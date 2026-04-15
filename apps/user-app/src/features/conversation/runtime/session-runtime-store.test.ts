@@ -211,6 +211,7 @@ describe("SessionRuntimeStore", () => {
       provider: "codex",
       providerSessionId: "raw-1",
       detail: null,
+      interruptSource: null,
       errorCode: null,
       errorDetail: null,
       updatedAt: "2026-03-24T10:00:00.000Z",
@@ -995,6 +996,7 @@ describe("SessionRuntimeStore", () => {
       provider: "codex",
       providerSessionId: "raw-1",
       detail: null,
+      interruptSource: null,
       updatedAt: "2026-03-24T10:00:00.000Z",
       contextUsage: null
     });

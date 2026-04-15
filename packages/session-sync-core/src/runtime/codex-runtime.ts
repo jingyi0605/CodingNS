@@ -219,6 +219,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       resolveRuntimeStoreKey(providerSessionId, request.sessionId)
     );
     const rawStoreRef = pickAvailableCodexRawStoreRef(
+      providerSessionId,
       resumedSyntheticSession
         ? [resumedSyntheticSession.rawStoreRef]
         : [startedSession.rawStoreRef, request.rawStoreRef],
@@ -395,6 +396,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       providerSessionId: resolvedSessionId
     });
     const rawStoreRef = pickAvailableCodexRawStoreRef(
+      resolvedSessionId,
       [request.rawStoreRef, resumed.rawStoreRef],
       syntheticRawStoreRef
     );
@@ -2162,22 +2164,65 @@ function buildRuntimeRawStoreRef(providerSessionId: string): string {
 }
 
 function pickAvailableCodexRawStoreRef(
+  providerSessionId: string,
   candidates: Array<string | null | undefined>,
   fallbackRawStoreRef: string
 ): string {
+  const normalizedProviderSessionId = providerSessionId.trim();
+  const normalizedCandidates: string[] = [];
+  const seen = new Set<string>();
+
   for (const candidate of candidates) {
     const normalized = candidate?.trim();
 
-    if (!normalized) {
+    if (!normalized || seen.has(normalized) || !existsSync(normalized)) {
       continue;
     }
 
-    if (existsSync(normalized)) {
-      return normalized;
+    seen.add(normalized);
+    normalizedCandidates.push(normalized);
+  }
+
+  if (!normalizedProviderSessionId) {
+    return normalizedCandidates[0] ?? fallbackRawStoreRef;
+  }
+
+  for (const candidate of normalizedCandidates) {
+    if (readSessionMeta(candidate)?.threadId === normalizedProviderSessionId) {
+      return candidate;
+    }
+  }
+
+  for (const candidate of normalizedCandidates) {
+    if (doesRawStorePathLookLikeThread(candidate, normalizedProviderSessionId)) {
+      return candidate;
+    }
+  }
+
+  for (const candidate of normalizedCandidates) {
+    if (isSyntheticRawStoreRef(candidate)) {
+      return candidate;
+    }
+  }
+
+  for (const candidate of normalizedCandidates) {
+    if (!readSessionMeta(candidate)) {
+      return candidate;
     }
   }
 
   return fallbackRawStoreRef;
+}
+
+function doesRawStorePathLookLikeThread(rawStoreRef: string, providerSessionId: string): boolean {
+  const fileName = basename(rawStoreRef, ".jsonl").trim().toLowerCase();
+  const normalizedProviderSessionId = providerSessionId.trim().toLowerCase();
+
+  if (!fileName || !normalizedProviderSessionId) {
+    return false;
+  }
+
+  return fileName === normalizedProviderSessionId || fileName.includes(normalizedProviderSessionId);
 }
 
 function resolveRuntimeStoreKey(providerSessionId: string, sessionId: string): string {
@@ -2305,14 +2350,15 @@ function resolveResumeThreadId(
   rawStoreRef: string | null
 ): string | null {
   const normalizedProviderSessionId = ensureText(providerSessionId).trim();
+
+  if (normalizedProviderSessionId.length > 0) {
+    return normalizedProviderSessionId;
+  }
+
   const fromRawStore = readThreadIdFromRawStore(rawStoreRef);
 
   if (fromRawStore) {
     return fromRawStore;
-  }
-
-  if (normalizedProviderSessionId.length > 0) {
-    return normalizedProviderSessionId;
   }
 
   return null;

@@ -37,6 +37,18 @@ const mockedGetButlerSessionTarget = vi.mocked(getButlerSessionTarget);
 
 describe("WorkspaceInboxModal", () => {
   const showToast = vi.fn();
+  const defaultAssistantState = {
+    lifecycleStage: "pending" as const,
+    analysisSummary: null,
+    generatedPrompt: null,
+    linkedButlerSessionId: null,
+    linkedSessionId: null,
+    linkedFollowUpTaskId: null,
+    lastError: null,
+    lastAnalyzedAt: null,
+    lastSessionCreatedAt: null,
+    lastFollowUpAt: null
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -95,6 +107,7 @@ describe("WorkspaceInboxModal", () => {
           content: "继续推动登录页验证码收尾。",
           priority: "medium",
           status: "pending",
+          assistantState: defaultAssistantState,
           createdAt: "2026-04-07T00:00:00.000Z",
           updatedAt: "2026-04-07T00:10:00.000Z",
           closedAt: null
@@ -141,6 +154,7 @@ describe("WorkspaceInboxModal", () => {
         content: "补齐登录验证码。",
         priority: "medium",
         status: "pending",
+        assistantState: defaultAssistantState,
         createdAt: "2026-04-07T00:11:00.000Z",
         updatedAt: "2026-04-07T00:11:00.000Z",
         closedAt: null
@@ -158,6 +172,10 @@ describe("WorkspaceInboxModal", () => {
         content: "继续推动登录页验证码收尾。",
         priority: "medium",
         status: "closed",
+        assistantState: {
+          ...defaultAssistantState,
+          lifecycleStage: "completed"
+        },
         createdAt: "2026-04-07T00:00:00.000Z",
         updatedAt: "2026-04-07T00:12:00.000Z",
         closedAt: "2026-04-07T00:12:00.000Z"

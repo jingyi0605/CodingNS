@@ -246,6 +246,7 @@ describe("WorkbenchLayout", () => {
       }
     } as never);
     mockedListButlerFollowUpTasks.mockResolvedValue({ items: [] } as never);
+    mockedListButlerInboxItems.mockResolvedValue({ items: [] } as never);
     mockedListButlerNotificationArchives.mockResolvedValue({ items: [] } as never);
     mockedUpdateButlerNotificationArchive.mockResolvedValue({ item: null } as never);
     clearViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY);
@@ -2856,9 +2857,149 @@ describe("WorkbenchLayout", () => {
     const notificationDialog = await screen.findByRole("dialog", {
       name: t("shell.globalNotificationsPanelTitle")
     });
-    expect(within(notificationDialog).getByText("跟进完成：登录页开发")).toBeInTheDocument();
+    expect(
+      within(notificationDialog).getByText(
+        t("shell.globalNotificationFollowUpCompletedTitle", { title: "登录页开发" })
+      )
+    ).toBeInTheDocument();
     expect(within(notificationDialog).getByText("登录页目标已完成，跟进自动结束。")).toBeInTheDocument();
     expect(within(notificationDialog).getByText(t("shell.globalNotificationKindFollowUpCompleted"))).toBeInTheDocument();
+  });
+
+  it("会为代办分析完成生成通知", async () => {
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "哆哆"
+      }
+    } as never);
+    mockedGetButlerOverview.mockResolvedValueOnce({
+      overview: {
+        version: "v1",
+        generatedAt: "2026-04-07T00:00:00.000Z",
+        global: {
+          projectCount: 1,
+          activeProjectCount: 1,
+          blockedProjectCount: 0,
+          highRiskProjectCount: 0,
+          topRisks: [],
+          nextActions: []
+        },
+        projects: [
+          {
+            id: "project-1",
+            workspaceId: "workspace-1",
+            name: "项目一",
+            repoRoot: "/repo/project-1",
+            lifecycleStatus: "active",
+            riskLevel: "medium",
+            activeSessionCount: 0,
+            sessionCount: 0,
+            memoryCount: 0,
+            failedPatrolCount: 0,
+            failedVerificationCount: 0,
+            latestSessionSummary: null,
+            latestPatrolSummary: null,
+            latestVerificationSummary: null,
+            topRisks: [],
+            nextActions: [],
+            lastActivityAt: "2026-04-07T00:00:00.000Z",
+            updatedAt: "2026-04-07T00:00:00.000Z"
+          }
+        ],
+        sessions: [],
+        patrols: [],
+        verifications: []
+      }
+    } as never);
+    mockedListButlerFollowUpTasks.mockResolvedValueOnce({
+      items: []
+    } as never);
+    mockedListButlerInboxItems.mockResolvedValueOnce({
+      items: [
+        {
+          id: "todo-1",
+          projectId: "project-1",
+          workspaceId: "workspace-1",
+          projectName: "项目一",
+          projectLifecycleStatus: "active",
+          itemType: "task",
+          title: "补齐登录验证码",
+          content: "继续收尾登录验证码流程。",
+          priority: "medium",
+          status: "pending",
+          assistantState: {
+            lifecycleStage: "analyzed",
+            analysisSummary: "仓库定位完成，登录验证码流程还差接口联调。",
+            generatedPrompt: "请先检查登录验证码相关页面、接口和错误处理。",
+            analysisControlSessionId: null,
+            analysisSessionId: null,
+            linkedButlerSessionId: null,
+            linkedSessionId: null,
+            linkedFollowUpTaskId: null,
+            lastError: null,
+            lastAnalyzedAt: "2026-04-07T00:02:00.000Z",
+            lastSessionCreatedAt: null,
+            lastFollowUpAt: null
+          },
+          createdAt: "2026-04-07T00:00:00.000Z",
+          updatedAt: "2026-04-07T00:02:00.000Z",
+          closedAt: null
+        }
+      ]
+    } as never);
+
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+    await findSessionCardByTitle("会话 Alpha");
+
+    const notificationButton = await screen.findByRole("button", {
+      name: t("shell.globalNotificationsAction")
+    });
+    expect(
+      within(notificationButton).getByLabelText(
+        t("shell.globalNotificationsUnreadAria", { count: "1" })
+      )
+    ).toBeInTheDocument();
+
+    await userEvent.click(notificationButton);
+
+    const notificationDialog = await screen.findByRole("dialog", {
+      name: t("shell.globalNotificationsPanelTitle")
+    });
+    expect(
+      within(notificationDialog).getByText(
+        t("shell.globalNotificationTodoAnalyzedTitle", { title: "补齐登录验证码" })
+      )
+    ).toBeInTheDocument();
+    expect(
+      within(notificationDialog).getByText("仓库定位完成，登录验证码流程还差接口联调。")
+    ).toBeInTheDocument();
+    expect(within(notificationDialog).getByText(t("shell.globalNotificationKindTodoAnalyzed"))).toBeInTheDocument();
   });
 
   it("通知归档会走服务端持久化并支持显示已归档通知", async () => {

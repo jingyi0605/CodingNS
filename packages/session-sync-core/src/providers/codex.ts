@@ -178,6 +178,11 @@ export class CodexAdapter implements ProviderAdapter {
         cachedSummary
         && cachedSummary.mtimeMs === stats.mtimeMs
         && cachedSummary.size === stats.size
+        && (
+          !cachedSummary.summary
+          || !sessionIdentity
+          || cachedSummary.summary.providerSessionId === sessionIdentity.threadId
+        )
       ) {
         this.touchSessionSummaryCache(filePath, cachedSummary);
 
@@ -210,6 +215,10 @@ export class CodexAdapter implements ProviderAdapter {
         && knownByPath.sourceMtimeMs === stats.mtimeMs
         && knownByPath.sourceSizeBytes === stats.size
         && hasUsableCodexTitle(knownByPath.title)
+        && (
+          !sessionIdentity
+          || knownByPath.providerSessionId === sessionIdentity.threadId
+        )
       ) {
         if (normalizeWorkspacePath(knownByPath.workspacePath) === targetPath) {
           retainedSummaries.push({
@@ -409,6 +418,16 @@ export class CodexAdapter implements ProviderAdapter {
     direction: HistoryDirection = "forward"
   ): Promise<HistoryPage> {
     const resolvedStoreRef = this.resolveSessionFilePath(rawStoreRef, providerSessionId);
+
+    if (!existsSync(resolvedStoreRef)) {
+      return {
+        messages: [],
+        cursor,
+        nextCursor: null,
+        total: 0
+      };
+    }
+
     const messages = this.getParsedMessages(resolvedStoreRef, providerSessionId);
     return sliceHistory(messages, cursor, limit, direction);
   }
@@ -420,6 +439,11 @@ export class CodexAdapter implements ProviderAdapter {
     limit: number
   ): Promise<HistoryPage | null> {
     const resolvedStoreRef = this.resolveSessionFilePath(rawStoreRef, providerSessionId);
+
+    if (!existsSync(resolvedStoreRef)) {
+      return null;
+    }
+
     const stats = statSync(resolvedStoreRef);
     const cached = this.historyCache.get(resolvedStoreRef);
 
@@ -472,9 +496,13 @@ export class CodexAdapter implements ProviderAdapter {
   ): ProviderSubscription {
     let currentCursor = cursor;
     const resolvedStoreRef = this.resolveSessionFilePath(rawStoreRef, providerSessionId);
-    let lastMtime = statSync(resolvedStoreRef).mtimeMs;
+    let lastMtime = existsSync(resolvedStoreRef) ? statSync(resolvedStoreRef).mtimeMs : 0;
 
     const timer = setInterval(async () => {
+      if (!existsSync(resolvedStoreRef)) {
+        return;
+      }
+
       const nextStat = statSync(resolvedStoreRef);
 
       if (nextStat.mtimeMs <= lastMtime) {
@@ -1065,8 +1093,20 @@ export class CodexAdapter implements ProviderAdapter {
   }
 
   private resolveSessionFilePath(rawStoreRef: string, providerSessionId: string): string {
+    const matchedByThreadId = this.findSessionFileByThreadId(providerSessionId);
+
     if (existsSync(rawStoreRef)) {
-      return rawStoreRef;
+      const boundThreadId = this.readThreadIdFromRawStore(rawStoreRef);
+
+      if (!boundThreadId || boundThreadId === providerSessionId) {
+        return rawStoreRef;
+      }
+
+      if (matchedByThreadId) {
+        return matchedByThreadId;
+      }
+
+      return buildSyntheticCodexHistoryPath(this.options.homeDir, providerSessionId);
     }
 
     const fileName = basename(rawStoreRef) || `${providerSessionId}.jsonl`;
@@ -1084,13 +1124,15 @@ export class CodexAdapter implements ProviderAdapter {
       return matchedPath;
     }
 
-    const matchedByThreadId = this.findSessionFileByThreadId(providerSessionId);
-
     if (matchedByThreadId) {
       return matchedByThreadId;
     }
 
-    return rawStoreRef;
+    if (isSyntheticCodexHistoryPath(rawStoreRef)) {
+      return rawStoreRef;
+    }
+
+    return buildSyntheticCodexHistoryPath(this.options.homeDir, providerSessionId);
   }
 
   private findSessionFileByThreadId(providerSessionId: string): string | null {
@@ -2302,6 +2344,15 @@ function buildCodexActiveSessionPath(homeDir: string, fileName: string): string 
   }
 
   return join(homeDir, "sessions", match[1], match[2], match[3], fileName);
+}
+
+function buildSyntheticCodexHistoryPath(homeDir: string, providerSessionId: string): string {
+  return join(homeDir, "runtime", "codex", `${providerSessionId}.jsonl`);
+}
+
+function isSyntheticCodexHistoryPath(rawStoreRef: string): boolean {
+  const normalized = rawStoreRef.replaceAll("\\", "/").toLowerCase();
+  return normalized.includes("/runtime/codex/") || normalized.startsWith("runtime/codex/");
 }
 
 function hasUsableCodexTitle(title: string | null | undefined): boolean {

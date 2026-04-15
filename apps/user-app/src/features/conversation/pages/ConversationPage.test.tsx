@@ -327,7 +327,11 @@ describe("ConversationPage", () => {
     expect(screen.getByRole("button", { name: "展开完整上文" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "分支树" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "展开完整上文" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: t("conversation.inheritedContextExpand")
+      })
+    );
 
     expect(screen.getByTestId("timeline-messages")).toHaveTextContent(
       "口令是1314|收到，口令是 1314。|现在还记得吗|还记得，口令是 1314。"
@@ -405,6 +409,108 @@ describe("ConversationPage", () => {
 
     expect(screen.getByTestId("timeline-messages")).not.toHaveTextContent("父会话第一句");
     expect(screen.getByTestId("timeline-messages")).not.toHaveTextContent("父会话第一句回复");
+  });
+
+  it("消息 fork 的折叠区不会把子会话创建前泄漏进来的父会话尾巴显示出来", async () => {
+    mockLiveRuntimeState.session = {
+      ...mockLiveRuntimeState.session,
+      sessionId: "session-child-3",
+      parentSessionId: "session-parent-1",
+      forkMethod: "native_message_fork",
+      forkSourceType: "message",
+      forkSourceSessionId: "session-parent-1",
+      forkSourceMessageId: "parent-assistant-1",
+      inheritedPrefixMessageCount: 2,
+      createdAt: "2026-04-11T11:05:00.000Z",
+      title: "子会话"
+    };
+    mockLiveRuntimeState.messages = [
+      {
+        ...createHistoryViewMessage("parent-user-1", "user", "父会话第一句", 1),
+        timestamp: "2026-04-11T11:00:01.000Z"
+      },
+      {
+        ...createHistoryViewMessage("parent-assistant-1", "assistant", "父会话第一句回复", 2),
+        timestamp: "2026-04-11T11:00:02.000Z"
+      },
+      {
+        ...createHistoryViewMessage("parent-user-2", "user", "父会话后来又说了一句", 3),
+        timestamp: "2026-04-11T11:02:00.000Z"
+      },
+      {
+        ...createHistoryViewMessage("parent-assistant-2", "assistant", "父会话后来又回了一句", 4),
+        timestamp: "2026-04-11T11:03:00.000Z"
+      },
+      {
+        ...createHistoryViewMessage("child-user-1", "user", "这是子会话自己的第一句", 5),
+        timestamp: "2026-04-11T11:06:00.000Z"
+      }
+    ];
+    mockUseWorkbenchShell.mockReturnValue({
+      shellMode: "desktop",
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "CodingNS",
+            path: "/Users/jackson/Code/CodingNS",
+            repoRoot: "/Users/jackson/Code/CodingNS"
+          },
+          sessions: [
+            {
+              ...mockLiveRuntimeState.session,
+              sessionId: "session-parent-1",
+              parentSessionId: null,
+              forkMethod: null,
+              forkSourceType: null,
+              forkSourceSessionId: null,
+              forkSourceMessageId: null,
+              title: "主会话"
+            },
+            mockLiveRuntimeState.session
+          ]
+        }
+      ],
+      requestNavigationRefresh: vi.fn(),
+      selectWorkspace: vi.fn(),
+      setSessionWorkspace: vi.fn(),
+      upsertNavigationSession: vi.fn(),
+      markNavigationSessionSeen: vi.fn(),
+      favoriteSessions: [],
+      archiveSession: vi.fn(),
+      unarchiveSession: vi.fn(),
+      startDraftSession: vi.fn()
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/workspaces/workspace-1/sessions/session-child-3"]}>
+        <Routes>
+          <Route
+            path="/workspaces/:workspaceId/sessions/:sessionId"
+            element={<ConversationPage />}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("timeline-messages")).toHaveTextContent("这是子会话自己的第一句");
+    });
+
+    expect(screen.getByTestId("timeline-messages")).not.toHaveTextContent("父会话后来又说了一句");
+    expect(screen.getByTestId("timeline-messages")).not.toHaveTextContent("父会话后来又回了一句");
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: t("conversation.inheritedContextExpand")
+      })
+    );
+
+    expect(screen.getByTestId("timeline-messages")).toHaveTextContent(
+      "父会话第一句|父会话第一句回复|这是子会话自己的第一句"
+    );
+    expect(screen.getByTestId("timeline-messages")).not.toHaveTextContent("父会话后来又说了一句");
+    expect(screen.getByTestId("timeline-messages")).not.toHaveTextContent("父会话后来又回了一句");
   });
 
   it("子工作树会话会把当前工作区上下文传给会话头部", async () => {

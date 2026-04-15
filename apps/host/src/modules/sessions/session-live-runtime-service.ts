@@ -35,6 +35,7 @@ import type { SessionStateRepository } from "../../storage/repositories/session-
 import type { SessionStatusSnapshotRepository } from "../../storage/repositories/session-status-snapshot-repository.js";
 import type {
   SessionActivityConfidence,
+  SessionInterruptSource,
   SessionActivityResolutionSource,
   SessionListItem,
   SessionResolvedRunningState,
@@ -161,6 +162,7 @@ export interface SessionRuntimeStatusView {
   activityConfidence: SessionActivityConfidence;
   runId: string | null;
   detail: string | null;
+  interruptSource: SessionInterruptSource | null;
   errorCode: string | null;
   errorDetail: string | null;
   updatedAt: string;
@@ -179,6 +181,7 @@ export interface SessionRuntimeStatusEnvelope {
   sessionId: string;
   status: "starting" | "running" | "completed" | "failed" | "interrupted";
   detail: string | null;
+  interruptSource: SessionInterruptSource | null;
   timestamp: string;
 }
 
@@ -194,6 +197,7 @@ export interface SessionInterruptedEnvelope {
   type: "session.interrupted";
   sessionId: string;
   detail: string | null;
+  interruptSource: SessionInterruptSource | null;
   timestamp: string;
 }
 
@@ -205,6 +209,7 @@ export interface SessionActivityEnvelope {
   activityConfidence: SessionActivityConfidence;
   runId: string | null;
   detail: string | null;
+  interruptSource: SessionInterruptSource | null;
   errorCode: string | null;
   errorDetail: string | null;
   hasActiveRun: boolean;
@@ -853,6 +858,7 @@ export class SessionLiveRuntimeService {
         activityConfidence: resolution.activityConfidence,
         runId: resolution.runId,
         detail: resolution.detail,
+        interruptSource: resolution.interruptSource,
         errorCode:
           resolution.runningState === "failed"
             ? resolution.errorCode ?? session.lastErrorCode
@@ -881,6 +887,7 @@ export class SessionLiveRuntimeService {
         activityConfidence: resolution.activityConfidence,
         runId: resolution.runId,
         detail: resolution.detail,
+        interruptSource: resolution.interruptSource,
         errorCode: resolution.runningState === "failed" ? resolution.errorCode ?? session.lastErrorCode : null,
         errorDetail: resolution.runningState === "failed" ? resolution.detail ?? session.lastErrorDetail : null,
         updatedAt: resolution.updatedAt,
@@ -905,6 +912,7 @@ export class SessionLiveRuntimeService {
       activityConfidence: resolution.activityConfidence,
       runId: resolution.runId,
       detail: persistedErrorDetail,
+      interruptSource: resolution.interruptSource,
       errorCode: persistedErrorCode,
       errorDetail: persistedErrorDetail,
       updatedAt: resolution.updatedAt,
@@ -1012,6 +1020,7 @@ export class SessionLiveRuntimeService {
         sessionId,
         status: runtimeSnapshot.runningState,
         detail: runtimeSnapshot.detail,
+        interruptSource: runtimeSnapshot.interruptSource,
         timestamp: runtimeSnapshot.lastEventAt ?? runtimeSnapshot.startedAt
       });
     }
@@ -1022,6 +1031,7 @@ export class SessionLiveRuntimeService {
         sessionId,
         status: externalRuntimeSnapshot.runningState,
         detail: externalRuntimeSnapshot.detail,
+        interruptSource: null,
         timestamp: externalRuntimeSnapshot.updatedAt
       });
     }
@@ -1237,6 +1247,7 @@ export class SessionLiveRuntimeService {
       activityConfidence: resolution.activityConfidence,
       runId: resolution.runId,
       detail: resolution.detail,
+      interruptSource: resolution.interruptSource,
       errorCode: resolution.errorCode,
       errorDetail: resolution.detail,
       hasActiveRun: options.hasActiveRun,
@@ -1392,6 +1403,7 @@ export class SessionLiveRuntimeService {
       source: "authoritative_provider_event",
       confidence: input.runningState === "failed" ? "strong" : "authoritative",
       detail: input.detail,
+      interruptSource: null,
       errorCode: input.runningState === "failed" ? "CLAUDE_HOOK_STOP_FAILURE" : null,
       observedAt: input.timestamp
     });
@@ -1424,6 +1436,7 @@ export class SessionLiveRuntimeService {
             sessionId: input.sessionId,
             status: input.runningState,
             detail: input.detail,
+            interruptSource: null,
             timestamp: input.timestamp
           } satisfies SessionRuntimeStatusEnvelope);
 
@@ -2326,7 +2339,7 @@ export class SessionLiveRuntimeService {
     provider: string,
     handle: ActiveRunHandle
   ): Promise<void> {
-    if (provider !== "gemini" && provider !== "kimi") {
+    if (provider !== "gemini" && provider !== "kimi" && provider !== "codex") {
       return;
     }
 
@@ -2335,7 +2348,7 @@ export class SessionLiveRuntimeService {
     while (Date.now() - startedAt < RUNTIME_START_BINDING_WAIT_TIMEOUT_MS) {
       const snapshot = handle.getSnapshot();
 
-      if (hasResolvedRuntimeBinding(snapshot.providerSessionId, snapshot.rawStoreRef)) {
+      if (shouldPersistResolvedStartBinding(snapshot.provider, snapshot.providerSessionId, snapshot.rawStoreRef)) {
         this.sessionHistoryService.persistSessionBinding(sessionId, workspaceId, {
           provider: snapshot.provider,
           providerSessionId: snapshot.providerSessionId,
@@ -2434,6 +2447,7 @@ export class SessionLiveRuntimeService {
         type: "session.interrupted",
         sessionId,
         detail: event.detail,
+        interruptSource: event.interruptSource,
         timestamp: event.timestamp
       };
     }
@@ -2443,6 +2457,7 @@ export class SessionLiveRuntimeService {
       sessionId,
       status: event.status,
       detail: event.detail,
+      interruptSource: event.interruptSource,
       timestamp: event.timestamp
     };
   }
@@ -2594,6 +2609,7 @@ function createRuntimeActivityObservation(
     lastEventAt: string | null;
     runningState: RuntimeRunState;
     detail: string | null;
+    interruptSource: SessionInterruptSource | null;
     errorCode?: string | null;
   }
 ): SessionActivityObservation {
@@ -2607,6 +2623,7 @@ function createRuntimeActivityObservation(
         ? "strong"
         : "authoritative",
     detail: snapshot.detail,
+    interruptSource: snapshot.interruptSource,
     errorCode: snapshot.runningState === "failed" ? snapshot.errorCode ?? null : null,
     observedAt: snapshot.lastEventAt ?? snapshot.startedAt
   };
@@ -2627,6 +2644,7 @@ function createExternalRuntimeActivityObservation(
     source: "authoritative_provider_event",
     confidence: snapshot.runningState === "failed" ? "strong" : "authoritative",
     detail: snapshot.detail,
+    interruptSource: null,
     errorCode: snapshot.runningState === "failed" ? "CLAUDE_HOOK_STOP_FAILURE" : null,
     observedAt: snapshot.updatedAt
   };
@@ -2650,6 +2668,7 @@ function createRuntimeEventObservation(
       event.type === "message"
         ? "Host 正在接收这一轮运行的实时事件"
         : event.detail,
+    interruptSource: event.interruptSource,
     errorCode: event.type === "error" ? event.errorCode : null,
     observedAt: event.type === "message" ? event.message.timestamp : event.timestamp
   };
@@ -2935,6 +2954,28 @@ function hasResolvedRuntimeBinding(
 
   return !providerSessionId.trim().toLowerCase().startsWith("pending://")
     && !rawStoreRef.trim().toLowerCase().startsWith("pending://");
+}
+
+function shouldPersistResolvedStartBinding(
+  provider: string,
+  providerSessionId: string | null,
+  rawStoreRef: string | null
+): providerSessionId is string {
+  if (!hasResolvedRuntimeBinding(providerSessionId, rawStoreRef)) {
+    return false;
+  }
+
+  if (provider === "codex") {
+    return !isSyntheticCodexRuntimeBinding(rawStoreRef);
+  }
+
+  return true;
+}
+
+function isSyntheticCodexRuntimeBinding(rawStoreRef: string): boolean {
+  const normalizedRawStoreRef = rawStoreRef.trim().replaceAll("\\", "/").toLowerCase();
+  return normalizedRawStoreRef.includes("/runtime/codex/")
+    || normalizedRawStoreRef.startsWith("runtime/codex/");
 }
 
 function waitForRuntimeBindingPoll(): Promise<void> {

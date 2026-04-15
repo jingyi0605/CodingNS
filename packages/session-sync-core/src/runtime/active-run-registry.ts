@@ -6,6 +6,7 @@ import type {
   RegisterActiveRunInput,
   RuntimeEvent,
   RuntimeEventInput,
+  RuntimeInterruptSource,
   RuntimeEventListener,
   RuntimeRunState,
   RuntimeSessionBinding
@@ -23,6 +24,7 @@ interface ActiveRunRecord {
   lastEventAt: string | null;
   completedAt: string | null;
   detail: string | null;
+  interruptSource: RuntimeInterruptSource | null;
   errorCode: string | null;
   supportsInterrupt: boolean;
   interruptHandler: (() => Promise<void>) | null;
@@ -61,6 +63,7 @@ export class ActiveRunRegistry {
       lastEventAt: null,
       completedAt: null,
       detail: null,
+      interruptSource: null,
       errorCode: null,
       supportsInterrupt: input.supportsInterrupt ?? false,
       interruptHandler: null,
@@ -196,6 +199,7 @@ export class ActiveRunRegistry {
     const record = this.getRecordOrThrow(sessionId);
     const timestamp = input.timestamp ?? nextTimestamp();
     const detail = input.detail ?? null;
+    const interruptSource = normalizeInterruptSource(input.type, input.interruptSource);
     const providerSessionId =
       input.providerSessionId === undefined ? record.providerSessionId : input.providerSessionId;
     const rawStoreRef =
@@ -204,9 +208,10 @@ export class ActiveRunRegistry {
     record.providerSessionId = providerSessionId;
     record.rawStoreRef = rawStoreRef;
     record.detail = detail;
+    record.interruptSource = interruptSource;
     record.errorCode = input.type === "error" ? normalizeErrorCode(input.errorCode) : null;
 
-    const event = this.toRuntimeEvent(record, input, timestamp, detail);
+    const event = this.toRuntimeEvent(record, input, timestamp, detail, interruptSource);
     this.applyEventState(record, event);
     this.rememberRecentEvent(record, event);
 
@@ -230,6 +235,10 @@ export class ActiveRunRegistry {
 
     record.lastEventAt = event.timestamp;
     record.detail = event.detail;
+    record.interruptSource =
+      record.runningState === "interrupted" && record.interruptSource === "user" && event.status === "interrupted"
+        ? "user"
+        : event.interruptSource;
     record.runningState = event.status;
     record.errorCode = event.type === "error" ? event.errorCode : null;
 
@@ -246,7 +255,8 @@ export class ActiveRunRegistry {
     record: ActiveRunRecord,
     input: RuntimeEventInput,
     timestamp: string,
-    detail: string | null
+    detail: string | null,
+    interruptSource: RuntimeInterruptSource | null
   ): RuntimeEvent {
     if (input.type === "message") {
       if (!input.message) {
@@ -262,6 +272,7 @@ export class ActiveRunRegistry {
         message: input.message,
         status: null,
         detail,
+        interruptSource,
         errorCode: null,
         rawEventRef: input.rawEventRef ?? null,
         timestamp
@@ -276,6 +287,7 @@ export class ActiveRunRegistry {
       rawStoreRef: input.rawStoreRef ?? record.rawStoreRef,
       message: null,
       detail,
+      interruptSource,
       rawEventRef: input.rawEventRef ?? null,
       timestamp
     };
@@ -367,6 +379,7 @@ export class ActiveRunRegistry {
       lastEventAt: record.lastEventAt,
       completedAt: record.completedAt,
       detail: record.detail,
+      interruptSource: record.interruptSource,
       errorCode: record.errorCode,
       supportsInterrupt: record.supportsInterrupt
     };
@@ -395,4 +408,15 @@ function normalizeRuntimeStatus(
 function normalizeErrorCode(errorCode: string | null | undefined): string {
   const normalized = errorCode?.trim();
   return normalized && normalized.length > 0 ? normalized : "PROVIDER_RUNTIME_ERROR";
+}
+
+function normalizeInterruptSource(
+  type: RuntimeEvent["type"],
+  interruptSource: RuntimeEventInput["interruptSource"]
+): RuntimeInterruptSource | null {
+  if (type !== "interrupted") {
+    return null;
+  }
+
+  return interruptSource ?? "runtime";
 }

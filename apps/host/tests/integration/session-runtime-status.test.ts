@@ -158,6 +158,47 @@ describe("session runtime status", () => {
     expect(inspection.completedAtCandidate).toBeNull();
   });
 
+  it("Codex 出现 turn_aborted 后，应把会话判定为 interrupted", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-runtime-status-"));
+    tempDirs.push(tempDir);
+    const rawStoreRef = path.join(tempDir, "codex-turn-aborted.jsonl");
+
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          timestamp: "2026-04-15T09:25:01.565Z",
+          type: "event_msg",
+          payload: {
+            type: "task_started",
+            turn_id: "turn-1"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-15T09:25:48.261Z",
+          type: "event_msg",
+          payload: {
+            type: "turn_aborted",
+            turn_id: "turn-1",
+            reason: "interrupted"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const inspection = inspectSessionActivity(
+      "codex",
+      rawStoreRef,
+      Date.parse("2026-04-15T09:25:50.000Z")
+    );
+
+    expect(inspection.runningState).toBe("interrupted");
+    expect(inspection.hasPendingTools).toBe(false);
+    expect(inspection.completedAtCandidate).toBe("2026-04-15T09:25:48.261Z");
+    expect(inspection.errorDetail).toBe("codex turn interrupted by user");
+  });
+
   it("Codex 原始会话出现 task_failed 后，runtime 接口应该返回 failed 和稳定错误码", async () => {
     const fixture = createProviderFixture();
     activeFixtures.push(fixture);

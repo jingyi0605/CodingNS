@@ -69,6 +69,7 @@ export class ProviderRuntimeService {
     await handle.emit({
       type: "interrupted",
       status: "interrupted",
+      interruptSource: "user",
       detail: "interrupt requested"
     });
 

@@ -2135,6 +2135,107 @@ describe("SessionLiveRuntimeService", () => {
     );
   });
 
+  it("startLiveSession 会在后台把 Codex synthetic binding 回填成真实 rollout 路径", async () => {
+    vi.useFakeTimers();
+    const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
+      createService();
+    const runtimeSnapshot = {
+      sessionId: "runtime-session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "019d9025-e575-7fa1-84e2-9e797a2d61df",
+      rawStoreRef: "/Users/test/runtime/codex/019d9025-e575-7fa1-84e2-9e797a2d61df.stream",
+      runningState: "starting",
+      attachedClients: 1,
+      startedAt: "2026-04-15T07:58:15.000Z",
+      lastEventAt: null,
+      completedAt: null,
+      detail: null,
+      errorCode: null,
+      supportsInterrupt: true
+    };
+    const providerRuntimeService = {
+      startSession: vi.fn(async () => ({
+        getSnapshot: vi.fn(() => ({ ...runtimeSnapshot })),
+        attach: vi.fn()
+      }))
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getProviderCapabilitiesSnapshot = vi.fn(() => ({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: false,
+      supportsCheckpoint: false,
+      limitations: []
+    }));
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+    sessionHistoryService.getBindingOrThrow.mockReturnValue({
+      provider: "codex",
+      providerSessionId: "019d9025-e575-7fa1-84e2-9e797a2d61df",
+      rawStoreRef: "/Users/test/runtime/codex/019d9025-e575-7fa1-84e2-9e797a2d61df.stream"
+    });
+    sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
+    sessionHistoryService.getSession.mockImplementation((sessionId: string) => ({
+      sessionId,
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "019d9025-e575-7fa1-84e2-9e797a2d61df",
+      rawStoreRef: runtimeSnapshot.rawStoreRef,
+      messageCount: 0
+    }));
+
+    setTimeout(() => {
+      runtimeSnapshot.rawStoreRef =
+        "/Users/test/butler-runtime/codex-home/sessions/2026/04/15/rollout-2026-04-15T15-58-15-019d9025-e575-7fa1-84e2-9e797a2d61df.jsonl";
+      runtimeSnapshot.runningState = "running";
+      runtimeSnapshot.lastEventAt = "2026-04-15T07:58:16.000Z";
+    }, 100);
+
+    const resultPromise = service.startLiveSession({
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      provider: "codex",
+      content: "Codex 启动后应回填真实 rollout 路径",
+      clientRequestId: null
+    });
+
+    const result = await resultPromise;
+
+    expect(result.providerSessionId).toBe("019d9025-e575-7fa1-84e2-9e797a2d61df");
+
+    await vi.advanceTimersByTimeAsync(200);
+
+    const createdSessionId = sessionHistoryService.persistSessionBinding.mock.calls[0]?.[0];
+
+    expect(createdSessionId).toEqual(expect.any(String));
+    expect(sessionHistoryService.persistSessionBinding).toHaveBeenLastCalledWith(
+      createdSessionId,
+      "workspace-1",
+      {
+        provider: "codex",
+        providerSessionId: "019d9025-e575-7fa1-84e2-9e797a2d61df",
+        rawStoreRef:
+          "/Users/test/butler-runtime/codex-home/sessions/2026/04/15/rollout-2026-04-15T15-58-15-019d9025-e575-7fa1-84e2-9e797a2d61df.jsonl"
+      }
+    );
+  });
+
   it("getSessionRuntime 会把 Gemini 真实会话映射到正在运行的 pending runtime", async () => {
     const { service, sessionHistoryService, sessionBindingRepository } = createService();
     const aliasRuntimeSnapshot = {

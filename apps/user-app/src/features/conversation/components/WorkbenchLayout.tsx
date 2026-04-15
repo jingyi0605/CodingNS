@@ -161,8 +161,10 @@ import {
   getButlerOverview,
   getButlerProfile,
   listButlerFollowUpTasks,
+  listButlerInboxItems,
   listButlerNotificationArchives,
   updateButlerNotificationArchive,
+  type ButlerInboxItemDto,
   type ButlerFollowUpTaskDto,
   type ButlerOverviewDto
 } from "../../butler/api/butler-api";
@@ -230,6 +232,8 @@ const WORKSPACE_COLOR_PRESETS = [
 
 export type WorkbenchGlobalNotificationKind =
   | "follow_up_waiting_user"
+  | "todo_analyzed"
+  | "todo_analyze_failed"
   | "follow_up_completed"
   | "follow_up_failed"
   | "verification_failed";
@@ -269,12 +273,53 @@ function normalizeSessionFailureDetail(session: SessionSummaryDto): string | nul
 
 function buildWorkbenchGlobalNotifications(
   overview: ButlerOverviewDto,
-  followUpTasks: ButlerFollowUpTaskDto[]
+  followUpTasks: ButlerFollowUpTaskDto[],
+  inboxItems: ButlerInboxItemDto[]
 ): WorkbenchGlobalNotification[] {
   const projectWorkspaceIdByProjectId = new Map(
     overview.projects.map((project) => [project.id, project.workspaceId] as const)
   );
   const notifications: WorkbenchGlobalNotification[] = [];
+
+  for (const item of inboxItems) {
+    const title = item.title.trim() || item.projectName;
+
+    if (
+      item.assistantState.lifecycleStage === "analyzed"
+      && !item.assistantState.linkedSessionId?.trim()
+      && item.assistantState.lastAnalyzedAt
+    ) {
+      notifications.push({
+        id: `todo-analysis-completed:${item.id}:${item.assistantState.lastAnalyzedAt}`,
+        kind: "todo_analyzed",
+        title: t("shell.globalNotificationTodoAnalyzedTitle", {
+          title
+        }),
+        body:
+          item.assistantState.analysisSummary?.trim()
+          || item.assistantState.generatedPrompt?.trim()
+          || item.content,
+        routePath: buildWorkspaceButlerPath(item.workspaceId),
+        workspaceId: item.workspaceId,
+        createdAt: item.assistantState.lastAnalyzedAt
+      });
+      continue;
+    }
+
+    if (item.assistantState.lifecycleStage === "failed") {
+      notifications.push({
+        id: `todo-analysis-failed:${item.id}:${item.updatedAt}`,
+        kind: "todo_analyze_failed",
+        title: t("shell.globalNotificationTodoAnalyzeFailedTitle", {
+          title
+        }),
+        body: item.assistantState.lastError?.trim() || item.content,
+        routePath: buildWorkspaceButlerPath(item.workspaceId),
+        workspaceId: item.workspaceId,
+        createdAt: item.updatedAt
+      });
+    }
+  }
 
   for (const task of followUpTasks) {
     const title = task.sessionTitle?.trim() || task.projectName;
@@ -365,12 +410,16 @@ function resolveWorkbenchNotificationPriority(kind: WorkbenchGlobalNotificationK
   switch (kind) {
     case "follow_up_waiting_user":
       return 0;
-    case "follow_up_completed":
+    case "todo_analyze_failed":
       return 1;
     case "follow_up_failed":
       return 2;
     case "verification_failed":
       return 3;
+    case "todo_analyzed":
+      return 4;
+    case "follow_up_completed":
+      return 5;
     default:
       return 9;
   }
@@ -380,6 +429,10 @@ function resolveWorkbenchNotificationKindLabel(kind: WorkbenchGlobalNotification
   switch (kind) {
     case "follow_up_waiting_user":
       return t("shell.globalNotificationKindWaitingUser");
+    case "todo_analyzed":
+      return t("shell.globalNotificationKindTodoAnalyzed");
+    case "todo_analyze_failed":
+      return t("shell.globalNotificationKindTodoAnalyzeFailed");
     case "follow_up_completed":
       return t("shell.globalNotificationKindFollowUpCompleted");
     case "follow_up_failed":
@@ -7026,9 +7079,10 @@ export function WorkbenchLayout({
         return;
       }
 
-      const [overviewResponse, followUpResponse, notificationArchiveResponse] = await Promise.all([
+      const [overviewResponse, followUpResponse, inboxResponse, notificationArchiveResponse] = await Promise.all([
         getButlerOverview(),
         listButlerFollowUpTasks(),
+        listButlerInboxItems(),
         listButlerNotificationArchives()
       ]);
 
@@ -7037,7 +7091,11 @@ export function WorkbenchLayout({
       }
 
       setGlobalNotifications(
-        buildWorkbenchGlobalNotifications(overviewResponse.overview, followUpResponse.items)
+        buildWorkbenchGlobalNotifications(
+          overviewResponse.overview,
+          followUpResponse.items,
+          inboxResponse.items
+        )
       );
       setArchivedNotificationIds(
         new Set(notificationArchiveResponse.items.map((item) => item.notificationId))

@@ -239,4 +239,101 @@ describe("CodexRuntimeAdapter", () => {
       "thread-2"
     );
   });
+
+  it("会从 turn/start 返回的完成态 turn 中恢复最终 assistant 消息", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-codex-runtime-turn-result-"));
+    tempDirs.push(tempDir);
+    const rawStoreRef = path.join(tempDir, "session.jsonl");
+    writeFileSync(rawStoreRef, "", "utf8");
+    let closed = false;
+
+    const transport: CodexAppServerTransport = {
+      initialize: vi.fn(async () => undefined),
+      startThread: vi.fn(async () => ({
+        providerSessionId: "thread-3",
+        rawStoreRef
+      })),
+      resumeThread: vi.fn(async () => ({
+        providerSessionId: "thread-3",
+        rawStoreRef
+      })),
+      resumeThreadFromHistory: vi.fn(async () => ({
+        providerSessionId: "thread-3",
+        rawStoreRef
+      })),
+      startTurn: vi.fn(async () => ({
+        notification: {
+          method: "turn/completed",
+          params: {
+            threadId: "thread-3",
+            turn: {
+              id: "turn-3",
+              status: "completed",
+              items: [],
+              lastAgentMessage:
+                "```json\n{\"analysisSummary\":\"验证码问题\",\"generatedPrompt\":\"问题判断\\n补齐三次失败后的验证码。\\n\\n仓库现状\\n当前只恢复到了完成态消息。\\n\\n实际开发思路\\n先查登录失败计数，再补验证码触发。\\n\\n验证与风险\\n补登录失败三次后的验证。\",\"followUpObjective\":\"补齐验证码\",\"completionCriteria\":\"三次失败后显示图形验证码\",\"cliEvidence\":[\"codingns assistant capabilities list\",\"codingns assistant projects get demo\",\"codingns assistant sessions list --project demo\"]}\n```"
+            }
+          }
+        }
+      })),
+      interruptTurn: vi.fn(async () => undefined),
+      setNotificationHandler: () => undefined,
+      setServerRequestHandler: () => undefined,
+      setOnClose: () => undefined,
+      isClosed: () => closed,
+      close: () => {
+        closed = true;
+      }
+    };
+    const adapter = new CodexRuntimeAdapter({
+      transportFactory: () => transport
+    });
+    const events: Array<Parameters<ProviderRuntimeEventSink["emit"]>[0]> = [];
+    const sink: ProviderRuntimeEventSink = {
+      emit: async (event) => {
+        events.push(event);
+      },
+      updateSessionBinding: vi.fn()
+    };
+
+    const launched = await adapter.startSession(
+      {
+        sessionId: "session-3",
+        workspaceId: "workspace-1",
+        workspacePath: tempDir,
+        provider: "codex",
+        providerSessionId: null,
+        rawStoreRef: null,
+        options: {
+          content: "请分析验证码收尾",
+          clientRequestId: null,
+          model: null,
+          reasoningLevel: null,
+          permissionMode: null,
+          providerPrompt: null,
+          attachments: []
+        }
+      },
+      sink
+    );
+
+    await launched.completed;
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "message",
+        message: expect.objectContaining({
+          role: "assistant",
+          kind: "text",
+          content: expect.stringContaining("\"analysisSummary\":\"验证码问题\"")
+        })
+      })
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "complete",
+        status: "completed"
+      })
+    );
+  }, 10000);
 });

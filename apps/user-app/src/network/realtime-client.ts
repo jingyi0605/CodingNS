@@ -4,6 +4,7 @@ import type {
   ProviderId,
   SessionActivityConfidence,
   SessionActivityResolutionSource,
+  SessionInterruptSource,
   SessionPermissionRequestDto
 } from "../features/conversation/api/conversation-api";
 import { ConnectionManager } from "./connection-manager";
@@ -63,6 +64,7 @@ export interface SessionRuntimeStatusEvent {
   sessionId: string;
   status: "idle" | "starting" | "running" | "reconnecting" | "completed" | "interrupted" | "failed";
   detail: string | null;
+  interruptSource: SessionInterruptSource | null;
   timestamp: string;
 }
 
@@ -83,6 +85,7 @@ export interface SessionActivityEvent {
   activityConfidence: SessionActivityConfidence;
   runId: string | null;
   detail: string | null;
+  interruptSource: SessionInterruptSource | null;
   errorCode: string | null;
   errorDetail: string | null;
   hasActiveRun: boolean;
@@ -103,6 +106,7 @@ export interface SessionInterruptedEvent {
   type: "session.interrupted";
   sessionId: string;
   detail: string | null;
+  interruptSource: SessionInterruptSource | null;
   timestamp: string;
 }
 

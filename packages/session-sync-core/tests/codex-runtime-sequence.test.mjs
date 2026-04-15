@@ -140,3 +140,97 @@ test("CodexRuntimeAdapter continueSession 会直接复用 provider 子线程，�
   assert.deepEqual(resumedThreadIds, ["child-thread-dirty"]);
   assert.equal(resumeFromHistoryCalled, false);
 });
+
+test("CodexRuntimeAdapter continueSession 遇到父会话 rawStoreRef 脏绑定时，会优先切到当前子线程 transcript", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-runtime-continue-dirty-"));
+  const parentRawStoreRef = join(tempDir, "parent-thread.jsonl");
+  const childRawStoreRef = join(tempDir, "child-thread.jsonl");
+  const bindings = [];
+  const emitted = [];
+  let closeHandler = null;
+
+  try {
+    writeFileSync(
+      parentRawStoreRef,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: "parent-thread",
+            cwd: "/tmp/workspace-1"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      childRawStoreRef,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: "child-thread",
+            cwd: "/tmp/workspace-1"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      transportFactory: () => ({
+        async initialize() {},
+        async startThread() {
+          throw new Error("UNEXPECTED_START_THREAD");
+        },
+        async resumeThread(_request, providerSessionId) {
+          return {
+            providerSessionId,
+            rawStoreRef: childRawStoreRef
+          };
+        },
+        async resumeThreadFromHistory() {
+          throw new Error("UNEXPECTED_RESUME_THREAD_FROM_HISTORY");
+        },
+        async startTurn() {
+          closeHandler?.(null);
+        },
+        async interruptTurn() {},
+        setNotificationHandler() {},
+        setServerRequestHandler() {},
+        setOnClose(handler) {
+          closeHandler = handler;
+        },
+        isClosed() {
+          return false;
+        },
+        close() {}
+      })
+    });
+
+    const launch = await adapter.continueSession(
+      createRunRequest({
+        providerSessionId: "child-thread",
+        rawStoreRef: parentRawStoreRef
+      }),
+      {
+        async emit(event) {
+          emitted.push(event);
+        },
+        updateSessionBinding(binding) {
+          bindings.push(binding);
+        }
+      }
+    );
+
+    await launch.completed;
+
+    assert.equal(launch.rawStoreRef, childRawStoreRef);
+    assert.equal(bindings.at(0)?.providerSessionId, "child-thread");
+    assert.equal(bindings.at(0)?.rawStoreRef, childRawStoreRef);
+    assert.equal(emitted.length, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});

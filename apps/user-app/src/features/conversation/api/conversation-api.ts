@@ -30,6 +30,7 @@ export type SessionActivityResolutionSource =
   | "inferred_log"
   | "unknown";
 export type SessionActivityConfidence = "authoritative" | "strong" | "weak";
+export type SessionInterruptSource = "user" | "runtime";
 export type HistoryDirection = "forward" | "backward";
 export type SessionKind = "default" | "annotation";
 export type ForkSourceType = "session" | "message";
@@ -721,6 +722,7 @@ export interface SessionRuntimeDto {
   activityConfidence: SessionActivityConfidence;
   runId: string | null;
   detail: string | null;
+  interruptSource: SessionInterruptSource | null;
   errorCode: string | null;
   errorDetail: string | null;
   updatedAt: string;

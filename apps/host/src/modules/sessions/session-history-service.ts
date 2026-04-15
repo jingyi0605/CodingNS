@@ -1837,7 +1837,11 @@ export class SessionHistoryService {
             this.sessionBindingRepository.findByProviderSession(
               session.provider,
               session.providerSessionId
-            ) ?? this.sessionBindingRepository.findByRawStoreRef(session.provider, session.rawStoreRef);
+            ) ?? (
+              shouldMatchSessionBindingByRawStoreRef(session.provider)
+                ? this.sessionBindingRepository.findByRawStoreRef(session.provider, session.rawStoreRef)
+                : null
+            );
 
           if (exactExisting && exactExisting.workspaceId !== workspaceId) {
             continue;
@@ -2261,16 +2265,28 @@ export class SessionHistoryService {
       return page;
     }
 
-    let leakedInheritedCount = 0;
+    const parentMessages = await this.readForkSourceMessages(
+      forkRecord.forkSourceSessionId,
+      parentBinding,
+      "session",
+      null,
+      null
+    );
+    let leakedInheritedCount = countCommonHistoryPrefixLength(
+      page.messages.slice(expectedInheritedCount),
+      parentMessages.slice(expectedInheritedCount)
+    );
 
-    for (let index = expectedInheritedCount; index < page.messages.length; index += 1) {
-      const message = page.messages[index];
+    if (leakedInheritedCount <= 0) {
+      for (let index = expectedInheritedCount; index < page.messages.length; index += 1) {
+        const message = page.messages[index];
 
-      if (!message || message.timestamp > childCreatedAt) {
-        break;
+        if (!message || message.timestamp > childCreatedAt) {
+          break;
+        }
+
+        leakedInheritedCount += 1;
       }
-
-      leakedInheritedCount += 1;
     }
 
     if (forkRecord.inheritedPrefixMessageCount !== expectedInheritedCount) {
@@ -2942,7 +2958,11 @@ export class SessionHistoryService {
       this.sessionBindingRepository.findByProviderSession(
         snapshot.provider,
         snapshot.providerSessionId
-      ) ?? this.sessionBindingRepository.findByRawStoreRef(snapshot.provider, snapshot.rawStoreRef);
+      ) ?? (
+        shouldMatchSessionBindingByRawStoreRef(snapshot.provider)
+          ? this.sessionBindingRepository.findByRawStoreRef(snapshot.provider, snapshot.rawStoreRef)
+          : null
+      );
 
     if (!existing || existing.sessionId === sessionId) {
       return null;
@@ -3825,6 +3845,48 @@ function normalizeSessionBindingSnapshot(
   };
 }
 
+function countCommonHistoryPrefixLength(
+  left: HistoryPage["messages"],
+  right: HistoryPage["messages"]
+): number {
+  const maxLength = Math.min(left.length, right.length);
+  let count = 0;
+
+  for (; count < maxLength; count += 1) {
+    if (!areHistoryMessagesEquivalent(left[count], right[count])) {
+      break;
+    }
+  }
+
+  return count;
+}
+
+function areHistoryMessagesEquivalent(
+  left: HistoryPage["messages"][number] | undefined,
+  right: HistoryPage["messages"][number] | undefined
+): boolean {
+  if (!left || !right) {
+    return false;
+  }
+
+  if (left.messageId && right.messageId) {
+    if (left.messageId === right.messageId) {
+      return true;
+    }
+  }
+
+  if (left.rawRef && right.rawRef) {
+    if (left.rawRef === right.rawRef) {
+      return true;
+    }
+  }
+
+  return left.role === right.role
+    && left.kind === right.kind
+    && left.content === right.content
+    && left.timestamp === right.timestamp;
+}
+
 function shouldSkipClaudePendingBinding(binding: Pick<SessionBinding, "provider" | "providerSessionId" | "rawStoreRef">): boolean {
   if (binding.provider !== "claude-code") {
     return false;
@@ -4298,6 +4360,10 @@ function isLegacyCodingNsRolloutSession(providerSessionId: string, rawStoreRef: 
 
 function shouldRemoveMissingSyntheticCodexSession(rawStoreRef: string): boolean {
   return isSyntheticCodexRawStoreRef(rawStoreRef) && !existsSync(rawStoreRef);
+}
+
+function shouldMatchSessionBindingByRawStoreRef(provider: string): boolean {
+  return provider !== "codex";
 }
 
 function resolveSessionListTitle(

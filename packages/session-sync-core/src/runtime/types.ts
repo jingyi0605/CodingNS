@@ -13,6 +13,8 @@ export type RuntimeRunState =
   | "interrupted"
   | "failed";
 
+export type RuntimeInterruptSource = "user" | "runtime";
+
 export interface RuntimeSendOptions {
   content: string;
   clientRequestId: string | null;
@@ -48,6 +50,7 @@ interface RuntimeEventBase {
   rawStoreRef: string | null;
   timestamp: string;
   detail: string | null;
+  interruptSource: RuntimeInterruptSource | null;
   errorCode: string | null;
   rawEventRef: string | null;
 }
@@ -78,6 +81,7 @@ export interface RuntimeEventInput {
   message?: NormalizedMessage | null;
   status?: RuntimeRunState | null;
   detail?: string | null;
+  interruptSource?: RuntimeInterruptSource | null;
   errorCode?: string | null;
   rawEventRef?: string | null;
   timestamp?: string;
@@ -99,6 +103,7 @@ export interface ActiveRunSnapshot {
   lastEventAt: string | null;
   completedAt: string | null;
   detail: string | null;
+  interruptSource: RuntimeInterruptSource | null;
   errorCode: string | null;
   supportsInterrupt: boolean;
 }

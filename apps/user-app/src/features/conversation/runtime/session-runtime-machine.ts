@@ -7,6 +7,7 @@ import type {
   ProviderCapabilitiesDto,
   SessionPermissionRequestDto,
   SessionQueueItemDto,
+  SessionInterruptSource,
   SessionSummaryDto,
   ToolCallDto
 } from "../api/conversation-api";
@@ -49,6 +50,7 @@ export interface SessionRuntimeState {
   connectionState: RuntimeConnectionState;
   lastCursor: string | null;
   pagesLoaded: number;
+  interruptSource: SessionInterruptSource | null;
   errorCode: string | null;
   errorDetail: string | null;
 }
@@ -70,6 +72,7 @@ export function createInitialRuntimeState(
       | "olderCursor"
       | "hasOlderMessages"
       | "lastCursor"
+      | "interruptSource"
       | "pagesLoaded"
     >
   >
@@ -90,6 +93,7 @@ export function createInitialRuntimeState(
     connectionState: "closed",
     lastCursor: seed?.lastCursor ?? null,
     pagesLoaded: seed?.pagesLoaded ?? 0,
+    interruptSource: seed?.interruptSource ?? null,
     errorCode: null,
     errorDetail: null
   };

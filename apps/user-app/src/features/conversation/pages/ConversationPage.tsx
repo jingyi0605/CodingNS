@@ -220,6 +220,7 @@ function LiveConversationPage({
   const historyState = useSessionRuntimeStore(store, (state) => state.historyState);
   const runtimeErrorCode = useSessionRuntimeStore(store, (state) => state.errorCode);
   const runtimeErrorDetail = useSessionRuntimeStore(store, (state) => state.errorDetail);
+  const runtimeInterruptSource = useSessionRuntimeStore(store, (state) => state.interruptSource);
   const loadingOlderMessages = useSessionRuntimeStore(
     store,
     (state) => state.loadingOlderMessages
@@ -355,9 +356,13 @@ function LiveConversationPage({
       return changed ? Array.from(nextIds) : current;
     });
   }, [mobilePreviewTrees, sessionId]);
-  const inheritedContextSource = useMemo(
-    () => resolveInheritedContextSource(currentSessionSummary, messages),
+  const sanitizedForkTimelineMessages = useMemo(
+    () => sanitizeForkTimelineMessages(currentSessionSummary, messages),
     [currentSessionSummary, messages]
+  );
+  const inheritedContextSource = useMemo(
+    () => resolveInheritedContextSource(currentSessionSummary, sanitizedForkTimelineMessages),
+    [currentSessionSummary, sanitizedForkTimelineMessages]
   );
   const inheritedContextParentTitle =
     inheritedContextSource?.parentSessionId
@@ -366,12 +371,12 @@ function LiveConversationPage({
       : t("conversation.inheritedContextParentFallback");
   const timelineMessages = useMemo<SessionMessageViewModel[]>(() => {
     if (!inheritedContextSource || inheritedContextSource.hiddenMessageCount <= 0) {
-      return messages;
+      return sanitizedForkTimelineMessages;
     }
 
     if (inheritedContextExpanded) {
       if (inheritedContextSource.sourceType !== "selection") {
-        return messages;
+        return sanitizedForkTimelineMessages;
       }
 
       return [
@@ -392,15 +397,21 @@ function LiveConversationPage({
           deliveryState: "sent",
           clientRequestId: null
         },
-        ...messages
+        ...sanitizedForkTimelineMessages
       ];
     }
 
-    const visibleMessages = messages.filter(
+    const visibleMessages = sanitizedForkTimelineMessages.filter(
       (message) => message.sequence > inheritedContextSource.hiddenSequenceBoundary
     );
     return visibleMessages;
-  }, [currentSessionSummary?.createdAt, inheritedContextExpanded, inheritedContextSource, messages, sessionId]);
+  }, [
+    currentSessionSummary?.createdAt,
+    inheritedContextExpanded,
+    inheritedContextSource,
+    sanitizedForkTimelineMessages,
+    sessionId
+  ]);
   const branchTreeWorkspaceId =
     currentSessionSummary?.workspaceId ?? navigationSession?.workspaceId ?? null;
   const branchTreeModel = useMemo(
@@ -782,6 +793,7 @@ function LiveConversationPage({
                 loadingOlderMessages={loadingOlderMessages}
                 hasOlderMessages={hasOlderMessages}
                 provider={session?.provider ?? null}
+                interruptedSource={runtimeInterruptSource}
                 runtimeThinkingPlaceholder={runtimeThinkingPlaceholder}
                 onLoadOlderMessages={() => {
                   void store.loadOlderMessages();
@@ -2852,4 +2864,34 @@ function resolveInheritedContextSource(
     hiddenSelectionText: "",
     sourceMessageId: session.forkSourceMessageId?.trim() || null
   };
+}
+
+function sanitizeForkTimelineMessages(
+  session: SessionSummaryDto | null,
+  messages: SessionMessageViewModel[]
+): SessionMessageViewModel[] {
+  if (
+    !session
+    || session.forkSourceType !== "message"
+    || typeof session.inheritedPrefixMessageCount !== "number"
+    || session.inheritedPrefixMessageCount < 0
+  ) {
+    return messages;
+  }
+
+  const childCreatedAt = session.createdAt?.trim() || "";
+
+  if (childCreatedAt.length === 0) {
+    return messages;
+  }
+
+  const inheritedBoundary = Math.max(0, session.inheritedPrefixMessageCount);
+
+  return messages.filter((message) => {
+    if (message.sequence <= inheritedBoundary) {
+      return true;
+    }
+
+    return message.timestamp >= childCreatedAt;
+  });
 }

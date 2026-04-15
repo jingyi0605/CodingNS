@@ -75,9 +75,9 @@ describe("SessionHistoryService forkSession", () => {
       forkThread: vi.fn(async () => {
         forkCount += 1;
         return {
-        providerSessionId: `child-thread-${forkCount}`,
-        rawStoreRef: childFile
-      };
+          providerSessionId: "child-thread",
+          rawStoreRef: childFile
+        };
       }),
       readThread: vi.fn(async () => ({ history: [] })),
       rollbackThread: vi.fn(async () => ({
@@ -386,6 +386,128 @@ describe("SessionHistoryService forkSession", () => {
     expect(sessionForkRepository.findBySessionId("child-session")).toMatchObject({
       inheritedPrefixMessageCount: 2
     });
+  });
+
+  it("父会话在 fork 之后新增消息时，读取子会话历史仍会剔除这段泄漏后缀", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const sourceFile = createCodexSessionFile(
+      fixture.codexHomeDir,
+      fixture.workspaceDir,
+      "source-thread",
+      [
+        ["user", "第一轮问题"],
+        ["assistant", "第一轮回答"],
+        ["user", "父会话 fork 后新增的问题"]
+      ]
+    );
+    const childFile = createNamedCodexSessionFile(
+      fixture.codexHomeDir,
+      fixture.workspaceDir,
+      "child-thread-late-leak.jsonl",
+      "child-thread",
+      [
+        ["user", "第一轮问题"],
+        ["assistant", "第一轮回答"],
+        ["user", "父会话 fork 后新增的问题"],
+        ["assistant", "子会话自己的第一句回复"]
+      ]
+    );
+    const {
+      service,
+      sessionForkRepository,
+      repos
+    } = createSessionHistoryHarness(fixture, () => ({
+      initialize: vi.fn(async () => {}),
+      forkThread: vi.fn(async () => {
+        throw new Error("UNEXPECTED_FORK_THREAD");
+      }),
+      readThread: vi.fn(async () => ({ history: [] })),
+      rollbackThread: vi.fn(async () => {
+        throw new Error("UNEXPECTED_ROLLBACK_THREAD");
+      }),
+      resumeThreadFromHistory: vi.fn(async () => {
+        throw new Error("UNEXPECTED_RESUME_THREAD_FROM_HISTORY");
+      }),
+      close: vi.fn()
+    }));
+
+    seedSourceSession(repos, sourceFile, 3);
+    const sourcePage = await service.readSessionHistory("source-session", null, 50, "forward", "user-1");
+    const anchorMessageId = sourcePage.messages[1]?.messageId;
+
+    expect(anchorMessageId).toBeTruthy();
+
+    repos.sessionBindingRepository?.upsert({
+      sessionId: "child-session-late-leak",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "child-thread",
+      rawStoreRef: childFile,
+      createdAt: "2026-04-10T08:00:02.500Z",
+      updatedAt: "2026-04-10T08:00:02.500Z"
+    });
+    repos.sessionIndexRepository?.upsert({
+      sessionId: "child-session-late-leak",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      parentSessionId: "source-session",
+      title: "子会话晚到泄漏",
+      messageCount: 4,
+      isArchived: false,
+      lastMessageAt: "2026-04-10T08:00:04.000Z",
+      createdAt: "2026-04-10T08:00:02.500Z",
+      updatedAt: "2026-04-10T08:00:04.000Z"
+    });
+    repos.sessionStateRepository?.upsert({
+      sessionId: "child-session-late-leak",
+      userId: "user-1",
+      runningState: "idle",
+      activitySource: "none",
+      favorite: false,
+      lastEventAt: "2026-04-10T08:00:04.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-04-10T08:00:04.000Z"
+    });
+    repos.sessionStatusSnapshotRepository?.upsert({
+      sessionId: "child-session-late-leak",
+      syncStatus: "idle",
+      syncCursor: null,
+      lastSyncAt: "2026-04-10T08:00:04.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      updatedAt: "2026-04-10T08:00:04.000Z"
+    });
+    sessionForkRepository.upsert({
+      sessionId: "child-session-late-leak",
+      parentSessionId: "source-session",
+      provider: "codex",
+      forkSourceType: "message",
+      forkSourceSessionId: "source-session",
+      forkSourceMessageId: anchorMessageId ?? null,
+      inheritedPrefixMessageCount: 2,
+      providerParentSessionId: "source-thread",
+      providerSourceMessageId: null,
+      forkMethod: "native_message_fork",
+      createdAt: "2026-04-10T08:00:02.500Z"
+    });
+
+    const childPage = await service.readSessionHistory(
+      "child-session-late-leak",
+      null,
+      50,
+      "forward",
+      "user-1"
+    );
+
+    expect(childPage.messages.map((message) => message.content)).toEqual([
+      "第一轮问题",
+      "第一轮回答",
+      "子会话自己的第一句回复"
+    ]);
   });
 
   it("跨 provider fork 会走重建链路，并把子会话绑定到目标 provider", async () => {
@@ -797,6 +919,165 @@ describe("SessionHistoryService forkSession", () => {
 
     expect(accepted.message.content).toBe("帮我继续改写成正式版本");
     expect(updatedFork.title).toBe("帮我继续改写成正式版本");
+  });
+
+  it("Codex discover 会按 providerSessionId 修正历史上绑错到父会话 rawStoreRef 的子会话", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const sourceFile = createCodexSessionFile(
+      fixture.codexHomeDir,
+      fixture.workspaceDir,
+      "source-thread",
+      [
+        ["user", "父会话问题"],
+        ["assistant", "父会话回答"]
+      ]
+    );
+    const childActualFile = createCodexSessionFile(
+      fixture.codexHomeDir,
+      fixture.workspaceDir,
+      "child-thread",
+      [
+        ["user", "子 agent 第一句"]
+      ]
+    );
+    const {
+      service,
+      repos
+    } = createSessionHistoryHarness(fixture, () => ({
+      initialize: vi.fn(async () => {}),
+      forkThread: vi.fn(async () => ({
+        providerSessionId: "unused",
+        rawStoreRef: null
+      })),
+      readThread: vi.fn(async () => ({ history: [] })),
+      rollbackThread: vi.fn(async () => ({
+        providerSessionId: "unused",
+        rawStoreRef: null
+      })),
+      resumeThreadFromHistory: vi.fn(async () => ({
+        providerSessionId: "unused",
+        rawStoreRef: null
+      })),
+      close: vi.fn()
+    }));
+
+    seedSourceSession(repos, sourceFile, 2);
+    repos.sessionBindingRepository?.upsert({
+      sessionId: "child-session",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "child-thread",
+      rawStoreRef: sourceFile,
+      createdAt: "2026-04-10T08:05:00.000Z",
+      updatedAt: "2026-04-10T08:05:00.000Z"
+    });
+    repos.sessionIndexRepository?.upsert({
+      sessionId: "child-session",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      parentSessionId: "source-session",
+      title: "旧的脏子会话",
+      messageCount: 3,
+      isArchived: false,
+      lastMessageAt: "2026-04-10T08:05:01.000Z",
+      createdAt: "2026-04-10T08:05:00.000Z",
+      updatedAt: "2026-04-10T08:05:01.000Z",
+      isSubagent: true,
+      subagentLabel: "agent"
+    });
+    repos.sessionStateRepository?.upsert({
+      sessionId: "child-session",
+      userId: "user-1",
+      runningState: "idle",
+      activitySource: "none",
+      favorite: false,
+      lastEventAt: "2026-04-10T08:05:01.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-04-10T08:05:01.000Z"
+    });
+    repos.sessionStatusSnapshotRepository?.upsert({
+      sessionId: "child-session",
+      syncStatus: "idle",
+      syncCursor: null,
+      lastSyncAt: "2026-04-10T08:05:01.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      updatedAt: "2026-04-10T08:05:01.000Z"
+    });
+
+    vi.spyOn(
+      (service as unknown as {
+        sessionSyncService: {
+          discoverWorkspaceSessions: (
+            workspacePath: string,
+            options?: unknown
+          ) => Promise<{
+            sessions: Array<{
+              provider: string;
+              providerSessionId: string;
+              rawStoreRef: string;
+              title: string;
+              workspacePath: string;
+              lastMessageAt: string;
+              messageCount: number;
+              isArchived: boolean;
+              parentProviderSessionId?: string | null;
+              isSubagent?: boolean;
+              subagentLabel?: string | null;
+            }>;
+            isComplete: boolean;
+          }>;
+        };
+      }).sessionSyncService,
+      "discoverWorkspaceSessions"
+    ).mockResolvedValue({
+      isComplete: true,
+      sessions: [
+        {
+          provider: "codex",
+          providerSessionId: "source-thread",
+          rawStoreRef: sourceFile,
+          title: "父会话问题",
+          workspacePath: fixture.workspaceDir,
+          lastMessageAt: "2026-04-10T08:00:10.000Z",
+          messageCount: 2,
+          isArchived: false,
+          parentProviderSessionId: null
+        },
+        {
+          provider: "codex",
+          providerSessionId: "child-thread",
+          rawStoreRef: childActualFile,
+          title: "子 agent 第一句",
+          workspacePath: fixture.workspaceDir,
+          lastMessageAt: "2026-04-10T08:05:01.000Z",
+          messageCount: 1,
+          isArchived: false,
+          parentProviderSessionId: "source-thread",
+          isSubagent: true,
+          subagentLabel: "agent"
+        }
+      ]
+    });
+
+    const discovered = await service.discoverWorkspaceSessions("workspace-1", "user-1", {
+      force: true
+    });
+    const discoveredChild = discovered.find((item) => item.sessionId === "child-session");
+    const repairedBinding = repos.sessionBindingRepository?.findBySessionId("child-session");
+
+    expect(discoveredChild).toMatchObject({
+      sessionId: "child-session",
+      rawStoreRef: childActualFile,
+      parentSessionId: "source-session",
+      title: "子 agent 第一句",
+      isSubagent: true
+    });
+    expect(repairedBinding?.rawStoreRef).toBe(childActualFile);
   });
 
   it("fork 会话深度超过 4 级时会拒绝继续分叉", async () => {

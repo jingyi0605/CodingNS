@@ -683,6 +683,283 @@ test("CodexAdapter 在子线程没有 CLI 标题和首条用户消息时，不�
   }
 });
 
+test("CodexAdapter 在 fork transport 返回父会话 rawStoreRef 时，会按 child threadId 改绑到真正的子会话文件", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-fork-raw-store-rebind-"));
+  const workspacePath = "/Users/jackson/Code/CodingNS";
+  const sourceFile = join(tempDir, "sessions", "2026", "04", "10", "source-thread.jsonl");
+  const childFile = join(tempDir, "sessions", "2026", "04", "10", "child-thread.jsonl");
+
+  try {
+    mkdirSync(join(tempDir, "sessions", "2026", "04", "10"), { recursive: true });
+    writeFileSync(
+      sourceFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "source-thread",
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "父会话第一句"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:02.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "父会话第一句回复"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      childFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-04-10T08:05:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "child-thread",
+            cwd: workspacePath,
+            forked_from_id: "source-thread"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-10T08:05:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "子会话继承的第一句"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new CodexAdapter({
+      homeDir: tempDir,
+      forkTransportFactory: () => ({
+        async initialize() {},
+        async forkThread(providerSessionId) {
+          assert.equal(providerSessionId, "source-thread");
+          return {
+            providerSessionId: "child-thread",
+            rawStoreRef: sourceFile
+          };
+        },
+        async readThread() {
+          throw new Error("UNEXPECTED_READ_THREAD");
+        },
+        async rollbackThread() {
+          throw new Error("UNEXPECTED_ROLLBACK_THREAD");
+        },
+        async resumeThreadFromHistory() {
+          throw new Error("UNEXPECTED_RESUME_THREAD_FROM_HISTORY");
+        },
+        close() {}
+      })
+    });
+
+    const result = await adapter.forkSession("source-thread", workspacePath, {
+      rawStoreRef: sourceFile,
+      sourceType: "session",
+      strategy: "auto"
+    });
+
+    assert.equal(result.session.providerSessionId, "child-thread");
+    assert.equal(result.session.rawStoreRef, childFile);
+    assert.equal(result.session.messageCount, 1);
+    assert.equal(result.session.parentProviderSessionId, "source-thread");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 在 child transcript 还没落盘时，会把错误的父 rawStoreRef 隔离成 synthetic codex transcript", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-fork-synthetic-isolation-"));
+  const workspacePath = "/Users/jackson/Code/CodingNS";
+  const sourceFile = join(tempDir, "sessions", "2026", "04", "10", "source-thread.jsonl");
+
+  try {
+    mkdirSync(join(tempDir, "sessions", "2026", "04", "10"), { recursive: true });
+    writeFileSync(
+      sourceFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "source-thread",
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "父会话第一句"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new CodexAdapter({
+      homeDir: tempDir,
+      forkTransportFactory: () => ({
+        async initialize() {},
+        async forkThread(providerSessionId) {
+          assert.equal(providerSessionId, "source-thread");
+          return {
+            providerSessionId: "child-thread",
+            rawStoreRef: sourceFile
+          };
+        },
+        async readThread() {
+          throw new Error("UNEXPECTED_READ_THREAD");
+        },
+        async rollbackThread() {
+          throw new Error("UNEXPECTED_ROLLBACK_THREAD");
+        },
+        async resumeThreadFromHistory() {
+          throw new Error("UNEXPECTED_RESUME_THREAD_FROM_HISTORY");
+        },
+        close() {}
+      })
+    });
+
+    const result = await adapter.forkSession("source-thread", workspacePath, {
+      rawStoreRef: sourceFile,
+      sourceType: "session",
+      strategy: "auto"
+    });
+
+    assert.equal(
+      result.session.rawStoreRef,
+      join(tempDir, "runtime", "codex", "child-thread.jsonl")
+    );
+    assert.equal(result.session.messageCount, 0);
+
+    const page = await adapter.readSessionHistory(
+      "child-thread",
+      result.session.rawStoreRef,
+      null,
+      50
+    );
+
+    assert.equal(page.messages.length, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter detectSessions 会忽略 providerSessionId 与文件 threadId 对不上的旧 rawStoreRef 缓存", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-detect-heal-"));
+  const workspacePath = "/Users/jackson/Code/CodingNS";
+  const sourceFile = join(tempDir, "sessions", "2026", "04", "10", "source-thread.jsonl");
+  const childFile = join(tempDir, "sessions", "2026", "04", "10", "child-thread.jsonl");
+
+  try {
+    mkdirSync(join(tempDir, "sessions", "2026", "04", "10"), { recursive: true });
+    writeFileSync(
+      sourceFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "source-thread",
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "父会话第一句"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      childFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-04-10T08:05:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "child-thread",
+            cwd: workspacePath,
+            forked_from_id: "source-thread"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-10T08:05:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "子会话第一句"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const sessions = await adapter.detectSessions(workspacePath, {
+      knownSessions: [
+        {
+          provider: "codex",
+          providerSessionId: "source-thread",
+          rawStoreRef: sourceFile,
+          title: "父会话",
+          workspacePath,
+          isArchived: false,
+          lastMessageAt: "2026-04-10T08:00:01.000Z",
+          messageCount: 1,
+          parentProviderSessionId: null,
+          sourceMtimeMs: statSync(sourceFile).mtimeMs,
+          sourceSizeBytes: statSync(sourceFile).size
+        },
+        {
+          provider: "codex",
+          providerSessionId: "child-thread",
+          rawStoreRef: sourceFile,
+          title: "错误绑定的子会话",
+          workspacePath,
+          isArchived: false,
+          lastMessageAt: "2026-04-10T08:05:01.000Z",
+          messageCount: 1,
+          parentProviderSessionId: "source-thread",
+          sourceMtimeMs: statSync(sourceFile).mtimeMs,
+          sourceSizeBytes: statSync(sourceFile).size
+        }
+      ]
+    });
+
+    const childSession = sessions.find((session) => session.providerSessionId === "child-thread");
+
+    assert.ok(childSession);
+    assert.equal(childSession.rawStoreRef, childFile);
+    assert.equal(childSession.parentProviderSessionId, "source-thread");
+    assert.equal(childSession.title, "子会话第一句");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexAdapter 遇到只提供扁平 history 的 thread/read 时，会拒绝使用重建型 message fork", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-fork-message-"));
   const workspacePath = "/Users/jackson/Code/CodingNS";

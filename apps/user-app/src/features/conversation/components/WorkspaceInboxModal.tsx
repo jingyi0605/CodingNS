@@ -69,10 +69,15 @@ export function WorkspaceInboxPanel({
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [preferredProjectId, setPreferredProjectId] = useState<string | null>(null);
   const [formState, setFormState] = useState<InboxFormState>(DEFAULT_FORM_STATE);
+  const [showClosedItems, setShowClosedItems] = useState(false);
 
   const selectableProjects = useMemo(
     () => sortSelectableProjects(projects, preferredWorkspaceId, preferredProjectId),
     [preferredProjectId, preferredWorkspaceId, projects]
+  );
+  const visibleItems = useMemo(
+    () => showClosedItems ? items : items.filter((item) => item.status !== "closed"),
+    [items, showClosedItems]
   );
 
   useEffect(() => {
@@ -263,6 +268,41 @@ export function WorkspaceInboxPanel({
     }
   }
 
+  async function handleQuickStatusChange(item: ButlerInboxItemDto, status: ButlerInboxItemStatus) {
+    if (item.status === status) {
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await updateButlerInboxItem(item.id, {
+        status
+      });
+      showToast({
+        title: t("shell.butlerInboxUpdated"),
+        tone: "success"
+      });
+      dispatchButlerInboxUpdatedEvent();
+      await loadData();
+
+      if (editingItemId === item.id) {
+        setFormState((current) => ({
+          ...current,
+          status
+        }));
+      }
+    } catch (error) {
+      showToast({
+        title: t("shell.butlerInboxSaveFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error"
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="workspace-inbox-modal">
       {!compactComposer ? (
@@ -311,19 +351,29 @@ export function WorkspaceInboxPanel({
 
       <section className="workspace-inbox-panel">
         <header className="workspace-inbox-panel-header">
-          <h3>{t("shell.butlerInboxListTitle")}</h3>
-          <p>{t("shell.butlerInboxListDescription")}</p>
+          <div>
+            <h3>{t("shell.butlerInboxListTitle")}</h3>
+            <p>{t("shell.butlerInboxListDescription")}</p>
+          </div>
+          <label className="workspace-inbox-closed-toggle">
+            <input
+              type="checkbox"
+              checked={showClosedItems}
+              onChange={(event) => setShowClosedItems(event.target.checked)}
+            />
+            <span>{t("shell.butlerInboxShowClosedAction")}</span>
+          </label>
         </header>
 
         {loading ? <p className="workspace-inbox-status">{t("shell.butlerInboxLoading")}</p> : null}
 
-        {!loading && items.length === 0 ? (
+        {!loading && visibleItems.length === 0 ? (
           <p className="workspace-inbox-status">{t("shell.butlerInboxEmpty")}</p>
         ) : null}
 
-        {!loading && items.length > 0 ? (
+        {!loading && visibleItems.length > 0 ? (
           <div className="workspace-inbox-list">
-            {items.map((item) => (
+            {visibleItems.map((item) => (
               <article key={item.id} className="workspace-inbox-item">
                 <div className="workspace-inbox-item-header">
                   <div>
@@ -339,6 +389,26 @@ export function WorkspaceInboxPanel({
                 <div className="workspace-inbox-item-footer">
                   <span>{formatDateTime(item.updatedAt)}</span>
                   <div className="workspace-inbox-item-actions">
+                    <div className="workspace-inbox-status-quick-actions" role="group" aria-label={t("shell.butlerInboxQuickStatusLabel")}>
+                      {(["pending", "in_progress", "closed"] as ButlerInboxItemStatus[]).map((status) => {
+                        const active = item.status === status;
+
+                        return (
+                          <button
+                            key={`${item.id}:${status}`}
+                            type="button"
+                            className="secondary-button"
+                            data-active={active}
+                            disabled={saving}
+                            onClick={() => {
+                              void handleQuickStatusChange(item, status);
+                            }}
+                          >
+                            {getInboxStatusLabel(status)}
+                          </button>
+                        );
+                      })}
+                    </div>
                     <button
                       type="button"
                       className="secondary-button"
