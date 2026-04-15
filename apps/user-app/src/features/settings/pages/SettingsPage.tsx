@@ -1055,8 +1055,7 @@ function MobileRemoteAccessSection() {
   return (
     <section className="settings-mobile-group-section">
       <h2 className="settings-mobile-group-title">{t("settings.remoteAccess")}</h2>
-      <p className="settings-mobile-group-note">{t("settings.remoteAccessSectionSummary")}</p>
-      <div className="settings-mobile-panel-shell">
+      <div className="settings-mobile-panel-shell settings-mobile-remote-shell">
         <TailscalePanel />
       </div>
     </section>
@@ -1067,8 +1066,7 @@ function MobileModelManagementSection() {
   return (
     <section className="settings-mobile-group-section">
       <h2 className="settings-mobile-group-title">{t("settings.modelManagement")}</h2>
-      <p className="settings-mobile-group-note">{t("settings.modelManagementSectionSummary")}</p>
-      <div className="settings-mobile-panel-shell">
+      <div className="settings-mobile-panel-shell settings-mobile-model-shell">
         <ModelManagementPanel />
       </div>
     </section>
@@ -1079,8 +1077,7 @@ function MobileSkillManagementSection() {
   return (
     <section className="settings-mobile-group-section">
       <h2 className="settings-mobile-group-title">{t("settings.skills")}</h2>
-      <p className="settings-mobile-group-note">{t("settings.skillsSectionSummary")}</p>
-      <div className="settings-mobile-panel-shell">
+      <div className="settings-mobile-panel-shell settings-mobile-skill-shell">
         <SkillManagementPanel />
       </div>
     </section>
@@ -1092,7 +1089,6 @@ function MobileSoftwareUpdateSection({ model }: { model: SettingsPageModel }) {
     <>
       <section className="settings-mobile-group-section">
         <h2 className="settings-mobile-group-title">{t("settings.softwareUpdate")}</h2>
-        <p className="settings-mobile-group-note">{t("settings.softwareUpdateSectionSummary")}</p>
         <div className="settings-mobile-list">
           <div className="settings-mobile-form-row">
             <div className="settings-mobile-row-copy">
@@ -1116,7 +1112,7 @@ function MobileSoftwareUpdateSection({ model }: { model: SettingsPageModel }) {
 
       <section className="settings-mobile-group-section">
         <h2 className="settings-mobile-group-title">{t("settings.serverUpdate")}</h2>
-        <div className="settings-mobile-panel-shell">
+        <div className="settings-mobile-panel-shell settings-mobile-update-shell">
           <ServiceUpdatePanel />
         </div>
       </section>
@@ -1136,7 +1132,7 @@ function MobileSoftwareUpdateSection({ model }: { model: SettingsPageModel }) {
               />
             </div>
           </div>
-          <div className="settings-mobile-panel-shell">
+          <div className="settings-mobile-panel-shell settings-mobile-update-shell">
             <ClientUpdatePanel />
           </div>
         </section>

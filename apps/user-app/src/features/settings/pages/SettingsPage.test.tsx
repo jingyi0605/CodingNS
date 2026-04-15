@@ -162,6 +162,7 @@ describe("SettingsPage", () => {
     await userEvent.click(screen.getByRole("button", { name: new RegExp(t("settings.remoteAccess")) }));
 
     expect(await screen.findByTestId("tailscale-panel")).toBeInTheDocument();
+    expect(screen.queryByText(t("settings.remoteAccessSectionSummary"))).not.toBeInTheDocument();
   });
 
   it("移动布局提供模型管理分类并能进入模型管理页", async () => {
@@ -171,6 +172,7 @@ describe("SettingsPage", () => {
     await userEvent.click(screen.getByRole("button", { name: new RegExp(t("settings.modelManagement")) }));
 
     expect(await screen.findByTestId("model-management-panel")).toBeInTheDocument();
+    expect(screen.queryByText(t("settings.modelManagementSectionSummary"))).not.toBeInTheDocument();
   });
 
   it("移动布局提供 Skills 分类并能进入 Skill 管理页", async () => {
@@ -193,6 +195,7 @@ describe("SettingsPage", () => {
     await userEvent.click(screen.getByRole("button", { name: new RegExp(t("settings.skills")) }));
 
     expect(await screen.findByRole("button", { name: t("settings.skillManageAction") })).toBeInTheDocument();
+    expect(screen.queryByText(t("settings.skillsSectionSummary"))).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: t("settings.skillManageAction") }));
 

@@ -66,7 +66,7 @@ export const zhCN = {
     remoteAccess: "远程访问",
     remoteAccessSectionSummary: "查看状态并管理 Tailscale 远程访问。",
     modelManagement: "模型管理",
-    modelManagementSectionSummary: "读取 cc-switch 预设，并为 Codex、Claude Code、Gemini、OpenCode 快速切换模型。",
+    modelManagementSectionSummary: "快速切换模型配置文件",
     modelManagementNavValue: "快速切换",
     modelManagementTitle: "模型快速切换",
     modelManagementDescription: "这里不新增也不编辑预设，只把 cc-switch 已有预设图形化展示出来，方便你一键切换。",
