@@ -10,7 +10,8 @@ import type { SessionMessageViewModel } from "../../conversation/runtime/session
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import { WorkbenchModal } from "../../conversation/components/WorkbenchModal";
 import {
-  buildWorkspaceButlerPath
+  buildWorkspaceButlerPath,
+  buildWorkspaceSessionPath
 } from "../../workbench/utils/workbench-navigation";
 import type {
   ButlerControlEventDto,
@@ -28,10 +29,12 @@ import type {
   ButlerToneId
 } from "../api/butler-api";
 import {
+  analyzeButlerInboxItem,
   getButlerFollowUpTask,
   listButlerFollowUpTasks,
   listButlerInboxItems,
-  listButlerPatrolPlans
+  listButlerPatrolPlans,
+  startButlerInboxItemSession
 } from "../api/butler-api";
 import { BUTLER_INBOX_UPDATED_EVENT } from "../runtime/butler-inbox-events";
 import { subscribeButlerRecordsUpdated } from "../runtime/butler-records-events";
@@ -139,6 +142,13 @@ export function ButlerPage() {
   const [detailTask, setDetailTask] = useState<ButlerFollowUpTaskDto | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [todoActionState, setTodoActionState] = useState<{
+    itemId: string | null;
+    kind: "analyze" | "start" | null;
+  }>({
+    itemId: null,
+    kind: null
+  });
 
   if (!storeRef.current || currentWorkspaceIdRef.current !== workspaceId) {
     storeRef.current = new ButlerRuntimeStore(workspaceId);
@@ -200,7 +210,7 @@ export function ButlerPage() {
   const effectiveLoadingOlderMessages = liveRuntimeStore ? liveRuntime.loadingOlderMessages : false;
   const effectiveHasOlderMessages = liveRuntimeStore ? liveRuntime.hasOlderMessages : false;
   const analysisTasks = useMemo(
-    () => followUpTasks.slice(0, 3),
+    () => followUpTasks.filter((task) => isVisibleFollowUpTask(task.status)).slice(0, 3),
     [followUpTasks]
   );
   const overviewProjectIds = useMemo(
@@ -236,6 +246,72 @@ export function ButlerPage() {
       setDetailLoading(false);
     }
   }, []);
+  const handleAnalyzeTodo = useCallback(async (item: ButlerInboxItemDto) => {
+    setTodoActionState({
+      itemId: item.id,
+      kind: "analyze"
+    });
+
+    try {
+      const response = await analyzeButlerInboxItem(item.id);
+      setInboxItems((current) => replaceInboxItem(current, response.item));
+      showToast({
+        title: t("shell.butlerTodoAnalyzeQueued"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: t("shell.butlerTodoAnalyzeFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error"
+      });
+    } finally {
+      setTodoActionState({
+        itemId: null,
+        kind: null
+      });
+    }
+  }, [showToast]);
+  const handleStartTodoSession = useCallback(async (item: ButlerInboxItemDto) => {
+    setTodoActionState({
+      itemId: item.id,
+      kind: "start"
+    });
+
+    try {
+      const response = await startButlerInboxItemSession(item.id);
+      setInboxItems((current) => replaceInboxItem(current, response.item));
+      if (response.followUpTask) {
+        setFollowUpTasks((current) => replaceFollowUpTask(current, response.followUpTask!));
+      }
+      requestNavigationRefresh();
+      showToast({
+        title: t("shell.butlerTodoStartSessionSucceeded"),
+        tone: "success"
+      });
+      navigate(buildWorkspaceSessionPath(response.item.workspaceId, response.session.sessionId));
+    } catch (error) {
+      showToast({
+        title: t("shell.butlerTodoStartSessionFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error"
+      });
+    } finally {
+      setTodoActionState({
+        itemId: null,
+        kind: null
+      });
+    }
+  }, [navigate, requestNavigationRefresh, showToast]);
+  const handleOpenTodoSession = useCallback((item: ButlerInboxItemDto) => {
+    const sessionId = item.assistantState.linkedSessionId?.trim();
+
+    if (!sessionId) {
+      return;
+    }
+
+    navigate(buildWorkspaceSessionPath(item.workspaceId, sessionId));
+  }, [navigate]);
   const handleSaveSettings = useCallback(async () => {
     if (!profile) {
       return;
@@ -505,6 +581,10 @@ export function ButlerPage() {
         savingSettings={savingSettings}
         onOpenFollowUpHistory={handleOpenFollowUpHistory}
         onOpenFollowUpDetail={handleOpenFollowUpDetail}
+        onAnalyzeTodo={handleAnalyzeTodo}
+        onStartTodoSession={handleStartTodoSession}
+        onOpenTodoSession={handleOpenTodoSession}
+        todoActionState={todoActionState}
         onSettingsFormChange={handleSettingsFormChange}
         onSaveSettings={() => {
           void handleSaveSettings();
@@ -513,16 +593,20 @@ export function ButlerPage() {
     ),
     [
       events,
+      handleAnalyzeTodo,
       handleOpenFollowUpHistory,
       followUpTasks,
       handleOpenFollowUpDetail,
+      handleOpenTodoSession,
       handleSaveSettings,
       handleSettingsFormChange,
+      handleStartTodoSession,
       inboxItems,
       overview,
       patrolPlans,
       savingSettings,
-      settingsForm
+      settingsForm,
+      todoActionState
     ]
   );
 
@@ -1141,6 +1225,13 @@ function ButlerAuxiliaryPanel(props: {
   savingSettings: boolean;
   onOpenFollowUpHistory: () => void;
   onOpenFollowUpDetail: (taskId: string) => Promise<void>;
+  onAnalyzeTodo: (item: ButlerInboxItemDto) => Promise<void>;
+  onStartTodoSession: (item: ButlerInboxItemDto) => Promise<void>;
+  onOpenTodoSession: (item: ButlerInboxItemDto) => void;
+  todoActionState: {
+    itemId: string | null;
+    kind: "analyze" | "start" | null;
+  };
   onSettingsFormChange: (patch: Partial<ButlerSettingsFormState>) => void;
   onSaveSettings: () => void;
 }) {
@@ -1182,6 +1273,10 @@ function ButlerAuxiliaryPanel(props: {
           followUpTasks={props.followUpTasks}
           onOpenFollowUpHistory={props.onOpenFollowUpHistory}
           onOpenFollowUpDetail={props.onOpenFollowUpDetail}
+          onAnalyzeTodo={props.onAnalyzeTodo}
+          onStartTodoSession={props.onStartTodoSession}
+          onOpenTodoSession={props.onOpenTodoSession}
+          todoActionState={props.todoActionState}
         />
       ) : activeTab === "automation" ? (
         <AutomationSidebarContent
@@ -1207,20 +1302,45 @@ function GlobalRecordsSidebarContent(props: {
   followUpTasks: ButlerFollowUpTaskDto[];
   onOpenFollowUpHistory: () => void;
   onOpenFollowUpDetail: (taskId: string) => Promise<void>;
+  onAnalyzeTodo: (item: ButlerInboxItemDto) => Promise<void>;
+  onStartTodoSession: (item: ButlerInboxItemDto) => Promise<void>;
+  onOpenTodoSession: (item: ButlerInboxItemDto) => void;
+  todoActionState: {
+    itemId: string | null;
+    kind: "analyze" | "start" | null;
+  };
 }) {
+  const [showCompletedRecords, setShowCompletedRecords] = useState(false);
+  const activeFollowUpTasks = useMemo(
+    () => showCompletedRecords
+      ? props.followUpTasks
+      : props.followUpTasks.filter((task) => isVisibleFollowUpTask(task.status)),
+    [props.followUpTasks, showCompletedRecords]
+  );
   const verificationRecords = useMemo(
-    () => buildVerificationRecords(props.overview?.verifications ?? []),
-    [props.overview?.verifications]
+    () => buildVerificationRecords(props.overview?.verifications ?? [], showCompletedRecords),
+    [props.overview?.verifications, showCompletedRecords]
   );
-  const todoRecords = useMemo(
-    () => buildTodoRecords(props.inboxItems),
-    [props.inboxItems]
-  );
+  const todoRecords = useMemo(() => (
+    showCompletedRecords
+      ? props.inboxItems
+      : props.inboxItems.filter((item) => item.status !== "closed")
+  ), [props.inboxItems, showCompletedRecords]);
 
   return (
     <>
+      <section className="butler-side-card">
+        <label className="butler-record-toggle">
+          <input
+            type="checkbox"
+            checked={showCompletedRecords}
+            onChange={(event) => setShowCompletedRecords(event.target.checked)}
+          />
+          <span>{t("shell.butlerInfoShowCompletedAction")}</span>
+        </label>
+      </section>
       <FollowUpStatusCard
-        tasks={props.followUpTasks}
+        tasks={activeFollowUpTasks}
         onOpenFollowUpHistory={props.onOpenFollowUpHistory}
         onOpenFollowUpDetail={props.onOpenFollowUpDetail}
       />
@@ -1229,10 +1349,14 @@ function GlobalRecordsSidebarContent(props: {
         items={verificationRecords}
         emptyText={t("shell.butlerInfoVerificationRecordsEmpty")}
       />
-      <GlobalRecordCard
+      <TodoLifecycleCard
         title={t("shell.butlerInfoTodoRecordsTitle")}
         items={todoRecords}
         emptyText={t("shell.butlerInfoTodoRecordsEmpty")}
+        todoActionState={props.todoActionState}
+        onAnalyzeTodo={props.onAnalyzeTodo}
+        onStartTodoSession={props.onStartTodoSession}
+        onOpenTodoSession={props.onOpenTodoSession}
       />
     </>
   );
@@ -1284,6 +1408,108 @@ function GlobalRecordCard(props: {
           {props.items.map((item) => (
             <SimpleInfoBlock key={`${item.title}:${item.content}`} title={item.title} content={item.content} />
           ))}
+        </div>
+      ) : (
+        <p className="butler-secondary-text">{props.emptyText}</p>
+      )}
+    </section>
+  );
+}
+
+function TodoLifecycleCard(props: {
+  title: string;
+  items: ButlerInboxItemDto[];
+  emptyText: string;
+  todoActionState: {
+    itemId: string | null;
+    kind: "analyze" | "start" | null;
+  };
+  onAnalyzeTodo: (item: ButlerInboxItemDto) => Promise<void>;
+  onStartTodoSession: (item: ButlerInboxItemDto) => Promise<void>;
+  onOpenTodoSession: (item: ButlerInboxItemDto) => void;
+}) {
+  return (
+    <section className="butler-side-card">
+      <header>
+        <h2>{props.title}</h2>
+      </header>
+      {props.items.length > 0 ? (
+        <div className="butler-record-list">
+          {props.items.map((item) => {
+            const running = props.todoActionState.itemId === item.id ? props.todoActionState.kind : null;
+            const hasPrompt = Boolean(item.assistantState.generatedPrompt?.trim());
+            const hasSession = Boolean(item.assistantState.linkedSessionId?.trim());
+            const isAnalyzing = item.assistantState.lifecycleStage === "analyzing";
+            const canCreateSession = hasSession || (hasPrompt && !isAnalyzing && item.status !== "closed");
+
+            return (
+              <article key={item.id} className="butler-todo-card">
+                <header className="butler-todo-card-header">
+                  <div>
+                    <strong>{item.title}</strong>
+                    <span>{item.projectName}</span>
+                  </div>
+                  <div className="butler-todo-card-badges">
+                    <span className="butler-inline-badge">{resolveTodoStatusLabel(item.status)}</span>
+                    <span className="butler-inline-badge">{resolveInboxLifecycleStageLabel(item.assistantState.lifecycleStage)}</span>
+                  </div>
+                </header>
+                <p>{item.content}</p>
+                <p className="butler-secondary-text">
+                  {item.assistantState.lastError
+                    || item.assistantState.analysisSummary
+                    || t("shell.butlerTodoLifecycleEmpty")}
+                </p>
+                {hasPrompt ? (
+                  <details className="butler-todo-prompt-preview">
+                    <summary>{t("shell.butlerTodoPromptPreviewAction")}</summary>
+                    <pre>{item.assistantState.generatedPrompt}</pre>
+                  </details>
+                ) : null}
+                <div className="butler-todo-card-actions">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={running !== null || item.status === "closed" || isAnalyzing}
+                    onClick={() => {
+                      void props.onAnalyzeTodo(item);
+                    }}
+                  >
+                    {running === "analyze"
+                      ? t("shell.butlerTodoAnalyzeRunning")
+                      : isAnalyzing
+                        ? t("shell.butlerTodoAnalyzeRunning")
+                        : hasPrompt
+                          ? t("shell.butlerTodoReanalyzeAction")
+                        : t("shell.butlerTodoAnalyzeAction")}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={running !== null || !canCreateSession}
+                    onClick={() => {
+                      if (hasSession) {
+                        props.onOpenTodoSession(item);
+                        return;
+                      }
+
+                      void props.onStartTodoSession(item);
+                    }}
+                  >
+                    {running === "start"
+                      ? t("shell.butlerTodoStartSessionRunning")
+                      : hasSession
+                        ? t("shell.butlerTodoOpenSessionAction")
+                        : isAnalyzing
+                          ? t("shell.butlerTodoWaitForPromptAction")
+                          : !hasPrompt
+                            ? t("shell.butlerTodoAnalyzeFirstAction")
+                            : t("shell.butlerTodoStartSessionAction")}
+                  </button>
+                </div>
+              </article>
+            );
+          })}
         </div>
       ) : (
         <p className="butler-secondary-text">{props.emptyText}</p>
@@ -1938,9 +2164,11 @@ function FollowUpRoundDetailsPanel(props: {
 }
 
 function buildVerificationRecords(
-  verifications: ButlerVerificationDigestDto[]
+  verifications: ButlerVerificationDigestDto[],
+  showCompleted: boolean
 ): Array<{ title: string; content: string }> {
   return [...verifications]
+    .filter((verification) => showCompleted || isVisibleVerification(verification.status))
     .sort((left, right) => parseIsoTime(resolveVerificationTime(right)) - parseIsoTime(resolveVerificationTime(left)))
     .slice(0, 5)
     .map((verification) => ({
@@ -1953,11 +2181,46 @@ function buildVerificationRecords(
     }));
 }
 
-function buildTodoRecords(items: ButlerInboxItemDto[]): Array<{ title: string; content: string }> {
-  return items.slice(0, 5).map((item) => ({
-    title: item.title,
-    content: `${item.projectName} · ${resolveTodoStatusLabel(item.status)}`
-  }));
+function replaceInboxItem(items: ButlerInboxItemDto[], nextItem: ButlerInboxItemDto): ButlerInboxItemDto[] {
+  const nextItems = items.filter((item) => item.id !== nextItem.id);
+  return [nextItem, ...nextItems].sort((left, right) => parseIsoTime(right.updatedAt) - parseIsoTime(left.updatedAt));
+}
+
+function replaceFollowUpTask(
+  tasks: ButlerFollowUpTaskDto[],
+  nextTask: ButlerFollowUpTaskDto
+): ButlerFollowUpTaskDto[] {
+  const nextTasks = tasks.filter((task) => task.id !== nextTask.id);
+  return [nextTask, ...nextTasks]
+    .sort((left, right) => parseIsoTime(resolveFollowUpTaskUpdatedAt(right)) - parseIsoTime(resolveFollowUpTaskUpdatedAt(left)));
+}
+
+function isVisibleFollowUpTask(status: ButlerFollowUpTaskDto["status"]): boolean {
+  return status === "active" || status === "waiting_user";
+}
+
+function isVisibleVerification(status: ButlerVerificationDigestDto["status"]): boolean {
+  return status === "queued" || status === "running" || status === "failed";
+}
+
+function resolveInboxLifecycleStageLabel(stage: ButlerInboxItemDto["assistantState"]["lifecycleStage"]): string {
+  switch (stage) {
+    case "analyzing":
+      return t("shell.butlerTodoLifecycleAnalyzing");
+    case "analyzed":
+      return t("shell.butlerTodoLifecycleAnalyzed");
+    case "session_created":
+      return t("shell.butlerTodoLifecycleSessionCreated");
+    case "follow_up_active":
+      return t("shell.butlerTodoLifecycleFollowUpActive");
+    case "completed":
+      return t("shell.butlerTodoLifecycleCompleted");
+    case "failed":
+      return t("shell.butlerTodoLifecycleFailed");
+    case "pending":
+    default:
+      return t("shell.butlerTodoLifecyclePending");
+  }
 }
 
 function resolveVerificationTime(verification: ButlerVerificationDigestDto): string | null {

@@ -5,6 +5,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { t } from "../../../shared/i18n";
 
 const setAuxiliaryPanelMock = vi.hoisted(() => vi.fn());
+const navigateMock = vi.hoisted(() => vi.fn());
+
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
+
+  return {
+    ...actual,
+    useNavigate: () => navigateMock
+  };
+});
 
 vi.mock("../../conversation/components/ComposerPanel", () => ({
   ComposerPanel: ({
@@ -73,6 +83,7 @@ vi.mock("../../conversation/api/conversation-api", () => ({
 }));
 
 vi.mock("../api/butler-api", () => ({
+  analyzeButlerInboxItem: vi.fn(),
   getButlerProfile: vi.fn(),
   initButlerProfile: vi.fn(),
   updateButlerProfile: vi.fn(),
@@ -86,12 +97,14 @@ vi.mock("../api/butler-api", () => ({
   getCurrentButlerControlSession: vi.fn(),
   resetButlerControlSession: vi.fn(),
   startButlerControlSession: vi.fn(),
+  startButlerInboxItemSession: vi.fn(),
   sendButlerControlMessage: vi.fn()
 }));
 
 import { useToast } from "../../../shared/toast";
 import { ButlerPage } from "./ButlerPage";
 import {
+  analyzeButlerInboxItem,
   getButlerProfile,
   initButlerProfile,
   updateButlerProfile,
@@ -104,7 +117,8 @@ import {
   listButlerControlEvents,
   getCurrentButlerControlSession,
   resetButlerControlSession,
-  startButlerControlSession
+  startButlerControlSession,
+  startButlerInboxItemSession
 } from "../api/butler-api";
 import {
   getProviderCapabilities,
@@ -113,6 +127,7 @@ import {
 } from "../../conversation/api/conversation-api";
 
 const mockedUseToast = vi.mocked(useToast);
+const mockedAnalyzeButlerInboxItem = vi.mocked(analyzeButlerInboxItem);
 const mockedGetButlerProfile = vi.mocked(getButlerProfile);
 const mockedInitButlerProfile = vi.mocked(initButlerProfile);
 const mockedUpdateButlerProfile = vi.mocked(updateButlerProfile);
@@ -126,6 +141,7 @@ const mockedListButlerControlEvents = vi.mocked(listButlerControlEvents);
 const mockedGetCurrentButlerControlSession = vi.mocked(getCurrentButlerControlSession);
 const mockedResetButlerControlSession = vi.mocked(resetButlerControlSession);
 const mockedStartButlerControlSession = vi.mocked(startButlerControlSession);
+const mockedStartButlerInboxItemSession = vi.mocked(startButlerInboxItemSession);
 const mockedGetProviderCapabilities = vi.mocked(getProviderCapabilities);
 const mockedGetSessionCapabilities = vi.mocked(getSessionCapabilities);
 const mockedGetSessionRuntime = vi.mocked(getSessionRuntime);
@@ -143,10 +159,23 @@ function createDeferred<T>() {
 
 describe("ButlerPage", () => {
   const showToastMock = vi.fn();
+  const defaultAssistantState = {
+    lifecycleStage: "pending" as const,
+    analysisSummary: null,
+    generatedPrompt: null,
+    linkedButlerSessionId: null,
+    linkedSessionId: null,
+    linkedFollowUpTaskId: null,
+    lastError: null,
+    lastAnalyzedAt: null,
+    lastSessionCreatedAt: null,
+    lastFollowUpAt: null
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
     setAuxiliaryPanelMock.mockReset();
+    navigateMock.mockReset();
     mockedUseToast.mockReturnValue({
       showToast: showToastMock,
       dismissToast: vi.fn()
@@ -273,6 +302,9 @@ describe("ButlerPage", () => {
     mockedListButlerControlEvents.mockResolvedValue({ items: [] });
     mockedGetCurrentButlerControlSession.mockResolvedValue({ controlSession: null });
     mockedResetButlerControlSession.mockResolvedValue({ controlSession: null } as never);
+    mockedAnalyzeButlerInboxItem.mockResolvedValue({
+      item: {} as never
+    });
     mockedStartButlerControlSession.mockResolvedValue({
       controlSession: {
         id: "ctrl-start",
@@ -288,6 +320,11 @@ describe("ButlerPage", () => {
         }
       }
     } as never);
+    mockedStartButlerInboxItemSession.mockResolvedValue({
+      item: {} as never,
+      session: {} as never,
+      followUpTask: null
+    });
     mockedGetProviderCapabilities.mockResolvedValue({
       provider: "codex",
       canStartSession: true,
@@ -755,6 +792,15 @@ describe("ButlerPage", () => {
           content: "继续把登录页验证码流程收尾。",
           priority: "medium",
           status: "in_progress",
+          assistantState: {
+            ...defaultAssistantState,
+            lifecycleStage: "follow_up_active",
+            analysisSummary: "仓库以 TypeScript 为主，登录流程已经进入收尾阶段。",
+            generatedPrompt: "请继续补齐登录验证码流程。",
+            linkedButlerSessionId: "butler-session-info-1",
+            linkedSessionId: "session-follow-1",
+            linkedFollowUpTaskId: "follow-up-info-1"
+          },
           createdAt: "2026-04-05T08:40:00.000Z",
           updatedAt: "2026-04-05T09:20:00.000Z",
           closedAt: null
@@ -952,18 +998,28 @@ describe("ButlerPage", () => {
 
     const latestSidePanel = getLatestSidePanel();
     const renderedPanel = render(latestSidePanel);
+    const todoSection = renderedPanel.getByText(t("shell.butlerInfoTodoRecordsTitle")).closest("section");
+
+    expect(todoSection).toBeTruthy();
+    const todoScope = within(todoSection!);
 
     expect(renderedPanel.getByText(t("shell.butlerInfoFollowUpRecordsTitle"))).toBeInTheDocument();
     expect(renderedPanel.getByRole("button", { name: t("shell.butlerFollowUpHistoryAction") })).toBeInTheDocument();
     expect(renderedPanel.getByText("登录页改造")).toBeInTheDocument();
     expect(renderedPanel.getByText("需要确认验证码失败策略。")).toBeInTheDocument();
+    expect(renderedPanel.queryByText("支付流程修复")).not.toBeInTheDocument();
     expect(renderedPanel.queryByText("旧历史任务")).not.toBeInTheDocument();
     expect(renderedPanel.getByText(t("shell.butlerInfoVerificationRecordsTitle"))).toBeInTheDocument();
     expect(renderedPanel.getByText("登录验证码")).toBeInTheDocument();
     expect(renderedPanel.getByText("正在从用户视角复测登录流程。")).toBeInTheDocument();
     expect(renderedPanel.getByText(t("shell.butlerInfoTodoRecordsTitle"))).toBeInTheDocument();
-    expect(renderedPanel.getByText("补齐验证码流程")).toBeInTheDocument();
-    expect(renderedPanel.getByText("普通项目 · 进行中")).toBeInTheDocument();
+    expect(todoScope.getByText("补齐验证码流程")).toBeInTheDocument();
+    expect(todoScope.getByText("普通项目")).toBeInTheDocument();
+    expect(todoScope.getByText(t("shell.butlerInfoTodoInProgress"))).toBeInTheDocument();
+    expect(todoScope.getByText(t("shell.butlerTodoLifecycleFollowUpActive"))).toBeInTheDocument();
+    expect(todoScope.getByText("仓库以 TypeScript 为主，登录流程已经进入收尾阶段。")).toBeInTheDocument();
+    expect(todoScope.getByRole("button", { name: t("shell.butlerTodoReanalyzeAction") })).toBeInTheDocument();
+    expect(todoScope.getByRole("button", { name: t("shell.butlerTodoOpenSessionAction") })).toBeInTheDocument();
 
     fireEvent.click(renderedPanel.getByRole("button", { name: t("shell.butlerFollowUpHistoryAction") }));
 
@@ -972,7 +1028,231 @@ describe("ButlerPage", () => {
     });
 
     const historyDialog = screen.getByRole("dialog", { name: t("shell.butlerFollowUpHistoryTitle") });
+    expect(within(historyDialog).getByText("支付流程修复")).toBeInTheDocument();
     expect(within(historyDialog).getByText("旧历史任务")).toBeInTheDocument();
+  });
+
+  it("代办生命周期卡片支持分析仓库并创建会话", async () => {
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "阿尔文",
+        providerId: "codex",
+        workspacePath: "/tmp/butler",
+        agentsMode: "inline",
+        agentsFilePath: null,
+        agentsContent: "测试",
+        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
+        initializedAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z"
+      }
+    });
+
+    const pendingTodo = {
+      id: "todo-lifecycle-1",
+      projectId: "project-normal",
+      projectName: "普通项目",
+      workspaceId: "workspace-1",
+      projectLifecycleStatus: "active" as const,
+      itemType: "task" as const,
+      title: "补齐验证码流程",
+      content: "继续把登录页验证码流程收尾。",
+      priority: "medium" as const,
+      status: "pending" as const,
+      assistantState: {
+        ...defaultAssistantState
+      },
+      createdAt: "2026-04-05T08:40:00.000Z",
+      updatedAt: "2026-04-05T08:40:00.000Z",
+      closedAt: null
+    };
+    const analyzedTodo = {
+      ...pendingTodo,
+      updatedAt: "2026-04-05T08:50:00.000Z",
+      assistantState: {
+        ...defaultAssistantState,
+        lifecycleStage: "analyzed" as const,
+        analysisSummary: "仓库以 TypeScript 为主，登录验证码流程还差最后一轮联调。",
+        generatedPrompt: "请先检查登录验证码相关页面、接口和错误处理，再继续补齐流程。",
+        lastAnalyzedAt: "2026-04-05T08:50:00.000Z"
+      }
+    };
+    const analyzingTodo = {
+      ...pendingTodo,
+      updatedAt: "2026-04-05T08:45:00.000Z",
+      assistantState: {
+        ...defaultAssistantState,
+        lifecycleStage: "analyzing" as const
+      }
+    };
+    const startedTodo = {
+      ...analyzedTodo,
+      status: "in_progress" as const,
+      updatedAt: "2026-04-05T09:00:00.000Z",
+      assistantState: {
+        ...analyzedTodo.assistantState,
+        lifecycleStage: "follow_up_active" as const,
+        linkedButlerSessionId: "butler-session-todo-1",
+        linkedSessionId: "session-exec-1",
+        linkedFollowUpTaskId: "follow-up-todo-1",
+        lastSessionCreatedAt: "2026-04-05T09:00:00.000Z",
+        lastFollowUpAt: "2026-04-05T09:00:00.000Z"
+      }
+    };
+
+    mockedListButlerInboxItems.mockResolvedValue({
+      items: [pendingTodo]
+    });
+    mockedAnalyzeButlerInboxItem.mockResolvedValueOnce({
+      item: analyzingTodo
+    });
+    mockedStartButlerInboxItemSession.mockResolvedValueOnce({
+      item: startedTodo,
+      session: {
+        id: "managed-session-1",
+        projectId: "project-normal",
+        sessionId: "session-exec-1",
+        provider: "codex",
+        title: "补齐验证码流程",
+        isArchived: false,
+        role: "execution",
+        ownershipMode: "managed",
+        status: "running",
+        runningState: "running",
+        lastSummary: "已根据代办创建执行会话。",
+        lastCheckpointAt: null,
+        createdAt: "2026-04-05T09:00:00.000Z",
+        updatedAt: "2026-04-05T09:00:00.000Z"
+      },
+      followUpTask: {
+        id: "follow-up-todo-1",
+        projectId: "project-normal",
+        projectName: "普通项目",
+        workspaceId: "workspace-1",
+        butlerSessionId: "butler-session-todo-1",
+        sessionId: "session-exec-1",
+        sessionTitle: "补齐验证码流程",
+        objective: "继续收尾登录验证码流程",
+        completionCriteria: "验证码流程完成并验证通过。",
+        maxAutoContinueCount: 5,
+        status: "active",
+        checkIntervalSeconds: 300,
+        lastCheckedAt: "2026-04-05T09:00:00.000Z",
+        nextCheckAt: null,
+        lastObservedRunningState: "running",
+        lastObservedMessageAt: "2026-04-05T09:00:00.000Z",
+        lastObservedMessageCount: 1,
+        lastAutomationSummary: "已创建执行会话并开始跟进。",
+        lastAutomationAt: "2026-04-05T09:00:00.000Z",
+        autoContinueCount: 0,
+        waitingReason: null,
+        createdAt: "2026-04-05T09:00:00.000Z",
+        updatedAt: "2026-04-05T09:00:00.000Z",
+        completedAt: null
+      }
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      const latestSidePanel = getLatestSidePanel() as {
+        props: {
+          inboxItems?: unknown[];
+        };
+      };
+      expect(latestSidePanel.props.inboxItems).toHaveLength(1);
+    });
+
+    const renderedPanel = render(getLatestSidePanel());
+
+    fireEvent.click(renderedPanel.getByRole("button", { name: t("shell.butlerTodoAnalyzeAction") }));
+
+    await waitFor(() => {
+      expect(mockedAnalyzeButlerInboxItem).toHaveBeenCalledWith("todo-lifecycle-1");
+    });
+    await waitFor(() => {
+      const latestSidePanel = getLatestSidePanel() as {
+        props: {
+          inboxItems: Array<{
+            assistantState: {
+              lifecycleStage: string;
+              generatedPrompt: string | null;
+            };
+          }>;
+        };
+      };
+      expect(latestSidePanel.props.inboxItems[0]?.assistantState.lifecycleStage).toBe("analyzing");
+      expect(latestSidePanel.props.inboxItems[0]?.assistantState.generatedPrompt).toBeNull();
+    });
+
+    renderedPanel.rerender(getLatestSidePanel());
+    expect(renderedPanel.getByText(t("shell.butlerTodoLifecycleAnalyzing"))).toBeInTheDocument();
+    expect(renderedPanel.getByRole("button", { name: t("shell.butlerTodoAnalyzeRunning") })).toBeDisabled();
+    expect(renderedPanel.getByRole("button", { name: t("shell.butlerTodoWaitForPromptAction") })).toBeDisabled();
+    expect(showToastMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: t("shell.butlerTodoAnalyzeQueued"),
+        tone: "success"
+      })
+    );
+
+    mockedListButlerInboxItems.mockResolvedValueOnce({
+      items: [analyzedTodo]
+    });
+    act(() => {
+      window.dispatchEvent(new Event("butler:inbox-updated"));
+    });
+
+    await waitFor(() => {
+      const latestSidePanel = getLatestSidePanel() as {
+        props: {
+          inboxItems: Array<{
+            assistantState: {
+              lifecycleStage: string;
+              generatedPrompt: string | null;
+            };
+          }>;
+        };
+      };
+      expect(latestSidePanel.props.inboxItems[0]?.assistantState.lifecycleStage).toBe("analyzed");
+      expect(latestSidePanel.props.inboxItems[0]?.assistantState.generatedPrompt).toContain("登录验证码");
+    });
+
+    renderedPanel.rerender(getLatestSidePanel());
+    expect(renderedPanel.getByText(t("shell.butlerTodoLifecycleAnalyzed"))).toBeInTheDocument();
+    expect(renderedPanel.getByRole("button", { name: t("shell.butlerTodoReanalyzeAction") })).toBeInTheDocument();
+    expect(renderedPanel.getByRole("button", { name: t("shell.butlerTodoStartSessionAction") })).toBeInTheDocument();
+
+    fireEvent.click(renderedPanel.getByRole("button", { name: t("shell.butlerTodoStartSessionAction") }));
+
+    await waitFor(() => {
+      expect(mockedStartButlerInboxItemSession).toHaveBeenCalledWith("todo-lifecycle-1");
+    });
+    await waitFor(() => {
+      const latestSidePanel = getLatestSidePanel() as {
+        props: {
+          inboxItems: Array<{
+            status: string;
+            assistantState: {
+              lifecycleStage: string;
+              linkedSessionId: string | null;
+            };
+          }>;
+          followUpTasks: unknown[];
+        };
+      };
+      expect(latestSidePanel.props.inboxItems[0]?.status).toBe("in_progress");
+      expect(latestSidePanel.props.inboxItems[0]?.assistantState.lifecycleStage).toBe("follow_up_active");
+      expect(latestSidePanel.props.inboxItems[0]?.assistantState.linkedSessionId).toBe("session-exec-1");
+      expect(latestSidePanel.props.followUpTasks).toHaveLength(1);
+    });
+
+    renderedPanel.rerender(getLatestSidePanel());
+    expect(renderedPanel.getByText(t("shell.butlerInfoTodoInProgress"))).toBeInTheDocument();
+    expect(renderedPanel.getByText(t("shell.butlerTodoLifecycleFollowUpActive"))).toBeInTheDocument();
+    expect(renderedPanel.getByRole("button", { name: t("shell.butlerTodoOpenSessionAction") })).toBeInTheDocument();
   });
 
   it("自动化页只展示自动化任务和最近运行记录", async () => {

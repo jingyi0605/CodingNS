@@ -291,6 +291,33 @@ describe("MobileButlerPage", () => {
           completedAt: "2026-04-09T09:00:00.000Z"
         },
         {
+          id: "follow-up-3b",
+          projectId: "project-1",
+          projectName: "项目一",
+          workspaceId: "workspace-1",
+          butlerSessionId: "butler-session-3b",
+          sessionId: "session-3b",
+          sessionTitle: "失败任务",
+          objective: "这个失败记录应该进历史",
+          completionCriteria: "失败记录默认隐藏",
+          maxAutoContinueCount: 5,
+          status: "failed",
+          checkIntervalSeconds: 300,
+          lastCheckedAt: null,
+          nextCheckAt: null,
+          lastObservedRunningState: "failed",
+          lastObservedMessageAt: "2026-04-09T09:20:00.000Z",
+          lastObservedMessageCount: 7,
+          lastAutomationSummary: "运行失败，不应该继续占用活跃面板。",
+          lastAutomationAt: "2026-04-09T09:20:00.000Z",
+          autoContinueCount: 2,
+          waitingReason: null,
+          rounds: [],
+          createdAt: "2026-04-09T09:10:00.000Z",
+          updatedAt: "2026-04-09T09:20:00.000Z",
+          completedAt: null
+        },
+        {
           id: "follow-up-4",
           projectId: "project-2",
           projectName: "项目二",
@@ -332,6 +359,18 @@ describe("MobileButlerPage", () => {
           content: "看下运行输出",
           priority: "medium",
           status: "pending",
+          assistantState: {
+            lifecycleStage: "pending",
+            analysisSummary: null,
+            generatedPrompt: null,
+            linkedButlerSessionId: null,
+            linkedSessionId: null,
+            linkedFollowUpTaskId: null,
+            lastError: null,
+            lastAnalyzedAt: null,
+            lastSessionCreatedAt: null,
+            lastFollowUpAt: null
+          },
           createdAt: "2026-04-09T10:00:00.000Z",
           updatedAt: "2026-04-09T10:00:00.000Z",
           closedAt: null
@@ -346,13 +385,15 @@ describe("MobileButlerPage", () => {
   it("摘要计数只统计 active 跟进和 queued/running 验证", async () => {
     renderPage();
 
-    const inProgressPill = await screen.findByText("进行中任务");
-    const waitingUserPill = screen.getByText("待你处理");
+    const inProgressPill = await screen.findByText("Active Tasks");
+    const waitingUserPill = screen.getByText("Waiting on You");
 
     await waitFor(() => {
       expect(within(inProgressPill.parentElement as HTMLElement).getByText("3")).toBeInTheDocument();
       expect(within(waitingUserPill.parentElement as HTMLElement).getByText("1")).toBeInTheDocument();
     });
+
+    expect(screen.queryByText("失败任务")).not.toBeInTheDocument();
   });
 });
 

@@ -303,6 +303,10 @@ export function MobileButlerPage() {
     () => state.followUpTasks.filter((task) => task.status === "waiting_user").length,
     [state.followUpTasks]
   );
+  const visibleFollowUpTasks = useMemo(
+    () => state.followUpTasks.filter((task) => isVisibleMobileFollowUpTask(task.status)),
+    [state.followUpTasks]
+  );
   const workspaceVerifications = useMemo(
     () =>
       (state.overview?.verifications ?? []).filter((verification) => (
@@ -311,22 +315,22 @@ export function MobileButlerPage() {
     [state.overview?.verifications, workspaceProjectIds]
   );
   const inProgressTaskCount = useMemo(
-    () => countInProgressButlerTasks(state.followUpTasks, workspaceVerifications),
-    [state.followUpTasks, workspaceVerifications]
+    () => countInProgressButlerTasks(visibleFollowUpTasks, workspaceVerifications),
+    [visibleFollowUpTasks, workspaceVerifications]
   );
   const followUpRecords = useMemo(
     () =>
-      [...state.followUpTasks]
+      [...visibleFollowUpTasks]
         .sort((left, right) => parseIsoTime(resolveFollowUpTaskUpdatedAt(right)) - parseIsoTime(resolveFollowUpTaskUpdatedAt(left)))
         .slice(0, 4),
-    [state.followUpTasks]
+    [visibleFollowUpTasks]
   );
   const verificationRecords = useMemo(
     () => buildVerificationRecords(workspaceVerifications),
     [workspaceVerifications]
   );
   const todoRecords = useMemo(
-    () => buildTodoRecords(state.inboxItems).slice(0, 4),
+    () => buildTodoRecords(state.inboxItems.filter((item) => item.status !== "closed")).slice(0, 4),
     [state.inboxItems]
   );
   const automationTasks = useMemo(
@@ -626,6 +630,7 @@ function buildVerificationRecords(
   }>
 ): Array<{ title: string; content: string }> {
   return [...verifications]
+    .filter((verification) => isVisibleMobileVerification(verification.status))
     .sort((left, right) => parseIsoTime(resolveVerificationTime(right)) - parseIsoTime(resolveVerificationTime(left)))
     .slice(0, 4)
     .map((verification) => ({
@@ -643,6 +648,14 @@ function buildTodoRecords(items: ButlerInboxItemDto[]): Array<{ title: string; c
     title: item.title,
     content: `${item.projectName} · ${resolveTodoStatusLabel(item.status)}`
   }));
+}
+
+function isVisibleMobileFollowUpTask(status: ButlerFollowUpTaskDto["status"]): boolean {
+  return status === "active" || status === "waiting_user";
+}
+
+function isVisibleMobileVerification(status: string): boolean {
+  return status === "queued" || status === "running" || status === "failed";
 }
 
 function buildAutomationTaskItems(
