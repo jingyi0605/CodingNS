@@ -521,6 +521,8 @@ const extensionZhCN = {
     manageWorkspaceTitle: "\u7ba1\u7406\u9879\u76ee",
     manageWorkspaceDescription:
       "\u9ed8\u8ba4\u53ea\u5217\u51fa\u5f53\u524d\u5df2\u52a0\u8f7d\u7684\u9879\u76ee\uff0c\u5c55\u5f00\u540e\u53ef\u4ee5\u67e5\u770b\u8def\u5f84\u3001Git \u6458\u8981\u3001\u4ee3\u7801\u7c7b\u578b\u7ec4\u6210\uff0c\u4e5f\u53ef\u4ee5\u4ece\u5f53\u524d\u5de5\u4f5c\u53f0\u5217\u8868\u91cc\u79fb\u9664\u3002",
+    manageWorkspaceImportAction: "\u5bfc\u5165\u9879\u76ee",
+    manageWorkspaceCloneAction: "Clone\u9879\u76ee",
     manageWorkspaceEmpty: "\u5f53\u524d\u6ca1\u6709\u53ef\u7ba1\u7406\u7684\u9879\u76ee\u3002",
     manageWorkspaceLoading: "\u6b63\u5728\u8bfb\u53d6\u9879\u76ee\u8be6\u60c5...",
     manageWorkspaceLoadFailed: "\u9879\u76ee\u8be6\u60c5\u52a0\u8f7d\u5931\u8d25",
@@ -2051,6 +2053,8 @@ const extensionEnUS = {
     manageWorkspaceTitle: "Manage Projects",
     manageWorkspaceDescription:
       "The list starts with the currently loaded projects. Expand one to inspect its path, Git summary, and code composition, or remove it from the current workbench list.",
+    manageWorkspaceImportAction: "Import Project",
+    manageWorkspaceCloneAction: "Clone Project",
     manageWorkspaceEmpty: "There are no projects to manage right now.",
     manageWorkspaceLoading: "Loading project details...",
     manageWorkspaceLoadFailed: "Failed to load project details.",

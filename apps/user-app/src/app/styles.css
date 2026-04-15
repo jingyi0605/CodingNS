@@ -13891,6 +13891,10 @@ textarea:focus-visible {
   width: min(1080px, calc(100% - 40px));
 }
 
+.workbench-modal-card.workbench-manage-workspaces-modal {
+  width: min(60vw, calc(100% - 40px));
+}
+
 .workbench-modal-card.debug-readiness-matrix-modal-card {
   width: min(80vw, max-content);
   max-width: 80vw;
@@ -14202,6 +14206,8 @@ textarea:focus-visible {
 .workbench-modal-header-actions {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
   flex-shrink: 0;
 }
@@ -14249,6 +14255,11 @@ textarea:focus-visible {
   height: 16px;
   display: block;
   pointer-events: none;
+}
+
+.workbench-manage-modal-action {
+  min-height: 34px;
+  white-space: nowrap;
 }
 
 .workbench-notification-modal-card {

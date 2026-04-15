@@ -3644,6 +3644,42 @@ describe("WorkbenchLayout", () => {
       name: t("shell.manageWorkspaceTitle")
     });
 
+    expect(managerDialog).toHaveClass("workbench-manage-workspaces-modal");
+    expect(
+      within(managerDialog).getByRole("button", { name: t("shell.manageWorkspaceImportAction") })
+    ).toBeInTheDocument();
+    expect(
+      within(managerDialog).getByRole("button", { name: t("shell.manageWorkspaceCloneAction") })
+    ).toBeInTheDocument();
+
+    await userEvent.click(
+      within(managerDialog).getByRole("button", { name: t("shell.manageWorkspaceImportAction") })
+    );
+
+    const importDialog = await screen.findByRole("dialog", {
+      name: t("shell.importBrowserTitle")
+    });
+    expect(importDialog).toBeInTheDocument();
+
+    await userEvent.click(within(importDialog).getByRole("button", { name: t("common.close") }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: t("shell.importBrowserTitle") })).toBeNull();
+    });
+
+    await userEvent.click(
+      within(managerDialog).getByRole("button", { name: t("shell.manageWorkspaceCloneAction") })
+    );
+
+    const cloneDialog = await screen.findByRole("dialog", { name: t("shell.cloneWorkspaceTitle") });
+    expect(cloneDialog).toBeInTheDocument();
+
+    await userEvent.click(within(cloneDialog).getByRole("button", { name: t("common.close") }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: t("shell.cloneWorkspaceTitle") })).toBeNull();
+    });
+
     await userEvent.click(within(managerDialog).getByRole("button", { name: /项目一/ }));
 
     expect((await within(managerDialog).findAllByText("C:/repo/workspace-1")).length).toBeGreaterThan(0);

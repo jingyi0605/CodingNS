@@ -6,7 +6,7 @@ type ModalCloseButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "chil
 
 function CloseIcon() {
   return (
-    <svg viewBox="0 0 16 16" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
       <path
         d="M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6"
         fill="none"

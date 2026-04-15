@@ -5448,7 +5448,26 @@ function SidebarContent({
       <SidebarModal
         open={workspaceManagerOpen}
         title={t("shell.manageWorkspaceTitle")}
+        className="workbench-manage-workspaces-modal"
         description={t("shell.manageWorkspaceDescription")}
+        headerActions={
+          <>
+            <button
+              type="button"
+              className="secondary-button workbench-manage-modal-action"
+              onClick={handleOpenDirectoryBrowser}
+            >
+              {t("shell.manageWorkspaceImportAction")}
+            </button>
+            <button
+              type="button"
+              className="secondary-button workbench-manage-modal-action"
+              onClick={handleOpenCloneWorkspace}
+            >
+              {t("shell.manageWorkspaceCloneAction")}
+            </button>
+          </>
+        }
         onClose={() => {
           if (removingWorkspaceId) {
             return;
