@@ -458,6 +458,9 @@ describe("WorkspaceDetailPage", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "服务状态" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "web", level: 3 })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "host", level: 3 })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "desktop", level: 3 })).toBeInTheDocument();
       expect(screen.getAllByText("vite").length).toBeGreaterThan(0);
       expect(screen.getAllByText("可以直接使用").length).toBeGreaterThan(0);
       expect(screen.getByText("启动失败")).toBeInTheDocument();
@@ -473,6 +476,7 @@ describe("WorkspaceDetailPage", () => {
       expect(screen.getByText("最近一次启动")).toBeInTheDocument();
       expect(screen.getByText("支持说明")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "查看支持矩阵" })).toBeInTheDocument();
+      expect(document.querySelectorAll(".mobile-debug-service-card")).toHaveLength(3);
     });
 
     expect(screen.queryByRole("dialog", { name: "支持说明" })).not.toBeInTheDocument();

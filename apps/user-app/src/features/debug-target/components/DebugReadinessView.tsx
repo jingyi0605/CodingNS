@@ -68,6 +68,7 @@ function MobileDebugReadinessView({
   const runtimeSession = state.runtime?.runtimeSession ?? null;
   const matrixItems = matrixLimit ? state.matrixItems.slice(0, matrixLimit) : state.matrixItems;
   const summary = buildOverallSummary(state);
+  const derivedServices = buildDerivedServices(state);
   const [matrixModalOpen, setMatrixModalOpen] = useState(false);
 
   return (
@@ -160,45 +161,50 @@ function MobileDebugReadinessView({
         ) : null}
       </section>
 
-      {state.services.length > 0 ? (
+      {derivedServices.length > 0 ? (
         <section className="mobile-feature-panel surface-card mobile-workspace-composition-panel">
           <div className="mobile-feature-section-header">
             <div>
               <h2>{t("shell.workspaceDetailDebugDetectedServicesTitle")}</h2>
             </div>
-            <span className="mobile-feature-counter">{state.services.length}</span>
+            <span className="mobile-feature-counter">{derivedServices.length}</span>
           </div>
-          <div className="mobile-feature-stack">
-            {state.services.map((service) => {
-              const analysis = state.analyses.find((item) => item.serviceId === service.id) ?? null;
+          <div className="mobile-feature-stack mobile-debug-service-stack">
+            {derivedServices.map((item) => (
+              <article key={item.service.id} className="surface-card mobile-debug-service-card">
+                <div className="mobile-debug-service-card-primary-row">
+                  <h3>{item.service.name}</h3>
+                  <div className="mobile-debug-service-card-inline-metric">
+                    <span>{t("shell.workspaceDetailDebugServiceFrameworkLabel")}</span>
+                    <strong>{item.analysis?.primaryFramework ?? t("common.unknown")}</strong>
+                  </div>
+                </div>
 
-              return (
-                <article key={service.id} className="surface-card mobile-session-row">
-                  <div className="mobile-session-row-primary mobile-session-row-primary-static">
-                    <span className="mobile-session-row-title">{service.name}</span>
-                    <span className="mobile-session-row-provider">{formatServiceCategory(resolveServiceCategory(service, analysis))}</span>
+                <div className="mobile-debug-service-card-meta-row">
+                  <p title={item.service.cwd}>{formatServicePath(item.service.cwd, workspace.path)}</p>
+                  <span
+                    className="mobile-debug-service-card-category"
+                    data-tone={resolveServiceCategoryTone(item.category)}
+                  >
+                    {formatServiceCategory(item.category)}
+                  </span>
+                </div>
+
+                <div className="mobile-debug-service-card-secondary-row">
+                  <div className="mobile-debug-service-card-inline-metric">
+                    <span>{t("shell.workspaceDetailDebugServiceCommandLabel")}</span>
+                    <strong>{formatCommand(item.service)}</strong>
                   </div>
-                  <div className="mobile-detail-grid mobile-workspace-detail-grid">
-                    <div className="mobile-detail-metric">
-                      <span>{t("shell.workspaceDetailDebugServicePathLabel")}</span>
-                      <strong title={service.cwd}>{formatServicePath(service.cwd, workspace.path)}</strong>
-                    </div>
-                    <div className="mobile-detail-metric">
-                      <span>{t("shell.workspaceDetailDebugServiceFrameworkLabel")}</span>
-                      <strong>{analysis?.primaryFramework ?? t("common.unknown")}</strong>
-                    </div>
-                    <div className="mobile-detail-metric">
-                      <span>{t("shell.workspaceDetailDebugCompatibilityLabel")}</span>
-                      <strong>{formatCompatibilityLevel(analysis?.compatibilityLevel ?? "unknown")}</strong>
-                    </div>
-                    <div className="mobile-detail-metric mobile-detail-metric-wide">
-                      <span>{t("shell.workspaceDetailDebugServiceCommandLabel")}</span>
-                      <strong>{formatCommand(service)}</strong>
-                    </div>
+                  <div
+                    className="mobile-debug-service-card-inline-metric"
+                    data-tone={resolveCompatibilityTone(item.analysis?.compatibilityLevel ?? "unknown")}
+                  >
+                    <span>{t("shell.workspaceDetailDebugCompatibilityLabel")}</span>
+                    <strong>{formatCompatibilityLevel(item.analysis?.compatibilityLevel ?? "unknown")}</strong>
                   </div>
-                </article>
-              );
-            })}
+                </div>
+              </article>
+            ))}
           </div>
         </section>
       ) : null}
