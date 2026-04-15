@@ -819,6 +819,10 @@ export class SessionLiveRuntimeService {
     const runtimeSessionId = this.resolveRuntimeSessionId(sessionId);
     const runtimeSnapshot = this.providerRuntimeService.getSnapshot(runtimeSessionId);
     const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(runtimeSessionId) ?? null;
+    const runtimeHasActiveRun = runtimeSnapshot ? isActiveRuntimeState(runtimeSnapshot.runningState) : false;
+    const externalHasActiveRun = externalRuntimeSnapshot
+      ? isActiveRuntimeState(externalRuntimeSnapshot.runningState)
+      : false;
     const session = runtimeSnapshot || externalRuntimeSnapshot
       ? this.sessionHistoryService.getSession(sessionId, userId)
       : await this.sessionHistoryService.refreshRuntimeFallbackSession(sessionId, userId);
@@ -841,9 +845,9 @@ export class SessionLiveRuntimeService {
         provider: session.provider,
         providerSessionId: runtimeSnapshot.providerSessionId ?? session.providerSessionId,
         runningState: resolution.runningState,
-        hasActiveRun: true,
-        canAttach: true,
-        canInterrupt: runtimeSnapshot.supportsInterrupt,
+        hasActiveRun: runtimeHasActiveRun,
+        canAttach: runtimeHasActiveRun,
+        canInterrupt: runtimeHasActiveRun && runtimeSnapshot.supportsInterrupt,
         inRunInputMode: capabilities.inRunInputMode,
         activityResolutionSource: resolution.activityResolutionSource,
         activityConfidence: resolution.activityConfidence,
@@ -869,7 +873,7 @@ export class SessionLiveRuntimeService {
         provider: "claude-code",
         providerSessionId: externalRuntimeSnapshot.providerSessionId,
         runningState: resolution.runningState,
-        hasActiveRun: true,
+        hasActiveRun: externalHasActiveRun,
         canAttach: false,
         canInterrupt: false,
         inRunInputMode: capabilities.inRunInputMode,
@@ -1140,8 +1144,9 @@ export class SessionLiveRuntimeService {
 
       return {
         ...this.mapResolutionToActivityEnvelope(resolution, {
-          hasActiveRun: true,
-          canInterrupt: runtimeSnapshot.supportsInterrupt
+          hasActiveRun: isActiveRuntimeState(runtimeSnapshot.runningState),
+          canInterrupt:
+            isActiveRuntimeState(runtimeSnapshot.runningState) && runtimeSnapshot.supportsInterrupt
         }),
         sessionId
       };
@@ -1156,7 +1161,7 @@ export class SessionLiveRuntimeService {
 
       return {
         ...this.mapResolutionToActivityEnvelope(resolution, {
-          hasActiveRun: true,
+          hasActiveRun: isActiveRuntimeState(externalRuntimeSnapshot.runningState),
           canInterrupt: false
         }),
         sessionId

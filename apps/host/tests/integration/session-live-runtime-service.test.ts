@@ -758,6 +758,74 @@ describe("SessionLiveRuntimeService", () => {
     expect(runtime.runId).toBeNull();
   });
 
+  it("getSessionRuntime 遇到终态 runtime snapshot 时，不应再标记 hasActiveRun", async () => {
+    const { service, sessionHistoryService } = createService();
+    const providerRuntimeService = {
+      getSnapshot: vi.fn(() => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "thread-1",
+        rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+        runningState: "completed",
+        attachedClients: 1,
+        startedAt: "2026-03-26T10:00:00.000Z",
+        lastEventAt: "2026-03-26T10:00:08.000Z",
+        completedAt: "2026-03-26T10:00:08.000Z",
+        detail: "run completed",
+        errorCode: null,
+        supportsInterrupt: true
+      }))
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+      runningState: "completed",
+      updatedAt: "2026-03-26T10:00:08.000Z",
+      lastEventAt: "2026-03-26T10:00:08.000Z",
+      completedAt: "2026-03-26T10:00:08.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "queued_guidance",
+      supportsSubagents: true,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      limitations: []
+    });
+    sessionHistoryService.getSessionContextUsage.mockResolvedValue(null);
+
+    const runtime = await service.getSessionRuntime("session-1", "user-1");
+
+    expect(runtime).toMatchObject({
+      sessionId: "session-1",
+      runningState: "completed",
+      hasActiveRun: false,
+      canAttach: false,
+      canInterrupt: false,
+      activityResolutionSource: "authoritative_runtime",
+      activityConfidence: "strong",
+      detail: "run completed"
+    });
+  });
+
   it("运行中会话可以把新消息加入项目队列", async () => {
     const {
       service,
@@ -1909,6 +1977,57 @@ describe("SessionLiveRuntimeService", () => {
       errorDetail: "still working",
       hasActiveRun: true,
       canInterrupt: true,
+      updatedAt: "2026-03-28T10:00:05.000Z",
+      watchdogTriggeredAt: null
+    });
+
+    subscription.close();
+  });
+
+  it("subscribeRuntime 遇到终态 runtime snapshot 时，session.activity 不应再宣称 hasActiveRun", () => {
+    const { service } = createService();
+    const providerRuntimeService = {
+      getSnapshot: vi.fn(() => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "codex-session-1",
+        rawStoreRef: "codex://session/codex-session-1",
+        runningState: "completed",
+        attachedClients: 1,
+        startedAt: "2026-03-28T10:00:00.000Z",
+        lastEventAt: "2026-03-28T10:00:05.000Z",
+        completedAt: "2026-03-28T10:00:05.000Z",
+        detail: "run completed",
+        errorCode: null,
+        supportsInterrupt: true
+      })),
+      subscribe: vi.fn(() => ({
+        close: vi.fn()
+      }))
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    const envelopes: Array<Record<string, unknown>> = [];
+    const subscription = service.subscribeRuntime("session-1", (envelope) => {
+      envelopes.push(envelope as Record<string, unknown>);
+    });
+
+    expect(envelopes).toContainEqual({
+      type: "session.activity",
+      sessionId: "session-1",
+      runningState: "completed",
+      activityResolutionSource: "authoritative_runtime",
+      activityConfidence: "strong",
+      runId: "runtime:session-1:2026-03-28T10:00:00.000Z",
+      detail: "run completed",
+      errorCode: null,
+      errorDetail: "run completed",
+      hasActiveRun: false,
+      canInterrupt: false,
       updatedAt: "2026-03-28T10:00:05.000Z",
       watchdogTriggeredAt: null
     });

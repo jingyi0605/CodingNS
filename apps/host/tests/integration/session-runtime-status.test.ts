@@ -114,6 +114,50 @@ describe("session runtime status", () => {
     expect(inspection.completedAtCandidate).toBeNull();
   });
 
+  it("Codex 工具输出刚结束时，只要还在活跃窗口内，就不能提前判成 completed", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-runtime-status-"));
+    tempDirs.push(tempDir);
+    const rawStoreRef = path.join(tempDir, "codex-tool-output.jsonl");
+
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          timestamp: "2026-03-26T10:02:00.000Z",
+          type: "response_item",
+          payload: {
+            type: "function_call",
+            call_id: "call-1",
+            name: "shell_command",
+            arguments: {
+              command: "git status --short"
+            }
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-26T10:02:05.000Z",
+          type: "response_item",
+          payload: {
+            type: "function_call_output",
+            call_id: "call-1",
+            output: "Exit code: 0"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const inspection = inspectSessionActivity(
+      "codex",
+      rawStoreRef,
+      Date.parse("2026-03-26T10:02:10.000Z")
+    );
+
+    expect(inspection.runningState).toBe("running");
+    expect(inspection.hasPendingTools).toBe(false);
+    expect(inspection.completedAtCandidate).toBeNull();
+  });
+
   it("Codex 原始会话出现 task_failed 后，runtime 接口应该返回 failed 和稳定错误码", async () => {
     const fixture = createProviderFixture();
     activeFixtures.push(fixture);

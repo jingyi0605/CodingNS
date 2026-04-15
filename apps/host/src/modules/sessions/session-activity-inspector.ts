@@ -163,7 +163,6 @@ function inspectCodexActivity(
   let lastTaskCompleteAt: string | null = null;
   let lastTaskFailedAt: string | null = null;
   let lastTaskFailedDetail: string | null = null;
-  let lastToolOutputAt: string | null = null;
 
   for (const record of records) {
     const recordType = readText(record.type);
@@ -216,7 +215,6 @@ function inspectCodexActivity(
 
       if (callId) {
         pendingToolCalls.delete(callId);
-        lastToolOutputAt = maxTimestamp(lastToolOutputAt, recordTimestamp);
       }
     }
   }
@@ -224,16 +222,10 @@ function inspectCodexActivity(
   const hasExplicitFailure = isTimestampAtOrAfter(lastTaskFailedAt, lastEventAt);
   const hasExplicitCompletion =
     !hasExplicitFailure && isTimestampAtOrAfter(lastTaskCompleteAt, lastEventAt);
-  const hasImplicitCompletion =
-    !hasExplicitFailure
-    && !hasExplicitCompletion
-    && pendingToolCalls.size === 0
-    && isTimestampAtOrAfter(lastToolOutputAt, lastEventAt);
   const hasPendingTools = pendingToolCalls.size > 0 && !hasExplicitCompletion;
   const isRunning =
     !hasExplicitFailure
     && !hasExplicitCompletion
-    && !hasImplicitCompletion
     && hasRecentActivity(lastEventAt, mtimeMs, now);
 
   return {
@@ -244,8 +236,6 @@ function inspectCodexActivity(
         ? lastTaskFailedAt
         : hasExplicitCompletion
           ? lastTaskCompleteAt
-          : hasImplicitCompletion
-            ? lastToolOutputAt
           : isRunning
             ? null
             : null,
@@ -257,7 +247,7 @@ function inspectCodexActivity(
     terminalState:
       hasExplicitFailure
         ? "failed"
-        : hasExplicitCompletion || hasImplicitCompletion
+        : hasExplicitCompletion
           ? "completed"
           : "none"
   };

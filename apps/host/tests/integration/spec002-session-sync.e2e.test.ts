@@ -3770,6 +3770,12 @@ describe("spec002 会话同步核心", () => {
           call_id: "call-shell-1",
           output: "Exit code: 0\nOutput:\nall good"
         }
+      })}\n${JSON.stringify({
+        timestamp: "2026-03-23T09:00:11.000Z",
+        type: "event_msg",
+        payload: {
+          type: "task_complete"
+        }
       })}`,
       "utf8"
     );
@@ -3788,7 +3794,7 @@ describe("spec002 会话同步核心", () => {
       .items.find((item: { provider: string }) => item.provider === "codex");
     expect(unreadSession.runningState).toBe("idle");
     expect(unreadSession.activityState).toBe("completed_unread");
-    expect(unreadSession.completedAt).toBe("2026-03-23T09:00:10.000Z");
+    expect(unreadSession.completedAt).toBe("2026-03-23T09:00:11.000Z");
     expect(unreadSession.lastSeenAt).toBeNull();
 
     const seen = await hosted.app.inject({
