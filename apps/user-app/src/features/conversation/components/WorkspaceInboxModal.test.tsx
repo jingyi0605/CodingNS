@@ -41,6 +41,8 @@ describe("WorkspaceInboxModal", () => {
     lifecycleStage: "pending" as const,
     analysisSummary: null,
     generatedPrompt: null,
+    analysisControlSessionId: null,
+    analysisSessionId: null,
     linkedButlerSessionId: null,
     linkedSessionId: null,
     linkedFollowUpTaskId: null,

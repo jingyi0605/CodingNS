@@ -2,6 +2,7 @@ import { nowIso } from "../../shared/utils/time.js";
 import type {
   SessionActivityConfidence,
   SessionActivityResolutionSource,
+  SessionInterruptSource,
   SessionListItem,
   SessionResolvedRunningState,
   SessionRunningState
@@ -19,6 +20,7 @@ export interface SessionActivityObservation {
   source: SessionActivityResolutionSource;
   confidence: SessionActivityConfidence;
   detail: string | null;
+  interruptSource: SessionInterruptSource | null;
   errorCode: string | null;
   observedAt: string;
 }
@@ -30,6 +32,7 @@ export interface SessionActivityResolution {
   activityResolutionSource: SessionActivityResolutionSource;
   activityConfidence: SessionActivityConfidence;
   detail: string | null;
+  interruptSource: SessionInterruptSource | null;
   errorCode: string | null;
   lastObservedAt: string | null;
   terminalAt: string | null;
@@ -320,6 +323,7 @@ function resolutionFromObservation(observation: SessionActivityObservation): Ses
     activityResolutionSource: observation.source,
     activityConfidence: observation.confidence,
     detail: observation.detail,
+    interruptSource: observation.interruptSource,
     errorCode: observation.errorCode,
     lastObservedAt: observedAt,
     terminalAt: isTerminal ? observedAt : null,
@@ -352,6 +356,7 @@ function createPersistedResolution(
     activityResolutionSource,
     activityConfidence,
     detail,
+    interruptSource: null,
     errorCode,
     lastObservedAt: session.lastEventAt,
     terminalAt,
@@ -544,6 +549,7 @@ function areResolutionsEqual(
     && left.activityResolutionSource === right.activityResolutionSource
     && left.activityConfidence === right.activityConfidence
     && left.detail === right.detail
+    && left.interruptSource === right.interruptSource
     && left.errorCode === right.errorCode
     && left.lastObservedAt === right.lastObservedAt
     && left.terminalAt === right.terminalAt

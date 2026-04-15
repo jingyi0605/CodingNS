@@ -611,9 +611,11 @@ export class ButlerSessionService {
     }
 
     const timestamp = nowIso();
-    const runningState = this.sessionStateRepository.findBySessionAndUser(candidate.sessionId, userId)?.runningState
+    const runningState = normalizeRunningState(
+      this.sessionStateRepository.findBySessionAndUser(candidate.sessionId, userId)?.runningState
       ?? candidate.runningState
-      ?? null;
+      ?? null
+    );
     const created = this.butlerSessionRepository.create({
       id: createId(),
       projectId: project.id,

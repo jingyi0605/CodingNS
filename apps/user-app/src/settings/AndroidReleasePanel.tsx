@@ -23,6 +23,8 @@ export function AndroidReleasePanel() {
       return;
     }
 
+    const expectedVersionCode = pendingInstallVersionCode;
+
     async function resolveInstallerReturn() {
       if (resumeCheckStartedRef.current) {
         return;
@@ -36,7 +38,7 @@ export function AndroidReleasePanel() {
         setCheckedVersion(state.currentVersion);
         setHasUpdate(state.hasUpdate);
 
-        if (!state.hasUpdate || state.currentVersionCode >= pendingInstallVersionCode) {
+        if (!state.hasUpdate || state.currentVersionCode >= expectedVersionCode) {
           setStatusText(t("settings.androidInstallSucceeded"));
           return;
         }

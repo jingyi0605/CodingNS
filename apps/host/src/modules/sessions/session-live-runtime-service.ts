@@ -2972,7 +2972,11 @@ function shouldPersistResolvedStartBinding(
   return true;
 }
 
-function isSyntheticCodexRuntimeBinding(rawStoreRef: string): boolean {
+function isSyntheticCodexRuntimeBinding(rawStoreRef: string | null): boolean {
+  if (!rawStoreRef?.trim()) {
+    return false;
+  }
+
   const normalizedRawStoreRef = rawStoreRef.trim().replaceAll("\\", "/").toLowerCase();
   return normalizedRawStoreRef.includes("/runtime/codex/")
     || normalizedRawStoreRef.startsWith("runtime/codex/");
