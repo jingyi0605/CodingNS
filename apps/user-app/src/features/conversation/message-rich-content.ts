@@ -14,15 +14,22 @@ const DATA_IMAGE_URL_PATTERN = /data:image\/([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9
 const MARKDOWN_DATA_IMAGE_PATTERN = /!\[([^\]]*)\]\((data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+)\)/g;
 const HTML_DATA_IMAGE_PATTERN = /<img\b[^>]*src=["'](data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+)["'][^>]*>/gi;
 const CUSTOM_IMAGE_BLOCK_PATTERN = /<image\b([^>]*)>([\s\S]*?)<\/image>/gi;
+const INTERNAL_ATTACHMENT_BLOCK_PATTERN =
+  /\[\[CODINGNS_IMAGE_ATTACHMENTS\]\][\s\S]*?\[\[\/CODINGNS_IMAGE_ATTACHMENTS\]\]/g;
 
 export function parseMessageRichContent(content: string): ParsedMessageRichContent {
-  const parsedStructuredContent = parseStructuredRichContent(content);
+  const sanitizedContent = stripInternalAttachmentDebugContent(content);
+  const parsedStructuredContent = parseStructuredRichContent(sanitizedContent);
 
   if (parsedStructuredContent) {
     return parsedStructuredContent;
   }
 
-  return extractInlineImagesFromText(content);
+  return extractInlineImagesFromText(sanitizedContent);
+}
+
+function stripInternalAttachmentDebugContent(content: string): string {
+  return content.replace(INTERNAL_ATTACHMENT_BLOCK_PATTERN, "");
 }
 
 function parseStructuredRichContent(content: string): ParsedMessageRichContent | null {

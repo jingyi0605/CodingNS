@@ -22,6 +22,8 @@ const SUPPORTED_IMAGE_EXTENSIONS = new Map<string, string>([
 
 const CLAUDE_ATTACHMENT_HEADER = "[[CODINGNS_IMAGE_ATTACHMENTS]]";
 const CLAUDE_ATTACHMENT_FOOTER = "[[/CODINGNS_IMAGE_ATTACHMENTS]]";
+const INTERNAL_ATTACHMENT_BLOCK_PATTERN =
+  /\[\[CODINGNS_IMAGE_ATTACHMENTS\]\][\s\S]*?\[\[\/CODINGNS_IMAGE_ATTACHMENTS\]\]/g;
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 
 export interface SessionAttachmentInput {
@@ -290,23 +292,11 @@ export class SessionMessageAttachmentService {
 }
 
 export function normalizeProviderMessageContent(provider: string, content: string): string {
-  if (provider !== "claude-code") {
+  if (provider !== "claude-code" && provider !== "codex") {
     return content;
   }
 
-  const headerIndex = content.indexOf(CLAUDE_ATTACHMENT_HEADER);
-
-  if (headerIndex < 0) {
-    return content;
-  }
-
-  const footerIndex = content.indexOf(CLAUDE_ATTACHMENT_FOOTER, headerIndex);
-
-  if (footerIndex < 0) {
-    return content;
-  }
-
-  return content.slice(0, headerIndex).trimEnd();
+  return content.replace(INTERNAL_ATTACHMENT_BLOCK_PATTERN, "").trimEnd();
 }
 
 function buildSafeFileName(fileName: string, index: number, mimeType: string): string {
