@@ -3317,6 +3317,12 @@ body {
   letter-spacing: 0;
 }
 
+.workbench-favorite-heading-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+}
+
 .workbench-section-counter {
   min-width: auto;
   height: auto;
@@ -3338,6 +3344,17 @@ body {
   width: 86px;
   margin-left: auto;
   flex-shrink: 0;
+}
+
+.workbench-favorite-section {
+  --workbench-nav-base-inset: var(--workbench-sidebar-icon-inset);
+  --workbench-nav-leading-slot: var(--workbench-sidebar-icon-slot-size);
+  --workbench-nav-leading-gap: 4px;
+  --workbench-nav-label-start: calc(
+    var(--workbench-nav-base-inset)
+    + var(--workbench-nav-leading-slot)
+    + var(--workbench-nav-leading-gap)
+  );
 }
 
 .workbench-workspace-section {

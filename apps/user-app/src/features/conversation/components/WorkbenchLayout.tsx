@@ -2490,17 +2490,33 @@ function SelectionMarkerIcon({ selected }: { selected: boolean }) {
   );
 }
 
-function StarIcon({ active }: { active: boolean }) {
+function StarIcon({ active, className }: { active: boolean; className?: string }) {
   if (active) {
     return (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="1.5">
+      <svg
+        className={className}
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      >
         <polygon points="12 3 15 9 22 10 17 15 18 22 12 18 6 22 7 15 2 10 9 9" />
       </svg>
     );
   }
 
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <svg
+      className={className}
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+    >
       <polygon points="12 3 15 9 22 10 17 15 18 22 12 18 6 22 7 15 2 10 9 9" />
     </svg>
   );
@@ -4981,10 +4997,10 @@ function SidebarContent({
         ) : null}
 
         {favoriteSessions.length > 0 ? (
-          <section className="workbench-section-block">
+          <section className="workbench-section-block workbench-favorite-section">
             <div className="workbench-section-heading">
               <div className="workbench-section-heading-main">
-                <StarIcon active />
+                <StarIcon active className="workbench-favorite-heading-icon" />
                 <span>{t("shell.favoriteSectionTitle")}</span>
               </div>
               <span className="workbench-section-counter">{favoriteSessions.length}</span>
