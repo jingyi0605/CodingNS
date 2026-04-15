@@ -125,7 +125,7 @@ jobs:
   build-windows:
     name: windows-installers
     runs-on: windows-latest
-    environment: Updater
+    environment: macOS-Package
     permissions:
       contents: read
 
