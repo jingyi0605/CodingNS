@@ -125,6 +125,7 @@ jobs:
   build-windows:
     name: windows-installers
     runs-on: windows-latest
+    environment: Updater
     permissions:
       contents: read
 
