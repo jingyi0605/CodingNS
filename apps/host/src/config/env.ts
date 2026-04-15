@@ -34,6 +34,8 @@ export interface HostConfig {
   claudeCodeHomeDir: string;
   codexHomeDir: string;
   tailscaleCliPath: string;
+  ccSwitchCliPath: string;
+  ccSwitchDbPath: string;
   codexCliPath: string;
   claudeHookBridgeToken: string;
   serverUpdatePackageName: string;
@@ -54,6 +56,10 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     overrides.opencodeDataDir ??
     process.env.CODINGNS_OPENCODE_DATA_DIR ??
     path.join(homeDir, ".local", "share", "opencode");
+  const ccSwitchDbPath =
+    overrides.ccSwitchDbPath ??
+    process.env.CODINGNS_CC_SWITCH_DB_PATH ??
+    path.join(homeDir, ".cc-switch", "cc-switch.db");
   const databasePath =
     overrides.databasePath ??
     process.env.CODINGNS_DB_PATH ??
@@ -89,6 +95,10 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     path.join(kimiHomeDir, "config.toml");
   const opencodeCliPath = resolveOpenCodeCliPath(
     overrides.opencodeCliPath ?? process.env.CODINGNS_OPENCODE_COMMAND,
+    homeDir
+  );
+  const ccSwitchCliPath = resolveCcSwitchCliPath(
+    overrides.ccSwitchCliPath ?? process.env.CODINGNS_CC_SWITCH_COMMAND,
     homeDir
   );
   const configuredOpenCodeBaseUrl = normalizeOptionalText(
@@ -158,6 +168,8 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
       overrides.tailscaleCliPath ??
       process.env.CODINGNS_TAILSCALE_COMMAND ??
       "tailscale",
+    ccSwitchCliPath,
+    ccSwitchDbPath,
     codexCliPath,
     claudeHookBridgeToken:
       overrides.claudeHookBridgeToken ??
@@ -387,6 +399,40 @@ function resolveOpenCodeCliPath(configuredPath: string | undefined, homeDir: str
   }
 
   return "opencode";
+}
+
+function resolveCcSwitchCliPath(configuredPath: string | undefined, homeDir: string): string {
+  const normalizedConfiguredPath = configuredPath?.trim();
+
+  if (normalizedConfiguredPath) {
+    return normalizedConfiguredPath;
+  }
+
+  const windowsGlobalNpmRoot = normalizeOptionalText(process.env.APPDATA)
+    ? path.join(process.env.APPDATA as string, "npm")
+    : null;
+  const candidates = process.platform === "win32"
+    ? [
+      path.resolve(process.cwd(), "node_modules", ".bin", "cc-switch.cmd"),
+      path.resolve(process.cwd(), "node_modules", ".bin", "cc-switch.exe"),
+      path.resolve(process.cwd(), "node_modules", ".bin", "cc-switch"),
+      path.join(homeDir, ".local", "bin", "cc-switch.exe"),
+      path.join(homeDir, ".local", "bin", "cc-switch.cmd"),
+      windowsGlobalNpmRoot ? path.join(windowsGlobalNpmRoot, "cc-switch.cmd") : null,
+      windowsGlobalNpmRoot ? path.join(windowsGlobalNpmRoot, "cc-switch.exe") : null
+    ]
+    : [
+      path.resolve(process.cwd(), "node_modules", ".bin", "cc-switch"),
+      path.join(homeDir, ".local", "bin", "cc-switch")
+    ];
+
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return "cc-switch";
 }
 
 function resolvePersistentSecret(secretPath: string): string {

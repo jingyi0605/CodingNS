@@ -23,6 +23,7 @@ import { THEMES, getThemeLabel, useTheme, type ThemeId } from "../../../shared/t
 import { useAppVersion } from "../../../shared/version/app-version";
 import { ParallelTaskDebugModal } from "../../../settings/ParallelTaskDebugModal";
 import { ClientUpdatePanel } from "../../../settings/ClientUpdatePanel";
+import { ModelManagementPanel } from "../../../settings/ModelManagementPanel";
 import { ServiceUpdatePanel } from "../../../settings/ServiceUpdatePanel";
 import { SkillManagementPanel } from "../../../settings/SkillManagementPanel";
 import { TailscalePanel } from "../../../settings/TailscalePanel";
@@ -31,6 +32,7 @@ import { MobilePageHeader } from "../../mobile-shell/components/MobilePageHeader
 
 type SettingsSectionId =
   | "appearance"
+  | "model-management"
   | "server-connection"
   | "remote-access"
   | "skills"
@@ -88,6 +90,7 @@ interface SettingsSectionMeta {
 function isSettingsSectionId(value: string | undefined): value is SettingsSectionId {
   return (
     value === "appearance" ||
+    value === "model-management" ||
     value === "server-connection" ||
     value === "remote-access" ||
     value === "skills" ||
@@ -484,6 +487,17 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
         ) : null}
 
         <section className="settings-section">
+          <h2 className="settings-section-title">{t("settings.modelManagement")}</h2>
+          <div className="settings-card">
+            <div className="settings-row">
+              <div className="settings-row-control settings-row-control-stretch">
+                <ModelManagementPanel />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="settings-section">
           <h2 className="settings-section-title">{t("settings.remoteAccess")}</h2>
           <div className="settings-card">
             <div className="settings-row">
@@ -720,6 +734,13 @@ function MobileSettingsPage({ model, appVersion }: { model: SettingsPageModel; a
 
   sectionEntries.push(
     {
+      id: "model-management",
+      title: t("settings.modelManagement"),
+      description: t("settings.modelManagementSectionSummary"),
+      value: t("settings.modelManagementNavValue"),
+      icon: <ModelManagementSectionIcon />
+    },
+    {
       id: "remote-access",
       title: t("settings.remoteAccess"),
       description: t("settings.remoteAccessSectionSummary"),
@@ -794,6 +815,7 @@ function MobileSettingsPage({ model, appVersion }: { model: SettingsPageModel; a
       <MobilePageHeader title={t("settings.title")} />
       <div className="settings-mobile-container">
         {activeSection === "appearance" ? <MobileAppearanceSection model={model} /> : null}
+        {activeSection === "model-management" ? <MobileModelManagementSection /> : null}
         {activeSection === "server-connection" && model.showServerSettings
           ? <MobileServerConnectionSection model={model} />
           : null}
@@ -1041,6 +1063,18 @@ function MobileRemoteAccessSection() {
   );
 }
 
+function MobileModelManagementSection() {
+  return (
+    <section className="settings-mobile-group-section">
+      <h2 className="settings-mobile-group-title">{t("settings.modelManagement")}</h2>
+      <p className="settings-mobile-group-note">{t("settings.modelManagementSectionSummary")}</p>
+      <div className="settings-mobile-panel-shell">
+        <ModelManagementPanel />
+      </div>
+    </section>
+  );
+}
+
 function MobileSkillManagementSection() {
   return (
     <section className="settings-mobile-group-section">
@@ -1189,6 +1223,16 @@ function SkillsSectionIcon() {
       <rect x="3.5" y="4" width="13" height="12" rx="2.5" />
       <path d="M6 7h8M6 10h8M6 13h4" strokeLinecap="round" />
       <path d="m12.7 13.2 1.4 1.4 2.6-2.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ModelManagementSectionIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+      <rect x="3.5" y="4" width="13" height="12" rx="2.5" />
+      <path d="M6.2 8.1h7.6M6.2 11.9h4.1" strokeLinecap="round" />
+      <path d="m12.8 11.3 1.3 1.3 2-2.2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

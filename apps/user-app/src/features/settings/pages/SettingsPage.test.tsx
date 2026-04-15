@@ -29,6 +29,10 @@ vi.mock("../../../settings/TailscalePanel", () => ({
   TailscalePanel: () => <div data-testid="tailscale-panel">tailscale-panel</div>
 }));
 
+vi.mock("../../../settings/ModelManagementPanel", () => ({
+  ModelManagementPanel: () => <div data-testid="model-management-panel">model-management-panel</div>
+}));
+
 describe("SettingsPage", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -85,6 +89,7 @@ describe("SettingsPage", () => {
     expect(screen.queryByText(t("settings.skillManagerTitle"))).not.toBeInTheDocument();
     expect(screen.queryByText(t("settings.skillManagerDescription"))).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("settings.skillManageAction") })).toBeInTheDocument();
+    expect(screen.getByTestId("model-management-panel")).toBeInTheDocument();
     expect(screen.getByTestId("tailscale-panel")).toBeInTheDocument();
     expect(screen.queryByText(t("settings.tailscaleSectionTitle"))).not.toBeInTheDocument();
     expect(screen.queryByText(t("settings.tailscaleSectionDescription"))).not.toBeInTheDocument();
@@ -157,6 +162,15 @@ describe("SettingsPage", () => {
     await userEvent.click(screen.getByRole("button", { name: new RegExp(t("settings.remoteAccess")) }));
 
     expect(await screen.findByTestId("tailscale-panel")).toBeInTheDocument();
+  });
+
+  it("移动布局提供模型管理分类并能进入模型管理页", async () => {
+    setViewportWidth(390);
+    renderSettingsPage();
+
+    await userEvent.click(screen.getByRole("button", { name: new RegExp(t("settings.modelManagement")) }));
+
+    expect(await screen.findByTestId("model-management-panel")).toBeInTheDocument();
   });
 
   it("移动布局提供 Skills 分类并能进入 Skill 管理页", async () => {
