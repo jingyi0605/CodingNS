@@ -2364,22 +2364,18 @@ function WorkbenchNotificationModal(props: {
                           props.onSelectNotification(notification);
                         }}
                       >
-                        <div className="workbench-notification-item-header">
-                          <span className="workbench-notification-item-kind">
-                            {resolveWorkbenchNotificationKindLabel(notification.kind)}
-                          </span>
-                          <time>{formatWorkbenchNotificationTime(notification.createdAt)}</time>
-                        </div>
+                        <span className="workbench-notification-item-kind">
+                          {resolveWorkbenchNotificationKindLabel(notification.kind)}
+                        </span>
                         <strong>{notification.title}</strong>
                         <p>{notification.body}</p>
                       </button>
-                      <div className="workbench-notification-item-actions">
+                      <div className="workbench-notification-item-side">
+                        <time>{formatWorkbenchNotificationTime(notification.createdAt)}</time>
                         <button
                           type="button"
-                          className="secondary-button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-
+                          className="secondary-button workbench-notification-item-action-button"
+                          onClick={() => {
                             if (archived) {
                               props.onUnarchiveNotification(notification.id);
                               return;
