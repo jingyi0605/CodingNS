@@ -463,6 +463,113 @@ describe("SessionLiveRuntimeService", () => {
     });
   });
 
+  it("startLiveSession 会先创建基础会话记录再挂载 runtime 持久化监听", async () => {
+    const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
+      createService();
+    const order: string[] = [];
+    const runtimeSnapshot = {
+      sessionId: "runtime-session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "019d9025-e575-7fa1-84e2-9e797a2d61df",
+      rawStoreRef: "/Users/test/runtime/codex/019d9025-e575-7fa1-84e2-9e797a2d61df.stream",
+      runningState: "starting",
+      attachedClients: 0,
+      startedAt: "2026-04-16T10:00:00.000Z",
+      lastEventAt: null,
+      completedAt: null,
+      detail: null,
+      errorCode: null,
+      supportsInterrupt: true
+    };
+    const handle = {
+      getSnapshot: vi.fn(() => ({ ...runtimeSnapshot })),
+      attach: vi.fn(() => ({
+        close() {
+          return;
+        }
+      }))
+    };
+    const providerRuntimeService = {
+      startSession: vi.fn(async () => handle)
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getProviderCapabilitiesSnapshot = vi.fn(() => ({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: false,
+      supportsCheckpoint: false,
+      limitations: []
+    }));
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+    sessionHistoryService.getBindingOrThrow.mockReturnValue({
+      provider: "codex",
+      providerSessionId: "019d9025-e575-7fa1-84e2-9e797a2d61df",
+      rawStoreRef: "/Users/test/runtime/codex/019d9025-e575-7fa1-84e2-9e797a2d61df.stream"
+    });
+    sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
+    sessionHistoryService.getSession.mockImplementation((sessionId: string) => ({
+      sessionId,
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "019d9025-e575-7fa1-84e2-9e797a2d61df",
+      rawStoreRef: "/Users/test/runtime/codex/019d9025-e575-7fa1-84e2-9e797a2d61df.stream",
+      messageCount: 0
+    }));
+
+    const originalCreateRuntimeBackedSession =
+      (service as unknown as { createRuntimeBackedSession: (...args: unknown[]) => void })
+        .createRuntimeBackedSession.bind(service);
+    const originalAttachRuntimePersistence =
+      (service as unknown as { attachRuntimePersistence: (...args: unknown[]) => void })
+        .attachRuntimePersistence.bind(service);
+
+    vi
+      .spyOn(
+        service as unknown as { createRuntimeBackedSession: (...args: unknown[]) => void },
+        "createRuntimeBackedSession"
+      )
+      .mockImplementation((...args: unknown[]) => {
+        order.push("create");
+        originalCreateRuntimeBackedSession(...args);
+      });
+    vi
+      .spyOn(
+        service as unknown as { attachRuntimePersistence: (...args: unknown[]) => void },
+        "attachRuntimePersistence"
+      )
+      .mockImplementation((...args: unknown[]) => {
+        order.push("attach");
+        originalAttachRuntimePersistence(...args);
+      });
+
+    await service.startLiveSession({
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      provider: "codex",
+      content: "Codex 快速启动时也要先落基础记录",
+      clientRequestId: null
+    });
+
+    expect(order).toEqual(["create", "attach"]);
+  });
+
   it("startLiveSession 在写入首条图片附件前会先创建 pending session binding", async () => {
     const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
       createService();

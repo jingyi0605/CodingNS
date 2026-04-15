@@ -396,7 +396,6 @@ export class SessionLiveRuntimeService {
       });
       const snapshot = handle.getSnapshot();
 
-      this.attachRuntimePersistence(handle, sessionId, workspace.id, input.userId);
       this.createRuntimeBackedSession({
         sessionId,
         workspaceId: workspace.id,
@@ -409,6 +408,9 @@ export class SessionLiveRuntimeService {
         initialContent: input.content,
         snapshot
       });
+      // 先把基础记录建出来，再回放 runtime 缓存事件，避免超快启动时出现
+      // “事件先到、索引还没落库”的竞态窗口。
+      this.attachRuntimePersistence(handle, sessionId, workspace.id, input.userId);
       const startBindingTask = this.waitForResolvedStartBinding(
         sessionId,
         workspace.id,

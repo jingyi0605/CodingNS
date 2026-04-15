@@ -2745,12 +2745,14 @@ export class SessionHistoryService {
   private getSessionListItemOrThrow(sessionId: string, userId: string): SessionListItem {
     const canonicalSessionId = this.resolveCanonicalSessionId(sessionId, userId);
     const item =
-      this.sessionIndexRepository.findBySessionId(canonicalSessionId, userId)
+      this.findSessionListItem(canonicalSessionId, sessionId, userId)
+      ?? this.repairMissingSessionListItem(canonicalSessionId, userId)
       ?? (
         canonicalSessionId === sessionId
           ? null
-          : this.sessionIndexRepository.findBySessionId(sessionId, userId)
-      );
+          : this.repairMissingSessionListItem(sessionId, userId)
+      )
+      ?? this.findSessionListItem(canonicalSessionId, sessionId, userId);
 
     if (!item) {
       throw new AppError({
@@ -2767,6 +2769,97 @@ export class SessionHistoryService {
     }
 
     return this.sessionIndexRepository.findBySessionId(aliasTargetSessionId, userId) ?? item;
+  }
+
+  private findSessionListItem(
+    canonicalSessionId: string,
+    sessionId: string,
+    userId: string
+  ): SessionListItem | null {
+    return (
+      this.sessionIndexRepository.findBySessionId(canonicalSessionId, userId)
+      ?? (
+        canonicalSessionId === sessionId
+          ? null
+          : this.sessionIndexRepository.findBySessionId(sessionId, userId)
+      )
+    );
+  }
+
+  private repairMissingSessionListItem(sessionId: string, userId: string): SessionListItem | null {
+    const binding = this.sessionBindingRepository.findBySessionId(sessionId);
+
+    if (!binding) {
+      return null;
+    }
+
+    const existingIndex = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
+    const existingSnapshot = this.sessionStatusSnapshotRepository.findBySessionId(sessionId);
+    const existingState = this.sessionStateRepository.findBySessionAndUser(sessionId, userId);
+    const timestamp = nowIso();
+    const fallbackLastMessageAt =
+      existingIndex?.lastMessageAt
+      ?? existingState?.lastEventAt
+      ?? existingSnapshot?.lastSyncAt
+      ?? null;
+    const fallbackCreatedAt =
+      pickEarlierIso(binding.createdAt, existingIndex?.createdAt ?? null)
+      ?? timestamp;
+
+    this.db.transaction(() => {
+      this.sessionIndexRepository.upsert({
+        sessionId,
+        workspaceId: binding.workspaceId,
+        provider: binding.provider,
+        parentSessionId: existingIndex?.parentSessionId ?? this.sessionForkRepository.findBySessionId(sessionId)?.parentSessionId ?? null,
+        sessionKind: existingIndex?.sessionKind ?? "default",
+        annotationSourceMessageId: existingIndex?.annotationSourceMessageId ?? null,
+        annotationSourceText: existingIndex?.annotationSourceText ?? null,
+        isSubagent: existingIndex?.isSubagent ?? false,
+        subagentLabel: existingIndex?.subagentLabel ?? null,
+        title:
+          existingIndex?.title?.trim()
+          || buildRecoveredSessionTitle(binding.provider, binding.providerSessionId),
+        messageCount: existingIndex?.messageCount ?? 0,
+        isArchived: existingIndex?.isArchived ?? false,
+        lastMessageAt: fallbackLastMessageAt,
+        createdAt: fallbackCreatedAt,
+        updatedAt: timestamp
+      });
+
+      if (!existingSnapshot) {
+        this.sessionStatusSnapshotRepository.upsert({
+          sessionId,
+          syncStatus: "idle",
+          syncCursor: null,
+          lastSyncAt: fallbackLastMessageAt,
+          lastErrorCode: null,
+          lastErrorDetail: null,
+          resumedAt: null,
+          updatedAt: timestamp
+        });
+      }
+
+      if (!existingState) {
+        this.sessionStateRepository.upsert({
+          sessionId,
+          userId,
+          runningState: inferRecoveredSessionRunningState(binding),
+          activitySource: inferRecoveredSessionActivitySource(binding),
+          favorite: false,
+          lastEventAt: shouldRecoverSessionAsActive(binding) ? (binding.updatedAt || timestamp) : fallbackLastMessageAt,
+          completedAt: null,
+          lastSeenAt: null,
+          updatedAt: timestamp
+        });
+      }
+    })();
+
+    console.warn(
+      `[session-history] repaired missing session index for ${sessionId} (${binding.provider})`
+    );
+
+    return this.sessionIndexRepository.findBySessionId(sessionId, userId);
   }
 
   private resolveCanonicalSessionId(sessionId: string, userId?: string): string {
@@ -3924,6 +4017,24 @@ function buildPendingBindingValue(provider: string, sessionId: string): string {
   return `pending://${provider}/${sessionId}`;
 }
 
+function shouldRecoverSessionAsActive(
+  binding: Pick<SessionBinding, "providerSessionId" | "rawStoreRef">
+): boolean {
+  return isPendingBindingValue(binding.providerSessionId) || isPendingBindingValue(binding.rawStoreRef);
+}
+
+function inferRecoveredSessionRunningState(
+  binding: Pick<SessionBinding, "providerSessionId" | "rawStoreRef">
+): SessionStateRecord["runningState"] {
+  return shouldRecoverSessionAsActive(binding) ? "starting" : "idle";
+}
+
+function inferRecoveredSessionActivitySource(
+  binding: Pick<SessionBinding, "providerSessionId" | "rawStoreRef">
+): SessionStateRecord["activitySource"] {
+  return shouldRecoverSessionAsActive(binding) ? "runtime" : "none";
+}
+
 function buildAliasBindingValue(provider: string, targetSessionId: string, sourceSessionId: string): string {
   return `alias://${provider}/${targetSessionId}/${sourceSessionId}`;
 }
@@ -4411,6 +4522,28 @@ function resolveSessionListTitle(
 function buildUserMessageTitle(content: string, fallbackTitle: string): string {
   const title = content.trim().replace(/\s+/g, " ");
   return title.slice(0, 48) || fallbackTitle;
+}
+
+function buildRecoveredSessionTitle(provider: string, providerSessionId: string): string {
+  if (isPendingBindingValue(providerSessionId)) {
+    return "新会话";
+  }
+
+  const normalizedProvider = provider.trim().toLowerCase();
+  const providerLabel =
+    normalizedProvider === "claude-code"
+      ? "Claude"
+      : normalizedProvider === "codex"
+        ? "Codex"
+        : normalizedProvider === "gemini"
+          ? "Gemini"
+          : normalizedProvider === "kimi"
+            ? "Kimi"
+            : normalizedProvider === "opencode"
+              ? "OpenCode"
+              : provider;
+
+  return `${providerLabel} 会话 ${providerSessionId.slice(0, 8)}`;
 }
 
 function resolvePersistedSessionTitle(
