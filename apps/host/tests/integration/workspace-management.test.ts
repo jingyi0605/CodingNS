@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { realpathSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -158,6 +159,53 @@ describe("workspace management", () => {
         name: "Managed Workspace"
       })
     ]);
+  });
+
+  it("代码组成只统计 Git 已跟踪文件，不混入未跟踪文件", async () => {
+    const fixture = createGitWorkspaceFixture();
+    activeFixtures.push(fixture);
+    writeFileSync(path.join(fixture.workspaceDir, "scratch.rs"), "fn main() {}\n", "utf8");
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const importResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/workspaces/import",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        path: fixture.workspaceDir,
+        name: "Tracked Only Workspace"
+      }
+    });
+
+    expect(importResponse.statusCode).toBe(201);
+
+    const detailResponse = await hosted.app.inject({
+      method: "GET",
+      url: `/api/workspaces/${importResponse.json().id as string}/management`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    expect(detailResponse.statusCode).toBe(200);
+    expect(detailResponse.json().codeComposition.scannedFileCount).toBe(1);
+    expect(detailResponse.json().codeComposition.items).toEqual([
+      expect.objectContaining({
+        type: "Markdown",
+        count: 1
+      })
+    ]);
+    expect(
+      detailResponse.json().codeComposition.items.some(
+        (item: { type: string }) => item.type === "Rust"
+      )
+    ).toBe(false);
   });
 
   it("支持工作区重排，并把折叠状态持久化到工作台快照", async () => {
