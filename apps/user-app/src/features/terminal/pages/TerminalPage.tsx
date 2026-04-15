@@ -64,6 +64,7 @@ import {
   type TerminalConnectionState,
   type TerminalOutputChunkDto
 } from "../runtime/terminal-realtime-client";
+import { createTerminalAttachInputGate } from "../runtime/terminal-attach-input-gate";
 import { isTerminalDebugEnabled, logTerminalDebug, terminalDebugNowMs } from "../runtime/terminal-debug-log";
 import {
   getTerminalRuntimeLabel,
@@ -76,6 +77,7 @@ import { TerminalRuntimeFallbackModal } from "../components/TerminalRuntimeFallb
 
 type PaneId = "primary" | "secondary";
 type SplitDirection = "single" | "vertical" | "horizontal";
+const TMUX_ATTACH_INPUT_RELEASE_DELAY_MS = 120;
 
 interface TerminalViewportRuntime {
   terminal: Terminal;
@@ -95,6 +97,8 @@ interface TerminalViewportRuntime {
   persistNow: () => void;
   scheduleCursorPersist: (cursor: string | null) => void;
   schedulePersist: (mode?: "interaction" | "output") => void;
+  suspendInputForwarding: () => void;
+  resumeInputForwarding: (delayMs?: number) => void;
   dispose: () => void;
 }
 
@@ -3426,6 +3430,7 @@ function TerminalWorkspacePane({
     realtimeClientRef.current?.close();
     realtimeClientRef.current = null;
     activeRecoveryStateRef.current = null;
+    viewportRuntimeRef.current?.suspendInputForwarding();
     onConnectionChange(paneId, "closed");
 
     if (!terminal?.id) {
@@ -3457,14 +3462,21 @@ function TerminalWorkspacePane({
       terminalId: terminal.id,
       lastCursor: resumeCursor,
       onConnectionChange: (state: TerminalConnectionState) => {
+        if (state !== "connected") {
+          viewportRuntimeRef.current?.suspendInputForwarding();
+        }
         onConnectionChange(paneId, state);
       },
       onSubscribed: () => {
         const runtime = viewportRuntimeRef.current;
 
         if (runtime) {
+          runtime.suspendInputForwarding();
           runtime.reflow();
           client.sendCurrentDimensions(runtime.terminal.cols, runtime.terminal.rows);
+          runtime.resumeInputForwarding(
+            terminal.runtimeType === "tmux" ? TMUX_ATTACH_INPUT_RELEASE_DELAY_MS : 0
+          );
         }
 
         if (activePaneRef.current) {
@@ -3827,6 +3839,9 @@ function createTerminalViewportRuntime(input: {
   });
   const fitAddon = new FitAddon();
   const serializeAddon = new SerializeAddon();
+  const inputGate = createTerminalAttachInputGate((content) => {
+    input.onInput(content);
+  });
   let persistTimer: number | null = null;
   let cursorPersistTimer: number | null = null;
   let pendingCursor: string | null = null;
@@ -3849,7 +3864,7 @@ function createTerminalViewportRuntime(input: {
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(serializeAddon);
   terminal.onData((content) => {
-    input.onInput(content);
+    inputGate.enqueue(content);
   });
   const scrollSubscription =
     typeof terminal.onScroll === "function"
@@ -4376,8 +4391,15 @@ function createTerminalViewportRuntime(input: {
     persistNow,
     scheduleCursorPersist,
     schedulePersist,
+    suspendInputForwarding: () => {
+      inputGate.suspend();
+    },
+    resumeInputForwarding: (delayMs = 0) => {
+      inputGate.resume(delayMs);
+    },
     dispose: () => {
       disposed = true;
+      inputGate.dispose();
       if (persistTimer !== null) {
         window.clearTimeout(persistTimer);
       }
