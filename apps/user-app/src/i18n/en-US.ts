@@ -215,6 +215,8 @@ export const enUS = {
     releasePageOpenFailed: "Failed to open page",
     androidInstallerStarted: "Handed off to the Android installer. You can still cancel there.",
     androidInstallPermissionRequired: "Allow installs from this source before retrying.",
+    androidInstallCancelled: "Install was cancelled or not completed. You can try again.",
+    androidInstallSucceeded: "The new version has been detected as installed.",
     releaseRollbackStarted: "Rollback started",
     releaseRollbackFailed: "Rollback failed",
     clientUpdateUnsupported: "Install updates are not supported here",

@@ -289,6 +289,8 @@ function createPlatform(
       getRuntimeInfo: async () => ({ ok: false, errorCode: "x", detail: "x" }),
       checkForUpdate: async () => ({ ok: false, errorCode: "x", detail: "x" }),
       installUpdate: async () => ({ ok: false, errorCode: "x", detail: "x" }),
+      getAndroidRuntimeInfo: async () => ({ ok: false, errorCode: "x", detail: "x" }),
+      installAndroidUpdate: async () => ({ ok: false, status: "failed", detail: "x" }),
       rollbackToPreviousVersion: async () => ({ ok: true }),
       pickDirectory: async () => ({ ok: false, errorCode: "x", detail: "x" }),
       createWindow: async () => ({ ok: true }),

@@ -22,7 +22,7 @@ import { LanguageSwitcher, t } from "../../../shared/i18n";
 import { THEMES, getThemeLabel, useTheme, type ThemeId } from "../../../shared/theme";
 import { useAppVersion } from "../../../shared/version/app-version";
 import { ParallelTaskDebugModal } from "../../../settings/ParallelTaskDebugModal";
-import { ReleasePanel } from "../../../settings/ReleasePanel";
+import { ClientUpdatePanel } from "../../../settings/ClientUpdatePanel";
 import { ServiceUpdatePanel } from "../../../settings/ServiceUpdatePanel";
 import { SkillManagementPanel } from "../../../settings/SkillManagementPanel";
 import { TailscalePanel } from "../../../settings/TailscalePanel";
@@ -648,7 +648,7 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
                     <span className="settings-row-title">{t("settings.clientUpdate")}</span>
                   </div>
                   <div className="settings-row-control settings-row-control-stretch">
-                    <ReleasePanel />
+                    <ClientUpdatePanel />
                   </div>
                 </div>
               </>
@@ -1103,7 +1103,7 @@ function MobileSoftwareUpdateSection({ model }: { model: SettingsPageModel }) {
             </div>
           </div>
           <div className="settings-mobile-panel-shell">
-            <ReleasePanel />
+            <ClientUpdatePanel />
           </div>
         </section>
       ) : null}

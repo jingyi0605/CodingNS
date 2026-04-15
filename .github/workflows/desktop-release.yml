@@ -101,6 +101,7 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           MACOS_BUILD_TARGET: universal-apple-darwin
+          CODINGNS_TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_SIGNING_PUBLIC_KEY }}
         shell: bash
         run: |
           set -euo pipefail
@@ -116,6 +117,8 @@ jobs:
             apps/desktop/src-tauri/target/release/macos-release/CodingNS.dmg
             apps/desktop/src-tauri/target/release/macos-release/CodingNS.app
             apps/desktop/src-tauri/target/release/macos-release/CodingNS.zip
+            apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/*.tar.gz
+            apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/*.sig
 
   build-windows:
     name: windows-installers
@@ -154,6 +157,8 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build Windows installers
+        env:
+          CODINGNS_TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_SIGNING_PUBLIC_KEY }}
         shell: bash
         run: ./scripts/build-desktop.sh windows
 
@@ -165,6 +170,8 @@ jobs:
           path: |
             apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
             apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.sig
+            apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.sig
 
   publish-release:
     name: publish-release
@@ -202,9 +209,90 @@ jobs:
               --notes "Automated desktop release assets."
           fi
 
+      - name: 生成桌面 updater latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          repo = os.environ["GH_REPO"]
+          tag_name = os.environ["GITHUB_REF_NAME"]
+          release_assets = Path("release-assets")
+
+          mac_updates = sorted(release_assets.rglob("*.app.tar.gz"))
+          mac_sigs = sorted(release_assets.rglob("*.app.tar.gz.sig"))
+          win_updates = [
+              path for path in sorted(release_assets.rglob("*.exe"))
+              if not path.name.endswith(".sig")
+          ]
+          win_sigs = sorted(release_assets.rglob("*.exe.sig"))
+
+          if not mac_updates or not mac_sigs or not win_updates or not win_sigs:
+              raise SystemExit("缺少桌面 updater 产物，无法生成 latest.json")
+
+          release_info = json.loads(
+              subprocess.check_output(
+                  [
+                      "gh",
+                      "release",
+                      "view",
+                      tag_name,
+                      "--repo",
+                      repo,
+                      "--json",
+                      "body,publishedAt",
+                  ],
+                  text=True,
+              )
+          )
+
+          version = tag_name[1:] if tag_name.startswith("v") else tag_name
+
+          def asset_url(path: Path) -> str:
+              return f"https://github.com/{repo}/releases/download/{tag_name}/{path.name}"
+
+          manifest = {
+              "version": version,
+              "notes": release_info.get("body") or "",
+              "pub_date": release_info.get("publishedAt"),
+              "platforms": {
+                  "macos-universal": {
+                      "signature": mac_sigs[0].read_text(encoding="utf-8").strip(),
+                      "url": asset_url(mac_updates[0]),
+                  },
+                  "windows-x86_64": {
+                      "signature": win_sigs[0].read_text(encoding="utf-8").strip(),
+                      "url": asset_url(win_updates[0]),
+                  },
+              },
+          }
+
+          (release_assets / "latest.json").write_text(
+              json.dumps(manifest, ensure_ascii=False, indent=2),
+              encoding="utf-8",
+          )
+          PY
+
+      - name: 上传 Release 资产
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_name="${GITHUB_REF_NAME}"
+
           mapfile -d "" files < <(
             find release-assets -type f \
-              \( -name "*.dmg" -o -name "*.msi" -o -name "*.exe" \) \
+              \( -name "*.dmg" -o -name "*.msi" -o -name "*.exe" -o -name "*.sig" -o -name "*.tar.gz" -o -name "latest.json" \) \
               -print0
           )
 

@@ -1,0 +1,70 @@
+.settings-update-card {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+}
+
+.settings-update-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.settings-update-field {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-primary);
+}
+
+.settings-update-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.settings-update-value {
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.settings-update-status {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--bg-primary) 78%, transparent);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-update-status[data-tone="success"] {
+  border-color: color-mix(in srgb, #30d158 30%, var(--border-subtle));
+  color: color-mix(in srgb, #1f7a3a 88%, var(--text-primary));
+}
+
+.settings-update-status[data-tone="warning"] {
+  border-color: color-mix(in srgb, #ff9f0a 34%, var(--border-subtle));
+  color: color-mix(in srgb, #8f5a00 86%, var(--text-primary));
+}
+
+.settings-update-status[data-tone="danger"] {
+  border-color: color-mix(in srgb, #ff453a 34%, var(--border-subtle));
+  color: color-mix(in srgb, #b42318 84%, var(--text-primary));
+}
+
+.settings-update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 720px) {
+  .settings-update-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

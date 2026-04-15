@@ -2,8 +2,7 @@ import { createPlatformAdapter } from "../platform-adapter";
 import { clientConfigStore } from "../../config/client-config-store";
 import type {
   DesktopReleaseState,
-  DesktopUpdateInstallResult,
-  ReleaseManifest
+  DesktopUpdateInstallResult
 } from "../../config/client-config-types";
 
 export async function checkForDesktopUpdate(): Promise<DesktopReleaseState> {
@@ -18,11 +17,10 @@ export async function checkForDesktopUpdate(): Promise<DesktopReleaseState> {
   return result.value;
 }
 
-export async function installDesktopUpdate(
-  manifest: ReleaseManifest
-): Promise<DesktopUpdateInstallResult> {
+export async function installDesktopUpdate(): Promise<DesktopUpdateInstallResult> {
   const adapter = createPlatformAdapter();
-  return adapter.bridge.installUpdate(manifest);
+  const config = clientConfigStore.getState();
+  return adapter.bridge.installUpdate(config.releaseChannel);
 }
 
 export async function rollbackDesktopUpdate() {

@@ -1,4 +1,7 @@
 import type {
+  AndroidApkManifest,
+  AndroidRuntimeInfo,
+  AndroidUpdateInstallResult,
   ClientRuntimeConfig,
   ClientRuntimeConfigPatch,
   DesktopBridgeResult,
@@ -6,7 +9,6 @@ import type {
   DesktopRuntimeInfo,
   DesktopUpdateInstallResult,
   ReleaseChannel,
-  ReleaseManifest,
   RuntimePlatform
 } from "../config/client-config-types";
 import type { WindowBounds, WindowDescriptor } from "./desktop/window-descriptor";
@@ -46,7 +48,9 @@ export interface DesktopShellBridge {
   writeDesktopConfig(config: ClientRuntimeConfigPatch): Promise<DesktopBridgeResult>;
   getRuntimeInfo(): Promise<DesktopBridgeResult<DesktopRuntimeInfo>>;
   checkForUpdate(channel: ReleaseChannel): Promise<DesktopBridgeResult<DesktopReleaseState>>;
-  installUpdate(manifest: ReleaseManifest): Promise<DesktopUpdateInstallResult>;
+  installUpdate(channel: ReleaseChannel): Promise<DesktopUpdateInstallResult>;
+  getAndroidRuntimeInfo(): Promise<DesktopBridgeResult<AndroidRuntimeInfo>>;
+  installAndroidUpdate(manifest: AndroidApkManifest): Promise<AndroidUpdateInstallResult>;
   rollbackToPreviousVersion(): Promise<DesktopBridgeResult>;
   pickDirectory(): Promise<DesktopBridgeResult<string | null>>;
   createWindow(descriptor: WindowDescriptor): Promise<DesktopBridgeResult>;
@@ -334,6 +338,18 @@ class WebDesktopShellBridge implements DesktopShellBridge {
     });
   }
 
+  getAndroidRuntimeInfo(): Promise<DesktopBridgeResult<AndroidRuntimeInfo>> {
+    return Promise.resolve(unsupportedResult("当前不是 Android 原生运行环境。"));
+  }
+
+  installAndroidUpdate(): Promise<AndroidUpdateInstallResult> {
+    return Promise.resolve({
+      ok: false,
+      status: "failed",
+      detail: "当前不是 Android 原生运行环境。"
+    });
+  }
+
   rollbackToPreviousVersion(): Promise<DesktopBridgeResult> {
     return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
   }
@@ -426,9 +442,9 @@ class TauriDesktopShellBridge implements DesktopShellBridge {
     return invokeDesktopCommand("check_for_update", { channel });
   }
 
-  async installUpdate(manifest: ReleaseManifest): Promise<DesktopUpdateInstallResult> {
+  async installUpdate(channel: ReleaseChannel): Promise<DesktopUpdateInstallResult> {
     const result = await invokeDesktopCommand<DesktopUpdateInstallResult>("install_update", {
-      manifest
+      channel
     });
 
     return result.ok
@@ -438,6 +454,18 @@ class TauriDesktopShellBridge implements DesktopShellBridge {
           errorCode: result.errorCode,
           detail: result.detail
         };
+  }
+
+  getAndroidRuntimeInfo(): Promise<DesktopBridgeResult<AndroidRuntimeInfo>> {
+    return Promise.resolve(unsupportedResult("当前不是 Android 原生运行环境。"));
+  }
+
+  installAndroidUpdate(): Promise<AndroidUpdateInstallResult> {
+    return Promise.resolve({
+      ok: false,
+      status: "failed",
+      detail: "当前不是 Android 原生运行环境。"
+    });
   }
 
   rollbackToPreviousVersion(): Promise<DesktopBridgeResult> {
@@ -497,6 +525,127 @@ class TauriMobileHapticsBridge implements PlatformHapticsBridge {
   }
 }
 
+class TauriMobileShellBridge implements DesktopShellBridge {
+  readonly supported = true;
+
+  constructor(private readonly platform: RuntimePlatform) {}
+
+  openExternal(url: string): Promise<DesktopBridgeResult> {
+    if (typeof window === "undefined") {
+      return Promise.resolve(unsupportedResult("当前环境无法打开外部链接。"));
+    }
+
+    window.open(url, "_blank", "noopener,noreferrer");
+    return Promise.resolve({ ok: true });
+  }
+
+  showNotification(title: string, body: string): Promise<DesktopBridgeResult> {
+    return showSystemNotification(title, body);
+  }
+
+  writeClipboardText(text: string): Promise<DesktopBridgeResult> {
+    return invokeTauriCommand("copy_text", { text });
+  }
+
+  setWindowState(): Promise<DesktopBridgeResult> {
+    return Promise.resolve(unsupportedResult("当前平台不支持窗口控制。"));
+  }
+
+  readDesktopConfig(): Promise<DesktopBridgeResult<Partial<ClientRuntimeConfig>>> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  writeDesktopConfig(): Promise<DesktopBridgeResult> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  getRuntimeInfo(): Promise<DesktopBridgeResult<DesktopRuntimeInfo>> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  checkForUpdate(): Promise<DesktopBridgeResult<DesktopReleaseState>> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  installUpdate(): Promise<DesktopUpdateInstallResult> {
+    return Promise.resolve({
+      ok: false,
+      errorCode: "PLATFORM_NOT_SUPPORTED",
+      detail: "当前不是桌面端运行环境。"
+    });
+  }
+
+  getAndroidRuntimeInfo(): Promise<DesktopBridgeResult<AndroidRuntimeInfo>> {
+    if (this.platform !== "android") {
+      return Promise.resolve(unsupportedResult("当前不是 Android 原生运行环境。"));
+    }
+
+    return invokeTauriCommand("get_android_runtime_info");
+  }
+
+  async installAndroidUpdate(manifest: AndroidApkManifest): Promise<AndroidUpdateInstallResult> {
+    if (this.platform !== "android") {
+      return {
+        ok: false,
+        status: "failed",
+        detail: "当前不是 Android 原生运行环境。"
+      };
+    }
+
+    const result = await invokeTauriCommand<AndroidUpdateInstallResult>("install_android_update", {
+      manifest
+    });
+
+    return result.ok
+      ? result.value ?? { ok: false, status: "failed", detail: "Android 更新结果为空。" }
+      : {
+          ok: false,
+          status: "failed",
+          detail: result.detail
+        };
+  }
+
+  rollbackToPreviousVersion(): Promise<DesktopBridgeResult> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  pickDirectory(): Promise<DesktopBridgeResult<string | null>> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  createWindow(): Promise<DesktopBridgeResult> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  closeWindow(): Promise<DesktopBridgeResult> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  focusWindow(): Promise<DesktopBridgeResult> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  listWindows(): Promise<DesktopBridgeResult<WindowDescriptor[]>> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  isWindowOpen(): Promise<DesktopBridgeResult<boolean>> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  getWindowDescriptor(): Promise<DesktopBridgeResult<WindowDescriptor>> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  syncWindowDescriptor(): Promise<DesktopBridgeResult> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  updateWindowBounds(): Promise<DesktopBridgeResult> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+}
+
 export function resolveRuntimePlatform(): RuntimePlatform {
   if (!isTauriRuntime()) {
     return "web";
@@ -531,7 +680,12 @@ export function createPlatformAdapter(options: PlatformAdapterOptions = {}): Pla
     isNativeMobile,
     viewportClass,
     ui: createUiProfile(platform),
-    bridge: platform === "desktop" ? new TauriDesktopShellBridge() : new WebDesktopShellBridge(),
+    bridge:
+      platform === "desktop"
+        ? new TauriDesktopShellBridge()
+        : isNativeMobile
+          ? new TauriMobileShellBridge(platform)
+          : new WebDesktopShellBridge(),
     windows: sharedWindowRegistryStore,
     haptics: isNativeMobile ? new TauriMobileHapticsBridge() : new WebHapticsBridge()
   };

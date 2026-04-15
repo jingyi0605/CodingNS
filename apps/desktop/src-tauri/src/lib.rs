@@ -11,7 +11,7 @@ use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State, WebviewUrl, WebviewWindow,
     WindowEvent,
 };
-use updater::{DesktopReleaseState, DesktopRuntimeInfo, ReleaseManifest, UpdateInstallResult};
+use updater::{DesktopReleaseState, DesktopRuntimeInfo, UpdateInstallResult};
 use window_manager::{
     window_manager_error, WindowBounds, WindowDescriptor, WindowKind, WindowManagerState,
     WindowMode,
@@ -49,13 +49,13 @@ fn get_runtime_info(app: AppHandle) -> DesktopRuntimeInfo {
 }
 
 #[tauri::command]
-fn check_for_update(app: AppHandle, channel: String) -> Result<DesktopReleaseState, String> {
-    updater::check_for_update(&app, &channel)
+async fn check_for_update(app: AppHandle, channel: String) -> Result<DesktopReleaseState, String> {
+    updater::check_for_update(&app, &channel).await
 }
 
 #[tauri::command]
-fn install_update(app: AppHandle, manifest: ReleaseManifest) -> UpdateInstallResult {
-    updater::install_update(&app, manifest)
+async fn install_update(app: AppHandle, channel: String) -> UpdateInstallResult {
+    updater::install_update(&app, &channel).await
 }
 
 #[tauri::command]
@@ -570,6 +570,7 @@ fn configure_macos_window_chrome(app: &tauri::App) -> tauri::Result<()> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(WindowManagerState::default())
         .setup(|_app| {
             #[cfg(target_os = "macos")]

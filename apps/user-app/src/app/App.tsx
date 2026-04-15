@@ -7,7 +7,9 @@ import { I18nProvider } from "../shared/i18n";
 import { ThemeProvider } from "../shared/theme";
 import { ToastProvider } from "../shared/toast";
 import { AppVersionProvider } from "../shared/version/app-version";
+import { DesktopAutoUpdateEffect } from "./DesktopAutoUpdateEffect";
 import { createAppRouter } from "./router";
+import "../settings/update-panels.css";
 
 export function App() {
   const language = usePreferencesSelector((state) => state.profile.language);
@@ -19,6 +21,7 @@ export function App() {
         <I18nProvider language={language}>
           <ThemeProvider>
             <ToastProvider>
+              <DesktopAutoUpdateEffect />
               <RouterProvider router={router} />
             </ToastProvider>
           </ThemeProvider>

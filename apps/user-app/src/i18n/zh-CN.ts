@@ -208,6 +208,8 @@ export const zhCN = {
     releasePageOpenFailed: "打开页面失败",
     androidInstallerStarted: "已交给系统安装器，安装完成前你仍可以取消",
     androidInstallPermissionRequired: "请先允许当前应用安装未知来源应用",
+    androidInstallCancelled: "安装已取消或未完成，可重新触发安装",
+    androidInstallSucceeded: "已检测到新版本完成安装",
     releaseRollbackStarted: "已开始回退",
     releaseRollbackFailed: "回退失败",
     clientUpdateUnsupported: "当前不支持安装更新",

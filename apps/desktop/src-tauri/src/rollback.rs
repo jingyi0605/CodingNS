@@ -26,6 +26,7 @@ fn rollback_state_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(data_dir.join("desktop-update-rollback.json"))
 }
 
+#[allow(dead_code)]
 pub fn save_rollback_state(
     app: &AppHandle,
     previous_version: &str,

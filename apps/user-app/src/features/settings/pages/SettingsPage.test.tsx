@@ -21,6 +21,9 @@ import { SettingsPage } from "./SettingsPage";
 
 const originalTauriInternals = window.__TAURI_INTERNALS__;
 const originalFetch = global.fetch;
+const userAgentDescriptor = Object.getOwnPropertyDescriptor(window.navigator, "userAgent");
+const platformDescriptor = Object.getOwnPropertyDescriptor(window.navigator, "platform");
+const maxTouchPointsDescriptor = Object.getOwnPropertyDescriptor(window.navigator, "maxTouchPoints");
 
 vi.mock("../../../settings/TailscalePanel", () => ({
   TailscalePanel: () => <div data-testid="tailscale-panel">tailscale-panel</div>
@@ -56,10 +59,21 @@ describe("SettingsPage", () => {
 
     if (originalTauriInternals) {
       window.__TAURI_INTERNALS__ = originalTauriInternals;
-      return;
+    } else {
+      delete window.__TAURI_INTERNALS__;
     }
 
-    delete window.__TAURI_INTERNALS__;
+    if (userAgentDescriptor) {
+      Object.defineProperty(window.navigator, "userAgent", userAgentDescriptor);
+    }
+
+    if (platformDescriptor) {
+      Object.defineProperty(window.navigator, "platform", platformDescriptor);
+    }
+
+    if (maxTouchPointsDescriptor) {
+      Object.defineProperty(window.navigator, "maxTouchPoints", maxTouchPointsDescriptor);
+    }
   });
 
   it("Web 桌面布局不显示服务器连接表单", () => {
@@ -255,6 +269,94 @@ describe("SettingsPage", () => {
     expect(screen.getByText(t("settings.autoCheckUpdate"))).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("settings.releaseCheckNow") })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("settings.releaseOpenPage") })).toBeInTheDocument();
+  });
+
+  it("Android 运行时使用移动布局时，会显示 APK 直装更新面板", async () => {
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/124.0.0.0 Mobile Safari/537.36",
+      platform: "Linux armv8l",
+      maxTouchPoints: 5
+    });
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn(async (command: string) => {
+        if (command === "get_android_runtime_info") {
+          return {
+            version: "0.3.0",
+            versionCode: 3000,
+            packageName: "com.codingns.userapp"
+          };
+        }
+
+        return undefined;
+      }) as never
+    };
+    authStore.hydrate(createAuthSession());
+    global.fetch = vi.fn(async () =>
+      createJsonResponse({
+        channel: "stable",
+        version: "0.4.0",
+        versionCode: 4000,
+        packageName: "com.codingns.userapp",
+        fileName: "app-universal-release.apk",
+        downloadUrl: "https://example.com/app-universal-release.apk",
+        sha256: "abc",
+        publishedAt: "2026-04-15T08:00:00.000Z",
+        notes: "",
+        minSupportedVersionCode: null,
+        htmlUrl: null
+      })
+    ) as typeof fetch;
+    clientConfigStore.hydrate({
+      platform: "android",
+      hostBaseUrl: "http://127.0.0.1:3002",
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    setViewportWidth(390);
+
+    renderSettingsPage("/settings/software-update");
+
+    expect(screen.getByText(t("settings.clientUpdate"))).toBeInTheDocument();
+    expect(screen.getByText(t("settings.autoCheckUpdate"))).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: t("settings.releaseCheckNow") }));
+
+    expect(await screen.findByText("0.3.0")).toBeInTheDocument();
+    expect(screen.getByText("0.4.0")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("settings.releaseOpenPage") })).not.toBeInTheDocument();
+  });
+
+  it("iOS 运行时的软件更新分类会明确显示客户端更新不受支持", () => {
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1",
+      platform: "iPhone",
+      maxTouchPoints: 5
+    });
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn()
+    };
+    clientConfigStore.hydrate({
+      platform: "ios",
+      hostBaseUrl: "http://127.0.0.1:3002",
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    setViewportWidth(390);
+
+    renderSettingsPage("/settings/software-update");
+
+    expect(screen.getByText(t("settings.serverUpdate"))).toBeInTheDocument();
+    expect(screen.getByText(t("settings.clientUpdate"))).toBeInTheDocument();
+    expect(screen.getByText(t("settings.autoCheckUpdate"))).toBeInTheDocument();
+    expect(screen.getByText(t("settings.clientUpdateUnsupported"))).toBeInTheDocument();
   });
 
   it("移动布局把默认会话权限放在安全与隐私分类下", async () => {
@@ -563,6 +665,29 @@ function setViewportWidth(width: number) {
     value: width
   });
   window.dispatchEvent(new Event("resize"));
+}
+
+function mockNavigator({
+  userAgent,
+  platform,
+  maxTouchPoints = 0
+}: {
+  userAgent: string;
+  platform: string;
+  maxTouchPoints?: number;
+}) {
+  Object.defineProperty(window.navigator, "userAgent", {
+    configurable: true,
+    value: userAgent
+  });
+  Object.defineProperty(window.navigator, "platform", {
+    configurable: true,
+    value: platform
+  });
+  Object.defineProperty(window.navigator, "maxTouchPoints", {
+    configurable: true,
+    value: maxTouchPoints
+  });
 }
 
 function createPreferenceState(overrides?: Partial<ReturnType<typeof userPreferenceStore.getState>["profile"]>) {

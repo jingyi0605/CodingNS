@@ -1,3 +1,4 @@
+mod android_update;
 mod config;
 
 #[cfg(target_os = "macos")]
@@ -64,6 +65,19 @@ fn write_desktop_config(app: AppHandle, patch: DesktopRuntimeConfig) -> Result<(
 #[tauri::command]
 fn get_runtime_info(app: AppHandle) -> DesktopRuntimeInfo {
   build_runtime_info(&app)
+}
+
+#[tauri::command]
+fn get_android_runtime_info(app: AppHandle) -> Result<android_update::AndroidRuntimeInfo, String> {
+  android_update::get_runtime_info(&app)
+}
+
+#[tauri::command]
+fn install_android_update(
+  app: AppHandle,
+  manifest: android_update::AndroidUpdateManifest
+) -> android_update::AndroidUpdateInstallResult {
+  android_update::install_update(&app, manifest)
 }
 
 #[tauri::command]
@@ -343,6 +357,8 @@ pub fn run() {
       read_desktop_config,
       write_desktop_config,
       get_runtime_info,
+      get_android_runtime_info,
+      install_android_update,
       copy_text,
       set_window_state,
       perform_haptic_feedback
