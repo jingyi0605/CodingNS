@@ -11,6 +11,11 @@ import {
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 
+import {
+  showDesktopContextMenu,
+  type DesktopContextMenuItem
+} from "../../../platform/desktop/desktop-context-menu";
+import { usePlatform } from "../../../platform/platform-provider";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { useHaptics } from "../../../shared/haptics";
@@ -159,6 +164,7 @@ export function GitSidebar({
   workbenchShellOverrides
 }: GitSidebarProps) {
   const navigate = useNavigate();
+  const platform = usePlatform();
   const workbenchShell = useWorkbenchShell();
   const {
     subscribeGitSnapshot,
@@ -234,6 +240,7 @@ export function GitSidebar({
   const commitDetailRequestIdRef = useRef(0);
   const wasPanelActiveRef = useRef(panelActive);
   const { showToast } = useToast();
+  const useNativeDesktopHistoryMenu = platform.isDesktop && !isMobileViewport;
   useEffect(() => {
     logPerfDebug("git_sidebar.props", {
       workspaceId,
@@ -1025,6 +1032,54 @@ export function GitSidebar({
     setExplainCommitHash(commitHash);
     setExplainProvider(null);
     setExplainProviderModalOpen(true);
+  }
+
+  function buildHistoryContextMenuItems(item: GitHistoryItemDto): DesktopContextMenuItem[] {
+    const canUndo = history[0]?.commitHash === item.commitHash && item.commitKind === "local";
+
+    return [
+      {
+        id: `view-changes:${item.commitHash}`,
+        label: t("git.viewCommitChanges"),
+        onSelect: () => void openCommitDetailModal(item.commitHash)
+      },
+      {
+        id: `copy-hash:${item.commitHash}`,
+        label: t("git.copyCommitHash"),
+        onSelect: () => void copyText(item.commitHash, t("git.copyCommitHashSuccess"))
+      },
+      {
+        id: `copy-message:${item.commitHash}`,
+        label: t("git.copyCommitMessage"),
+        onSelect: () => void copyText(buildCommitMessageText(item), t("git.copyCommitMessageSuccess"))
+      },
+      {
+        id: `copy-version:${item.commitHash}`,
+        label: t("git.copyCommitVersion"),
+        onSelect: () => void handleCopyCommitVersion(item.commitHash)
+      },
+      {
+        id: `explain:${item.commitHash}`,
+        label: t("git.explainCommitAction"),
+        onSelect: () => openExplainProviderModal(item.commitHash)
+      },
+      ...(canUndo
+        ? [
+            {
+              id: `undo:${item.commitHash}`,
+              label: t("git.undoLastCommit"),
+              disabled: actioning,
+              onSelect: () => void handleUndoLastCommit()
+            } satisfies DesktopContextMenuItem
+          ]
+        : [])
+    ];
+  }
+
+  async function openDesktopHistoryContextMenu(item: GitHistoryItemDto) {
+    setDesktopHistoryMenuCommitHash(null);
+    setMobileHistoryMenuCommitHash(null);
+    await showDesktopContextMenu(buildHistoryContextMenuItems(item));
   }
 
   async function handleExplainCommit() {
@@ -1856,13 +1911,25 @@ export function GitSidebar({
                 hasMore={Boolean(historyNextCursor)}
                 actioning={actioning}
                 openCommitHash={desktopHistoryMenuCommitHash}
+                useNativeContextMenu={useNativeDesktopHistoryMenu}
                 onMenuTriggerRef={setHistoryMenuTriggerRef}
                 onScroll={handleHistoryScroll}
-                onToggleMenu={(commitHash) =>
+                onToggleMenu={(commitHash) => {
+                  if (useNativeDesktopHistoryMenu) {
+                    const targetItem = history.find((item) => item.commitHash === commitHash);
+
+                    if (targetItem) {
+                      void openDesktopHistoryContextMenu(targetItem);
+                    }
+
+                    return;
+                  }
+
                   setDesktopHistoryMenuCommitHash((current) =>
                     current === commitHash ? null : commitHash
-                  )
-                }
+                  );
+                }}
+                onOpenContextMenu={(item) => void openDesktopHistoryContextMenu(item)}
                 onViewCommitChanges={(commitHash) => void openCommitDetailModal(commitHash)}
                 onCopyCommitHash={(commitHash) =>
                   void copyText(commitHash, t("git.copyCommitHashSuccess"))
@@ -2982,9 +3049,11 @@ function GitDesktopHistoryList({
   actioning,
   openCommitHash,
   className,
+  useNativeContextMenu = false,
   onMenuTriggerRef,
   onScroll,
   onToggleMenu,
+  onOpenContextMenu,
   onViewCommitChanges,
   onCopyCommitHash,
   onCopyCommitMessage,
@@ -2999,9 +3068,11 @@ function GitDesktopHistoryList({
   actioning: boolean;
   openCommitHash: string | null;
   className?: string;
+  useNativeContextMenu?: boolean;
   onMenuTriggerRef: (commitHash: string, node: HTMLButtonElement | null) => void;
   onScroll?: (event: UIEvent<HTMLDivElement>) => void;
   onToggleMenu: (commitHash: string) => void;
+  onOpenContextMenu?: (item: GitHistoryItemDto) => void;
   onViewCommitChanges: (commitHash: string) => void;
   onCopyCommitHash: (commitHash: string) => void;
   onCopyCommitMessage: (item: GitHistoryItemDto) => void;
@@ -3025,6 +3096,15 @@ function GitDesktopHistoryList({
             className="git-history-entry"
             data-kind={item.commitKind}
             data-menu-open={menuOpen ? "true" : "false"}
+            onContextMenu={(event) => {
+              if (!useNativeContextMenu || !onOpenContextMenu) {
+                return;
+              }
+
+              event.preventDefault();
+              event.stopPropagation();
+              onOpenContextMenu(item);
+            }}
           >
             <span
               className="git-history-marker"
@@ -3038,15 +3118,19 @@ function GitDesktopHistoryList({
                   <span className="git-history-kind-badge" data-kind={item.commitKind}>
                     {formatHistoryCommitKind(item.commitKind)}
                   </span>
-                  <button
-                    type="button"
-                    className="git-icon-button git-history-more"
-                    ref={(node) => onMenuTriggerRef(item.commitHash, node)}
-                    aria-label={t("git.historyItemMenu")}
-                    onClick={() => onToggleMenu(item.commitHash)}
-                  >
-                    <MoreIcon />
-                  </button>
+                  {useNativeContextMenu ? null : (
+                    <button
+                      type="button"
+                      className="git-icon-button git-history-more"
+                      ref={(node) => onMenuTriggerRef(item.commitHash, node)}
+                      aria-label={t("git.historyItemMenu")}
+                      onClick={() => {
+                        onToggleMenu(item.commitHash);
+                      }}
+                    >
+                      <MoreIcon />
+                    </button>
+                  )}
                 </div>
               </div>
               {item.refs.length > 0 ? (

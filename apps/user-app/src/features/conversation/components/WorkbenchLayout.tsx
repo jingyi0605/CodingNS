@@ -51,6 +51,7 @@ import {
   openGitExternalWindow,
   openProcessesExternalWindow
 } from "../../../platform/desktop/window-openers";
+import { showDesktopContextMenu } from "../../../platform/desktop/desktop-context-menu";
 import { usePlatform } from "../../../platform/platform-provider";
 import {
   useLocalUiPreferenceSelector,
@@ -197,6 +198,7 @@ const WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
 const WORKBENCH_PERMISSION_POLL_INTERVAL_MS = 4_000;
 const SESSION_FAILURE_NOTIFICATION_DETAIL_MAX_LENGTH = 220;
 const WINDOW_DETACH_DRAG_THRESHOLD_PX = 18;
+const WORKSPACE_POINTER_REORDER_THRESHOLD_PX = 6;
 const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
 const WORKBENCH_RUNTIME_ACTIVE_STATES: ReadonlySet<string> = new Set([
   "starting",
@@ -1438,6 +1440,15 @@ function buildManagedWorkspaceTreePath(
 }
 
 type WorkspaceDropPosition = "before" | "after";
+
+interface WorkspacePointerReorderGesture {
+  pointerId: number;
+  workspaceId: string;
+  startX: number;
+  startY: number;
+  pointerTarget: HTMLButtonElement;
+  dragging: boolean;
+}
 
 export function reorderWorkspaceGroups(
   groups: WorkspaceSessionGroup[],
@@ -2785,6 +2796,7 @@ function SessionCard({
   onArchive: () => void;
   onCloseMenu: () => void;
 }) {
+  const platform = usePlatform();
   const subagentBadgeLabel = isSubagentSession(session)
     ? session.subagentLabel?.trim() || t("shell.subagentBadge")
     : null;
@@ -2804,7 +2816,7 @@ function SessionCard({
   const [menuPositionStyle, setMenuPositionStyle] = useState<CSSProperties | null>(null);
 
   useLayoutEffect(() => {
-    if (!menuOpen || !menuAnchorPoint || typeof window === "undefined") {
+    if (platform.isDesktop || !menuOpen || !menuAnchorPoint || typeof window === "undefined") {
       setMenuPositionStyle(null);
       return;
     }
@@ -2843,10 +2855,30 @@ function SessionCard({
       window.removeEventListener("resize", updateMenuPosition);
       window.removeEventListener("scroll", updateMenuPosition, true);
     };
-  }, [menuAnchorPoint, menuOpen]);
+  }, [menuAnchorPoint, menuOpen, platform.isDesktop]);
+
+  async function openDesktopSessionMenu() {
+    await showDesktopContextMenu([
+      {
+        id: `rename:${session.sessionId}`,
+        label: t("shell.renameAction"),
+        onSelect: onRename
+      },
+      {
+        id: `favorite:${session.sessionId}`,
+        label: isFavorite ? t("shell.unfavoriteAction") : t("shell.favoriteAction"),
+        onSelect: onToggleFavorite
+      },
+      {
+        id: `archive:${session.sessionId}`,
+        label: t("shell.archiveAction"),
+        onSelect: onArchive
+      }
+    ]);
+  }
 
   const sessionMenu =
-    menuOpen && typeof document !== "undefined"
+    !platform.isDesktop && menuOpen && typeof document !== "undefined"
       ? createPortal(
           <div
             ref={menuRef}
@@ -2921,6 +2953,11 @@ function SessionCard({
 
         event.preventDefault();
         event.stopPropagation();
+        if (platform.isDesktop) {
+          void openDesktopSessionMenu();
+          return;
+        }
+
         onOpenContextMenu({
           x: event.clientX,
           y: event.clientY
@@ -2991,6 +3028,11 @@ function SessionCard({
 
             event.preventDefault();
             event.stopPropagation();
+            if (platform.isDesktop) {
+              void openDesktopSessionMenu();
+              return;
+            }
+
             const anchorRect = event.currentTarget.getBoundingClientRect();
             onOpenContextMenu({
               x: anchorRect.right,
@@ -3192,6 +3234,10 @@ function SidebarContent({
   const createWorktreeBaseRefPickerRef = useRef<HTMLDivElement | null>(null);
   const createWorktreeBaseRefPopoverRef = useRef<HTMLDivElement | null>(null);
   const workspaceDragCollapseFrameRef = useRef<number | null>(null);
+  const workspaceGroupElementMapRef = useRef(new Map<string, HTMLElement>());
+  const workspacePointerGestureRef = useRef<WorkspacePointerReorderGesture | null>(null);
+  const workspacePointerGestureCleanupRef = useRef<(() => void) | null>(null);
+  const suppressWorkspaceToggleClickRef = useRef<string | null>(null);
   const expandedWorktreeNodeIdSet = useMemo(
     () => new Set(worktreeNodeExpansionState.expandedWorkspaceIds),
     [worktreeNodeExpansionState.expandedWorkspaceIds]
@@ -3201,6 +3247,8 @@ function SidebarContent({
     [worktreeNodeExpansionState.collapsedWorkspaceIds]
   );
   const workspaceReorderDragging = dragWorkspaceId !== null;
+  const enableWorkspacePointerReorder =
+    allowWorkspaceReorder && platform.isDesktop && platform.ui.osFamily === "macos";
   const closeSessionMenu = useCallback(() => {
     setOpenSessionMenuKey(null);
     setOpenSessionMenuAnchorPoint(null);
@@ -3903,6 +3951,203 @@ function SidebarContent({
     setDragWorkspaceId(null);
   }
 
+  function clearWorkspacePointerGesture(options?: {
+    commit?: boolean;
+    preserveClickSuppression?: boolean;
+  }) {
+    const commit = options?.commit ?? false;
+    const preserveClickSuppression = options?.preserveClickSuppression ?? false;
+    const gesture = workspacePointerGestureRef.current;
+    const cleanup = workspacePointerGestureCleanupRef.current;
+
+    workspacePointerGestureRef.current = null;
+    workspacePointerGestureCleanupRef.current = null;
+    cleanup?.();
+
+    if (gesture?.dragging) {
+      clearWorkspaceDragState();
+
+      if (commit) {
+        onCommitWorkspaceReorder();
+      }
+
+      if (!preserveClickSuppression && suppressWorkspaceToggleClickRef.current === gesture.workspaceId) {
+        suppressWorkspaceToggleClickRef.current = null;
+      }
+    }
+  }
+
+  function handleWorkspaceToggleClick(workspaceId: string) {
+    if (suppressWorkspaceToggleClickRef.current === workspaceId) {
+      suppressWorkspaceToggleClickRef.current = null;
+      return;
+    }
+
+    onToggleWorkspaceCollapse(workspaceId);
+  }
+
+  function setWorkspaceGroupElement(workspaceId: string, element: HTMLElement | null) {
+    if (element) {
+      workspaceGroupElementMapRef.current.set(workspaceId, element);
+      return;
+    }
+
+    workspaceGroupElementMapRef.current.delete(workspaceId);
+  }
+
+  function resolveWorkspacePointerDropTarget(clientX: number, clientY: number) {
+    for (const [workspaceId, element] of workspaceGroupElementMapRef.current) {
+      const rect = element.getBoundingClientRect();
+
+      if (
+        clientX >= rect.left
+        && clientX <= rect.right
+        && clientY >= rect.top
+        && clientY <= rect.bottom
+      ) {
+        return {
+          workspaceId,
+          element
+        };
+      }
+    }
+
+    return null;
+  }
+
+  function handleWorkspacePointerDown(
+    event: ReactPointerEvent<HTMLButtonElement>,
+    workspaceId: string
+  ) {
+    if (!enableWorkspacePointerReorder || event.button !== 0) {
+      return;
+    }
+
+    clearWorkspacePointerGesture();
+
+    const pointerTarget = event.currentTarget;
+    const gesture: WorkspacePointerReorderGesture = {
+      pointerId: event.pointerId,
+      workspaceId,
+      startX: event.clientX,
+      startY: event.clientY,
+      pointerTarget,
+      dragging: false
+    };
+
+    workspacePointerGestureRef.current = gesture;
+    pointerTarget.setPointerCapture?.(event.pointerId);
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      previewWorkspacePointerReorder(moveEvent);
+    };
+
+    const handlePointerUp = (pointerEvent: PointerEvent) => {
+      finishWorkspacePointerGesture(pointerEvent.pointerId, {
+        commit: true,
+        preserveClickSuppression: true
+      });
+    };
+
+    const handlePointerCancel = (pointerEvent: PointerEvent) => {
+      finishWorkspacePointerGesture(pointerEvent.pointerId, {
+        commit: false,
+        preserveClickSuppression: false
+      });
+    };
+
+    workspacePointerGestureCleanupRef.current = () => {
+      pointerTarget.removeEventListener("pointermove", handlePointerMove);
+      pointerTarget.removeEventListener("pointerup", handlePointerUp);
+      pointerTarget.removeEventListener("pointercancel", handlePointerCancel);
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerCancel);
+    };
+
+    pointerTarget.addEventListener("pointermove", handlePointerMove);
+    pointerTarget.addEventListener("pointerup", handlePointerUp);
+    pointerTarget.addEventListener("pointercancel", handlePointerCancel);
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerCancel);
+  }
+
+  function previewWorkspacePointerReorder(event: {
+    pointerId: number;
+    clientX: number;
+    clientY: number;
+    preventDefault: () => void;
+  }) {
+    const currentGesture = workspacePointerGestureRef.current;
+
+    if (!currentGesture || currentGesture.pointerId !== event.pointerId) {
+      return;
+    }
+
+    if (!currentGesture.dragging) {
+      const distance = Math.hypot(event.clientX - currentGesture.startX, event.clientY - currentGesture.startY);
+
+      if (distance < WORKSPACE_POINTER_REORDER_THRESHOLD_PX) {
+        return;
+      }
+
+      currentGesture.dragging = true;
+      suppressWorkspaceToggleClickRef.current = currentGesture.workspaceId;
+      onStartWorkspaceReorder();
+      setDragWorkspaceId(currentGesture.workspaceId);
+    }
+
+    event.preventDefault();
+
+    const target = resolveWorkspacePointerDropTarget(event.clientX, event.clientY);
+
+    if (!target || target.workspaceId === currentGesture.workspaceId) {
+      return;
+    }
+
+    onPreviewWorkspaceReorder(
+      currentGesture.workspaceId,
+      target.workspaceId,
+      resolveWorkspaceDropPosition(target.element, event.clientY)
+    );
+  }
+
+  function finishWorkspacePointerGesture(
+    pointerId: number,
+    options: {
+      commit: boolean;
+      preserveClickSuppression: boolean;
+    }
+  ) {
+    const currentGesture = workspacePointerGestureRef.current;
+
+    if (!currentGesture || currentGesture.pointerId !== pointerId) {
+      return;
+    }
+
+    currentGesture.pointerTarget.releasePointerCapture?.(pointerId);
+    clearWorkspacePointerGesture(options);
+  }
+
+  function handleWorkspacePointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
+    previewWorkspacePointerReorder(event);
+  }
+
+  function handleWorkspacePointerUp(event: ReactPointerEvent<HTMLButtonElement>) {
+    finishWorkspacePointerGesture(event.pointerId, {
+      commit: true,
+      preserveClickSuppression: true
+    });
+  }
+
+  function handleWorkspacePointerCancel(event: ReactPointerEvent<HTMLButtonElement>) {
+    finishWorkspacePointerGesture(event.pointerId, {
+      commit: false,
+      preserveClickSuppression: false
+    });
+  }
+
   function handleWorkspaceDragStart(
     event: ReactDragEvent<HTMLButtonElement>,
     workspaceId: string
@@ -3950,6 +4195,10 @@ function SidebarContent({
     clearWorkspaceDragState();
     onCommitWorkspaceReorder();
   }
+
+  useEffect(() => () => {
+    clearWorkspacePointerGesture();
+  }, []);
 
   function getVisibleSubagentCount(sessionId: string) {
     return visibleSubagentCounts[sessionId] ?? SUBAGENT_PAGE_SIZE;
@@ -5093,6 +5342,8 @@ function SidebarContent({
             <section
               key={group.workspace.id}
               className="workbench-workspace-group"
+              ref={(element) => setWorkspaceGroupElement(group.workspace.id, element)}
+              data-workspace-group-id={group.workspace.id}
               data-batch-active={batchWorkspaceId === group.workspace.id}
               data-dragging={isDraggedWorkspace}
               onDragOver={(event) => handleWorkspaceDragOver(event, group.workspace.id)}
@@ -5103,14 +5354,22 @@ function SidebarContent({
                   type="button"
                   className="workbench-workspace-toggle"
                   aria-label={isWorkspaceCollapsed ? t("shell.workspaceExpand") : t("shell.workspaceCollapse")}
-                  draggable={allowWorkspaceReorder}
-                  onClick={() => onToggleWorkspaceCollapse(group.workspace.id)}
+                  draggable={allowWorkspaceReorder && !enableWorkspacePointerReorder}
+                  onClick={() => handleWorkspaceToggleClick(group.workspace.id)}
+                  onPointerDown={
+                    enableWorkspacePointerReorder
+                      ? (event) => handleWorkspacePointerDown(event, group.workspace.id)
+                      : undefined
+                  }
+                  onPointerMove={enableWorkspacePointerReorder ? handleWorkspacePointerMove : undefined}
+                  onPointerUp={enableWorkspacePointerReorder ? handleWorkspacePointerUp : undefined}
+                  onPointerCancel={enableWorkspacePointerReorder ? handleWorkspacePointerCancel : undefined}
                   onDragStart={
-                    allowWorkspaceReorder
+                    allowWorkspaceReorder && !enableWorkspacePointerReorder
                       ? (event) => handleWorkspaceDragStart(event, group.workspace.id)
                       : undefined
                   }
-                  onDragEnd={allowWorkspaceReorder ? handleWorkspaceDragEnd : undefined}
+                  onDragEnd={allowWorkspaceReorder && !enableWorkspacePointerReorder ? handleWorkspaceDragEnd : undefined}
                   data-reorder-enabled={allowWorkspaceReorder ? "true" : undefined}
                 >
                   <span className="workbench-workspace-toggle-icon" aria-hidden="true">

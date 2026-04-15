@@ -34,11 +34,16 @@ import { WorkspaceDebugDetailPage } from "../../debug-target/pages/WorkspaceDebu
 const openFilesExternalWindowMock = vi.hoisted(() => vi.fn());
 const openGitExternalWindowMock = vi.hoisted(() => vi.fn());
 const openProcessesExternalWindowMock = vi.hoisted(() => vi.fn());
+const showDesktopContextMenuMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../../../platform/desktop/window-openers", () => ({
   openFilesExternalWindow: openFilesExternalWindowMock,
   openGitExternalWindow: openGitExternalWindowMock,
   openProcessesExternalWindow: openProcessesExternalWindowMock
+}));
+
+vi.mock("../../../platform/desktop/desktop-context-menu", () => ({
+  showDesktopContextMenu: showDesktopContextMenuMock
 }));
 
 vi.mock("../../butler/api/butler-api", () => ({
@@ -181,6 +186,7 @@ describe("WorkbenchLayout", () => {
     openFilesExternalWindowMock.mockReset();
     openGitExternalWindowMock.mockReset();
     openProcessesExternalWindowMock.mockReset();
+    showDesktopContextMenuMock.mockReset();
     mockedCreateButlerInboxItem.mockReset();
     mockedDeleteButlerInboxItem.mockReset();
     mockedGetButlerProfile.mockReset();
@@ -1036,8 +1042,8 @@ describe("WorkbenchLayout", () => {
 
     renderWorkbenchRoute();
 
-    const betaCard = await findSessionCardByTitle("会话 Beta");
-    openSessionCardContextMenu(betaCard);
+    const alphaCard = await findSessionCardByTitle("会话 Alpha");
+    openSessionCardContextMenu(alphaCard);
     await userEvent.click(screen.getByRole("button", { name: t("shell.favoriteAction") }));
 
     MockWebSocket.instances[0]?.dispatchMessage({
@@ -1130,6 +1136,60 @@ describe("WorkbenchLayout", () => {
       left: "198px",
       width: "180px"
     });
+  });
+
+  it("macOS 桌面端会话右键菜单改走原生菜单", async () => {
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+      platform: "MacIntel"
+    });
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn()
+    };
+    showDesktopContextMenuMock.mockResolvedValue(undefined);
+
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+
+    const sessionCard = await findSessionCardByTitle("会话 Alpha");
+    openSessionCardContextMenu(sessionCard);
+
+    await waitFor(() => {
+      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+    });
+
+    expect(showDesktopContextMenuMock).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ label: t("shell.renameAction") }),
+        expect.objectContaining({ label: t("shell.favoriteAction") }),
+        expect.objectContaining({ label: t("shell.archiveAction") })
+      ])
+    );
+    expect(document.querySelector(".workbench-session-menu")).toBeNull();
   });
 
   it("macOS 桌面端只保留原三栏顶部作为拖拽区，不再额外插入统一顶栏", async () => {
@@ -4875,6 +4935,54 @@ describe("WorkbenchLayout", () => {
         }
       ]);
     });
+  });
+
+  it("macOS 桌面端工作区标题改用指针排序，不再依赖原生 draggable", async () => {
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+      platform: "MacIntel"
+    });
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn()
+    };
+
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [createSessionSummary({ sessionId: "session-1", title: "会话一", workspaceId: "workspace-1" })],
+        collapsed: false
+      },
+      {
+        workspace: createWorkspace("workspace-2", "项目二"),
+        sessions: [createSessionSummary({ sessionId: "session-2", title: "会话二", workspaceId: "workspace-2" })],
+        collapsed: false
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    const view = renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+
+    await findWorkspaceGroupByName("项目一");
+    await findWorkspaceGroupByName("项目二");
+
+    const workspaceToggles = Array.from(
+      view.container.querySelectorAll<HTMLButtonElement>(".workbench-workspace-toggle")
+    );
+
+    expect(workspaceToggles).toHaveLength(2);
+    expect(workspaceToggles.every((toggle) => toggle.dataset.reorderEnabled === "true")).toBe(true);
+    expect(workspaceToggles.every((toggle) => toggle.getAttribute("draggable") !== "true")).toBe(true);
   });
 
   it("重排工作区时会按目标位置生成新的顺序", () => {

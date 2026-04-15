@@ -39,8 +39,10 @@ const workbenchShellMock = vi.hoisted(() => ({
 const hapticsMock = vi.hoisted(() => ({
   trigger: vi.fn()
 }));
+const showDesktopContextMenuMock = vi.hoisted(() => vi.fn());
 const platformMock = vi.hoisted(() => ({
   isDesktop: true,
+  isMobile: false,
   bridge: {
     supported: true
   }
@@ -80,6 +82,10 @@ vi.mock("../../../platform/platform-provider", () => ({
   usePlatform: () => platformMock
 }));
 
+vi.mock("../../../platform/desktop/desktop-context-menu", () => ({
+  showDesktopContextMenu: showDesktopContextMenuMock
+}));
+
 vi.mock("react-router-dom", () => ({
   useNavigate: () => navigateMock
 }));
@@ -99,6 +105,7 @@ describe("GitSidebar", () => {
     vi.clearAllMocks();
     setViewportWidth(430);
     hapticsMock.trigger.mockReset();
+    showDesktopContextMenuMock.mockReset();
     gitSnapshotListener = null;
     window.sessionStorage.clear();
     clearViewSnapshot(GIT_SIDEBAR_SNAPSHOT_KEY);
@@ -717,6 +724,54 @@ describe("GitSidebar", () => {
     expect(position.left).toBe(120);
     expect(position.maxHeight).toBe(600);
     expect(position.transformOrigin).toBe("bottom right");
+  });
+
+  it("桌面端最近版本支持鼠标右键弹出原生菜单", async () => {
+    setViewportWidth(1280);
+    showDesktopContextMenuMock.mockResolvedValue(undefined);
+    renderSidebar();
+
+    const entryTitle = await screen.findByText("feat: local only");
+    const entry = entryTitle.closest(".git-history-entry");
+
+    if (!(entry instanceof HTMLElement)) {
+      throw new Error("未找到最近版本条目");
+    }
+
+    fireEvent.contextMenu(entry, {
+      clientX: 420,
+      clientY: 260
+    });
+
+    await waitFor(() => {
+      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+    });
+
+    expect(showDesktopContextMenuMock).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ label: expect.stringMatching(/查看更改文件与 DIFF|View Changed Files and DIFF/) }),
+        expect.objectContaining({ label: expect.stringMatching(/复制 Commit Hash|Copy Commit Hash/) }),
+        expect.objectContaining({ label: expect.stringMatching(/复制提交信息|Copy Commit Message/) }),
+        expect.objectContaining({ label: expect.stringMatching(/复制 Git 版本号|Copy Git Version/) }),
+        expect.objectContaining({ label: expect.stringMatching(/解释更改|Explain Change/) }),
+        expect.objectContaining({ label: expect.stringMatching(/撤销上次提交|Undo Last Commit/) })
+      ])
+    );
+    expect(document.querySelector(".git-history-entry-menu")).toBeNull();
+  });
+
+  it("桌面端最近版本条目不再显示重复的操作按钮", async () => {
+    setViewportWidth(1280);
+    renderSidebar();
+
+    const entryTitle = await screen.findByText("feat: local only");
+    const entry = entryTitle.closest(".git-history-entry");
+
+    if (!(entry instanceof HTMLElement)) {
+      throw new Error("未找到最近版本条目");
+    }
+
+    expect(entry.querySelector(".git-history-more")).toBeNull();
   });
 
   it("已暂存后再次编辑的文件会同时出现在暂存区和当前变更", async () => {
