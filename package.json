@@ -7,11 +7,10 @@
     "pnpm": ">=9.0.0"
   },
   "scripts": {
-    "preinstall": "node scripts/check-node-version.cjs && node scripts/ensure-pnpm.cjs",
+    "preinstall": "node scripts/ensure-pnpm.cjs",
     "postinstall": "node scripts/fix-node-pty-helper-permissions.cjs && echo '\n✅ 依赖安装完成！现在可以运行开发命令了。\n'",
     "version:sync": "node scripts/sync-version.mjs",
-    "rebuild:native": "node scripts/rebuild-native-modules.cjs",
-    "dev": "node scripts/show-dev-help.cjs",
+    "dev": "node -e \"console.log('前后端需要分开启动，分别查看日志。');console.log('后端：npm run dev:backend');console.log('前端：npm run dev:frontend');\"",
     "dev:backend": "node scripts/dev-backend.cjs",
     "dev:backend:perf": "node scripts/dev-backend.cjs CODINGNS_PERF_DEBUG=1",
     "dev:frontend": "pnpm --filter user-app dev",
@@ -23,7 +22,7 @@
     "build:host": "pnpm --dir packages/session-sync-core build && pnpm --filter host build",
     "build:standalone": "pnpm --dir packages/codingns build",
     "build:desktop": "pnpm --dir apps/desktop build",
-    "package:apps": "bash scripts/build-packages.sh",
+    "package:apps": "bash scripts/package-apps.sh",
     "publish:npm": "bash scripts/publish-npm-package.sh",
     "publish:npm:dry-run": "bash scripts/publish-npm-package.sh --dry-run",
     "test:host": "pnpm --dir packages/session-sync-core build && pnpm --filter host test",

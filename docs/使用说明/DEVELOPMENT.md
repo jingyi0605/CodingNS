@@ -71,13 +71,10 @@ pnpm install
 ⚠️ **如果你刚刚切换了 Node.js 版本**（例如从 v20 升级到 v22），**必须重新编译原生模块**：
 
 ```bash
-# 方法 1: 使用项目提供的脚本（推荐）
-pnpm rebuild:native
-
-# 方法 2: 手动重新编译所有原生模块
+# 重新编译所有原生模块
 pnpm rebuild
 
-# 方法 3: 如果以上方法不行，完全重装
+# 如果以上方法不行，完全重装
 rm -rf node_modules pnpm-lock.yaml
 pnpm install
 ```
@@ -91,9 +88,9 @@ pnpm install
 > Error: The module 'better_sqlite3.node' was compiled against a different Node.js version using NODE_MODULE_VERSION 115.
 > This version of Node.js requires NODE_MODULE_VERSION 127.
 > ```
-> 这表示你的原生模块是用旧版本编译的，需要运行 `pnpm rebuild:native` 重新编译。
+> 这表示你的原生模块是用旧版本编译的，需要运行 `pnpm rebuild` 重新编译。
 >
-> 在 macOS 上，如果看到终端创建时报 `posix_spawnp failed.`，通常是 `node-pty` 的 `spawn-helper` 丢失了执行权限。现在项目会在 `postinstall`、`rebuild:native` 和 Host 运行时自动修复这个权限。
+> 在 macOS 上，如果看到终端创建时报 `posix_spawnp failed.`，通常是 `node-pty` 的 `spawn-helper` 丢失了执行权限。现在项目会在 `postinstall` 和 Host 运行时自动修复这个权限。
 
 ### 5. 运行开发服务器
 
@@ -194,8 +191,8 @@ pnpm --version  # 应该显示 10.7.1 或更高
 # 检查项目依赖
 pnpm list --depth=0
 
-# 运行版本检查脚本
-node scripts/check-node-version.cjs
+# 安装依赖时会自动检查 Node.js 版本和 pnpm
+pnpm install
 ```
 
 ## 新设备设置清单

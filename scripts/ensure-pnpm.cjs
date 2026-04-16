@@ -1,5 +1,25 @@
+#!/usr/bin/env node
+
+/**
+ * 安装前环境检查脚本
+ * 目标：
+ * 1. 强制使用 pnpm 安装依赖
+ * 2. 检查 Node.js 主版本是否满足要求
+ */
+
+const requiredMajorVersion = 22;
+const currentNodeVersion = process.versions.node;
+const currentMajorVersion = parseInt(currentNodeVersion.split(".")[0], 10);
 const userAgent = process.env.npm_config_user_agent ?? "";
 const execPath = process.env.npm_execpath ?? "";
+
+if (currentMajorVersion < requiredMajorVersion) {
+  console.error("Node.js 版本过低。");
+  console.error(`项目要求 Node.js >= v${requiredMajorVersion}.0.0`);
+  console.error(`当前版本: v${currentNodeVersion}`);
+  console.error("建议执行：nvm install 22 && nvm use 22");
+  process.exit(1);
+}
 
 const isPnpm =
   userAgent.startsWith("pnpm/") ||

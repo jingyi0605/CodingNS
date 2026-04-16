@@ -232,7 +232,7 @@ cd codingns
 pnpm install
 
 # Rebuild native modules (if needed)
-pnpm rebuild:native
+pnpm rebuild
 
 # View development help
 pnpm dev
@@ -569,7 +569,7 @@ cd codingns
 pnpm install
 
 # 重新编译原生模块（如果需要）
-pnpm rebuild:native
+pnpm rebuild
 
 # 查看开发帮助
 pnpm dev
