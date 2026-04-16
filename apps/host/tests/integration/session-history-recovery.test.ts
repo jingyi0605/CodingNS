@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { resolveHostConfig } from "../../src/config/env.js";
 import { SessionActivityAuthorityService } from "../../src/modules/sessions/session-activity-authority-service.js";
@@ -18,6 +18,78 @@ import { destroyFixture, createEmptyFixture, type EmptyFixture } from "../helper
 const activeFixtures: EmptyFixture[] = [];
 const activeClosers: Array<() => Promise<void> | void> = [];
 
+function createHarness() {
+  const fixture = createEmptyFixture();
+  const database = createDatabaseClient(":memory:");
+  const config = resolveHostConfig({
+    databasePath: ":memory:",
+    claudeCodeHomeDir: fixture.claudeHomeDir,
+    codexHomeDir: fixture.codexHomeDir
+  });
+  const workspaceRepository = new WorkspaceRepository(database.db);
+  const sessionBindingRepository = new SessionBindingRepository(database.db);
+  const sessionIndexRepository = new SessionIndexRepository(database.db);
+  const sessionStateRepository = new SessionStateRepository(database.db);
+  const sessionStatusSnapshotRepository = new SessionStatusSnapshotRepository(database.db);
+  const sessionChangedFileService = new SessionChangedFileService(
+    new SessionChangedFileRepository(database.db)
+  );
+  const sessionMessageAttachmentService = new SessionMessageAttachmentService(
+    new SessionMessageAttachmentRepository(database.db),
+    config
+  );
+  const service = new SessionHistoryService(
+    database.db,
+    workspaceRepository,
+    sessionBindingRepository,
+    sessionChangedFileService,
+    sessionIndexRepository,
+    sessionMessageAttachmentService,
+    sessionStateRepository,
+    sessionStatusSnapshotRepository,
+    config,
+    new SessionActivityAuthorityService()
+  );
+
+  activeFixtures.push(fixture);
+  activeClosers.push(() => database.close());
+
+  workspaceRepository.create({
+    id: "workspace-1",
+    name: "Fixture Workspace",
+    path: fixture.workspaceDir,
+    repoRoot: fixture.workspaceDir,
+    favorite: false,
+    createdAt: "2026-04-16T08:00:00.000Z",
+    updatedAt: "2026-04-16T08:00:00.000Z",
+    removedAt: null
+  });
+  database.db
+    .prepare(
+      `INSERT INTO auth_users (id, username, password_hash, role, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      "user-1",
+      "tester",
+      "hash",
+      "admin",
+      "2026-04-16T08:00:00.000Z",
+      "2026-04-16T08:00:00.000Z"
+    );
+
+  return {
+    fixture,
+    database,
+    service,
+    workspaceRepository,
+    sessionBindingRepository,
+    sessionIndexRepository,
+    sessionStateRepository,
+    sessionStatusSnapshotRepository
+  };
+}
+
 afterEach(async () => {
   while (activeClosers.length > 0) {
     const close = activeClosers.pop();
@@ -35,64 +107,13 @@ afterEach(async () => {
 
 describe("SessionHistoryService 恢复缺失索引", () => {
   it("binding 仍在时，getSession 会补建缺失的 index、snapshot 和 state", () => {
-    const fixture = createEmptyFixture();
-    const database = createDatabaseClient(":memory:");
-    const config = resolveHostConfig({
-      databasePath: ":memory:",
-      claudeCodeHomeDir: fixture.claudeHomeDir,
-      codexHomeDir: fixture.codexHomeDir
-    });
-    const workspaceRepository = new WorkspaceRepository(database.db);
-    const sessionBindingRepository = new SessionBindingRepository(database.db);
-    const sessionIndexRepository = new SessionIndexRepository(database.db);
-    const sessionStateRepository = new SessionStateRepository(database.db);
-    const sessionStatusSnapshotRepository = new SessionStatusSnapshotRepository(database.db);
-    const sessionChangedFileService = new SessionChangedFileService(
-      new SessionChangedFileRepository(database.db)
-    );
-    const sessionMessageAttachmentService = new SessionMessageAttachmentService(
-      new SessionMessageAttachmentRepository(database.db),
-      config
-    );
-    const service = new SessionHistoryService(
-      database.db,
-      workspaceRepository,
+    const {
+      service,
       sessionBindingRepository,
-      sessionChangedFileService,
       sessionIndexRepository,
-      sessionMessageAttachmentService,
       sessionStateRepository,
-      sessionStatusSnapshotRepository,
-      config,
-      new SessionActivityAuthorityService()
-    );
-
-    activeFixtures.push(fixture);
-    activeClosers.push(() => database.close());
-
-    workspaceRepository.create({
-      id: "workspace-1",
-      name: "Fixture Workspace",
-      path: fixture.workspaceDir,
-      repoRoot: fixture.workspaceDir,
-      favorite: false,
-      createdAt: "2026-04-16T08:00:00.000Z",
-      updatedAt: "2026-04-16T08:00:00.000Z",
-      removedAt: null
-    });
-    database.db
-      .prepare(
-        `INSERT INTO auth_users (id, username, password_hash, role, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        "user-1",
-        "tester",
-        "hash",
-        "admin",
-        "2026-04-16T08:00:00.000Z",
-        "2026-04-16T08:00:00.000Z"
-      );
+      sessionStatusSnapshotRepository
+    } = createHarness();
 
     sessionBindingRepository.upsert({
       sessionId: "session-missing-index",
@@ -133,5 +154,98 @@ describe("SessionHistoryService 恢复缺失索引", () => {
       runningState: "starting",
       activitySource: "runtime"
     });
+  });
+
+  it("discoverWorkspaceSessions 不会删除刚创建且尚未回填真实路径的 Codex synthetic session", async () => {
+    const { service, sessionBindingRepository, sessionIndexRepository } = createHarness();
+    const recentTimestamp = new Date().toISOString();
+    const syntheticRawStoreRef = `${process.cwd()}/.tmp/runtime/codex/recent-missing.stream`;
+
+    sessionBindingRepository.upsert({
+      sessionId: "session-recent-synthetic",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "provider-session-recent",
+      rawStoreRef: syntheticRawStoreRef,
+      createdAt: recentTimestamp,
+      updatedAt: recentTimestamp
+    });
+    sessionIndexRepository.upsert({
+      sessionId: "session-recent-synthetic",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      title: "新建中的 Codex 会话",
+      messageCount: 0,
+      isArchived: false,
+      lastMessageAt: null,
+      createdAt: recentTimestamp,
+      updatedAt: recentTimestamp
+    });
+
+    Object.defineProperty(service, "providerDiscoveryHelperClient", {
+      value: {
+        discoverWorkspaceSessions: vi.fn(async () => ({
+          sessions: [],
+          isComplete: true
+        }))
+      },
+      configurable: true
+    });
+
+    const sessions = await service.discoverWorkspaceSessions("workspace-1", "user-1", {
+      force: true,
+      refreshStateMode: "deferred"
+    });
+
+    expect(sessions.map((session) => session.sessionId)).toContain("session-recent-synthetic");
+    expect(service.getSession("session-recent-synthetic", "user-1").sessionId).toBe(
+      "session-recent-synthetic"
+    );
+  });
+
+  it("discoverWorkspaceSessions 仍会清理超出宽限期的失效 Codex synthetic session", async () => {
+    const { service, sessionBindingRepository, sessionIndexRepository } = createHarness();
+    const staleTimestamp = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const syntheticRawStoreRef = `${process.cwd()}/.tmp/runtime/codex/stale-missing.stream`;
+
+    sessionBindingRepository.upsert({
+      sessionId: "session-stale-synthetic",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "provider-session-stale",
+      rawStoreRef: syntheticRawStoreRef,
+      createdAt: staleTimestamp,
+      updatedAt: staleTimestamp
+    });
+    sessionIndexRepository.upsert({
+      sessionId: "session-stale-synthetic",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      title: "陈旧的 Codex synthetic 会话",
+      messageCount: 0,
+      isArchived: false,
+      lastMessageAt: null,
+      createdAt: staleTimestamp,
+      updatedAt: staleTimestamp
+    });
+
+    Object.defineProperty(service, "providerDiscoveryHelperClient", {
+      value: {
+        discoverWorkspaceSessions: vi.fn(async () => ({
+          sessions: [],
+          isComplete: true
+        }))
+      },
+      configurable: true
+    });
+
+    const sessions = await service.discoverWorkspaceSessions("workspace-1", "user-1", {
+      force: true,
+      refreshStateMode: "deferred"
+    });
+
+    expect(sessions.map((session) => session.sessionId)).not.toContain("session-stale-synthetic");
+    expect(sessionBindingRepository.findBySessionId("session-stale-synthetic")).toBeNull();
+    expect(sessionIndexRepository.findIndexRecordBySessionId("session-stale-synthetic")).toBeNull();
   });
 });

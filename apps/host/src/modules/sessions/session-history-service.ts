@@ -151,6 +151,7 @@ interface PersistedSessionDescriptor {
 const RECONSTRUCTED_FORK_TARGET_PROVIDERS = new Set(["codex", "claude-code", "opencode"]);
 const FORK_RECONSTRUCTION_PAGE_SIZE = 200;
 const MAX_FORK_DEPTH = 4;
+const SYNTHETIC_CODEX_SESSION_CLEANUP_GRACE_MS = 120_000;
 
 interface WorkspaceDiscoveryStatus {
   refreshedAt: number;
@@ -3007,6 +3008,7 @@ export class SessionHistoryService {
       sessions.map((session) => buildProviderSessionKey(session.provider, session.providerSessionId))
     );
     const discoveredRawStoreRefs = new Set(sessions.map((session) => session.rawStoreRef));
+    const nowMs = Date.now();
     const staleHiddenSessions = this.sessionIndexRepository
       .listByWorkspace(workspaceId, userId)
       .filter((session) => {
@@ -3022,7 +3024,10 @@ export class SessionHistoryService {
           (session.provider === "codex" &&
             (
               isLegacyCodingNsRolloutSession(session.providerSessionId, session.rawStoreRef) ||
-              shouldRemoveMissingSyntheticCodexSession(session.rawStoreRef)
+              (
+                shouldRemoveMissingSyntheticCodexSession(session.rawStoreRef) &&
+                !this.shouldPreserveSyntheticCodexSession(session, nowMs)
+              )
             )) ||
           (session.provider === "claude-code" && shouldRemoveHiddenClaudeDebugSession(session))
         );
@@ -3043,6 +3048,42 @@ export class SessionHistoryService {
       WORKSPACE_DISCOVERY_PERSIST_BATCH_SIZE,
       deleteTransaction
     );
+  }
+
+  private shouldPreserveSyntheticCodexSession(
+    session: Pick<
+      SessionListItem,
+      "sessionId" | "activitySource" | "runningState" | "createdAt" | "updatedAt"
+    >,
+    nowMs: number
+  ): boolean {
+    if (
+      session.activitySource === "runtime"
+      || session.runningState === "starting"
+      || session.runningState === "running"
+    ) {
+      return true;
+    }
+
+    const hasActiveRuntimeState = this.listSessionStatesBySessionId(session.sessionId).some(
+      (state) =>
+        state.activitySource === "runtime"
+        || state.runningState === "starting"
+        || state.runningState === "running"
+    );
+
+    if (hasActiveRuntimeState) {
+      return true;
+    }
+
+    const latestTouchedAt = pickLaterIso(session.updatedAt, session.createdAt) ?? session.updatedAt;
+    const latestTouchedAtMs = Date.parse(latestTouchedAt);
+
+    if (!Number.isFinite(latestTouchedAtMs)) {
+      return false;
+    }
+
+    return nowMs - latestTouchedAtMs <= SYNTHETIC_CODEX_SESSION_CLEANUP_GRACE_MS;
   }
 
   private findSameWorkspaceBindingDuplicate(
