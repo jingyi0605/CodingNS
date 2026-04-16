@@ -4337,10 +4337,10 @@ body {
 .workbench-auxiliary .terminal-manager-overview-card {
   gap: 4px;
   padding: 10px 12px;
-  border: none;
+  border: 1px solid rgba(15, 23, 42, 0.06);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.72);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.46);
+  background: transparent;
+  box-shadow: none;
 }
 
 .workbench-auxiliary .terminal-manager-overview-card span {
@@ -4407,6 +4407,8 @@ body {
   gap: 10px;
   padding: 0 0 12px;
   border-radius: 0 !important;
+  background: transparent;
+  box-shadow: none;
 }
 
 .workbench-auxiliary .terminal-manager-card + .terminal-manager-card {
@@ -4451,9 +4453,9 @@ body {
 
 .workbench-auxiliary .terminal-manager-status-panel {
   padding: 10px 12px;
-  border: none;
+  border: 1px solid rgba(15, 23, 42, 0.06);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.68);
+  background: transparent;
 }
 
 .workbench-auxiliary .terminal-manager-status-title {
@@ -4509,7 +4511,8 @@ body {
 .workbench-auxiliary .terminal-manager-detail-item {
   padding: 9px 10px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.56);
+  border: 1px solid rgba(15, 23, 42, 0.05);
+  background: transparent;
 }
 
 .workbench-auxiliary .terminal-manager-detail-item span {
@@ -5420,17 +5423,15 @@ body {
   --workbench-macos-titlebar-control-size: 26px;
   --workbench-macos-titlebar-padding-top: 4px;
   --workbench-macos-titlebar-padding-bottom: 5px;
-  --sidebar-surface: rgba(242, 244, 246, 0.8);
-  --inspector-surface: rgba(245, 247, 249, 0.84);
+  --sidebar-surface: rgba(243, 244, 245, 0.82);
+  --inspector-surface: rgba(243, 244, 245, 0.86);
   --content-surface: rgba(252, 252, 252, 0.98);
   --panel-bg: rgba(255, 255, 255, 0.68);
   --panel-bg-strong: rgba(255, 255, 255, 0.9);
   --panel-border: rgba(15, 23, 42, 0.08);
   --panel-border-strong: rgba(15, 23, 42, 0.12);
   --panel-separator: rgba(15, 23, 42, 0.08);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.14), transparent 18%),
-    transparent;
+  background: transparent;
 }
 
 [data-theme="dark"] .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] {
@@ -5456,18 +5457,13 @@ body {
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] {
-  background:
-    radial-gradient(circle at 12% 0%, rgba(255, 255, 255, 0.16), transparent 26%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 16%),
-    transparent;
+  background: transparent;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-body-shell {
-  border-color: color-mix(in srgb, var(--panel-border-strong) 68%, transparent);
-  background: color-mix(in srgb, var(--panel-bg-strong) 36%, transparent);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.2),
-    0 18px 42px rgba(15, 23, 42, 0.06);
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav,
@@ -5479,11 +5475,9 @@ body {
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary {
-  backdrop-filter: blur(26px) saturate(165%);
-  -webkit-backdrop-filter: blur(26px) saturate(165%);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.34),
-    inset 0 0 0 0.5px rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(28px) saturate(108%);
+  -webkit-backdrop-filter: blur(28px) saturate(108%);
+  box-shadow: none;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell {
@@ -5493,9 +5487,9 @@ body {
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-desktop-titlebar,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .terminal-tabbar {
-  background: color-mix(in srgb, var(--panel-bg-strong) 62%, transparent);
-  backdrop-filter: blur(30px) saturate(165%);
-  -webkit-backdrop-filter: blur(30px) saturate(165%);
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-import-card.minimal,
@@ -5511,9 +5505,7 @@ body {
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.14), transparent 18%),
-    color-mix(in srgb, var(--sidebar-surface) 94%, white 6%);
+  background: var(--sidebar-surface);
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell {
@@ -5521,9 +5513,7 @@ body {
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent 18%),
-    color-mix(in srgb, var(--inspector-surface) 94%, white 6%);
+  background: var(--inspector-surface);
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-side-resizer {
@@ -6065,8 +6055,8 @@ body {
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] {
-  --sidebar-surface: rgba(247, 248, 250, 0.66);
-  --inspector-surface: rgba(249, 250, 252, 0.68);
+  --sidebar-surface: rgba(243, 244, 245, 0.78);
+  --inspector-surface: rgba(243, 244, 245, 0.82);
   --panel-bg: rgba(255, 255, 255, 0.24);
   --panel-bg-strong: rgba(255, 255, 255, 0.42);
   --panel-border: rgba(15, 23, 42, 0.035);
@@ -6086,6 +6076,10 @@ body {
   font-kerning: normal;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-synthesis: none;
+  font-family: var(--font-sans);
+  font-weight: 400;
+  letter-spacing: -0.011em;
 }
 
 [data-theme="dark"] .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] {
@@ -6104,23 +6098,19 @@ body {
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary {
-  backdrop-filter: blur(28px) saturate(170%);
-  -webkit-backdrop-filter: blur(28px) saturate(170%);
+  backdrop-filter: blur(28px) saturate(108%);
+  -webkit-backdrop-filter: blur(28px) saturate(108%);
   box-shadow: none;
   border: none !important;
   outline: none;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent 18%),
-    color-mix(in srgb, var(--sidebar-surface) 90%, white 10%);
+  background: var(--sidebar-surface);
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent 18%),
-    color-mix(in srgb, var(--inspector-surface) 90%, white 10%);
+  background: var(--inspector-surface);
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-body-shell {
@@ -6215,13 +6205,11 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-primary-actions .secondary-button:hover:not(:disabled),
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-tree-trigger:hover,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-tree-file-button:hover,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-tree-file-button[data-active="true"],
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-tree-row[data-active="true"],
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-toolbar .ghost-button:hover:not(:disabled),
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-actions .secondary-button:hover:not(:disabled),
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-actions .primary-button:hover:not(:disabled),
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-detail-toggle:hover {
-  background: color-mix(in srgb, var(--panel-separator) 18%, transparent) !important;
+  background: rgba(60, 60, 67, 0.12) !important;
   border-color: transparent !important;
   box-shadow: none !important;
 }
@@ -6246,14 +6234,29 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-session-card[data-active="true"],
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-archive-folder:hover,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-workspace-icon-button:hover,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-workspace-create:hover,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-workspace-create:hover {
+  background: color-mix(in srgb, var(--panel-separator) 22%, transparent);
+  border-color: transparent;
+  box-shadow: none;
+}
+
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree-item:hover,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-session-list-button:hover,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-tree-trigger:hover,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-tree-file-button:hover,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-menu-item:hover:not(:disabled) {
+  background: rgba(60, 60, 67, 0.12);
+  border-color: transparent;
+  box-shadow: none;
+}
+
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree-item[data-selected="true"],
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-session-list-button[data-selected="true"],
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree-item[data-active="true"],
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-session-list-button[data-active="true"] {
-  background: color-mix(in srgb, var(--panel-separator) 22%, transparent);
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-session-list-button[data-active="true"],
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-tree-file-button[data-active="true"],
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-tree-row[data-active="true"] {
+  background: rgba(60, 60, 67, 0.18);
   border-color: transparent;
   box-shadow: none;
 }
@@ -6301,6 +6304,8 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-body,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-body,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary[data-custom-panel="true"] .butler-side-content,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-custom-panel .butler-side-content,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .debug-readiness-page-shell,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .message-timeline,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree {
@@ -6308,10 +6313,18 @@ body {
   scrollbar-color: transparent transparent;
 }
 
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary[data-custom-panel="true"] .butler-side-content,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-custom-panel .butler-side-content {
+  overflow-x: hidden;
+  overflow-y: overlay;
+}
+
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav::-webkit-scrollbar,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-body::-webkit-scrollbar,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary::-webkit-scrollbar,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-body::-webkit-scrollbar,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary[data-custom-panel="true"] .butler-side-content::-webkit-scrollbar,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-custom-panel .butler-side-content::-webkit-scrollbar,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .debug-readiness-page-shell::-webkit-scrollbar,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .message-timeline::-webkit-scrollbar,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree::-webkit-scrollbar {
@@ -6323,6 +6336,8 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-body:hover,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary:hover,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-body:hover,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary[data-custom-panel="true"] .butler-side-content:hover,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-custom-panel .butler-side-content:hover,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .debug-readiness-page-shell:hover,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .message-timeline:hover,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree:hover,
@@ -6330,6 +6345,8 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-body:focus-within,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary:focus-within,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-body:focus-within,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary[data-custom-panel="true"] .butler-side-content:focus-within,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-custom-panel .butler-side-content:focus-within,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .debug-readiness-page-shell:focus-within,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .message-timeline:focus-within,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree:focus-within {
@@ -6340,6 +6357,8 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-body::-webkit-scrollbar-track,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary::-webkit-scrollbar-track,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-body::-webkit-scrollbar-track,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary[data-custom-panel="true"] .butler-side-content::-webkit-scrollbar-track,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-custom-panel .butler-side-content::-webkit-scrollbar-track,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .debug-readiness-page-shell::-webkit-scrollbar-track,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .message-timeline::-webkit-scrollbar-track,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree::-webkit-scrollbar-track {
@@ -6350,6 +6369,8 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-body::-webkit-scrollbar-thumb,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary::-webkit-scrollbar-thumb,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-body::-webkit-scrollbar-thumb,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary[data-custom-panel="true"] .butler-side-content::-webkit-scrollbar-thumb,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-custom-panel .butler-side-content::-webkit-scrollbar-thumb,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .debug-readiness-page-shell::-webkit-scrollbar-thumb,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .message-timeline::-webkit-scrollbar-thumb,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree::-webkit-scrollbar-thumb {
@@ -6363,6 +6384,8 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-body:hover::-webkit-scrollbar-thumb,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary:hover::-webkit-scrollbar-thumb,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-body:hover::-webkit-scrollbar-thumb,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary[data-custom-panel="true"] .butler-side-content:hover::-webkit-scrollbar-thumb,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-custom-panel .butler-side-content:hover::-webkit-scrollbar-thumb,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .debug-readiness-page-shell:hover::-webkit-scrollbar-thumb,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .message-timeline:hover::-webkit-scrollbar-thumb,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree:hover::-webkit-scrollbar-thumb,
@@ -6370,6 +6393,8 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-body:focus-within::-webkit-scrollbar-thumb,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary:focus-within::-webkit-scrollbar-thumb,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-body:focus-within::-webkit-scrollbar-thumb,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary[data-custom-panel="true"] .butler-side-content:focus-within::-webkit-scrollbar-thumb,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-custom-panel .butler-side-content:focus-within::-webkit-scrollbar-thumb,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .debug-readiness-page-shell:focus-within::-webkit-scrollbar-thumb,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .message-timeline:focus-within::-webkit-scrollbar-thumb,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree:focus-within::-webkit-scrollbar-thumb {
@@ -6388,7 +6413,7 @@ body {
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-desktop-titlebar,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .terminal-tabbar {
-  background: color-mix(in srgb, var(--panel-bg-strong) 54%, transparent);
+  background: transparent;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-header h1,
@@ -6403,8 +6428,8 @@ body {
     -apple-system,
     BlinkMacSystemFont,
     sans-serif;
-  font-weight: 500;
-  letter-spacing: -0.018em;
+  font-weight: 560;
+  letter-spacing: -0.022em;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .settings-row-title,
@@ -6413,14 +6438,75 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .session-title,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-info-tab,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button {
-  font-weight: 500;
-  letter-spacing: -0.012em;
+  font-weight: 510;
+  letter-spacing: -0.015em;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .settings-row-description,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .session-meta,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .settings-section-title {
   color: color-mix(in srgb, var(--text-secondary) 84%, rgba(60, 60, 67, 0.58));
+  font-weight: 400;
+  letter-spacing: -0.008em;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell {
+  font-family: var(--font-sans);
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .conversation-header h1 {
+  font-size: 15px;
+  font-weight: 580;
+  letter-spacing: -0.022em;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-workspace-toggle strong {
+  font-size: 12.5px;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .session-title {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.012em;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .session-meta,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-header p,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .status-text {
+  font-weight: 400;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .message-text,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .message-text p,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .markdown-content p,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .markdown-content li,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .markdown-content blockquote,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .markdown-content td,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .composer-input {
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .composer-input {
+  line-height: 1.65;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-panel-view-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-panel-session-actions .secondary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-panel-session-actions .primary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-primary-actions .secondary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-primary-actions .primary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel .ghost-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel .secondary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel .primary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-settings-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .secondary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .primary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .ghost-button {
+  font-weight: 510;
+  letter-spacing: -0.01em;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-panel-view-button,
@@ -6441,8 +6527,12 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-section,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-card,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-desktop-card,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-details,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-overview-card,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-list,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-status-panel,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-detail-item,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel-eyebrow,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-runtime-badge,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel .badge,
@@ -6454,6 +6544,7 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-detail-toggle,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .workbench-section-counter {
   background: transparent !important;
+  background-image: none !important;
   border-color: transparent !important;
   box-shadow: none !important;
 }
@@ -6542,6 +6633,46 @@ body {
   -webkit-backdrop-filter: blur(24px) saturate(160%);
 }
 
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-menu-item:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--panel-separator) 16%, transparent);
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-section {
+  background: transparent !important;
+  background-image: none !important;
+  border: 1px solid rgba(255, 255, 255, 0.68) !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-card,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-desktop-card,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-overview-card,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-status-panel,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-detail-item,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .workbench-empty-state.minimal {
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-overview-card,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-status-panel,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-detail-item {
+  border-color: rgba(255, 255, 255, 0.56) !important;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-card + .terminal-manager-card {
+  border-top-color: rgba(255, 255, 255, 0.48) !important;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .butler-todo-card {
+  background: transparent !important;
+  border: 1px solid color-mix(in srgb, var(--panel-border-strong) 72%, transparent) !important;
+  box-shadow: none !important;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .butler-todo-prompt-preview pre {
+  background: transparent !important;
+  border: 1px solid color-mix(in srgb, var(--panel-border-strong) 68%, transparent);
+  box-shadow: none !important;
 }
