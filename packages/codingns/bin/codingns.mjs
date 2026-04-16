@@ -246,6 +246,188 @@ async function runAssistantCommand(argv) {
       })));
       return;
     }
+    case "workspaces:list":
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: "/api/assistant/workspaces",
+        argv: rest,
+        helpTopic: "workspaces.list"
+      }));
+      return;
+    case "workspaces:browse":
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: "/api/assistant/workspaces/browse",
+        argv: rest,
+        supportedOptions: ["path"],
+        helpTopic: "workspaces.browse"
+      }, (options) => ({
+        path: readOptionalTrimmedValue(options.values.path)
+      })));
+      return;
+    case "workspaces:mkdir":
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: "/api/assistant/workspaces/directories",
+        argv: rest,
+        supportedOptions: ["parent-path", "directory-name"],
+        helpTopic: "workspaces.mkdir"
+      }, (options) => ({
+        parentPath: requireOptionValue(options.values["parent-path"], "parent-path"),
+        directoryName: requireOptionValue(options.values["directory-name"], "directory-name")
+      })));
+      return;
+    case "workspaces:import":
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: "/api/assistant/workspaces/import",
+        argv: rest,
+        supportedOptions: ["path", "name"],
+        helpTopic: "workspaces.import"
+      }, (options) => ({
+        path: requireOptionValue(options.values.path, "path"),
+        name: readOptionalTrimmedValue(options.values.name)
+      })));
+      return;
+    case "workspaces:clone":
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: "/api/assistant/workspaces/clone",
+        argv: rest,
+        supportedOptions: [
+          "repository-url",
+          "parent-path",
+          "directory-name",
+          "name",
+          "auth-mode",
+          "username",
+          "password",
+          "auth-token"
+        ],
+        helpTopic: "workspaces.clone"
+      }, (options) => ({
+        repositoryUrl: requireOptionValue(options.values["repository-url"], "repository-url"),
+        parentPath: requireOptionValue(options.values["parent-path"], "parent-path"),
+        directoryName: readOptionalTrimmedValue(options.values["directory-name"]),
+        name: readOptionalTrimmedValue(options.values.name),
+        auth: buildWorkspaceCloneAuth(options.values)
+      })));
+      return;
+    case "workspaces:reorder":
+      await printAssistantResponse(await requestAssistant({
+        method: "PUT",
+        path: "/api/assistant/workspaces/reorder",
+        argv: rest,
+        supportedOptions: ["workspace-id"],
+        repeatableOptions: ["workspace-id"],
+        helpTopic: "workspaces.reorder"
+      }, (options) => ({
+        workspaceIds: requireMultiOptionValues(options.values["workspace-id"], "workspace-id")
+      })));
+      return;
+    case "workspaces:management": {
+      const [workspaceId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: `/api/assistant/workspaces/${requirePositional(workspaceId, "workspaceId")}/management`,
+        argv: tail,
+        helpTopic: "workspaces.management"
+      }));
+      return;
+    }
+    case "workspaces:nav-state": {
+      const [workspaceId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "PUT",
+        path: `/api/assistant/workspaces/${requirePositional(workspaceId, "workspaceId")}/navigation-state`,
+        argv: tail,
+        supportedOptions: ["collapsed", "background-color"],
+        helpTopic: "workspaces.nav-state"
+      }, (options) => {
+        const payload = {};
+        const collapsed = readOptionalTrimmedValue(options.values.collapsed);
+        const backgroundColor = readOptionalTrimmedValue(options.values["background-color"]);
+
+        if (collapsed !== null) {
+          payload.collapsed = parseBooleanOption(collapsed, "collapsed");
+        }
+
+        if (backgroundColor !== null) {
+          payload.backgroundColor = normalizeBackgroundColorOption(backgroundColor);
+        }
+
+        return payload;
+      }));
+      return;
+    }
+    case "workspaces:remove": {
+      const [workspaceId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "DELETE",
+        path: `/api/assistant/workspaces/${requirePositional(workspaceId, "workspaceId")}`,
+        argv: tail,
+        helpTopic: "workspaces.remove"
+      }));
+      return;
+    }
+    case "worktrees:tree":
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: "/api/assistant/worktrees/tree",
+        argv: rest,
+        supportedOptions: ["root-workspace-id"],
+        helpTopic: "worktrees.tree"
+      }, (options) => ({
+        rootWorkspaceId: requireOptionValue(options.values["root-workspace-id"], "root-workspace-id")
+      })));
+      return;
+    case "worktrees:create":
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: "/api/assistant/worktrees",
+        argv: rest,
+        supportedOptions: ["source-workspace-id", "branch-name", "display-name", "base-ref"],
+        helpTopic: "worktrees.create"
+      }, (options) => ({
+        sourceWorkspaceId: requireOptionValue(options.values["source-workspace-id"], "source-workspace-id"),
+        branchName: requireOptionValue(options.values["branch-name"], "branch-name"),
+        displayName: readOptionalTrimmedValue(options.values["display-name"]),
+        baseRef: readOptionalTrimmedValue(options.values["base-ref"])
+      })));
+      return;
+    case "worktrees:merge-preview": {
+      const [workspaceId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: `/api/assistant/worktrees/${requirePositional(workspaceId, "workspaceId")}/merge-preview`,
+        argv: tail,
+        helpTopic: "worktrees.merge-preview"
+      }));
+      return;
+    }
+    case "worktrees:merge": {
+      const [workspaceId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: `/api/assistant/worktrees/${requirePositional(workspaceId, "workspaceId")}/merge-into-parent`,
+        argv: tail,
+        helpTopic: "worktrees.merge"
+      }));
+      return;
+    }
+    case "worktrees:cleanup": {
+      const [workspaceId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: `/api/assistant/worktrees/${requirePositional(workspaceId, "workspaceId")}/cleanup`,
+        argv: tail,
+        supportedFlags: ["delete-branch"],
+        helpTopic: "worktrees.cleanup"
+      }, (options) => ({
+        deleteBranch: options.flags["delete-branch"] === true
+      })));
+      return;
+    }
     default:
       console.error(`[codingns] 不支持的 assistant 子命令：${group}${action ? ` ${action}` : ""}`);
       printAssistantHelpTopic("assistant", 1);
@@ -336,7 +518,9 @@ async function requestAssistant(command, buildPayload) {
       "base-url",
       "token",
       ...(command.supportedOptions ?? [])
-    ]
+    ],
+    repeatableOptions: command.repeatableOptions ?? [],
+    supportedFlags: command.supportedFlags ?? []
   });
 
   if (options.help) {
@@ -366,13 +550,14 @@ async function requestAssistant(command, buildPayload) {
   let response;
 
   try {
+    const usesJsonBody = command.method === "POST" || command.method === "PUT";
     response = await fetch(url, {
       method: command.method,
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        ...(command.method === "POST" ? { "Content-Type": "application/json" } : {})
+        ...(usesJsonBody ? { "Content-Type": "application/json" } : {})
       },
-      body: command.method === "POST" ? JSON.stringify(payload ?? {}) : undefined
+      body: usesJsonBody ? JSON.stringify(payload ?? {}) : undefined
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "未知网络错误";
@@ -753,6 +938,8 @@ assistant 例子：
 
   codingns assistant capabilities list --token <token>
   codingns assistant projects list --status active --token <token>
+  codingns assistant workspaces list --token <token>
+  codingns assistant worktrees tree --root-workspace-id <id> --token <token>
   codingns assistant sessions send <sessionId> --message "继续修复类型错误" --token <token>
   codingns assistant terminals send <terminalId> --input "npm test\\n" --token <token>
 
@@ -840,6 +1027,115 @@ codingns assistant projects get
 
 用法：
   codingns assistant projects get <projectId> --token <token>
+`.trim();
+    case "workspaces":
+      return `
+codingns assistant workspaces
+
+可用动作：
+  list        列出当前工作区
+  browse      浏览可导入目录
+  mkdir       创建目录
+  import      导入工作区
+  clone       克隆并导入工作区
+  reorder     调整工作区顺序
+  management  读取工作区管理摘要
+  nav-state   更新导航状态
+  remove      移除工作区
+
+示例：
+  codingns assistant workspaces list --token <token>
+  codingns assistant workspaces import --path /repo/demo --token <token>
+`.trim();
+    case "workspaces.list":
+      return `
+codingns assistant workspaces list
+
+用途：
+  列出当前可见工作区。
+
+用法：
+  codingns assistant workspaces list --token <token>
+`.trim();
+    case "workspaces.browse":
+      return `
+codingns assistant workspaces browse
+
+用途：
+  浏览本地目录，给导入或 clone 选目标位置。
+
+用法：
+  codingns assistant workspaces browse [--path <path>] --token <token>
+`.trim();
+    case "workspaces.mkdir":
+      return `
+codingns assistant workspaces mkdir
+
+用途：
+  在指定父目录下创建新目录。
+
+用法：
+  codingns assistant workspaces mkdir --parent-path <path> --directory-name <name> --token <token>
+`.trim();
+    case "workspaces.import":
+      return `
+codingns assistant workspaces import
+
+用途：
+  把已有目录导入成工作区。
+
+用法：
+  codingns assistant workspaces import --path <path> [--name <name>] --token <token>
+`.trim();
+    case "workspaces.clone":
+      return `
+codingns assistant workspaces clone
+
+用途：
+  克隆 Git 仓库并导入成工作区。
+
+用法：
+  codingns assistant workspaces clone --repository-url <url> --parent-path <path> [--directory-name <name>] [--name <name>] [--auth-mode none|basic|token] [--username <name>] [--password <password>] [--auth-token <token>] --token <token>
+`.trim();
+    case "workspaces.reorder":
+      return `
+codingns assistant workspaces reorder
+
+用途：
+  调整工作区显示顺序，必须提交当前全部可见工作区。
+
+用法：
+  codingns assistant workspaces reorder --workspace-id <id> [--workspace-id <id>] --token <token>
+`.trim();
+    case "workspaces.management":
+      return `
+codingns assistant workspaces management
+
+用途：
+  读取工作区 Git 和代码构成摘要。
+
+用法：
+  codingns assistant workspaces management <workspaceId> --token <token>
+`.trim();
+    case "workspaces.nav-state":
+      return `
+codingns assistant workspaces nav-state
+
+用途：
+  更新工作区导航状态，比如折叠状态和背景色。
+
+用法：
+  codingns assistant workspaces nav-state <workspaceId> [--collapsed true|false] [--background-color #RRGGBB|none] --token <token>
+`.trim();
+    case "workspaces.remove":
+      return `
+codingns assistant workspaces remove
+
+用途：
+  移除工作区入口，不直接删除磁盘目录。
+
+用法：
+  codingns assistant workspaces remove <workspaceId> --token <token>
 `.trim();
     case "sessions":
       return `
@@ -960,14 +1256,88 @@ codingns assistant terminals send
 用法：
   codingns assistant terminals send <terminalId> --input "npm test\\n" --token <token>
 `.trim();
+    case "worktrees":
+      return `
+codingns assistant worktrees
+
+可用动作：
+  tree           读取工作树结构
+  create         创建子工作树
+  merge-preview  读取合并预览
+  merge          合并回父工作区
+  cleanup        清理子工作树
+
+示例：
+  codingns assistant worktrees tree --root-workspace-id <id> --token <token>
+  codingns assistant worktrees create --source-workspace-id <id> --branch-name feature/demo --token <token>
+`.trim();
+    case "worktrees.tree":
+      return `
+codingns assistant worktrees tree
+
+用途：
+  读取某个根工作区下面的工作树结构。
+
+用法：
+  codingns assistant worktrees tree --root-workspace-id <id> --token <token>
+`.trim();
+    case "worktrees.create":
+      return `
+codingns assistant worktrees create
+
+用途：
+  从指定工作区创建新的子工作树。
+
+用法：
+  codingns assistant worktrees create --source-workspace-id <id> --branch-name <name> [--display-name <name>] [--base-ref <ref>] --token <token>
+`.trim();
+    case "worktrees.merge-preview":
+      return `
+codingns assistant worktrees merge-preview
+
+用途：
+  查看子工作树合并回父工作区前的阻塞项和预览。
+
+用法：
+  codingns assistant worktrees merge-preview <workspaceId> --token <token>
+`.trim();
+    case "worktrees.merge":
+      return `
+codingns assistant worktrees merge
+
+用途：
+  把子工作树合并回父工作区。
+
+用法：
+  codingns assistant worktrees merge <workspaceId> --token <token>
+`.trim();
+    case "worktrees.cleanup":
+      return `
+codingns assistant worktrees cleanup
+
+用途：
+  清理已经完成的子工作树，可选同时删除分支。
+
+用法：
+  codingns assistant worktrees cleanup <workspaceId> [--delete-branch] --token <token>
+`.trim();
     default:
       return `
 codingns assistant 用法：
 
-  codingns assistant help [capabilities|projects|sessions|terminals] [action]
+  codingns assistant help [capabilities|projects|workspaces|sessions|terminals|worktrees] [action]
   codingns assistant capabilities list [--base-url http://127.0.0.1:3002] --token <token>
   codingns assistant projects list [--workspace-id <id>] [--status active|paused|archived] [--risk-level low|medium|high] --token <token>
   codingns assistant projects get <projectId> [--base-url ...] --token <token>
+  codingns assistant workspaces list [--base-url ...] --token <token>
+  codingns assistant workspaces browse [--path <path>] [--base-url ...] --token <token>
+  codingns assistant workspaces mkdir --parent-path <path> --directory-name <name> [--base-url ...] --token <token>
+  codingns assistant workspaces import --path <path> [--name <name>] [--base-url ...] --token <token>
+  codingns assistant workspaces clone --repository-url <url> --parent-path <path> [--directory-name <name>] [--name <name>] [--auth-mode none|basic|token] [--username <name>] [--password <password>] [--auth-token <token>] [--base-url ...] --token <token>
+  codingns assistant workspaces reorder --workspace-id <id> [--workspace-id <id>] [--base-url ...] --token <token>
+  codingns assistant workspaces management <workspaceId> [--base-url ...] --token <token>
+  codingns assistant workspaces nav-state <workspaceId> [--collapsed true|false] [--background-color #RRGGBB|none] [--base-url ...] --token <token>
+  codingns assistant workspaces remove <workspaceId> [--base-url ...] --token <token>
   codingns assistant sessions list --project <projectId> [--base-url ...] --token <token>
   codingns assistant sessions get <sessionId> [--base-url ...] --token <token>
   codingns assistant sessions messages <sessionId> [--cursor <cursor>] [--limit 40] [--direction forward|backward] --token <token>
@@ -977,6 +1347,11 @@ codingns assistant 用法：
   codingns assistant terminals list [--workspace-id <id> | --project-id <id>] --token <token>
   codingns assistant terminals history <terminalId> [--before-seq <n>] [--limit 20] --token <token>
   codingns assistant terminals send <terminalId> --input "npm test\\n" --token <token>
+  codingns assistant worktrees tree --root-workspace-id <id> [--base-url ...] --token <token>
+  codingns assistant worktrees create --source-workspace-id <id> --branch-name <name> [--display-name <name>] [--base-ref <ref>] [--base-url ...] --token <token>
+  codingns assistant worktrees merge-preview <workspaceId> [--base-url ...] --token <token>
+  codingns assistant worktrees merge <workspaceId> [--base-url ...] --token <token>
+  codingns assistant worktrees cleanup <workspaceId> [--delete-branch] [--base-url ...] --token <token>
 
 环境变量：
 
@@ -1055,6 +1430,50 @@ function buildAssistantHelpTopic(action, rest) {
   }
 
   return `${action}.${rest[0]}`;
+}
+
+function buildWorkspaceCloneAuth(values) {
+  const authMode = readOptionalTrimmedValue(values["auth-mode"]);
+
+  if (!authMode || authMode === "none") {
+    return authMode === "none" ? { mode: "none" } : undefined;
+  }
+
+  if (authMode === "basic") {
+    return {
+      mode: "basic",
+      username: readOptionalTrimmedValue(values.username),
+      password: readOptionalTrimmedValue(values.password)
+    };
+  }
+
+  if (authMode === "token") {
+    return {
+      mode: "token",
+      username: readOptionalTrimmedValue(values.username),
+      token: readOptionalTrimmedValue(values["auth-token"])
+    };
+  }
+
+  fail(`不支持的 --auth-mode：${authMode}`);
+}
+
+function parseBooleanOption(value, field) {
+  const normalized = value.toLowerCase();
+
+  if (normalized === "true") {
+    return true;
+  }
+
+  if (normalized === "false") {
+    return false;
+  }
+
+  fail(`参数 --${field} 只接受 true 或 false`);
+}
+
+function normalizeBackgroundColorOption(value) {
+  return value.toLowerCase() === "none" ? null : value;
 }
 
 function buildSkillsHelpTopic(action) {
