@@ -2572,15 +2572,17 @@ export function MessageTimeline({
     }
 
     const currentHeadSignature = buildMessageSignature(messages[0] ?? null);
+    const pendingOlderLoadOffset = pendingOlderLoadOffsetRef.current;
+    const pendingOlderLoadHeadSignature = pendingOlderLoadHeadSignatureRef.current;
     const shouldRestoreOlderLoadOffset =
-      pendingOlderLoadOffsetRef.current !== null
+      pendingOlderLoadOffset !== null
       && !loadingOlderMessages
-      && pendingOlderLoadHeadSignatureRef.current !== null
-      && pendingOlderLoadHeadSignatureRef.current !== currentHeadSignature
+      && pendingOlderLoadHeadSignature !== null
+      && pendingOlderLoadHeadSignature !== currentHeadSignature
       && messages.length >= previousCount;
 
     if (shouldRestoreOlderLoadOffset) {
-      list.scrollTop = Math.max(0, list.scrollHeight - pendingOlderLoadOffsetRef.current);
+      list.scrollTop = Math.max(0, list.scrollHeight - pendingOlderLoadOffset);
       pendingOlderLoadOffsetRef.current = null;
       pendingOlderLoadHeadSignatureRef.current = null;
     } else if (pendingOlderLoadOffsetRef.current !== null && !loadingOlderMessages) {
