@@ -11,6 +11,7 @@ import { SessionBindingRepository } from "../../src/storage/repositories/session
 import { SessionChangedFileRepository } from "../../src/storage/repositories/session-changed-file-repository.js";
 import { SessionIndexRepository } from "../../src/storage/repositories/session-index-repository.js";
 import { SessionMessageAttachmentRepository } from "../../src/storage/repositories/session-message-attachment-repository.js";
+import { SessionMessageOriginRepository } from "../../src/storage/repositories/session-message-origin-repository.js";
 import { SessionStateRepository } from "../../src/storage/repositories/session-state-repository.js";
 import { SessionStatusSnapshotRepository } from "../../src/storage/repositories/session-status-snapshot-repository.js";
 import { WorkspaceRepository } from "../../src/storage/repositories/workspace-repository.js";
@@ -33,6 +34,7 @@ function createHarness() {
   const sessionIndexRepository = new SessionIndexRepository(database.db);
   const sessionStateRepository = new SessionStateRepository(database.db);
   const sessionStatusSnapshotRepository = new SessionStatusSnapshotRepository(database.db);
+  const sessionMessageOriginRepository = new SessionMessageOriginRepository(database.db);
   const sessionChangedFileService = new SessionChangedFileService(
     new SessionChangedFileRepository(database.db)
   );
@@ -50,7 +52,8 @@ function createHarness() {
     sessionStateRepository,
     sessionStatusSnapshotRepository,
     config,
-    new SessionActivityAuthorityService()
+    new SessionActivityAuthorityService(),
+    sessionMessageOriginRepository
   );
 
   activeFixtures.push(fixture);
@@ -88,7 +91,8 @@ function createHarness() {
     sessionBindingRepository,
     sessionIndexRepository,
     sessionStateRepository,
-    sessionStatusSnapshotRepository
+    sessionStatusSnapshotRepository,
+    sessionMessageOriginRepository
   };
 }
 
@@ -156,6 +160,68 @@ describe("SessionHistoryService 恢复缺失索引", () => {
       runningState: "starting",
       activitySource: "runtime"
     });
+  });
+
+  it("实时用户消息先到时，resolveMessageOrigin 会命中未回填 messageId 的代理来源并补写 messageId", () => {
+    const { service, sessionBindingRepository, sessionIndexRepository, sessionMessageOriginRepository } =
+      createHarness();
+
+    sessionBindingRepository.upsert({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "provider-session-1",
+      rawStoreRef: "pending://codex/session-1",
+      createdAt: "2026-04-16T08:00:30.000Z",
+      updatedAt: "2026-04-16T08:00:30.000Z"
+    });
+    sessionIndexRepository.upsert({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      title: "真实会话",
+      messageCount: 0,
+      isArchived: false,
+      lastMessageAt: null,
+      createdAt: "2026-04-16T08:00:30.000Z",
+      updatedAt: "2026-04-16T08:00:30.000Z"
+    });
+
+    sessionMessageOriginRepository.upsert({
+      sessionId: "session-1",
+      clientRequestId: "assistant-origin:test-unresolved",
+      messageId: null,
+      origin: "butler_proxy",
+      originRef: "control-1",
+      content: "继续推进",
+      createdAt: "2026-04-16T08:01:00.000Z",
+      updatedAt: "2026-04-16T08:01:00.000Z"
+    });
+
+    const resolved = service.resolveMessageOrigin("session-1", {
+      messageId: "message-1",
+      role: "user",
+      content: "继续推进",
+      timestamp: "2026-04-16T08:01:05.000Z",
+      sequence: 1,
+      attachments: []
+    });
+
+    expect(resolved.origin).toBe("butler_proxy");
+    expect(resolved.originRef).toBe("control-1");
+    expect(
+      sessionMessageOriginRepository.listBySessionAndMessageIds("session-1", ["message-1"])
+    ).toEqual([
+      expect.objectContaining({
+        sessionId: "session-1",
+        clientRequestId: "assistant-origin:test-unresolved",
+        messageId: "message-1",
+        origin: "butler_proxy",
+        originRef: "control-1",
+        content: "继续推进",
+        updatedAt: "2026-04-16T08:01:05.000Z"
+      })
+    ]);
   });
 
   it("discoverWorkspaceSessions 不会删除刚创建且尚未回填真实路径的 Codex synthetic session", async () => {

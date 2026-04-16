@@ -367,6 +367,7 @@ export interface GitRemoteCredentialRecord {
 export type ButlerProfileProviderId = "codex" | "claude-code";
 export type ButlerAgentsMode = "inline" | "file";
 export type ButlerControlSessionStatus = "idle" | "running" | "failed" | "closed";
+export type ButlerControlTimerStatus = "active" | "completed" | "cancelled" | "failed";
 export type ButlerControlEventKind = "action";
 export type ButlerControlActionType =
   | "open-project"
@@ -444,11 +445,32 @@ export interface ButlerControlSession {
   purpose: ButlerControlSessionPurpose;
   title: string | null;
   sourceItemId: string | null;
+  model: string | null;
+  reasoningLevel: string | null;
+  permissionMode: string | null;
   status: ButlerControlSessionStatus;
   lastContextVersion: string | null;
   lastSummary: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ButlerControlTimer {
+  id: string;
+  controlSessionId: string;
+  sessionId: string;
+  userId: string;
+  projectId: string | null;
+  targetSessionId: string | null;
+  title: string | null;
+  content: string;
+  dueAt: string;
+  status: ButlerControlTimerStatus;
+  triggeredAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  cancelledAt: string | null;
 }
 
 export interface ButlerControlRelatedRef {

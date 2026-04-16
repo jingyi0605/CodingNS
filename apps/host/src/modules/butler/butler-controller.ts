@@ -1,11 +1,14 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 
+import { AppError } from "../../shared/errors/app-error.js";
+import type { ButlerControlTimerStatus } from "../../types/domain.js";
 import { requireUserId } from "../preferences/common.js";
 import type {
   ButlerControlSessionService,
   SendButlerControlMessageInput,
   StartButlerControlSessionInput
 } from "./butler-control-session-service.js";
+import type { ButlerControlTimerService } from "./butler-control-timer-service.js";
 import type {
   ButlerControlActionService,
   ResumeButlerProjectSessionActionInput,
@@ -62,6 +65,12 @@ interface ButlerFollowUpTaskListQuery {
   sessionId?: string;
 }
 
+interface ButlerControlTimerListQuery {
+  status?: ButlerControlTimerStatus;
+  controlSessionId?: string;
+  limit?: string;
+}
+
 interface ButlerProjectParams {
   projectId: string;
 }
@@ -78,7 +87,25 @@ interface ButlerFollowUpTaskParams {
   taskId: string;
 }
 
+interface ButlerControlTimerParams {
+  timerId: string;
+}
+
 interface CancelButlerFollowUpTaskBody {
+  reason?: string;
+}
+
+interface CreateButlerControlTimerBody {
+  controlSessionId?: string | null;
+  projectId?: string | null;
+  targetSessionId?: string | null;
+  title?: string | null;
+  content?: string;
+  dueAt?: string | null;
+  afterSeconds?: number | null;
+}
+
+interface CancelButlerControlTimerBody {
   reason?: string;
 }
 
@@ -267,6 +294,10 @@ export class ButlerController {
     private readonly butlerActionContextService?: Pick<
       ButlerActionContextService,
       "getSessionActionContext" | "invalidateSessionActionContext"
+    >,
+    private readonly butlerControlTimerService?: Pick<
+      ButlerControlTimerService,
+      "listTimers" | "getTimer" | "createTimer" | "cancelTimer"
     >
   ) {}
 
@@ -333,6 +364,32 @@ export class ButlerController {
     });
   };
 
+  readonly listControlTimers = async (
+    request: FastifyRequest<{ Querystring: ButlerControlTimerListQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      items: this.requireControlTimerService().listTimers({
+        userId: requireUserId(request),
+        statuses: request.query.status ? [request.query.status] : undefined,
+        controlSessionId: request.query.controlSessionId?.trim() || null,
+        limit: normalizePositiveInteger(request.query.limit)
+      })
+    });
+  };
+
+  readonly getControlTimer = async (
+    request: FastifyRequest<{ Params: ButlerControlTimerParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      timer: this.requireControlTimerService().getTimer(
+        request.params.timerId,
+        requireUserId(request)
+      )
+    });
+  };
+
   readonly listControlSessionEvents = async (
     _request: FastifyRequest,
     reply: FastifyReply
@@ -380,6 +437,39 @@ export class ButlerController {
     reply.status(202).send(
       await this.butlerControlSessionService.sendMessage(requireUserId(request), request.body ?? {})
     );
+  };
+
+  readonly createControlTimer = async (
+    request: FastifyRequest<{ Body: CreateButlerControlTimerBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.status(201).send({
+      timer: this.requireControlTimerService().createTimer({
+        userId: requireUserId(request),
+        controlSessionId: request.body.controlSessionId,
+        projectId: request.body.projectId,
+        targetSessionId: request.body.targetSessionId,
+        title: request.body.title,
+        content: request.body.content ?? "",
+        dueAt: request.body.dueAt,
+        afterSeconds: request.body.afterSeconds
+      })
+    });
+  };
+
+  readonly cancelControlTimer = async (
+    request: FastifyRequest<{
+      Params: ButlerControlTimerParams;
+      Body: CancelButlerControlTimerBody;
+    }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      timer: this.requireControlTimerService().cancelTimer(
+        request.params.timerId,
+        requireUserId(request)
+      )
+    });
   };
 
   readonly getOverview = async (
@@ -1039,4 +1129,28 @@ export class ButlerController {
       run: this.verificationRunService.getRun(request.params.projectId, request.params.verificationId)
     });
   };
+
+  private requireControlTimerService(): Pick<
+    ButlerControlTimerService,
+    "listTimers" | "getTimer" | "createTimer" | "cancelTimer"
+  > {
+    if (!this.butlerControlTimerService) {
+      throw new AppError({
+        statusCode: 501,
+        errorCode: "BUTLER_CONTROL_TIMER_SERVICE_UNAVAILABLE",
+        detail: "当前实例尚未启用助手计时器服务"
+      });
+    }
+
+    return this.butlerControlTimerService;
+  }
+}
+
+function normalizePositiveInteger(value: string | undefined): number | undefined {
+  if (!value?.trim()) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }

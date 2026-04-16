@@ -28,10 +28,11 @@ description: Use when working inside CodingNS and needing to inspect托管项目
 6. 要分析调试目标、显式请求端口或启动调试进程时，先跑 `codingns assistant debug-targets --help`。
 7. 要查单次调试运行态时，先跑 `codingns assistant debug-runtimes --help`。
 8. 要找项目时，先跑 `codingns assistant projects --help`，再决定用 `list` 还是 `get`。
-9. 要找会话时，先跑 `codingns assistant sessions --help`，再决定用 `list / get / messages / runtime`。
-10. 要推进开发时，优先用 `codingns assistant sessions send`。
-11. 只有明确需要终端链路时，才用 `codingns assistant terminals send` 或 `codingns assistant terminals close`。
-12. 要从现有上下文开新分支时，才用 `codingns assistant sessions fork`。
+9. 要找会话时，先跑 `codingns assistant sessions --help`，再决定用 `list / start / get / messages / runtime / send / fork`。
+10. 要推进开发时，如果明确是在续写已有真实会话，才用 `codingns assistant sessions send`；如果没有明确续写目标，优先用 `codingns assistant sessions start` 按当前助手配置新建真实会话。
+11. 如果要等待真实会话回复，或者未来某个具体时间后再继续，必须用 `codingns assistant timers create` 创建计时器，不能只在回答里说“稍后继续”。
+12. 只有明确需要终端链路时，才用 `codingns assistant terminals send` 或 `codingns assistant terminals close`。
+13. 要从现有上下文开新分支时，才用 `codingns assistant sessions fork`。
 
 ## Butler 认证补充
 
@@ -67,6 +68,10 @@ description: Use when working inside CodingNS and needing to inspect托管项目
   先 `codingns assistant debug-targets launch-plan --help`，确认 `--port-request` 语法后再执行。
 - “给这个会话继续发任务”：
   先 `codingns assistant sessions send --help`，确认参数后再发送。
+- “没有明确续写目标，要把任务发到真实项目里”：
+  先 `codingns assistant sessions start --help`，确认参数后再新建会话。
+- “等 5 分钟后再回来检查真实会话”：
+  先 `codingns assistant timers create --help`，再创建计时器。
 - “终端里补一个测试命令”：
   先 `codingns assistant terminals history <terminalId>` 看最近输出，再决定是否 `send`。
 

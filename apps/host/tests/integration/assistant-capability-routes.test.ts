@@ -148,6 +148,90 @@ describe("assistant capability routes", () => {
     });
   });
 
+  it("新建项目会话和计时器路由会做参数清洗", async () => {
+    const assistantCapabilityService = {
+      startProjectSession: vi.fn(async () => ({
+        ok: true,
+        capability: "projects.sessions.start",
+        auditId: "audit-session-start",
+        timestamp: "2026-04-16T12:00:00.000Z",
+        targetRef: {
+          kind: "project",
+          id: "project-1"
+        },
+        payload: {
+          session: {
+            id: "butler-session-1",
+            sessionId: "session-1"
+          }
+        }
+      })),
+      createTimer: vi.fn(() => ({
+        ok: true,
+        capability: "timers.create",
+        auditId: "audit-timer-create",
+        timestamp: "2026-04-16T12:01:00.000Z",
+        targetRef: {
+          kind: "timer",
+          id: "timer-1"
+        },
+        payload: {
+          timer: {
+            id: "timer-1",
+            dueAt: "2026-04-16T12:06:00.000Z"
+          }
+        }
+      }))
+    };
+
+    const app = await createAssistantApp(assistantCapabilityService);
+
+    const startResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/projects/project-1/sessions",
+      payload: {
+        content: "  请在新会话里继续修复这个问题  ",
+        providerId: "  codex  ",
+        model: "  gpt-5.4  ",
+        reasoningLevel: "  high  ",
+        permissionMode: "  acceptEdits  "
+      }
+    });
+    expect(startResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.startProjectSession).toHaveBeenCalledWith({
+      projectId: "project-1",
+      userId: "user-1",
+      content: "请在新会话里继续修复这个问题",
+      providerId: "codex",
+      model: "gpt-5.4",
+      reasoningLevel: "high",
+      permissionMode: "acceptEdits"
+    });
+
+    const timerResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/timers",
+      payload: {
+        content: "  5 分钟后检查这个真实会话的新回复  ",
+        title: "  等待真实会话  ",
+        afterSeconds: "300",
+        projectId: "  project-1  ",
+        targetSessionId: "  session-1  "
+      }
+    });
+    expect(timerResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.createTimer).toHaveBeenCalledWith({
+      userId: "user-1",
+      controlSessionId: null,
+      projectId: "project-1",
+      targetSessionId: "session-1",
+      title: "等待真实会话",
+      content: "5 分钟后检查这个真实会话的新回复",
+      dueAt: null,
+      afterSeconds: 300
+    });
+  });
+
   it("发送会话消息和终端输入时会做基础参数清洗", async () => {
     const assistantCapabilityService = {
       sendSessionMessage: vi.fn(async () => ({
@@ -657,6 +741,7 @@ describe("assistant capability routes", () => {
     expect(launchPlanResponse.statusCode).toBe(200);
     expect(assistantCapabilityService.createDebugLaunchPlan).toHaveBeenCalledWith({
       targetId: "target-1",
+      userId: "user-1",
       portRequests: [
         {
           serviceId: null,

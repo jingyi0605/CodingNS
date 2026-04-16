@@ -272,6 +272,9 @@ describe("ButlerSessionService", () => {
     };
     const createdCheckpoints: Array<{ summary: string; progressState: string; sourceKind: string }> = [];
     const createdSessions: ButlerSession[] = [];
+    const originRepository = {
+      upsert: vi.fn()
+    };
 
     const service = new ButlerSessionService(
       {
@@ -308,9 +311,20 @@ describe("ButlerSessionService", () => {
           sessionId: "session-created",
           provider: "codex",
           providerSessionId: "provider-session-created",
-          acceptedAt: "2026-04-02T00:01:00.000Z"
+          acceptedAt: "2026-04-02T00:01:00.000Z",
+          clientRequestId: "req-created",
+          message: {
+            messageId: "msg-created",
+            role: "user",
+            content: "请检查项目进度",
+            timestamp: "2026-04-02T00:01:00.000Z",
+            sequence: 1,
+            attachments: []
+          }
         }))
-      }
+      },
+      undefined,
+      originRepository
     );
 
     const started = await service.startSession(
@@ -333,6 +347,15 @@ describe("ButlerSessionService", () => {
       progressState: "working",
       sourceKind: "manual"
     });
+    expect(originRepository.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "session-created",
+      clientRequestId: "req-created",
+      messageId: "msg-created",
+      origin: "butler_proxy",
+      content: "请检查项目进度",
+      createdAt: "2026-04-02T00:01:00.000Z",
+      updatedAt: "2026-04-02T00:01:00.000Z"
+    }));
   });
 
   it("startSession 遇到底层会话已创建但索引读取失败时，会自动回收并绑定托管会话", async () => {

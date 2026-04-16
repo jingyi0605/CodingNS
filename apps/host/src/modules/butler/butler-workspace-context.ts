@@ -163,7 +163,8 @@ function composeInstructionContent(
 - 如果 \`BUTLER_CONTEXT.md\` 里的项目数或会话数是 0，不能直接下结论，必须先确认 CLI 认证入口可用，再跑 \`codingns assistant capabilities list\` 和 \`codingns assistant projects list\` 确认真实状态。
 - 如果用户追问的细节超出当前摘要，先明确缺口，再按 \`BUTLER_API.md\` 里记录的 CLI 顺序补查项目、会话、消息窗口或终端历史。
 - 如果用户追问会话内容，先定位 \`sessionId\`，再优先用 \`codingns assistant sessions messages <sessionId>\` 查看最近消息，不要只复述摘要。
-- 需要推进开发时，优先用 \`codingns assistant sessions send <sessionId> --message ...\`；只有明确需要 shell 链路时，才用 \`codingns assistant terminals send <terminalId> --input ...\`。
+- 需要推进开发时，如果明确是在续写某个已有真实会话，才用 \`codingns assistant sessions send <sessionId> --message ...\`；如果没有明确续写目标，先用 \`codingns assistant sessions start --project <projectId> --message ...\` 按当前助手的 provider/model 配置新建真实会话。
+- 如果你决定“等待真实会话回复”“几分钟后再检查”“到某个具体时间再继续”，不能只在回答里口头承诺，必须立刻用 \`codingns assistant timers create ...\` 创建计时器，让系统到点后自动续回当前助手会话。
 - 不要编造不存在的项目状态；信息不足时直接说缺什么。
 `;
 }
@@ -205,9 +206,10 @@ export CODINGNS_ACCESS_TOKEN="$(jq -r '.accessToken' "${authFilePath}")"
 4. 不知道怎么查时，先跑 \`codingns assistant --help\`、\`codingns assistant help projects\`、\`codingns assistant help sessions\`、\`codingns assistant help terminals\`。
 5. 要找项目时，先 \`codingns assistant projects list\`，需要详情时再 \`projects get <projectId>\`。
 6. 要找会话时，先 \`codingns assistant sessions list --project <projectId>\`，再按需要用 \`sessions get\`、\`sessions runtime\`、\`sessions messages\`。
-7. 要推进开发时，优先 \`codingns assistant sessions send <sessionId> --message "..."\`。
-8. 只有明确需要 shell 链路时，先 \`terminals list\`、\`terminals history\`，再决定是否 \`terminals send\`。
-9. 要开新分支时，再用 \`codingns assistant sessions fork <sessionId>\`。
+7. 要推进开发时，先判断是不是明确续写某个已有真实会话；明确续写才用 \`codingns assistant sessions send <sessionId> --message "..."\`，否则用 \`codingns assistant sessions start --project <projectId> --message "..."\` 新建真实会话。
+8. 如果需要等待真实会话回复，或者未来某个具体时间后再继续，立刻用 \`codingns assistant timers create\` 建计时器，不能只口头说“稍后继续”。
+9. 只有明确需要 shell 链路时，先 \`terminals list\`、\`terminals history\`，再决定是否 \`terminals send\`。
+10. 要开新分支时，再用 \`codingns assistant sessions fork <sessionId>\`。
 
 ## 执行边界
 
@@ -222,7 +224,9 @@ export CODINGNS_ACCESS_TOKEN="$(jq -r '.accessToken' "${authFilePath}")"
 codingns assistant --help
 codingns assistant help projects
 codingns assistant help sessions
+codingns assistant sessions start --help
 codingns assistant sessions send --help
+codingns assistant timers create --help
 codingns assistant terminals send --help
 \`\`\`
 
@@ -235,8 +239,10 @@ codingns assistant terminals send --help
 - \`codingns assistant sessions get <sessionId>\`：读取真实会话详情。
 - \`codingns assistant sessions messages <sessionId> --limit 40\`：读取最近消息窗口。
 - \`codingns assistant sessions runtime <sessionId>\`：查看会话是否还在运行。
-- \`codingns assistant sessions send <sessionId> --message "..."\`：向真实项目会话发消息。
+- \`codingns assistant sessions start --project <projectId> --message "..."\`：按当前助手配置新建真实项目会话。
+- \`codingns assistant sessions send <sessionId> --message "..."\`：向明确要续写的真实项目会话发消息。
 - \`codingns assistant sessions fork <sessionId> --message-id <messageId>\`：从消息点 fork 新会话。
+- \`codingns assistant timers create --after-seconds 300 --message "..." --session-id <sessionId>\`：给当前助手会话挂一个后续唤醒计时器。
 - \`codingns assistant terminals list --project-id <projectId>\`：列出项目下终端。
 - \`codingns assistant terminals history <terminalId> --limit 50\`：读取终端最近输出。
 - \`codingns assistant terminals send <terminalId> --input "npm test\\n"\`：向终端发送输入。

@@ -15,12 +15,15 @@ export class ButlerControlSessionRepository {
            purpose,
            title,
            source_item_id,
+           model,
+           reasoning_level,
+           permission_mode,
            status,
            last_context_version,
            last_summary,
            created_at,
            updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         record.id,
@@ -29,6 +32,9 @@ export class ButlerControlSessionRepository {
         record.purpose,
         record.title,
         record.sourceItemId,
+        record.model,
+        record.reasoningLevel,
+        record.permissionMode,
         record.status,
         record.lastContextVersion,
         record.lastSummary,
@@ -49,6 +55,9 @@ export class ButlerControlSessionRepository {
            purpose,
            title,
            source_item_id,
+           model,
+           reasoning_level,
+           permission_mode,
            status,
            last_context_version,
            last_summary,
@@ -72,6 +81,9 @@ export class ButlerControlSessionRepository {
            purpose,
            title,
            source_item_id,
+           model,
+           reasoning_level,
+           permission_mode,
            status,
            last_context_version,
            last_summary,
@@ -97,6 +109,9 @@ export class ButlerControlSessionRepository {
            purpose,
            title,
            source_item_id,
+           model,
+           reasoning_level,
+           permission_mode,
            status,
            last_context_version,
            last_summary,
@@ -123,6 +138,9 @@ export class ButlerControlSessionRepository {
            purpose,
            title,
            source_item_id,
+           model,
+           reasoning_level,
+           permission_mode,
            status,
            last_context_version,
            last_summary,
@@ -146,6 +164,9 @@ export class ButlerControlSessionRepository {
            purpose,
            title,
            source_item_id,
+           model,
+           reasoning_level,
+           permission_mode,
            status,
            last_context_version,
            last_summary,
@@ -176,6 +197,9 @@ export class ButlerControlSessionRepository {
          SET purpose = ?,
              title = ?,
              source_item_id = ?,
+             model = ?,
+             reasoning_level = ?,
+             permission_mode = ?,
              status = ?,
              last_context_version = ?,
              last_summary = ?,
@@ -186,6 +210,9 @@ export class ButlerControlSessionRepository {
         record.purpose,
         record.title,
         record.sourceItemId,
+        record.model,
+        record.reasoningLevel,
+        record.permissionMode,
         record.status,
         record.lastContextVersion,
         record.lastSummary,
@@ -204,6 +231,9 @@ interface ButlerControlSessionRow {
   purpose: ButlerControlSession["purpose"];
   title: string | null;
   source_item_id: string | null;
+  model: string | null;
+  reasoning_level: string | null;
+  permission_mode: string | null;
   status: ButlerControlSession["status"];
   last_context_version: string | null;
   last_summary: string | null;
@@ -219,6 +249,9 @@ function mapButlerControlSessionRow(row: ButlerControlSessionRow): ButlerControl
     purpose: row.purpose,
     title: row.title,
     sourceItemId: row.source_item_id,
+    model: row.model,
+    reasoningLevel: row.reasoning_level,
+    permissionMode: row.permission_mode,
     status: row.status,
     lastContextVersion: row.last_context_version,
     lastSummary: row.last_summary,

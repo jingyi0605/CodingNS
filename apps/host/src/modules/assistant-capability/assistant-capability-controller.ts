@@ -23,10 +23,19 @@ interface AssistantTerminalParams {
   terminalId: string;
 }
 
+interface AssistantTimerParams {
+  timerId: string;
+}
+
 interface AssistantMessagesQuery {
   cursor?: string;
   limit?: string;
   direction?: string;
+}
+
+interface AssistantTimerListQuery {
+  status?: "active" | "completed" | "cancelled" | "failed";
+  controlSessionId?: string;
 }
 
 interface AssistantTerminalListQuery {
@@ -67,6 +76,14 @@ interface AssistantSendMessageBody {
   permissionMode?: string | null;
 }
 
+interface AssistantStartProjectSessionBody {
+  content?: string;
+  providerId?: "codex" | "claude-code" | null;
+  model?: string | null;
+  reasoningLevel?: string | null;
+  permissionMode?: string | null;
+}
+
 interface AssistantForkBody {
   sourceType?: "session" | "message";
   sourceMessageId?: string | null;
@@ -76,6 +93,16 @@ interface AssistantForkBody {
 
 interface AssistantTerminalInputBody {
   content?: string;
+}
+
+interface AssistantCreateTimerBody {
+  controlSessionId?: string | null;
+  projectId?: string | null;
+  targetSessionId?: string | null;
+  title?: string | null;
+  content?: string;
+  dueAt?: string | null;
+  afterSeconds?: number | string | null;
 }
 
 interface AssistantCreateWorkspaceDirectoryBody {
@@ -188,6 +215,24 @@ export class AssistantCapabilityController {
     ));
   };
 
+  readonly startProjectSession = async (
+    request: FastifyRequest<{
+      Params: AssistantProjectParams;
+      Body: AssistantStartProjectSessionBody;
+    }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.assistantCapabilityService.startProjectSession({
+      projectId: request.params.projectId,
+      userId: requireUserId(request),
+      content: requireNonEmptyText(request.body.content, "content", "新建项目会话必须提供 content"),
+      providerId: normalizeAssistantProviderId(request.body.providerId),
+      model: normalizeNullableText(request.body.model),
+      reasoningLevel: normalizeNullableText(request.body.reasoningLevel),
+      permissionMode: normalizeNullableText(request.body.permissionMode)
+    }));
+  };
+
   readonly getSession = async (
     request: FastifyRequest<{ Params: AssistantSessionParams }>,
     reply: FastifyReply
@@ -253,6 +298,53 @@ export class AssistantCapabilityController {
       strategy: request.body.strategy,
       targetProvider: normalizeNullableText(request.body.targetProvider)
     }));
+  };
+
+  readonly listTimers = async (
+    request: FastifyRequest<{ Querystring: AssistantTimerListQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.listTimers({
+      userId: requireUserId(request),
+      status: request.query.status,
+      controlSessionId: normalizeNullableText(request.query.controlSessionId)
+    }));
+  };
+
+  readonly getTimer = async (
+    request: FastifyRequest<{ Params: AssistantTimerParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.getTimer(
+      request.params.timerId,
+      requireUserId(request)
+    ));
+  };
+
+  readonly createTimer = async (
+    request: FastifyRequest<{ Body: AssistantCreateTimerBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.createTimer({
+      userId: requireUserId(request),
+      controlSessionId: normalizeNullableText(request.body.controlSessionId),
+      projectId: normalizeNullableText(request.body.projectId),
+      targetSessionId: normalizeNullableText(request.body.targetSessionId),
+      title: normalizeNullableText(request.body.title),
+      content: requireNonEmptyText(request.body.content, "content", "创建计时器必须提供 content"),
+      dueAt: normalizeNullableText(request.body.dueAt),
+      afterSeconds: normalizeNullableInteger(request.body.afterSeconds, "afterSeconds")
+    }));
+  };
+
+  readonly cancelTimer = async (
+    request: FastifyRequest<{ Params: AssistantTimerParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.cancelTimer(
+      request.params.timerId,
+      requireUserId(request)
+    ));
   };
 
   readonly listTerminals = async (
@@ -541,6 +633,7 @@ export class AssistantCapabilityController {
   ): Promise<void> => {
     reply.send(await this.assistantCapabilityService.createDebugLaunchPlan({
       targetId: request.params.targetId,
+      userId: requireUserId(request),
       portRequests: normalizeDebugPortRequests(request.body?.portRequests)
     }));
   };
@@ -674,6 +767,49 @@ function normalizeOptionalInteger(value: string | undefined, field: string): num
   }
 
   return parsed;
+}
+
+function normalizeNullableInteger(value: number | string | null | undefined, field: string): number | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const parsed =
+    typeof value === "number"
+      ? value
+      : Number.parseInt(value, 10);
+
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: `${field} 必须是正整数`,
+      field
+    });
+  }
+
+  return parsed;
+}
+
+function normalizeAssistantProviderId(
+  value: "codex" | "claude-code" | null | undefined
+): "codex" | "claude-code" | null {
+  const normalized = normalizeNullableText(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === "codex" || normalized === "claude-code") {
+    return normalized;
+  }
+
+  throw new AppError({
+    statusCode: 400,
+    errorCode: "INVALID_INPUT",
+    detail: `不支持的 providerId：${normalized}`,
+    field: "providerId"
+  });
 }
 
 function normalizeCommandHints(value: unknown): string[] {

@@ -1,5 +1,8 @@
 import { createId } from "../../shared/utils/id.js";
+import { AppError } from "../../shared/errors/app-error.js";
 import { nowIso } from "../../shared/utils/time.js";
+import type { ButlerControlSessionService } from "../butler/butler-control-session-service.js";
+import type { ButlerControlTimerService } from "../butler/butler-control-timer-service.js";
 import type { ButlerProjectService } from "../butler/butler-project-service.js";
 import type { ButlerSessionService } from "../butler/butler-session-service.js";
 import type {
@@ -8,6 +11,8 @@ import type {
 } from "../debug-target/debug-target-service.js";
 import type { SessionHistoryService } from "../sessions/session-history-service.js";
 import type { SessionLiveRuntimeService } from "../sessions/session-live-runtime-service.js";
+import type { SessionMessageOriginRepository } from "../../storage/repositories/session-message-origin-repository.js";
+import { recordButlerProxyMessageOrigin } from "../sessions/session-message-origin-utils.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
 import type {
   CloneWorkspaceInput,
@@ -34,7 +39,16 @@ export interface AssistantCapabilityReceipt<TPayload> {
   auditId: string;
   timestamp: string;
   targetRef: {
-    kind: "project" | "session" | "terminal" | "workspace" | "worktree" | "debug_target" | "debug_runtime" | "none";
+    kind:
+      | "project"
+      | "session"
+      | "terminal"
+      | "workspace"
+      | "worktree"
+      | "debug_target"
+      | "debug_runtime"
+      | "timer"
+      | "none";
     id: string | null;
   };
   payload: TPayload;
@@ -51,6 +65,16 @@ interface SendAssistantSessionMessageInput {
   userId: string;
   content: string;
   clientRequestId?: string | null;
+  model?: string | null;
+  reasoningLevel?: string | null;
+  permissionMode?: string | null;
+}
+
+interface StartAssistantProjectSessionInput {
+  projectId: string;
+  userId: string;
+  content: string;
+  providerId?: "codex" | "claude-code" | null;
   model?: string | null;
   reasoningLevel?: string | null;
   permissionMode?: string | null;
@@ -82,6 +106,17 @@ interface SendAssistantTerminalInput {
   content: string;
 }
 
+interface CreateAssistantTimerInput {
+  userId: string;
+  controlSessionId?: string | null;
+  projectId?: string | null;
+  targetSessionId?: string | null;
+  title?: string | null;
+  content: string;
+  dueAt?: string | null;
+  afterSeconds?: number | null;
+}
+
 interface AnalyzeAssistantDebugTargetInput {
   workspaceId: string;
   rootPath: string;
@@ -90,6 +125,7 @@ interface AnalyzeAssistantDebugTargetInput {
 
 interface CreateAssistantDebugLaunchPlanInput {
   targetId: string;
+  userId: string;
   portRequests: DebugTargetPortRequest[];
 }
 
@@ -159,6 +195,12 @@ const ASSISTANT_CAPABILITIES: AssistantCapabilityDescriptor[] = [
     summary: "列出指定项目下可操作的会话"
   },
   {
+    name: "projects.sessions.start",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "按当前助手配置为项目新建真实会话"
+  },
+  {
     name: "sessions.get",
     mode: "read",
     enabled: true,
@@ -187,6 +229,30 @@ const ASSISTANT_CAPABILITIES: AssistantCapabilityDescriptor[] = [
     mode: "proxy_execute",
     enabled: true,
     summary: "从指定会话或消息点 fork 新会话"
+  },
+  {
+    name: "timers.list",
+    mode: "read",
+    enabled: true,
+    summary: "列出当前助手会话相关的计时器"
+  },
+  {
+    name: "timers.get",
+    mode: "read",
+    enabled: true,
+    summary: "读取单个助手计时器详情"
+  },
+  {
+    name: "timers.create",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "创建助手控制会话的定时继续任务"
+  },
+  {
+    name: "timers.cancel",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "取消助手控制会话计时器"
   },
   {
     name: "terminals.list",
@@ -360,7 +426,12 @@ export class AssistantCapabilityService {
     >,
     private readonly butlerSessionService: Pick<
       ButlerSessionService,
-      "listByProject" | "ensureProjectSessionsSynced"
+      "listByProject" | "ensureProjectSessionsSynced" | "startSession"
+    >,
+    private readonly butlerControlSessionService: Pick<ButlerControlSessionService, "getCurrentSession">,
+    private readonly butlerControlTimerService: Pick<
+      ButlerControlTimerService,
+      "listTimers" | "getTimer" | "createTimer" | "cancelTimer"
     >,
     private readonly sessionHistoryService: Pick<
       SessionHistoryService,
@@ -401,7 +472,11 @@ export class AssistantCapabilityService {
     private readonly worktreeManager: Pick<WorktreeManager, "getTree" | "create">,
     private readonly worktreeSyncService: Pick<WorktreeSyncService, "syncRoot">,
     private readonly worktreeMergeService: Pick<WorktreeMergeService, "preview" | "apply">,
-    private readonly worktreeCleanupService: Pick<WorktreeCleanupService, "cleanup">
+    private readonly worktreeCleanupService: Pick<WorktreeCleanupService, "cleanup">,
+    private readonly sessionMessageOriginRepository: Pick<
+      SessionMessageOriginRepository,
+      "upsert"
+    > | null = null
   ) {}
 
   listCapabilities(): AssistantCapabilityReceipt<{
@@ -474,6 +549,49 @@ export class AssistantCapabilityService {
     });
   }
 
+  async startProjectSession(
+    input: StartAssistantProjectSessionInput
+  ): Promise<AssistantCapabilityReceipt<{
+    session: Awaited<ReturnType<ButlerSessionService["startSession"]>>;
+  }>> {
+    const controlSession = this.butlerControlSessionService.getCurrentSession(input.userId);
+    const providerId =
+      input.providerId?.trim() as "codex" | "claude-code" | undefined
+      ?? controlSession?.providerId
+      ?? undefined;
+
+    if (!providerId) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "ASSISTANT_CONTROL_SESSION_NOT_FOUND",
+        detail: "当前没有可用的助手控制会话，无法继承默认 provider"
+      });
+    }
+
+    const session = await this.butlerSessionService.startSession(
+      input.projectId,
+      {
+        role: "adhoc",
+        ownershipMode: "managed",
+        content: input.content.trim(),
+        providerId,
+        model: normalizeAssistantText(input.model) ?? controlSession?.model ?? null,
+        reasoningLevel:
+          normalizeAssistantText(input.reasoningLevel) ?? controlSession?.reasoningLevel ?? null,
+        permissionMode:
+          normalizeAssistantText(input.permissionMode) ?? controlSession?.permissionMode ?? null
+      },
+      input.userId
+    );
+
+    return this.createReceipt("projects.sessions.start", {
+      kind: "project",
+      id: input.projectId
+    }, {
+      session
+    });
+  }
+
   getSession(
     sessionId: string,
     userId: string
@@ -536,17 +654,33 @@ export class AssistantCapabilityService {
   ): Promise<AssistantCapabilityReceipt<{
     result: Awaited<ReturnType<SessionLiveRuntimeService["sendLiveMessage"]>>;
   }>> {
+    const requestedAt = nowIso();
+    const clientRequestId = recordButlerProxyMessageOrigin(this.sessionMessageOriginRepository, {
+      sessionId: input.sessionId,
+      clientRequestId: input.clientRequestId?.trim() || null,
+      content: input.content,
+      createdAt: requestedAt,
+      fallbackKey: `assistant-send:${input.sessionId}:${requestedAt}`
+    });
     const result = await this.sessionLiveRuntimeService.sendLiveMessage({
       sessionId: input.sessionId,
       userId: input.userId,
       content: input.content,
-      clientRequestId: input.clientRequestId?.trim() || null,
+      clientRequestId,
       runtimeOptions: {
         model: input.model?.trim() || null,
         reasoningLevel: input.reasoningLevel?.trim() || null,
         permissionMode: input.permissionMode?.trim() || null,
         attachments: []
       }
+    });
+    recordButlerProxyMessageOrigin(this.sessionMessageOriginRepository, {
+      sessionId: input.sessionId,
+      clientRequestId,
+      messageId: result.message?.messageId ?? null,
+      content: input.content,
+      createdAt: result.acceptedAt,
+      fallbackKey: `assistant-send:${input.sessionId}:${result.acceptedAt}`
     });
 
     return this.createReceipt("sessions.message.send", {
@@ -576,6 +710,76 @@ export class AssistantCapabilityService {
       id: input.sessionId
     }, {
       session
+    });
+  }
+
+  listTimers(
+    input: {
+      userId: string;
+      status?: "active" | "completed" | "cancelled" | "failed";
+      controlSessionId?: string | null;
+    }
+  ): AssistantCapabilityReceipt<{
+    items: ReturnType<ButlerControlTimerService["listTimers"]>;
+  }> {
+    const items = this.butlerControlTimerService.listTimers({
+      userId: input.userId,
+      statuses: input.status ? [input.status] : undefined,
+      controlSessionId: input.controlSessionId ?? null
+    });
+
+    return this.createReceipt("timers.list", {
+      kind: "none",
+      id: null
+    }, {
+      items
+    });
+  }
+
+  getTimer(
+    timerId: string,
+    userId: string
+  ): AssistantCapabilityReceipt<{
+    timer: ReturnType<ButlerControlTimerService["getTimer"]>;
+  }> {
+    const timer = this.butlerControlTimerService.getTimer(timerId, userId);
+
+    return this.createReceipt("timers.get", {
+      kind: "timer",
+      id: timerId
+    }, {
+      timer
+    });
+  }
+
+  createTimer(
+    input: CreateAssistantTimerInput
+  ): AssistantCapabilityReceipt<{
+    timer: ReturnType<ButlerControlTimerService["createTimer"]>;
+  }> {
+    const timer = this.butlerControlTimerService.createTimer(input);
+
+    return this.createReceipt("timers.create", {
+      kind: "timer",
+      id: timer.id
+    }, {
+      timer
+    });
+  }
+
+  cancelTimer(
+    timerId: string,
+    userId: string
+  ): AssistantCapabilityReceipt<{
+    timer: ReturnType<ButlerControlTimerService["cancelTimer"]>;
+  }> {
+    const timer = this.butlerControlTimerService.cancelTimer(timerId, userId);
+
+    return this.createReceipt("timers.cancel", {
+      kind: "timer",
+      id: timerId
+    }, {
+      timer
     });
   }
 
@@ -710,7 +914,11 @@ export class AssistantCapabilityService {
   ): Promise<AssistantCapabilityReceipt<{
     plan: Awaited<ReturnType<DebugTargetService["createLaunchPlan"]>>;
   }>> {
-    const plan = await this.debugTargetService.createLaunchPlan(input.targetId, input.portRequests);
+    const plan = await this.debugTargetService.createLaunchPlan(
+      input.targetId,
+      input.portRequests,
+      input.userId
+    );
 
     return this.createReceipt("debug-targets.launch-plan.create", {
       kind: "debug_target",
@@ -1023,4 +1231,9 @@ export class AssistantCapabilityService {
       payload
     };
   }
+}
+
+function normalizeAssistantText(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
 }

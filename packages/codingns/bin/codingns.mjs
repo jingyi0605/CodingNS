@@ -139,6 +139,23 @@ async function runAssistantCommand(argv) {
       }));
       return;
     }
+    case "sessions:start": {
+      const projectId = requireOptionPositional(rest, "--project", "projectId");
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: `/api/assistant/projects/${projectId}/sessions`,
+        argv: stripConsumedOption(rest, "--project"),
+        supportedOptions: ["message", "provider", "model", "reasoning-level", "permission-mode"],
+        helpTopic: "sessions.start"
+      }, (options) => ({
+        content: requireOptionValue(options.values.message, "message"),
+        providerId: readOptionalTrimmedValue(options.values.provider),
+        model: readOptionalTrimmedValue(options.values.model),
+        reasoningLevel: readOptionalTrimmedValue(options.values["reasoning-level"]),
+        permissionMode: readOptionalTrimmedValue(options.values["permission-mode"])
+      })));
+      return;
+    }
     case "sessions:get": {
       const [sessionId, ...tail] = rest;
       await printAssistantResponse(await requestAssistant({
@@ -205,6 +222,63 @@ async function runAssistantCommand(argv) {
         strategy: readOptionalTrimmedValue(options.values.strategy),
         targetProvider: readOptionalTrimmedValue(options.values["target-provider"])
       })));
+      return;
+    }
+    case "timers:list":
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: "/api/assistant/timers",
+        argv: rest,
+        supportedOptions: ["status", "control-session-id"],
+        helpTopic: "timers.list"
+      }, (options) => ({
+        status: readOptionalTrimmedValue(options.values.status),
+        controlSessionId: readOptionalTrimmedValue(options.values["control-session-id"])
+      })));
+      return;
+    case "timers:get": {
+      const [timerId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: `/api/assistant/timers/${requirePositional(timerId, "timerId")}`,
+        argv: tail,
+        helpTopic: "timers.get"
+      }));
+      return;
+    }
+    case "timers:create":
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: "/api/assistant/timers",
+        argv: rest,
+        supportedOptions: [
+          "message",
+          "title",
+          "due-at",
+          "after-seconds",
+          "control-session-id",
+          "project-id",
+          "session-id"
+        ],
+        helpTopic: "timers.create"
+      }, (options) => ({
+        content: requireOptionValue(options.values.message, "message"),
+        title: readOptionalTrimmedValue(options.values.title),
+        dueAt: readOptionalTrimmedValue(options.values["due-at"]),
+        afterSeconds: readOptionalTrimmedValue(options.values["after-seconds"]),
+        controlSessionId: readOptionalTrimmedValue(options.values["control-session-id"]),
+        projectId: readOptionalTrimmedValue(options.values["project-id"]),
+        targetSessionId: readOptionalTrimmedValue(options.values["session-id"])
+      })));
+      return;
+    case "timers:cancel": {
+      const [timerId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: `/api/assistant/timers/${requirePositional(timerId, "timerId")}/cancel`,
+        argv: tail,
+        helpTopic: "timers.cancel"
+      }));
       return;
     }
     case "terminals:list":
@@ -1376,6 +1450,7 @@ codingns assistant sessions
 
 可用动作：
   list      列出指定项目下的会话
+  start     按当前助手配置新建项目会话
   get       读取会话详情
   messages  读取消息窗口
   runtime   读取运行态
@@ -1384,6 +1459,7 @@ codingns assistant sessions
 
 示例：
   codingns assistant sessions list --project <projectId> --token <token>
+  codingns assistant sessions start --project <projectId> --message "继续处理这个问题" --token <token>
   codingns assistant sessions send <sessionId> --message "继续修复" --token <token>
 `.trim();
     case "sessions.list":
@@ -1395,6 +1471,16 @@ codingns assistant sessions list
 
 用法：
   codingns assistant sessions list --project <projectId> --token <token>
+`.trim();
+    case "sessions.start":
+      return `
+codingns assistant sessions start
+
+用途：
+  在指定项目下新建真实会话；如果不显式传 provider/model，会默认继承当前助手控制会话的配置。
+
+用法：
+  codingns assistant sessions start --project <projectId> --message "..." [--provider <provider>] [--model <model>] [--reasoning-level <level>] [--permission-mode <mode>] --token <token>
 `.trim();
     case "sessions.get":
       return `
@@ -1445,6 +1531,60 @@ codingns assistant sessions fork
 
 用法：
   codingns assistant sessions fork <sessionId> [--source-type session|message] [--message-id <id>] [--strategy auto|native-only|reconstruct-only] [--target-provider <provider>] --token <token>
+`.trim();
+    case "timers":
+      return `
+codingns assistant timers
+
+可用动作：
+  list    列出当前助手会话相关的计时器
+  get     读取单个计时器详情
+  create  创建到点后继续助手会话的计时器
+  cancel  取消计时器
+
+示例：
+  codingns assistant timers create --after-seconds 300 --message "5 分钟后检查真实会话最新回复" --session-id <sessionId> --project-id <projectId> --token <token>
+  codingns assistant timers list --status active --token <token>
+`.trim();
+    case "timers.list":
+      return `
+codingns assistant timers list
+
+用途：
+  查看当前助手会话下仍在等待、已完成或已失败的计时器。
+
+用法：
+  codingns assistant timers list [--status active|completed|cancelled|failed] [--control-session-id <id>] --token <token>
+`.trim();
+    case "timers.get":
+      return `
+codingns assistant timers get
+
+用途：
+  读取单个计时器详情，包括计划触发时间和最后错误。
+
+用法：
+  codingns assistant timers get <timerId> --token <token>
+`.trim();
+    case "timers.create":
+      return `
+codingns assistant timers create
+
+用途：
+  创建一个一次性计时器；到期后系统会自动向同一个助手控制会话发送消息，继续工作。
+
+用法：
+  codingns assistant timers create --message "..." [--title <title>] [--due-at <isoTime> | --after-seconds <seconds>] [--control-session-id <id>] [--project-id <projectId>] [--session-id <sessionId>] --token <token>
+`.trim();
+    case "timers.cancel":
+      return `
+codingns assistant timers cancel
+
+用途：
+  取消一个尚未触发的计时器。
+
+用法：
+  codingns assistant timers cancel <timerId> --token <token>
 `.trim();
     case "terminals":
       return `
@@ -1687,7 +1827,7 @@ codingns assistant worktrees cleanup
       return `
 codingns assistant 用法：
 
-  codingns assistant help [capabilities|projects|sessions|terminals|debug-targets|debug-runtimes|workspaces|worktrees] [action]
+  codingns assistant help [capabilities|projects|sessions|timers|terminals|debug-targets|debug-runtimes|workspaces|worktrees] [action]
   codingns assistant capabilities list [--base-url http://127.0.0.1:3002] --token <token>
   codingns assistant projects list [--workspace-id <id>] [--status active|paused|archived] [--risk-level low|medium|high] --token <token>
   codingns assistant projects get <projectId> [--base-url ...] --token <token>
@@ -1710,11 +1850,16 @@ codingns assistant 用法：
   codingns assistant workspaces nav-state <workspaceId> [--collapsed true|false] [--background-color #RRGGBB|none] [--base-url ...] --token <token>
   codingns assistant workspaces remove <workspaceId> [--base-url ...] --token <token>
   codingns assistant sessions list --project <projectId> [--base-url ...] --token <token>
+  codingns assistant sessions start --project <projectId> --message "..." [--provider <provider>] [--model <model>] [--reasoning-level <level>] [--permission-mode <mode>] --token <token>
   codingns assistant sessions get <sessionId> [--base-url ...] --token <token>
   codingns assistant sessions messages <sessionId> [--cursor <cursor>] [--limit 40] [--direction forward|backward] --token <token>
   codingns assistant sessions runtime <sessionId> [--base-url ...] --token <token>
   codingns assistant sessions send <sessionId> --message "..." [--client-request-id <id>] [--model <model>] [--reasoning-level <level>] [--permission-mode <mode>] --token <token>
   codingns assistant sessions fork <sessionId> [--source-type session|message] [--message-id <id>] [--strategy auto|native-only|reconstruct-only] [--target-provider <provider>] --token <token>
+  codingns assistant timers list [--status active|completed|cancelled|failed] [--control-session-id <id>] --token <token>
+  codingns assistant timers get <timerId> [--base-url ...] --token <token>
+  codingns assistant timers create --message "..." [--title <title>] [--due-at <isoTime> | --after-seconds <seconds>] [--control-session-id <id>] [--project-id <projectId>] [--session-id <sessionId>] --token <token>
+  codingns assistant timers cancel <timerId> [--base-url ...] --token <token>
   codingns assistant terminals list [--workspace-id <id> | --project-id <id>] --token <token>
   codingns assistant terminals history <terminalId> [--before-seq <n>] [--limit 20] --token <token>
   codingns assistant terminals send <terminalId> --input "npm test\\n" --token <token>

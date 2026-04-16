@@ -64,6 +64,7 @@ codingns assistant help workspaces
 codingns assistant help worktrees
 codingns assistant help debug-targets
 codingns assistant help sessions
+codingns assistant help timers
 codingns assistant sessions send --help
 codingns assistant capabilities list
 codingns assistant projects list --status active
@@ -78,11 +79,13 @@ codingns assistant workspaces management workspace-123
 codingns assistant worktrees tree --root-workspace-id workspace-123
 codingns assistant worktrees create --source-workspace-id workspace-123 --branch-name feature/demo
 codingns assistant sessions list --project project-123
+codingns assistant sessions start --project project-123 --message "继续推进这个任务"
 codingns assistant sessions get session-123
 codingns assistant sessions messages session-123 --limit 20
 codingns assistant sessions runtime session-123
 codingns assistant sessions send session-123 --message "继续修复类型错误"
 codingns assistant sessions fork session-123 --message-id msg-123
+codingns assistant timers create --after-seconds 300 --message "5 分钟后检查真实会话的最新回复" --project-id project-123 --session-id session-123
 codingns assistant terminals list --project-id project-123
 codingns assistant terminals history terminal-123 --limit 50
 codingns assistant terminals send terminal-123 --input "npm test\n"

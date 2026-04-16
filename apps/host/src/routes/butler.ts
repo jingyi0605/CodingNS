@@ -12,11 +12,15 @@ export async function registerButlerRoutes(
   app.get("/api/butler/control-session", butlerController.getCurrentControlSession);
   app.get("/api/butler/control-sessions", butlerController.listControlSessions);
   app.get("/api/butler/control-sessions/:controlSessionId", butlerController.getControlSession);
+  app.get("/api/butler/control-timers", butlerController.listControlTimers);
+  app.get("/api/butler/control-timers/:timerId", butlerController.getControlTimer);
   app.get("/api/butler/control-session/events", butlerController.listControlSessionEvents);
   app.post("/api/butler/control-session/reset", butlerController.resetControlSession);
   app.post("/api/butler/control-session/start", butlerController.startControlSession);
   app.post("/api/butler/control-session/resume", butlerController.resumeControlSession);
   app.post("/api/butler/control-session/messages", butlerController.sendControlMessage);
+  app.post("/api/butler/control-timers", butlerController.createControlTimer);
+  app.post("/api/butler/control-timers/:timerId/cancel", butlerController.cancelControlTimer);
   app.get("/api/butler/overview", butlerController.getOverview);
   app.get("/api/butler/follow-up-tasks", butlerController.listFollowUpTasks);
   app.get("/api/butler/follow-up-tasks/:taskId", butlerController.getFollowUpTask);

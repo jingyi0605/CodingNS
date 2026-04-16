@@ -11,6 +11,8 @@ import { AssistantCapabilityController } from "../modules/assistant-capability/a
 import { AssistantCapabilityService } from "../modules/assistant-capability/assistant-capability-service.js";
 import { BootstrapController } from "../modules/bootstrap/bootstrap-controller.js";
 import { BootstrapService } from "../modules/bootstrap/bootstrap-service.js";
+import { ButlerControlTimerScheduler } from "../modules/butler/butler-control-timer-scheduler.js";
+import { ButlerControlTimerService } from "../modules/butler/butler-control-timer-service.js";
 import { ButlerControlSessionService } from "../modules/butler/butler-control-session-service.js";
 import { ButlerControlActionService } from "../modules/butler/butler-control-action-service.js";
 import { ButlerController } from "../modules/butler/butler-controller.js";
@@ -142,6 +144,7 @@ import { AuthLoginAttemptRepository } from "../storage/repositories/auth-login-a
 import { AuthUserRepository } from "../storage/repositories/auth-user-repository.js";
 import { AiFallbackEditRepository } from "../storage/repositories/ai-fallback-edit-repository.js";
 import { BootstrapStateRepository } from "../storage/repositories/bootstrap-state-repository.js";
+import { ButlerControlTimerRepository } from "../storage/repositories/butler-control-timer-repository.js";
 import { ButlerControlSessionRepository } from "../storage/repositories/butler-control-session-repository.js";
 import { ButlerControlEventRepository } from "../storage/repositories/butler-control-event-repository.js";
 import { ButlerFollowUpTaskRepository } from "../storage/repositories/butler-follow-up-task-repository.js";
@@ -224,6 +227,7 @@ export function createServer(config: HostConfig) {
     portLeaseRepository: new PortLeaseRepository(database.db),
     runtimeBindingRepository: new RuntimeBindingRepository(database.db),
     aiFallbackEditRepository: new AiFallbackEditRepository(database.db),
+    butlerControlTimerRepository: new ButlerControlTimerRepository(database.db),
     butlerControlSessionRepository: new ButlerControlSessionRepository(database.db),
     butlerControlEventRepository: new ButlerControlEventRepository(database.db),
     butlerFollowUpTaskRepository: new ButlerFollowUpTaskRepository(database.db),
@@ -583,7 +587,8 @@ export function createServer(config: HostConfig) {
     repositories.sessionIndexRepository,
     repositories.sessionStateRepository,
     sessionLiveRuntimeService,
-    sessionHistoryService
+    sessionHistoryService,
+    repositories.sessionMessageOriginRepository
   );
   const projectMemoryService = new ProjectMemoryService(
     repositories.butlerProjectRepository,
@@ -734,7 +739,19 @@ export function createServer(config: HostConfig) {
     butlerAuthService,
     skillManagerService,
     butlerRuntimeConfig.codexHomeDir,
-    config.codexHomeDir
+    config.codexHomeDir,
+    repositories.sessionMessageOriginRepository
+  );
+  const butlerControlTimerService = new ButlerControlTimerService(
+    butlerProfileService,
+    butlerControlSessionService,
+    repositories.butlerControlTimerRepository
+  );
+  const butlerControlTimerScheduler = new ButlerControlTimerScheduler(
+    butlerControlTimerService,
+    {
+      schedulerMetrics
+    }
   );
   butlerInboxService.configureLifecycleServices({
     butlerInboxAnalysisService,
@@ -843,7 +860,8 @@ export function createServer(config: HostConfig) {
     patrolRunService,
     patrolExecutionService,
     verificationRunService,
-    butlerActionContextService
+    butlerActionContextService,
+    butlerControlTimerService
   );
   const sessionController = new SessionController(
     sessionHistoryService,
@@ -854,6 +872,8 @@ export function createServer(config: HostConfig) {
     new AssistantCapabilityService(
       butlerProjectService,
       butlerSessionService,
+      butlerControlSessionService,
+      butlerControlTimerService,
       sessionHistoryService,
       sessionLiveRuntimeService,
       terminalService,
@@ -862,7 +882,8 @@ export function createServer(config: HostConfig) {
       worktreeManager,
       worktreeSyncService,
       worktreeMergeService,
-      worktreeCleanupService
+      worktreeCleanupService,
+      repositories.sessionMessageOriginRepository
     )
   );
   const providerController = new ProviderController(
@@ -969,6 +990,7 @@ export function createServer(config: HostConfig) {
   patrolScheduler.start();
   sessionSummaryScheduler.start();
   butlerFollowUpScheduler.start();
+  butlerControlTimerScheduler.start();
   debugRuntimeReconciliationScheduler.start();
 
   if (config.webUiDir) {
@@ -983,6 +1005,7 @@ export function createServer(config: HostConfig) {
     await patrolScheduler.dispose();
     await sessionSummaryScheduler.dispose();
     await butlerFollowUpScheduler.dispose();
+    await butlerControlTimerScheduler.dispose();
     await debugRuntimeReconciliationScheduler.dispose();
     terminalService.off("exit", handleDebugTargetTerminalExit);
     await terminalService.dispose();

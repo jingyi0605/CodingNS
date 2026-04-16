@@ -15,9 +15,11 @@ import type { ButlerAuthService } from "./butler-auth-service.js";
 import type { WorkspaceService } from "../workspace/workspace-service.js";
 import type { SessionHistoryService } from "../sessions/session-history-service.js";
 import type { SessionLiveRuntimeService } from "../sessions/session-live-runtime-service.js";
+import type { SessionMessageOriginRepository } from "../../storage/repositories/session-message-origin-repository.js";
 import type { ButlerContextAggregator, ButlerPromptContext } from "./context-aggregator.js";
 import type { SkillManagerService } from "../skills/skill-manager-service.js";
 import { syncButlerWorkspaceContext } from "./butler-workspace-context.js";
+import { recordButlerProxyMessageOrigin } from "../sessions/session-message-origin-utils.js";
 
 export interface ButlerControlSessionView extends ButlerControlSession {
   session: SessionListItem;
@@ -56,7 +58,11 @@ export class ButlerControlSessionService {
     private readonly butlerAuthService: Pick<ButlerAuthService, "ensureWorkspaceCredential" | "getCredentialFilePath">,
     private readonly skillManagerService: Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">,
     private readonly codexHomeDir: string | null = null,
-    private readonly sourceCodexHomeDir: string | null = null
+    private readonly sourceCodexHomeDir: string | null = null,
+    private readonly sessionMessageOriginRepository: Pick<
+      SessionMessageOriginRepository,
+      "upsert"
+    > | null = null
   ) {}
 
   getCurrentSession(userId: string): ButlerControlSessionView | null {
@@ -108,6 +114,11 @@ export class ButlerControlSessionService {
   ): Promise<ButlerControlSessionView> {
     const profile = this.butlerProfileService.ensureInitialized();
     const content = normalizeControlContent(input.content, "");
+    const model = normalizeNullableText(input.model);
+    const reasoningLevel = normalizeNullableText(input.reasoningLevel);
+    const permissionMode = normalizeNullableText(input.permissionMode);
+    const clientRequestId = normalizeNullableText(input.clientRequestId)
+      ?? `assistant-origin:butler-control-start:${createId()}`;
     const promptContext = await this.butlerContextAggregator.resolvePromptContext(userId, input.content ?? null);
     const workspace = this.prepareWorkspace(profile, promptContext, userId);
     const current = this.butlerControlSessionRepository.findLatestOpenByProvider(profile.providerId);
@@ -125,13 +136,21 @@ export class ButlerControlSessionService {
       userId,
       provider: profile.providerId,
       content,
-      clientRequestId: normalizeNullableText(input.clientRequestId),
+      clientRequestId,
       runtimeOptions: {
-        model: normalizeNullableText(input.model),
-        reasoningLevel: normalizeNullableText(input.reasoningLevel),
-        permissionMode: normalizeNullableText(input.permissionMode),
+        model,
+        reasoningLevel,
+        permissionMode,
         attachments: []
       }
+    });
+    recordButlerProxyMessageOrigin(this.sessionMessageOriginRepository, {
+      sessionId: started.sessionId,
+      clientRequestId,
+      messageId: started.message?.messageId ?? null,
+      content,
+      createdAt: started.acceptedAt,
+      fallbackKey: `butler-control-start:${started.sessionId}:${started.acceptedAt}`
     });
     const timestamp = started.acceptedAt;
     const created = this.butlerControlSessionRepository.create({
@@ -141,6 +160,9 @@ export class ButlerControlSessionService {
       purpose: input.purpose ?? "chat",
       title: normalizeNullableText(input.title),
       sourceItemId: normalizeNullableText(input.sourceItemId),
+      model,
+      reasoningLevel,
+      permissionMode,
       status: "running",
       lastContextVersion: promptContext.version,
       lastSummary: normalizeNullableText(input.title) ?? summarizeMessage(content),
@@ -202,6 +224,17 @@ export class ButlerControlSessionService {
         ? this.requireSessionById(input.controlSessionId, profile.providerId)
         : this.requireCurrentSession(profile.providerId);
     const content = normalizeControlContent(input.content, "");
+    const requestedAt = nowIso();
+    const clientRequestId = recordButlerProxyMessageOrigin(this.sessionMessageOriginRepository, {
+      sessionId: current.sessionId,
+      clientRequestId: normalizeNullableText(input.clientRequestId),
+      content,
+      createdAt: requestedAt,
+      fallbackKey: `butler-control-send:${current.id}:${requestedAt}`
+    });
+    const model = normalizeNullableText(input.model) ?? current.model;
+    const reasoningLevel = normalizeNullableText(input.reasoningLevel) ?? current.reasoningLevel;
+    const permissionMode = normalizeNullableText(input.permissionMode) ?? current.permissionMode;
     const promptContext = await this.butlerContextAggregator.resolvePromptContext(userId, content);
     this.syncWorkspaceContext(profile, promptContext, userId);
 
@@ -210,16 +243,27 @@ export class ButlerControlSessionService {
         sessionId: current.sessionId,
         userId,
         content,
-        clientRequestId: normalizeNullableText(input.clientRequestId),
+        clientRequestId,
         runtimeOptions: {
-          model: normalizeNullableText(input.model),
-          reasoningLevel: normalizeNullableText(input.reasoningLevel),
-          permissionMode: normalizeNullableText(input.permissionMode),
+          model,
+          reasoningLevel,
+          permissionMode,
           attachments: []
         }
       });
+      recordButlerProxyMessageOrigin(this.sessionMessageOriginRepository, {
+        sessionId: current.sessionId,
+        clientRequestId,
+        messageId: result.message?.messageId ?? null,
+        content,
+        createdAt: result.acceptedAt,
+        fallbackKey: `butler-control-send:${current.id}:${result.acceptedAt}`
+      });
       const updated = this.butlerControlSessionRepository.update({
         ...current,
+        model,
+        reasoningLevel,
+        permissionMode,
         status: "running",
         lastContextVersion: promptContext.version,
         lastSummary: summarizeMessage(content),

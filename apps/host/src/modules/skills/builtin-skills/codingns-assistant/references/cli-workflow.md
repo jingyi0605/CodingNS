@@ -90,7 +90,9 @@ codingns assistant sessions messages <sessionId> --limit 20 [--token <token>]
 ### 通过真实会话推进开发
 
 ```bash
+codingns assistant sessions start --project <projectId> --message "继续处理这个任务" [--token <token>]
 codingns assistant sessions send <sessionId> --message "继续修复类型错误" [--token <token>]
+codingns assistant timers create --after-seconds 300 --message "5 分钟后检查真实会话回复" --session-id <sessionId> --project-id <projectId> [--token <token>]
 ```
 
 如果需要从某条消息重新开分支：
@@ -122,7 +124,9 @@ codingns assistant terminals close <terminalId> --token <token>
 - 需要看子工作树能不能合并：优先 `worktrees merge-preview`
 - 需要为并行工作区分析调试目标或固定端口：优先 `debug-targets analyze`、`debug-targets launch-plan`
 - 需要看显式端口请求有没有落到实际运行时：优先 `debug-targets runtime-latest`、`debug-runtimes get`
+- 没有明确续写目标、要把任务发进真实项目：优先 `sessions start`
 - 需要继续已有开发上下文：优先 `sessions send`
+- 需要等待真实会话回复或未来某个时间继续：优先 `timers create`
 - 需要查看会话是否还活着：优先 `sessions runtime`
 - 需要看模型最近说了什么：优先 `sessions messages`
 - 需要看构建、测试、脚本输出：优先 `terminals history`

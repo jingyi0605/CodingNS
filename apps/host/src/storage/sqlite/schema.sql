@@ -688,6 +688,9 @@ CREATE TABLE IF NOT EXISTS butler_control_sessions (
   purpose TEXT NOT NULL DEFAULT 'chat' CHECK (purpose IN ('chat', 'todo_analysis')),
   title TEXT,
   source_item_id TEXT,
+  model TEXT,
+  reasoning_level TEXT,
+  permission_mode TEXT,
   status TEXT NOT NULL CHECK (status IN ('idle', 'running', 'failed', 'closed')),
   last_context_version TEXT,
   last_summary TEXT,
@@ -698,6 +701,32 @@ CREATE TABLE IF NOT EXISTS butler_control_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_butler_control_sessions_provider
   ON butler_control_sessions(provider_id, updated_at DESC, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS butler_control_timers (
+  id TEXT PRIMARY KEY,
+  control_session_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  project_id TEXT,
+  target_session_id TEXT,
+  title TEXT,
+  content TEXT NOT NULL,
+  due_at TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('active', 'completed', 'cancelled', 'failed')),
+  triggered_at TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  cancelled_at TEXT,
+  FOREIGN KEY (control_session_id) REFERENCES butler_control_sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY (session_id) REFERENCES session_bindings(session_id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_butler_control_timers_status_due_at
+  ON butler_control_timers(status, due_at ASC, updated_at ASC);
+CREATE INDEX IF NOT EXISTS idx_butler_control_timers_session
+  ON butler_control_timers(control_session_id, status, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS butler_control_events (
   id TEXT PRIMARY KEY,

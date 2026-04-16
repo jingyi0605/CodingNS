@@ -47,6 +47,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureUserPreferenceProfileSchema(db);
   ensureButlerProfileSchema(db);
   ensureButlerControlSessionSchema(db);
+  ensureButlerControlTimerSchema(db);
   ensureButlerInboxSchema(db);
   ensureButlerFollowUpTaskSchema(db);
   ensureButlerSessionSummarySchema(db);
@@ -269,6 +270,56 @@ function ensureButlerControlSessionSchema(db: Database.Database): void {
   if (!columnNames.has("source_item_id")) {
     db.exec("ALTER TABLE butler_control_sessions ADD COLUMN source_item_id TEXT");
   }
+
+  if (!columnNames.has("model")) {
+    db.exec("ALTER TABLE butler_control_sessions ADD COLUMN model TEXT");
+  }
+
+  if (!columnNames.has("reasoning_level")) {
+    db.exec("ALTER TABLE butler_control_sessions ADD COLUMN reasoning_level TEXT");
+  }
+
+  if (!columnNames.has("permission_mode")) {
+    db.exec("ALTER TABLE butler_control_sessions ADD COLUMN permission_mode TEXT");
+  }
+}
+
+function ensureButlerControlTimerSchema(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(butler_control_timers)")
+    .all() as Array<{ name: string }>;
+
+  if (columns.length > 0) {
+    return;
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS butler_control_timers (
+      id TEXT PRIMARY KEY,
+      control_session_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      project_id TEXT,
+      target_session_id TEXT,
+      title TEXT,
+      content TEXT NOT NULL,
+      due_at TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('active', 'completed', 'cancelled', 'failed')),
+      triggered_at TEXT,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      cancelled_at TEXT,
+      FOREIGN KEY (control_session_id) REFERENCES butler_control_sessions(id) ON DELETE CASCADE,
+      FOREIGN KEY (session_id) REFERENCES session_bindings(session_id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_butler_control_timers_status_due_at
+      ON butler_control_timers(status, due_at ASC, updated_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_butler_control_timers_session
+      ON butler_control_timers(control_session_id, status, updated_at DESC);
+  `);
 }
 
 function ensureButlerInboxSchema(db: Database.Database): void {

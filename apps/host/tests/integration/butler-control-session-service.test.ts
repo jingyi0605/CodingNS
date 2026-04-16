@@ -215,6 +215,9 @@ describe("ButlerControlSessionService", () => {
       activityState: "running"
     };
     let savedControlSession: ButlerControlSession | null = null;
+    const originRepository = {
+      upsert: vi.fn()
+    };
 
     const service = new ButlerControlSessionService(
       {
@@ -335,7 +338,8 @@ describe("ButlerControlSessionService", () => {
         }
       }),
       codexHomeDir,
-      defaultCodexHomeDir
+      defaultCodexHomeDir,
+      originRepository
     );
 
     const started = await service.startSession("user-1", {
@@ -375,6 +379,14 @@ describe("ButlerControlSessionService", () => {
     expect(readFileSync(path.join(codexHomeDir, "skills", "codingns-assistant", "SKILL.md"), "utf8")).toContain(
       "codingns-assistant"
     );
+    expect(originRepository.upsert).toHaveBeenCalledTimes(1);
+    expect(originRepository.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "session-1",
+      origin: "butler_proxy",
+      content: "请先介绍当前职责",
+      createdAt: "2026-04-05T00:00:10.000Z",
+      updatedAt: "2026-04-05T00:00:10.000Z"
+    }));
   });
 
   it("发送消息时会直接调用现有 session runtime", async () => {
@@ -404,6 +416,12 @@ describe("ButlerControlSessionService", () => {
       id: "control-1",
       providerId: "codex",
       sessionId: "session-1",
+      purpose: "chat",
+      title: null,
+      sourceItemId: null,
+      model: "gpt-5.4",
+      reasoningLevel: "medium",
+      permissionMode: "default",
       status: "idle",
       lastContextVersion: null,
       lastSummary: null,
@@ -444,6 +462,9 @@ describe("ButlerControlSessionService", () => {
       activityState: "running"
     };
     let updatedControlSession: ButlerControlSession | null = null;
+    const originRepository = {
+      upsert: vi.fn()
+    };
 
     const service = new ButlerControlSessionService(
       {
@@ -510,7 +531,10 @@ describe("ButlerControlSessionService", () => {
         }),
         getCredentialFilePath: vi.fn(() => path.join(workspacePath, "BUTLER_AUTH.json"))
       } as unknown as Pick<ButlerAuthService, "ensureWorkspaceCredential" | "getCredentialFilePath">,
-      createSkillManagerStub()
+      createSkillManagerStub(),
+      null,
+      null,
+      originRepository
     );
 
     const sent = await service.sendMessage("user-1", {
@@ -525,6 +549,23 @@ describe("ButlerControlSessionService", () => {
     expect(readFileSync(path.join(workspacePath, "BUTLER_CONTEXT.md"), "utf8")).toContain(
       "作用域：项目 project-1"
     );
+    expect(originRepository.upsert).toHaveBeenCalledTimes(2);
+    expect(originRepository.upsert).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      sessionId: "session-1",
+      clientRequestId: "req-1",
+      messageId: null,
+      origin: "butler_proxy",
+      content: "继续汇总当前风险"
+    }));
+    expect(originRepository.upsert).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      sessionId: "session-1",
+      clientRequestId: "req-1",
+      messageId: "msg-2",
+      origin: "butler_proxy",
+      content: "继续汇总当前风险",
+      createdAt: "2026-04-05T00:01:00.000Z",
+      updatedAt: "2026-04-05T00:01:00.000Z"
+    }));
   });
 });
 

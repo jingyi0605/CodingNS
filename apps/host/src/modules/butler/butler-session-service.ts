@@ -18,6 +18,8 @@ import type { SessionIndexRepository } from "../../storage/repositories/session-
 import type { SessionStateRepository } from "../../storage/repositories/session-state-repository.js";
 import type { SessionLiveRuntimeService } from "../sessions/session-live-runtime-service.js";
 import type { SessionHistoryService } from "../sessions/session-history-service.js";
+import type { SessionMessageOriginRepository } from "../../storage/repositories/session-message-origin-repository.js";
+import { recordButlerProxyMessageOrigin } from "../sessions/session-message-origin-utils.js";
 
 export interface ButlerProjectSessionView {
   id: string;
@@ -84,7 +86,11 @@ export class ButlerSessionService {
     private readonly sessionHistoryService?: Pick<
       SessionHistoryService,
       "discoverWorkspaceSessions" | "listWorkspaceSessions" | "requestWorkspaceDiscovery" | "resumeSession"
-    >
+    >,
+    private readonly sessionMessageOriginRepository: Pick<
+      SessionMessageOriginRepository,
+      "upsert"
+    > | null = null
   ) {}
 
   async startSession(
@@ -120,6 +126,14 @@ export class ButlerSessionService {
             normalizeNullableText(input.permissionMode)
             ?? (project.approvalMode === "readonly" ? "default" : "acceptEdits")
         }
+      });
+      recordButlerProxyMessageOrigin(this.sessionMessageOriginRepository, {
+        sessionId: launch.sessionId,
+        clientRequestId: launch.clientRequestId,
+        messageId: launch.message?.messageId ?? null,
+        content,
+        createdAt: launch.acceptedAt,
+        fallbackKey: `butler-session-start:${project.id}:${launch.sessionId}`
       });
 
       return this.createManagedSessionFromLaunch(project, input, providerId, launch);
