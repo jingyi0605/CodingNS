@@ -4164,6 +4164,24 @@ body {
   color: rgba(60, 60, 67, 0.86);
 }
 
+.workbench-nav-settings-host-badge {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: min(148px, calc(100% - 68px));
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent-strong, var(--accent));
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .workbench-nav-settings-button:hover {
   background: rgba(120, 120, 128, 0.1);
 }

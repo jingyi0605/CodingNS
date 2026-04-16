@@ -53,6 +53,9 @@ import {
 } from "../../../platform/desktop/window-openers";
 import { showDesktopContextMenu } from "../../../platform/desktop/desktop-context-menu";
 import { usePlatform } from "../../../platform/platform-provider";
+import { useClientConfigSelector } from "../../../config/client-config-store";
+import { getActiveHost } from "../../../config/client-config-types";
+import { getVisibleDiscoveredHosts } from "../../../config/local-host-discovery-store";
 import {
   useLocalUiPreferenceSelector,
   type SessionDisplaySortMode
@@ -3352,6 +3355,11 @@ function SidebarContent({
   const navigate = useNavigate();
   const platform = usePlatform();
   const { showToast } = useToast();
+  const runtimeConfig = useClientConfigSelector((state) => state);
+  const activeHostName = getActiveHost(runtimeConfig)?.name ?? "";
+  const showHostNameBadge =
+    runtimeConfig.hosts.length + getVisibleDiscoveredHosts(runtimeConfig).length > 1
+    && activeHostName.length > 0;
   const handleHeaderMouseDownCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
     if (!platform.isDesktop || platform.ui.osFamily !== "macos" || event.button !== 0) {
       return;
@@ -5621,10 +5629,15 @@ function SidebarContent({
             className="settings-entry-button workbench-nav-settings-button"
             type="button"
             onClick={onOpenSettings}
-            title={t("settings.title")}
+            title={showHostNameBadge ? `${t("settings.title")} · ${activeHostName}` : t("settings.title")}
           >
             <SettingsIcon />
             <span className="settings-entry-label">{t("settings.title")}</span>
+            {showHostNameBadge ? (
+              <span className="workbench-nav-settings-host-badge" title={activeHostName}>
+                {activeHostName}
+              </span>
+            ) : null}
           </button>
           <WorkbenchUpdateBadge onOpenSoftwareUpdate={() => navigate("/settings/software-update")} />
         </div>
