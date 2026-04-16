@@ -334,7 +334,7 @@ describe("session runtime machine", () => {
     expect(withoutPlaceholder[0]?.role).toBe("user");
   });
 
-  it("会折叠 codex runtime 与历史回流之间相隔数秒的重复 assistant 正文", () => {
+  it("会折叠短时间内重复回流的 codex assistant 正文", () => {
     const merged = mergeAuthoritativeMessages([], "session-1", [
       createHistoryMessage({
         messageId: "codex-runtime-message",
@@ -352,7 +352,7 @@ describe("session runtime machine", () => {
         providerSessionId: "raw-1",
         role: "assistant",
         content: "同一条回复",
-        timestamp: "2026-03-24T01:05:49.100Z",
+        timestamp: "2026-03-24T01:05:31.100Z",
         sequence: 3,
         rawRef: "codex://demo#line=7"
       })
@@ -361,7 +361,7 @@ describe("session runtime machine", () => {
     expect(merged).toHaveLength(1);
   });
 
-  it("会折叠被 codex 工具消息隔开的重复 assistant 正文", () => {
+  it("不会把被 codex 工具消息隔开的相同 assistant 正文误当成重复消息", () => {
     const merged = mergeAuthoritativeMessages([], "session-1", [
       createHistoryMessage({
         messageId: "codex-assistant-1",
@@ -426,7 +426,38 @@ describe("session runtime machine", () => {
     expect(merged.map((item) => item.id)).toEqual([
       "codex-assistant-1",
       "codex-tool-call-1",
-      "codex-tool-result-1"
+      "codex-tool-result-1",
+      "codex-assistant-2"
+    ]);
+  });
+
+  it("不会把相隔较久但内容相同的 codex assistant 历史消息误折叠", () => {
+    const merged = mergeAuthoritativeMessages([], "session-1", [
+      createHistoryMessage({
+        messageId: "codex-assistant-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        content: "处理完成",
+        timestamp: "2026-04-13T10:00:00.000Z",
+        sequence: 2,
+        rawRef: "codex://demo#line=6"
+      }),
+      createHistoryMessage({
+        messageId: "codex-assistant-2",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        content: "处理完成",
+        timestamp: "2026-04-13T10:00:20.000Z",
+        sequence: 3,
+        rawRef: "codex://demo#line=7"
+      })
+    ]);
+
+    expect(merged.map((item) => item.id)).toEqual([
+      "codex-assistant-1",
+      "codex-assistant-2"
     ]);
   });
 
