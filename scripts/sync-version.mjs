@@ -12,6 +12,7 @@ const jsonTargets = [
   'apps/host/package.json',
   'apps/desktop/src-tauri/tauri.conf.json',
   'apps/user-app/src-tauri/tauri.conf.json',
+  'apps/user-app/src-tauri/gen/android/app/src/main/assets/tauri.conf.json',
 ];
 const cargoTargets = [
   'apps/desktop/src-tauri/Cargo.toml',
