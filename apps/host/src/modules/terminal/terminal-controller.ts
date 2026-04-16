@@ -55,6 +55,9 @@ interface RunTemplateBody {
   terminalId?: string;
   shell?: string;
   runtimeType?: string;
+  argsOverride?: string[];
+  envPatch?: Record<string, string>;
+  portOverride?: number | null;
 }
 
 export class TerminalController {
@@ -264,6 +267,9 @@ export class TerminalController {
         terminalId: request.body.terminalId?.trim(),
         shell: request.body.shell?.trim(),
         runtimeType: normalizeRuntimeType(request.body.runtimeType),
+        argsOverride: normalizeOptionalArgs(request.body.argsOverride),
+        envPatch: normalizeOptionalEnv(request.body.envPatch),
+        portOverride: normalizeOptionalPort(request.body.portOverride),
         userId: request.auth!.user.userId
       })
     );
@@ -292,6 +298,54 @@ function normalizeArgs(input?: string[]): string[] {
   }
 
   return input;
+}
+
+function normalizeOptionalArgs(input?: string[]): string[] | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+
+  return normalizeArgs(input);
+}
+
+function normalizeOptionalEnv(input?: Record<string, string>): Record<string, string> | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: "envPatch 必须是对象",
+      field: "envPatch"
+    });
+  }
+
+  const result: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(input)) {
+    if (typeof value !== "string") {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "envPatch 的值必须是字符串",
+        field: `envPatch.${key}`
+      });
+    }
+
+    result[key] = value;
+  }
+
+  return result;
+}
+
+function normalizeOptionalPort(input?: number | null): number | null | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+
+  return normalizePort(input);
 }
 
 function normalizeRuntimeType(

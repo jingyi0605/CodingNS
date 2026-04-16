@@ -130,6 +130,83 @@ describe("worktree routes", () => {
     ]);
   });
 
+  it("创建子工作树时会继承主工作区已登记的启动项，并重写 cwd 与代理 slug", async () => {
+    const fixture = createGitWorkspaceFixture();
+    activeFixtures.push(fixture);
+    runGitCommand(fixture.repoDir, ["restore", "README.md"]);
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    await bootstrapWorkspace(hosted, fixture);
+    const accessToken = await loginAsAdmin(hosted);
+    const createTemplateResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/terminals/templates",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceId: fixture.workspaceId,
+        name: "Frontend",
+        cwd: path.join(fixture.workspaceDir, "apps", "web"),
+        command: "npm",
+        args: ["run", "dev:frontend"],
+        port: 4174,
+        proxyEnabled: true,
+        runtimeType: "embedded-pty"
+      }
+    });
+
+    expect(createTemplateResponse.statusCode).toBe(201);
+    const sourceTemplate = createTemplateResponse.json() as {
+      id: string;
+      cwd: string;
+      proxySlug: string;
+      sourceType?: string | null;
+    };
+
+    const response = await hosted.app.inject({
+      method: "POST",
+      url: "/api/worktrees",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        sourceWorkspaceId: fixture.workspaceId,
+        branchName: "feat/template-copy"
+      }
+    });
+
+    expect(response.statusCode).toBe(201);
+    const childWorkspaceId = response.json().workspace.id as string;
+    const childWorkspacePath = response.json().workspace.path as string;
+    const listTemplatesResponse = await hosted.app.inject({
+      method: "GET",
+      url: `/api/terminals/templates?workspaceId=${childWorkspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    expect(listTemplatesResponse.statusCode).toBe(200);
+    expect(listTemplatesResponse.json().items).toHaveLength(1);
+    expect(listTemplatesResponse.json().items[0]).toMatchObject({
+      workspaceId: childWorkspaceId,
+      name: "Frontend",
+      cwd: path.join(childWorkspacePath, "apps", "web"),
+      command: "npm",
+      args: ["run", "dev:frontend"],
+      port: 4174,
+      proxyEnabled: true,
+      runtimeType: "embedded-pty",
+      sourceType: "manual"
+    });
+    expect(listTemplatesResponse.json().items[0].proxySlug).toEqual(expect.any(String));
+    expect(listTemplatesResponse.json().items[0].proxySlug).not.toBe(sourceTemplate.proxySlug);
+  });
+
   it("来源工作区有未提交改动时会拒绝创建子工作树", async () => {
     const fixture = createGitWorkspaceFixture();
     activeFixtures.push(fixture);

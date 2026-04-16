@@ -242,11 +242,20 @@ function ensureUserPreferenceProfileSchema(db: Database.Database): void {
     .prepare("PRAGMA table_info(user_preference_profiles)")
     .all() as Array<{ name: string }>;
 
-  if (columns.length === 0 || columns.some((column) => column.name === "auto_theme")) {
+  if (columns.length === 0) {
     return;
   }
 
-  db.exec("ALTER TABLE user_preference_profiles ADD COLUMN auto_theme INTEGER NOT NULL DEFAULT 0 CHECK (auto_theme IN (0, 1))");
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("auto_theme")) {
+    db.exec("ALTER TABLE user_preference_profiles ADD COLUMN auto_theme INTEGER NOT NULL DEFAULT 0 CHECK (auto_theme IN (0, 1))");
+  }
+
+  if (!columnNames.has("debug_port_pools_json")) {
+    db.exec(`ALTER TABLE user_preference_profiles
+      ADD COLUMN debug_port_pools_json TEXT NOT NULL DEFAULT '{"frontend":{"start":43000,"end":43999},"backend":{"start":44000,"end":44999},"worker":{"start":45000,"end":45999},"mock":{"start":46000,"end":46999},"custom":{"start":47000,"end":47999}}'`);
+  }
 }
 
 function ensureButlerControlSessionSchema(db: Database.Database): void {

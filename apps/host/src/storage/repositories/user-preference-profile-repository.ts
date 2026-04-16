@@ -8,7 +8,7 @@ export class UserPreferenceProfileRepository {
   findByUserId(userId: string): UserPreferenceProfileRecord | null {
     const row = this.db
       .prepare(
-        `SELECT language, theme, auto_theme, default_permission_mode, providers_json, created_at, updated_at
+        `SELECT language, theme, auto_theme, default_permission_mode, providers_json, debug_port_pools_json, created_at, updated_at
          FROM user_preference_profiles
          WHERE user_id = ?`
       )
@@ -25,6 +25,7 @@ export class UserPreferenceProfileRepository {
       autoTheme: row.auto_theme === 1,
       defaultPermissionMode: row.default_permission_mode as UserPreferenceProfileRecord["defaultPermissionMode"],
       providers: JSON.parse(row.providers_json) as UserPreferenceProfileRecord["providers"],
+      debugPortPools: JSON.parse(row.debug_port_pools_json) as UserPreferenceProfileRecord["debugPortPools"],
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };
@@ -40,15 +41,17 @@ export class UserPreferenceProfileRepository {
           auto_theme,
           default_permission_mode,
           providers_json,
+          debug_port_pools_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
           language = excluded.language,
           theme = excluded.theme,
           auto_theme = excluded.auto_theme,
           default_permission_mode = excluded.default_permission_mode,
           providers_json = excluded.providers_json,
+          debug_port_pools_json = excluded.debug_port_pools_json,
           updated_at = excluded.updated_at`
       )
       .run(
@@ -58,6 +61,7 @@ export class UserPreferenceProfileRepository {
         record.autoTheme ? 1 : 0,
         record.defaultPermissionMode,
         JSON.stringify(record.providers),
+        JSON.stringify(record.debugPortPools),
         record.createdAt,
         record.updatedAt
       );
@@ -72,6 +76,7 @@ interface UserPreferenceProfileRow {
   auto_theme: number;
   default_permission_mode: string;
   providers_json: string;
+  debug_port_pools_json: string;
   created_at: string;
   updated_at: string;
 }

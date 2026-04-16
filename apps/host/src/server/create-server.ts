@@ -529,33 +529,6 @@ export function createServer(config: HostConfig) {
   sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
     butlerFollowUpSessionLiveRuntimeService.resolveLiveActivityObservation(sessionId)
   );
-  const worktreeManager = new WorktreeManager(
-    workspaceService,
-    repositories.workspaceWorktreeRepository,
-    gitReadService,
-    gitCommandRunner
-  );
-  const worktreeSyncService = new WorktreeSyncService(
-    workspaceService,
-    repositories.workspaceWorktreeRepository,
-    gitCommandRunner
-  );
-  const worktreeMergeService = new WorktreeMergeService(
-    workspaceService,
-    repositories.workspaceWorktreeRepository,
-    gitReadService,
-    gitCommandRunner,
-    worktreeSyncService
-  );
-  const worktreeCleanupService = new WorktreeCleanupService(
-    workspaceService,
-    repositories.workspaceWorktreeRepository,
-    repositories.sessionIndexRepository,
-    repositories.terminalInstanceRepository,
-    gitReadService,
-    gitCommandRunner,
-    worktreeSyncService
-  );
   const workbenchService = new WorkbenchService(
     repositories.workspaceRepository,
     repositories.workspaceNavigationStateRepository,
@@ -799,6 +772,7 @@ export function createServer(config: HostConfig) {
     repositories.runtimeBindingRepository,
     repositories.aiFallbackEditRepository,
     repositories.terminalCommandTemplateRepository,
+    preferenceProfileService,
     terminalService,
     repositories.terminalInstanceRepository,
     taskManager
@@ -814,6 +788,34 @@ export function createServer(config: HostConfig) {
     repositories.terminalCommandTemplateRepository,
     workspaceService,
     terminalService
+  );
+  const worktreeManager = new WorktreeManager(
+    workspaceService,
+    repositories.workspaceWorktreeRepository,
+    gitReadService,
+    gitCommandRunner,
+    commandTemplateService
+  );
+  const worktreeSyncService = new WorktreeSyncService(
+    workspaceService,
+    repositories.workspaceWorktreeRepository,
+    gitCommandRunner
+  );
+  const worktreeMergeService = new WorktreeMergeService(
+    workspaceService,
+    repositories.workspaceWorktreeRepository,
+    gitReadService,
+    gitCommandRunner,
+    worktreeSyncService
+  );
+  const worktreeCleanupService = new WorktreeCleanupService(
+    workspaceService,
+    repositories.workspaceWorktreeRepository,
+    repositories.sessionIndexRepository,
+    repositories.terminalInstanceRepository,
+    gitReadService,
+    gitCommandRunner,
+    worktreeSyncService
   );
   const templateReverseProxyService = new TemplateReverseProxyService(commandTemplateService);
   const workspacePanelSnapshotService = new WorkspacePanelSnapshotService(

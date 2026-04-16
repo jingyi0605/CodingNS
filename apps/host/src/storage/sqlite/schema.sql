@@ -328,6 +328,7 @@ CREATE TABLE IF NOT EXISTS user_preference_profiles (
     default_permission_mode IN ('default', 'acceptEdits', 'bypassPermissions')
   ),
   providers_json TEXT NOT NULL,
+  debug_port_pools_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY (user_id) REFERENCES auth_users(id)

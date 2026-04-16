@@ -34,7 +34,15 @@ export class WorktreeManager {
     private readonly workspaceService: WorkspaceService,
     private readonly workspaceWorktreeRepository: WorkspaceWorktreeRepository,
     private readonly gitReadService: GitReadService,
-    private readonly gitCommandRunner: GitCommandRunner
+    private readonly gitCommandRunner: GitCommandRunner,
+    private readonly commandTemplateService: {
+      cloneTemplatesToWorkspace(input: {
+        sourceWorkspaceId: string;
+        targetWorkspaceId: string;
+        sourceWorkspacePath: string;
+        targetWorkspacePath: string;
+      }): unknown;
+    }
   ) {}
 
   async create(input: CreateWorktreeInput, signal?: AbortSignal): Promise<WorktreeCreateResult> {
@@ -113,6 +121,12 @@ export class WorktreeManager {
       worktreeCreated = true;
 
       createdWorkspace = this.workspaceService.importWorkspace(targetPath, displayName);
+      this.commandTemplateService.cloneTemplatesToWorkspace({
+        sourceWorkspaceId: rootWorkspace.id,
+        targetWorkspaceId: createdWorkspace.id,
+        sourceWorkspacePath: rootWorkspace.path,
+        targetWorkspacePath: createdWorkspace.path
+      });
 
       const headCommit = await this.resolveHeadCommit(targetPath, createdWorkspace.id, signal);
       const meta = this.workspaceWorktreeRepository.create({

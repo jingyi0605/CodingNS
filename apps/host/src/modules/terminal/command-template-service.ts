@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import path from "node:path";
 
 import type Database from "better-sqlite3";
 
@@ -33,6 +34,9 @@ interface RunCommandTemplateInput {
   terminalId?: string;
   shell?: string;
   runtimeType?: TerminalRuntimeType | null;
+  argsOverride?: string[];
+  envPatch?: Record<string, string>;
+  portOverride?: number | null;
   userId: string;
 }
 
@@ -53,6 +57,66 @@ export class CommandTemplateService {
   listTemplates(workspaceId: string): TerminalCommandTemplate[] {
     this.workspaceService.getWorkspaceOrThrow(workspaceId);
     return this.templateRepository.listByWorkspace(workspaceId);
+  }
+
+  cloneTemplatesToWorkspace(input: {
+    sourceWorkspaceId: string;
+    targetWorkspaceId: string;
+    sourceWorkspacePath: string;
+    targetWorkspacePath: string;
+  }): TerminalCommandTemplate[] {
+    this.workspaceService.getWorkspaceOrThrow(input.sourceWorkspaceId);
+    this.workspaceService.getWorkspaceOrThrow(input.targetWorkspaceId);
+
+    const sourceTemplates = this.templateRepository
+      .listByWorkspace(input.sourceWorkspaceId)
+      .filter(shouldCloneToWorktree);
+
+    if (sourceTemplates.length === 0) {
+      return [];
+    }
+
+    const timestamp = nowIso();
+    const clonedTemplates = sourceTemplates.map((template) =>
+      buildValidatedTemplate({
+        id: createId(),
+        workspaceId: input.targetWorkspaceId,
+        name: template.name,
+        cwd: resolveInheritedTemplateCwd(template.cwd, input.sourceWorkspacePath, input.targetWorkspacePath),
+        command: template.command,
+        args: [...template.args],
+        env: { ...template.env },
+        port: template.port,
+        proxyEnabled: template.proxyEnabled,
+        proxySlug: template.proxyEnabled ? this.createUniqueProxySlug() : null,
+        runtimeType: template.runtimeType,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        sourceType: template.sourceType ?? "manual",
+        debugTargetId: template.debugTargetId ?? null,
+        debugServiceId: template.debugServiceId ?? null,
+        frameworkAnalysisId: template.frameworkAnalysisId ?? null,
+        adapterKind: template.adapterKind ?? null,
+        injectionMode: template.injectionMode ?? null,
+        generatedArtifactRef: template.generatedArtifactRef ?? null,
+        serviceDiscoveryMode: template.serviceDiscoveryMode ?? null,
+        managedBySystem: template.managedBySystem === true
+      })
+    );
+
+    const persist = this.db.transaction(() => {
+      for (const template of clonedTemplates) {
+        this.templateRepository.create(template);
+      }
+    });
+
+    try {
+      persist();
+    } catch (error) {
+      throw mapTemplateStorageError(error);
+    }
+
+    return clonedTemplates;
   }
 
   async listTemplateRuntimeStatuses(workspaceId: string, signal?: AbortSignal) {
@@ -229,6 +293,15 @@ export class CommandTemplateService {
     createdTerminal: boolean;
   }> {
     const template = this.getTemplateOrThrow(input.templateId);
+    const effectiveTemplate: TerminalCommandTemplate = {
+      ...template,
+      args: input.argsOverride ?? template.args,
+      env: {
+        ...template.env,
+        ...(input.envPatch ?? {})
+      },
+      port: input.portOverride === undefined ? template.port : input.portOverride
+    };
     let targetTerminalId = input.terminalId ?? null;
     let createdTerminal = false;
 
@@ -247,11 +320,11 @@ export class CommandTemplateService {
       const terminal = await this.terminalService.createTerminal({
         workspaceId: template.workspaceId,
         name: `${template.name} 运行`,
-        cwd: template.cwd,
+        cwd: effectiveTemplate.cwd,
         shell: input.shell,
-        runtimeType: input.runtimeType ?? template.runtimeType ?? undefined,
+        runtimeType: input.runtimeType ?? effectiveTemplate.runtimeType ?? undefined,
         createdByUserId: input.userId,
-        env: template.env
+        env: effectiveTemplate.env
       });
 
       targetTerminalId = terminal.id;
@@ -259,7 +332,7 @@ export class CommandTemplateService {
     }
 
     const terminal = this.terminalService.getTerminalOrThrow(targetTerminalId);
-    const commandLine = buildTemplateCommandLine(template, terminal.shell);
+    const commandLine = buildTemplateCommandLine(effectiveTemplate, terminal.shell);
 
     await this.terminalService.writeInput(
       targetTerminalId,
@@ -268,7 +341,7 @@ export class CommandTemplateService {
 
     return {
       terminalId: targetTerminalId,
-      templateId: template.id,
+      templateId: effectiveTemplate.id,
       createdTerminal
     };
   }
@@ -420,6 +493,44 @@ function normalizePort(input?: number | null): number | null {
 
 function containsControlCharacter(input: string): boolean {
   return input.includes("\0") || input.includes("\n") || input.includes("\r");
+}
+
+function shouldCloneToWorktree(template: TerminalCommandTemplate): boolean {
+  if (template.managedBySystem === true) {
+    return false;
+  }
+
+  if (template.sourceType === "debug_service") {
+    return false;
+  }
+
+  return true;
+}
+
+function resolveInheritedTemplateCwd(
+  templateCwd: string,
+  sourceWorkspacePath: string,
+  targetWorkspacePath: string
+): string {
+  const normalizedSourcePath = stripTrailingSeparators(path.resolve(sourceWorkspacePath));
+  const normalizedTargetPath = stripTrailingSeparators(path.resolve(targetWorkspacePath));
+  const normalizedTemplateCwd = path.resolve(templateCwd);
+
+  if (normalizedTemplateCwd === normalizedSourcePath) {
+    return normalizedTargetPath;
+  }
+
+  const relativePath = path.relative(normalizedSourcePath, normalizedTemplateCwd);
+
+  if (!relativePath || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    return templateCwd;
+  }
+
+  return path.join(normalizedTargetPath, relativePath);
+}
+
+function stripTrailingSeparators(input: string): string {
+  return input.replace(/[\\/]+$/, "");
 }
 
 function mapTemplateStorageError(error: unknown): AppError {

@@ -108,7 +108,8 @@ export class DebugTargetController {
     reply.send(
       await this.debugTargetService.createLaunchPlan(
         request.params.targetId?.trim() || "",
-        normalizePortRequests(request.body?.portRequests)
+        normalizePortRequests(request.body?.portRequests),
+        request.auth?.user.userId ?? null
       )
     );
   };

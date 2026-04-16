@@ -19,6 +19,8 @@ import type {
   AiFallbackEditRecord,
   DebugLaunchPlan,
   DebugLaunchPlanServiceItem,
+  DebugPortPoolConfig,
+  DebugPortPoolRole,
   DebugRuntimeHistoryEnvelope,
   DebugRuntimeDetail,
   DebugRuntimeSessionStatus,
@@ -34,7 +36,10 @@ import type {
   TerminalInstance,
   TerminalRuntimeType
 } from "../../types/domain.js";
+import type { PreferenceProfileService } from "../preferences/profile-service.js";
+import { DEFAULT_DEBUG_PORT_POOLS } from "../preferences/profile-service.js";
 import { buildTemplateCommandLine, getShellEnterSequence } from "../terminal/terminal-shell.js";
+import { discoverTemplateRuntimeStatuses } from "../terminal/template-port-runtime.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
 import { createTaskManager, TaskManager } from "../tasks/task-manager.js";
 import { HOST_TASK_TYPES } from "../tasks/task-types.js";
@@ -105,6 +110,7 @@ export class DebugTargetService {
     private readonly terminalCommandTemplateRepository: {
       listByWorkspace(workspaceId: string): TerminalCommandTemplate[];
     },
+    private readonly preferenceProfileService: Pick<PreferenceProfileService, "getProfile">,
     private readonly terminalService: Pick<TerminalService, "createTerminal" | "writeInput" | "closeTerminal" | "getTerminalOrThrow">,
     private readonly terminalInstanceRepository: {
       findById(id: string): TerminalInstance | null;
@@ -223,154 +229,10 @@ export class DebugTargetService {
 
   async createLaunchPlan(
     targetId: string,
-    portRequests: DebugTargetPortRequest[] = []
+    portRequests: DebugTargetPortRequest[] = [],
+    userId: string | null = null
   ): Promise<DebugLaunchPlan> {
-    const target = this.getTargetOrThrow(targetId);
-    const services = this.debugServiceRepository.listByTargetId(targetId);
-    const analyses = this.frameworkAnalysisResultRepository.listByTargetId(targetId);
-
-    if (services.length === 0 || analyses.length === 0) {
-      throw new AppError({
-        statusCode: 409,
-        errorCode: "DEBUG_TARGET_ANALYSIS_REQUIRED",
-        detail: "当前调试目标还没有可用的框架分析结果，请先执行分析"
-      });
-    }
-
-    const analysisByServiceId = new Map(
-      analyses
-        .filter((analysis) => analysis.serviceId)
-        .map((analysis) => [analysis.serviceId as string, analysis])
-    );
-    const timestamp = nowIso();
-    const runtimeSession = this.debugRuntimeSessionRepository.create({
-      id: createId(),
-      targetId: target.id,
-      status: "PREPARING",
-      failureStage: null,
-      startedAt: null,
-      stoppedAt: null,
-      createdAt: timestamp,
-      updatedAt: timestamp
-    });
-    const planItems: DebugLaunchPlanServiceItem[] = [];
-    const requestedPorts = await resolveRequestedPorts({
-      targetRootPath: target.rootPath,
-      services,
-      portRequests,
-      portLeaseRepository: this.portLeaseRepository
-    });
-
-    for (const service of services) {
-      const analysis = analysisByServiceId.get(service.id) ?? analyses[0] ?? null;
-
-      if (!analysis) {
-        throw new AppError({
-          statusCode: 409,
-          errorCode: "DEBUG_TARGET_ANALYSIS_REQUIRED",
-          detail: "调试服务缺少框架分析结果，无法生成启动计划"
-        });
-      }
-
-      const allocatedPort = requestedPorts.get(service.id)
-        ?? await allocateManagedPort(service.role, this.portLeaseRepository);
-      const injectionPlan = resolveLaunchPlan({
-        targetRootPath: target.rootPath,
-        service,
-        analysis,
-        leasedPort: allocatedPort
-      });
-      const missingRequirements = resolveMissingRequirements(analysis);
-      let aiFallbackEditRecord: AiFallbackEditRecord | null = null;
-      const autoStartAllowed =
-        isFrameworkEligible(analysis.compatibilityLevel)
-        && missingRequirements.length === 0
-        && injectionPlan.adapterKind !== "ai_fallback"
-        && injectionPlan.adapterKind !== null;
-      const portLeaseId = injectionPlan.leasedPort === null ? null : createId();
-      const runtimeBindingId = createId();
-
-      if (injectionPlan.aiFallback?.eligible) {
-        aiFallbackEditRecord = this.aiFallbackEditRepository.create({
-          id: createId(),
-          runtimeId: runtimeSession.id,
-          serviceId: service.id,
-          reason: injectionPlan.aiFallback.reason,
-          allowedFiles: injectionPlan.aiFallback.allowedFiles,
-          targetPort: injectionPlan.leasedPort ?? allocatedPort,
-          patchRef: null,
-          rollbackRef: null,
-          status: "PENDING",
-          createdAt: timestamp
-        });
-      }
-
-      if (portLeaseId && injectionPlan.leasedPort !== null) {
-        this.portLeaseRepository.create({
-          id: portLeaseId,
-          runtimeId: runtimeSession.id,
-          serviceId: service.id,
-          port: injectionPlan.leasedPort,
-          protocol: "tcp",
-          status: "LEASED",
-          leasedAt: timestamp,
-          expiresAt: null,
-          releasedAt: null
-        });
-      }
-
-      this.runtimeBindingRepository.create({
-        id: runtimeBindingId,
-        runtimeId: runtimeSession.id,
-        serviceId: service.id,
-        processInstanceId: null,
-        expectedPort: injectionPlan.expectedPort,
-        leasedPort: injectionPlan.leasedPort,
-        observedPort: null,
-        proxyPath: null,
-        status: "ALLOCATED",
-        updatedAt: timestamp
-      });
-
-      planItems.push({
-        serviceId: service.id,
-        role: service.role,
-        frameworkAnalysisId: analysis.id,
-        primaryFramework: analysis.primaryFramework ?? null,
-        compatibilityLevel: analysis.compatibilityLevel,
-        adapterKind: injectionPlan.adapterKind ?? null,
-        injectionMode: injectionPlan.injectionMode ?? null,
-        command: service.command,
-        args: injectionPlan.args,
-        envPatch: injectionPlan.envPatch,
-        expectedPort: injectionPlan.expectedPort,
-        leasedPort: injectionPlan.leasedPort,
-        artifactRef: injectionPlan.artifactRef,
-        runtimeBindingId,
-        portLeaseId,
-        requiresServiceDiscoveryHandling: analysis.requiresServiceDiscoveryHandling,
-        requiresHmrHandling: analysis.requiresHmrHandling,
-        requiresCallbackHandling: analysis.requiresCallbackHandling,
-        failureStage: injectionPlan.failureStage,
-        adapterAttempts: injectionPlan.adapterAttempts,
-        aiFallback: injectionPlan.aiFallback
-          ? {
-              ...injectionPlan.aiFallback,
-              editId: aiFallbackEditRecord?.id ?? null,
-              status: aiFallbackEditRecord?.status ?? injectionPlan.aiFallback.status
-            }
-          : null,
-        missingRequirements,
-        autoStartAllowed
-      });
-    }
-
-    return {
-      runtimeSession,
-      targetId: target.id,
-      autoStartAllowed: planItems.every((item) => item.autoStartAllowed),
-      services: planItems
-    };
+    return await this.createRegisteredTemplatePreviewPlan(targetId, portRequests, userId);
   }
 
   async run(input: RunDebugTargetInput): Promise<{
@@ -383,7 +245,11 @@ export class DebugTargetService {
       runtimeBindingId: string;
     }>;
   }> {
-    const launchPlan = await this.createLaunchPlan(input.targetId, input.portRequests ?? []);
+    const launchPlan = await this.createManagedRuntimeLaunchPlan(
+      input.targetId,
+      input.portRequests ?? [],
+      input.userId
+    );
 
     if (!launchPlan.autoStartAllowed) {
       const aiFallbackItem = launchPlan.services.find((item) => item.aiFallback?.eligible);
@@ -502,6 +368,233 @@ export class DebugTargetService {
       runtimeSession: updatedRuntimeSession ?? launchPlan.runtimeSession,
       services: startedServices
     };
+  }
+
+  private async createManagedRuntimeLaunchPlan(
+    targetId: string,
+    portRequests: DebugTargetPortRequest[],
+    userId: string | null
+  ): Promise<DebugLaunchPlan> {
+    const target = this.getTargetOrThrow(targetId);
+    const services = this.debugServiceRepository.listByTargetId(targetId);
+    const analyses = this.frameworkAnalysisResultRepository.listByTargetId(targetId);
+
+    if (services.length === 0 || analyses.length === 0) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "DEBUG_TARGET_ANALYSIS_REQUIRED",
+        detail: "当前调试目标还没有可用的框架分析结果，请先执行分析"
+      });
+    }
+
+    const analysisByServiceId = new Map(
+      analyses
+        .filter((analysis) => analysis.serviceId)
+        .map((analysis) => [analysis.serviceId as string, analysis])
+    );
+    const timestamp = nowIso();
+    const runtimeSession = this.debugRuntimeSessionRepository.create({
+      id: createId(),
+      targetId: target.id,
+      status: "PREPARING",
+      failureStage: null,
+      startedAt: null,
+      stoppedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    const planItems: DebugLaunchPlanServiceItem[] = [];
+    const requestedPorts = await resolveRequestedPorts({
+      targetRootPath: target.rootPath,
+      services,
+      portRequests,
+      portLeaseRepository: this.portLeaseRepository
+    });
+    const portPoolConfig = this.resolvePortPoolConfig(userId);
+
+    for (const service of services) {
+      const analysis = analysisByServiceId.get(service.id) ?? analyses[0] ?? null;
+
+      if (!analysis) {
+        throw new AppError({
+          statusCode: 409,
+          errorCode: "DEBUG_TARGET_ANALYSIS_REQUIRED",
+          detail: "调试服务缺少框架分析结果，无法生成启动计划"
+        });
+      }
+
+      const allocatedPort = requestedPorts.get(service.id)
+        ?? await allocateManagedPort(service.role, this.portLeaseRepository, portPoolConfig);
+      const injectionPlan = resolveLaunchPlan({
+        targetRootPath: target.rootPath,
+        service,
+        analysis,
+        leasedPort: allocatedPort
+      });
+      const missingRequirements = resolveMissingRequirements(analysis);
+      let aiFallbackEditRecord: AiFallbackEditRecord | null = null;
+      const autoStartAllowed =
+        isFrameworkEligible(analysis.compatibilityLevel)
+        && missingRequirements.length === 0
+        && injectionPlan.adapterKind !== "ai_fallback"
+        && injectionPlan.adapterKind !== null;
+      const portLeaseId = injectionPlan.leasedPort === null ? null : createId();
+      const runtimeBindingId = createId();
+
+      if (injectionPlan.aiFallback?.eligible) {
+        aiFallbackEditRecord = this.aiFallbackEditRepository.create({
+          id: createId(),
+          runtimeId: runtimeSession.id,
+          serviceId: service.id,
+          reason: injectionPlan.aiFallback.reason,
+          allowedFiles: injectionPlan.aiFallback.allowedFiles,
+          targetPort: injectionPlan.leasedPort ?? allocatedPort,
+          patchRef: null,
+          rollbackRef: null,
+          status: "PENDING",
+          createdAt: timestamp
+        });
+      }
+
+      if (portLeaseId && injectionPlan.leasedPort !== null) {
+        this.portLeaseRepository.create({
+          id: portLeaseId,
+          runtimeId: runtimeSession.id,
+          serviceId: service.id,
+          port: injectionPlan.leasedPort,
+          protocol: "tcp",
+          status: "LEASED",
+          leasedAt: timestamp,
+          expiresAt: null,
+          releasedAt: null
+        });
+      }
+
+      this.runtimeBindingRepository.create({
+        id: runtimeBindingId,
+        runtimeId: runtimeSession.id,
+        serviceId: service.id,
+        processInstanceId: null,
+        expectedPort: injectionPlan.expectedPort,
+        leasedPort: injectionPlan.leasedPort,
+        observedPort: null,
+        proxyPath: null,
+        status: "ALLOCATED",
+        updatedAt: timestamp
+      });
+
+      planItems.push({
+        serviceId: service.id,
+        role: service.role,
+        frameworkAnalysisId: analysis.id,
+        primaryFramework: analysis.primaryFramework ?? null,
+        compatibilityLevel: analysis.compatibilityLevel,
+        adapterKind: injectionPlan.adapterKind ?? null,
+        injectionMode: injectionPlan.injectionMode ?? null,
+        command: service.command,
+        args: injectionPlan.args,
+        envPatch: injectionPlan.envPatch,
+        expectedPort: injectionPlan.expectedPort,
+        leasedPort: injectionPlan.leasedPort,
+        artifactRef: injectionPlan.artifactRef,
+        runtimeBindingId,
+        portLeaseId,
+        requiresServiceDiscoveryHandling: analysis.requiresServiceDiscoveryHandling,
+        requiresHmrHandling: analysis.requiresHmrHandling,
+        requiresCallbackHandling: analysis.requiresCallbackHandling,
+        failureStage: injectionPlan.failureStage,
+        adapterAttempts: injectionPlan.adapterAttempts,
+        aiFallback: injectionPlan.aiFallback
+          ? {
+              ...injectionPlan.aiFallback,
+              editId: aiFallbackEditRecord?.id ?? null,
+              status: aiFallbackEditRecord?.status ?? injectionPlan.aiFallback.status
+            }
+          : null,
+        missingRequirements,
+        autoStartAllowed
+      });
+    }
+
+    return {
+      runtimeSession,
+      targetId: target.id,
+      autoStartAllowed: planItems.every((item) => item.autoStartAllowed),
+      services: planItems
+    };
+  }
+
+  private async createRegisteredTemplatePreviewPlan(
+    targetId: string,
+    portRequests: DebugTargetPortRequest[],
+    userId: string | null
+  ): Promise<DebugLaunchPlan> {
+    const target = this.getTargetOrThrow(targetId);
+    const analyses = this.frameworkAnalysisResultRepository.listByTargetId(targetId);
+
+    if (analyses.length === 0) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "DEBUG_TARGET_ANALYSIS_REQUIRED",
+        detail: "当前调试目标还没有可用的框架分析结果，请先执行分析"
+      });
+    }
+
+    const timestamp = nowIso();
+    const runtimeSession = buildPreviewRuntimeSession(target.id, timestamp);
+    const templates = listRegisteredTemplatesForTarget(
+      this.terminalCommandTemplateRepository.listByWorkspace(target.workspaceId),
+      target.rootPath
+    );
+
+    if (templates.length === 0) {
+      return await this.createManagedRuntimeLaunchPlan(targetId, portRequests, userId);
+    }
+
+    const services = this.debugServiceRepository.listByTargetId(targetId);
+    const runtimeStatuses = await discoverTemplateRuntimeStatuses(
+      templates
+        .filter((template) => template.port !== null)
+        .map((template) => ({
+          templateId: template.id,
+          port: template.port as number
+        }))
+    );
+    const runtimeStatusByTemplateId = new Map(
+      runtimeStatuses.map((item) => [item.templateId, item] as const)
+    );
+    const portPoolConfig = this.resolvePortPoolConfig(userId);
+    const requestedPorts = await resolveTemplateRequestedPorts({
+      targetRootPath: target.rootPath,
+      templates,
+      portRequests,
+      portLeaseRepository: this.portLeaseRepository
+    });
+    const templatePlans = await buildRegisteredTemplatePlanItems({
+      target,
+      templates,
+      services,
+      analyses,
+      runtimeStatusByTemplateId,
+      requestedPorts,
+      portPoolConfig,
+      portLeaseRepository: this.portLeaseRepository
+    });
+
+    return {
+      runtimeSession,
+      targetId: target.id,
+      autoStartAllowed: templatePlans.length > 0 && templatePlans.every((item) => item.autoStartAllowed),
+      services: templatePlans
+    };
+  }
+
+  private resolvePortPoolConfig(userId: string | null): DebugPortPoolConfig {
+    if (!userId) {
+      return clonePortPoolConfig(DEFAULT_DEBUG_PORT_POOLS);
+    }
+
+    return clonePortPoolConfig(this.preferenceProfileService.getProfile(userId).debugPortPools);
   }
 
   async handleTerminalExit(event: { terminal: TerminalInstance; requestedClose: boolean }): Promise<void> {
@@ -2173,6 +2266,525 @@ function isFrameworkEligible(level: FrameworkCompatibilityLevel): boolean {
   return level === "supported" || level === "conditional";
 }
 
+interface RegisteredTemplatePlanBuildInput {
+  target: DebugTargetProfile;
+  templates: TerminalCommandTemplate[];
+  services: DebugServiceSpec[];
+  analyses: FrameworkAnalysisResult[];
+  runtimeStatusByTemplateId: Map<string, { occupied: boolean }>;
+  requestedPorts: Map<string, number>;
+  portPoolConfig: DebugPortPoolConfig;
+  portLeaseRepository: PortLeaseRepository;
+}
+
+interface MatchedTemplateAnalysisContext {
+  template: TerminalCommandTemplate;
+  role: DebugServiceRole;
+  service: DebugServiceSpec | null;
+  analysis: FrameworkAnalysisResult | null;
+}
+
+async function buildRegisteredTemplatePlanItems(
+  input: RegisteredTemplatePlanBuildInput
+): Promise<DebugLaunchPlanServiceItem[]> {
+  const matchedContexts = input.templates.map((template) =>
+    matchTemplateAnalysisContext(template, input.services, input.analyses)
+  );
+  const configuredPortCount = new Map<number, number>();
+  const plannedPortByTemplateId = new Map<string, number | null>();
+  const usedPorts = new Set<number>();
+
+  for (const template of input.templates) {
+    if (template.port !== null) {
+      configuredPortCount.set(template.port, (configuredPortCount.get(template.port) ?? 0) + 1);
+    }
+  }
+
+  for (const context of matchedContexts) {
+    const requestedPort = input.requestedPorts.get(context.template.id);
+
+    if (requestedPort !== undefined) {
+      plannedPortByTemplateId.set(context.template.id, requestedPort);
+      usedPorts.add(requestedPort);
+      continue;
+    }
+
+    if (context.template.port === null) {
+      plannedPortByTemplateId.set(context.template.id, null);
+      continue;
+    }
+
+    const runtimeStatus = input.runtimeStatusByTemplateId.get(context.template.id) ?? null;
+    const needsOrchestration =
+      input.target.sourceType === "worktree"
+      || (configuredPortCount.get(context.template.port) ?? 0) > 1
+      || runtimeStatus?.occupied === true
+      || input.portLeaseRepository.findActiveByPort(context.template.port, "tcp") !== null
+      || usedPorts.has(context.template.port);
+
+    if (!needsOrchestration) {
+      plannedPortByTemplateId.set(context.template.id, context.template.port);
+      usedPorts.add(context.template.port);
+      continue;
+    }
+
+    const allocatedPort = await allocateManagedPort(
+      context.role,
+      input.portLeaseRepository,
+      input.portPoolConfig,
+      usedPorts
+    );
+    plannedPortByTemplateId.set(context.template.id, allocatedPort);
+    usedPorts.add(allocatedPort);
+  }
+
+  const backendEndpoint = resolveRegisteredTemplateBackendEndpoint(matchedContexts, plannedPortByTemplateId);
+
+  return matchedContexts.map((context) => {
+    const plannedPort = plannedPortByTemplateId.get(context.template.id) ?? null;
+    const runtimeBindingId = createId();
+    const analysis = context.analysis;
+
+    if (!analysis) {
+      return {
+        serviceId: context.template.id,
+        role: context.role,
+        frameworkAnalysisId: null,
+        primaryFramework: null,
+        compatibilityLevel: "unknown",
+        adapterKind: context.template.adapterKind ?? null,
+        injectionMode: context.template.injectionMode ?? null,
+        command: context.template.command,
+        args: context.template.args,
+        envPatch: {},
+        expectedPort: context.template.port,
+        leasedPort: plannedPort,
+        artifactRef: context.template.generatedArtifactRef ?? null,
+        runtimeBindingId,
+        portLeaseId: null,
+        requiresServiceDiscoveryHandling: false,
+        requiresHmrHandling: false,
+        requiresCallbackHandling: false,
+        failureStage: "framework_analysis_missing",
+        adapterAttempts: [],
+        aiFallback: null,
+        missingRequirements: ["analysis"],
+        autoStartAllowed: false
+      };
+    }
+
+    if (plannedPort === null) {
+      return {
+        serviceId: context.template.id,
+        role: context.role,
+        frameworkAnalysisId: analysis.id,
+        primaryFramework: analysis.primaryFramework ?? null,
+        compatibilityLevel: analysis.compatibilityLevel,
+        adapterKind: context.template.adapterKind ?? null,
+        injectionMode: context.template.injectionMode ?? null,
+        command: context.template.command,
+        args: context.template.args,
+        envPatch: {},
+        expectedPort: context.template.port,
+        leasedPort: null,
+        artifactRef: context.template.generatedArtifactRef ?? null,
+        runtimeBindingId,
+        portLeaseId: null,
+        requiresServiceDiscoveryHandling: analysis.requiresServiceDiscoveryHandling,
+        requiresHmrHandling: analysis.requiresHmrHandling,
+        requiresCallbackHandling: analysis.requiresCallbackHandling,
+        failureStage: "port_unconfigured",
+        adapterAttempts: [],
+        aiFallback: null,
+        missingRequirements: ["port"],
+        autoStartAllowed: false
+      };
+    }
+
+    const injectionPlan = resolveLaunchPlan({
+      targetRootPath: input.target.rootPath,
+      service: buildTemplateBackedDebugService(context.template, context.role, analysis.id),
+      analysis,
+      leasedPort: plannedPort
+    });
+    const serviceDiscoveryEnvPatch = buildServiceDiscoveryEnvPatch({
+      role: context.role,
+      analysis,
+      backendEndpoint
+    });
+    const missingRequirements = resolveRegisteredTemplateMissingRequirements(analysis, {
+      role: context.role,
+      backendEndpoint
+    });
+    const envPatch = {
+      ...injectionPlan.envPatch,
+      ...serviceDiscoveryEnvPatch
+    };
+    const autoStartAllowed =
+      isFrameworkEligible(analysis.compatibilityLevel)
+      && missingRequirements.length === 0
+      && injectionPlan.adapterKind !== "ai_fallback"
+      && injectionPlan.adapterKind !== null;
+
+    return {
+      serviceId: context.template.id,
+      role: context.role,
+      frameworkAnalysisId: analysis.id,
+      primaryFramework: analysis.primaryFramework ?? null,
+      compatibilityLevel: analysis.compatibilityLevel,
+      adapterKind: injectionPlan.adapterKind ?? null,
+      injectionMode: injectionPlan.injectionMode ?? null,
+      command: context.template.command,
+      args: injectionPlan.args,
+      envPatch,
+      expectedPort: context.template.port,
+      leasedPort: plannedPort,
+      artifactRef: injectionPlan.artifactRef ?? context.template.generatedArtifactRef ?? null,
+      runtimeBindingId,
+      portLeaseId: null,
+      requiresServiceDiscoveryHandling: analysis.requiresServiceDiscoveryHandling,
+      requiresHmrHandling: analysis.requiresHmrHandling,
+      requiresCallbackHandling: analysis.requiresCallbackHandling,
+      failureStage: injectionPlan.failureStage,
+      adapterAttempts: injectionPlan.adapterAttempts,
+      aiFallback: injectionPlan.aiFallback,
+      missingRequirements,
+      autoStartAllowed
+    };
+  });
+}
+
+function buildPreviewRuntimeSession(targetId: string, timestamp: string): DebugRuntimeSession {
+  return {
+    id: `preview-${createId()}`,
+    targetId,
+    status: "PREPARING",
+    failureStage: null,
+    startedAt: null,
+    stoppedAt: null,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+}
+
+function listRegisteredTemplatesForTarget(
+  templates: TerminalCommandTemplate[],
+  rootPath: string
+): TerminalCommandTemplate[] {
+  return templates
+    .filter((template) => template.managedBySystem !== true)
+    .filter((template) => isTemplateRelevantToRootPath(template, rootPath))
+    .sort((left, right) => compareTemplatePriority(left, right, rootPath));
+}
+
+function matchTemplateAnalysisContext(
+  template: TerminalCommandTemplate,
+  services: DebugServiceSpec[],
+  analyses: FrameworkAnalysisResult[]
+): MatchedTemplateAnalysisContext {
+  const analysisByServiceId = new Map(
+    analyses
+      .filter((analysis) => analysis.serviceId)
+      .map((analysis) => [analysis.serviceId as string, analysis] as const)
+  );
+  const normalizedTemplateCwd = path.resolve(template.cwd);
+  const templateRole = inferTemplateRole(template);
+  const matchedService = [...services]
+    .sort((left, right) => compareServiceMatchPriority(left, right, normalizedTemplateCwd, templateRole))
+    .find((service) => {
+      const serviceCwd = path.resolve(service.cwd);
+      return serviceCwd === normalizedTemplateCwd
+        || isPathWithin(normalizedTemplateCwd, serviceCwd)
+        || isPathWithin(serviceCwd, normalizedTemplateCwd);
+    }) ?? null;
+  const analysis = matchedService ? analysisByServiceId.get(matchedService.id) ?? null : null;
+
+  return {
+    template,
+    role: matchedService?.role ?? templateRole,
+    service: matchedService,
+    analysis
+  };
+}
+
+function compareServiceMatchPriority(
+  left: DebugServiceSpec,
+  right: DebugServiceSpec,
+  templateCwd: string,
+  templateRole: DebugServiceRole
+): number {
+  const leftExact = Number(path.resolve(left.cwd) === templateCwd);
+  const rightExact = Number(path.resolve(right.cwd) === templateCwd);
+
+  if (rightExact !== leftExact) {
+    return rightExact - leftExact;
+  }
+
+  const leftRoleMatch = Number(left.role === templateRole);
+  const rightRoleMatch = Number(right.role === templateRole);
+
+  if (rightRoleMatch !== leftRoleMatch) {
+    return rightRoleMatch - leftRoleMatch;
+  }
+
+  const leftDistance = resolveRelativePathDistance(templateCwd, left.cwd);
+  const rightDistance = resolveRelativePathDistance(templateCwd, right.cwd);
+
+  if (leftDistance !== rightDistance) {
+    return leftDistance - rightDistance;
+  }
+
+  return left.name.localeCompare(right.name);
+}
+
+function resolveRelativePathDistance(leftPath: string, rightPath: string): number {
+  const normalizedLeft = withTrailingSeparator(path.resolve(leftPath));
+  const normalizedRight = withTrailingSeparator(path.resolve(rightPath));
+
+  if (normalizedLeft === normalizedRight) {
+    return 0;
+  }
+
+  if (normalizedLeft.startsWith(normalizedRight) || normalizedRight.startsWith(normalizedLeft)) {
+    return 1;
+  }
+
+  return 2;
+}
+
+function inferTemplateRole(template: TerminalCommandTemplate): DebugServiceRole {
+  const signal = [
+    template.name,
+    template.cwd,
+    template.command,
+    ...template.args
+  ].join(" ").toLowerCase();
+
+  if (
+    signal.includes("frontend")
+    || signal.includes("web")
+    || signal.includes("ui")
+    || signal.includes("vite")
+    || signal.includes("next")
+    || signal.includes("astro")
+    || signal.includes("nuxt")
+    || signal.includes("vue")
+    || signal.includes("remix")
+  ) {
+    return "frontend";
+  }
+
+  if (signal.includes("worker")) {
+    return "worker";
+  }
+
+  if (signal.includes("mock")) {
+    return "mock";
+  }
+
+  if (
+    signal.includes("backend")
+    || signal.includes("server")
+    || signal.includes("api")
+    || signal.includes("host")
+    || signal.includes("express")
+    || signal.includes("nestjs")
+    || signal.includes("koa")
+    || signal.includes("hono")
+    || signal.includes("uvicorn")
+    || signal.includes("flask")
+    || signal.includes("django")
+    || signal.includes("spring")
+    || signal.includes("rails")
+    || signal.includes("dotnet")
+  ) {
+    return "backend";
+  }
+
+  return "custom";
+}
+
+function buildTemplateBackedDebugService(
+  template: TerminalCommandTemplate,
+  role: DebugServiceRole,
+  frameworkAnalysisId: string | null
+): DebugServiceSpec {
+  return {
+    id: template.id,
+    targetId: template.debugTargetId ?? "",
+    role,
+    name: template.name,
+    cwd: template.cwd,
+    command: template.command,
+    args: template.args,
+    env: template.env,
+    defaultPortHint: template.port,
+    protocol: "http",
+    healthPath: null,
+    adapterKind: template.adapterKind ?? null,
+    frameworkAnalysisId,
+    createdAt: template.createdAt,
+    updatedAt: template.updatedAt
+  };
+}
+
+function resolveRegisteredTemplateBackendEndpoint(
+  contexts: MatchedTemplateAnalysisContext[],
+  plannedPortByTemplateId: Map<string, number | null>
+): string | null {
+  const candidate = contexts.find((context) =>
+    context.role === "backend" && plannedPortByTemplateId.get(context.template.id) !== null
+  );
+
+  if (!candidate) {
+    return null;
+  }
+
+  return `http://127.0.0.1:${plannedPortByTemplateId.get(candidate.template.id)}`;
+}
+
+function buildServiceDiscoveryEnvPatch(input: {
+  role: DebugServiceRole;
+  analysis: FrameworkAnalysisResult;
+  backendEndpoint: string | null;
+}): Record<string, string> {
+  if (input.role === "backend" || !input.analysis.requiresServiceDiscoveryHandling || !input.backendEndpoint) {
+    return {};
+  }
+
+  switch (input.analysis.primaryFramework) {
+    case "vite":
+      return {
+        VITE_API_BASE_URL: input.backendEndpoint,
+        API_BASE_URL: input.backendEndpoint
+      };
+    case "nextjs":
+      return {
+        NEXT_PUBLIC_API_BASE_URL: input.backendEndpoint,
+        API_BASE_URL: input.backendEndpoint
+      };
+    case "cra":
+      return {
+        REACT_APP_API_BASE_URL: input.backendEndpoint,
+        API_BASE_URL: input.backendEndpoint
+      };
+    case "astro":
+      return {
+        PUBLIC_API_BASE_URL: input.backendEndpoint,
+        API_BASE_URL: input.backendEndpoint
+      };
+    case "nuxt":
+      return {
+        NUXT_PUBLIC_API_BASE_URL: input.backendEndpoint,
+        API_BASE_URL: input.backendEndpoint
+      };
+    case "vue-cli":
+      return {
+        VUE_APP_API_BASE_URL: input.backendEndpoint,
+        API_BASE_URL: input.backendEndpoint
+      };
+    case "remix":
+      return {
+        API_BASE_URL: input.backendEndpoint,
+        PUBLIC_API_BASE_URL: input.backendEndpoint
+      };
+    default:
+      return {
+        API_BASE_URL: input.backendEndpoint,
+        BACKEND_BASE_URL: input.backendEndpoint
+      };
+  }
+}
+
+function resolveRegisteredTemplateMissingRequirements(
+  analysis: FrameworkAnalysisResult,
+  input: {
+    role: DebugServiceRole;
+    backendEndpoint: string | null;
+  }
+): string[] {
+  const missing: string[] = [];
+
+  if (
+    analysis.requiresServiceDiscoveryHandling
+    && input.role !== "backend"
+    && !input.backendEndpoint
+  ) {
+    missing.push("service_discovery");
+  }
+
+  if (analysis.requiresCallbackHandling) {
+    missing.push("callback");
+  }
+
+  return missing;
+}
+
+async function resolveTemplateRequestedPorts(input: {
+  targetRootPath: string;
+  templates: TerminalCommandTemplate[];
+  portRequests: DebugTargetPortRequest[];
+  portLeaseRepository: PortLeaseRepository;
+}): Promise<Map<string, number>> {
+  const requestedPorts = new Map<string, number>();
+  const usedPorts = new Map<number, string>();
+
+  for (const request of input.portRequests) {
+    validatePortRequestShape(request);
+
+    const matches = input.templates.filter((template) =>
+      matchesTemplatePortRequest(template, input.targetRootPath, request)
+    );
+
+    if (matches.length === 0) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "DEBUG_TARGET_PORT_REQUEST_UNMATCHED",
+        detail: `显式端口请求没有匹配到任何启动项：${describePortRequest(request)}`,
+        field: "portRequests"
+      });
+    }
+
+    if (matches.length > 1) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "DEBUG_TARGET_PORT_REQUEST_AMBIGUOUS",
+        detail: `显式端口请求匹配到了多个启动项：${describePortRequest(request)}`,
+        field: "portRequests"
+      });
+    }
+
+    const matchedTemplate = matches[0]!;
+    const previousPort = requestedPorts.get(matchedTemplate.id);
+
+    if (previousPort !== undefined && previousPort !== request.port) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "DEBUG_TARGET_PORT_REQUEST_CONFLICT",
+        detail: `同一个启动项收到了多个不同的显式端口请求：${matchedTemplate.name}`,
+        field: "portRequests"
+      });
+    }
+
+    const occupiedBy = usedPorts.get(request.port);
+
+    if (occupiedBy && occupiedBy !== matchedTemplate.id) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "DEBUG_TARGET_PORT_REQUEST_CONFLICT",
+        detail: `多个启动项请求了同一个端口：${request.port}`,
+        field: "portRequests"
+      });
+    }
+
+    await ensureRequestedPortAvailable(request.port, inferTemplateRole(matchedTemplate), input.portLeaseRepository);
+    requestedPorts.set(matchedTemplate.id, request.port);
+    usedPorts.set(request.port, matchedTemplate.id);
+  }
+
+  return requestedPorts;
+}
+
 async function resolveRequestedPorts(input: {
   targetRootPath: string;
   services: DebugServiceSpec[];
@@ -2240,12 +2852,16 @@ async function resolveRequestedPorts(input: {
 
 async function allocateManagedPort(
   role: DebugServiceSpec["role"],
-  portLeaseRepository: PortLeaseRepository
+  portLeaseRepository: PortLeaseRepository,
+  portPoolConfig: DebugPortPoolConfig,
+  usedPorts: ReadonlySet<number> = new Set()
 ): Promise<number> {
-  const startPort = resolvePortRangeStart(role);
+  const range = portPoolConfig[role as DebugPortPoolRole] ?? portPoolConfig.custom;
 
-  for (let offset = 0; offset < 200; offset += 1) {
-    const port = startPort + offset;
+  for (let port = range.start; port <= range.end; port += 1) {
+    if (usedPorts.has(port)) {
+      continue;
+    }
 
     if (portLeaseRepository.findActiveByPort(port, "tcp")) {
       continue;
@@ -2261,7 +2877,7 @@ async function allocateManagedPort(
   throw new AppError({
     statusCode: 409,
     errorCode: "PORT_LEASE_EXHAUSTED",
-    detail: `当前服务角色没有可分配的空闲端口：${role}`
+    detail: `当前服务角色没有可分配的空闲端口：${role}（范围 ${range.start}-${range.end}）`
   });
 }
 
@@ -2286,21 +2902,6 @@ async function ensureRequestedPortAvailable(
       detail: `显式请求的端口当前不可用：${port}（服务角色：${role}）`,
       field: "portRequests"
     });
-  }
-}
-
-function resolvePortRangeStart(role: DebugServiceSpec["role"]): number {
-  switch (role) {
-    case "frontend":
-      return 43000;
-    case "backend":
-      return 44000;
-    case "worker":
-      return 45000;
-    case "mock":
-      return 46000;
-    default:
-      return 47000;
   }
 }
 
@@ -2423,6 +3024,49 @@ function matchesPortRequest(
   }
 
   return true;
+}
+
+function matchesTemplatePortRequest(
+  template: TerminalCommandTemplate,
+  targetRootPath: string,
+  request: DebugTargetPortRequest
+): boolean {
+  if (request.serviceId?.trim() && request.serviceId.trim() !== template.id) {
+    return false;
+  }
+
+  if (request.role?.trim() && request.role.trim() !== inferTemplateRole(template)) {
+    return false;
+  }
+
+  if (request.name?.trim() && request.name.trim() !== template.name) {
+    return false;
+  }
+
+  if (request.command?.trim() && request.command.trim() !== template.command) {
+    return false;
+  }
+
+  if (request.cwd?.trim()) {
+    const selectorPath = normalizePortRequestCwd(request.cwd, targetRootPath);
+    const templatePath = path.resolve(template.cwd);
+
+    if (selectorPath !== templatePath) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function clonePortPoolConfig(config: DebugPortPoolConfig): DebugPortPoolConfig {
+  return {
+    frontend: { ...config.frontend },
+    backend: { ...config.backend },
+    worker: { ...config.worker },
+    mock: { ...config.mock },
+    custom: { ...config.custom }
+  };
 }
 
 function normalizePortRequestCwd(value: string | null | undefined, targetRootPath: string): string {

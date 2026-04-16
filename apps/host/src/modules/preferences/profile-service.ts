@@ -1,6 +1,8 @@
 import { AppError } from "../../shared/errors/app-error.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type {
+  DebugPortPoolConfig,
+  DebugPortPoolRole,
   PreferenceProviderId,
   UserPreferenceLanguage,
   UserPreferencePermissionMode,
@@ -31,6 +33,20 @@ const PROVIDER_IDS: PreferenceProviderId[] = [
 const DEFAULT_LANGUAGE: UserPreferenceLanguage = "zh-CN";
 const DEFAULT_THEME: UserPreferenceTheme = "light";
 const DEFAULT_PERMISSION_MODE: UserPreferencePermissionMode = "default";
+export const DEFAULT_DEBUG_PORT_POOLS: DebugPortPoolConfig = {
+  frontend: { start: 43000, end: 43999 },
+  backend: { start: 44000, end: 44999 },
+  worker: { start: 45000, end: 45999 },
+  mock: { start: 46000, end: 46999 },
+  custom: { start: 47000, end: 47999 }
+};
+const DEBUG_PORT_POOL_ROLES: DebugPortPoolRole[] = [
+  "frontend",
+  "backend",
+  "worker",
+  "mock",
+  "custom"
+];
 const DEFAULT_PROVIDER_PROFILE: UserPreferenceProviderProfile = {
   defaultModel: null,
   defaultReasoningLevel: null
@@ -47,6 +63,7 @@ export interface PreferenceProfilePatchInput {
   autoTheme?: boolean;
   defaultPermissionMode?: string;
   providers?: unknown;
+  debugPortPools?: unknown;
 }
 
 type PreferenceProvidersPatch = Partial<Record<PreferenceProviderId, ProviderPreferencePatch>>;
@@ -83,7 +100,11 @@ export class PreferenceProfileService {
         input.defaultPermissionMode !== undefined
           ? normalizePermissionMode(input.defaultPermissionMode)
           : baseProfile.defaultPermissionMode,
-      providers: mergeProviders(baseProfile.providers, providersPatch)
+      providers: mergeProviders(baseProfile.providers, providersPatch),
+      debugPortPools:
+        input.debugPortPools !== undefined
+          ? normalizeDebugPortPools(input.debugPortPools)
+          : baseProfile.debugPortPools
     };
 
     const timestamp = nowIso();
@@ -105,7 +126,8 @@ function toProfile(record: UserPreferenceProfileRecord): UserPreferenceProfile {
     theme: record.theme,
     autoTheme: record.autoTheme,
     defaultPermissionMode: record.defaultPermissionMode,
-    providers: buildProvidersRecord(record.providers)
+    providers: buildProvidersRecord(record.providers),
+    debugPortPools: cloneDebugPortPools(record.debugPortPools)
   };
 }
 
@@ -122,7 +144,8 @@ function createDefaultProfile(): UserPreferenceProfile {
     theme: DEFAULT_THEME,
     autoTheme: false,
     defaultPermissionMode: DEFAULT_PERMISSION_MODE,
-    providers: buildProvidersRecord()
+    providers: buildProvidersRecord(),
+    debugPortPools: cloneDebugPortPools(DEFAULT_DEBUG_PORT_POOLS)
   };
 }
 
@@ -222,6 +245,84 @@ function mergeProviders(
   }
 
   return result;
+}
+
+function normalizeDebugPortPools(input: unknown): DebugPortPoolConfig {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw invalidField("debugPortPools", "debugPortPools 必须是对象");
+  }
+
+  const result = {} as DebugPortPoolConfig;
+
+  for (const role of DEBUG_PORT_POOL_ROLES) {
+    const rawRange = (input as Record<string, unknown>)[role];
+
+    if (typeof rawRange !== "object" || rawRange === null || Array.isArray(rawRange)) {
+      throw invalidField(`debugPortPools.${role}`, `${role} 端口池必须提供 start 和 end`);
+    }
+
+    const start = normalizePortPoolBound(
+      (rawRange as Record<string, unknown>).start,
+      `debugPortPools.${role}.start`
+    );
+    const end = normalizePortPoolBound(
+      (rawRange as Record<string, unknown>).end,
+      `debugPortPools.${role}.end`
+    );
+
+    if (start >= end) {
+      throw invalidField(`debugPortPools.${role}`, `${role} 端口池的 start 必须小于 end`);
+    }
+
+    result[role] = { start, end };
+  }
+
+  validateDebugPortPoolOverlap(result);
+  return result;
+}
+
+function normalizePortPoolBound(value: unknown, field: string): number {
+  if (!Number.isInteger(value)) {
+    throw invalidField(field, `${field} 必须是整数`);
+  }
+
+  const port = Number(value);
+
+  if (port < 1024 || port > 65535) {
+    throw invalidField(field, `${field} 必须在 1024 到 65535 之间`);
+  }
+
+  return port;
+}
+
+function validateDebugPortPoolOverlap(config: DebugPortPoolConfig): void {
+  const ranges = DEBUG_PORT_POOL_ROLES.map((role) => ({
+    role,
+    start: config[role].start,
+    end: config[role].end
+  })).sort((left, right) => left.start - right.start);
+
+  for (let index = 1; index < ranges.length; index += 1) {
+    const previous = ranges[index - 1]!;
+    const current = ranges[index]!;
+
+    if (current.start <= previous.end) {
+      throw invalidField(
+        "debugPortPools",
+        `${previous.role} 与 ${current.role} 的端口池范围发生重叠`
+      );
+    }
+  }
+}
+
+function cloneDebugPortPools(config: DebugPortPoolConfig): DebugPortPoolConfig {
+  return {
+    frontend: { ...config.frontend },
+    backend: { ...config.backend },
+    worker: { ...config.worker },
+    mock: { ...config.mock },
+    custom: { ...config.custom }
+  };
 }
 
 function normalizeLanguage(value: unknown): UserPreferenceLanguage {

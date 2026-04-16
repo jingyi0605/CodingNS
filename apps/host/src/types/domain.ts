@@ -332,6 +332,14 @@ export type PreferenceProviderId =
 export type UserPreferenceLanguage = "zh-CN" | "en-US";
 export type UserPreferenceTheme = "light" | "dark" | "sky-blue" | "eye-green";
 export type UserPreferencePermissionMode = "default" | "acceptEdits" | "bypassPermissions";
+export type DebugPortPoolRole = "frontend" | "backend" | "worker" | "mock" | "custom";
+
+export interface DebugPortPoolRange {
+  start: number;
+  end: number;
+}
+
+export type DebugPortPoolConfig = Record<DebugPortPoolRole, DebugPortPoolRange>;
 
 export interface UserPreferenceProviderProfile {
   defaultModel: string | null;
@@ -346,6 +354,7 @@ export interface UserPreferenceProfile {
   autoTheme: boolean;
   defaultPermissionMode: UserPreferencePermissionMode;
   providers: UserPreferenceProviders;
+  debugPortPools: DebugPortPoolConfig;
 }
 
 export interface UserPreferenceProfileRecord extends UserPreferenceProfile {
@@ -715,7 +724,7 @@ export interface FileContextBinding {
 }
 
 export type DebugTargetSourceType = "repo" | "worktree";
-export type DebugServiceRole = "frontend" | "backend" | "worker" | "mock" | "custom";
+export type DebugServiceRole = DebugPortPoolRole;
 export type DebugServiceProtocol = "http" | "ws" | "tcp";
 export type FrameworkAnalysisConfidence = "high" | "medium" | "low";
 export type FrameworkCompatibilityLevel = "supported" | "conditional" | "unsupported" | "unknown";
