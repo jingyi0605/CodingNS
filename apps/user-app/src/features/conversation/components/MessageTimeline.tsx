@@ -2276,6 +2276,7 @@ export function MessageTimeline({
   const previousLastMessageSignatureRef = useRef<string | null>(null);
   const stickToBottomRef = useRef(true);
   const pendingOlderLoadOffsetRef = useRef<number | null>(null);
+  const pendingOlderLoadHeadSignatureRef = useRef<string | null>(null);
   const olderLoadLockRef = useRef(false);
   const pendingRestoreStateRef = useRef(readPersistedConversationScrollState(sessionId));
   const restoredTailSignatureRef = useRef<string | null>(
@@ -2463,6 +2464,7 @@ export function MessageTimeline({
 
     olderLoadLockRef.current = true;
     pendingOlderLoadOffsetRef.current = list.scrollHeight - list.scrollTop;
+    pendingOlderLoadHeadSignatureRef.current = buildMessageSignature(messages[0] ?? null);
     onLoadOlderMessages();
     return true;
   }
@@ -2489,6 +2491,7 @@ export function MessageTimeline({
       currentScrollStateRef.current = pendingRestoreStateRef.current;
       stickToBottomRef.current = pendingRestoreStateRef.current?.stickToBottom ?? true;
       pendingOlderLoadOffsetRef.current = null;
+      pendingOlderLoadHeadSignatureRef.current = null;
       finishManualRestore();
       hasNewMessagesBelowRef.current = false;
       setHasNewMessagesBelow(false);
@@ -2568,9 +2571,21 @@ export function MessageTimeline({
       return;
     }
 
-    if (pendingOlderLoadOffsetRef.current !== null && messages.length >= previousCount) {
+    const currentHeadSignature = buildMessageSignature(messages[0] ?? null);
+    const shouldRestoreOlderLoadOffset =
+      pendingOlderLoadOffsetRef.current !== null
+      && !loadingOlderMessages
+      && pendingOlderLoadHeadSignatureRef.current !== null
+      && pendingOlderLoadHeadSignatureRef.current !== currentHeadSignature
+      && messages.length >= previousCount;
+
+    if (shouldRestoreOlderLoadOffset) {
       list.scrollTop = Math.max(0, list.scrollHeight - pendingOlderLoadOffsetRef.current);
       pendingOlderLoadOffsetRef.current = null;
+      pendingOlderLoadHeadSignatureRef.current = null;
+    } else if (pendingOlderLoadOffsetRef.current !== null && !loadingOlderMessages) {
+      pendingOlderLoadOffsetRef.current = null;
+      pendingOlderLoadHeadSignatureRef.current = null;
     } else if (
       stickToBottomRef.current
       && (
@@ -2585,7 +2600,7 @@ export function MessageTimeline({
     syncScrollAffordance(list);
     previousMessageCountRef.current = messages.length;
     previousLastMessageSignatureRef.current = currentLastSignature;
-  }, [historyState, messages, sessionId]);
+  }, [historyState, loadingOlderMessages, messages, sessionId]);
 
   useEffect(() => {
     if (!hasOlderMessages) {

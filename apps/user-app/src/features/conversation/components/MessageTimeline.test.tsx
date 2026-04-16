@@ -1117,6 +1117,230 @@ describe("MessageTimeline", () => {
     expect(handleLoadOlderMessages).toHaveBeenCalledTimes(1);
   });
 
+  it("加载更早消息期间收到实时新消息时，不会提前消费历史滚动恢复偏移", () => {
+    const handleLoadOlderMessages = vi.fn();
+    const baseMessages = [
+      {
+        ...createAssistantTextMessage("第一条消息", "assistant-base-1"),
+        sessionId: "session-scroll-1"
+      },
+      {
+        ...createAssistantTextMessage("第二条消息", "assistant-base-2"),
+        sessionId: "session-scroll-1",
+        sequence: 2,
+        rawRef: "codex://raw#line=assistant-base-2"
+      }
+    ];
+    const runtimeTailMessage = {
+      ...createAssistantTextMessage("最新实时消息", "assistant-tail-1"),
+      sessionId: "session-scroll-1",
+      sequence: 3,
+      rawRef: "codex://raw#line=assistant-tail-1"
+    };
+    const olderMessages = [
+      {
+        ...createAssistantTextMessage("更早的第一条", "assistant-older-1"),
+        sessionId: "session-scroll-1",
+        sequence: -1,
+        rawRef: "codex://raw#line=assistant-older-1",
+        timestamp: "2026-03-23T09:58:00.000Z"
+      },
+      {
+        ...createAssistantTextMessage("更早的第二条", "assistant-older-2"),
+        sessionId: "session-scroll-1",
+        sequence: 0,
+        rawRef: "codex://raw#line=assistant-older-2",
+        timestamp: "2026-03-23T09:59:00.000Z"
+      }
+    ];
+    const { rerender } = render(
+      <MessageTimeline
+        sessionId="session-scroll-1"
+        historyState="ready"
+        provider="codex"
+        hasOlderMessages
+        loadingOlderMessages={false}
+        onLoadOlderMessages={handleLoadOlderMessages}
+        onRetryMessage={vi.fn()}
+        messages={baseMessages}
+      />
+    );
+
+    const messageList = document.querySelector(".message-list") as HTMLDivElement | null;
+
+    expect(messageList).not.toBeNull();
+
+    let scrollHeight = 1200;
+    Object.defineProperty(messageList, "scrollHeight", {
+      get: () => scrollHeight,
+      configurable: true
+    });
+    Object.defineProperty(messageList, "clientHeight", {
+      value: 600,
+      configurable: true
+    });
+
+    fireEvent.scroll(messageList!, {
+      target: {
+        scrollTop: 0
+      }
+    });
+
+    expect(handleLoadOlderMessages).toHaveBeenCalledTimes(1);
+    expect(messageList!.scrollTop).toBe(0);
+
+    rerender(
+      <MessageTimeline
+        sessionId="session-scroll-1"
+        historyState="ready"
+        provider="codex"
+        hasOlderMessages
+        loadingOlderMessages
+        onLoadOlderMessages={handleLoadOlderMessages}
+        onRetryMessage={vi.fn()}
+        messages={baseMessages}
+      />
+    );
+
+    scrollHeight = 1300;
+    rerender(
+      <MessageTimeline
+        sessionId="session-scroll-1"
+        historyState="ready"
+        provider="codex"
+        hasOlderMessages
+        loadingOlderMessages
+        onLoadOlderMessages={handleLoadOlderMessages}
+        onRetryMessage={vi.fn()}
+        messages={[...baseMessages, runtimeTailMessage]}
+      />
+    );
+
+    expect(messageList!.scrollTop).toBe(0);
+
+    scrollHeight = 1900;
+    rerender(
+      <MessageTimeline
+        sessionId="session-scroll-1"
+        historyState="ready"
+        provider="codex"
+        hasOlderMessages={false}
+        loadingOlderMessages={false}
+        onLoadOlderMessages={handleLoadOlderMessages}
+        onRetryMessage={vi.fn()}
+        messages={[...olderMessages, ...baseMessages, runtimeTailMessage]}
+      />
+    );
+
+    expect(messageList!.scrollTop).toBe(700);
+  });
+
+  it("加载更早消息失败时，即使期间收到实时新消息，也不会误下移视口且允许再次触发加载", () => {
+    const handleLoadOlderMessages = vi.fn();
+    const baseMessages = [
+      {
+        ...createAssistantTextMessage("第一条消息", "assistant-failed-base-1"),
+        sessionId: "session-scroll-failed"
+      },
+      {
+        ...createAssistantTextMessage("第二条消息", "assistant-failed-base-2"),
+        sessionId: "session-scroll-failed",
+        sequence: 2,
+        rawRef: "codex://raw#line=assistant-failed-base-2"
+      }
+    ];
+    const runtimeTailMessage = {
+      ...createAssistantTextMessage("最新实时消息", "assistant-failed-tail-1"),
+      sessionId: "session-scroll-failed",
+      sequence: 3,
+      rawRef: "codex://raw#line=assistant-failed-tail-1"
+    };
+    const { rerender } = render(
+      <MessageTimeline
+        sessionId="session-scroll-failed"
+        historyState="ready"
+        provider="codex"
+        hasOlderMessages
+        loadingOlderMessages={false}
+        onLoadOlderMessages={handleLoadOlderMessages}
+        onRetryMessage={vi.fn()}
+        messages={baseMessages}
+      />
+    );
+
+    const messageList = document.querySelector(".message-list") as HTMLDivElement | null;
+
+    expect(messageList).not.toBeNull();
+
+    let scrollHeight = 1200;
+    Object.defineProperty(messageList, "scrollHeight", {
+      get: () => scrollHeight,
+      configurable: true
+    });
+    Object.defineProperty(messageList, "clientHeight", {
+      value: 600,
+      configurable: true
+    });
+
+    fireEvent.scroll(messageList!, {
+      target: {
+        scrollTop: 0
+      }
+    });
+
+    expect(handleLoadOlderMessages).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <MessageTimeline
+        sessionId="session-scroll-failed"
+        historyState="ready"
+        provider="codex"
+        hasOlderMessages
+        loadingOlderMessages
+        onLoadOlderMessages={handleLoadOlderMessages}
+        onRetryMessage={vi.fn()}
+        messages={baseMessages}
+      />
+    );
+
+    scrollHeight = 1300;
+    rerender(
+      <MessageTimeline
+        sessionId="session-scroll-failed"
+        historyState="ready"
+        provider="codex"
+        hasOlderMessages
+        loadingOlderMessages
+        onLoadOlderMessages={handleLoadOlderMessages}
+        onRetryMessage={vi.fn()}
+        messages={[...baseMessages, runtimeTailMessage]}
+      />
+    );
+
+    rerender(
+      <MessageTimeline
+        sessionId="session-scroll-failed"
+        historyState="ready"
+        provider="codex"
+        hasOlderMessages
+        loadingOlderMessages={false}
+        onLoadOlderMessages={handleLoadOlderMessages}
+        onRetryMessage={vi.fn()}
+        messages={[...baseMessages, runtimeTailMessage]}
+      />
+    );
+
+    expect(messageList!.scrollTop).toBe(0);
+
+    fireEvent.scroll(messageList!, {
+      target: {
+        scrollTop: 0
+      }
+    });
+
+    expect(handleLoadOlderMessages).toHaveBeenCalledTimes(2);
+  });
+
   it("会把交错返回的工具调用和结果按 callId 成对合并显示", async () => {
     render(
       <MessageTimeline
