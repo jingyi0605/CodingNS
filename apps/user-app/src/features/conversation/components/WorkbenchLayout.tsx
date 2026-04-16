@@ -7177,10 +7177,37 @@ export function WorkbenchLayout({
   const [notificationSeenAt, setNotificationSeenAt] = useState<string | null>(() =>
     readStoredString(WORKBENCH_NOTIFICATION_SEEN_AT_KEY)
   );
+  const prefersMacOsWorkbenchVibrancy =
+    shellMode === "desktop"
+    && platform.isDesktop
+    && platform.ui.osFamily === "macos"
+    && platform.ui.prefersOverlayTitlebar;
 
   useEffect(() => {
     showToastRef.current = showToast;
   }, [showToast]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const { documentElement, body } = document;
+
+    if (!prefersMacOsWorkbenchVibrancy) {
+      documentElement.removeAttribute("data-workbench-macos-vibrancy");
+      body?.removeAttribute("data-workbench-macos-vibrancy");
+      return;
+    }
+
+    documentElement.setAttribute("data-workbench-macos-vibrancy", "true");
+    body?.setAttribute("data-workbench-macos-vibrancy", "true");
+
+    return () => {
+      documentElement.removeAttribute("data-workbench-macos-vibrancy");
+      body?.removeAttribute("data-workbench-macos-vibrancy");
+    };
+  }, [prefersMacOsWorkbenchVibrancy]);
 
   useEffect(() => {
     sessionDisplaySortModeRef.current = sessionDisplaySortMode;
