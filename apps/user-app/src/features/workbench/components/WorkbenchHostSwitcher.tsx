@@ -5,6 +5,7 @@ import { clientConfigStore, useClientConfigSelector } from "../../../config/clie
 import { getActiveHost, type HostProfile } from "../../../config/client-config-types";
 import { HostSwitchError, hostSwitchCoordinator } from "../../../config/host-switch-coordinator";
 import { normalizeServerBaseUrl } from "../../../config/server-config-shared";
+import { persistRememberedLoginCredentials } from "../../auth/store/remembered-login";
 import { useAuthSelector } from "../../auth/store/auth-store";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
@@ -18,6 +19,8 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
   const [formOpen, setFormOpen] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [baseUrlDraft, setBaseUrlDraft] = useState("");
+  const [usernameDraft, setUsernameDraft] = useState("");
+  const [passwordDraft, setPasswordDraft] = useState("");
   const [pendingHostId, setPendingHostId] = useState<string | null>(null);
   const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null);
   const anchorRef = useRef<HTMLDivElement | null>(null);
@@ -57,7 +60,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
           Math.max(edgePadding, rect.left),
           Math.max(edgePadding, viewportWidth - width - edgePadding)
         );
-    const estimatedHeight = formOpen ? 320 : 240;
+    const estimatedHeight = formOpen ? 440 : 240;
     const top = collapsed ? rect.top : rect.bottom + gap;
     const clampedTop = Math.min(
       Math.max(edgePadding, top),
@@ -136,6 +139,17 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
   }
 
   async function handleAddHost(): Promise<void> {
+    const trimmedUsername = usernameDraft.trim();
+    const hasCredentialInput = trimmedUsername.length > 0 || passwordDraft.length > 0;
+
+    if (hasCredentialInput && (!trimmedUsername || !passwordDraft)) {
+      showToast({
+        title: t("shell.hostAddIncompleteCredentials"),
+        tone: "error"
+      });
+      return;
+    }
+
     let normalizedBaseUrl: string;
 
     try {
@@ -173,8 +187,14 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
       await clientConfigStore.update({
         hosts: [...runtimeConfig.hosts, nextHost]
       });
-      setNameDraft("");
-      setBaseUrlDraft("");
+      if (trimmedUsername && passwordDraft) {
+        persistRememberedLoginCredentials({
+          hostId: nextHost.id,
+          username: trimmedUsername,
+          password: passwordDraft
+        });
+      }
+      resetFormDrafts();
       setFormOpen(false);
       showToast({
         title: t("shell.hostAddSuccess", { name: nextHost.name })
@@ -185,6 +205,13 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
         tone: "error"
       });
     }
+  }
+
+  function resetFormDrafts(): void {
+    setNameDraft("");
+    setBaseUrlDraft("");
+    setUsernameDraft("");
+    setPasswordDraft("");
   }
 
   if (!activeHost) {
@@ -290,14 +317,30 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                       placeholder={t("shell.hostSwitcherUrlPlaceholder")}
                     />
                   </label>
+                  <label className="workbench-host-switcher-field">
+                    <span>{t("auth.username")}</span>
+                    <input
+                      value={usernameDraft}
+                      onChange={(event) => setUsernameDraft(event.target.value)}
+                      autoComplete="username"
+                    />
+                  </label>
+                  <label className="workbench-host-switcher-field">
+                    <span>{t("auth.password")}</span>
+                    <input
+                      type="password"
+                      value={passwordDraft}
+                      onChange={(event) => setPasswordDraft(event.target.value)}
+                      autoComplete="current-password"
+                    />
+                  </label>
                   <div className="workbench-host-switcher-form-actions">
                     <button
                       type="button"
                       className="secondary-button"
                       onClick={() => {
                         setFormOpen(false);
-                        setNameDraft("");
-                        setBaseUrlDraft("");
+                        resetFormDrafts();
                       }}
                     >
                       {t("common.cancel")}

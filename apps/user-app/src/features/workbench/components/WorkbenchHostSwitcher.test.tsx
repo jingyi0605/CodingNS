@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clientConfigStore } from "../../../config/client-config-store";
 import { authStore } from "../../auth/store/auth-store";
+import { readRememberedLoginCredentials } from "../../auth/store/remembered-login";
 import { ToastProvider } from "../../../shared/toast";
 import { WorkbenchHostSwitcher } from "./WorkbenchHostSwitcher";
 
@@ -103,6 +104,33 @@ describe("WorkbenchHostSwitcher", () => {
     await waitFor(() => {
       const nextHost = clientConfigStore.getState().hosts.find((host) => host.name === "演示机房");
       expect(nextHost?.baseUrl).toBe("http://10.0.0.8:3002");
+    });
+  });
+
+  it("新增 HOST 时可以顺手保存认证信息", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ToastProvider>
+        <WorkbenchHostSwitcher />
+      </ToastProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "切换 HOST" }));
+    await user.click(screen.getByRole("button", { name: /新增 HOST/ }));
+    await user.type(screen.getByLabelText("HOST 名称"), "机房 Host");
+    await user.type(screen.getByLabelText("HOST 地址"), "10.0.0.9:3002");
+    await user.type(screen.getByLabelText("用户名"), "root");
+    await user.type(screen.getByLabelText("密码"), "Secret123!");
+    await user.click(screen.getByRole("button", { name: "保存 HOST" }));
+
+    await waitFor(() => {
+      const nextHost = clientConfigStore.getState().hosts.find((host) => host.name === "机房 Host");
+      expect(nextHost).toBeDefined();
+      expect(readRememberedLoginCredentials(nextHost?.id ?? null)).toMatchObject({
+        username: "root",
+        password: "Secret123!"
+      });
     });
   });
 });

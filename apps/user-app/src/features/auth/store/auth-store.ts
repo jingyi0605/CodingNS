@@ -81,8 +81,36 @@ class AuthStore {
   getState = () => this.state;
 
   async login(payload: LoginPayload, baseUrl?: string): Promise<AuthSession> {
-    const session = await loginRequest(payload, baseUrl);
-    this.setSession(session);
+    const currentHost = this.getCurrentHost();
+
+    if (!currentHost) {
+      const session = await loginRequest(payload, baseUrl);
+      this.updateState({
+        status: "authenticated",
+        session
+      });
+      return session;
+    }
+
+    const session = await this.loginForHost(currentHost, payload, baseUrl);
+    this.updateState({
+      status: "authenticated",
+      session
+    });
+    return session;
+  }
+
+  async loginForHost(host: HostProfile, payload: LoginPayload, baseUrl?: string): Promise<AuthSession> {
+    const session = await loginRequest(payload, baseUrl ?? host.baseUrl);
+    this.persistSession(host, session);
+
+    if (this.getCurrentHost()?.id === host.id) {
+      this.updateState({
+        status: "authenticated",
+        session
+      });
+    }
+
     return session;
   }
 
@@ -179,6 +207,14 @@ class AuthStore {
       return;
     }
 
+    this.persistSession(host, session);
+    this.updateState({
+      status: "authenticated",
+      session
+    });
+  }
+
+  private persistSession(host: HostProfile, session: AuthSession): void {
     this.sessionMap = {
       ...this.sessionMap,
       [host.id]: {
@@ -201,10 +237,6 @@ class AuthStore {
           : item
       )
     }).catch(() => {});
-    this.updateState({
-      status: "authenticated",
-      session
-    });
   }
 
   private syncCurrentHostSession(): void {

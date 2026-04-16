@@ -1,5 +1,7 @@
 import { clientConfigStore } from "./client-config-store";
 import { getHostProfileById } from "./client-config-types";
+import { authStore } from "../features/auth/store/auth-store";
+import { readRememberedLoginCredentials } from "../features/auth/store/remembered-login";
 import { probeHost } from "../network/host-probe";
 
 export class HostSwitchError extends Error {
@@ -49,13 +51,29 @@ class HostSwitchCoordinator {
       throw new HostSwitchError("HOST_UNREACHABLE", `目标 HOST 不可达：${targetHost.baseUrl}`);
     }
 
+    const rememberedLogin = readRememberedLoginCredentials(targetHost.id);
+
+    if (rememberedLogin) {
+      try {
+        await authStore.loginForHost(targetHost, {
+          username: rememberedLogin.username,
+          password: rememberedLogin.password
+        });
+      } catch {
+        // 预登录失败时仍然允许切换过去，后续回到登录页让用户手动修正凭据。
+      }
+    }
+
+    const nextConfig = clientConfigStore.getState();
+    const switchedAt = new Date().toISOString();
+
     await clientConfigStore.update({
-      hosts: currentConfig.hosts.map((host) =>
+      hosts: nextConfig.hosts.map((host) =>
         host.id === hostId
           ? {
               ...host,
-              lastConnectedAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
+              lastConnectedAt: switchedAt,
+              updatedAt: switchedAt
             }
           : host
       ),
