@@ -6,6 +6,7 @@ import type { ProviderCapabilities } from "@codingns/session-sync-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { resolveHostConfig } from "../../src/config/env.js";
+import { createTaskManager, type TaskManager } from "../../src/modules/tasks/task-manager.js";
 import { HOST_TASK_TYPES } from "../../src/modules/tasks/task-types.js";
 import { SessionChangedFileService } from "../../src/modules/sessions/session-changed-file-service.js";
 import { SessionHistoryService } from "../../src/modules/sessions/session-history-service.js";
@@ -33,19 +34,21 @@ describe("SessionHistoryService background tasks", () => {
   });
 
   it("workspace discovery 会进入统一任务管理器并按工作区去重", async () => {
-    const service = createSessionHistoryService();
-    seedWorkspace(service.workspaceRepository, service.database.db, service.workspacePath);
     const discoverDeferred = createDeferred<{ sessions: []; isComplete: true }>();
-    const privateService = service.instance as unknown as {
-      providerDiscoveryHelperClient: {
-        discoverWorkspaceSessions: (input: unknown) => Promise<{ sessions: []; isComplete: true }>;
-      };
-    };
     const discoverMock = vi.fn(async () => discoverDeferred.promise);
+    const taskManager = createTaskManager(null, {
+      helper_process: {
+        execute: async (definition, input, context) => {
+          if (definition.taskType === HOST_TASK_TYPES.workspaceDiscoveryScan) {
+            return await discoverMock(input, context.signal);
+          }
 
-    privateService.providerDiscoveryHelperClient = {
-      discoverWorkspaceSessions: discoverMock
-    };
+          return await definition.run(input, context);
+        }
+      }
+    });
+    const service = createSessionHistoryService(taskManager);
+    seedWorkspace(service.workspaceRepository, service.database.db, service.workspacePath);
 
     service.instance.requestWorkspaceDiscovery("workspace-1", "user-1", { force: true });
     service.instance.requestWorkspaceDiscovery("workspace-1", "user-1", { force: true });
@@ -120,7 +123,55 @@ describe("SessionHistoryService background tasks", () => {
     service.dispose();
   });
 
-  function createSessionHistoryService() {
+  it("workspace discovery 任务取消后会把 AbortSignal 传给 provider helper", async () => {
+    let receivedSignal: AbortSignal | null = null;
+    const taskManager = createTaskManager(null, {
+      helper_process: {
+        execute: async (definition, input, context) => {
+          if (definition.taskType !== HOST_TASK_TYPES.workspaceDiscoveryScan) {
+            return await definition.run(input, context);
+          }
+
+          receivedSignal = context.signal;
+          return await new Promise<never>((_resolve, reject) => {
+            if (context.signal.aborted) {
+              reject(context.signal.reason ?? new Error("aborted"));
+              return;
+            }
+
+            context.signal.addEventListener("abort", () => {
+              reject(context.signal.reason ?? new Error("aborted"));
+            }, { once: true });
+          });
+        }
+      }
+    });
+    const service = createSessionHistoryService(taskManager);
+    seedWorkspace(service.workspaceRepository, service.database.db, service.workspacePath);
+
+    service.instance.requestWorkspaceDiscovery("workspace-1", "user-1", { force: true });
+    await flushMicrotasks();
+
+    expect(receivedSignal).not.toBeNull();
+    expect(receivedSignal?.aborted).toBe(false);
+
+    taskManager.cancel(HOST_TASK_TYPES.workspaceDiscovery, "workspace-1", "manual abort");
+    await flushMicrotasks();
+
+    expect(receivedSignal?.aborted).toBe(true);
+    expect(
+      service.instance.observeBackgroundTaskMetrics().taskTypes[HOST_TASK_TYPES.workspaceDiscovery]?.counters
+        .cancelled
+    ).toBe(1);
+    expect(
+      service.instance.observeBackgroundTaskMetrics().taskTypes[HOST_TASK_TYPES.workspaceDiscoveryScan]?.counters
+        .cancelled
+    ).toBe(1);
+
+    service.dispose();
+  });
+
+  function createSessionHistoryService(taskManager?: TaskManager) {
     const rootDir = createTempRoot();
     const workspacePath = join(rootDir, "workspace");
     const claudeCodeHomeDir = join(rootDir, "claude-home");
@@ -161,7 +212,12 @@ describe("SessionHistoryService background tasks", () => {
       ),
       new SessionStateRepository(database.db),
       new SessionStatusSnapshotRepository(database.db),
-      config
+      config,
+      undefined,
+      null,
+      null,
+      {},
+      taskManager
     );
 
     return {

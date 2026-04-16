@@ -19,6 +19,7 @@ import {
   type HistoryDirection,
   type HistoryPage,
   type ProviderCapabilities,
+  type ProviderSessionDiscovery,
   type ProviderSubscription,
   type SendMessageResult
 } from "@codingns/session-sync-core";
@@ -77,8 +78,13 @@ import {
   getSharedProviderDiscoveryHelperClient,
   type ProviderSessionDiscoveryHelperConfig
 } from "../provider/provider-discovery-helper-client.js";
+import { discoverWorkspaceSessionsInRuntime } from "../provider/provider-discovery-runtime.js";
 import { createTaskManager, TaskManager } from "../tasks/task-manager.js";
-import { HOST_TASK_TYPES, type TaskMetricsSnapshot } from "../tasks/task-types.js";
+import {
+  HOST_TASK_TYPES,
+  type TaskHandle,
+  type TaskMetricsSnapshot
+} from "../tasks/task-types.js";
 import { CodexAppServerHelperClient } from "./codex-app-server-helper-client.js";
 
 interface StartSessionInput {
@@ -338,9 +344,33 @@ export class SessionHistoryService {
         refreshStateMode: "inline" | "deferred";
       }, SessionListItem[]>({
         taskType: HOST_TASK_TYPES.workspaceDiscovery,
+        executionLane: "host_background",
+        run: async ({ workspaceId, userId, refreshStateMode }, context) =>
+          this.runDiscoverWorkspaceSessions(
+            workspaceId,
+            userId,
+            refreshStateMode,
+            context.signal
+          )
+      });
+    }
+
+    if (!this.taskManager.has(HOST_TASK_TYPES.workspaceDiscoveryScan)) {
+      this.taskManager.register<{
+        config: ProviderSessionDiscoveryHelperConfig;
+        workspacePath: string;
+        knownSessions: import("@codingns/session-sync-core").ProviderSessionSummary[];
+      }, ProviderSessionDiscovery>({
+        taskType: HOST_TASK_TYPES.workspaceDiscoveryScan,
         executionLane: "helper_process",
-        run: async ({ workspaceId, userId, refreshStateMode }) =>
-          this.runDiscoverWorkspaceSessions(workspaceId, userId, refreshStateMode)
+        helperProcessHandler: "session.workspace_discovery",
+        run: async ({ config, workspacePath, knownSessions }, context) =>
+          await discoverWorkspaceSessionsInRuntime(
+            config,
+            workspacePath,
+            knownSessions,
+            context.signal
+          )
       });
     }
 
@@ -659,23 +689,24 @@ export class SessionHistoryService {
     return this.enrichSessionItem(this.getSessionListItemOrThrow(sessionId, userId));
   }
 
-  async syncSessionTitle(sessionId: string): Promise<void> {
+  async syncSessionTitle(sessionId: string, signal?: AbortSignal): Promise<void> {
     const binding = this.getBindingOrThrow(sessionId);
-    await this.syncSessionTitleFromProvider(sessionId, binding);
+    await this.syncSessionTitleFromProvider(sessionId, binding, signal);
   }
 
   async syncWorkspaceSessionTitles(
     workspaceId: string,
     userId: string,
-    concurrency = 1
+    concurrency = 1,
+    signal?: AbortSignal
   ): Promise<void> {
     const sessions = this.sessionIndexRepository.listByWorkspace(workspaceId, userId);
 
     await runWithConcurrency(sessions, concurrency, async (session) => {
-      await this.syncSessionTitle(session.sessionId).catch(() => {
+      await this.syncSessionTitle(session.sessionId, signal).catch(() => {
         return;
       });
-    });
+    }, signal);
   }
 
   async listSessionChangedFiles(
@@ -1800,7 +1831,8 @@ export class SessionHistoryService {
   private async runDiscoverWorkspaceSessions(
     workspaceId: string,
     userId: string,
-    refreshStateMode: "inline" | "deferred" = "inline"
+    refreshStateMode: "inline" | "deferred" = "inline",
+    signal?: AbortSignal
   ): Promise<SessionListItem[]> {
     const startedAt = Date.now();
     const debugStartedAtMs = terminalDebugNowMs();
@@ -1826,15 +1858,22 @@ export class SessionHistoryService {
         existingWorkspaceSessions,
         workspace.path
       );
-      const discovery = await this.providerDiscoveryHelperClient
-        .discoverWorkspaceSessions({
+      const discoveryHandle = this.taskManager.enqueue<{
+        config: ProviderSessionDiscoveryHelperConfig;
+        workspacePath: string;
+        knownSessions: import("@codingns/session-sync-core").ProviderSessionSummary[];
+      }, ProviderSessionDiscovery>(HOST_TASK_TYPES.workspaceDiscoveryScan, {
+        key: workspaceId,
+        source: "session_history.workspace_discovery.scan",
+        input: {
           config: this.providerSessionDiscoveryConfig,
           workspacePath: workspace.path,
           knownSessions
-        })
-        .catch((error) => {
-          throw mapSessionProviderError(error);
-        });
+        }
+      });
+      const discovery = await awaitTaskHandleWithSignal(discoveryHandle, signal).catch((error) => {
+        throw mapSessionProviderError(error);
+      });
       const sessions = discovery.sessions;
       discoverDurationMs = Date.now() - discoverStartedAt;
       const timestamp = nowIso();
@@ -2635,7 +2674,8 @@ export class SessionHistoryService {
 
   private async syncSessionTitleFromProvider(
     sessionId: string,
-    binding: SessionBinding
+    binding: SessionBinding,
+    signal?: AbortSignal
   ): Promise<void> {
     const currentIndex = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
 
@@ -2653,7 +2693,7 @@ export class SessionHistoryService {
         provider: binding.provider,
         providerSessionId: binding.providerSessionId,
         rawStoreRef: binding.rawStoreRef
-      })
+      }, signal)
     ).trim();
 
     const resolvedTitle = resolvePersistedSessionTitle(
@@ -4911,7 +4951,8 @@ function buildProviderCapabilityCacheKey(
 async function runWithConcurrency<TItem>(
   items: readonly TItem[],
   concurrency: number,
-  worker: (item: TItem) => Promise<void>
+  worker: (item: TItem) => Promise<void>,
+  signal?: AbortSignal
 ): Promise<void> {
   const normalizedConcurrency = Math.max(1, Math.floor(concurrency) || 1);
   const queue = [...items];
@@ -4919,6 +4960,7 @@ async function runWithConcurrency<TItem>(
     length: Math.min(normalizedConcurrency, queue.length || 1)
   }, async () => {
     while (queue.length > 0) {
+      throwIfAborted(signal);
       const current = queue.shift();
 
       if (current === undefined) {
@@ -4930,6 +4972,57 @@ async function runWithConcurrency<TItem>(
   });
 
   await Promise.all(runners);
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw signal.reason ?? new Error("任务已取消");
+  }
+}
+
+async function awaitTaskHandleWithSignal<TResult>(
+  handle: TaskHandle<TResult>,
+  signal?: AbortSignal
+): Promise<TResult> {
+  if (!signal) {
+    return await handle.promise;
+  }
+
+  if (signal.aborted) {
+    handle.cancel(getAbortMessage(signal.reason));
+    throw signal.reason ?? new Error("任务已取消");
+  }
+
+  return await new Promise<TResult>((resolve, reject) => {
+    const onAbort = () => {
+      handle.cancel(getAbortMessage(signal.reason));
+      reject(signal.reason ?? new Error("任务已取消"));
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    handle.promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      }
+    );
+  });
+}
+
+function getAbortMessage(reason: unknown): string {
+  if (reason instanceof Error && reason.message.trim().length > 0) {
+    return reason.message;
+  }
+
+  if (typeof reason === "string" && reason.trim().length > 0) {
+    return reason;
+  }
+
+  return "任务已取消";
 }
 
 async function runBatchedTransactions<TItem>(

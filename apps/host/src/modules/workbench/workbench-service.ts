@@ -145,12 +145,15 @@ export class WorkbenchService {
       }, WorkbenchSnapshot>({
         taskType: HOST_TASK_TYPES.workbenchSyncTitles,
         executionLane: "host_background",
-        run: async ({ userId }) => this.runSyncSessionTitles(userId)
+        run: async ({ userId }, context) => this.runSyncSessionTitles(userId, context.signal)
       });
     }
   }
 
-  private async runSyncSessionTitles(userId: string): Promise<WorkbenchSnapshot> {
+  private async runSyncSessionTitles(
+    userId: string,
+    signal?: AbortSignal
+  ): Promise<WorkbenchSnapshot> {
     const workspaces = this.listWorkbenchWorkspaces();
 
     await Promise.all(
@@ -158,7 +161,8 @@ export class WorkbenchService {
         this.sessionHistoryService.syncWorkspaceSessionTitles(
           workspace.id,
           userId,
-          SESSION_TITLE_SYNC_CONCURRENCY
+          SESSION_TITLE_SYNC_CONCURRENCY,
+          signal
         )
       )
     );

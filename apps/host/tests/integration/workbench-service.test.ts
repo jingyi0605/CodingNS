@@ -197,4 +197,61 @@ describe("WorkbenchService", () => {
       ]
     });
   });
+
+  it("标题同步任务取消后会把 AbortSignal 传给 sessionHistoryService", async () => {
+    let receivedSignal: AbortSignal | null = null;
+    const service = new WorkbenchService(
+      {
+        list: vi.fn(() => [
+          {
+            id: "workspace-1",
+            path: "/repo/workspace-1"
+          }
+        ])
+      } as never,
+      {
+        listByUserId: vi.fn(() => [])
+      } as never,
+      {
+        listWorkspaceSessions: vi.fn(() => []),
+        requestWorkspaceDiscovery: vi.fn(),
+        syncWorkspaceSessionTitles: vi.fn(async (_workspaceId: string, _userId: string, _concurrency: number, signal?: AbortSignal) => {
+          receivedSignal = signal ?? null;
+
+          await new Promise<never>((_resolve, reject) => {
+            if (!signal) {
+              reject(new Error("missing signal"));
+              return;
+            }
+
+            signal.addEventListener("abort", () => {
+              reject(signal.reason ?? new Error("aborted"));
+            }, { once: true });
+          });
+        })
+      } as never,
+      {
+        getProfile: vi.fn(() => null)
+      } as never,
+      {
+        listSessionIds: vi.fn(() => [])
+      } as never
+    );
+
+    const handle = service.scheduleSessionTitleSync("user-1");
+    await flushMicrotasks();
+
+    expect(receivedSignal).not.toBeNull();
+    expect(receivedSignal?.aborted).toBe(false);
+
+    handle.cancel("manual abort");
+
+    await expect(handle.promise).rejects.toThrow("manual abort");
+    expect(receivedSignal?.aborted).toBe(true);
+  });
 });
+
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
