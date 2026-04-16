@@ -39,7 +39,22 @@ export class GitCommandRunner {
     options: GitCommandOptions = {}
   ): Promise<GitCommandResult> {
     if (this.helperClient) {
-      return this.helperClient.run(repoRoot, args, options);
+      try {
+        return await this.helperClient.run(repoRoot, args, options);
+      } catch (error) {
+        if (!shouldFallbackToDirectGitRun(error)) {
+          throw error;
+        }
+
+        console.warn("[git-helper-fallback]", {
+          workspaceId: options.workspaceId ?? null,
+          operation: options.operation ?? null,
+          repoRoot,
+          args,
+          command: `git ${args.join(" ")}`,
+          reason: error.message
+        });
+      }
     }
 
     return this.runDirect(repoRoot, args, options, 0);
@@ -265,6 +280,10 @@ export class GitCommandRunner {
 
 function shouldRetryGitSpawn(error: NodeJS.ErrnoException): boolean {
   return error.code === "EBADF";
+}
+
+function shouldFallbackToDirectGitRun(error: unknown): error is AppError {
+  return error instanceof AppError && error.errorCode === "GIT_HELPER_UNAVAILABLE";
 }
 
 function toErrnoException(error: unknown): NodeJS.ErrnoException {

@@ -91,11 +91,7 @@ export class GitCommandHelperClient {
     });
     this.child.on("error", (error) => {
       this.rejectAllPending(
-        new AppError({
-          statusCode: 500,
-          errorCode: "GIT_COMMAND_FAILED",
-          detail: `Git helper 启动失败：${error.message}`
-        })
+        createHelperUnavailableError(`Git helper 启动失败：${error.message}`)
       );
     });
     this.child.on("exit", (code, signal) => {
@@ -104,24 +100,14 @@ export class GitCommandHelperClient {
       }
 
       this.rejectAllPending(
-        new AppError({
-          statusCode: 500,
-          errorCode: "GIT_COMMAND_FAILED",
-          detail: `Git helper 已退出：code=${code ?? "null"} signal=${signal ?? "null"}`
-        })
+        createHelperUnavailableError(`Git helper 已退出：code=${code ?? "null"} signal=${signal ?? "null"}`)
       );
     });
   }
 
   run(repoRoot: string, args: string[], options: GitCommandOptions = {}): Promise<GitCommandResult> {
-    if (this.disposed) {
-      return Promise.reject(
-        new AppError({
-          statusCode: 500,
-          errorCode: "GIT_COMMAND_FAILED",
-          detail: "Git helper 已关闭"
-        })
-      );
+    if (!this.isTransportAvailable()) {
+      return Promise.reject(createHelperUnavailableError("Git helper 已关闭"));
     }
 
     const id = String(this.nextRequestId++);
@@ -187,11 +173,7 @@ export class GitCommandHelperClient {
 
         this.pendingRequests.delete(id);
         reject(
-          new AppError({
-            statusCode: 500,
-            errorCode: "GIT_COMMAND_FAILED",
-            detail: `写入 Git helper 失败：${error.message}`
-          })
+          createHelperUnavailableError(`写入 Git helper 失败：${error.message}`)
         );
       });
     });
@@ -205,13 +187,7 @@ export class GitCommandHelperClient {
     this.disposed = true;
     this.stdoutReader.close();
     this.child.kill("SIGTERM");
-    this.rejectAllPending(
-      new AppError({
-        statusCode: 500,
-        errorCode: "GIT_COMMAND_FAILED",
-        detail: "Git helper 已关闭"
-      })
-    );
+    this.rejectAllPending(createHelperUnavailableError("Git helper 已关闭"));
   }
 
   private handleResponseLine(line: string): void {
@@ -271,6 +247,22 @@ export class GitCommandHelperClient {
       });
     });
   }
+
+  private isTransportAvailable(): boolean {
+    if (this.disposed || this.child.killed || this.child.stdin.destroyed) {
+      return false;
+    }
+
+    return this.child.exitCode === null || this.child.exitCode === undefined;
+  }
+}
+
+function createHelperUnavailableError(detail: string): AppError {
+  return new AppError({
+    statusCode: 500,
+    errorCode: "GIT_HELPER_UNAVAILABLE",
+    detail
+  });
 }
 
 function resolveHelperLaunch(): { command: string; args: string[] } {

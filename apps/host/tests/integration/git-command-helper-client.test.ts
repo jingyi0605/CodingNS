@@ -67,4 +67,44 @@ describe("GitCommandHelperClient", () => {
       targetId: "1"
     });
   });
+
+  it("helper stdin 已销毁时会直接返回 transport 不可用错误", async () => {
+    const stdin = {
+      destroyed: true,
+      write: vi.fn()
+    };
+    const child = {
+      stdout: {},
+      stderr: {
+        on: vi.fn()
+      },
+      stdin,
+      killed: false,
+      exitCode: null,
+      kill: vi.fn(),
+      on: vi.fn()
+    };
+    const stdoutReader = {
+      on: vi.fn(),
+      close: vi.fn()
+    };
+
+    vi.doMock("node:child_process", () => ({
+      spawn: vi.fn(() => child)
+    }));
+    vi.doMock("node:readline", () => ({
+      default: {
+        createInterface: vi.fn(() => stdoutReader)
+      }
+    }));
+
+    const { GitCommandHelperClient } = await import("../../src/modules/git/git-command-helper-client.js");
+    const client = new GitCommandHelperClient();
+
+    await expect(client.run("/tmp/repo", ["status"])).rejects.toMatchObject({
+      errorCode: "GIT_HELPER_UNAVAILABLE",
+      message: "Git helper 已关闭"
+    });
+    expect(stdin.write).not.toHaveBeenCalled();
+  });
 });

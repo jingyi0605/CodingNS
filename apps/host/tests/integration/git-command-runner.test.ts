@@ -237,4 +237,60 @@ describe("GitCommandRunner", () => {
     await expect(resultPromise).rejects.toThrow("manual abort");
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
   });
+
+  it("helper transport 不可用时会自动降级到直连 git", async () => {
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const helperChild = {
+      stdout: new PassThrough(),
+      stderr: {
+        on: vi.fn()
+      },
+      stdin: {
+        destroyed: false,
+        write: vi.fn((_content: string, callback?: (error?: Error | null) => void) => {
+          callback?.(new Error("Cannot call write after a stream was destroyed"));
+          return true;
+        })
+      },
+      killed: false,
+      exitCode: null,
+      kill: vi.fn(),
+      on: vi.fn()
+    };
+    const directChild = new MockChildProcess();
+
+    spawnMock
+      .mockReturnValueOnce(helperChild)
+      .mockReturnValueOnce(directChild);
+
+    const runner = new GitCommandRunner({
+      preferHelperProcess: true
+    });
+    const resultPromise = runner.run("/repo", ["status", "--porcelain=1"], {
+      workspaceId: "workspace-1",
+      operation: "gitRead.getStatus"
+    });
+
+    await Promise.resolve();
+    directChild.stdout.write("ok\n");
+    directChild.emit("close", 0);
+
+    await expect(resultPromise).resolves.toEqual({
+      stdout: "ok\n",
+      stderr: "",
+      exitCode: 0
+    });
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      "[git-helper-fallback]",
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        operation: "gitRead.getStatus",
+        repoRoot: "/repo",
+        args: ["status", "--porcelain=1"],
+        command: "git status --porcelain=1",
+        reason: "写入 Git helper 失败：Cannot call write after a stream was destroyed"
+      })
+    );
+  });
 });
