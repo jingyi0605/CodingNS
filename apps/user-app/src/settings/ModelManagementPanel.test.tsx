@@ -18,6 +18,7 @@ vi.mock("../features/conversation/components/SessionProviderPicker", () => ({
 
 const missingCcSwitchCliMessage =
   "当前机器未安装 cc-switch-cli。这里集成的是 CC-Switch 的衍生 CLI 版本，不是 CC-Switch UI 版本。请先安装：https://github.com/SaladDay/cc-switch-cli";
+const legacyMissingCcSwitchMessage = "当前机器未找到 cc-switch 命令";
 
 describe("ModelManagementPanel", () => {
   beforeEach(() => {
@@ -102,13 +103,13 @@ describe("ModelManagementPanel", () => {
     expect(clearSessionProviderPickerCapabilityCacheMock).toHaveBeenCalledTimes(1);
   });
 
-  it("cc-switch-cli 未安装时只显示安装说明和仓库地址", async () => {
+  it("cc-switch-cli 未安装时即使 Host 还在回旧文案也只显示安装说明和仓库地址", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
       if (url.endsWith("/api/system/model-switch") && method === "GET") {
-        return createJsonResponse(createMissingCliSnapshotResponse());
+        return createJsonResponse(createMissingCliSnapshotResponse(legacyMissingCcSwitchMessage));
       }
 
       throw new Error(`Unexpected request: ${method} ${url}`);
@@ -234,25 +235,25 @@ function createCodexSnapshot(currentPresetId: string) {
   };
 }
 
-function createMissingCliSnapshotResponse() {
+function createMissingCliSnapshotResponse(statusText = missingCcSwitchCliMessage) {
   return {
     items: [
-      createUnavailableSnapshot("codex", "Codex"),
-      createUnavailableSnapshot("claude-code", "Claude Code"),
-      createUnavailableSnapshot("gemini", "Gemini"),
-      createUnavailableSnapshot("opencode", "OpenCode")
+      createUnavailableSnapshot("codex", "Codex", statusText),
+      createUnavailableSnapshot("claude-code", "Claude Code", statusText),
+      createUnavailableSnapshot("gemini", "Gemini", statusText),
+      createUnavailableSnapshot("opencode", "OpenCode", statusText)
     ],
     scannedAt: "2026-04-15T10:00:00.000Z"
   };
 }
 
-function createUnavailableSnapshot(app: string, displayName: string) {
+function createUnavailableSnapshot(app: string, displayName: string, statusText: string) {
   return {
     app,
     displayName,
     cliAvailable: false,
     status: "unavailable",
-    statusText: missingCcSwitchCliMessage,
+    statusText,
     currentPresetId: null,
     currentPresetName: null,
     currentModel: null,

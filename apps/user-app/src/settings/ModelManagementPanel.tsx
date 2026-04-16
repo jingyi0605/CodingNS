@@ -18,6 +18,9 @@ import { t } from "../shared/i18n";
 import { ApiError } from "../shared/network/api-error";
 
 type PendingActionKey = string | null;
+const CC_SWITCH_CLI_REPO_URL = "https://github.com/SaladDay/cc-switch-cli";
+const CC_SWITCH_CLI_MISSING_GUIDE =
+  "当前机器未安装 cc-switch-cli。这里集成的是 CC-Switch 的衍生 CLI 版本，不是 CC-Switch UI 版本。请先安装：";
 const URL_PATTERN = /(https?:\/\/[^\s]+)/i;
 
 export function ModelManagementPanel() {
@@ -375,16 +378,10 @@ function resolveMissingCcSwitchCliNotice(items: ModelManagementAppSnapshotDto[])
   }
 
   const rawText = items[0]?.statusText?.trim() ?? "";
-  const matchedUrl = rawText.match(URL_PATTERN)?.[1] ?? "";
-
-  if (!matchedUrl) {
-    return null;
-  }
-
-  const message = rawText.replace(matchedUrl, "").trim();
+  const matchedUrl = rawText.match(URL_PATTERN)?.[1] ?? CC_SWITCH_CLI_REPO_URL;
 
   return {
-    message,
+    message: CC_SWITCH_CLI_MISSING_GUIDE,
     url: matchedUrl
   };
 }
