@@ -1107,39 +1107,41 @@ export function MobileButlerPage() {
           onTouchStart={handleSidebarTouchStart}
           onTouchEnd={handleSidebarTouchEnd}
         >
-          <div
-            className="mobile-butler-segmented-shell"
-            data-mobile-butler-gesture="ignore"
-          >
-            <div className="mobile-butler-segmented-control" role="tablist" aria-label={t("shell.butlerSidebarTabsLabel")}>
-              {MOBILE_BUTLER_TAB_ORDER.map((tabId) => {
-                const selected = activeTab === tabId;
-                const label =
-                  tabId === "info"
-                    ? t("shell.butlerSidebarInfoTab")
-                    : tabId === "automation"
-                      ? t("shell.butlerSidebarAutomationTab")
-                      : t("shell.butlerSidebarSettingsTab");
+          <div className="mobile-butler-sidebar-shell">
+            <div
+              className="mobile-butler-segmented-shell"
+              data-mobile-butler-gesture="ignore"
+            >
+              <div className="mobile-butler-segmented-control" role="tablist" aria-label={t("shell.butlerSidebarTabsLabel")}>
+                {MOBILE_BUTLER_TAB_ORDER.map((tabId) => {
+                  const selected = activeTab === tabId;
+                  const label =
+                    tabId === "info"
+                      ? t("shell.butlerSidebarInfoTab")
+                      : tabId === "automation"
+                        ? t("shell.butlerSidebarAutomationTab")
+                        : t("shell.butlerSidebarSettingsTab");
 
-                return (
-                  <button
-                    key={tabId}
-                    type="button"
-                    role="tab"
-                    className="mobile-butler-segmented-button"
-                    aria-selected={selected}
-                    onClick={() => {
-                      selectTab(tabId);
-                    }}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
+                  return (
+                    <button
+                      key={tabId}
+                      type="button"
+                      role="tab"
+                      className="mobile-butler-segmented-button"
+                      aria-selected={selected}
+                      onClick={() => {
+                        selectTab(tabId);
+                      }}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-          <div className="mobile-page-top-body mobile-butler-body mobile-butler-sidebar-body">
-            {sidebarContent}
+            <div className="mobile-page-top-body mobile-butler-body mobile-butler-sidebar-body">
+              {sidebarContent}
+            </div>
           </div>
         </aside>
       </div>

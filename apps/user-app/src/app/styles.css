@@ -23950,6 +23950,7 @@ textarea:focus-visible {
 
 .mobile-butler-drawer-sidebar {
   right: 0;
+  gap: 0;
   transform: translateX(calc(100% + 1.5rem));
   opacity: 0;
 }
@@ -24035,6 +24036,15 @@ textarea:focus-visible {
   padding: 0.4rem 0 max(0.6rem, env(safe-area-inset-bottom, 0px));
 }
 
+.mobile-butler-sidebar-shell {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .mobile-butler-settings-summary {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -24042,8 +24052,18 @@ textarea:focus-visible {
 }
 
 .mobile-butler-segmented-shell {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  flex: 0 0 auto;
   padding-top: 0.2rem;
   padding-bottom: 0.16rem;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-surface) 98%, transparent),
+      color-mix(in srgb, var(--bg-primary) 94%, transparent)
+    );
 }
 
 .mobile-butler-segmented-control {
