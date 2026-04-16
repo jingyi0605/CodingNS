@@ -2476,6 +2476,124 @@ describe("spec002 会话同步核心", () => {
     ).toBe(true);
   });
 
+  it("本地已恢复的 opencode 会话不会被后续发现结果重新刷回归档列表", async () => {
+    const fixture = createEmptyFixture();
+    const config = resolveHostConfig({
+      databasePath: ":memory:",
+      claudeCodeHomeDir: fixture.claudeHomeDir,
+      codexHomeDir: fixture.codexHomeDir
+    });
+    const database = createDatabaseClient(":memory:");
+    const workspaceRepository = new WorkspaceRepository(database.db);
+    const sessionBindingRepository = new SessionBindingRepository(database.db);
+    const sessionIndexRepository = new SessionIndexRepository(database.db);
+    const sessionStateRepository = new SessionStateRepository(database.db);
+    const sessionStatusSnapshotRepository = new SessionStatusSnapshotRepository(database.db);
+    const sessionChangedFileService = new SessionChangedFileService(
+      new SessionChangedFileRepository(database.db)
+    );
+    const sessionMessageAttachmentService = new SessionMessageAttachmentService(
+      new SessionMessageAttachmentRepository(database.db),
+      config
+    );
+    const sessionHistoryService = new SessionHistoryService(
+      database.db,
+      workspaceRepository,
+      sessionBindingRepository,
+      sessionChangedFileService,
+      sessionIndexRepository,
+      sessionMessageAttachmentService,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository,
+      config
+    );
+    const timestamp = nowIso();
+
+    activeEmptyFixtures.push(fixture);
+    activeClosers.push(() => database.close());
+
+    database.db
+      .prepare(
+        `INSERT INTO auth_users (id, username, password_hash, role, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run("user-1", "tester", "hash", "admin", timestamp, timestamp);
+
+    workspaceRepository.create({
+      id: "workspace-1",
+      name: "Fixture Workspace",
+      path: fixture.workspaceDir,
+      repoRoot: fixture.workspaceDir,
+      favorite: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      removedAt: null
+    });
+    sessionBindingRepository.upsert({
+      sessionId: "host-session-restored",
+      workspaceId: "workspace-1",
+      provider: "opencode",
+      providerSessionId: "op-restored-1",
+      rawStoreRef: "opencode://session/op-restored-1",
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    sessionIndexRepository.upsert({
+      sessionId: "host-session-restored",
+      workspaceId: "workspace-1",
+      provider: "opencode",
+      title: "Restored OpenCode Session",
+      messageCount: 3,
+      isArchived: false,
+      lastMessageAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+
+    const discoverMock = vi.fn().mockResolvedValue({
+      sessions: [
+        {
+          provider: "opencode",
+          providerSessionId: "op-restored-1",
+          title: "Restored OpenCode Session",
+          workspacePath: fixture.workspaceDir,
+          rawStoreRef: "opencode://session/op-restored-1",
+          isArchived: true,
+          lastMessageAt: timestamp,
+          messageCount: 3
+        }
+      ],
+      isComplete: true
+    });
+
+    (
+      sessionHistoryService as unknown as {
+        sessionSyncService: {
+          discoverWorkspaceSessions: typeof discoverMock;
+        };
+      }
+    ).sessionSyncService = {
+      discoverWorkspaceSessions: discoverMock
+    };
+
+    const items = await sessionHistoryService.discoverWorkspaceSessions("workspace-1", "user-1", {
+      force: true
+    });
+
+    expect(items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: "host-session-restored",
+          provider: "opencode",
+          isArchived: false
+        })
+      ])
+    );
+    expect(
+      sessionIndexRepository.findIndexRecordBySessionId("host-session-restored")?.isArchived
+    ).toBe(false);
+  });
+
   it("打通 bootstrap、导入工作区、发现会话、历史读取、能力查询、续接和新建会话", async () => {
     const fixture = createProviderFixture();
     activeFixtures.push(fixture);

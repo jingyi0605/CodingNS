@@ -1963,7 +1963,11 @@ export class SessionHistoryService {
             subagentLabel: existingIndex?.subagentLabel ?? null,
             title: preservedTitle,
             messageCount: session.messageCount,
-            isArchived: resolveDiscoveredArchiveState(existingIndex?.isArchived ?? false, session.isArchived),
+            isArchived: resolveDiscoveredArchiveState(
+              session.provider,
+              existingIndex?.isArchived ?? false,
+              session.isArchived
+            ),
             lastMessageAt: session.lastMessageAt,
             createdAt,
             updatedAt: timestamp
@@ -2060,6 +2064,7 @@ export class SessionHistoryService {
             ),
             messageCount: persistedSession.session.messageCount,
             isArchived: resolveDiscoveredArchiveState(
+              persistedSession.session.provider,
               persistedSession.existingIndex?.isArchived ?? false,
               persistedSession.session.isArchived
             ),
@@ -3986,11 +3991,29 @@ function mergeSessionIndexRecord(input: {
     subagentLabel: input.target?.subagentLabel ?? input.source?.subagentLabel ?? null,
     title: pickPreferredSessionTitle(input.target?.title ?? null, input.source?.title ?? null),
     messageCount: Math.max(input.target?.messageCount ?? 0, input.source?.messageCount ?? 0),
-    isArchived: Boolean(input.target?.isArchived || input.source?.isArchived),
+    isArchived: mergePersistedArchiveState(
+      input.provider,
+      input.target?.isArchived,
+      input.source?.isArchived
+    ),
     lastMessageAt: pickLaterIso(input.target?.lastMessageAt ?? null, input.source?.lastMessageAt ?? null),
     createdAt: pickEarlierIso(input.target?.createdAt ?? null, input.source?.createdAt ?? null) ?? input.timestamp,
     updatedAt: input.timestamp
   };
+}
+
+function mergePersistedArchiveState(
+  provider: string,
+  targetArchived: boolean | null | undefined,
+  sourceArchived: boolean | null | undefined
+): boolean {
+  // 只有 Codex 这类真实支持归档的 provider 才认底层归档真相；
+  // 其他 provider 的归档完全由 Host 本地索引维护，不能让旧副本把恢复状态再刷回去。
+  if (shouldUseProviderDiscoveredArchiveState(provider)) {
+    return Boolean(targetArchived || sourceArchived);
+  }
+
+  return targetArchived ?? sourceArchived ?? false;
 }
 
 function mergeSessionStatusSnapshot(input: {
@@ -4458,14 +4481,20 @@ function isCloseClaudeSessionTimestamp(
 }
 
 function resolveDiscoveredArchiveState(
+  provider: string,
   existingArchived: boolean,
   discoveredArchived: boolean | null | undefined
 ): boolean {
-  if (existingArchived) {
-    return true;
+  if (!shouldUseProviderDiscoveredArchiveState(provider)) {
+    return existingArchived;
   }
 
   return discoveredArchived === true;
+}
+
+function shouldUseProviderDiscoveredArchiveState(provider: string): boolean {
+  // 当前只有 Codex 的归档能稳定映射到底层文件位置；其余 provider 一律信本地 session_indices。
+  return provider === "codex";
 }
 
 function isMessageAtOrAfter(timestamp: string, minTimestamp: string | null): boolean {
