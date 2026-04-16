@@ -2,9 +2,10 @@ import { useState } from "react";
 import { createPlatformAdapter } from "../platform/platform-adapter";
 import { t } from "../shared/i18n";
 import {
-  checkForDesktopUpdate,
+  refreshDesktopUpdateState,
   installDesktopUpdate
 } from "../platform/desktop/release-manager";
+import { useDesktopUpdateSelector } from "../platform/desktop/desktop-update-store";
 
 export function ReleasePanel() {
   const platform = createPlatformAdapter();
@@ -13,27 +14,18 @@ export function ReleasePanel() {
   const [installing, setInstalling] = useState(false);
   const [openingPage, setOpeningPage] = useState(false);
   const [statusText, setStatusText] = useState<string | null>(null);
-  const [checkedVersion, setCheckedVersion] = useState<string | null>(null);
-  const [manifest, setManifest] = useState<Awaited<ReturnType<typeof checkForDesktopUpdate>>["manifest"]>(null);
-  const [hasUpdate, setHasUpdate] = useState(false);
+  const latestState = useDesktopUpdateSelector((state) => state.latestState);
+  const checkedVersion = latestState?.currentVersion ?? null;
+  const manifest = latestState?.manifest ?? null;
+  const hasUpdate = latestState?.hasUpdate ?? false;
 
   async function handleCheckUpdate() {
     setLoading(true);
     setStatusText(null);
 
     try {
-      const state = await checkForDesktopUpdate();
-      setManifest(state.manifest);
-      setCheckedVersion(state.currentVersion);
-      setHasUpdate(state.hasUpdate);
+      const state = await refreshDesktopUpdateState({ notify: "always" });
       setStatusText(resolveReleaseStatus(state.manifest, state.hasUpdate));
-
-      if (state.hasUpdate) {
-        await platform.bridge.showNotification(
-          t("settings.releaseUpdateReady"),
-          state.manifest?.version ?? "-"
-        );
-      }
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : t("settings.releaseCheckFailed"));
     } finally {
@@ -91,7 +83,12 @@ export function ReleasePanel() {
 
   const canInstall = Boolean(supportsClientPackageUpdate && manifest && hasUpdate);
   const effectiveStatusText =
-    statusText ?? (!supportsClientPackageUpdate ? t("settings.clientUpdateUnsupported") : null);
+    statusText ??
+    (!supportsClientPackageUpdate
+      ? t("settings.clientUpdateUnsupported")
+      : latestState
+        ? resolveReleaseStatus(latestState.manifest, latestState.hasUpdate)
+        : null);
 
   return (
     <div className="settings-update-card">
@@ -146,7 +143,7 @@ export function ReleasePanel() {
 }
 
 function resolveReleaseStatus(
-  manifest: Awaited<ReturnType<typeof checkForDesktopUpdate>>["manifest"],
+  manifest: Awaited<ReturnType<typeof refreshDesktopUpdateState>>["manifest"],
   hasUpdate: boolean
 ): string {
   if (!hasUpdate) {
@@ -157,7 +154,7 @@ function resolveReleaseStatus(
 }
 
 function resolveReleaseTone(
-  manifest: Awaited<ReturnType<typeof checkForDesktopUpdate>>["manifest"],
+  manifest: Awaited<ReturnType<typeof refreshDesktopUpdateState>>["manifest"],
   hasUpdate: boolean,
   statusText: string
 ): "neutral" | "success" | "warning" | "danger" {

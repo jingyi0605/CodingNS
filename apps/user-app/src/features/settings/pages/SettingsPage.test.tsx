@@ -14,6 +14,7 @@ import {
 import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import { authStore } from "../../auth/store/auth-store";
 import { PlatformProvider } from "../../../platform/platform-provider";
+import { resetDesktopUpdateState } from "../../../platform/desktop/desktop-update-store";
 import { I18nProvider, t } from "../../../shared/i18n";
 import { ThemeProvider } from "../../../shared/theme";
 import { AppVersionProvider } from "../../../shared/version/app-version";
@@ -36,6 +37,7 @@ vi.mock("../../../settings/ModelManagementPanel", () => ({
 
 describe("SettingsPage", () => {
   beforeEach(() => {
+    resetDesktopUpdateState();
     window.localStorage.clear();
     localUiPreferenceStore.setSessionDisplaySortMode("createdAt");
     localUiPreferenceStore.setShowSystemFiles(false);

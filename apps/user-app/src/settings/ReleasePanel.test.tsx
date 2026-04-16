@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clientConfigStore } from "../config/client-config-store";
+import { resetDesktopUpdateState } from "../platform/desktop/desktop-update-store";
 import { I18nProvider, t } from "../shared/i18n";
 import { ThemeProvider } from "../shared/theme";
 import { ReleasePanel } from "./ReleasePanel";
@@ -11,6 +12,7 @@ const originalTauriInternals = window.__TAURI_INTERNALS__;
 
 describe("ReleasePanel", () => {
   beforeEach(() => {
+    resetDesktopUpdateState();
     clientConfigStore.hydrate({
       platform: "desktop",
       hostBaseUrl: "http://127.0.0.1:3002",

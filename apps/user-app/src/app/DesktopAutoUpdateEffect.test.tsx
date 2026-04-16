@@ -2,11 +2,12 @@ import { render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clientConfigStore } from "../config/client-config-store";
-import { t } from "../shared/i18n";
+import { resetDesktopUpdateState } from "../platform/desktop/desktop-update-store";
 import { DesktopAutoUpdateEffect } from "./DesktopAutoUpdateEffect";
 
 describe("DesktopAutoUpdateEffect", () => {
   beforeEach(() => {
+    resetDesktopUpdateState();
     clientConfigStore.hydrate({
       platform: "web",
       hostBaseUrl: "http://127.0.0.1:3002",
@@ -26,9 +27,10 @@ describe("DesktopAutoUpdateEffect", () => {
     delete window.__TAURI_INTERNALS__;
   });
 
-  it("桌面端开启自动检查时，会在启动后检查更新并提示新版本", async () => {
-    const invoke = vi.fn(async <T,>(command: string): Promise<T> => {
+  it("桌面端开启自动检查时，会在启动后立即检查，并在一小时后再次检查", async () => {
+    const invoke = vi.fn(async <T,>(command: string, args?: Record<string, unknown>): Promise<T> => {
       if (command === "check_for_update") {
+        expect(args).toEqual({ channel: "stable" });
         return {
           checkedAt: "2026-04-15T10:00:00.000Z",
           currentVersion: "0.1.2",
@@ -52,8 +54,19 @@ describe("DesktopAutoUpdateEffect", () => {
         } as T;
       }
 
+      if (command === "show_notification") {
+        return {
+          ok: true
+        } as T;
+      }
+
       return undefined as T;
     });
+    const setIntervalSpy = vi.spyOn(window, "setInterval").mockImplementation(
+      ((..._args: Parameters<typeof window.setInterval>) =>
+        1 as unknown as ReturnType<typeof window.setInterval>) as unknown as typeof window.setInterval
+    );
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
 
     window.__TAURI_INTERNALS__ = {
       invoke: invoke as NonNullable<Window["__TAURI_INTERNALS__"]>["invoke"]
@@ -71,16 +84,16 @@ describe("DesktopAutoUpdateEffect", () => {
     render(<DesktopAutoUpdateEffect />);
 
     await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("check_for_update", {
-        channel: "stable"
-      });
+      expect(countCommandCalls(invoke, "check_for_update")).toBe(1);
     });
 
-    await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("show_notification", {
-        title: t("settings.releaseUpdateReady"),
-        body: "0.1.3"
-      });
-    });
+    expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 60 * 60 * 1000);
   });
 });
+
+function countCommandCalls(
+  invoke: ReturnType<typeof vi.fn>,
+  command: string
+): number {
+  return invoke.mock.calls.filter(([calledCommand]) => calledCommand === command).length;
+}
