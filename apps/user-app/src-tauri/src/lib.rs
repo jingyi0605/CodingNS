@@ -11,6 +11,8 @@ use std::time::Duration;
 use objc2_app_kit::{NSView, NSWindow, NSWindowButton};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, WebviewWindow};
+#[cfg(target_os = "macos")]
+use tauri::window::{Effect, EffectState, EffectsBuilder};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 #[cfg(target_os = "android")]
@@ -141,6 +143,19 @@ fn build_runtime_info(app: &AppHandle) -> DesktopRuntimeInfo {
       .map(|path| path.to_string_lossy().to_string()),
     window_chrome: collect_window_chrome_info(app)
   }
+}
+
+#[cfg(target_os = "macos")]
+fn apply_macos_window_material(window: &WebviewWindow) -> Result<(), String> {
+  // macOS 侧边栏的毛玻璃依赖原生窗口材质；主内容区仍由前端用更高不透明度兜底。
+  window
+    .set_effects(
+      EffectsBuilder::new()
+        .effect(Effect::Sidebar)
+        .state(EffectState::FollowsWindowActiveState)
+        .build()
+    )
+    .map_err(|error| error.to_string())
 }
 
 #[cfg(target_os = "macos")]
@@ -349,6 +364,16 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_clipboard_manager::init())
     .setup(|app| {
+      #[cfg(target_os = "macos")]
+      {
+        if let Some(window) = app.get_webview_window("main") {
+          if let Err(error) = apply_macos_window_material(&window) {
+            // 视觉材质失败不能阻断启动，最多退回普通窗口。
+            log::warn!("failed to apply macOS window material: {error}");
+          }
+        }
+      }
+
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()
