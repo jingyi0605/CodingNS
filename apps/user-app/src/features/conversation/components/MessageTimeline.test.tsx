@@ -1923,6 +1923,102 @@ describe("MessageTimeline", () => {
     ).toHaveTextContent("NEW");
   });
 
+  it("恢复阅读位置后用户一旦滚动，就不会再被手动恢复逻辑拉回旧位置", () => {
+    vi.useFakeTimers();
+
+    try {
+      const sessionOneMessages = [
+        {
+          ...createAssistantTextMessage("第一条消息", "assistant-interrupt-1"),
+          sessionId: "session-interrupt"
+        },
+        {
+          ...createAssistantTextMessage("第二条消息", "assistant-interrupt-2"),
+          sessionId: "session-interrupt",
+          sequence: 2,
+          rawRef: "codex://raw#line=interrupt-2"
+        }
+      ];
+      const { rerender } = render(
+        <MessageTimeline
+          sessionId="session-interrupt"
+          historyState="ready"
+          provider="codex"
+          onRetryMessage={vi.fn()}
+          messages={sessionOneMessages}
+        />
+      );
+
+      const messageList = document.querySelector(".message-list") as HTMLDivElement | null;
+
+      expect(messageList).not.toBeNull();
+
+      Object.defineProperty(messageList, "scrollHeight", {
+        value: 2000,
+        configurable: true
+      });
+      Object.defineProperty(messageList, "clientHeight", {
+        value: 600,
+        configurable: true
+      });
+      Object.defineProperty(messageList, "scrollTop", {
+        value: 0,
+        writable: true,
+        configurable: true
+      });
+
+      fireEvent.scroll(messageList!, {
+        target: {
+          scrollTop: 420
+        }
+      });
+
+      rerender(
+        <MessageTimeline
+          sessionId="session-interrupt-other"
+          historyState="ready"
+          provider="codex"
+          onRetryMessage={vi.fn()}
+          messages={[
+            {
+              ...createAssistantTextMessage("其他会话", "assistant-interrupt-other"),
+              sessionId: "session-interrupt-other"
+            }
+          ]}
+        />
+      );
+
+      rerender(
+        <MessageTimeline
+          sessionId="session-interrupt"
+          historyState="ready"
+          provider="codex"
+          onRetryMessage={vi.fn()}
+          messages={sessionOneMessages}
+        />
+      );
+
+      expect(messageList!.scrollTop).toBe(420);
+
+      fireEvent.wheel(messageList!, {
+        deltaY: 120
+      });
+      fireEvent.scroll(messageList!, {
+        target: {
+          scrollTop: 560
+        }
+      });
+
+      expect(messageList!.scrollTop).toBe(560);
+
+      vi.advanceTimersByTime(4000);
+
+      expect(messageList!.scrollTop).toBe(560);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("离底部较远时会显示回到底部按钮，点击后直接跳到底部", async () => {
     render(
       <MessageTimeline

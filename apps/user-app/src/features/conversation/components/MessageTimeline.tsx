@@ -3765,6 +3765,14 @@ export function MessageTimeline({
     scheduleManualRestoreFrame();
   }
 
+  function interruptManualRestore() {
+    if (!manualRestoreInProgressRef.current) {
+      return;
+    }
+
+    finishManualRestore();
+  }
+
   function triggerOlderMessagesPrefetch(list: HTMLDivElement): boolean {
     if (
       olderLoadLockRef.current ||
@@ -3947,6 +3955,11 @@ export function MessageTimeline({
   }
 
   function handleWheel(event: ReactWheelEvent<HTMLDivElement>) {
+    if (event.deltaY !== 0) {
+      // 用户已经主动接管滚动，不要再把列表强拉回记忆位置。
+      interruptManualRestore();
+    }
+
     if (event.deltaY >= 0) {
       return;
     }
@@ -3975,6 +3988,8 @@ export function MessageTimeline({
     if (currentY - startY < OLDER_HISTORY_TOUCH_DRAG_THRESHOLD_PX) {
       return;
     }
+
+    interruptManualRestore();
 
     const list = listRef.current;
 
