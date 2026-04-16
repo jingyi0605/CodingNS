@@ -17512,7 +17512,8 @@ textarea:focus-visible {
 }
 
 .settings-model-switcher-item-main span,
-.settings-model-modal-note {
+.settings-model-modal-note,
+.settings-model-card-note {
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.5;
@@ -17522,6 +17523,28 @@ textarea:focus-visible {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+.settings-model-missing-state {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-primary);
+}
+
+.settings-model-missing-copy {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.settings-model-missing-link {
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .settings-model-card,
@@ -17538,6 +17561,11 @@ textarea:focus-visible {
   gap: 8px;
   padding: 10px 12px;
   box-shadow: var(--settings-overview-metric-card-shadow);
+}
+
+.settings-model-card-note {
+  margin: 0;
+  word-break: break-word;
 }
 
 .settings-model-card-main {

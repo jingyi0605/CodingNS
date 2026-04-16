@@ -18,6 +18,7 @@ import { t } from "../shared/i18n";
 import { ApiError } from "../shared/network/api-error";
 
 type PendingActionKey = string | null;
+const URL_PATTERN = /(https?:\/\/[^\s]+)/i;
 
 export function ModelManagementPanel() {
   const accessToken = useAuthSelector((state) => state.session?.accessToken ?? null);
@@ -132,6 +133,7 @@ export function ModelManagementPanel() {
 
   const items = snapshot?.items ?? [];
   const activeItem = items.find((item) => item.app === activeApp) ?? items[0] ?? null;
+  const missingCliNotice = resolveMissingCcSwitchCliNotice(items);
 
   return (
     <>
@@ -140,7 +142,19 @@ export function ModelManagementPanel() {
           {statusText ? <p className="settings-release-status">{statusText}</p> : null}
           {panelError ? <p className="settings-release-status">{panelError}</p> : null}
 
-          {items.length > 0 ? (
+          {missingCliNotice ? (
+            <section className="settings-model-missing-state">
+              <p className="settings-model-missing-copy">{missingCliNotice.message}</p>
+              <a
+                className="settings-tailscale-link settings-model-missing-link"
+                href={missingCliNotice.url}
+                rel="noreferrer"
+                target="_blank"
+              >
+                {missingCliNotice.url}
+              </a>
+            </section>
+          ) : items.length > 0 ? (
             <>
               <div className="settings-model-grid">
                 {items.map((item) => (
@@ -161,6 +175,9 @@ export function ModelManagementPanel() {
                         </strong>
                       </div>
                     </div>
+                    {item.statusText ? (
+                      <p className="settings-model-card-note">{item.statusText}</p>
+                    ) : null}
                   </section>
                 ))}
               </div>
@@ -185,7 +202,7 @@ export function ModelManagementPanel() {
       </div>
 
       <WorkbenchModal
-        open={modalOpen}
+        open={modalOpen && !missingCliNotice}
         title={t("settings.modelManagementModalTitle")}
         description={t("settings.modelManagementModalDescription")}
         className="settings-model-modal"
@@ -344,4 +361,30 @@ function resolveModelPanelError(error: unknown): string {
   }
 
   return error instanceof Error ? error.message : t("settings.modelManagementLoadFailed");
+}
+
+function resolveMissingCcSwitchCliNotice(items: ModelManagementAppSnapshotDto[]): {
+  message: string;
+  url: string;
+} | null {
+  if (
+    items.length === 0
+    || !items.every((item) => item.status === "unavailable" && !item.cliAvailable && Boolean(item.statusText))
+  ) {
+    return null;
+  }
+
+  const rawText = items[0]?.statusText?.trim() ?? "";
+  const matchedUrl = rawText.match(URL_PATTERN)?.[1] ?? "";
+
+  if (!matchedUrl) {
+    return null;
+  }
+
+  const message = rawText.replace(matchedUrl, "").trim();
+
+  return {
+    message,
+    url: matchedUrl
+  };
 }

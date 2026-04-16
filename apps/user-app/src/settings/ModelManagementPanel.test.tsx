@@ -16,6 +16,9 @@ vi.mock("../features/conversation/components/SessionProviderPicker", () => ({
   clearSessionProviderPickerCapabilityCache: clearSessionProviderPickerCapabilityCacheMock
 }));
 
+const missingCcSwitchCliMessage =
+  "当前机器未安装 cc-switch-cli。这里集成的是 CC-Switch 的衍生 CLI 版本，不是 CC-Switch UI 版本。请先安装：https://github.com/SaladDay/cc-switch-cli";
+
 describe("ModelManagementPanel", () => {
   beforeEach(() => {
     clientConfigStore.hydrate({
@@ -98,6 +101,36 @@ describe("ModelManagementPanel", () => {
     expect(screen.getByText("Codex 已切换到 实验预设。")).toBeInTheDocument();
     expect(clearSessionProviderPickerCapabilityCacheMock).toHaveBeenCalledTimes(1);
   });
+
+  it("cc-switch-cli 未安装时只显示安装说明和仓库地址", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (url.endsWith("/api/system/model-switch") && method === "GET") {
+        return createJsonResponse(createMissingCliSnapshotResponse());
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    global.fetch = fetchMock as typeof fetch;
+
+    renderPanel();
+
+    expect(
+      await screen.findByText(
+        "当前机器未安装 cc-switch-cli。这里集成的是 CC-Switch 的衍生 CLI 版本，不是 CC-Switch UI 版本。请先安装："
+      )
+    ).toBeInTheDocument();
+    const repoLink = screen.getByRole("link", {
+      name: "https://github.com/SaladDay/cc-switch-cli"
+    });
+    expect(repoLink).toHaveAttribute("href", "https://github.com/SaladDay/cc-switch-cli");
+    expect(screen.queryByRole("button", { name: t("settings.modelManagementOpenSwitcher") })).not.toBeInTheDocument();
+    expect(screen.queryByText("Codex")).not.toBeInTheDocument();
+    expect(document.querySelector(".settings-model-card")).toBeNull();
+  });
 });
 
 function renderPanel() {
@@ -150,7 +183,7 @@ function createModelSnapshotResponse(currentPresetId: string) {
         displayName: "Gemini",
         cliAvailable: false,
         status: "unavailable",
-        statusText: "当前机器未找到 cc-switch 命令",
+        statusText: missingCcSwitchCliMessage,
         currentPresetId: null,
         currentPresetName: null,
         currentModel: null,
@@ -198,5 +231,31 @@ function createCodexSnapshot(currentPresetId: string) {
         isCurrent: currentPresetId === "preset-codex-2"
       }
     ]
+  };
+}
+
+function createMissingCliSnapshotResponse() {
+  return {
+    items: [
+      createUnavailableSnapshot("codex", "Codex"),
+      createUnavailableSnapshot("claude-code", "Claude Code"),
+      createUnavailableSnapshot("gemini", "Gemini"),
+      createUnavailableSnapshot("opencode", "OpenCode")
+    ],
+    scannedAt: "2026-04-15T10:00:00.000Z"
+  };
+}
+
+function createUnavailableSnapshot(app: string, displayName: string) {
+  return {
+    app,
+    displayName,
+    cliAvailable: false,
+    status: "unavailable",
+    statusText: missingCcSwitchCliMessage,
+    currentPresetId: null,
+    currentPresetName: null,
+    currentModel: null,
+    options: []
   };
 }
