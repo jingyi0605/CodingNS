@@ -107,6 +107,7 @@ interface GitClientSubscription {
   lastPayload: string | null;
   lastRequestedAt: number;
   refreshTask: Promise<void> | null;
+  refreshController: AbortController | null;
 }
 
 interface TerminalManagerClientSubscription {
@@ -184,18 +185,21 @@ export class WorkbenchWsHub {
           workspaceId: message.workspaceId.trim(),
           lastPayload: null,
           lastRequestedAt: 0,
-          refreshTask: null
+          refreshTask: null,
+          refreshController: null
         });
         this.fileWatcher.subscribe(message.workspaceId.trim());
         void this.refreshGitSubscription(client);
         return true;
       case "git.refresh":
         this.workspacePanelSnapshotService.invalidateGit(message.workspaceId.trim());
+        this.abortGitRefresh(client, "git subscription replaced");
         this.clientGitSubscriptions.set(client, {
           workspaceId: message.workspaceId.trim(),
           lastPayload: null,
           lastRequestedAt: 0,
-          refreshTask: null
+          refreshTask: null,
+          refreshController: null
         });
         void this.refreshGitSubscription(client, true);
         return true;
@@ -258,6 +262,7 @@ export class WorkbenchWsHub {
     }
     const gitSub = this.clientGitSubscriptions.get(client);
     if (gitSub) {
+      gitSub.refreshController?.abort(new Error("git subscription closed"));
       this.fileWatcher.unsubscribe(gitSub.workspaceId);
     }
 
@@ -618,6 +623,7 @@ export class WorkbenchWsHub {
         return subscription.refreshTask;
       }
 
+      subscription.refreshController?.abort(new Error("git subscription superseded"));
       await subscription.refreshTask;
     }
 
@@ -631,13 +637,23 @@ export class WorkbenchWsHub {
     }
 
     subscription.lastRequestedAt = now;
+    const controller = new AbortController();
+    subscription.refreshController = controller;
     subscription.refreshTask = (async () => {
       const startedAtMs = terminalDebugNowMs();
       try {
         const snapshot = await this.workspacePanelSnapshotService.getGitPanelSnapshot(
           subscription.workspaceId,
-          { force }
+          {
+            force,
+            signal: controller.signal
+          }
         );
+
+        if (controller.signal.aborted) {
+          return;
+        }
+
         const payload = buildGitPayload(snapshot);
 
         if (payload === subscription.lastPayload) {
@@ -654,15 +670,26 @@ export class WorkbenchWsHub {
           durationMs: terminalDebugNowMs() - startedAtMs
         });
       } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
         this.reportAsyncError("refreshGitSubscription", error, {
           workspaceId: subscription.workspaceId
         });
       }
     })().finally(() => {
       subscription.refreshTask = null;
+      if (subscription.refreshController === controller) {
+        subscription.refreshController = null;
+      }
     });
 
     return subscription.refreshTask;
+  }
+
+  private abortGitRefresh(client: WebSocket, reason: string): void {
+    this.clientGitSubscriptions.get(client)?.refreshController?.abort(new Error(reason));
   }
 
   private async refreshTerminalManagerSubscription(

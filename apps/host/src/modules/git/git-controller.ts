@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { AppError } from "../../shared/errors/app-error.js";
+import { createRequestAbortSignal } from "../../shared/http/request-abort.js";
 import { requireUserId } from "../preferences/common.js";
 import type { GitAuthInput } from "./git-auth.js";
 import type { CommitOrchestrator } from "./commit-orchestrator.js";
@@ -82,7 +83,12 @@ export class GitController {
     request: FastifyRequest<{ Querystring: WorkspaceQuery }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(await this.gitReadService.getStatus(requireWorkspaceId(request.query.workspaceId)));
+    reply.send(
+      await this.gitReadService.getStatus(
+        requireWorkspaceId(request.query.workspaceId),
+        createRequestAbortSignal(request)
+      )
+    );
   };
 
   readonly getDiff = async (
@@ -105,7 +111,8 @@ export class GitController {
       await this.gitReadService.getDiff(
         workspaceId,
         targetPath,
-        request.query.staged === "true"
+        request.query.staged === "true",
+        createRequestAbortSignal(request)
       )
     );
   };
@@ -126,7 +133,13 @@ export class GitController {
       });
     }
 
-    reply.send(await this.gitReadService.getCommitDetail(workspaceId, commitHash));
+    reply.send(
+      await this.gitReadService.getCommitDetail(
+        workspaceId,
+        commitHash,
+        createRequestAbortSignal(request)
+      )
+    );
   };
 
   readonly stage = async (
@@ -260,7 +273,8 @@ export class GitController {
       await this.gitReadService.getHistory(
         requireWorkspaceId(request.query.workspaceId),
         request.query.cursor ?? null,
-        Number(request.query.limit ?? "20")
+        Number(request.query.limit ?? "20"),
+        createRequestAbortSignal(request)
       )
     );
   };
@@ -269,14 +283,24 @@ export class GitController {
     request: FastifyRequest<{ Querystring: WorkspaceQuery }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(await this.gitReadService.getBranches(requireWorkspaceId(request.query.workspaceId)));
+    reply.send(
+      await this.gitReadService.getBranches(
+        requireWorkspaceId(request.query.workspaceId),
+        createRequestAbortSignal(request)
+      )
+    );
   };
 
   readonly getTags = async (
     request: FastifyRequest<{ Querystring: WorkspaceQuery }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(await this.gitReadService.getTags(requireWorkspaceId(request.query.workspaceId)));
+    reply.send(
+      await this.gitReadService.getTags(
+        requireWorkspaceId(request.query.workspaceId),
+        createRequestAbortSignal(request)
+      )
+    );
   };
 
   readonly switchBranch = async (
@@ -296,7 +320,12 @@ export class GitController {
     request: FastifyRequest<{ Querystring: WorkspaceQuery }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(await this.gitReadService.getRemotes(requireWorkspaceId(request.query.workspaceId)));
+    reply.send(
+      await this.gitReadService.getRemotes(
+        requireWorkspaceId(request.query.workspaceId),
+        createRequestAbortSignal(request)
+      )
+    );
   };
 
   readonly syncRemote = async (

@@ -39,9 +39,10 @@ export class WorktreeCleanupService {
   async cleanup(
     workspaceId: string,
     userId: string,
-    options: WorktreeCleanupOptions = {}
+    options: WorktreeCleanupOptions = {},
+    signal?: AbortSignal
   ): Promise<WorktreeCleanupResult> {
-    const meta = await this.resolveCleanupCandidate(workspaceId);
+    const meta = await this.resolveCleanupCandidate(workspaceId, signal);
     const workspace = this.workspaceService.getWorkspaceOrThrow(meta.workspaceId);
     const rootWorkspace = this.workspaceService.getWorkspaceOrThrow(meta.rootWorkspaceId);
     const targetWorkspace = this.workspaceService.getWorkspaceOrThrow(meta.parentWorkspaceId);
@@ -58,7 +59,7 @@ export class WorktreeCleanupService {
       });
     }
 
-    const status = await this.gitReadService.getStatus(workspace.id);
+    const status = await this.gitReadService.getStatus(workspace.id, signal);
 
     if (status.snapshot.isDirty) {
       throw new AppError({
@@ -93,7 +94,7 @@ export class WorktreeCleanupService {
     }
 
     const branchMergedIntoParent = deleteBranchRequested
-      ? await this.isBranchMergedIntoParent(workspace, targetWorkspace)
+      ? await this.isBranchMergedIntoParent(workspace, targetWorkspace, signal)
       : false;
 
     if (deleteBranchRequested && !branchMergedIntoParent) {
@@ -130,7 +131,8 @@ export class WorktreeCleanupService {
           allowNonZeroExit: true,
           timeoutMs: WORKTREE_CLEANUP_TIMEOUT_MS,
           workspaceId: rootWorkspace.id,
-          operation: "worktree.cleanup.remove"
+          operation: "worktree.cleanup.remove",
+          signal
         }
       );
 
@@ -148,7 +150,8 @@ export class WorktreeCleanupService {
         {
           allowNonZeroExit: true,
           workspaceId: rootWorkspace.id,
-          operation: "worktree.cleanup.prune"
+          operation: "worktree.cleanup.prune",
+          signal
         }
       );
 
@@ -159,7 +162,8 @@ export class WorktreeCleanupService {
           {
             allowNonZeroExit: true,
             workspaceId: rootWorkspace.id,
-            operation: "worktree.cleanup.deleteBranch"
+            operation: "worktree.cleanup.deleteBranch",
+            signal
           }
         );
 
@@ -209,22 +213,30 @@ export class WorktreeCleanupService {
 
   private async isBranchMergedIntoParent(
     sourceWorkspace: { id: string; path: string },
-    targetWorkspace: { id: string; path: string }
+    targetWorkspace: { id: string; path: string },
+    signal?: AbortSignal
   ): Promise<boolean> {
-    const sourceHeadCommit = await this.resolveCommit(sourceWorkspace.path, sourceWorkspace.id, "HEAD");
-    const targetHeadCommit = await this.resolveCommit(targetWorkspace.path, targetWorkspace.id, "HEAD");
+    const sourceHeadCommit = await this.resolveCommit(sourceWorkspace.path, sourceWorkspace.id, "HEAD", signal);
+    const targetHeadCommit = await this.resolveCommit(targetWorkspace.path, targetWorkspace.id, "HEAD", signal);
 
     if (!sourceHeadCommit || !targetHeadCommit) {
       return false;
     }
 
-    return this.isAncestor(targetWorkspace.path, targetWorkspace.id, sourceHeadCommit, targetHeadCommit);
+    return this.isAncestor(
+      targetWorkspace.path,
+      targetWorkspace.id,
+      sourceHeadCommit,
+      targetHeadCommit,
+      signal
+    );
   }
 
   private async resolveCommit(
     cwd: string,
     workspaceId: string,
-    ref: string
+    ref: string,
+    signal?: AbortSignal
   ): Promise<string | null> {
     const result = await this.gitCommandRunner.run(
       cwd,
@@ -232,7 +244,8 @@ export class WorktreeCleanupService {
       {
         allowNonZeroExit: true,
         workspaceId,
-        operation: "worktree.cleanup.resolveCommit"
+        operation: "worktree.cleanup.resolveCommit",
+        signal
       }
     );
 
@@ -243,7 +256,8 @@ export class WorktreeCleanupService {
     cwd: string,
     workspaceId: string,
     ancestorCommit: string,
-    descendantCommit: string
+    descendantCommit: string,
+    signal?: AbortSignal
   ): Promise<boolean> {
     const result = await this.gitCommandRunner.run(
       cwd,
@@ -251,14 +265,18 @@ export class WorktreeCleanupService {
       {
         allowNonZeroExit: true,
         workspaceId,
-        operation: "worktree.cleanup.previewAncestor"
+        operation: "worktree.cleanup.previewAncestor",
+        signal
       }
     );
 
     return result.exitCode === 0;
   }
 
-  private async resolveCleanupCandidate(workspaceId: string): Promise<WorkspaceWorktreeRecord> {
+  private async resolveCleanupCandidate(
+    workspaceId: string,
+    signal?: AbortSignal
+  ): Promise<WorkspaceWorktreeRecord> {
     const normalizedWorkspaceId = workspaceId.trim();
 
     if (!normalizedWorkspaceId) {
@@ -280,7 +298,7 @@ export class WorktreeCleanupService {
       });
     }
 
-    await this.worktreeSyncService.syncRoot(meta.rootWorkspaceId);
+    await this.worktreeSyncService.syncRoot(meta.rootWorkspaceId, signal);
 
     const nextMeta = this.workspaceWorktreeRepository.findByWorkspaceId(normalizedWorkspaceId);
 

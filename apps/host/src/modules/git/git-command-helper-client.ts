@@ -11,6 +11,7 @@ interface GitCommandOptions {
   env?: NodeJS.ProcessEnv;
   workspaceId?: string;
   operation?: string;
+  signal?: AbortSignal;
 }
 
 interface GitCommandResult {
@@ -25,6 +26,12 @@ interface HelperRunRequest {
   repoRoot: string;
   args: string[];
   options: GitCommandOptions;
+}
+
+interface HelperCancelRequest {
+  type: "cancel";
+  id: string;
+  targetId: string;
 }
 
 interface HelperRunSuccessResponse {
@@ -118,23 +125,64 @@ export class GitCommandHelperClient {
     }
 
     const id = String(this.nextRequestId++);
+    const { signal: _signal, ...serializedOptions } = options;
     const payload: HelperRunRequest = {
       type: "run",
       id,
       repoRoot,
       args,
-      options
+      options: serializedOptions
     };
 
     return new Promise<GitCommandResult>((resolve, reject) => {
+      const signal = options.signal;
+      let aborted = false;
+      let onAbort: (() => void) | null = null;
+
+      if (signal) {
+        onAbort = () => {
+          aborted = true;
+          this.pendingRequests.delete(id);
+          void this.sendCancel(id);
+          reject(signal.reason ?? new Error("git helper aborted"));
+        };
+
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+
       this.pendingRequests.set(id, {
-        resolve,
-        reject
+        resolve: (value) => {
+          if (onAbort && signal) {
+            signal.removeEventListener("abort", onAbort);
+          }
+
+          if (!aborted) {
+            resolve(value);
+          }
+        },
+        reject: (error) => {
+          if (onAbort && signal) {
+            signal.removeEventListener("abort", onAbort);
+          }
+
+          if (!aborted) {
+            reject(error);
+          }
+        }
       });
 
       this.child.stdin.write(`${JSON.stringify(payload)}\n`, (error) => {
         if (!error) {
           return;
+        }
+
+        if (onAbort && signal) {
+          signal.removeEventListener("abort", onAbort);
         }
 
         this.pendingRequests.delete(id);
@@ -204,6 +252,24 @@ export class GitCommandHelperClient {
     }
 
     this.pendingRequests.clear();
+  }
+
+  private async sendCancel(targetId: string): Promise<void> {
+    if (this.disposed || this.child.killed || this.child.stdin.destroyed) {
+      return;
+    }
+
+    const payload: HelperCancelRequest = {
+      type: "cancel",
+      id: `cancel:${targetId}`,
+      targetId
+    };
+
+    await new Promise<void>((resolve) => {
+      this.child.stdin.write(`${JSON.stringify(payload)}\n`, () => {
+        resolve();
+      });
+    });
   }
 }
 

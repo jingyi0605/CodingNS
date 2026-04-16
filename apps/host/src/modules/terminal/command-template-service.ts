@@ -55,21 +55,23 @@ export class CommandTemplateService {
     return this.templateRepository.listByWorkspace(workspaceId);
   }
 
-  async listTemplateRuntimeStatuses(workspaceId: string) {
+  async listTemplateRuntimeStatuses(workspaceId: string, signal?: AbortSignal) {
     return await this.listTemplateRuntimeStatusesByItems(
       this.listTemplates(workspaceId)
         .filter((template) => template.port !== null)
         .map((template) => ({
           templateId: template.id,
           port: template.port as number
-        }))
+        })),
+      signal
     );
   }
 
   async listTemplateRuntimeStatusesByItems(
-    items: Array<{ templateId: string; port: number }>
+    items: Array<{ templateId: string; port: number }>,
+    signal?: AbortSignal
   ) {
-    return await discoverTemplateRuntimeStatuses(items);
+    return await discoverTemplateRuntimeStatuses(items, signal);
   }
 
   async stopTemplateRuntimeProcess(templateId: string): Promise<{

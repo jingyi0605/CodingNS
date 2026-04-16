@@ -84,6 +84,67 @@ describe("WorkspacePanelSnapshotService", () => {
     expect(gitReadService.getHistory).toHaveBeenCalledTimes(2);
     expect(gitReadService.getBranches).toHaveBeenCalledTimes(2);
   });
+
+  it("Git 快照请求取消后会中断整条快照链", async () => {
+    const workspaceId = "workspace-1";
+    let receivedSignal: AbortSignal | null = null;
+    const gitReadService = {
+      getStatus: vi.fn(async (_workspaceId: string, signal?: AbortSignal) => {
+        receivedSignal = signal ?? null;
+
+        await new Promise<never>((_resolve, reject) => {
+          if (!signal) {
+            reject(new Error("missing signal"));
+            return;
+          }
+
+          if (signal.aborted) {
+            reject(signal.reason ?? new Error("aborted"));
+            return;
+          }
+
+          signal.addEventListener("abort", () => {
+            reject(signal.reason ?? new Error("aborted"));
+          }, { once: true });
+        });
+      }),
+      getHistory: vi.fn(),
+      getBranches: vi.fn()
+    } satisfies Pick<GitReadService, "getStatus" | "getHistory" | "getBranches">;
+
+    const service = new WorkspacePanelSnapshotService(
+      {
+        list: vi.fn()
+      } as unknown as FileTreeService,
+      gitReadService as unknown as GitReadService,
+      {
+        listTerminalSnapshotItems: vi.fn()
+      } as unknown as TerminalService,
+      {
+        listTemplates: vi.fn(),
+        listTemplateRuntimeStatuses: vi.fn()
+      } as unknown as CommandTemplateService,
+      {
+        getManagementSummary: vi.fn()
+      } as unknown as WorkspaceService
+    );
+    const controller = new AbortController();
+    const promise = service.getGitPanelSnapshot(workspaceId, {
+      force: true,
+      signal: controller.signal
+    });
+
+    await Promise.resolve();
+    expect(receivedSignal).not.toBeNull();
+    expect(receivedSignal?.aborted).toBe(false);
+
+    controller.abort(new Error("manual abort"));
+
+    await expect(promise).rejects.toThrow("manual abort");
+    expect(receivedSignal?.aborted).toBe(true);
+    expect(gitReadService.getHistory).not.toHaveBeenCalled();
+    expect(gitReadService.getBranches).not.toHaveBeenCalled();
+  });
 });
 
 function createGitStatus(workspaceId: string, staged: boolean) {

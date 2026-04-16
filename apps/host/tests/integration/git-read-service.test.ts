@@ -65,6 +65,48 @@ describe("GitReadService", () => {
     });
   });
 
+  it("getStatus 会把 AbortSignal 透传给 gitCommandRunner", async () => {
+    const controller = new AbortController();
+    const gitCommandRunner = {
+      run: vi.fn(async (_repoRoot: string, args: string[], options?: { signal?: AbortSignal }) => {
+        expect(options?.signal).toBe(controller.signal);
+
+        if (args[0] === "status") {
+          return createResult("## main\n");
+        }
+
+        if (args[0] === "remote") {
+          return createResult("origin\n");
+        }
+
+        throw new Error(`未预期的 Git 命令: ${args.join(" ")}`);
+      })
+    } satisfies Pick<GitCommandRunner, "run">;
+
+    const workspaceRepoGuard = {
+      resolve: vi.fn(async () => ({
+        workspace: {
+          id: "workspace-1",
+          name: "Git 工作区",
+          path: "C:/repo",
+          repoRoot: "C:/repo",
+          favorite: false,
+          createdAt: "2026-03-23T00:00:00.000Z",
+          updatedAt: "2026-03-23T00:00:00.000Z"
+        },
+        repoRoot: "C:/repo"
+      }))
+    } satisfies Pick<WorkspaceRepoGuard, "resolve">;
+
+    const service = new GitReadService(
+      gitCommandRunner as unknown as GitCommandRunner,
+      workspaceRepoGuard as unknown as WorkspaceRepoGuard
+    );
+
+    await service.getStatus("workspace-1", controller.signal);
+    expect(gitCommandRunner.run).toHaveBeenCalledTimes(2);
+  });
+
   it("会为历史提交补充本地远程归属与远程标签", async () => {
     const gitCommandRunner = {
       run: vi.fn(async (_repoRoot: string, args: string[]) => {

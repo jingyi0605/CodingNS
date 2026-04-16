@@ -35,7 +35,7 @@ export class WorktreeSyncService {
     private readonly gitCommandRunner: GitCommandRunner
   ) {}
 
-  async syncRoot(rootWorkspaceId: string): Promise<WorktreeSyncResult> {
+  async syncRoot(rootWorkspaceId: string, signal?: AbortSignal): Promise<WorktreeSyncResult> {
     const requestedWorkspaceId = rootWorkspaceId.trim();
 
     if (!requestedWorkspaceId) {
@@ -55,7 +55,8 @@ export class WorktreeSyncService {
       ["worktree", "list", "--porcelain"],
       {
         workspaceId: resolvedRootWorkspaceId,
-        operation: "worktree.sync.list"
+        operation: "worktree.sync.list",
+        signal
       }
     );
     const actualEntryByPath = new Map(
@@ -107,7 +108,8 @@ export class WorktreeSyncService {
       await this.gitCommandRunner.run(rootWorkspace.path, ["worktree", "prune"], {
         allowNonZeroExit: true,
         workspaceId: resolvedRootWorkspaceId,
-        operation: "worktree.sync.prune"
+        operation: "worktree.sync.prune",
+        signal
       });
     }
 

@@ -13,6 +13,7 @@ interface GitCommandOptions {
   env?: NodeJS.ProcessEnv;
   workspaceId?: string;
   operation?: string;
+  signal?: AbortSignal;
 }
 
 export interface GitCommandResult {
@@ -61,9 +62,11 @@ export class GitCommandRunner {
       ...process.env,
       ...(options.env ?? {})
     };
+    const signal = options.signal;
 
     return await new Promise<GitCommandResult>((resolve, reject) => {
       let child;
+      let onAbort: (() => void) | null = null;
 
       try {
         child = spawn("git", effectiveArgs, {
@@ -97,6 +100,11 @@ export class GitCommandRunner {
 
         completed = true;
         clearTimeout(timer);
+
+        if (signal && onAbort) {
+          signal.removeEventListener("abort", onAbort);
+        }
+
         callback();
       };
 
@@ -124,6 +132,32 @@ export class GitCommandRunner {
           );
         });
       }, timeoutMs);
+
+      if (signal) {
+        onAbort = () => {
+          if (!child.killed) {
+            child.kill("SIGTERM");
+          }
+
+          finish(() => {
+            reject(
+              signal.reason
+              ?? new AppError({
+                statusCode: 499,
+                errorCode: "GIT_COMMAND_CANCELLED",
+                detail: `Git 命令已取消：git ${args.join(" ")}`
+              })
+            );
+          });
+        };
+
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
 
       child.stdout.on("data", (chunk) => {
         stdout += String(chunk);

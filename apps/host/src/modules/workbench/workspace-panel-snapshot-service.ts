@@ -20,7 +20,7 @@ import {
   terminalDebugNowMs
 } from "../../shared/utils/terminal-debug-log.js";
 import { createTaskManager, type TaskManager } from "../tasks/task-manager.js";
-import { HOST_TASK_TYPES } from "../tasks/task-types.js";
+import { HOST_TASK_TYPES, type TaskHandle } from "../tasks/task-types.js";
 
 const FILE_TREE_CACHE_MAX_AGE_MS = 5_000;
 const GIT_SNAPSHOT_CACHE_MAX_AGE_MS = 15_000;
@@ -61,6 +61,13 @@ interface SnapshotCacheEntry<TSnapshot> {
   cachedAt: number;
 }
 
+interface AbortableInflightTask<TResult> {
+  promise: Promise<TResult>;
+  controller: AbortController;
+  consumerCount: number;
+  settled: boolean;
+}
+
 export class WorkspacePanelSnapshotService {
   private readonly fileTreeCache = new Map<string, SnapshotCacheEntry<FileTreeSnapshot>>();
   private readonly gitSnapshotCache = new Map<string, SnapshotCacheEntry<GitPanelSnapshot>>();
@@ -73,7 +80,7 @@ export class WorkspacePanelSnapshotService {
     SnapshotCacheEntry<WorkspaceManagementSnapshot>
   >();
   private readonly fileTreeInflight = new Map<string, Promise<FileTreeSnapshot>>();
-  private readonly gitInflight = new Map<string, Promise<GitPanelSnapshot>>();
+  private readonly gitInflight = new Map<string, AbortableInflightTask<GitPanelSnapshot>>();
   private readonly terminalManagerInflight = new Map<string, Promise<TerminalManagerSnapshot>>();
   private readonly workspaceManagementInflight = new Map<
     string,
@@ -133,7 +140,7 @@ export class WorkspacePanelSnapshotService {
 
   async getGitPanelSnapshot(
     workspaceId: string,
-    options?: { force?: boolean }
+    options?: { force?: boolean; signal?: AbortSignal }
   ): Promise<GitPanelSnapshot> {
     const cached = this.gitSnapshotCache.get(workspaceId);
 
@@ -144,12 +151,17 @@ export class WorkspacePanelSnapshotService {
     const inflight = this.gitInflight.get(workspaceId);
 
     if (inflight) {
-      return inflight;
+      return await awaitAbortableInflightTask(inflight, options?.signal);
     }
 
-    const task = (async () => {
+    const controller = new AbortController();
+    const task: AbortableInflightTask<GitPanelSnapshot> = {
+      controller,
+      consumerCount: 0,
+      settled: false,
+      promise: (async () => {
       // 先执行轻量级 status 检测（仅 2 条 git 命令）
-      const status = await this.gitReadService.getStatus(workspaceId);
+      const status = await this.gitReadService.getStatus(workspaceId, controller.signal);
 
       // 如果有缓存，比较 status 是否有变化
       if (cached && !isGitStatusChanged(cached.snapshot.status, status)) {
@@ -163,8 +175,8 @@ export class WorkspacePanelSnapshotService {
 
       // 状态有变化，执行完整刷新（复用已获取的 status）
       const [historyPage, branches] = await Promise.all([
-        this.gitReadService.getHistory(workspaceId, null, GIT_HISTORY_LIMIT),
-        this.gitReadService.getBranches(workspaceId)
+        this.gitReadService.getHistory(workspaceId, null, GIT_HISTORY_LIMIT, controller.signal),
+        this.gitReadService.getBranches(workspaceId, controller.signal)
       ]);
 
       const snapshot: GitPanelSnapshot = {
@@ -183,11 +195,13 @@ export class WorkspacePanelSnapshotService {
 
       return snapshot;
     })().finally(() => {
+      task.settled = true;
       this.gitInflight.delete(workspaceId);
-    });
+    })
+    };
 
     this.gitInflight.set(workspaceId, task);
-    return task;
+    return await awaitAbortableInflightTask(task, options?.signal);
   }
 
   async getTerminalManagerSnapshot(
@@ -299,7 +313,8 @@ export class WorkspacePanelSnapshotService {
         taskType: HOST_TASK_TYPES.templateRuntimeStatusDiscovery,
         executionLane: "helper_process",
         helperProcessHandler: "terminal.template_runtime_status_discovery",
-        run: async ({ items }) => this.commandTemplateService.listTemplateRuntimeStatusesByItems(items)
+        run: async ({ items }, context) =>
+          this.commandTemplateService.listTemplateRuntimeStatusesByItems(items, context.signal)
       });
     }
 
@@ -309,12 +324,16 @@ export class WorkspacePanelSnapshotService {
       }, TerminalManagerSnapshot>({
         taskType: HOST_TASK_TYPES.terminalManagerSnapshot,
         executionLane: "host_background",
-        run: async ({ workspaceId }) => this.loadTerminalManagerSnapshot(workspaceId)
+        run: async ({ workspaceId }, context) =>
+          this.loadTerminalManagerSnapshot(workspaceId, context.signal)
       });
     }
   }
 
-  private async loadTerminalManagerSnapshot(workspaceId: string): Promise<TerminalManagerSnapshot> {
+  private async loadTerminalManagerSnapshot(
+    workspaceId: string,
+    signal?: AbortSignal
+  ): Promise<TerminalManagerSnapshot> {
     const startedAtMs = terminalDebugNowMs();
     const terminalListStartedAtMs = terminalDebugNowMs();
     const terminals = this.terminalService.listTerminalSnapshotItems(workspaceId);
@@ -329,9 +348,9 @@ export class WorkspacePanelSnapshotService {
         port: template.port as number
       }));
     const templateStatusStartedAtMs = terminalDebugNowMs();
-    const templateStatuses = runtimeStatusItems.length === 0
-      ? []
-      : await this.taskManager.enqueue<{
+    const templateStatusesHandle = runtimeStatusItems.length === 0
+      ? null
+      : this.taskManager.enqueue<{
           items: Array<{ templateId: string; port: number }>;
         }, TerminalTemplateRuntimeStatus[]>(HOST_TASK_TYPES.templateRuntimeStatusDiscovery, {
           key: workspaceId,
@@ -339,7 +358,10 @@ export class WorkspacePanelSnapshotService {
           input: {
             items: runtimeStatusItems
           }
-        }).promise;
+        });
+    const templateStatuses = templateStatusesHandle === null
+      ? []
+      : await awaitTaskHandleWithSignal(templateStatusesHandle, signal);
     const templateStatusMs = terminalDebugNowMs() - templateStatusStartedAtMs;
     const shellOptionsStartedAtMs = terminalDebugNowMs();
     const shellOptions = listTerminalShellOptions();
@@ -384,6 +406,102 @@ function isExpired(cachedAt: number, maxAgeMs: number): boolean {
 
 function normalizePanelPath(path: string): string {
   return path.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+}
+
+async function awaitTaskHandleWithSignal<TResult>(
+  handle: TaskHandle<TResult>,
+  signal?: AbortSignal
+): Promise<TResult> {
+  if (!signal) {
+    return await handle.promise;
+  }
+
+  if (signal.aborted) {
+    handle.cancel(getAbortMessage(signal.reason));
+    throw signal.reason ?? new Error("任务已取消");
+  }
+
+  return await new Promise<TResult>((resolve, reject) => {
+    const onAbort = () => {
+      handle.cancel(getAbortMessage(signal.reason));
+      reject(signal.reason ?? new Error("任务已取消"));
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    handle.promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      }
+    );
+  });
+}
+
+async function awaitAbortableInflightTask<TResult>(
+  task: AbortableInflightTask<TResult>,
+  signal?: AbortSignal
+): Promise<TResult> {
+  task.consumerCount += 1;
+  let released = false;
+
+  const release = () => {
+    if (released) {
+      return;
+    }
+
+    released = true;
+    task.consumerCount = Math.max(0, task.consumerCount - 1);
+
+    if (task.consumerCount === 0 && !task.settled && !task.controller.signal.aborted) {
+      task.controller.abort(new Error("git panel snapshot aborted"));
+    }
+  };
+
+  if (!signal) {
+    return await task.promise.finally(release);
+  }
+
+  if (signal.aborted) {
+    release();
+    throw signal.reason ?? new Error("任务已取消");
+  }
+
+  return await new Promise<TResult>((resolve, reject) => {
+    const onAbort = () => {
+      release();
+      reject(signal.reason ?? new Error("任务已取消"));
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    task.promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        release();
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        release();
+        reject(error);
+      }
+    );
+  });
+}
+
+function getAbortMessage(reason: unknown): string {
+  if (reason instanceof Error && reason.message.trim().length > 0) {
+    return reason.message;
+  }
+
+  if (typeof reason === "string" && reason.trim().length > 0) {
+    return reason;
+  }
+
+  return "任务已取消";
 }
 
 /**

@@ -13,8 +13,8 @@ import type { ButlerProfileService } from "../butler/butler-profile-service.js";
 import { createGitAuthContext, type GitAuthInput } from "../git/git-auth.js";
 import type { GitCommandRunner } from "../git/git-command-runner.js";
 import { createTaskManager, type TaskManager } from "../tasks/task-manager.js";
-import { HOST_TASK_TYPES } from "../tasks/task-types.js";
-import { readWorkspaceCodeComposition } from "./workspace-code-composition.js";
+import { HOST_TASK_TYPES, type TaskHandle } from "../tasks/task-types.js";
+import { readWorkspaceCodeCompositionWithSignal } from "./workspace-code-composition.js";
 
 interface WorkspaceDirectoryOption {
   path: string;
@@ -346,7 +346,10 @@ export class WorkspaceService {
       .filter((workspace) => !isPathInsideButlerWorkspace(workspace.path, butlerWorkspacePath));
   }
 
-  private async readGitSummary(workspace: Workspace): Promise<WorkspaceGitSummary> {
+  private async readGitSummary(
+    workspace: Workspace,
+    signal?: AbortSignal
+  ): Promise<WorkspaceGitSummary> {
     const workspacePath = path.resolve(workspace.path);
 
     if (!fs.existsSync(workspacePath) || !fs.statSync(workspacePath).isDirectory()) {
@@ -367,7 +370,8 @@ export class WorkspaceService {
         {
           allowNonZeroExit: true,
           workspaceId: workspace.id,
-          operation: "workspace.readGitSummary"
+          operation: "workspace.readGitSummary",
+          signal
         }
       );
 
@@ -399,17 +403,20 @@ export class WorkspaceService {
         this.gitCommandRunner.run(repoRoot, ["branch", "--show-current"], {
           allowNonZeroExit: true,
           workspaceId: workspace.id,
-          operation: "workspace.readGitSummary"
+          operation: "workspace.readGitSummary",
+          signal
         }),
         this.gitCommandRunner.run(repoRoot, ["rev-list", "--count", "--all"], {
           allowNonZeroExit: true,
           workspaceId: workspace.id,
-          operation: "workspace.readGitSummary"
+          operation: "workspace.readGitSummary",
+          signal
         }),
         this.gitCommandRunner.run(repoRoot, ["remote", "-v"], {
           allowNonZeroExit: true,
           workspaceId: workspace.id,
-          operation: "workspace.readGitSummary"
+          operation: "workspace.readGitSummary",
+          signal
         })
       ]);
 
@@ -441,7 +448,8 @@ export class WorkspaceService {
         taskType: HOST_TASK_TYPES.workspaceCodeCompositionScan,
         executionLane: "helper_process",
         helperProcessHandler: "workspace.code_composition_scan",
-        run: async ({ workspacePath }) => readWorkspaceCodeComposition(workspacePath)
+        run: async ({ workspacePath }, context) =>
+          readWorkspaceCodeCompositionWithSignal(workspacePath, context.signal)
       });
     }
 
@@ -451,25 +459,30 @@ export class WorkspaceService {
       }, WorkspaceManagementSummary>({
         taskType: HOST_TASK_TYPES.workspaceManagementSummary,
         executionLane: "host_background",
-        run: async ({ workspaceId }) => this.loadManagementSummary(workspaceId)
+        run: async ({ workspaceId }, context) =>
+          this.loadManagementSummary(workspaceId, context.signal)
       });
     }
   }
 
-  private async loadManagementSummary(workspaceId: string): Promise<WorkspaceManagementSummary> {
+  private async loadManagementSummary(
+    workspaceId: string,
+    signal?: AbortSignal
+  ): Promise<WorkspaceManagementSummary> {
     const workspace = this.getWorkspaceOrThrow(workspaceId);
+    const codeCompositionHandle = this.taskManager.enqueue<{
+      workspacePath: string;
+    }, WorkspaceCodeCompositionSummary>(HOST_TASK_TYPES.workspaceCodeCompositionScan, {
+      key: workspace.id,
+      source: "workspace.load_management_summary.code_composition",
+      input: {
+        workspacePath: workspace.path
+      }
+    });
 
     const [git, codeComposition] = await Promise.all([
-      this.readGitSummary(workspace),
-      this.taskManager.enqueue<{
-        workspacePath: string;
-      }, WorkspaceCodeCompositionSummary>(HOST_TASK_TYPES.workspaceCodeCompositionScan, {
-        key: workspace.id,
-        source: "workspace.load_management_summary.code_composition",
-        input: {
-          workspacePath: workspace.path
-        }
-      }).promise
+      this.readGitSummary(workspace, signal),
+      awaitTaskHandleWithSignal(codeCompositionHandle, signal)
     ]);
 
     return {
@@ -553,6 +566,51 @@ function createWorkspaceRecord(
     updatedAt: timestamp,
     removedAt: null
   });
+}
+
+async function awaitTaskHandleWithSignal<TResult>(
+  handle: TaskHandle<TResult>,
+  signal?: AbortSignal
+): Promise<TResult> {
+  if (!signal) {
+    return await handle.promise;
+  }
+
+  if (signal.aborted) {
+    handle.cancel(getAbortMessage(signal.reason));
+    throw signal.reason ?? new Error("任务已取消");
+  }
+
+  return await new Promise<TResult>((resolve, reject) => {
+    const onAbort = () => {
+      handle.cancel(getAbortMessage(signal.reason));
+      reject(signal.reason ?? new Error("任务已取消"));
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    handle.promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      }
+    );
+  });
+}
+
+function getAbortMessage(reason: unknown): string {
+  if (reason instanceof Error && reason.message.trim().length > 0) {
+    return reason.message;
+  }
+
+  if (typeof reason === "string" && reason.trim().length > 0) {
+    return reason;
+  }
+
+  return "任务已取消";
 }
 
 function normalizeWorkspaceIds(workspaceIds: string[]): string[] {

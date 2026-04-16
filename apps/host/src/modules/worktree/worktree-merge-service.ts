@@ -57,28 +57,46 @@ export class WorktreeMergeService {
     private readonly worktreeSyncService: WorktreeSyncService
   ) {}
 
-  async preview(workspaceId: string): Promise<WorktreeMergePreviewResult> {
-    const meta = await this.resolveActiveWorktreeMeta(workspaceId);
+  async preview(workspaceId: string, signal?: AbortSignal): Promise<WorktreeMergePreviewResult> {
+    const meta = await this.resolveActiveWorktreeMeta(workspaceId, signal);
     const sourceWorkspace = this.workspaceService.getWorkspaceOrThrow(meta.workspaceId);
     const targetWorkspace = this.workspaceService.getWorkspaceOrThrow(meta.parentWorkspaceId);
     const [sourceStatus, targetStatus] = await Promise.all([
-      this.gitReadService.getStatus(sourceWorkspace.id),
-      this.gitReadService.getStatus(targetWorkspace.id)
+      this.gitReadService.getStatus(sourceWorkspace.id, signal),
+      this.gitReadService.getStatus(targetWorkspace.id, signal)
     ]);
-    const sourceHeadCommit = await this.resolveCommit(sourceWorkspace.path, sourceWorkspace.id, "HEAD");
-    const targetHeadCommit = await this.resolveCommit(targetWorkspace.path, targetWorkspace.id, "HEAD");
+    const sourceHeadCommit = await this.resolveCommit(sourceWorkspace.path, sourceWorkspace.id, "HEAD", signal);
+    const targetHeadCommit = await this.resolveCommit(targetWorkspace.path, targetWorkspace.id, "HEAD", signal);
     const mergeBaseCommit =
       sourceHeadCommit && targetHeadCommit
-        ? await this.resolveMergeBase(targetWorkspace.path, targetWorkspace.id, targetHeadCommit, sourceHeadCommit)
+        ? await this.resolveMergeBase(
+            targetWorkspace.path,
+            targetWorkspace.id,
+            targetHeadCommit,
+            sourceHeadCommit,
+            signal
+          )
         : null;
     const { ahead, behind } =
       sourceHeadCommit && targetHeadCommit
-        ? await this.resolveAheadBehind(targetWorkspace.path, targetWorkspace.id, targetHeadCommit, sourceHeadCommit)
+        ? await this.resolveAheadBehind(
+            targetWorkspace.path,
+            targetWorkspace.id,
+            targetHeadCommit,
+            sourceHeadCommit,
+            signal
+          )
         : { ahead: 0, behind: 0 };
     const alreadyMerged =
       Boolean(sourceHeadCommit)
       && Boolean(targetHeadCommit)
-      && await this.isAncestor(targetWorkspace.path, targetWorkspace.id, sourceHeadCommit ?? "", targetHeadCommit ?? "");
+      && await this.isAncestor(
+        targetWorkspace.path,
+        targetWorkspace.id,
+        sourceHeadCommit ?? "",
+        targetHeadCommit ?? "",
+        signal
+      );
     const childRecords = this.workspaceWorktreeRepository
       .listByParentWorkspaceId(meta.workspaceId)
       .filter((record) => record.lifecycleStatus === "active" || record.lifecycleStatus === "removing");
@@ -124,7 +142,13 @@ export class WorktreeMergeService {
       !alreadyMerged
       && ahead > 0
       && blockers.every((item) => item.code !== "SOURCE_DIRTY" && item.code !== "TARGET_DIRTY")
-        ? await this.detectConflictPaths(targetWorkspace.path, targetWorkspace.id, targetHeadCommit, sourceHeadCommit)
+        ? await this.detectConflictPaths(
+            targetWorkspace.path,
+            targetWorkspace.id,
+            targetHeadCommit,
+            sourceHeadCommit,
+            signal
+          )
         : [];
 
     if (conflictPaths.length > 0) {
@@ -154,8 +178,8 @@ export class WorktreeMergeService {
     };
   }
 
-  async apply(workspaceId: string): Promise<WorktreeMergeApplyResult> {
-    const preview = await this.preview(workspaceId);
+  async apply(workspaceId: string, signal?: AbortSignal): Promise<WorktreeMergeApplyResult> {
+    const preview = await this.preview(workspaceId, signal);
     const meta = preview.meta;
 
     if (!preview.alreadyMerged && preview.blockers.length > 0) {
@@ -179,7 +203,8 @@ export class WorktreeMergeService {
           allowNonZeroExit: true,
           timeoutMs: WORKTREE_MERGE_TIMEOUT_MS,
           workspaceId: targetWorkspace.id,
-          operation: "worktree.merge.apply"
+          operation: "worktree.merge.apply",
+          signal
         }
       );
 
@@ -190,7 +215,8 @@ export class WorktreeMergeService {
           {
             allowNonZeroExit: true,
             workspaceId: targetWorkspace.id,
-            operation: "worktree.merge.abort"
+            operation: "worktree.merge.abort",
+            signal
           }
         );
         throw new AppError({
@@ -203,7 +229,7 @@ export class WorktreeMergeService {
       applied = true;
     }
 
-    const mergeCommit = await this.resolveCommit(targetWorkspace.path, targetWorkspace.id, "HEAD");
+    const mergeCommit = await this.resolveCommit(targetWorkspace.path, targetWorkspace.id, "HEAD", signal);
     const nextMeta = this.workspaceWorktreeRepository.update({
       ...meta,
       lifecycleStatus: "merged",
@@ -244,7 +270,10 @@ export class WorktreeMergeService {
     };
   }
 
-  private async resolveActiveWorktreeMeta(workspaceId: string): Promise<WorkspaceWorktreeRecord> {
+  private async resolveActiveWorktreeMeta(
+    workspaceId: string,
+    signal?: AbortSignal
+  ): Promise<WorkspaceWorktreeRecord> {
     const normalizedWorkspaceId = workspaceId.trim();
 
     if (!normalizedWorkspaceId) {
@@ -266,7 +295,7 @@ export class WorktreeMergeService {
       });
     }
 
-    await this.worktreeSyncService.syncRoot(meta.rootWorkspaceId);
+    await this.worktreeSyncService.syncRoot(meta.rootWorkspaceId, signal);
 
     const nextMeta = this.workspaceWorktreeRepository.findByWorkspaceId(normalizedWorkspaceId);
 
@@ -317,7 +346,8 @@ export class WorktreeMergeService {
   private async resolveCommit(
     cwd: string,
     workspaceId: string,
-    ref: string
+    ref: string,
+    signal?: AbortSignal
   ): Promise<string | null> {
     const result = await this.gitCommandRunner.run(
       cwd,
@@ -325,7 +355,8 @@ export class WorktreeMergeService {
       {
         allowNonZeroExit: true,
         workspaceId,
-        operation: "worktree.merge.resolveCommit"
+        operation: "worktree.merge.resolveCommit",
+        signal
       }
     );
 
@@ -336,7 +367,8 @@ export class WorktreeMergeService {
     cwd: string,
     workspaceId: string,
     targetHeadCommit: string,
-    sourceHeadCommit: string
+    sourceHeadCommit: string,
+    signal?: AbortSignal
   ): Promise<string | null> {
     const result = await this.gitCommandRunner.run(
       cwd,
@@ -344,7 +376,8 @@ export class WorktreeMergeService {
       {
         allowNonZeroExit: true,
         workspaceId,
-        operation: "worktree.merge.previewBase"
+        operation: "worktree.merge.previewBase",
+        signal
       }
     );
 
@@ -355,14 +388,16 @@ export class WorktreeMergeService {
     cwd: string,
     workspaceId: string,
     targetHeadCommit: string,
-    sourceHeadCommit: string
+    sourceHeadCommit: string,
+    signal?: AbortSignal
   ): Promise<{ ahead: number; behind: number }> {
     const result = await this.gitCommandRunner.run(
       cwd,
       ["rev-list", "--left-right", "--count", `${targetHeadCommit}...${sourceHeadCommit}`],
       {
         workspaceId,
-        operation: "worktree.merge.previewAheadBehind"
+        operation: "worktree.merge.previewAheadBehind",
+        signal
       }
     );
     const [behindRaw, aheadRaw] = result.stdout.trim().split(/\s+/);
@@ -377,7 +412,8 @@ export class WorktreeMergeService {
     cwd: string,
     workspaceId: string,
     ancestorCommit: string,
-    descendantCommit: string
+    descendantCommit: string,
+    signal?: AbortSignal
   ): Promise<boolean> {
     const result = await this.gitCommandRunner.run(
       cwd,
@@ -385,7 +421,8 @@ export class WorktreeMergeService {
       {
         allowNonZeroExit: true,
         workspaceId,
-        operation: "worktree.merge.previewAncestor"
+        operation: "worktree.merge.previewAncestor",
+        signal
       }
     );
 
@@ -396,7 +433,8 @@ export class WorktreeMergeService {
     cwd: string,
     workspaceId: string,
     targetHeadCommit: string | null,
-    sourceHeadCommit: string | null
+    sourceHeadCommit: string | null,
+    signal?: AbortSignal
   ): Promise<string[]> {
     if (!targetHeadCommit || !sourceHeadCommit) {
       return [];
@@ -408,7 +446,8 @@ export class WorktreeMergeService {
       {
         allowNonZeroExit: true,
         workspaceId,
-        operation: "worktree.merge.previewConflicts"
+        operation: "worktree.merge.previewConflicts",
+        signal
       }
     );
 

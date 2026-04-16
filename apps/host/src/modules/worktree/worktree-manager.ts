@@ -37,7 +37,7 @@ export class WorktreeManager {
     private readonly gitCommandRunner: GitCommandRunner
   ) {}
 
-  async create(input: CreateWorktreeInput): Promise<WorktreeCreateResult> {
+  async create(input: CreateWorktreeInput, signal?: AbortSignal): Promise<WorktreeCreateResult> {
     const sourceWorkspaceId = input.sourceWorkspaceId.trim();
     const branchName = normalizeBranchName(input.branchName);
 
@@ -55,7 +55,7 @@ export class WorktreeManager {
     const rootWorkspace = this.workspaceService.getWorkspaceOrThrow(
       sourceMeta?.rootWorkspaceId ?? sourceWorkspaceId
     );
-    const sourceStatus = await this.gitReadService.getStatus(sourceWorkspaceId);
+    const sourceStatus = await this.gitReadService.getStatus(sourceWorkspaceId, signal);
 
     if (sourceStatus.snapshot.isDirty) {
       throw new AppError({
@@ -65,14 +65,20 @@ export class WorktreeManager {
       });
     }
 
-    await this.ensureBranchNameValid(sourceStatus.snapshot.repoRoot, sourceWorkspaceId, branchName);
-    await this.ensureBranchDoesNotExist(sourceStatus.snapshot.repoRoot, sourceWorkspaceId, branchName);
+    await this.ensureBranchNameValid(sourceStatus.snapshot.repoRoot, sourceWorkspaceId, branchName, signal);
+    await this.ensureBranchDoesNotExist(
+      sourceStatus.snapshot.repoRoot,
+      sourceWorkspaceId,
+      branchName,
+      signal
+    );
 
     const baseRef = (input.baseRef?.trim() || sourceStatus.snapshot.branch || "HEAD").trim();
     const baseCommit = await this.resolveBaseCommit(
       sourceStatus.snapshot.repoRoot,
       sourceWorkspaceId,
-      baseRef
+      baseRef,
+      signal
     );
     const targetPath = buildTargetPath(rootWorkspace.path, branchName);
 
@@ -100,14 +106,15 @@ export class WorktreeManager {
         {
           timeoutMs: WORKTREE_CREATE_TIMEOUT_MS,
           workspaceId: sourceWorkspaceId,
-          operation: "worktree.create"
+          operation: "worktree.create",
+          signal
         }
       );
       worktreeCreated = true;
 
       createdWorkspace = this.workspaceService.importWorkspace(targetPath, displayName);
 
-      const headCommit = await this.resolveHeadCommit(targetPath, createdWorkspace.id);
+      const headCommit = await this.resolveHeadCommit(targetPath, createdWorkspace.id, signal);
       const meta = this.workspaceWorktreeRepository.create({
         workspaceId: createdWorkspace.id,
         rootWorkspaceId: rootWorkspace.id,
@@ -138,7 +145,8 @@ export class WorktreeManager {
         branchName,
         targetPath,
         createdWorkspace,
-        worktreeCreated
+        worktreeCreated,
+        signal
       );
       throw mapCreateWorktreeError(error);
     }
@@ -203,7 +211,8 @@ export class WorktreeManager {
   private async ensureBranchNameValid(
     repoRoot: string,
     workspaceId: string,
-    branchName: string
+    branchName: string,
+    signal?: AbortSignal
   ): Promise<void> {
     const result = await this.gitCommandRunner.run(
       repoRoot,
@@ -211,7 +220,8 @@ export class WorktreeManager {
       {
         allowNonZeroExit: true,
         workspaceId,
-        operation: "worktree.create.validateBranch"
+        operation: "worktree.create.validateBranch",
+        signal
       }
     );
 
@@ -230,7 +240,8 @@ export class WorktreeManager {
   private async ensureBranchDoesNotExist(
     repoRoot: string,
     workspaceId: string,
-    branchName: string
+    branchName: string,
+    signal?: AbortSignal
   ): Promise<void> {
     const result = await this.gitCommandRunner.run(
       repoRoot,
@@ -238,7 +249,8 @@ export class WorktreeManager {
       {
         allowNonZeroExit: true,
         workspaceId,
-        operation: "worktree.create.checkBranchExists"
+        operation: "worktree.create.checkBranchExists",
+        signal
       }
     );
 
@@ -256,7 +268,8 @@ export class WorktreeManager {
   private async resolveBaseCommit(
     repoRoot: string,
     workspaceId: string,
-    baseRef: string
+    baseRef: string,
+    signal?: AbortSignal
   ): Promise<string> {
     const result = await this.gitCommandRunner.run(
       repoRoot,
@@ -264,7 +277,8 @@ export class WorktreeManager {
       {
         allowNonZeroExit: true,
         workspaceId,
-        operation: "worktree.create.resolveBaseRef"
+        operation: "worktree.create.resolveBaseRef",
+        signal
       }
     );
     const baseCommit = result.stdout.trim();
@@ -281,10 +295,15 @@ export class WorktreeManager {
     });
   }
 
-  private async resolveHeadCommit(targetPath: string, workspaceId: string): Promise<string> {
+  private async resolveHeadCommit(
+    targetPath: string,
+    workspaceId: string,
+    signal?: AbortSignal
+  ): Promise<string> {
     const result = await this.gitCommandRunner.run(targetPath, ["rev-parse", "HEAD"], {
       workspaceId,
-      operation: "worktree.create.resolveHeadCommit"
+      operation: "worktree.create.resolveHeadCommit",
+      signal
     });
 
     return result.stdout.trim();
@@ -296,7 +315,8 @@ export class WorktreeManager {
     branchName: string,
     targetPath: string,
     createdWorkspace: Workspace | null,
-    worktreeCreated: boolean
+    worktreeCreated: boolean,
+    signal?: AbortSignal
   ): Promise<void> {
     if (createdWorkspace) {
       this.workspaceService.removeWorkspace(createdWorkspace.id);
@@ -310,7 +330,8 @@ export class WorktreeManager {
           {
             allowNonZeroExit: true,
             workspaceId,
-            operation: "worktree.create.rollbackRemove"
+            operation: "worktree.create.rollbackRemove",
+            signal
           }
         );
       } catch {
@@ -326,7 +347,8 @@ export class WorktreeManager {
       await this.gitCommandRunner.run(repoRoot, ["branch", "-D", branchName], {
         allowNonZeroExit: true,
         workspaceId,
-        operation: "worktree.create.rollbackDeleteBranch"
+        operation: "worktree.create.rollbackDeleteBranch",
+        signal
       });
     } catch {
       // 分支删除失败只保留残留，不能覆盖原始错误。

@@ -37,7 +37,8 @@ export class GitReadService {
   ) {}
 
   async getStatus(
-    workspaceId: string
+    workspaceId: string,
+    signal?: AbortSignal
   ): Promise<{ snapshot: GitRepoSnapshot; changes: GitChangeItem[] }> {
     const repo = await this.workspaceRepoGuard.resolve(workspaceId);
     const statusResult = await this.gitCommandRunner.run(repo.repoRoot, [
@@ -47,7 +48,8 @@ export class GitReadService {
       "--untracked-files=all"
     ], {
       workspaceId,
-      operation: "gitRead.getStatus"
+      operation: "gitRead.getStatus",
+      signal
     });
     const remoteResult = await this.gitCommandRunner.run(
       repo.repoRoot,
@@ -55,7 +57,8 @@ export class GitReadService {
       {
         allowNonZeroExit: true,
         workspaceId,
-        operation: "gitRead.getStatus"
+        operation: "gitRead.getStatus",
+        signal
       }
     );
     const lines = statusResult.stdout
@@ -81,7 +84,12 @@ export class GitReadService {
     };
   }
 
-  async getDiff(workspaceId: string, targetPath: string, staged: boolean): Promise<GitDiffResult> {
+  async getDiff(
+    workspaceId: string,
+    targetPath: string,
+    staged: boolean,
+    signal?: AbortSignal
+  ): Promise<GitDiffResult> {
     const repo = await this.workspaceRepoGuard.resolve(workspaceId);
     const relativePath = this.workspaceRepoGuard.ensureRelativePath(repo.repoRoot, targetPath);
     const diffArgs = staged
@@ -89,7 +97,8 @@ export class GitReadService {
       : ["diff", "--", relativePath];
     const diffResult = await this.gitCommandRunner.run(repo.repoRoot, diffArgs, {
       workspaceId,
-      operation: "gitRead.getDiff"
+      operation: "gitRead.getDiff",
+      signal
     });
     const numstatResult = await this.gitCommandRunner.run(
       repo.repoRoot,
@@ -98,7 +107,8 @@ export class GitReadService {
         : ["diff", "--numstat", "--", relativePath],
       {
         workspaceId,
-        operation: "gitRead.getDiff"
+        operation: "gitRead.getDiff",
+        signal
       }
     );
     const binary = numstatResult.stdout
@@ -116,7 +126,11 @@ export class GitReadService {
     };
   }
 
-  async getCommitDetail(workspaceId: string, commitHash: string): Promise<GitCommitDetail> {
+  async getCommitDetail(
+    workspaceId: string,
+    commitHash: string,
+    signal?: AbortSignal
+  ): Promise<GitCommitDetail> {
     const repo = await this.workspaceRepoGuard.resolve(workspaceId);
     const normalizedCommitHash = commitHash.trim();
     const [metadataResult, changedFilesResult, diffResult, versionResult] = await Promise.all([
@@ -131,7 +145,8 @@ export class GitReadService {
         ],
         {
           workspaceId,
-          operation: "gitRead.getCommitDetail"
+          operation: "gitRead.getCommitDetail",
+          signal
         }
       ),
       this.gitCommandRunner.run(
@@ -145,7 +160,8 @@ export class GitReadService {
         ],
         {
           workspaceId,
-          operation: "gitRead.getCommitDetail"
+          operation: "gitRead.getCommitDetail",
+          signal
         }
       ),
       this.gitCommandRunner.run(
@@ -158,7 +174,8 @@ export class GitReadService {
         ],
         {
           workspaceId,
-          operation: "gitRead.getCommitDetail"
+          operation: "gitRead.getCommitDetail",
+          signal
         }
       ),
       this.gitCommandRunner.run(
@@ -167,7 +184,8 @@ export class GitReadService {
         {
           allowNonZeroExit: true,
           workspaceId,
-          operation: "gitRead.getCommitDetail"
+          operation: "gitRead.getCommitDetail",
+          signal
         }
       )
     ]);
@@ -196,7 +214,8 @@ export class GitReadService {
   async getHistory(
     workspaceId: string,
     cursor: string | null,
-    limit: number
+    limit: number,
+    signal?: AbortSignal
   ): Promise<GitHistoryPage> {
     const repo = await this.workspaceRepoGuard.resolve(workspaceId);
     const safeLimit = clampHistoryLimit(limit);
@@ -211,7 +230,8 @@ export class GitReadService {
       ],
       {
         workspaceId,
-        operation: "gitRead.getHistory"
+        operation: "gitRead.getHistory",
+        signal
       }
     );
     const parsedRefs = refsResult.stdout
@@ -237,13 +257,15 @@ export class GitReadService {
         ],
         {
           workspaceId,
-          operation: "gitRead.getHistory"
+          operation: "gitRead.getHistory",
+          signal
         }
       ),
       this.gitCommandRunner.run(repo.repoRoot, ["rev-list", "--count", "--all"], {
         allowNonZeroExit: true,
         workspaceId,
-        operation: "gitRead.getHistory"
+        operation: "gitRead.getHistory",
+        signal
       }),
       currentRef?.upstream
         ? this.gitCommandRunner.run(
@@ -252,7 +274,8 @@ export class GitReadService {
             {
               allowNonZeroExit: true,
               workspaceId,
-              operation: "gitRead.getHistory"
+              operation: "gitRead.getHistory",
+              signal
             }
           )
         : Promise.resolve({
@@ -279,12 +302,13 @@ export class GitReadService {
     };
   }
 
-  async getBranches(workspaceId: string): Promise<GitBranchSnapshot> {
+  async getBranches(workspaceId: string, signal?: AbortSignal): Promise<GitBranchSnapshot> {
     const repo = await this.workspaceRepoGuard.resolve(workspaceId);
     const [statusResult, localResult, remoteResult] = await Promise.all([
       this.gitCommandRunner.run(repo.repoRoot, ["status", "--porcelain=1", "--branch"], {
         workspaceId,
-        operation: "gitRead.getBranches"
+        operation: "gitRead.getBranches",
+        signal
       }),
       this.gitCommandRunner.run(
         repo.repoRoot,
@@ -295,7 +319,8 @@ export class GitReadService {
         ],
         {
           workspaceId,
-          operation: "gitRead.getBranches"
+          operation: "gitRead.getBranches",
+          signal
         }
       ),
       this.gitCommandRunner.run(
@@ -307,7 +332,8 @@ export class GitReadService {
         ],
         {
           workspaceId,
-          operation: "gitRead.getBranches"
+          operation: "gitRead.getBranches",
+          signal
         }
       )
     ]);
@@ -337,14 +363,15 @@ export class GitReadService {
     };
   }
 
-  async getRemotes(workspaceId: string): Promise<GitRemoteItem[]> {
+  async getRemotes(workspaceId: string, signal?: AbortSignal): Promise<GitRemoteItem[]> {
     const repo = await this.workspaceRepoGuard.resolve(workspaceId);
     const result = await this.gitCommandRunner.run(
       repo.repoRoot,
       ["remote", "-v"],
       {
         workspaceId,
-        operation: "gitRead.getRemotes"
+        operation: "gitRead.getRemotes",
+        signal
       }
     );
 
@@ -373,7 +400,7 @@ export class GitReadService {
     return Array.from(remotes.values());
   }
 
-  async getTags(workspaceId: string): Promise<GitTagItem[]> {
+  async getTags(workspaceId: string, signal?: AbortSignal): Promise<GitTagItem[]> {
     const repo = await this.workspaceRepoGuard.resolve(workspaceId);
     const result = await this.gitCommandRunner.run(
       repo.repoRoot,
@@ -385,7 +412,8 @@ export class GitReadService {
       ],
       {
         workspaceId,
-        operation: "gitRead.getTags"
+        operation: "gitRead.getTags",
+        signal
       }
     );
 

@@ -1,5 +1,6 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 
+import { createRequestAbortSignal } from "../../shared/http/request-abort.js";
 import { requireUserId } from "../preferences/common.js";
 import type { WorktreeCleanupService } from "./worktree-cleanup-service.js";
 import type { CreateWorktreeInput, WorktreeManager } from "./worktree-manager.js";
@@ -37,7 +38,10 @@ export class WorktreeController {
     request: FastifyRequest<{ Querystring: WorktreeTreeQuery }>,
     reply: FastifyReply
   ): Promise<void> => {
-    await this.worktreeSyncService.syncRoot(request.query.rootWorkspaceId?.trim() || "");
+    await this.worktreeSyncService.syncRoot(
+      request.query.rootWorkspaceId?.trim() || "",
+      createRequestAbortSignal(request)
+    );
 
     reply.send({
       items: this.worktreeManager.getTree(request.query.rootWorkspaceId?.trim() || "")
@@ -55,21 +59,31 @@ export class WorktreeController {
       baseRef: request.body.baseRef?.trim() || undefined
     };
 
-    reply.status(201).send(await this.worktreeManager.create(input));
+    reply.status(201).send(await this.worktreeManager.create(input, createRequestAbortSignal(request)));
   };
 
   readonly getMergePreview = async (
     request: FastifyRequest<{ Params: WorktreeParams }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(await this.worktreeMergeService.preview(request.params.workspaceId?.trim() || ""));
+    reply.send(
+      await this.worktreeMergeService.preview(
+        request.params.workspaceId?.trim() || "",
+        createRequestAbortSignal(request)
+      )
+    );
   };
 
   readonly mergeIntoParent = async (
     request: FastifyRequest<{ Params: WorktreeParams }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(await this.worktreeMergeService.apply(request.params.workspaceId?.trim() || ""));
+    reply.send(
+      await this.worktreeMergeService.apply(
+        request.params.workspaceId?.trim() || "",
+        createRequestAbortSignal(request)
+      )
+    );
   };
 
   readonly cleanup = async (
@@ -82,7 +96,8 @@ export class WorktreeController {
         requireUserId(request),
         {
           deleteBranch: request.body?.deleteBranch === true
-        }
+        },
+        createRequestAbortSignal(request)
       )
     );
   };

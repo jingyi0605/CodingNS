@@ -21,11 +21,21 @@ interface HelperRunRequest {
   options: GitCommandOptions;
 }
 
+interface HelperCancelRequest {
+  type: "cancel";
+  id: string;
+  targetId: string;
+}
+
 interface GitCommandResult {
   stdout: string;
   stderr: string;
   exitCode: number;
 }
+
+type HelperRequest = HelperRunRequest | HelperCancelRequest;
+
+const activeRequests = new Map<string, AbortController>();
 
 const stdinReader = readline.createInterface({
   input: process.stdin,
@@ -37,21 +47,25 @@ stdinReader.on("line", (line) => {
 });
 
 async function handleRequestLine(line: string): Promise<void> {
-  let request: HelperRunRequest;
+  let request: HelperRequest;
 
   try {
-    request = JSON.parse(line) as HelperRunRequest;
+    request = JSON.parse(line) as HelperRequest;
   } catch (error) {
     logHelperError("无法解析请求", error);
     return;
   }
 
-  if (request.type !== "run") {
+  if (request.type === "cancel") {
+    activeRequests.get(request.targetId)?.abort(createGitCommandCancelledError());
     return;
   }
 
+  const controller = new AbortController();
+  activeRequests.set(request.id, controller);
+
   try {
-    const result = await runGitCommand(request.repoRoot, request.args, request.options);
+    const result = await runGitCommand(request.repoRoot, request.args, request.options, 0, controller.signal);
 
     process.stdout.write(
       `${JSON.stringify({
@@ -76,6 +90,8 @@ async function handleRequestLine(line: string): Promise<void> {
         }
       })}\n`
     );
+  } finally {
+    activeRequests.delete(request.id);
   }
 }
 
@@ -83,7 +99,8 @@ async function runGitCommand(
   repoRoot: string,
   args: string[],
   options: GitCommandOptions = {},
-  retryAttempt = 0
+  retryAttempt = 0,
+  signal?: AbortSignal
 ): Promise<GitCommandResult> {
   const startedAt = Date.now();
   const timeoutMs = options.timeoutMs ?? 15_000;
@@ -94,6 +111,11 @@ async function runGitCommand(
   };
 
   return await new Promise<GitCommandResult>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(createGitCommandCancelledError(signal.reason));
+      return;
+    }
+
     let child;
 
     try {
@@ -117,9 +139,9 @@ async function runGitCommand(
           errorCode: getErrnoCode(error),
           reason: getErrorMessage(error)
         });
-        setTimeout(() => {
-          resolve(runGitCommand(repoRoot, args, options, nextAttempt));
-        }, GIT_COMMAND_SPAWN_RETRY_DELAY_MS);
+        waitForRetryDelay(signal).then(() => {
+          resolve(runGitCommand(repoRoot, args, options, nextAttempt, signal));
+        }, reject);
         return;
       }
 
@@ -130,6 +152,7 @@ async function runGitCommand(
     let stdout = "";
     let stderr = "";
     let completed = false;
+    let onAbort: (() => void) | null = null;
 
     const finish = (callback: () => void) => {
       if (completed) {
@@ -138,6 +161,11 @@ async function runGitCommand(
 
       completed = true;
       clearTimeout(timer);
+
+      if (signal && onAbort) {
+        signal.removeEventListener("abort", onAbort);
+      }
+
       callback();
     };
 
@@ -164,6 +192,20 @@ async function runGitCommand(
       });
     }, timeoutMs);
 
+    if (signal) {
+      onAbort = () => {
+        if (!child.killed) {
+          child.kill("SIGTERM");
+        }
+
+        finish(() => {
+          reject(createGitCommandCancelledError(signal.reason));
+        });
+      };
+
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+
     child.stdout.on("data", (chunk) => {
       stdout += String(chunk);
     });
@@ -188,9 +230,9 @@ async function runGitCommand(
             errorCode: getErrnoCode(error),
             reason: getErrorMessage(error)
           });
-          setTimeout(() => {
-            resolve(runGitCommand(repoRoot, args, options, nextAttempt));
-          }, GIT_COMMAND_SPAWN_RETRY_DELAY_MS);
+          waitForRetryDelay(signal).then(() => {
+            resolve(runGitCommand(repoRoot, args, options, nextAttempt, signal));
+          }, reject);
           return;
         }
 
@@ -289,6 +331,14 @@ function createGitCommandFailedError(error: unknown) {
   };
 }
 
+function createGitCommandCancelledError(reason?: unknown) {
+  return {
+    statusCode: 499,
+    errorCode: "GIT_COMMAND_CANCELLED",
+    detail: reason instanceof Error ? reason.message : "Git 命令已取消"
+  };
+}
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -308,4 +358,29 @@ function logHelperWarn(scope: string, payload: Record<string, unknown>): void {
 
 function logHelperError(message: string, error: unknown): void {
   console.error(`[git-helper] ${message}`, error);
+}
+
+async function waitForRetryDelay(signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    throw createGitCommandCancelledError(signal.reason);
+  }
+
+  let onAbort: (() => void) | null = null;
+
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(resolve, GIT_COMMAND_SPAWN_RETRY_DELAY_MS);
+
+    if (signal) {
+      onAbort = () => {
+        clearTimeout(timer);
+        reject(createGitCommandCancelledError(signal.reason));
+      };
+
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  }).finally(() => {
+    if (signal && onAbort) {
+      signal.removeEventListener("abort", onAbort);
+    }
+  });
 }

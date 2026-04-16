@@ -220,4 +220,21 @@ describe("GitCommandRunner", () => {
       })
     );
   });
+
+  it("直连模式收到 AbortSignal 后会终止 git 子进程", async () => {
+    const child = new MockChildProcess();
+
+    spawnMock.mockReturnValue(child);
+
+    const runner = new GitCommandRunner();
+    const controller = new AbortController();
+    const resultPromise = runner.run("/repo", ["status", "--porcelain=1"], {
+      signal: controller.signal
+    });
+
+    controller.abort(new Error("manual abort"));
+
+    await expect(resultPromise).rejects.toThrow("manual abort");
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
 });
