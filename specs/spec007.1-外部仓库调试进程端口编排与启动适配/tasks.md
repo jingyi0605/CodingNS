@@ -246,6 +246,29 @@
     - 已落地 `GET /api/framework-compatibility-matrix`
     - 当前分析器是第一版轻量文件探测器，重点先保证接口结构、兼容矩阵准入和持久化模型站住
 
+- [x] 2.5 子工作区模板继承、端口池配置和真实启动方案预览
+  - 状态：DONE
+  - 这一步到底做什么：把“主工作区登记启动项 -> 子工作区继承模板 -> 调试页生成真实编排方案”这条主链路打通
+  - 做完以后能看到什么结果：子工作区不再因为默认端口占用就直接卡死，而是会先给出新的编排端口、注入方式和前后端联动结果
+  - 依赖什么：1.4、2.1、2.4
+  - 主要改哪些文件：
+    - `apps/host/src/modules/worktree/worktree-manager.ts`
+    - `apps/host/src/modules/debug-target/debug-target-service.ts`
+    - `apps/host/src/modules/preferences/profile-service.ts`
+    - `apps/user-app/src/features/debug-target/pages/WorkspaceDebugDetailPage.tsx`
+    - `apps/user-app/src/features/settings/pages/SettingsPage.tsx`
+  - 这一步先不做什么：不做跨机器编排，不做完整服务依赖图
+  - 怎么验证：
+    - `apps/host/tests/integration/worktree-routes.test.ts`
+    - `apps/host/tests/integration/debug-target-routes.test.ts`
+    - `apps/user-app/src/features/debug-target/pages/WorkspaceDebugDetailPage.test.tsx`
+    - `apps/user-app/src/features/settings/pages/SettingsPage.test.tsx`
+  - 本次落地补记：
+    - 子工作区创建时已经自动复制主工作区已登记启动项
+    - 设置页已补“调试端口池”配置，默认按 `frontend/backend/worker/mock/custom` 分段
+    - 调试页“检查启动方案”现在走 Host 真实编排结果，不再在前端本地把“端口占用”直接当成终点
+    - Host 会根据框架分析给前端补 `API_BASE_URL` 一类联动信息，保证编排后仍能连到编排后的后端
+
 ---
 
 ## 阶段 3：把端口租约和回收机制做实
@@ -372,24 +395,24 @@
 
 - [x] 5.2 前端落地兼容矩阵页面或调试面板
   - 状态：DONE
-  - 这一步到底做什么：把框架分析结果、兼容矩阵、运行时绑定和失败阶段放进用户能看懂的面板里
-  - 做完以后能看到什么结果：用户不再只看到“启动失败”，而是知道为什么失败、当前框架支不支持、需要补什么条件
+  - 这一步到底做什么：把框架分析结果放进用户能看懂的面板里，同时把启动执行页面改成只围绕进程管理已注册启动项工作
+  - 做完以后能看到什么结果：用户既能看到仓库分析与框架识别信息，也不会再被前端猜出来的启动方式误导
   - 依赖什么：2.4、3.3
   - 开始前先看：
     - `docs/20260413-实现清单.md` §6
   - 主要改哪些文件：
     - 工作区管理相关页面
     - 调试目标详情面板
-    - 兼容矩阵说明弹层
+    - 已注册启动项展示区
   - 这一步先不做什么：不做复杂可视化编排图
   - 怎么验证：
     - 前端组件测试
     - 交互走查
   - 本次落地补记：
-    - 已在 `WorkspaceDetailPage` 增加最小“调试准备”卡片
-    - 页面进入后会自动触发 `analyzeDebugTarget`，并读取 `getLatestDebugRuntime`
-    - 当前可显示主框架、置信度、兼容等级、推荐注入方式、服务发现/HMR/callback 要求、AI 兜底策略、最新运行态和失败阶段
-    - 已补 `WorkspaceDetailPage.test.tsx` 回归测试
+    - 已在桌面调试页和移动端工作区详情里保留仓库分析、框架识别、兼容等级等只读信息
+    - 前端已经移除“根据仓库分析结果猜启动命令并直接进入运行”的链路代码
+    - 当前桌面页与移动端页的启动判断、阻断项和运行态都只基于进程管理里已注册的启动项与端口运行态
+    - 已补桌面调试页和工作区详情页相关回归测试
 
 - [ ] 5.3 准备第一阶段验收样本仓库
   - 状态：TODO
