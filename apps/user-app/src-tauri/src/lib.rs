@@ -1,3 +1,4 @@
+#[cfg(target_os = "android")]
 mod android_update;
 mod config;
 
@@ -67,11 +68,13 @@ fn get_runtime_info(app: AppHandle) -> DesktopRuntimeInfo {
   build_runtime_info(&app)
 }
 
+#[cfg(target_os = "android")]
 #[tauri::command]
 fn get_android_runtime_info(app: AppHandle) -> Result<android_update::AndroidRuntimeInfo, String> {
   android_update::get_runtime_info(&app)
 }
 
+#[cfg(target_os = "android")]
 #[tauri::command]
 fn install_android_update(
   app: AppHandle,
@@ -355,16 +358,32 @@ pub fn run() {
       }
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![
-      read_desktop_config,
-      write_desktop_config,
-      get_runtime_info,
-      get_android_runtime_info,
-      install_android_update,
-      copy_text,
-      set_window_state,
-      perform_haptic_feedback
-    ])
+    .invoke_handler({
+      #[cfg(target_os = "android")]
+      {
+        tauri::generate_handler![
+          read_desktop_config,
+          write_desktop_config,
+          get_runtime_info,
+          get_android_runtime_info,
+          install_android_update,
+          copy_text,
+          set_window_state,
+          perform_haptic_feedback
+        ]
+      }
+      #[cfg(not(target_os = "android"))]
+      {
+        tauri::generate_handler![
+          read_desktop_config,
+          write_desktop_config,
+          get_runtime_info,
+          copy_text,
+          set_window_state,
+          perform_haptic_feedback
+        ]
+      }
+    })
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }
