@@ -6,6 +6,8 @@ import { t } from "../../../shared/i18n";
 import { getSessionMessages } from "../api/conversation-api";
 import {
   buildSessionBranchTreeModel,
+  resolveDesktopBranchTreeDialogBounds,
+  resolveDesktopBranchTreeStageLayout,
   resolveMobileBranchTreeFitScale,
   hasSessionBranchRelations,
   resolveBranchTreeStageScale,
@@ -54,9 +56,47 @@ describe("SessionBranchTreePanel", () => {
     expect(hasSessionBranchRelations(model)).toBe(true);
   });
 
-  it("下游分支过多时会继续缩小画布，优先保证完整显示", () => {
+  it("桌面端只会在宽度超出可视区时缩小分支树", () => {
     expect(resolveBranchTreeStageScale(640, 1280)).toBe(0.5);
     expect(resolveBranchTreeStageScale(640, 320)).toBe(1);
+  });
+
+  it("桌面端弹窗宽度会优先贴合分支树内容，超出窗口时再卡到可用宽度", () => {
+    expect(resolveDesktopBranchTreeDialogBounds(1000, 420)).toEqual({
+      minWidth: 520,
+      maxWidth: 968,
+      defaultWidth: 520
+    });
+    expect(resolveDesktopBranchTreeDialogBounds(1000, 900)).toEqual({
+      minWidth: 520,
+      maxWidth: 968,
+      defaultWidth: 936
+    });
+    expect(resolveDesktopBranchTreeDialogBounds(860, 1200)).toEqual({
+      minWidth: 520,
+      maxWidth: 828,
+      defaultWidth: 828
+    });
+  });
+
+  it("桌面端会给较小分支图补上默认水平居中偏移", () => {
+    expect(resolveDesktopBranchTreeStageLayout(900, 640, 420, 220)).toEqual({
+      scale: 1,
+      offsetX: 240,
+      offsetY: 0,
+      shellWidth: 900,
+      shellHeight: 220
+    });
+  });
+
+  it("桌面端在宽度受限时会缩放到可视区内，并按缩放后的树高返回舞台尺寸", () => {
+    expect(resolveDesktopBranchTreeStageLayout(640, 500, 1280, 420)).toEqual({
+      scale: 0.5,
+      offsetX: 0,
+      offsetY: 0,
+      shellWidth: 640,
+      shellHeight: 210
+    });
   });
 
   it("移动端会同时参考宽高来计算默认适配缩放", () => {

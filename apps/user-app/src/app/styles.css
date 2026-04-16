@@ -7292,7 +7292,8 @@ textarea:focus-visible {
 
 .conversation-branch-dialog {
   position: relative;
-  width: min(50vw, calc(100vw - 32px));
+  width: auto;
+  max-width: calc(100vw - 32px);
   max-height: calc(100vh - 32px);
   overflow: hidden;
   box-shadow:

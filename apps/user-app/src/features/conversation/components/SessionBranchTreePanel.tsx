@@ -86,6 +86,7 @@ const BRANCH_TREE_POPOVER_WIDTH = 332;
 const BRANCH_TREE_PREVIEW_ESTIMATED_HEIGHT = 360;
 const BRANCH_TREE_DESKTOP_BREAKPOINT = 840;
 const BRANCH_TREE_DIALOG_MIN_WIDTH = 520;
+const BRANCH_TREE_DIALOG_HORIZONTAL_CHROME = 36;
 const BRANCH_TREE_MOBILE_VIEWPORT_PADDING = 18;
 const BRANCH_TREE_MOBILE_MIN_SCALE = 0.22;
 const BRANCH_TREE_MOBILE_MAX_SCALE = 2.4;
@@ -95,6 +96,14 @@ interface BranchViewportTransform {
   scale: number;
   offsetX: number;
   offsetY: number;
+}
+
+interface DesktopBranchTreeStageLayout {
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+  shellWidth: number;
+  shellHeight: number;
 }
 
 function sortSessions(left: SessionSummaryDto, right: SessionSummaryDto) {
@@ -260,6 +269,43 @@ export function resolveBranchTreeStageScale(viewportWidth: number, layoutWidth: 
   }
 
   return Math.min(1, viewportWidth / layoutWidth);
+}
+
+export function resolveDesktopBranchTreeDialogBounds(
+  viewportWidth: number,
+  layoutWidth: number
+) {
+  const maxAvailableWidth = Math.max(420, viewportWidth - 32);
+  const preferredWidth = Math.ceil(layoutWidth + BRANCH_TREE_DIALOG_HORIZONTAL_CHROME);
+  const maxWidth = maxAvailableWidth;
+  const minWidth = Math.min(BRANCH_TREE_DIALOG_MIN_WIDTH, maxWidth);
+
+  return {
+    minWidth,
+    maxWidth,
+    defaultWidth: Math.min(maxWidth, Math.max(minWidth, preferredWidth))
+  };
+}
+
+export function resolveDesktopBranchTreeStageLayout(
+  viewportWidth: number,
+  viewportHeight: number,
+  layoutWidth: number,
+  layoutHeight: number
+): DesktopBranchTreeStageLayout {
+  void viewportHeight;
+  const scale = resolveBranchTreeStageScale(viewportWidth, layoutWidth);
+  const scaledWidth = layoutWidth * scale;
+  const scaledHeight = layoutHeight * scale;
+  const offsetX = scaledWidth < viewportWidth ? (viewportWidth - scaledWidth) / 2 : 0;
+
+  return {
+    scale,
+    offsetX,
+    offsetY: 0,
+    shellWidth: Math.max(viewportWidth, scaledWidth),
+    shellHeight: scaledHeight
+  };
 }
 
 function clampValue(value: number, min: number, max: number): number {
@@ -775,6 +821,7 @@ function BranchCanvasTree({
   onSelectSession,
   onBackgroundClick,
   stageScale,
+  desktopStageLayout,
   transform,
   isMobileViewport,
   viewportRef,
@@ -789,6 +836,7 @@ function BranchCanvasTree({
   onSelectSession: (sessionId: string | null) => void;
   onBackgroundClick?: (() => void) | undefined;
   stageScale: number;
+  desktopStageLayout: DesktopBranchTreeStageLayout;
   transform?: BranchViewportTransform | null;
   isMobileViewport: boolean;
   viewportRef: RefObject<HTMLDivElement>;
@@ -835,8 +883,8 @@ function BranchCanvasTree({
       <div
         className="conversation-branch-canvas-stage-shell"
         style={{
-          width: isMobileViewport ? "100%" : layout.width * stageScale,
-          height: isMobileViewport ? "100%" : layout.height * stageScale
+          width: isMobileViewport ? "100%" : desktopStageLayout.shellWidth,
+          height: isMobileViewport ? "100%" : desktopStageLayout.shellHeight
         }}
         onClick={(event) => {
           if (event.target === event.currentTarget) {
@@ -851,7 +899,7 @@ function BranchCanvasTree({
             height: layout.height,
             transform: transform
               ? `translate(${transform.offsetX}px, ${transform.offsetY}px) scale(${transform.scale})`
-              : `scale(${stageScale})`,
+              : `translate(${desktopStageLayout.offsetX}px, ${desktopStageLayout.offsetY}px) scale(${desktopStageLayout.scale})`,
             transformOrigin: "top left"
           }}
           onClick={() => {
@@ -1028,6 +1076,14 @@ export function SessionBranchTreeExplorer({
   const stageScale = useMemo(() => {
     return resolveBranchTreeStageScale(canvasViewportWidth, layout.width);
   }, [canvasViewportWidth, layout.width]);
+  const desktopStageLayout = useMemo(() => {
+    return resolveDesktopBranchTreeStageLayout(
+      canvasViewportWidth,
+      canvasViewportHeight,
+      layout.width,
+      layout.height
+    );
+  }, [canvasViewportHeight, canvasViewportWidth, layout.height, layout.width]);
 
   useEffect(() => {
     if (!isMobileViewport || canvasViewportWidth <= 0 || canvasViewportHeight <= 0) {
@@ -1431,6 +1487,7 @@ export function SessionBranchTreeExplorer({
             onSelectSession={setSelectedSessionId}
             onBackgroundClick={showMobileBareCanvas ? onClose : undefined}
             stageScale={stageScale}
+            desktopStageLayout={desktopStageLayout}
             transform={isMobileViewport ? mobileTransform : null}
             isMobileViewport={isMobileViewport}
             viewportRef={canvasViewportRef}
@@ -1493,22 +1550,11 @@ export function SessionBranchTreePanel({
     () => buildSessionBranchTreeModel(navigationGroups, workspaceId, sessionId),
     [navigationGroups, sessionId, workspaceId]
   );
+  const layout = useMemo(() => (model ? buildBranchTreeLayout(model.root) : null), [model]);
   const [dialogWidth, setDialogWidth] = useState<number | null>(null);
   const [isDesktopViewport, setIsDesktopViewport] = useState(
     typeof window !== "undefined" ? window.innerWidth > BRANCH_TREE_DESKTOP_BREAKPOINT : true
   );
-
-  function getDesktopDialogBounds(viewportWidth: number) {
-    const maxWidth = Math.max(420, viewportWidth - 32);
-    const minWidth = Math.min(BRANCH_TREE_DIALOG_MIN_WIDTH, maxWidth);
-    const defaultWidth = Math.min(Math.max(viewportWidth * 0.5, minWidth), maxWidth);
-
-    return {
-      minWidth,
-      maxWidth,
-      defaultWidth
-    };
-  }
 
   useEffect(() => {
     if (!open) {
@@ -1539,7 +1585,7 @@ export function SessionBranchTreePanel({
         return;
       }
 
-      const bounds = getDesktopDialogBounds(window.innerWidth);
+      const bounds = resolveDesktopBranchTreeDialogBounds(window.innerWidth, layout?.width ?? 0);
       setDialogWidth((current) => {
         if (current === null) {
           return bounds.defaultWidth;
@@ -1552,14 +1598,14 @@ export function SessionBranchTreePanel({
     syncViewportState();
     window.addEventListener("resize", syncViewportState);
     return () => window.removeEventListener("resize", syncViewportState);
-  }, []);
+  }, [layout?.width]);
 
   function beginDesktopResize(startClientX: number) {
     if (typeof window === "undefined" || !isDesktopViewport) {
       return;
     }
 
-    const bounds = getDesktopDialogBounds(window.innerWidth);
+    const bounds = resolveDesktopBranchTreeDialogBounds(window.innerWidth, layout?.width ?? 0);
     const startWidth = dialogWidth ?? bounds.defaultWidth;
 
     function handlePointerMove(event: MouseEvent) {
@@ -1580,7 +1626,7 @@ export function SessionBranchTreePanel({
     return null;
   }
 
-  const desktopBounds = getDesktopDialogBounds(window.innerWidth);
+  const desktopBounds = resolveDesktopBranchTreeDialogBounds(window.innerWidth, layout?.width ?? 0);
   const resolvedDialogWidth = isDesktopViewport
     ? dialogWidth ?? desktopBounds.defaultWidth
     : undefined;
