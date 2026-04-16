@@ -1559,6 +1559,21 @@ const extensionZhCN = {
     butlerFollowUpCompletionCriteriaLabel: "结束条件",
     butlerFollowUpCompletionCriteriaPlaceholder:
       "例如：只有当当前功能按既定需求完成，且不再存在必须继续推进的未完成项时，才停止自动跟进。",
+    butlerFollowUpCompletionCriteriaRequired: "请先选择或填写明确的结束条件，助手必须知道什么时候停下",
+    butlerCompletionTemplateSectionLabel: "结束模板",
+    butlerCompletionTemplateSectionHint: "请选择一条明确模板；模板会直接覆盖结束条件，且必须在达到轮数上限后停止自动续接。",
+    butlerCompletionTemplateRecommendedLabel: "标准收口",
+    butlerCompletionTemplateRecommendedDescription: "功能完成并验证通过后结束",
+    butlerCompletionTemplateRecommendedValue:
+      "只有当当前功能已经按本次需求完成、已完成一次开发验证或人工确认，且不存在必须继续推进的阻塞项时，才停止自动跟进；如果 AI 推荐的下一步相对于核心目标不是必选项，也必须停止；达到自动跟进轮数上限后也必须停止，不再无限续接会话。",
+    butlerCompletionTemplateSpecLabel: "Spec 收尾",
+    butlerCompletionTemplateSpecDescription: "把当前 spec 的必做项收干净",
+    butlerCompletionTemplateSpecValue:
+      "只有当当前 spec 的必做任务已经完成，相关代码、文档和必要验证已补齐，且没有必须继续推进的阻塞项时，才停止自动跟进；如果 AI 推荐的下一步相对于核心目标不是必选项，也必须停止；不主动扩展到新的需求范围；达到自动跟进轮数上限后也必须停止。",
+    butlerCompletionTemplateBugfixLabel: "问题修复",
+    butlerCompletionTemplateBugfixDescription: "问题修复并确认没有高优先级回归",
+    butlerCompletionTemplateBugfixValue:
+      "只有当这次问题已经定位并修复，相关验证已经通过，且没有新的高优先级回归需要立即处理时，才停止自动跟进；如果 AI 推荐的下一步相对于核心目标不是必选项，也必须停止；优化建议和后续想法不算必须继续推进的理由；达到自动跟进轮数上限后也必须停止。",
     butlerFollowUpRoundLimitLabel: "最多自动跟进轮数",
     butlerFollowUpRoundLimitHint: "达到上限后，助手会停止自动续接，避免无限扩展会话。",
     butlerCurrentFollowUpLabel: "当前跟进任务",
@@ -3427,6 +3442,23 @@ const extensionEnUS = {
     butlerFollowUpCompletionCriteriaLabel: "Finish Conditions",
     butlerFollowUpCompletionCriteriaPlaceholder:
       "Example: only stop once the current feature is finished against the agreed requirements.",
+    butlerFollowUpCompletionCriteriaRequired:
+      "Choose or write an explicit stop condition first so Butler knows exactly when to stop",
+    butlerCompletionTemplateSectionLabel: "Stop Templates",
+    butlerCompletionTemplateSectionHint:
+      "Pick one explicit template. It replaces the stop condition and must still stop when the round limit is reached.",
+    butlerCompletionTemplateRecommendedLabel: "Standard Finish",
+    butlerCompletionTemplateRecommendedDescription: "Stop after the feature is done and verified",
+    butlerCompletionTemplateRecommendedValue:
+      "Stop only when the current feature is complete for this request, one development verification or manual confirmation has finished, and there is no blocking item that must still be pushed forward; if the next step recommended by AI is not required for the core goal, it must also stop; once the auto-continue round limit is reached, it must also stop and must not keep extending the session.",
+    butlerCompletionTemplateSpecLabel: "Spec Wrap-up",
+    butlerCompletionTemplateSpecDescription: "Finish the must-do items in the current spec",
+    butlerCompletionTemplateSpecValue:
+      "Stop only when the must-do tasks in the current spec are complete, the related code, docs, and required verification are all in place, and there is no blocking item that still must be pushed forward; if the next step recommended by AI is not required for the core goal, it must also stop; do not expand into new scope; once the auto-continue round limit is reached, it must also stop.",
+    butlerCompletionTemplateBugfixLabel: "Bug Fix",
+    butlerCompletionTemplateBugfixDescription: "Fix the issue and confirm there is no high-priority regression",
+    butlerCompletionTemplateBugfixValue:
+      "Stop only when this issue has been diagnosed and fixed, the related verification has passed, and there is no new high-priority regression that needs immediate work; if the next step recommended by AI is not required for the core goal, it must also stop; follow-up ideas and optimizations are not valid reasons to keep pushing; once the auto-continue round limit is reached, it must also stop.",
     butlerFollowUpRoundLimitLabel: "Max Auto Follow-up Rounds",
     butlerFollowUpRoundLimitHint:
       "Once the limit is reached, Butler stops auto-resuming so the session does not expand forever.",

@@ -267,6 +267,10 @@ describe("SessionButlerActionButton", () => {
       expect(screen.getByText("项目甲")).toBeInTheDocument();
     });
 
+    expect(
+      screen.getByRole("textbox", { name: t("conversation.butlerFollowUpCompletionCriteriaLabel") })
+    ).toHaveValue(t("conversation.butlerCompletionTemplateRecommendedValue"));
+
     fireEvent.change(
       screen.getByRole("textbox", { name: t("conversation.butlerFollowUpObjectiveLabel") }),
       {
@@ -291,10 +295,39 @@ describe("SessionButlerActionButton", () => {
     await waitFor(() => {
       expect(mockedCreateButlerFollowUpTask).toHaveBeenCalledWith(
         expect.objectContaining({
+          completionCriteria: t("conversation.butlerCompletionTemplateRecommendedValue"),
           maxAutoContinueCount: 5
         })
       );
     });
+  });
+
+  it("可以通过结束模板快捷按钮覆盖结束条件", async () => {
+    render(
+      <SessionButlerActionButton
+        session={createSessionSummary()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(mockedGetButlerSessionActionContext).toHaveBeenCalledWith("session-1");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: t("conversation.butlerActionButton") }));
+
+    await waitFor(() => {
+      expect(screen.getByText("项目甲")).toBeInTheDocument();
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: `${t("conversation.butlerCompletionTemplateBugfixLabel")} ${t("conversation.butlerCompletionTemplateBugfixDescription")}`
+      })
+    );
+
+    expect(
+      screen.getByRole("textbox", { name: t("conversation.butlerFollowUpCompletionCriteriaLabel") })
+    ).toHaveValue(t("conversation.butlerCompletionTemplateBugfixValue"));
   });
 
   it("悬浮 AI 按钮时会显示当前会话的助手分析", async () => {

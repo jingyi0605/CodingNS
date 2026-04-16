@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
@@ -24,19 +24,58 @@ interface SessionButlerActionButtonProps {
 type ButlerActionKind = "follow-up" | "verification" | null;
 const DEFAULT_FOLLOW_UP_ROUND_LIMIT = 5;
 
+interface ButlerCompletionCriteriaPreset {
+  id: string;
+  label: string;
+  description: string;
+  value: string;
+}
+
+function buildCompletionCriteriaPresets(): ButlerCompletionCriteriaPreset[] {
+  return [
+    {
+      id: "recommended",
+      label: t("conversation.butlerCompletionTemplateRecommendedLabel"),
+      description: t("conversation.butlerCompletionTemplateRecommendedDescription"),
+      value: t("conversation.butlerCompletionTemplateRecommendedValue")
+    },
+    {
+      id: "spec-finish",
+      label: t("conversation.butlerCompletionTemplateSpecLabel"),
+      description: t("conversation.butlerCompletionTemplateSpecDescription"),
+      value: t("conversation.butlerCompletionTemplateSpecValue")
+    },
+    {
+      id: "bugfix",
+      label: t("conversation.butlerCompletionTemplateBugfixLabel"),
+      description: t("conversation.butlerCompletionTemplateBugfixDescription"),
+      value: t("conversation.butlerCompletionTemplateBugfixValue")
+    }
+  ];
+}
+
+function getDefaultCompletionCriteria(): string {
+  return buildCompletionCriteriaPresets()[0]?.value ?? "";
+}
+
 export function SessionButlerActionButton({ session }: SessionButlerActionButtonProps) {
   const { showToast } = useToast();
   const { requestNavigationRefresh } = useWorkbenchShell();
+  const objectiveFieldId = useId();
+  const completionCriteriaFieldId = useId();
+  const completionCriteriaHintId = useId();
+  const roundLimitFieldId = useId();
   const [modalOpen, setModalOpen] = useState(false);
   const [contextLoading, setContextLoading] = useState(false);
   const [actionContext, setActionContext] = useState<ButlerSessionActionContextDto | null>(null);
   const [contextError, setContextError] = useState<string | null>(null);
   const [runningAction, setRunningAction] = useState<ButlerActionKind>(null);
   const [followUpObjective, setFollowUpObjective] = useState("");
-  const [followUpCompletionCriteria, setFollowUpCompletionCriteria] = useState("");
+  const [followUpCompletionCriteria, setFollowUpCompletionCriteria] = useState(() => getDefaultCompletionCriteria());
   const [followUpRoundLimit, setFollowUpRoundLimit] = useState(DEFAULT_FOLLOW_UP_ROUND_LIMIT);
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [contextRequestSeq, setContextRequestSeq] = useState(0);
+  const completionCriteriaPresets = buildCompletionCriteriaPresets();
 
   const currentTitle = useMemo(() => session?.title?.trim() || null, [session?.title]);
   const target = useMemo<ButlerSessionTargetDto | null>(() => {
@@ -58,7 +97,7 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
     setContextError(null);
     setActionContext(null);
     setFollowUpObjective("");
-    setFollowUpCompletionCriteria("");
+    setFollowUpCompletionCriteria(getDefaultCompletionCriteria());
     setFollowUpRoundLimit(DEFAULT_FOLLOW_UP_ROUND_LIMIT);
   }, [session?.sessionId]);
 
@@ -124,10 +163,19 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
     }
 
     const objective = followUpObjective.trim();
+    const completionCriteria = followUpCompletionCriteria.trim();
 
     if (!objective) {
       showToast({
         title: t("conversation.butlerFollowUpObjectiveRequired"),
+        tone: "warning"
+      });
+      return;
+    }
+
+    if (!completionCriteria) {
+      showToast({
+        title: t("conversation.butlerFollowUpCompletionCriteriaRequired"),
         tone: "warning"
       });
       return;
@@ -140,7 +188,7 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
         projectId: target.project.id,
         butlerSessionId: target.session.id,
         objective,
-        completionCriteria: followUpCompletionCriteria.trim() || undefined,
+        completionCriteria,
         maxAutoContinueCount: followUpRoundLimit
       });
       setActionContext((current) => (
@@ -160,7 +208,7 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
         tone: "success"
       });
       setFollowUpObjective("");
-      setFollowUpCompletionCriteria("");
+      setFollowUpCompletionCriteria(getDefaultCompletionCriteria());
       setFollowUpRoundLimit(DEFAULT_FOLLOW_UP_ROUND_LIMIT);
       setModalOpen(false);
     } catch (error) {
@@ -318,6 +366,7 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
         open={modalOpen}
         title={t("conversation.butlerActionModalTitle")}
         description={t("conversation.butlerActionModalDescription")}
+        className="conversation-butler-modal-card"
         onClose={() => {
           if (runningAction) {
             return;
@@ -337,19 +386,22 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
 
           {!contextLoading && !contextError && target ? (
             <>
-              <div className="conversation-butler-target-card">
-                <span>{t("conversation.butlerActionProjectLabel")}</span>
-                <strong>{target.project.name}</strong>
-              </div>
-              <div className="conversation-butler-target-card">
-                <span>{t("conversation.butlerActionSessionLabel")}</span>
-                <strong>{target.session.title || currentTitle || target.session.sessionId}</strong>
+              <div className="conversation-butler-target-grid">
+                <div className="conversation-butler-target-card">
+                  <span>{t("conversation.butlerActionProjectLabel")}</span>
+                  <strong>{target.project.name}</strong>
+                </div>
+                <div className="conversation-butler-target-card">
+                  <span>{t("conversation.butlerActionSessionLabel")}</span>
+                  <strong>{target.session.title || currentTitle || target.session.sessionId}</strong>
+                </div>
               </div>
 
-              <label className="workbench-modal-field">
-                <span>{t("conversation.butlerFollowUpObjectiveLabel")}</span>
+              <div className="workbench-modal-field conversation-butler-modal-field">
+                <label htmlFor={objectiveFieldId}>{t("conversation.butlerFollowUpObjectiveLabel")}</label>
                 <textarea
-                  rows={4}
+                  id={objectiveFieldId}
+                  rows={3}
                   value={followUpObjective}
                   placeholder={t("conversation.butlerFollowUpObjectivePlaceholder")}
                   disabled={runningAction !== null}
@@ -357,59 +409,93 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
                     setFollowUpObjective(event.target.value);
                   }}
                 />
-              </label>
+              </div>
 
-              <label className="workbench-modal-field">
-                <span>{t("conversation.butlerFollowUpCompletionCriteriaLabel")}</span>
+              <div className="workbench-modal-field conversation-butler-modal-field">
+                <div className="conversation-butler-field-heading">
+                  <label htmlFor={completionCriteriaFieldId}>
+                    {t("conversation.butlerFollowUpCompletionCriteriaLabel")}
+                  </label>
+                  <small id={completionCriteriaHintId}>
+                    {t("conversation.butlerCompletionTemplateSectionHint")}
+                  </small>
+                </div>
                 <textarea
+                  id={completionCriteriaFieldId}
                   rows={3}
                   value={followUpCompletionCriteria}
                   placeholder={t("conversation.butlerFollowUpCompletionCriteriaPlaceholder")}
+                  aria-describedby={completionCriteriaHintId}
                   disabled={runningAction !== null}
                   onChange={(event) => {
                     setFollowUpCompletionCriteria(event.target.value);
                   }}
                 />
-              </label>
-
-              <label className="workbench-modal-field">
-                <span>{t("conversation.butlerFollowUpRoundLimitLabel")}</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={followUpRoundLimit}
-                  disabled={runningAction !== null}
-                  onChange={(event) => {
-                    const nextValue = Number.parseInt(event.target.value, 10);
-                    setFollowUpRoundLimit(Number.isFinite(nextValue) ? nextValue : DEFAULT_FOLLOW_UP_ROUND_LIMIT);
-                  }}
-                />
-                <small>{t("conversation.butlerFollowUpRoundLimitHint")}</small>
-              </label>
-
-              {latestFollowUpTask && (latestFollowUpTask.status === "active" || latestFollowUpTask.status === "waiting_user") ? (
-                <div className="conversation-butler-target-card">
-                  <span>{t("conversation.butlerCurrentFollowUpLabel")}</span>
-                  <strong>{renderButlerTaskStatus(latestFollowUpTask.status)}</strong>
-                  <small>
-                    {t("conversation.butlerCurrentFollowUpProgress", {
-                      current: latestFollowUpTask.autoContinueCount,
-                      max: latestFollowUpTask.maxAutoContinueCount ?? DEFAULT_FOLLOW_UP_ROUND_LIMIT
-                    })}
-                  </small>
-                  <button
-                    type="button"
-                    className="workbench-secondary-button"
-                    disabled={runningAction !== null}
-                    onClick={() => {
-                      void handleCancelFollowUp();
-                    }}
-                  >
-                    {t("conversation.butlerStopFollowUpAction")}
-                  </button>
+                <div
+                  className="conversation-butler-preset-grid"
+                  role="group"
+                  aria-label={t("conversation.butlerCompletionTemplateSectionLabel")}
+                >
+                  {completionCriteriaPresets.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      className="conversation-butler-preset-card"
+                      data-selected={followUpCompletionCriteria.trim() === preset.value}
+                      aria-pressed={followUpCompletionCriteria.trim() === preset.value}
+                      disabled={runningAction !== null}
+                      onClick={() => {
+                        setFollowUpCompletionCriteria(preset.value);
+                      }}
+                    >
+                      <strong>{preset.label}</strong>
+                      <span>{preset.description}</span>
+                    </button>
+                  ))}
                 </div>
-              ) : null}
+              </div>
+
+              <div className="conversation-butler-meta-grid">
+                <div className="workbench-modal-field conversation-butler-modal-field conversation-butler-round-limit-field">
+                  <label htmlFor={roundLimitFieldId}>{t("conversation.butlerFollowUpRoundLimitLabel")}</label>
+                  <input
+                    id={roundLimitFieldId}
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={followUpRoundLimit}
+                    disabled={runningAction !== null}
+                    onChange={(event) => {
+                      const nextValue = Number.parseInt(event.target.value, 10);
+                      setFollowUpRoundLimit(Number.isFinite(nextValue) ? nextValue : DEFAULT_FOLLOW_UP_ROUND_LIMIT);
+                    }}
+                  />
+                  <small>{t("conversation.butlerFollowUpRoundLimitHint")}</small>
+                </div>
+
+                {latestFollowUpTask && (latestFollowUpTask.status === "active" || latestFollowUpTask.status === "waiting_user") ? (
+                  <div className="conversation-butler-target-card conversation-butler-current-task-card">
+                    <span>{t("conversation.butlerCurrentFollowUpLabel")}</span>
+                    <strong>{renderButlerTaskStatus(latestFollowUpTask.status)}</strong>
+                    <small>
+                      {t("conversation.butlerCurrentFollowUpProgress", {
+                        current: latestFollowUpTask.autoContinueCount,
+                        max: latestFollowUpTask.maxAutoContinueCount ?? DEFAULT_FOLLOW_UP_ROUND_LIMIT
+                      })}
+                    </small>
+                    <button
+                      type="button"
+                      className="workbench-secondary-button"
+                      disabled={runningAction !== null}
+                      onClick={() => {
+                        void handleCancelFollowUp();
+                      }}
+                    >
+                      {t("conversation.butlerStopFollowUpAction")}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
 
               <div className="conversation-butler-action-grid">
                 <button
