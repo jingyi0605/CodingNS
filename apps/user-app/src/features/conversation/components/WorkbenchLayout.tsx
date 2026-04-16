@@ -229,6 +229,138 @@ const WORKSPACE_COLOR_PRESETS = [
   "#84CC16",
   "#10B981"
 ] as const;
+const WORKBENCH_TITLEBAR_LIVE_SHIFT_VARIABLES = [
+  "--workbench-titlebar-live-content-shift-y",
+  "--workbench-nav-toolbar-live-shift-y",
+  "--workbench-info-tabs-live-shift-y",
+  "--workbench-auxiliary-toolbar-button-live-shift-y",
+  "--workbench-conversation-header-main-live-shift-y",
+  "--workbench-conversation-header-actions-live-shift-y",
+  "--workbench-terminal-tabbar-live-shift-y",
+  "--workbench-collapsed-controls-live-shift-y",
+  "--workbench-collapsed-left-controls-live-shift-y",
+  "--workbench-collapsed-right-controls-live-shift-y"
+] as const;
+const WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS = {
+  navToolbar: {
+    selector: ".workbench-nav-toolbar",
+    variableName: "--workbench-nav-toolbar-live-shift-y"
+  },
+  infoTabs: {
+    selector: ".workbench-info-tabs",
+    variableName: "--workbench-info-tabs-live-shift-y"
+  },
+  auxiliaryToolbarButton: {
+    selector: ".workbench-auxiliary-header > .workbench-nav-toolbar-button",
+    variableName: "--workbench-auxiliary-toolbar-button-live-shift-y"
+  },
+  conversationHeaderMain: {
+    selector: ".conversation-header-main",
+    variableName: "--workbench-conversation-header-main-live-shift-y"
+  },
+  conversationHeaderActions: {
+    selector: ".conversation-header-actions",
+    variableName: "--workbench-conversation-header-actions-live-shift-y"
+  },
+  terminalTabbarMain: {
+    selector: ".terminal-tabbar-main",
+    variableName: "--workbench-terminal-tabbar-live-shift-y"
+  },
+  collapsedLeftControls: {
+    selector: ".workbench-collapsed-controls.left[data-visible=\"true\"] .workbench-nav-toolbar-button",
+    variableName: "--workbench-collapsed-left-controls-live-shift-y"
+  },
+  collapsedRightControls: {
+    selector: ".workbench-collapsed-controls.right[data-visible=\"true\"] .workbench-nav-toolbar-button",
+    variableName: "--workbench-collapsed-right-controls-live-shift-y"
+  }
+} as const;
+
+function readCssNumericCustomProperty(style: CSSStyleDeclaration, propertyName: string): number | null {
+  const rawValue = style.getPropertyValue(propertyName).trim();
+
+  if (!rawValue) {
+    return null;
+  }
+
+  const parsedValue = Number.parseFloat(rawValue);
+  return Number.isFinite(parsedValue) ? parsedValue : null;
+}
+
+function roundWorkbenchLayoutValue(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function measureWorkbenchElementCenterY(containerRect: DOMRect, element: HTMLElement): number | null {
+  const elementRect = element.getBoundingClientRect();
+
+  if (elementRect.width <= 0 || elementRect.height <= 0) {
+    return null;
+  }
+
+  const computedStyle = window.getComputedStyle(element);
+
+  if (computedStyle.display === "none" || computedStyle.visibility === "hidden") {
+    return null;
+  }
+
+  return elementRect.top - containerRect.top + elementRect.height / 2;
+}
+
+function measureWorkbenchSelectorCenterY(container: HTMLElement, selector: string): number | null {
+  const containerRect = container.getBoundingClientRect();
+  const elements = Array.from(container.querySelectorAll<HTMLElement>(selector));
+  const centers = elements
+    .map((element) => measureWorkbenchElementCenterY(containerRect, element))
+    .filter((value): value is number => value !== null);
+
+  if (centers.length === 0) {
+    return null;
+  }
+
+  return centers.reduce((total, value) => total + value, 0) / centers.length;
+}
+
+function setWorkbenchLiveShiftVariable(target: HTMLElement, variableName: string, value: number | null) {
+  const currentValue = target.style.getPropertyValue(variableName).trim();
+
+  if (value === null || !Number.isFinite(value)) {
+    if (currentValue) {
+      target.style.removeProperty(variableName);
+    }
+    return;
+  }
+
+  const nextValue = `${roundWorkbenchLayoutValue(value)}px`;
+
+  if (currentValue !== nextValue) {
+    target.style.setProperty(variableName, nextValue);
+  }
+}
+
+function resolveWorkbenchAbsoluteShift(
+  style: CSSStyleDeclaration,
+  variableName: string,
+  targetCenterY: number,
+  measuredCenterY: number | null
+): number | null {
+  if (measuredCenterY === null) {
+    return null;
+  }
+
+  const currentShift = readCssNumericCustomProperty(style, variableName) ?? 0;
+  return currentShift + (targetCenterY - measuredCenterY);
+}
+
+function resetWorkbenchTitlebarLiveShiftVariables(target: HTMLElement | null) {
+  if (!target) {
+    return;
+  }
+
+  for (const variableName of WORKBENCH_TITLEBAR_LIVE_SHIFT_VARIABLES) {
+    target.style.removeProperty(variableName);
+  }
+}
 
 export type WorkbenchGlobalNotificationKind =
   | "follow_up_waiting_user"
@@ -6958,6 +7090,7 @@ export function WorkbenchLayout({
   const notificationArchiveMutationRequestIdRef = useRef(0);
   const showToastRef = useRef(showToast);
   const platformBridgeRef = useRef(platform.bridge);
+  const workbenchShellRef = useRef<HTMLDivElement | null>(null);
   const completionBaselineReadyRef = useRef(false);
   const previousSessionCompletionStateRef = useRef(
     new Map<
@@ -8985,6 +9118,229 @@ export function WorkbenchLayout({
       />
     );
   const shouldShowAuxiliaryPanel = auxiliaryPanelContent !== null;
+  const shouldUseMacOsOverlayTitlebarAlignment =
+    platform.isDesktop && platform.ui.osFamily === "macos" && platform.ui.prefersOverlayTitlebar;
+
+  useLayoutEffect(() => {
+    const shellElement = workbenchShellRef.current;
+
+    if (!shellElement || !shouldUseMacOsOverlayTitlebarAlignment || typeof window === "undefined") {
+      resetWorkbenchTitlebarLiveShiftVariables(shellElement);
+      return;
+    }
+
+    let animationFrameId: number | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+    const observedElements = new Set<HTMLElement>([shellElement]);
+
+    const measureAndApplyAlignment = () => {
+      const computedStyle = window.getComputedStyle(shellElement);
+      const trafficLightCenterY = readCssNumericCustomProperty(
+        computedStyle,
+        "--desktop-macos-traffic-light-center-y"
+      );
+
+      if (trafficLightCenterY === null) {
+        resetWorkbenchTitlebarLiveShiftVariables(shellElement);
+        return;
+      }
+
+      const measuredCenters = {
+        navToolbar: measureWorkbenchSelectorCenterY(
+          shellElement,
+          WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.navToolbar.selector
+        ),
+        infoTabs: measureWorkbenchSelectorCenterY(
+          shellElement,
+          WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.infoTabs.selector
+        ),
+        auxiliaryToolbarButton: measureWorkbenchSelectorCenterY(
+          shellElement,
+          WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.auxiliaryToolbarButton.selector
+        ),
+        conversationHeaderMain: measureWorkbenchSelectorCenterY(
+          shellElement,
+          WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.conversationHeaderMain.selector
+        ),
+        conversationHeaderActions: measureWorkbenchSelectorCenterY(
+          shellElement,
+          WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.conversationHeaderActions.selector
+        ),
+        terminalTabbarMain: measureWorkbenchSelectorCenterY(
+          shellElement,
+          WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.terminalTabbarMain.selector
+        ),
+        collapsedLeftControls: measureWorkbenchSelectorCenterY(
+          shellElement,
+          WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.collapsedLeftControls.selector
+        ),
+        collapsedRightControls: measureWorkbenchSelectorCenterY(
+          shellElement,
+          WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.collapsedRightControls.selector
+        )
+      } as const;
+      const contentCenters = [
+        measuredCenters.infoTabs,
+        measuredCenters.conversationHeaderMain,
+        measuredCenters.conversationHeaderActions,
+        measuredCenters.terminalTabbarMain
+      ].filter((value): value is number => value !== null);
+      const collapsedCenters = [
+        measuredCenters.collapsedLeftControls,
+        measuredCenters.collapsedRightControls
+      ].filter((value): value is number => value !== null);
+      const collapsedShift =
+        collapsedCenters.length > 0
+          ? resolveWorkbenchAbsoluteShift(
+              computedStyle,
+              "--workbench-collapsed-controls-live-shift-y",
+              trafficLightCenterY,
+              collapsedCenters.reduce((total, value) => total + value, 0) / collapsedCenters.length
+            )
+          : null;
+      const contentShift =
+        contentCenters.length > 0
+          ? resolveWorkbenchAbsoluteShift(
+              computedStyle,
+              "--workbench-titlebar-live-content-shift-y",
+              trafficLightCenterY,
+              contentCenters.reduce((total, value) => total + value, 0) / contentCenters.length
+            )
+          : null;
+
+      setWorkbenchLiveShiftVariable(shellElement, "--workbench-titlebar-live-content-shift-y", contentShift);
+      setWorkbenchLiveShiftVariable(shellElement, "--workbench-collapsed-controls-live-shift-y", collapsedShift);
+      setWorkbenchLiveShiftVariable(
+        shellElement,
+        WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.navToolbar.variableName,
+        resolveWorkbenchAbsoluteShift(
+          computedStyle,
+          WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.navToolbar.variableName,
+          trafficLightCenterY,
+          measuredCenters.navToolbar
+        )
+      );
+      setWorkbenchLiveShiftVariable(
+        shellElement,
+        WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.infoTabs.variableName,
+        resolveWorkbenchAbsoluteShift(
+          computedStyle,
+          WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.infoTabs.variableName,
+          trafficLightCenterY,
+          measuredCenters.infoTabs
+        )
+      );
+      setWorkbenchLiveShiftVariable(
+        shellElement,
+        WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.auxiliaryToolbarButton.variableName,
+        resolveWorkbenchAbsoluteShift(
+          computedStyle,
+          WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.auxiliaryToolbarButton.variableName,
+          trafficLightCenterY,
+          measuredCenters.auxiliaryToolbarButton
+        )
+      );
+      setWorkbenchLiveShiftVariable(
+        shellElement,
+        WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.conversationHeaderMain.variableName,
+        resolveWorkbenchAbsoluteShift(
+          computedStyle,
+          WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.conversationHeaderMain.variableName,
+          trafficLightCenterY,
+          measuredCenters.conversationHeaderMain
+        )
+      );
+      setWorkbenchLiveShiftVariable(
+        shellElement,
+        WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.conversationHeaderActions.variableName,
+        resolveWorkbenchAbsoluteShift(
+          computedStyle,
+          WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.conversationHeaderActions.variableName,
+          trafficLightCenterY,
+          measuredCenters.conversationHeaderActions
+        )
+      );
+      setWorkbenchLiveShiftVariable(
+        shellElement,
+        WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.terminalTabbarMain.variableName,
+        resolveWorkbenchAbsoluteShift(
+          computedStyle,
+          WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.terminalTabbarMain.variableName,
+          trafficLightCenterY,
+          measuredCenters.terminalTabbarMain
+        )
+      );
+      setWorkbenchLiveShiftVariable(
+        shellElement,
+        WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.collapsedLeftControls.variableName,
+        resolveWorkbenchAbsoluteShift(
+          computedStyle,
+          WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.collapsedLeftControls.variableName,
+          trafficLightCenterY,
+          measuredCenters.collapsedLeftControls
+        )
+      );
+      setWorkbenchLiveShiftVariable(
+        shellElement,
+        WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.collapsedRightControls.variableName,
+        resolveWorkbenchAbsoluteShift(
+          computedStyle,
+          WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS.collapsedRightControls.variableName,
+          trafficLightCenterY,
+          measuredCenters.collapsedRightControls
+        )
+      );
+    };
+
+    const scheduleMeasure = () => {
+      if (animationFrameId !== null) {
+        window.cancelAnimationFrame(animationFrameId);
+      }
+
+      animationFrameId = window.requestAnimationFrame(() => {
+        animationFrameId = null;
+        measureAndApplyAlignment();
+      });
+    };
+
+    scheduleMeasure();
+
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(() => {
+        scheduleMeasure();
+      });
+
+      for (const target of Object.values(WORKBENCH_TITLEBAR_ALIGNMENT_TARGETS)) {
+        for (const element of shellElement.querySelectorAll<HTMLElement>(target.selector)) {
+          observedElements.add(element);
+        }
+      }
+
+      for (const element of observedElements) {
+        resizeObserver.observe(element);
+      }
+    }
+
+    window.addEventListener("resize", scheduleMeasure);
+
+    return () => {
+      if (animationFrameId !== null) {
+        window.cancelAnimationFrame(animationFrameId);
+      }
+
+      window.removeEventListener("resize", scheduleMeasure);
+      resizeObserver?.disconnect();
+    };
+  }, [
+    activeCenterTab,
+    infoPanelReady,
+    leftCollapsed,
+    location.pathname,
+    location.search,
+    rightCollapsed,
+    shouldShowAuxiliaryPanel,
+    shouldUseMacOsOverlayTitlebarAlignment
+  ]);
   const mobileNavigationPanel = isMobileShell ? (
     <SidebarContent
       workspaceGroups={workspaceSidebarGroups}
@@ -9145,6 +9501,7 @@ export function WorkbenchLayout({
       ) : (
         <div
           className="workbench-shell"
+          ref={workbenchShellRef}
           style={shellStyle}
           data-nav-loading={navigationLoading}
           data-left-collapsed={leftCollapsed}
