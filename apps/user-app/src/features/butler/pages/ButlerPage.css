@@ -170,8 +170,7 @@
 }
 
 .butler-toolbar-button,
-.butler-provider-switcher button,
-.butler-init-form button {
+.butler-provider-switcher button {
   border: 1px solid rgba(15, 23, 42, 0.12);
   border-radius: 10px;
   padding: 8px 12px;
@@ -186,8 +185,7 @@
 }
 
 .butler-toolbar-button:hover,
-.butler-provider-switcher button:hover,
-.butler-init-form button:hover {
+.butler-provider-switcher button:hover {
   border-color: rgba(14, 165, 233, 0.36);
   background: #fff;
   transform: translateY(-1px);
@@ -195,8 +193,7 @@
 }
 
 .butler-toolbar-button:disabled,
-.butler-provider-switcher button:disabled,
-.butler-init-form button:disabled {
+.butler-provider-switcher button:disabled {
   cursor: not-allowed;
   opacity: 0.62;
   transform: none;
@@ -1243,21 +1240,11 @@
   justify-content: center;
   padding: clamp(20px, 4vw, 44px);
   overflow: auto;
-  background:
-    radial-gradient(circle at 14% 18%, rgba(0, 122, 255, 0.16), transparent 28%),
-    radial-gradient(circle at 86% 82%, rgba(52, 199, 89, 0.14), transparent 26%),
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--bg-primary) 92%, rgba(255, 255, 255, 0.24)),
-      var(--bg-primary)
-    );
+  background: var(--butler-init-shell-bg);
 }
 
 .butler-init-backdrop {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
+  display: none;
 }
 
 .butler-init-glow {
@@ -1272,7 +1259,7 @@
   left: -8%;
   width: 320px;
   height: 320px;
-  background: radial-gradient(circle, rgba(100, 210, 255, 0.42), transparent 68%);
+  background: var(--butler-init-glow-primary);
 }
 
 .butler-init-glow-secondary {
@@ -1280,7 +1267,7 @@
   bottom: 4%;
   width: 360px;
   height: 360px;
-  background: radial-gradient(circle, rgba(48, 209, 88, 0.28), transparent 70%);
+  background: var(--butler-init-glow-secondary);
 }
 
 .butler-init-layout {
@@ -1310,15 +1297,10 @@
 .butler-init-preview-card,
 .butler-init-form-section,
 .butler-init-actions {
-  border: 1px solid color-mix(in srgb, var(--border-primary) 82%, rgba(255, 255, 255, 0.65));
+  border: 1px solid var(--butler-init-card-border);
   border-radius: 24px;
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--bg-surface) 94%, rgba(255, 255, 255, 0.7)),
-      color-mix(in srgb, var(--bg-primary) 94%, rgba(255, 255, 255, 0.22))
-    );
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  background: var(--butler-init-card-bg);
+  box-shadow: var(--butler-init-card-shadow);
 }
 
 .butler-init-hero-card {
@@ -1411,9 +1393,9 @@
   height: 56px;
   border-radius: 16px;
   flex: 0 0 auto;
-  box-shadow:
-    0 14px 28px rgba(0, 122, 255, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.76);
+  background: var(--butler-init-avatar-bg);
+  color: var(--butler-init-avatar-fg);
+  box-shadow: var(--butler-init-avatar-shadow);
 }
 
 .butler-init-preview-avatar span {
@@ -1425,9 +1407,9 @@
   align-items: center;
   padding: 6px 12px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 84%, rgba(255, 255, 255, 0.72));
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  color: var(--accent, #007aff);
+  border: 1px solid var(--butler-init-provider-border);
+  background: var(--butler-init-provider-bg);
+  color: var(--accent);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -1445,9 +1427,9 @@
   align-items: center;
   padding: 7px 10px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 86%, rgba(255, 255, 255, 0.72));
-  background: color-mix(in srgb, var(--bg-primary) 72%, rgba(255, 255, 255, 0.68));
-  color: var(--text-secondary, #6b7280);
+  border: 1px solid var(--butler-init-chip-border);
+  background: var(--butler-init-chip-bg);
+  color: var(--butler-init-chip-text);
   font-size: 12px;
   font-weight: 600;
 }
@@ -1612,35 +1594,40 @@ select.butler-form-control {
 }
 
 .butler-init-submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 168px;
   min-height: 46px;
-  border-color: color-mix(in srgb, var(--accent) 76%, rgba(255, 255, 255, 0.32));
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--accent) 88%, white 12%),
-    color-mix(in srgb, var(--accent-hover) 92%, #001f4d 8%)
-  );
-  color: #ffffff;
-  box-shadow:
-    0 16px 28px rgba(0, 122, 255, 0.22),
-    inset 0 1px 0 rgba(255, 255, 255, 0.24);
+  padding: 0 20px;
+  border: 1px solid var(--butler-init-submit-border);
+  border-radius: 12px;
+  background: var(--butler-init-submit-bg);
+  color: var(--butler-init-submit-text);
+  box-shadow: var(--butler-init-submit-shadow);
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
 }
 
 .butler-init-submit:hover {
-  border-color: color-mix(in srgb, var(--accent) 84%, rgba(255, 255, 255, 0.28));
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--accent) 92%, white 8%),
-    color-mix(in srgb, var(--accent-hover) 96%, #001f4d 4%)
-  );
-  box-shadow:
-    0 18px 30px rgba(0, 122, 255, 0.26),
-    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  border-color: color-mix(in srgb, var(--accent) 64%, var(--surface-overlay-border));
+  background: var(--butler-init-submit-bg-hover);
+  box-shadow: var(--butler-init-submit-shadow-hover);
+  transform: translateY(-1px);
 }
 
 .butler-init-submit:disabled {
-  background: linear-gradient(180deg, rgba(0, 122, 255, 0.72), rgba(0, 102, 212, 0.7));
-  color: rgba(255, 255, 255, 0.82);
+  border-color: color-mix(in srgb, var(--border-primary) 88%, transparent);
+  background: var(--butler-init-submit-bg-disabled);
+  color: var(--butler-init-submit-text-disabled);
+  box-shadow: none;
+  cursor: not-allowed;
+  transform: none;
+  opacity: 1;
 }
 
 @keyframes butler-loading-spin {

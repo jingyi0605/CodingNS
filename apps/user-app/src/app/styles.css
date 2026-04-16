@@ -12717,22 +12717,9 @@ textarea:focus-visible {
     );
   --desktop-panel-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
   --desktop-panel-shadow-strong: 0 18px 40px rgba(15, 23, 42, 0.08);
-  --butler-init-shell-bg:
-    radial-gradient(circle at 14% 18%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 28%),
-    radial-gradient(circle at 86% 82%, color-mix(in srgb, var(--success) 14%, transparent), transparent 26%),
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--bg-primary) 92%, var(--surface-overlay-highlight) 24%),
-      var(--bg-primary)
-    );
-  --butler-init-glow-primary:
-    radial-gradient(
-      circle,
-      color-mix(in srgb, var(--accent) 34%, var(--surface-overlay-highlight) 66%),
-      transparent 68%
-    );
-  --butler-init-glow-secondary:
-    radial-gradient(circle, color-mix(in srgb, var(--success) 28%, transparent), transparent 70%);
+  --butler-init-shell-bg: var(--bg-primary);
+  --butler-init-glow-primary: none;
+  --butler-init-glow-secondary: none;
   --butler-init-card-border: var(--desktop-panel-edge);
   --butler-init-card-bg: var(--surface-panel-bg-strong);
   --butler-init-card-shadow: var(--surface-panel-shadow);
@@ -12752,24 +12739,9 @@ textarea:focus-visible {
   --butler-init-chip-bg: color-mix(in srgb, var(--bg-surface) 72%, var(--bg-hover));
   --butler-init-chip-text: color-mix(in srgb, var(--text-secondary) 90%, var(--text-primary) 10%);
   --butler-init-submit-border: color-mix(in srgb, var(--accent) 52%, var(--surface-overlay-border));
-  --butler-init-submit-bg:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--accent) 86%, var(--surface-overlay-highlight) 14%),
-      color-mix(in srgb, var(--accent-hover) 82%, var(--bg-primary) 18%)
-    );
-  --butler-init-submit-bg-hover:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--accent) 90%, var(--surface-overlay-highlight) 10%),
-      color-mix(in srgb, var(--accent-hover) 86%, var(--bg-primary) 14%)
-    );
-  --butler-init-submit-bg-disabled:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--accent) 48%, var(--bg-secondary) 52%),
-      color-mix(in srgb, var(--accent-hover) 42%, var(--bg-primary) 58%)
-    );
+  --butler-init-submit-bg: var(--accent);
+  --butler-init-submit-bg-hover: var(--accent-hover);
+  --butler-init-submit-bg-disabled: color-mix(in srgb, var(--accent) 38%, var(--bg-secondary));
   --butler-init-submit-shadow:
     0 16px 28px color-mix(in srgb, var(--accent) 22%, transparent),
     inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 24%, transparent);
