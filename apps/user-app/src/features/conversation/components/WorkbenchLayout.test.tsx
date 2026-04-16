@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { authStore } from "../../auth/store/auth-store";
+import { clientConfigStore } from "../../../config/client-config-store";
 import { localUiPreferenceStore } from "../../../preferences/local-ui-preference-store";
 import { clearViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { t } from "../../../shared/i18n";
@@ -342,6 +343,107 @@ describe("WorkbenchLayout", () => {
       t("shell.hostSwitcherAriaLabel"),
       t("shell.globalNotificationsAction")
     ]);
+  });
+
+  it("存在多个 HOST 时会在设置按钮里显示当前 HOST 名称标签", async () => {
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: "host-2",
+      hosts: [
+        {
+          id: "host-1",
+          name: "本地 Host",
+          baseUrl: "http://127.0.0.1:3002",
+          kind: "local",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-14T00:00:00.000Z",
+          lastUserId: "user-1",
+          lastUsername: "admin"
+        },
+        {
+          id: "host-2",
+          name: "办公室 Host",
+          baseUrl: "http://10.10.1.8:3002",
+          kind: "lan",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-15T00:00:00.000Z",
+          lastUserId: null,
+          lastUsername: null
+        }
+      ],
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    authStore.hydrate({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 3600,
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    });
+
+    const view = renderWorkbenchRoute();
+    const settingsButton = view.container.querySelector(".workbench-nav-settings-button");
+
+    if (!(settingsButton instanceof HTMLElement)) {
+      throw new Error("未找到设置按钮");
+    }
+
+    expect(within(settingsButton).getByText(t("settings.title"))).toBeInTheDocument();
+    expect(within(settingsButton).getByText("办公室 Host")).toBeInTheDocument();
+  });
+
+  it("只有一个 HOST 时设置按钮不显示 HOST 名称标签", async () => {
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: "host-1",
+      hosts: [
+        {
+          id: "host-1",
+          name: "本地 Host",
+          baseUrl: "http://127.0.0.1:3002",
+          kind: "local",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-14T00:00:00.000Z",
+          lastUserId: "user-1",
+          lastUsername: "admin"
+        }
+      ],
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    authStore.hydrate({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 3600,
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    });
+
+    const view = renderWorkbenchRoute();
+    const settingsButton = view.container.querySelector(".workbench-nav-settings-button");
+
+    if (!(settingsButton instanceof HTMLElement)) {
+      throw new Error("未找到设置按钮");
+    }
+
+    expect(within(settingsButton).getByText(t("settings.title"))).toBeInTheDocument();
+    expect(within(settingsButton).queryByText("本地 Host")).not.toBeInTheDocument();
   });
 
   it("会把缺失 children 的侧栏树节点当作空数组处理", () => {
