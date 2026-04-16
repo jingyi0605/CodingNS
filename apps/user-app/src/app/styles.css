@@ -18816,6 +18816,9 @@ textarea:focus-visible {
   position: relative;
   display: inline-flex;
   align-self: flex-start;
+  width: 44px;
+  height: 28px;
+  flex: 0 0 44px;
   cursor: pointer;
 }
 
@@ -18831,6 +18834,7 @@ textarea:focus-visible {
   width: 44px;
   height: 28px;
   position: relative;
+  pointer-events: none;
   border-radius: 999px;
   background: color-mix(in srgb, var(--bg-hover) 82%, var(--bg-primary));
   border: 0.5px solid color-mix(in srgb, var(--border-primary) 68%, transparent);
@@ -18844,6 +18848,7 @@ textarea:focus-visible {
   position: absolute;
   top: 2px;
   left: 2px;
+  pointer-events: none;
   width: 22px;
   height: 22px;
   border-radius: 50%;

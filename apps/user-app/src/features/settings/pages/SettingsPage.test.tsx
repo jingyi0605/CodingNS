@@ -438,6 +438,21 @@ describe("SettingsPage", () => {
     });
   });
 
+  it("点击可见开关容器也会切换自动主题", async () => {
+    renderSettingsPage();
+
+    const checkbox = screen.getByRole("checkbox", { name: t("settings.autoTheme") });
+    const switchControl = checkbox.closest(".settings-mobile-switch");
+
+    expect(switchControl).not.toBeNull();
+
+    await userEvent.click(switchControl!);
+
+    await waitFor(() => {
+      expect(userPreferenceStore.getState().profile.autoTheme).toBe(true);
+    });
+  });
+
   it("开启自动主题后会根据系统偏好切换日夜模式", async () => {
     const mediaQuery = createMatchMediaMock(false);
     window.matchMedia = vi.fn().mockImplementation(mediaQuery.matchMedia);

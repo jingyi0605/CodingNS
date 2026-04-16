@@ -1180,7 +1180,19 @@ function SettingsSwitch({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="settings-mobile-switch" aria-label={label}>
+    <label
+      className="settings-mobile-switch"
+      aria-label={label}
+      onClick={(event) => {
+        if (event.target instanceof HTMLInputElement) {
+          return;
+        }
+
+        event.preventDefault();
+        // 不再把可点击性赌在隐藏 input 的默认行为上，直接让可见开关自己负责切换。
+        onChange(!checked);
+      }}
+    >
       <input
         type="checkbox"
         aria-label={label}
