@@ -1,15 +1,22 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { t } from "../../../shared/i18n";
 import { writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { WorkspaceDetailPage } from "./WorkspaceDetailPage";
 
-const { mockAnalyzeDebugTarget, mockGetRecentDebugRuntimes, mockGetFrameworkCompatibilityMatrix } = vi.hoisted(() => ({
+const {
+  mockAnalyzeDebugTarget,
+  mockGetFrameworkCompatibilityMatrix,
+  mockListWorkspaceTemplates,
+  mockListWorkspaceTemplateRuntimeStatuses
+} = vi.hoisted(() => ({
   mockAnalyzeDebugTarget: vi.fn(),
-  mockGetRecentDebugRuntimes: vi.fn(),
-  mockGetFrameworkCompatibilityMatrix: vi.fn()
+  mockGetFrameworkCompatibilityMatrix: vi.fn(),
+  mockListWorkspaceTemplates: vi.fn(),
+  mockListWorkspaceTemplateRuntimeStatuses: vi.fn()
 }));
 
 const mockUseWorkbenchShell = vi.fn();
@@ -36,10 +43,14 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     ...actual,
     analyzeDebugTarget: mockAnalyzeDebugTarget,
     getFrameworkCompatibilityMatrix: mockGetFrameworkCompatibilityMatrix,
-    getRecentDebugRuntimes: mockGetRecentDebugRuntimes,
     removeWorkspace: vi.fn()
   };
 });
+
+vi.mock("../../terminal/api/terminal-api", () => ({
+  listWorkspaceTemplates: mockListWorkspaceTemplates,
+  listWorkspaceTemplateRuntimeStatuses: mockListWorkspaceTemplateRuntimeStatuses
+}));
 
 vi.mock("../../../shared/toast", () => ({
   useToast: () => ({
@@ -163,7 +174,8 @@ describe("WorkspaceDetailPage", () => {
     mockShowToast.mockReset();
     mockAnalyzeDebugTarget.mockReset();
     mockGetFrameworkCompatibilityMatrix.mockReset();
-    mockGetRecentDebugRuntimes.mockReset();
+    mockListWorkspaceTemplates.mockReset();
+    mockListWorkspaceTemplateRuntimeStatuses.mockReset();
     window.sessionStorage.clear();
     gitSnapshotListeners.clear();
     mockAnalyzeDebugTarget.mockResolvedValue({
@@ -281,117 +293,6 @@ describe("WorkspaceDetailPage", () => {
       ],
       autoInjectionEligible: true
     });
-    mockGetRecentDebugRuntimes.mockResolvedValue({
-      targetId: "debug-target-1",
-      items: [{
-        runtimeSession: {
-          id: "runtime-1",
-          targetId: "debug-target-1",
-          status: "FAILED",
-          failureStage: "service_discovery",
-          startedAt: "2026-04-14T00:00:00.000Z",
-          stoppedAt: "2026-04-14T00:01:00.000Z",
-          createdAt: "2026-04-14T00:00:00.000Z",
-          updatedAt: "2026-04-14T00:01:00.000Z"
-        },
-        target: {
-          id: "debug-target-1",
-          workspaceId: "workspace-1",
-          rootPath: "/repo/project-one",
-          displayName: "project-one",
-          sourceType: "repo",
-          createdAt: "2026-04-14T00:00:00.000Z",
-          updatedAt: "2026-04-14T00:00:00.000Z"
-        },
-        services: [
-          {
-            service: {
-              id: "service-1",
-              targetId: "debug-target-1",
-              role: "frontend",
-              name: "web",
-              cwd: "/repo/project-one",
-              command: "pnpm",
-              args: ["dev"],
-              env: {},
-              defaultPortHint: 5173,
-              protocol: "http",
-              healthPath: null,
-              adapterKind: "cli",
-              frameworkAnalysisId: "analysis-1",
-              createdAt: "2026-04-14T00:00:00.000Z",
-              updatedAt: "2026-04-14T00:00:00.000Z"
-            },
-            analysis: null,
-            binding: {
-              id: "binding-1",
-              runtimeId: "runtime-1",
-              serviceId: "service-1",
-              processInstanceId: "terminal-1",
-              expectedPort: 5173,
-              leasedPort: 43000,
-              observedPort: null,
-              proxyPath: null,
-              status: "FAILED",
-              updatedAt: "2026-04-14T00:01:00.000Z"
-            },
-            portLease: {
-              id: "lease-1",
-              runtimeId: "runtime-1",
-              serviceId: "service-1",
-              port: 43000,
-              protocol: "tcp",
-              status: "RELEASED",
-              leasedAt: "2026-04-14T00:00:00.000Z",
-              expiresAt: null,
-              releasedAt: "2026-04-14T00:01:00.000Z"
-            },
-            processInstance: {
-              id: "terminal-1",
-              workspaceId: "workspace-1",
-              name: "web",
-              cwd: "/repo/project-one",
-              shell: "/bin/zsh",
-              runtimeType: "embedded-pty",
-              runtimeSessionId: "terminal-runtime-1",
-              attachTarget: "terminal-1",
-              status: "error",
-              processId: 123,
-              createdByUserId: "user-1",
-              createdAt: "2026-04-14T00:00:00.000Z",
-              lastActiveAt: "2026-04-14T00:00:30.000Z",
-              closedAt: "2026-04-14T00:01:00.000Z",
-              exitCode: 1,
-              statusDetail: "boom",
-              debugRuntimeSessionId: "runtime-1",
-              debugTargetId: "debug-target-1",
-              debugServiceId: "service-1",
-              frameworkAnalysisId: "analysis-1",
-              launcherSourceType: "debug_service",
-              launchStage: "command_dispatched",
-              failureStage: "process_runtime_error",
-              adapterKind: "cli",
-              envPatchSummary: {},
-              artifactRef: null
-            },
-            aiFallbackEdits: [
-              {
-                id: "edit-1",
-                runtimeId: "runtime-1",
-                serviceId: "service-1",
-                reason: "test",
-                allowedFiles: ["server.js"],
-                targetPort: 43000,
-                patchRef: null,
-                rollbackRef: null,
-                status: "PENDING",
-                createdAt: "2026-04-14T00:00:00.000Z"
-              }
-            ]
-          }
-        ]
-      }]
-    });
     mockGetFrameworkCompatibilityMatrix.mockResolvedValue({
       version: "2026-04-13",
       items: [
@@ -427,17 +328,86 @@ describe("WorkspaceDetailPage", () => {
         }
       ]
     });
+    mockListWorkspaceTemplates.mockResolvedValue({
+      items: [
+        {
+          id: "template-web",
+          workspaceId: "workspace-1",
+          name: "web",
+          cwd: "/repo/project-one/apps/web",
+          command: "pnpm",
+          args: ["dev"],
+          env: {},
+          port: 43000,
+          proxyEnabled: true,
+          proxySlug: "web",
+          runtimeType: "node",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z"
+        },
+        {
+          id: "template-host",
+          workspaceId: "workspace-1",
+          name: "host",
+          cwd: "/repo/project-one/apps/api",
+          command: "pnpm",
+          args: ["dev"],
+          env: {},
+          port: 44000,
+          proxyEnabled: false,
+          proxySlug: null,
+          runtimeType: "node",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z"
+        },
+        {
+          id: "template-desktop",
+          workspaceId: "workspace-1",
+          name: "desktop",
+          cwd: "/repo/project-one/apps/desktop",
+          command: "pnpm",
+          args: ["tauri", "dev"],
+          env: {},
+          port: null,
+          proxyEnabled: false,
+          proxySlug: null,
+          runtimeType: "node",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z"
+        }
+      ]
+    });
+    mockListWorkspaceTemplateRuntimeStatuses.mockResolvedValue({
+      items: [
+        {
+          templateId: "template-web",
+          port: 43000,
+          occupied: false,
+          processId: null,
+          processName: null,
+          processCommandLine: null
+        },
+        {
+          templateId: "template-host",
+          port: 44000,
+          occupied: true,
+          processId: 2048,
+          processName: "node",
+          processCommandLine: "node host-dev.js"
+        }
+      ]
+    });
     mockUseWorkbenchShell.mockReturnValue(createWorkbenchShell());
   });
 
   it("会展示项目摘要和会话列表", async () => {
     renderPage();
 
-    expect(screen.getByRole("button", { name: "切换工作区" })).toHaveTextContent("项目一");
+    expect(screen.getByRole("button", { name: t("shell.workspaceHomeSwitcherLabel") })).toHaveTextContent("项目一");
     expect(screen.getAllByText("/repo/project-one")).toHaveLength(2);
     expect(screen.getByText("会话 Alpha")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "收藏会话" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "归档会话" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.favoriteAction") })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.archiveAction") })).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.getByText("main")).toBeInTheDocument();
@@ -446,66 +416,60 @@ describe("WorkspaceDetailPage", () => {
       expect(document.querySelector(".workbench-manage-type-chart-ring")).not.toBeNull();
     });
 
-    const compositionHeading = screen.getByRole("heading", { name: "代码类型组成" });
-    const recentHeading = screen.getByRole("heading", { name: "最近会话" });
+    const compositionHeading = screen.getByRole("heading", { name: t("shell.manageWorkspaceCodeCompositionLabel") });
+    const recentHeading = screen.getByRole("heading", { name: t("shell.recentSessionsSectionTitle") });
     expect(Boolean(compositionHeading.compareDocumentPosition(recentHeading) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
   });
 
-  it("会展示服务状态信息和最新失败阶段", async () => {
-    const user = userEvent.setup();
-
+  it("会展示只读仓库分析和已注册启动项", async () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "服务状态" })).toBeInTheDocument();
-      expect(screen.getByRole("heading", { name: "web", level: 3 })).toBeInTheDocument();
-      expect(screen.getByRole("heading", { name: "host", level: 3 })).toBeInTheDocument();
-      expect(screen.getByRole("heading", { name: "desktop", level: 3 })).toBeInTheDocument();
-      expect(screen.getAllByText("vite").length).toBeGreaterThan(0);
-      expect(screen.getAllByText("可以直接使用").length).toBeGreaterThan(0);
-      expect(screen.getByText("启动失败")).toBeInTheDocument();
-      expect(screen.getByText("还缺少服务地址相关处理")).toBeInTheDocument();
-      expect(screen.getByText("识别到的服务")).toBeInTheDocument();
-      expect(screen.getByText("apps/web")).toBeInTheDocument();
-      expect(screen.getByText("apps/api")).toBeInTheDocument();
-      expect(screen.getByText("apps/desktop")).toBeInTheDocument();
-      expect(screen.getAllByText("桌面壳服务").length).toBeGreaterThan(0);
       expect(
-        screen.getByText("当前识别到 2 个网页服务，以及 1 个桌面壳服务。桌面壳服务会单独展示，不参与网页服务的自动处理。")
+        screen.getByRole("heading", { name: t("shell.workspaceDetailRegisteredDebugAnalysisTitle") })
       ).toBeInTheDocument();
-      expect(screen.getByText("最近一次启动")).toBeInTheDocument();
-      expect(screen.getByText("支持说明")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "查看支持矩阵" })).toBeInTheDocument();
-      expect(document.querySelectorAll(".mobile-debug-service-card")).toHaveLength(3);
+      expect(screen.getByText("web")).toBeInTheDocument();
+      expect(screen.getByText("host")).toBeInTheDocument();
+      expect(screen.getByText("desktop")).toBeInTheDocument();
+      expect(screen.getAllByText("apps/web").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("apps/api").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("apps/desktop").length).toBeGreaterThan(0);
+      expect(
+        screen.getByRole("heading", { name: t("shell.workspaceDetailRegisteredDebugTemplatesTitle") })
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: t("shell.workspaceDetailRegisteredDebugOpenProcessManagerAction") })
+      ).toBeInTheDocument();
+      expect(
+        screen.getAllByText(t("shell.workspaceDetailRegisteredDebugTemplateStatusOccupied")).length
+      ).toBeGreaterThan(0);
+      expect(screen.getByText(t("shell.workspaceDetailRegisteredDebugPlanReasonPortMissing"))).toBeInTheDocument();
+      expect(screen.getAllByText(t("shell.workspaceDetailDebugSummaryServiceCountLabel")).length).toBeGreaterThan(0);
+      expect(screen.queryByText(t("shell.workspaceDetailDebugDetectedServicesTitle"))).not.toBeInTheDocument();
+      expect(document.querySelectorAll(".mobile-debug-service-card")).toHaveLength(0);
     });
-
-    expect(screen.queryByRole("dialog", { name: "支持说明" })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "查看支持矩阵" }));
-
-    const dialog = await screen.findByRole("dialog", { name: "支持说明" });
-    expect(dialog).toBeInTheDocument();
-    expect(within(dialog).getByText("Vite 端口入口清楚，第一阶段默认支持")).toBeInTheDocument();
 
     expect(mockAnalyzeDebugTarget).toHaveBeenCalledWith({
       workspaceId: "workspace-1",
       rootPath: "/repo/project-one"
     });
-    expect(mockGetRecentDebugRuntimes).toHaveBeenCalledWith("debug-target-1", 5);
     expect(mockGetFrameworkCompatibilityMatrix).toHaveBeenCalled();
+    expect(mockListWorkspaceTemplates).toHaveBeenCalledWith("workspace-1");
+    expect(mockListWorkspaceTemplateRuntimeStatuses).toHaveBeenCalledWith("workspace-1");
   });
 
-  it("没有运行记录时会显示未启动占位", async () => {
-    mockGetRecentDebugRuntimes.mockResolvedValueOnce({
-      targetId: "debug-target-1",
+  it("没有已注册启动项时会提示先去进程管理登记", async () => {
+    mockListWorkspaceTemplates.mockResolvedValueOnce({
+      items: []
+    });
+    mockListWorkspaceTemplateRuntimeStatuses.mockResolvedValueOnce({
       items: []
     });
 
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByText("未启动")).toBeInTheDocument();
-      expect(screen.getByText("当前还没有运行记录。")).toBeInTheDocument();
+      expect(screen.getByText(t("shell.workspaceDetailRegisteredDebugTemplatesEmpty"))).toBeInTheDocument();
     });
   });
 
@@ -575,9 +539,13 @@ describe("WorkspaceDetailPage", () => {
 
     renderPage();
 
-    await user.click(screen.getByRole("button", { name: "新建会话" }));
+    await user.click(screen.getByRole("button", { name: t("shell.createSession") }));
 
-    expect(screen.getByRole("button", { name: /选择工作区 项目一/ })).toHaveTextContent("项目一");
+    expect(
+      screen.getByRole("button", {
+        name: new RegExp(`^${t("shell.createSessionWorkspaceLabel")} 项目一$`)
+      })
+    ).toHaveTextContent("项目一");
 
     await user.click(screen.getByRole("button", { name: "OpenCode" }));
 
@@ -638,7 +606,7 @@ describe("WorkspaceDetailPage", () => {
 
     renderPage("/workspaces/workspace-1-child");
 
-    expect(screen.getByRole("button", { name: "切换工作区" })).toHaveTextContent("feat/login-codex");
+    expect(screen.getByRole("button", { name: t("shell.workspaceHomeSwitcherLabel") })).toHaveTextContent("feat/login-codex");
     expect(screen.getAllByText("/repo/project-one/.worktrees/login").length).toBeGreaterThan(0);
     expect(screen.getByText("工作树会话")).toBeInTheDocument();
   });
@@ -680,13 +648,13 @@ describe("WorkspaceDetailPage", () => {
 
     renderPage();
 
-    expect(screen.getAllByRole("button", { name: "取消归档" })).toHaveLength(10);
-    expect(screen.getByRole("button", { name: "查看更多归档会话" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: t("shell.unarchiveAction") })).toHaveLength(10);
+    expect(screen.getByRole("button", { name: t("shell.archiveExpandMore") })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "查看更多归档会话" }));
+    await user.click(screen.getByRole("button", { name: t("shell.archiveExpandMore") }));
 
-    expect(screen.getAllByRole("button", { name: "取消归档" })).toHaveLength(15);
-    expect(screen.queryByRole("button", { name: "查看更多归档会话" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: t("shell.unarchiveAction") })).toHaveLength(15);
+    expect(screen.queryByRole("button", { name: t("shell.archiveExpandMore") })).not.toBeInTheDocument();
   });
 });
 

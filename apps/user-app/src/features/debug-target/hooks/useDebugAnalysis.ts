@@ -1,53 +1,56 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   analyzeDebugTarget,
   getFrameworkCompatibilityMatrix,
-  getRecentDebugRuntimes,
-  type DebugRuntimeHistoryEnvelopeDto,
-  type DebugRuntimeDetailDto,
   type DebugServiceSpecDto,
-  type FrameworkCompatibilityMatrixItemDto,
-  type FrameworkAnalysisResultDto
+  type FrameworkAnalysisResultDto,
+  type FrameworkCompatibilityMatrixItemDto
 } from "../../conversation/api/conversation-api";
 import { t } from "../../../shared/i18n";
 
-export interface DebugReadinessWorkspaceTarget {
+export interface DebugAnalysisWorkspaceTarget {
   id: string;
   path: string;
   name?: string | null;
 }
 
-export interface DebugReadinessState {
+export interface DebugAnalysisState {
   loading: boolean;
   error: string | null;
   targetId: string | null;
   targetSourceType: "repo" | "worktree" | null;
-  autoInjectionEligible: boolean;
   services: DebugServiceSpecDto[];
   analyses: FrameworkAnalysisResultDto[];
-  primaryAnalysis: FrameworkAnalysisResultDto | null;
-  runtime: DebugRuntimeDetailDto | null;
-  runtimeHistory: DebugRuntimeDetailDto[];
   matrixItems: FrameworkCompatibilityMatrixItemDto[];
+  primaryAnalysis: FrameworkAnalysisResultDto | null;
   currentCompatibilityItem: FrameworkCompatibilityMatrixItemDto | null;
+  lastAnalyzedAt: string | null;
+  refresh: () => void;
 }
 
-export function useDebugReadiness(
-  workspace: DebugReadinessWorkspaceTarget | null
-): DebugReadinessState {
-  const [state, setState] = useState<Omit<DebugReadinessState, "primaryAnalysis" | "currentCompatibilityItem">>({
+type InternalDebugAnalysisState = Omit<
+  DebugAnalysisState,
+  "primaryAnalysis" | "currentCompatibilityItem" | "lastAnalyzedAt" | "refresh"
+>;
+
+export function useDebugAnalysis(
+  workspace: DebugAnalysisWorkspaceTarget | null
+): DebugAnalysisState {
+  const [state, setState] = useState<InternalDebugAnalysisState>({
     loading: false,
     error: null,
     targetId: null,
     targetSourceType: null,
-    autoInjectionEligible: false,
     services: [],
     analyses: [],
-    runtime: null,
-    runtimeHistory: [],
     matrixItems: []
   });
+  const [refreshVersion, setRefreshVersion] = useState(0);
+
+  const refresh = useCallback(() => {
+    setRefreshVersion((current) => current + 1);
+  }, []);
 
   useEffect(() => {
     if (!workspace?.id || !workspace.path) {
@@ -56,11 +59,8 @@ export function useDebugReadiness(
         error: null,
         targetId: null,
         targetSourceType: null,
-        autoInjectionEligible: false,
         services: [],
         analyses: [],
-        runtime: null,
-        runtimeHistory: [],
         matrixItems: []
       });
       return;
@@ -76,15 +76,13 @@ export function useDebugReadiness(
 
     void (async () => {
       try {
-        const analysisEnvelope = await analyzeDebugTarget({
-          workspaceId: workspace.id,
-          rootPath: workspace.path
-        });
-        const [runtimeHistoryEnvelope, matrix] = await Promise.all([
-          getRecentDebugRuntimes(analysisEnvelope.target.id, 5),
+        const [analysisEnvelope, matrix] = await Promise.all([
+          analyzeDebugTarget({
+            workspaceId: workspace.id,
+            rootPath: workspace.path
+          }),
           getFrameworkCompatibilityMatrix()
         ]);
-        const runtime = pickLatestRuntime(runtimeHistoryEnvelope);
 
         if (disposed) {
           return;
@@ -95,11 +93,8 @@ export function useDebugReadiness(
           error: null,
           targetId: analysisEnvelope.target.id,
           targetSourceType: analysisEnvelope.target.sourceType,
-          autoInjectionEligible: analysisEnvelope.autoInjectionEligible,
           services: analysisEnvelope.services,
           analyses: analysisEnvelope.analyses,
-          runtime,
-          runtimeHistory: runtimeHistoryEnvelope.items,
           matrixItems: matrix.items
         });
       } catch (error) {
@@ -112,11 +107,8 @@ export function useDebugReadiness(
           error: error instanceof Error ? error.message : t("shell.workspaceDetailDebugAnalyzeFailed"),
           targetId: null,
           targetSourceType: null,
-          autoInjectionEligible: false,
           services: [],
           analyses: [],
-          runtime: null,
-          runtimeHistory: [],
           matrixItems: []
         });
       }
@@ -125,7 +117,7 @@ export function useDebugReadiness(
     return () => {
       disposed = true;
     };
-  }, [workspace?.id, workspace?.path]);
+  }, [refreshVersion, workspace?.id, workspace?.path]);
 
   const primaryAnalysis = useMemo(
     () => pickPrimaryAnalysis(state.services, state.analyses),
@@ -137,16 +129,18 @@ export function useDebugReadiness(
       ?? null,
     [primaryAnalysis?.primaryFramework, state.matrixItems]
   );
+  const lastAnalyzedAt = useMemo(
+    () => state.analyses[0]?.createdAt ?? null,
+    [state.analyses]
+  );
 
   return {
     ...state,
     primaryAnalysis,
-    currentCompatibilityItem
+    currentCompatibilityItem,
+    lastAnalyzedAt,
+    refresh
   };
-}
-
-function pickLatestRuntime(runtimeHistoryEnvelope: DebugRuntimeHistoryEnvelopeDto): DebugRuntimeDetailDto | null {
-  return runtimeHistoryEnvelope.items[0] ?? null;
 }
 
 function pickPrimaryAnalysis(

@@ -297,6 +297,79 @@ export interface FrameworkCompatibilityMatrixDto {
   items: FrameworkCompatibilityMatrixItemDto[];
 }
 
+export interface DebugLaunchAdapterAttemptDto {
+  kind: "cli" | "env" | "override" | "ai_fallback";
+  status: "selected" | "blocked" | "fallback_required" | "skipped";
+  reason: string;
+}
+
+export interface DebugAiFallbackSummaryDto {
+  eligible: boolean;
+  editId: string | null;
+  status: "PENDING" | "APPLIED" | "ROLLED_BACK" | "REJECTED" | null;
+  reason: string;
+  allowedFiles: string[];
+}
+
+export interface DebugLaunchPlanServiceItemDto {
+  serviceId: string;
+  role: DebugServiceRoleDto;
+  frameworkAnalysisId: string | null;
+  primaryFramework: string | null;
+  compatibilityLevel: FrameworkCompatibilityLevelDto;
+  adapterKind: "cli" | "env" | "override" | "ai_fallback" | null;
+  injectionMode: DebugInjectionModeDto | null;
+  command: string;
+  args: string[];
+  envPatch: Record<string, string>;
+  expectedPort: number | null;
+  leasedPort: number | null;
+  artifactRef: string | null;
+  runtimeBindingId: string;
+  portLeaseId: string | null;
+  requiresServiceDiscoveryHandling: boolean;
+  requiresHmrHandling: boolean;
+  requiresCallbackHandling: boolean;
+  failureStage: string | null;
+  adapterAttempts: DebugLaunchAdapterAttemptDto[];
+  aiFallback: DebugAiFallbackSummaryDto | null;
+  missingRequirements: string[];
+  autoStartAllowed: boolean;
+}
+
+export interface DebugLaunchPlanDto {
+  runtimeSession: DebugRuntimeSessionDto;
+  targetId: string;
+  autoStartAllowed: boolean;
+  services: DebugLaunchPlanServiceItemDto[];
+}
+
+export interface DebugTargetPortRequestDto {
+  serviceId?: string | null;
+  role?: DebugServiceRoleDto | null;
+  cwd?: string | null;
+  name?: string | null;
+  command?: string | null;
+  port: number;
+}
+
+export interface RunDebugTargetPayload {
+  shell?: string;
+  runtimeType?: string | null;
+  portRequests?: DebugTargetPortRequestDto[];
+}
+
+export interface RunDebugTargetResultDto {
+  runtimeSession: DebugRuntimeSessionDto;
+  services: Array<{
+    serviceId: string;
+    processInstanceId: string;
+    terminalId: string;
+    leasedPort: number | null;
+    runtimeBindingId: string;
+  }>;
+}
+
 export interface ProviderModelOptionDto {
   id: string;
   name: string;
@@ -850,6 +923,19 @@ export function analyzeDebugTarget(payload: {
 export function getFrameworkAnalysis(targetId: string) {
   return httpClient.request<FrameworkAnalysisListEnvelopeDto>(
     `/api/debug-targets/${encodeURIComponent(targetId)}/framework-analysis`
+  );
+}
+
+export function createDebugLaunchPlan(
+  targetId: string,
+  payload?: { portRequests?: DebugTargetPortRequestDto[] }
+) {
+  return httpClient.request<DebugLaunchPlanDto>(
+    `/api/debug-targets/${encodeURIComponent(targetId)}/launch-plan`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload ?? {})
+    }
   );
 }
 

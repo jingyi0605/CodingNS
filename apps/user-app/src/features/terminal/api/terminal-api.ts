@@ -31,6 +31,14 @@ export interface TerminalTemplateDto {
   proxyEnabled: boolean;
   proxySlug: string | null;
   runtimeType?: string | null;
+  sourceType?: "manual" | "debug_service" | null;
+  debugTargetId?: string | null;
+  debugServiceId?: string | null;
+  frameworkAnalysisId?: string | null;
+  adapterKind?: "cli" | "env" | "override" | "ai_fallback" | null;
+  injectionMode?: "cli" | "env" | "override" | "ai_fallback" | "none" | null;
+  serviceDiscoveryMode?: "same_origin" | "api_base_url" | "none" | null;
+  managedBySystem?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -207,7 +215,14 @@ export function deleteTerminalTemplate(templateId: string) {
 
 export function runTerminalTemplate(
   templateId: string,
-  payload: { terminalId?: string; shell?: string; runtimeType?: string }
+  payload: {
+    terminalId?: string;
+    shell?: string;
+    runtimeType?: string;
+    argsOverride?: string[];
+    envPatch?: Record<string, string>;
+    portOverride?: number | null;
+  }
 ) {
   return httpClient.request<{
     terminalId: string;

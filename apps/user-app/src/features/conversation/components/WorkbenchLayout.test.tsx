@@ -3905,40 +3905,6 @@ describe("WorkbenchLayout", () => {
               frameworkAnalysisId: "analysis-1",
               createdAt: "2026-03-26T12:00:00.000Z",
               updatedAt: "2026-03-26T12:00:00.000Z"
-            },
-            {
-              id: "service-2",
-              targetId: "debug-target-1",
-              role: "backend",
-              name: "host",
-              cwd: "C:/repo/workspace-1/apps/host",
-              command: "pnpm",
-              args: ["dev"],
-              env: {},
-              defaultPortHint: 3000,
-              protocol: "http",
-              healthPath: null,
-              adapterKind: "env",
-              frameworkAnalysisId: "analysis-2",
-              createdAt: "2026-03-26T12:00:00.000Z",
-              updatedAt: "2026-03-26T12:00:00.000Z"
-            },
-            {
-              id: "service-3",
-              targetId: "debug-target-1",
-              role: "frontend",
-              name: "desktop",
-              cwd: "C:/repo/workspace-1/apps/desktop",
-              command: "pnpm",
-              args: ["dev"],
-              env: {},
-              defaultPortHint: null,
-              protocol: "http",
-              healthPath: null,
-              adapterKind: "cli",
-              frameworkAnalysisId: "analysis-3",
-              createdAt: "2026-03-26T12:00:00.000Z",
-              updatedAt: "2026-03-26T12:00:00.000Z"
             }
           ],
           analyses: [
@@ -3957,48 +3923,9 @@ describe("WorkbenchLayout", () => {
               reasons: ["检测到 vite.config.ts"],
               detectedFiles: ["package.json", "vite.config.ts"],
               createdAt: "2026-03-26T12:00:00.000Z"
-            },
-            {
-              id: "analysis-2",
-              targetId: "debug-target-1",
-              serviceId: "service-2",
-              primaryFramework: "node-custom",
-              confidence: "medium",
-              compatibilityLevel: "conditional",
-              recommendedInjectionMode: "env",
-              requiresServiceDiscoveryHandling: false,
-              requiresHmrHandling: false,
-              requiresCallbackHandling: false,
-              aiFallbackPolicy: "conditional",
-              reasons: ["检测到 package.json"],
-              detectedFiles: ["package.json", "src/main.ts"],
-              createdAt: "2026-03-26T12:00:00.000Z"
-            },
-            {
-              id: "analysis-3",
-              targetId: "debug-target-1",
-              serviceId: "service-3",
-              primaryFramework: "tauri",
-              confidence: "high",
-              compatibilityLevel: "conditional",
-              recommendedInjectionMode: "none",
-              requiresServiceDiscoveryHandling: false,
-              requiresHmrHandling: false,
-              requiresCallbackHandling: false,
-              aiFallbackPolicy: "forbidden",
-              reasons: ["检测到 src-tauri/tauri.conf.json"],
-              detectedFiles: ["package.json", "src-tauri/tauri.conf.json"],
-              createdAt: "2026-03-26T12:00:00.000Z"
             }
           ],
           autoInjectionEligible: true
-        });
-      }
-
-      if (url.includes("/api/debug-targets/debug-target-1/runtimes?")) {
-        return createJsonResponse({
-          targetId: "debug-target-1",
-          items: []
         });
       }
 
@@ -4015,26 +3942,81 @@ describe("WorkbenchLayout", () => {
               requiresCallbackHandling: false,
               aiFallbackPolicy: "conditional",
               notes: "Vite 端口入口清楚，第一阶段默认支持"
+            }
+          ]
+        });
+      }
+
+      if (url.includes("/api/terminals/templates?workspaceId=workspace-1")) {
+        return createJsonResponse({
+          items: [
+            {
+              id: "template-1",
+              workspaceId: "workspace-1",
+              name: "web",
+              cwd: "C:/repo/workspace-1/apps/web",
+              command: "pnpm",
+              args: ["dev"],
+              env: {},
+              port: 43000,
+              proxyEnabled: true,
+              proxySlug: "web",
+              runtimeType: "node",
+              createdAt: "2026-03-26T12:00:00.000Z",
+              updatedAt: "2026-03-26T12:00:00.000Z"
             },
             {
-              framework: "node-custom",
-              compatibilityLevel: "conditional",
-              recommendedInjectionMode: "env",
-              requiresServiceDiscoveryHandling: false,
-              requiresHmrHandling: false,
-              requiresCallbackHandling: false,
-              aiFallbackPolicy: "conditional",
-              notes: "通用 Node 服务先按条件支持处理"
+              id: "template-2",
+              workspaceId: "workspace-1",
+              name: "host",
+              cwd: "C:/repo/workspace-1/apps/host",
+              command: "pnpm",
+              args: ["dev"],
+              env: {},
+              port: 44000,
+              proxyEnabled: false,
+              proxySlug: null,
+              runtimeType: "node",
+              createdAt: "2026-03-26T12:00:00.000Z",
+              updatedAt: "2026-03-26T12:00:00.000Z"
             },
             {
-              framework: "tauri",
-              compatibilityLevel: "conditional",
-              recommendedInjectionMode: "none",
-              requiresServiceDiscoveryHandling: false,
-              requiresHmrHandling: false,
-              requiresCallbackHandling: false,
-              aiFallbackPolicy: "forbidden",
-              notes: "桌面壳默认只做识别，不参与 Web 端口编排"
+              id: "template-3",
+              workspaceId: "workspace-1",
+              name: "desktop",
+              cwd: "C:/repo/workspace-1/apps/desktop",
+              command: "pnpm",
+              args: ["tauri", "dev"],
+              env: {},
+              port: null,
+              proxyEnabled: false,
+              proxySlug: null,
+              runtimeType: "node",
+              createdAt: "2026-03-26T12:00:00.000Z",
+              updatedAt: "2026-03-26T12:00:00.000Z"
+            }
+          ]
+        });
+      }
+
+      if (url.includes("/api/terminals/templates/runtime-status?workspaceId=workspace-1")) {
+        return createJsonResponse({
+          items: [
+            {
+              templateId: "template-1",
+              port: 43000,
+              occupied: false,
+              processId: null,
+              processName: null,
+              processCommandLine: null
+            },
+            {
+              templateId: "template-2",
+              port: 44000,
+              occupied: false,
+              processId: null,
+              processName: null,
+              processCommandLine: null
             }
           ]
         });
@@ -4056,23 +4038,15 @@ describe("WorkbenchLayout", () => {
     );
 
     expect(await screen.findByText(t("shell.workspaceDetailDebugPageTitle"))).toBeInTheDocument();
-    expect(await screen.findByText(/apps\/web/)).toBeInTheDocument();
-    expect(await screen.findByText(/apps\/host/)).toBeInTheDocument();
-    expect(await screen.findByText(/apps\/desktop/)).toBeInTheDocument();
-    expect(screen.getAllByText(/桌面壳服务/).length).toBeGreaterThan(0);
     expect(
-      screen.getByText(
-        t("shell.workspaceDetailDebugOverallSummaryMixed", { webCount: 2, desktopCount: 1 })
+      await screen.findByText(
+        t("shell.workspaceDetailRegisteredDebugOverallSummary", { runnable: 2, orchestrated: 0, blocked: 1 })
       )
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: t("shell.workspaceDetailDebugMatrixOpenAction") })).toBeInTheDocument();
-    expect(screen.queryByText("通用 Node 服务先按条件支持处理")).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: t("shell.workspaceDetailDebugMatrixOpenAction") }));
-
-    expect(await screen.findByRole("dialog", { name: t("shell.workspaceDetailDebugMatrixTitle") })).toBeInTheDocument();
-    expect(screen.getByText("通用 Node 服务先按条件支持处理")).toBeInTheDocument();
-    expect(screen.getByText("桌面壳默认只做识别，不参与 Web 端口编排")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: t("shell.workspaceDetailRegisteredDebugOpenProcessManagerAction") })
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.workspaceDetailDebugMatrixOpenAction") })).not.toBeInTheDocument();
   });
 
   it("收到空 git 快照并写入缓存后，重新挂载工作台也不会崩溃", async () => {

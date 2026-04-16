@@ -11908,7 +11908,7 @@ textarea:focus-visible {
 .debug-readiness-page {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 12px;
   flex: 0 0 auto;
 }
 
@@ -11916,17 +11916,15 @@ textarea:focus-visible {
 .debug-readiness-section {
   position: relative;
   overflow: hidden;
-  border-radius: 22px;
-  border: 1px solid var(--surface-panel-border);
-  background: var(--surface-panel-bg);
-  box-shadow: var(--surface-panel-shadow);
+  border-radius: 16px;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-surface);
+  box-shadow: none;
 }
 
 .debug-readiness-hero {
-  padding: 22px;
-  background:
-    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 14%, transparent), transparent 36%),
-    var(--surface-panel-bg-strong);
+  padding: 16px;
+  background: var(--bg-surface);
 }
 
 .debug-readiness-hero-header,
@@ -11934,36 +11932,24 @@ textarea:focus-visible {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
 }
 
 .debug-readiness-hero-copy,
 .debug-readiness-section-header > div {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .debug-readiness-eyebrow {
-  display: inline-flex;
-  align-items: center;
-  width: fit-content;
-  min-height: 24px;
-  padding: 0 10px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border-primary));
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: color-mix(in srgb, var(--text-primary) 82%, var(--accent) 18%);
+  display: none;
 }
 
 .debug-readiness-hero-copy h2,
 .debug-readiness-section-header h3 {
   margin: 0;
-  font-size: 18px;
+  font-size: 16px;
   line-height: 1.2;
   letter-spacing: -0.02em;
 }
@@ -11971,8 +11957,8 @@ textarea:focus-visible {
 .debug-readiness-hero-copy p,
 .debug-readiness-section-header p {
   margin: 0;
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 12px;
+  line-height: 1.5;
   color: var(--text-secondary);
 }
 
@@ -11982,72 +11968,88 @@ textarea:focus-visible {
   gap: 10px;
 }
 
+.debug-readiness-hero-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.debug-readiness-hero-toolbar .workbench-modal-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
+.debug-readiness-hero-toolbar .workbench-modal-actions > .secondary-button,
+.debug-readiness-hero-toolbar .workbench-modal-actions > .primary-button {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+}
+
 .debug-readiness-summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(138px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.debug-readiness-summary-grid-hero {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .debug-readiness-summary-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  min-height: 118px;
-  padding: 16px;
-  border-radius: 18px;
-  border: 1px solid color-mix(in srgb, var(--surface-panel-border) 92%, transparent);
-  background: color-mix(in srgb, var(--bg-elevated) 94%, var(--bg-surface));
+  gap: 4px;
+  min-height: 0;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-elevated);
 }
 
 .debug-readiness-summary-card[data-tone="success"] {
-  border-color: color-mix(in srgb, var(--success) 26%, var(--border-primary));
-  background: linear-gradient(180deg, color-mix(in srgb, var(--success) 8%, var(--bg-elevated)), color-mix(in srgb, var(--bg-elevated) 94%, var(--bg-surface)));
+  border-color: var(--success);
 }
 
 .debug-readiness-summary-card[data-tone="warn"] {
-  border-color: color-mix(in srgb, var(--warning) 30%, var(--border-primary));
-  background: linear-gradient(180deg, color-mix(in srgb, var(--warning) 10%, var(--bg-elevated)), color-mix(in srgb, var(--bg-elevated) 94%, var(--bg-surface)));
+  border-color: var(--warning);
 }
 
 .debug-readiness-summary-card[data-tone="danger"] {
-  border-color: color-mix(in srgb, var(--danger) 30%, var(--border-primary));
-  background: linear-gradient(180deg, color-mix(in srgb, var(--danger) 10%, var(--bg-elevated)), color-mix(in srgb, var(--bg-elevated) 94%, var(--bg-surface)));
+  border-color: var(--danger);
 }
 
 .debug-readiness-summary-card > span {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
   color: var(--text-secondary);
 }
 
 .debug-readiness-summary-card > strong {
-  font-size: 18px;
-  line-height: 1.3;
+  font-size: 16px;
+  line-height: 1.25;
 }
 
 .debug-readiness-summary-card > small {
-  font-size: 12px;
-  line-height: 1.6;
+  display: block;
+  font-size: 11px;
+  line-height: 1.4;
   color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .debug-readiness-chip-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 16px;
+  display: none;
 }
 
 .debug-readiness-hero-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+  display: none;
 }
 
 .debug-readiness-hero-meta > span {
@@ -12067,29 +12069,29 @@ textarea:focus-visible {
 .debug-readiness-chip {
   display: inline-flex;
   align-items: center;
-  min-height: 28px;
-  padding: 0 11px;
+  min-height: 24px;
+  padding: 0 10px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 80%, transparent);
-  background: color-mix(in srgb, var(--bg-hover) 58%, transparent);
-  font-size: 12px;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-elevated);
+  font-size: 11px;
   font-weight: 600;
   color: var(--text-secondary);
 }
 
 .debug-readiness-chip[data-tone="success"] {
-  border-color: color-mix(in srgb, var(--success) 26%, var(--border-primary));
-  color: color-mix(in srgb, var(--text-primary) 84%, var(--success) 16%);
+  border-color: var(--success);
+  color: var(--success);
 }
 
 .debug-readiness-chip[data-tone="warn"] {
-  border-color: color-mix(in srgb, var(--warning) 30%, var(--border-primary));
-  color: color-mix(in srgb, var(--text-primary) 84%, var(--warning) 16%);
+  border-color: var(--warning);
+  color: var(--warning);
 }
 
 .debug-readiness-chip[data-tone="danger"] {
-  border-color: color-mix(in srgb, var(--danger) 30%, var(--border-primary));
-  color: color-mix(in srgb, var(--text-primary) 80%, var(--danger) 20%);
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .debug-readiness-layout {
@@ -12099,7 +12101,7 @@ textarea:focus-visible {
 }
 
 .debug-readiness-section {
-  padding: 18px;
+  padding: 14px;
 }
 
 .debug-readiness-section-body {
@@ -12108,17 +12110,19 @@ textarea:focus-visible {
   gap: 16px;
 }
 
-.debug-readiness-service-grid,
+.debug-readiness-service-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .debug-readiness-runtime-list,
 .debug-readiness-matrix-list,
 .debug-readiness-sidebar {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-
-.debug-readiness-service-grid {
-  margin-top: 16px;
+  gap: 8px;
 }
 
 .debug-readiness-matrix-counter {
@@ -12407,50 +12411,63 @@ textarea:focus-visible {
 .debug-readiness-matrix-item {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 16px;
-  border-radius: 18px;
-  border: 1px solid color-mix(in srgb, var(--surface-panel-border) 92%, transparent);
-  background: color-mix(in srgb, var(--bg-elevated) 95%, var(--bg-surface));
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-elevated);
 }
 
 .debug-readiness-service-card-header,
 .debug-readiness-runtime-item-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
+}
+
+.debug-readiness-service-card-header > div,
+.debug-readiness-runtime-item-header > strong,
+.debug-readiness-runtime-item-header > span {
+  min-width: 0;
 }
 
 .debug-readiness-service-card-header strong,
 .debug-readiness-runtime-item-header strong,
 .debug-readiness-matrix-item strong {
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.3;
 }
 
 .debug-readiness-service-card-header p,
 .debug-readiness-runtime-item > p {
-  margin: 4px 0 0;
-  font-size: 12px;
-  line-height: 1.6;
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
   color: var(--text-secondary);
   word-break: break-all;
 }
 
 .debug-readiness-runtime-item-header > span {
-  font-size: 12px;
+  display: block;
+  font-size: 11px;
   color: var(--text-secondary);
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
 }
 
 .debug-readiness-service-card-grid,
 .debug-readiness-runtime-item-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .debug-readiness-service-card-grid > div,
+.debug-readiness-runtime-item-grid > div,
 .debug-readiness-service-card-list > p {
   display: flex;
   flex-direction: column;
@@ -12459,34 +12476,39 @@ textarea:focus-visible {
 }
 
 .debug-readiness-service-card-grid span,
+.debug-readiness-runtime-item-grid span,
 .debug-readiness-service-card-list span {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
   color: var(--text-secondary);
 }
 
 .debug-readiness-service-card-grid strong,
+.debug-readiness-runtime-item-grid strong,
 .debug-readiness-service-card-list strong {
-  font-size: 13px;
-  line-height: 1.6;
-  word-break: break-word;
+  display: block;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
   color: var(--text-primary);
 }
 
 .debug-readiness-service-card-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding-top: 10px;
-  border-top: 1px solid color-mix(in srgb, var(--border-primary) 70%, transparent);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-primary);
 }
 
 .debug-readiness-runtime-item-grid {
-  font-size: 12px;
-  line-height: 1.6;
+  font-size: 11px;
+  line-height: 1.4;
   color: var(--text-secondary);
+}
+
+.debug-readiness-runtime-item > .workbench-manage-hint {
+  overflow-wrap: anywhere;
 }
 
 .debug-readiness-matrix-item {
@@ -12500,30 +12522,51 @@ textarea:focus-visible {
 }
 
 @media (max-width: 1100px) {
-  .debug-readiness-summary-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .debug-readiness-layout {
+    grid-template-columns: 1fr;
   }
 
-  .debug-readiness-layout {
+  .debug-readiness-service-grid {
     grid-template-columns: 1fr;
   }
 
   .debug-readiness-matrix-legend-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .debug-readiness-hero-toolbar .workbench-modal-actions > .secondary-button,
+  .debug-readiness-hero-toolbar .workbench-modal-actions > .primary-button {
+    flex: 1 1 auto;
+  }
 }
 
 @media (max-width: 720px) {
   .debug-readiness-hero,
   .debug-readiness-section {
-    padding: 16px;
-    border-radius: 18px;
+    padding: 12px;
+    border-radius: 12px;
   }
 
   .debug-readiness-summary-grid,
   .debug-readiness-service-card-grid,
-  .debug-readiness-runtime-item-grid {
+  .debug-readiness-runtime-item-grid,
+  .debug-readiness-service-card-list {
     grid-template-columns: 1fr;
+  }
+
+  .debug-readiness-summary-grid-hero {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .debug-readiness-hero-toolbar .workbench-modal-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .debug-readiness-hero-toolbar .workbench-modal-actions > .secondary-button,
+  .debug-readiness-hero-toolbar .workbench-modal-actions > .primary-button {
+    width: 100%;
+    min-width: 0;
+    flex: 1 1 auto;
   }
 
   .debug-readiness-matrix-modal-card {
@@ -24848,6 +24891,17 @@ textarea:focus-visible {
   color: var(--text-secondary);
   font-size: 0.72rem;
   line-height: 1.35;
+}
+
+.mobile-butler-record-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.mobile-butler-record-action {
+  flex: 0 0 auto;
 }
 
 .mobile-butler-record-card p {
