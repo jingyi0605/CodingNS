@@ -857,6 +857,7 @@ export function createServer(config: HostConfig) {
       sessionHistoryService,
       sessionLiveRuntimeService,
       terminalService,
+      debugTargetService,
       workspaceService,
       worktreeManager,
       worktreeSyncService,

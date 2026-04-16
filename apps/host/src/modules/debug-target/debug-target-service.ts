@@ -64,6 +64,16 @@ export interface RunDebugTargetInput {
   userId: string;
   shell?: string;
   runtimeType?: TerminalRuntimeType | null;
+  portRequests?: DebugTargetPortRequest[];
+}
+
+export interface DebugTargetPortRequest {
+  serviceId?: string | null;
+  role?: DebugServiceRole | null;
+  cwd?: string | null;
+  name?: string | null;
+  command?: string | null;
+  port: number;
 }
 
 interface DebugRuntimeReconciliationTaskInput {
@@ -211,7 +221,10 @@ export class DebugTargetService {
     };
   }
 
-  async createLaunchPlan(targetId: string): Promise<DebugLaunchPlan> {
+  async createLaunchPlan(
+    targetId: string,
+    portRequests: DebugTargetPortRequest[] = []
+  ): Promise<DebugLaunchPlan> {
     const target = this.getTargetOrThrow(targetId);
     const services = this.debugServiceRepository.listByTargetId(targetId);
     const analyses = this.frameworkAnalysisResultRepository.listByTargetId(targetId);
@@ -241,6 +254,12 @@ export class DebugTargetService {
       updatedAt: timestamp
     });
     const planItems: DebugLaunchPlanServiceItem[] = [];
+    const requestedPorts = await resolveRequestedPorts({
+      targetRootPath: target.rootPath,
+      services,
+      portRequests,
+      portLeaseRepository: this.portLeaseRepository
+    });
 
     for (const service of services) {
       const analysis = analysisByServiceId.get(service.id) ?? analyses[0] ?? null;
@@ -253,7 +272,8 @@ export class DebugTargetService {
         });
       }
 
-      const allocatedPort = await allocateManagedPort(service.role, this.portLeaseRepository);
+      const allocatedPort = requestedPorts.get(service.id)
+        ?? await allocateManagedPort(service.role, this.portLeaseRepository);
       const injectionPlan = resolveLaunchPlan({
         targetRootPath: target.rootPath,
         service,
@@ -363,7 +383,7 @@ export class DebugTargetService {
       runtimeBindingId: string;
     }>;
   }> {
-    const launchPlan = await this.createLaunchPlan(input.targetId);
+    const launchPlan = await this.createLaunchPlan(input.targetId, input.portRequests ?? []);
 
     if (!launchPlan.autoStartAllowed) {
       const aiFallbackItem = launchPlan.services.find((item) => item.aiFallback?.eligible);
@@ -2153,6 +2173,71 @@ function isFrameworkEligible(level: FrameworkCompatibilityLevel): boolean {
   return level === "supported" || level === "conditional";
 }
 
+async function resolveRequestedPorts(input: {
+  targetRootPath: string;
+  services: DebugServiceSpec[];
+  portRequests: DebugTargetPortRequest[];
+  portLeaseRepository: PortLeaseRepository;
+}): Promise<Map<string, number>> {
+  const requestedPorts = new Map<string, number>();
+  const usedPorts = new Map<number, string>();
+
+  for (const request of input.portRequests) {
+    validatePortRequestShape(request);
+
+    const matches = input.services.filter((service) =>
+      matchesPortRequest(service, input.targetRootPath, request)
+    );
+
+    if (matches.length === 0) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "DEBUG_TARGET_PORT_REQUEST_UNMATCHED",
+        detail: `显式端口请求没有匹配到任何服务：${describePortRequest(request)}`,
+        field: "portRequests"
+      });
+    }
+
+    if (matches.length > 1) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "DEBUG_TARGET_PORT_REQUEST_AMBIGUOUS",
+        detail: `显式端口请求匹配到了多个服务：${describePortRequest(request)}`,
+        field: "portRequests"
+      });
+    }
+
+    const matchedService = matches[0]!;
+    const previousPort = requestedPorts.get(matchedService.id);
+
+    if (previousPort !== undefined && previousPort !== request.port) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "DEBUG_TARGET_PORT_REQUEST_CONFLICT",
+        detail: `同一个服务收到了多个不同的显式端口请求：${matchedService.name}`,
+        field: "portRequests"
+      });
+    }
+
+    const occupiedBy = usedPorts.get(request.port);
+
+    if (occupiedBy && occupiedBy !== matchedService.id) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "DEBUG_TARGET_PORT_REQUEST_CONFLICT",
+        detail: `多个服务请求了同一个端口：${request.port}`,
+        field: "portRequests"
+      });
+    }
+
+    await ensureRequestedPortAvailable(request.port, matchedService.role, input.portLeaseRepository);
+    requestedPorts.set(matchedService.id, request.port);
+    usedPorts.set(request.port, matchedService.id);
+  }
+
+  return requestedPorts;
+}
+
 async function allocateManagedPort(
   role: DebugServiceSpec["role"],
   portLeaseRepository: PortLeaseRepository
@@ -2178,6 +2263,30 @@ async function allocateManagedPort(
     errorCode: "PORT_LEASE_EXHAUSTED",
     detail: `当前服务角色没有可分配的空闲端口：${role}`
   });
+}
+
+async function ensureRequestedPortAvailable(
+  port: number,
+  role: DebugServiceSpec["role"],
+  portLeaseRepository: PortLeaseRepository
+): Promise<void> {
+  if (portLeaseRepository.findActiveByPort(port, "tcp")) {
+    throw new AppError({
+      statusCode: 409,
+      errorCode: "DEBUG_TARGET_PORT_NOT_AVAILABLE",
+      detail: `显式请求的端口已被平台中的其他运行时占用：${port}`,
+      field: "portRequests"
+    });
+  }
+
+  if (!(await isPortAvailable(port))) {
+    throw new AppError({
+      statusCode: 409,
+      errorCode: "DEBUG_TARGET_PORT_NOT_AVAILABLE",
+      detail: `显式请求的端口当前不可用：${port}（服务角色：${role}）`,
+      field: "portRequests"
+    });
+  }
 }
 
 function resolvePortRangeStart(role: DebugServiceSpec["role"]): number {
@@ -2253,6 +2362,90 @@ function resolveProcessInstance(
   }
 
   return terminalInstanceRepository.findById(processInstanceId);
+}
+
+function validatePortRequestShape(request: DebugTargetPortRequest): void {
+  if (!Number.isInteger(request.port) || request.port < 1 || request.port > 65535) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: `显式端口请求非法，port 必须是 1 到 65535 之间的整数：${request.port}`,
+      field: "portRequests"
+    });
+  }
+
+  const hasSelector = Boolean(
+    request.serviceId?.trim()
+    || request.role?.trim()
+    || request.cwd?.trim()
+    || request.name?.trim()
+    || request.command?.trim()
+  );
+
+  if (!hasSelector) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: "显式端口请求至少要提供 serviceId、role、cwd、name、command 中的一个选择条件",
+      field: "portRequests"
+    });
+  }
+}
+
+function matchesPortRequest(
+  service: DebugServiceSpec,
+  targetRootPath: string,
+  request: DebugTargetPortRequest
+): boolean {
+  if (request.serviceId?.trim() && request.serviceId.trim() !== service.id) {
+    return false;
+  }
+
+  if (request.role?.trim() && request.role.trim() !== service.role) {
+    return false;
+  }
+
+  if (request.name?.trim() && request.name.trim() !== service.name) {
+    return false;
+  }
+
+  if (request.command?.trim() && request.command.trim() !== service.command) {
+    return false;
+  }
+
+  if (request.cwd?.trim()) {
+    const selectorPath = normalizePortRequestCwd(request.cwd, targetRootPath);
+    const servicePath = path.resolve(service.cwd);
+
+    if (selectorPath !== servicePath) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function normalizePortRequestCwd(value: string | null | undefined, targetRootPath: string): string {
+  const trimmed = value?.trim() || "";
+
+  if (!trimmed) {
+    return "";
+  }
+
+  return path.resolve(path.isAbsolute(trimmed) ? trimmed : path.join(targetRootPath, trimmed));
+}
+
+function describePortRequest(request: DebugTargetPortRequest): string {
+  const parts = [
+    request.serviceId?.trim() ? `serviceId=${request.serviceId.trim()}` : null,
+    request.role?.trim() ? `role=${request.role.trim()}` : null,
+    request.cwd?.trim() ? `cwd=${request.cwd.trim()}` : null,
+    request.name?.trim() ? `name=${request.name.trim()}` : null,
+    request.command?.trim() ? `command=${request.command.trim()}` : null,
+    `port=${request.port}`
+  ].filter((item): item is string => Boolean(item));
+
+  return parts.join(", ");
 }
 
 function resolveAiFallbackNextStatus(action: "apply" | "reject" | "rollback"): AiFallbackEditRecord["status"] {

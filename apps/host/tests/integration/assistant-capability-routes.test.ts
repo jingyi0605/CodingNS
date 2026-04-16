@@ -430,6 +430,265 @@ describe("assistant capability routes", () => {
     );
   });
 
+  it("调试目标与终端关闭路由会把显式端口请求和运行参数传给服务", async () => {
+    const assistantCapabilityService = {
+      closeTerminal: vi.fn(async () => ({
+        ok: true,
+        capability: "terminals.close",
+        auditId: "audit-close",
+        timestamp: "2026-04-16T12:10:00.000Z",
+        targetRef: {
+          kind: "terminal",
+          id: "terminal-1"
+        },
+        payload: {
+          result: {
+            success: true
+          }
+        }
+      })),
+      getDebugCompatibilityMatrix: vi.fn(() => ({
+        ok: true,
+        capability: "debug-targets.compatibility-matrix.get",
+        auditId: "audit-matrix",
+        timestamp: "2026-04-16T12:11:00.000Z",
+        targetRef: {
+          kind: "none",
+          id: null
+        },
+        payload: {
+          matrix: {
+            version: "2026-04-13",
+            items: []
+          }
+        }
+      })),
+      analyzeDebugTarget: vi.fn(() => ({
+        ok: true,
+        capability: "debug-targets.analyze",
+        auditId: "audit-analyze",
+        timestamp: "2026-04-16T12:12:00.000Z",
+        targetRef: {
+          kind: "debug_target",
+          id: "target-1"
+        },
+        payload: {
+          result: {
+            target: {
+              id: "target-1"
+            },
+            services: [],
+            analyses: [],
+            autoInjectionEligible: true
+          }
+        }
+      })),
+      createDebugLaunchPlan: vi.fn(async () => ({
+        ok: true,
+        capability: "debug-targets.launch-plan.create",
+        auditId: "audit-plan",
+        timestamp: "2026-04-16T12:13:00.000Z",
+        targetRef: {
+          kind: "debug_target",
+          id: "target-1"
+        },
+        payload: {
+          plan: {
+            runtimeSession: {
+              id: "runtime-1"
+            },
+            targetId: "target-1",
+            autoStartAllowed: true,
+            services: []
+          }
+        }
+      })),
+      runDebugTarget: vi.fn(async () => ({
+        ok: true,
+        capability: "debug-targets.run",
+        auditId: "audit-run",
+        timestamp: "2026-04-16T12:14:00.000Z",
+        targetRef: {
+          kind: "debug_target",
+          id: "target-1"
+        },
+        payload: {
+          result: {
+            runtimeSession: {
+              id: "runtime-1"
+            },
+            services: []
+          }
+        }
+      })),
+      getLatestDebugRuntime: vi.fn(async () => ({
+        ok: true,
+        capability: "debug-targets.runtime-latest.get",
+        auditId: "audit-runtime-latest",
+        timestamp: "2026-04-16T12:15:00.000Z",
+        targetRef: {
+          kind: "debug_target",
+          id: "target-1"
+        },
+        payload: {
+          runtime: null
+        }
+      })),
+      listDebugRuntimes: vi.fn(async () => ({
+        ok: true,
+        capability: "debug-targets.runtimes.list",
+        auditId: "audit-runtime-history",
+        timestamp: "2026-04-16T12:16:00.000Z",
+        targetRef: {
+          kind: "debug_target",
+          id: "target-1"
+        },
+        payload: {
+          history: {
+            targetId: "target-1",
+            items: []
+          }
+        }
+      })),
+      getDebugRuntime: vi.fn(async () => ({
+        ok: true,
+        capability: "debug-runtimes.get",
+        auditId: "audit-runtime",
+        timestamp: "2026-04-16T12:17:00.000Z",
+        targetRef: {
+          kind: "debug_runtime",
+          id: "runtime-1"
+        },
+        payload: {
+          runtime: {
+            runtimeSession: {
+              id: "runtime-1"
+            },
+            services: []
+          }
+        }
+      }))
+    };
+
+    const app = await createAssistantApp(assistantCapabilityService);
+
+    const closeResponse = await app.inject({
+      method: "DELETE",
+      url: "/api/assistant/terminals/terminal-1"
+    });
+    expect(closeResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.closeTerminal).toHaveBeenCalledWith("terminal-1");
+
+    const matrixResponse = await app.inject({
+      method: "GET",
+      url: "/api/assistant/debug-targets/compatibility-matrix"
+    });
+    expect(matrixResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.getDebugCompatibilityMatrix).toHaveBeenCalledTimes(1);
+
+    const analyzeResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/debug-targets/analyze",
+      payload: {
+        workspaceId: " workspace-1 ",
+        rootPath: " /tmp/repo ",
+        commandHints: [" pnpm dev ", 42, "node server.js"]
+      }
+    });
+    expect(analyzeResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.analyzeDebugTarget).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      rootPath: "/tmp/repo",
+      commandHints: ["pnpm dev", "node server.js"]
+    });
+
+    const launchPlanResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/debug-targets/target-1/launch-plan",
+      payload: {
+        portRequests: [
+          {
+            role: " backend ",
+            cwd: " apps/api ",
+            command: " node ",
+            port: "44123"
+          }
+        ]
+      }
+    });
+    expect(launchPlanResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.createDebugLaunchPlan).toHaveBeenCalledWith({
+      targetId: "target-1",
+      portRequests: [
+        {
+          serviceId: null,
+          role: "backend",
+          cwd: "apps/api",
+          name: null,
+          command: "node",
+          port: 44123
+        }
+      ]
+    });
+
+    const runResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/debug-targets/target-1/run",
+      payload: {
+        shell: " zsh ",
+        runtimeType: " tmux ",
+        portRequests: [
+          {
+            role: "frontend",
+            cwd: ".",
+            port: 43001
+          }
+        ]
+      }
+    });
+    expect(runResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.runDebugTarget).toHaveBeenCalledWith({
+      targetId: "target-1",
+      userId: "user-1",
+      shell: "zsh",
+      runtimeType: "tmux",
+      portRequests: [
+        {
+          serviceId: null,
+          role: "frontend",
+          cwd: ".",
+          name: null,
+          command: null,
+          port: 43001
+        }
+      ]
+    });
+
+    const runtimeLatestResponse = await app.inject({
+      method: "GET",
+      url: "/api/assistant/debug-targets/target-1/runtime-latest"
+    });
+    expect(runtimeLatestResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.getLatestDebugRuntime).toHaveBeenCalledWith("target-1");
+
+    const runtimesResponse = await app.inject({
+      method: "GET",
+      url: "/api/assistant/debug-targets/target-1/runtimes?limit=12"
+    });
+    expect(runtimesResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.listDebugRuntimes).toHaveBeenCalledWith({
+      targetId: "target-1",
+      limit: 12
+    });
+
+    const runtimeResponse = await app.inject({
+      method: "GET",
+      url: "/api/assistant/debug-runtimes/runtime-1"
+    });
+    expect(runtimeResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.getDebugRuntime).toHaveBeenCalledWith("runtime-1");
+  });
+
   it("缺少 rootWorkspaceId 时会拒绝查询工作树", async () => {
     const assistantCapabilityService = {
       getWorktreeTree: vi.fn()

@@ -2,7 +2,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { AppError } from "../../shared/errors/app-error.js";
 import type { TerminalRuntimeType } from "../../types/domain.js";
-import type { DebugTargetService } from "./debug-target-service.js";
+import type { DebugTargetPortRequest, DebugTargetService } from "./debug-target-service.js";
 
 interface AnalyzeDebugTargetBody {
   workspaceId?: string;
@@ -18,9 +18,23 @@ interface DebugTargetRuntimeHistoryQuery {
   limit?: string;
 }
 
+interface DebugTargetPortRequestBodyItem {
+  serviceId?: string | null;
+  role?: string | null;
+  cwd?: string | null;
+  name?: string | null;
+  command?: string | null;
+  port?: number | string | null;
+}
+
+interface DebugTargetLaunchPlanBody {
+  portRequests?: DebugTargetPortRequestBodyItem[];
+}
+
 interface RunDebugTargetBody {
   shell?: string;
   runtimeType?: string | null;
+  portRequests?: DebugTargetPortRequestBodyItem[];
 }
 
 interface AiFallbackEditParams {
@@ -88,11 +102,14 @@ export class DebugTargetController {
   };
 
   readonly createLaunchPlan = async (
-    request: FastifyRequest<{ Params: DebugTargetParams }>,
+    request: FastifyRequest<{ Params: DebugTargetParams; Body: DebugTargetLaunchPlanBody }>,
     reply: FastifyReply
   ): Promise<void> => {
     reply.send(
-      await this.debugTargetService.createLaunchPlan(request.params.targetId?.trim() || "")
+      await this.debugTargetService.createLaunchPlan(
+        request.params.targetId?.trim() || "",
+        normalizePortRequests(request.body?.portRequests)
+      )
     );
   };
 
@@ -105,7 +122,8 @@ export class DebugTargetController {
         targetId: request.params.targetId?.trim() || "",
         userId: request.auth!.user.userId,
         shell: request.body?.shell?.trim() || undefined,
-        runtimeType: normalizeRuntimeType(request.body?.runtimeType)
+        runtimeType: normalizeRuntimeType(request.body?.runtimeType),
+        portRequests: normalizePortRequests(request.body?.portRequests)
       })
     );
   };
@@ -225,5 +243,96 @@ function normalizeRuntimeType(input?: string | null): TerminalRuntimeType | null
     errorCode: "INVALID_INPUT",
     detail: `不支持的终端 runtimeType：${value}`,
     field: "runtimeType"
+  });
+}
+
+function normalizeNullableText(value: string | null | undefined): string | null {
+  const text = value?.trim();
+  return text ? text : null;
+}
+
+function normalizePortRequests(input: unknown): DebugTargetPortRequest[] {
+  if (input === undefined || input === null) {
+    return [];
+  }
+
+  if (!Array.isArray(input)) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: "portRequests 必须是数组",
+      field: "portRequests"
+    });
+  }
+
+  return input.map((item, index) => normalizePortRequestItem(item, index));
+}
+
+function normalizePortRequestItem(input: unknown, index: number): DebugTargetPortRequest {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: `portRequests[${index}] 必须是对象`,
+      field: "portRequests"
+    });
+  }
+
+  const item = input as DebugTargetPortRequestBodyItem;
+  const port = normalizePortRequestPort(item.port, index);
+
+  return {
+    serviceId: normalizeNullableText(item.serviceId),
+    role: normalizePortRequestRole(item.role),
+    cwd: normalizeNullableText(item.cwd),
+    name: normalizeNullableText(item.name),
+    command: normalizeNullableText(item.command),
+    port
+  };
+}
+
+function normalizePortRequestPort(value: number | string | null | undefined, index: number): number {
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseInt(value.trim(), 10);
+
+    if (Number.isInteger(parsed)) {
+      return parsed;
+    }
+  }
+
+  throw new AppError({
+    statusCode: 400,
+    errorCode: "INVALID_INPUT",
+    detail: `portRequests[${index}].port 必须是整数`,
+    field: "portRequests"
+  });
+}
+
+function normalizePortRequestRole(value?: string | null): DebugTargetPortRequest["role"] {
+  const normalized = normalizeNullableText(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (
+    normalized === "frontend"
+    || normalized === "backend"
+    || normalized === "worker"
+    || normalized === "mock"
+    || normalized === "custom"
+  ) {
+    return normalized;
+  }
+
+  throw new AppError({
+    statusCode: 400,
+    errorCode: "INVALID_INPUT",
+    detail: `不支持的调试服务角色：${normalized}`,
+    field: "portRequests"
   });
 }

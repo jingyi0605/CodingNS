@@ -821,6 +821,155 @@ describe("debug target routes", () => {
     });
   });
 
+  it("生成启动计划时支持按服务选择器显式请求端口", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+    const repoPath = path.join(fixture.rootDir, "express-requested-port-repo");
+
+    mkdirSync(repoPath, { recursive: true });
+    writeFileSync(
+      path.join(repoPath, "package.json"),
+      JSON.stringify(
+        {
+          name: "express-requested-port-repo",
+          scripts: {
+            dev: "node server.js"
+          },
+          dependencies: {
+            express: "^4.0.0"
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    writeFileSync(path.join(repoPath, "server.js"), "setInterval(() => {}, 1000);\n", "utf8");
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, repoPath, "Express Requested Port Repo");
+    const analyzeResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/debug-targets/analyze",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceId,
+        rootPath: repoPath,
+        commandHints: ["node server.js"]
+      }
+    });
+
+    expect(analyzeResponse.statusCode).toBe(200);
+    const targetId = analyzeResponse.json().target.id as string;
+    const launchPlanResponse = await hosted.app.inject({
+      method: "POST",
+      url: `/api/debug-targets/${targetId}/launch-plan`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        portRequests: [
+          {
+            role: "backend",
+            cwd: ".",
+            command: "node",
+            port: 44123
+          }
+        ]
+      }
+    });
+
+    expect(launchPlanResponse.statusCode).toBe(200);
+    expect(launchPlanResponse.json().services[0]).toMatchObject({
+      adapterKind: "env",
+      injectionMode: "env",
+      leasedPort: 44123
+    });
+  });
+
+  it("显式请求已被宿主机占用的端口时会返回冲突错误", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+    const repoPath = path.join(fixture.rootDir, "express-requested-port-conflict-repo");
+
+    mkdirSync(repoPath, { recursive: true });
+    writeFileSync(
+      path.join(repoPath, "package.json"),
+      JSON.stringify(
+        {
+          name: "express-requested-port-conflict-repo",
+          scripts: {
+            dev: "node server.js"
+          },
+          dependencies: {
+            express: "^4.0.0"
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    writeFileSync(path.join(repoPath, "server.js"), "setInterval(() => {}, 1000);\n", "utf8");
+
+    const portLock = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      portLock.once("error", reject);
+      portLock.listen(44124, "127.0.0.1", () => resolve());
+    });
+    activePortLocks.push(portLock);
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, repoPath, "Express Requested Port Conflict Repo");
+    const analyzeResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/debug-targets/analyze",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceId,
+        rootPath: repoPath,
+        commandHints: ["node server.js"]
+      }
+    });
+
+    expect(analyzeResponse.statusCode).toBe(200);
+    const targetId = analyzeResponse.json().target.id as string;
+    const launchPlanResponse = await hosted.app.inject({
+      method: "POST",
+      url: `/api/debug-targets/${targetId}/launch-plan`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        portRequests: [
+          {
+            role: "backend",
+            cwd: ".",
+            command: "node",
+            port: 44124
+          }
+        ]
+      }
+    });
+
+    expect(launchPlanResponse.statusCode).toBe(409);
+    expect(launchPlanResponse.json()).toMatchObject({
+      error_code: "DEBUG_TARGET_PORT_NOT_AVAILABLE"
+    });
+  });
+
   it("可以把允许自动启动的调试目标接进现有终端执行链路", async () => {
     const fixture = createEmptyFixture();
     activeFixtures.push(fixture);

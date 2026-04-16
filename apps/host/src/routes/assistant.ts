@@ -18,6 +18,7 @@ export async function registerAssistantCapabilityRoutes(
   app.get("/api/assistant/terminals", assistantCapabilityController.listTerminals);
   app.get("/api/assistant/terminals/:terminalId/history", assistantCapabilityController.readTerminalHistory);
   app.post("/api/assistant/terminals/:terminalId/input", assistantCapabilityController.sendTerminalInput);
+  app.delete("/api/assistant/terminals/:terminalId", assistantCapabilityController.closeTerminal);
   app.get("/api/assistant/workspaces", assistantCapabilityController.listWorkspaces);
   app.get("/api/assistant/workspaces/browse", assistantCapabilityController.browseWorkspaces);
   app.post("/api/assistant/workspaces/directories", assistantCapabilityController.createWorkspaceDirectory);
@@ -32,4 +33,16 @@ export async function registerAssistantCapabilityRoutes(
   app.post("/api/assistant/worktrees/:workspaceId/merge-preview", assistantCapabilityController.getWorktreeMergePreview);
   app.post("/api/assistant/worktrees/:workspaceId/merge-into-parent", assistantCapabilityController.mergeWorktreeIntoParent);
   app.post("/api/assistant/worktrees/:workspaceId/cleanup", assistantCapabilityController.cleanupWorktree);
+  app.get("/api/assistant/debug-targets/compatibility-matrix", assistantCapabilityController.getDebugCompatibilityMatrix);
+  app.post("/api/assistant/debug-targets/analyze", assistantCapabilityController.analyzeDebugTarget);
+  app.get("/api/assistant/debug-targets/:targetId/framework-analysis", assistantCapabilityController.getDebugFrameworkAnalysis);
+  app.post(
+    "/api/assistant/debug-targets/:targetId/framework-analysis/refresh",
+    assistantCapabilityController.refreshDebugFrameworkAnalysis
+  );
+  app.post("/api/assistant/debug-targets/:targetId/launch-plan", assistantCapabilityController.createDebugLaunchPlan);
+  app.post("/api/assistant/debug-targets/:targetId/run", assistantCapabilityController.runDebugTarget);
+  app.get("/api/assistant/debug-targets/:targetId/runtime-latest", assistantCapabilityController.getLatestDebugRuntime);
+  app.get("/api/assistant/debug-targets/:targetId/runtimes", assistantCapabilityController.listDebugRuntimes);
+  app.get("/api/assistant/debug-runtimes/:runtimeId", assistantCapabilityController.getDebugRuntime);
 }
