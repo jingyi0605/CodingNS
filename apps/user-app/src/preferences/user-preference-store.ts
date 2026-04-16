@@ -11,6 +11,7 @@ import type {
   AccountPreferenceProviderPatch,
   AccountPreferencesPatch,
   AccountPreferencesProfile,
+  DebugPortPoolConfig,
   PreferenceProviderId,
   PreferenceReasoningLevel,
   PreferenceThemeId
@@ -26,6 +27,7 @@ interface AccountPreferenceState {
     theme: PreferenceThemeId;
     autoTheme: boolean;
     defaultPermissionMode: ClientPermissionMode;
+    debugPortPools?: DebugPortPoolConfig;
   };
   providers: AccountPreferencesProfile["providers"];
   updatedAt: string | null;
@@ -50,6 +52,13 @@ const LEGACY_CLIENT_CONFIG_KEY = "codingns.client.runtime-config";
 const LEGACY_THEME_KEY = "codingns-theme";
 const LEGACY_MODEL_KEY_PREFIX = "composer-selected-model:";
 const LEGACY_REASONING_KEY_PREFIX = "composer-reasoning-level:";
+const DEFAULT_DEBUG_PORT_POOLS: DebugPortPoolConfig = {
+  frontend: { start: 43000, end: 43999 },
+  backend: { start: 44000, end: 44999 },
+  worker: { start: 45000, end: 45999 },
+  mock: { start: 46000, end: 46999 },
+  custom: { start: 47000, end: 47999 }
+};
 
 function canUseLocalStorage(): boolean {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
@@ -151,7 +160,8 @@ function createDefaultState(): AccountPreferenceState {
       language: detectBrowserLanguage(),
       theme: getSystemTheme(),
       autoTheme: false,
-      defaultPermissionMode: "default"
+      defaultPermissionMode: "default",
+      debugPortPools: cloneDebugPortPools(DEFAULT_DEBUG_PORT_POOLS)
     },
     providers: createDefaultProviders(),
     updatedAt: null,
@@ -269,6 +279,7 @@ function hasPatchContent(patch: AccountPreferencesPatch | null | undefined): boo
     patch.theme !== undefined ||
     patch.autoTheme !== undefined ||
     patch.defaultPermissionMode !== undefined ||
+    patch.debugPortPools !== undefined ||
     (patch.providers !== undefined && Object.keys(patch.providers).length > 0)
   );
 }
@@ -293,6 +304,7 @@ function normalizeProfile(
     autoTheme: normalizeAutoTheme(input?.autoTheme) ?? defaults.profile.autoTheme,
     defaultPermissionMode:
       normalizePermissionMode(input?.defaultPermissionMode) ?? defaults.profile.defaultPermissionMode,
+    debugPortPools: normalizeDebugPortPools(input?.debugPortPools) ?? defaults.profile.debugPortPools,
     providers,
     updatedAt: typeof input?.updatedAt === "string" ? input.updatedAt : null
   };
@@ -316,6 +328,7 @@ function readShadow(): StoredPreferenceShadow | null {
       theme: parsed.profile?.theme,
       autoTheme: parsed.profile?.autoTheme,
       defaultPermissionMode: parsed.profile?.defaultPermissionMode,
+      debugPortPools: parsed.profile?.debugPortPools,
       providers: parsed.providers,
       updatedAt: parsed.updatedAt
     });
@@ -325,7 +338,8 @@ function readShadow(): StoredPreferenceShadow | null {
         language: normalized.language,
         theme: normalized.theme,
         autoTheme: normalized.autoTheme,
-        defaultPermissionMode: normalized.defaultPermissionMode
+        defaultPermissionMode: normalized.defaultPermissionMode,
+        debugPortPools: normalized.debugPortPools
       },
       providers: normalized.providers,
       updatedAt: normalized.updatedAt
@@ -378,7 +392,8 @@ function createStateFromProfile(
       language: profile.language,
       theme: profile.theme,
       autoTheme: profile.autoTheme,
-      defaultPermissionMode: profile.defaultPermissionMode
+      defaultPermissionMode: profile.defaultPermissionMode,
+      debugPortPools: cloneDebugPortPools(profile.debugPortPools ?? DEFAULT_DEBUG_PORT_POOLS)
     },
     providers: profile.providers,
     updatedAt: profile.updatedAt,
@@ -422,11 +437,61 @@ function applyPatch(
       language: patch.language ?? current.profile.language,
       theme: patch.theme ?? current.profile.theme,
       autoTheme: patch.autoTheme ?? current.profile.autoTheme,
-      defaultPermissionMode: patch.defaultPermissionMode ?? current.profile.defaultPermissionMode
+      defaultPermissionMode: patch.defaultPermissionMode ?? current.profile.defaultPermissionMode,
+      debugPortPools: patch.debugPortPools
+        ? cloneDebugPortPools(patch.debugPortPools)
+        : current.profile.debugPortPools ?? cloneDebugPortPools(DEFAULT_DEBUG_PORT_POOLS)
     },
     providers: nextProviders,
     updatedAt: current.updatedAt,
     source
+  };
+}
+
+function normalizeDebugPortPools(value: unknown): DebugPortPoolConfig | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const roles: Array<keyof DebugPortPoolConfig> = ["frontend", "backend", "worker", "mock", "custom"];
+  const result = {} as DebugPortPoolConfig;
+
+  for (const role of roles) {
+    const range = (value as Record<string, unknown>)[role];
+
+    if (!range || typeof range !== "object" || Array.isArray(range)) {
+      return null;
+    }
+
+    const start = normalizePortPoolValue((range as Record<string, unknown>).start);
+    const end = normalizePortPoolValue((range as Record<string, unknown>).end);
+
+    if (start === null || end === null || start >= end) {
+      return null;
+    }
+
+    result[role] = { start, end };
+  }
+
+  return result;
+}
+
+function normalizePortPoolValue(value: unknown): number | null {
+  if (!Number.isInteger(value)) {
+    return null;
+  }
+
+  const port = Number(value);
+  return port >= 1024 && port <= 65535 ? port : null;
+}
+
+function cloneDebugPortPools(value: DebugPortPoolConfig): DebugPortPoolConfig {
+  return {
+    frontend: { ...value.frontend },
+    backend: { ...value.backend },
+    worker: { ...value.worker },
+    mock: { ...value.mock },
+    custom: { ...value.custom }
   };
 }
 

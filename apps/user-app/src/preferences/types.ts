@@ -8,6 +8,14 @@ export type PreferenceProviderId =
   | "kimi";
 export type PreferenceThemeId = "light" | "dark" | "sky-blue" | "eye-green";
 export type PreferenceReasoningLevel = "low" | "medium" | "high" | "xhigh";
+export type DebugPortPoolRole = "frontend" | "backend" | "worker" | "mock" | "custom";
+
+export interface DebugPortPoolRange {
+  start: number;
+  end: number;
+}
+
+export type DebugPortPoolConfig = Record<DebugPortPoolRole, DebugPortPoolRange>;
 
 export interface AccountPreferenceProviderProfile {
   defaultModel: string | null;
@@ -20,6 +28,7 @@ export interface AccountPreferencesProfile {
   autoTheme: boolean;
   defaultPermissionMode: ClientPermissionMode;
   providers: Record<PreferenceProviderId, AccountPreferenceProviderProfile>;
+  debugPortPools?: DebugPortPoolConfig;
   updatedAt: string | null;
 }
 
@@ -34,4 +43,5 @@ export interface AccountPreferencesPatch {
   autoTheme?: boolean;
   defaultPermissionMode?: ClientPermissionMode;
   providers?: Partial<Record<PreferenceProviderId, AccountPreferenceProviderPatch>>;
+  debugPortPools?: DebugPortPoolConfig;
 }

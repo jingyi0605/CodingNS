@@ -29,6 +29,15 @@ import { SkillManagementPanel } from "../../../settings/SkillManagementPanel";
 import { TailscalePanel } from "../../../settings/TailscalePanel";
 import { authStore } from "../../auth/store/auth-store";
 import { MobilePageHeader } from "../../mobile-shell/components/MobilePageHeader";
+import type { DebugPortPoolConfig, DebugPortPoolRole } from "../../../preferences/types";
+
+const DEFAULT_DEBUG_PORT_POOLS: DebugPortPoolConfig = {
+  frontend: { start: 43000, end: 43999 },
+  backend: { start: 44000, end: 44999 },
+  worker: { start: 45000, end: 45999 },
+  mock: { start: 46000, end: 46999 },
+  custom: { start: 47000, end: 47999 }
+};
 
 type SettingsSectionId =
   | "appearance"
@@ -50,6 +59,7 @@ interface SettingsPageModel {
   readonly accountPreferences: {
     language: AppLanguage;
     defaultPermissionMode: ClientPermissionMode;
+    debugPortPools: DebugPortPoolConfig;
   };
   readonly sessionDisplaySortMode: SessionDisplaySortMode;
   readonly showSystemFiles: boolean;
@@ -80,6 +90,7 @@ interface SettingsPageModel {
   readonly updateNotifyOnPermissionRequest: (enabled: boolean) => void;
   readonly updateNotifyOnSessionCompleted: (enabled: boolean) => void;
   readonly updateNotifyOnSessionFailed: (enabled: boolean) => void;
+  readonly updateDebugPortPools: (config: DebugPortPoolConfig) => Promise<void>;
 }
 
 interface SettingsSectionMeta {
@@ -142,7 +153,10 @@ function useSettingsPageModel(): SettingsPageModel {
   );
   const accountPreferences = {
     language: preferenceLanguage,
-    defaultPermissionMode: preferencePermissionMode
+    defaultPermissionMode: preferencePermissionMode,
+    debugPortPools:
+      useUserPreferenceSelector((state) => state.profile.debugPortPools)
+      ?? DEFAULT_DEBUG_PORT_POOLS
   };
   const platform = usePlatform();
   const canConfigureServerAddress = canConfigureHostBaseUrl(runtimeConfig.platform);
@@ -288,6 +302,12 @@ function useSettingsPageModel(): SettingsPageModel {
     });
   }
 
+  async function updateDebugPortPools(config: DebugPortPoolConfig): Promise<void> {
+    await userPreferenceStore.updateProfile({
+      debugPortPools: config
+    });
+  }
+
   return {
     platform,
     theme,
@@ -319,7 +339,8 @@ function useSettingsPageModel(): SettingsPageModel {
     updateShowSystemFiles,
     updateNotifyOnPermissionRequest,
     updateNotifyOnSessionCompleted,
-    updateNotifyOnSessionFailed
+    updateNotifyOnSessionFailed,
+    updateDebugPortPools
   };
 }
 
@@ -366,7 +387,8 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
     updateShowSystemFiles,
     updateNotifyOnPermissionRequest,
     updateNotifyOnSessionCompleted,
-    updateNotifyOnSessionFailed
+    updateNotifyOnSessionFailed,
+    updateDebugPortPools
   } = model;
 
   return (
@@ -611,6 +633,16 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
                 />
               </div>
             </div>
+          </div>
+        </section>
+
+        <section className="settings-section">
+          <h2 className="settings-section-title">{t("settings.debugPortPool")}</h2>
+          <div className="settings-card">
+            <DebugPortPoolEditor
+              value={accountPreferences.debugPortPools}
+              onSave={updateDebugPortPools}
+            />
           </div>
         </section>
 
@@ -1020,6 +1052,18 @@ function MobileSecurityPrivacySection({ model }: { model: SettingsPageModel }) {
       </section>
 
       <section className="settings-mobile-group-section">
+        <h2 className="settings-mobile-group-title">{t("settings.debugPortPool")}</h2>
+        <p className="settings-mobile-group-note">{t("settings.debugPortPoolDescription")}</p>
+        <div className="settings-mobile-list">
+          <DebugPortPoolEditor
+            value={model.accountPreferences.debugPortPools}
+            onSave={model.updateDebugPortPools}
+            compact
+          />
+        </div>
+      </section>
+
+      <section className="settings-mobile-group-section">
         <h2 className="settings-mobile-group-title">{t("settings.notificationSettings")}</h2>
         <p className="settings-mobile-group-note">{t("settings.notificationSettingsDescription")}</p>
         <div className="settings-mobile-list">
@@ -1068,6 +1112,208 @@ function MobileSecurityPrivacySection({ model }: { model: SettingsPageModel }) {
       </section>
     </>
   );
+}
+
+type DebugPortPoolDraft = Record<DebugPortPoolRole, { start: string; end: string }>;
+
+function DebugPortPoolEditor(props: {
+  value: DebugPortPoolConfig | undefined;
+  onSave: (config: DebugPortPoolConfig) => Promise<void>;
+  compact?: boolean;
+}) {
+  const [draft, setDraft] = useState<DebugPortPoolDraft>(() => toDebugPortPoolDraft(props.value));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setDraft(toDebugPortPoolDraft(props.value));
+  }, [props.value]);
+
+  async function handleSave(): Promise<void> {
+    setError(null);
+    setSaved(false);
+
+    let nextConfig: DebugPortPoolConfig;
+
+    try {
+      nextConfig = parseDebugPortPoolDraft(draft);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : t("settings.debugPortPoolSaveFailed"));
+      return;
+    }
+
+    try {
+      setSaving(true);
+      await props.onSave(nextConfig);
+      setSaved(true);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : t("settings.debugPortPoolSaveFailed"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className={props.compact ? "settings-mobile-form-stack" : "settings-row-control settings-row-control-stretch"}>
+      {!props.compact ? (
+        <div className="settings-row">
+          <div className="settings-row-label">
+            <span className="settings-row-title">{t("settings.debugPortPool")}</span>
+            <span className="settings-row-description">{t("settings.debugPortPoolDescription")}</span>
+          </div>
+        </div>
+      ) : null}
+
+      {DEBUG_PORT_POOL_ROLE_ORDER.map((role) => (
+        <div
+          key={role}
+          className={props.compact ? "settings-mobile-form-row" : "settings-row"}
+        >
+          <div className={props.compact ? "settings-mobile-row-copy" : "settings-row-label"}>
+            <span className={props.compact ? "settings-mobile-row-title" : "settings-row-title"}>
+              {getDebugPortPoolRoleLabel(role)}
+            </span>
+            <span className={props.compact ? "settings-mobile-row-description" : "settings-row-description"}>
+              {t("settings.debugPortPoolRoleHint", { role: getDebugPortPoolRoleLabel(role) })}
+            </span>
+          </div>
+          <div className={props.compact ? "settings-mobile-form-stack" : "settings-row-control settings-row-control-stretch"}>
+            <div className="settings-inline-form">
+              <input
+                aria-label={`${getDebugPortPoolRoleLabel(role)} ${t("settings.debugPortPoolStart")}`}
+                className="settings-text-input"
+                inputMode="numeric"
+                value={draft[role].start}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setDraft((current) => ({
+                    ...current,
+                    [role]: {
+                      ...current[role],
+                      start: value
+                    }
+                  }));
+                }}
+              />
+              <span>{t("settings.debugPortPoolRangeSeparator")}</span>
+              <input
+                aria-label={`${getDebugPortPoolRoleLabel(role)} ${t("settings.debugPortPoolEnd")}`}
+                className="settings-text-input"
+                inputMode="numeric"
+                value={draft[role].end}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setDraft((current) => ({
+                    ...current,
+                    [role]: {
+                      ...current[role],
+                      end: value
+                    }
+                  }));
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      ))}
+
+      <div className={props.compact ? "settings-mobile-form-stack" : "settings-inline-form"}>
+        <button
+          type="button"
+          className={props.compact ? "settings-mobile-primary-button" : "settings-button"}
+          disabled={saving}
+          onClick={() => {
+            void handleSave();
+          }}
+        >
+          {saving ? t("common.loading") : t("settings.debugPortPoolSaveAction")}
+        </button>
+        {saved ? <span>{t("settings.debugPortPoolSaved")}</span> : null}
+      </div>
+      {error ? <p className="status-text" data-tone="error">{error}</p> : null}
+    </div>
+  );
+}
+
+const DEBUG_PORT_POOL_ROLE_ORDER: DebugPortPoolRole[] = [
+  "frontend",
+  "backend",
+  "worker",
+  "mock",
+  "custom"
+];
+
+function toDebugPortPoolDraft(value: DebugPortPoolConfig | undefined): DebugPortPoolDraft {
+  const resolved = value ?? DEFAULT_DEBUG_PORT_POOLS;
+  return {
+    frontend: {
+      start: String(resolved.frontend.start),
+      end: String(resolved.frontend.end)
+    },
+    backend: {
+      start: String(resolved.backend.start),
+      end: String(resolved.backend.end)
+    },
+    worker: {
+      start: String(resolved.worker.start),
+      end: String(resolved.worker.end)
+    },
+    mock: {
+      start: String(resolved.mock.start),
+      end: String(resolved.mock.end)
+    },
+    custom: {
+      start: String(resolved.custom.start),
+      end: String(resolved.custom.end)
+    }
+  };
+}
+
+function parseDebugPortPoolDraft(draft: DebugPortPoolDraft): DebugPortPoolConfig {
+  const config = {} as DebugPortPoolConfig;
+
+  for (const role of DEBUG_PORT_POOL_ROLE_ORDER) {
+    const start = Number.parseInt(draft[role].start, 10);
+    const end = Number.parseInt(draft[role].end, 10);
+
+    if (!Number.isInteger(start) || !Number.isInteger(end)) {
+      throw new Error(t("settings.debugPortPoolValidationInteger"));
+    }
+
+    if (start < 1024 || end > 65535 || start >= end) {
+      throw new Error(t("settings.debugPortPoolValidationRange"));
+    }
+
+    config[role] = { start, end };
+  }
+
+  const sorted = DEBUG_PORT_POOL_ROLE_ORDER
+    .map((role) => ({ role, start: config[role].start, end: config[role].end }))
+    .sort((left, right) => left.start - right.start);
+
+  for (let index = 1; index < sorted.length; index += 1) {
+    if (sorted[index]!.start <= sorted[index - 1]!.end) {
+      throw new Error(t("settings.debugPortPoolValidationOverlap"));
+    }
+  }
+
+  return config;
+}
+
+function getDebugPortPoolRoleLabel(role: DebugPortPoolRole): string {
+  switch (role) {
+    case "frontend":
+      return t("settings.debugPortPoolRoleFrontend");
+    case "backend":
+      return t("settings.debugPortPoolRoleBackend");
+    case "worker":
+      return t("settings.debugPortPoolRoleWorker");
+    case "mock":
+      return t("settings.debugPortPoolRoleMock");
+    default:
+      return t("settings.debugPortPoolRoleCustom");
+  }
 }
 
 function MobileRemoteAccessSection() {
