@@ -5,9 +5,13 @@ export interface TerminalAttachInputGate {
   dispose(): void;
 }
 
+const TMUX_ATTACH_PROBE_FILTER_TAIL_MS = 250;
+const TERMINAL_ATTACH_PROBE_RESPONSE_PATTERN = /\u001b\[\?(?:\d+;)*\d+c|\u001b\[>(?:\d+;)*\d+c/g;
+
 /**
  * tmux 重新 attach 后会立刻探测终端能力。
- * 这里先把 xterm 自动回送的输入短暂缓冲，等 attach 端进入稳定状态后再一次性放行。
+ * 这些响应如果在 attach 尚未稳定时落进 pane，就会直接污染 shell 输入。
+ * 这里先缓冲，再在稳定窗口结束后剔除探测响应，只放行真实用户输入。
  */
 export function createTerminalAttachInputGate(
   forward: (content: string) => void,
@@ -16,6 +20,8 @@ export function createTerminalAttachInputGate(
   let ready = false;
   let pendingContent = "";
   let releaseTimer: number | null = null;
+  let probeFilterTailTimer: number | null = null;
+  let sanitizePendingContent = false;
 
   const clearReleaseTimer = () => {
     if (releaseTimer === null) {
@@ -26,13 +32,30 @@ export function createTerminalAttachInputGate(
     releaseTimer = null;
   };
 
-  const flushPending = () => {
-    if (!ready || pendingContent.length === 0) {
+  const clearProbeFilterTailTimer = () => {
+    if (probeFilterTailTimer === null) {
       return;
     }
 
-    const content = pendingContent;
+    scheduler.clearTimeout(probeFilterTailTimer);
+    probeFilterTailTimer = null;
+  };
+
+  const flushPending = () => {
+    if (!ready || releaseTimer !== null || probeFilterTailTimer !== null || pendingContent.length === 0) {
+      return;
+    }
+
+    const content = sanitizePendingContent
+      ? stripTerminalAttachProbeResponses(pendingContent)
+      : pendingContent;
     pendingContent = "";
+    sanitizePendingContent = false;
+
+    if (!content) {
+      return;
+    }
+
     forward(content);
   };
 
@@ -42,7 +65,7 @@ export function createTerminalAttachInputGate(
         return;
       }
 
-      if (ready && releaseTimer === null) {
+      if (ready && releaseTimer === null && probeFilterTailTimer === null) {
         forward(content);
         return;
       }
@@ -51,10 +74,12 @@ export function createTerminalAttachInputGate(
     },
     suspend() {
       clearReleaseTimer();
+      clearProbeFilterTailTimer();
       ready = false;
     },
     resume(delayMs = 0) {
       clearReleaseTimer();
+      clearProbeFilterTailTimer();
 
       if (delayMs <= 0) {
         ready = true;
@@ -63,16 +88,26 @@ export function createTerminalAttachInputGate(
       }
 
       ready = false;
+      sanitizePendingContent = true;
       releaseTimer = scheduler.setTimeout(() => {
         releaseTimer = null;
         ready = true;
-        flushPending();
+        probeFilterTailTimer = scheduler.setTimeout(() => {
+          probeFilterTailTimer = null;
+          flushPending();
+        }, TMUX_ATTACH_PROBE_FILTER_TAIL_MS);
       }, delayMs);
     },
     dispose() {
       clearReleaseTimer();
+      clearProbeFilterTailTimer();
       ready = false;
       pendingContent = "";
+      sanitizePendingContent = false;
     }
   };
+}
+
+function stripTerminalAttachProbeResponses(content: string): string {
+  return content.replace(TERMINAL_ATTACH_PROBE_RESPONSE_PATTERN, "");
 }

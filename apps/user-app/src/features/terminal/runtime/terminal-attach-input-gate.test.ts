@@ -31,12 +31,13 @@ describe("createTerminalAttachInputGate", () => {
     gate.enqueue("\u001b[?1;2c");
     gate.resume(120);
     gate.enqueue("\u001b[>0;276;0c");
+    gate.enqueue("pwd\r");
 
-    vi.advanceTimersByTime(119);
+    vi.advanceTimersByTime(369);
     expect(forwarded).toEqual([]);
 
     vi.advanceTimersByTime(1);
-    expect(forwarded).toEqual(["\u001b[?1;2c\u001b[>0;276;0c"]);
+    expect(forwarded).toEqual(["pwd\r"]);
 
     vi.useRealTimers();
   });

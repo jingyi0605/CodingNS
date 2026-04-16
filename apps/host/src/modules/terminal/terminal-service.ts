@@ -88,6 +88,7 @@ interface TerminalServiceOptions {
 
 const TERMINAL_ACTIVITY_FLUSH_INTERVAL_MS = 2_000;
 const TERMINAL_OUTPUT_FLUSH_INTERVAL_MS = 8;
+const TERMINAL_DETACH_GRACE_PERIOD_MS = 10_000;
 
 interface PendingTerminalOutputBatch {
   contents: string[];
@@ -122,6 +123,7 @@ export class TerminalService extends EventEmitter {
   private readonly outputBuffer = new TerminalOutputBuffer();
   private readonly runtimeManager = new TerminalRuntimeManager();
   private readonly terminalSubscriptionCounts = new Map<string, number>();
+  private readonly pendingDetachTimersByTerminalId = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pendingCloseReasons = new Map<string, TerminalCloseReason>();
   private readonly pendingDeletedTerminalIds = new Set<string>();
   private readonly pendingActivityByTerminalId = new Map<string, string>();
@@ -360,6 +362,7 @@ export class TerminalService extends EventEmitter {
   ): Promise<{ success: true }> {
     const terminal = this.getTerminalOrThrow(terminalId);
     const session = this.getRuntimeSessionOrThrow(terminal.runtimeSessionId);
+    this.cancelScheduledRuntimeDetach(terminalId);
     this.pendingCloseReasons.set(terminalId, reason);
 
     if (terminal.status === "closed" || terminal.status === "error") {
@@ -386,6 +389,7 @@ export class TerminalService extends EventEmitter {
   async deleteTerminal(terminalId: string): Promise<{ success: true }> {
     const terminal = this.getTerminalOrThrow(terminalId);
     const session = this.getRuntimeSessionOrThrow(terminal.runtimeSessionId);
+    this.cancelScheduledRuntimeDetach(terminalId);
     this.pendingCloseReasons.delete(terminalId);
     this.pendingActivityByTerminalId.delete(terminalId);
     this.clearActivityFlushTimerIfIdle();
@@ -553,6 +557,7 @@ export class TerminalService extends EventEmitter {
 
   async dispose(): Promise<void> {
     this.isDisposing = true;
+    this.clearPendingDetachTimers();
     this.flushPendingTerminalOutput();
     this.flushPendingActivity();
     await this.terminalLogSpooler?.dispose();
@@ -1038,6 +1043,7 @@ export class TerminalService extends EventEmitter {
   }
 
   private retainTerminalSubscription(terminalId: string): void {
+    this.cancelScheduledRuntimeDetach(terminalId);
     const currentCount = this.terminalSubscriptionCounts.get(terminalId) ?? 0;
     this.terminalSubscriptionCounts.set(terminalId, currentCount + 1);
   }
@@ -1047,15 +1053,52 @@ export class TerminalService extends EventEmitter {
 
     if (currentCount <= 1) {
       this.terminalSubscriptionCounts.delete(terminalId);
-      this.detachRuntimeAttachmentIfIdle(terminalId);
+      this.scheduleRuntimeDetachIfIdle(terminalId);
       return;
     }
 
     this.terminalSubscriptionCounts.set(terminalId, currentCount - 1);
   }
 
+  private scheduleRuntimeDetachIfIdle(terminalId: string): void {
+    if (this.isDisposing) {
+      return;
+    }
+
+    this.cancelScheduledRuntimeDetach(terminalId);
+    const timer = setTimeout(() => {
+      this.pendingDetachTimersByTerminalId.delete(terminalId);
+      this.detachRuntimeAttachmentIfIdle(terminalId);
+    }, TERMINAL_DETACH_GRACE_PERIOD_MS);
+
+    this.pendingDetachTimersByTerminalId.set(terminalId, timer);
+  }
+
+  private cancelScheduledRuntimeDetach(terminalId: string): void {
+    const timer = this.pendingDetachTimersByTerminalId.get(terminalId);
+
+    if (!timer) {
+      return;
+    }
+
+    clearTimeout(timer);
+    this.pendingDetachTimersByTerminalId.delete(terminalId);
+  }
+
+  private clearPendingDetachTimers(): void {
+    for (const timer of this.pendingDetachTimersByTerminalId.values()) {
+      clearTimeout(timer);
+    }
+
+    this.pendingDetachTimersByTerminalId.clear();
+  }
+
   private detachRuntimeAttachmentIfIdle(terminalId: string): void {
     if (this.isDisposing) {
+      return;
+    }
+
+    if ((this.terminalSubscriptionCounts.get(terminalId) ?? 0) > 0) {
       return;
     }
 
