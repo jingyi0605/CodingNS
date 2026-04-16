@@ -832,10 +832,14 @@ export class SessionRuntimeStore {
   private async resolveHistoryBootstrapFallback(): Promise<void> {
     try {
       // WebSocket 首包偶发丢失时，主动拉一页最新历史兜底，避免首次点开会话看到旧快照。
+      const fallbackLimit = Math.min(
+        SNAPSHOT_HISTORY_LIMIT,
+        Math.max(REALTIME_LIMIT, this.state.messages.length, INITIAL_HISTORY_LIMIT)
+      );
       const page = await getSessionMessages(
         this.sessionId,
         null,
-        INITIAL_HISTORY_LIMIT,
+        fallbackLimit,
         "backward"
       );
 
@@ -844,8 +848,8 @@ export class SessionRuntimeStore {
       }
 
       this.historyBootstrapEnvelopeReceived = true;
-      const merged = this.mergeHistoryMessages(page.messages, true);
       const shouldReplaceSnapshotSeed = this.replaceSnapshotSeedOnBackfill;
+      const merged = this.mergeHistoryMessages(page.messages, true);
 
       this.patch({
         messages: merged,

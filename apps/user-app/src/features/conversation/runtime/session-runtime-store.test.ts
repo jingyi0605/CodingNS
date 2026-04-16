@@ -354,11 +354,82 @@ describe("SessionRuntimeStore", () => {
     expect(mocked.getSessionMessages).toHaveBeenCalledWith(
       "session-1",
       null,
-      30,
+      40,
       "backward"
     );
     expect(store.getState().historyState).toBe("ready");
     expect(store.getState().messages.at(-1)?.id).toBe("message-60");
+    expect(store.getState().lastCursor).toBe("cursor-latest");
+    expect(store.getState().olderCursor).toBe("cursor-older");
+
+    store.destroy();
+  });
+
+  it("活动会话已有较多缓存消息时，HTTP 历史兜底不会主动把首屏拉短", async () => {
+    vi.useFakeTimers();
+    writeViewSnapshot(SESSION_RUNTIME_SNAPSHOT_KEY, {
+      session: null,
+      capabilities: null,
+      runtimeHasActiveRun: null,
+      runtimeCanInterrupt: null,
+      contextUsage: null,
+      messages: Array.from({ length: 60 }, (_, index) => ({
+        id: `fallback-live-${index + 1}`,
+        sessionId: "session-1",
+        role: "assistant",
+        kind: "text",
+        content: `fallback-live-${index + 1}`,
+        toolCall: null,
+        attachments: [],
+        attachmentPayloads: null,
+        timestamp: `2026-03-24T10:${String(index).padStart(2, "0")}:00.000Z`,
+        sequence: index + 1,
+        rawRef: `codex://raw#line=${index + 1}`,
+        deliveryState: "sent",
+        clientRequestId: null
+      })),
+      permissionRequests: [],
+      queuedMessages: [],
+      olderCursor: null,
+      hasOlderMessages: false,
+      lastCursor: null,
+      pagesLoaded: 1
+    });
+    mocked.getSessionMessages.mockResolvedValueOnce({
+      messages: Array.from({ length: 60 }, (_, index) => ({
+        messageId: `fallback-live-${index + 1}`,
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        kind: "text",
+        content: `fallback-live-${index + 1}`,
+        timestamp: `2026-03-24T10:${String(index).padStart(2, "0")}:00.000Z`,
+        sequence: index + 1,
+        rawRef: `codex://raw#line=${index + 1}`,
+        toolCall: null
+      })),
+      cursor: "cursor-latest",
+      nextCursor: "cursor-older",
+      total: 60
+    });
+
+    const store = new SessionRuntimeStore("session-1");
+
+    expect(store.getState().messages).toHaveLength(60);
+
+    await store.initialize();
+    emitRealtimeSubscribed();
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(mocked.getSessionMessages).toHaveBeenCalledWith(
+      "session-1",
+      null,
+      60,
+      "backward"
+    );
+    expect(store.getState().messages).toHaveLength(60);
+    expect(store.getState().messages[0]?.sequence).toBe(1);
+    expect(store.getState().messages.at(-1)?.sequence).toBe(60);
     expect(store.getState().lastCursor).toBe("cursor-latest");
     expect(store.getState().olderCursor).toBe("cursor-older");
 
