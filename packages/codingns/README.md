@@ -60,11 +60,17 @@ export CODINGNS_ACCESS_TOKEN=your-access-token
 
 ```bash
 codingns assistant --help
+codingns assistant help workspaces
+codingns assistant help worktrees
 codingns assistant help sessions
 codingns assistant sessions send --help
 codingns assistant capabilities list
 codingns assistant projects list --status active
 codingns assistant projects get project-123
+codingns assistant workspaces list
+codingns assistant workspaces management workspace-123
+codingns assistant worktrees tree --root-workspace-id workspace-123
+codingns assistant worktrees create --source-workspace-id workspace-123 --branch-name feature/demo
 codingns assistant sessions list --project project-123
 codingns assistant sessions get session-123
 codingns assistant sessions messages session-123 --limit 20
