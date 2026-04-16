@@ -5,8 +5,11 @@ import { clientConfigStore, useClientConfigSelector } from "../../../config/clie
 import { getActiveHost, type HostProfile } from "../../../config/client-config-types";
 import { HostSwitchError, hostSwitchCoordinator } from "../../../config/host-switch-coordinator";
 import { normalizeServerBaseUrl } from "../../../config/server-config-shared";
-import { persistRememberedLoginCredentials } from "../../auth/store/remembered-login";
-import { useAuthSelector } from "../../auth/store/auth-store";
+import {
+  clearRememberedLoginCredentials,
+  persistRememberedLoginCredentials
+} from "../../auth/store/remembered-login";
+import { authStore, useAuthSelector } from "../../auth/store/auth-store";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 
@@ -22,6 +25,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
   const [usernameDraft, setUsernameDraft] = useState("");
   const [passwordDraft, setPasswordDraft] = useState("");
   const [pendingHostId, setPendingHostId] = useState<string | null>(null);
+  const [pendingDeleteHostId, setPendingDeleteHostId] = useState<string | null>(null);
   const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null);
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -117,7 +121,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
   }, [open, updateMenuStyle]);
 
   async function handleSwitchHost(host: HostProfile): Promise<void> {
-    if (pendingHostId || host.id === runtimeConfig.activeHostId) {
+    if (pendingHostId || pendingDeleteHostId || host.id === runtimeConfig.activeHostId) {
       setOpen(false);
       return;
     }
@@ -135,6 +139,42 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
       });
     } finally {
       setPendingHostId(null);
+    }
+  }
+
+  async function handleDeleteHost(host: HostProfile): Promise<void> {
+    if (host.id === runtimeConfig.activeHostId || pendingHostId || pendingDeleteHostId) {
+      return;
+    }
+
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        t("shell.hostDeleteConfirm", { name: host.name })
+      );
+
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setPendingDeleteHostId(host.id);
+
+    try {
+      await clientConfigStore.update({
+        hosts: runtimeConfig.hosts.filter((item) => item.id !== host.id)
+      });
+      clearRememberedLoginCredentials(host.id);
+      authStore.clearHostSession(host.id);
+      showToast({
+        title: t("shell.hostDeleteSuccess", { name: host.name })
+      });
+    } catch {
+      showToast({
+        title: t("shell.hostDeleteFailed", { name: host.name }),
+        tone: "error"
+      });
+    } finally {
+      setPendingDeleteHostId(null);
     }
   }
 
@@ -264,37 +304,55 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                     : host.lastUsername ?? host.baseUrl;
 
                   return (
-                    <button
+                    <div
                       key={host.id}
-                      type="button"
                       className="workbench-host-switcher-item"
                       data-active={isActive}
-                      disabled={pendingHostId !== null}
-                      onClick={() => {
-                        void handleSwitchHost(host);
-                      }}
                     >
-                      <span className="workbench-host-switcher-item-copy">
-                        <span className="workbench-host-switcher-item-title">
-                          {host.name}
-                          {isActive ? (
-                            <span className="workbench-host-switcher-item-badge">
-                              {t("shell.hostSwitcherCurrentBadge")}
-                            </span>
-                          ) : null}
+                      <button
+                        type="button"
+                        className="workbench-host-switcher-item-main"
+                        disabled={pendingHostId !== null || pendingDeleteHostId !== null}
+                        onClick={() => {
+                          void handleSwitchHost(host);
+                        }}
+                      >
+                        <span className="workbench-host-switcher-item-copy">
+                          <span className="workbench-host-switcher-item-title">
+                            {host.name}
+                            {isActive ? (
+                              <span className="workbench-host-switcher-item-badge">
+                                {t("shell.hostSwitcherCurrentBadge")}
+                              </span>
+                            ) : null}
+                          </span>
+                          <span className="workbench-host-switcher-item-meta">{status}</span>
                         </span>
-                        <span className="workbench-host-switcher-item-meta">{status}</span>
-                      </span>
-                      <span className="workbench-host-switcher-item-trailing">
-                        {pendingHostId === host.id ? (
-                          t("shell.hostSwitcherSwitching")
-                        ) : isActive ? (
-                          <CheckIcon />
-                        ) : (
-                          <ChevronRightIcon />
-                        )}
-                      </span>
-                    </button>
+                        <span className="workbench-host-switcher-item-trailing">
+                          {pendingHostId === host.id ? (
+                            t("shell.hostSwitcherSwitching")
+                          ) : isActive ? (
+                            <CheckIcon />
+                          ) : (
+                            <ChevronRightIcon />
+                          )}
+                        </span>
+                      </button>
+                      {!isActive ? (
+                        <button
+                          type="button"
+                          className="workbench-host-switcher-item-action"
+                          aria-label={t("shell.hostDeleteAriaLabel", { name: host.name })}
+                          title={t("shell.hostDeleteAction")}
+                          disabled={pendingHostId !== null || pendingDeleteHostId !== null}
+                          onClick={() => {
+                            void handleDeleteHost(host);
+                          }}
+                        >
+                          {pendingDeleteHostId === host.id ? t("shell.hostDeleteBusy") : <TrashIcon />}
+                        </button>
+                      ) : null}
+                    </div>
                   );
                 })}
               </div>
@@ -502,6 +560,21 @@ function PlusIcon() {
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth="1.6"
+      />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M3.5 4.5h9M6.5 2.75h3M5 4.5v7.25a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1V4.5M6.75 6.5v4M9.25 6.5v4"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.35"
       />
     </svg>
   );

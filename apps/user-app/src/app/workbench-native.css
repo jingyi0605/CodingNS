@@ -2310,6 +2310,7 @@ body {
 }
 .workbench-host-switcher-anchor > .workbench-nav-toolbar-button > svg,
 .workbench-host-switcher-item-trailing svg,
+.workbench-host-switcher-item-action svg,
 .workbench-host-switcher-add svg {
   width: 14px;
   height: 14px;
@@ -2377,9 +2378,15 @@ body {
   flex-direction: column;
 }
 
-.workbench-host-switcher-item,
+.workbench-host-switcher-item {
+  display: flex;
+  align-items: stretch;
+}
+
+.workbench-host-switcher-item-main,
 .workbench-host-switcher-add {
   display: flex;
+  flex: 1 1 auto;
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -2396,12 +2403,13 @@ body {
   border-top: 1px solid var(--panel-separator);
 }
 
-.workbench-host-switcher-item:hover,
+.workbench-host-switcher-item-main:hover,
+.workbench-host-switcher-item-action:hover,
 .workbench-host-switcher-add:hover {
   background: var(--panel-hover);
 }
 
-.workbench-host-switcher-item[data-active="true"] {
+.workbench-host-switcher-item[data-active="true"] > .workbench-host-switcher-item-main {
   background: var(--panel-active);
 }
 
@@ -2413,6 +2421,21 @@ body {
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 600;
+}
+
+.workbench-host-switcher-item-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  border: 0;
+  border-left: 1px solid var(--panel-separator);
+  background: transparent;
+  color: var(--text-tertiary);
+}
+
+.workbench-host-switcher-item-action:hover {
+  color: #ef4444;
 }
 
 .workbench-host-switcher-form {
@@ -3202,19 +3225,34 @@ body {
 [data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-toolbar,
 [data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-info-tabs,
 [data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-header-main,
+[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-header-actions,
 [data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .terminal-tabbar-main {
-  /* 原生三色球和 WebView 内容不在同一层，只能做小幅基线修正来逼近系统标题栏。 */
   position: relative;
   z-index: 1;
-  transform: translateY(var(--workbench-titlebar-content-shift-y));
 }
 
 [data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-header > .workbench-nav-toolbar-button {
-  transform: translateY(var(--workbench-titlebar-content-shift-y));
+  transform: translateY(var(--workbench-auxiliary-toolbar-button-live-shift-y));
 }
 
 [data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-toolbar {
-  transform: translateY(var(--workbench-nav-toolbar-shift-y));
+  transform: translateY(var(--workbench-nav-toolbar-live-shift-y));
+}
+
+[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-info-tabs {
+  transform: translateY(var(--workbench-info-tabs-live-shift-y));
+}
+
+[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-header-main {
+  transform: translateY(var(--workbench-conversation-header-main-live-shift-y));
+}
+
+[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-header-actions {
+  transform: translateY(var(--workbench-conversation-header-actions-live-shift-y));
+}
+
+[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .terminal-tabbar-main {
+  transform: translateY(var(--workbench-terminal-tabbar-live-shift-y));
 }
 
 [data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .terminal-tabbar {
@@ -5134,15 +5172,27 @@ body {
   /* 默认按 Web/H5 基线布局，不额外吃 macOS 标题栏补偿。 */
   --workbench-titlebar-leading-inset: 0px;
   --workbench-titlebar-content-shift-y: 0px;
+  --workbench-titlebar-live-content-shift-y: var(--workbench-titlebar-content-shift-y);
   --workbench-nav-toolbar-shift-y: 0px;
+  --workbench-nav-toolbar-live-shift-y: var(--workbench-nav-toolbar-shift-y);
+  --workbench-info-tabs-live-shift-y: var(--workbench-titlebar-live-content-shift-y);
+  --workbench-auxiliary-toolbar-button-live-shift-y: var(--workbench-titlebar-live-content-shift-y);
+  --workbench-conversation-header-main-live-shift-y: var(--workbench-titlebar-live-content-shift-y);
+  --workbench-conversation-header-actions-live-shift-y: var(--workbench-titlebar-live-content-shift-y);
+  --workbench-terminal-tabbar-live-shift-y: var(--workbench-titlebar-live-content-shift-y);
   --workbench-collapsed-controls-shift-y: 0px;
+  --workbench-collapsed-controls-live-shift-y: var(--workbench-collapsed-controls-shift-y);
+  --workbench-collapsed-left-controls-live-shift-y: var(--workbench-collapsed-controls-live-shift-y);
+  --workbench-collapsed-right-controls-live-shift-y: var(--workbench-collapsed-controls-live-shift-y);
   --workbench-macos-traffic-light-safe-zone: 0px;
   --workbench-collapsed-left-controls-width: 0px;
   --workbench-collapsed-right-controls-width: 0px;
   --workbench-collapsed-left-content-inset: 0px;
   --workbench-collapsed-right-content-inset: 0px;
-  /* 这是 Web 侧标题栏控件的统一默认中心线，不是系统坐标。 */
-  --workbench-macos-titlebar-layout-center-y: 18px;
+  /* Web 顶栏内容的自然中心线：顶部内边距 + header 内容区中心。 */
+  --workbench-macos-titlebar-layout-center-y: calc(
+    var(--workbench-header-padding-top) + var(--workbench-header-min-height) / 2
+  );
 }
 
 .workbench-shell[data-left-collapsed="true"] {
@@ -5170,7 +5220,7 @@ body {
   --workbench-header-padding-bottom: 5px;
   --workbench-macos-traffic-light-safe-zone: var(--desktop-macos-traffic-light-safe-zone-width, 86px);
   --workbench-titlebar-leading-inset: var(--desktop-macos-traffic-light-leading-inset, 78px);
-  /* 左侧按钮、右侧标签和收起态控件全部贴同一条系统基线，避免位置漂移。 */
+  /* 用原生三色球中心减去 Web 顶栏自然中心，得到稳定的几何偏移。 */
   --workbench-titlebar-content-shift-y: calc(
     var(--desktop-macos-traffic-light-center-y, 14px) - var(--workbench-macos-titlebar-layout-center-y)
   );
@@ -5268,22 +5318,26 @@ body {
 
 .workbench-collapsed-controls.left {
   margin-left: var(--workbench-titlebar-leading-inset);
-  transform: translate3d(-6px, var(--workbench-collapsed-controls-shift-y), 0);
+  transform: translate3d(-6px, var(--workbench-collapsed-left-controls-live-shift-y), 0);
 }
 
 .workbench-collapsed-controls.right {
-  transform: translate3d(8px, var(--workbench-collapsed-controls-shift-y), 0);
+  transform: translate3d(8px, var(--workbench-collapsed-right-controls-live-shift-y), 0);
 }
 
 .workbench-collapsed-controls[data-visible="true"] {
   pointer-events: auto;
   opacity: 1;
   visibility: visible;
-  transform: translate3d(0, var(--workbench-collapsed-controls-shift-y), 0);
+  transform: translate3d(0, var(--workbench-collapsed-controls-live-shift-y), 0);
 }
 
 .workbench-collapsed-controls.left[data-visible="true"] {
-  transform: translate3d(0, var(--workbench-collapsed-controls-shift-y), 0);
+  transform: translate3d(0, var(--workbench-collapsed-left-controls-live-shift-y), 0);
+}
+
+.workbench-collapsed-controls.right[data-visible="true"] {
+  transform: translate3d(0, var(--workbench-collapsed-right-controls-live-shift-y), 0);
 }
 
 .workbench-main-drag-strip {

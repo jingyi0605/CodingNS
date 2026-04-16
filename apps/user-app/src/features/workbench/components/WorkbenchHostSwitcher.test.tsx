@@ -24,6 +24,7 @@ describe("WorkbenchHostSwitcher", () => {
   beforeEach(() => {
     switchHostMock.mockReset();
     window.localStorage.clear();
+    vi.restoreAllMocks();
     clientConfigStore.hydrate({
       platform: "desktop",
       activeHostId: "host-1",
@@ -79,7 +80,7 @@ describe("WorkbenchHostSwitcher", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "切换 HOST" }));
-    await user.click(screen.getByRole("button", { name: /办公室 Host/ }));
+    await user.click(screen.getByRole("button", { name: /办公室 Host.*10\.10\.1\.8:3002/ }));
 
     await waitFor(() => {
       expect(switchHostMock).toHaveBeenCalledWith("host-2");
@@ -131,6 +132,44 @@ describe("WorkbenchHostSwitcher", () => {
         username: "root",
         password: "Secret123!"
       });
+    });
+  });
+
+  it("支持删除非当前 HOST，并清理已保存的认证信息", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(
+      <ToastProvider>
+        <WorkbenchHostSwitcher />
+      </ToastProvider>
+    );
+
+    const nextHost = clientConfigStore.getState().hosts.find((host) => host.id === "host-2");
+    expect(nextHost).toBeDefined();
+
+    if (!nextHost) {
+      throw new Error("host-2 should exist");
+    }
+
+    window.localStorage.setItem(
+      "codingns.auth.remembered-login",
+      JSON.stringify({
+        [nextHost.id]: {
+          hostId: nextHost.id,
+          username: "tester",
+          password: "Secret123!",
+          savedAt: Date.now()
+        }
+      })
+    );
+
+    await user.click(screen.getByRole("button", { name: "切换 HOST" }));
+    await user.click(screen.getByRole("button", { name: `删除 HOST ${nextHost.name}` }));
+
+    await waitFor(() => {
+      expect(clientConfigStore.getState().hosts.some((host) => host.id === "host-2")).toBe(false);
+      expect(readRememberedLoginCredentials("host-2")).toBeNull();
     });
   });
 });

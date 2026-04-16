@@ -164,4 +164,38 @@ describe("authStore", () => {
       JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null")
     ).not.toHaveProperty("host-2");
   });
+
+  it("可以单独清理指定 HOST 的会话，不影响其他 HOST", async () => {
+    const clientConfigStore = await setupClientConfig();
+    const { authStore } = await import("./auth-store");
+
+    authStore.hydrate(storedSession);
+    clientConfigStore.hydrate({
+      ...clientConfigStore.getState(),
+      activeHostId: "host-2"
+    });
+    authStore.hydrate({
+      ...storedSession,
+      accessToken: "host-2-token"
+    });
+    clientConfigStore.hydrate({
+      ...clientConfigStore.getState(),
+      activeHostId: "host-1"
+    });
+
+    authStore.clearHostSession("host-2");
+
+    expect(authStore.getState().session?.accessToken).toBe("access-token");
+    expect(
+      JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null")
+    ).toMatchObject({
+      "host-1": {
+        hostId: "host-1",
+        session: storedSession
+      }
+    });
+    expect(
+      JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null")
+    ).not.toHaveProperty("host-2");
+  });
 });

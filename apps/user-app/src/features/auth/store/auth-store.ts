@@ -202,6 +202,24 @@ class AuthStore {
     });
   }
 
+  clearHostSession(hostId: string): void {
+    if (!hostId || !this.sessionMap[hostId]) {
+      return;
+    }
+
+    const nextSessionMap = { ...this.sessionMap };
+    delete nextSessionMap[hostId];
+    this.sessionMap = nextSessionMap;
+    this.persistSessionMap();
+
+    if (this.getCurrentHost()?.id === hostId) {
+      this.updateState({
+        status: "anonymous",
+        session: null
+      });
+    }
+  }
+
   private setSession(session: AuthSession, host = this.getCurrentHost()): void {
     if (!host) {
       return;
