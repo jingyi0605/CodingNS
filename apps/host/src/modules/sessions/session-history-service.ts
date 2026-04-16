@@ -3081,8 +3081,14 @@ export class SessionHistoryService {
           (session.provider === "claude-code" && shouldRemoveHiddenClaudeDebugSession(session))
         );
       });
+    const managedButlerSessionIds = this.listManagedButlerSessionIds(
+      staleHiddenSessions.map((session) => session.sessionId)
+    );
+    const deletableSessions = staleHiddenSessions.filter(
+      (session) => !managedButlerSessionIds.has(session.sessionId)
+    );
 
-    if (staleHiddenSessions.length === 0) {
+    if (deletableSessions.length === 0) {
       return;
     }
 
@@ -3093,10 +3099,36 @@ export class SessionHistoryService {
     });
 
     await runBatchedTransactions(
-      staleHiddenSessions.map((session) => session.sessionId),
+      deletableSessions.map((session) => session.sessionId),
       WORKSPACE_DISCOVERY_PERSIST_BATCH_SIZE,
       deleteTransaction
     );
+  }
+
+  private listManagedButlerSessionIds(sessionIds: string[]): Set<string> {
+    if (sessionIds.length === 0) {
+      return new Set();
+    }
+
+    const managedSessionIds = new Set<string>();
+
+    for (let index = 0; index < sessionIds.length; index += WORKSPACE_DISCOVERY_PERSIST_BATCH_SIZE) {
+      const batch = sessionIds.slice(index, index + WORKSPACE_DISCOVERY_PERSIST_BATCH_SIZE);
+      const placeholders = batch.map(() => "?").join(", ");
+      const rows = this.db
+        .prepare(
+          `SELECT session_id
+           FROM butler_sessions
+           WHERE session_id IN (${placeholders})`
+        )
+        .all(...batch) as Array<{ session_id: string }>;
+
+      for (const row of rows) {
+        managedSessionIds.add(row.session_id);
+      }
+    }
+
+    return managedSessionIds;
   }
 
   private shouldPreserveSyntheticCodexSession(

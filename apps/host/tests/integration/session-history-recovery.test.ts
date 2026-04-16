@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { resolveHostConfig } from "../../src/config/env.js";
@@ -247,5 +249,143 @@ describe("SessionHistoryService 恢复缺失索引", () => {
     expect(sessions.map((session) => session.sessionId)).not.toContain("session-stale-synthetic");
     expect(sessionBindingRepository.findBySessionId("session-stale-synthetic")).toBeNull();
     expect(sessionIndexRepository.findIndexRecordBySessionId("session-stale-synthetic")).toBeNull();
+  });
+
+  it("discoverWorkspaceSessions 不会清理已被 butler_sessions 引用的 stale hidden session", async () => {
+    const {
+      fixture,
+      database,
+      service,
+      sessionBindingRepository,
+      sessionIndexRepository
+    } = createHarness();
+    const staleTimestamp = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const archivedSessionDir = `${fixture.codexHomeDir}/archived_sessions`;
+    const rolloutFilePath = `${archivedSessionDir}/rollout-2026-04-11T09-11-20.543Z-test.jsonl`;
+
+    mkdirSync(archivedSessionDir, { recursive: true });
+    writeFileSync(
+      rolloutFilePath,
+      `${JSON.stringify({
+        timestamp: staleTimestamp,
+        type: "session_meta",
+        payload: {
+          id: "rollout-2026-04-11T09-11-20.543Z-test",
+          timestamp: staleTimestamp,
+          cwd: fixture.workspaceDir,
+          originator: "CodingNS Host",
+          source: "codingns"
+        }
+      })}\n`,
+      "utf8"
+    );
+
+    sessionBindingRepository.upsert({
+      sessionId: "session-stale-hidden-butler",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "rollout-2026-04-11T09-11-20.543Z-test",
+      rawStoreRef: rolloutFilePath,
+      createdAt: staleTimestamp,
+      updatedAt: staleTimestamp
+    });
+    sessionIndexRepository.upsert({
+      sessionId: "session-stale-hidden-butler",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      title: "已纳管的历史 rollout 会话",
+      messageCount: 0,
+      isArchived: true,
+      lastMessageAt: null,
+      createdAt: staleTimestamp,
+      updatedAt: staleTimestamp
+    });
+    database.db
+      .prepare(
+        `INSERT INTO butler_projects (
+           id,
+           workspace_id,
+           name,
+           repo_root,
+           default_provider,
+           instruction_profile_id,
+           approval_mode,
+           lifecycle_status,
+           risk_level,
+           config_json,
+           last_patrol_at,
+           last_verification_at,
+           created_at,
+           updated_at,
+           archived_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "butler-project-1",
+        "workspace-1",
+        "Fixture Workspace",
+        fixture.workspaceDir,
+        "codex",
+        null,
+        "controlled",
+        "active",
+        "low",
+        "{}",
+        null,
+        null,
+        staleTimestamp,
+        staleTimestamp,
+        null
+      );
+    database.db
+      .prepare(
+        `INSERT INTO butler_sessions (
+           id,
+           project_id,
+           session_id,
+           role,
+           ownership_mode,
+           status,
+           last_summary,
+           last_checkpoint_at,
+           created_at,
+           updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "butler-session-1",
+        "butler-project-1",
+        "session-stale-hidden-butler",
+        "adhoc",
+        "observed",
+        "idle",
+        "已有摘要",
+        staleTimestamp,
+        staleTimestamp,
+        staleTimestamp
+      );
+
+    Object.defineProperty(service, "providerDiscoveryHelperClient", {
+      value: {
+        discoverWorkspaceSessions: vi.fn(async () => ({
+          sessions: [],
+          isComplete: true
+        }))
+      },
+      configurable: true
+    });
+
+    const sessions = await service.discoverWorkspaceSessions("workspace-1", "user-1", {
+      force: true,
+      refreshStateMode: "deferred"
+    });
+
+    expect(sessions.map((session) => session.sessionId)).toContain("session-stale-hidden-butler");
+    expect(sessionBindingRepository.findBySessionId("session-stale-hidden-butler")).toMatchObject({
+      sessionId: "session-stale-hidden-butler"
+    });
+    expect(sessionIndexRepository.findIndexRecordBySessionId("session-stale-hidden-butler")).toMatchObject({
+      sessionId: "session-stale-hidden-butler"
+    });
   });
 });
