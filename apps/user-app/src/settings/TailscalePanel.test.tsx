@@ -286,6 +286,7 @@ function createPlatform(
       setWindowState: async () => ({ ok: true }),
       readDesktopConfig: async () => ({ ok: false, errorCode: "x", detail: "x" }),
       writeDesktopConfig: async () => ({ ok: true }),
+      scanLocalHosts: async () => ({ ok: false, errorCode: "x", detail: "x" }),
       getRuntimeInfo: async () => ({ ok: false, errorCode: "x", detail: "x" }),
       checkForUpdate: async () => ({ ok: false, errorCode: "x", detail: "x" }),
       installUpdate: async () => ({ ok: false, errorCode: "x", detail: "x" }),

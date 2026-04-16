@@ -22,7 +22,8 @@ function createMockAdapter(overrides: {
         ok: true,
         value: overrides.desktopConfig
       })),
-      writeDesktopConfig: vi.fn(async () => ({ ok: true }))
+      writeDesktopConfig: vi.fn(async () => ({ ok: true })),
+      scanLocalHosts: vi.fn(async () => ({ ok: false }))
     }
   } as never;
 }

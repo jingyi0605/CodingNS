@@ -3,6 +3,7 @@ import { useSyncExternalStore } from "react";
 import type {
   ClientRuntimeConfig,
   ClientRuntimeConfigPatch,
+  DiscoveredHostProfile,
   LegacyClientRuntimeConfigSnapshot
 } from "./client-config-types";
 import {
@@ -13,6 +14,12 @@ import {
 import { resolveRuntimePlatform } from "../platform/platform-adapter";
 
 type Listener = () => void;
+
+export interface ClientRuntimeStatePatch {
+  activeDiscoveredHostId?: string | null;
+  discoveredHosts?: DiscoveredHostProfile[];
+  localHostDiscovery?: ClientRuntimeConfig["localHostDiscovery"];
+}
 
 function createFallbackState(): ClientRuntimeConfig {
   return normalizeClientRuntimeConfigSnapshot(null, resolveRuntimePlatform());
@@ -33,6 +40,36 @@ class ClientConfigStore {
 
   hydrate(config: ClientRuntimeConfig | LegacyClientRuntimeConfigSnapshot): void {
     this.state = normalizeClientRuntimeConfigSnapshot(config, this.state.platform);
+    this.emit();
+  }
+
+  updateRuntime(patch: ClientRuntimeStatePatch): void {
+    const nextDiscoveredHosts = patch.discoveredHosts ?? this.state.discoveredHosts;
+    const nextActiveDiscoveredHostId =
+      patch.activeDiscoveredHostId !== undefined
+        ? patch.activeDiscoveredHostId
+        : this.state.activeDiscoveredHostId;
+    const resolvedActiveDiscoveredHostId =
+      nextActiveDiscoveredHostId
+      && nextDiscoveredHosts.some((host) => host.id === nextActiveDiscoveredHostId)
+        ? nextActiveDiscoveredHostId
+        : null;
+    const nextLocalHostDiscovery = patch.localHostDiscovery ?? this.state.localHostDiscovery;
+
+    if (
+      nextDiscoveredHosts === this.state.discoveredHosts
+      && resolvedActiveDiscoveredHostId === this.state.activeDiscoveredHostId
+      && nextLocalHostDiscovery === this.state.localHostDiscovery
+    ) {
+      return;
+    }
+
+    this.state = {
+      ...this.state,
+      discoveredHosts: nextDiscoveredHosts,
+      activeDiscoveredHostId: resolvedActiveDiscoveredHostId,
+      localHostDiscovery: nextLocalHostDiscovery
+    };
     this.emit();
   }
 

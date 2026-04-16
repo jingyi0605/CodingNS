@@ -79,7 +79,14 @@
 }
 
 [data-runtime-platform="desktop"][data-os-family="macos"] {
-  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+  --font-sans:
+    "SF Pro Text",
+    "SF Pro SC",
+    "PingFang SC",
+    "Helvetica Neue",
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
   --font-mono: "SF Mono", "SFMono-Regular", "Menlo", "Consolas", monospace;
   --window-toolbar-height: 56px;
 }
@@ -191,6 +198,7 @@ body {
   user-select: none;
 }
 
+.workbench-shell .git-sidebar .git-editor-row textarea,
 .workbench-shell .git-sidebar .git-editor-row input {
   -webkit-user-select: text;
   user-select: text;
@@ -2419,6 +2427,11 @@ body {
   font-weight: 700;
 }
 
+.workbench-host-switcher-item-badge[data-tone="discovered"] {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent-strong, var(--accent));
+}
+
 .workbench-host-switcher-menu {
   position: fixed;
   z-index: 2401;
@@ -2441,6 +2454,20 @@ body {
 .workbench-host-switcher-list {
   display: flex;
   flex-direction: column;
+}
+
+.workbench-host-switcher-section-label {
+  padding: 10px 14px 6px;
+  border-top: 1px solid var(--panel-separator);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.workbench-host-switcher-list > .workbench-host-switcher-section-label:first-child {
+  border-top: 0;
 }
 
 .workbench-host-switcher-item {
@@ -2542,6 +2569,17 @@ body {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.workbench-host-switcher-state-row {
+  padding: 10px 14px 14px;
+  border-top: 1px solid var(--panel-separator);
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.workbench-host-switcher-state-row[data-tone="error"] {
+  color: #ef4444;
 }
 
 .workbench-notification-badge {
@@ -3515,6 +3553,7 @@ body {
 }
 
 .workbench-workspace-section {
+  --workbench-workspace-row-height: 38px;
   --workbench-nav-base-inset: var(--workbench-sidebar-icon-inset);
   --workbench-nav-leading-slot: 16px;
   --workbench-nav-leading-gap: 4px;
@@ -3523,7 +3562,7 @@ body {
     + var(--workbench-nav-leading-slot)
     + var(--workbench-nav-leading-gap)
   );
-  gap: 8px;
+  gap: 0;
 }
 
 .workbench-workspace-group {
@@ -3534,11 +3573,13 @@ body {
 
 .workbench-workspace-header.minimal {
   --workbench-sidebar-actions-offset: max(3px, var(--workbench-sidebar-item-padding-end));
+  min-height: var(--workbench-workspace-row-height);
   padding: 0 var(--workbench-sidebar-actions-offset) 0 0;
 }
 
 .workbench-workspace-group + .workbench-workspace-group {
-  margin-top: 4px;
+  margin-top: 0;
+  border-top: 1px solid color-mix(in srgb, var(--panel-border) 80%, transparent);
 }
 
 .workbench-workspace-group[data-workspace-tone="worktree"] {
@@ -3629,7 +3670,7 @@ body {
   display: grid;
   grid-template-columns: var(--workbench-nav-leading-slot) minmax(0, 1fr);
   column-gap: var(--workbench-nav-leading-gap);
-  min-height: 22px;
+  min-height: var(--workbench-workspace-row-height);
   padding: 0 var(--workbench-sidebar-item-padding-end) 0 var(--workbench-nav-base-inset);
   border-radius: 8px;
 }
@@ -3653,6 +3694,7 @@ body {
   display: grid;
   grid-template-columns: repeat(3, 26px);
   align-items: center;
+  min-height: var(--workbench-workspace-row-height);
   justify-content: end;
   justify-items: end;
   gap: 4px;
@@ -6005,10 +6047,27 @@ body {
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] {
-  --sidebar-surface: rgba(242, 244, 246, 0.52);
-  --inspector-surface: rgba(245, 247, 249, 0.56);
-  --panel-bg: rgba(255, 255, 255, 0.42);
-  --panel-bg-strong: rgba(255, 255, 255, 0.68);
+  --sidebar-surface: rgba(247, 248, 250, 0.66);
+  --inspector-surface: rgba(249, 250, 252, 0.68);
+  --panel-bg: rgba(255, 255, 255, 0.24);
+  --panel-bg-strong: rgba(255, 255, 255, 0.42);
+  --panel-border: rgba(15, 23, 42, 0.035);
+  --panel-border-strong: rgba(15, 23, 42, 0.052);
+  --panel-separator: rgba(15, 23, 42, 0.04);
+  padding: 0;
+  background: transparent;
+  font-family:
+    "SF Pro Text",
+    "SF Pro SC",
+    "PingFang SC",
+    "Helvetica Neue",
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+  text-rendering: optimizeLegibility;
+  font-kerning: normal;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 [data-theme="dark"] .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] {
@@ -6029,17 +6088,30 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary {
   backdrop-filter: blur(28px) saturate(170%);
   -webkit-backdrop-filter: blur(28px) saturate(170%);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    inset 0 0 0 0.5px color-mix(in srgb, var(--panel-border) 52%, transparent);
+  box-shadow: none;
+  border: none !important;
+  outline: none;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav {
-  background: color-mix(in srgb, var(--sidebar-surface) 74%, transparent);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent 18%),
+    color-mix(in srgb, var(--sidebar-surface) 90%, white 10%);
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary {
-  background: color-mix(in srgb, var(--inspector-surface) 76%, transparent);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent 18%),
+    color-mix(in srgb, var(--inspector-surface) 90%, white 10%);
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-body-shell {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+  overflow: hidden;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-header,
@@ -6049,7 +6121,7 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-body,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-info-tabs {
   background: transparent;
-  border-color: transparent;
+  border-color: transparent !important;
   box-shadow: none;
 }
 
@@ -6093,6 +6165,63 @@ body {
   color: var(--text-primary);
 }
 
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .file-panel-tab,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .file-toolbar-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-primary-actions .primary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-primary-actions .secondary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-tree-file-icon,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-status-badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .file-session-badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .file-panel-tab-badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .session-provider-badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .session-runtime-origin-badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel-eyebrow,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-runtime-badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-card .badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-stat-pill,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-status-panel,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-detail-item,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-toolbar .ghost-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-actions .secondary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-actions .primary-button {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .file-panel-tab.active,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .file-panel-tab[aria-pressed="true"],
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .file-toolbar-button:hover:not(:disabled),
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .file-toolbar-button[data-active="true"],
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-primary-actions .primary-button:hover:not(:disabled),
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-primary-actions .secondary-button:hover:not(:disabled),
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-tree-trigger:hover,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-tree-file-button:hover,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-tree-file-button[data-active="true"],
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-tree-row[data-active="true"],
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-toolbar .ghost-button:hover:not(:disabled),
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-actions .secondary-button:hover:not(:disabled),
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-actions .primary-button:hover:not(:disabled),
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-detail-toggle:hover {
+  background: color-mix(in srgb, var(--panel-separator) 18%, transparent) !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .file-panel-tab-badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .file-session-badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-status-badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .session-provider-badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .session-runtime-origin-badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-tree-file-icon,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel-eyebrow,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-runtime-badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-card .badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-stat-pill {
+  padding-inline: 0;
+  min-width: auto;
+}
+
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button.active,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button[data-open="true"],
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-session-card:hover,
@@ -6111,9 +6240,24 @@ body {
   box-shadow: none;
 }
 
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .workbench-page,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .conversation-page-shell,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .terminal-layout,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .conversation-page-shell,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .terminal-shell {
+  border: none;
+  box-shadow: none;
+  outline: none;
+}
+
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-side-resizer {
   width: 6px;
   flex: 0 0 6px;
+  margin-left: -3px;
+  margin-right: -3px;
+  position: relative;
+  z-index: 8;
   background: transparent;
 }
 
@@ -6130,8 +6274,9 @@ body {
   transition: opacity 140ms ease;
 }
 
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-side-resizer:active::after,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-side-resizer:hover::after {
-  opacity: 0.42;
+  opacity: 0.3;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav,
@@ -6141,7 +6286,7 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .debug-readiness-page-shell,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .message-timeline,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree {
-  scrollbar-width: none;
+  scrollbar-width: thin;
   scrollbar-color: transparent transparent;
 }
 
@@ -6152,8 +6297,8 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .debug-readiness-page-shell::-webkit-scrollbar,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .message-timeline::-webkit-scrollbar,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree::-webkit-scrollbar {
-  width: 0;
-  height: 0;
+  width: 6px;
+  height: 6px;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav:hover,
@@ -6170,42 +6315,29 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .debug-readiness-page-shell:focus-within,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .message-timeline:focus-within,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree:focus-within {
-  scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--panel-border-strong) 72%, transparent) transparent;
 }
 
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav:hover::-webkit-scrollbar,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-body:hover::-webkit-scrollbar,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary:hover::-webkit-scrollbar,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-body:hover::-webkit-scrollbar,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .debug-readiness-page-shell:hover::-webkit-scrollbar,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .message-timeline:hover::-webkit-scrollbar,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree:hover::-webkit-scrollbar,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav:focus-within::-webkit-scrollbar,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-body:focus-within::-webkit-scrollbar,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary:focus-within::-webkit-scrollbar,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-body:focus-within::-webkit-scrollbar,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .debug-readiness-page-shell:focus-within::-webkit-scrollbar,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .message-timeline:focus-within::-webkit-scrollbar,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree:focus-within::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav::-webkit-scrollbar-track,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-body::-webkit-scrollbar-track,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary::-webkit-scrollbar-track,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-body::-webkit-scrollbar-track,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .debug-readiness-page-shell::-webkit-scrollbar-track,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .message-timeline::-webkit-scrollbar-track,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree::-webkit-scrollbar-track {
+  background: transparent;
 }
 
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav:hover::-webkit-scrollbar-track,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-body:hover::-webkit-scrollbar-track,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary:hover::-webkit-scrollbar-track,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-body:hover::-webkit-scrollbar-track,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .debug-readiness-page-shell:hover::-webkit-scrollbar-track,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .message-timeline:hover::-webkit-scrollbar-track,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree:hover::-webkit-scrollbar-track,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav:focus-within::-webkit-scrollbar-track,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-body:focus-within::-webkit-scrollbar-track,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary:focus-within::-webkit-scrollbar-track,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-body:focus-within::-webkit-scrollbar-track,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .debug-readiness-page-shell:focus-within::-webkit-scrollbar-track,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .message-timeline:focus-within::-webkit-scrollbar-track,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree:focus-within::-webkit-scrollbar-track {
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav::-webkit-scrollbar-thumb,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-body::-webkit-scrollbar-thumb,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary::-webkit-scrollbar-thumb,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-body::-webkit-scrollbar-thumb,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .debug-readiness-page-shell::-webkit-scrollbar-thumb,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .message-timeline::-webkit-scrollbar-thumb,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
   background: transparent;
 }
 
@@ -6223,6 +6355,175 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .debug-readiness-page-shell:focus-within::-webkit-scrollbar-thumb,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .message-timeline:focus-within::-webkit-scrollbar-thumb,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree:focus-within::-webkit-scrollbar-thumb {
-  border-radius: 999px;
   background: color-mix(in srgb, var(--panel-border-strong) 72%, transparent);
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-desktop-titlebar,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .terminal-tabbar,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .conversation-header,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .composer-panel {
+  border: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  outline: none;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-desktop-titlebar,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .terminal-tabbar {
+  background: color-mix(in srgb, var(--panel-bg-strong) 54%, transparent);
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-header h1,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-header h1,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .settings-title,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-titlebar-brand-text strong {
+  font-family:
+    "SF Pro Display",
+    "SF Pro SC",
+    "PingFang SC",
+    "Helvetica Neue",
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+  font-weight: 500;
+  letter-spacing: -0.018em;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .settings-row-title,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .settings-section-title,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-workspace-toggle strong,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .session-title,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-info-tab,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button {
+  font-weight: 500;
+  letter-spacing: -0.012em;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .settings-row-description,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .session-meta,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .settings-section-title {
+  color: color-mix(in srgb, var(--text-secondary) 84%, rgba(60, 60, 67, 0.58));
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-panel-view-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-panel-session-actions .secondary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-panel-session-actions .primary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-editor-row textarea,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-commit-inline input,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-primary-actions .secondary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-primary-actions .primary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-icon-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-sidebar .badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-history-kind-badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-history-ref-pill,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-history-entry-menu,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-operations-menu,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-selection-menu,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-remote-auth-banner,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-section,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-card,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-details,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-overview-card,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel-eyebrow,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-runtime-badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel .badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-stat-pill,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel .ghost-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel .secondary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel .primary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-toolbar .primary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-detail-toggle,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .workbench-section-counter {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-panel-view-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-panel-session-actions .secondary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-panel-session-actions .primary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-primary-actions .secondary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-primary-actions .primary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-icon-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel .ghost-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel .secondary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel .primary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-toolbar .primary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-detail-toggle {
+  color: color-mix(in srgb, var(--text-secondary) 90%, rgba(28, 28, 30, 0.88));
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-panel-view-button:hover,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-panel-session-actions .secondary-button:hover:not(:disabled),
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-panel-session-actions .primary-button:hover:not(:disabled),
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-primary-actions .secondary-button:hover:not(:disabled),
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-primary-actions .primary-button:hover:not(:disabled),
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-icon-button:hover:not(:disabled),
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel .ghost-button:hover:not(:disabled),
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel .secondary-button:hover:not(:disabled),
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel .primary-button:hover:not(:disabled),
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-toolbar .primary-button:hover:not(:disabled),
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-detail-toggle:hover {
+  background: color-mix(in srgb, var(--panel-separator) 18%, transparent) !important;
+  color: var(--text-primary);
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-panel-view-button.active,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-primary-actions .primary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-panel-session-actions .primary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel .primary-button,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-toolbar .primary-button {
+  background: transparent !important;
+  color: var(--accent);
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-editor-row textarea,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-commit-inline input {
+  box-shadow: none !important;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-editor-row textarea::placeholder,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-commit-inline input::placeholder {
+  color: color-mix(in srgb, var(--text-secondary) 72%, rgba(60, 60, 67, 0.56));
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-sidebar .badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-history-kind-badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-history-ref-pill,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-session-badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-panel-tab-badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel-eyebrow,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-runtime-badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel .badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-stat-pill,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .workbench-section-counter {
+  min-width: auto;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  border: none !important;
+  border-radius: 0;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-sidebar .badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-history-kind-badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-history-ref-pill,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel-eyebrow,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-runtime-badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel .badge,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-stat-pill,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .workbench-section-counter {
+  font-weight: 500;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-history-entry-menu,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-operations-menu,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-selection-menu {
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-menu-item:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--panel-separator) 16%, transparent);
 }

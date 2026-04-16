@@ -1,4 +1,5 @@
 import { clientConfigStore } from "../../../config/client-config-store";
+import { getEffectiveActiveHostId } from "../../../config/client-config-types";
 import type { SessionDisplaySortMode } from "../../../preferences/local-ui-preference-store";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import type {
@@ -26,7 +27,7 @@ export function buildHostWorkbenchNavigationSnapshotKey(hostId: string): string 
 
 export function readWorkbenchNavigationSnapshot(
   maxAgeMs = WORKBENCH_NAVIGATION_CACHE_MAX_AGE_MS,
-  hostId = clientConfigStore.getState().activeHostId
+  hostId = getEffectiveActiveHostId(clientConfigStore.getState())
 ): WorkbenchSnapshotDto | null {
   if (hostId) {
     const hostSnapshot = readViewSnapshot<WorkbenchSnapshotDto>(
@@ -44,7 +45,7 @@ export function readWorkbenchNavigationSnapshot(
 
 export function writeWorkbenchNavigationSnapshot(
   snapshot: WorkbenchSnapshotDto,
-  hostId = clientConfigStore.getState().activeHostId
+  hostId = getEffectiveActiveHostId(clientConfigStore.getState())
 ): void {
   writeViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY, snapshot);
 

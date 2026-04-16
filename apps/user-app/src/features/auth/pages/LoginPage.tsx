@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { canConfigureHostBaseUrl } from "../../../config/client-config-service";
 import { useClientConfigSelector } from "../../../config/client-config-store";
+import { getEffectiveActiveHostId } from "../../../config/client-config-types";
 import { serverConfigStore, useServerConfigSelector } from "../../../config/server-config";
 import { authGateway } from "../../../auth/auth-gateway";
 import { probeHost } from "../../../network/host-probe";
@@ -198,7 +199,7 @@ export function LoginPage() {
   const [searchParams] = useSearchParams();
   const platform = usePlatform();
   const appVersion = useAppVersion();
-  const activeHostId = useClientConfigSelector((state) => state.activeHostId);
+  const activeHostId = useClientConfigSelector((state) => getEffectiveActiveHostId(state));
   const canConfigureServerAddress = canConfigureHostBaseUrl(platform.platform);
   const rememberPasswordSupported = useMemo(() => supportsRememberPassword(platform), [platform]);
   const rememberedLoginSnapshot = useMemo(

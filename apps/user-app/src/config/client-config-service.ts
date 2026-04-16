@@ -8,6 +8,7 @@ import {
   type HostProfile,
   type HostProfileKind,
   type LegacyClientRuntimeConfigSnapshot,
+  type LocalHostDiscoveryState,
   type RuntimePlatform
 } from "./client-config-types";
 import { syncRememberedLoginServerBaseUrl } from "../features/auth/store/remembered-login";
@@ -77,7 +78,7 @@ function persistLocalConfig(config: ClientRuntimeConfig): void {
     return;
   }
 
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stripRuntimeConfigForPersistence(config)));
 }
 
 function readWindowOrigin(): string | null {
@@ -114,6 +115,16 @@ export function resolveDefaultHostBaseUrl(platform: RuntimePlatform): string {
 
 function nowIsoString(): string {
   return new Date().toISOString();
+}
+
+function createDefaultLocalHostDiscoveryState(): LocalHostDiscoveryState {
+  return {
+    status: "idle",
+    lastScannedAt: null,
+    cooldownUntil: null,
+    errorCode: null,
+    errorDetail: null
+  };
 }
 
 function normalizeString(value: unknown): string | null {
@@ -258,6 +269,9 @@ function createDefaultConfig(platform: RuntimePlatform): ClientRuntimeConfig {
     platform,
     activeHostId: DEFAULT_HOST_PROFILE_ID,
     hosts: [createHostProfile(resolveDefaultHostBaseUrl(platform), now)],
+    discoveredHosts: [],
+    activeDiscoveredHostId: null,
+    localHostDiscovery: createDefaultLocalHostDiscoveryState(),
     releaseChannel: "stable",
     autoReconnect: true,
     autoCheckUpdate: platform === "desktop",
@@ -280,6 +294,9 @@ function mergeConfig(baseConfig: ClientRuntimeConfig, patch?: RuntimeConfigPatch
       platform: nextPlatform,
       activeHostId: defaultConfig.activeHostId,
       hosts: defaultConfig.hosts,
+      discoveredHosts: baseConfig.discoveredHosts,
+      activeDiscoveredHostId: null,
+      localHostDiscovery: baseConfig.localHostDiscovery,
       releaseChannel: patch.releaseChannel ?? baseConfig.releaseChannel,
       autoReconnect: patch.autoReconnect ?? baseConfig.autoReconnect,
       autoCheckUpdate: patch.autoCheckUpdate ?? baseConfig.autoCheckUpdate,
@@ -310,6 +327,13 @@ function mergeConfig(baseConfig: ClientRuntimeConfig, patch?: RuntimeConfigPatch
     platform: nextPlatform,
     activeHostId: nextActiveHostId,
     hosts: nextHosts,
+    discoveredHosts: baseConfig.discoveredHosts,
+    activeDiscoveredHostId:
+      baseConfig.activeDiscoveredHostId
+      && baseConfig.discoveredHosts.some((host) => host.id === baseConfig.activeDiscoveredHostId)
+        ? baseConfig.activeDiscoveredHostId
+        : null,
+    localHostDiscovery: baseConfig.localHostDiscovery,
     releaseChannel: patch.releaseChannel ?? baseConfig.releaseChannel,
     autoReconnect: patch.autoReconnect ?? baseConfig.autoReconnect,
     autoCheckUpdate: patch.autoCheckUpdate ?? baseConfig.autoCheckUpdate,
@@ -317,6 +341,22 @@ function mergeConfig(baseConfig: ClientRuntimeConfig, patch?: RuntimeConfigPatch
     defaultPermissionMode: normalizePermissionMode(
       patch.defaultPermissionMode ?? baseConfig.defaultPermissionMode
     )
+  };
+}
+
+function stripRuntimeConfigForPersistence(config: ClientRuntimeConfig): Omit<
+  ClientRuntimeConfig,
+  "discoveredHosts" | "activeDiscoveredHostId" | "localHostDiscovery"
+> {
+  return {
+    platform: config.platform,
+    activeHostId: config.activeHostId,
+    hosts: config.hosts,
+    releaseChannel: config.releaseChannel,
+    autoReconnect: config.autoReconnect,
+    autoCheckUpdate: config.autoCheckUpdate,
+    language: config.language,
+    defaultPermissionMode: config.defaultPermissionMode
   };
 }
 
@@ -362,7 +402,7 @@ export async function persistClientRuntimeConfig(
   const adapter = createPlatformAdapter();
 
   if (adapter.isDesktop) {
-    await adapter.bridge.writeDesktopConfig(normalizedConfig);
+    await adapter.bridge.writeDesktopConfig(stripRuntimeConfigForPersistence(normalizedConfig));
   }
 
   return normalizedConfig;

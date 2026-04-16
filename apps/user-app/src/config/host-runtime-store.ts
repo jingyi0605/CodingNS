@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 import { clientConfigStore } from "./client-config-store";
+import { getEffectiveActiveHostId } from "./client-config-types";
 
 type Listener = () => void;
 
@@ -12,14 +13,14 @@ interface HostRuntimeState {
 class HostRuntimeStore {
   private state: HostRuntimeState = {
     epoch: 0,
-    activeHostId: clientConfigStore.getState().activeHostId
+    activeHostId: getEffectiveActiveHostId(clientConfigStore.getState())
   };
 
   private listeners = new Set<Listener>();
 
   constructor() {
     clientConfigStore.subscribe(() => {
-      const nextActiveHostId = clientConfigStore.getState().activeHostId;
+      const nextActiveHostId = getEffectiveActiveHostId(clientConfigStore.getState());
 
       if (nextActiveHostId === this.state.activeHostId) {
         return;

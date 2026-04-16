@@ -9,9 +9,12 @@ import { ToastProvider } from "../../../shared/toast";
 import { WorkbenchHostSwitcher } from "./WorkbenchHostSwitcher";
 
 const switchHostMock = vi.fn();
+const refreshLocalHostsMock = vi.fn();
 
 vi.mock("../../../config/host-switch-coordinator", async () => {
-  const actual = await vi.importActual("../../../config/host-switch-coordinator");
+  const actual = await vi.importActual<typeof import("../../../config/host-switch-coordinator")>(
+    "../../../config/host-switch-coordinator"
+  );
   return {
     ...actual,
     hostSwitchCoordinator: {
@@ -20,9 +23,25 @@ vi.mock("../../../config/host-switch-coordinator", async () => {
   };
 });
 
+vi.mock("../../../config/local-host-discovery-store", async () => {
+  const actual = (await vi.importActual(
+    "../../../config/local-host-discovery-store"
+  )) as typeof import("../../../config/local-host-discovery-store");
+  return {
+    ...actual,
+    localHostDiscoveryStore: {
+      ...actual.localHostDiscoveryStore,
+      refresh: (...args: unknown[]) => refreshLocalHostsMock(...args),
+      setActiveDiscoveredHost: vi.fn()
+    }
+  };
+});
+
 describe("WorkbenchHostSwitcher", () => {
   beforeEach(() => {
     switchHostMock.mockReset();
+    refreshLocalHostsMock.mockReset();
+    refreshLocalHostsMock.mockResolvedValue(undefined);
     window.localStorage.clear();
     vi.restoreAllMocks();
     clientConfigStore.hydrate({
@@ -172,6 +191,55 @@ describe("WorkbenchHostSwitcher", () => {
     await waitFor(() => {
       expect(clientConfigStore.getState().hosts.some((host) => host.id === "host-2")).toBe(false);
       expect(readRememberedLoginCredentials("host-2")).toBeNull();
+    });
+  });
+
+  it("会把自动发现 HOST 放到单独分组里并支持切换", async () => {
+    const user = userEvent.setup();
+
+    clientConfigStore.updateRuntime({
+      discoveredHosts: [
+        {
+          id: "local-discovered:http://127.0.0.1:4100:/tmp/demo",
+          discoveryKey: "local-discovered:http://127.0.0.1:4100:/tmp/demo",
+          name: "127.0.0.1:4100",
+          baseUrl: "http://127.0.0.1:4100",
+          kind: "local",
+          createdAt: "2026-04-16T00:00:00.000Z",
+          updatedAt: "2026-04-16T00:00:00.000Z",
+          lastConnectedAt: null,
+          lastUserId: null,
+          lastUsername: null,
+          source: "desktop-process-scan",
+          pid: 1001,
+          executable: "/opt/homebrew/bin/node",
+          dataDir: "/tmp/demo",
+          discoveredAt: "2026-04-16T00:00:00.000Z",
+          lastReachableAt: "2026-04-16T00:00:00.000Z"
+        }
+      ],
+      localHostDiscovery: {
+        status: "ready",
+        lastScannedAt: "2026-04-16T00:00:00.000Z",
+        cooldownUntil: "2026-04-16T00:00:10.000Z",
+        errorCode: null,
+        errorDetail: null
+      }
+    });
+
+    render(
+      <ToastProvider>
+        <WorkbenchHostSwitcher />
+      </ToastProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "切换 HOST" }));
+
+    expect(screen.getAllByText("自动发现").length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: /127\.0\.0\.1:4100.*http:\/\/127\.0\.0\.1:4100/ }));
+
+    await waitFor(() => {
+      expect(switchHostMock).toHaveBeenCalledWith("local-discovered:http://127.0.0.1:4100:/tmp/demo");
     });
   });
 });

@@ -1,8 +1,9 @@
 import { clientConfigStore } from "./client-config-store";
-import { getHostProfileById } from "./client-config-types";
+import { getEffectiveActiveHostId, getRuntimeHostById, isDiscoveredHostProfile } from "./client-config-types";
 import { authStore } from "../features/auth/store/auth-store";
 import { readRememberedLoginCredentials } from "../features/auth/store/remembered-login";
 import { probeHost } from "../network/host-probe";
+import { localHostDiscoveryStore } from "./local-host-discovery-store";
 
 export class HostSwitchError extends Error {
   constructor(
@@ -35,11 +36,11 @@ class HostSwitchCoordinator {
   private async performSwitch(hostId: string): Promise<void> {
     const currentConfig = clientConfigStore.getState();
 
-    if (currentConfig.activeHostId === hostId) {
+    if (getEffectiveActiveHostId(currentConfig) === hostId) {
       return;
     }
 
-    const targetHost = getHostProfileById(currentConfig, hostId);
+    const targetHost = getRuntimeHostById(currentConfig, hostId);
 
     if (!targetHost) {
       throw new HostSwitchError("HOST_NOT_FOUND", `找不到 HOST：${hostId}`);
@@ -67,6 +68,23 @@ class HostSwitchCoordinator {
     const nextConfig = clientConfigStore.getState();
     const switchedAt = new Date().toISOString();
 
+    if (isDiscoveredHostProfile(targetHost)) {
+      clientConfigStore.updateRuntime({
+        discoveredHosts: nextConfig.discoveredHosts.map((host) =>
+          host.id === hostId
+            ? {
+                ...host,
+                lastConnectedAt: switchedAt,
+                updatedAt: switchedAt
+              }
+            : host
+        ),
+        activeDiscoveredHostId: hostId
+      });
+      return;
+    }
+
+    localHostDiscoveryStore.setActiveDiscoveredHost(null);
     await clientConfigStore.update({
       hosts: nextConfig.hosts.map((host) =>
         host.id === hostId

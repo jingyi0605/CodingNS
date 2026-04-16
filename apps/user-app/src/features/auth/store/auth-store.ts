@@ -1,7 +1,12 @@
 import { useSyncExternalStore } from "react";
 
 import { clientConfigStore } from "../../../config/client-config-store";
-import { getActiveHost, type HostProfile } from "../../../config/client-config-types";
+import {
+  getActiveHost,
+  isDiscoveredHostProfile,
+  type HostProfile,
+  type RuntimeHostProfile
+} from "../../../config/client-config-types";
 import { ApiError } from "../../../shared/network/api-error";
 import { loginRequest, refreshRequest, setupRequest, type LoginPayload } from "../api/auth-api";
 
@@ -100,7 +105,7 @@ class AuthStore {
     return session;
   }
 
-  async loginForHost(host: HostProfile, payload: LoginPayload, baseUrl?: string): Promise<AuthSession> {
+  async loginForHost(host: RuntimeHostProfile, payload: LoginPayload, baseUrl?: string): Promise<AuthSession> {
     const session = await loginRequest(payload, baseUrl ?? host.baseUrl);
     this.persistSession(host, session);
 
@@ -232,7 +237,7 @@ class AuthStore {
     });
   }
 
-  private persistSession(host: HostProfile, session: AuthSession): void {
+  private persistSession(host: RuntimeHostProfile, session: AuthSession): void {
     this.sessionMap = {
       ...this.sessionMap,
       [host.id]: {
@@ -242,15 +247,34 @@ class AuthStore {
       }
     };
     this.persistSessionMap();
+    const connectedAt = new Date().toISOString();
+
+    if (isDiscoveredHostProfile(host)) {
+      clientConfigStore.updateRuntime({
+        discoveredHosts: clientConfigStore.getState().discoveredHosts.map((item) =>
+          item.id === host.id
+            ? {
+                ...item,
+                lastConnectedAt: connectedAt,
+                lastUserId: session.user.userId,
+                lastUsername: session.user.username,
+                updatedAt: connectedAt
+              }
+            : item
+        )
+      });
+      return;
+    }
+
     void clientConfigStore.update({
       hosts: clientConfigStore.getState().hosts.map((item) =>
         item.id === host.id
           ? {
               ...item,
-              lastConnectedAt: new Date().toISOString(),
+              lastConnectedAt: connectedAt,
               lastUserId: session.user.userId,
               lastUsername: session.user.username,
-              updatedAt: new Date().toISOString()
+              updatedAt: connectedAt
             }
           : item
       )
@@ -274,7 +298,7 @@ class AuthStore {
     });
   }
 
-  private getCurrentHost(): HostProfile | null {
+  private getCurrentHost(): RuntimeHostProfile | null {
     return getActiveHost(clientConfigStore.getState());
   }
 

@@ -1,9 +1,11 @@
 mod config;
+mod host_discovery;
 mod rollback;
 mod updater;
 mod window_manager;
 
 use config::DesktopRuntimeConfig;
+use host_discovery::DesktopLocalHostProcessHit;
 use rfd::FileDialog;
 use serde::Serialize;
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -43,6 +45,11 @@ fn read_desktop_config(app: AppHandle) -> Result<DesktopRuntimeConfig, String> {
 #[tauri::command]
 fn write_desktop_config(app: AppHandle, patch: DesktopRuntimeConfig) -> Result<(), String> {
     config::write_desktop_config(&app, patch)
+}
+
+#[tauri::command]
+fn scan_local_hosts() -> Result<Vec<DesktopLocalHostProcessHit>, String> {
+    host_discovery::scan_local_hosts()
 }
 
 #[tauri::command]
@@ -596,6 +603,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             read_desktop_config,
             write_desktop_config,
+            scan_local_hosts,
             get_runtime_info,
             check_for_update,
             install_update,

@@ -4,6 +4,7 @@ import type {
   AndroidUpdateInstallResult,
   ClientRuntimeConfig,
   ClientRuntimeConfigPatch,
+  DesktopLocalHostProcessHit,
   DesktopBridgeResult,
   DesktopReleaseState,
   DesktopRuntimeInfo,
@@ -46,6 +47,7 @@ export interface DesktopShellBridge {
   setWindowState(state: "minimize" | "maximize" | "toggle-maximize" | "close"): Promise<DesktopBridgeResult>;
   readDesktopConfig(): Promise<DesktopBridgeResult<Partial<ClientRuntimeConfig>>>;
   writeDesktopConfig(config: ClientRuntimeConfigPatch): Promise<DesktopBridgeResult>;
+  scanLocalHosts(): Promise<DesktopBridgeResult<DesktopLocalHostProcessHit[]>>;
   getRuntimeInfo(): Promise<DesktopBridgeResult<DesktopRuntimeInfo>>;
   checkForUpdate(channel: ReleaseChannel): Promise<DesktopBridgeResult<DesktopReleaseState>>;
   installUpdate(channel: ReleaseChannel): Promise<DesktopUpdateInstallResult>;
@@ -322,6 +324,10 @@ class WebDesktopShellBridge implements DesktopShellBridge {
     return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
   }
 
+  scanLocalHosts(): Promise<DesktopBridgeResult<DesktopLocalHostProcessHit[]>> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
   getRuntimeInfo(): Promise<DesktopBridgeResult<DesktopRuntimeInfo>> {
     return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
   }
@@ -432,6 +438,10 @@ class TauriDesktopShellBridge implements DesktopShellBridge {
 
   writeDesktopConfig(config: ClientRuntimeConfigPatch): Promise<DesktopBridgeResult> {
     return invokeDesktopCommand("write_desktop_config", { patch: config });
+  }
+
+  scanLocalHosts(): Promise<DesktopBridgeResult<DesktopLocalHostProcessHit[]>> {
+    return invokeDesktopCommand("scan_local_hosts");
   }
 
   getRuntimeInfo(): Promise<DesktopBridgeResult<DesktopRuntimeInfo>> {
@@ -556,6 +566,10 @@ class TauriMobileShellBridge implements DesktopShellBridge {
   }
 
   writeDesktopConfig(): Promise<DesktopBridgeResult> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  scanLocalHosts(): Promise<DesktopBridgeResult<DesktopLocalHostProcessHit[]>> {
     return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
   }
 

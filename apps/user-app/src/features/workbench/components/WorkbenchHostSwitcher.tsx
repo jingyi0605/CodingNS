@@ -2,12 +2,23 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { createPortal } from "react-dom";
 
 import { clientConfigStore, useClientConfigSelector } from "../../../config/client-config-store";
-import { getActiveHost, type HostProfile } from "../../../config/client-config-types";
+import {
+  getActiveHost,
+  getEffectiveActiveHostId,
+  isDiscoveredHostProfile,
+  type HostProfile,
+  type RuntimeHostProfile
+} from "../../../config/client-config-types";
 import { HostSwitchError, hostSwitchCoordinator } from "../../../config/host-switch-coordinator";
+import {
+  getVisibleDiscoveredHosts,
+  localHostDiscoveryStore
+} from "../../../config/local-host-discovery-store";
 import { normalizeServerBaseUrl } from "../../../config/server-config-shared";
 import {
   clearRememberedLoginCredentials,
-  persistRememberedLoginCredentials
+  persistRememberedLoginCredentials,
+  readRememberedLoginCredentials
 } from "../../auth/store/remembered-login";
 import { authStore, useAuthSelector } from "../../auth/store/auth-store";
 import { t } from "../../../shared/i18n";
@@ -34,9 +45,14 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
   const session = useAuthSelector((state) => state.session);
   const { showToast } = useToast();
   const activeHost = getActiveHost(runtimeConfig);
+  const activeHostId = getEffectiveActiveHostId(runtimeConfig);
   const orderedHosts = useMemo(
-    () => sortHosts(runtimeConfig.hosts, runtimeConfig.activeHostId),
-    [runtimeConfig.activeHostId, runtimeConfig.hosts]
+    () => sortHosts(runtimeConfig.hosts, activeHostId),
+    [activeHostId, runtimeConfig.hosts]
+  );
+  const discoveredHosts = useMemo(
+    () => sortHosts(getVisibleDiscoveredHosts(runtimeConfig), activeHostId),
+    [activeHostId, runtimeConfig]
   );
   const updateMenuStyle = useCallback(() => {
     if (typeof window === "undefined") {
@@ -87,6 +103,8 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
       return;
     }
 
+    void localHostDiscoveryStore.refresh();
+
     function handlePointerDown(event: PointerEvent) {
       if (!(event.target instanceof Node)) {
         return;
@@ -123,8 +141,8 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
     };
   }, [open, updateMenuStyle]);
 
-  async function handleSwitchHost(host: HostProfile): Promise<void> {
-    if (pendingHostId || pendingDeleteHostId || host.id === runtimeConfig.activeHostId) {
+  async function handleSwitchHost(host: RuntimeHostProfile): Promise<void> {
+    if (pendingHostId || pendingDeleteHostId || host.id === activeHostId) {
       setOpen(false);
       return;
     }
@@ -147,7 +165,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
   }
 
   async function handleDeleteHost(host: HostProfile): Promise<void> {
-    if (host.id === runtimeConfig.activeHostId || pendingHostId || pendingDeleteHostId) {
+    if (host.id === activeHostId || pendingHostId || pendingDeleteHostId) {
       return;
     }
 
@@ -224,8 +242,16 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
     };
 
     try {
+      const shouldPromoteActiveDiscoveredHost =
+        isDiscoveredHostProfile(activeHost) && activeHost.baseUrl === normalizedBaseUrl;
+
+      if (shouldPromoteActiveDiscoveredHost) {
+        localHostDiscoveryStore.setActiveDiscoveredHost(null);
+      }
+
       await clientConfigStore.update({
-        hosts: [...runtimeConfig.hosts, nextHost]
+        hosts: [...runtimeConfig.hosts, nextHost],
+        activeHostId: shouldPromoteActiveDiscoveredHost ? nextHost.id : runtimeConfig.activeHostId
       });
       if (trimmedUsername && passwordDraft) {
         persistRememberedLoginCredentials({
@@ -298,8 +324,11 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                 <strong>{t("shell.hostSwitcherTitle")}</strong>
               </div>
               <div className="workbench-host-switcher-list">
+                <div className="workbench-host-switcher-section-label">
+                  {t("shell.hostSwitcherSavedSection")}
+                </div>
                 {orderedHosts.map((host) => {
-                  const isActive = host.id === runtimeConfig.activeHostId;
+                  const isActive = host.id === activeHostId;
                   const status = isActive
                     ? session?.user.username ?? host.lastUsername ?? host.baseUrl
                     : host.lastUsername ?? host.baseUrl;
@@ -365,6 +394,72 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                     </div>
                   );
                 })}
+                {discoveredHosts.length > 0 ? (
+                  <>
+                    <div className="workbench-host-switcher-section-label">
+                      {t("shell.hostSwitcherDiscoveredSection")}
+                    </div>
+                    {discoveredHosts.map((host) => {
+                      const isActive = host.id === activeHostId;
+                      const rememberedLogin = readRememberedLoginCredentials(host.id);
+                      const status = isActive
+                        ? session?.user.username ?? rememberedLogin?.username ?? host.baseUrl
+                        : rememberedLogin?.username ?? host.baseUrl;
+
+                      return (
+                        <div
+                          key={host.id}
+                          className="workbench-host-switcher-item"
+                          data-active={isActive}
+                          data-discovered="true"
+                        >
+                          <button
+                            type="button"
+                            className="workbench-host-switcher-item-main"
+                            disabled={pendingHostId !== null || pendingDeleteHostId !== null}
+                            onClick={() => {
+                              void handleSwitchHost(host);
+                            }}
+                          >
+                            <span className="workbench-host-switcher-item-copy">
+                              <span className="workbench-host-switcher-item-title">
+                                {host.name}
+                                <span className="workbench-host-switcher-item-badge" data-tone="discovered">
+                                  {t("shell.hostSwitcherDiscoveredBadge")}
+                                </span>
+                                {isActive ? (
+                                  <span className="workbench-host-switcher-item-badge">
+                                    {t("shell.hostSwitcherCurrentBadge")}
+                                  </span>
+                                ) : null}
+                              </span>
+                              <span className="workbench-host-switcher-item-meta">{status}</span>
+                            </span>
+                            <span className="workbench-host-switcher-item-trailing">
+                              {pendingHostId === host.id ? (
+                                t("shell.hostSwitcherSwitching")
+                              ) : isActive ? (
+                                <CheckIcon />
+                              ) : (
+                                <ChevronRightIcon />
+                              )}
+                            </span>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </>
+                ) : null}
+                {runtimeConfig.localHostDiscovery.status === "refreshing" ? (
+                  <div className="workbench-host-switcher-state-row">
+                    {t("shell.hostDiscoveryRefreshing")}
+                  </div>
+                ) : null}
+                {runtimeConfig.localHostDiscovery.status === "failed" ? (
+                  <div className="workbench-host-switcher-state-row" data-tone="error">
+                    {t("shell.hostDiscoveryFailed")}
+                  </div>
+                ) : null}
               </div>
 
               {formOpen ? (
@@ -445,7 +540,10 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
   );
 }
 
-function sortHosts(hosts: readonly HostProfile[], activeHostId: string | null): HostProfile[] {
+function sortHosts<T extends Pick<HostProfile, "id" | "createdAt" | "updatedAt" | "lastConnectedAt">>(
+  hosts: readonly T[],
+  activeHostId: string | null
+): T[] {
   return [...hosts].sort((left, right) => {
     if (left.id === activeHostId) {
       return -1;

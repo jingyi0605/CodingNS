@@ -3,10 +3,16 @@ export type ReleaseChannel = "stable" | "beta";
 export type AppLanguage = "zh-CN" | "en-US";
 export type ClientPermissionMode = "default" | "acceptEdits" | "bypassPermissions";
 export type HostProfileKind = "local" | "lan" | "remote" | "custom";
+export type LocalHostDiscoveryStatus =
+  | "idle"
+  | "refreshing"
+  | "ready"
+  | "unsupported"
+  | "failed";
 
 export const DEFAULT_HOST_PROFILE_ID = "default-host";
 
-export interface HostProfile {
+export interface HostProfileBase {
   id: string;
   name: string;
   baseUrl: string;
@@ -18,10 +24,45 @@ export interface HostProfile {
   lastUsername: string | null;
 }
 
+export interface HostProfile extends HostProfileBase {}
+
+export interface DesktopLocalHostProcessHit {
+  pid: number;
+  commandLine: string;
+  executable: string | null;
+  source: "codingns" | "npm" | "npx" | "node";
+  baseUrl: string | null;
+  port: number | null;
+  dataDir: string | null;
+}
+
+export interface DiscoveredHostProfile extends HostProfileBase {
+  discoveryKey: string;
+  source: "desktop-process-scan";
+  pid: number | null;
+  executable: string | null;
+  dataDir: string | null;
+  discoveredAt: string;
+  lastReachableAt: string | null;
+}
+
+export interface LocalHostDiscoveryState {
+  status: LocalHostDiscoveryStatus;
+  lastScannedAt: string | null;
+  cooldownUntil: string | null;
+  errorCode: string | null;
+  errorDetail: string | null;
+}
+
+export type RuntimeHostProfile = HostProfile | DiscoveredHostProfile;
+
 export interface ClientRuntimeConfig {
   platform: RuntimePlatform;
   activeHostId: string | null;
   hosts: HostProfile[];
+  discoveredHosts: DiscoveredHostProfile[];
+  activeDiscoveredHostId: string | null;
+  localHostDiscovery: LocalHostDiscoveryState;
   releaseChannel: ReleaseChannel;
   autoReconnect: boolean;
   autoCheckUpdate: boolean;
@@ -178,6 +219,10 @@ export interface DesktopUpdateInstallResult {
   downloadedFilePath?: string | null;
 }
 
+export function isDiscoveredHostProfile(host: RuntimeHostProfile | HostProfile | null | undefined): host is DiscoveredHostProfile {
+  return Boolean(host && "discoveryKey" in host && typeof host.discoveryKey === "string");
+}
+
 export function getHostProfileById(
   config: Pick<ClientRuntimeConfig, "activeHostId" | "hosts">,
   hostId: string | null | undefined
@@ -189,12 +234,49 @@ export function getHostProfileById(
   return config.hosts.find((host) => host.id === hostId) ?? null;
 }
 
-export function getActiveHost(config: Pick<ClientRuntimeConfig, "activeHostId" | "hosts">): HostProfile | null {
-  return getHostProfileById(config, config.activeHostId) ?? config.hosts[0] ?? null;
+export function getRuntimeHostById(
+  config: Pick<ClientRuntimeConfig, "hosts"> & Partial<Pick<ClientRuntimeConfig, "discoveredHosts">>,
+  hostId: string | null | undefined
+): RuntimeHostProfile | null {
+  if (!hostId) {
+    return null;
+  }
+
+  return (
+    config.hosts.find((host) => host.id === hostId)
+    ?? config.discoveredHosts?.find((host) => host.id === hostId)
+    ?? null
+  );
+}
+
+export function getEffectiveActiveHostId(
+  config: Pick<ClientRuntimeConfig, "activeHostId" | "hosts">
+    & Partial<Pick<ClientRuntimeConfig, "activeDiscoveredHostId" | "discoveredHosts">>
+): string | null {
+  if (
+    config.activeDiscoveredHostId
+    && config.discoveredHosts?.some((host) => host.id === config.activeDiscoveredHostId)
+  ) {
+    return config.activeDiscoveredHostId;
+  }
+
+  if (config.activeHostId && config.hosts.some((host) => host.id === config.activeHostId)) {
+    return config.activeHostId;
+  }
+
+  return config.hosts[0]?.id ?? config.discoveredHosts?.[0]?.id ?? null;
+}
+
+export function getActiveHost(
+  config: Pick<ClientRuntimeConfig, "activeHostId" | "hosts">
+    & Partial<Pick<ClientRuntimeConfig, "activeDiscoveredHostId" | "discoveredHosts">>
+): RuntimeHostProfile | null {
+  return getRuntimeHostById(config, getEffectiveActiveHostId(config));
 }
 
 export function getActiveHostBaseUrl(
   config: Pick<ClientRuntimeConfig, "activeHostId" | "hosts">
+    & Partial<Pick<ClientRuntimeConfig, "activeDiscoveredHostId" | "discoveredHosts">>
 ): string | null {
   return getActiveHost(config)?.baseUrl ?? null;
 }
