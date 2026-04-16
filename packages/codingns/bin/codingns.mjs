@@ -229,7 +229,7 @@ async function runAssistantCommand(argv) {
         helpTopic: "terminals.history"
       }, (options) => ({
         beforeSeq: readOptionalTrimmedValue(options.values["before-seq"]),
-        limit: readOptionalTrimmedValue(options.values.limit)
+        limit: readAssistantTerminalHistoryLimitOption(options.values.limit)
       })));
       return;
     }
@@ -1006,6 +1006,27 @@ function readStringOption(...values) {
 function readOptionalTrimmedValue(value) {
   const normalized = typeof value === "string" ? value.trim() : "";
   return normalized.length > 0 ? normalized : null;
+}
+
+function readAssistantTerminalHistoryLimitOption(value) {
+  const normalized = readOptionalTrimmedValue(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(normalized, 10);
+
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return normalized;
+  }
+
+  if (parsed <= 100) {
+    return normalized;
+  }
+
+  console.warn("[codingns] assistant terminals history 的 --limit 最大为 100，已自动收敛到 100。");
+  return "100";
 }
 
 function readMultiOptionValues(value) {

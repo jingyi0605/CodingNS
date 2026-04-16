@@ -288,7 +288,7 @@ export class AssistantCapabilityController {
     reply.send(await this.assistantCapabilityService.readTerminalHistory({
       terminalId: request.params.terminalId,
       beforeSeq: normalizeOptionalInteger(request.query.beforeSeq, "beforeSeq"),
-      limit: normalizePositiveInteger(request.query.limit, 20, 100, "limit")
+      limit: normalizePositiveIntegerWithUpperClamp(request.query.limit, 20, 100, "limit")
     }));
   };
 
@@ -631,6 +631,30 @@ function normalizePositiveInteger(
   }
 
   return parsed;
+}
+
+function normalizePositiveIntegerWithUpperClamp(
+  value: string | undefined,
+  fallback: number,
+  max: number,
+  field: string
+): number {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: `${field} 必须是大于 0 的整数`,
+      field
+    });
+  }
+
+  return Math.min(parsed, max);
 }
 
 function normalizeOptionalInteger(value: string | undefined, field: string): number | null {

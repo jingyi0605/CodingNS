@@ -241,6 +241,44 @@ describe("assistant capability routes", () => {
     expect(assistantCapabilityService.listTerminals).not.toHaveBeenCalled();
   });
 
+  it("读取 assistant 终端历史时会把超上限 limit 收敛到 100", async () => {
+    const assistantCapabilityService = {
+      readTerminalHistory: vi.fn(async () => ({
+        ok: true,
+        capability: "terminals.history.read",
+        auditId: "audit-terminal-history",
+        timestamp: "2026-04-16T08:00:00.000Z",
+        targetRef: {
+          kind: "terminal",
+          id: "terminal-1"
+        },
+        payload: {
+          page: {
+            terminalId: "terminal-1",
+            content: "",
+            lineCount: 0,
+            anchorLine: 0,
+            hasMore: false,
+            nextBeforeSeq: null
+          }
+        }
+      }))
+    };
+
+    const app = await createAssistantApp(assistantCapabilityService);
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/assistant/terminals/terminal-1/history?beforeSeq=20&limit=200"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(assistantCapabilityService.readTerminalHistory).toHaveBeenCalledWith({
+      terminalId: "terminal-1",
+      beforeSeq: 20,
+      limit: 100
+    });
+  });
+
   it("fork 路由默认按 session sourceType 调服务", async () => {
     const assistantCapabilityService = {
       forkSession: vi.fn(async () => ({
