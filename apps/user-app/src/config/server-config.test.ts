@@ -68,4 +68,63 @@ describe("normalizeServerBaseUrl", () => {
     expect(clientConfigStore.getState().hosts).toHaveLength(2);
     expect(clientConfigStore.getState().hosts[0].baseUrl).toBe("http://127.0.0.1:3002");
   });
+
+  it("服务器配置列表会包含自动发现 HOST，并标记来源为自动发现", () => {
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: "host-1",
+      hosts: [
+        {
+          id: "host-1",
+          name: "127.0.0.1:3002",
+          baseUrl: "http://127.0.0.1:3002",
+          kind: "local",
+          createdAt: "2026-04-16T00:00:00.000Z",
+          updatedAt: "2026-04-16T00:00:00.000Z",
+          lastConnectedAt: null,
+          lastUserId: null,
+          lastUsername: null
+        }
+      ],
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    clientConfigStore.updateRuntime({
+      discoveredHosts: [
+        {
+          id: "local-discovered:http://127.0.0.1:4100:/tmp/demo",
+          discoveryKey: "local-discovered:http://127.0.0.1:4100:/tmp/demo",
+          name: "127.0.0.1:4100",
+          baseUrl: "http://127.0.0.1:4100",
+          kind: "local",
+          createdAt: "2026-04-16T00:00:00.000Z",
+          updatedAt: "2026-04-16T00:00:00.000Z",
+          lastConnectedAt: null,
+          lastUserId: null,
+          lastUsername: null,
+          source: "desktop-process-scan",
+          pid: 1001,
+          executable: "/opt/homebrew/bin/node",
+          dataDir: "/tmp/demo",
+          discoveredAt: "2026-04-16T00:00:00.000Z",
+          lastReachableAt: "2026-04-16T00:00:00.000Z"
+        }
+      ]
+    });
+
+    const state = serverConfigStore.getState();
+
+    expect(state.options).toContain("http://127.0.0.1:4100");
+    expect(state.presetOptions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          value: "http://127.0.0.1:4100",
+          source: "discovered"
+        })
+      ])
+    );
+  });
 });

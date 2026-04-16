@@ -9200,17 +9200,17 @@ textarea:focus-visible {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  padding: 6px 0 0;
+  padding: 0;
 }
 
 .workbench-workspace-group + .workbench-workspace-group {
-  margin-top: 4px;
-  padding-top: 12px;
+  margin-top: 0;
+  padding-top: 0;
   border-top: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
 }
 
 .workbench-workspace-header.minimal {
-  padding: 4px 0;
+  padding: 0;
 }
 
 .workbench-workspace-actions.minimal {
@@ -11086,11 +11086,13 @@ textarea:focus-visible {
 .workbench-workspace-header.minimal {
   justify-content: space-between;
   gap: 10px;
-  padding: 4px 2px 6px;
+  min-height: var(--workbench-workspace-row-height);
+  padding: 0 2px;
   min-width: 0;
 }
 
 .workbench-workspace-section {
+  --workbench-workspace-row-height: 38px;
   --workbench-nav-base-inset: 6px;
   --workbench-nav-leading-slot: 16px;
   --workbench-nav-leading-gap: 4px;
@@ -11099,6 +11101,11 @@ textarea:focus-visible {
     + var(--workbench-nav-leading-slot)
     + var(--workbench-nav-leading-gap)
   );
+  gap: 0;
+}
+
+.workbench-workspace-section > .workbench-section-heading {
+  margin-bottom: 10px;
 }
 
 .workbench-workspace-toggle {
@@ -11107,6 +11114,7 @@ textarea:focus-visible {
   column-gap: var(--workbench-nav-leading-gap);
   align-items: center;
   flex: 1 1 auto;
+  min-height: var(--workbench-workspace-row-height);
   min-width: 0;
   overflow: hidden;
   padding-left: var(--workbench-nav-base-inset);
@@ -11136,6 +11144,7 @@ textarea:focus-visible {
   display: grid;
   grid-template-columns: repeat(3, 30px);
   align-items: center;
+  min-height: var(--workbench-workspace-row-height);
   justify-content: end;
   justify-items: end;
   gap: 8px;
@@ -12708,6 +12717,67 @@ textarea:focus-visible {
     );
   --desktop-panel-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
   --desktop-panel-shadow-strong: 0 18px 40px rgba(15, 23, 42, 0.08);
+  --butler-init-shell-bg:
+    radial-gradient(circle at 14% 18%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 28%),
+    radial-gradient(circle at 86% 82%, color-mix(in srgb, var(--success) 14%, transparent), transparent 26%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-primary) 92%, var(--surface-overlay-highlight) 24%),
+      var(--bg-primary)
+    );
+  --butler-init-glow-primary:
+    radial-gradient(
+      circle,
+      color-mix(in srgb, var(--accent) 34%, var(--surface-overlay-highlight) 66%),
+      transparent 68%
+    );
+  --butler-init-glow-secondary:
+    radial-gradient(circle, color-mix(in srgb, var(--success) 28%, transparent), transparent 70%);
+  --butler-init-card-border: var(--desktop-panel-edge);
+  --butler-init-card-bg: var(--surface-panel-bg-strong);
+  --butler-init-card-shadow: var(--surface-panel-shadow);
+  --butler-init-avatar-bg:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 18%, var(--bg-surface)),
+      color-mix(in srgb, var(--success) 18%, var(--bg-surface))
+    );
+  --butler-init-avatar-fg: color-mix(in srgb, var(--text-primary) 86%, var(--accent) 14%);
+  --butler-init-avatar-shadow:
+    0 14px 28px color-mix(in srgb, var(--accent) 14%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 82%, transparent);
+  --butler-init-provider-border: color-mix(in srgb, var(--accent) 24%, var(--surface-overlay-border));
+  --butler-init-provider-bg: color-mix(in srgb, var(--accent) 10%, var(--bg-surface));
+  --butler-init-chip-border: color-mix(in srgb, var(--border-primary) 86%, transparent);
+  --butler-init-chip-bg: color-mix(in srgb, var(--bg-surface) 72%, var(--bg-hover));
+  --butler-init-chip-text: color-mix(in srgb, var(--text-secondary) 90%, var(--text-primary) 10%);
+  --butler-init-submit-border: color-mix(in srgb, var(--accent) 52%, var(--surface-overlay-border));
+  --butler-init-submit-bg:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 86%, var(--surface-overlay-highlight) 14%),
+      color-mix(in srgb, var(--accent-hover) 82%, var(--bg-primary) 18%)
+    );
+  --butler-init-submit-bg-hover:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 90%, var(--surface-overlay-highlight) 10%),
+      color-mix(in srgb, var(--accent-hover) 86%, var(--bg-primary) 14%)
+    );
+  --butler-init-submit-bg-disabled:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 48%, var(--bg-secondary) 52%),
+      color-mix(in srgb, var(--accent-hover) 42%, var(--bg-primary) 58%)
+    );
+  --butler-init-submit-shadow:
+    0 16px 28px color-mix(in srgb, var(--accent) 22%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 24%, transparent);
+  --butler-init-submit-shadow-hover:
+    0 18px 30px color-mix(in srgb, var(--accent) 26%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 28%, transparent);
+  --butler-init-submit-text: var(--text-inverse);
+  --butler-init-submit-text-disabled: color-mix(in srgb, var(--text-inverse) 82%, transparent);
 }
 
 [data-theme="dark"] {
@@ -17100,6 +17170,33 @@ textarea:focus-visible {
   font-size: 10px;
   color: var(--cyber-text-dim);
   pointer-events: none;
+}
+
+.cyber-select-tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.cyber-select-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--cyber-border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--cyber-text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.cyber-select-tag[data-tone="discovered"] {
+  border-color: rgba(10, 132, 255, 0.45);
+  background: rgba(10, 132, 255, 0.12);
+  color: var(--cyber-primary);
 }
 
 .cyber-input-wrapper {

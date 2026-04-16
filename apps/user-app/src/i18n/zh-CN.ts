@@ -20,6 +20,7 @@ export const zhCN = {
     serverHint:
       "登录、实时消息和终端都会连接到这里。客户端应填写 Host API 地址，例如 http://127.0.0.1:3002；4174、5173 这类前端开发端口不是给正式客户端直接连接的，只有代理和跨域都配好时才适合临时调试。",
     serverInvalid: "服务器地址无效，请检查后再试。",
+    serverDiscoveredTag: "自动发现",
     serverCurrent: "当前服务器",
     bootstrapTitle: "先完成首次初始化",
     bootstrapSubtitle: "这个 Host 还没有管理员账号，先创建一个最小登录入口。",

@@ -21,6 +21,7 @@ export const enUS = {
     serverHint:
       "Login, realtime messages, and terminals all connect through this host. Point the client at the Host API endpoint such as http://127.0.0.1:3002; frontend dev ports like 4174 or 5173 are not meant for packaged clients and only work for temporary debugging when proxying and CORS are configured correctly.",
     serverInvalid: "Invalid server address. Check it and try again.",
+    serverDiscoveredTag: "Auto-discovered",
     serverCurrent: "Current Server",
     bootstrapTitle: "Complete the first-time bootstrap",
     bootstrapSubtitle:

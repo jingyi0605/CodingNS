@@ -255,6 +255,61 @@ describe("LoginPage", () => {
     });
   });
 
+  it("服务器配置弹窗会展示自动发现 HOST，并标注自动发现标签", async () => {
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+      platform: "Win32"
+    });
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn()
+    };
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      hostBaseUrl: "http://127.0.0.1:3002",
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    clientConfigStore.updateRuntime({
+      discoveredHosts: [
+        {
+          id: "local-discovered:http://127.0.0.1:4100:/tmp/demo",
+          discoveryKey: "local-discovered:http://127.0.0.1:4100:/tmp/demo",
+          name: "127.0.0.1:4100",
+          baseUrl: "http://127.0.0.1:4100",
+          kind: "local",
+          createdAt: "2026-04-16T00:00:00.000Z",
+          updatedAt: "2026-04-16T00:00:00.000Z",
+          lastConnectedAt: null,
+          lastUserId: null,
+          lastUsername: null,
+          source: "desktop-process-scan",
+          pid: 1001,
+          executable: "/opt/homebrew/bin/node",
+          dataDir: "/tmp/demo",
+          discoveredAt: "2026-04-16T00:00:00.000Z",
+          lastReachableAt: "2026-04-16T00:00:00.000Z"
+        }
+      ]
+    });
+
+    renderLoginPage();
+
+    await userEvent.click(screen.getByRole("button", { name: new RegExp(t("auth.serverSettings")) }));
+
+    const presetSelect = await screen.findByRole("combobox", { name: t("auth.serverPreset") });
+
+    expect(screen.getByRole("option", { name: /http:\/\/127\.0\.0\.1:4100.*自动发现/ })).toBeInTheDocument();
+
+    await userEvent.selectOptions(presetSelect, "http://127.0.0.1:4100");
+
+    expect(screen.getByText(t("auth.serverDiscoveredTag"))).toBeInTheDocument();
+    expect(screen.getByLabelText(t("auth.serverAddress"))).toHaveValue("http://127.0.0.1:4100");
+  });
+
   it("第三次失败后会显示验证码，并在验证码正确后继续登录", async () => {
     mockNavigator({
       userAgent:

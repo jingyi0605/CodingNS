@@ -1,7 +1,8 @@
 import { useSyncExternalStore } from "react";
 
 import { clientConfigStore } from "./client-config-store";
-import { getActiveHost } from "./client-config-types";
+import { getActiveHost, isDiscoveredHostProfile } from "./client-config-types";
+import { getVisibleDiscoveredHosts } from "./local-host-discovery-store";
 import { normalizeServerBaseUrl } from "./server-config-shared";
 
 const HISTORY_STORAGE_KEY = "codingns.server.base-url.history";
@@ -11,6 +12,14 @@ const CUSTOM_SERVER_OPTION = "__custom__";
 export interface ServerConfigState {
   baseUrl: string;
   options: string[];
+  presetOptions: ServerPresetOption[];
+}
+
+export type ServerPresetSource = "saved" | "discovered" | "history" | "origin";
+
+export interface ServerPresetOption {
+  value: string;
+  source: ServerPresetSource;
 }
 
 function canUseLocalStorage(): boolean {
@@ -79,6 +88,22 @@ function uniqOptions(items: Array<string | null | undefined>): string[] {
   return result;
 }
 
+function uniqPresetOptions(items: Array<ServerPresetOption | null | undefined>): ServerPresetOption[] {
+  const seen = new Set<string>();
+  const result: ServerPresetOption[] = [];
+
+  for (const item of items) {
+    if (!item || seen.has(item.value)) {
+      continue;
+    }
+
+    seen.add(item.value);
+    result.push(item);
+  }
+
+  return result;
+}
+
 function buildOptions(baseUrl: string, hostBaseUrls: string[]): string[] {
   const history = readStoredHistory();
   const nextOptions = uniqOptions([
@@ -89,6 +114,43 @@ function buildOptions(baseUrl: string, hostBaseUrls: string[]): string[] {
   ]);
 
   return nextOptions.slice(0, MAX_HISTORY_SIZE);
+}
+
+function buildPresetOptions(config: ReturnType<typeof clientConfigStore.getState>): ServerPresetOption[] {
+  const activeHost = getActiveHost(config);
+  const history = readStoredHistory().map((value) => ({
+    value,
+    source: "history" as const
+  }));
+  const origin = safelyNormalizeServerBaseUrl(readWindowOrigin());
+  const savedHosts = config.hosts.map((host) => ({
+    value: host.baseUrl,
+    source: "saved" as const
+  }));
+  const discoveredHosts = getVisibleDiscoveredHosts(config).map((host) => ({
+    value: host.baseUrl,
+    source: "discovered" as const
+  }));
+
+  const activeOption = activeHost
+    ? {
+        value: activeHost.baseUrl,
+        source: isDiscoveredHostProfile(activeHost) ? ("discovered" as const) : ("saved" as const)
+      }
+    : null;
+
+  return uniqPresetOptions([
+    activeOption,
+    ...savedHosts,
+    ...discoveredHosts,
+    ...history,
+    origin
+      ? {
+          value: origin,
+          source: "origin" as const
+        }
+      : null
+  ]).slice(0, MAX_HISTORY_SIZE);
 }
 
 function persistHistory(options: string[]): void {
@@ -108,7 +170,12 @@ class ServerConfigStoreCompat {
       if (
         nextState.baseUrl === this.state.baseUrl &&
         nextState.options.length === this.state.options.length &&
-        nextState.options.every((item, index) => item === this.state.options[index])
+        nextState.options.every((item, index) => item === this.state.options[index]) &&
+        nextState.presetOptions.length === this.state.presetOptions.length &&
+        nextState.presetOptions.every((item, index) => {
+          const current = this.state.presetOptions[index];
+          return current?.value === item.value && current?.source === item.source;
+        })
       ) {
         return;
       }
@@ -137,6 +204,25 @@ class ServerConfigStoreCompat {
 
     const nextBaseUrl = normalizeServerBaseUrl(input);
     const changed = nextBaseUrl !== activeHost.baseUrl;
+
+    if (isDiscoveredHostProfile(activeHost)) {
+      clientConfigStore.updateRuntime({
+        discoveredHosts: currentConfig.discoveredHosts.map((host) =>
+          host.id === activeHost.id
+            ? {
+                ...host,
+                baseUrl: nextBaseUrl,
+                name: new URL(nextBaseUrl).host,
+                updatedAt: new Date().toISOString()
+              }
+            : host
+        )
+      });
+      this.state = this.createState(clientConfigStore.getState());
+      this.emit();
+      return changed;
+    }
+
     const nextHosts = currentConfig.hosts.map((host) =>
       host.id === activeHost.id
         ? {
@@ -165,15 +251,17 @@ class ServerConfigStoreCompat {
   private createState(config: ReturnType<typeof clientConfigStore.getState>): ServerConfigState {
     const activeHost = getActiveHost(config);
     const baseUrl = activeHost?.baseUrl ?? "";
+    const presetOptions = buildPresetOptions(config);
     const options = buildOptions(
       baseUrl,
-      config.hosts.map((host) => host.baseUrl)
+      presetOptions.map((option) => option.value)
     );
     persistHistory(options);
 
     return {
       baseUrl,
-      options
+      options,
+      presetOptions
     };
   }
 

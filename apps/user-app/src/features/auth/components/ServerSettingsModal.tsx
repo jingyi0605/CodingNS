@@ -4,7 +4,8 @@ import {
   getServerSelectValue,
   normalizeServerBaseUrl,
   serverConfigStore,
-  useServerConfigSelector
+  useServerConfigSelector,
+  type ServerPresetOption
 } from "../../../config/server-config";
 import { t } from "../../../shared/i18n";
 
@@ -18,6 +19,7 @@ interface ServerSettingsModalProps {
 export function ServerSettingsModal({ isOpen, onClose, onSave, theme = "dark" }: ServerSettingsModalProps) {
   const persistedServerBaseUrl = useServerConfigSelector((state) => state.baseUrl);
   const serverOptions = useServerConfigSelector((state) => state.options);
+  const presetOptions = useServerConfigSelector((state) => state.presetOptions);
   const customServerOptionValue = getCustomServerOptionValue();
 
   const [serverBaseUrlInput, setServerBaseUrlInput] = useState(persistedServerBaseUrl);
@@ -35,6 +37,7 @@ export function ServerSettingsModal({ isOpen, onClose, onSave, theme = "dark" }:
     normalizedServerBaseUrl ?? serverBaseUrlInput,
     serverOptions
   );
+  const selectedPresetOption = presetOptions.find((option) => option.value === selectedServerOption) ?? null;
   const presetSelectId = "server-settings-preset";
   const addressInputId = "server-settings-address";
 
@@ -116,15 +119,24 @@ export function ServerSettingsModal({ isOpen, onClose, onSave, theme = "dark" }:
                   setStatusText(null);
                 }}
               >
-                {serverOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
+                {presetOptions.map((option) => (
+                  <option key={`${option.source}:${option.value}`} value={option.value}>
+                    {formatPresetOptionLabel(option)}
                   </option>
                 ))}
                 <option value={customServerOptionValue}>{t("auth.serverCustomOption")}</option>
               </select>
               <span className="cyber-select-arrow">▼</span>
             </div>
+            {selectedPresetOption ? (
+              <div className="cyber-select-tags" aria-live="polite">
+                {selectedPresetOption.source === "discovered" ? (
+                  <span className="cyber-select-tag" data-tone="discovered">
+                    {t("auth.serverDiscoveredTag")}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
           </label>
 
           <label className="field-group cyber-field" htmlFor={addressInputId}>
@@ -171,4 +183,12 @@ export function ServerSettingsModal({ isOpen, onClose, onSave, theme = "dark" }:
       </div>
     </div>
   );
+}
+
+function formatPresetOptionLabel(option: ServerPresetOption): string {
+  if (option.source === "discovered") {
+    return `${option.value} · ${t("auth.serverDiscoveredTag")}`;
+  }
+
+  return option.value;
 }
