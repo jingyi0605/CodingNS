@@ -1534,6 +1534,39 @@ function ButlerAuxiliaryPanel(props: {
     { id: "automation", label: t("shell.butlerSidebarAutomationTab") },
     { id: "settings", label: t("shell.butlerSidebarSettingsTab") }
   ] as const;
+  const sidebarContent =
+    activeTab === "info" ? (
+      <GlobalRecordsSidebarContent
+        overview={props.overview}
+        inboxItems={props.inboxItems}
+        followUpTasks={props.followUpTasks}
+        onOpenFollowUpHistory={props.onOpenFollowUpHistory}
+        onOpenVerificationHistory={props.onOpenVerificationHistory}
+        onOpenFollowUpDetail={props.onOpenFollowUpDetail}
+        onAnalyzeTodo={props.onAnalyzeTodo}
+        onStartTodoSession={props.onStartTodoSession}
+        onOpenTodoSession={props.onOpenTodoSession}
+        onCopyTodoPrompt={props.onCopyTodoPrompt}
+        todoActionState={props.todoActionState}
+      />
+    ) : activeTab === "automation" ? (
+      <AutomationSidebarContent
+        overview={props.overview}
+        followUpTasks={props.followUpTasks}
+        patrolPlans={props.patrolPlans}
+        controlTimers={props.controlTimers}
+        cancellingTimerId={props.cancellingTimerId}
+        onOpenAutomationHistory={props.onOpenAutomationHistory}
+        onCancelControlTimer={props.onCancelControlTimer}
+      />
+    ) : (
+      <SettingsSidebarContent
+        settingsForm={props.settingsForm}
+        savingSettings={props.savingSettings}
+        onSettingsFormChange={props.onSettingsFormChange}
+        onSaveSettings={props.onSaveSettings}
+      />
+    );
 
   return (
     <div className="butler-side-column">
@@ -1559,38 +1592,9 @@ function ButlerAuxiliaryPanel(props: {
           ))}
         </div>
       </div>
-      {activeTab === "info" ? (
-        <GlobalRecordsSidebarContent
-          overview={props.overview}
-          inboxItems={props.inboxItems}
-          followUpTasks={props.followUpTasks}
-          onOpenFollowUpHistory={props.onOpenFollowUpHistory}
-          onOpenVerificationHistory={props.onOpenVerificationHistory}
-          onOpenFollowUpDetail={props.onOpenFollowUpDetail}
-          onAnalyzeTodo={props.onAnalyzeTodo}
-          onStartTodoSession={props.onStartTodoSession}
-          onOpenTodoSession={props.onOpenTodoSession}
-          onCopyTodoPrompt={props.onCopyTodoPrompt}
-          todoActionState={props.todoActionState}
-        />
-      ) : activeTab === "automation" ? (
-        <AutomationSidebarContent
-          overview={props.overview}
-          followUpTasks={props.followUpTasks}
-          patrolPlans={props.patrolPlans}
-          controlTimers={props.controlTimers}
-          cancellingTimerId={props.cancellingTimerId}
-          onOpenAutomationHistory={props.onOpenAutomationHistory}
-          onCancelControlTimer={props.onCancelControlTimer}
-        />
-      ) : (
-        <SettingsSidebarContent
-          settingsForm={props.settingsForm}
-          savingSettings={props.savingSettings}
-          onSettingsFormChange={props.onSettingsFormChange}
-          onSaveSettings={props.onSaveSettings}
-        />
-      )}
+      <div className="butler-side-content">
+        {sidebarContent}
+      </div>
     </div>
   );
 }

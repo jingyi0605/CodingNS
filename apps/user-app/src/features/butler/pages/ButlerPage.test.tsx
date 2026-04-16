@@ -1881,6 +1881,8 @@ describe("ButlerPage", () => {
     expect(renderedPanel.getByRole("tab", { name: t("shell.butlerSidebarInfoTab") })).toHaveClass("workbench-info-tab");
     expect(renderedPanel.getByRole("tab", { name: t("shell.butlerSidebarAutomationTab") })).toBeInTheDocument();
     expect(renderedPanel.getByRole("tab", { name: t("shell.butlerSidebarSettingsTab") })).toBeInTheDocument();
+    expect(renderedPanel.container.querySelector(".butler-side-header")).toBeTruthy();
+    expect(renderedPanel.container.querySelector(".butler-side-content")).toBeTruthy();
     expect(renderedPanel.queryByText("技能")).not.toBeInTheDocument();
     expect(renderedPanel.queryByText(t("shell.butlerInfoFollowUpRecordsDescription"))).not.toBeInTheDocument();
     expect(renderedPanel.queryByText(t("shell.butlerInfoVerificationRecordsDescription"))).not.toBeInTheDocument();

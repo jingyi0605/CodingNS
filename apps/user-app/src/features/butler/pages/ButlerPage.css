@@ -286,9 +286,9 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  overflow: auto;
-  padding: 0 10px 10px;
+  gap: 0;
+  overflow: hidden;
+  padding: 0;
 }
 
 .workbench-auxiliary[data-custom-panel="true"] {
@@ -303,6 +303,7 @@
 }
 
 .butler-side-header {
+  flex: 0 0 auto;
   min-height: var(--workbench-header-min-height);
   height: var(--workbench-header-min-height);
   box-sizing: border-box;
@@ -314,6 +315,14 @@
   background: var(--bg-surface, rgba(248, 250, 252, 0.98));
   display: flex;
   align-items: center;
+}
+
+.butler-side-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0 10px 10px;
 }
 
 .butler-side-tabs {
