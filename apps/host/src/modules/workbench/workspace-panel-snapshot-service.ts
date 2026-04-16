@@ -151,7 +151,13 @@ export class WorkspacePanelSnapshotService {
     const inflight = this.gitInflight.get(workspaceId);
 
     if (inflight) {
-      return await awaitAbortableInflightTask(inflight, options?.signal);
+      // 已经取消但还没从 inflight 表里清掉的任务不能复用，
+      // 否则新的订阅会接到旧任务的 abort 结果，误报成内部错误。
+      if (inflight.controller.signal.aborted) {
+        this.gitInflight.delete(workspaceId);
+      } else {
+        return await awaitAbortableInflightTask(inflight, options?.signal);
+      }
     }
 
     const controller = new AbortController();
@@ -160,44 +166,44 @@ export class WorkspacePanelSnapshotService {
       consumerCount: 0,
       settled: false,
       promise: (async () => {
-      // 先执行轻量级 status 检测（仅 2 条 git 命令）
-      const status = await this.gitReadService.getStatus(workspaceId, controller.signal);
+        // 先执行轻量级 status 检测（仅 2 条 git 命令）
+        const status = await this.gitReadService.getStatus(workspaceId, controller.signal);
 
-      // 如果有缓存，比较 status 是否有变化
-      if (cached && !isGitStatusChanged(cached.snapshot.status, status)) {
-        // 状态未变，延长缓存 TTL，跳过昂贵的 history/branches 查询
+        // 如果有缓存，比较 status 是否有变化
+        if (cached && !isGitStatusChanged(cached.snapshot.status, status)) {
+          // 状态未变，延长缓存 TTL，跳过昂贵的 history/branches 查询
+          this.gitSnapshotCache.set(workspaceId, {
+            snapshot: cached.snapshot,
+            cachedAt: Date.now()
+          });
+          return cached.snapshot;
+        }
+
+        // 状态有变化，执行完整刷新（复用已获取的 status）
+        const [historyPage, branches] = await Promise.all([
+          this.gitReadService.getHistory(workspaceId, null, GIT_HISTORY_LIMIT, controller.signal),
+          this.gitReadService.getBranches(workspaceId, controller.signal)
+        ]);
+
+        const snapshot: GitPanelSnapshot = {
+          workspaceId,
+          status,
+          history: historyPage.items,
+          historyTotalCount: historyPage.totalCount,
+          historyNextCursor: historyPage.nextCursor,
+          branches
+        };
+
         this.gitSnapshotCache.set(workspaceId, {
-          snapshot: cached.snapshot,
+          snapshot,
           cachedAt: Date.now()
         });
-        return cached.snapshot;
-      }
 
-      // 状态有变化，执行完整刷新（复用已获取的 status）
-      const [historyPage, branches] = await Promise.all([
-        this.gitReadService.getHistory(workspaceId, null, GIT_HISTORY_LIMIT, controller.signal),
-        this.gitReadService.getBranches(workspaceId, controller.signal)
-      ]);
-
-      const snapshot: GitPanelSnapshot = {
-        workspaceId,
-        status,
-        history: historyPage.items,
-        historyTotalCount: historyPage.totalCount,
-        historyNextCursor: historyPage.nextCursor,
-        branches
-      };
-
-      this.gitSnapshotCache.set(workspaceId, {
-        snapshot,
-        cachedAt: Date.now()
-      });
-
-      return snapshot;
-    })().finally(() => {
-      task.settled = true;
-      this.gitInflight.delete(workspaceId);
-    })
+        return snapshot;
+      })().finally(() => {
+        task.settled = true;
+        this.gitInflight.delete(workspaceId);
+      })
     };
 
     this.gitInflight.set(workspaceId, task);

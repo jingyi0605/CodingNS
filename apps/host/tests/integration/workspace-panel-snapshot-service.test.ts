@@ -145,6 +145,107 @@ describe("WorkspacePanelSnapshotService", () => {
     expect(gitReadService.getHistory).not.toHaveBeenCalled();
     expect(gitReadService.getBranches).not.toHaveBeenCalled();
   });
+
+  it("已中止但尚未清理的 Git inflight 任务不会被后续请求复用", async () => {
+    const workspaceId = "workspace-1";
+    let releaseFirstAbort: (() => void) | null = null;
+
+    const gitReadService = {
+      getStatus: vi.fn(async (_workspaceId: string, signal?: AbortSignal) => {
+        const callIndex = gitReadService.getStatus.mock.calls.length;
+
+        if (callIndex === 1) {
+          await new Promise<never>((_resolve, reject) => {
+            if (!signal) {
+              reject(new Error("missing signal"));
+              return;
+            }
+
+            if (signal.aborted) {
+              reject(signal.reason ?? new Error("aborted"));
+              return;
+            }
+
+            signal.addEventListener("abort", () => {
+              releaseFirstAbort = () => {
+                reject(signal.reason ?? new Error("aborted"));
+              };
+            }, { once: true });
+          });
+        }
+
+        return createGitStatus(workspaceId, false);
+      }),
+      getHistory: vi.fn(async () => ({
+        items: [
+          {
+            commitHash: "11111111",
+            authorName: "Linus",
+            authoredAt: "2026-04-02T00:00:00.000Z",
+            subject: "feat: snapshot",
+            body: "",
+            commitKind: "shared" as const,
+            refs: []
+          }
+        ],
+        cursor: "0",
+        nextCursor: null,
+        totalCount: 1
+      })),
+      getBranches: vi.fn(async () => ({
+        currentBranch: "main",
+        local: [{ name: "main", current: true, upstream: "origin/main", remote: false }],
+        remote: []
+      }))
+    } satisfies Pick<GitReadService, "getStatus" | "getHistory" | "getBranches">;
+
+    const service = new WorkspacePanelSnapshotService(
+      {
+        list: vi.fn()
+      } as unknown as FileTreeService,
+      gitReadService as unknown as GitReadService,
+      {
+        listTerminalSnapshotItems: vi.fn()
+      } as unknown as TerminalService,
+      {
+        listTemplates: vi.fn(),
+        listTemplateRuntimeStatuses: vi.fn()
+      } as unknown as CommandTemplateService,
+      {
+        getManagementSummary: vi.fn()
+      } as unknown as WorkspaceService
+    );
+
+    const controller = new AbortController();
+    const firstPromise = service.getGitPanelSnapshot(workspaceId, {
+      force: true,
+      signal: controller.signal
+    });
+
+    await Promise.resolve();
+    controller.abort(new Error("first aborted"));
+    await Promise.resolve();
+
+    expect(releaseFirstAbort).not.toBeNull();
+
+    const secondPromise = service.getGitPanelSnapshot(workspaceId, {
+      force: true
+    });
+
+    expect(gitReadService.getStatus).toHaveBeenCalledTimes(2);
+
+    releaseFirstAbort?.();
+
+    await expect(firstPromise).rejects.toThrow("first aborted");
+    await expect(secondPromise).resolves.toMatchObject({
+      workspaceId,
+      status: {
+        snapshot: {
+          branch: "main"
+        }
+      }
+    });
+  });
 });
 
 function createGitStatus(workspaceId: string, staged: boolean) {
