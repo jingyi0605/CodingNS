@@ -146,12 +146,20 @@ body {
 
 .workbench-titlebar-context,
 .workbench-titlebar-context *,
-.workbench-shell .message-content,
-.workbench-shell .message-content *,
+.workbench-shell .message-timeline,
+.workbench-shell .message-list,
+.workbench-shell .message-item,
+.workbench-shell .message-content-wrapper,
+.workbench-shell .thinking-message-content,
+.workbench-shell .message-attachments,
+.workbench-shell .message-origin-detail-popover,
+.workbench-shell .tool-call-item,
 .workbench-shell .rules-message-summary,
 .workbench-shell .rules-message-hint,
 .workbench-shell .rules-message-body,
 .workbench-shell .rules-message-body *,
+.workbench-shell .message-content,
+.workbench-shell .message-content *,
 .workbench-shell input,
 .workbench-shell textarea,
 .workbench-shell select,
@@ -159,6 +167,15 @@ body {
 .workbench-shell [contenteditable="true"] * {
   -webkit-user-select: text;
   user-select: text;
+}
+
+/* 会话消息允许整块拖拽选中，但消息内的操作按钮仍然保持不可选，避免把点击拖成选区。 */
+.workbench-shell .message-metadata-action,
+.workbench-shell .retry-button,
+.workbench-shell .rules-message-toggle,
+.workbench-shell .message-origin-badge-button {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* Git 面板整体禁止拖拽选中，只保留提交信息输入框可选。 */
