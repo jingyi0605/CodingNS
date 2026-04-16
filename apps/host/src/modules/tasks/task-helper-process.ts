@@ -7,8 +7,15 @@ import {
 
 interface HelperTaskRequest {
   id: string;
+  type: "run";
   handler: TaskHelperProcessHandlerName;
   input: unknown;
+}
+
+interface HelperTaskCancelRequest {
+  id: string;
+  type: "cancel";
+  targetId: string;
 }
 
 type HelperTaskResponse =
@@ -24,6 +31,10 @@ type HelperTaskResponse =
       ok: false;
       error: string;
     };
+
+type HelperTaskMessage = HelperTaskRequest | HelperTaskCancelRequest;
+
+const activeRequests = new Map<string, AbortController>();
 
 const reader = readline.createInterface({
   input: process.stdin,
@@ -41,10 +52,10 @@ async function handleLine(line: string): Promise<void> {
     return;
   }
 
-  let payload: HelperTaskRequest;
+  let payload: HelperTaskMessage;
 
   try {
-    payload = JSON.parse(trimmed) as HelperTaskRequest;
+    payload = JSON.parse(trimmed) as HelperTaskMessage;
   } catch (error) {
     writeResponse({
       type: "result",
@@ -55,8 +66,16 @@ async function handleLine(line: string): Promise<void> {
     return;
   }
 
+  if (payload.type === "cancel") {
+    activeRequests.get(payload.targetId)?.abort(new Error("helper task aborted"));
+    return;
+  }
+
+  const controller = new AbortController();
+  activeRequests.set(payload.id, controller);
+
   try {
-    const result = await runTaskHelperProcessHandler(payload.handler, payload.input);
+    const result = await runTaskHelperProcessHandler(payload.handler, payload.input, controller.signal);
     writeResponse({
       type: "result",
       id: payload.id,
@@ -70,6 +89,8 @@ async function handleLine(line: string): Promise<void> {
       ok: false,
       error: error instanceof Error ? error.message : "helper task failed"
     });
+  } finally {
+    activeRequests.delete(payload.id);
   }
 }
 

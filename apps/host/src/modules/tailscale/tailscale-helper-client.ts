@@ -45,6 +45,7 @@ export class TailscaleHelperClient {
   private readonly stdoutReader: readline.Interface;
   private readonly pendingRequests = new Map<string, PendingRequest<unknown>>();
   private nextRequestId = 1;
+  private disposed = false;
 
   constructor() {
     const launch = resolveHelperLaunch();
@@ -71,6 +72,10 @@ export class TailscaleHelperClient {
       this.rejectAll(error);
     });
     this.child.on("exit", (code, signal) => {
+      if (this.disposed && (code === 0 || signal === "SIGTERM")) {
+        return;
+      }
+
       this.rejectAll(
         new Error(
           `tailscale helper 已退出：code=${code ?? "null"} signal=${signal ?? "null"}`
@@ -129,14 +134,25 @@ export class TailscaleHelperClient {
   }
 
   dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.disposed = true;
     this.stdoutReader.close();
 
     if (!this.child.killed) {
       this.child.kill("SIGTERM");
     }
+
+    this.rejectAll(new Error("tailscale helper 已关闭"));
   }
 
   private async sendRequest<TResult>(payload: Record<string, unknown>): Promise<TResult> {
+    if (this.disposed) {
+      return Promise.reject(new Error("tailscale helper 已关闭"));
+    }
+
     const id = String(this.nextRequestId++);
 
     return await new Promise<TResult>((resolve, reject) => {

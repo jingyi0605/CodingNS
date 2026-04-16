@@ -1,9 +1,10 @@
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
 
-import { OpenCodeSystemProbeHelperClient } from "./opencode-system-probe-helper-client.js";
+import { getSharedOpenCodeSystemProbeHelperClient } from "./opencode-system-probe-helper-client.js";
 const DEFAULT_CACHE_TTL_MS = 5_000;
 const DEFAULT_PROBE_TIMEOUT_MS = 800;
+const DEFAULT_MANAGED_SERVER_RETRY_COOLDOWN_MS = 10_000;
 
 interface OpenCodeBaseUrlResolverOptions {
   configuredBaseUrl?: string | null;
@@ -14,6 +15,7 @@ interface OpenCodeBaseUrlResolverOptions {
   inspectProcessCwd?: (pid: number) => Promise<string | null> | string | null;
   probeBaseUrl?: (baseUrl: string) => Promise<boolean>;
   now?: () => number;
+  managedServerRetryCooldownMs?: number;
 }
 
 interface ResolveBaseUrlInput {
@@ -33,8 +35,6 @@ interface OpenCodeListeningSocket {
 
 type ManagedOpenCodeServerProcess = ChildProcessByStdio<null, Readable, Readable>;
 
-let systemProbeHelperClient: OpenCodeSystemProbeHelperClient | null = null;
-
 export class OpenCodeBaseUrlResolver {
   private readonly configuredBaseUrl: string | null;
   private readonly commandPath: string | null;
@@ -45,29 +45,40 @@ export class OpenCodeBaseUrlResolver {
   private readonly inspectProcessCwd: (pid: number) => Promise<string | null> | string | null;
   private readonly probeBaseUrl: (baseUrl: string) => Promise<boolean>;
   private readonly now: () => number;
+  private readonly managedServerRetryCooldownMs: number;
   private readonly cachedBaseUrlByWorkspaceKey = new Map<string, string>();
   private readonly cachedAtByWorkspaceKey = new Map<string, number>();
   private readonly inflightByWorkspaceKey = new Map<string, Promise<string>>();
   private readonly managedServerBaseUrlByWorkspaceKey = new Map<string, string>();
   private readonly managedServerProcessByWorkspaceKey = new Map<string, ManagedOpenCodeServerProcess>();
   private readonly managedServerInflightByWorkspaceKey = new Map<string, Promise<string>>();
+  private readonly managedServerRetryBlockedUntilByWorkspaceKey = new Map<string, number>();
+  private disposed = false;
 
   constructor(options: OpenCodeBaseUrlResolverOptions = {}) {
     this.configuredBaseUrl = normalizeBaseUrl(options.configuredBaseUrl ?? null);
     this.commandPath = normalizeCommandPath(options.commandPath ?? null);
     this.cacheTtlMs = Math.max(500, Math.floor(options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS));
-    this.inspectProcessList = options.inspectProcessList ?? (() => getSystemProbeHelperClient().readProcessList());
+    this.inspectProcessList =
+      options.inspectProcessList
+      ?? (() => getSharedOpenCodeSystemProbeHelperClient().readProcessList());
     this.inspectListeningSockets =
       options.inspectListeningSockets
-      ?? ((pid) => getSystemProbeHelperClient().readListeningSockets(pid));
+      ?? ((pid) => getSharedOpenCodeSystemProbeHelperClient().readListeningSockets(pid));
     this.inspectProcessCwd =
       options.inspectProcessCwd
-      ?? ((pid) => getSystemProbeHelperClient().readProcessCwd(pid));
+      ?? ((pid) => getSharedOpenCodeSystemProbeHelperClient().readProcessCwd(pid));
     this.probeBaseUrl = options.probeBaseUrl ?? probeOpenCodeBaseUrl;
     this.now = options.now ?? Date.now;
+    this.managedServerRetryCooldownMs = Math.max(
+      1_000,
+      Math.floor(options.managedServerRetryCooldownMs ?? DEFAULT_MANAGED_SERVER_RETRY_COOLDOWN_MS)
+    );
   }
 
   async resolve(input: ResolveBaseUrlInput = {}): Promise<string> {
+    this.ensureNotDisposed();
+
     if (this.configuredBaseUrl) {
       return this.configuredBaseUrl;
     }
@@ -98,6 +109,8 @@ export class OpenCodeBaseUrlResolver {
   }
 
   async listReachableBaseUrls(input: ResolveBaseUrlInput = {}): Promise<string[]> {
+    this.ensureNotDisposed();
+
     const candidates = await this.collectCandidateBaseUrls(input.workspacePath ?? null);
     const available: string[] = [];
 
@@ -190,6 +203,12 @@ export class OpenCodeBaseUrlResolver {
       return inflight;
     }
 
+    const blockedUntil = this.managedServerRetryBlockedUntilByWorkspaceKey.get(workspaceKey) ?? 0;
+
+    if (blockedUntil > this.now()) {
+      throw new Error("SERVER_UNAVAILABLE");
+    }
+
     const task = this.startManagedServer(workspacePath);
     const wrappedTask = task.finally(() => {
       if (this.managedServerInflightByWorkspaceKey.get(workspaceKey) === wrappedTask) {
@@ -203,6 +222,8 @@ export class OpenCodeBaseUrlResolver {
   private async startManagedServer(workspacePath: string): Promise<string> {
     const commandPath = this.commandPath?.trim();
     const workspaceKey = normalizeWorkspaceKey(workspacePath);
+
+    this.ensureNotDisposed();
 
     if (!commandPath) {
       throw new Error("SERVER_UNAVAILABLE");
@@ -225,6 +246,7 @@ export class OpenCodeBaseUrlResolver {
     );
 
     this.managedServerProcessByWorkspaceKey.set(workspaceKey, child);
+    this.managedServerRetryBlockedUntilByWorkspaceKey.delete(workspaceKey);
 
     child.once("exit", () => {
       if (this.managedServerProcessByWorkspaceKey.get(workspaceKey) === child) {
@@ -237,6 +259,7 @@ export class OpenCodeBaseUrlResolver {
       const timeout = setTimeout(() => {
         cleanup();
         child.kill();
+        this.recordManagedServerFailure(workspaceKey);
         reject(new Error("SERVER_UNAVAILABLE"));
       }, 5_000);
       let output = "";
@@ -261,11 +284,13 @@ export class OpenCodeBaseUrlResolver {
 
       const handleExit = () => {
         cleanup();
+        this.recordManagedServerFailure(workspaceKey);
         reject(new Error(output.trim() || "SERVER_UNAVAILABLE"));
       };
 
       const handleError = () => {
         cleanup();
+        this.recordManagedServerFailure(workspaceKey);
         reject(new Error("SERVER_UNAVAILABLE"));
       };
 
@@ -282,6 +307,41 @@ export class OpenCodeBaseUrlResolver {
       child.once("exit", handleExit);
       child.once("error", handleError);
     });
+  }
+
+  dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.disposed = true;
+    this.cachedBaseUrlByWorkspaceKey.clear();
+    this.cachedAtByWorkspaceKey.clear();
+    this.inflightByWorkspaceKey.clear();
+    this.managedServerBaseUrlByWorkspaceKey.clear();
+    this.managedServerInflightByWorkspaceKey.clear();
+    this.managedServerRetryBlockedUntilByWorkspaceKey.clear();
+
+    for (const child of this.managedServerProcessByWorkspaceKey.values()) {
+      if (!child.killed) {
+        child.kill("SIGTERM");
+      }
+    }
+
+    this.managedServerProcessByWorkspaceKey.clear();
+  }
+
+  private ensureNotDisposed(): void {
+    if (this.disposed) {
+      throw new Error("SERVER_UNAVAILABLE");
+    }
+  }
+
+  private recordManagedServerFailure(workspaceKey: string): void {
+    this.managedServerRetryBlockedUntilByWorkspaceKey.set(
+      workspaceKey,
+      this.now() + this.managedServerRetryCooldownMs
+    );
   }
 }
 
@@ -522,14 +582,6 @@ async function probeOpenCodeBaseUrl(baseUrl: string): Promise<boolean> {
   } finally {
     clearTimeout(timer);
   }
-}
-
-function getSystemProbeHelperClient(): OpenCodeSystemProbeHelperClient {
-  if (!systemProbeHelperClient) {
-    systemProbeHelperClient = new OpenCodeSystemProbeHelperClient();
-  }
-
-  return systemProbeHelperClient;
 }
 
 function escapeRegExp(value: string): string {

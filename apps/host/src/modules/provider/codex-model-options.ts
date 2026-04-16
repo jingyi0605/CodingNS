@@ -1,6 +1,6 @@
 import type { ProviderCapabilities, ProviderModelOption } from "@codingns/session-sync-core";
 
-import { ProviderDiscoveryHelperClient } from "./provider-discovery-helper-client.js";
+import { getSharedProviderDiscoveryHelperClient } from "./provider-discovery-helper-client.js";
 
 const PROVIDER_DEFAULT_MODEL_ID = "provider-default";
 const DEFAULT_TIMEOUT_MS = 5_000;
@@ -34,8 +34,6 @@ interface CodexModelOptionsServiceOptions {
   timeoutMs?: number;
   cacheTtlMs?: number;
 }
-
-const providerDiscoveryHelperClient = new ProviderDiscoveryHelperClient();
 
 export class CodexModelOptionsService {
   private readonly timeoutMs: number;
@@ -96,7 +94,7 @@ export class CodexModelOptionsService {
     };
     models: CodexModelListItem[];
   }> {
-    return providerDiscoveryHelperClient.readCodexAppServerState({
+    return getSharedProviderDiscoveryHelperClient().readCodexAppServerState({
       commandPath: this.options.commandPath,
       timeoutMs: this.timeoutMs
     }).then((result) => {

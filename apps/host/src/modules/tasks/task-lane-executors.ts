@@ -1,8 +1,8 @@
-import { TaskHelperProcessClient } from "./task-helper-client.js";
+import { getSharedTaskHelperProcessClient } from "./task-helper-client.js";
 import type { TaskExecutionLane, TaskLaneExecutor } from "./task-types.js";
 
 export function createHostTaskLaneExecutors(): Partial<Record<TaskExecutionLane, TaskLaneExecutor>> {
-  const helperProcessClient = new TaskHelperProcessClient();
+  const helperProcessClient = getSharedTaskHelperProcessClient();
 
   return {
     helper_process: {

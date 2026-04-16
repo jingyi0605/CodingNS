@@ -7,6 +7,8 @@ interface OpenCodeListeningSocket {
   port: number;
 }
 
+const DEFAULT_COMMAND_TIMEOUT_MS = 5_000;
+
 type HelperRequest =
   | {
       id: string;
@@ -264,6 +266,7 @@ async function tryRunCommand(
   args: string[],
   options: {
     windowsHide?: boolean;
+    timeoutMs?: number;
   } = {}
 ): Promise<{
   status: number | null;
@@ -273,7 +276,7 @@ async function tryRunCommand(
   try {
     return await runCommand(command, args, options);
   } catch (error) {
-    if (isMissingBinaryError(error)) {
+    if (isMissingBinaryError(error) || isCommandTimeoutError(error)) {
       return null;
     }
 
@@ -286,6 +289,7 @@ async function runCommand(
   args: string[],
   options: {
     windowsHide?: boolean;
+    timeoutMs?: number;
   } = {}
 ): Promise<{
   status: number | null;
@@ -300,6 +304,26 @@ async function runCommand(
     });
     let stdout = "";
     let stderr = "";
+    let settled = false;
+
+    const finish = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timer);
+      callback();
+    };
+    const timer = setTimeout(() => {
+      if (!child.killed) {
+        child.kill("SIGTERM");
+      }
+
+      finish(() => {
+        reject(new Error(`COMMAND_TIMEOUT:${command}`));
+      });
+    }, Math.max(500, Math.floor(options.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS)));
 
     child.stdout.on("data", (chunk) => {
       stdout += String(chunk);
@@ -308,13 +332,17 @@ async function runCommand(
       stderr += String(chunk);
     });
     child.on("error", (error) => {
-      reject(error);
+      finish(() => {
+        reject(error);
+      });
     });
     child.on("close", (status) => {
-      resolve({
-        status,
-        stdout,
-        stderr
+      finish(() => {
+        resolve({
+          status,
+          stdout,
+          stderr
+        });
       });
     });
   });
@@ -330,6 +358,10 @@ function isMissingBinaryError(error: unknown): boolean {
   }
 
   return "message" in error && typeof error.message === "string" && error.message.includes("ENOENT");
+}
+
+function isCommandTimeoutError(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith("COMMAND_TIMEOUT:");
 }
 
 function parseSocketEndpoint(endpoint: string): OpenCodeListeningSocket | null {
@@ -392,7 +424,9 @@ export const __internal__ = {
   parseListeningSocketsFromLsofOutput,
   parseListeningSocketsFromSsOutput,
   isMissingBinaryError,
+  isCommandTimeoutError,
   readListeningSocketsViaLsof,
   readListeningSocketsViaSs,
-  tryRunCommand
+  tryRunCommand,
+  runCommand
 };

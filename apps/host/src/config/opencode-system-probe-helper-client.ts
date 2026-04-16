@@ -27,11 +27,14 @@ interface PendingRequest<T> {
   reject: (reason?: unknown) => void;
 }
 
+let sharedOpenCodeSystemProbeHelperClient: OpenCodeSystemProbeHelperClient | null = null;
+
 export class OpenCodeSystemProbeHelperClient {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly stdoutReader: readline.Interface;
   private readonly pendingRequests = new Map<string, PendingRequest<unknown>>();
   private nextRequestId = 1;
+  private disposed = false;
 
   constructor() {
     const launch = resolveHelperLaunch();
@@ -100,6 +103,10 @@ export class OpenCodeSystemProbeHelperClient {
   }
 
   private async sendRequest(payload: Record<string, unknown>): Promise<unknown> {
+    if (this.disposed) {
+      return Promise.reject(new Error("opencode system probe helper 已关闭"));
+    }
+
     const id = String(this.nextRequestId++);
 
     return await new Promise((resolve, reject) => {
@@ -123,6 +130,21 @@ export class OpenCodeSystemProbeHelperClient {
         }
       );
     });
+  }
+
+  dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.disposed = true;
+    this.stdoutReader.close();
+
+    if (!this.child.killed) {
+      this.child.kill("SIGTERM");
+    }
+
+    this.rejectAll(new Error("opencode system probe helper 已关闭"));
   }
 
   private handleResponseLine(line: string): void {
@@ -163,6 +185,23 @@ export class OpenCodeSystemProbeHelperClient {
 
     this.pendingRequests.clear();
   }
+}
+
+export function getSharedOpenCodeSystemProbeHelperClient(): OpenCodeSystemProbeHelperClient {
+  if (!sharedOpenCodeSystemProbeHelperClient) {
+    sharedOpenCodeSystemProbeHelperClient = new OpenCodeSystemProbeHelperClient();
+  }
+
+  return sharedOpenCodeSystemProbeHelperClient;
+}
+
+export function disposeSharedOpenCodeSystemProbeHelperClient(): void {
+  if (!sharedOpenCodeSystemProbeHelperClient) {
+    return;
+  }
+
+  sharedOpenCodeSystemProbeHelperClient.dispose();
+  sharedOpenCodeSystemProbeHelperClient = null;
 }
 
 function resolveHelperLaunch(): { command: string; args: string[] } {

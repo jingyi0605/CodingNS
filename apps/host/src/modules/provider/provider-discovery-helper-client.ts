@@ -27,11 +27,20 @@ type HelperResponse =
       error: string;
     };
 
+interface HelperCancelRequest {
+  type: "cancel";
+  id: string;
+  targetId: string;
+}
+
+let sharedProviderDiscoveryHelperClient: ProviderDiscoveryHelperClient | null = null;
+
 export class ProviderDiscoveryHelperClient {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly stdoutReader: readline.Interface;
   private readonly pendingRequests = new Map<string, PendingRequest<unknown>>();
   private nextRequestId = 1;
+  private disposed = false;
 
   constructor() {
     const launch = resolveHelperLaunch();
@@ -69,7 +78,7 @@ export class ProviderDiscoveryHelperClient {
   async readCodexAppServerState(input: {
     commandPath: string;
     timeoutMs: number;
-  }): Promise<{
+  }, signal?: AbortSignal): Promise<{
     config: {
       model: string | null;
       modelReasoningEffort: string | null;
@@ -79,7 +88,7 @@ export class ProviderDiscoveryHelperClient {
     const result = await this.sendRequest({
       type: "codex_app_server_state",
       ...input
-    });
+    }, signal);
 
     return result as {
       config: {
@@ -94,11 +103,11 @@ export class ProviderDiscoveryHelperClient {
     commandPath: string;
     workspacePath: string | null;
     timeoutMs: number;
-  }): Promise<string[]> {
+  }, signal?: AbortSignal): Promise<string[]> {
     const result = await this.sendRequest({
       type: "opencode_cli_models",
       ...input
-    });
+    }, signal);
 
     return result as string[];
   }
@@ -107,11 +116,11 @@ export class ProviderDiscoveryHelperClient {
     config: ProviderSessionDiscoveryHelperConfig;
     workspacePath: string;
     knownSessions: ProviderSessionSummary[];
-  }): Promise<ProviderSessionDiscovery> {
+  }, signal?: AbortSignal): Promise<ProviderSessionDiscovery> {
     const result = await this.sendRequest({
       type: "workspace_session_discovery",
       ...input
-    });
+    }, signal);
 
     return result as ProviderSessionDiscovery;
   }
@@ -121,22 +130,61 @@ export class ProviderDiscoveryHelperClient {
     provider: string;
     providerSessionId: string;
     rawStoreRef: string;
-  }): Promise<string> {
+  }, signal?: AbortSignal): Promise<string> {
     const result = await this.sendRequest({
       type: "session_title_read",
       ...input
-    });
+    }, signal);
 
     return result as string;
   }
 
-  private async sendRequest(payload: Record<string, unknown>): Promise<unknown> {
+  private async sendRequest(payload: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    if (this.disposed) {
+      return Promise.reject(new Error("provider discovery helper 已关闭"));
+    }
+
     const id = String(this.nextRequestId++);
 
     return await new Promise((resolve, reject) => {
+      let aborted = false;
+      let onAbort: (() => void) | null = null;
+
+      if (signal) {
+        onAbort = () => {
+          aborted = true;
+          this.pendingRequests.delete(id);
+          void this.sendCancel(id);
+          reject(signal.reason ?? new Error("provider discovery helper aborted"));
+        };
+
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+
       this.pendingRequests.set(id, {
-        resolve,
-        reject
+        resolve: (value) => {
+          if (onAbort && signal) {
+            signal.removeEventListener("abort", onAbort);
+          }
+
+          if (!aborted) {
+            resolve(value);
+          }
+        },
+        reject: (error) => {
+          if (onAbort && signal) {
+            signal.removeEventListener("abort", onAbort);
+          }
+
+          if (!aborted) {
+            reject(error);
+          }
+        }
       });
 
       this.child.stdin.write(
@@ -149,11 +197,30 @@ export class ProviderDiscoveryHelperClient {
             return;
           }
 
+          if (onAbort && signal) {
+            signal.removeEventListener("abort", onAbort);
+          }
+
           this.pendingRequests.delete(id);
           reject(error);
         }
       );
     });
+  }
+
+  dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.disposed = true;
+    this.stdoutReader.close();
+
+    if (!this.child.killed) {
+      this.child.kill("SIGTERM");
+    }
+
+    this.rejectAll(new Error("provider discovery helper 已关闭"));
   }
 
   private handleResponseLine(line: string): void {
@@ -194,6 +261,41 @@ export class ProviderDiscoveryHelperClient {
 
     this.pendingRequests.clear();
   }
+
+  private async sendCancel(targetId: string): Promise<void> {
+    if (this.disposed || this.child.killed || this.child.stdin.destroyed) {
+      return;
+    }
+
+    const payload: HelperCancelRequest = {
+      type: "cancel",
+      id: `cancel:${targetId}`,
+      targetId
+    };
+
+    await new Promise<void>((resolve) => {
+      this.child.stdin.write(`${JSON.stringify(payload)}\n`, () => {
+        resolve();
+      });
+    });
+  }
+}
+
+export function getSharedProviderDiscoveryHelperClient(): ProviderDiscoveryHelperClient {
+  if (!sharedProviderDiscoveryHelperClient) {
+    sharedProviderDiscoveryHelperClient = new ProviderDiscoveryHelperClient();
+  }
+
+  return sharedProviderDiscoveryHelperClient;
+}
+
+export function disposeSharedProviderDiscoveryHelperClient(): void {
+  if (!sharedProviderDiscoveryHelperClient) {
+    return;
+  }
+
+  sharedProviderDiscoveryHelperClient.dispose();
+  sharedProviderDiscoveryHelperClient = null;
 }
 
 export interface ProviderSessionDiscoveryHelperConfig {

@@ -62,4 +62,33 @@ describe("OpenCodeSystemProbeHelperProcess", () => {
 
     await expect(__internal__.readListeningSocketsViaLsof(79133)).resolves.toEqual([]);
   });
+
+  it("底层系统命令超时后会主动终止子进程", async () => {
+    const kill = vi.fn();
+
+    vi.doMock("node:child_process", () => ({
+      spawn: () => {
+        return {
+          killed: false,
+          kill,
+          stdout: {
+            on: vi.fn()
+          },
+          stderr: {
+            on: vi.fn()
+          },
+          on: vi.fn()
+        };
+      }
+    }));
+
+    const { __internal__ } = await import("../../src/config/opencode-system-probe-helper-process.js");
+
+    await expect(
+      __internal__.runCommand("ps", ["-ax"], {
+        timeoutMs: 10
+      })
+    ).rejects.toThrow("COMMAND_TIMEOUT:ps");
+    expect(kill).toHaveBeenCalledWith("SIGTERM");
+  });
 });

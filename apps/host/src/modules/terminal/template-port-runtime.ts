@@ -15,17 +15,20 @@ interface PortProcessInfo {
 }
 
 export async function discoverTemplateRuntimeStatuses(
-  items: Array<{ templateId: string; port: number }>
+  items: Array<{ templateId: string; port: number }>,
+  signal?: AbortSignal
 ): Promise<TerminalTemplateRuntimeStatus[]> {
+  throwIfAborted(signal);
   const uniquePorts = [...new Set(items.map((item) => item.port))];
   const processInfoByPort = new Map<number, PortProcessInfo | null>();
 
   await Promise.all(
     uniquePorts.map(async (port) => {
-      processInfoByPort.set(port, await findPortProcess(port));
+      processInfoByPort.set(port, await findPortProcess(port, signal));
     })
   );
 
+  throwIfAborted(signal);
   return items.map((item) => {
     const processInfo = processInfoByPort.get(item.port) ?? null;
 
@@ -99,15 +102,17 @@ export async function terminateRuntimeProcess(processInfo: PortProcessInfo): Pro
   }
 }
 
-async function findPortProcess(port: number): Promise<PortProcessInfo | null> {
+async function findPortProcess(port: number, signal?: AbortSignal): Promise<PortProcessInfo | null> {
+  throwIfAborted(signal);
+
   if (process.platform === "win32") {
-    return await findWindowsPortProcess(port);
+    return await findWindowsPortProcess(port, signal);
   }
 
-  return await findPosixPortProcess(port);
+  return await findPosixPortProcess(port, signal);
 }
 
-async function findWindowsPortProcess(port: number): Promise<PortProcessInfo | null> {
+async function findWindowsPortProcess(port: number, signal?: AbortSignal): Promise<PortProcessInfo | null> {
   const shellPath =
     process.env.SYSTEMROOT
       ? path.join(process.env.SYSTEMROOT, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
@@ -127,7 +132,7 @@ async function findWindowsPortProcess(port: number): Promise<PortProcessInfo | n
     "Bypass",
     "-Command",
     script
-  ]);
+  ], signal);
 
   if (!stdout?.trim()) {
     return null;
@@ -140,7 +145,7 @@ async function findWindowsPortProcess(port: number): Promise<PortProcessInfo | n
   }
 
   const parentProcessId = normalizeOptionalPositiveInteger(parsed.ParentProcessId);
-  const parentProcess = parentProcessId ? await lookupWindowsProcess(parentProcessId) : null;
+  const parentProcess = parentProcessId ? await lookupWindowsProcess(parentProcessId, signal) : null;
 
   return {
     processId: parsed.ProcessId,
@@ -154,20 +159,20 @@ async function findWindowsPortProcess(port: number): Promise<PortProcessInfo | n
   };
 }
 
-async function findPosixPortProcess(port: number): Promise<PortProcessInfo | null> {
+async function findPosixPortProcess(port: number, signal?: AbortSignal): Promise<PortProcessInfo | null> {
   if (process.platform === "linux") {
-    const ssInfo = await findLinuxPortProcessWithSs(port);
+    const ssInfo = await findLinuxPortProcessWithSs(port, signal);
 
     if (ssInfo) {
       return ssInfo;
     }
   }
 
-  return await findPosixPortProcessWithLsof(port);
+  return await findPosixPortProcessWithLsof(port, signal);
 }
 
-async function findLinuxPortProcessWithSs(port: number): Promise<PortProcessInfo | null> {
-  const stdout = await tryRunProcess("ss", ["-ltnp"]);
+async function findLinuxPortProcessWithSs(port: number, signal?: AbortSignal): Promise<PortProcessInfo | null> {
+  const stdout = await tryRunProcess("ss", ["-ltnp"], signal);
 
   if (!stdout) {
     return null;
@@ -191,19 +196,19 @@ async function findLinuxPortProcessWithSs(port: number): Promise<PortProcessInfo
       continue;
     }
 
-    return await enrichPosixProcess(processId, processName);
+    return await enrichPosixProcess(processId, processName, signal);
   }
 
   return null;
 }
 
-async function findPosixPortProcessWithLsof(port: number): Promise<PortProcessInfo | null> {
+async function findPosixPortProcessWithLsof(port: number, signal?: AbortSignal): Promise<PortProcessInfo | null> {
   const stdout = await tryRunProcess("lsof", [
     "-nP",
     `-iTCP:${port}`,
     "-sTCP:LISTEN",
     "-Fpct"
-  ]);
+  ], signal);
 
   if (!stdout) {
     return null;
@@ -224,7 +229,7 @@ async function findPosixPortProcessWithLsof(port: number): Promise<PortProcessIn
     }
 
     if (processId) {
-      return await enrichPosixProcess(processId, processName);
+      return await enrichPosixProcess(processId, processName, signal);
     }
   }
 
@@ -233,9 +238,10 @@ async function findPosixPortProcessWithLsof(port: number): Promise<PortProcessIn
 
 async function enrichPosixProcess(
   processId: number,
-  fallbackName: string | null
+  fallbackName: string | null,
+  signal?: AbortSignal
 ): Promise<PortProcessInfo | null> {
-  const currentProcess = await lookupPosixProcess(processId, fallbackName);
+  const currentProcess = await lookupPosixProcess(processId, fallbackName, signal);
 
   if (!currentProcess) {
     return null;
@@ -243,7 +249,7 @@ async function enrichPosixProcess(
 
   const parentProcess =
     currentProcess.parentProcessId !== null
-      ? await lookupPosixProcess(currentProcess.parentProcessId, null)
+      ? await lookupPosixProcess(currentProcess.parentProcessId, null, signal)
       : null;
 
   return {
@@ -258,15 +264,23 @@ async function enrichPosixProcess(
   };
 }
 
-async function tryRunProcess(command: string, args: string[]): Promise<string | null> {
+async function tryRunProcess(
+  command: string,
+  args: string[],
+  signal?: AbortSignal
+): Promise<string | null> {
   try {
-    return await runProcess(command, args);
-  } catch {
+    return await runProcess(command, args, signal);
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw error;
+    }
+
     return null;
   }
 }
 
-async function runProcess(command: string, args: string[]): Promise<string> {
+async function runProcess(command: string, args: string[], signal?: AbortSignal): Promise<string> {
   return await new Promise<string>((resolve, reject) => {
     const child = spawn(command, args, {
       windowsHide: true,
@@ -275,6 +289,41 @@ async function runProcess(command: string, args: string[]): Promise<string> {
 
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    let onAbort: (() => void) | null = null;
+
+    const finish = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+
+      if (signal && onAbort) {
+        signal.removeEventListener("abort", onAbort);
+      }
+
+      callback();
+    };
+
+    if (signal) {
+      onAbort = () => {
+        if (!child.killed) {
+          child.kill("SIGTERM");
+        }
+
+        finish(() => {
+          reject(signal.reason ?? new Error("template runtime discovery aborted"));
+        });
+      };
+
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
 
     child.stdout.on("data", (chunk) => {
       stdout += String(chunk);
@@ -284,21 +333,28 @@ async function runProcess(command: string, args: string[]): Promise<string> {
       stderr += String(chunk);
     });
 
-    child.on("error", reject);
+    child.on("error", (error) => {
+      finish(() => {
+        reject(error);
+      });
+    });
     child.on("close", (exitCode) => {
-      if (exitCode !== 0) {
-        reject(new Error(stderr.trim() || `${command} exited with code ${exitCode ?? "unknown"}`));
-        return;
-      }
+      finish(() => {
+        if (exitCode !== 0) {
+          reject(new Error(stderr.trim() || `${command} exited with code ${exitCode ?? "unknown"}`));
+          return;
+        }
 
-      resolve(stdout);
+        resolve(stdout);
+      });
     });
   });
 }
 
 async function lookupPosixProcess(
   processId: number,
-  fallbackName: string | null
+  fallbackName: string | null,
+  signal?: AbortSignal
 ): Promise<{
   processId: number;
   parentProcessId: number | null;
@@ -311,10 +367,10 @@ async function lookupPosixProcess(
   }
 
   const [parentProcessIdText, processGroupIdText, processNameText, processCommandLine] = await Promise.all([
-    tryRunProcess("ps", ["-p", String(processId), "-o", "ppid="]),
-    tryRunProcess("ps", ["-p", String(processId), "-o", "pgid="]),
-    tryRunProcess("ps", ["-p", String(processId), "-o", "comm="]),
-    tryRunProcess("ps", ["-p", String(processId), "-o", "args="])
+    tryRunProcess("ps", ["-p", String(processId), "-o", "ppid="], signal),
+    tryRunProcess("ps", ["-p", String(processId), "-o", "pgid="], signal),
+    tryRunProcess("ps", ["-p", String(processId), "-o", "comm="], signal),
+    tryRunProcess("ps", ["-p", String(processId), "-o", "args="], signal)
   ]);
 
   const processName = processNameText?.trim() || fallbackName;
@@ -406,7 +462,7 @@ interface WindowsProcessInfo {
   CommandLine: string | null;
 }
 
-async function lookupWindowsProcess(processId: number): Promise<WindowsProcessInfo | null> {
+async function lookupWindowsProcess(processId: number, signal?: AbortSignal): Promise<WindowsProcessInfo | null> {
   const shellPath =
     process.env.SYSTEMROOT
       ? path.join(process.env.SYSTEMROOT, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
@@ -424,7 +480,7 @@ async function lookupWindowsProcess(processId: number): Promise<WindowsProcessIn
     "Bypass",
     "-Command",
     script
-  ]);
+  ], signal);
 
   if (!stdout?.trim()) {
     return null;
@@ -501,4 +557,18 @@ function normalizeOptionalPositiveInteger(value: unknown): number | null {
 
   const parsed = Number(trimmed);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw signal.reason ?? new Error("template runtime discovery aborted");
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return error.name === "AbortError" || error.message.includes("aborted");
 }

@@ -1,6 +1,6 @@
 import type { ProviderCapabilities, ProviderModelOption } from "@codingns/session-sync-core";
 
-import { ProviderDiscoveryHelperClient } from "./provider-discovery-helper-client.js";
+import { getSharedProviderDiscoveryHelperClient } from "./provider-discovery-helper-client.js";
 
 const PROVIDER_DEFAULT_MODEL_ID = "provider-default";
 const DEFAULT_TIMEOUT_MS = 5_000;
@@ -17,8 +17,6 @@ interface OpenCodeModelOptionsServiceOptions {
 export interface OpenCodeDiscoverySnapshot {
   modelOptions: ProviderModelOption[];
 }
-
-const providerDiscoveryHelperClient = new ProviderDiscoveryHelperClient();
 
 interface OpenCodeProviderConfigSnapshot {
   providers: OpenCodeProviderEntry[];
@@ -200,7 +198,7 @@ export class OpenCodeModelOptionsService {
   }
 
   private readModelListFromCli(workspacePath: string | null): Promise<string[]> {
-    return providerDiscoveryHelperClient.readOpenCodeCliModels({
+    return getSharedProviderDiscoveryHelperClient().readOpenCodeCliModels({
       commandPath: this.options.commandPath,
       workspacePath,
       timeoutMs: this.timeoutMs

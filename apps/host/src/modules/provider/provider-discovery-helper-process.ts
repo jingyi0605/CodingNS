@@ -2,19 +2,15 @@ import { spawn } from "node:child_process";
 import readline, { createInterface } from "node:readline";
 
 import {
-  ClaudeCodeAdapter,
-  CodexAdapter,
-  GeminiAdapter,
-  KimiAdapter,
-  OpenCodeAdapter,
-  ProviderRegistry,
-  SessionSyncService,
-  type ProviderSessionDiscovery,
   type ProviderSessionSummary
 } from "@codingns/session-sync-core";
 
 import { resolveCommandLaunch } from "../../shared/utils/command-launch.js";
 import type { ProviderSessionDiscoveryHelperConfig } from "./provider-discovery-helper-client.js";
+import {
+  discoverWorkspaceSessionsInRuntime,
+  readSessionTitleInRuntime
+} from "./provider-discovery-runtime.js";
 
 type HelperRequest =
   | {
@@ -44,14 +40,14 @@ type HelperRequest =
       provider: string;
       providerSessionId: string;
       rawStoreRef: string;
+    }
+  | {
+      id: string;
+      type: "cancel";
+      targetId: string;
     };
 
-let workspaceDiscoveryRuntime:
-  | {
-      cacheKey: string;
-      service: SessionSyncService;
-    }
-  | null = null;
+const activeRequests = new Map<string, AbortController>();
 
 const stdinReader = readline.createInterface({
   input: process.stdin,
@@ -72,9 +68,21 @@ async function handleLine(line: string): Promise<void> {
   }
 
   try {
+    if (payload.type === "cancel") {
+      activeRequests.get(payload.targetId)?.abort(new Error("provider discovery helper aborted"));
+      return;
+    }
+
+    const controller = new AbortController();
+    activeRequests.set(payload.id, controller);
+
     switch (payload.type) {
       case "codex_app_server_state": {
-        const result = await readCodexAppServerState(payload.commandPath, payload.timeoutMs);
+        const result = await readCodexAppServerState(
+          payload.commandPath,
+          payload.timeoutMs,
+          controller.signal
+        );
         emitResult(payload.id, result);
         return;
       }
@@ -82,7 +90,8 @@ async function handleLine(line: string): Promise<void> {
         const result = await readOpenCodeCliModels(
           payload.commandPath,
           payload.workspacePath,
-          payload.timeoutMs
+          payload.timeoutMs,
+          controller.signal
         );
         emitResult(payload.id, result);
         return;
@@ -91,7 +100,8 @@ async function handleLine(line: string): Promise<void> {
         const result = await discoverWorkspaceSessions(
           payload.config,
           payload.workspacePath,
-          payload.knownSessions
+          payload.knownSessions,
+          controller.signal
         );
         emitResult(payload.id, result);
         return;
@@ -101,7 +111,8 @@ async function handleLine(line: string): Promise<void> {
           payload.config,
           payload.provider,
           payload.providerSessionId,
-          payload.rawStoreRef
+          payload.rawStoreRef,
+          controller.signal
         );
         emitResult(payload.id, result);
         return;
@@ -109,6 +120,12 @@ async function handleLine(line: string): Promise<void> {
     }
   } catch (error) {
     emitError(payload.id, error instanceof Error ? error.message : String(error));
+  } finally {
+    if ("targetId" in payload) {
+      return;
+    }
+
+    activeRequests.delete(payload.id);
   }
 }
 
@@ -134,7 +151,11 @@ function emitError(id: string, error: string): void {
   );
 }
 
-async function readCodexAppServerState(commandPath: string, timeoutMs: number): Promise<{
+async function readCodexAppServerState(
+  commandPath: string,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<{
   config: {
     model: string | null;
     modelReasoningEffort: string | null;
@@ -142,6 +163,11 @@ async function readCodexAppServerState(commandPath: string, timeoutMs: number): 
   models: Array<Record<string, unknown>>;
 }> {
   return await new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason ?? new Error("provider discovery helper aborted"));
+      return;
+    }
+
     const launch = resolveCommandLaunch(commandPath, ["app-server"]);
     const child = spawn(launch.command, launch.args, {
       env: process.env,
@@ -154,6 +180,7 @@ async function readCodexAppServerState(commandPath: string, timeoutMs: number): 
     });
     const stderrChunks: string[] = [];
     let settled = false;
+    let onAbort: (() => void) | null = null;
     let configResult: { model: string | null; modelReasoningEffort: string | null } | null = null;
     let modelResult: Array<Record<string, unknown>> | null = null;
     const timeout = setTimeout(() => {
@@ -163,6 +190,10 @@ async function readCodexAppServerState(commandPath: string, timeoutMs: number): 
     function cleanup(): void {
       clearTimeout(timeout);
       stdout.close();
+
+      if (signal && onAbort) {
+        signal.removeEventListener("abort", onAbort);
+      }
 
       if (!child.killed) {
         child.kill("SIGTERM");
@@ -198,6 +229,14 @@ async function readCodexAppServerState(commandPath: string, timeoutMs: number): 
     child.on("error", (error) => {
       finishWithError(error);
     });
+
+    if (signal) {
+      onAbort = () => {
+        finishWithError(signal.reason instanceof Error ? signal.reason : new Error("provider discovery helper aborted"));
+      };
+
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
 
     child.stderr.on("data", (chunk) => {
       stderrChunks.push(chunk.toString("utf8"));
@@ -311,9 +350,15 @@ async function readCodexAppServerState(commandPath: string, timeoutMs: number): 
 async function readOpenCodeCliModels(
   commandPath: string,
   workspacePath: string | null,
-  timeoutMs: number
+  timeoutMs: number,
+  signal?: AbortSignal
 ): Promise<string[]> {
   return await new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason ?? new Error("provider discovery helper aborted"));
+      return;
+    }
+
     const launch = resolveCommandLaunch(commandPath, ["models", "opencode"]);
     const child = spawn(launch.command, launch.args, {
       cwd: workspacePath ?? undefined,
@@ -332,6 +377,7 @@ async function readOpenCodeCliModels(
     const models: string[] = [];
     const seen = new Set<string>();
     let settled = false;
+    let onAbort: (() => void) | null = null;
     const timeout = setTimeout(() => {
       finishWithError(new Error("OPENCODE_MODELS_TIMEOUT"));
     }, timeoutMs);
@@ -339,6 +385,10 @@ async function readOpenCodeCliModels(
     function cleanup(): void {
       clearTimeout(timeout);
       stdout.close();
+
+      if (signal && onAbort) {
+        signal.removeEventListener("abort", onAbort);
+      }
 
       if (!child.killed) {
         child.kill("SIGTERM");
@@ -368,6 +418,14 @@ async function readOpenCodeCliModels(
     child.on("error", (error) => {
       finishWithError(error);
     });
+
+    if (signal) {
+      onAbort = () => {
+        finishWithError(signal.reason instanceof Error ? signal.reason : new Error("provider discovery helper aborted"));
+      };
+
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
 
     child.stderr.on("data", (chunk) => {
       stderrChunks.push(chunk.toString("utf8"));
@@ -448,60 +506,26 @@ function normalizeCliModelId(value: string): string | null {
 async function discoverWorkspaceSessions(
   config: ProviderSessionDiscoveryHelperConfig,
   workspacePath: string,
-  knownSessions: ProviderSessionSummary[]
-): Promise<ProviderSessionDiscovery> {
-  const service = getWorkspaceDiscoveryService(config);
-  return service.discoverWorkspaceSessions(workspacePath, {
-    knownSessions
-  });
+  knownSessions: ProviderSessionSummary[],
+  signal?: AbortSignal
+): Promise<import("@codingns/session-sync-core").ProviderSessionDiscovery> {
+  return await discoverWorkspaceSessionsInRuntime(config, workspacePath, knownSessions, signal);
 }
 
 async function readSessionTitle(
   config: ProviderSessionDiscoveryHelperConfig,
   provider: string,
   providerSessionId: string,
-  rawStoreRef: string
+  rawStoreRef: string,
+  signal?: AbortSignal
 ): Promise<string> {
-  const service = getWorkspaceDiscoveryService(config);
-  return await service.readSessionTitle(provider, providerSessionId, rawStoreRef);
-}
-
-function getWorkspaceDiscoveryService(
-  config: ProviderSessionDiscoveryHelperConfig
-): SessionSyncService {
-  const cacheKey = JSON.stringify(config);
-
-  if (workspaceDiscoveryRuntime?.cacheKey === cacheKey) {
-    return workspaceDiscoveryRuntime.service;
-  }
-
-  const registry = new ProviderRegistry([
-    new ClaudeCodeAdapter({ homeDir: config.claudeCodeHomeDir }),
-    new CodexAdapter({
-      homeDir: config.codexHomeDir
-    }),
-    new GeminiAdapter({
-      homeDir: config.geminiHomeDir,
-      commandPath: config.geminiCliPath
-    }),
-    new KimiAdapter({
-      homeDir: config.kimiHomeDir,
-      defaultModel: config.kimiDefaultModel
-    }),
-    new OpenCodeAdapter({
-      baseUrl: config.opencodeBaseUrl,
-      dataDir: config.opencodeDataDir,
-      dbPath: config.opencodeDbPath
-    })
-  ]);
-  const service = new SessionSyncService(registry);
-
-  workspaceDiscoveryRuntime = {
-    cacheKey,
-    service
-  };
-
-  return service;
+  return await readSessionTitleInRuntime(
+    config,
+    provider,
+    providerSessionId,
+    rawStoreRef,
+    signal
+  );
 }
 
 function normalizeText(value: unknown): string | null {

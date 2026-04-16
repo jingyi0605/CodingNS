@@ -3,6 +3,7 @@ import path from "node:path";
 import Fastify from "fastify";
 
 import type { HostConfig } from "../config/env.js";
+import { disposeSharedOpenCodeSystemProbeHelperClient } from "../config/opencode-system-probe-helper-client.js";
 import { createAuthGuard } from "../middlewares/auth-guard.js";
 import { AuthController } from "../modules/auth/auth-controller.js";
 import { AuthService } from "../modules/auth/auth-service.js";
@@ -75,6 +76,7 @@ import { CcSwitchAdapter } from "../modules/model-switch/cc-switch-adapter.js";
 import { ModelSwitchController } from "../modules/model-switch/model-switch-controller.js";
 import { ModelSwitchService } from "../modules/model-switch/model-switch-service.js";
 import { ProviderController } from "../modules/provider/provider-controller.js";
+import { disposeSharedProviderDiscoveryHelperClient } from "../modules/provider/provider-discovery-helper-client.js";
 import { SkillController } from "../modules/skills/skill-controller.js";
 import { SkillManagerService } from "../modules/skills/skill-manager-service.js";
 import { createDefaultSkillTargetAdapters } from "../modules/skills/skill-target-adapter.js";
@@ -94,6 +96,7 @@ import { RuntimeObservabilityService } from "../modules/tasks/observability-serv
 import { SchedulerMetrics } from "../modules/tasks/scheduler-metrics.js";
 import { TaskActivityLog } from "../modules/tasks/task-activity-log.js";
 import { createTaskManager } from "../modules/tasks/task-manager.js";
+import { disposeSharedTaskHelperProcessClient } from "../modules/tasks/task-helper-client.js";
 import { createHostTaskLaneExecutors } from "../modules/tasks/task-lane-executors.js";
 import { CommandTemplateService } from "../modules/terminal/command-template-service.js";
 import { TerminalController } from "../modules/terminal/terminal-controller.js";
@@ -969,8 +972,12 @@ export function createServer(config: HostConfig) {
     await butlerSessionLiveRuntimeService.dispose();
     await sessionLiveRuntimeService.dispose();
     await wsHandle.close();
+    config.opencodeBaseUrlResolver?.dispose?.();
     gitCommandRunner.dispose();
     tailscaleHelperClient.dispose();
+    disposeSharedTaskHelperProcessClient();
+    disposeSharedProviderDiscoveryHelperClient();
+    disposeSharedOpenCodeSystemProbeHelperClient();
     database.close();
   });
 

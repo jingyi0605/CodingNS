@@ -24,11 +24,14 @@ type HelperResponse =
       error: string;
     };
 
+let sharedTaskHelperProcessClient: TaskHelperProcessClient | null = null;
+
 export class TaskHelperProcessClient {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly stdoutReader: readline.Interface;
   private readonly pendingRequests = new Map<string, PendingRequest<unknown>>();
   private nextRequestId = 1;
+  private disposed = false;
 
   constructor() {
     const launch = resolveHelperLaunch();
@@ -68,6 +71,10 @@ export class TaskHelperProcessClient {
     input: unknown,
     signal?: AbortSignal
   ): Promise<TResult> {
+    if (this.disposed) {
+      return Promise.reject(new Error("task helper 已关闭"));
+    }
+
     const id = String(this.nextRequestId++);
 
     return await new Promise<TResult>((resolve, reject) => {
@@ -78,6 +85,7 @@ export class TaskHelperProcessClient {
         onAbort = () => {
           aborted = true;
           this.pendingRequests.delete(id);
+          void this.sendCancel(id);
           reject(signal.reason ?? new Error("helper task aborted"));
         };
 
@@ -113,6 +121,7 @@ export class TaskHelperProcessClient {
       this.child.stdin.write(
         `${JSON.stringify({
           id,
+          type: "run",
           handler,
           input
         })}\n`,
@@ -130,6 +139,21 @@ export class TaskHelperProcessClient {
         }
       );
     });
+  }
+
+  dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.disposed = true;
+    this.stdoutReader.close();
+
+    if (!this.child.killed) {
+      this.child.kill("SIGTERM");
+    }
+
+    this.rejectAll(new Error("task helper 已关闭"));
   }
 
   private handleResponseLine(line: string): void {
@@ -170,6 +194,42 @@ export class TaskHelperProcessClient {
 
     this.pendingRequests.clear();
   }
+
+  private async sendCancel(targetId: string): Promise<void> {
+    if (this.disposed || this.child.killed || this.child.stdin.destroyed) {
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      this.child.stdin.write(
+        `${JSON.stringify({
+          id: `cancel:${targetId}`,
+          type: "cancel",
+          targetId
+        })}\n`,
+        () => {
+          resolve();
+        }
+      );
+    });
+  }
+}
+
+export function getSharedTaskHelperProcessClient(): TaskHelperProcessClient {
+  if (!sharedTaskHelperProcessClient) {
+    sharedTaskHelperProcessClient = new TaskHelperProcessClient();
+  }
+
+  return sharedTaskHelperProcessClient;
+}
+
+export function disposeSharedTaskHelperProcessClient(): void {
+  if (!sharedTaskHelperProcessClient) {
+    return;
+  }
+
+  sharedTaskHelperProcessClient.dispose();
+  sharedTaskHelperProcessClient = null;
 }
 
 function resolveHelperLaunch(): { command: string; args: string[] } {

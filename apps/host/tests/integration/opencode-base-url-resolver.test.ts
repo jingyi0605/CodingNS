@@ -1,8 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OpenCodeBaseUrlResolver } from "../../src/config/opencode-base-url-resolver.js";
 
 describe("OpenCodeBaseUrlResolver", () => {
+  afterEach(() => {
+    vi.doUnmock("node:child_process");
+    vi.doUnmock("../../src/config/opencode-system-probe-helper-client.js");
+    vi.resetModules();
+  });
+
   it("会自动发现本机可用的 opencode serve 地址", async () => {
     const inspectProcessList = vi.fn(
       () =>
@@ -184,11 +190,11 @@ describe("OpenCodeBaseUrlResolver", () => {
     });
     const readProcessCwd = vi.fn(async () => null);
     vi.doMock("../../src/config/opencode-system-probe-helper-client.js", () => ({
-      OpenCodeSystemProbeHelperClient: class {
-        readProcessList = readProcessList;
-        readListeningSockets = readListeningSockets;
-        readProcessCwd = readProcessCwd;
-      }
+      getSharedOpenCodeSystemProbeHelperClient: () => ({
+        readProcessList,
+        readListeningSockets,
+        readProcessCwd
+      })
     }));
 
     try {
@@ -207,8 +213,6 @@ describe("OpenCodeBaseUrlResolver", () => {
       expect(readListeningSockets).toHaveBeenCalledWith(8124);
       expect(readProcessCwd).toHaveBeenCalledWith(8124);
     } finally {
-      vi.doUnmock("../../src/config/opencode-system-probe-helper-client.js");
-      vi.resetModules();
       Object.defineProperty(process, "platform", {
         configurable: true,
         value: originalPlatform
@@ -303,8 +307,6 @@ describe("OpenCodeBaseUrlResolver", () => {
         })
       );
     } finally {
-      vi.doUnmock("node:child_process");
-      vi.resetModules();
       Object.defineProperty(process, "platform", {
         configurable: true,
         value: originalPlatform
@@ -371,33 +373,90 @@ describe("OpenCodeBaseUrlResolver", () => {
       spawnSync
     }));
 
-    try {
-      const { OpenCodeBaseUrlResolver: DarwinResolver } = await import(
-        "../../src/config/opencode-base-url-resolver.js"
-      );
-      const resolver = new DarwinResolver({
-        commandPath: "/opt/homebrew/bin/opencode",
-        inspectProcessList: () => "79133 node /opt/homebrew/bin/opencode serve --print-logs",
-        inspectListeningSockets: () => [{ hostname: "127.0.0.1", port: 41827 }],
-        inspectProcessCwd: () => "/Users/jackson/Code/CodingNS",
-        probeBaseUrl: async (baseUrl: string) => baseUrl === "http://127.0.0.1:4312"
+    const { OpenCodeBaseUrlResolver: DarwinResolver } = await import(
+      "../../src/config/opencode-base-url-resolver.js"
+    );
+    const resolver = new DarwinResolver({
+      commandPath: "/opt/homebrew/bin/opencode",
+      inspectProcessList: () => "79133 node /opt/homebrew/bin/opencode serve --print-logs",
+      inspectListeningSockets: () => [{ hostname: "127.0.0.1", port: 41827 }],
+      inspectProcessCwd: () => "/Users/jackson/Code/CodingNS",
+      probeBaseUrl: async (baseUrl: string) => baseUrl === "http://127.0.0.1:4312"
+    });
+
+    await expect(
+      resolver.resolve({ workspacePath: "/Users/jackson/Code/MDG-BussInfo" })
+    ).resolves.toBe("http://127.0.0.1:4312");
+    expect(spawn).toHaveBeenCalledWith(
+      "/opt/homebrew/bin/opencode",
+      ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"],
+      expect.objectContaining({
+        cwd: "/Users/jackson/Code/MDG-BussInfo",
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true
+      })
+    );
+  });
+
+  it("dispose 会终止托管 serve，并阻止后续继续 resolve", async () => {
+    vi.resetModules();
+
+    const stdoutHandlers: Array<(chunk: string) => void> = [];
+    const kill = vi.fn(() => {
+      child.killed = true;
+    });
+    const child = {
+      killed: false,
+      stdout: {
+        on: (event: string, handler: (chunk: string) => void) => {
+          if (event === "data") {
+            stdoutHandlers.push(handler);
+          }
+        },
+        off: vi.fn()
+      },
+      stderr: {
+        on: vi.fn(),
+        off: vi.fn()
+      },
+      once: vi.fn(),
+      off: vi.fn(),
+      kill
+    };
+    const spawn = vi.fn(() => {
+      queueMicrotask(() => {
+        for (const handler of stdoutHandlers) {
+          handler("opencode server listening on http://127.0.0.1:4312\n");
+        }
       });
 
-      await expect(
-        resolver.resolve({ workspacePath: "/Users/jackson/Code/MDG-BussInfo" })
-      ).resolves.toBe("http://127.0.0.1:4312");
-      expect(spawn).toHaveBeenCalledWith(
-        "/opt/homebrew/bin/opencode",
-        ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"],
-        expect.objectContaining({
-          cwd: "/Users/jackson/Code/MDG-BussInfo",
-          stdio: ["ignore", "pipe", "pipe"],
-          windowsHide: true
-        })
-      );
-    } finally {
-      vi.doUnmock("node:child_process");
-      vi.resetModules();
-    }
+      return child;
+    });
+
+    vi.doMock("node:child_process", () => ({
+      spawn
+    }));
+
+    const { OpenCodeBaseUrlResolver: Resolver } = await import(
+      "../../src/config/opencode-base-url-resolver.js"
+    );
+    const resolver = new Resolver({
+      commandPath: "/opt/homebrew/bin/opencode",
+      inspectProcessList: () => "",
+      inspectListeningSockets: () => [],
+      inspectProcessCwd: () => null,
+      probeBaseUrl: async (baseUrl: string) => baseUrl === "http://127.0.0.1:4312"
+    });
+
+    await expect(
+      resolver.resolve({ workspacePath: "/Users/jackson/Code/CodingNS" })
+    ).resolves.toBe("http://127.0.0.1:4312");
+
+    resolver.dispose();
+
+    expect(kill).toHaveBeenCalledWith("SIGTERM");
+    await expect(
+      resolver.resolve({ workspacePath: "/Users/jackson/Code/CodingNS", refresh: true })
+    ).rejects.toThrow("SERVER_UNAVAILABLE");
   });
 });
