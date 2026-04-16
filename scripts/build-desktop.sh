@@ -31,6 +31,8 @@ MACOS_SIGNING_DIR_DEFAULT="$REPO_DIR/.local-secrets/macos-signing"
 MACOS_SIGNING_DIR="${MACOS_SIGNING_DIR:-$MACOS_SIGNING_DIR_DEFAULT}"
 MACOS_SIGNING_ENV_FILE="$MACOS_SIGNING_DIR/release-macos.env"
 MACOS_SIGNING_CSR_FILE="$MACOS_SIGNING_DIR/developer-id-signing.csr.pem"
+MACOS_KEYCHAIN_PATH_DEFAULT="$HOME/Library/Keychains/login.keychain-db"
+MACOS_KEYCHAIN_PATH="${MACOS_KEYCHAIN_PATH:-$MACOS_KEYCHAIN_PATH_DEFAULT}"
 MACOS_CERT_IMPORT_SCRIPT="$REPO_DIR/scripts/import-macos-signing-certificate.sh"
 CARGO_HOME_DEFAULT="$REPO_DIR/.cargo-home"
 MACOS_RELEASE_COPY_DIR_DEFAULT="$HOME/WorkFile/临时文件"
@@ -294,13 +296,11 @@ print_macos_build_artifacts() {
 print_macos_release_artifacts() {
     local app_path="$1"
     local dmg_path="$2"
-    local zip_path="$3"
 
     echo ""
     log_info "发布产物位置:"
-    log_success "  notarized app: $app_path"
+    log_success "  signed app: $app_path"
     log_success "  notarized dmg: $dmg_path"
-    log_success "  notarize zip: $zip_path"
 }
 
 copy_macos_release_artifacts() {
@@ -308,7 +308,6 @@ copy_macos_release_artifacts() {
     local destination_dir
     local release_app_path="$MACOS_RELEASE_DIR/CodingNS.app"
     local release_dmg_path="$MACOS_RELEASE_DIR/CodingNS.dmg"
-    local release_zip_path="$MACOS_RELEASE_DIR/CodingNS.zip"
     local timestamp
 
     if [[ -n "${CODINGNS_MACOS_RELEASE_COPY_DIR:-}" ]]; then
@@ -331,23 +330,16 @@ copy_macos_release_artifacts() {
         return 1
     fi
 
-    if [[ ! -f "$release_zip_path" ]]; then
-        log_error "未找到 notarize zip: $release_zip_path"
-        return 1
-    fi
-
     log_info "复制 macOS 发布产物到: $destination_dir"
     mkdir -p "$destination_dir"
     rsync -a "$release_app_path" "$destination_dir/"
     cp "$release_dmg_path" "$destination_dir/"
-    cp "$release_zip_path" "$destination_dir/"
 
     echo ""
     log_info "复制后的产物位置:"
     log_success "  target dir: $destination_dir"
     log_success "  app: $destination_dir/$(basename "$release_app_path")"
     log_success "  dmg: $destination_dir/$(basename "$release_dmg_path")"
-    log_success "  zip: $destination_dir/$(basename "$release_zip_path")"
 }
 
 resolve_notarytool_args() {
@@ -423,6 +415,28 @@ verify_sign_identity() {
     fi
 
     return 0
+}
+
+prepare_macos_keychain_access() {
+    if [[ ! -f "$MACOS_KEYCHAIN_PATH" ]]; then
+        log_warn "未找到钥匙串文件，跳过访问权限预处理: $MACOS_KEYCHAIN_PATH"
+        return 0
+    fi
+
+    if [[ -z "${MACOS_KEYCHAIN_PASSWORD:-}" ]]; then
+        log_warn "未配置 MACOS_KEYCHAIN_PASSWORD；如果 login.keychain 已锁定，codesign 可能报 errSecInternalComponent"
+        return 0
+    fi
+
+    log_info "解锁 macOS 登录钥匙串..."
+    security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$MACOS_KEYCHAIN_PATH"
+
+    log_info "刷新私钥访问权限，允许 codesign 在 CLI / tmux 下直接取钥..."
+    security set-key-partition-list \
+        -S apple-tool:,apple:,codesign: \
+        -s \
+        -k "$MACOS_KEYCHAIN_PASSWORD" \
+        "$MACOS_KEYCHAIN_PATH" >/dev/null
 }
 
 sign_macos_app() {
@@ -561,8 +575,9 @@ validate_notarized_macos_release() {
     local dmg_path="$2"
 
     log_info "执行最终 Gatekeeper 校验..."
-    xcrun stapler validate -v "$app_path"
     xcrun stapler validate -v "$dmg_path"
+    log_info "复核 .app 签名完整性..."
+    codesign --verify --deep --strict --verbose=2 "$app_path"
     spctl --assess --type execute -vv "$app_path"
     spctl --assess --type open --context context:primary-signature -vv "$dmg_path"
 }
@@ -816,13 +831,13 @@ release_macos() {
     ensure_macos_host
     load_macos_release_env
     check_macos_release_deps || exit 1
+    prepare_macos_keychain_access || exit 1
     verify_sign_identity || exit 1
     resolve_notarytool_args || exit 1
 
     local source_app_path
     local release_app_path
     local release_dmg_path
-    local release_zip_path
     local app_name
 
     source_app_path="$(find_built_macos_app)" || exit 1
@@ -837,10 +852,6 @@ release_macos() {
     sign_macos_app "$release_app_path"
     verify_macos_signature "$release_app_path"
 
-    release_zip_path="$(create_macos_release_zip "$release_app_path")"
-    notarize_macos_file "$release_zip_path"
-    staple_macos_artifact "$release_app_path"
-
     release_dmg_path="$(create_macos_release_dmg "$release_app_path")"
     sign_macos_dmg "$release_dmg_path"
     notarize_macos_file "$release_dmg_path"
@@ -849,7 +860,7 @@ release_macos() {
     validate_notarized_macos_release "$release_app_path" "$release_dmg_path"
 
     log_success "macOS 发布流程完成！"
-    print_macos_release_artifacts "$release_app_path" "$release_dmg_path" "$release_zip_path"
+    print_macos_release_artifacts "$release_app_path" "$release_dmg_path"
 }
 
 build_windows() {
@@ -1063,6 +1074,8 @@ print_usage() {
     echo "  APPLE_ID                   未使用 APPLE_NOTARY_PROFILE 时必填"
     echo "  APPLE_APP_SPECIFIC_PASSWORD 未使用 APPLE_NOTARY_PROFILE 时必填"
     echo "  APPLE_TEAM_ID              未使用 APPLE_NOTARY_PROFILE 时必填"
+    echo "  MACOS_KEYCHAIN_PASSWORD    可选，login.keychain 密码；CLI/tmux 签名失败时建议提供"
+    echo "  MACOS_KEYCHAIN_PATH        可选，默认 $HOME/Library/Keychains/login.keychain-db"
     echo "  MACOS_ENTITLEMENTS_PATH    可选，自定义 entitlements 文件"
     echo "  MACOS_BUILD_TARGET         可选，默认 universal-apple-darwin"
     echo "  CODINGNS_MACOS_RELEASE_COPY_DIR  可选，release-copy / release-macos-copy 的复制目标目录"
