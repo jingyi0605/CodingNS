@@ -578,10 +578,11 @@ fn configure_macos_window_chrome(app: &tauri::App) -> tauri::Result<()> {
 
     // 统一顶栏要回到 Overlay 轨道，让应用工具栏真正进入标题栏区域。
     window.set_title_bar_style(TitleBarStyle::Overlay)?;
-    // 桌面端真正的毛玻璃依赖原生窗口材质，前端只负责把左右栏做成可透层。
+    // Sidebar 材质天生偏灰，会把浅色半透明边栏整体压暗。
+    // 这里改成更接近内容背景的窗口材质，让左右栏在日间模式下保持更亮的通透感。
     window.set_effects(
         EffectsBuilder::new()
-            .effect(Effect::Sidebar)
+            .effect(Effect::UnderWindowBackground)
             .state(EffectState::FollowsWindowActiveState)
             .build(),
     )?;
