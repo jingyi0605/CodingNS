@@ -92,7 +92,7 @@ export const zhCN = {
     modelManagementOptionsEmpty: "当前没有可切换的预设。",
     modelManagementStatusReady: "可切换",
     modelManagementStatusUnconfigured: "未配置",
-    modelManagementStatusUnavailable: "CLI 不可用",
+    modelManagementStatusUnavailable: "未安装 cc-switch-cli",
     modelManagementStatusError: "读取失败",
     skills: "Skills",
     skillsSectionSummary: "读取并同步各个 CLI 自己的本地 skill，不做市场，不接远端仓库。",

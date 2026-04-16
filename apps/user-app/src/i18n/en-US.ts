@@ -98,7 +98,7 @@ export const enUS = {
     modelManagementOptionsEmpty: "No switchable presets were found.",
     modelManagementStatusReady: "Ready",
     modelManagementStatusUnconfigured: "Unconfigured",
-    modelManagementStatusUnavailable: "CLI unavailable",
+    modelManagementStatusUnavailable: "cc-switch-cli missing",
     modelManagementStatusError: "Read failed",
     skills: "Skills",
     skillsSectionSummary:

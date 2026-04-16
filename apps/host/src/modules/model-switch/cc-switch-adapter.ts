@@ -48,6 +48,7 @@ interface AppMetadata {
 }
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+const CC_SWITCH_CLI_REPO_URL = "https://github.com/SaladDay/cc-switch-cli";
 
 const APP_METADATA: Record<ModelSwitchAppId, AppMetadata> = {
   "claude-code": {
@@ -89,7 +90,7 @@ export class CcSwitchAdapter {
         displayName: metadata.displayName,
         cliAvailable: false,
         status: "unavailable",
-        statusText: "当前机器未找到 cc-switch 命令",
+        statusText: buildCcSwitchCliMissingMessage(),
         currentPresetId: null,
         currentPresetName: null,
         currentModel: null,
@@ -162,7 +163,7 @@ export class CcSwitchAdapter {
       throw new AppError({
         statusCode: 503,
         errorCode: "CC_SWITCH_UNAVAILABLE",
-        detail: "当前机器未找到 cc-switch 命令"
+        detail: buildCcSwitchCliMissingMessage()
       });
     }
 
@@ -422,4 +423,8 @@ function createBoundedOutputCollector(maxLength = 4096): {
       return content;
     }
   };
+}
+
+function buildCcSwitchCliMissingMessage(): string {
+  return `当前机器未安装 cc-switch-cli。这里集成的是 CC-Switch 的衍生 CLI 版本，不是 CC-Switch UI 版本。请先安装：${CC_SWITCH_CLI_REPO_URL}`;
 }

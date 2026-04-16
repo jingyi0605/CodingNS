@@ -152,7 +152,9 @@ describe("model switch routes", () => {
         expect.objectContaining({
           app: "codex",
           status: "unavailable",
-          cliAvailable: false
+          cliAvailable: false,
+          statusText:
+            "当前机器未安装 cc-switch-cli。这里集成的是 CC-Switch 的衍生 CLI 版本，不是 CC-Switch UI 版本。请先安装：https://github.com/SaladDay/cc-switch-cli"
         })
       ])
     );
