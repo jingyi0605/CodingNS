@@ -231,6 +231,7 @@ export const zhCN = {
     releaseInstallNow: "安装更新",
     releaseOpenPage: "打开发布页",
     releaseRollback: "回退版本",
+    releaseUpdateBadge: "新版本",
     releaseUpdateReady: "发现新版本",
     releaseUpToDate: "已是最新版本",
     releaseCheckFailed: "检查失败",

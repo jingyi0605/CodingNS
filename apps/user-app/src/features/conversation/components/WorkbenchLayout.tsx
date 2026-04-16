@@ -177,6 +177,7 @@ import { WorkbenchModal as SidebarModal } from "./WorkbenchModal";
 import { WorkspaceCloneModal } from "./WorkspaceCloneModal";
 import { WorkspaceInboxPanel } from "./WorkspaceInboxModal";
 import { WorkspaceImportBrowserModal } from "./WorkspaceImportBrowserModal";
+import { WorkbenchUpdateBadge } from "./WorkbenchUpdateBadge";
 
 const LEFT_PANEL_WIDTH_KEY = "workbench.left.width";
 const RIGHT_PANEL_WIDTH_KEY = "workbench.right.width";
@@ -5615,15 +5616,18 @@ function SidebarContent({
       </div>
 
       <div className="workbench-nav-footer minimal">
-        <button
-          className="settings-entry-button workbench-nav-settings-button"
-          type="button"
-          onClick={onOpenSettings}
-          title={t("settings.title")}
-        >
-          <SettingsIcon />
-          <span className="settings-entry-label">{t("settings.title")}</span>
-        </button>
+        <div className="workbench-nav-footer-actions">
+          <button
+            className="settings-entry-button workbench-nav-settings-button"
+            type="button"
+            onClick={onOpenSettings}
+            title={t("settings.title")}
+          >
+            <SettingsIcon />
+            <span className="settings-entry-label">{t("settings.title")}</span>
+          </button>
+          <WorkbenchUpdateBadge onOpenSoftwareUpdate={() => navigate("/settings/software-update")} />
+        </div>
       </div>
 
       <SidebarModal

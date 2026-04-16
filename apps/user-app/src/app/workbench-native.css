@@ -4042,6 +4042,17 @@ body {
   background: transparent;
 }
 
+.workbench-nav-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workbench-nav-footer-actions .workbench-nav-settings-button {
+  flex: 1 1 auto;
+  width: auto;
+}
+
 .workbench-nav-settings-button {
   justify-content: flex-start;
   min-height: 32px;
@@ -4054,6 +4065,37 @@ body {
 
 .workbench-nav-settings-button:hover {
   background: rgba(120, 120, 128, 0.1);
+}
+
+.workbench-nav-update-badge {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, rgba(120, 120, 128, 0.24));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, rgba(255, 255, 255, 0.78));
+  color: var(--accent);
+  cursor: pointer;
+  transition:
+    transform 120ms ease,
+    border-color 120ms ease,
+    background 120ms ease;
+}
+
+.workbench-nav-update-badge:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 42%, rgba(120, 120, 128, 0.28));
+  background: color-mix(in srgb, var(--accent) 18%, rgba(255, 255, 255, 0.88));
+}
+
+.workbench-nav-update-badge-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .workbench-auxiliary-header {

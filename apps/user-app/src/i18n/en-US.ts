@@ -240,6 +240,7 @@ export const enUS = {
     releaseInstallNow: "Install",
     releaseOpenPage: "Open Release",
     releaseRollback: "Rollback",
+    releaseUpdateBadge: "Update",
     releaseUpdateReady: "New version found",
     releaseUpToDate: "Up to date",
     releaseCheckFailed: "Check failed",
