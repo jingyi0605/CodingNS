@@ -5,6 +5,15 @@ import type { ButlerSessionService } from "../butler/butler-session-service.js";
 import type { SessionHistoryService } from "../sessions/session-history-service.js";
 import type { SessionLiveRuntimeService } from "../sessions/session-live-runtime-service.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
+import type {
+  CloneWorkspaceInput,
+  UpdateWorkspaceNavigationStateInput,
+  WorkspaceService
+} from "../workspace/workspace-service.js";
+import type { CreateWorktreeInput, WorktreeManager } from "../worktree/worktree-manager.js";
+import type { WorktreeCleanupOptions, WorktreeCleanupService } from "../worktree/worktree-cleanup-service.js";
+import type { WorktreeMergeService } from "../worktree/worktree-merge-service.js";
+import type { WorktreeSyncService } from "../worktree/worktree-sync-service.js";
 
 type AssistantCapabilityMode = "read" | "proxy_execute";
 
@@ -21,7 +30,7 @@ export interface AssistantCapabilityReceipt<TPayload> {
   auditId: string;
   timestamp: string;
   targetRef: {
-    kind: "project" | "session" | "terminal" | "none";
+    kind: "project" | "session" | "terminal" | "workspace" | "worktree" | "none";
     id: string | null;
   };
   payload: TPayload;
@@ -67,6 +76,38 @@ interface ReadAssistantTerminalHistoryInput {
 interface SendAssistantTerminalInput {
   terminalId: string;
   content: string;
+}
+
+interface CreateAssistantWorkspaceDirectoryInput {
+  parentPath: string;
+  directoryName: string;
+}
+
+interface ImportAssistantWorkspaceInput {
+  path: string;
+  name?: string | null;
+}
+
+interface CloneAssistantWorkspaceInput {
+  repositoryUrl: string;
+  parentPath: string;
+  directoryName?: string | null;
+  name?: string | null;
+  auth?: CloneWorkspaceInput["auth"];
+}
+
+interface UpdateAssistantWorkspaceNavigationStateInput {
+  workspaceId: string;
+  userId: string;
+  collapsed?: boolean;
+  backgroundColor?: string | null;
+}
+
+interface CreateAssistantWorktreeInput {
+  sourceWorkspaceId: string;
+  branchName: string;
+  displayName?: string | null;
+  baseRef?: string | null;
 }
 
 const ASSISTANT_CAPABILITIES: AssistantCapabilityDescriptor[] = [
@@ -141,6 +182,90 @@ const ASSISTANT_CAPABILITIES: AssistantCapabilityDescriptor[] = [
     mode: "proxy_execute",
     enabled: true,
     summary: "向受控终端发送输入"
+  },
+  {
+    name: "workspaces.list",
+    mode: "read",
+    enabled: true,
+    summary: "列出当前可见工作区"
+  },
+  {
+    name: "workspaces.browse",
+    mode: "read",
+    enabled: true,
+    summary: "浏览可导入的本地目录"
+  },
+  {
+    name: "workspaces.directory.create",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "创建新的工作区目录"
+  },
+  {
+    name: "workspaces.import",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "把已有目录导入成工作区"
+  },
+  {
+    name: "workspaces.clone",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "克隆仓库并导入成工作区"
+  },
+  {
+    name: "workspaces.reorder",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "调整工作区显示顺序"
+  },
+  {
+    name: "workspaces.management.get",
+    mode: "read",
+    enabled: true,
+    summary: "读取工作区管理摘要"
+  },
+  {
+    name: "workspaces.navigation-state.update",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "更新工作区导航状态"
+  },
+  {
+    name: "workspaces.remove",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "移除工作区入口"
+  },
+  {
+    name: "worktrees.tree",
+    mode: "read",
+    enabled: true,
+    summary: "读取工作树结构"
+  },
+  {
+    name: "worktrees.create",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "创建子工作树"
+  },
+  {
+    name: "worktrees.merge-preview",
+    mode: "read",
+    enabled: true,
+    summary: "读取子工作树合并预览"
+  },
+  {
+    name: "worktrees.merge-into-parent",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "把子工作树合并回父工作区"
+  },
+  {
+    name: "worktrees.cleanup",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "清理子工作树"
   }
 ];
 
@@ -165,7 +290,23 @@ export class AssistantCapabilityService {
     private readonly terminalService: Pick<
       TerminalService,
       "listTerminals" | "readTerminalHistory" | "writeInput"
-    >
+    >,
+    private readonly workspaceService: Pick<
+      WorkspaceService,
+      | "list"
+      | "browseDirectories"
+      | "createDirectory"
+      | "importWorkspace"
+      | "cloneWorkspace"
+      | "reorderWorkspaces"
+      | "getManagementSummary"
+      | "removeWorkspace"
+      | "updateNavigationState"
+    >,
+    private readonly worktreeManager: Pick<WorktreeManager, "getTree" | "create">,
+    private readonly worktreeSyncService: Pick<WorktreeSyncService, "syncRoot">,
+    private readonly worktreeMergeService: Pick<WorktreeMergeService, "preview" | "apply">,
+    private readonly worktreeCleanupService: Pick<WorktreeCleanupService, "cleanup">
   ) {}
 
   listCapabilities(): AssistantCapabilityReceipt<{
@@ -393,6 +534,229 @@ export class AssistantCapabilityService {
     return this.createReceipt("terminals.input.send", {
       kind: "terminal",
       id: input.terminalId
+    }, {
+      result
+    });
+  }
+
+  listWorkspaces(): AssistantCapabilityReceipt<{
+    items: ReturnType<WorkspaceService["list"]>;
+  }> {
+    return this.createReceipt("workspaces.list", {
+      kind: "none",
+      id: null
+    }, {
+      items: this.workspaceService.list()
+    });
+  }
+
+  browseWorkspaces(
+    requestedPath?: string | null
+  ): AssistantCapabilityReceipt<{
+    result: ReturnType<WorkspaceService["browseDirectories"]>;
+  }> {
+    return this.createReceipt("workspaces.browse", {
+      kind: "none",
+      id: null
+    }, {
+      result: this.workspaceService.browseDirectories(requestedPath?.trim() || undefined)
+    });
+  }
+
+  createWorkspaceDirectory(
+    input: CreateAssistantWorkspaceDirectoryInput
+  ): AssistantCapabilityReceipt<{
+    result: ReturnType<WorkspaceService["createDirectory"]>;
+  }> {
+    const result = this.workspaceService.createDirectory(input.parentPath, input.directoryName);
+
+    return this.createReceipt("workspaces.directory.create", {
+      kind: "none",
+      id: null
+    }, {
+      result
+    });
+  }
+
+  importWorkspace(
+    input: ImportAssistantWorkspaceInput
+  ): AssistantCapabilityReceipt<{
+    workspace: ReturnType<WorkspaceService["importWorkspace"]>;
+  }> {
+    const workspace = this.workspaceService.importWorkspace(input.path, input.name ?? undefined);
+
+    return this.createReceipt("workspaces.import", {
+      kind: "workspace",
+      id: workspace.id
+    }, {
+      workspace
+    });
+  }
+
+  async cloneWorkspace(
+    input: CloneAssistantWorkspaceInput
+  ): Promise<AssistantCapabilityReceipt<{
+    workspace: Awaited<ReturnType<WorkspaceService["cloneWorkspace"]>>;
+  }>> {
+    const workspace = await this.workspaceService.cloneWorkspace({
+      repositoryUrl: input.repositoryUrl,
+      parentPath: input.parentPath,
+      directoryName: input.directoryName ?? undefined,
+      name: input.name ?? undefined,
+      auth: input.auth ?? undefined
+    });
+
+    return this.createReceipt("workspaces.clone", {
+      kind: "workspace",
+      id: workspace.id
+    }, {
+      workspace
+    });
+  }
+
+  reorderWorkspaces(
+    workspaceIds: string[]
+  ): AssistantCapabilityReceipt<{
+    items: ReturnType<WorkspaceService["reorderWorkspaces"]>;
+  }> {
+    const items = this.workspaceService.reorderWorkspaces(workspaceIds);
+
+    return this.createReceipt("workspaces.reorder", {
+      kind: "none",
+      id: null
+    }, {
+      items
+    });
+  }
+
+  async getWorkspaceManagementSummary(
+    workspaceId: string
+  ): Promise<AssistantCapabilityReceipt<{
+    summary: Awaited<ReturnType<WorkspaceService["getManagementSummary"]>>;
+  }>> {
+    const summary = await this.workspaceService.getManagementSummary(workspaceId);
+
+    return this.createReceipt("workspaces.management.get", {
+      kind: "workspace",
+      id: workspaceId
+    }, {
+      summary
+    });
+  }
+
+  updateWorkspaceNavigationState(
+    input: UpdateAssistantWorkspaceNavigationStateInput
+  ): AssistantCapabilityReceipt<{
+    state: ReturnType<WorkspaceService["updateNavigationState"]>;
+  }> {
+    const state = this.workspaceService.updateNavigationState(input.workspaceId, input.userId, {
+      collapsed: input.collapsed,
+      backgroundColor: input.backgroundColor
+    });
+
+    return this.createReceipt("workspaces.navigation-state.update", {
+      kind: "workspace",
+      id: input.workspaceId
+    }, {
+      state
+    });
+  }
+
+  removeWorkspace(
+    workspaceId: string
+  ): AssistantCapabilityReceipt<{
+    workspace: ReturnType<WorkspaceService["removeWorkspace"]>;
+  }> {
+    const workspace = this.workspaceService.removeWorkspace(workspaceId);
+
+    return this.createReceipt("workspaces.remove", {
+      kind: "workspace",
+      id: workspaceId
+    }, {
+      workspace
+    });
+  }
+
+  async getWorktreeTree(
+    rootWorkspaceId: string
+  ): Promise<AssistantCapabilityReceipt<{
+    rootWorkspaceId: string;
+    items: ReturnType<WorktreeManager["getTree"]>;
+  }>> {
+    await this.worktreeSyncService.syncRoot(rootWorkspaceId);
+    const items = this.worktreeManager.getTree(rootWorkspaceId);
+
+    return this.createReceipt("worktrees.tree", {
+      kind: "workspace",
+      id: rootWorkspaceId
+    }, {
+      rootWorkspaceId,
+      items
+    });
+  }
+
+  async createWorktree(
+    input: CreateAssistantWorktreeInput
+  ): Promise<AssistantCapabilityReceipt<{
+    result: Awaited<ReturnType<WorktreeManager["create"]>>;
+  }>> {
+    const result = await this.worktreeManager.create({
+      sourceWorkspaceId: input.sourceWorkspaceId,
+      branchName: input.branchName,
+      displayName: input.displayName ?? undefined,
+      baseRef: input.baseRef ?? undefined
+    });
+
+    return this.createReceipt("worktrees.create", {
+      kind: "worktree",
+      id: result.workspace.id
+    }, {
+      result
+    });
+  }
+
+  async getWorktreeMergePreview(
+    workspaceId: string
+  ): Promise<AssistantCapabilityReceipt<{
+    preview: Awaited<ReturnType<WorktreeMergeService["preview"]>>;
+  }>> {
+    const preview = await this.worktreeMergeService.preview(workspaceId);
+
+    return this.createReceipt("worktrees.merge-preview", {
+      kind: "worktree",
+      id: workspaceId
+    }, {
+      preview
+    });
+  }
+
+  async mergeWorktreeIntoParent(
+    workspaceId: string
+  ): Promise<AssistantCapabilityReceipt<{
+    result: Awaited<ReturnType<WorktreeMergeService["apply"]>>;
+  }>> {
+    const result = await this.worktreeMergeService.apply(workspaceId);
+
+    return this.createReceipt("worktrees.merge-into-parent", {
+      kind: "worktree",
+      id: workspaceId
+    }, {
+      result
+    });
+  }
+
+  async cleanupWorktree(
+    workspaceId: string,
+    userId: string,
+    options: WorktreeCleanupOptions
+  ): Promise<AssistantCapabilityReceipt<{
+    result: Awaited<ReturnType<WorktreeCleanupService["cleanup"]>>;
+  }>> {
+    const result = await this.worktreeCleanupService.cleanup(workspaceId, userId, options);
+
+    return this.createReceipt("worktrees.cleanup", {
+      kind: "worktree",
+      id: workspaceId
     }, {
       result
     });

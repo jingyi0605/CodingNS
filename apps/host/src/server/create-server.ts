@@ -78,6 +78,7 @@ import { ModelSwitchService } from "../modules/model-switch/model-switch-service
 import { ProviderController } from "../modules/provider/provider-controller.js";
 import { disposeSharedProviderDiscoveryHelperClient } from "../modules/provider/provider-discovery-helper-client.js";
 import { SkillController } from "../modules/skills/skill-controller.js";
+import { syncBuiltinSkillsOnStartup } from "../modules/skills/builtin-skill-service.js";
 import { SkillManagerService } from "../modules/skills/skill-manager-service.js";
 import { createDefaultSkillTargetAdapters } from "../modules/skills/skill-target-adapter.js";
 import { TailscaleManager } from "../modules/tailscale/tailscale-manager.js";
@@ -389,6 +390,18 @@ export function createServer(config: HostConfig) {
       ssotRootDir: path.join(path.dirname(config.databasePath), "skills")
     }
   );
+  for (const result of syncBuiltinSkillsOnStartup(skillManagerService)) {
+    if (result.ok) {
+      console.info(
+        `[host] 已同步内置 Skill ${result.directoryName} -> ${result.targetCli.join(",")}`
+      );
+      continue;
+    }
+
+    console.warn(
+      `[host] 同步内置 Skill 失败 ${result.directoryName}: ${result.errorDetail ?? "unknown error"}`
+    );
+  }
   const commitRuleEngine = new CommitRuleEngine();
   const commitDraftService = new CommitDraftService(gitReadService);
   const commitOrchestrator = new CommitOrchestrator(
@@ -843,7 +856,12 @@ export function createServer(config: HostConfig) {
       butlerSessionService,
       sessionHistoryService,
       sessionLiveRuntimeService,
-      terminalService
+      terminalService,
+      workspaceService,
+      worktreeManager,
+      worktreeSyncService,
+      worktreeMergeService,
+      worktreeCleanupService
     )
   );
   const providerController = new ProviderController(

@@ -18,4 +18,18 @@ export async function registerAssistantCapabilityRoutes(
   app.get("/api/assistant/terminals", assistantCapabilityController.listTerminals);
   app.get("/api/assistant/terminals/:terminalId/history", assistantCapabilityController.readTerminalHistory);
   app.post("/api/assistant/terminals/:terminalId/input", assistantCapabilityController.sendTerminalInput);
+  app.get("/api/assistant/workspaces", assistantCapabilityController.listWorkspaces);
+  app.get("/api/assistant/workspaces/browse", assistantCapabilityController.browseWorkspaces);
+  app.post("/api/assistant/workspaces/directories", assistantCapabilityController.createWorkspaceDirectory);
+  app.post("/api/assistant/workspaces/import", assistantCapabilityController.importWorkspace);
+  app.post("/api/assistant/workspaces/clone", assistantCapabilityController.cloneWorkspace);
+  app.put("/api/assistant/workspaces/reorder", assistantCapabilityController.reorderWorkspaces);
+  app.get("/api/assistant/workspaces/:workspaceId/management", assistantCapabilityController.getWorkspaceManagementSummary);
+  app.put("/api/assistant/workspaces/:workspaceId/navigation-state", assistantCapabilityController.updateWorkspaceNavigationState);
+  app.delete("/api/assistant/workspaces/:workspaceId", assistantCapabilityController.removeWorkspace);
+  app.get("/api/assistant/worktrees/tree", assistantCapabilityController.getWorktreeTree);
+  app.post("/api/assistant/worktrees", assistantCapabilityController.createWorktree);
+  app.post("/api/assistant/worktrees/:workspaceId/merge-preview", assistantCapabilityController.getWorktreeMergePreview);
+  app.post("/api/assistant/worktrees/:workspaceId/merge-into-parent", assistantCapabilityController.mergeWorktreeIntoParent);
+  app.post("/api/assistant/worktrees/:workspaceId/cleanup", assistantCapabilityController.cleanupWorktree);
 }

@@ -279,4 +279,174 @@ describe("assistant capability routes", () => {
       targetProvider: "codex"
     });
   });
+
+  it("工作区与工作树路由会把参数清洗后传给服务", async () => {
+    const assistantCapabilityService = {
+      browseWorkspaces: vi.fn(() => ({
+        ok: true,
+        capability: "workspaces.browse",
+        auditId: "audit-browse",
+        timestamp: "2026-04-16T12:00:00.000Z",
+        targetRef: {
+          kind: "none",
+          id: null
+        },
+        payload: {
+          result: {
+            currentPath: "/tmp",
+            parentPath: "/",
+            roots: [],
+            items: []
+          }
+        }
+      })),
+      createWorkspaceDirectory: vi.fn(() => ({
+        ok: true,
+        capability: "workspaces.directory.create",
+        auditId: "audit-mkdir",
+        timestamp: "2026-04-16T12:01:00.000Z",
+        targetRef: {
+          kind: "none",
+          id: null
+        },
+        payload: {
+          result: {
+            path: "/tmp/demo",
+            name: "demo"
+          }
+        }
+      })),
+      updateWorkspaceNavigationState: vi.fn(() => ({
+        ok: true,
+        capability: "workspaces.navigation-state.update",
+        auditId: "audit-nav",
+        timestamp: "2026-04-16T12:02:00.000Z",
+        targetRef: {
+          kind: "workspace",
+          id: "workspace-1"
+        },
+        payload: {
+          state: {
+            workspaceId: "workspace-1",
+            userId: "user-1",
+            collapsed: true,
+            backgroundColor: "#112233",
+            updatedAt: "2026-04-16T12:02:00.000Z"
+          }
+        }
+      })),
+      getWorktreeTree: vi.fn(async () => ({
+        ok: true,
+        capability: "worktrees.tree",
+        auditId: "audit-tree",
+        timestamp: "2026-04-16T12:03:00.000Z",
+        targetRef: {
+          kind: "workspace",
+          id: "workspace-1"
+        },
+        payload: {
+          rootWorkspaceId: "workspace-1",
+          items: []
+        }
+      })),
+      cleanupWorktree: vi.fn(async () => ({
+        ok: true,
+        capability: "worktrees.cleanup",
+        auditId: "audit-cleanup",
+        timestamp: "2026-04-16T12:04:00.000Z",
+        targetRef: {
+          kind: "worktree",
+          id: "workspace-2"
+        },
+        payload: {
+          result: {
+            workspaceId: "workspace-2",
+            removed: true
+          }
+        }
+      }))
+    };
+
+    const app = await createAssistantApp(assistantCapabilityService);
+
+    const browseResponse = await app.inject({
+      method: "GET",
+      url: "/api/assistant/workspaces/browse?path=%20/tmp/demo%20"
+    });
+    expect(browseResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.browseWorkspaces).toHaveBeenCalledWith("/tmp/demo");
+
+    const mkdirResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/workspaces/directories",
+      payload: {
+        parentPath: " /tmp ",
+        directoryName: " demo "
+      }
+    });
+    expect(mkdirResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.createWorkspaceDirectory).toHaveBeenCalledWith({
+      parentPath: "/tmp",
+      directoryName: "demo"
+    });
+
+    const navStateResponse = await app.inject({
+      method: "PUT",
+      url: "/api/assistant/workspaces/workspace-1/navigation-state",
+      payload: {
+        collapsed: true,
+        backgroundColor: " #112233 "
+      }
+    });
+    expect(navStateResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.updateWorkspaceNavigationState).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      collapsed: true,
+      backgroundColor: " #112233 "
+    });
+
+    const treeResponse = await app.inject({
+      method: "GET",
+      url: "/api/assistant/worktrees/tree?rootWorkspaceId=workspace-1"
+    });
+    expect(treeResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.getWorktreeTree).toHaveBeenCalledWith("workspace-1");
+
+    const cleanupResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/worktrees/workspace-2/cleanup",
+      payload: {
+        deleteBranch: true
+      }
+    });
+    expect(cleanupResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.cleanupWorktree).toHaveBeenCalledWith(
+      "workspace-2",
+      "user-1",
+      {
+        deleteBranch: true
+      }
+    );
+  });
+
+  it("缺少 rootWorkspaceId 时会拒绝查询工作树", async () => {
+    const assistantCapabilityService = {
+      getWorktreeTree: vi.fn()
+    };
+
+    const app = await createAssistantApp(assistantCapabilityService);
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/assistant/worktrees/tree"
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      error_code: "INVALID_INPUT",
+      field: "rootWorkspaceId",
+      detail: "查询工作树必须提供 rootWorkspaceId"
+    });
+    expect(assistantCapabilityService.getWorktreeTree).not.toHaveBeenCalled();
+  });
 });

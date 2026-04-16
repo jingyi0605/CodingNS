@@ -38,6 +38,14 @@ interface AssistantTerminalHistoryQuery {
   limit?: string;
 }
 
+interface AssistantWorkspaceBrowseQuery {
+  path?: string;
+}
+
+interface AssistantWorktreeTreeQuery {
+  rootWorkspaceId?: string;
+}
+
 interface AssistantSendMessageBody {
   content?: string;
   clientRequestId?: string | null;
@@ -55,6 +63,51 @@ interface AssistantForkBody {
 
 interface AssistantTerminalInputBody {
   content?: string;
+}
+
+interface AssistantCreateWorkspaceDirectoryBody {
+  parentPath?: string;
+  directoryName?: string;
+}
+
+interface AssistantImportWorkspaceBody {
+  path?: string;
+  name?: string | null;
+}
+
+interface AssistantCloneWorkspaceBody {
+  repositoryUrl?: string;
+  parentPath?: string;
+  directoryName?: string | null;
+  name?: string | null;
+  auth?:
+    | { mode?: "none" }
+    | { mode: "basic"; username?: string; password?: string }
+    | { mode: "token"; username?: string; token?: string };
+}
+
+interface AssistantReorderWorkspacesBody {
+  workspaceIds?: string[];
+}
+
+interface AssistantWorkspaceParams {
+  workspaceId: string;
+}
+
+interface AssistantWorkspaceNavigationStateBody {
+  collapsed?: unknown;
+  backgroundColor?: unknown;
+}
+
+interface AssistantCreateWorktreeBody {
+  sourceWorkspaceId?: string;
+  branchName?: string;
+  displayName?: string | null;
+  baseRef?: string | null;
+}
+
+interface AssistantWorktreeCleanupBody {
+  deleteBranch?: boolean;
 }
 
 export class AssistantCapabilityController {
@@ -210,6 +263,189 @@ export class AssistantCapabilityController {
       terminalId: request.params.terminalId,
       content: requireNonEmptyText(request.body.content, "content", "终端输入必须提供 content")
     }));
+  };
+
+  readonly listWorkspaces = async (
+    _request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.listWorkspaces());
+  };
+
+  readonly browseWorkspaces = async (
+    request: FastifyRequest<{ Querystring: AssistantWorkspaceBrowseQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.browseWorkspaces(
+      normalizeNullableText(request.query.path)
+    ));
+  };
+
+  readonly createWorkspaceDirectory = async (
+    request: FastifyRequest<{ Body: AssistantCreateWorkspaceDirectoryBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.createWorkspaceDirectory({
+      parentPath: requireNonEmptyText(request.body.parentPath, "parentPath", "创建目录必须提供 parentPath"),
+      directoryName: requireNonEmptyText(
+        request.body.directoryName,
+        "directoryName",
+        "创建目录必须提供 directoryName"
+      )
+    }));
+  };
+
+  readonly importWorkspace = async (
+    request: FastifyRequest<{ Body: AssistantImportWorkspaceBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.importWorkspace({
+      path: requireNonEmptyText(request.body.path, "path", "导入工作区必须提供 path"),
+      name: normalizeNullableText(request.body.name)
+    }));
+  };
+
+  readonly cloneWorkspace = async (
+    request: FastifyRequest<{ Body: AssistantCloneWorkspaceBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.assistantCapabilityService.cloneWorkspace({
+      repositoryUrl: requireNonEmptyText(
+        request.body.repositoryUrl,
+        "repositoryUrl",
+        "克隆工作区必须提供 repositoryUrl"
+      ),
+      parentPath: requireNonEmptyText(request.body.parentPath, "parentPath", "克隆工作区必须提供 parentPath"),
+      directoryName: normalizeNullableText(request.body.directoryName),
+      name: normalizeNullableText(request.body.name),
+      auth: request.body.auth
+    }));
+  };
+
+  readonly reorderWorkspaces = async (
+    request: FastifyRequest<{ Body: AssistantReorderWorkspacesBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.reorderWorkspaces(
+      Array.isArray(request.body.workspaceIds) ? request.body.workspaceIds : []
+    ));
+  };
+
+  readonly getWorkspaceManagementSummary = async (
+    request: FastifyRequest<{ Params: AssistantWorkspaceParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.assistantCapabilityService.getWorkspaceManagementSummary(
+      request.params.workspaceId
+    ));
+  };
+
+  readonly updateWorkspaceNavigationState = async (
+    request: FastifyRequest<{
+      Params: AssistantWorkspaceParams;
+      Body: AssistantWorkspaceNavigationStateBody;
+    }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const input: {
+      workspaceId: string;
+      userId: string;
+      collapsed?: boolean;
+      backgroundColor?: string | null;
+    } = {
+      workspaceId: request.params.workspaceId,
+      userId: requireUserId(request)
+    };
+
+    if (typeof request.body?.collapsed === "boolean") {
+      input.collapsed = request.body.collapsed;
+    }
+
+    if (request.body && Object.prototype.hasOwnProperty.call(request.body, "backgroundColor")) {
+      const rawBackgroundColor = request.body.backgroundColor;
+
+      if (rawBackgroundColor === null || typeof rawBackgroundColor === "string") {
+        input.backgroundColor = rawBackgroundColor;
+      }
+    }
+
+    reply.send(this.assistantCapabilityService.updateWorkspaceNavigationState(input));
+  };
+
+  readonly removeWorkspace = async (
+    request: FastifyRequest<{ Params: AssistantWorkspaceParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.removeWorkspace(request.params.workspaceId));
+  };
+
+  readonly getWorktreeTree = async (
+    request: FastifyRequest<{ Querystring: AssistantWorktreeTreeQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const rootWorkspaceId = normalizeNullableText(request.query.rootWorkspaceId);
+
+    if (!rootWorkspaceId) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "查询工作树必须提供 rootWorkspaceId",
+        field: "rootWorkspaceId"
+      });
+    }
+
+    reply.send(await this.assistantCapabilityService.getWorktreeTree(rootWorkspaceId));
+  };
+
+  readonly createWorktree = async (
+    request: FastifyRequest<{ Body: AssistantCreateWorktreeBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.assistantCapabilityService.createWorktree({
+      sourceWorkspaceId: requireNonEmptyText(
+        request.body.sourceWorkspaceId,
+        "sourceWorkspaceId",
+        "创建工作树必须提供 sourceWorkspaceId"
+      ),
+      branchName: requireNonEmptyText(
+        request.body.branchName,
+        "branchName",
+        "创建工作树必须提供 branchName"
+      ),
+      displayName: normalizeNullableText(request.body.displayName),
+      baseRef: normalizeNullableText(request.body.baseRef)
+    }));
+  };
+
+  readonly getWorktreeMergePreview = async (
+    request: FastifyRequest<{ Params: AssistantWorkspaceParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.assistantCapabilityService.getWorktreeMergePreview(
+      request.params.workspaceId
+    ));
+  };
+
+  readonly mergeWorktreeIntoParent = async (
+    request: FastifyRequest<{ Params: AssistantWorkspaceParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.assistantCapabilityService.mergeWorktreeIntoParent(
+      request.params.workspaceId
+    ));
+  };
+
+  readonly cleanupWorktree = async (
+    request: FastifyRequest<{ Params: AssistantWorkspaceParams; Body: AssistantWorktreeCleanupBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.assistantCapabilityService.cleanupWorktree(
+      request.params.workspaceId,
+      requireUserId(request),
+      {
+        deleteBranch: request.body?.deleteBranch === true
+      }
+    ));
   };
 }
 
