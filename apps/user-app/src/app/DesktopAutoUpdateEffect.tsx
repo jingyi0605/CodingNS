@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 
 import { useClientConfigSelector } from "../config/client-config-store";
+import { useDesktopUpdateSelector } from "../platform/desktop/desktop-update-store";
 import { refreshDesktopUpdateState } from "../platform/desktop/release-manager";
 
 const DESKTOP_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
@@ -9,9 +10,10 @@ export function DesktopAutoUpdateEffect() {
   const platform = useClientConfigSelector((state) => state.platform);
   const autoCheckUpdate = useClientConfigSelector((state) => state.autoCheckUpdate);
   const releaseChannel = useClientConfigSelector((state) => state.releaseChannel);
+  const pendingRestartVersion = useDesktopUpdateSelector((state) => state.pendingRestartVersion);
 
   useEffect(() => {
-    if (platform !== "desktop" || !autoCheckUpdate) {
+    if (platform !== "desktop" || !autoCheckUpdate || pendingRestartVersion) {
       return;
     }
 
@@ -32,7 +34,7 @@ export function DesktopAutoUpdateEffect() {
     return () => {
       window.clearInterval(timerId);
     };
-  }, [autoCheckUpdate, platform, releaseChannel]);
+  }, [autoCheckUpdate, pendingRestartVersion, platform, releaseChannel]);
 
   return null;
 }

@@ -2,7 +2,10 @@ import { render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clientConfigStore } from "../config/client-config-store";
-import { resetDesktopUpdateState } from "../platform/desktop/desktop-update-store";
+import {
+  markDesktopUpdateRestartPending,
+  resetDesktopUpdateState
+} from "../platform/desktop/desktop-update-store";
 import { DesktopAutoUpdateEffect } from "./DesktopAutoUpdateEffect";
 
 describe("DesktopAutoUpdateEffect", () => {
@@ -88,6 +91,30 @@ describe("DesktopAutoUpdateEffect", () => {
     });
 
     expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 60 * 60 * 1000);
+  });
+
+  it("安装完成后等待重启时，不再继续自动检查更新", async () => {
+    const invoke = vi.fn();
+
+    window.__TAURI_INTERNALS__ = {
+      invoke: invoke as NonNullable<Window["__TAURI_INTERNALS__"]>["invoke"]
+    };
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      hostBaseUrl: "http://127.0.0.1:3002",
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    markDesktopUpdateRestartPending("0.1.3");
+
+    render(<DesktopAutoUpdateEffect />);
+
+    await waitFor(() => {
+      expect(invoke).not.toHaveBeenCalled();
+    });
   });
 });
 

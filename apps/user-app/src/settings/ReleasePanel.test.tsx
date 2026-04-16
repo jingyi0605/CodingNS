@@ -69,6 +69,10 @@ describe("ReleasePanel", () => {
         };
       }
 
+      if (command === "restart_application") {
+        return null;
+      }
+
       if (command === "open_external") {
         expect(args).toEqual({
           url: "https://github.com/jingyi0605/CodingNS/releases/tag/v0.2.0"
@@ -101,7 +105,12 @@ describe("ReleasePanel", () => {
 
     await userEvent.click(screen.getByRole("button", { name: t("settings.releaseInstallNow") }));
 
-    await screen.findByText(t("settings.releaseInstallStarted"));
+    await screen.findByText(t("settings.releaseRestartRequired"));
+    expect(
+      screen.getByRole("dialog", { name: t("settings.releaseRestartDialogTitle") })
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: t("settings.releaseRestartConfirm") }));
 
     await userEvent.click(screen.getByRole("button", { name: t("settings.releaseOpenPage") }));
 
@@ -109,6 +118,7 @@ describe("ReleasePanel", () => {
       expect(invoke).toHaveBeenCalledWith("install_update", {
         channel: "stable"
       });
+      expect(invoke).toHaveBeenCalledWith("restart_application");
       expect(invoke).toHaveBeenCalledWith("open_external", {
         url: "https://github.com/jingyi0605/CodingNS/releases/tag/v0.2.0"
       });

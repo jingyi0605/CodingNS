@@ -6,6 +6,7 @@ import type {
 } from "../../config/client-config-types";
 import {
   getDesktopUpdateSnapshot,
+  markDesktopUpdateRestartPending,
   markDesktopUpdateVersionNotified,
   recordDesktopUpdateState
 } from "./desktop-update-store";
@@ -48,6 +49,22 @@ export async function installDesktopUpdate(): Promise<DesktopUpdateInstallResult
 export async function rollbackDesktopUpdate() {
   const adapter = createPlatformAdapter();
   return adapter.bridge.rollbackToPreviousVersion();
+}
+
+export function markDesktopRestartRequired(version: string): void {
+  markDesktopUpdateRestartPending(version);
+}
+
+export async function restartDesktopApplication(): Promise<void> {
+  if (typeof window === "undefined" || typeof window.__TAURI_INTERNALS__?.invoke !== "function") {
+    throw new Error("当前运行环境不支持桌面应用重启。");
+  }
+
+  try {
+    await window.__TAURI_INTERNALS__.invoke("restart_application");
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : "重启应用失败。");
+  }
 }
 
 async function maybeNotifyDesktopUpdate(

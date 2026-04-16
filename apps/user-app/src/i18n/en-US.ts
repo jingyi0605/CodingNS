@@ -250,6 +250,13 @@ export const enUS = {
       "A new version is available, but this release does not provide checksum information yet.",
     releaseInstallStarted: "Install started",
     releaseInstallFailed: "Install failed",
+    releaseRestartRequired: "Install completed. Please restart the app.",
+    releaseRestartDialogTitle: "Install completed",
+    releaseRestartDialogDescription:
+      "Version {version} has been installed. Restart the app to finish switching to the new build.",
+    releaseRestartLater: "Later",
+    releaseRestartConfirm: "Yes, restart now",
+    releaseRestartFailed: "Failed to restart the app",
     releasePageOpenFailed: "Failed to open page",
     androidInstallerStarted: "Handed off to the Android installer. You can still cancel there.",
     androidInstallPermissionRequired: "Allow installs from this source before retrying.",
