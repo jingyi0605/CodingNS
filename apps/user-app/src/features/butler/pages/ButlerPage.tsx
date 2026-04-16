@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
@@ -15,6 +15,7 @@ import {
 import type {
   ButlerControlEventDto,
   ButlerControlSessionDto,
+  ButlerControlTimerDto,
   ButlerFollowUpTaskRoundDto,
   ButlerFollowUpTaskDto,
   ButlerInboxItemDto,
@@ -30,8 +31,10 @@ import type {
 } from "../api/butler-api";
 import {
   analyzeButlerInboxItem,
+  cancelButlerControlTimer,
   getButlerFollowUpTask,
   listButlerControlSessions,
+  listButlerControlTimers,
   listButlerFollowUpTasks,
   listButlerInboxItems,
   listButlerPatrolPlans,
@@ -166,7 +169,7 @@ export function ButlerPage() {
   const { workspaceId = "" } = useParams();
   const navigate = useNavigate();
   const { showToast } = useToast();
-  const { requestNavigationRefresh, setAuxiliaryPanel } = useWorkbenchShell();
+  const { navigationGroups, requestNavigationRefresh, setAuxiliaryPanel } = useWorkbenchShell();
   const storeRef = useRef<ButlerRuntimeStore | null>(null);
   const currentWorkspaceIdRef = useRef<string | null>(null);
   const [initForm, setInitForm] = useState<ButlerInitFormState>(DEFAULT_INIT_FORM_STATE);
@@ -180,13 +183,19 @@ export function ButlerPage() {
   const [followUpTasks, setFollowUpTasks] = useState<ButlerFollowUpTaskDto[]>([]);
   const [patrolPlans, setPatrolPlans] = useState<ButlerPatrolPlanDto[]>([]);
   const [controlSessions, setControlSessions] = useState<ButlerControlSessionDto[]>([]);
+  const [controlTimers, setControlTimers] = useState<ButlerControlTimerDto[]>([]);
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [followUpHistoryOpen, setFollowUpHistoryOpen] = useState(false);
+  const [verificationHistoryOpen, setVerificationHistoryOpen] = useState(false);
+  const [automationHistoryOpen, setAutomationHistoryOpen] = useState(false);
   const [controlHistoryOpen, setControlHistoryOpen] = useState(false);
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
   const [detailTask, setDetailTask] = useState<ButlerFollowUpTaskDto | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [cancellingTimerId, setCancellingTimerId] = useState<string | null>(null);
+  const [executingTimerId, setExecutingTimerId] = useState<string | null>(null);
+  const [countdownNow, setCountdownNow] = useState(() => Date.now());
   const [todoActionState, setTodoActionState] = useState<{
     itemId: string | null;
     kind: "analyze" | "start" | null;
@@ -239,10 +248,56 @@ export function ButlerPage() {
     () => followUpTasks.filter((task) => isVisibleFollowUpTask(task.status)).slice(0, 3),
     [followUpTasks]
   );
+  const activeControlTimer = useMemo(
+    () => {
+      if (!controlSession || runtimeHasActiveRun) {
+        return null;
+      }
+
+      return controlTimers
+        .filter((timer) => timer.status === "active" && timer.controlSessionId === controlSession.id)
+        .sort((left, right) => parseIsoTime(left.dueAt) - parseIsoTime(right.dueAt))[0] ?? null;
+    },
+    [controlSession, controlTimers, runtimeHasActiveRun]
+  );
   const overviewProjectIds = useMemo(
     () => (overview?.projects ?? []).map((project) => project.id).sort(),
     [overview?.projects]
   );
+  const currentWorkspaceName =
+    navigationGroups.find((group) => group.workspace.id === workspaceId)?.workspace.name ?? null;
+  const workspaceNameById = useMemo(
+    () =>
+      new Map(
+        navigationGroups.map((group) => [group.workspace.id, group.workspace.name] as const)
+      ),
+    [navigationGroups]
+  );
+  const sessionTitleById = useMemo(
+    () =>
+      new Map(
+        navigationGroups.flatMap((group) =>
+          group.sessions.map((session) => [session.sessionId, session.title?.trim() || t("common.unknown")] as const)
+        )
+      ),
+    [navigationGroups]
+  );
+
+  useEffect(() => {
+    setCountdownNow(Date.now());
+
+    if (!activeControlTimer) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setCountdownNow(Date.now());
+    }, 1_000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [activeControlTimer]);
   const reloadControlSessionHistory = useCallback(async () => {
     if (!initialized) {
       setControlSessions([]);
@@ -262,6 +317,12 @@ export function ButlerPage() {
   }, [initialized, showToast]);
   const handleOpenFollowUpHistory = useCallback(() => {
     setFollowUpHistoryOpen(true);
+  }, []);
+  const handleOpenVerificationHistory = useCallback(() => {
+    setVerificationHistoryOpen(true);
+  }, []);
+  const handleOpenAutomationHistory = useCallback(() => {
+    setAutomationHistoryOpen(true);
   }, []);
   const handleOpenControlHistory = useCallback(() => {
     setControlHistoryOpen(true);
@@ -381,6 +442,58 @@ export function ButlerPage() {
       });
     }
   }, [showToast]);
+  const handleCancelControlTimer = useCallback(async (timerId: string) => {
+    setCancellingTimerId(timerId);
+
+    try {
+      const response = await cancelButlerControlTimer(timerId);
+      setControlTimers((current) => replaceControlTimer(current, response.timer));
+      showToast({
+        title: t("shell.butlerControlTimerCancelSucceeded"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: t("shell.butlerControlTimerCancelFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error"
+      });
+    } finally {
+      setCancellingTimerId(null);
+    }
+  }, [showToast]);
+  const handleExecuteControlTimerNow = useCallback(async (timer: ButlerControlTimerDto) => {
+    const prompt = timer.content.trim();
+
+    if (!prompt) {
+      showToast({
+        title: t("shell.butlerControlTimerExecuteNowFailed"),
+        tone: "error"
+      });
+      return;
+    }
+
+    setExecutingTimerId(timer.id);
+
+    try {
+      const response = await cancelButlerControlTimer(timer.id);
+      setControlTimers((current) => replaceControlTimer(current, response.timer));
+      await store.sendMessage(prompt);
+      requestNavigationRefresh();
+      showToast({
+        title: t("shell.butlerControlTimerExecuteNowSucceeded"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: t("shell.butlerControlTimerExecuteNowFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error"
+      });
+    } finally {
+      setExecutingTimerId(null);
+    }
+  }, [requestNavigationRefresh, showToast, store]);
   const handleSaveSettings = useCallback(async () => {
     if (!profile) {
       return;
@@ -520,6 +633,7 @@ export function ButlerPage() {
       setFollowUpTasks([]);
       setPatrolPlans([]);
       setControlSessions([]);
+      setControlTimers([]);
       return;
     }
 
@@ -527,10 +641,11 @@ export function ButlerPage() {
 
     async function loadSidebarData() {
       try {
-        const [inboxResponse, followUpResponse, controlSessionResponse, patrolPlanResponses] = await Promise.all([
+        const [inboxResponse, followUpResponse, controlSessionResponse, controlTimerResponse, patrolPlanResponses] = await Promise.all([
           listButlerInboxItems(),
           listButlerFollowUpTasks(),
           listButlerControlSessions(),
+          listButlerControlTimers(),
           Promise.all(overviewProjectIds.map((projectId) => listButlerPatrolPlans(projectId)))
         ]);
 
@@ -538,6 +653,7 @@ export function ButlerPage() {
           setInboxItems(inboxResponse.items);
           setFollowUpTasks(followUpResponse.items);
           setControlSessions(controlSessionResponse.items);
+          setControlTimers(controlTimerResponse.items);
           setPatrolPlans(patrolPlanResponses.flatMap((response) => response.items));
         }
       } catch (loadError) {
@@ -549,6 +665,7 @@ export function ButlerPage() {
         setFollowUpTasks([]);
         setPatrolPlans([]);
         setControlSessions([]);
+        setControlTimers([]);
         showToast({
           title: t("shell.butlerSidebarLoadFailed"),
           description: loadError instanceof Error ? loadError.message : undefined,
@@ -680,10 +797,15 @@ export function ButlerPage() {
         inboxItems={inboxItems}
         followUpTasks={followUpTasks}
         patrolPlans={patrolPlans}
+        controlTimers={controlTimers}
+        cancellingTimerId={cancellingTimerId}
         settingsForm={settingsForm}
         savingSettings={savingSettings}
         onOpenFollowUpHistory={handleOpenFollowUpHistory}
+        onOpenVerificationHistory={handleOpenVerificationHistory}
+        onOpenAutomationHistory={handleOpenAutomationHistory}
         onOpenFollowUpDetail={handleOpenFollowUpDetail}
+        onCancelControlTimer={handleCancelControlTimer}
         onAnalyzeTodo={handleAnalyzeTodo}
         onStartTodoSession={handleStartTodoSession}
         onOpenTodoSession={handleOpenTodoSession}
@@ -698,8 +820,11 @@ export function ButlerPage() {
     [
       events,
       handleAnalyzeTodo,
+      handleCancelControlTimer,
       handleCopyTodoPrompt,
+      handleOpenAutomationHistory,
       handleOpenFollowUpHistory,
+      handleOpenVerificationHistory,
       followUpTasks,
       handleOpenFollowUpDetail,
       handleOpenTodoSession,
@@ -707,8 +832,10 @@ export function ButlerPage() {
       handleSettingsFormChange,
       handleStartTodoSession,
       inboxItems,
+      controlTimers,
       overview,
       patrolPlans,
+      cancellingTimerId,
       savingSettings,
       settingsForm,
       todoActionState
@@ -1241,6 +1368,25 @@ export function ButlerPage() {
             }}
           />
 
+            {activeControlTimer ? (
+              <ButlerControlTimerBanner
+                timer={activeControlTimer}
+                currentWorkspaceId={workspaceId}
+                currentWorkspaceName={currentWorkspaceName}
+                workspaceNameById={workspaceNameById}
+                sessionTitleById={sessionTitleById}
+                countdownNow={countdownNow}
+                cancelling={cancellingTimerId === activeControlTimer.id}
+                executingNow={executingTimerId === activeControlTimer.id}
+                onCancel={() => {
+                  void handleCancelControlTimer(activeControlTimer.id);
+                }}
+                onExecuteNow={() => {
+                  void handleExecuteControlTimerNow(activeControlTimer);
+                }}
+              />
+            ) : null}
+
             <div className="butler-composer-shell">
               <ComposerPanel
               capabilities={capabilities}
@@ -1286,11 +1432,36 @@ export function ButlerPage() {
         }}
       >
         <FollowUpHistoryPanel
-          tasks={followUpTasks}
+          tasks={followUpTasks.filter((task) => !isVisibleFollowUpTask(task.status))}
           onOpenFollowUpDetail={handleOpenFollowUpDetail}
           onClose={() => {
             setFollowUpHistoryOpen(false);
           }}
+        />
+      </WorkbenchModal>
+      <WorkbenchModal
+        open={verificationHistoryOpen}
+        title={t("shell.butlerVerificationHistoryTitle")}
+        description={t("shell.butlerVerificationHistoryDescription")}
+        onClose={() => {
+          setVerificationHistoryOpen(false);
+        }}
+      >
+        <VerificationHistoryPanel
+          items={buildVerificationRecords(overview?.verifications ?? [], "history")}
+        />
+      </WorkbenchModal>
+      <WorkbenchModal
+        open={automationHistoryOpen}
+        title={t("shell.butlerAutomationHistoryTitle")}
+        description={t("shell.butlerAutomationHistoryDescription")}
+        onClose={() => {
+          setAutomationHistoryOpen(false);
+        }}
+      >
+        <AutomationHistoryPanel
+          taskItems={buildAutomationTaskItems(patrolPlans, followUpTasks, controlTimers, overview, "history")}
+          runItems={buildAutomationRunItems(followUpTasks, controlTimers, overview, "history")}
         />
       </WorkbenchModal>
       <WorkbenchModal
@@ -1337,10 +1508,15 @@ function ButlerAuxiliaryPanel(props: {
   inboxItems: ButlerInboxItemDto[];
   followUpTasks: ButlerFollowUpTaskDto[];
   patrolPlans: ButlerPatrolPlanDto[];
+  controlTimers: ButlerControlTimerDto[];
+  cancellingTimerId: string | null;
   settingsForm: ButlerSettingsFormState;
   savingSettings: boolean;
   onOpenFollowUpHistory: () => void;
+  onOpenVerificationHistory: () => void;
+  onOpenAutomationHistory: () => void;
   onOpenFollowUpDetail: (taskId: string) => Promise<void>;
+  onCancelControlTimer: (timerId: string) => Promise<void>;
   onAnalyzeTodo: (item: ButlerInboxItemDto) => Promise<void>;
   onStartTodoSession: (item: ButlerInboxItemDto) => Promise<void>;
   onOpenTodoSession: (item: ButlerInboxItemDto) => void;
@@ -1389,6 +1565,7 @@ function ButlerAuxiliaryPanel(props: {
           inboxItems={props.inboxItems}
           followUpTasks={props.followUpTasks}
           onOpenFollowUpHistory={props.onOpenFollowUpHistory}
+          onOpenVerificationHistory={props.onOpenVerificationHistory}
           onOpenFollowUpDetail={props.onOpenFollowUpDetail}
           onAnalyzeTodo={props.onAnalyzeTodo}
           onStartTodoSession={props.onStartTodoSession}
@@ -1401,6 +1578,10 @@ function ButlerAuxiliaryPanel(props: {
           overview={props.overview}
           followUpTasks={props.followUpTasks}
           patrolPlans={props.patrolPlans}
+          controlTimers={props.controlTimers}
+          cancellingTimerId={props.cancellingTimerId}
+          onOpenAutomationHistory={props.onOpenAutomationHistory}
+          onCancelControlTimer={props.onCancelControlTimer}
         />
       ) : (
         <SettingsSidebarContent
@@ -1419,6 +1600,7 @@ function GlobalRecordsSidebarContent(props: {
   inboxItems: ButlerInboxItemDto[];
   followUpTasks: ButlerFollowUpTaskDto[];
   onOpenFollowUpHistory: () => void;
+  onOpenVerificationHistory: () => void;
   onOpenFollowUpDetail: (taskId: string) => Promise<void>;
   onAnalyzeTodo: (item: ButlerInboxItemDto) => Promise<void>;
   onStartTodoSession: (item: ButlerInboxItemDto) => Promise<void>;
@@ -1429,35 +1611,21 @@ function GlobalRecordsSidebarContent(props: {
     kind: "analyze" | "start" | null;
   };
 }) {
-  const [showCompletedRecords, setShowCompletedRecords] = useState(false);
   const activeFollowUpTasks = useMemo(
-    () => showCompletedRecords
-      ? props.followUpTasks
-      : props.followUpTasks.filter((task) => isVisibleFollowUpTask(task.status)),
-    [props.followUpTasks, showCompletedRecords]
+    () => props.followUpTasks.filter((task) => isVisibleFollowUpTask(task.status)),
+    [props.followUpTasks]
   );
   const verificationRecords = useMemo(
-    () => buildVerificationRecords(props.overview?.verifications ?? [], showCompletedRecords),
-    [props.overview?.verifications, showCompletedRecords]
+    () => buildVerificationRecords(props.overview?.verifications ?? [], "active"),
+    [props.overview?.verifications]
   );
-  const todoRecords = useMemo(() => (
-    showCompletedRecords
-      ? props.inboxItems
-      : props.inboxItems.filter((item) => item.status !== "closed")
-  ), [props.inboxItems, showCompletedRecords]);
+  const todoRecords = useMemo(
+    () => props.inboxItems.filter((item) => item.status !== "closed"),
+    [props.inboxItems]
+  );
 
   return (
     <>
-      <section className="butler-side-card">
-        <label className="butler-record-toggle">
-          <input
-            type="checkbox"
-            checked={showCompletedRecords}
-            onChange={(event) => setShowCompletedRecords(event.target.checked)}
-          />
-          <span>{t("shell.butlerInfoShowCompletedAction")}</span>
-        </label>
-      </section>
       <FollowUpStatusCard
         tasks={activeFollowUpTasks}
         onOpenFollowUpHistory={props.onOpenFollowUpHistory}
@@ -1467,6 +1635,8 @@ function GlobalRecordsSidebarContent(props: {
         title={t("shell.butlerInfoVerificationRecordsTitle")}
         items={verificationRecords}
         emptyText={t("shell.butlerInfoVerificationRecordsEmpty")}
+        actionLabel={t("shell.butlerFollowUpHistoryAction")}
+        onAction={props.onOpenVerificationHistory}
       />
       <TodoLifecycleCard
         title={t("shell.butlerInfoTodoRecordsTitle")}
@@ -1486,21 +1656,29 @@ function AutomationSidebarContent(props: {
   overview: ButlerOverviewDto | null;
   followUpTasks: ButlerFollowUpTaskDto[];
   patrolPlans: ButlerPatrolPlanDto[];
+  controlTimers: ButlerControlTimerDto[];
+  cancellingTimerId: string | null;
+  onOpenAutomationHistory: () => void;
+  onCancelControlTimer: (timerId: string) => Promise<void>;
 }) {
   const automationTasks = useMemo(
-    () => buildAutomationTaskItems(props.patrolPlans, props.followUpTasks, props.overview),
-    [props.followUpTasks, props.overview, props.patrolPlans]
+    () => buildAutomationTaskItems(props.patrolPlans, props.followUpTasks, props.controlTimers, props.overview, "active"),
+    [props.controlTimers, props.followUpTasks, props.overview, props.patrolPlans]
   );
   const automationRuns = useMemo(
-    () => buildAutomationRunItems(props.followUpTasks, props.overview),
-    [props.followUpTasks, props.overview]
+    () => buildAutomationRunItems(props.followUpTasks, props.controlTimers, props.overview, "active"),
+    [props.controlTimers, props.followUpTasks, props.overview]
   );
 
   return (
     <>
       <AutomationTaskOverviewCard
         items={automationTasks}
+        cancellingTimerId={props.cancellingTimerId}
+        onCancelControlTimer={props.onCancelControlTimer}
         emptyText={t("shell.butlerAutomationTasksEmpty")}
+        actionLabel={t("shell.butlerFollowUpHistoryAction")}
+        onAction={props.onOpenAutomationHistory}
       />
       <AutomationRunOverviewCard
         items={automationRuns}
@@ -1517,11 +1695,22 @@ function GlobalRecordCard(props: {
     content: string;
   }>;
   emptyText: string;
+  actionLabel?: string;
+  onAction?: () => void;
 }) {
   return (
     <section className="butler-side-card">
       <header>
         <h2>{props.title}</h2>
+        {props.actionLabel && props.onAction ? (
+          <button
+            type="button"
+            className="secondary-button butler-side-header-action"
+            onClick={props.onAction}
+          >
+            {props.actionLabel}
+          </button>
+        ) : null}
       </header>
       {props.items.length > 0 ? (
         <div className="butler-record-list">
@@ -1833,10 +2022,151 @@ function FollowUpStatusItem(props: {
   );
 }
 
+function ButlerControlTimerBanner(props: {
+  timer: ButlerControlTimerDto;
+  currentWorkspaceId: string;
+  currentWorkspaceName: string | null;
+  workspaceNameById: Map<string, string>;
+  sessionTitleById: Map<string, string>;
+  countdownNow: number;
+  cancelling: boolean;
+  executingNow: boolean;
+  onCancel: () => void;
+  onExecuteNow: () => void;
+}) {
+  const detailButtonId = useId();
+  const detailPopoverId = useId();
+  const detailRef = useRef<HTMLDivElement | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const countdownText = resolveControlTimerCountdownLabel(props.timer, props.countdownNow);
+  const countdownClockText = resolveControlTimerClockLabel(props.timer, props.countdownNow);
+  const workspaceText = resolveControlTimerWorkspaceLabel(
+    props.timer,
+    props.workspaceNameById,
+    props.currentWorkspaceId,
+    props.currentWorkspaceName
+  );
+  const sessionText = resolveControlTimerSessionLabel(props.timer, props.sessionTitleById);
+  const promptContent = resolveControlTimerPromptContent(props.timer);
+
+  useEffect(() => {
+    if (!detailOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (detailRef.current?.contains(event.target as Node)) {
+        return;
+      }
+
+      setDetailOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setDetailOpen(false);
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [detailOpen]);
+
+  return (
+    <section className="butler-control-timer-banner" aria-live="polite">
+      <div className="butler-control-timer-banner-shell">
+        <div className="butler-control-timer-banner-copy">
+          <div className="butler-control-timer-banner-status">
+            <span className="butler-control-timer-pulse" aria-hidden="true" />
+            <span className="butler-control-timer-banner-caption">
+              {t("shell.butlerControlTimerBannerTitle")}
+            </span>
+          </div>
+          <div className="butler-control-timer-display-panel">
+            <p className="butler-control-timer-display-clock">{countdownClockText}</p>
+            <p className="butler-control-timer-banner-countdown">{countdownText}</p>
+          </div>
+          <div className="butler-control-timer-banner-meta">
+            <div className="butler-control-timer-banner-meta-card">
+              <span>{t("shell.butlerControlTimerWorkspaceLabel")}</span>
+              <strong title={workspaceText}>{workspaceText}</strong>
+            </div>
+            <div className="butler-control-timer-banner-meta-card">
+              <span>{t("shell.butlerControlTimerSessionLabel")}</span>
+              <strong title={sessionText}>{sessionText}</strong>
+            </div>
+          </div>
+        </div>
+        <div className="butler-control-timer-banner-actions">
+          <div className="butler-control-timer-banner-detail" ref={detailRef}>
+            <button
+              type="button"
+              className="butler-control-timer-banner-detail-button"
+              aria-label={t("shell.butlerControlTimerDetailAction")}
+              aria-haspopup="dialog"
+              aria-expanded={detailOpen}
+              aria-controls={detailOpen ? detailPopoverId : undefined}
+              title={t("shell.butlerControlTimerDetailAction")}
+              onClick={() => {
+                setDetailOpen((current) => !current);
+              }}
+            >
+              <span className="butler-control-timer-banner-detail-icon" aria-hidden="true">
+                <TimerDetailIcon />
+              </span>
+            </button>
+            {detailOpen ? (
+              <div
+                id={detailPopoverId}
+                className="butler-control-timer-banner-detail-popover"
+                role="dialog"
+                aria-labelledby={detailButtonId}
+              >
+                <strong id={detailButtonId}>{t("shell.butlerControlTimerPromptTitle")}</strong>
+                <p>{promptContent}</p>
+              </div>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            className="secondary-button butler-control-timer-banner-action"
+            disabled={props.cancelling || props.executingNow}
+            onClick={props.onExecuteNow}
+          >
+            {props.executingNow
+              ? t("shell.butlerControlTimerExecutingNow")
+              : t("shell.butlerControlTimerExecuteNowAction")}
+          </button>
+          <button
+            type="button"
+            className="secondary-button butler-control-timer-banner-action"
+            disabled={props.cancelling || props.executingNow}
+            onClick={props.onCancel}
+          >
+            {props.cancelling
+              ? t("shell.butlerControlTimerCancelling")
+              : t("shell.butlerControlTimerStopAction")}
+          </button>
+        </div>
+        <p className="butler-control-timer-banner-note">
+          {t("shell.butlerControlTimerActionNote")}
+        </p>
+      </div>
+    </section>
+  );
+}
+
 interface AutomationTaskItem {
   id: string;
+  timerId?: string;
+  kind: "patrol_plan" | "follow_up" | "control_timer";
   title: string;
   projectName: string;
+  status: "active" | "waiting_user" | "completed" | "failed" | "cancelled";
   taskTypeLabel: string;
   statusLabel: string;
   nextRunAt: string | null;
@@ -1845,8 +2175,10 @@ interface AutomationTaskItem {
 
 interface AutomationRunItem {
   id: string;
+  kind: "patrol_run" | "follow_up_round" | "control_timer";
   title: string;
   projectName: string;
+  status: "active" | "waiting_user" | "completed" | "failed" | "cancelled";
   sourceLabel: string;
   statusLabel: string;
   summary: string;
@@ -1855,12 +2187,25 @@ interface AutomationRunItem {
 
 function AutomationTaskOverviewCard(props: {
   items: AutomationTaskItem[];
+  cancellingTimerId: string | null;
+  onCancelControlTimer: (timerId: string) => Promise<void>;
   emptyText: string;
+  actionLabel?: string;
+  onAction?: () => void;
 }) {
   return (
     <section className="butler-side-card">
       <header>
         <h2>{t("shell.butlerAutomationTasksTitle")}</h2>
+        {props.actionLabel && props.onAction ? (
+          <button
+            type="button"
+            className="secondary-button butler-side-header-action"
+            onClick={props.onAction}
+          >
+            {props.actionLabel}
+          </button>
+        ) : null}
       </header>
       {props.items.length > 0 ? (
         <div className="butler-record-list">
@@ -1871,7 +2216,7 @@ function AutomationTaskOverviewCard(props: {
                   <strong>{item.title}</strong>
                   <span>{item.projectName}</span>
                 </div>
-                <span className="butler-automation-status-badge" data-status="active">
+                <span className="butler-automation-status-badge" data-status={item.status}>
                   {item.statusLabel}
                 </span>
               </header>
@@ -1886,8 +2231,24 @@ function AutomationTaskOverviewCard(props: {
                 </div>
               </div>
               <footer className="butler-automation-card-footer">
-                <span>{t("shell.butlerAutomationTaskNextRunLabel")}</span>
-                <strong>{formatIsoDateTime(item.nextRunAt)}</strong>
+                <div className="butler-automation-card-footer-copy">
+                  <span>{t("shell.butlerAutomationTaskNextRunLabel")}</span>
+                  <strong>{formatIsoDateTime(item.nextRunAt)}</strong>
+                </div>
+                {item.kind === "control_timer" && item.timerId ? (
+                  <button
+                    type="button"
+                    className="secondary-button butler-automation-card-action"
+                    disabled={props.cancellingTimerId === item.timerId}
+                    onClick={() => {
+                      void props.onCancelControlTimer(item.timerId!);
+                    }}
+                  >
+                    {props.cancellingTimerId === item.timerId
+                      ? t("shell.butlerControlTimerCancelling")
+                      : t("shell.butlerControlTimerCancelAction")}
+                  </button>
+                ) : null}
               </footer>
             </article>
           ))}
@@ -1917,7 +2278,7 @@ function AutomationRunOverviewCard(props: {
                   <strong>{item.title}</strong>
                   <span>{item.projectName}</span>
                 </div>
-                <span className="butler-automation-status-badge" data-status="active">
+                <span className="butler-automation-status-badge" data-status={item.status}>
                   {item.statusLabel}
                 </span>
               </header>
@@ -2173,31 +2534,57 @@ function resolveFollowUpTaskUpdatedAt(task: ButlerFollowUpTaskDto): string {
 function buildAutomationTaskItems(
   patrolPlans: ButlerPatrolPlanDto[],
   followUpTasks: ButlerFollowUpTaskDto[],
-  overview: ButlerOverviewDto | null
+  controlTimers: ButlerControlTimerDto[],
+  overview: ButlerOverviewDto | null,
+  mode: "active" | "history" = "active"
 ): AutomationTaskItem[] {
   const projectNameById = new Map(
     (overview?.projects ?? []).map((project) => [project.id, project.name] as const)
   );
-  const planItems = patrolPlans.map<AutomationTaskItem>((plan) => ({
-    id: `patrol-plan:${plan.id}`,
-    title: plan.name,
-    projectName: projectNameById.get(plan.projectId) ?? plan.projectId,
-    taskTypeLabel: resolveAutomationTaskTypeLabel("patrol_plan", plan.triggerType),
-    statusLabel: plan.enabled ? t("shell.butlerAutomationTaskEnabled") : t("shell.butlerAutomationTaskDisabled"),
-    nextRunAt: plan.nextRunAt,
-    lastRunAt: plan.lastScheduledAt
-  }));
-  const followUpItems = followUpTasks.map<AutomationTaskItem>((task) => ({
-    id: `follow-up:${task.id}`,
-    title: task.sessionTitle?.trim() || task.projectName,
-    projectName: task.projectName,
-    taskTypeLabel: resolveAutomationTaskTypeLabel("follow_up"),
-    statusLabel: resolveFollowUpTaskStatusLabel(task.status),
-    nextRunAt: task.nextCheckAt,
-    lastRunAt: task.lastAutomationAt || task.lastCheckedAt || task.updatedAt
-  }));
+  const planItems = patrolPlans
+    .filter((plan) => (mode === "history" ? !plan.enabled : plan.enabled))
+    .map<AutomationTaskItem>((plan) => ({
+      id: `patrol-plan:${plan.id}`,
+      kind: "patrol_plan",
+      title: plan.name,
+      projectName: projectNameById.get(plan.projectId) ?? plan.projectId,
+      status: plan.enabled ? "active" : "cancelled",
+      taskTypeLabel: resolveAutomationTaskTypeLabel("patrol_plan", plan.triggerType),
+      statusLabel: plan.enabled ? t("shell.butlerAutomationTaskEnabled") : t("shell.butlerAutomationTaskDisabled"),
+      nextRunAt: plan.nextRunAt,
+      lastRunAt: plan.lastScheduledAt
+    }));
+  const followUpItems = followUpTasks
+    .filter((task) => (
+      mode === "history" ? !isVisibleFollowUpTask(task.status) : isVisibleFollowUpTask(task.status)
+    ))
+    .map<AutomationTaskItem>((task) => ({
+      id: `follow-up:${task.id}`,
+      kind: "follow_up",
+      title: task.sessionTitle?.trim() || task.projectName,
+      projectName: task.projectName,
+      status: task.status,
+      taskTypeLabel: resolveAutomationTaskTypeLabel("follow_up"),
+      statusLabel: resolveFollowUpTaskStatusLabel(task.status),
+      nextRunAt: task.nextCheckAt,
+      lastRunAt: task.lastAutomationAt || task.lastCheckedAt || task.updatedAt
+    }));
+  const timerItems = controlTimers
+    .filter((timer) => (mode === "history" ? timer.status !== "active" : timer.status === "active"))
+    .map<AutomationTaskItem>((timer) => ({
+      id: `control-timer:${timer.id}`,
+      timerId: timer.id,
+      kind: "control_timer",
+      title: resolveControlTimerTitle(timer),
+      projectName: resolveControlTimerProjectName(timer, projectNameById),
+      status: timer.status,
+      taskTypeLabel: resolveAutomationTaskTypeLabel("control_timer"),
+      statusLabel: resolveControlTimerStatusLabel(timer.status),
+      nextRunAt: timer.dueAt,
+      lastRunAt: timer.updatedAt
+    }));
 
-  return [...planItems, ...followUpItems]
+  return [...timerItems, ...planItems, ...followUpItems]
     .sort((left, right) => {
       const leftNext = parseIsoTime(left.nextRunAt);
       const rightNext = parseIsoTime(right.nextRunAt);
@@ -2221,33 +2608,70 @@ function buildAutomationTaskItems(
 
 function buildAutomationRunItems(
   followUpTasks: ButlerFollowUpTaskDto[],
-  overview: ButlerOverviewDto | null
+  controlTimers: ButlerControlTimerDto[],
+  overview: ButlerOverviewDto | null,
+  mode: "active" | "history" = "active"
 ): AutomationRunItem[] {
+  const isActiveRunStatus = (status: AutomationRunItem["status"]): boolean =>
+    status === "active" || status === "waiting_user";
   const projectNameById = new Map(
     (overview?.projects ?? []).map((project) => [project.id, project.name] as const)
   );
-  const patrolRunItems = (overview?.patrols ?? []).map<AutomationRunItem>((run) => ({
-    id: `patrol-run:${run.id}`,
-    title: t("shell.butlerAutomationPatrolRunTitle"),
-    projectName: projectNameById.get(run.projectId) ?? run.projectId,
-    sourceLabel: resolveAutomationRunSourceLabel("patrol_run"),
-    statusLabel: run.status,
-    summary: run.summary?.trim() || t("shell.butlerAutomationRunEmptySummary"),
-    createdAt: run.finishedAt || run.startedAt || run.createdAt
-  }));
-  const followUpRunItems = followUpTasks.flatMap<AutomationRunItem>((task) =>
-    (task.rounds ?? []).map((round) => ({
-      id: `follow-up-round:${task.id}:${round.roundNumber}`,
-      title: `${task.sessionTitle?.trim() || task.projectName} · ${t("shell.butlerAutomationRoundLabel", { round: round.roundNumber })}`,
-      projectName: task.projectName,
-      sourceLabel: resolveAutomationRunSourceLabel("follow_up_round"),
-      statusLabel: resolveFollowUpTaskStatusLabel(round.status),
-      summary: round.summary?.trim() || t("shell.butlerAutomationRunEmptySummary"),
-      createdAt: round.createdAt
+  const patrolRunItems = (overview?.patrols ?? [])
+    .map((run) => ({
+      run,
+      normalizedStatus: normalizeAutomationRunStatus(run.status)
     }))
+    .filter(({ normalizedStatus }) => (
+      mode === "history"
+        ? !isActiveRunStatus(normalizedStatus)
+        : isActiveRunStatus(normalizedStatus)
+    ))
+    .map<AutomationRunItem>(({ run, normalizedStatus }) => ({
+      id: `patrol-run:${run.id}`,
+      kind: "patrol_run",
+      title: t("shell.butlerAutomationPatrolRunTitle"),
+      projectName: projectNameById.get(run.projectId) ?? run.projectId,
+      status: normalizedStatus,
+      sourceLabel: resolveAutomationRunSourceLabel("patrol_run"),
+      statusLabel: run.status,
+      summary: run.summary?.trim() || t("shell.butlerAutomationRunEmptySummary"),
+      createdAt: run.finishedAt || run.startedAt || run.createdAt
+    }));
+  const followUpRunItems = followUpTasks.flatMap<AutomationRunItem>((task) =>
+    (task.rounds ?? [])
+      .filter((round) => (
+        mode === "history"
+          ? !isActiveRunStatus(round.status)
+          : isActiveRunStatus(round.status)
+      ))
+      .map((round) => ({
+        id: `follow-up-round:${task.id}:${round.roundNumber}`,
+        kind: "follow_up_round",
+        title: `${task.sessionTitle?.trim() || task.projectName} · ${t("shell.butlerAutomationRoundLabel", { round: round.roundNumber })}`,
+        projectName: task.projectName,
+        status: round.status,
+        sourceLabel: resolveAutomationRunSourceLabel("follow_up_round"),
+        statusLabel: resolveFollowUpTaskStatusLabel(round.status),
+        summary: round.summary?.trim() || t("shell.butlerAutomationRunEmptySummary"),
+        createdAt: round.createdAt
+      }))
   );
+  const timerRunItems = controlTimers
+    .filter((timer) => (mode === "history" ? timer.status !== "active" : false))
+    .map<AutomationRunItem>((timer) => ({
+      id: `control-timer:${timer.id}`,
+      kind: "control_timer",
+      title: resolveControlTimerTitle(timer),
+      projectName: resolveControlTimerProjectName(timer, projectNameById),
+      status: timer.status,
+      sourceLabel: resolveAutomationRunSourceLabel("control_timer"),
+      statusLabel: resolveControlTimerStatusLabel(timer.status),
+      summary: resolveControlTimerRunSummary(timer),
+      createdAt: timer.triggeredAt || timer.cancelledAt || timer.updatedAt
+    }));
 
-  return [...patrolRunItems, ...followUpRunItems]
+  return [...timerRunItems, ...patrolRunItems, ...followUpRunItems]
     .sort((left, right) => parseIsoTime(right.createdAt) - parseIsoTime(left.createdAt))
     .slice(0, 12);
 }
@@ -2336,12 +2760,103 @@ function FollowUpRoundDetailsPanel(props: {
   );
 }
 
+function VerificationHistoryPanel(props: {
+  items: Array<{
+    title: string;
+    content: string;
+  }>;
+}) {
+  if (props.items.length === 0) {
+    return <p className="butler-secondary-text">{t("shell.butlerVerificationHistoryEmpty")}</p>;
+  }
+
+  return (
+    <div className="butler-record-list">
+      {props.items.map((item) => (
+        <SimpleInfoBlock key={`${item.title}:${item.content}`} title={item.title} content={item.content} />
+      ))}
+    </div>
+  );
+}
+
+function AutomationHistoryPanel(props: {
+  taskItems: AutomationTaskItem[];
+  runItems: AutomationRunItem[];
+}) {
+  if (props.taskItems.length === 0 && props.runItems.length === 0) {
+    return <p className="butler-secondary-text">{t("shell.butlerAutomationHistoryEmpty")}</p>;
+  }
+
+  return (
+    <div className="butler-record-list">
+      {props.taskItems.map((item) => (
+        <article key={item.id} className="butler-automation-card">
+          <header className="butler-automation-card-header">
+            <div className="butler-automation-card-title-group">
+              <strong>{item.title}</strong>
+              <span>{item.projectName}</span>
+            </div>
+            <span className="butler-automation-status-badge" data-status={item.status}>
+              {item.statusLabel}
+            </span>
+          </header>
+          <div className="butler-automation-card-body">
+            <div className="butler-automation-row">
+              <span>{t("shell.butlerAutomationTaskTypeLabel")}</span>
+              <strong>{item.taskTypeLabel}</strong>
+            </div>
+            <div className="butler-automation-row">
+              <span>{t("shell.butlerAutomationTaskLastRunLabel")}</span>
+              <strong>{formatIsoDateTime(item.lastRunAt)}</strong>
+            </div>
+          </div>
+          <footer className="butler-automation-card-footer">
+            <span>{t("shell.butlerAutomationTaskNextRunLabel")}</span>
+            <strong>{formatIsoDateTime(item.nextRunAt)}</strong>
+          </footer>
+        </article>
+      ))}
+      {props.runItems.map((item) => (
+        <article key={item.id} className="butler-automation-card">
+          <header className="butler-automation-card-header">
+            <div className="butler-automation-card-title-group">
+              <strong>{item.title}</strong>
+              <span>{item.projectName}</span>
+            </div>
+            <span className="butler-automation-status-badge" data-status={item.status}>
+              {item.statusLabel}
+            </span>
+          </header>
+          <div className="butler-automation-card-body">
+            <div className="butler-automation-row">
+              <span>{t("shell.butlerAutomationRunSourceLabel")}</span>
+              <strong>{item.sourceLabel}</strong>
+            </div>
+            <div className="butler-automation-row">
+              <span>{t("shell.butlerAutomationRunSummaryLabel")}</span>
+              <strong>{item.summary}</strong>
+            </div>
+          </div>
+          <footer className="butler-automation-card-footer">
+            <span>{t("shell.butlerAutomationRunProcessedAtLabel")}</span>
+            <strong>{formatIsoDateTime(item.createdAt)}</strong>
+          </footer>
+        </article>
+      ))}
+    </div>
+  );
+}
+
 function buildVerificationRecords(
   verifications: ButlerVerificationDigestDto[],
-  showCompleted: boolean
+  mode: "active" | "history"
 ): Array<{ title: string; content: string }> {
   return [...verifications]
-    .filter((verification) => showCompleted || isVisibleVerification(verification.status))
+    .filter((verification) => (
+      mode === "history"
+        ? !isVisibleVerification(verification.status)
+        : isVisibleVerification(verification.status)
+    ))
     .sort((left, right) => parseIsoTime(resolveVerificationTime(right)) - parseIsoTime(resolveVerificationTime(left)))
     .slice(0, 5)
     .map((verification) => ({
@@ -2377,12 +2892,188 @@ function replaceControlSession(
     .sort((left, right) => parseIsoTime(right.updatedAt) - parseIsoTime(left.updatedAt));
 }
 
+function replaceControlTimer(
+  timers: ButlerControlTimerDto[],
+  nextTimer: ButlerControlTimerDto
+): ButlerControlTimerDto[] {
+  const nextTimers = timers.filter((timer) => timer.id !== nextTimer.id);
+  return [nextTimer, ...nextTimers]
+    .sort((left, right) => parseIsoTime(resolveControlTimerSortTime(right)) - parseIsoTime(resolveControlTimerSortTime(left)));
+}
+
 function isVisibleFollowUpTask(status: ButlerFollowUpTaskDto["status"]): boolean {
   return status === "active" || status === "waiting_user";
 }
 
+function resolveControlTimerSortTime(timer: ButlerControlTimerDto): string {
+  return timer.dueAt || timer.triggeredAt || timer.cancelledAt || timer.updatedAt || timer.createdAt;
+}
+
+function resolveControlTimerTitle(timer: ButlerControlTimerDto): string {
+  return timer.title?.trim()
+    || timer.controlSession?.title?.trim()
+    || timer.controlSession?.session?.title?.trim()
+    || timer.content.trim();
+}
+
+function resolveControlTimerPromptContent(timer: ButlerControlTimerDto): string {
+  return timer.content.trim() || resolveControlTimerTitle(timer);
+}
+
+function resolveControlTimerProjectName(
+  timer: ButlerControlTimerDto,
+  projectNameById: Map<string, string>
+): string {
+  if (timer.projectId && projectNameById.has(timer.projectId)) {
+    return projectNameById.get(timer.projectId)!;
+  }
+
+  return timer.controlSession?.session?.workspaceId || t("shell.butlerControlTimerNoProject");
+}
+
+function resolveControlTimerStatusLabel(status: ButlerControlTimerDto["status"]): string {
+  switch (status) {
+    case "completed":
+      return t("shell.butlerAutomationStatusCompleted");
+    case "failed":
+      return t("shell.butlerAutomationStatusFailed");
+    case "cancelled":
+      return t("shell.butlerAutomationStatusCancelled");
+    case "active":
+    default:
+      return t("shell.butlerAutomationStatusActive");
+  }
+}
+
+function resolveControlTimerRunSummary(timer: ButlerControlTimerDto): string {
+  if (timer.status === "completed") {
+    return t("shell.butlerControlTimerRunCompletedSummary");
+  }
+
+  if (timer.status === "cancelled") {
+    return t("shell.butlerControlTimerRunCancelledSummary");
+  }
+
+  return timer.lastError?.trim() || t("shell.butlerControlTimerRunFailedSummary");
+}
+
+function resolveControlTimerCountdownLabel(timer: ButlerControlTimerDto, nowMs: number): string {
+  const dueMs = parseIsoTime(timer.dueAt);
+
+  if (!dueMs || dueMs <= nowMs) {
+    return t("shell.butlerControlTimerCountdownDueNow");
+  }
+
+  return t("shell.butlerControlTimerCountdownActive", {
+    duration: formatDurationLabel(dueMs - nowMs)
+  });
+}
+
+function resolveControlTimerClockLabel(timer: ButlerControlTimerDto, nowMs: number): string {
+  const dueMs = parseIsoTime(timer.dueAt);
+
+  if (!dueMs || dueMs <= nowMs) {
+    return "00:00";
+  }
+
+  return formatDigitalDurationLabel(dueMs - nowMs);
+}
+
+function resolveControlTimerWorkspaceLabel(
+  timer: ButlerControlTimerDto,
+  workspaceNameById: Map<string, string>,
+  currentWorkspaceId: string,
+  currentWorkspaceName: string | null
+): string {
+  const workspaceId = timer.controlSession?.session?.workspaceId?.trim() || currentWorkspaceId.trim();
+
+  if (!workspaceId) {
+    return t("shell.butlerControlTimerUnknownWorkspace");
+  }
+
+  if (workspaceNameById.has(workspaceId)) {
+    return workspaceNameById.get(workspaceId)!;
+  }
+
+  if (workspaceId === currentWorkspaceId.trim() && currentWorkspaceName?.trim()) {
+    return currentWorkspaceName.trim();
+  }
+
+  return t("shell.butlerControlTimerUnknownWorkspace");
+}
+
+function resolveControlTimerSessionLabel(
+  timer: ButlerControlTimerDto,
+  sessionTitleById: Map<string, string>
+): string {
+  const targetSessionId = timer.targetSessionId?.trim();
+
+  if (targetSessionId && sessionTitleById.has(targetSessionId)) {
+    return sessionTitleById.get(targetSessionId)!;
+  }
+
+  if (timer.controlSession?.session?.title?.trim()) {
+    return timer.controlSession.session.title.trim();
+  }
+
+  const currentSessionId = timer.controlSession?.session?.sessionId?.trim() || timer.sessionId.trim();
+
+  if (currentSessionId && sessionTitleById.has(currentSessionId)) {
+    return sessionTitleById.get(currentSessionId)!;
+  }
+
+  return t("shell.butlerControlTimerUnknownSession");
+}
+
+function TimerDetailIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
+      <path
+        fill="currentColor"
+        d="M8 1.25a6.75 6.75 0 1 0 0 13.5A6.75 6.75 0 0 0 8 1.25Zm0 1.5a5.25 5.25 0 1 1 0 10.5A5.25 5.25 0 0 1 8 2.75Zm0 2.5a.875.875 0 1 0 0 1.75a.875.875 0 0 0 0-1.75Zm-.875 3.125a.625.625 0 1 0 0 1.25h.25v1.75h-.25a.625.625 0 1 0 0 1.25h1.75a.625.625 0 1 0 0-1.25h-.25V9a.625.625 0 0 0-.625-.625h-.875Z"
+      />
+    </svg>
+  );
+}
+
+function formatDurationLabel(durationMs: number): string {
+  const totalSeconds = Math.max(1, Math.ceil(durationMs / 1_000));
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  const formatUnit = (value: number, unit: Intl.NumberFormatOptions["unit"]) =>
+    new Intl.NumberFormat(undefined, {
+      style: "unit",
+      unit,
+      unitDisplay: "narrow"
+    }).format(value);
+
+  if (hours > 0) {
+    return [formatUnit(hours, "hour"), formatUnit(Math.max(minutes, 0), "minute")].join(" ");
+  }
+
+  if (minutes > 0) {
+    return [formatUnit(minutes, "minute"), formatUnit(seconds, "second")].join(" ");
+  }
+
+  return formatUnit(seconds, "second");
+}
+
+function formatDigitalDurationLabel(durationMs: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(durationMs / 1_000));
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
 function isVisibleVerification(status: ButlerVerificationDigestDto["status"]): boolean {
-  return status === "queued" || status === "running" || status === "failed";
+  return status === "queued" || status === "running";
 }
 
 function resolveInboxLifecycleStageLabel(stage: ButlerInboxItemDto["assistantState"]["lifecycleStage"]): string {
@@ -2527,11 +3218,15 @@ function resolveFollowUpRoundKindLabel(kind: ButlerFollowUpTaskRoundDto["kind"])
 }
 
 function resolveAutomationTaskTypeLabel(
-  kind: "patrol_plan" | "follow_up",
+  kind: "patrol_plan" | "follow_up" | "control_timer",
   triggerType?: ButlerPatrolPlanDto["triggerType"]
 ): string {
   if (kind === "follow_up") {
     return t("shell.butlerAutomationTaskTypeFollowUp");
+  }
+
+  if (kind === "control_timer") {
+    return t("shell.butlerAutomationTaskTypeControlTimer");
   }
 
   switch (triggerType) {
@@ -2545,10 +3240,38 @@ function resolveAutomationTaskTypeLabel(
   }
 }
 
-function resolveAutomationRunSourceLabel(kind: "patrol_run" | "follow_up_round"): string {
-  return kind === "patrol_run"
-    ? t("shell.butlerAutomationRunSourcePatrol")
-    : t("shell.butlerAutomationRunSourceFollowUp");
+function resolveAutomationRunSourceLabel(
+  kind: "patrol_run" | "follow_up_round" | "control_timer"
+): string {
+  if (kind === "patrol_run") {
+    return t("shell.butlerAutomationRunSourcePatrol");
+  }
+
+  if (kind === "control_timer") {
+    return t("shell.butlerAutomationRunSourceControlTimer");
+  }
+
+  return t("shell.butlerAutomationRunSourceFollowUp");
+}
+
+function normalizeAutomationRunStatus(status: string): AutomationRunItem["status"] {
+  switch (status) {
+    case "failed":
+      return "failed";
+    case "cancelled":
+      return "cancelled";
+    case "completed":
+    case "passed":
+    case "succeeded":
+      return "completed";
+    case "waiting_user":
+      return "waiting_user";
+    case "active":
+    case "queued":
+    case "running":
+    default:
+      return "active";
+  }
 }
 
 function resolveButlerAvatar(input: {

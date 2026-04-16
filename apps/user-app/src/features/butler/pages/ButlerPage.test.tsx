@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
 
@@ -68,6 +68,41 @@ vi.mock("../../conversation/components/MessageTimeline", () => ({
 
 vi.mock("../../conversation/components/WorkbenchLayout", () => ({
   useWorkbenchShell: () => ({
+    navigationGroups: [
+      {
+        workspace: {
+          id: "workspace-1",
+          name: "项目一",
+          path: "/repo/project-one"
+        },
+        sessions: [
+          {
+            id: "session-follow-1",
+            projectId: "project-1",
+            sessionId: "session-1",
+            title: "登录页改造",
+            provider: "codex",
+            role: "execution",
+            ownershipMode: "managed",
+            status: "running",
+            runningState: "running",
+            lastSummary: null,
+            lastCheckpointAt: null,
+            lastContextTokenCount: null,
+            createdAt: "2026-04-05T00:00:00.000Z",
+            updatedAt: "2026-04-05T00:00:00.000Z",
+            parentSessionId: null,
+            forkedFromSessionId: null,
+            forkedAt: null,
+            branchLabel: null,
+            branchOrder: null,
+            workspaceId: "workspace-1",
+            workspaceName: "项目一",
+            workspacePath: "/repo/project-one"
+          }
+        ]
+      }
+    ],
     requestNavigationRefresh: vi.fn(),
     setAuxiliaryPanel: setAuxiliaryPanelMock
   })
@@ -85,6 +120,7 @@ vi.mock("../../conversation/api/conversation-api", () => ({
 
 vi.mock("../api/butler-api", () => ({
   analyzeButlerInboxItem: vi.fn(),
+  cancelButlerControlTimer: vi.fn(),
   getButlerProfile: vi.fn(),
   initButlerProfile: vi.fn(),
   updateButlerProfile: vi.fn(),
@@ -92,6 +128,7 @@ vi.mock("../api/butler-api", () => ({
   cancelButlerFollowUpTask: vi.fn(),
   getButlerFollowUpTask: vi.fn(),
   listButlerControlSessions: vi.fn(),
+  listButlerControlTimers: vi.fn(),
   listButlerPatrolPlans: vi.fn(),
   listButlerFollowUpTasks: vi.fn(),
   listButlerInboxItems: vi.fn(),
@@ -107,6 +144,7 @@ import { useToast } from "../../../shared/toast";
 import { ButlerPage } from "./ButlerPage";
 import {
   analyzeButlerInboxItem,
+  cancelButlerControlTimer,
   getButlerProfile,
   initButlerProfile,
   updateButlerProfile,
@@ -114,6 +152,7 @@ import {
   cancelButlerFollowUpTask,
   getButlerFollowUpTask,
   listButlerControlSessions,
+  listButlerControlTimers,
   listButlerPatrolPlans,
   listButlerFollowUpTasks,
   listButlerInboxItems,
@@ -131,6 +170,7 @@ import {
 
 const mockedUseToast = vi.mocked(useToast);
 const mockedAnalyzeButlerInboxItem = vi.mocked(analyzeButlerInboxItem);
+const mockedCancelButlerControlTimer = vi.mocked(cancelButlerControlTimer);
 const mockedGetButlerProfile = vi.mocked(getButlerProfile);
 const mockedInitButlerProfile = vi.mocked(initButlerProfile);
 const mockedUpdateButlerProfile = vi.mocked(updateButlerProfile);
@@ -138,6 +178,7 @@ const mockedGetButlerOverview = vi.mocked(getButlerOverview);
 const mockedCancelButlerFollowUpTask = vi.mocked(cancelButlerFollowUpTask);
 const mockedGetButlerFollowUpTask = vi.mocked(getButlerFollowUpTask);
 const mockedListButlerControlSessions = vi.mocked(listButlerControlSessions);
+const mockedListButlerControlTimers = vi.mocked(listButlerControlTimers);
 const mockedListButlerPatrolPlans = vi.mocked(listButlerPatrolPlans);
 const mockedListButlerFollowUpTasks = vi.mocked(listButlerFollowUpTasks);
 const mockedListButlerInboxItems = vi.mocked(listButlerInboxItems);
@@ -252,6 +293,9 @@ describe("ButlerPage", () => {
     mockedCancelButlerFollowUpTask.mockResolvedValue({
       task: {} as never
     });
+    mockedCancelButlerControlTimer.mockResolvedValue({
+      timer: {} as never
+    });
     mockedGetButlerFollowUpTask.mockResolvedValue({
       task: {
         id: "follow-up-1",
@@ -310,6 +354,9 @@ describe("ButlerPage", () => {
     mockedListButlerControlSessions.mockResolvedValue({
       items: []
     } as never);
+    mockedListButlerControlTimers.mockResolvedValue({
+      items: []
+    });
     mockedListButlerFollowUpTasks.mockResolvedValue({
       items: []
     });
@@ -404,6 +451,10 @@ describe("ButlerPage", () => {
       watchdogTriggeredAt: null,
       contextUsage: null
     } as never);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   function renderPage() {
@@ -793,6 +844,17 @@ describe("ButlerPage", () => {
             startedAt: "2026-04-05T09:10:00.000Z",
             finishedAt: null,
             createdAt: "2026-04-05T09:10:00.000Z"
+          },
+          {
+            id: "verification-2",
+            projectId: "project-blocked",
+            verificationType: "api",
+            status: "completed",
+            targetRef: "支付回归",
+            summary: "支付回归验证已经完成。",
+            startedAt: "2026-04-05T08:10:00.000Z",
+            finishedAt: "2026-04-05T08:15:00.000Z",
+            createdAt: "2026-04-05T08:10:00.000Z"
           }
         ]
       }
@@ -1022,7 +1084,9 @@ describe("ButlerPage", () => {
     const todoScope = within(todoSection!);
 
     expect(renderedPanel.getByText(t("shell.butlerInfoFollowUpRecordsTitle"))).toBeInTheDocument();
-    expect(renderedPanel.getByRole("button", { name: t("shell.butlerFollowUpHistoryAction") })).toBeInTheDocument();
+    expect(
+      renderedPanel.getAllByRole("button", { name: t("shell.butlerFollowUpHistoryAction") }).length
+    ).toBeGreaterThanOrEqual(1);
     expect(renderedPanel.getByText("登录页改造")).toBeInTheDocument();
     expect(renderedPanel.getByText("需要确认验证码失败策略。")).toBeInTheDocument();
     expect(renderedPanel.queryByText("支付流程修复")).not.toBeInTheDocument();
@@ -1030,6 +1094,7 @@ describe("ButlerPage", () => {
     expect(renderedPanel.getByText(t("shell.butlerInfoVerificationRecordsTitle"))).toBeInTheDocument();
     expect(renderedPanel.getByText("登录验证码")).toBeInTheDocument();
     expect(renderedPanel.getByText("正在从用户视角复测登录流程。")).toBeInTheDocument();
+    expect(renderedPanel.queryByText("支付回归")).not.toBeInTheDocument();
     expect(renderedPanel.getByText(t("shell.butlerInfoTodoRecordsTitle"))).toBeInTheDocument();
     expect(todoScope.getByText("补齐验证码流程")).toBeInTheDocument();
     expect(todoScope.getByText("普通项目")).toBeInTheDocument();
@@ -1039,7 +1104,7 @@ describe("ButlerPage", () => {
     expect(todoScope.getByRole("button", { name: t("shell.butlerTodoReanalyzeAction") })).toBeInTheDocument();
     expect(todoScope.getByRole("button", { name: t("shell.butlerTodoOpenSessionAction") })).toBeInTheDocument();
 
-    fireEvent.click(renderedPanel.getByRole("button", { name: t("shell.butlerFollowUpHistoryAction") }));
+    fireEvent.click(renderedPanel.getAllByRole("button", { name: t("shell.butlerFollowUpHistoryAction") })[0]!);
 
     await waitFor(() => {
       expect(screen.getByRole("dialog", { name: t("shell.butlerFollowUpHistoryTitle") })).toBeInTheDocument();
@@ -1048,6 +1113,27 @@ describe("ButlerPage", () => {
     const historyDialog = screen.getByRole("dialog", { name: t("shell.butlerFollowUpHistoryTitle") });
     expect(within(historyDialog).getByText("支付流程修复")).toBeInTheDocument();
     expect(within(historyDialog).getByText("旧历史任务")).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: t("common.close") }).at(-1) as HTMLElement);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: t("shell.butlerFollowUpHistoryTitle") })).toBeNull();
+    });
+
+    const verificationSection = renderedPanel.getByText(t("shell.butlerInfoVerificationRecordsTitle")).closest("section");
+    expect(verificationSection).toBeTruthy();
+
+    fireEvent.click(within(verificationSection as HTMLElement).getByRole("button", {
+      name: t("shell.butlerFollowUpHistoryAction")
+    }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: t("shell.butlerVerificationHistoryTitle") })).toBeInTheDocument();
+    });
+
+    const verificationHistoryDialog = screen.getByRole("dialog", { name: t("shell.butlerVerificationHistoryTitle") });
+    expect(within(verificationHistoryDialog).getByText("支付回归")).toBeInTheDocument();
+    expect(within(verificationHistoryDialog).getByText("支付回归验证已经完成。")).toBeInTheDocument();
   });
 
   it("代办生命周期卡片支持分析仓库并创建会话", async () => {
@@ -1438,6 +1524,19 @@ describe("ButlerPage", () => {
         sessions: [],
         patrols: [
           {
+            id: "patrol-run-active-1",
+            projectId: "project-1",
+            planId: "plan-1",
+            triggeredBy: "scheduler",
+            status: "running",
+            riskLevel: "low",
+            summary: "本轮巡检还在执行中。",
+            suggestions: [],
+            startedAt: "2026-04-07T01:05:00.000Z",
+            finishedAt: null,
+            createdAt: "2026-04-07T01:05:00.000Z"
+          },
+          {
             id: "patrol-run-1",
             projectId: "project-1",
             planId: "plan-1",
@@ -1567,13 +1666,23 @@ describe("ButlerPage", () => {
     expect(renderedPanel.getByText(t("shell.butlerAutomationTaskTypeInterval"))).toBeInTheDocument();
     expect(renderedPanel.getAllByText(t("shell.butlerAutomationTaskNextRunLabel")).length).toBeGreaterThan(0);
     expect(renderedPanel.getByText(t("shell.butlerAutomationRunsTitle"))).toBeInTheDocument();
-    expect(renderedPanel.getByText("注册流程收尾")).toBeInTheDocument();
-    expect(renderedPanel.getAllByText(t("shell.butlerAutomationStatusCompleted")).length).toBeGreaterThan(0);
-    expect(renderedPanel.getByText(t("shell.butlerAutomationRunSourceFollowUp"))).toBeInTheDocument();
+    expect(renderedPanel.queryByText("注册流程收尾")).not.toBeInTheDocument();
+    expect(renderedPanel.queryByText("当前目标已经完成，跟进任务已收尾。")).not.toBeInTheDocument();
+    expect(renderedPanel.queryByText("本轮巡检未发现新的高风险问题。")).not.toBeInTheDocument();
     expect(renderedPanel.getByText(t("shell.butlerAutomationRunSourcePatrol"))).toBeInTheDocument();
-    expect(renderedPanel.getByText("当前目标已经完成，跟进任务已收尾。")).toBeInTheDocument();
-    expect(renderedPanel.getByText("本轮巡检未发现新的高风险问题。")).toBeInTheDocument();
+    expect(renderedPanel.getByText("本轮巡检还在执行中。")).toBeInTheDocument();
     expect(renderedPanel.queryByRole("button", { name: t("shell.butlerAutomationViewRoundsAction") })).not.toBeInTheDocument();
+
+    fireEvent.click(renderedPanel.getAllByRole("button", { name: t("shell.butlerFollowUpHistoryAction") })[0]!);
+
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: t("shell.butlerAutomationHistoryTitle") })).toBeInTheDocument();
+    });
+
+    const automationHistoryDialog = screen.getByRole("dialog", { name: t("shell.butlerAutomationHistoryTitle") });
+    expect(within(automationHistoryDialog).getByText("注册流程收尾")).toBeInTheDocument();
+    expect(within(automationHistoryDialog).getByText("当前目标已经完成，跟进任务已收尾。")).toBeInTheDocument();
+    expect(within(automationHistoryDialog).getByText("本轮巡检未发现新的高风险问题。")).toBeInTheDocument();
   });
 
   it("会话跟进历史和状态卡都可以查看轮次详情", async () => {
@@ -1620,6 +1729,32 @@ describe("ButlerPage", () => {
           createdAt: "2026-04-07T00:50:00.000Z",
           updatedAt: "2026-04-07T01:02:00.000Z",
           completedAt: null
+        },
+        {
+          id: "follow-up-2",
+          projectId: "project-1",
+          projectName: "项目甲",
+          workspaceId: "workspace-1",
+          butlerSessionId: "butler-session-2",
+          sessionId: "session-2",
+          sessionTitle: "注册页收尾",
+          objective: "补齐注册页收尾工作",
+          completionCriteria: "注册页问题全部关闭。",
+          maxAutoContinueCount: 5,
+          status: "completed",
+          checkIntervalSeconds: 300,
+          lastCheckedAt: "2026-04-07T00:40:00.000Z",
+          nextCheckAt: null,
+          lastObservedRunningState: "completed",
+          lastObservedMessageAt: "2026-04-07T00:40:00.000Z",
+          lastObservedMessageCount: 8,
+          lastAutomationSummary: "注册页收尾已完成。",
+          lastAutomationAt: "2026-04-07T00:40:00.000Z",
+          autoContinueCount: 2,
+          waitingReason: null,
+          createdAt: "2026-04-07T00:10:00.000Z",
+          updatedAt: "2026-04-07T00:40:00.000Z",
+          completedAt: "2026-04-07T00:40:00.000Z"
         }
       ]
     });
@@ -1632,7 +1767,7 @@ describe("ButlerPage", () => {
           followUpTasks?: unknown[];
         };
       };
-      expect(latestSidePanel.props.followUpTasks).toHaveLength(1);
+      expect(latestSidePanel.props.followUpTasks).toHaveLength(2);
     });
 
     const latestSidePanel = getLatestSidePanel();
@@ -1653,13 +1788,19 @@ describe("ButlerPage", () => {
       expect(screen.queryByRole("dialog", { name: t("shell.butlerAutomationRoundDetailsTitle") })).toBeNull();
     });
 
-    fireEvent.click(renderedPanel.getByRole("button", { name: t("shell.butlerFollowUpHistoryAction") }));
+    const followUpSection = renderedPanel.getByText(t("shell.butlerInfoFollowUpRecordsTitle")).closest("section");
+    expect(followUpSection).toBeTruthy();
+
+    fireEvent.click(within(followUpSection as HTMLElement).getByRole("button", {
+      name: t("shell.butlerFollowUpHistoryAction")
+    }));
 
     await waitFor(() => {
       expect(screen.getByRole("dialog", { name: t("shell.butlerFollowUpHistoryTitle") })).toBeInTheDocument();
     });
 
     const historyDialog = screen.getByRole("dialog", { name: t("shell.butlerFollowUpHistoryTitle") });
+    expect(within(historyDialog).getByText("注册页收尾")).toBeInTheDocument();
     fireEvent.click(within(historyDialog).getByRole("button", { name: t("shell.butlerAutomationViewRoundsAction") }));
 
     await waitFor(() => {
