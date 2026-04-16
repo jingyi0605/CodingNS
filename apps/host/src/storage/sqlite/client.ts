@@ -254,7 +254,7 @@ function ensureUserPreferenceProfileSchema(db: Database.Database): void {
 
   if (!columnNames.has("debug_port_pools_json")) {
     db.exec(`ALTER TABLE user_preference_profiles
-      ADD COLUMN debug_port_pools_json TEXT NOT NULL DEFAULT '{"frontend":{"start":43000,"end":43999},"backend":{"start":44000,"end":44999},"worker":{"start":45000,"end":45999},"mock":{"start":46000,"end":46999},"custom":{"start":47000,"end":47999}}'`);
+      ADD COLUMN debug_port_pools_json TEXT NOT NULL DEFAULT '{"start":43000,"end":47999}'`);
   }
 }
 

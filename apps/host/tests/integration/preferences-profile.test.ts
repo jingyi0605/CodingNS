@@ -36,6 +36,10 @@ const DEFAULT_PROFILE_RESPONSE = {
   theme: "light",
   autoTheme: false,
   defaultPermissionMode: "default",
+  debugPortPools: {
+    start: 43000,
+    end: 47999
+  },
   providers: {
     "claude-code": {
       defaultModel: null,
@@ -258,6 +262,83 @@ describe("偏好 profile 接口", () => {
           defaultModel: null,
           defaultReasoningLevel: "xhigh"
         }
+      },
+      updatedAt: expect.any(String)
+    });
+  });
+
+  it("保存调试端口池时只需要一个共享范围", async () => {
+    const fixture = createEmptyFixture();
+    const databasePath = path.join(fixture.rootDir, "host.sqlite");
+    activeFixtures.push(fixture);
+
+    const hosted = createTestApp(fixture, {
+      databasePath
+    });
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const response = await hosted.app.inject({
+      method: "PUT",
+      url: "/api/preferences/profile",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        debugPortPools: {
+          start: 48000,
+          end: 48099
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      ...DEFAULT_PROFILE_RESPONSE,
+      debugPortPools: {
+        start: 48000,
+        end: 48099
+      },
+      updatedAt: expect.any(String)
+    });
+  });
+
+  it("读取旧版分角色端口池配置时会归一化成单一区间", async () => {
+    const fixture = createEmptyFixture();
+    const databasePath = path.join(fixture.rootDir, "host.sqlite");
+    activeFixtures.push(fixture);
+
+    const hosted = createTestApp(fixture, {
+      databasePath
+    });
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const response = await hosted.app.inject({
+      method: "PUT",
+      url: "/api/preferences/profile",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        debugPortPools: {
+          frontend: { start: 43000, end: 43999 },
+          backend: { start: 44000, end: 44999 },
+          worker: { start: 45000, end: 45999 },
+          mock: { start: 46000, end: 46999 },
+          custom: { start: 47000, end: 47999 }
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      ...DEFAULT_PROFILE_RESPONSE,
+      debugPortPools: {
+        start: 43000,
+        end: 47999
       },
       updatedAt: expect.any(String)
     });

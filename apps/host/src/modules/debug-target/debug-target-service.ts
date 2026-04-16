@@ -20,7 +20,6 @@ import type {
   DebugLaunchPlan,
   DebugLaunchPlanServiceItem,
   DebugPortPoolConfig,
-  DebugPortPoolRole,
   DebugRuntimeHistoryEnvelope,
   DebugRuntimeDetail,
   DebugRuntimeSessionStatus,
@@ -2856,7 +2855,7 @@ async function allocateManagedPort(
   portPoolConfig: DebugPortPoolConfig,
   usedPorts: ReadonlySet<number> = new Set()
 ): Promise<number> {
-  const range = portPoolConfig[role as DebugPortPoolRole] ?? portPoolConfig.custom;
+  const range = portPoolConfig;
 
   for (let port = range.start; port <= range.end; port += 1) {
     if (usedPorts.has(port)) {
@@ -3060,13 +3059,7 @@ function matchesTemplatePortRequest(
 }
 
 function clonePortPoolConfig(config: DebugPortPoolConfig): DebugPortPoolConfig {
-  return {
-    frontend: { ...config.frontend },
-    backend: { ...config.backend },
-    worker: { ...config.worker },
-    mock: { ...config.mock },
-    custom: { ...config.custom }
-  };
+  return { ...config };
 }
 
 function normalizePortRequestCwd(value: string | null | undefined, targetRootPath: string): string {

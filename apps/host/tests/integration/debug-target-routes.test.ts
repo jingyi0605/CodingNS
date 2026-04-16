@@ -814,11 +814,15 @@ describe("debug target routes", () => {
     });
 
     expect(launchPlanResponse.statusCode).toBe(200);
-    expect(launchPlanResponse.json().services[0]).toMatchObject({
+    const launchService = launchPlanResponse.json().services[0];
+
+    expect(launchService).toMatchObject({
       adapterKind: "env",
-      injectionMode: "env",
-      leasedPort: 44001
+      injectionMode: "env"
     });
+    expect(launchService.leasedPort).not.toBe(44000);
+    expect(launchService.leasedPort).toBeGreaterThanOrEqual(43000);
+    expect(launchService.leasedPort).toBeLessThanOrEqual(47999);
   });
 
   it("生成启动计划时支持按服务选择器显式请求端口", async () => {

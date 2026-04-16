@@ -34,13 +34,10 @@ const DEFAULT_LANGUAGE: UserPreferenceLanguage = "zh-CN";
 const DEFAULT_THEME: UserPreferenceTheme = "light";
 const DEFAULT_PERMISSION_MODE: UserPreferencePermissionMode = "default";
 export const DEFAULT_DEBUG_PORT_POOLS: DebugPortPoolConfig = {
-  frontend: { start: 43000, end: 43999 },
-  backend: { start: 44000, end: 44999 },
-  worker: { start: 45000, end: 45999 },
-  mock: { start: 46000, end: 46999 },
-  custom: { start: 47000, end: 47999 }
+  start: 43000,
+  end: 47999
 };
-const DEBUG_PORT_POOL_ROLES: DebugPortPoolRole[] = [
+const LEGACY_DEBUG_PORT_POOL_ROLES: DebugPortPoolRole[] = [
   "frontend",
   "backend",
   "worker",
@@ -127,7 +124,7 @@ function toProfile(record: UserPreferenceProfileRecord): UserPreferenceProfile {
     autoTheme: record.autoTheme,
     defaultPermissionMode: record.defaultPermissionMode,
     providers: buildProvidersRecord(record.providers),
-    debugPortPools: cloneDebugPortPools(record.debugPortPools)
+    debugPortPools: normalizeDebugPortPools(record.debugPortPools)
   };
 }
 
@@ -252,33 +249,13 @@ function normalizeDebugPortPools(input: unknown): DebugPortPoolConfig {
     throw invalidField("debugPortPools", "debugPortPools 必须是对象");
   }
 
-  const result = {} as DebugPortPoolConfig;
+  const directRange = tryNormalizePortPoolRange(input, "debugPortPools");
 
-  for (const role of DEBUG_PORT_POOL_ROLES) {
-    const rawRange = (input as Record<string, unknown>)[role];
-
-    if (typeof rawRange !== "object" || rawRange === null || Array.isArray(rawRange)) {
-      throw invalidField(`debugPortPools.${role}`, `${role} 端口池必须提供 start 和 end`);
-    }
-
-    const start = normalizePortPoolBound(
-      (rawRange as Record<string, unknown>).start,
-      `debugPortPools.${role}.start`
-    );
-    const end = normalizePortPoolBound(
-      (rawRange as Record<string, unknown>).end,
-      `debugPortPools.${role}.end`
-    );
-
-    if (start >= end) {
-      throw invalidField(`debugPortPools.${role}`, `${role} 端口池的 start 必须小于 end`);
-    }
-
-    result[role] = { start, end };
+  if (directRange) {
+    return directRange;
   }
 
-  validateDebugPortPoolOverlap(result);
-  return result;
+  return normalizeLegacyDebugPortPools(input);
 }
 
 function normalizePortPoolBound(value: unknown, field: string): number {
@@ -295,34 +272,60 @@ function normalizePortPoolBound(value: unknown, field: string): number {
   return port;
 }
 
-function validateDebugPortPoolOverlap(config: DebugPortPoolConfig): void {
-  const ranges = DEBUG_PORT_POOL_ROLES.map((role) => ({
-    role,
-    start: config[role].start,
-    end: config[role].end
-  })).sort((left, right) => left.start - right.start);
-
-  for (let index = 1; index < ranges.length; index += 1) {
-    const previous = ranges[index - 1]!;
-    const current = ranges[index]!;
-
-    if (current.start <= previous.end) {
-      throw invalidField(
-        "debugPortPools",
-        `${previous.role} 与 ${current.role} 的端口池范围发生重叠`
-      );
-    }
+function tryNormalizePortPoolRange(
+  input: unknown,
+  field: string
+): DebugPortPoolConfig | null {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return null;
   }
+
+  const record = input as Record<string, unknown>;
+
+  if (
+    !Object.prototype.hasOwnProperty.call(record, "start")
+    && !Object.prototype.hasOwnProperty.call(record, "end")
+  ) {
+    return null;
+  }
+
+  const start = normalizePortPoolBound(record.start, `${field}.start`);
+  const end = normalizePortPoolBound(record.end, `${field}.end`);
+
+  if (start >= end) {
+    throw invalidField(field, `${field} 的 start 必须小于 end`);
+  }
+
+  return { start, end };
+}
+
+function normalizeLegacyDebugPortPools(input: unknown): DebugPortPoolConfig {
+  let start = Number.POSITIVE_INFINITY;
+  let end = Number.NEGATIVE_INFINITY;
+
+  for (const role of LEGACY_DEBUG_PORT_POOL_ROLES) {
+    const range = tryNormalizePortPoolRange(
+      (input as Record<string, unknown>)[role],
+      `debugPortPools.${role}`
+    );
+
+    if (!range) {
+      throw invalidField(`debugPortPools.${role}`, `${role} 端口池必须提供 start 和 end`);
+    }
+
+    start = Math.min(start, range.start);
+    end = Math.max(end, range.end);
+  }
+
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) {
+    throw invalidField("debugPortPools", "debugPortPools 必须提供合法的端口范围");
+  }
+
+  return { start, end };
 }
 
 function cloneDebugPortPools(config: DebugPortPoolConfig): DebugPortPoolConfig {
-  return {
-    frontend: { ...config.frontend },
-    backend: { ...config.backend },
-    worker: { ...config.worker },
-    mock: { ...config.mock },
-    custom: { ...config.custom }
-  };
+  return { ...config };
 }
 
 function normalizeLanguage(value: unknown): UserPreferenceLanguage {
