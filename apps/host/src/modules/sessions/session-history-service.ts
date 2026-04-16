@@ -211,6 +211,7 @@ const MUTABLE_HISTORY_TAIL_REFRESH_INTERVAL_MS = 1_200;
 const WORKSPACE_DISCOVERY_BACKGROUND_MAX_AGE_MS = 15_000;
 const PROVIDER_CAPABILITY_CACHE_MAX_AGE_MS = 5_000;
 const WORKSPACE_DISCOVERY_PERSIST_BATCH_SIZE = 25;
+const SESSION_TRANSACTION_HOTSPOT_THRESHOLD_MS = 150;
 
 export class SessionHistoryService {
   private readonly providerRegistry: ProviderRegistry;
@@ -1994,7 +1995,16 @@ export class SessionHistoryService {
       const persistPass1Stats = await runBatchedTransactions(
         sessions,
         WORKSPACE_DISCOVERY_PERSIST_BATCH_SIZE,
-        persistPass1Transaction
+        persistPass1Transaction,
+        {
+          scope: "workspace.discover_sessions.persist_pass1.batch",
+          thresholdMs: SESSION_TRANSACTION_HOTSPOT_THRESHOLD_MS,
+          detail: {
+            workspaceId,
+            workspacePath: workspace.path,
+            phase: "pass1"
+          }
+        }
       );
       persistPass1DurationMs = Date.now() - persistPass1StartedAt;
       persistPass1BatchCount = persistPass1Stats.batchCount;
@@ -2064,7 +2074,16 @@ export class SessionHistoryService {
       const persistPass2Stats = await runBatchedTransactions(
         persistedSessions,
         WORKSPACE_DISCOVERY_PERSIST_BATCH_SIZE,
-        persistPass2Transaction
+        persistPass2Transaction,
+        {
+          scope: "workspace.discover_sessions.persist_pass2.batch",
+          thresholdMs: SESSION_TRANSACTION_HOTSPOT_THRESHOLD_MS,
+          detail: {
+            workspaceId,
+            workspacePath: workspace.path,
+            phase: "pass2"
+          }
+        }
       );
       persistPass2DurationMs = Date.now() - persistPass2StartedAt;
       persistPass2BatchCount = persistPass2Stats.batchCount;
@@ -3101,7 +3120,16 @@ export class SessionHistoryService {
     await runBatchedTransactions(
       deletableSessions.map((session) => session.sessionId),
       WORKSPACE_DISCOVERY_PERSIST_BATCH_SIZE,
-      deleteTransaction
+      deleteTransaction,
+      {
+        scope: "workspace.discover_sessions.cleanup_hidden.batch",
+        thresholdMs: SESSION_TRANSACTION_HOTSPOT_THRESHOLD_MS,
+        detail: {
+          workspaceId,
+          userId,
+          phase: "cleanup_hidden"
+        }
+      }
     );
   }
 
@@ -5060,7 +5088,12 @@ function getAbortMessage(reason: unknown): string {
 async function runBatchedTransactions<TItem>(
   items: readonly TItem[],
   batchSize: number,
-  transaction: (batch: TItem[]) => void
+  transaction: (batch: TItem[]) => void,
+  logOptions?: {
+    scope: string;
+    thresholdMs?: number;
+    detail?: Record<string, unknown>;
+  }
 ): Promise<{
   batchCount: number;
   maxBatchMs: number;
@@ -5076,6 +5109,26 @@ async function runBatchedTransactions<TItem>(
     transaction(batch);
 
     const batchDurationMs = Date.now() - batchStartedAt;
+    const nextBatchIndex = batchCount + 1;
+
+    if (logOptions) {
+      logPerformance(
+        logOptions.scope,
+        batchDurationMs,
+        {
+          ...logOptions.detail,
+          batchIndex: nextBatchIndex,
+          batchSize: batch.length,
+          batchStartIndex: index,
+          totalItems: items.length,
+          configuredBatchSize: normalizedBatchSize
+        },
+        {
+          thresholdMs: logOptions.thresholdMs ?? SESSION_TRANSACTION_HOTSPOT_THRESHOLD_MS
+        }
+      );
+    }
+
     batchCount += 1;
     maxBatchMs = Math.max(maxBatchMs, batchDurationMs);
 

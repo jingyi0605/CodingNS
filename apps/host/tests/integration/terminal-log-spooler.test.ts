@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { TerminalLogFileRepository } from "../../src/storage/repositories/terminal-log-file-repository.js";
@@ -126,6 +127,75 @@ describe("TerminalLogSpooler", () => {
 
     await spooler.dispose();
     database.close();
+  });
+
+  it("文件数据库模式下遇到短暂写锁会重试并最终写入成功", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-terminal-log-worker-busy-"));
+    const databasePath = path.join(tempDir, "terminal.db");
+    tempDirs.push(tempDir);
+    const database = createDatabaseClient(databasePath);
+    seedTerminalDependencies(database.db, "terminal-3");
+
+    const fileRepository = new TerminalLogFileRepository(database.db);
+    const segmentRepository = new TerminalLogSegmentRepository(database.db);
+    const spooler = new TerminalLogSpooler({
+      databasePath,
+      logRootDir: tempDir,
+      fileRepository,
+      segmentRepository,
+      flushIntervalMs: 60_000,
+      maxBatchBytes: 1024
+    });
+    const blockingConnection = new Database(databasePath);
+
+    blockingConnection.pragma("journal_mode = WAL");
+    blockingConnection.pragma("busy_timeout = 5000");
+    blockingConnection.exec("BEGIN IMMEDIATE");
+
+    const releaseTimer = setTimeout(() => {
+      blockingConnection.exec("COMMIT");
+      blockingConnection.close();
+    }, 600);
+
+    try {
+      spooler.appendChunks("terminal-3", [
+        {
+          terminalId: "terminal-3",
+          cursor: "1",
+          stream: "stdout",
+          content: "busy\n",
+          timestamp: "2026-03-28T11:00:00.000Z"
+        },
+        {
+          terminalId: "terminal-3",
+          cursor: "2",
+          stream: "stdout",
+          content: "retry\n",
+          timestamp: "2026-03-28T11:00:01.000Z"
+        }
+      ]);
+      await spooler.flushTerminal("terminal-3");
+      const fileRecord = fileRepository.findActiveByTerminalId("terminal-3");
+      const latestSegment = segmentRepository.findLatestByTerminalId("terminal-3");
+
+      expect(fileRecord).not.toBeNull();
+      expect(fileRecord?.endSeq).toBe(2);
+      expect(latestSegment).not.toBeNull();
+      expect(latestSegment?.endSeq).toBe(2);
+      expect(
+        readFileSync(path.join(tempDir, "terminal-3", "active.log"), "utf8")
+      ).toBe("busy\nretry\n");
+    } finally {
+      clearTimeout(releaseTimer);
+
+      if (blockingConnection.open) {
+        blockingConnection.exec("ROLLBACK");
+        blockingConnection.close();
+      }
+
+      await spooler.dispose();
+      database.close();
+    }
   });
 });
 

@@ -73,7 +73,9 @@ export class TerminalLogWriterClient {
       const content = String(chunk).trim();
 
       if (content) {
-        console.warn(`[terminal-log-writer] ${content}`);
+        console.warn(
+          content.startsWith("[terminal-log-writer]") ? content : `[terminal-log-writer] ${content}`
+        );
       }
     });
     this.child.on("error", (error) => {
