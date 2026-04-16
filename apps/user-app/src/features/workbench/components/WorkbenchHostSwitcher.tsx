@@ -26,6 +26,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
   const [passwordDraft, setPasswordDraft] = useState("");
   const [pendingHostId, setPendingHostId] = useState<string | null>(null);
   const [pendingDeleteHostId, setPendingDeleteHostId] = useState<string | null>(null);
+  const [confirmDeleteHostId, setConfirmDeleteHostId] = useState<string | null>(null);
   const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null);
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -97,6 +98,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
       ) {
         setOpen(false);
         setFormOpen(false);
+        setConfirmDeleteHostId(null);
       }
     }
 
@@ -104,6 +106,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
       if (event.key === "Escape") {
         setOpen(false);
         setFormOpen(false);
+        setConfirmDeleteHostId(null);
       }
     }
 
@@ -132,6 +135,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
       await hostSwitchCoordinator.switchHost(host.id);
       setOpen(false);
       setFormOpen(false);
+      setConfirmDeleteHostId(null);
     } catch (error) {
       showToast({
         title: resolveHostSwitchErrorMessage(error, host.name),
@@ -147,14 +151,9 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
       return;
     }
 
-    if (typeof window !== "undefined") {
-      const confirmed = window.confirm(
-        t("shell.hostDeleteConfirm", { name: host.name })
-      );
-
-      if (!confirmed) {
-        return;
-      }
+    if (confirmDeleteHostId !== host.id) {
+      setConfirmDeleteHostId(host.id);
+      return;
     }
 
     setPendingDeleteHostId(host.id);
@@ -165,6 +164,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
       });
       clearRememberedLoginCredentials(host.id);
       authStore.clearHostSession(host.id);
+      setConfirmDeleteHostId(null);
       showToast({
         title: t("shell.hostDeleteSuccess", { name: host.name })
       });
@@ -236,6 +236,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
       }
       resetFormDrafts();
       setFormOpen(false);
+      setConfirmDeleteHostId(null);
       showToast({
         title: t("shell.hostAddSuccess", { name: nextHost.name })
       });
@@ -343,13 +344,22 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                           type="button"
                           className="workbench-host-switcher-item-action"
                           aria-label={t("shell.hostDeleteAriaLabel", { name: host.name })}
-                          title={t("shell.hostDeleteAction")}
+                          title={
+                            confirmDeleteHostId === host.id
+                              ? t("shell.hostDeleteConfirmAction")
+                              : t("shell.hostDeleteAction")
+                          }
+                          data-confirming={confirmDeleteHostId === host.id}
                           disabled={pendingHostId !== null || pendingDeleteHostId !== null}
                           onClick={() => {
                             void handleDeleteHost(host);
                           }}
                         >
-                          {pendingDeleteHostId === host.id ? t("shell.hostDeleteBusy") : <TrashIcon />}
+                          {pendingDeleteHostId === host.id
+                            ? t("shell.hostDeleteBusy")
+                            : confirmDeleteHostId === host.id
+                              ? t("shell.hostDeleteConfirmAction")
+                              : <TrashIcon />}
                         </button>
                       ) : null}
                     </div>
@@ -420,6 +430,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                   className="workbench-host-switcher-add"
                   onClick={() => {
                     setFormOpen(true);
+                    setConfirmDeleteHostId(null);
                   }}
                 >
                   <PlusIcon />

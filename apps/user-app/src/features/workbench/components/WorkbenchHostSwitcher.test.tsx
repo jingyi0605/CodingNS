@@ -137,7 +137,6 @@ describe("WorkbenchHostSwitcher", () => {
 
   it("支持删除非当前 HOST，并清理已保存的认证信息", async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     render(
       <ToastProvider>
@@ -165,6 +164,9 @@ describe("WorkbenchHostSwitcher", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "切换 HOST" }));
+    const deleteButton = screen.getByRole("button", { name: `删除 HOST ${nextHost.name}` });
+    await user.click(deleteButton);
+    expect(screen.getByRole("button", { name: `删除 HOST ${nextHost.name}` })).toHaveTextContent("确认删除");
     await user.click(screen.getByRole("button", { name: `删除 HOST ${nextHost.name}` }));
 
     await waitFor(() => {
