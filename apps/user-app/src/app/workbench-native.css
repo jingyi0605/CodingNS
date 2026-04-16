@@ -4462,6 +4462,19 @@ body {
   box-shadow: none;
 }
 
+.assistant-message .message-text,
+.user-message .message-text {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.markdown-content p,
+.markdown-content li,
+.markdown-content blockquote,
+.markdown-content td {
+  font-weight: 500;
+}
+
 .queued-message-list {
   padding-left: var(--conversation-content-gutter);
   padding-right: var(--conversation-content-gutter);

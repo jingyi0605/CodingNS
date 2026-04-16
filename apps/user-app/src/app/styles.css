@@ -208,9 +208,9 @@
   --bg-hover: rgba(255, 255, 255, 0.05);
   --bg-active: rgba(10, 132, 255, 0.15);
 
-  --text-primary: #f5f5f5;
-  --text-secondary: #a0a0a0;
-  --text-tertiary: #666666;
+  --text-primary: #ffffff;
+  --text-secondary: #c6c6c6;
+  --text-tertiary: #939393;
   --text-inverse: #000000;
 
   --border-primary: rgba(255, 255, 255, 0.08);
@@ -3035,11 +3035,24 @@ a {
   min-width: 0;
 }
 
+.assistant-message .message-text,
+.user-message .message-text {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
 /* Markdown Content */
 .markdown-content {
   font-size: 14px;
   line-height: 1.7;
   color: var(--text-primary);
+}
+
+.markdown-content p,
+.markdown-content li,
+.markdown-content blockquote,
+.markdown-content td {
+  font-weight: 500;
 }
 
 .markdown-content p {
