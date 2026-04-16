@@ -41,6 +41,11 @@ export interface SyncManagedSkillInput {
   targetCli: readonly SkillTargetCli[];
 }
 
+export interface EnsureBuiltinSkillInput {
+  sourcePath: string;
+  targetCli: readonly SkillTargetCli[];
+}
+
 export interface ImportUnmanagedSkillInput {
   targetCli: SkillTargetCli;
   directoryPath: string;
@@ -245,6 +250,49 @@ export class SkillManagerService {
     };
   }
 
+  ensureBuiltinSkill(input: EnsureBuiltinSkillInput): ManagedSkillMutationResult {
+    const sourcePath = resolveSourceDirectoryPath(input.sourcePath);
+    const sourceSnapshot = readSkillDirectorySnapshot("codex", sourcePath, sourcePath);
+    const existingSkill = this.managedSkillRepository.findByDirectoryName(sourceSnapshot.directoryName);
+    const ssotRootDir = this.requireSsotRootDir();
+    const timestamp = this.now();
+
+    const skill: ManagedSkillRecord = existingSkill
+      ? {
+          ...existingSkill,
+          name: sourceSnapshot.name,
+          sourceType: "builtin",
+          sourcePath,
+          contentHash: sourceSnapshot.contentHash,
+          managedState: "active",
+          updatedAt: timestamp
+        }
+      : {
+          id: this.createManagedSkillId(),
+          name: sourceSnapshot.name,
+          directoryName: sourceSnapshot.directoryName,
+          sourceType: "builtin",
+          sourcePath,
+          contentHash: sourceSnapshot.contentHash,
+          managedState: "active",
+          createdAt: timestamp,
+          updatedAt: timestamp
+        };
+    const ssotPath = path.join(ssotRootDir, skill.directoryName);
+
+    copySkillDirectory(sourcePath, ssotPath);
+    this.managedSkillRepository.upsert(skill);
+
+    const targetResults = this.forceSyncManagedSkillRecord(skill, input.targetCli);
+
+    return {
+      skill: this.managedSkillRepository.findById(skill.id) ?? skill,
+      bindings: this.skillTargetBindingRepository.listBySkillId(skill.id),
+      targetResults,
+      ssotPath
+    };
+  }
+
   importUnmanagedSkill(input: ImportUnmanagedSkillInput): ManagedSkillMutationResult {
     const sourceLocation = resolveSingleTargetLocation(this.targetAdapters, input.targetCli);
     const directoryPath = path.resolve(input.directoryPath);
@@ -317,6 +365,36 @@ export class SkillManagerService {
     return plannedTargets.map((target) => this.syncOneTarget(skill, ssotPath, target.targetCli, timestamp));
   }
 
+  private forceSyncManagedSkillRecord(
+    skill: ManagedSkillRecord,
+    targetCli: readonly SkillTargetCli[]
+  ): SkillTargetSyncResult[] {
+    const ssotPath = this.resolveSsotPath(skill.directoryName);
+    const timestamp = this.now();
+
+    if (!isValidSkillDirectory(ssotPath)) {
+      this.managedSkillRepository.upsert({
+        ...skill,
+        managedState: "missing",
+        updatedAt: timestamp
+      });
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "SKILL_SSOT_MISSING",
+        detail: "受管 skill 的 SSOT 目录缺失或不合法"
+      });
+    }
+
+    const plannedTargets = this.skillSyncPlanner.planRequestedTargets(
+      targetCli,
+      this.skillTargetBindingRepository.listBySkillId(skill.id)
+    );
+
+    return plannedTargets.map((target) =>
+      this.forceSyncOneTarget(skill, ssotPath, target.targetCli, timestamp)
+    );
+  }
+
   private syncOneTarget(
     skill: ManagedSkillRecord,
     ssotPath: string,
@@ -347,6 +425,59 @@ export class SkillManagerService {
         errorDetail: conflictResult.errorDetail
       };
     }
+
+    try {
+      copySkillDirectory(ssotPath, targetDir);
+
+      const binding = buildBindingRecord(skill.id, targetCli, {
+        enabled: true,
+        syncStatus: "synced",
+        lastSyncedAt: timestamp,
+        lastErrorCode: null,
+        lastErrorDetail: null
+      });
+
+      this.skillTargetBindingRepository.upsert(binding);
+
+      return {
+        targetCli,
+        targetDir,
+        syncStatus: "synced",
+        lastSyncedAt: timestamp,
+        errorCode: null,
+        errorDetail: null
+      };
+    } catch (error) {
+      const errorDetail = error instanceof Error ? error.message : String(error);
+      const binding = buildBindingRecord(skill.id, targetCli, {
+        enabled: true,
+        syncStatus: "failed",
+        lastSyncedAt: null,
+        lastErrorCode: "SKILL_SYNC_FAILED",
+        lastErrorDetail: errorDetail
+      });
+
+      this.skillTargetBindingRepository.upsert(binding);
+
+      return {
+        targetCli,
+        targetDir,
+        syncStatus: "failed",
+        lastSyncedAt: null,
+        errorCode: "SKILL_SYNC_FAILED",
+        errorDetail
+      };
+    }
+  }
+
+  private forceSyncOneTarget(
+    skill: ManagedSkillRecord,
+    ssotPath: string,
+    targetCli: SkillTargetCli,
+    timestamp: string
+  ): SkillTargetSyncResult {
+    const targetLocation = resolveSingleTargetLocation(this.targetAdapters, targetCli);
+    const targetDir = path.join(targetLocation.rootDir, skill.directoryName);
 
     try {
       copySkillDirectory(ssotPath, targetDir);

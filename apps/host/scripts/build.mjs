@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 const appPath = fileURLToPath(new URL("../", import.meta.url));
 const sourceSchemaPath = path.join(appPath, "src", "storage", "sqlite", "schema.sql");
 const outputSchemaPath = path.join(appPath, ".build", "src", "storage", "sqlite", "schema.sql");
+const sourceBuiltinSkillRoot = path.join(appPath, "src", "modules", "skills", "builtin-skills");
+const outputBuiltinSkillRoot = path.join(appPath, ".build", "src", "modules", "skills", "builtin-skills");
 const require = createRequire(import.meta.url);
 const tscEntry = require.resolve("typescript/bin/tsc", {
   paths: [appPath]
@@ -27,3 +29,9 @@ execFileSync(
 
 fs.mkdirSync(path.dirname(outputSchemaPath), { recursive: true });
 fs.copyFileSync(sourceSchemaPath, outputSchemaPath);
+
+if (fs.existsSync(sourceBuiltinSkillRoot)) {
+  fs.rmSync(outputBuiltinSkillRoot, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(outputBuiltinSkillRoot), { recursive: true });
+  fs.cpSync(sourceBuiltinSkillRoot, outputBuiltinSkillRoot, { recursive: true });
+}

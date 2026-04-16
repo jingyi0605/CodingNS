@@ -1,0 +1,4 @@
+interface:
+  display_name: "CodingNS Assistant"
+  short_description: "通过 CLI 查询项目、会话、终端并代理推进任务"
+  default_prompt: "Use $codingns-assistant to inspect CodingNS through `codingns assistant ...`, including workspaces and worktrees, query help on demand, and only advance work through real sessions or controlled terminals."

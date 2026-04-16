@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -29,6 +30,7 @@ if (process.env.CODINGNS_SKIP_CODEX_POSTINSTALL === "1") {
 logInfo(`[codingns] 正在校验 Codex 运行时依赖（${process.platform}/${process.arch}）...`);
 
 if (await verifyCodexRuntime()) {
+  syncBuiltinCodexSkill();
   logInfo("[codingns] Codex 运行时依赖已就绪");
   process.exit(0);
 }
@@ -58,6 +60,7 @@ if (!(await verifyCodexRuntime())) {
   process.exit(1);
 }
 
+syncBuiltinCodexSkill();
 logInfo("[codingns] Codex 运行时依赖修复完成");
 
 async function verifyCodexRuntime() {
@@ -120,6 +123,36 @@ function cleanupBrokenCodexPackages() {
   fs.rmSync(path.join(binRoot, "codex"), { force: true });
   fs.rmSync(path.join(binRoot, "codex.cmd"), { force: true });
   fs.rmSync(path.join(binRoot, "codex.ps1"), { force: true });
+}
+
+function syncBuiltinCodexSkill() {
+  const sourcePath = path.join(
+    packageRoot,
+    "dist",
+    "server",
+    "modules",
+    "skills",
+    "builtin-skills",
+    "codingns-assistant"
+  );
+
+  if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isDirectory()) {
+    logInfo(`[codingns] 未找到内置 Skill，跳过同步：${sourcePath}`);
+    return;
+  }
+
+  const codexHomeDir = process.env.CODINGNS_CODEX_HOME?.trim() || path.join(os.homedir(), ".codex");
+  const targetPath = path.join(codexHomeDir, "skills", "codingns-assistant");
+
+  try {
+    fs.rmSync(targetPath, { recursive: true, force: true });
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.cpSync(sourcePath, targetPath, { recursive: true });
+    logInfo(`[codingns] 已同步内置 Skill 到 ${targetPath}`);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`[codingns] 同步内置 Skill 失败：${detail}`);
+  }
 }
 
 function runNpmInstall(args) {
