@@ -168,6 +168,7 @@ export class RealtimeClient {
   private latestCursor: string | null;
   private subscribed = false;
   private pendingOlderRequest: { cursor: string | null; limit: number } | null = null;
+  private inFlightOlderRequest: { cursor: string | null; limit: number } | null = null;
   private readonly connectionManager: ConnectionManager;
 
   constructor(private readonly options: RealtimeClientOptions) {
@@ -210,6 +211,7 @@ export class RealtimeClient {
     this.disposed = true;
     this.subscribed = false;
     this.pendingOlderRequest = null;
+    this.inFlightOlderRequest = null;
     this.connectionManager.close();
     this.socket?.close();
     this.socket = null;
@@ -265,6 +267,8 @@ export class RealtimeClient {
       }
 
       if (payload.type === "session.error") {
+        this.clearOlderMessagesRequest();
+
         if (payload.error_code === "UNAUTHORIZED") {
           this.handleUnauthorized();
           return;
@@ -285,6 +289,7 @@ export class RealtimeClient {
       }
 
       if (payload.type === "session.history_older") {
+        this.clearOlderMessagesRequest();
         this.options.onOlderHistory(payload);
         return;
       }
@@ -324,6 +329,7 @@ export class RealtimeClient {
       }
 
       this.subscribed = false;
+      this.requeueInFlightOlderRequest();
       this.connectionManager.markDisconnected();
     });
 
@@ -343,6 +349,7 @@ export class RealtimeClient {
 
     this.authRecoveryInFlight = true;
     this.subscribed = false;
+    this.requeueInFlightOlderRequest();
     const socket = this.socket;
     this.socket = null;
     socket?.close();
@@ -369,6 +376,7 @@ export class RealtimeClient {
   }
 
   private sendOlderMessagesRequest(cursor: string | null, limit: number): void {
+    this.inFlightOlderRequest = { cursor, limit };
     this.socket?.send(
       JSON.stringify({
         type: "session.load_older",
@@ -387,5 +395,19 @@ export class RealtimeClient {
     const pending = this.pendingOlderRequest;
     this.pendingOlderRequest = null;
     this.sendOlderMessagesRequest(pending.cursor, pending.limit);
+  }
+
+  private clearOlderMessagesRequest(): void {
+    this.pendingOlderRequest = null;
+    this.inFlightOlderRequest = null;
+  }
+
+  private requeueInFlightOlderRequest(): void {
+    if (!this.inFlightOlderRequest) {
+      return;
+    }
+
+    this.pendingOlderRequest = this.inFlightOlderRequest;
+    this.inFlightOlderRequest = null;
   }
 }

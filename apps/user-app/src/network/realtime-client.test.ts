@@ -135,4 +135,166 @@ describe("RealtimeClient", () => {
 
     client.close();
   });
+
+  it("older 请求发出后如果连接重建，会在重新订阅后自动补发", () => {
+    const client = new RealtimeClient({
+      sessionId: "session-1",
+      cursor: "cursor-1",
+      limit: 50,
+      onConnectionChange: () => undefined,
+      onSubscribed: () => undefined,
+      onEnvelope: () => undefined,
+      onOlderHistory: () => undefined,
+      onRuntimeMessage: () => undefined,
+      onActivity: () => undefined,
+      onRuntimeStatus: () => undefined,
+      onRuntimeError: () => undefined,
+      onInterrupted: () => undefined,
+      onPermissionRequest: () => undefined,
+      onPermissionRequestResolved: () => undefined,
+      onError: () => undefined,
+      onUnauthorized: () => undefined
+    });
+
+    client.start();
+
+    const firstSocket = MockWebSocket.instances[0];
+
+    expect(firstSocket).toBeDefined();
+
+    firstSocket?.open();
+    firstSocket?.dispatchEvent(
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "session.subscribed",
+          sessionId: "session-1"
+        })
+      })
+    );
+
+    expect(client.requestOlderMessages("older-cursor-1", 20)).toBe(true);
+    expect(firstSocket?.sentPayloads.map((payload) => JSON.parse(payload)).at(-1)).toEqual({
+      type: "session.load_older",
+      sessionId: "session-1",
+      cursor: "older-cursor-1",
+      limit: 20
+    });
+
+    firstSocket?.close();
+    client.reconnectNow();
+
+    const secondSocket = MockWebSocket.instances[1];
+
+    expect(secondSocket).toBeDefined();
+
+    secondSocket?.open();
+    expect(secondSocket?.sentPayloads.map((payload) => JSON.parse(payload))).toEqual([
+      {
+        type: "session.subscribe",
+        sessionId: "session-1",
+        cursor: "cursor-1",
+        limit: 50
+      }
+    ]);
+
+    secondSocket?.dispatchEvent(
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "session.subscribed",
+          sessionId: "session-1"
+        })
+      })
+    );
+
+    expect(secondSocket?.sentPayloads.map((payload) => JSON.parse(payload))).toEqual([
+      {
+        type: "session.subscribe",
+        sessionId: "session-1",
+        cursor: "cursor-1",
+        limit: 50
+      },
+      {
+        type: "session.load_older",
+        sessionId: "session-1",
+        cursor: "older-cursor-1",
+        limit: 20
+      }
+    ]);
+
+    client.close();
+  });
+
+  it("收到 older history 响应后，后续重连不会重复补发同一个 older 请求", () => {
+    const client = new RealtimeClient({
+      sessionId: "session-1",
+      cursor: "cursor-1",
+      limit: 50,
+      onConnectionChange: () => undefined,
+      onSubscribed: () => undefined,
+      onEnvelope: () => undefined,
+      onOlderHistory: () => undefined,
+      onRuntimeMessage: () => undefined,
+      onActivity: () => undefined,
+      onRuntimeStatus: () => undefined,
+      onRuntimeError: () => undefined,
+      onInterrupted: () => undefined,
+      onPermissionRequest: () => undefined,
+      onPermissionRequestResolved: () => undefined,
+      onError: () => undefined,
+      onUnauthorized: () => undefined
+    });
+
+    client.start();
+
+    const firstSocket = MockWebSocket.instances[0];
+
+    firstSocket?.open();
+    firstSocket?.dispatchEvent(
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "session.subscribed",
+          sessionId: "session-1"
+        })
+      })
+    );
+
+    expect(client.requestOlderMessages("older-cursor-1", 20)).toBe(true);
+    firstSocket?.dispatchEvent(
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "session.history_older",
+          sessionId: "session-1",
+          cursor: null,
+          olderCursor: "older-cursor-2",
+          messages: []
+        })
+      })
+    );
+
+    firstSocket?.close();
+    client.reconnectNow();
+
+    const secondSocket = MockWebSocket.instances[1];
+
+    secondSocket?.open();
+    secondSocket?.dispatchEvent(
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "session.subscribed",
+          sessionId: "session-1"
+        })
+      })
+    );
+
+    expect(secondSocket?.sentPayloads.map((payload) => JSON.parse(payload))).toEqual([
+      {
+        type: "session.subscribe",
+        sessionId: "session-1",
+        cursor: "cursor-1",
+        limit: 50
+      }
+    ]);
+
+    client.close();
+  });
 });

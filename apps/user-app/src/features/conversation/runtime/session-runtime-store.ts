@@ -136,6 +136,7 @@ export class SessionRuntimeStore {
     this.replaceSnapshotSeedOnBackfill =
       !this.hasAuthoritativeBootstrapMessages
       && (cachedSnapshot?.messages.length ?? 0) > 0
+      && (cachedSnapshot?.messages.length ?? 0) <= REALTIME_LIMIT
       && (cachedSnapshot?.pagesLoaded ?? 0) <= 1;
 
     this.state = createInitialRuntimeState({
@@ -245,6 +246,7 @@ export class SessionRuntimeStore {
     this.replaceSnapshotSeedOnBackfill =
       !this.hasAuthoritativeBootstrapMessages
       && (cachedSnapshot?.messages.length ?? 0) > 0
+      && (cachedSnapshot?.messages.length ?? 0) <= REALTIME_LIMIT
       && (cachedSnapshot?.pagesLoaded ?? 0) <= 1;
     this.emit();
     await this.initialize();

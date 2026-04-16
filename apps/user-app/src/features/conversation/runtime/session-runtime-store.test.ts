@@ -982,6 +982,66 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
+  it("活动会话的缓存消息已超过实时首屏窗口时，不会被首个 backfill 截断变少", async () => {
+    writeViewSnapshot(SESSION_RUNTIME_SNAPSHOT_KEY, {
+      session: null,
+      capabilities: null,
+      runtimeHasActiveRun: null,
+      runtimeCanInterrupt: null,
+      contextUsage: null,
+      messages: Array.from({ length: 60 }, (_, index) => ({
+        id: `cached-live-${index + 1}`,
+        sessionId: "session-1",
+        role: "assistant",
+        kind: "text",
+        content: `cached-live-${index + 1}`,
+        toolCall: null,
+        attachments: [],
+        attachmentPayloads: null,
+        timestamp: `2026-03-24T10:${String(index).padStart(2, "0")}:00.000Z`,
+        sequence: index + 1,
+        rawRef: `codex://raw#line=${index + 1}`,
+        deliveryState: "sent",
+        clientRequestId: null
+      })),
+      permissionRequests: [],
+      queuedMessages: [],
+      olderCursor: null,
+      hasOlderMessages: false,
+      lastCursor: "cursor-latest-before",
+      pagesLoaded: 1
+    });
+
+    const store = new SessionRuntimeStore("session-1");
+    await store.initialize();
+    emitRealtimeSubscribed();
+    emitRealtimeEnvelope({
+      type: "session.backfill",
+      sessionId: "session-1",
+      cursor: "cursor-latest-after",
+      olderCursor: "cursor-older-1",
+      messages: Array.from({ length: 40 }, (_, index) => ({
+        messageId: `cached-live-${index + 21}`,
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        kind: "text",
+        content: `cached-live-${index + 21}`,
+        timestamp: `2026-03-24T11:${String(index).padStart(2, "0")}:00.000Z`,
+        sequence: index + 21,
+        rawRef: `codex://raw#line=${index + 21}`,
+        toolCall: null
+      }))
+    });
+
+    expect(store.getState().messages).toHaveLength(60);
+    expect(store.getState().messages[0]?.sequence).toBe(1);
+    expect(store.getState().messages.at(-1)?.sequence).toBe(60);
+    expect(store.getState().lastCursor).toBe("cursor-latest-after");
+
+    store.destroy();
+  });
+
   it("does not overwrite a terminal state back to running on later envelopes", async () => {
     vi.useFakeTimers();
     const store = new SessionRuntimeStore("session-1");
