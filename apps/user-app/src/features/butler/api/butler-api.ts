@@ -32,6 +32,7 @@ export type ButlerFollowUpRoundKind =
   | "failed"
   | "cancelled"
   | "limit_reached";
+export type ButlerControlTimerStatus = "active" | "completed" | "cancelled" | "failed";
 
 export interface ButlerProfileDto {
   id: "default";
@@ -112,6 +113,25 @@ export interface ButlerStartControlSessionPayload {
 }
 
 export interface ButlerControlSessionResponseDto {
+  controlSession: ButlerControlSessionDto | null;
+}
+
+export interface ButlerControlTimerDto {
+  id: string;
+  controlSessionId: string;
+  sessionId: string;
+  userId: string;
+  projectId: string | null;
+  targetSessionId: string | null;
+  title: string | null;
+  content: string;
+  dueAt: string;
+  status: ButlerControlTimerStatus;
+  triggeredAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  cancelledAt: string | null;
   controlSession: ButlerControlSessionDto | null;
 }
 
@@ -507,6 +527,37 @@ export function getButlerControlSession(controlSessionId: string) {
   );
 }
 
+export function listButlerControlTimers(payload: {
+  status?: ButlerControlTimerStatus | null;
+  controlSessionId?: string | null;
+  limit?: number | null;
+} = {}) {
+  const searchParams = new URLSearchParams();
+
+  if (payload.status) {
+    searchParams.set("status", payload.status);
+  }
+
+  if (payload.controlSessionId?.trim()) {
+    searchParams.set("controlSessionId", payload.controlSessionId.trim());
+  }
+
+  if (payload.limit && payload.limit > 0) {
+    searchParams.set("limit", String(payload.limit));
+  }
+
+  const query = searchParams.toString();
+  const path = query ? `/api/butler/control-timers?${query}` : "/api/butler/control-timers";
+
+  return httpClient.request<{ items: ButlerControlTimerDto[] }>(path);
+}
+
+export function getButlerControlTimer(timerId: string) {
+  return httpClient.request<{ timer: ButlerControlTimerDto }>(
+    `/api/butler/control-timers/${encodeURIComponent(timerId)}`
+  );
+}
+
 export function resetButlerControlSession() {
   return httpClient.request<ButlerControlSessionResponseDto>("/api/butler/control-session/reset", {
     method: "POST"
@@ -534,6 +585,31 @@ export function sendButlerControlMessage(payload: ButlerSendMessagePayload) {
     method: "POST",
     body: JSON.stringify(payload)
   });
+}
+
+export function createButlerControlTimer(payload: {
+  controlSessionId?: string | null;
+  projectId?: string | null;
+  targetSessionId?: string | null;
+  title?: string | null;
+  content: string;
+  dueAt?: string | null;
+  afterSeconds?: number | null;
+}) {
+  return httpClient.request<{ timer: ButlerControlTimerDto }>("/api/butler/control-timers", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function cancelButlerControlTimer(timerId: string) {
+  return httpClient.request<{ timer: ButlerControlTimerDto }>(
+    `/api/butler/control-timers/${encodeURIComponent(timerId)}/cancel`,
+    {
+      method: "POST",
+      body: JSON.stringify({})
+    }
+  );
 }
 
 export function listButlerControlEvents() {

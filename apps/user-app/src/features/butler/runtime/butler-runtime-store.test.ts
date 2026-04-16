@@ -250,6 +250,108 @@ describe("ButlerRuntimeStore", () => {
     );
   });
 
+  it("会保留 Butler 会话的 older cursor，并在上翻时继续加载更早消息", async () => {
+    const store = new ButlerRuntimeStore("workspace-1");
+    const controlSession = {
+      id: "ctrl-history",
+      providerId: "codex",
+      sessionId: "session-control-1",
+      purpose: "chat" as const,
+      title: "控制会话",
+      sourceItemId: null,
+      status: "running" as const,
+      lastContextVersion: null,
+      lastSummary: "最近在跟进",
+      createdAt: "2026-04-05T00:00:00.000Z",
+      updatedAt: "2026-04-05T00:00:00.000Z",
+      session: {
+        sessionId: "session-control-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "provider-control-1",
+        rawStoreRef: "raw-control-1",
+        title: "控制会话",
+        messageCount: 2,
+        lastMessageAt: "2026-04-05T00:00:02.000Z",
+        createdAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:02.000Z",
+        syncStatus: "idle",
+        syncCursor: null,
+        lastSyncAt: null,
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "running",
+        activitySource: "runtime",
+        lastEventAt: "2026-04-05T00:00:02.000Z",
+        completedAt: null,
+        lastSeenAt: null,
+        activityState: "idle"
+      }
+    };
+    mockedGetCurrentButlerControlSession.mockResolvedValueOnce({
+      controlSession
+    } as never);
+    mockedGetSessionMessages
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            messageId: "msg-2",
+            provider: "codex",
+            providerSessionId: "provider-control-1",
+            role: "assistant",
+            kind: "text",
+            content: "较新的消息",
+            timestamp: "2026-04-05T00:00:02.000Z",
+            sequence: 2,
+            rawRef: "raw-2"
+          }
+        ],
+        cursor: "cursor-latest",
+        nextCursor: "cursor-older-1",
+        total: 2
+      } as never)
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            messageId: "msg-1",
+            provider: "codex",
+            providerSessionId: "provider-control-1",
+            role: "user",
+            kind: "text",
+            content: "更早的消息",
+            timestamp: "2026-04-05T00:00:01.000Z",
+            sequence: 1,
+            rawRef: "raw-1"
+          }
+        ],
+        cursor: "cursor-older-1",
+        nextCursor: null,
+        total: 2
+      } as never);
+
+    await store.initialize();
+
+    expect(store.getState().hasOlderMessages).toBe(true);
+    expect(store.getState().olderCursor).toBe("cursor-older-1");
+
+    await store.loadOlderMessages();
+
+    expect(mockedGetSessionMessages).toHaveBeenNthCalledWith(
+      2,
+      "session-control-1",
+      "cursor-older-1",
+      60,
+      "backward"
+    );
+    expect(store.getState().messages.map((message) => message.content)).toEqual([
+      "更早的消息",
+      "较新的消息"
+    ]);
+    expect(store.getState().hasOlderMessages).toBe(false);
+    expect(store.getState().olderCursor).toBeNull();
+  });
+
   it("控制会话收到实时助手消息时会立刻更新消息列表", async () => {
     const store = new ButlerRuntimeStore("workspace-1");
     const controlSession = {

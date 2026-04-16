@@ -114,6 +114,7 @@ vi.mock("../../../shared/toast", () => ({
 
 vi.mock("../../conversation/api/conversation-api", () => ({
   getProviderCapabilities: vi.fn(),
+  getSessionMessages: vi.fn(),
   getSessionCapabilities: vi.fn(),
   getSessionRuntime: vi.fn()
 }));
@@ -164,6 +165,7 @@ import {
 } from "../api/butler-api";
 import {
   getProviderCapabilities,
+  getSessionMessages,
   getSessionCapabilities,
   getSessionRuntime
 } from "../../conversation/api/conversation-api";
@@ -188,6 +190,7 @@ const mockedResetButlerControlSession = vi.mocked(resetButlerControlSession);
 const mockedStartButlerControlSession = vi.mocked(startButlerControlSession);
 const mockedStartButlerInboxItemSession = vi.mocked(startButlerInboxItemSession);
 const mockedGetProviderCapabilities = vi.mocked(getProviderCapabilities);
+const mockedGetSessionMessages = vi.mocked(getSessionMessages);
 const mockedGetSessionCapabilities = vi.mocked(getSessionCapabilities);
 const mockedGetSessionRuntime = vi.mocked(getSessionRuntime);
 
@@ -411,6 +414,12 @@ describe("ButlerPage", () => {
       defaultReasoningLevel: null,
       limitations: []
     });
+    mockedGetSessionMessages.mockResolvedValue({
+      messages: [],
+      cursor: "cursor-latest",
+      nextCursor: null,
+      total: 0
+    } as never);
     mockedGetSessionCapabilities.mockResolvedValue({
       provider: "codex",
       canStartSession: true,
@@ -2021,15 +2030,64 @@ describe("ButlerPage", () => {
         }
       }
     } as never);
+    mockedGetSessionMessages
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            messageId: "message-latest-1",
+            provider: "codex",
+            providerSessionId: "provider-control-1",
+            role: "assistant",
+            kind: "text",
+            content: "最新一页",
+            timestamp: "2026-04-05T00:00:01.000Z",
+            sequence: 10,
+            rawRef: "raw-latest-1"
+          }
+        ],
+        cursor: "cursor-latest",
+        nextCursor: "cursor-older-1",
+        total: 61
+      } as never)
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            messageId: "message-older-1",
+            provider: "codex",
+            providerSessionId: "provider-control-1",
+            role: "assistant",
+            kind: "text",
+            content: "更早一页",
+            timestamp: "2026-04-05T00:00:00.000Z",
+            sequence: 9,
+            rawRef: "raw-older-1"
+          }
+        ],
+        cursor: "cursor-older-1",
+        nextCursor: null,
+        total: 62
+      } as never);
 
     renderPage();
 
     await waitFor(() => {
       expect(screen.getByTestId("butler-load-older")).toBeInTheDocument();
       expect(mockedGetCurrentButlerControlSession).toHaveBeenCalled();
+      expect(screen.getByTestId("butler-message-has-older")).toHaveTextContent("true");
     });
 
     fireEvent.click(screen.getByTestId("butler-load-older"));
+
+    await waitFor(() => {
+      expect(mockedGetSessionMessages).toHaveBeenNthCalledWith(
+        2,
+        "session-control-1",
+        "cursor-older-1",
+        60,
+        "backward"
+      );
+      expect(screen.getByTestId("butler-message-has-older")).toHaveTextContent("false");
+    });
   });
 
   it("does not re-register the auxiliary panel when rerendering with the same inputs", async () => {

@@ -33,6 +33,7 @@ import {
   type ButlerPatrolPlanDto,
   type ButlerProfileDto
 } from "../api/butler-api";
+import { ButlerAnchoredPopover } from "../components/ButlerAnchoredPopover";
 import { ButlerLoadingState } from "../components/ButlerLoadingState";
 import { BUTLER_INBOX_UPDATED_EVENT } from "../runtime/butler-inbox-events";
 import { subscribeButlerRecordsUpdated } from "../runtime/butler-records-events";
@@ -243,6 +244,7 @@ export function MobileButlerPage() {
   const [openHistoryPanel, setOpenHistoryPanel] = useState<MobileButlerHistoryPanel>(null);
   const [composerPanelElement, setComposerPanelElement] = useState<HTMLElement | null>(null);
   const [cancellingTimerId, setCancellingTimerId] = useState<string | null>(null);
+  const [executingTimerId, setExecutingTimerId] = useState<string | null>(null);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
   const [state, setState] = useState<MobileButlerState>({
     loading: true,
@@ -255,6 +257,10 @@ export function MobileButlerPage() {
     controlSessions: [],
     controlTimers: []
   });
+  const projectNameById = useMemo(
+    () => new Map((state.overview?.projects ?? []).map((project) => [project.id, project.name] as const)),
+    [state.overview?.projects]
+  );
 
   if (!storeRef.current || currentWorkspaceIdRef.current !== workspaceId) {
     storeRef.current = new ButlerRuntimeStore(workspaceId);
@@ -270,6 +276,8 @@ export function MobileButlerPage() {
   const capabilities = useButlerRuntimeStore(store, (runtime) => runtime.capabilities);
   const messages = useButlerRuntimeStore(store, (runtime) => runtime.messages);
   const historyState = useButlerRuntimeStore(store, (runtime) => runtime.historyState);
+  const loadingOlderMessages = useButlerRuntimeStore(store, (runtime) => runtime.loadingOlderMessages);
+  const hasOlderMessages = useButlerRuntimeStore(store, (runtime) => runtime.hasOlderMessages);
   const runtimeHasActiveRun = useButlerRuntimeStore(store, (runtime) => runtime.runtimeHasActiveRun);
   const runtimeCanInterrupt = useButlerRuntimeStore(store, (runtime) => runtime.runtimeCanInterrupt);
   const contextUsage = useButlerRuntimeStore(store, (runtime) => runtime.contextUsage);
@@ -685,7 +693,7 @@ export function MobileButlerPage() {
                         item.kind === "control_timer"
                           ? cancellingTimerId === item.timerId
                             ? t("shell.butlerControlTimerCancelling")
-                            : t("shell.butlerControlTimerCancelAction")
+                            : t("shell.butlerControlTimerStopAction")
                           : null,
                       actionDisabled:
                         item.kind === "control_timer" ? cancellingTimerId === item.timerId : false,
@@ -917,6 +925,42 @@ export function MobileButlerPage() {
     }
   }
 
+  async function handleExecuteControlTimerNow(timer: ButlerControlTimerDto) {
+    const prompt = timer.content.trim();
+
+    if (!prompt) {
+      showToast({
+        title: t("shell.butlerControlTimerExecuteNowFailed"),
+        tone: "error"
+      });
+      return;
+    }
+
+    setExecutingTimerId(timer.id);
+
+    try {
+      const response = await cancelButlerControlTimer(timer.id);
+      setState((current) => ({
+        ...current,
+        controlTimers: replaceControlTimer(current.controlTimers, response.timer)
+      }));
+      await store.sendMessage(prompt);
+      requestNavigationRefresh();
+      showToast({
+        title: t("shell.butlerControlTimerExecuteNowSucceeded"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: t("shell.butlerControlTimerExecuteNowFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error"
+      });
+    } finally {
+      setExecutingTimerId(null);
+    }
+  }
+
   if (!currentWorkspace) {
     return (
       <main className="mobile-feature-page mobile-page-scroll-root">
@@ -1047,10 +1091,12 @@ export function MobileButlerPage() {
                       sessionId={controlSession?.session?.sessionId}
                       messages={messages}
                       historyState={historyState}
-                      loadingOlderMessages={false}
-                      hasOlderMessages={false}
+                      loadingOlderMessages={loadingOlderMessages}
+                      hasOlderMessages={hasOlderMessages}
                       provider={activeProvider}
-                      onLoadOlderMessages={() => undefined}
+                      onLoadOlderMessages={() => {
+                        void store.loadOlderMessages();
+                      }}
                       onRetryMessage={(clientRequestId) => {
                         void store.retryMessage(clientRequestId);
                       }}
@@ -1063,12 +1109,17 @@ export function MobileButlerPage() {
                   timer={activeControlTimer}
                   currentWorkspaceId={workspaceId}
                   currentWorkspaceName={currentWorkspace?.name ?? null}
+                  projectNameById={projectNameById}
                   workspaceNameById={workspaceNameById}
                   sessionTitleById={sessionTitleById}
                   countdownNow={countdownNow}
                   cancelling={cancellingTimerId === activeControlTimer.id}
+                  executingNow={executingTimerId === activeControlTimer.id}
                   onCancel={() => {
                     void handleCancelControlTimer(activeControlTimer.id);
+                  }}
+                  onExecuteNow={() => {
+                    void handleExecuteControlTimerNow(activeControlTimer);
                   }}
                 />
               ) : null}
@@ -1112,7 +1163,11 @@ export function MobileButlerPage() {
               className="mobile-butler-segmented-shell"
               data-mobile-butler-gesture="ignore"
             >
-              <div className="mobile-butler-segmented-control" role="tablist" aria-label={t("shell.butlerSidebarTabsLabel")}>
+              <div
+                className="mobile-butler-segmented-control"
+                role="tablist"
+                aria-label={t("shell.butlerSidebarTabsLabel")}
+              >
                 {MOBILE_BUTLER_TAB_ORDER.map((tabId) => {
                   const selected = activeTab === tabId;
                   const label =
@@ -1153,20 +1208,25 @@ function MobileButlerControlTimerBanner(props: {
   timer: ButlerControlTimerDto;
   currentWorkspaceId: string;
   currentWorkspaceName: string | null;
+  projectNameById: Map<string, string>;
   workspaceNameById: Map<string, string>;
   sessionTitleById: Map<string, string>;
   countdownNow: number;
   cancelling: boolean;
+  executingNow: boolean;
   onCancel: () => void;
+  onExecuteNow: () => void;
 }) {
   const detailButtonId = useId();
   const detailPopoverId = useId();
   const detailRef = useRef<HTMLDivElement | null>(null);
+  const detailPopoverRef = useRef<HTMLDivElement | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const countdownText = resolveControlTimerCountdownLabel(props.timer, props.countdownNow);
   const countdownClockText = resolveControlTimerClockLabel(props.timer, props.countdownNow);
   const workspaceText = resolveControlTimerWorkspaceLabel(
     props.timer,
+    props.projectNameById,
     props.workspaceNameById,
     props.currentWorkspaceId,
     props.currentWorkspaceName
@@ -1180,7 +1240,10 @@ function MobileButlerControlTimerBanner(props: {
     }
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (detailRef.current?.contains(event.target as Node)) {
+      if (
+        detailRef.current?.contains(event.target as Node)
+        || detailPopoverRef.current?.contains(event.target as Node)
+      ) {
         return;
       }
 
@@ -1240,29 +1303,45 @@ function MobileButlerControlTimerBanner(props: {
               <TimerDetailIcon />
             </span>
           </button>
-          {detailOpen ? (
-            <div
-              id={detailPopoverId}
-              className="mobile-butler-timer-detail-popover"
-              role="dialog"
-              aria-labelledby={detailButtonId}
-            >
+          <ButlerAnchoredPopover
+            open={detailOpen}
+            id={detailPopoverId}
+            className="mobile-butler-timer-detail-popover"
+            anchorRef={detailRef}
+            popoverRef={detailPopoverRef}
+            labelledBy={detailButtonId}
+            maxWidth={288}
+            gap={8}
+            viewportPadding={12}
+          >
+            <div>
               <strong>{t("shell.butlerControlTimerPromptTitle")}</strong>
               <p>{promptContent}</p>
             </div>
-          ) : null}
+          </ButlerAnchoredPopover>
         </div>
         <button
           type="button"
           className="secondary-button mobile-butler-timer-action"
-          disabled={props.cancelling}
+          disabled={props.cancelling || props.executingNow}
+          onClick={props.onExecuteNow}
+        >
+          {props.executingNow
+            ? t("shell.butlerControlTimerExecutingNow")
+            : t("shell.butlerControlTimerExecuteNowAction")}
+        </button>
+        <button
+          type="button"
+          className="secondary-button mobile-butler-timer-action"
+          disabled={props.cancelling || props.executingNow}
           onClick={props.onCancel}
         >
           {props.cancelling
             ? t("shell.butlerControlTimerCancelling")
-            : t("shell.butlerControlTimerCancelAction")}
+            : t("shell.butlerControlTimerStopAction")}
         </button>
       </div>
+      <p className="mobile-butler-timer-note">{t("shell.butlerControlTimerActionNote")}</p>
     </section>
   );
 }
@@ -1739,10 +1818,17 @@ function resolveControlTimerClockLabel(timer: ButlerControlTimerDto, nowMs: numb
 
 function resolveControlTimerWorkspaceLabel(
   timer: ButlerControlTimerDto,
+  projectNameById: Map<string, string>,
   workspaceNameById: Map<string, string>,
   currentWorkspaceId: string,
   currentWorkspaceName: string | null
 ): string {
+  const projectId = timer.projectId?.trim();
+
+  if (projectId && projectNameById.has(projectId)) {
+    return projectNameById.get(projectId)!;
+  }
+
   const workspaceId = timer.controlSession?.session?.workspaceId?.trim() || currentWorkspaceId.trim();
 
   if (!workspaceId) {

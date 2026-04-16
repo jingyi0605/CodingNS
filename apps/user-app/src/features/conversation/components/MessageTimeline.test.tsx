@@ -20,7 +20,12 @@ vi.mock("./WorkbenchLayout", () => ({
           path: "/Users/jackson/Code/CodingNS",
           repoRoot: "/Users/jackson/Code/CodingNS"
         },
-        sessions: []
+        sessions: [
+          {
+            sessionId: "session-1",
+            title: "登录页开发"
+          }
+        ]
       }
     ],
     currentWorkspaceId: "workspace-1",
@@ -114,6 +119,16 @@ function createButlerProxyTextMessage(content: string): SessionMessageViewModel 
   };
 }
 
+function createAssistantProxyTextMessage(content: string): SessionMessageViewModel {
+  return {
+    ...createTextMessage(content),
+    id: "message-butler-2",
+    clientRequestId: null,
+    origin: "butler_proxy",
+    originRef: null
+  };
+}
+
 function createAssistantTextMessage(content: string, id = "assistant-1"): SessionMessageViewModel {
   return {
     id,
@@ -196,6 +211,59 @@ function createToolMessage(input: {
     deliveryState: "sent",
     clientRequestId: null
   };
+}
+
+function createAssistantCapabilityReceiptMessage(input: {
+  id: string;
+  capability: string;
+  payload: Record<string, unknown>;
+  targetRef?: {
+    kind: string;
+    id: string | null;
+  };
+}): SessionMessageViewModel {
+  const receipt = {
+    ok: true,
+    capability: input.capability,
+    auditId: `${input.id}-audit`,
+    timestamp: "2026-04-16T12:00:00.000Z",
+    targetRef: input.targetRef ?? {
+      kind: "none",
+      id: null
+    },
+    payload: input.payload
+  };
+
+  return createToolMessage({
+    id: input.id,
+    callId: `${input.id}-call`,
+    name: "assistant_capability",
+    kind: "tool_result",
+    content: JSON.stringify(receipt, null, 2),
+    toolOutput: JSON.stringify(receipt, null, 2)
+  });
+}
+
+function createAssistantCliToolMessage(input: {
+  id: string;
+  command: string;
+  output?: string | null;
+  kind?: "tool_call" | "tool_result";
+}): SessionMessageViewModel {
+  return createToolMessage({
+    id: input.id,
+    callId: `${input.id}-call`,
+    name: "shell_command",
+    kind: input.kind ?? "tool_call",
+    content: JSON.stringify({
+      command: input.command
+    }),
+    toolInput: JSON.stringify({
+      command: input.command
+    }),
+    toolOutput: input.output ?? null,
+    status: input.kind === "tool_result" ? "completed" : "running"
+  });
 }
 
 describe("MessageTimeline", () => {
@@ -413,6 +481,21 @@ describe("MessageTimeline", () => {
     expect(screen.getByText(t("conversation.butlerProxyMessageBadge"))).toBeInTheDocument();
   });
 
+  it("没有来源详情的代理发送消息只显示标签，不会请求 Butler 跟进详情", () => {
+    render(
+      <MessageTimeline
+        messages={[createAssistantProxyTextMessage("继续跟进这个真实会话。")]}
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText(t("conversation.butlerProxyMessageBadge"))).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("conversation.butlerProxyMessageBadge") })).not.toBeInTheDocument();
+    expect(getButlerFollowUpTaskMock).not.toHaveBeenCalled();
+  });
+
   it("点击文件路径链接会切到文件面板并定位文件", async () => {
     revealWorkspaceFileMock.mockReturnValue(true);
     const writeText = vi.fn().mockResolvedValue(undefined);
@@ -498,7 +581,7 @@ describe("MessageTimeline", () => {
     );
 
     expect(screen.getByText(t("conversation.roleTool"))).toBeInTheDocument();
-    expect(screen.getByText("命令：git status --short")).toBeInTheDocument();
+    expect(screen.getByText(`${t("conversation.toolPreviewCommand")}：git status --short`)).toBeInTheDocument();
     expect(document.querySelectorAll(".tool-message-row")).toHaveLength(1);
     expect(screen.queryByText(t("conversation.toolStatusCompleted"))).not.toBeInTheDocument();
 
@@ -607,6 +690,128 @@ describe("MessageTimeline", () => {
 
     expect(screen.getByText("设计任务卡片")).toBeInTheDocument();
     expect(screen.getByText("补时间线测试")).toBeInTheDocument();
+  });
+
+  it("会把 assistant 会话发送回执渲染成专门的助手动作卡片", () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createAssistantCapabilityReceiptMessage({
+            id: "assistant-send-1",
+            capability: "sessions.message.send",
+            targetRef: {
+              kind: "session",
+              id: "session-1"
+            },
+            payload: {
+              result: {
+                acceptedAt: "2026-04-16T12:10:00.000Z"
+              }
+            }
+          })
+        ]}
+      />
+    );
+
+    expect(screen.getByText(t("conversation.assistantCapabilityBadgeSession"))).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.assistantCapabilitySessionSendTitle"))).toBeInTheDocument();
+    expect(screen.getByText("登录页开发")).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.assistantCapabilitySummarySessionSend"))).toBeInTheDocument();
+  });
+
+  it("会把 codingns assistant help 命令渲染成助手帮助卡片", () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createAssistantCliToolMessage({
+            id: "assistant-help-1",
+            command: "codingns assistant help sessions"
+          })
+        ]}
+      />
+    );
+
+    expect(screen.getByText(t("conversation.assistantCapabilityBadgeSession"))).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.assistantCliHelpSessionsTitle"))).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.assistantCliSummaryHelp"))).toBeInTheDocument();
+  });
+
+  it("会把 codingns assistant sessions send 命令渲染成助手会话卡片", () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createAssistantCliToolMessage({
+            id: "assistant-send-command-1",
+            command: "codingns assistant sessions send session-1 --message \"继续推进登录页收尾\""
+          })
+        ]}
+      />
+    );
+
+    expect(screen.getByText(t("conversation.assistantCapabilitySessionSendTitle"))).toBeInTheDocument();
+    expect(screen.getByText("登录页开发")).toBeInTheDocument();
+    expect(screen.getByText("继续推进登录页收尾")).toBeInTheDocument();
+  });
+
+  it("会把 codingns assistant timers create 命令渲染成助手自动化卡片", () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createAssistantCliToolMessage({
+            id: "assistant-timer-command-1",
+            command: "codingns assistant timers create --after-seconds 300 --session-id session-1 --message \"5分钟后检查真实会话回复\""
+          })
+        ]}
+      />
+    );
+
+    expect(screen.getByText(t("conversation.assistantCapabilityTimerCreateTitle"))).toBeInTheDocument();
+    expect(screen.getByText("登录页开发")).toBeInTheDocument();
+    expect(screen.getByText("300")).toBeInTheDocument();
+  });
+
+  it("会把 assistant 工作区回执渲染成专门的助手动作卡片", () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createAssistantCapabilityReceiptMessage({
+            id: "assistant-workspace-1",
+            capability: "workspaces.clone",
+            targetRef: {
+              kind: "workspace",
+              id: "workspace-1"
+            },
+            payload: {
+              workspace: {
+                id: "workspace-1",
+                name: "CodingNS 副本",
+                path: "/Users/jackson/Code/CodingNS-copy"
+              }
+            }
+          })
+        ]}
+      />
+    );
+
+    expect(screen.getByText(t("conversation.assistantCapabilityBadgeWorkspace"))).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.assistantCapabilityWorkspaceCloneTitle"))).toBeInTheDocument();
+    expect(screen.getByText("CodingNS 副本")).toBeInTheDocument();
+    expect(screen.getByText("/Users/jackson/Code/CodingNS-copy")).toBeInTheDocument();
   });
 
   it("会把 OpenCode 的 todowrite 调用与结果合并成任务卡片", async () => {
@@ -733,12 +938,12 @@ describe("MessageTimeline", () => {
     );
 
     expect(screen.getByText("AGENTS.md instructions for C:\\Code\\FamilyClaw")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /展开规则/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: new RegExp(t("conversation.rulesMessageExpand")) })).toBeInTheDocument();
     expect(screen.queryByText("不要主动启动开发服务器")).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: /展开规则/ }));
+    await userEvent.click(screen.getByRole("button", { name: new RegExp(t("conversation.rulesMessageExpand")) }));
 
-    expect(screen.getByRole("button", { name: /收起规则/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: new RegExp(t("conversation.rulesMessageCollapse")) })).toBeInTheDocument();
     expect(screen.getByText((content) => content.includes("不要主动启动开发服务器"))).toBeInTheDocument();
   });
 
@@ -869,7 +1074,7 @@ describe("MessageTimeline", () => {
     );
 
     expect(screen.getByText((content) => content.includes("不要主动启动开发服务器"))).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /展开规则/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: new RegExp(t("conversation.rulesMessageExpand")) })).not.toBeInTheDocument();
   });
 
   it("会为缺失 toolCall 的工具消息做通用兜底", async () => {
@@ -947,7 +1152,7 @@ describe("MessageTimeline", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(document.querySelector(".message-list .apply-patch-modal")).toBeNull();
     expect(document.body.querySelector(".apply-patch-modal")).not.toBeNull();
-    expect(screen.getByRole("heading", { name: "Patch 变更预览" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: t("conversation.applyPatchDialogTitle") })).toBeInTheDocument();
     expect(screen.getByText("C:/Code/CodingNS/apps/user-app/src/app/styles.css")).toBeInTheDocument();
     const diffViewText = document.querySelector(".apply-patch-diff-view")?.textContent ?? "";
     expect(diffViewText).toContain("+  gap: 8px;");
@@ -1112,6 +1317,57 @@ describe("MessageTimeline", () => {
       target: {
         scrollTop: 0
       }
+    });
+
+    expect(handleLoadOlderMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it("已经顶到最上面时，继续向上滚轮也会触发更早消息加载", () => {
+    const handleLoadOlderMessages = vi.fn();
+
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        hasOlderMessages
+        onLoadOlderMessages={handleLoadOlderMessages}
+        onRetryMessage={vi.fn()}
+        messages={Array.from({ length: 5 }, (_, index) => ({
+          id: `wheel-message-${index + 1}`,
+          sessionId: "session-wheel-1",
+          role: "assistant",
+          kind: "text",
+          content: `wheel-message-${index + 1}`,
+          toolCall: null,
+          timestamp: `2026-03-23T10:1${index}:00.000Z`,
+          sequence: index + 1,
+          rawRef: `codex://raw#line=wheel-${index + 1}`,
+          deliveryState: "sent",
+          clientRequestId: null
+        }))}
+      />
+    );
+
+    const messageList = document.querySelector(".message-list") as HTMLDivElement | null;
+
+    expect(messageList).not.toBeNull();
+
+    Object.defineProperty(messageList, "scrollHeight", {
+      value: 1200,
+      configurable: true
+    });
+    Object.defineProperty(messageList, "clientHeight", {
+      value: 600,
+      configurable: true
+    });
+    Object.defineProperty(messageList, "scrollTop", {
+      value: 0,
+      writable: true,
+      configurable: true
+    });
+
+    fireEvent.wheel(messageList!, {
+      deltaY: -120
     });
 
     expect(handleLoadOlderMessages).toHaveBeenCalledTimes(1);
@@ -2061,12 +2317,12 @@ describe("MessageTimeline", () => {
     );
 
     expect(screen.getByText("你是 Kimi Code CLI。")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /展开提示词/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: new RegExp(t("conversation.systemPromptExpand")) })).toBeInTheDocument();
     expect(screen.queryByText("请先阅读工作区规则，再继续执行。")).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: /展开提示词/ }));
+    await userEvent.click(screen.getByRole("button", { name: new RegExp(t("conversation.systemPromptExpand")) }));
 
-    expect(screen.getByRole("button", { name: /收起提示词/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: new RegExp(t("conversation.systemPromptCollapse")) })).toBeInTheDocument();
     expect(screen.getByText((content) => content.includes("请先阅读工作区规则，再继续执行。"))).toBeInTheDocument();
   });
   it("代理发送标签和时间会放进同一个用户气泡 footer", () => {

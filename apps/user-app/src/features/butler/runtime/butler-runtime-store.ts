@@ -60,6 +60,9 @@ export interface ButlerRuntimeState {
   events: ButlerControlEventDto[];
   messages: SessionMessageViewModel[];
   historyState: ButlerHistoryState;
+  loadingOlderMessages: boolean;
+  olderCursor: string | null;
+  hasOlderMessages: boolean;
   runtimeHasActiveRun: boolean | null;
   runtimeCanInterrupt: boolean | null;
   contextUsage: ContextUsageDto | null;
@@ -95,6 +98,9 @@ export class ButlerRuntimeStore {
       events: [],
       messages: [],
       historyState: "idle",
+      loadingOlderMessages: false,
+      olderCursor: null,
+      hasOlderMessages: false,
       runtimeHasActiveRun: null,
       runtimeCanInterrupt: null,
       contextUsage: null,
@@ -130,6 +136,9 @@ export class ButlerRuntimeStore {
           controlSession: null,
           messages: [],
           historyState: "idle",
+          loadingOlderMessages: false,
+          olderCursor: null,
+          hasOlderMessages: false,
           overview: null,
           events: [],
           runtimeHasActiveRun: null,
@@ -204,6 +213,9 @@ export class ButlerRuntimeStore {
       events: this.state.events,
       messages: this.state.messages,
       historyState: this.state.historyState,
+      loadingOlderMessages: this.state.loadingOlderMessages,
+      olderCursor: this.state.olderCursor,
+      hasOlderMessages: this.state.hasOlderMessages,
       runtimeHasActiveRun: this.state.runtimeHasActiveRun,
       runtimeCanInterrupt: this.state.runtimeCanInterrupt,
       contextUsage: this.state.contextUsage
@@ -217,6 +229,9 @@ export class ButlerRuntimeStore {
       | "events"
       | "messages"
       | "historyState"
+      | "loadingOlderMessages"
+      | "olderCursor"
+      | "hasOlderMessages"
       | "runtimeHasActiveRun"
       | "runtimeCanInterrupt"
       | "contextUsage"
@@ -230,6 +245,9 @@ export class ButlerRuntimeStore {
       controlSession: null,
       messages: [],
       historyState: "idle",
+      loadingOlderMessages: false,
+      olderCursor: null,
+      hasOlderMessages: false,
       overview: null,
       events: [],
       runtimeHasActiveRun: null,
@@ -409,6 +427,9 @@ export class ButlerRuntimeStore {
       controlSession: null,
       messages: [],
       historyState: "ready",
+      loadingOlderMessages: false,
+      olderCursor: null,
+      hasOlderMessages: false,
       runtimeHasActiveRun: null,
       runtimeCanInterrupt: null,
       contextUsage: null
@@ -427,6 +448,71 @@ export class ButlerRuntimeStore {
     this.patch({
       switchingProvider: options?.preserveSwitchingState ? this.state.switchingProvider : false
     });
+  }
+
+  async loadOlderMessages(): Promise<void> {
+    const controlSessionId = this.state.controlSession?.id ?? null;
+    const sessionId = this.state.controlSession?.session.sessionId ?? null;
+
+    if (
+      !sessionId
+      || this.state.historyState !== "ready"
+      || this.state.loadingOlderMessages
+      || !this.state.olderCursor
+    ) {
+      return;
+    }
+
+    this.patch({
+      loadingOlderMessages: true,
+      error: null
+    });
+
+    try {
+      const historyPage = await getSessionMessages(
+        sessionId,
+        this.state.olderCursor,
+        BUTLER_MESSAGE_PAGE_SIZE,
+        "backward"
+      );
+
+      if (
+        !controlSessionId
+        || this.state.controlSession?.id !== controlSessionId
+        || this.state.controlSession?.session.sessionId !== sessionId
+      ) {
+        this.patch({
+          loadingOlderMessages: false
+        });
+        return;
+      }
+
+      const merged = mergeButlerMessages(this.state.messages, sessionId, historyPage.messages);
+
+      this.patch({
+        messages: buildButlerVisibleMessages(
+          merged,
+          this.state.controlSession,
+          {
+            runningState: this.state.controlSession?.session.runningState ?? "idle",
+            runtimeHasActiveRun: this.state.runtimeHasActiveRun ?? false,
+            runtimeCanInterrupt: this.state.runtimeCanInterrupt ?? false,
+            detail: null,
+            errorDetail: this.state.error,
+            updatedAt: this.state.controlSession?.updatedAt ?? new Date().toISOString()
+          }
+        ),
+        historyState: "ready",
+        loadingOlderMessages: false,
+        olderCursor: historyPage.nextCursor,
+        hasOlderMessages: Boolean(historyPage.nextCursor)
+      });
+    } catch (error) {
+      this.patch({
+        loadingOlderMessages: false,
+        error: toErrorMessage(error)
+      });
+    }
   }
 
   async refreshAll(): Promise<void> {
@@ -522,6 +608,9 @@ export class ButlerRuntimeStore {
           controlSession: null,
           messages: [],
           historyState: "ready",
+          loadingOlderMessages: false,
+          olderCursor: null,
+          hasOlderMessages: false,
           runtimeHasActiveRun: null,
           runtimeCanInterrupt: null,
           contextUsage: null
@@ -566,6 +655,9 @@ export class ButlerRuntimeStore {
           updatedAt: runtime.updatedAt
         }),
         historyState: "ready",
+        loadingOlderMessages: false,
+        olderCursor: historyPage.nextCursor,
+        hasOlderMessages: Boolean(historyPage.nextCursor),
         runtimeHasActiveRun: runtime.hasActiveRun,
         runtimeCanInterrupt: runtime.canInterrupt,
         contextUsage: runtime.contextUsage

@@ -281,6 +281,318 @@
   background: transparent;
 }
 
+.butler-control-timer-banner {
+  position: relative;
+  z-index: 12;
+  display: flex;
+  justify-content: center;
+  padding: 12px 12px 10px;
+  background: transparent;
+  overflow: visible;
+}
+
+.butler-control-timer-banner-shell {
+  position: relative;
+  z-index: 12;
+  width: min(680px, 100%);
+  max-width: 100%;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--surface-overlay-border);
+  border-radius: 18px;
+  background: var(--bg-elevated);
+  box-shadow: var(--desktop-panel-shadow);
+}
+
+.butler-control-timer-banner-copy {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 4px 12px;
+}
+
+.butler-control-timer-banner-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  grid-row: 1 / span 2;
+  align-self: center;
+  margin: 0;
+}
+
+.butler-control-timer-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 72%, var(--text-secondary));
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 36%, transparent);
+  animation: butler-control-timer-pulse 1.8s ease-in-out infinite;
+}
+
+.butler-control-timer-banner-caption,
+.butler-control-timer-banner-countdown,
+.butler-control-timer-display-clock,
+.butler-control-timer-banner-meta {
+  margin: 0;
+}
+
+.butler-control-timer-banner-caption {
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.butler-control-timer-display-panel {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.butler-control-timer-display-clock {
+  color: var(--text-primary);
+  font-family:
+    "SFMono-Regular",
+    "SF Mono",
+    "ui-monospace",
+    "Menlo",
+    "Monaco",
+    monospace;
+  font-size: clamp(24px, 2.1vw, 28px);
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+}
+
+.butler-control-timer-banner-countdown {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.25;
+  letter-spacing: 0.02em;
+}
+
+.butler-control-timer-banner-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-column: 1 / -1;
+  justify-self: stretch;
+  align-items: start;
+  gap: 4px;
+}
+
+.butler-control-timer-banner-meta-card {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+}
+
+.butler-control-timer-banner-meta-card span {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.2;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.butler-control-timer-banner-meta-card strong {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.25;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.butler-control-timer-banner-actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  align-self: center;
+}
+
+.butler-control-timer-banner-detail {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.butler-control-timer-banner-detail-button {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-primary);
+  border-radius: 999px;
+  background: var(--bg-surface-secondary);
+  color: var(--text-secondary);
+  box-shadow: none;
+  transition:
+    transform 140ms ease,
+    background-color 140ms ease,
+    border-color 140ms ease;
+}
+
+.butler-control-timer-banner-detail-button:hover {
+  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-surface-secondary));
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border-primary));
+}
+
+.butler-control-timer-banner-detail-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  outline-offset: 2px;
+}
+
+.butler-control-timer-banner-detail-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+}
+
+.butler-control-timer-banner-detail-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.butler-control-timer-banner-detail-popover {
+  padding: 10px 12px;
+  border: 1px solid var(--surface-overlay-border);
+  border-radius: 14px;
+  background: var(--bg-elevated);
+  box-shadow: var(--desktop-panel-shadow-strong);
+  max-height: min(48vh, 320px);
+  overflow: auto;
+}
+
+.butler-control-timer-banner-detail-popover strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.butler-control-timer-banner-detail-popover p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.butler-control-timer-banner-action {
+  min-height: 34px;
+  padding-inline: 12px;
+  white-space: nowrap;
+  border-radius: 999px;
+  border-color: var(--border-primary);
+  background: var(--bg-surface-secondary);
+  color: var(--text-primary);
+  box-shadow: none;
+}
+
+.butler-control-timer-banner-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-surface-secondary));
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border-primary));
+}
+
+.butler-control-timer-banner-note {
+  grid-column: 1 / -1;
+  margin: 2px 0 0;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.3;
+  text-align: right;
+  justify-self: end;
+}
+
+@media (max-width: 960px) {
+  .butler-control-timer-banner {
+    padding-inline: 12px;
+  }
+
+  .butler-control-timer-banner-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .butler-control-timer-banner-copy {
+    grid-template-columns: 1fr;
+  }
+
+  .butler-control-timer-banner-actions {
+    justify-content: flex-start;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .butler-control-timer-banner-detail-popover {
+    max-height: min(46vh, 280px);
+  }
+
+  .butler-control-timer-banner-shell {
+    width: min(680px, 100%);
+  }
+
+  .butler-control-timer-banner-status {
+    grid-row: auto;
+    align-self: start;
+  }
+
+  .butler-control-timer-display-panel {
+    flex-wrap: wrap;
+  }
+
+  .butler-control-timer-banner-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .butler-control-timer-banner-note {
+    justify-self: stretch;
+  }
+}
+
+@keyframes butler-control-timer-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 36%, transparent);
+  }
+
+  60% {
+    transform: scale(1.12);
+    box-shadow: 0 0 0 8px transparent;
+  }
+}
+
 .butler-side-column {
   height: 100%;
   min-height: 0;
@@ -635,7 +947,7 @@
 }
 
 .butler-automation-row,
-.butler-automation-card-footer {
+.butler-automation-card-footer-copy {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -647,6 +959,17 @@
   line-height: 1.4;
   font-weight: 400;
   color: var(--text-secondary, #6b7280);
+}
+
+.butler-automation-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.butler-automation-card-action {
+  flex: 0 0 auto;
 }
 
 .butler-follow-up-history-panel {

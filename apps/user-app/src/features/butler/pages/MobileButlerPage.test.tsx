@@ -17,6 +17,8 @@ const mockListButlerPatrolPlans = vi.fn();
 const mockListButlerControlSessions = vi.fn();
 const mockListButlerControlTimers = vi.fn();
 const mockCancelButlerControlTimer = vi.fn();
+const mockRuntimeSendMessage = vi.fn();
+const mockRequestNavigationRefresh = vi.fn();
 const mockRuntimeState: any = {
   loading: false,
   initialized: true,
@@ -139,7 +141,7 @@ vi.mock("../runtime/butler-runtime-store", () => ({
     initialize = vi.fn();
     openControlSession = vi.fn();
     startFreshSession = vi.fn();
-    sendMessage = vi.fn();
+    sendMessage = mockRuntimeSendMessage;
     retryMessage = vi.fn();
     interrupt = vi.fn();
   },
@@ -204,7 +206,7 @@ describe("MobileButlerPage", () => {
           ]
         }
       ],
-      requestNavigationRefresh: vi.fn(),
+      requestNavigationRefresh: mockRequestNavigationRefresh,
       selectWorkspace: vi.fn()
     });
     mockGetButlerProfile.mockResolvedValue({
@@ -713,10 +715,10 @@ describe("MobileButlerPage", () => {
       screen.getByRole("button", { name: t("shell.butlerControlTimerDetailAction") })
     );
 
-    expect(screen.getByText(t("shell.butlerControlTimerPromptTitle"))).toBeInTheDocument();
+    expect(screen.getAllByText(t("shell.butlerControlTimerPromptTitle")).length).toBeGreaterThanOrEqual(1);
     expect(
-      screen.getByText("请在 4 分钟后重新检查移动端布局，然后继续这个真实会话。")
-    ).toBeInTheDocument();
+      screen.getAllByText("请在 4 分钟后重新检查移动端布局，然后继续这个真实会话。").length
+    ).toBeGreaterThanOrEqual(1);
 
     const stage = view.container.querySelector(".mobile-butler-main-stage") as HTMLElement;
     fireEvent.touchStart(stage, {
@@ -730,7 +732,7 @@ describe("MobileButlerPage", () => {
     fireEvent.click(automationTab);
 
     const cancelButtons = await screen.findAllByRole("button", {
-      name: t("shell.butlerControlTimerCancelAction")
+      name: t("shell.butlerControlTimerStopAction")
     });
     fireEvent.click(cancelButtons[0]!);
 
@@ -739,6 +741,35 @@ describe("MobileButlerPage", () => {
       expect(mockShowToast).toHaveBeenCalledWith(
         expect.objectContaining({
           title: t("shell.butlerControlTimerCancelSucceeded"),
+          tone: "success"
+        })
+      );
+    });
+  });
+
+  it("聊天区底部支持停止计时后立即执行，并显示按钮说明", async () => {
+    mockRuntimeState.runtimeHasActiveRun = false;
+    const view = renderPage();
+
+    await waitFor(() => {
+      expect(view.container.querySelector(".mobile-butler-timer-countdown")?.textContent).toMatch(/\S/);
+    });
+
+    expect(screen.getByText(t("shell.butlerControlTimerActionNote"))).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: t("shell.butlerControlTimerExecuteNowAction") })
+    );
+
+    await waitFor(() => {
+      expect(mockCancelButlerControlTimer).toHaveBeenCalledWith("timer-1");
+      expect(mockRuntimeSendMessage).toHaveBeenCalledWith(
+        "请在 4 分钟后重新检查移动端布局，然后继续这个真实会话。"
+      );
+      expect(mockRequestNavigationRefresh).toHaveBeenCalled();
+      expect(mockShowToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: t("shell.butlerControlTimerExecuteNowSucceeded"),
           tone: "success"
         })
       );

@@ -8,6 +8,8 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type TouchEvent as ReactTouchEvent,
+  type WheelEvent as ReactWheelEvent,
   type ReactNode
 } from "react";
 import { createPortal } from "react-dom";
@@ -122,12 +124,42 @@ interface ToolMessageGroup {
   updatedAt: string;
 }
 
+interface AssistantCapabilityReceiptRecord {
+  ok: true;
+  capability: string;
+  auditId: string;
+  timestamp: string;
+  targetRef: {
+    kind: string;
+    id: string | null;
+  };
+  payload: Record<string, unknown>;
+}
+
+interface AssistantCapabilityNavigationLookup {
+  workspaceNamesById: Map<string, string>;
+  sessionNamesById: Map<string, string>;
+  sessionWorkspaceIdsById: Map<string, string>;
+}
+
+interface AssistantCapabilitySnapshot {
+  kind: "session" | "automation" | "terminal" | "workspace" | "debug" | "query";
+  badge: string;
+  title: string;
+  summary: string;
+  rows: Array<{
+    label: string;
+    value: string;
+  }>;
+}
+
 type FoldedPromptKind = "rules" | "system_prompt";
 
 const OLDER_HISTORY_PREFETCH_THRESHOLD_PX = 480;
 const STICK_TO_BOTTOM_DISTANCE_PX = 80;
 const SCROLL_TO_BOTTOM_BUTTON_THRESHOLD_PX = 240;
 const SCROLL_STATE_PERSIST_DELAY_MS = 120;
+const OLDER_HISTORY_TOUCH_DRAG_THRESHOLD_PX = 18;
 const MANUAL_RESTORE_INTERVAL_MS = 50;
 const MANUAL_RESTORE_DURATION_MS = 3500;
 const MarkdownLinkContext = createContext(false);
@@ -318,6 +350,1169 @@ function parseToolInputRecord(input: string): Record<string, unknown> | null {
 function readToolInputText(record: Record<string, unknown>, field: string): string {
   const value = record[field];
   return typeof value === "string" ? value : "";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readRecord(record: Record<string, unknown> | null | undefined, key: string): Record<string, unknown> | null {
+  if (!record) {
+    return null;
+  }
+
+  const value = record[key];
+  return isRecord(value) ? value : null;
+}
+
+function readArray(record: Record<string, unknown> | null | undefined, key: string): unknown[] | null {
+  if (!record) {
+    return null;
+  }
+
+  const value = record[key];
+  return Array.isArray(value) ? value : null;
+}
+
+function readText(record: Record<string, unknown> | null | undefined, key: string): string | null {
+  if (!record) {
+    return null;
+  }
+
+  const value = record[key];
+
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    return normalized ? normalized : null;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  return null;
+}
+
+function parseAssistantCapabilityReceipt(tool: ResolvedToolCall): AssistantCapabilityReceiptRecord | null {
+  const candidates = [tool.output, tool.input];
+
+  for (const candidate of candidates) {
+    const parsed = parseAssistantCapabilityReceiptCandidate(candidate, 0);
+
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function parseAssistantCapabilityReceiptCandidate(
+  raw: string | null | undefined,
+  depth: number
+): AssistantCapabilityReceiptRecord | null {
+  if (!raw?.trim() || depth > 2) {
+    return null;
+  }
+
+  try {
+    return unwrapAssistantCapabilityReceipt(JSON.parse(raw) as unknown, depth);
+  } catch {
+    return null;
+  }
+}
+
+function unwrapAssistantCapabilityReceipt(
+  value: unknown,
+  depth: number
+): AssistantCapabilityReceiptRecord | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  if (looksLikeAssistantCapabilityReceipt(value)) {
+    return {
+      ok: true,
+      capability: readText(value, "capability") ?? "",
+      auditId: readText(value, "auditId") ?? "",
+      timestamp: readText(value, "timestamp") ?? "",
+      targetRef: {
+        kind: readText(readRecord(value, "targetRef"), "kind") ?? "none",
+        id: readText(readRecord(value, "targetRef"), "id")
+      },
+      payload: readRecord(value, "payload") ?? {}
+    };
+  }
+
+  const nestedKeys = ["output", "result", "data", "payload"];
+
+  for (const key of nestedKeys) {
+    const nested = value[key];
+
+    if (typeof nested === "string") {
+      const parsed = parseAssistantCapabilityReceiptCandidate(nested, depth + 1);
+
+      if (parsed) {
+        return parsed;
+      }
+    }
+
+    if (isRecord(nested)) {
+      const parsed = unwrapAssistantCapabilityReceipt(nested, depth + 1);
+
+      if (parsed) {
+        return parsed;
+      }
+    }
+  }
+
+  return null;
+}
+
+function looksLikeAssistantCapabilityReceipt(value: Record<string, unknown>): boolean {
+  return value.ok === true
+    && typeof value.capability === "string"
+    && typeof value.auditId === "string"
+    && typeof value.timestamp === "string"
+    && isRecord(value.targetRef)
+    && isRecord(value.payload);
+}
+
+function buildAssistantCapabilityNavigationLookup(
+  navigationGroups: ReturnType<typeof useWorkbenchShell>["navigationGroups"]
+): AssistantCapabilityNavigationLookup {
+  const workspaceNamesById = new Map<string, string>();
+  const sessionNamesById = new Map<string, string>();
+  const sessionWorkspaceIdsById = new Map<string, string>();
+
+  navigationGroups.forEach((group) => {
+    workspaceNamesById.set(group.workspace.id, group.workspace.name);
+
+    group.sessions.forEach((session) => {
+      const title = typeof session.title === "string" && session.title.trim()
+        ? session.title.trim()
+        : session.sessionId;
+      sessionNamesById.set(session.sessionId, title);
+      sessionWorkspaceIdsById.set(session.sessionId, group.workspace.id);
+    });
+  });
+
+  return {
+    workspaceNamesById,
+    sessionNamesById,
+    sessionWorkspaceIdsById
+  };
+}
+
+function buildAssistantCapabilitySnapshot(
+  tool: ResolvedToolCall,
+  navigationLookup: AssistantCapabilityNavigationLookup
+): AssistantCapabilitySnapshot | null {
+  const receipt = parseAssistantCapabilityReceipt(tool);
+
+  if (!receipt) {
+    return null;
+  }
+
+  return {
+    ...resolveAssistantCapabilityMeta(receipt.capability),
+    rows: buildAssistantCapabilityRows(receipt, navigationLookup)
+  };
+}
+
+function buildAssistantCliCommandSnapshot(
+  tool: ResolvedToolCall,
+  navigationLookup: AssistantCapabilityNavigationLookup
+): AssistantCapabilitySnapshot | null {
+  const command = extractAssistantCliCommand(tool);
+
+  if (!command) {
+    return null;
+  }
+
+  const parsed = parseAssistantCliCommand(command);
+
+  if (!parsed) {
+    return null;
+  }
+
+  return {
+    ...resolveAssistantCliSnapshotMeta(parsed),
+    rows: buildAssistantCliSnapshotRows(parsed, navigationLookup)
+  };
+}
+
+function extractAssistantCliCommand(tool: ResolvedToolCall): string | null {
+  const input = parseToolInputRecord(tool.input);
+  const command = input && typeof input.command === "string" ? input.command.trim() : "";
+
+  if (!command) {
+    return null;
+  }
+
+  const index = command.indexOf("codingns assistant");
+
+  if (index < 0) {
+    return null;
+  }
+
+  return command.slice(index).trim();
+}
+
+interface ParsedAssistantCliCommand {
+  group: string | null;
+  action: string | null;
+  mode: "help" | "execute";
+  options: Record<string, string | true>;
+  positionals: string[];
+}
+
+function parseAssistantCliCommand(command: string): ParsedAssistantCliCommand | null {
+  const tokens = tokenizeShellCommand(command);
+  const startIndex = tokens.findIndex((token, index) => token === "codingns" && tokens[index + 1] === "assistant");
+
+  if (startIndex < 0) {
+    return null;
+  }
+
+  const invocation = tokens.slice(startIndex + 2);
+
+  if (invocation.length === 0 || invocation[0] === "--help" || invocation[0] === "-h") {
+    return {
+      group: null,
+      action: null,
+      mode: "help",
+      options: {},
+      positionals: []
+    };
+  }
+
+  if (invocation[0] === "help") {
+    return {
+      group: invocation[1] ?? null,
+      action: invocation[2] ?? null,
+      mode: "help",
+      options: {},
+      positionals: []
+    };
+  }
+
+  const group = invocation[0] ?? null;
+  const actionCandidate = invocation[1];
+  const action = actionCandidate && !actionCandidate.startsWith("-") ? actionCandidate : null;
+  const remainder = invocation.slice(action ? 2 : 1);
+  const { options, positionals } = parseCommandOptions(remainder);
+
+  if (!action && options["--help"]) {
+    return {
+      group,
+      action: null,
+      mode: "help",
+      options,
+      positionals
+    };
+  }
+
+  return {
+    group,
+    action,
+    mode: "execute",
+    options,
+    positionals
+  };
+}
+
+function tokenizeShellCommand(command: string): string[] {
+  const tokens: string[] = [];
+  const pattern = /"([^"\\]|\\.)*"|'([^'\\]|\\.)*'|`([^`\\]|\\.)*`|\S+/g;
+
+  for (const match of command.matchAll(pattern)) {
+    const value = match[0] ?? "";
+
+    if (!value) {
+      continue;
+    }
+
+    const quoted = value[0];
+
+    if ((quoted === "\"" || quoted === "'" || quoted === "`") && value[value.length - 1] === quoted) {
+      tokens.push(value.slice(1, -1));
+      continue;
+    }
+
+    tokens.push(value);
+  }
+
+  return tokens;
+}
+
+function parseCommandOptions(tokens: string[]): {
+  options: Record<string, string | true>;
+  positionals: string[];
+} {
+  const options: Record<string, string | true> = {};
+  const positionals: string[] = [];
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index] ?? "";
+
+    if (!token.startsWith("--")) {
+      positionals.push(token);
+      continue;
+    }
+
+    const next = tokens[index + 1];
+
+    if (!next || next.startsWith("--")) {
+      options[token] = true;
+      continue;
+    }
+
+    options[token] = next;
+    index += 1;
+  }
+
+  return {
+    options,
+    positionals
+  };
+}
+
+function resolveAssistantCliSnapshotMeta(
+  parsed: ParsedAssistantCliCommand
+): Omit<AssistantCapabilitySnapshot, "rows"> {
+  if (parsed.mode === "help") {
+    return resolveAssistantCliHelpMeta(parsed.group, parsed.action);
+  }
+
+  const capability = buildAssistantCliCapabilityKey(parsed.group, parsed.action);
+
+  if (capability) {
+    return resolveAssistantCapabilityMeta(capability);
+  }
+
+  return {
+    kind: resolveAssistantCliKind(parsed.group),
+    badge: resolveAssistantCliBadge(parsed.group),
+    title: t("conversation.assistantCapabilityQueryTitle"),
+    summary: t("conversation.assistantCliSummaryCommand")
+  };
+}
+
+function resolveAssistantCliHelpMeta(
+  group: string | null,
+  action: string | null
+): Omit<AssistantCapabilitySnapshot, "rows"> {
+  if (!group) {
+    return {
+      kind: "query",
+      badge: t("conversation.assistantCapabilityBadgeQuery"),
+      title: t("conversation.assistantCliHelpRootTitle"),
+      summary: t("conversation.assistantCliSummaryHelp")
+    };
+  }
+
+  if (group === "sessions") {
+    return {
+      kind: "session",
+      badge: t("conversation.assistantCapabilityBadgeSession"),
+      title: action
+        ? t("conversation.assistantCliHelpSessionActionTitle", { action })
+        : t("conversation.assistantCliHelpSessionsTitle"),
+      summary: t("conversation.assistantCliSummaryHelp")
+    };
+  }
+
+  if (group === "timers") {
+    return {
+      kind: "automation",
+      badge: t("conversation.assistantCapabilityBadgeAutomation"),
+      title: t("conversation.assistantCliHelpTimersTitle"),
+      summary: t("conversation.assistantCliSummaryHelp")
+    };
+  }
+
+  if (group === "terminals") {
+    return {
+      kind: "terminal",
+      badge: t("conversation.assistantCapabilityBadgeTerminal"),
+      title: t("conversation.assistantCliHelpTerminalsTitle"),
+      summary: t("conversation.assistantCliSummaryHelp")
+    };
+  }
+
+  if (group === "workspaces" || group === "worktrees") {
+    return {
+      kind: "workspace",
+      badge: t("conversation.assistantCapabilityBadgeWorkspace"),
+      title: t("conversation.assistantCliHelpWorkspacesTitle"),
+      summary: t("conversation.assistantCliSummaryHelp")
+    };
+  }
+
+  return {
+    kind: resolveAssistantCliKind(group),
+    badge: resolveAssistantCliBadge(group),
+    title: t("conversation.assistantCliHelpGenericTitle", { group }),
+    summary: t("conversation.assistantCliSummaryHelp")
+  };
+}
+
+function buildAssistantCliCapabilityKey(group: string | null, action: string | null): string | null {
+  const normalizedGroup = group?.trim();
+  const normalizedAction = action?.trim();
+
+  if (!normalizedGroup) {
+    return null;
+  }
+
+  if (normalizedGroup === "capabilities" && normalizedAction === "list") {
+    return "capabilities.list";
+  }
+
+  if (normalizedGroup === "projects" && normalizedAction === "list") {
+    return "projects.list";
+  }
+
+  if (normalizedGroup === "projects" && normalizedAction === "get") {
+    return "projects.get";
+  }
+
+  if (normalizedGroup === "sessions" && normalizedAction === "list") {
+    return "projects.sessions.list";
+  }
+
+  if (normalizedGroup === "sessions" && normalizedAction === "get") {
+    return "sessions.get";
+  }
+
+  if (normalizedGroup === "sessions" && normalizedAction === "messages") {
+    return "sessions.messages.list";
+  }
+
+  if (normalizedGroup === "sessions" && normalizedAction === "runtime") {
+    return "sessions.runtime.get";
+  }
+
+  if (normalizedGroup === "sessions" && normalizedAction === "start") {
+    return "projects.sessions.start";
+  }
+
+  if (normalizedGroup === "sessions" && normalizedAction === "send") {
+    return "sessions.message.send";
+  }
+
+  if (normalizedGroup === "sessions" && normalizedAction === "fork") {
+    return "sessions.fork";
+  }
+
+  if (normalizedGroup === "timers" && normalizedAction === "create") {
+    return "timers.create";
+  }
+
+  if (normalizedGroup === "timers" && normalizedAction === "cancel") {
+    return "timers.cancel";
+  }
+
+  if (normalizedGroup === "timers" && normalizedAction === "list") {
+    return "timers.list";
+  }
+
+  if (normalizedGroup === "terminals" && normalizedAction === "send") {
+    return "terminals.input.send";
+  }
+
+  if (normalizedGroup === "terminals" && normalizedAction === "close") {
+    return "terminals.close";
+  }
+
+  if (normalizedGroup === "terminals" && normalizedAction === "history") {
+    return "terminals.history.read";
+  }
+
+  if (normalizedGroup === "terminals" && normalizedAction === "list") {
+    return "terminals.list";
+  }
+
+  if (normalizedGroup === "workspaces" && normalizedAction === "list") {
+    return "workspaces.list";
+  }
+
+  if (normalizedGroup === "workspaces" && normalizedAction === "clone") {
+    return "workspaces.clone";
+  }
+
+  if (normalizedGroup === "workspaces" && normalizedAction === "import") {
+    return "workspaces.import";
+  }
+
+  if (normalizedGroup === "workspaces" && normalizedAction === "management") {
+    return "workspaces.management.get";
+  }
+
+  if (normalizedGroup === "worktrees" && normalizedAction === "tree") {
+    return "worktrees.tree";
+  }
+
+  if (normalizedGroup === "worktrees" && normalizedAction === "create") {
+    return "worktrees.create";
+  }
+
+  return null;
+}
+
+function resolveAssistantCliKind(group: string | null): AssistantCapabilitySnapshot["kind"] {
+  switch (group) {
+    case "sessions":
+    case "projects":
+      return "session";
+    case "timers":
+      return "automation";
+    case "terminals":
+      return "terminal";
+    case "workspaces":
+    case "worktrees":
+      return "workspace";
+    case "debug-targets":
+    case "debug-runtimes":
+      return "debug";
+    default:
+      return "query";
+  }
+}
+
+function resolveAssistantCliBadge(group: string | null): string {
+  switch (resolveAssistantCliKind(group)) {
+    case "session":
+      return t("conversation.assistantCapabilityBadgeSession");
+    case "automation":
+      return t("conversation.assistantCapabilityBadgeAutomation");
+    case "terminal":
+      return t("conversation.assistantCapabilityBadgeTerminal");
+    case "workspace":
+      return t("conversation.assistantCapabilityBadgeWorkspace");
+    case "debug":
+      return t("conversation.assistantCapabilityBadgeDebug");
+    case "query":
+    default:
+      return t("conversation.assistantCapabilityBadgeQuery");
+  }
+}
+
+function buildAssistantCliSnapshotRows(
+  parsed: ParsedAssistantCliCommand,
+  navigationLookup: AssistantCapabilityNavigationLookup
+): AssistantCapabilitySnapshot["rows"] {
+  const rows: AssistantCapabilitySnapshot["rows"] = [];
+  const sessionId = readAssistantOption(parsed, "--session-id") ?? parsed.positionals[0] ?? null;
+  const projectId = readAssistantOption(parsed, "--project") ?? readAssistantOption(parsed, "--project-id");
+
+  if (parsed.mode === "help") {
+    pushAssistantCapabilityRow(rows, t("conversation.assistantCliLabelScope"), parsed.group ?? t("conversation.assistantCliScopeRoot"));
+    pushAssistantCapabilityRow(rows, t("conversation.assistantCliLabelAction"), parsed.action);
+    return rows;
+  }
+
+  if (parsed.group === "sessions") {
+    pushAssistantCapabilityRow(
+      rows,
+      t("conversation.assistantCapabilityLabelSession"),
+      resolveAssistantSessionName(sessionId, null, navigationLookup)
+    );
+  }
+
+  if (parsed.group === "timers") {
+    pushAssistantCapabilityRow(
+      rows,
+      t("conversation.assistantCapabilityLabelSession"),
+      resolveAssistantSessionName(sessionId, null, navigationLookup)
+    );
+    pushAssistantCapabilityRow(
+      rows,
+      t("conversation.assistantCliLabelDelay"),
+      readAssistantOption(parsed, "--after-seconds")
+    );
+  }
+
+  if (parsed.group === "terminals") {
+    pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelTerminal"), parsed.positionals[0] ?? null);
+  }
+
+  if (parsed.group === "workspaces" || parsed.group === "worktrees") {
+    pushAssistantCapabilityRow(
+      rows,
+      t("conversation.assistantCapabilityLabelWorkspace"),
+      resolveAssistantWorkspaceName(parsed.positionals[0] ?? null, null, navigationLookup)
+    );
+  }
+
+  pushAssistantCapabilityRow(rows, t("conversation.assistantCliLabelProject"), projectId);
+  pushAssistantCapabilityRow(rows, t("conversation.assistantCliLabelMessage"), readAssistantOption(parsed, "--message"));
+  pushAssistantCapabilityRow(rows, t("conversation.assistantCliLabelInput"), readAssistantOption(parsed, "--input"));
+
+  return rows.slice(0, 4);
+}
+
+function readAssistantOption(parsed: ParsedAssistantCliCommand, key: string): string | null {
+  const value = parsed.options[key];
+  return typeof value === "string" ? value : null;
+}
+
+function resolveAssistantCapabilityMeta(capability: string): Omit<AssistantCapabilitySnapshot, "rows"> {
+  switch (capability) {
+    case "projects.sessions.start":
+      return {
+        kind: "session",
+        badge: t("conversation.assistantCapabilityBadgeSession"),
+        title: t("conversation.assistantCapabilityProjectSessionStartTitle"),
+        summary: t("conversation.assistantCapabilitySummarySessionStart")
+      };
+    case "sessions.message.send":
+      return {
+        kind: "session",
+        badge: t("conversation.assistantCapabilityBadgeSession"),
+        title: t("conversation.assistantCapabilitySessionSendTitle"),
+        summary: t("conversation.assistantCapabilitySummarySessionSend")
+      };
+    case "sessions.fork":
+      return {
+        kind: "session",
+        badge: t("conversation.assistantCapabilityBadgeSession"),
+        title: t("conversation.assistantCapabilitySessionForkTitle"),
+        summary: t("conversation.assistantCapabilitySummarySessionFork")
+      };
+    case "timers.create":
+      return {
+        kind: "automation",
+        badge: t("conversation.assistantCapabilityBadgeAutomation"),
+        title: t("conversation.assistantCapabilityTimerCreateTitle"),
+        summary: t("conversation.assistantCapabilitySummaryTimerCreate")
+      };
+    case "timers.cancel":
+      return {
+        kind: "automation",
+        badge: t("conversation.assistantCapabilityBadgeAutomation"),
+        title: t("conversation.assistantCapabilityTimerCancelTitle"),
+        summary: t("conversation.assistantCapabilitySummaryTimerCancel")
+      };
+    case "terminals.input.send":
+      return {
+        kind: "terminal",
+        badge: t("conversation.assistantCapabilityBadgeTerminal"),
+        title: t("conversation.assistantCapabilityTerminalInputTitle"),
+        summary: t("conversation.assistantCapabilitySummaryTerminalInput")
+      };
+    case "terminals.close":
+      return {
+        kind: "terminal",
+        badge: t("conversation.assistantCapabilityBadgeTerminal"),
+        title: t("conversation.assistantCapabilityTerminalCloseTitle"),
+        summary: t("conversation.assistantCapabilitySummaryTerminalClose")
+      };
+    case "workspaces.directory.create":
+      return {
+        kind: "workspace",
+        badge: t("conversation.assistantCapabilityBadgeWorkspace"),
+        title: t("conversation.assistantCapabilityWorkspaceDirectoryCreateTitle"),
+        summary: t("conversation.assistantCapabilitySummaryWorkspace")
+      };
+    case "workspaces.import":
+      return {
+        kind: "workspace",
+        badge: t("conversation.assistantCapabilityBadgeWorkspace"),
+        title: t("conversation.assistantCapabilityWorkspaceImportTitle"),
+        summary: t("conversation.assistantCapabilitySummaryWorkspace")
+      };
+    case "workspaces.clone":
+      return {
+        kind: "workspace",
+        badge: t("conversation.assistantCapabilityBadgeWorkspace"),
+        title: t("conversation.assistantCapabilityWorkspaceCloneTitle"),
+        summary: t("conversation.assistantCapabilitySummaryWorkspace")
+      };
+    case "workspaces.navigation-state.update":
+      return {
+        kind: "workspace",
+        badge: t("conversation.assistantCapabilityBadgeWorkspace"),
+        title: t("conversation.assistantCapabilityWorkspaceNavigationUpdateTitle"),
+        summary: t("conversation.assistantCapabilitySummaryWorkspace")
+      };
+    case "workspaces.remove":
+      return {
+        kind: "workspace",
+        badge: t("conversation.assistantCapabilityBadgeWorkspace"),
+        title: t("conversation.assistantCapabilityWorkspaceRemoveTitle"),
+        summary: t("conversation.assistantCapabilitySummaryWorkspace")
+      };
+    case "worktrees.create":
+      return {
+        kind: "workspace",
+        badge: t("conversation.assistantCapabilityBadgeWorkspace"),
+        title: t("conversation.assistantCapabilityWorktreeCreateTitle"),
+        summary: t("conversation.assistantCapabilitySummaryWorktree")
+      };
+    case "worktrees.merge-into-parent":
+      return {
+        kind: "workspace",
+        badge: t("conversation.assistantCapabilityBadgeWorkspace"),
+        title: t("conversation.assistantCapabilityWorktreeMergeTitle"),
+        summary: t("conversation.assistantCapabilitySummaryWorktree")
+      };
+    case "worktrees.cleanup":
+      return {
+        kind: "workspace",
+        badge: t("conversation.assistantCapabilityBadgeWorkspace"),
+        title: t("conversation.assistantCapabilityWorktreeCleanupTitle"),
+        summary: t("conversation.assistantCapabilitySummaryWorktree")
+      };
+    case "debug-targets.run":
+      return {
+        kind: "debug",
+        badge: t("conversation.assistantCapabilityBadgeDebug"),
+        title: t("conversation.assistantCapabilityDebugRunTitle"),
+        summary: t("conversation.assistantCapabilitySummaryDebug")
+      };
+    default:
+      if (capability.startsWith("sessions.") || capability.startsWith("projects.")) {
+        return {
+          kind: "session",
+          badge: t("conversation.assistantCapabilityBadgeSession"),
+          title: t("conversation.assistantCapabilitySessionReadTitle"),
+          summary: t("conversation.assistantCapabilitySummaryRead")
+        };
+      }
+
+      if (capability.startsWith("timers.")) {
+        return {
+          kind: "automation",
+          badge: t("conversation.assistantCapabilityBadgeAutomation"),
+          title: t("conversation.assistantCapabilityAutomationReadTitle"),
+          summary: t("conversation.assistantCapabilitySummaryRead")
+        };
+      }
+
+      if (capability.startsWith("terminals.")) {
+        return {
+          kind: "terminal",
+          badge: t("conversation.assistantCapabilityBadgeTerminal"),
+          title: t("conversation.assistantCapabilityTerminalReadTitle"),
+          summary: t("conversation.assistantCapabilitySummaryRead")
+        };
+      }
+
+      if (capability.startsWith("workspaces.") || capability.startsWith("worktrees.")) {
+        return {
+          kind: "workspace",
+          badge: t("conversation.assistantCapabilityBadgeWorkspace"),
+          title: t("conversation.assistantCapabilityWorkspaceReadTitle"),
+          summary: t("conversation.assistantCapabilitySummaryRead")
+        };
+      }
+
+      if (capability.startsWith("debug-targets.") || capability.startsWith("debug-runtimes.")) {
+        return {
+          kind: "debug",
+          badge: t("conversation.assistantCapabilityBadgeDebug"),
+          title: t("conversation.assistantCapabilityDebugReadTitle"),
+          summary: t("conversation.assistantCapabilitySummaryRead")
+        };
+      }
+
+      return {
+        kind: "query",
+        badge: t("conversation.assistantCapabilityBadgeQuery"),
+        title: t("conversation.assistantCapabilityQueryTitle"),
+        summary: t("conversation.assistantCapabilitySummaryRead")
+      };
+  }
+}
+
+function buildAssistantCapabilityRows(
+  receipt: AssistantCapabilityReceiptRecord,
+  navigationLookup: AssistantCapabilityNavigationLookup
+): AssistantCapabilitySnapshot["rows"] {
+  const rows: AssistantCapabilitySnapshot["rows"] = [];
+  const payload = receipt.payload;
+
+  switch (receipt.capability) {
+    case "projects.sessions.start": {
+      const session = readRecord(payload, "session");
+      pushAssistantCapabilityRow(
+        rows,
+        t("conversation.assistantCapabilityLabelSession"),
+        resolveAssistantSessionName(readText(session, "sessionId"), readText(session, "title"), navigationLookup)
+      );
+      pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelProvider"), readText(session, "provider"));
+      break;
+    }
+    case "sessions.message.send": {
+      const result = readRecord(payload, "result");
+      pushAssistantCapabilityRow(
+        rows,
+        t("conversation.assistantCapabilityLabelSession"),
+        resolveAssistantSessionName(receipt.targetRef.id, null, navigationLookup)
+      );
+      pushAssistantCapabilityRow(
+        rows,
+        t("conversation.assistantCapabilityLabelWorkspace"),
+        resolveAssistantWorkspaceNameBySessionId(receipt.targetRef.id, navigationLookup)
+      );
+      pushAssistantCapabilityRow(
+        rows,
+        t("conversation.assistantCapabilityLabelStatus"),
+        t("conversation.assistantCapabilityStatusCompleted")
+      );
+      pushAssistantCapabilityRow(
+        rows,
+        t("conversation.assistantCapabilityLabelDueAt"),
+        formatAssistantCapabilityTimestamp(readText(result, "acceptedAt") ?? receipt.timestamp)
+      );
+      break;
+    }
+    case "sessions.fork": {
+      const session = readRecord(payload, "session");
+      pushAssistantCapabilityRow(
+        rows,
+        t("conversation.assistantCapabilityLabelSession"),
+        resolveAssistantSessionName(readText(session, "sessionId"), readText(session, "title"), navigationLookup)
+      );
+      pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelProvider"), readText(session, "provider"));
+      break;
+    }
+    case "timers.create":
+    case "timers.cancel": {
+      const timer = readRecord(payload, "timer");
+      const controlSession = readRecord(timer, "controlSession");
+      const controlSessionRecord = readRecord(controlSession, "session");
+      pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelTimer"), readText(timer, "title"));
+      pushAssistantCapabilityRow(
+        rows,
+        t("conversation.assistantCapabilityLabelWorkspace"),
+        resolveAssistantWorkspaceName(readText(controlSessionRecord, "workspaceId"), null, navigationLookup)
+      );
+      pushAssistantCapabilityRow(
+        rows,
+        t("conversation.assistantCapabilityLabelSession"),
+        resolveAssistantSessionName(readText(timer, "targetSessionId"), null, navigationLookup)
+      );
+      pushAssistantCapabilityRow(
+        rows,
+        t("conversation.assistantCapabilityLabelDueAt"),
+        formatAssistantCapabilityTimestamp(readText(timer, "dueAt"))
+      );
+      pushAssistantCapabilityRow(
+        rows,
+        t("conversation.assistantCapabilityLabelStatus"),
+        resolveAssistantCapabilityStatusLabel(readText(timer, "status"))
+      );
+      break;
+    }
+    case "terminals.input.send":
+    case "terminals.close":
+      pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelTerminal"), receipt.targetRef.id);
+      break;
+    case "workspaces.directory.create": {
+      const result = readRecord(payload, "result");
+      pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelPath"), readText(result, "path"));
+      break;
+    }
+    case "workspaces.import":
+    case "workspaces.clone":
+    case "workspaces.remove": {
+      const workspace = readRecord(payload, "workspace");
+      pushAssistantCapabilityRow(
+        rows,
+        t("conversation.assistantCapabilityLabelWorkspace"),
+        resolveAssistantWorkspaceName(
+          readText(workspace, "id") ?? receipt.targetRef.id,
+          readText(workspace, "name"),
+          navigationLookup
+        )
+      );
+      pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelPath"), readText(workspace, "path"));
+      break;
+    }
+    case "workspaces.navigation-state.update": {
+      const state = readRecord(payload, "state");
+      pushAssistantCapabilityRow(
+        rows,
+        t("conversation.assistantCapabilityLabelWorkspace"),
+        resolveAssistantWorkspaceName(readText(state, "workspaceId") ?? receipt.targetRef.id, null, navigationLookup)
+      );
+      pushAssistantCapabilityRow(
+        rows,
+        t("conversation.assistantCapabilityLabelStatus"),
+        readText(state, "collapsed") === "true"
+          ? t("conversation.assistantCapabilityNavigationCollapsed")
+          : t("conversation.assistantCapabilityNavigationExpanded")
+      );
+      break;
+    }
+    case "worktrees.create": {
+      const result = readRecord(payload, "result");
+      const workspace = readRecord(result, "workspace");
+      pushAssistantCapabilityRow(
+        rows,
+        t("conversation.assistantCapabilityLabelWorkspace"),
+        resolveAssistantWorkspaceName(
+          readText(workspace, "id") ?? receipt.targetRef.id,
+          readText(workspace, "name"),
+          navigationLookup
+        )
+      );
+      pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelBranch"), readText(result, "branchName"));
+      break;
+    }
+    case "worktrees.merge-into-parent":
+    case "worktrees.cleanup": {
+      const result = readRecord(payload, "result");
+      pushAssistantCapabilityRow(
+        rows,
+        t("conversation.assistantCapabilityLabelWorkspace"),
+        resolveAssistantWorkspaceName(receipt.targetRef.id, null, navigationLookup)
+      );
+      pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelStatus"), readText(result, "status"));
+      break;
+    }
+    case "debug-targets.run": {
+      const result = readRecord(payload, "result");
+      pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelDebugTarget"), receipt.targetRef.id);
+      pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelRuntime"), readText(result, "runtimeId"));
+      break;
+    }
+    default:
+      break;
+  }
+
+  appendAssistantCapabilityGenericRows(rows, receipt, navigationLookup);
+  return rows.slice(0, 4);
+}
+
+function appendAssistantCapabilityGenericRows(
+  rows: AssistantCapabilitySnapshot["rows"],
+  receipt: AssistantCapabilityReceiptRecord,
+  navigationLookup: AssistantCapabilityNavigationLookup
+) {
+  if (receipt.targetRef.kind === "session") {
+    pushAssistantCapabilityRow(
+      rows,
+      t("conversation.assistantCapabilityLabelSession"),
+      resolveAssistantSessionName(receipt.targetRef.id, null, navigationLookup)
+    );
+    pushAssistantCapabilityRow(
+      rows,
+      t("conversation.assistantCapabilityLabelWorkspace"),
+      resolveAssistantWorkspaceNameBySessionId(receipt.targetRef.id, navigationLookup)
+    );
+  }
+
+  if (receipt.targetRef.kind === "workspace" || receipt.targetRef.kind === "worktree") {
+    pushAssistantCapabilityRow(
+      rows,
+      t("conversation.assistantCapabilityLabelWorkspace"),
+      resolveAssistantWorkspaceName(receipt.targetRef.id, null, navigationLookup)
+    );
+  }
+
+  if (receipt.targetRef.kind === "terminal") {
+    pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelTerminal"), receipt.targetRef.id);
+  }
+
+  if (receipt.targetRef.kind === "timer") {
+    pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelTimer"), receipt.targetRef.id);
+  }
+
+  const count = extractAssistantCapabilityCount(receipt.payload);
+
+  if (count !== null) {
+    pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelCount"), String(count));
+  }
+}
+
+function pushAssistantCapabilityRow(
+  rows: AssistantCapabilitySnapshot["rows"],
+  label: string,
+  value: string | null
+) {
+  const normalized = value?.trim();
+
+  if (!normalized) {
+    return;
+  }
+
+  if (rows.some((row) => row.label === label)) {
+    return;
+  }
+
+  rows.push({
+    label,
+    value: normalized
+  });
+}
+
+function resolveAssistantSessionName(
+  sessionId: string | null,
+  fallbackName: string | null,
+  navigationLookup: AssistantCapabilityNavigationLookup
+): string | null {
+  const fallback = fallbackName?.trim();
+
+  if (fallback) {
+    return fallback;
+  }
+
+  const normalizedId = sessionId?.trim();
+
+  if (!normalizedId) {
+    return null;
+  }
+
+  return navigationLookup.sessionNamesById.get(normalizedId) ?? normalizedId;
+}
+
+function resolveAssistantWorkspaceName(
+  workspaceId: string | null,
+  fallbackName: string | null,
+  navigationLookup: AssistantCapabilityNavigationLookup
+): string | null {
+  const fallback = fallbackName?.trim();
+
+  if (fallback) {
+    return fallback;
+  }
+
+  const normalizedId = workspaceId?.trim();
+
+  if (!normalizedId) {
+    return null;
+  }
+
+  return navigationLookup.workspaceNamesById.get(normalizedId) ?? normalizedId;
+}
+
+function resolveAssistantWorkspaceNameBySessionId(
+  sessionId: string | null,
+  navigationLookup: AssistantCapabilityNavigationLookup
+): string | null {
+  const normalizedId = sessionId?.trim();
+
+  if (!normalizedId) {
+    return null;
+  }
+
+  return resolveAssistantWorkspaceName(
+    navigationLookup.sessionWorkspaceIdsById.get(normalizedId) ?? null,
+    null,
+    navigationLookup
+  );
+}
+
+function extractAssistantCapabilityCount(payload: Record<string, unknown>): number | null {
+  const directItems = readArray(payload, "items");
+
+  if (directItems) {
+    return directItems.length;
+  }
+
+  const page = readRecord(payload, "page");
+  const pageItems = readArray(page, "items");
+
+  if (pageItems) {
+    return pageItems.length;
+  }
+
+  const history = readRecord(payload, "history");
+  const historyItems = readArray(history, "items");
+
+  if (historyItems) {
+    return historyItems.length;
+  }
+
+  return null;
+}
+
+function formatAssistantCapabilityTimestamp(value: string | null): string | null {
+  const normalized = value?.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  const timestamp = Date.parse(normalized);
+
+  if (!Number.isFinite(timestamp)) {
+    return normalized;
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(timestamp));
+}
+
+function resolveAssistantCapabilityStatusLabel(status: string | null): string | null {
+  switch (status) {
+    case "active":
+      return t("conversation.assistantCapabilityStatusActive");
+    case "completed":
+      return t("conversation.assistantCapabilityStatusCompleted");
+    case "cancelled":
+      return t("conversation.assistantCapabilityStatusCancelled");
+    case "failed":
+      return t("conversation.assistantCapabilityStatusFailed");
+    default:
+      return status;
+  }
+}
+
+function AssistantCapabilityIcon({ kind }: { kind: AssistantCapabilitySnapshot["kind"] }) {
+  switch (kind) {
+    case "session":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+          <path d="M5 7.5A2.5 2.5 0 0 1 7.5 5h9A2.5 2.5 0 0 1 19 7.5v5A2.5 2.5 0 0 1 16.5 15H11l-4 4v-4H7.5A2.5 2.5 0 0 1 5 12.5z" />
+        </svg>
+      );
+    case "automation":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+          <circle cx="12" cy="12" r="7.5" />
+          <path d="M12 8.5v4.2l2.8 1.8" />
+        </svg>
+      );
+    case "terminal":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+          <path d="m7 8 3.5 3.5L7 15" />
+          <path d="M13 15h4" />
+          <rect x="4.5" y="5.5" width="15" height="13" rx="2.5" />
+        </svg>
+      );
+    case "workspace":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+          <path d="M4.5 8.5A2.5 2.5 0 0 1 7 6h3l1.5 1.5H17A2.5 2.5 0 0 1 19.5 10v6A2.5 2.5 0 0 1 17 18.5H7A2.5 2.5 0 0 1 4.5 16z" />
+        </svg>
+      );
+    case "debug":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+          <path d="M9 4.5h6" />
+          <path d="M10 8h4a4 4 0 0 1 4 4v1a6 6 0 0 1-12 0v-1a4 4 0 0 1 4-4Z" />
+          <path d="M4.5 11h3M16.5 11h3M5.5 7.5l2 1.5M18.5 7.5l-2 1.5" />
+        </svg>
+      );
+    case "query":
+    default:
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+          <circle cx="11" cy="11" r="5.5" />
+          <path d="m16 16 3.5 3.5" />
+        </svg>
+      );
+  }
 }
 
 function buildEditableToolPreview(tool: ResolvedToolCall): ApplyPatchPreview | null {
@@ -1472,8 +2667,21 @@ function ApplyPatchToolItem({
 
 function ToolCallItem({ group }: { group: ToolMessageGroup }) {
   const [expanded, setExpanded] = useState(false);
+  const { navigationGroups } = useWorkbenchShell();
   const { tool, hasRequest, hasResult } = group;
   const toolDisplayName = getToolDisplayName(tool.name);
+  const assistantCapabilityLookup = useMemo(
+    () => buildAssistantCapabilityNavigationLookup(navigationGroups),
+    [navigationGroups]
+  );
+  const assistantCapabilitySnapshot = useMemo(
+    () => buildAssistantCapabilitySnapshot(tool, assistantCapabilityLookup),
+    [assistantCapabilityLookup, tool]
+  );
+  const assistantCliCommandSnapshot = useMemo(
+    () => buildAssistantCliCommandSnapshot(tool, assistantCapabilityLookup),
+    [assistantCapabilityLookup, tool]
+  );
   const taskSnapshot = useMemo(
     () => buildConversationTaskSnapshotFromToolCall(tool, null, group.updatedAt),
     [group.updatedAt, tool]
@@ -1485,6 +2693,36 @@ function ToolCallItem({ group }: { group: ToolMessageGroup }) {
 
   if (applyPatchPreview) {
     return <ApplyPatchToolItem tool={tool} preview={applyPatchPreview} />;
+  }
+
+  if (assistantCapabilitySnapshot) {
+    return (
+      <AssistantCapabilityToolItem
+        tool={tool}
+        snapshot={assistantCapabilitySnapshot}
+        expanded={expanded}
+        hasRequest={hasRequest}
+        hasResult={hasResult}
+        onToggleExpanded={() => {
+          setExpanded((current) => !current);
+        }}
+      />
+    );
+  }
+
+  if (assistantCliCommandSnapshot) {
+    return (
+      <AssistantCapabilityToolItem
+        tool={tool}
+        snapshot={assistantCliCommandSnapshot}
+        expanded={expanded}
+        hasRequest={hasRequest}
+        hasResult={hasResult}
+        onToggleExpanded={() => {
+          setExpanded((current) => !current);
+        }}
+      />
+    );
   }
 
   if (taskSnapshot) {
@@ -1546,6 +2784,81 @@ function ToolCallItem({ group }: { group: ToolMessageGroup }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function AssistantCapabilityToolItem({
+  tool,
+  snapshot,
+  expanded,
+  hasRequest,
+  hasResult,
+  onToggleExpanded
+}: {
+  tool: ResolvedToolCall;
+  snapshot: AssistantCapabilitySnapshot;
+  expanded: boolean;
+  hasRequest: boolean;
+  hasResult: boolean;
+  onToggleExpanded: () => void;
+}) {
+  const rawLabel = expanded
+    ? t("conversation.assistantCapabilityRawCollapse")
+    : t("conversation.assistantCapabilityRawExpand");
+
+  return (
+    <div className="tool-call-item assistant-capability-item" data-kind={snapshot.kind}>
+      <div className="assistant-capability-header">
+        <div className="assistant-capability-heading">
+          <span className="assistant-capability-icon">
+            <AssistantCapabilityIcon kind={snapshot.kind} />
+          </span>
+          <div className="assistant-capability-heading-main">
+            <span className="assistant-capability-badge">{snapshot.badge}</span>
+            <strong>{snapshot.title}</strong>
+            <span className="assistant-capability-summary">{snapshot.summary}</span>
+          </div>
+        </div>
+        <button
+          type="button"
+          className="task-tool-raw-toggle"
+          onClick={onToggleExpanded}
+        >
+          {rawLabel}
+        </button>
+      </div>
+
+      {snapshot.rows.length > 0 ? (
+        <div className="assistant-capability-list">
+          {snapshot.rows.map((row) => (
+            <div key={row.label} className="assistant-capability-row">
+              <span className="assistant-capability-row-label">{row.label}</span>
+              <span className="assistant-capability-row-value">{row.value}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {expanded ? (
+        <div className="tool-call-output">
+          {hasRequest && tool.input ? (
+            <div className="tool-call-section">
+              <div className="tool-call-section-label">{t("conversation.toolInputLabel")}</div>
+              <pre>{tool.input}</pre>
+            </div>
+          ) : null}
+
+          {(hasResult || tool.error || tool.output) ? (
+            <div className="tool-call-section">
+              <div className="tool-call-section-label">{t("conversation.toolResultLabel")}</div>
+              <pre className={tool.error ? "tool-call-error" : undefined}>
+                {tool.error || tool.output || t("conversation.toolResultEmpty")}
+              </pre>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -2288,6 +3601,7 @@ export function MessageTimeline({
   const manualRestoreTargetRef = useRef<number | null>(null);
   const manualRestoreDeadlineRef = useRef(0);
   const manualRestoreInProgressRef = useRef(false);
+  const touchStartYRef = useRef<number | null>(null);
   const [showScrollToBottomButton, setShowScrollToBottomButton] = useState(false);
   const [hasNewMessagesBelow, setHasNewMessagesBelow] = useState(false);
   const hasNewMessagesBelowRef = useRef(false);
@@ -2632,6 +3946,49 @@ export function MessageTimeline({
     }
   }
 
+  function handleWheel(event: ReactWheelEvent<HTMLDivElement>) {
+    if (event.deltaY >= 0) {
+      return;
+    }
+
+    const list = listRef.current;
+
+    if (!list) {
+      return;
+    }
+
+    triggerOlderMessagesPrefetch(list);
+  }
+
+  function handleTouchStart(event: ReactTouchEvent<HTMLDivElement>) {
+    touchStartYRef.current = event.touches[0]?.clientY ?? null;
+  }
+
+  function handleTouchMove(event: ReactTouchEvent<HTMLDivElement>) {
+    const startY = touchStartYRef.current;
+    const currentY = event.touches[0]?.clientY ?? null;
+
+    if (startY === null || currentY === null) {
+      return;
+    }
+
+    if (currentY - startY < OLDER_HISTORY_TOUCH_DRAG_THRESHOLD_PX) {
+      return;
+    }
+
+    const list = listRef.current;
+
+    if (!list) {
+      return;
+    }
+
+    triggerOlderMessagesPrefetch(list);
+  }
+
+  function handleTouchEnd() {
+    touchStartYRef.current = null;
+  }
+
   return (
     <section className="message-timeline">
       {historyState === "loading" && (
@@ -2643,6 +4000,11 @@ export function MessageTimeline({
         ref={listRef}
         className="message-list"
         onScroll={handleScroll}
+        onWheel={handleWheel}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
       >
         {showTimelineSkeleton ? <TimelineSkeleton /> : null}
 

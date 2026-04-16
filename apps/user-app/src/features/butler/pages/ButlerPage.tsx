@@ -40,6 +40,7 @@ import {
   listButlerPatrolPlans,
   startButlerInboxItemSession
 } from "../api/butler-api";
+import { ButlerAnchoredPopover } from "../components/ButlerAnchoredPopover";
 import { ButlerLoadingState } from "../components/ButlerLoadingState";
 import { BUTLER_INBOX_UPDATED_EVENT } from "../runtime/butler-inbox-events";
 import { subscribeButlerRecordsUpdated } from "../runtime/butler-records-events";
@@ -222,6 +223,8 @@ export function ButlerPage() {
   const events = useButlerRuntimeStore(store, (state) => state.events);
   const messages = useButlerRuntimeStore(store, (state) => state.messages);
   const historyState = useButlerRuntimeStore(store, (state) => state.historyState);
+  const loadingOlderMessages = useButlerRuntimeStore(store, (state) => state.loadingOlderMessages);
+  const hasOlderMessages = useButlerRuntimeStore(store, (state) => state.hasOlderMessages);
   const runtimeHasActiveRun = useButlerRuntimeStore(store, (state) => state.runtimeHasActiveRun);
   const runtimeCanInterrupt = useButlerRuntimeStore(store, (state) => state.runtimeCanInterrupt);
   const contextUsage = useButlerRuntimeStore(store, (state) => state.contextUsage);
@@ -266,6 +269,10 @@ export function ButlerPage() {
   );
   const currentWorkspaceName =
     navigationGroups.find((group) => group.workspace.id === workspaceId)?.workspace.name ?? null;
+  const projectNameById = useMemo(
+    () => new Map((overview?.projects ?? []).map((project) => [project.id, project.name] as const)),
+    [overview?.projects]
+  );
   const workspaceNameById = useMemo(
     () =>
       new Map(
@@ -1345,15 +1352,17 @@ export function ButlerPage() {
             sessionId={controlSession?.session?.sessionId}
             messages={messages}
             historyState={historyState}
-            loadingOlderMessages={false}
-            hasOlderMessages={false}
+            loadingOlderMessages={loadingOlderMessages}
+            hasOlderMessages={hasOlderMessages}
             provider={activeProvider}
             assistantAvatar={
               <span className="butler-message-avatar" aria-hidden="true">
                 {butlerAvatar}
               </span>
             }
-            onLoadOlderMessages={() => undefined}
+            onLoadOlderMessages={() => {
+              void store.loadOlderMessages();
+            }}
             onRetryMessage={(clientRequestId) => {
               const targetMessage = messages.find(
                 (message) => message.clientRequestId === clientRequestId
@@ -1373,6 +1382,7 @@ export function ButlerPage() {
                 timer={activeControlTimer}
                 currentWorkspaceId={workspaceId}
                 currentWorkspaceName={currentWorkspaceName}
+                projectNameById={projectNameById}
                 workspaceNameById={workspaceNameById}
                 sessionTitleById={sessionTitleById}
                 countdownNow={countdownNow}
@@ -2030,6 +2040,7 @@ function ButlerControlTimerBanner(props: {
   timer: ButlerControlTimerDto;
   currentWorkspaceId: string;
   currentWorkspaceName: string | null;
+  projectNameById: Map<string, string>;
   workspaceNameById: Map<string, string>;
   sessionTitleById: Map<string, string>;
   countdownNow: number;
@@ -2041,11 +2052,13 @@ function ButlerControlTimerBanner(props: {
   const detailButtonId = useId();
   const detailPopoverId = useId();
   const detailRef = useRef<HTMLDivElement | null>(null);
+  const detailPopoverRef = useRef<HTMLDivElement | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const countdownText = resolveControlTimerCountdownLabel(props.timer, props.countdownNow);
   const countdownClockText = resolveControlTimerClockLabel(props.timer, props.countdownNow);
   const workspaceText = resolveControlTimerWorkspaceLabel(
     props.timer,
+    props.projectNameById,
     props.workspaceNameById,
     props.currentWorkspaceId,
     props.currentWorkspaceName
@@ -2059,7 +2072,10 @@ function ButlerControlTimerBanner(props: {
     }
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (detailRef.current?.contains(event.target as Node)) {
+      if (
+        detailRef.current?.contains(event.target as Node)
+        || detailPopoverRef.current?.contains(event.target as Node)
+      ) {
         return;
       }
 
@@ -2108,6 +2124,7 @@ function ButlerControlTimerBanner(props: {
         <div className="butler-control-timer-banner-actions">
           <div className="butler-control-timer-banner-detail" ref={detailRef}>
             <button
+              id={detailButtonId}
               type="button"
               className="butler-control-timer-banner-detail-button"
               aria-label={t("shell.butlerControlTimerDetailAction")}
@@ -2123,17 +2140,19 @@ function ButlerControlTimerBanner(props: {
                 <TimerDetailIcon />
               </span>
             </button>
-            {detailOpen ? (
-              <div
-                id={detailPopoverId}
-                className="butler-control-timer-banner-detail-popover"
-                role="dialog"
-                aria-labelledby={detailButtonId}
-              >
-                <strong id={detailButtonId}>{t("shell.butlerControlTimerPromptTitle")}</strong>
+            <ButlerAnchoredPopover
+              open={detailOpen}
+              id={detailPopoverId}
+              className="butler-control-timer-banner-detail-popover"
+              anchorRef={detailRef}
+              popoverRef={detailPopoverRef}
+              labelledBy={detailButtonId}
+            >
+              <div>
+                <strong>{t("shell.butlerControlTimerPromptTitle")}</strong>
                 <p>{promptContent}</p>
               </div>
-            ) : null}
+            </ButlerAnchoredPopover>
           </div>
           <button
             type="button"
@@ -2250,7 +2269,7 @@ function AutomationTaskOverviewCard(props: {
                   >
                     {props.cancellingTimerId === item.timerId
                       ? t("shell.butlerControlTimerCancelling")
-                      : t("shell.butlerControlTimerCancelAction")}
+                      : t("shell.butlerControlTimerStopAction")}
                   </button>
                 ) : null}
               </footer>
@@ -2985,10 +3004,17 @@ function resolveControlTimerClockLabel(timer: ButlerControlTimerDto, nowMs: numb
 
 function resolveControlTimerWorkspaceLabel(
   timer: ButlerControlTimerDto,
+  projectNameById: Map<string, string>,
   workspaceNameById: Map<string, string>,
   currentWorkspaceId: string,
   currentWorkspaceName: string | null
 ): string {
+  const projectId = timer.projectId?.trim();
+
+  if (projectId && projectNameById.has(projectId)) {
+    return projectNameById.get(projectId)!;
+  }
+
   const workspaceId = timer.controlSession?.session?.workspaceId?.trim() || currentWorkspaceId.trim();
 
   if (!workspaceId) {
