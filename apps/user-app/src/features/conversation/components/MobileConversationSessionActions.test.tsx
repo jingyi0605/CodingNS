@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import { t } from "../../../shared/i18n";
 import { MobileConversationSessionActions } from "./MobileConversationSessionActions";
 
 import type { SessionSummaryDto } from "../api/conversation-api";
@@ -25,6 +26,22 @@ describe("MobileConversationSessionActions", () => {
 
     expect(screen.getByRole("button", { name: "AI" })).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("传入分支关系动作时显示分支按钮", () => {
+    render(
+      <MobileConversationSessionActions
+        session={createSessionSummary({
+          sessionId: "fork-session",
+          title: "Fork Session",
+          workspaceId: "workspace-1"
+        })}
+        onOpenBranchTree={() => {}}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: t("conversation.branchTreeAction") })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "AI" })).toBeInTheDocument();
   });
 
   it("没有会话时不渲染入口", () => {

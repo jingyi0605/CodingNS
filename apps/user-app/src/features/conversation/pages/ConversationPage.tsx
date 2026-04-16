@@ -42,8 +42,7 @@ import { SessionBranchTreePanel } from "../components/SessionBranchTreePanel";
 import { SessionHeader } from "../components/SessionHeader";
 import { SessionButlerActionButton } from "../components/SessionButlerActionButton";
 import {
-  BranchTreeActionIcon,
-  ContextExpandActionIcon
+  BranchTreeActionIcon
 } from "../components/ConversationActionIcons";
 import { useWorkbenchShell } from "../components/WorkbenchLayout";
 import { isRealSubagentSession } from "../session-fork-display";
@@ -241,7 +240,6 @@ function LiveConversationPage({
   );
   const hasOlderMessages = useSessionRuntimeStore(store, (state) => state.hasOlderMessages);
   const connectionState = useSessionRuntimeStore(store, (state) => state.connectionState);
-  const [inheritedContextExpanded, setInheritedContextExpanded] = useState(false);
   const [deletingQueueItemId, setDeletingQueueItemId] = useState<string | null>(null);
   const [steeringQueueItemId, setSteeringQueueItemId] = useState<string | null>(null);
   const isRunning = isSessionRunning(session);
@@ -347,13 +345,6 @@ function LiveConversationPage({
   const mobileMainGestureHandlers = !showInlineHeader
     ? mergeMobileGestureHandlers(mobilePreview.mainGestureHandlers, mobileToolPanel.mainGestureHandlers)
     : null;
-  const sessionById = useMemo(
-    () =>
-      new Map(
-        navigationGroups.flatMap((group) => group.sessions.map((item) => [item.sessionId, item] as const))
-      ),
-    [navigationGroups]
-  );
 
   useEffect(() => {
     const ancestorIds = findSessionTreeAncestorIds(
@@ -384,58 +375,7 @@ function LiveConversationPage({
     () => sanitizeForkTimelineMessages(currentSessionSummary, messages),
     [currentSessionSummary, messages]
   );
-  const inheritedContextSource = useMemo(
-    () => resolveInheritedContextSource(currentSessionSummary, sanitizedForkTimelineMessages),
-    [currentSessionSummary, sanitizedForkTimelineMessages]
-  );
-  const inheritedContextParentTitle =
-    inheritedContextSource?.parentSessionId
-      ? sessionById.get(inheritedContextSource.parentSessionId)?.title?.trim()
-        || t("conversation.inheritedContextParentFallback")
-      : t("conversation.inheritedContextParentFallback");
-  const timelineMessages = useMemo<SessionMessageViewModel[]>(() => {
-    if (!inheritedContextSource || inheritedContextSource.hiddenMessageCount <= 0) {
-      return sanitizedForkTimelineMessages;
-    }
-
-    if (inheritedContextExpanded) {
-      if (inheritedContextSource.sourceType !== "selection") {
-        return sanitizedForkTimelineMessages;
-      }
-
-      return [
-        {
-          id: `annotation-selection-${sessionId}`,
-          sessionId,
-          role: "system",
-          kind: "text",
-          content: inheritedContextSource.hiddenSelectionText,
-          toolCall: null,
-          attachments: [],
-          attachmentPayloads: null,
-          origin: "system",
-          originRef: inheritedContextSource.sourceMessageId ?? null,
-          timestamp: currentSessionSummary?.createdAt ?? new Date(0).toISOString(),
-          sequence: inheritedContextSource.hiddenSequenceBoundary,
-          rawRef: `annotation-selection://${sessionId}`,
-          deliveryState: "sent",
-          clientRequestId: null
-        },
-        ...sanitizedForkTimelineMessages
-      ];
-    }
-
-    const visibleMessages = sanitizedForkTimelineMessages.filter(
-      (message) => message.sequence > inheritedContextSource.hiddenSequenceBoundary
-    );
-    return visibleMessages;
-  }, [
-    currentSessionSummary?.createdAt,
-    inheritedContextExpanded,
-    inheritedContextSource,
-    sanitizedForkTimelineMessages,
-    sessionId
-  ]);
+  const timelineMessages = sanitizedForkTimelineMessages;
   const branchTreeWorkspaceId =
     currentSessionSummary?.workspaceId ?? navigationSession?.workspaceId ?? null;
   const branchTreeModel = useMemo(
@@ -444,6 +384,9 @@ function LiveConversationPage({
   );
   const hasBranchRelations = hasSessionBranchRelations(branchTreeModel);
   const canOpenBranchTree = Boolean(currentSessionSummary && branchTreeWorkspaceId && hasBranchRelations);
+  const openBranchTree = () => {
+    setBranchTreeOpen(true);
+  };
   const mobileArchivedSessions = useMemo(
     () =>
       mobileWorkspaceTarget?.sessions.filter(
@@ -480,7 +423,6 @@ function LiveConversationPage({
   useEffect(() => {
     setBranchTreeOpen(false);
     setForkDraft(null);
-    setInheritedContextExpanded(false);
   }, [sessionId]);
 
   useEffect(() => {
@@ -707,7 +649,14 @@ function LiveConversationPage({
           <SessionHeader
             session={session ?? navigationSession}
             workspaceContext={currentWorkspaceContext}
-            actions={<SessionButlerActionButton session={session ?? navigationSession} />}
+            actions={(
+              <>
+                {canOpenBranchTree ? (
+                  <ConversationBranchTreeButton onOpenBranchTree={openBranchTree} />
+                ) : null}
+                <SessionButlerActionButton session={session ?? navigationSession} />
+              </>
+            )}
           />
         ) : null}
         {!showInlineHeader ? (
@@ -735,6 +684,7 @@ function LiveConversationPage({
                 </span>
                 <MobileConversationSessionActions
                   session={session ?? navigationSession}
+                  onOpenBranchTree={canOpenBranchTree ? openBranchTree : undefined}
                 />
               </div>
             }
@@ -807,18 +757,6 @@ function LiveConversationPage({
                 }
               }}
             />
-            {inheritedContextSource && inheritedContextSource.hiddenMessageCount > 0 ? (
-              <InheritedContextBanner
-                expanded={inheritedContextExpanded}
-                hiddenMessageCount={inheritedContextSource.hiddenMessageCount}
-                parentTitle={inheritedContextParentTitle}
-                sourceType={inheritedContextSource.sourceType}
-                onToggle={() => {
-                  setInheritedContextExpanded((current) => !current);
-                }}
-                onOpenBranchTree={canOpenBranchTree ? () => setBranchTreeOpen(true) : undefined}
-              />
-            ) : null}
             <div ref={timelineSelectionContainerRef} className="conversation-timeline-shell">
               <MessageTimeline
                 sessionId={sessionId}
@@ -3017,68 +2955,21 @@ function ConversationArchiveFolderModal({
   );
 }
 
-function InheritedContextBanner(input: {
-  expanded: boolean;
-  hiddenMessageCount: number;
-  parentTitle: string;
-  sourceType: "session" | "message" | "selection";
-  onToggle: () => void;
-  onOpenBranchTree?: (() => void) | undefined;
+function ConversationBranchTreeButton(input: {
+  onOpenBranchTree: () => void;
 }) {
-  const summaryText =
-    input.sourceType === "selection"
-      ? t("conversation.actionInheritedSelectionSummary", {
-          parentTitle: input.parentTitle
-        })
-      : t("conversation.inheritedContextSummary", {
-          count: input.hiddenMessageCount,
-          parentTitle: input.parentTitle
-        });
-
   return (
-    <section className="conversation-inherited-context-banner">
-      <div className="conversation-inherited-context-copy">
-        <p title={summaryText}>
-          {summaryText}
-        </p>
-      </div>
-      <div className="conversation-inherited-context-actions">
-        {input.hiddenMessageCount > 0 ? (
-          <button
-            type="button"
-            className="conversation-inherited-context-icon-button"
-            aria-label={
-              input.expanded
-                ? t("conversation.inheritedContextCollapse")
-                : t("conversation.inheritedContextExpand")
-            }
-            title={
-              input.expanded
-                ? t("conversation.inheritedContextCollapse")
-                : t("conversation.inheritedContextExpand")
-            }
-            onClick={input.onToggle}
-          >
-            <span className="conversation-header-ai-button-label" aria-hidden="true">
-              <ContextExpandActionIcon expanded={input.expanded} />
-            </span>
-          </button>
-        ) : null}
-        {input.onOpenBranchTree ? (
-          <button
-            type="button"
-            className="conversation-inherited-context-icon-button"
-            aria-label={t("conversation.branchTreeAction")}
-            title={t("conversation.branchTreeAction")}
-            onClick={input.onOpenBranchTree}
-          >
-            <span className="conversation-header-ai-button-label" aria-hidden="true">
-              <BranchTreeActionIcon />
-            </span>
-          </button>
-        ) : null}
-      </div>
-    </section>
+    <button
+      type="button"
+      className="conversation-header-ai-button"
+      aria-label={t("conversation.branchTreeAction")}
+      title={t("conversation.branchTreeAction")}
+      onClick={input.onOpenBranchTree}
+    >
+      <span className="conversation-header-ai-button-label" aria-hidden="true">
+        <BranchTreeActionIcon />
+      </span>
+    </button>
   );
 }
 
@@ -3285,69 +3176,6 @@ function createClientRequestId(): string {
   }
 
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-function resolveInheritedContextSource(
-  session: SessionSummaryDto | null,
-  messages: SessionMessageViewModel[]
-):
-  | {
-      parentSessionId: string;
-      sourceType: "session" | "message" | "selection";
-      hiddenMessageCount: number;
-      hiddenSequenceBoundary: number;
-      hiddenSelectionText: string;
-      sourceMessageId: string | null;
-    }
-  | null {
-  if (!session) {
-    return null;
-  }
-
-  const parentSessionId = session.parentSessionId?.trim() || null;
-
-  if (!parentSessionId || isRealSubagentSession(session)) {
-    return null;
-  }
-
-  if (
-    session.sessionKind === "annotation"
-    && typeof session.annotationSourceText === "string"
-    && session.annotationSourceText.trim().length > 0
-  ) {
-    return {
-      parentSessionId,
-      sourceType: "selection",
-      hiddenMessageCount: 1,
-      hiddenSequenceBoundary: 0,
-      hiddenSelectionText: session.annotationSourceText,
-      sourceMessageId: session.annotationSourceMessageId?.trim() || null
-    };
-  }
-
-  const sourceType =
-    session.forkSourceType === "message" || session.forkSourceType === "session"
-      ? session.forkSourceType
-      : session.forkSourceMessageId
-        ? "message"
-        : "session";
-  const hiddenSequenceBoundary = Math.max(0, session.inheritedPrefixMessageCount ?? 0);
-  const hiddenMessageCount = messages.filter(
-    (message) => message.sequence <= hiddenSequenceBoundary
-  ).length;
-
-  if (hiddenMessageCount <= 0) {
-    return null;
-  }
-
-  return {
-    parentSessionId,
-    sourceType,
-    hiddenMessageCount,
-    hiddenSequenceBoundary,
-    hiddenSelectionText: "",
-    sourceMessageId: session.forkSourceMessageId?.trim() || null
-  };
 }
 
 function sanitizeForkTimelineMessages(

@@ -736,11 +736,20 @@
   min-width: 0;
 }
 
+.mobile-conversation-session-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.45rem;
+}
+
+.mobile-conversation-toolbar-main .mobile-conversation-session-actions,
 .mobile-conversation-toolbar-main .conversation-butler-entry {
   flex: 0 0 auto;
 }
 
-.mobile-conversation-toolbar-main .conversation-header-ai-button {
+.mobile-conversation-toolbar-main .mobile-conversation-session-actions .conversation-header-ai-button {
   min-width: 2.45rem;
   height: 2rem;
   padding: 0 0.8rem;
