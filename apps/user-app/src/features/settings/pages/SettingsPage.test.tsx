@@ -227,7 +227,7 @@ describe("SettingsPage", () => {
     await userEvent.click(screen.getByRole("button", { name: new RegExp(t("settings.serverConnection")) }));
 
     const addressInput = await screen.findByRole("textbox", { name: t("settings.serverAddress") });
-    const saveButton = screen.getByRole("button", { name: t("common.save") });
+    const saveButton = screen.getAllByRole("button", { name: t("common.save") })[0]!;
 
     await userEvent.clear(addressInput);
     await userEvent.type(addressInput, "10.10.1.8:4100");
@@ -255,7 +255,7 @@ describe("SettingsPage", () => {
     renderSettingsPage();
 
     const addressInput = screen.getByRole("textbox", { name: t("settings.serverAddress") });
-    const saveButton = screen.getByRole("button", { name: t("common.save") });
+    const saveButton = screen.getAllByRole("button", { name: t("common.save") })[0]!;
 
     await userEvent.clear(addressInput);
     await userEvent.type(addressInput, "10.10.1.8:4100");
@@ -290,6 +290,37 @@ describe("SettingsPage", () => {
     expect(screen.getByText(t("settings.autoCheckUpdate"))).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("settings.releaseCheckNow") })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("settings.releaseOpenPage") })).toBeInTheDocument();
+  });
+
+  it("调试端口池只保留一个共享范围配置", async () => {
+    renderSettingsPage();
+
+    const startInput = screen.getByRole("textbox", {
+      name: `${t("settings.debugPortPool")} ${t("settings.debugPortPoolStart")}`
+    });
+    const endInput = screen.getByRole("textbox", {
+      name: `${t("settings.debugPortPool")} ${t("settings.debugPortPoolEnd")}`
+    });
+
+    expect(screen.getByText(t("settings.debugPortPoolRangeLabel"))).toBeInTheDocument();
+    expect(screen.queryByText(t("settings.debugPortPoolRoleFrontend"))).not.toBeInTheDocument();
+    expect(screen.queryByText(t("settings.debugPortPoolRoleBackend"))).not.toBeInTheDocument();
+    expect(startInput).toHaveValue("43000");
+    expect(endInput).toHaveValue("47999");
+
+    await userEvent.clear(startInput);
+    await userEvent.type(startInput, "48000");
+    await userEvent.clear(endInput);
+    await userEvent.type(endInput, "48010");
+    const saveButtons = screen.getAllByRole("button", { name: t("common.save") });
+    await userEvent.click(saveButtons[saveButtons.length - 1]!);
+
+    await waitFor(() => {
+      expect(userPreferenceStore.getState().profile.debugPortPools).toEqual({
+        start: 48000,
+        end: 48010
+      });
+    });
   });
 
   it("Android 运行时使用移动布局时，会显示 APK 直装更新面板", async () => {
@@ -765,7 +796,11 @@ function createPreferenceState(overrides?: Partial<ReturnType<typeof userPrefere
       language: overrides?.language ?? "zh-CN",
       theme: overrides?.theme ?? "light",
       autoTheme: overrides?.autoTheme ?? false,
-      defaultPermissionMode: overrides?.defaultPermissionMode ?? "default"
+      defaultPermissionMode: overrides?.defaultPermissionMode ?? "default",
+      debugPortPools: overrides?.debugPortPools ?? {
+        start: 43000,
+        end: 47999
+      }
     },
     providers: {
       "claude-code": {

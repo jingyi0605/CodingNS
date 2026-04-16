@@ -17436,6 +17436,19 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.settings-debug-port-pool-editor {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-debug-port-pool-label {
+  flex: 0 0 72px;
+}
+
+.settings-debug-port-pool-feedback {
+  padding: 8px 18px 16px;
+}
+
 .settings-text-input,
 .settings-select {
   width: 100%;

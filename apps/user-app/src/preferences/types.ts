@@ -15,7 +15,7 @@ export interface DebugPortPoolRange {
   end: number;
 }
 
-export type DebugPortPoolConfig = Record<DebugPortPoolRole, DebugPortPoolRange>;
+export type DebugPortPoolConfig = DebugPortPoolRange;
 
 export interface AccountPreferenceProviderProfile {
   defaultModel: string | null;

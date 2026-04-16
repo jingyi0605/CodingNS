@@ -29,14 +29,11 @@ import { SkillManagementPanel } from "../../../settings/SkillManagementPanel";
 import { TailscalePanel } from "../../../settings/TailscalePanel";
 import { authStore } from "../../auth/store/auth-store";
 import { MobilePageHeader } from "../../mobile-shell/components/MobilePageHeader";
-import type { DebugPortPoolConfig, DebugPortPoolRole } from "../../../preferences/types";
+import type { DebugPortPoolConfig } from "../../../preferences/types";
 
 const DEFAULT_DEBUG_PORT_POOLS: DebugPortPoolConfig = {
-  frontend: { start: 43000, end: 43999 },
-  backend: { start: 44000, end: 44999 },
-  worker: { start: 45000, end: 45999 },
-  mock: { start: 46000, end: 46999 },
-  custom: { start: 47000, end: 47999 }
+  start: 43000,
+  end: 47999
 };
 
 type SettingsSectionId =
@@ -1053,7 +1050,6 @@ function MobileSecurityPrivacySection({ model }: { model: SettingsPageModel }) {
 
       <section className="settings-mobile-group-section">
         <h2 className="settings-mobile-group-title">{t("settings.debugPortPool")}</h2>
-        <p className="settings-mobile-group-note">{t("settings.debugPortPoolDescription")}</p>
         <div className="settings-mobile-list">
           <DebugPortPoolEditor
             value={model.accountPreferences.debugPortPools}
@@ -1114,7 +1110,10 @@ function MobileSecurityPrivacySection({ model }: { model: SettingsPageModel }) {
   );
 }
 
-type DebugPortPoolDraft = Record<DebugPortPoolRole, { start: string; end: string }>;
+interface DebugPortPoolDraft {
+  start: string;
+  end: string;
+}
 
 function DebugPortPoolEditor(props: {
   value: DebugPortPoolConfig | undefined;
@@ -1155,165 +1154,83 @@ function DebugPortPoolEditor(props: {
   }
 
   return (
-    <div className={props.compact ? "settings-mobile-form-stack" : "settings-row-control settings-row-control-stretch"}>
-      {!props.compact ? (
-        <div className="settings-row">
-          <div className="settings-row-label">
-            <span className="settings-row-title">{t("settings.debugPortPool")}</span>
-            <span className="settings-row-description">{t("settings.debugPortPoolDescription")}</span>
+    <div className={props.compact ? "settings-mobile-form-stack" : "settings-debug-port-pool-editor"}>
+      <div className={props.compact ? "settings-mobile-form-row" : "settings-row"}>
+        <div className={props.compact ? "settings-mobile-row-copy" : "settings-row-label settings-debug-port-pool-label"}>
+          <span className={props.compact ? "settings-mobile-row-title" : "settings-row-title"}>
+            {t("settings.debugPortPoolRangeLabel")}
+          </span>
+        </div>
+        <div className={props.compact ? "settings-mobile-form-stack" : "settings-row-control settings-row-control-stretch"}>
+          <div className="settings-inline-form">
+            <input
+              aria-label={`${t("settings.debugPortPool")} ${t("settings.debugPortPoolStart")}`}
+              className="settings-text-input"
+              inputMode="numeric"
+              value={draft.start}
+              onChange={(event) => {
+                const value = event.target.value;
+                setDraft((current) => ({
+                  ...current,
+                  start: value
+                }));
+              }}
+            />
+            <span>{t("settings.debugPortPoolRangeSeparator")}</span>
+            <input
+              aria-label={`${t("settings.debugPortPool")} ${t("settings.debugPortPoolEnd")}`}
+              className="settings-text-input"
+              inputMode="numeric"
+              value={draft.end}
+              onChange={(event) => {
+                const value = event.target.value;
+                setDraft((current) => ({
+                  ...current,
+                  end: value
+                }));
+              }}
+            />
+            <button
+              type="button"
+              className={props.compact ? "settings-mobile-primary-button" : "settings-button"}
+              disabled={saving}
+              onClick={() => {
+                void handleSave();
+              }}
+            >
+              {saving ? t("common.loading") : t("common.save")}
+            </button>
+            {saved ? <span>{t("settings.debugPortPoolSaved")}</span> : null}
           </div>
         </div>
-      ) : null}
-
-      {DEBUG_PORT_POOL_ROLE_ORDER.map((role) => (
-        <div
-          key={role}
-          className={props.compact ? "settings-mobile-form-row" : "settings-row"}
-        >
-          <div className={props.compact ? "settings-mobile-row-copy" : "settings-row-label"}>
-            <span className={props.compact ? "settings-mobile-row-title" : "settings-row-title"}>
-              {getDebugPortPoolRoleLabel(role)}
-            </span>
-            <span className={props.compact ? "settings-mobile-row-description" : "settings-row-description"}>
-              {t("settings.debugPortPoolRoleHint", { role: getDebugPortPoolRoleLabel(role) })}
-            </span>
-          </div>
-          <div className={props.compact ? "settings-mobile-form-stack" : "settings-row-control settings-row-control-stretch"}>
-            <div className="settings-inline-form">
-              <input
-                aria-label={`${getDebugPortPoolRoleLabel(role)} ${t("settings.debugPortPoolStart")}`}
-                className="settings-text-input"
-                inputMode="numeric"
-                value={draft[role].start}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setDraft((current) => ({
-                    ...current,
-                    [role]: {
-                      ...current[role],
-                      start: value
-                    }
-                  }));
-                }}
-              />
-              <span>{t("settings.debugPortPoolRangeSeparator")}</span>
-              <input
-                aria-label={`${getDebugPortPoolRoleLabel(role)} ${t("settings.debugPortPoolEnd")}`}
-                className="settings-text-input"
-                inputMode="numeric"
-                value={draft[role].end}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setDraft((current) => ({
-                    ...current,
-                    [role]: {
-                      ...current[role],
-                      end: value
-                    }
-                  }));
-                }}
-              />
-            </div>
-          </div>
-        </div>
-      ))}
-
-      <div className={props.compact ? "settings-mobile-form-stack" : "settings-inline-form"}>
-        <button
-          type="button"
-          className={props.compact ? "settings-mobile-primary-button" : "settings-button"}
-          disabled={saving}
-          onClick={() => {
-            void handleSave();
-          }}
-        >
-          {saving ? t("common.loading") : t("settings.debugPortPoolSaveAction")}
-        </button>
-        {saved ? <span>{t("settings.debugPortPoolSaved")}</span> : null}
       </div>
-      {error ? <p className="status-text" data-tone="error">{error}</p> : null}
+      {error ? <p className="status-text settings-debug-port-pool-feedback" data-tone="error">{error}</p> : null}
     </div>
   );
 }
 
-const DEBUG_PORT_POOL_ROLE_ORDER: DebugPortPoolRole[] = [
-  "frontend",
-  "backend",
-  "worker",
-  "mock",
-  "custom"
-];
-
 function toDebugPortPoolDraft(value: DebugPortPoolConfig | undefined): DebugPortPoolDraft {
   const resolved = value ?? DEFAULT_DEBUG_PORT_POOLS;
+
   return {
-    frontend: {
-      start: String(resolved.frontend.start),
-      end: String(resolved.frontend.end)
-    },
-    backend: {
-      start: String(resolved.backend.start),
-      end: String(resolved.backend.end)
-    },
-    worker: {
-      start: String(resolved.worker.start),
-      end: String(resolved.worker.end)
-    },
-    mock: {
-      start: String(resolved.mock.start),
-      end: String(resolved.mock.end)
-    },
-    custom: {
-      start: String(resolved.custom.start),
-      end: String(resolved.custom.end)
-    }
+    start: String(resolved.start),
+    end: String(resolved.end)
   };
 }
 
 function parseDebugPortPoolDraft(draft: DebugPortPoolDraft): DebugPortPoolConfig {
-  const config = {} as DebugPortPoolConfig;
+  const start = Number.parseInt(draft.start, 10);
+  const end = Number.parseInt(draft.end, 10);
 
-  for (const role of DEBUG_PORT_POOL_ROLE_ORDER) {
-    const start = Number.parseInt(draft[role].start, 10);
-    const end = Number.parseInt(draft[role].end, 10);
-
-    if (!Number.isInteger(start) || !Number.isInteger(end)) {
-      throw new Error(t("settings.debugPortPoolValidationInteger"));
-    }
-
-    if (start < 1024 || end > 65535 || start >= end) {
-      throw new Error(t("settings.debugPortPoolValidationRange"));
-    }
-
-    config[role] = { start, end };
+  if (!Number.isInteger(start) || !Number.isInteger(end)) {
+    throw new Error(t("settings.debugPortPoolValidationInteger"));
   }
 
-  const sorted = DEBUG_PORT_POOL_ROLE_ORDER
-    .map((role) => ({ role, start: config[role].start, end: config[role].end }))
-    .sort((left, right) => left.start - right.start);
-
-  for (let index = 1; index < sorted.length; index += 1) {
-    if (sorted[index]!.start <= sorted[index - 1]!.end) {
-      throw new Error(t("settings.debugPortPoolValidationOverlap"));
-    }
+  if (start < 1024 || end > 65535 || start >= end) {
+    throw new Error(t("settings.debugPortPoolValidationRange"));
   }
 
-  return config;
-}
-
-function getDebugPortPoolRoleLabel(role: DebugPortPoolRole): string {
-  switch (role) {
-    case "frontend":
-      return t("settings.debugPortPoolRoleFrontend");
-    case "backend":
-      return t("settings.debugPortPoolRoleBackend");
-    case "worker":
-      return t("settings.debugPortPoolRoleWorker");
-    case "mock":
-      return t("settings.debugPortPoolRoleMock");
-    default:
-      return t("settings.debugPortPoolRoleCustom");
-  }
+  return { start, end };
 }
 
 function MobileRemoteAccessSection() {

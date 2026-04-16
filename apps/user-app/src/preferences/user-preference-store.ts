@@ -53,11 +53,8 @@ const LEGACY_THEME_KEY = "codingns-theme";
 const LEGACY_MODEL_KEY_PREFIX = "composer-selected-model:";
 const LEGACY_REASONING_KEY_PREFIX = "composer-reasoning-level:";
 const DEFAULT_DEBUG_PORT_POOLS: DebugPortPoolConfig = {
-  frontend: { start: 43000, end: 43999 },
-  backend: { start: 44000, end: 44999 },
-  worker: { start: 45000, end: 45999 },
-  mock: { start: 46000, end: 46999 },
-  custom: { start: 47000, end: 47999 }
+  start: 43000,
+  end: 47999
 };
 
 function canUseLocalStorage(): boolean {
@@ -453,27 +450,13 @@ function normalizeDebugPortPools(value: unknown): DebugPortPoolConfig | null {
     return null;
   }
 
-  const roles: Array<keyof DebugPortPoolConfig> = ["frontend", "backend", "worker", "mock", "custom"];
-  const result = {} as DebugPortPoolConfig;
+  const directRange = normalizePortPoolRange(value);
 
-  for (const role of roles) {
-    const range = (value as Record<string, unknown>)[role];
-
-    if (!range || typeof range !== "object" || Array.isArray(range)) {
-      return null;
-    }
-
-    const start = normalizePortPoolValue((range as Record<string, unknown>).start);
-    const end = normalizePortPoolValue((range as Record<string, unknown>).end);
-
-    if (start === null || end === null || start >= end) {
-      return null;
-    }
-
-    result[role] = { start, end };
+  if (directRange) {
+    return directRange;
   }
 
-  return result;
+  return normalizeLegacyPortPoolConfig(value);
 }
 
 function normalizePortPoolValue(value: unknown): number | null {
@@ -485,14 +468,57 @@ function normalizePortPoolValue(value: unknown): number | null {
   return port >= 1024 && port <= 65535 ? port : null;
 }
 
+function normalizePortPoolRange(value: unknown): DebugPortPoolConfig | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  if (
+    !Object.prototype.hasOwnProperty.call(record, "start")
+    || !Object.prototype.hasOwnProperty.call(record, "end")
+  ) {
+    return null;
+  }
+
+  const start = normalizePortPoolValue(record.start);
+  const end = normalizePortPoolValue(record.end);
+
+  if (start === null || end === null || start >= end) {
+    return null;
+  }
+
+  return { start, end };
+}
+
+function normalizeLegacyPortPoolConfig(value: unknown): DebugPortPoolConfig | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const roles = ["frontend", "backend", "worker", "mock", "custom"] as const;
+  let start = Number.POSITIVE_INFINITY;
+  let end = Number.NEGATIVE_INFINITY;
+
+  for (const role of roles) {
+    const range = normalizePortPoolRange((value as Record<string, unknown>)[role]);
+
+    if (!range) {
+      return null;
+    }
+
+    start = Math.min(start, range.start);
+    end = Math.max(end, range.end);
+  }
+
+  return Number.isFinite(start) && Number.isFinite(end) && start < end
+    ? { start, end }
+    : null;
+}
+
 function cloneDebugPortPools(value: DebugPortPoolConfig): DebugPortPoolConfig {
-  return {
-    frontend: { ...value.frontend },
-    backend: { ...value.backend },
-    worker: { ...value.worker },
-    mock: { ...value.mock },
-    custom: { ...value.custom }
-  };
+  return { ...value };
 }
 
 async function fetchRemoteStateWithMigration(): Promise<AccountPreferenceState> {
