@@ -5009,6 +5009,14 @@ body {
   color: rgba(235, 235, 245, 0.62);
 }
 
+[data-theme="dark"] .workbench-auxiliary .terminal-manager-overview-card span {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+[data-theme="dark"] .workbench-auxiliary .terminal-manager-overview-card strong {
+  color: rgba(255, 255, 255, 0.96);
+}
+
 [data-theme="dark"] .workbench-auxiliary .terminal-manager-overview-card,
 [data-theme="dark"] .workbench-auxiliary .terminal-manager-status-panel,
 [data-theme="dark"] .workbench-auxiliary .terminal-manager-detail-item {
@@ -6636,7 +6644,7 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-section {
   background: transparent !important;
   background-image: none !important;
-  border: 1px solid rgba(255, 255, 255, 0.68) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
   box-shadow: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -6658,11 +6666,21 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-overview-card,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-status-panel,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-detail-item {
-  border-color: rgba(255, 255, 255, 0.56) !important;
+  border-color: rgba(255, 255, 255, 0.14) !important;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-card + .terminal-manager-card {
-  border-top-color: rgba(255, 255, 255, 0.48) !important;
+  border-top-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"][data-theme="dark"] .workbench-auxiliary .terminal-manager-overview-card span,
+[data-theme="dark"] .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-overview-card span {
+  color: rgba(255, 255, 255, 0.78) !important;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"][data-theme="dark"] .workbench-auxiliary .terminal-manager-overview-card strong,
+[data-theme="dark"] .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-overview-card strong {
+  color: rgba(255, 255, 255, 0.98) !important;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .butler-todo-card {
