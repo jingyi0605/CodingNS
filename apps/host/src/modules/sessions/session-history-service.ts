@@ -74,7 +74,7 @@ import {
   enrichOpenCodeCapabilities
 } from "../provider/opencode-model-options.js";
 import {
-  ProviderDiscoveryHelperClient,
+  getSharedProviderDiscoveryHelperClient,
   type ProviderSessionDiscoveryHelperConfig
 } from "../provider/provider-discovery-helper-client.js";
 import { createTaskManager, TaskManager } from "../tasks/task-manager.js";
@@ -217,7 +217,7 @@ export class SessionHistoryService {
   private readonly openCodeModelOptionsService: OpenCodeModelOptionsService;
   private readonly providerCliCommandPaths: Readonly<Partial<Record<string, string>>>;
   private readonly providerCliAvailability: Readonly<Partial<Record<string, boolean>>>;
-  private readonly providerDiscoveryHelperClient = new ProviderDiscoveryHelperClient();
+  private readonly providerDiscoveryHelperClient = getSharedProviderDiscoveryHelperClient();
   private readonly providerSessionDiscoveryConfig: ProviderSessionDiscoveryHelperConfig;
   private readonly taskManager: TaskManager;
   private readonly workspaceDiscoveryStatuses = new Map<string, WorkspaceDiscoveryStatus>();
@@ -482,7 +482,16 @@ export class SessionHistoryService {
   ): Promise<HistoryPage> {
     const startedAt = Date.now();
     const resolvedSessionId = this.resolveCanonicalSessionId(sessionId, userId);
-    const binding = this.getBindingOrThrow(resolvedSessionId);
+    let binding = this.getBindingOrThrow(resolvedSessionId);
+
+    if (userId) {
+      binding = await this.repairCodexDirtyBindingBeforeHistoryRead(
+        resolvedSessionId,
+        userId,
+        binding
+      );
+    }
+
     const current = this.sessionStatusSnapshotRepository.findBySessionId(resolvedSessionId);
     const safeLimit = clampLimit(limit);
     const knownTotalMessageCount =
@@ -3541,6 +3550,25 @@ export class SessionHistoryService {
     return nextRecord;
   }
 
+  private async repairCodexDirtyBindingBeforeHistoryRead(
+    sessionId: string,
+    userId: string,
+    binding: SessionBinding
+  ): Promise<SessionBinding> {
+    if (!shouldRepairCodexDirtyBinding(binding)) {
+      return binding;
+    }
+
+    await this.discoverWorkspaceSessions(binding.workspaceId, userId, {
+      force: true,
+      refreshStateMode: "deferred"
+    }).catch(() => {
+      return [];
+    });
+
+    return this.getBindingOrThrow(sessionId);
+  }
+
   private resolveLiveActivityObservation(sessionId: string): SessionActivityObservation | null {
     for (const resolver of this.liveActivityObservationResolvers) {
       const observation = resolver(sessionId);
@@ -4519,6 +4547,66 @@ function isLegacyCodingNsRolloutSession(providerSessionId: string, rawStoreRef: 
 
 function shouldRemoveMissingSyntheticCodexSession(rawStoreRef: string): boolean {
   return isSyntheticCodexRawStoreRef(rawStoreRef) && !existsSync(rawStoreRef);
+}
+
+function shouldRepairCodexDirtyBinding(binding: Pick<SessionBinding, "provider" | "providerSessionId" | "rawStoreRef">): boolean {
+  if (binding.provider !== "codex") {
+    return false;
+  }
+
+  if (isSyntheticCodexRawStoreRef(binding.rawStoreRef)) {
+    return false;
+  }
+
+  const expectedThreadId = binding.providerSessionId.trim();
+
+  if (!expectedThreadId) {
+    return false;
+  }
+
+  const boundThreadId = readCodexThreadIdFromRawStore(binding.rawStoreRef);
+
+  if (boundThreadId) {
+    return boundThreadId !== expectedThreadId;
+  }
+
+  return !existsSync(binding.rawStoreRef);
+}
+
+function readCodexThreadIdFromRawStore(filePath: string): string | null {
+  if (!existsSync(filePath)) {
+    return null;
+  }
+
+  try {
+    const firstLine = readFileSync(filePath, "utf8")
+      .split(/\r?\n/, 1)
+      .at(0)
+      ?.trim();
+
+    if (!firstLine) {
+      return null;
+    }
+
+    const record = JSON.parse(firstLine) as {
+      type?: unknown;
+      payload?: {
+        id?: unknown;
+      };
+    };
+
+    if (record.type !== "session_meta") {
+      return null;
+    }
+
+    const threadId =
+      typeof record.payload?.id === "string"
+        ? record.payload.id.trim()
+        : "";
+    return threadId.length > 0 ? threadId : null;
+  } catch {
+    return null;
+  }
 }
 
 function shouldMatchSessionBindingByRawStoreRef(provider: string): boolean {

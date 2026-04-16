@@ -1080,6 +1080,124 @@ describe("SessionHistoryService forkSession", () => {
     expect(repairedBinding?.rawStoreRef).toBe(childActualFile);
   });
 
+  it("首次读取会话历史时会先修复 Codex 旧脏 binding，再返回子会话自己的消息", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const sourceFile = createCodexSessionFile(
+      fixture.codexHomeDir,
+      fixture.workspaceDir,
+      "source-thread",
+      [
+        ["user", "父会话问题"],
+        ["assistant", "父会话回答"]
+      ]
+    );
+    const childActualFile = createCodexSessionFile(
+      fixture.codexHomeDir,
+      fixture.workspaceDir,
+      "child-thread",
+      [
+        ["user", "子会话自己的消息"]
+      ]
+    );
+    const {
+      service,
+      repos
+    } = createSessionHistoryHarness(fixture, () => ({
+      initialize: vi.fn(async () => {}),
+      forkThread: vi.fn(async () => ({
+        providerSessionId: "unused",
+        rawStoreRef: null
+      })),
+      readThread: vi.fn(async () => ({ history: [] })),
+      rollbackThread: vi.fn(async () => ({
+        providerSessionId: "unused",
+        rawStoreRef: null
+      })),
+      resumeThreadFromHistory: vi.fn(async () => ({
+        providerSessionId: "unused",
+        rawStoreRef: null
+      })),
+      close: vi.fn()
+    }));
+
+    seedSourceSession(repos, sourceFile, 2);
+    repos.sessionBindingRepository?.upsert({
+      sessionId: "child-session",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "child-thread",
+      rawStoreRef: sourceFile,
+      createdAt: "2026-04-10T08:05:00.000Z",
+      updatedAt: "2026-04-10T08:05:00.000Z"
+    });
+    repos.sessionIndexRepository?.upsert({
+      sessionId: "child-session",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      parentSessionId: "source-session",
+      title: "旧脏子会话",
+      messageCount: 1,
+      isArchived: false,
+      lastMessageAt: "2026-04-10T08:05:01.000Z",
+      createdAt: "2026-04-10T08:05:00.000Z",
+      updatedAt: "2026-04-10T08:05:01.000Z"
+    });
+    repos.sessionStateRepository?.upsert({
+      sessionId: "child-session",
+      userId: "user-1",
+      runningState: "idle",
+      activitySource: "none",
+      favorite: false,
+      lastEventAt: "2026-04-10T08:05:01.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-04-10T08:05:01.000Z"
+    });
+    repos.sessionStatusSnapshotRepository?.upsert({
+      sessionId: "child-session",
+      syncStatus: "idle",
+      syncCursor: null,
+      lastSyncAt: "2026-04-10T08:05:01.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      updatedAt: "2026-04-10T08:05:01.000Z"
+    });
+
+    const discoverSpy = vi.spyOn(service, "discoverWorkspaceSessions").mockImplementation(
+      async () => {
+        repos.sessionBindingRepository?.upsert({
+          sessionId: "child-session",
+          workspaceId: "workspace-1",
+          provider: "codex",
+          providerSessionId: "child-thread",
+          rawStoreRef: childActualFile,
+          createdAt: "2026-04-10T08:05:00.000Z",
+          updatedAt: "2026-04-10T08:05:02.000Z"
+        });
+
+        return [];
+      }
+    );
+
+    const childPage = await service.readSessionHistory(
+      "child-session",
+      null,
+      50,
+      "forward",
+      "user-1"
+    );
+    const repairedBinding = repos.sessionBindingRepository?.findBySessionId("child-session");
+
+    expect(discoverSpy).toHaveBeenCalledTimes(1);
+    expect(childPage.messages.map((message) => message.content)).toEqual([
+      "子会话自己的消息"
+    ]);
+    expect(repairedBinding?.rawStoreRef).toBe(childActualFile);
+  });
+
   it("fork 会话深度超过 4 级时会拒绝继续分叉", async () => {
     const fixture = createEmptyFixture();
     activeFixtures.push(fixture);
