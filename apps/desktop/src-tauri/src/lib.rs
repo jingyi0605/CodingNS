@@ -59,6 +59,12 @@ async fn install_update(app: AppHandle, channel: String) -> UpdateInstallResult 
 }
 
 #[tauri::command]
+fn restart_application(app: AppHandle) -> Result<(), String> {
+    app.request_restart();
+    Ok(())
+}
+
+#[tauri::command]
 fn rollback_to_previous_version(app: AppHandle) -> Result<(), String> {
     rollback::rollback_to_previous_version(&app)
 }
@@ -584,6 +590,7 @@ pub fn run() {
             get_runtime_info,
             check_for_update,
             install_update,
+            restart_application,
             rollback_to_previous_version,
             open_external,
             show_notification,
