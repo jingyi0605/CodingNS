@@ -7193,6 +7193,7 @@ export function WorkbenchLayout({
     }
 
     const { documentElement, body } = document;
+    const root = document.getElementById("root");
 
     if (!prefersMacOsWorkbenchVibrancy) {
       documentElement.removeAttribute("data-workbench-macos-vibrancy");
@@ -7200,12 +7201,28 @@ export function WorkbenchLayout({
       return;
     }
 
+    const previousDocumentBackground = documentElement.style.background;
+    const previousBodyBackground = body?.style.background ?? "";
+    const previousRootBackground = root?.style.background ?? "";
+
     documentElement.setAttribute("data-workbench-macos-vibrancy", "true");
     body?.setAttribute("data-workbench-macos-vibrancy", "true");
+    documentElement.style.background = "transparent";
+    body?.style.setProperty("background", "transparent");
+    root?.style.setProperty("background", "transparent");
 
     return () => {
       documentElement.removeAttribute("data-workbench-macos-vibrancy");
       body?.removeAttribute("data-workbench-macos-vibrancy");
+      documentElement.style.background = previousDocumentBackground;
+
+      if (body) {
+        body.style.background = previousBodyBackground;
+      }
+
+      if (root instanceof HTMLElement) {
+        root.style.background = previousRootBackground;
+      }
     };
   }, [prefersMacOsWorkbenchVibrancy]);
 

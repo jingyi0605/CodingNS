@@ -5360,61 +5360,82 @@ body {
   --workbench-macos-titlebar-control-size: 26px;
   --workbench-macos-titlebar-padding-top: 4px;
   --workbench-macos-titlebar-padding-bottom: 5px;
-  --sidebar-surface: rgba(244, 244, 242, 0.68);
-  --inspector-surface: rgba(248, 248, 246, 0.72);
-  --content-surface: rgba(252, 252, 250, 0.84);
-  --panel-bg: rgba(255, 255, 255, 0.5);
-  --panel-bg-strong: rgba(255, 255, 255, 0.72);
-  --panel-border: rgba(24, 24, 27, 0.08);
-  --panel-border-strong: rgba(24, 24, 27, 0.12);
-  --panel-separator: rgba(24, 24, 27, 0.08);
+  --sidebar-surface: rgba(242, 244, 246, 0.8);
+  --inspector-surface: rgba(245, 247, 249, 0.84);
+  --content-surface: rgba(252, 252, 252, 0.98);
+  --panel-bg: rgba(255, 255, 255, 0.68);
+  --panel-bg-strong: rgba(255, 255, 255, 0.9);
+  --panel-border: rgba(15, 23, 42, 0.08);
+  --panel-border-strong: rgba(15, 23, 42, 0.12);
+  --panel-separator: rgba(15, 23, 42, 0.08);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent 22%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14), transparent 18%),
     transparent;
 }
 
 [data-theme="dark"] .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] {
-  --sidebar-surface: rgba(30, 30, 30, 0.62);
-  --inspector-surface: rgba(36, 36, 36, 0.66);
-  --content-surface: rgba(24, 24, 24, 0.82);
-  --panel-bg: rgba(32, 32, 32, 0.44);
-  --panel-bg-strong: rgba(40, 40, 40, 0.66);
+  --sidebar-surface: rgba(31, 37, 44, 0.8);
+  --inspector-surface: rgba(33, 39, 46, 0.84);
+  --content-surface: rgba(24, 25, 28, 0.98);
+  --panel-bg: rgba(36, 41, 48, 0.62);
+  --panel-bg-strong: rgba(40, 45, 52, 0.84);
   --panel-border: rgba(255, 255, 255, 0.08);
   --panel-border-strong: rgba(255, 255, 255, 0.12);
-  --panel-separator: rgba(255, 255, 255, 0.08);
+  --panel-separator: rgba(255, 255, 255, 0.1);
 }
 
 [data-theme="sky-blue"] .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] {
-  --sidebar-surface: rgba(8, 18, 44, 0.68);
-  --inspector-surface: rgba(10, 20, 48, 0.72);
-  --content-surface: rgba(8, 16, 38, 0.84);
-  --panel-bg: rgba(10, 20, 48, 0.46);
-  --panel-bg-strong: rgba(12, 24, 56, 0.68);
+  --sidebar-surface: rgba(9, 21, 46, 0.78);
+  --inspector-surface: rgba(11, 24, 52, 0.82);
+  --content-surface: rgba(7, 14, 34, 0.96);
+  --panel-bg: rgba(12, 24, 56, 0.62);
+  --panel-bg-strong: rgba(12, 24, 56, 0.84);
+  --panel-border: rgba(140, 210, 255, 0.16);
+  --panel-border-strong: rgba(170, 226, 255, 0.26);
+  --panel-separator: rgba(140, 210, 255, 0.18);
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] {
+  background:
+    radial-gradient(circle at 12% 0%, rgba(255, 255, 255, 0.16), transparent 26%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 16%),
+    transparent;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-body-shell {
+  border-color: color-mix(in srgb, var(--panel-border-strong) 68%, transparent);
+  background: color-mix(in srgb, var(--panel-bg-strong) 36%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 18px 42px rgba(15, 23, 42, 0.06);
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary {
   background: transparent;
+  border: none;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary {
-  backdrop-filter: blur(22px) saturate(165%);
-  -webkit-backdrop-filter: blur(22px) saturate(165%);
+  backdrop-filter: blur(26px) saturate(165%);
+  -webkit-backdrop-filter: blur(26px) saturate(165%);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.34),
-    inset 0 0 0 0.5px rgba(255, 255, 255, 0.16);
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.12);
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell {
-  backdrop-filter: blur(10px) saturate(120%);
-  -webkit-backdrop-filter: blur(10px) saturate(120%);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-desktop-titlebar,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .terminal-tabbar {
-  background: color-mix(in srgb, var(--panel-bg-strong) 82%, transparent);
-  backdrop-filter: blur(22px) saturate(150%);
-  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  background: color-mix(in srgb, var(--panel-bg-strong) 62%, transparent);
+  backdrop-filter: blur(30px) saturate(165%);
+  -webkit-backdrop-filter: blur(30px) saturate(165%);
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-import-card.minimal,
@@ -5425,7 +5446,44 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .settings-card,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .conversation-header,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .composer-input-wrapper {
-  background: color-mix(in srgb, var(--panel-bg-strong) 86%, transparent);
+  background: color-mix(in srgb, var(--panel-bg-strong) 88%, transparent);
+  border-color: color-mix(in srgb, var(--panel-border-strong) 82%, transparent);
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14), transparent 18%),
+    color-mix(in srgb, var(--sidebar-surface) 94%, white 6%);
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell {
+  background: color-mix(in srgb, var(--content-surface) 98%, white 2%);
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent 18%),
+    color-mix(in srgb, var(--inspector-surface) 94%, white 6%);
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-side-resizer {
+  width: 8px;
+  flex: 0 0 8px;
+  position: relative;
+  background:
+    linear-gradient(
+      90deg,
+      transparent 0,
+      color-mix(in srgb, var(--panel-separator) 26%, transparent) 30%,
+      color-mix(in srgb, var(--panel-separator) 68%, transparent) 50%,
+      color-mix(in srgb, var(--panel-separator) 26%, transparent) 70%,
+      transparent 100%
+    );
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-side-resizer::after,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-side-resizer::before {
+  display: none;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .workbench-page,
@@ -5433,7 +5491,7 @@ body {
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .terminal-layout,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .conversation-page-shell,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .terminal-shell {
-  background: transparent;
+  background: color-mix(in srgb, var(--content-surface) 98%, white 2%);
 }
 
 .workbench-nav {

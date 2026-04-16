@@ -1,7 +1,7 @@
 {
   "$schema": "../../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "CodingNS",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "identifier": "com.codingns.desktop",
   "build": {
     "frontendDist": "../../user-app/dist",
@@ -10,6 +10,7 @@
     "beforeBuildCommand": "pnpm --dir ../user-app build"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -20,6 +21,7 @@
         "minHeight": 720,
         "resizable": true,
         "acceptFirstMouse": true,
+        "transparent": true,
         "hiddenTitle": true,
         "titleBarStyle": "Overlay",
         "trafficLightPosition": {

@@ -11,6 +11,8 @@ use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State, WebviewUrl, WebviewWindow,
     WindowEvent,
 };
+#[cfg(target_os = "macos")]
+use tauri::window::{Effect, EffectState, EffectsBuilder};
 use updater::{DesktopReleaseState, DesktopRuntimeInfo, UpdateInstallResult};
 use window_manager::{
     window_manager_error, WindowBounds, WindowDescriptor, WindowKind, WindowManagerState,
@@ -569,6 +571,13 @@ fn configure_macos_window_chrome(app: &tauri::App) -> tauri::Result<()> {
 
     // 统一顶栏要回到 Overlay 轨道，让应用工具栏真正进入标题栏区域。
     window.set_title_bar_style(TitleBarStyle::Overlay)?;
+    // 桌面端真正的毛玻璃依赖原生窗口材质，前端只负责把左右栏做成可透层。
+    window.set_effects(
+        EffectsBuilder::new()
+            .effect(Effect::Sidebar)
+            .state(EffectState::FollowsWindowActiveState)
+            .build(),
+    )?;
     Ok(())
 }
 
