@@ -700,6 +700,66 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
+  it("首屏 backfill 比本地快照更旧时，不会把最新消息回滚掉", async () => {
+    writeViewSnapshot(SESSION_RUNTIME_SNAPSHOT_KEY, {
+      session: null,
+      capabilities: null,
+      runtimeHasActiveRun: null,
+      runtimeCanInterrupt: null,
+      contextUsage: null,
+      messages: Array.from({ length: 12 }, (_, index) => ({
+        id: `cached-tail-${index + 1}`,
+        sessionId: "session-1",
+        role: "assistant" as const,
+        kind: "text" as const,
+        content: `cached-tail-${index + 1}`,
+        toolCall: null,
+        attachments: [],
+        attachmentPayloads: null,
+        timestamp: `2026-03-24T10:${String(index).padStart(2, "0")}:00.000Z`,
+        sequence: index + 1,
+        rawRef: `codex://raw#line=${index + 1}`,
+        deliveryState: "sent" as const,
+        clientRequestId: null
+      })),
+      permissionRequests: [],
+      queuedMessages: [],
+      olderCursor: null,
+      hasOlderMessages: false,
+      lastCursor: "cursor-before",
+      pagesLoaded: 1
+    });
+
+    const store = new SessionRuntimeStore("session-1");
+    await store.initialize();
+    emitRealtimeSubscribed();
+    emitRealtimeEnvelope({
+      type: "session.backfill",
+      sessionId: "session-1",
+      cursor: "cursor-after",
+      olderCursor: "cursor-older",
+      messages: Array.from({ length: 11 }, (_, index) => ({
+        messageId: `cached-tail-${index + 1}`,
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        kind: "text",
+        content: `cached-tail-${index + 1}`,
+        timestamp: `2026-03-24T10:${String(index).padStart(2, "0")}:00.000Z`,
+        sequence: index + 1,
+        rawRef: `codex://raw#line=${index + 1}`,
+        toolCall: null
+      }))
+    });
+
+    expect(store.getState().messages).toHaveLength(12);
+    expect(store.getState().messages.at(-1)?.id).toBe("cached-tail-12");
+    expect(store.getState().messages.at(-1)?.content).toBe("cached-tail-12");
+    expect(store.getState().lastCursor).toBe("cursor-after");
+
+    store.destroy();
+  });
+
   it("缓存里只有 provider-default 时，会重新刷新 capabilities", async () => {
     vi.useFakeTimers();
     writeViewSnapshot(SESSION_RUNTIME_SNAPSHOT_KEY, {

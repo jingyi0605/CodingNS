@@ -580,21 +580,24 @@ export class SessionRuntimeStore {
       onEnvelope: (event) => {
         this.historyBootstrapEnvelopeReceived = true;
         this.clearHistoryBootstrapFallbackTimer();
-        const shouldReplaceSnapshotSeed =
+        const shouldAttemptReplaceSnapshotSeed =
           event.type === "session.backfill" && this.replaceSnapshotSeedOnBackfill;
-        const merged = this.mergeHistoryMessages(event.messages, event.type === "session.backfill");
+        const { messages: merged, replacedSnapshotSeed } = this.mergeHistoryMessages(
+          event.messages,
+          shouldAttemptReplaceSnapshotSeed
+        );
         this.patch({
           messages: merged,
           lastCursor: event.cursor,
           historyState: "ready",
           olderCursor:
-            event.type === "session.backfill" && !shouldReplaceSnapshotSeed && this.state.pagesLoaded > 1
+            event.type === "session.backfill" && !replacedSnapshotSeed && this.state.pagesLoaded > 1
               ? this.state.olderCursor
               : (event.olderCursor ?? this.state.olderCursor),
           hasOlderMessages:
             event.type === "session.backfill"
               ? (
-                  !shouldReplaceSnapshotSeed && this.state.pagesLoaded > 1
+                  !replacedSnapshotSeed && this.state.pagesLoaded > 1
                     ? this.state.hasOlderMessages
                     : Boolean(event.olderCursor)
                 )
@@ -608,7 +611,7 @@ export class SessionRuntimeStore {
           pagesLoaded:
             event.type === "session.backfill"
               ? (
-                  !shouldReplaceSnapshotSeed && this.state.pagesLoaded > 1
+                  !replacedSnapshotSeed && this.state.pagesLoaded > 1
                     ? this.state.pagesLoaded
                     : Math.max(this.state.pagesLoaded, merged.length > 0 ? 1 : 0)
                 )
@@ -626,7 +629,7 @@ export class SessionRuntimeStore {
         }
       },
       onOlderHistory: (event) => {
-        const merged = this.mergeHistoryMessages(event.messages, false);
+        const { messages: merged } = this.mergeHistoryMessages(event.messages, false);
 
         this.patch({
           messages: merged,
@@ -707,18 +710,27 @@ export class SessionRuntimeStore {
   private mergeHistoryMessages(
     incoming: HistoryMessageDto[],
     replaceSnapshotSeed: boolean
-  ): SessionMessageViewModel[] {
+  ): { messages: SessionMessageViewModel[]; replacedSnapshotSeed: boolean } {
+    // 首屏 backfill 可能比本地快照更旧，例如 provider 日志尚未落盘。
+    // 这种情况下只能合并，不能把已经看到的最新尾消息删掉。
+    const replacedSnapshotSeed =
+      replaceSnapshotSeed
+      && this.replaceSnapshotSeedOnBackfill
+      && shouldReplaceSnapshotSeedWithIncoming(this.state.messages, incoming);
     const baseMessages =
-      replaceSnapshotSeed && this.replaceSnapshotSeedOnBackfill
+      replacedSnapshotSeed
         ? this.state.messages.filter((message) => message.deliveryState !== "sent")
         : this.state.messages;
     const merged = mergeAuthoritativeMessages(baseMessages, this.sessionId, incoming);
 
-    if (replaceSnapshotSeed) {
+    if (replacedSnapshotSeed) {
       this.replaceSnapshotSeedOnBackfill = false;
     }
 
-    return merged;
+    return {
+      messages: merged,
+      replacedSnapshotSeed
+    };
   }
 
   private handleError(error: unknown): void {
@@ -848,18 +860,20 @@ export class SessionRuntimeStore {
       }
 
       this.historyBootstrapEnvelopeReceived = true;
-      const shouldReplaceSnapshotSeed = this.replaceSnapshotSeedOnBackfill;
-      const merged = this.mergeHistoryMessages(page.messages, true);
+      const { messages: merged, replacedSnapshotSeed } = this.mergeHistoryMessages(
+        page.messages,
+        this.replaceSnapshotSeedOnBackfill
+      );
 
       this.patch({
         messages: merged,
         historyState: "ready",
         olderCursor:
-          !shouldReplaceSnapshotSeed && this.state.pagesLoaded > 1
+          !replacedSnapshotSeed && this.state.pagesLoaded > 1
             ? this.state.olderCursor
             : page.nextCursor,
         hasOlderMessages:
-          !shouldReplaceSnapshotSeed && this.state.pagesLoaded > 1
+          !replacedSnapshotSeed && this.state.pagesLoaded > 1
             ? this.state.hasOlderMessages
             : resolveHasOlderMessages({
                 session: this.state.session,
@@ -870,7 +884,7 @@ export class SessionRuntimeStore {
               }),
         lastCursor: page.cursor ?? this.state.lastCursor,
         pagesLoaded:
-          !shouldReplaceSnapshotSeed && this.state.pagesLoaded > 1
+          !replacedSnapshotSeed && this.state.pagesLoaded > 1
             ? this.state.pagesLoaded
             : (
                 merged.length > 0
@@ -1487,6 +1501,79 @@ export function connectionTone(state: RuntimeConnectionState) {
 function resolveKnownMessageCount(session: SessionSummaryDto | null): number | null {
   const messageCount = session?.messageCount;
   return typeof messageCount === "number" && Number.isFinite(messageCount) ? messageCount : null;
+}
+
+function shouldReplaceSnapshotSeedWithIncoming(
+  current: SessionMessageViewModel[],
+  incoming: HistoryMessageDto[]
+): boolean {
+  const latestIncomingMessage = pickLatestHistoryMessage(incoming);
+
+  if (!latestIncomingMessage) {
+    return false;
+  }
+
+  const latestCurrentMessage = pickLatestSentViewMessage(current);
+
+  if (!latestCurrentMessage) {
+    return true;
+  }
+
+  return compareMessageOrder(
+    latestIncomingMessage.sequence,
+    latestIncomingMessage.timestamp,
+    latestCurrentMessage.sequence,
+    latestCurrentMessage.timestamp
+  ) >= 0;
+}
+
+function pickLatestHistoryMessage(messages: HistoryMessageDto[]): HistoryMessageDto | null {
+  let latest: HistoryMessageDto | null = null;
+
+  for (const message of messages) {
+    if (
+      !latest
+      || compareMessageOrder(message.sequence, message.timestamp, latest.sequence, latest.timestamp) > 0
+    ) {
+      latest = message;
+    }
+  }
+
+  return latest;
+}
+
+function pickLatestSentViewMessage(
+  messages: SessionMessageViewModel[]
+): SessionMessageViewModel | null {
+  let latest: SessionMessageViewModel | null = null;
+
+  for (const message of messages) {
+    if (message.deliveryState !== "sent") {
+      continue;
+    }
+
+    if (
+      !latest
+      || compareMessageOrder(message.sequence, message.timestamp, latest.sequence, latest.timestamp) > 0
+    ) {
+      latest = message;
+    }
+  }
+
+  return latest;
+}
+
+function compareMessageOrder(
+  leftSequence: number,
+  leftTimestamp: string,
+  rightSequence: number,
+  rightTimestamp: string
+): number {
+  if (leftSequence !== rightSequence) {
+    return leftSequence - rightSequence;
+  }
+
+  return leftTimestamp.localeCompare(rightTimestamp);
 }
 
 function resolveInitialHistoryState(
