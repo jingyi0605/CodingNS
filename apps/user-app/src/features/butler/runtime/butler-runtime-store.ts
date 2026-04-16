@@ -536,7 +536,9 @@ export class ButlerRuntimeStore {
       this.selectedControlSessionId = controlSession.id;
 
       const [historyPage, runtime] = await Promise.all([
-        getSessionMessages(controlSession.session.sessionId, null, BUTLER_MESSAGE_PAGE_SIZE, "forward"),
+        // Butler 对话页打开时必须先展示最新一页；长会话如果从 forward 读第一页，
+        // 会把已经看到的最近消息回退成最早的旧历史。
+        getSessionMessages(controlSession.session.sessionId, null, BUTLER_MESSAGE_PAGE_SIZE, "backward"),
         getSessionRuntime(controlSession.session.sessionId)
       ]);
       if (this.state.controlSession?.id !== controlSession.id) {

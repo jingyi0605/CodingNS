@@ -421,6 +421,79 @@ describe("ButlerRuntimeStore", () => {
     ]);
   });
 
+  it("打开长控制会话时会优先读取最新一页历史，而不是最早一页", async () => {
+    const store = new ButlerRuntimeStore("workspace-1");
+    const controlSession = {
+      id: "ctrl-long-1",
+      providerId: "codex",
+      sessionId: "session-control-long-1",
+      purpose: "chat" as const,
+      title: "长控制会话",
+      sourceItemId: null,
+      status: "running" as const,
+      lastContextVersion: null,
+      lastSummary: null,
+      createdAt: "2026-04-05T00:00:00.000Z",
+      updatedAt: "2026-04-05T00:10:00.000Z",
+      session: {
+        sessionId: "session-control-long-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "provider-control-long-1",
+        rawStoreRef: "raw-control-long-1",
+        title: "长控制会话",
+        messageCount: 200,
+        lastMessageAt: "2026-04-05T00:10:00.000Z",
+        createdAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:10:00.000Z",
+        syncStatus: "idle",
+        syncCursor: null,
+        lastSyncAt: null,
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "completed",
+        activitySource: "runtime",
+        lastEventAt: "2026-04-05T00:10:00.000Z",
+        completedAt: "2026-04-05T00:10:00.000Z",
+        lastSeenAt: null,
+        activityState: "completed_unread"
+      }
+    };
+
+    mockedGetCurrentButlerControlSession.mockResolvedValue({
+      controlSession
+    } as never);
+    mockedGetSessionMessages.mockResolvedValue({
+      messages: Array.from({ length: 60 }, (_, index) => ({
+        messageId: `msg-${index + 141}`,
+        provider: "codex",
+        providerSessionId: "provider-control-long-1",
+        role: index % 2 === 0 ? "user" : "assistant",
+        kind: "text",
+        content: `message-${index + 141}`,
+        timestamp: `2026-04-05T00:${String(index).padStart(2, "0")}:00.000Z`,
+        sequence: index + 141,
+        rawRef: `raw-${index + 141}`
+      })),
+      cursor: "cursor-200",
+      nextCursor: "cursor-140",
+      total: 200
+    } as never);
+
+    await store.initialize();
+
+    expect(mockedGetSessionMessages).toHaveBeenCalledWith(
+      "session-control-long-1",
+      null,
+      60,
+      "backward"
+    );
+    expect(store.getState().messages[0]?.sequence).toBe(141);
+    expect(store.getState().messages.at(-1)?.sequence).toBe(200);
+    expect(realtimeMock.instances[0]?.options.cursor).toBe("cursor-200");
+  });
+
   it("重复收到 inactive 活动事件时不会反复 reload 控制会话", async () => {
     vi.useFakeTimers();
 
