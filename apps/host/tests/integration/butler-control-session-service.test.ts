@@ -63,6 +63,7 @@ describe("ButlerControlSessionService", () => {
         ensureInitialized: vi.fn(() => profile)
       } as unknown as ButlerProfileService,
       {
+        findLatestOpenByProvider: vi.fn(() => null),
         findLatestByProvider: vi.fn(() => null),
         create: vi.fn(),
         update: vi.fn()
@@ -220,6 +221,7 @@ describe("ButlerControlSessionService", () => {
         ensureInitialized: vi.fn(() => profile)
       } as unknown as ButlerProfileService,
       {
+        findLatestOpenByProvider: vi.fn(() => null),
         findLatestByProvider: vi.fn(() => null),
         create: vi.fn((record: ButlerControlSession) => {
           savedControlSession = record;
@@ -448,6 +450,7 @@ describe("ButlerControlSessionService", () => {
         ensureInitialized: vi.fn(() => profile)
       } as unknown as ButlerProfileService,
       {
+        findLatestOpenByProvider: vi.fn(() => currentSession),
         findLatestByProvider: vi.fn(() => currentSession),
         create: vi.fn(),
         update: vi.fn((record: ButlerControlSession) => {
