@@ -482,23 +482,55 @@ create_macos_release_dmg() {
     local app_name
     local staging_dir
     local dmg_path
+    local tmp_dmg_path
+    local volume_name
 
     app_name="$(basename "$signed_app_path" .app)"
-    staging_dir="$MACOS_RELEASE_DIR/dmg-src"
     dmg_path="$MACOS_RELEASE_DIR/${app_name}.dmg"
+    volume_name="${MACOS_DMG_VOLUME_NAME:-$app_name}"
 
-    rm -rf "$staging_dir"
-    mkdir -p "$staging_dir"
-    ditto "$signed_app_path" "$staging_dir/${app_name}.app"
+    # 用临时目录和临时 dmg 路径，避免 runner 上已有同名文件句柄或系统索引占用目标路径。
+    staging_dir="$(mktemp -d "${TMPDIR:-/tmp}/codingns-macos-dmg-src.XXXXXX")"
+    tmp_dmg_path="$(mktemp "${TMPDIR:-/tmp}/${app_name}.XXXXXX.dmg")"
+
+    if [[ -z "$staging_dir" || -z "$tmp_dmg_path" ]]; then
+        log_error "创建 DMG 临时目录失败"
+        rm -rf "$staging_dir"
+        rm -f "$tmp_dmg_path"
+        return 1
+    fi
+
+    rm -f "$tmp_dmg_path"
+    if ! ditto "$signed_app_path" "$staging_dir/${app_name}.app"; then
+        log_error "复制 .app 到 DMG staging 目录失败"
+        rm -rf "$staging_dir"
+        rm -f "$tmp_dmg_path"
+        return 1
+    fi
 
     log_info "重新生成用于发布的 DMG..." >&2
     rm -f "$dmg_path"
-    hdiutil create \
-        -volname "${MACOS_DMG_VOLUME_NAME:-$app_name}" \
+
+    if ! hdiutil create \
+        -volname "$volume_name" \
         -srcfolder "$staging_dir" \
         -ov \
         -format UDZO \
-        "$dmg_path" > /dev/null
+        "$tmp_dmg_path" > /dev/null; then
+        log_error "重新生成 DMG 失败，hdiutil 无法写出镜像"
+        rm -rf "$staging_dir"
+        rm -f "$tmp_dmg_path"
+        return 1
+    fi
+
+    if ! mv "$tmp_dmg_path" "$dmg_path"; then
+        log_error "无法把临时 DMG 移动到发布目录: $dmg_path"
+        rm -rf "$staging_dir"
+        rm -f "$tmp_dmg_path"
+        return 1
+    fi
+
+    rm -rf "$staging_dir"
 
     echo "$dmg_path"
 }
@@ -520,6 +552,11 @@ create_macos_release_zip() {
 
 sign_macos_dmg() {
     local dmg_path="$1"
+
+    if [[ ! -f "$dmg_path" ]]; then
+        log_error "待签名的 DMG 不存在: $dmg_path"
+        return 1
+    fi
 
     log_info "对 DMG 执行签名..."
     codesign \
@@ -852,7 +889,10 @@ release_macos() {
     sign_macos_app "$release_app_path"
     verify_macos_signature "$release_app_path"
 
-    release_dmg_path="$(create_macos_release_dmg "$release_app_path")"
+    if ! release_dmg_path="$(create_macos_release_dmg "$release_app_path")"; then
+        log_error "DMG 生成失败，终止后续签名和公证"
+        return 1
+    fi
     sign_macos_dmg "$release_dmg_path"
     notarize_macos_file "$release_dmg_path"
 
