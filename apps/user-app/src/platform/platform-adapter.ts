@@ -30,6 +30,12 @@ export type PlatformOsFamily = "macos" | "windows" | "linux" | "ios" | "android"
 export type WindowControlsStyle = "traffic-lights" | "windows" | "none";
 export type ViewportClass = "compact" | "medium" | "expanded";
 export type HapticPattern = "selection" | "action" | "gesture" | "success" | "warning" | "error";
+export type DesktopWindowState =
+  | "minimize"
+  | "maximize"
+  | "toggle-maximize"
+  | "toggle-zoom"
+  | "close";
 
 export interface PlatformUiProfile {
   readonly osFamily: PlatformOsFamily;
@@ -39,12 +45,21 @@ export interface PlatformUiProfile {
   readonly prefersSystemFontStack: boolean;
 }
 
+export interface NativeSidebarLayout {
+  readonly leftWidth: number;
+  readonly rightWidth: number;
+  readonly leftCollapsed: boolean;
+  readonly rightCollapsed: boolean;
+  readonly prefersDarkAppearance: boolean;
+  readonly isResizing: boolean;
+}
+
 export interface DesktopShellBridge {
   readonly supported: boolean;
   openExternal(url: string): Promise<DesktopBridgeResult>;
   showNotification(title: string, body: string): Promise<DesktopBridgeResult>;
   writeClipboardText(text: string): Promise<DesktopBridgeResult>;
-  setWindowState(state: "minimize" | "maximize" | "toggle-maximize" | "close"): Promise<DesktopBridgeResult>;
+  setWindowState(state: DesktopWindowState): Promise<DesktopBridgeResult>;
   readDesktopConfig(): Promise<DesktopBridgeResult<Partial<ClientRuntimeConfig>>>;
   writeDesktopConfig(config: ClientRuntimeConfigPatch): Promise<DesktopBridgeResult>;
   scanLocalHosts(): Promise<DesktopBridgeResult<DesktopLocalHostProcessHit[]>>;
@@ -63,6 +78,7 @@ export interface DesktopShellBridge {
   getWindowDescriptor(windowId?: string): Promise<DesktopBridgeResult<WindowDescriptor>>;
   syncWindowDescriptor(descriptor: WindowDescriptor): Promise<DesktopBridgeResult>;
   updateWindowBounds(windowId: string, bounds: WindowBounds): Promise<DesktopBridgeResult>;
+  syncNativeSidebarLayout(layout: NativeSidebarLayout): Promise<DesktopBridgeResult>;
 }
 
 export interface PlatformHapticsBridge {
@@ -395,6 +411,10 @@ class WebDesktopShellBridge implements DesktopShellBridge {
   updateWindowBounds(): Promise<DesktopBridgeResult> {
     return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
   }
+
+  syncNativeSidebarLayout(): Promise<DesktopBridgeResult> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
 }
 
 class WebHapticsBridge implements PlatformHapticsBridge {
@@ -426,9 +446,7 @@ class TauriDesktopShellBridge implements DesktopShellBridge {
     return invokeDesktopCommand("copy_text", { text });
   }
 
-  setWindowState(
-    state: "minimize" | "maximize" | "toggle-maximize" | "close"
-  ): Promise<DesktopBridgeResult> {
+  setWindowState(state: DesktopWindowState): Promise<DesktopBridgeResult> {
     return invokeDesktopCommand("set_window_state", { state });
   }
 
@@ -518,6 +536,10 @@ class TauriDesktopShellBridge implements DesktopShellBridge {
 
   updateWindowBounds(windowId: string, bounds: WindowBounds): Promise<DesktopBridgeResult> {
     return invokeDesktopCommand("update_window_bounds", { windowId, bounds });
+  }
+
+  syncNativeSidebarLayout(layout: NativeSidebarLayout): Promise<DesktopBridgeResult> {
+    return invokeDesktopCommand("sync_native_sidebar_layout", { layout });
   }
 }
 
@@ -656,6 +678,10 @@ class TauriMobileShellBridge implements DesktopShellBridge {
   }
 
   updateWindowBounds(): Promise<DesktopBridgeResult> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  syncNativeSidebarLayout(): Promise<DesktopBridgeResult> {
     return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
   }
 }

@@ -3,6 +3,7 @@ import {
   useCallback,
   createContext,
   useContext,
+  useDeferredValue,
   type Dispatch,
   useEffect,
   useLayoutEffect,
@@ -39,9 +40,12 @@ import {
   type WorkspaceManagementRealtimeSnapshotDto
 } from "../../../network/workbench-realtime-client";
 import {
-  canStartDesktopWindowDragFromTarget,
-  startDesktopWindowDrag
+  beginMacOsTitlebarDragGesture,
+  canHandleMacOsTitlebarPointerGesture,
+  resolveMacOsNativeTitlebarDragRegion,
+  shouldUseMacOsNativeTitlebarDragRegion,
 } from "../../../platform/desktop/window-drag";
+import type { NativeSidebarLayout } from "../../../platform/platform-adapter";
 import {
   createDesktopWindowDetachPreview,
   type DesktopWindowDetachPreviewController
@@ -192,7 +196,8 @@ const SELECTED_WORKSPACE_ID_KEY = "workbench.workspace.selected.id";
 const WORKBENCH_NOTIFICATION_SEEN_AT_KEY = "workbench.notifications.seen_at";
 const DEFAULT_LEFT_PANEL_WIDTH = 280;
 const DEFAULT_RIGHT_PANEL_WIDTH = 320;
-const MIN_PANEL_WIDTH = 208;
+const MIN_LEFT_PANEL_WIDTH = 240;
+const MIN_RIGHT_PANEL_WIDTH = 280;
 const MAX_LEFT_PANEL_WIDTH = 520;
 const MAX_RIGHT_PANEL_WIDTH = 560;
 const INFO_PANEL_BOOT_DELAY_MS = 200;
@@ -206,6 +211,7 @@ const WORKBENCH_PERMISSION_POLL_INTERVAL_MS = 4_000;
 const SESSION_FAILURE_NOTIFICATION_DETAIL_MAX_LENGTH = 220;
 const WINDOW_DETACH_DRAG_THRESHOLD_PX = 18;
 const WORKSPACE_POINTER_REORDER_THRESHOLD_PX = 6;
+const WORKBENCH_PANEL_RESIZING_ATTRIBUTE = "data-workbench-panel-resizing";
 const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
 const WORKBENCH_RUNTIME_ACTIVE_STATES: ReadonlySet<string> = new Set([
   "starting",
@@ -1286,6 +1292,30 @@ function removeStoredValue(key: string) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+function readCssPixelValue(value: string): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function resolveMacOsUnifiedTitlebarGestureHeight(element: HTMLElement): number {
+  const styles = window.getComputedStyle(element);
+  const titlebarHeight = readCssPixelValue(styles.getPropertyValue("--desktop-macos-titlebar-height"));
+  const headerMinHeight = readCssPixelValue(styles.getPropertyValue("--workbench-header-min-height"));
+  const paddingTop = readCssPixelValue(styles.getPropertyValue("--workbench-macos-titlebar-padding-top"));
+  const paddingBottom = readCssPixelValue(styles.getPropertyValue("--workbench-macos-titlebar-padding-bottom"));
+
+  return Math.max(titlebarHeight, headerMinHeight, 40) + paddingTop + paddingBottom + 8;
+}
+
+function isMacOsUnifiedTitlebarGesture(eventClientY: number, shellElement: HTMLElement): boolean {
+  const shellRect = shellElement.getBoundingClientRect();
+
+  return (
+    eventClientY >= shellRect.top &&
+    eventClientY <= shellRect.top + resolveMacOsUnifiedTitlebarGestureHeight(shellElement)
+  );
 }
 
 function isEditableTarget(target: EventTarget | null) {
@@ -3374,23 +3404,13 @@ function SidebarContent({
 }) {
   const navigate = useNavigate();
   const platform = usePlatform();
+  const macOsNativeTitlebarDragRegion = resolveMacOsNativeTitlebarDragRegion(platform);
   const { showToast } = useToast();
   const runtimeConfig = useClientConfigSelector((state) => state);
   const activeHostName = getActiveHost(runtimeConfig)?.name ?? "";
   const showHostNameBadge =
     runtimeConfig.hosts.length + getVisibleDiscoveredHosts(runtimeConfig).length > 1
     && activeHostName.length > 0;
-  const handleHeaderMouseDownCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
-    if (!platform.isDesktop || platform.ui.osFamily !== "macos" || event.button !== 0) {
-      return;
-    }
-
-    if (!canStartDesktopWindowDragFromTarget(event.target)) {
-      return;
-    }
-
-    void startDesktopWindowDrag();
-  }, [platform.isDesktop, platform.ui.osFamily]);
   const [importBrowserOpen, setImportBrowserOpen] = useState(false);
   const [cloneBrowserOpen, setCloneBrowserOpen] = useState(false);
   const [workspaceManagerOpen, setWorkspaceManagerOpen] = useState(false);
@@ -5349,9 +5369,12 @@ function SidebarContent({
       <div
         className="workbench-nav-header"
         data-window-drag-handle="workbench-nav-header"
-        onMouseDownCapture={handleHeaderMouseDownCapture}
+        data-tauri-drag-region={macOsNativeTitlebarDragRegion}
       >
-        <div className="workbench-nav-toolbar">
+        <div
+          className="workbench-nav-toolbar"
+          data-tauri-drag-region={macOsNativeTitlebarDragRegion}
+        >
           {onToggleCollapse ? (
             <button
               type="button"
@@ -6252,6 +6275,7 @@ function WorkbenchInfoPanel({
 }) {
   const fallbackWorkspaceId = activeWorkspaceId ?? navigationGroups[0]?.workspace.id ?? null;
   const platform = usePlatform();
+  const macOsNativeTitlebarDragRegion = resolveMacOsNativeTitlebarDragRegion(platform);
   const { showToast } = useToast();
   const detachGestureRef = useRef<{
     tab: InfoTab;
@@ -6557,18 +6581,6 @@ function WorkbenchInfoPanel({
     onTabChange(tab);
   }, [onTabChange]);
 
-  const handleHeaderMouseDownCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
-    if (!platform.isDesktop || platform.ui.osFamily !== "macos" || event.button !== 0) {
-      return;
-    }
-
-    if (!canStartDesktopWindowDragFromTarget(event.target)) {
-      return;
-    }
-
-    void startDesktopWindowDrag();
-  }, [platform.isDesktop, platform.ui.osFamily]);
-
   return (
     <>
       <div
@@ -6576,7 +6588,7 @@ function WorkbenchInfoPanel({
         data-workspace-tone={workspaceContext?.tone ?? "root"}
         style={createWorkspaceToneStyle(workspaceContext)}
         data-window-drag-handle="workbench-auxiliary-header"
-        onMouseDownCapture={handleHeaderMouseDownCapture}
+        data-tauri-drag-region={macOsNativeTitlebarDragRegion}
       >
         {onToggleCollapse ? (
           <button
@@ -6593,6 +6605,7 @@ function WorkbenchInfoPanel({
           className="workbench-info-tabs"
           role="tablist"
           aria-label={t("shell.infoTabsLabel")}
+          data-tauri-drag-region={macOsNativeTitlebarDragRegion}
         >
           <button
             className={activeTab === "files" ? "workbench-info-tab active" : "workbench-info-tab"}
@@ -7128,6 +7141,10 @@ export function WorkbenchLayout({
   const showToastRef = useRef(showToast);
   const platformBridgeRef = useRef(platform.bridge);
   const workbenchShellRef = useRef<HTMLDivElement | null>(null);
+  const leftPanelWidthRef = useRef(0);
+  const rightPanelWidthRef = useRef(0);
+  const resizeAnimationFrameIdRef = useRef<number | null>(null);
+  const pendingResizeWidthRef = useRef<number | null>(null);
   const completionBaselineReadyRef = useRef(false);
   const previousSessionCompletionStateRef = useRef(
     new Map<
@@ -7161,12 +7178,16 @@ export function WorkbenchLayout({
   );
   const [navigationError, setNavigationError] = useState<string | null>(null);
   const [leftPanelWidth, setLeftPanelWidth] = useState(() =>
-    clamp(readStoredNumber(LEFT_PANEL_WIDTH_KEY, DEFAULT_LEFT_PANEL_WIDTH), MIN_PANEL_WIDTH, MAX_LEFT_PANEL_WIDTH)
+    clamp(
+      readStoredNumber(LEFT_PANEL_WIDTH_KEY, DEFAULT_LEFT_PANEL_WIDTH),
+      MIN_LEFT_PANEL_WIDTH,
+      MAX_LEFT_PANEL_WIDTH
+    )
   );
   const [rightPanelWidth, setRightPanelWidth] = useState(() =>
     clamp(
       readStoredNumber(RIGHT_PANEL_WIDTH_KEY, DEFAULT_RIGHT_PANEL_WIDTH),
-      MIN_PANEL_WIDTH,
+      MIN_RIGHT_PANEL_WIDTH,
       MAX_RIGHT_PANEL_WIDTH
     )
   );
@@ -7176,6 +7197,7 @@ export function WorkbenchLayout({
   const [rightCollapsed, setRightCollapsed] = useState(() =>
     readStoredBoolean(RIGHT_PANEL_COLLAPSED_KEY, false)
   );
+  const [activeResizeSide, setActiveResizeSide] = useState<"left" | "right" | null>(null);
   const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState(() =>
     extractCollapsedWorkspaceIds(initialWorkbenchSnapshotRef.current)
   );
@@ -7199,6 +7221,53 @@ export function WorkbenchLayout({
   const [workspaceManagementStateById, setWorkspaceManagementStateById] = useState<
     Record<string, WorkspaceManagementViewState>
   >({});
+  const useMacOsNativeTitlebarDragRegion = shouldUseMacOsNativeTitlebarDragRegion(platform);
+  const handleUnifiedTitlebarMouseDownCapture = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    if (useMacOsNativeTitlebarDragRegion) {
+      return;
+    }
+
+    const shellElement = workbenchShellRef.current;
+
+    if (!shellElement) {
+      return;
+    }
+
+    if (
+      !canHandleMacOsTitlebarPointerGesture(platform, event.button, event.target)
+      || !isMacOsUnifiedTitlebarGesture(event.clientY, shellElement)
+    ) {
+      return;
+    }
+
+    beginMacOsTitlebarDragGesture({
+      platform,
+      button: event.button,
+      target: event.target,
+      clientX: event.clientX,
+      clientY: event.clientY
+    });
+  }, [platform, useMacOsNativeTitlebarDragRegion]);
+  const handleUnifiedTitlebarDoubleClickCapture = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    if (useMacOsNativeTitlebarDragRegion) {
+      return;
+    }
+
+    const shellElement = workbenchShellRef.current;
+
+    if (!shellElement) {
+      return;
+    }
+
+    if (
+      !canHandleMacOsTitlebarPointerGesture(platform, event.button, event.target)
+      || !isMacOsUnifiedTitlebarGesture(event.clientY, shellElement)
+    ) {
+      return;
+    }
+
+    void platform.bridge.setWindowState("toggle-zoom");
+  }, [platform, useMacOsNativeTitlebarDragRegion]);
   const [worktreeMergeStateById, setWorktreeMergeStateById] = useState<
     Record<string, WorktreeMergeViewState>
   >({});
@@ -7262,6 +7331,39 @@ export function WorkbenchLayout({
   }, [prefersMacOsWorkbenchVibrancy]);
 
   useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const { documentElement, body } = document;
+
+    if (!activeResizeSide) {
+      documentElement.removeAttribute(WORKBENCH_PANEL_RESIZING_ATTRIBUTE);
+      body?.removeAttribute(WORKBENCH_PANEL_RESIZING_ATTRIBUTE);
+      return;
+    }
+
+    const previousDocumentCursor = documentElement.style.cursor;
+    const previousBodyCursor = body?.style.cursor ?? "";
+
+    documentElement.setAttribute(WORKBENCH_PANEL_RESIZING_ATTRIBUTE, activeResizeSide);
+    body?.setAttribute(WORKBENCH_PANEL_RESIZING_ATTRIBUTE, activeResizeSide);
+    documentElement.style.cursor = "col-resize";
+    body?.style.setProperty("cursor", "col-resize");
+    window.getSelection()?.removeAllRanges();
+
+    return () => {
+      documentElement.removeAttribute(WORKBENCH_PANEL_RESIZING_ATTRIBUTE);
+      body?.removeAttribute(WORKBENCH_PANEL_RESIZING_ATTRIBUTE);
+      documentElement.style.cursor = previousDocumentCursor;
+
+      if (body) {
+        body.style.cursor = previousBodyCursor;
+      }
+    };
+  }, [activeResizeSide]);
+
+  useEffect(() => {
     sessionDisplaySortModeRef.current = sessionDisplaySortMode;
     setNavigationGroups((current) => sortWorkspaceSessionGroups(current, sessionDisplaySortMode));
   }, [sessionDisplaySortMode]);
@@ -7273,6 +7375,22 @@ export function WorkbenchLayout({
   useEffect(() => {
     platformBridgeRef.current = platform.bridge;
   }, [platform.bridge]);
+
+  useEffect(() => {
+    leftPanelWidthRef.current = leftPanelWidth;
+  }, [leftPanelWidth]);
+
+  useEffect(() => {
+    rightPanelWidthRef.current = rightPanelWidth;
+  }, [rightPanelWidth]);
+
+  useEffect(() => {
+    return () => {
+      if (resizeAnimationFrameIdRef.current !== null) {
+        window.cancelAnimationFrame(resizeAnimationFrameIdRef.current);
+      }
+    };
+  }, []);
 
   const refreshGlobalNotifications = useCallback(async () => {
     const requestId = notificationRefreshRequestIdRef.current + 1;
@@ -8895,26 +9013,111 @@ export function WorkbenchLayout({
     }
   }
 
-  function beginResize(side: "left" | "right", startClientX: number) {
+  function applyWorkbenchShellPanelWidths(nextLeftWidth: number, nextRightWidth: number) {
+    const shellElement = workbenchShellRef.current;
+
+    if (!shellElement) {
+      return;
+    }
+
+    shellElement.style.setProperty("--workbench-left-width", `${nextLeftWidth}px`);
+    shellElement.style.setProperty(
+      "--workbench-left-current-width",
+      leftCollapsed ? "0px" : `${nextLeftWidth}px`
+    );
+    shellElement.style.setProperty("--workbench-right-width", `${nextRightWidth}px`);
+    shellElement.style.setProperty(
+      "--workbench-right-current-width",
+      rightCollapsed ? "0px" : `${nextRightWidth}px`
+    );
+  }
+
+  function buildNativeSidebarLayoutSnapshot(
+    overrides: Partial<NativeSidebarLayout> = {}
+  ): NativeSidebarLayout {
+    return {
+      leftWidth: overrides.leftWidth ?? (leftCollapsed ? 0 : leftPanelWidthRef.current),
+      rightWidth:
+        overrides.rightWidth
+        ?? (shouldShowAuxiliaryPanel && !rightCollapsed ? rightPanelWidthRef.current : 0),
+      leftCollapsed: overrides.leftCollapsed ?? leftCollapsed,
+      rightCollapsed: overrides.rightCollapsed ?? (!shouldShowAuxiliaryPanel || rightCollapsed),
+      prefersDarkAppearance: overrides.prefersDarkAppearance ?? theme !== "light",
+      isResizing: overrides.isResizing ?? activeResizeSide !== null
+    };
+  }
+
+  function beginResize(side: "left" | "right", startEvent: ReactMouseEvent<HTMLDivElement>) {
+    startEvent.preventDefault();
+    startEvent.stopPropagation();
+    window.getSelection()?.removeAllRanges();
+
+    const startClientX = startEvent.clientX;
     const startWidth = side === "left" ? leftPanelWidth : rightPanelWidth;
+    setActiveResizeSide(side);
 
-    function handlePointerMove(event: globalThis.MouseEvent) {
-      const delta = event.clientX - startClientX;
+    const commitPendingResizeWidth = () => {
+      const pendingWidth = pendingResizeWidthRef.current;
+      pendingResizeWidthRef.current = null;
 
-      if (side === "left") {
-        setLeftPanelWidth(clamp(startWidth + delta, MIN_PANEL_WIDTH, MAX_LEFT_PANEL_WIDTH));
+      if (pendingWidth === null) {
         return;
       }
 
-      setRightPanelWidth(clamp(startWidth - delta, MIN_PANEL_WIDTH, MAX_RIGHT_PANEL_WIDTH));
+      if (side === "left") {
+        leftPanelWidthRef.current = pendingWidth;
+        setLeftPanelWidth((current) => (current === pendingWidth ? current : pendingWidth));
+        applyWorkbenchShellPanelWidths(pendingWidth, rightPanelWidthRef.current);
+        return;
+      }
+
+      rightPanelWidthRef.current = pendingWidth;
+      setRightPanelWidth((current) => (current === pendingWidth ? current : pendingWidth));
+      applyWorkbenchShellPanelWidths(leftPanelWidthRef.current, pendingWidth);
+    };
+
+    function handlePointerMove(event: globalThis.MouseEvent) {
+      event.preventDefault();
+      window.getSelection()?.removeAllRanges();
+      const delta = event.clientX - startClientX;
+      const nextWidth = side === "left"
+        ? clamp(startWidth + delta, MIN_LEFT_PANEL_WIDTH, MAX_LEFT_PANEL_WIDTH)
+        : clamp(startWidth - delta, MIN_RIGHT_PANEL_WIDTH, MAX_RIGHT_PANEL_WIDTH);
+      const currentWidth = side === "left" ? leftPanelWidthRef.current : rightPanelWidthRef.current;
+
+      if (nextWidth === currentWidth && pendingResizeWidthRef.current === null) {
+        return;
+      }
+
+      pendingResizeWidthRef.current = nextWidth;
+
+      if (resizeAnimationFrameIdRef.current !== null) {
+        return;
+      }
+
+      resizeAnimationFrameIdRef.current = window.requestAnimationFrame(() => {
+        resizeAnimationFrameIdRef.current = null;
+        commitPendingResizeWidth();
+      });
     }
 
     function stopResize() {
       document.removeEventListener("mousemove", handlePointerMove);
       document.removeEventListener("mouseup", stopResize);
+
+      if (resizeAnimationFrameIdRef.current !== null) {
+        window.cancelAnimationFrame(resizeAnimationFrameIdRef.current);
+        resizeAnimationFrameIdRef.current = null;
+      }
+
+      commitPendingResizeWidth();
+      setActiveResizeSide((current) => (current === side ? null : current));
+      const finalLayout = buildNativeSidebarLayoutSnapshot({ isResizing: false });
+      nativeSidebarLayoutRef.current = finalLayout;
+      void platform.bridge.syncNativeSidebarLayout(finalLayout);
     }
 
-    document.addEventListener("mousemove", handlePointerMove);
+    document.addEventListener("mousemove", handlePointerMove, { passive: false });
     document.addEventListener("mouseup", stopResize);
   }
 
@@ -9221,9 +9424,11 @@ export function WorkbenchLayout({
       rightWidth: shouldShowAuxiliaryPanel && !rightCollapsed ? rightPanelWidth : 0,
       leftCollapsed,
       rightCollapsed: !shouldShowAuxiliaryPanel || rightCollapsed,
-      prefersDarkAppearance: theme !== "light"
+      prefersDarkAppearance: theme !== "light",
+      isResizing: activeResizeSide !== null
     }),
     [
+      activeResizeSide,
       leftCollapsed,
       leftPanelWidth,
       rightCollapsed,
@@ -9232,6 +9437,14 @@ export function WorkbenchLayout({
       theme
     ]
   );
+  const deferredNativeSidebarLayout = useDeferredValue(nativeSidebarLayout);
+  const nativeSidebarSyncLayout =
+    activeResizeSide === null ? deferredNativeSidebarLayout : nativeSidebarLayout;
+  const nativeSidebarLayoutRef = useRef(nativeSidebarLayout);
+
+  useEffect(() => {
+    nativeSidebarLayoutRef.current = nativeSidebarLayout;
+  }, [nativeSidebarLayout]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -9242,7 +9455,7 @@ export function WorkbenchLayout({
 
     const syncNativeSidebarLayout = () => {
       animationFrameId = null;
-      void platform.bridge.syncNativeSidebarLayout(nativeSidebarLayout);
+      void platform.bridge.syncNativeSidebarLayout(nativeSidebarSyncLayout);
     };
 
     const scheduleSync = () => {
@@ -9259,7 +9472,8 @@ export function WorkbenchLayout({
         rightWidth: 0,
         leftCollapsed: true,
         rightCollapsed: true,
-        prefersDarkAppearance: false
+        prefersDarkAppearance: false,
+        isResizing: false
       });
       return () => {
         if (animationFrameId !== null) {
@@ -9269,17 +9483,14 @@ export function WorkbenchLayout({
     }
 
     scheduleSync();
-    window.addEventListener("resize", scheduleSync);
 
     return () => {
       if (animationFrameId !== null) {
         window.cancelAnimationFrame(animationFrameId);
       }
-
-      window.removeEventListener("resize", scheduleSync);
     };
   }, [
-    nativeSidebarLayout,
+    nativeSidebarSyncLayout,
     platform.bridge,
     prefersMacOsWorkbenchVibrancy
   ]);
@@ -9666,6 +9877,8 @@ export function WorkbenchLayout({
           className="workbench-shell"
           ref={workbenchShellRef}
           style={shellStyle}
+          onMouseDownCapture={handleUnifiedTitlebarMouseDownCapture}
+          onDoubleClickCapture={handleUnifiedTitlebarDoubleClickCapture}
           data-nav-loading={navigationLoading}
           data-left-collapsed={leftCollapsed}
           data-right-collapsed={rightCollapsed}
@@ -9741,7 +9954,7 @@ export function WorkbenchLayout({
               onMouseDown={
                 leftCollapsed
                   ? undefined
-                  : (event) => beginResize("left", event.clientX)
+                  : (event) => beginResize("left", event)
               }
             />
 
@@ -9817,7 +10030,7 @@ export function WorkbenchLayout({
                   onMouseDown={
                     rightCollapsed
                       ? undefined
-                      : (event) => beginResize("right", event.clientX)
+                      : (event) => beginResize("right", event)
                   }
                 />
                 <aside

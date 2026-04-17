@@ -1,9 +1,6 @@
-import { useCallback, type MouseEvent, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
-import {
-  canStartDesktopWindowDragFromTarget,
-  startDesktopWindowDrag
-} from "../../../platform/desktop/window-drag";
+import { resolveMacOsNativeTitlebarDragRegion } from "../../../platform/desktop/window-drag";
 import { usePlatform } from "../../../platform/platform-provider";
 import { t } from "../../../shared/i18n";
 import { buildSessionTitlePresentation } from "../session-title";
@@ -40,17 +37,7 @@ function resolveTitleScale(title: string) {
 
 export function SessionHeader({ session, actions, workspaceContext = null }: SessionHeaderProps) {
   const platform = usePlatform();
-  const handleHeaderMouseDownCapture = useCallback((event: MouseEvent<HTMLElement>) => {
-    if (!platform.isDesktop || platform.ui.osFamily !== "macos" || event.button !== 0) {
-      return;
-    }
-
-    if (!canStartDesktopWindowDragFromTarget(event.target)) {
-      return;
-    }
-
-    void startDesktopWindowDrag();
-  }, [platform.isDesktop, platform.ui.osFamily]);
+  const macOsNativeTitlebarDragRegion = resolveMacOsNativeTitlebarDragRegion(platform);
 
   if (!session) {
     return (
@@ -58,9 +45,12 @@ export function SessionHeader({ session, actions, workspaceContext = null }: Ses
         className="conversation-header conversation-header-skeleton"
         aria-hidden="true"
         data-window-drag-handle="conversation-header"
-        onMouseDownCapture={handleHeaderMouseDownCapture}
+        data-tauri-drag-region={macOsNativeTitlebarDragRegion}
       >
-        <div className="conversation-header-main">
+        <div
+          className="conversation-header-main"
+          data-tauri-drag-region={macOsNativeTitlebarDragRegion}
+        >
           <span className="skeleton-line short" />
           <span className="skeleton-line long" />
         </div>
@@ -78,10 +68,17 @@ export function SessionHeader({ session, actions, workspaceContext = null }: Ses
       data-workspace-tone={workspaceContext?.tone ?? "root"}
       style={createWorkspaceToneStyle(workspaceContext)}
       data-window-drag-handle="conversation-header"
-      onMouseDownCapture={handleHeaderMouseDownCapture}
+      data-tauri-drag-region={macOsNativeTitlebarDragRegion}
     >
-      <div className="conversation-header-main">
-        <h1 className={`conversation-title is-${titleScale}`} title={titlePresentation.fullTitle}>
+      <div
+        className="conversation-header-main"
+        data-tauri-drag-region={macOsNativeTitlebarDragRegion}
+      >
+        <h1
+          className={`conversation-title is-${titleScale}`}
+          title={titlePresentation.fullTitle}
+          data-tauri-drag-region={macOsNativeTitlebarDragRegion}
+        >
           {titlePresentation.displayTitle}
         </h1>
       </div>

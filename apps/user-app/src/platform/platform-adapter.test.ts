@@ -256,6 +256,23 @@ describe("platform-adapter", () => {
     });
   });
 
+  it("桌面端 bridge 支持 toggle-zoom 窗口命令", async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined);
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+      platform: "MacIntel"
+    });
+    window.__TAURI_INTERNALS__ = { invoke };
+
+    const adapter = createPlatformAdapter({ viewportWidth: 1280 });
+    await adapter.bridge.setWindowState("toggle-zoom");
+
+    expect(invoke).toHaveBeenCalledWith("set_window_state", {
+      state: "toggle-zoom"
+    });
+  });
+
   it("getWindowDescriptor 未传 windowId 时会读取当前窗口 descriptor", async () => {
     const invoke = vi.fn().mockResolvedValue(undefined);
     mockNavigator({

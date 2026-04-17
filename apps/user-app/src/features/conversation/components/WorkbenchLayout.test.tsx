@@ -345,6 +345,32 @@ describe("WorkbenchLayout", () => {
     ]);
   });
 
+  it("macOS 桌面端顶栏区域改回原生 drag region，避免 JS 双击切窗打架", async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined);
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+      platform: "MacIntel"
+    });
+    window.__TAURI_INTERNALS__ = { invoke };
+
+    renderWorkbenchRoute();
+    await screen.findByRole("button", { name: t("shell.hideSessionSidebar") });
+
+    const header = document.querySelector(".workbench-nav-header");
+
+    if (!(header instanceof HTMLElement)) {
+      throw new Error("未找到左侧标题栏");
+    }
+
+    fireEvent.doubleClick(header);
+
+    expect(header).toHaveAttribute("data-tauri-drag-region", "");
+    expect(invoke).not.toHaveBeenCalledWith("set_window_state", {
+      state: "toggle-zoom"
+    });
+  });
+
   it("存在多个 HOST 时会在设置按钮里显示当前 HOST 名称标签", async () => {
     clientConfigStore.hydrate({
       platform: "desktop",
@@ -1343,12 +1369,12 @@ describe("WorkbenchLayout", () => {
     expect(document.querySelector(".workbench-desktop-titlebar")).toBeNull();
     expect(navHeader).toHaveAttribute("data-window-drag-handle", "workbench-nav-header");
     expect(auxiliaryHeader).toHaveAttribute("data-window-drag-handle", "workbench-auxiliary-header");
-    expect(navHeader).not.toHaveAttribute("data-tauri-drag-region");
-    expect(navToolbar).not.toHaveAttribute("data-tauri-drag-region");
+    expect(navHeader).toHaveAttribute("data-tauri-drag-region", "");
+    expect(navToolbar).toHaveAttribute("data-tauri-drag-region", "");
     expect(navBody).not.toHaveAttribute("data-tauri-drag-region");
     expect(navSegment).not.toHaveAttribute("data-tauri-drag-region");
-    expect(auxiliaryHeader).not.toHaveAttribute("data-tauri-drag-region");
-    expect(infoTabs).not.toHaveAttribute("data-tauri-drag-region");
+    expect(auxiliaryHeader).toHaveAttribute("data-tauri-drag-region", "");
+    expect(infoTabs).toHaveAttribute("data-tauri-drag-region", "");
     expect(
       screen.getByRole("button", { name: t("shell.hideSessionSidebar") })
     ).not.toHaveAttribute("data-tauri-drag-region");
