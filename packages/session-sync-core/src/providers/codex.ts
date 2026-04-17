@@ -31,6 +31,7 @@ import {
   extractTextBlocks,
   ensureText,
   messageIdFromRawRef,
+  messageIdFromStableKey,
   nextTimestamp,
   normalizeWorkspacePath,
   readFirstNonEmptyLine,
@@ -1907,7 +1908,13 @@ export class CodexAdapter implements ProviderAdapter {
 
           if (content.length > 0) {
             pushMessage("event_msg", {
-              messageId: messageIdFromRawRef(rawRef),
+              messageId: resolveCodexParsedMessageId({
+                providerSessionId,
+                rawRef,
+                role: "user",
+                kind: "text",
+                payloadId: payload.id
+              }),
               provider: this.providerId,
               providerSessionId,
               role: "user",
@@ -1925,7 +1932,13 @@ export class CodexAdapter implements ProviderAdapter {
 
           if (content.length > 0) {
             pushMessage("event_msg", {
-              messageId: messageIdFromRawRef(rawRef),
+              messageId: resolveCodexParsedMessageId({
+                providerSessionId,
+                rawRef,
+                role: "assistant",
+                kind: "text",
+                payloadId: payload.id
+              }),
               provider: this.providerId,
               providerSessionId,
               role: "assistant",
@@ -1943,7 +1956,13 @@ export class CodexAdapter implements ProviderAdapter {
 
           if (content.length > 0) {
             pushMessage("event_msg", {
-              messageId: messageIdFromRawRef(rawRef),
+              messageId: resolveCodexParsedMessageId({
+                providerSessionId,
+                rawRef,
+                role: "assistant",
+                kind: "thinking",
+                payloadId: payload.id
+              }),
               provider: this.providerId,
               providerSessionId,
               role: "assistant",
@@ -1959,6 +1978,7 @@ export class CodexAdapter implements ProviderAdapter {
 
       if (record.type === "response_item") {
         const payload = (record.payload ?? {}) as {
+          id?: unknown;
           type?: unknown;
           role?: unknown;
           content?: Array<Record<string, unknown>>;
@@ -1979,7 +1999,13 @@ export class CodexAdapter implements ProviderAdapter {
           }
 
           pushMessage("response_item", {
-            messageId: messageIdFromRawRef(rawRef),
+            messageId: resolveCodexParsedMessageId({
+              providerSessionId,
+              rawRef,
+              role: "assistant",
+              kind: "thinking",
+              payloadId: payload.id
+            }),
             provider: this.providerId,
             providerSessionId,
             role: "assistant",
@@ -2000,7 +2026,13 @@ export class CodexAdapter implements ProviderAdapter {
           toolNameById.set(callId, name);
 
           pushMessage("response_item", {
-            messageId: messageIdFromRawRef(rawRef),
+            messageId: resolveCodexParsedMessageId({
+              providerSessionId,
+              rawRef,
+              role: "tool",
+              kind: "tool_call",
+              callId
+            }),
             provider: this.providerId,
             providerSessionId,
             role: "tool",
@@ -2027,7 +2059,13 @@ export class CodexAdapter implements ProviderAdapter {
           const resultState = resolveToolResultState(payload, output);
 
           pushMessage("response_item", {
-            messageId: messageIdFromRawRef(rawRef),
+            messageId: resolveCodexParsedMessageId({
+              providerSessionId,
+              rawRef,
+              role: "tool",
+              kind: "tool_result",
+              callId
+            }),
             provider: this.providerId,
             providerSessionId,
             role: "tool",
@@ -2059,7 +2097,13 @@ export class CodexAdapter implements ProviderAdapter {
         }
 
         pushMessage("response_item", {
-          messageId: messageIdFromRawRef(rawRef),
+          messageId: resolveCodexParsedMessageId({
+            providerSessionId,
+            rawRef,
+            role,
+            kind: "text",
+            payloadId: payload.id
+          }),
           provider: this.providerId,
           providerSessionId,
           role,
@@ -2351,6 +2395,62 @@ function areCodexTimestampsNear(left: string, right: string): boolean {
   }
 
   return Math.abs(leftMs - rightMs) <= 1000;
+}
+
+function resolveCodexParsedMessageId(input: {
+  providerSessionId: string;
+  rawRef: string;
+  role: NormalizedMessage["role"];
+  kind: NormalizedMessage["kind"];
+  payloadId?: unknown;
+  callId?: string | null;
+}): string {
+  const stableIdentity = resolveCodexStableIdentity(input);
+
+  if (!stableIdentity) {
+    return messageIdFromRawRef(input.rawRef);
+  }
+
+  return messageIdFromStableKey(buildCodexStableMessageKey(input.providerSessionId, stableIdentity));
+}
+
+function resolveCodexStableIdentity(input: {
+  role: NormalizedMessage["role"];
+  kind: NormalizedMessage["kind"];
+  payloadId?: unknown;
+  callId?: string | null;
+}): string | null {
+  if (input.kind === "tool_call" || input.kind === "tool_result") {
+    const normalizedCallId = ensureText(input.callId).trim();
+
+    if (!normalizedCallId) {
+      return null;
+    }
+
+    return input.kind === "tool_call"
+      ? `tool:call:${normalizedCallId}`
+      : `tool:result:${normalizedCallId}`;
+  }
+
+  if (
+    input.role !== "assistant"
+    && input.role !== "user"
+  ) {
+    return null;
+  }
+
+  const normalizedPayloadId = ensureText(input.payloadId).trim();
+
+  if (!normalizedPayloadId) {
+    return null;
+  }
+
+  const identityKind = input.kind === "thinking" ? "thinking" : "text";
+  return `${input.role}:${identityKind}:${normalizedPayloadId}`;
+}
+
+function buildCodexStableMessageKey(providerSessionId: string, stableIdentity: string): string {
+  return `codex:${providerSessionId}:${stableIdentity}`;
 }
 
 function extractTextFromArray(value: unknown): string {

@@ -12,6 +12,7 @@ import {
   createRawRef,
   ensureDirectory,
   extractTextBlocks,
+  messageIdFromStableKey,
   messageIdFromRawRef,
   nextTimestamp,
   normalizeWorkspacePath,
@@ -840,6 +841,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     }
   ): Promise<void> {
     const message = this.buildMessage(context, {
+      timestamp: input.timestamp,
       role: input.role,
       kind: input.kind,
       content: input.content,
@@ -1085,6 +1087,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
   private buildMessage(
     context: ActiveTurnContext,
     input: {
+      timestamp: string;
       role: NormalizedMessage["role"];
       kind: NormalizedMessage["kind"];
       content: string;
@@ -1111,7 +1114,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       kind: input.kind,
       content: input.content,
       toolCall: input.toolCall ?? null,
-      timestamp: nextTimestamp(),
+      timestamp: input.timestamp,
       sequence,
       rawRef
     };
@@ -1136,7 +1139,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     const created: CodexStableMessageRef = {
       sequence: context.sequence,
       rawRef,
-      messageId: messageIdFromRawRef(rawRef)
+      messageId: messageIdFromStableKey(buildCodexStableMessageKey(context.providerSessionId, stableIdentity))
     };
     context.stableMessageRefByIdentity.set(stableIdentity, created);
     return created;
@@ -2891,6 +2894,7 @@ function toSyntheticRuntimeRecord(
         type: "event_msg",
         payload: {
           type: "agent_message",
+          id: ensureText(readProp(item, "id")).trim() || undefined,
           message: content
         }
       }
@@ -2915,6 +2919,7 @@ function toSyntheticRuntimeRecord(
         type: "event_msg",
         payload: {
           type: "agent_reasoning",
+          id: ensureText(readProp(item, "id")).trim() || undefined,
           text: content
         }
       }
@@ -2988,6 +2993,10 @@ function mapToolStartItemType(itemType: string): string {
 
 function mapToolResultItemType(itemType: string): string {
   return itemType === "custom_tool_call" ? "custom_tool_call_output" : "function_call_output";
+}
+
+function buildCodexStableMessageKey(providerSessionId: string, stableIdentity: string): string {
+  return `codex:${providerSessionId}:${stableIdentity}`;
 }
 
 function normalizeCodexItemStatus(value: unknown): string {

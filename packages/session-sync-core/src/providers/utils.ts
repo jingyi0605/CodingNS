@@ -433,8 +433,12 @@ export function createRawRef(
   return `${provider}://${normalizedPath}#line=${lineNumber}${suffix}`;
 }
 
+export function messageIdFromStableKey(stableKey: string): string {
+  return createHash("sha1").update(stableKey).digest("hex");
+}
+
 export function messageIdFromRawRef(rawRef: string): string {
-  return createHash("sha1").update(rawRef).digest("hex");
+  return messageIdFromStableKey(rawRef);
 }
 
 export function ensureText(value: unknown): string {
