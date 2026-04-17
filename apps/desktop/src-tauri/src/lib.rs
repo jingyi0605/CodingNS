@@ -621,6 +621,62 @@ unsafe fn apply_macos_native_sidebar_layout(
 }
 
 #[cfg(target_os = "macos")]
+unsafe fn configure_macos_live_resize_view(view: &NSView) {
+    view.setPostsFrameChangedNotifications(true);
+    view.setLayerContentsRedrawPolicy(NSViewLayerContentsRedrawPolicy::DuringViewResize);
+    view.setNeedsDisplay(true);
+}
+
+#[cfg(target_os = "macos")]
+fn configure_macos_window_live_resize(window: &WebviewWindow) -> Result<(), String> {
+    let window_for_resize = window.clone();
+
+    window
+        .run_on_main_thread(move || unsafe {
+            let Ok(ns_window_ptr) = window_for_resize.ns_window() else {
+                return;
+            };
+            let Ok(ns_view_ptr) = window_for_resize.ns_view() else {
+                return;
+            };
+            let ns_window: &NSWindow = &*ns_window_ptr.cast();
+            let content_view: &NSView = &*ns_view_ptr.cast();
+
+            // zoom / live resize 期间先保留上一帧内容，不要把新区域直接露成透明底。
+            ns_window.setPreservesContentDuringLiveResize(true);
+            configure_macos_live_resize_view(content_view);
+
+            let _ = window_for_resize.with_webview(|webview| {
+                let webview_view: &NSView = &*webview.inner().cast();
+                configure_macos_live_resize_view(webview_view);
+            });
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn sync_macos_webview_frame(window: &WebviewWindow) -> Result<(), String> {
+    let window_for_resize = window.clone();
+
+    window
+        .run_on_main_thread(move || unsafe {
+            let Ok(ns_view_ptr) = window_for_resize.ns_view() else {
+                return;
+            };
+            let content_view: &NSView = &*ns_view_ptr.cast();
+            let content_bounds = content_view.bounds();
+
+            let _ = window_for_resize.with_webview(move |webview| {
+                let webview_view: &NSView = &*webview.inner().cast();
+                webview_view.setFrame(content_bounds);
+                webview_view.setNeedsDisplay(true);
+                webview_view.displayIfNeeded();
+            });
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "macos")]
 fn schedule_macos_native_sidebar_layout(
     window: &WebviewWindow,
     window_label: String,
@@ -858,6 +914,7 @@ fn attach_macos_native_sidebar_handlers(window: WebviewWindow, native_sidebar_st
     window.on_window_event(move |event| {
         if matches!(event, WindowEvent::Resized(_)) {
             let _ = sync_cached_macos_native_sidebar_layout(&window_for_events, &native_sidebar_state);
+            let _ = sync_macos_webview_frame(&window_for_events);
         }
     });
 }
@@ -978,12 +1035,13 @@ fn configure_macos_window_chrome(app: &tauri::App) -> tauri::Result<()> {
             return;
         };
         let ns_window: &NSWindow = &*ns_window_ptr.cast();
-        let clear_color = NSColor::clearColor();
+        let window_background_color = NSColor::windowBackgroundColor();
 
-        // 不再给整窗套一层统一材质，只保留透明窗口，让侧栏由独立的原生 NSVisualEffectView 负责。
-        ns_window.setBackgroundColor(Some(&clear_color));
-        ns_window.setOpaque(false);
+        // 主窗口必须保持不透明，缩放动画期间即使 WebView 晚一帧，也只能露出窗口背景，不能露出桌面。
+        ns_window.setBackgroundColor(Some(&window_background_color));
+        ns_window.setOpaque(true);
     })?;
+    configure_macos_window_live_resize(&window).map_err(std::io::Error::other)?;
     Ok(())
 }
 

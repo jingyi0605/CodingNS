@@ -237,6 +237,9 @@ export function ButlerPage() {
   const [followUpHistoryOpen, setFollowUpHistoryOpen] = useState(false);
   const [verificationHistoryOpen, setVerificationHistoryOpen] = useState(false);
   const [automationHistoryOpen, setAutomationHistoryOpen] = useState(false);
+  const [selectedAutomationId, setSelectedAutomationId] = useState<string | null>(null);
+  const [automationEditorState, setAutomationEditorState] = useState<AutomationEditorState | null>(null);
+  const [savingAutomationId, setSavingAutomationId] = useState<string | null>(null);
   const [controlHistoryOpen, setControlHistoryOpen] = useState(false);
   const [sandboxManagerOpen, setSandboxManagerOpen] = useState(false);
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
@@ -377,6 +380,30 @@ export function ButlerPage() {
       ),
     [navigationGroups]
   );
+  const selectedAutomation = useMemo(
+    () =>
+      selectedAutomationId
+        ? assistantAutomations.find((automation) => automation.id === selectedAutomationId) ?? null
+        : null,
+    [assistantAutomations, selectedAutomationId]
+  );
+  const selectedAutomationRuns = useMemo(
+    () =>
+      selectedAutomationId
+        ? assistantAutomationRuns
+          .filter((run) => run.automationId === selectedAutomationId)
+          .sort((left, right) => parseIsoTime(right.createdAt) - parseIsoTime(left.createdAt))
+          .slice(0, 8)
+        : [],
+    [assistantAutomationRuns, selectedAutomationId]
+  );
+
+  useEffect(() => {
+    if (selectedAutomationId && !selectedAutomation) {
+      setSelectedAutomationId(null);
+      setAutomationEditorState(null);
+    }
+  }, [selectedAutomation, selectedAutomationId]);
   const sessionWorkspaceIdById = useMemo(
     () =>
       new Map(
@@ -689,6 +716,55 @@ export function ButlerPage() {
       setCancellingAutomationId(null);
     }
   }, [showToast]);
+  const handleOpenAutomationDetail = useCallback((automationId: string) => {
+    const automation = assistantAutomations.find((item) => item.id === automationId);
+
+    if (!automation) {
+      return;
+    }
+
+    setSelectedAutomationId(automationId);
+    setAutomationEditorState(createAutomationEditorState(automation));
+  }, [assistantAutomations]);
+  const handleSaveAutomation = useCallback(async () => {
+    if (!selectedAutomation || !automationEditorState) {
+      return;
+    }
+
+    let payload: ReturnType<typeof buildAutomationUpdatePayload>;
+
+    try {
+      payload = buildAutomationUpdatePayload(selectedAutomation, automationEditorState);
+    } catch (error) {
+      showToast({
+        title: t("shell.butlerAutomationSaveFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error"
+      });
+      return;
+    }
+
+    setSavingAutomationId(selectedAutomation.id);
+
+    try {
+      const response = await updateAssistantAutomation(selectedAutomation.id, payload);
+      setAssistantAutomations((current) => replaceAssistantAutomation(current, response.payload.automation));
+      setSelectedAutomationId(response.payload.automation.id);
+      setAutomationEditorState(createAutomationEditorState(response.payload.automation));
+      showToast({
+        title: t("shell.butlerAutomationSaveSucceeded"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: t("shell.butlerAutomationSaveFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error"
+      });
+    } finally {
+      setSavingAutomationId(null);
+    }
+  }, [automationEditorState, selectedAutomation, showToast]);
   const handleExecuteControlTimerNow = useCallback(async (timer: ButlerControlTimerDto) => {
     const prompt = timer.content.trim();
 

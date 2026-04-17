@@ -21,7 +21,7 @@
         "minHeight": 720,
         "resizable": true,
         "acceptFirstMouse": true,
-        "transparent": true,
+        "transparent": false,
         "hiddenTitle": true,
         "titleBarStyle": "Overlay",
         "trafficLightPosition": {

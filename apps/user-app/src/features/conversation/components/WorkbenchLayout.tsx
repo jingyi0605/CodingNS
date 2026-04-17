@@ -212,6 +212,8 @@ const SESSION_FAILURE_NOTIFICATION_DETAIL_MAX_LENGTH = 220;
 const WINDOW_DETACH_DRAG_THRESHOLD_PX = 18;
 const WORKSPACE_POINTER_REORDER_THRESHOLD_PX = 6;
 const WORKBENCH_PANEL_RESIZING_ATTRIBUTE = "data-workbench-panel-resizing";
+const WORKBENCH_WINDOW_RESIZING_ATTRIBUTE = "data-workbench-window-resizing";
+const WORKBENCH_WINDOW_RESIZE_SETTLE_MS = 180;
 const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
 const WORKBENCH_RUNTIME_ACTIVE_STATES: ReadonlySet<string> = new Set([
   "starting",
@@ -7145,6 +7147,9 @@ export function WorkbenchLayout({
   const rightPanelWidthRef = useRef(0);
   const resizeAnimationFrameIdRef = useRef<number | null>(null);
   const pendingResizeWidthRef = useRef<number | null>(null);
+  const windowResizeSettleTimerRef = useRef<number | null>(null);
+  const isWindowLiveResizingRef = useRef(false);
+  const pendingTitlebarAlignmentAfterResizeRef = useRef(false);
   const completionBaselineReadyRef = useRef(false);
   const previousSessionCompletionStateRef = useRef(
     new Map<
@@ -7277,6 +7282,7 @@ export function WorkbenchLayout({
   const [archivedNotificationIds, setArchivedNotificationIds] = useState<Set<string>>(() => new Set());
   const [notificationPanelOpen, setNotificationPanelOpen] = useState(false);
   const [showArchivedNotifications, setShowArchivedNotifications] = useState(false);
+  const [windowResizeSettleVersion, setWindowResizeSettleVersion] = useState(0);
   const [notificationSeenAt, setNotificationSeenAt] = useState<string | null>(() =>
     readStoredString(WORKBENCH_NOTIFICATION_SEEN_AT_KEY)
   );
@@ -7329,6 +7335,14 @@ export function WorkbenchLayout({
       }
     };
   }, [prefersMacOsWorkbenchVibrancy]);
+
+  useEffect(() => {
+    return () => {
+      if (windowResizeSettleTimerRef.current !== null) {
+        window.clearTimeout(windowResizeSettleTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof document === "undefined") {
@@ -9418,6 +9432,57 @@ export function WorkbenchLayout({
   const shouldShowAuxiliaryPanel = auxiliaryPanelContent !== null;
   const shouldUseMacOsOverlayTitlebarAlignment =
     platform.isDesktop && platform.ui.osFamily === "macos" && platform.ui.prefersOverlayTitlebar;
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") {
+      return;
+    }
+
+    const { documentElement, body } = document;
+    const clearWindowLiveResizeState = () => {
+      if (windowResizeSettleTimerRef.current !== null) {
+        window.clearTimeout(windowResizeSettleTimerRef.current);
+        windowResizeSettleTimerRef.current = null;
+      }
+
+      const hadLiveResize = isWindowLiveResizingRef.current;
+      isWindowLiveResizingRef.current = false;
+      documentElement.removeAttribute(WORKBENCH_WINDOW_RESIZING_ATTRIBUTE);
+      body?.removeAttribute(WORKBENCH_WINDOW_RESIZING_ATTRIBUTE);
+
+      if (hadLiveResize && pendingTitlebarAlignmentAfterResizeRef.current) {
+        pendingTitlebarAlignmentAfterResizeRef.current = false;
+        setWindowResizeSettleVersion((value) => value + 1);
+      }
+    };
+
+    if (!shouldUseMacOsOverlayTitlebarAlignment) {
+      clearWindowLiveResizeState();
+      return;
+    }
+
+    const handleWindowResize = () => {
+      isWindowLiveResizingRef.current = true;
+      documentElement.setAttribute(WORKBENCH_WINDOW_RESIZING_ATTRIBUTE, "true");
+      body?.setAttribute(WORKBENCH_WINDOW_RESIZING_ATTRIBUTE, "true");
+
+      if (windowResizeSettleTimerRef.current !== null) {
+        window.clearTimeout(windowResizeSettleTimerRef.current);
+      }
+
+      windowResizeSettleTimerRef.current = window.setTimeout(() => {
+        clearWindowLiveResizeState();
+      }, WORKBENCH_WINDOW_RESIZE_SETTLE_MS);
+    };
+
+    window.addEventListener("resize", handleWindowResize);
+
+    return () => {
+      window.removeEventListener("resize", handleWindowResize);
+      clearWindowLiveResizeState();
+    };
+  }, [shouldUseMacOsOverlayTitlebarAlignment]);
+
   const nativeSidebarLayout = useMemo(
     () => ({
       leftWidth: leftCollapsed ? 0 : leftPanelWidth,
@@ -9508,6 +9573,7 @@ export function WorkbenchLayout({
     const observedElements = new Set<HTMLElement>([shellElement]);
 
     const measureAndApplyAlignment = () => {
+      pendingTitlebarAlignmentAfterResizeRef.current = false;
       const computedStyle = window.getComputedStyle(shellElement);
       const trafficLightCenterY = readCssNumericCustomProperty(
         computedStyle,
@@ -9667,6 +9733,11 @@ export function WorkbenchLayout({
     };
 
     const scheduleMeasure = () => {
+      if (isWindowLiveResizingRef.current) {
+        pendingTitlebarAlignmentAfterResizeRef.current = true;
+        return;
+      }
+
       if (animationFrameId !== null) {
         window.cancelAnimationFrame(animationFrameId);
       }
@@ -9713,7 +9784,8 @@ export function WorkbenchLayout({
     location.search,
     rightCollapsed,
     shouldShowAuxiliaryPanel,
-    shouldUseMacOsOverlayTitlebarAlignment
+    shouldUseMacOsOverlayTitlebarAlignment,
+    windowResizeSettleVersion
   ]);
   const mobileNavigationPanel = isMobileShell ? (
     <SidebarContent

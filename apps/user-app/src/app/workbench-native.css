@@ -210,6 +210,21 @@ html[data-workbench-panel-resizing] .workbench-auxiliary > * {
   transition: none !important;
 }
 
+html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell,
+html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .workbench-page,
+html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .conversation-page-shell,
+html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-main-shell > .terminal-layout,
+html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-page-shell,
+html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .terminal-shell {
+  /* 原生侧栏在 AppKit 层平滑缩放时，中间 Web 内容要固定到独立绘制层，
+     否则 sticky header、消息列表和输入区会在 zoom 动画里反复重绘，出现撕裂感。 */
+  contain: paint;
+  isolation: isolate;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
 /* Git 面板整体禁止拖拽选中，只保留提交信息输入框可选。 */
 .workbench-shell .git-sidebar,
 .workbench-shell .git-sidebar * {
