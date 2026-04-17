@@ -370,11 +370,17 @@ function mergeComposerAttachments(
 
 function isComposerImeConfirming(
   event: React.KeyboardEvent<HTMLTextAreaElement>,
-  composing: boolean
+  composing: boolean,
+  commitLocked: boolean
 ): boolean {
   const nativeEvent = event.nativeEvent;
 
-  return nativeEvent.isComposing || nativeEvent.keyCode === 229 || composing;
+  return (
+    nativeEvent.isComposing
+    || nativeEvent.keyCode === 229
+    || composing
+    || commitLocked
+  );
 }
 
 export function ComposerPanel({
@@ -426,11 +432,24 @@ export function ComposerPanel({
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const submitLockRef = useRef(false);
   const composingRef = useRef(false);
+  const compositionCommitLockRef = useRef(false);
+  const compositionCommitUnlockTimerRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
   const attachmentRegistryRef = useRef(new Set<string>());
   const attachmentDraftCacheRef = useRef(new Map<string, StoredComposerDraftAttachment>());
   const quickPhraseMutationVersionRef = useRef(0);
   const { showToast } = useToast();
   const haptics = useHaptics();
+
+  const clearCompositionCommitLock = useCallback(() => {
+    if (compositionCommitUnlockTimerRef.current !== null) {
+      globalThis.clearTimeout(compositionCommitUnlockTimerRef.current);
+      compositionCommitUnlockTimerRef.current = null;
+    }
+
+    compositionCommitLockRef.current = false;
+  }, []);
+
+  useEffect(() => clearCompositionCommitLock, [clearCompositionCommitLock]);
 
   const provider = getProviderFromCapabilities(capabilities);
   const accountProviderPreferences = usePreferencesSelector((state) =>
@@ -1570,10 +1589,17 @@ export function ComposerPanel({
               rows={1}
               onFocus={() => setShowSlashMenu(false)}
               onCompositionStart={() => {
+                clearCompositionCommitLock();
                 composingRef.current = true;
               }}
               onCompositionEnd={() => {
                 composingRef.current = false;
+                // WebKit 桌面端可能在 compositionend 后立刻再抛一个 Enter，这里短暂加锁避免误发。
+                compositionCommitLockRef.current = true;
+                compositionCommitUnlockTimerRef.current = globalThis.setTimeout(() => {
+                  compositionCommitLockRef.current = false;
+                  compositionCommitUnlockTimerRef.current = null;
+                }, 0);
               }}
               onPaste={(event) => {
                 if (inRunSendBlocked) {
@@ -1602,7 +1628,13 @@ export function ComposerPanel({
                 }
 
                 if (event.key === "Enter" && !event.shiftKey) {
-                  if (isComposerImeConfirming(event, composingRef.current)) {
+                  if (
+                    isComposerImeConfirming(
+                      event,
+                      composingRef.current,
+                      compositionCommitLockRef.current
+                    )
+                  ) {
                     return;
                   }
 

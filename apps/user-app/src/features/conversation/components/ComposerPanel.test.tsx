@@ -319,6 +319,7 @@ describe("ComposerPanel", () => {
 
   afterEach(() => {
     localStorage.clear();
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -483,7 +484,7 @@ describe("ComposerPanel", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it("输入法组合结束后按 Enter 会发送消息", async () => {
+  it("输入法刚结束组合输入时按 Enter 不发送消息", () => {
     const onSend = vi.fn().mockResolvedValue(undefined);
 
     render(
@@ -503,6 +504,37 @@ describe("ComposerPanel", () => {
     });
     fireEvent.compositionStart(textarea);
     fireEvent.compositionEnd(textarea);
+    fireEvent.keyDown(textarea, {
+      key: "Enter",
+      code: "Enter"
+    });
+
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("输入法提交锁释放后按 Enter 会发送消息", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ provider: "codex" })}
+        isSubmitting={false}
+        onInterrupt={vi.fn()}
+        onSend={onSend}
+      />
+    );
+
+    const textarea = screen.getByRole("textbox");
+    fireEvent.change(textarea, {
+      target: {
+        value: "你好"
+      }
+    });
+    fireEvent.compositionStart(textarea);
+    fireEvent.compositionEnd(textarea);
+
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+
     fireEvent.keyDown(textarea, {
       key: "Enter",
       code: "Enter"
