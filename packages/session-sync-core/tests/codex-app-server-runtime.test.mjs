@@ -1,10 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { CodexRuntimeAdapter } from "../dist/runtime/codex-runtime.js";
+
+function createStableMessageId(providerSessionId, stableIdentity) {
+  return createHash("sha1").update(`codex:${providerSessionId}:${stableIdentity}`).digest("hex");
+}
 
 function createRunRequest(overrides = {}) {
   return {
@@ -209,17 +214,19 @@ rl.on("line", (line) => {
     });
 
     await launch.completed;
+    const toolCallEvent = emitted.find((event) => event.type === "message" && event.message.kind === "tool_call");
+    const toolResultEvent = emitted.find((event) => event.type === "message" && event.message.kind === "tool_result");
+    const assistantEvent = emitted.find(
+      (event) => event.type === "message" && event.message.role === "assistant" && event.message.content === "检查完成"
+    );
 
     assert.equal(approvalRequests.length, 1);
     assert.equal(approvalRequests[0]?.request.method, "item/commandExecution/requestApproval");
     assert.equal(launch.providerSessionId, "thread-1");
     assert.equal(launch.rawStoreRef, threadPath);
-    assert.equal(emitted.some((event) => event.type === "message" && event.message.kind === "tool_call"), true);
-    assert.equal(emitted.some((event) => event.type === "message" && event.message.kind === "tool_result"), true);
-    assert.equal(
-      emitted.some((event) => event.type === "message" && event.message.role === "assistant" && event.message.content === "检查完成"),
-      true
-    );
+    assert.equal(toolCallEvent?.message.messageId, createStableMessageId("thread-1", "tool:call:command-1"));
+    assert.equal(toolResultEvent?.message.messageId, createStableMessageId("thread-1", "tool:result:command-1"));
+    assert.equal(assistantEvent?.message.messageId, createStableMessageId("thread-1", "assistant:text:assistant-1"));
     assert.equal(emitted.some((event) => event.type === "complete"), true);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -351,6 +358,159 @@ rl.on("line", (line) => {
       true
     );
     assert.equal(emitted.some((event) => event.type === "complete"), true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexRuntimeAdapter 会为 app-server assistant 与 tool 消息生成稳定 messageId", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-stable-id-"));
+  const scriptPath = join(tempDir, "fake-codex-app-server.cjs");
+  const launcherPath = join(
+    tempDir,
+    process.platform === "win32" ? "fake-codex.cmd" : "fake-codex.sh"
+  );
+  const threadPath = join(tempDir, "thread-stable.jsonl").replace(/\\/g, "/");
+  const emitted = [];
+
+  writeFakeCodexAppServer(
+    scriptPath,
+    `
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+function write(payload) {
+  process.stdout.write(JSON.stringify(payload) + "\\n");
+}
+rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === "initialize") {
+    write({ jsonrpc: "2.0", id: msg.id, result: {} });
+    return;
+  }
+  if (msg.method === "thread/start") {
+    write({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        thread: {
+          id: "thread-stable",
+          preview: "",
+          ephemeral: false,
+          modelProvider: "openai",
+          createdAt: 0,
+          updatedAt: 0,
+          status: { type: "idle" },
+          path: ${JSON.stringify(threadPath)},
+          cwd: "C:/workspace-1",
+          cliVersion: "0.0.0",
+          source: "appServer",
+          agentNickname: null,
+          agentRole: null,
+          gitInfo: null,
+          name: null,
+          turns: []
+        }
+      }
+    });
+    return;
+  }
+  if (msg.method === "turn/start") {
+    write({
+      method: "item/started",
+      params: {
+        threadId: "thread-stable",
+        turnId: "turn-stable",
+        item: {
+          type: "commandExecution",
+          id: "command-1",
+          command: ["/bin/zsh", "-lc", "pwd"],
+          status: "inProgress"
+        }
+      }
+    });
+    write({
+      method: "item/completed",
+      params: {
+        threadId: "thread-stable",
+        turnId: "turn-stable",
+        item: {
+          type: "commandExecution",
+          id: "command-1",
+          command: ["/bin/zsh", "-lc", "pwd"],
+          status: "completed",
+          aggregatedOutput: "/workspace",
+          exitCode: 0
+        }
+      }
+    });
+    write({
+      method: "item/completed",
+      params: {
+        threadId: "thread-stable",
+        turnId: "turn-stable",
+        item: {
+          type: "agentMessage",
+          id: "assistant-1",
+          text: "整理完成",
+          phase: "final_answer"
+        }
+      }
+    });
+    write({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-stable",
+        turn: { id: "turn-stable", items: [], status: "completed" }
+      }
+    });
+    write({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        turn: { id: "turn-stable", items: [], status: "completed" }
+      }
+    });
+    setTimeout(() => process.exit(0), 10);
+  }
+});
+`
+  );
+  writeFileSync(
+    launcherPath,
+    process.platform === "win32"
+      ? `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`
+      : `#!/usr/bin/env sh\n"${process.execPath}" "${scriptPath}" "$@"\n`,
+    "utf8"
+  );
+
+  if (process.platform !== "win32") {
+    chmodSync(launcherPath, 0o755);
+  }
+
+  try {
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      commandPath: launcherPath
+    });
+
+    const launch = await adapter.startSession(createRunRequest(), {
+      async emit(event) {
+        emitted.push(event);
+      },
+      updateSessionBinding() {}
+    });
+
+    await launch.completed;
+
+    const toolCallEvent = emitted.find((event) => event.type === "message" && event.message.kind === "tool_call");
+    const toolResultEvent = emitted.find((event) => event.type === "message" && event.message.kind === "tool_result");
+    const assistantEvent = emitted.find(
+      (event) => event.type === "message" && event.message.role === "assistant" && event.message.content === "整理完成"
+    );
+
+    assert.equal(toolCallEvent?.message.messageId, createStableMessageId("thread-stable", "tool:call:command-1"));
+    assert.equal(toolResultEvent?.message.messageId, createStableMessageId("thread-stable", "tool:result:command-1"));
+    assert.equal(assistantEvent?.message.messageId, createStableMessageId("thread-stable", "assistant:text:assistant-1"));
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

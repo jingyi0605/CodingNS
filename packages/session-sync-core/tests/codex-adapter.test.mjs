@@ -1,11 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 
 import { CodexAdapter } from "../dist/index.js";
+
+function createStableMessageId(providerSessionId, stableIdentity) {
+  return createHash("sha1").update(`codex:${providerSessionId}:${stableIdentity}`).digest("hex");
+}
 
 test("CodexAdapter 会如实声明 queued guidance 的产品语义与当前 SDK 接入限制", async () => {
   const adapter = new CodexAdapter({ homeDir: "/tmp/codingns-codex-capabilities" });
@@ -113,6 +118,79 @@ test("CodexAdapter 会优先保留 response_item，并忽略末尾空白差异�
           content: "思考消息",
           sequence: 3,
           rawRef: `codex://${sessionFile.replaceAll("\\", "/")}#line=6`
+        }
+      ]
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 会为 app-server 落盘的 assistant 与 tool 消息复用稳定 messageId", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-adapter-stable-id-"));
+  const sessionFile = join(tempDir, "session.jsonl");
+
+  try {
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-04-17T10:00:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            id: "assistant-1",
+            message: "开始整理"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-17T10:00:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "function_call",
+            call_id: "command-1",
+            name: "command_execution",
+            arguments: "pwd"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-17T10:00:02.000Z",
+          type: "response_item",
+          payload: {
+            type: "function_call_output",
+            call_id: "command-1",
+            output: "/workspace",
+            status: "completed"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const page = await adapter.readSessionHistory("thread-1", sessionFile, null, 50);
+
+    assert.deepEqual(
+      page.messages.map((message) => ({
+        messageId: message.messageId,
+        role: message.role,
+        kind: message.kind
+      })),
+      [
+        {
+          messageId: createStableMessageId("thread-1", "assistant:text:assistant-1"),
+          role: "assistant",
+          kind: "text"
+        },
+        {
+          messageId: createStableMessageId("thread-1", "tool:call:command-1"),
+          role: "tool",
+          kind: "tool_call"
+        },
+        {
+          messageId: createStableMessageId("thread-1", "tool:result:command-1"),
+          role: "tool",
+          kind: "tool_result"
         }
       ]
     );
