@@ -61,6 +61,7 @@
 1. WHEN 方法名为 `get*`、`list*`、`read*`、`peek*`、`build*Snapshot` THEN System SHALL 默认保持无副作用
 2. WHEN 某个读动作必须顺手触发刷新 THEN System SHALL 改用显式命名，例如 `ensure*`、`schedule*Refresh`，而不是继续藏在 `get*` 里
 3. WHEN 一个接口既要返回当前结果又要推动后续刷新 THEN System SHALL 先完成纯读，再通过显式后台刷新入口推进，而不是在读方法内部偷偷发任务
+4. WHEN 维护者新增服务方法 THEN System SHALL 先把它归类到“纯读 / 缓存读 / 请求内写 / 后台刷新 / 重扫描”五类之一，不允许同一个方法混着承担两类以上职责
 
 ### 需求 2：刷新动作必须有统一状态模型，不能只靠 dedupe 硬撑
 
@@ -71,6 +72,9 @@
 1. WHEN 一个资源支持后台刷新 THEN System SHALL 至少能表达 `fresh`、`stale`、`running`、`cooldown` 这几种状态
 2. WHEN 同一资源短时间内被重复触发 THEN System SHALL 根据脏标记和冷却时间决定是否真正入队，而不是每次都重新 enqueue
 3. WHEN 刷新完成、失败或被取消 THEN System SHALL 更新资源刷新状态，并保留后续观测所需的最近结果或错误信息
+4. WHEN 资源实现刷新状态 THEN System SHALL 至少记录 `dirtyReasons`、`lastRequestedAt`、`lastStartedAt`、`lastCompletedAt`、`lastFailedAt`、`nextAllowedAt`、`runningTaskId`
+5. WHEN 资源已经处于 `running` THEN System SHALL 合并新的脏标记，不得为同一资源继续重复创建并发刷新
+6. WHEN 资源处于 `cooldown` 且没有新的脏标记 THEN System SHALL 直接复用最近结果，不得为等价请求重复开重活
 
 ### 需求 3：跨请求后台刷新必须走统一任务系统
 
@@ -81,6 +85,8 @@
 1. WHEN 一个任务跨请求存在、需要去重、需要观测或会影响多个入口 THEN System SHALL 通过统一 `TaskManager` 注册和调度
 2. WHEN 一个任务只是在当前服务内部做很短的缓存填充，且不跨请求、不需要重试和指标 THEN System MAY 保留私有 `inflight`
 3. WHEN 使用私有 `inflight` THEN System SHALL 明确它只用于“同一资源、同一进程、短生命周期”的 Promise 复用，不得悄悄替代正式后台任务
+4. WHEN 私有 `inflight` 开始长出定时器、失败状态、重试、跨入口刷新、长生命周期缓存或专门的 abort 控制器 THEN System SHALL 视为越界并迁回 `TaskManager`
+5. WHEN 一个刷新型任务已经需要独立指标、排队信息或任务 TTL THEN System SHALL 不再允许只靠模块内变量硬撑
 
 ### 需求 4：Host 主线程只允许做小而确定的读写
 
@@ -111,6 +117,8 @@
 1. WHEN 文件树只展示当前目录 THEN System SHALL 优先监听当前展开目录及必要父级，而不是整个工作区
 2. WHEN Git 面板需要感知变化 THEN System SHALL 优先监听 `.git` 元数据或更小的变化源，而不是递归 watch 整个 repo
 3. WHEN 某个 watcher 需要监听整仓库 THEN System SHALL 在设计文档里说明原因、边界、忽略规则和句柄成本
+4. WHEN 订阅关闭、面板隐藏或最后一个监听者离开 THEN System SHALL 及时释放 watcher、定时器和 `AbortController`
+5. WHEN watcher 的监听范围无法缩小 THEN System SHALL 额外提供触发频率、句柄数量和释放时机的观测口径
 
 ### 需求 7：写操作必须区分“小写”和“重写”
 
@@ -131,6 +139,7 @@
 1. WHEN 方法名使用 `get/list/read/peek` THEN System SHALL 保持只读语义
 2. WHEN 方法会推动刷新、补齐缓存、创建资源或驱动外部副作用 THEN System SHALL 使用 `ensure/schedule/refresh/create/update/invalidate/flush` 等显式命名
 3. WHEN 一个方法既有读又有明显副作用 THEN System SHALL 拆分成两个阶段或两个方法，而不是继续用混合语义命名
+4. WHEN 现有历史接口暂时不能改协议 THEN System SHALL 在内部先拆成“纯读入口 + 显式刷新入口”，并把旧接口标记为待迁移，而不是继续扩散混合语义
 
 ### 需求 9：新增服务接入前必须过统一检查清单
 
