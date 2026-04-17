@@ -140,14 +140,23 @@ async function runAssistantCommand(argv) {
       return;
     }
     case "sessions:start": {
-      const projectId = requireOptionPositional(rest, "--project", "projectId");
       await printAssistantResponse(await requestAssistant({
         method: "POST",
-        path: `/api/assistant/projects/${projectId}/sessions`,
-        argv: stripConsumedOption(rest, "--project"),
-        supportedOptions: ["message", "provider", "model", "reasoning-level", "permission-mode"],
+        path: "/api/assistant/sessions/start",
+        argv: rest,
+        supportedOptions: [
+          "project",
+          "workspace",
+          "sandbox",
+          "message",
+          "provider",
+          "model",
+          "reasoning-level",
+          "permission-mode"
+        ],
         helpTopic: "sessions.start"
       }, (options) => ({
+        ...resolveAssistantSessionStartTarget(options.values),
         content: requireOptionValue(options.values.message, "message"),
         providerId: readOptionalTrimmedValue(options.values.provider),
         model: readOptionalTrimmedValue(options.values.model),
@@ -222,6 +231,180 @@ async function runAssistantCommand(argv) {
         strategy: readOptionalTrimmedValue(options.values.strategy),
         targetProvider: readOptionalTrimmedValue(options.values["target-provider"])
       })));
+      return;
+    }
+    case "automations:list":
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: "/api/assistant/automations",
+        argv: rest,
+        supportedOptions: ["status", "control-session-id"],
+        helpTopic: "automations.list"
+      }, (options) => ({
+        status: readOptionalTrimmedValue(options.values.status),
+        controlSessionId: readOptionalTrimmedValue(options.values["control-session-id"])
+      })));
+      return;
+    case "automations:get": {
+      const [automationId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: `/api/assistant/automations/${requirePositional(automationId, "automationId")}`,
+        argv: tail,
+        helpTopic: "automations.get"
+      }));
+      return;
+    }
+    case "automations:create":
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: "/api/assistant/automations",
+        argv: rest,
+        supportedOptions: [
+          "message",
+          "trigger",
+          "title",
+          "due-at",
+          "after-seconds",
+          "every-seconds",
+          "every-minutes",
+          "every-hours",
+          "stop-at",
+          "cron-minute",
+          "cron-hour",
+          "cron-day-of-week",
+          "condition-kind",
+          "repository-url",
+          "poll-interval-seconds",
+          "expires-at",
+          "max-checks",
+          "condition-session-id",
+          "control-session-id",
+          "project-id",
+          "session-id"
+        ],
+        supportedFlags: ["include-trigger-context"],
+        repeatableOptions: ["cron-day-of-week"],
+        helpTopic: "automations.create"
+      }, (options) => ({
+        content: requireOptionValue(options.values.message, "message"),
+        triggerType: readOptionalTrimmedValue(options.values.trigger),
+        title: readOptionalTrimmedValue(options.values.title),
+        dueAt: readOptionalTrimmedValue(options.values["due-at"]),
+        afterSeconds: readOptionalTrimmedValue(options.values["after-seconds"]),
+        everySeconds: readOptionalTrimmedValue(options.values["every-seconds"]),
+        everyMinutes: readOptionalTrimmedValue(options.values["every-minutes"]),
+        everyHours: readOptionalTrimmedValue(options.values["every-hours"]),
+        stopAt: readOptionalTrimmedValue(options.values["stop-at"]),
+        cronMinute: readOptionalTrimmedValue(options.values["cron-minute"]),
+        cronHour: readOptionalTrimmedValue(options.values["cron-hour"]),
+        cronDaysOfWeek: readMultiOptionValues(options.values["cron-day-of-week"]),
+        conditionKind: readOptionalTrimmedValue(options.values["condition-kind"]),
+        repositoryUrl: readOptionalTrimmedValue(options.values["repository-url"]),
+        pollIntervalSeconds: readOptionalTrimmedValue(options.values["poll-interval-seconds"]),
+        expiresAt: readOptionalTrimmedValue(options.values["expires-at"]),
+        maxChecks: readOptionalTrimmedValue(options.values["max-checks"]),
+        conditionSessionId: readOptionalTrimmedValue(options.values["condition-session-id"]),
+        includeTriggerContext: options.flags["include-trigger-context"] === true,
+        controlSessionId: readOptionalTrimmedValue(options.values["control-session-id"]),
+        projectId: readOptionalTrimmedValue(options.values["project-id"]),
+        targetSessionId: readOptionalTrimmedValue(options.values["session-id"])
+      })));
+      return;
+    case "automations:cancel": {
+      const [automationId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: `/api/assistant/automations/${requirePositional(automationId, "automationId")}/cancel`,
+        argv: tail,
+        helpTopic: "automations.cancel"
+      }));
+      return;
+    }
+    case "automations:runs": {
+      const [automationId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: `/api/assistant/automations/${requirePositional(automationId, "automationId")}/runs`,
+        argv: tail,
+        helpTopic: "automations.runs"
+      }));
+      return;
+    }
+    case "sandboxes:list":
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: "/api/assistant/sandboxes",
+        argv: rest,
+        supportedOptions: ["status"],
+        helpTopic: "sandboxes.list"
+      }, (options) => ({
+        status: readOptionalTrimmedValue(options.values.status)
+      })));
+      return;
+    case "sandboxes:create":
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: "/api/assistant/sandboxes",
+        argv: rest,
+        supportedOptions: [
+          "title",
+          "description",
+          "purpose",
+          "expires-at",
+          "source-kind",
+          "repository-url",
+          "directory-name",
+          "auth-mode",
+          "username",
+          "password",
+          "auth-token"
+        ],
+        helpTopic: "sandboxes.create"
+      }, (options) => ({
+        title: readOptionalTrimmedValue(options.values.title),
+        description: readOptionalTrimmedValue(options.values.description),
+        purpose: readOptionalTrimmedValue(options.values.purpose),
+        expiresAt: readOptionalTrimmedValue(options.values["expires-at"]),
+        sourceKind: readOptionalTrimmedValue(options.values["source-kind"]),
+        repositoryUrl: readOptionalTrimmedValue(options.values["repository-url"]),
+        directoryName: readOptionalTrimmedValue(options.values["directory-name"]),
+        auth: buildWorkspaceCloneAuth(options.values)
+      })));
+      return;
+    case "sandboxes:promote": {
+      const [sandboxId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: `/api/assistant/sandboxes/${requirePositional(sandboxId, "sandboxId")}/promote`,
+        argv: tail,
+        supportedOptions: ["mode", "project-name", "provider"],
+        helpTopic: "sandboxes.promote"
+      }, (options) => ({
+        mode: readOptionalTrimmedValue(options.values.mode),
+        projectName: readOptionalTrimmedValue(options.values["project-name"]),
+        defaultProvider: readOptionalTrimmedValue(options.values.provider)
+      })));
+      return;
+    }
+    case "sandboxes:expire": {
+      const [sandboxId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: `/api/assistant/sandboxes/${requirePositional(sandboxId, "sandboxId")}/expire`,
+        argv: tail,
+        helpTopic: "sandboxes.expire"
+      }));
+      return;
+    }
+    case "sandboxes:remove": {
+      const [sandboxId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "DELETE",
+        path: `/api/assistant/sandboxes/${requirePositional(sandboxId, "sandboxId")}`,
+        argv: tail,
+        helpTopic: "sandboxes.remove"
+      }));
       return;
     }
     case "timers:list":
@@ -1450,7 +1633,7 @@ codingns assistant sessions
 
 可用动作：
   list      列出指定项目下的会话
-  start     按当前助手配置新建项目会话
+  start     按 project/workspace/sandbox 目标新建真实会话
   get       读取会话详情
   messages  读取消息窗口
   runtime   读取运行态
@@ -1477,10 +1660,10 @@ codingns assistant sessions list
 codingns assistant sessions start
 
 用途：
-  在指定项目下新建真实会话；如果不显式传 provider/model，会默认继承当前助手控制会话的配置。
+  在指定 project/workspace/sandbox 目标下新建真实会话；如果不显式传 provider/model，会默认继承当前助手控制会话的配置。
 
 用法：
-  codingns assistant sessions start --project <projectId> --message "..." [--provider <provider>] [--model <model>] [--reasoning-level <level>] [--permission-mode <mode>] --token <token>
+  codingns assistant sessions start (--project <projectId> | --workspace <workspaceId> | --sandbox <sandboxId>) --message "..." [--provider <provider>] [--model <model>] [--reasoning-level <level>] [--permission-mode <mode>] --token <token>
 `.trim();
     case "sessions.get":
       return `
@@ -1531,6 +1714,139 @@ codingns assistant sessions fork
 
 用法：
   codingns assistant sessions fork <sessionId> [--source-type session|message] [--message-id <id>] [--strategy auto|native-only|reconstruct-only] [--target-provider <provider>] --token <token>
+`.trim();
+    case "sandboxes":
+      return `
+codingns assistant sandboxes
+
+可用动作：
+  list     列出当前助手沙箱
+  create   创建新的临时沙箱工作区
+  promote  把沙箱保留为 pinned，或晋升成正式项目
+  expire   标记沙箱过期
+  remove   清理沙箱
+
+示例：
+  codingns assistant sandboxes list --status active --token <token>
+  codingns assistant sandboxes create --title "CodingNS 临时沙箱" --source-kind clone --repository-url <url> --token <token>
+`.trim();
+    case "sandboxes.list":
+      return `
+codingns assistant sandboxes list
+
+用途：
+  列出当前用户可见的助手沙箱。
+
+用法：
+  codingns assistant sandboxes list [--status active|archived|expired|deleted] --token <token>
+`.trim();
+    case "sandboxes.create":
+      return `
+codingns assistant sandboxes create
+
+用途：
+  创建新的临时沙箱工作区；默认空白沙箱，也可以直接 clone 仓库。
+
+用法：
+  codingns assistant sandboxes create [--title <title>] [--description <text>] [--purpose <text>] [--expires-at <isoTime>] [--source-kind blank|clone] [--repository-url <url>] [--directory-name <name>] [--auth-mode none|basic|token] [--username <name>] [--password <password>] [--auth-token <token>] --token <token>
+`.trim();
+    case "sandboxes.promote":
+      return `
+codingns assistant sandboxes promote
+
+用途：
+  把沙箱保留为 pinned，或者直接晋升成正式项目。
+
+用法：
+  codingns assistant sandboxes promote <sandboxId> [--mode pin|project] [--project-name <name>] [--provider <provider>] --token <token>
+`.trim();
+    case "sandboxes.expire":
+      return `
+codingns assistant sandboxes expire
+
+用途：
+  把指定沙箱标记为过期，后续不能再拿它启动会话。
+
+用法：
+  codingns assistant sandboxes expire <sandboxId> --token <token>
+`.trim();
+    case "sandboxes.remove":
+      return `
+codingns assistant sandboxes remove
+
+用途：
+  删除指定沙箱并尝试清理对应工作区入口。
+
+用法：
+  codingns assistant sandboxes remove <sandboxId> --token <token>
+`.trim();
+    case "automations":
+      return `
+  codingns assistant automations
+
+可用动作：
+  list    列出正式自动化任务
+  get     读取单个自动化详情
+  create  创建正式自动化任务
+  cancel  取消自动化任务
+  runs    查看自动化执行记录
+
+示例：
+  codingns assistant automations create --after-seconds 3600 --message "1 小时后检查 codingns 新 tag" --session-id <sessionId> --project-id <projectId> --token <token>
+  codingns assistant automations create --trigger interval --every-hours 1 --message "每小时检查一次" --token <token>
+  codingns assistant automations create --trigger cron --cron-minute 30 --cron-hour 9 --cron-day-of-week 1 --cron-day-of-week 2 --message "工作日早上检查" --token <token>
+  codingns assistant automations create --trigger condition --condition-kind git.remote_tag_changed --repository-url <url> --poll-interval-seconds 3600 --message "发现新 tag 后通知我" --include-trigger-context --token <token>
+  codingns assistant automations list --status active --token <token>
+`.trim();
+    case "automations.list":
+      return `
+codingns assistant automations list
+
+用途：
+  查看当前助手控制会话下的正式自动化任务。
+
+用法：
+  codingns assistant automations list [--status active|completed|cancelled|failed] [--control-session-id <id>] --token <token>
+`.trim();
+    case "automations.get":
+      return `
+codingns assistant automations get
+
+用途：
+  读取单个自动化任务详情。
+
+用法：
+  codingns assistant automations get <automationId> --token <token>
+`.trim();
+    case "automations.create":
+      return `
+codingns assistant automations create
+
+用途：
+  创建正式自动化；支持 once / interval / cron / condition 四种触发器。
+
+用法：
+  codingns assistant automations create --message "..." [--trigger once|interval|cron|condition] [--title <title>] [--due-at <isoTime> | --after-seconds <seconds>] [--every-seconds <n> | --every-minutes <n> | --every-hours <n>] [--stop-at <isoTime>] [--cron-minute <0-59>] [--cron-hour <0-23>] [--cron-day-of-week <0-6>] [--condition-kind git.remote_tag_changed|session.runtime_idle] [--repository-url <url>] [--condition-session-id <sessionId>] [--poll-interval-seconds <n>] [--expires-at <isoTime>] [--max-checks <n>] [--include-trigger-context] [--control-session-id <id>] [--project-id <projectId>] [--session-id <sessionId>] --token <token>
+`.trim();
+    case "automations.cancel":
+      return `
+codingns assistant automations cancel
+
+用途：
+  取消一个尚未执行的自动化任务。
+
+用法：
+  codingns assistant automations cancel <automationId> --token <token>
+`.trim();
+    case "automations.runs":
+      return `
+codingns assistant automations runs
+
+用途：
+  查看某个自动化任务的执行记录。
+
+用法：
+  codingns assistant automations runs <automationId> --token <token>
 `.trim();
     case "timers":
       return `
@@ -1827,7 +2143,7 @@ codingns assistant worktrees cleanup
       return `
 codingns assistant 用法：
 
-  codingns assistant help [capabilities|projects|sessions|timers|terminals|debug-targets|debug-runtimes|workspaces|worktrees] [action]
+  codingns assistant help [capabilities|projects|sessions|sandboxes|automations|timers|terminals|debug-targets|debug-runtimes|workspaces|worktrees] [action]
   codingns assistant capabilities list [--base-url http://127.0.0.1:3002] --token <token>
   codingns assistant projects list [--workspace-id <id>] [--status active|paused|archived] [--risk-level low|medium|high] --token <token>
   codingns assistant projects get <projectId> [--base-url ...] --token <token>
@@ -1850,12 +2166,22 @@ codingns assistant 用法：
   codingns assistant workspaces nav-state <workspaceId> [--collapsed true|false] [--background-color #RRGGBB|none] [--base-url ...] --token <token>
   codingns assistant workspaces remove <workspaceId> [--base-url ...] --token <token>
   codingns assistant sessions list --project <projectId> [--base-url ...] --token <token>
-  codingns assistant sessions start --project <projectId> --message "..." [--provider <provider>] [--model <model>] [--reasoning-level <level>] [--permission-mode <mode>] --token <token>
+  codingns assistant sessions start (--project <projectId> | --workspace <workspaceId> | --sandbox <sandboxId>) --message "..." [--provider <provider>] [--model <model>] [--reasoning-level <level>] [--permission-mode <mode>] --token <token>
   codingns assistant sessions get <sessionId> [--base-url ...] --token <token>
   codingns assistant sessions messages <sessionId> [--cursor <cursor>] [--limit 40] [--direction forward|backward] --token <token>
   codingns assistant sessions runtime <sessionId> [--base-url ...] --token <token>
   codingns assistant sessions send <sessionId> --message "..." [--client-request-id <id>] [--model <model>] [--reasoning-level <level>] [--permission-mode <mode>] --token <token>
   codingns assistant sessions fork <sessionId> [--source-type session|message] [--message-id <id>] [--strategy auto|native-only|reconstruct-only] [--target-provider <provider>] --token <token>
+  codingns assistant sandboxes list [--status active|archived|expired|deleted] [--base-url ...] --token <token>
+  codingns assistant sandboxes create [--title <title>] [--description <text>] [--purpose <text>] [--expires-at <isoTime>] [--source-kind blank|clone] [--repository-url <url>] [--directory-name <name>] [--auth-mode none|basic|token] [--username <name>] [--password <password>] [--auth-token <token>] [--base-url ...] --token <token>
+  codingns assistant sandboxes promote <sandboxId> [--mode pin|project] [--project-name <name>] [--provider <provider>] [--base-url ...] --token <token>
+  codingns assistant sandboxes expire <sandboxId> [--base-url ...] --token <token>
+  codingns assistant sandboxes remove <sandboxId> [--base-url ...] --token <token>
+  codingns assistant automations list [--status active|completed|cancelled|failed] [--control-session-id <id>] --token <token>
+  codingns assistant automations get <automationId> [--base-url ...] --token <token>
+  codingns assistant automations create --message "..." [--trigger once|interval|cron|condition] [--title <title>] [--due-at <isoTime> | --after-seconds <seconds>] [--every-seconds <n> | --every-minutes <n> | --every-hours <n>] [--stop-at <isoTime>] [--cron-minute <0-59>] [--cron-hour <0-23>] [--cron-day-of-week <0-6>] [--condition-kind git.remote_tag_changed|session.runtime_idle] [--repository-url <url>] [--condition-session-id <sessionId>] [--poll-interval-seconds <n>] [--expires-at <isoTime>] [--max-checks <n>] [--include-trigger-context] [--control-session-id <id>] [--project-id <projectId>] [--session-id <sessionId>] --token <token>
+  codingns assistant automations cancel <automationId> [--base-url ...] --token <token>
+  codingns assistant automations runs <automationId> [--base-url ...] --token <token>
   codingns assistant timers list [--status active|completed|cancelled|failed] [--control-session-id <id>] --token <token>
   codingns assistant timers get <timerId> [--base-url ...] --token <token>
   codingns assistant timers create --message "..." [--title <title>] [--due-at <isoTime> | --after-seconds <seconds>] [--control-session-id <id>] [--project-id <projectId>] [--session-id <sessionId>] --token <token>
@@ -1949,6 +2275,23 @@ function buildAssistantHelpTopic(action, rest) {
   }
 
   return `${action}.${rest[0]}`;
+}
+
+function resolveAssistantSessionStartTarget(values) {
+  const projectId = readOptionalTrimmedValue(values.project);
+  const workspaceId = readOptionalTrimmedValue(values.workspace);
+  const sandboxId = readOptionalTrimmedValue(values.sandbox);
+  const targets = [
+    projectId ? { projectId } : null,
+    workspaceId ? { workspaceId } : null,
+    sandboxId ? { sandboxId } : null
+  ].filter((item) => item !== null);
+
+  if (targets.length !== 1) {
+    fail("sessions start 必须且只能提供 --project、--workspace、--sandbox 其中一个");
+  }
+
+  return targets[0];
 }
 
 function buildWorkspaceCloneAuth(values) {
