@@ -26,6 +26,7 @@ export function syncButlerWorkspaceContext(input: {
   profile: ButlerProfile;
   promptContext: ButlerPromptContext;
   userId: string;
+  workspacePath?: string | null;
   butlerAuthService: Pick<ButlerAuthService, "ensureWorkspaceCredential" | "getCredentialFilePath">;
   skillManagerService: Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">;
   codexHomeDir: string | null;
@@ -33,14 +34,17 @@ export function syncButlerWorkspaceContext(input: {
   claudeCodeHomeDir: string | null;
   sourceClaudeCodeHomeDir: string | null;
 }): void {
-  fs.mkdirSync(input.profile.workspacePath, { recursive: true });
-  ensureButlerWorkspaceIsolation(input.profile.workspacePath);
-  const auth = input.butlerAuthService.ensureWorkspaceCredential(input.profile.workspacePath, input.userId);
-  const authFilePath = input.butlerAuthService.getCredentialFilePath(input.profile.workspacePath);
+  const workspacePath = resolveInstructionWorkspacePath(input.profile, input.workspacePath);
 
-  writeInstructionFiles(input.profile, input.promptContext, auth, authFilePath);
+  fs.mkdirSync(workspacePath, { recursive: true });
+  ensureButlerWorkspaceIsolation(workspacePath);
+  const auth = input.butlerAuthService.ensureWorkspaceCredential(workspacePath, input.userId);
+  const authFilePath = input.butlerAuthService.getCredentialFilePath(workspacePath);
+
+  writeInstructionFiles(input.profile, workspacePath, input.promptContext, auth, authFilePath);
   syncCodexInstructionConfig(
     input.profile,
+    workspacePath,
     input.skillManagerService,
     input.codexHomeDir,
     input.sourceCodexHomeDir
@@ -54,32 +58,34 @@ export function syncButlerWorkspaceContext(input: {
 
 function writeInstructionFiles(
   profile: ButlerProfile,
+  workspacePath: string,
   promptContext: ButlerPromptContext,
   auth: ButlerWorkspaceCredential,
   authFilePath: string
 ): void {
-  const artifacts = buildButlerInstructionArtifacts(profile, promptContext);
+  const artifacts = buildButlerInstructionArtifacts(profile, promptContext, workspacePath);
 
   writeFileIfChanged(artifacts.sharedRulesPath, artifacts.sharedRulesContent);
   writeFileIfChanged(artifacts.rootAgentsPath, artifacts.agentsContent);
   writeFileIfChanged(artifacts.rootClaudePath, artifacts.claudeContent);
 
-  if (profile.agentsMode === "file" && profile.agentsFilePath) {
+  if (shouldSyncProfileAgentsFile(profile, workspacePath) && profile.agentsFilePath) {
     writeFileIfChanged(profile.agentsFilePath, artifacts.agentsContent);
   }
 
   writeFileIfChanged(
-    path.join(profile.workspacePath, "BUTLER_CONTEXT.md"),
+    path.join(workspacePath, "BUTLER_CONTEXT.md"),
     `${promptContext.prompt.trim()}\n`
   );
   writeFileIfChanged(
-    path.join(profile.workspacePath, "BUTLER_API.md"),
+    path.join(workspacePath, "BUTLER_API.md"),
     buildApiGuideContent(auth, authFilePath)
   );
 }
 
 function syncCodexInstructionConfig(
   profile: ButlerProfile,
+  workspacePath: string,
   skillManagerService: Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">,
   codexHomeDir: string | null,
   sourceCodexHomeDir: string | null
@@ -91,10 +97,7 @@ function syncCodexInstructionConfig(
   const targetHomeDir = path.resolve(codexHomeDir);
   const sourceHomeDir = resolveSourceCodexHomeDir(sourceCodexHomeDir, targetHomeDir);
   const sourceConfigPath = path.join(sourceHomeDir, "config.toml");
-  const instructionFilePath =
-    profile.agentsMode === "file" && profile.agentsFilePath
-      ? path.resolve(profile.agentsFilePath)
-      : path.join(profile.workspacePath, "AGENTS.md");
+  const instructionFilePath = resolveInstructionAgentsFilePath(profile, workspacePath);
   const sourceConfigContent =
     sourceHomeDir !== targetHomeDir && fs.existsSync(sourceConfigPath) && fs.statSync(sourceConfigPath).isFile()
       ? fs.readFileSync(sourceConfigPath, "utf8")
@@ -209,7 +212,8 @@ function syncManagedButlerSkill(
 
 function buildButlerInstructionArtifacts(
   profile: ButlerProfile,
-  promptContext: ButlerPromptContext
+  promptContext: ButlerPromptContext,
+  workspacePath: string
 ): {
   sharedRulesPath: string;
   rootAgentsPath: string;
@@ -221,9 +225,9 @@ function buildButlerInstructionArtifacts(
   const sharedInstructionBody = composeSharedInstructionBody(profile, promptContext);
 
   return {
-    sharedRulesPath: path.join(profile.workspacePath, BUTLER_SHARED_RULES_FILE_NAME),
-    rootAgentsPath: path.join(profile.workspacePath, BUTLER_AGENTS_FILE_NAME),
-    rootClaudePath: path.join(profile.workspacePath, BUTLER_CLAUDE_FILE_NAME),
+    sharedRulesPath: path.join(workspacePath, BUTLER_SHARED_RULES_FILE_NAME),
+    rootAgentsPath: path.join(workspacePath, BUTLER_AGENTS_FILE_NAME),
+    rootClaudePath: path.join(workspacePath, BUTLER_CLAUDE_FILE_NAME),
     sharedRulesContent: composeSharedInstructionSourceDocument(sharedInstructionBody),
     agentsContent: composeProviderInstructionDocument("codex", sharedInstructionBody),
     claudeContent: composeProviderInstructionDocument("claude-code", sharedInstructionBody)
@@ -238,11 +242,13 @@ function composeSharedInstructionBody(
 
 ## 代码助手共享规则正文（系统自动生成）
 
-- 当前工作目录是代码助手专用目录，只使用这里的助手规则，不回退到普通项目会话规则。
+- 当前工作目录是当前助手会话的专用沙箱目录，只使用这里的助手规则，不回退到普通项目会话规则。
 - \`${BUTLER_SHARED_RULES_FILE_NAME}\` 是共享规则源；\`${BUTLER_AGENTS_FILE_NAME}\` 和 \`${BUTLER_CLAUDE_FILE_NAME}\` 都是从这里自动展开出来的下游文件。
-- 你是代码助手控制面，不是项目实现者。默认职责只有：查看、分析、归纳、补查信息、安排下一步、把指令发送给真实项目会话或终端。
-- 禁止直接改业务项目代码、禁止直接生成补丁并落盘、禁止自己在项目目录里写实现。用户要推进开发时，只能通过内部 API 续接/新建项目会话、发送消息、查询结果，或者操作受控终端。
-- 如果用户要求“修改代码”“继续实现”“修 bug”，先定位目标项目和目标会话；没有会话就先新建/续接项目会话，再把任务发给那个会话继续做，不要自己在 Butler 工作目录里动手。
+- 当前目录默认就是当前助手会话独占的临时沙箱。只要任务不涉及正式工作区，你可以直接在这里写脚本、写临时代码、生成文件、整理产物。
+- 当前沙箱不是正式工作区，也不是任何托管项目仓库。禁止把当前助手沙箱误当成正式项目目录。
+- 只要任务涉及正式工作区、项目仓库、已有项目会话里的代码修改，就绝对不能直接在那些目录里动手。必须先定位目标工作区和目标会话，再通过 \`codingns assistant sessions start / send / fork\` 或受控终端去推进。
+- 如果用户要求“修改代码”“继续实现”“修 bug”，先判断目标是不是正式工作区；如果是，就进入对应真实项目会话继续做；如果不是，而只是一次性脚本、临时样例、分析产物或独立文件，直接在当前助手沙箱里完成。
+- 如果用户没有指定工作区，但你判断需要落文件，默认直接落在当前助手沙箱，不要为了落文件再额外创建一层“沙箱会话”。
 - 当前聚合后的平台摘要写在 \`BUTLER_CONTEXT.md\`，先看这里，不要把所有项目原始记录一股脑塞进回答。
 - 当前摘要作用域以 \`BUTLER_CONTEXT.md\` 的最新内容为准；这次生成时记录的是：${promptContext.scope === "project" ? `项目 ${promptContext.projectId}` : "全局总览"}。如果后续上下文文件已刷新，以文件里的当前作用域为准，不要被旧缓存绑死。
 - 你自己的主工具入口不是一堆 HTTP 路由，而是 \`codingns assistant ...\`。真正执行前，先用 \`codingns assistant --help\`、\`codingns assistant help <group>\`、\`codingns assistant <group> <action> --help\` 按需查命令。
@@ -337,7 +343,7 @@ function buildApiGuideContent(auth: ButlerWorkspaceCredential, authFilePath: str
 
 ## 什么时候手工导出环境变量
 
-- 只有当你不在 Butler 工作区、CLI 自动发现失败，或者要临时切到别的 Host / 凭证文件时，才手工导出环境变量。
+- 只有当你不在当前助手沙箱工作区、CLI 自动发现失败，或者要临时切到别的 Host / 凭证文件时，才手工导出环境变量。
 - 默认不要把“先 export 再执行”当成每轮固定动作。
 
 \`\`\`bash
@@ -348,7 +354,7 @@ export CODINGNS_ACCESS_TOKEN="$(jq -r '.accessToken' "${authFilePath}")"
 ## 默认读取顺序
 
 1. 先读 \`BUTLER_CONTEXT.md\` 的当前摘要。
-2. 先确认 CLI 认证入口可用；在 Butler 工作区里默认直接执行即可，必要时再核对上面的凭证文件路径。
+2. 先确认 CLI 认证入口可用；在当前助手沙箱工作区里默认直接执行即可，必要时再核对上面的凭证文件路径。
 3. 认证入口可用后，再跑 \`codingns assistant capabilities list\`，确认当前开放能力。
 4. 不知道怎么查时，先跑 \`codingns assistant --help\`、\`codingns assistant help projects\`、\`codingns assistant help sessions\`、\`codingns assistant help terminals\`。
 5. 要找项目时，先 \`codingns assistant projects list\`，需要详情时再 \`projects get <projectId>\`。
@@ -360,8 +366,9 @@ export CODINGNS_ACCESS_TOKEN="$(jq -r '.accessToken' "${authFilePath}")"
 
 ## 执行边界
 
-- 你不能直接修改项目代码，也不能把自己当成项目执行会话。
-- 需要推进开发时，只能通过下面这些 CLI 命令驱动真实项目会话或受控终端。
+- 当前目录就是当前助手会话自己的沙箱；如果任务只发生在这里，你可以直接写文件、写脚本、生成临时产物。
+- 你不能直接修改任何正式工作区或项目仓库代码，也不能把自己当成工作区执行会话。
+- 需要推进正式工作区开发时，只能通过下面这些 CLI 命令驱动真实项目会话或受控终端。
 - 需要命令结果时，优先查终端历史；确实要执行命令，再向受控终端发送输入。
 - 需要分叉会话时，统一走 \`codingns assistant sessions fork\`，不要自己伪造一条“新上下文”继续编。
 
@@ -439,6 +446,30 @@ function resolveSourceClaudeCodeHomeDir(sourceClaudeCodeHomeDir: string | null, 
   }
 
   return targetHomeDir;
+}
+
+function resolveInstructionWorkspacePath(profile: ButlerProfile, workspacePath?: string | null): string {
+  const normalized = workspacePath?.trim();
+  return path.resolve(normalized || profile.workspacePath);
+}
+
+function resolveInstructionAgentsFilePath(profile: ButlerProfile, workspacePath: string): string {
+  if (path.resolve(workspacePath) !== path.resolve(profile.workspacePath)) {
+    return path.join(workspacePath, BUTLER_AGENTS_FILE_NAME);
+  }
+
+  if (profile.agentsMode === "file" && profile.agentsFilePath) {
+    return path.resolve(profile.agentsFilePath);
+  }
+
+  return path.join(profile.workspacePath, BUTLER_AGENTS_FILE_NAME);
+}
+
+function shouldSyncProfileAgentsFile(profile: ButlerProfile, workspacePath: string): boolean {
+  return (
+    path.resolve(workspacePath) === path.resolve(profile.workspacePath)
+    && profile.agentsMode === "file"
+  );
 }
 
 function composeCodexConfigContent(sourceConfigContent: string, instructionFilePath: string): string {

@@ -20,6 +20,7 @@ import type { ButlerContextAggregator, ButlerPromptContext } from "./context-agg
 import type { SkillManagerService } from "../skills/skill-manager-service.js";
 import { syncButlerWorkspaceContext } from "./butler-workspace-context.js";
 import { recordButlerProxyMessageOrigin } from "../sessions/session-message-origin-utils.js";
+import type { AssistantSandboxService } from "./assistant-sandbox-service.js";
 
 export interface ButlerControlSessionView extends ButlerControlSession {
   session: SessionListItem;
@@ -39,6 +40,11 @@ export interface StartButlerControlSessionInput {
 export interface SendButlerControlMessageInput extends StartButlerControlSessionInput {
   content?: string;
   controlSessionId?: string | null;
+}
+
+interface PreparedButlerWorkspace {
+  workspaceId: string;
+  sandboxId: string | null;
 }
 
 export class ButlerControlSessionService {
@@ -64,6 +70,10 @@ export class ButlerControlSessionService {
     private readonly sessionMessageOriginRepository: Pick<
       SessionMessageOriginRepository,
       "upsert"
+    > | null = null,
+    private readonly assistantSandboxService: Pick<
+      AssistantSandboxService,
+      "createSandbox" | "listSandboxes" | "markSandboxUsedByControlSession" | "removeSandbox"
     > | null = null
   ) {}
 
@@ -122,7 +132,10 @@ export class ButlerControlSessionService {
     const clientRequestId = normalizeNullableText(input.clientRequestId)
       ?? `assistant-origin:butler-control-start:${createId()}`;
     const promptContext = await this.butlerContextAggregator.resolvePromptContext(userId, input.content ?? null);
-    const workspace = this.prepareWorkspace(profile, promptContext, userId);
+    const preparedWorkspace = await this.prepareWorkspace(profile, promptContext, userId, {
+      title: normalizeNullableText(input.title),
+      content
+    });
     const current = this.butlerControlSessionRepository.findLatestOpenByProvider(profile.providerId);
 
     if (current && current.status !== "closed") {
@@ -133,46 +146,66 @@ export class ButlerControlSessionService {
       });
     }
 
-    const started = await this.sessionLiveRuntimeService.startLiveSession({
-      workspaceId: workspace.id,
-      userId,
-      provider: profile.providerId,
-      content,
-      clientRequestId,
-      runtimeOptions: {
+    try {
+      const started = await this.sessionLiveRuntimeService.startLiveSession({
+        workspaceId: preparedWorkspace.workspaceId,
+        userId,
+        provider: profile.providerId,
+        content,
+        clientRequestId,
+        runtimeOptions: {
+          model,
+          reasoningLevel,
+          permissionMode,
+          attachments: []
+        }
+      });
+      recordButlerProxyMessageOrigin(this.sessionMessageOriginRepository, {
+        sessionId: started.sessionId,
+        clientRequestId,
+        messageId: started.message?.messageId ?? null,
+        content,
+        createdAt: started.acceptedAt,
+        fallbackKey: `butler-control-start:${started.sessionId}:${started.acceptedAt}`
+      });
+      const timestamp = started.acceptedAt;
+      const created = this.butlerControlSessionRepository.create({
+        id: createId(),
+        providerId: profile.providerId,
+        sessionId: started.sessionId,
+        purpose: input.purpose ?? "chat",
+        title: normalizeNullableText(input.title),
+        sourceItemId: normalizeNullableText(input.sourceItemId),
         model,
         reasoningLevel,
         permissionMode,
-        attachments: []
-      }
-    });
-    recordButlerProxyMessageOrigin(this.sessionMessageOriginRepository, {
-      sessionId: started.sessionId,
-      clientRequestId,
-      messageId: started.message?.messageId ?? null,
-      content,
-      createdAt: started.acceptedAt,
-      fallbackKey: `butler-control-start:${started.sessionId}:${started.acceptedAt}`
-    });
-    const timestamp = started.acceptedAt;
-    const created = this.butlerControlSessionRepository.create({
-      id: createId(),
-      providerId: profile.providerId,
-      sessionId: started.sessionId,
-      purpose: input.purpose ?? "chat",
-      title: normalizeNullableText(input.title),
-      sourceItemId: normalizeNullableText(input.sourceItemId),
-      model,
-      reasoningLevel,
-      permissionMode,
-      status: "running",
-      lastContextVersion: promptContext.version,
-      lastSummary: normalizeNullableText(input.title) ?? summarizeMessage(content),
-      createdAt: timestamp,
-      updatedAt: timestamp
-    });
+        status: "running",
+        lastContextVersion: promptContext.version,
+        lastSummary: normalizeNullableText(input.title) ?? summarizeMessage(content),
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
 
-    return this.toView(created, userId);
+      if (preparedWorkspace.sandboxId && this.assistantSandboxService) {
+        this.assistantSandboxService.markSandboxUsedByControlSession(
+          preparedWorkspace.sandboxId,
+          userId,
+          created.id
+        );
+      }
+
+      return this.toView(created, userId);
+    } catch (error) {
+      if (preparedWorkspace.sandboxId && this.assistantSandboxService) {
+        try {
+          this.assistantSandboxService.removeSandbox(preparedWorkspace.sandboxId, userId);
+        } catch {
+          // 控制会话没真正启动成功时，尽量把新建的空白沙箱收口，避免残留无主目录。
+        }
+      }
+
+      throw error;
+    }
   }
 
   async resumeCurrentSession(
@@ -185,7 +218,12 @@ export class ButlerControlSessionService {
     const profile = this.butlerProfileService.ensureInitialized();
     const current = this.requireCurrentSession(profile.providerId);
     const promptContext = await this.butlerContextAggregator.resolvePromptContext(userId, null);
-    this.syncWorkspaceContext(profile, promptContext, userId);
+    this.syncWorkspaceContext(
+      profile,
+      promptContext,
+      userId,
+      this.resolveControlSessionWorkspacePath(profile, current.id, userId)
+    );
 
     try {
       const resumed = await this.sessionHistoryService.resumeSession(current.sessionId);
@@ -238,7 +276,12 @@ export class ButlerControlSessionService {
     const reasoningLevel = normalizeNullableText(input.reasoningLevel) ?? current.reasoningLevel;
     const permissionMode = normalizeNullableText(input.permissionMode) ?? current.permissionMode;
     const promptContext = await this.butlerContextAggregator.resolvePromptContext(userId, content);
-    this.syncWorkspaceContext(profile, promptContext, userId);
+    this.syncWorkspaceContext(
+      profile,
+      promptContext,
+      userId,
+      this.resolveControlSessionWorkspacePath(profile, current.id, userId)
+    );
 
     try {
       const result = await this.sessionLiveRuntimeService.sendLiveMessage({
@@ -325,16 +368,64 @@ export class ButlerControlSessionService {
     };
   }
 
-  private prepareWorkspace(profile: ButlerProfile, promptContext: ButlerPromptContext, userId: string) {
-    this.syncWorkspaceContext(profile, promptContext, userId);
-    return this.workspaceService.importWorkspace(profile.workspacePath, "代码助手");
+  private async prepareWorkspace(
+    profile: ButlerProfile,
+    promptContext: ButlerPromptContext,
+    userId: string,
+    input: {
+      title: string | null;
+      content: string;
+    }
+  ): Promise<PreparedButlerWorkspace> {
+    if (!this.assistantSandboxService) {
+      this.syncWorkspaceContext(profile, promptContext, userId, profile.workspacePath);
+      const workspace = this.workspaceService.importWorkspace(profile.workspacePath, "代码助手");
+
+      return {
+        workspaceId: workspace.id,
+        sandboxId: null
+      };
+    }
+
+    const sandbox = await this.assistantSandboxService.createSandbox({
+      userId,
+      title: inferControlSessionSandboxTitle(input.title, input.content),
+      description: "当前助手会话独占的临时工作区",
+      purpose: "butler_control_session",
+      source: {
+        kind: "blank",
+        directoryName: `control-session-${createId().slice(0, 8)}`
+      }
+    });
+    const workspacePath = sandbox.workspace?.path?.trim();
+
+    if (!workspacePath) {
+      throw new AppError({
+        statusCode: 500,
+        errorCode: "BUTLER_CONTROL_SANDBOX_UNAVAILABLE",
+        detail: "已创建助手沙箱，但未能解析对应工作区路径"
+      });
+    }
+
+    this.syncWorkspaceContext(profile, promptContext, userId, workspacePath);
+
+    return {
+      workspaceId: sandbox.workspaceId,
+      sandboxId: sandbox.id
+    };
   }
 
-  private syncWorkspaceContext(profile: ButlerProfile, promptContext: ButlerPromptContext, userId: string): void {
+  private syncWorkspaceContext(
+    profile: ButlerProfile,
+    promptContext: ButlerPromptContext,
+    userId: string,
+    workspacePath: string
+  ): void {
     syncButlerWorkspaceContext({
       profile,
       promptContext,
       userId,
+      workspacePath,
       butlerAuthService: this.butlerAuthService,
       skillManagerService: this.skillManagerService,
       codexHomeDir: this.codexHomeDir,
@@ -342,6 +433,25 @@ export class ButlerControlSessionService {
       claudeCodeHomeDir: this.claudeCodeHomeDir,
       sourceClaudeCodeHomeDir: this.sourceClaudeCodeHomeDir
     });
+  }
+
+  private resolveControlSessionWorkspacePath(
+    profile: ButlerProfile,
+    controlSessionId: string,
+    userId: string
+  ): string {
+    const sandboxWorkspacePath = this.assistantSandboxService
+      ?.listSandboxes({
+        userId,
+        controlSessionId,
+        statuses: ["active", "archived"],
+        limit: 1
+      })[0]
+      ?.workspace
+      ?.path
+      ?.trim();
+
+    return sandboxWorkspacePath || profile.workspacePath;
   }
 
   private markFailed(record: ButlerControlSession, fallbackSummary: string): void {
@@ -395,4 +505,8 @@ function normalizeNullableText(value: string | null | undefined): string | null 
 
 function summarizeMessage(content: string): string {
   return content.length > 120 ? `${content.slice(0, 117)}...` : content;
+}
+
+function inferControlSessionSandboxTitle(title: string | null, content: string): string {
+  return title ?? summarizeMessage(content) ?? "助手临时工作区";
 }

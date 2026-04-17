@@ -733,7 +733,8 @@ export function createServer(config: HostConfig) {
     config.codexHomeDir,
     butlerRuntimeConfig.claudeCodeHomeDir,
     config.claudeCodeHomeDir,
-    repositories.sessionMessageOriginRepository
+    repositories.sessionMessageOriginRepository,
+    assistantSandboxService
   );
   const assistantAutomationService = new AssistantAutomationService(
     butlerProfileService,
