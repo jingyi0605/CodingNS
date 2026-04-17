@@ -3153,6 +3153,7 @@ interface AutomationRunItem {
   status: "active" | "waiting_user" | "completed" | "failed" | "cancelled";
   sourceLabel: string;
   statusLabel: string;
+  summary: string;
   createdAt: string;
 }
 
@@ -3276,6 +3277,7 @@ function AutomationTaskOverviewCard(props: {
   items: AutomationTaskItem[];
   cancellingAutomationId: string | null;
   onCancelAutomation: (automationId: string) => Promise<void>;
+  onOpenAutomationDetail: (automationId: string) => void;
   emptyText: string;
   actionLabel?: string;
   onAction?: () => void;
@@ -3311,29 +3313,27 @@ function AutomationTaskOverviewCard(props: {
                   {item.statusLabel}
                 </span>
               </header>
-              <div className="butler-automation-overview-chip-row">
-                <span className="butler-automation-overview-chip">
-                  {item.taskTypeLabel}
+              <div className="butler-automation-overview-inline">
+                <span className="butler-automation-overview-chip">{item.taskTypeLabel}</span>
+                <span className="butler-automation-overview-inline-meta">
+                  {t("shell.butlerAutomationTaskNextRunLabel")} · {formatIsoDateTime(item.nextRunAt)}
+                </span>
+                <span className="butler-automation-overview-inline-meta">
+                  {t("shell.butlerAutomationTaskLastRunLabel")} · {formatIsoDateTime(item.lastRunAt)}
                 </span>
               </div>
-              <p className="butler-automation-overview-summary">{item.promptPreview}</p>
-              <div className="butler-automation-overview-metrics">
-                <div className="butler-automation-overview-metric">
-                  <span>{t("shell.butlerAutomationTaskNextRunLabel")}</span>
-                  <strong>{formatIsoDateTime(item.nextRunAt)}</strong>
-                </div>
-                <div className="butler-automation-overview-metric">
-                  <span>{t("shell.butlerAutomationTaskLastRunLabel")}</span>
-                  <strong>{formatIsoDateTime(item.lastRunAt)}</strong>
-                </div>
-              </div>
-              {item.lastResultSummary ? (
-                <div className="butler-automation-overview-note">
-                  <span>{t("shell.butlerAutomationRunSummaryLabel")}</span>
-                  <strong>{item.lastResultSummary}</strong>
-                </div>
-              ) : null}
               <footer className="butler-automation-card-footer">
+                {item.automationId ? (
+                  <button
+                    type="button"
+                    className="secondary-button butler-automation-card-action"
+                    onClick={() => {
+                      props.onOpenAutomationDetail(item.automationId!);
+                    }}
+                  >
+                    {t("shell.butlerAutomationOpenDetailsAction")}
+                  </button>
+                ) : null}
                 {item.automationId && item.status === "active" ? (
                   <button
                     type="button"
@@ -3362,6 +3362,7 @@ function AutomationTaskOverviewCard(props: {
 function AutomationRunOverviewCard(props: {
   items: AutomationRunItem[];
   emptyText: string;
+  onOpenAutomationDetail: (automationId: string) => void;
 }) {
   return (
     <section className="butler-side-card">
@@ -3385,22 +3386,23 @@ function AutomationRunOverviewCard(props: {
                   {item.statusLabel}
                 </span>
               </header>
-              <div className="butler-automation-overview-chip-row">
-                <span className="butler-automation-overview-chip">
-                  {item.sourceLabel}
+              <div className="butler-automation-overview-inline">
+                <span className="butler-automation-overview-chip">{item.sourceLabel}</span>
+                <span className="butler-automation-overview-inline-meta">
+                  {t("shell.butlerAutomationRunProcessedAtLabel")} · {formatIsoDateTime(item.createdAt)}
                 </span>
               </div>
-              <p className="butler-automation-overview-summary">{item.summary}</p>
-              <div className="butler-automation-overview-note">
-                <span>{t("shell.butlerAutomationPromptLabel")}</span>
-                <strong>{item.detailPreview}</strong>
-              </div>
-              <div className="butler-automation-overview-metrics">
-                <div className="butler-automation-overview-metric">
-                  <span>{t("shell.butlerAutomationRunProcessedAtLabel")}</span>
-                  <strong>{formatIsoDateTime(item.createdAt)}</strong>
-                </div>
-              </div>
+              <footer className="butler-automation-card-footer">
+                <button
+                  type="button"
+                  className="secondary-button butler-automation-card-action"
+                  onClick={() => {
+                    props.onOpenAutomationDetail(item.automationId);
+                  }}
+                >
+                  {t("shell.butlerAutomationOpenDetailsAction")}
+                </button>
+              </footer>
             </article>
           ))}
         </div>
@@ -3408,6 +3410,340 @@ function AutomationRunOverviewCard(props: {
         <p className="butler-secondary-text">{props.emptyText}</p>
       )}
     </section>
+  );
+}
+
+function AutomationDetailModalPanel(props: {
+  automation: AssistantAutomationTaskDto;
+  editorState: AutomationEditorState;
+  saving: boolean;
+  projectName: string;
+  targetSessionTitle: string | null;
+  recentRuns: AssistantAutomationRunDto[];
+  onEditorChange: (patch: Partial<AutomationEditorState>) => void;
+  onSave: () => void;
+}) {
+  return (
+    <div className="butler-automation-detail-shell">
+      <section className="butler-automation-detail-summary-grid">
+        <div className="butler-automation-detail-summary-card">
+          <span>{t("shell.butlerAutomationTaskTypeLabel")}</span>
+          <strong>{resolveAutomationTaskTypeLabel(props.automation.triggerType)}</strong>
+        </div>
+        <div className="butler-automation-detail-summary-card">
+          <span>{t("shell.butlerAutomationStatusLabel")}</span>
+          <strong>{resolveAssistantAutomationTaskStatusLabel(props.automation.status)}</strong>
+        </div>
+        <div className="butler-automation-detail-summary-card">
+          <span>{t("shell.butlerAutomationTaskNextRunLabel")}</span>
+          <strong>{formatIsoDateTime(props.automation.nextRunAt)}</strong>
+        </div>
+        <div className="butler-automation-detail-summary-card">
+          <span>{t("shell.butlerAutomationTaskLastRunLabel")}</span>
+          <strong>{formatIsoDateTime(props.automation.lastRunAt || props.automation.updatedAt)}</strong>
+        </div>
+        <div className="butler-automation-detail-summary-card">
+          <span>{t("shell.butlerControlTimerWorkspaceLabel")}</span>
+          <strong>{props.projectName}</strong>
+        </div>
+        {props.targetSessionTitle ? (
+          <div className="butler-automation-detail-summary-card">
+            <span>{t("shell.butlerAutomationTargetSessionLabel")}</span>
+            <strong>{props.targetSessionTitle}</strong>
+          </div>
+        ) : null}
+      </section>
+
+      <section className="butler-side-card butler-automation-detail-section">
+        <header>
+          <h2>{t("shell.butlerAutomationDetailTitle")}</h2>
+        </header>
+        <div className="butler-automation-detail-form-grid">
+          <label className="butler-form-field">
+            <span>{t("shell.butlerAutomationTitleLabel")}</span>
+            <input
+              className="butler-form-control"
+              value={props.editorState.title}
+              disabled={props.saving}
+              onChange={(event) => {
+                props.onEditorChange({
+                  title: event.target.value
+                });
+              }}
+            />
+          </label>
+          <label className="butler-form-field butler-form-field-wide">
+            <span>{t("shell.butlerAutomationPromptLabel")}</span>
+            <textarea
+              className="butler-form-control butler-automation-detail-textarea"
+              value={props.editorState.content}
+              disabled={props.saving}
+              onChange={(event) => {
+                props.onEditorChange({
+                  content: event.target.value
+                });
+              }}
+            />
+          </label>
+          <label className="butler-automation-detail-toggle">
+            <input
+              type="checkbox"
+              checked={props.editorState.includeTriggerContext}
+              disabled={props.saving}
+              onChange={(event) => {
+                props.onEditorChange({
+                  includeTriggerContext: event.target.checked
+                });
+              }}
+            />
+            <span>{t("shell.butlerAutomationIncludeTriggerContextLabel")}</span>
+          </label>
+          <AutomationScheduleFields
+            automation={props.automation}
+            editorState={props.editorState}
+            saving={props.saving}
+            onEditorChange={props.onEditorChange}
+          />
+        </div>
+        <div className="butler-automation-detail-actions">
+          <button
+            type="button"
+            className="primary-button"
+            disabled={props.saving}
+            onClick={props.onSave}
+          >
+            {props.saving ? t("shell.butlerAutomationSaving") : t("shell.butlerAutomationSaveAction")}
+          </button>
+        </div>
+      </section>
+
+      <section className="butler-side-card butler-automation-detail-section">
+        <header>
+          <h2>{t("shell.butlerAutomationRunsTitle")}</h2>
+        </header>
+        {props.recentRuns.length > 0 ? (
+          <div className="butler-automation-detail-run-list">
+            {props.recentRuns.map((run) => (
+              <article key={run.id} className="butler-automation-detail-run-card">
+                <header>
+                  <strong>{t("shell.butlerAutomationRoundLabel", { round: run.runSeq })}</strong>
+                  <span className="butler-automation-status-badge" data-status={normalizeAutomationRunStatus(run.status)}>
+                    {resolveAssistantAutomationRunStatusLabel(run.status)}
+                  </span>
+                </header>
+                <div className="butler-automation-detail-run-meta">
+                  <span>{resolveAutomationRunSourceLabel(run.triggerType)}</span>
+                  <span>{formatIsoDateTime(run.finishedAt || run.startedAt || run.createdAt)}</span>
+                </div>
+                <p>{run.summary?.trim() || run.error?.trim() || t("shell.butlerAutomationRunEmptySummary")}</p>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="butler-secondary-text">{t("shell.butlerAutomationRunsEmpty")}</p>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function AutomationScheduleFields(props: {
+  automation: AssistantAutomationTaskDto;
+  editorState: AutomationEditorState;
+  saving: boolean;
+  onEditorChange: (patch: Partial<AutomationEditorState>) => void;
+}) {
+  const { triggerConfig } = props.automation;
+
+  if (triggerConfig.type === "once") {
+    return (
+      <label className="butler-form-field">
+        <span>{t("shell.butlerAutomationDueAtLabel")}</span>
+        <input
+          type="datetime-local"
+          className="butler-form-control"
+          value={props.editorState.dueAt}
+          disabled={props.saving}
+          onChange={(event) => {
+            props.onEditorChange({
+              dueAt: event.target.value
+            });
+          }}
+        />
+      </label>
+    );
+  }
+
+  if (triggerConfig.type === "interval") {
+    return (
+      <>
+        <label className="butler-form-field">
+          <span>{t("shell.butlerAutomationEverySecondsLabel")}</span>
+          <input
+            inputMode="numeric"
+            className="butler-form-control"
+            value={props.editorState.everySeconds}
+            disabled={props.saving}
+            onChange={(event) => {
+              props.onEditorChange({
+                everySeconds: event.target.value
+              });
+            }}
+          />
+        </label>
+        <label className="butler-form-field">
+          <span>{t("shell.butlerAutomationEveryMinutesLabel")}</span>
+          <input
+            inputMode="numeric"
+            className="butler-form-control"
+            value={props.editorState.everyMinutes}
+            disabled={props.saving}
+            onChange={(event) => {
+              props.onEditorChange({
+                everyMinutes: event.target.value
+              });
+            }}
+          />
+        </label>
+        <label className="butler-form-field">
+          <span>{t("shell.butlerAutomationEveryHoursLabel")}</span>
+          <input
+            inputMode="numeric"
+            className="butler-form-control"
+            value={props.editorState.everyHours}
+            disabled={props.saving}
+            onChange={(event) => {
+              props.onEditorChange({
+                everyHours: event.target.value
+              });
+            }}
+          />
+        </label>
+        <label className="butler-form-field">
+          <span>{t("shell.butlerAutomationStopAtLabel")}</span>
+          <input
+            type="datetime-local"
+            className="butler-form-control"
+            value={props.editorState.stopAt}
+            disabled={props.saving}
+            onChange={(event) => {
+              props.onEditorChange({
+                stopAt: event.target.value
+              });
+            }}
+          />
+        </label>
+      </>
+    );
+  }
+
+  if (triggerConfig.type === "cron") {
+    return (
+      <>
+        <label className="butler-form-field">
+          <span>{t("shell.butlerAutomationCronMinuteLabel")}</span>
+          <input
+            inputMode="numeric"
+            className="butler-form-control"
+            value={props.editorState.cronMinute}
+            disabled={props.saving}
+            onChange={(event) => {
+              props.onEditorChange({
+                cronMinute: event.target.value
+              });
+            }}
+          />
+        </label>
+        <label className="butler-form-field">
+          <span>{t("shell.butlerAutomationCronHourLabel")}</span>
+          <input
+            inputMode="numeric"
+            className="butler-form-control"
+            value={props.editorState.cronHour}
+            disabled={props.saving}
+            onChange={(event) => {
+              props.onEditorChange({
+                cronHour: event.target.value
+              });
+            }}
+          />
+        </label>
+        <label className="butler-form-field butler-form-field-wide">
+          <span>{t("shell.butlerAutomationCronDaysOfWeekLabel")}</span>
+          <input
+            className="butler-form-control"
+            value={props.editorState.cronDaysOfWeek}
+            disabled={props.saving}
+            onChange={(event) => {
+              props.onEditorChange({
+                cronDaysOfWeek: event.target.value
+              });
+            }}
+          />
+        </label>
+        <label className="butler-form-field">
+          <span>{t("shell.butlerAutomationStopAtLabel")}</span>
+          <input
+            type="datetime-local"
+            className="butler-form-control"
+            value={props.editorState.stopAt}
+            disabled={props.saving}
+            onChange={(event) => {
+              props.onEditorChange({
+                stopAt: event.target.value
+              });
+            }}
+          />
+        </label>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <label className="butler-form-field">
+        <span>{t("shell.butlerAutomationPollIntervalLabel")}</span>
+        <input
+          inputMode="numeric"
+          className="butler-form-control"
+          value={props.editorState.pollIntervalSeconds}
+          disabled={props.saving}
+          onChange={(event) => {
+            props.onEditorChange({
+              pollIntervalSeconds: event.target.value
+            });
+          }}
+        />
+      </label>
+      <label className="butler-form-field">
+        <span>{t("shell.butlerAutomationMaxChecksLabel")}</span>
+        <input
+          inputMode="numeric"
+          className="butler-form-control"
+          value={props.editorState.maxChecks}
+          disabled={props.saving}
+          onChange={(event) => {
+            props.onEditorChange({
+              maxChecks: event.target.value
+            });
+          }}
+        />
+      </label>
+      <label className="butler-form-field">
+        <span>{t("shell.butlerAutomationExpiresAtLabel")}</span>
+        <input
+          type="datetime-local"
+          className="butler-form-control"
+          value={props.editorState.expiresAt}
+          disabled={props.saving}
+          onChange={(event) => {
+            props.onEditorChange({
+              expiresAt: event.target.value
+            });
+          }}
+        />
+      </label>
+    </>
   );
 }
 
@@ -3770,9 +4106,7 @@ function buildAutomationTaskItems(
       taskTypeLabel: resolveAutomationTaskTypeLabel(automation.triggerType),
       statusLabel: resolveAssistantAutomationTaskStatusLabel(automation.status),
       nextRunAt: automation.nextRunAt,
-      lastRunAt: automation.lastRunAt || automation.updatedAt,
-      promptPreview: summarizeAutomationPrompt(automation.actionConfig.content),
-      lastResultSummary: automation.lastRunSummary?.trim() || automation.lastError?.trim() || null
+      lastRunAt: automation.lastRunAt || automation.updatedAt
     }));
 
   return items
@@ -3827,6 +4161,7 @@ function buildAutomationRunItems(
     ))
     .map<AutomationRunItem>(({ run, automation, normalizedStatus }) => ({
       id: `assistant-automation-run:${run.id}`,
+      automationId: run.automationId,
       kind: "assistant_automation_run",
       title: resolveAssistantAutomationTitle(automation!),
       projectName: resolveAssistantAutomationProjectName(automation!, projectNameById),
@@ -3834,8 +4169,7 @@ function buildAutomationRunItems(
       sourceLabel: resolveAutomationRunSourceLabel(run.triggerType),
       statusLabel: resolveAssistantAutomationRunStatusLabel(run.status),
       summary: run.summary?.trim() || run.error?.trim() || t("shell.butlerAutomationRunEmptySummary"),
-      createdAt: run.finishedAt || run.startedAt || run.createdAt,
-      detailPreview: summarizeAutomationPrompt(run.actionSnapshot.content)
+      createdAt: run.finishedAt || run.startedAt || run.createdAt
     }));
 
   return automationRunItems
@@ -4401,6 +4735,135 @@ function parseIsoTime(value: string | null | undefined): number {
   return Number.isNaN(time) ? 0 : time;
 }
 
+function toEditableNumber(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "";
+}
+
+function normalizeTextInput(value: string): string | null {
+  const normalized = value.trim();
+  return normalized ? normalized : null;
+}
+
+function formatIsoForDateTimeInput(value: string | null | undefined): string {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function parseNullableDateTimeInput(value: string, label: string): string | null {
+  const normalized = value.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  const timestamp = Date.parse(normalized);
+
+  if (Number.isNaN(timestamp)) {
+    throw new Error(`${label}${t("shell.butlerAutomationInvalidDateSuffix")}`);
+  }
+
+  return new Date(timestamp).toISOString();
+}
+
+function parseRequiredDateTimeInput(value: string, label: string): string {
+  const normalized = parseNullableDateTimeInput(value, label);
+
+  if (!normalized) {
+    throw new Error(`${label}${t("shell.butlerAutomationRequiredSuffix")}`);
+  }
+
+  return normalized;
+}
+
+function parseRequiredInteger(value: string, label: string): number {
+  const normalized = value.trim();
+
+  if (!normalized) {
+    throw new Error(`${label}${t("shell.butlerAutomationRequiredSuffix")}`);
+  }
+
+  const parsed = Number.parseInt(normalized, 10);
+
+  if (!Number.isInteger(parsed)) {
+    throw new Error(`${label}${t("shell.butlerAutomationInvalidNumberSuffix")}`);
+  }
+
+  return parsed;
+}
+
+function parseOptionalInteger(value: string, label: string): number | null {
+  const normalized = value.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(normalized, 10);
+
+  if (!Number.isInteger(parsed)) {
+    throw new Error(`${label}${t("shell.butlerAutomationInvalidNumberSuffix")}`);
+  }
+
+  return parsed;
+}
+
+function parseOptionalPositiveInteger(value: string, label: string): number | null {
+  const parsed = parseOptionalInteger(value, label);
+
+  if (parsed === null) {
+    return null;
+  }
+
+  if (parsed <= 0) {
+    throw new Error(`${label}${t("shell.butlerAutomationInvalidPositiveNumberSuffix")}`);
+  }
+
+  return parsed;
+}
+
+function parseRequiredPositiveInteger(value: string, label: string): number {
+  const parsed = parseRequiredInteger(value, label);
+
+  if (parsed <= 0) {
+    throw new Error(`${label}${t("shell.butlerAutomationInvalidPositiveNumberSuffix")}`);
+  }
+
+  return parsed;
+}
+
+function parseCronDaysOfWeekInput(value: string): number[] | null {
+  const normalized = value.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed = normalized
+    .split(",")
+    .map((item) => Number.parseInt(item.trim(), 10))
+    .filter((item) => Number.isInteger(item));
+
+  if (parsed.length === 0 || parsed.some((item) => item < 0 || item > 6)) {
+    throw new Error(t("shell.butlerAutomationCronDaysValidation"));
+  }
+
+  return Array.from(new Set(parsed)).sort((left, right) => left - right);
+}
+
 function formatTimestamp(value: string | null | undefined): string {
   const time = parseIsoTime(value);
 
@@ -4630,18 +5093,131 @@ function resolveAssistantAutomationProjectName(
   return automation.controlSession?.session?.workspaceId || t("shell.butlerControlTimerNoProject");
 }
 
-function summarizeAutomationPrompt(content: string): string {
-  const normalized = content.replace(/\s+/g, " ").trim();
+function resolveAutomationTargetSessionLabel(
+  automation: AssistantAutomationTaskDto,
+  sessionTitleById: ReadonlyMap<string, string>
+): string | null {
+  const targetSessionId = automation.actionConfig.targetSessionId?.trim();
 
-  if (!normalized) {
-    return t("conversation.butlerAnalysisEmpty");
+  if (targetSessionId && sessionTitleById.has(targetSessionId)) {
+    return sessionTitleById.get(targetSessionId)!;
   }
 
-  if (normalized.length <= 88) {
-    return normalized;
+  if (automation.controlSession?.title?.trim()) {
+    return automation.controlSession.title.trim();
   }
 
-  return `${normalized.slice(0, 88)}...`;
+  if (targetSessionId) {
+    return targetSessionId;
+  }
+
+  return null;
+}
+
+function createAutomationEditorState(automation: AssistantAutomationTaskDto): AutomationEditorState {
+  const editorState: AutomationEditorState = {
+    title: automation.title?.trim() || "",
+    content: automation.actionConfig.content,
+    includeTriggerContext: automation.actionConfig.includeTriggerContext,
+    dueAt: "",
+    everySeconds: "",
+    everyMinutes: "",
+    everyHours: "",
+    stopAt: "",
+    cronMinute: "",
+    cronHour: "",
+    cronDaysOfWeek: "",
+    pollIntervalSeconds: "",
+    expiresAt: "",
+    maxChecks: ""
+  };
+
+  if (automation.triggerConfig.type === "once") {
+    editorState.dueAt = formatIsoForDateTimeInput(automation.triggerConfig.dueAt);
+  } else if (automation.triggerConfig.type === "interval") {
+    editorState.everySeconds = toEditableNumber(automation.triggerConfig.seconds);
+    editorState.everyMinutes = toEditableNumber(automation.triggerConfig.minutes);
+    editorState.everyHours = toEditableNumber(automation.triggerConfig.hours);
+    editorState.stopAt = formatIsoForDateTimeInput(automation.triggerConfig.stopAt);
+  } else if (automation.triggerConfig.type === "cron") {
+    editorState.cronMinute = toEditableNumber(automation.triggerConfig.minute);
+    editorState.cronHour = toEditableNumber(automation.triggerConfig.hour);
+    editorState.cronDaysOfWeek = (automation.triggerConfig.daysOfWeek ?? []).join(",");
+    editorState.stopAt = formatIsoForDateTimeInput(automation.triggerConfig.stopAt);
+  } else {
+    editorState.pollIntervalSeconds = toEditableNumber(automation.triggerConfig.pollIntervalSeconds);
+    editorState.expiresAt = formatIsoForDateTimeInput(automation.triggerConfig.expiresAt);
+    editorState.maxChecks = toEditableNumber(automation.triggerConfig.maxChecks);
+  }
+
+  return editorState;
+}
+
+function buildAutomationUpdatePayload(
+  automation: AssistantAutomationTaskDto,
+  editorState: AutomationEditorState
+): {
+  title: string | null;
+  content: string;
+  includeTriggerContext: boolean;
+  dueAt?: string | null;
+  everySeconds?: number | null;
+  everyMinutes?: number | null;
+  everyHours?: number | null;
+  stopAt?: string | null;
+  cronMinute?: number | null;
+  cronHour?: number | null;
+  cronDaysOfWeek?: number[] | null;
+  pollIntervalSeconds?: number | null;
+  expiresAt?: string | null;
+  maxChecks?: number | null;
+} {
+  const payload = {
+    title: normalizeTextInput(editorState.title),
+    content: editorState.content.trim(),
+    includeTriggerContext: editorState.includeTriggerContext
+  };
+
+  if (!payload.content) {
+    throw new Error(t("shell.butlerAutomationPromptRequired"));
+  }
+
+  if (automation.triggerConfig.type === "once") {
+    return {
+      ...payload,
+      dueAt: parseRequiredDateTimeInput(editorState.dueAt, t("shell.butlerAutomationDueAtLabel"))
+    };
+  }
+
+  if (automation.triggerConfig.type === "interval") {
+    return {
+      ...payload,
+      everySeconds: parseOptionalPositiveInteger(editorState.everySeconds, t("shell.butlerAutomationEverySecondsLabel")),
+      everyMinutes: parseOptionalPositiveInteger(editorState.everyMinutes, t("shell.butlerAutomationEveryMinutesLabel")),
+      everyHours: parseOptionalPositiveInteger(editorState.everyHours, t("shell.butlerAutomationEveryHoursLabel")),
+      stopAt: parseNullableDateTimeInput(editorState.stopAt, t("shell.butlerAutomationStopAtLabel"))
+    };
+  }
+
+  if (automation.triggerConfig.type === "cron") {
+    return {
+      ...payload,
+      cronMinute: parseRequiredInteger(editorState.cronMinute, t("shell.butlerAutomationCronMinuteLabel")),
+      cronHour: parseOptionalInteger(editorState.cronHour, t("shell.butlerAutomationCronHourLabel")),
+      cronDaysOfWeek: parseCronDaysOfWeekInput(editorState.cronDaysOfWeek),
+      stopAt: parseNullableDateTimeInput(editorState.stopAt, t("shell.butlerAutomationStopAtLabel"))
+    };
+  }
+
+  return {
+    ...payload,
+    pollIntervalSeconds: parseRequiredPositiveInteger(
+      editorState.pollIntervalSeconds,
+      t("shell.butlerAutomationPollIntervalLabel")
+    ),
+    expiresAt: parseNullableDateTimeInput(editorState.expiresAt, t("shell.butlerAutomationExpiresAtLabel")),
+    maxChecks: parseOptionalPositiveInteger(editorState.maxChecks, t("shell.butlerAutomationMaxChecksLabel"))
+  };
 }
 
 function resolveAssistantSandboxStatusLabel(

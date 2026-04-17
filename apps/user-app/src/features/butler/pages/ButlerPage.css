@@ -1022,7 +1022,7 @@
 .butler-automation-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   padding: 8px 10px;
   border: none !important;
   border-radius: 0 !important;
@@ -1039,21 +1039,22 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
 }
 
 .butler-automation-card-title-group {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .butler-automation-card-title-group strong {
   font-size: 12px;
   line-height: 1.35;
-  font-weight: 400;
-  color: var(--text-secondary, #6b7280);
+  font-weight: 600;
+  color: var(--text-primary, #111827);
+  word-break: break-word;
 }
 
 .butler-automation-card-title-group span,
@@ -1086,8 +1087,9 @@
 
 .butler-automation-card-footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
 }
 
@@ -1096,18 +1098,19 @@
 }
 
 .butler-automation-overview-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(228px, 1fr));
   gap: 10px;
 }
 
 .butler-automation-overview-card {
-  gap: 12px;
-  padding: 14px 15px;
+  min-width: 0;
+  gap: 10px;
+  padding: 12px;
   border: 1px solid color-mix(in srgb, var(--border-primary) 74%, transparent) !important;
-  border-radius: 16px !important;
+  border-radius: 14px !important;
   background:
-    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 10%, transparent), transparent 36%),
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 8%, transparent), transparent 32%),
     linear-gradient(
       180deg,
       color-mix(in srgb, var(--bg-surface) 98%, transparent),
@@ -1115,12 +1118,12 @@
     ) !important;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.78),
-    0 8px 24px rgba(15, 23, 42, 0.05) !important;
+    0 8px 18px rgba(15, 23, 42, 0.05) !important;
 }
 
 .butler-automation-overview-card:hover {
   background:
-    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 14%, transparent), transparent 38%),
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 12%, transparent), transparent 34%),
     linear-gradient(
       180deg,
       color-mix(in srgb, var(--bg-surface) 100%, transparent),
@@ -1130,7 +1133,7 @@
 }
 
 .butler-automation-overview-card .butler-automation-card-title-group strong {
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.3;
   font-weight: 600;
   color: var(--text-primary, #111827);
@@ -1141,15 +1144,10 @@
   font-size: 11px;
 }
 
-.butler-automation-overview-chip-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
 .butler-automation-overview-chip {
   display: inline-flex;
   align-items: center;
+  align-self: flex-start;
   min-height: 24px;
   padding: 0 10px;
   border-radius: 999px;
@@ -1157,53 +1155,28 @@
   color: var(--text-secondary, #6b7280);
   font-size: 11px;
   line-height: 1;
+  font-weight: 500;
   white-space: nowrap;
 }
 
-.butler-automation-overview-summary {
-  margin: 0;
-  color: var(--text-primary, #111827);
-  font-size: 13px;
-  line-height: 1.55;
-  word-break: break-word;
-}
-
-.butler-automation-overview-metrics {
+.butler-automation-overview-inline {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
 }
 
-.butler-automation-overview-metric,
-.butler-automation-overview-note {
+.butler-automation-overview-inline-meta {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  padding: 10px 11px;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--bg-surface-secondary) 90%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border-primary) 60%, transparent);
-}
-
-.butler-automation-overview-metric span,
-.butler-automation-overview-note span {
-  font-size: 10px;
-  color: var(--text-tertiary, #9ca3af);
-}
-
-.butler-automation-overview-metric strong,
-.butler-automation-overview-note strong {
-  font-size: 12px;
-  line-height: 1.45;
-  font-weight: 500;
-  color: var(--text-primary, #111827);
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-surface-secondary) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-primary) 58%, transparent);
+  color: var(--text-secondary, #6b7280);
+  font-size: 11px;
+  line-height: 1.35;
   word-break: break-word;
-}
-
-.butler-automation-overview-card[data-kind="run"] .butler-automation-overview-summary {
-  font-size: 14px;
-  font-weight: 500;
 }
 
 .butler-automation-card-footer-hint {
@@ -1212,7 +1185,7 @@
 }
 
 .butler-automation-overview-card .butler-automation-card-footer {
-  justify-content: flex-end;
+  padding-top: 2px;
 }
 
 .butler-follow-up-history-panel {
@@ -1397,6 +1370,169 @@
 .butler-automation-status-badge[data-status="cancelled"] {
   background: rgba(239, 68, 68, 0.14);
   color: #991b1b;
+}
+
+.workbench-modal-card.butler-automation-detail-modal {
+  width: min(980px, calc(100vw - 56px));
+}
+
+.workbench-modal-card.butler-automation-detail-modal .workbench-modal-body {
+  max-height: calc(100vh - 180px);
+  overflow: auto;
+}
+
+.butler-automation-detail-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.butler-automation-detail-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.butler-automation-detail-summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 13px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 70%, transparent);
+  border-radius: 14px;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-surface) 98%, transparent),
+      color-mix(in srgb, var(--bg-surface-secondary) 92%, transparent)
+    );
+}
+
+.butler-automation-detail-summary-card span {
+  font-size: 10px;
+  color: var(--text-tertiary, #9ca3af);
+}
+
+.butler-automation-detail-summary-card strong {
+  font-size: 13px;
+  line-height: 1.45;
+  font-weight: 600;
+  color: var(--text-primary, #111827);
+  word-break: break-word;
+}
+
+.butler-automation-detail-section.butler-side-card {
+  gap: 14px;
+  padding: 16px !important;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 70%, transparent) !important;
+  border-radius: 18px !important;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-surface) 99%, transparent),
+      color-mix(in srgb, var(--bg-surface-secondary) 94%, transparent)
+    ) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    0 8px 22px rgba(15, 23, 42, 0.04) !important;
+}
+
+.butler-automation-detail-section.butler-side-card + .butler-automation-detail-section.butler-side-card {
+  margin-top: 0;
+  padding-top: 16px !important;
+  border-top: 1px solid color-mix(in srgb, var(--border-primary) 70%, transparent) !important;
+}
+
+.butler-automation-detail-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.butler-automation-detail-textarea {
+  min-height: 140px;
+  padding: 10px 12px;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.butler-automation-detail-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 62%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-surface-secondary) 84%, transparent);
+  color: var(--text-secondary, #6b7280);
+  font-size: 12px;
+}
+
+.butler-automation-detail-toggle input {
+  margin: 0;
+}
+
+.butler-automation-detail-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.butler-automation-detail-run-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.butler-automation-detail-run-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 68%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-surface-secondary) 88%, transparent);
+}
+
+.butler-automation-detail-run-card header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.butler-automation-detail-run-card header strong {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-primary, #111827);
+}
+
+.butler-automation-detail-run-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--text-tertiary, #9ca3af);
+  font-size: 11px;
+}
+
+.butler-automation-detail-run-card p {
+  margin: 0;
+  color: var(--text-secondary, #6b7280);
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+@media (max-width: 860px) {
+  .workbench-modal-card.butler-automation-detail-modal {
+    width: min(100vw - 24px, 720px);
+  }
+
+  .butler-automation-detail-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .butler-loading-panel {
