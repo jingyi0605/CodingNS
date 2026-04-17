@@ -93,6 +93,10 @@ jobs:
             -k "${APPLE_KEYCHAIN_PASSWORD}" \
             "${KEYCHAIN_PATH}"
           security find-identity -v -p codesigning "${KEYCHAIN_PATH}"
+          {
+            echo "MACOS_KEYCHAIN_PATH=${KEYCHAIN_PATH}"
+            echo "MACOS_KEYCHAIN_PASSWORD=${APPLE_KEYCHAIN_PASSWORD}"
+          } >> "$GITHUB_ENV"
 
       - name: 构建并发布 macOS 安装包
         env:
