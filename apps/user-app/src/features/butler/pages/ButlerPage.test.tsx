@@ -121,20 +121,29 @@ vi.mock("../../conversation/api/conversation-api", () => ({
 
 vi.mock("../api/butler-api", () => ({
   analyzeButlerInboxItem: vi.fn(),
+  cancelAssistantAutomation: vi.fn(),
   cancelButlerControlTimer: vi.fn(),
   cancelButlerVerificationRun: vi.fn(),
+  createAssistantSandbox: vi.fn(),
+  expireAssistantSandbox: vi.fn(),
   getButlerProfile: vi.fn(),
   initButlerProfile: vi.fn(),
   updateButlerProfile: vi.fn(),
   getButlerOverview: vi.fn(),
   cancelButlerFollowUpTask: vi.fn(),
   getButlerFollowUpTask: vi.fn(),
+  listAssistantSandboxes: vi.fn(),
   listButlerControlSessions: vi.fn(),
   listButlerControlTimers: vi.fn(),
+  listAssistantAutomations: vi.fn(),
+  listRecentAssistantAutomationRuns: vi.fn(),
   listButlerPatrolPlans: vi.fn(),
   listButlerFollowUpTasks: vi.fn(),
   listButlerInboxItems: vi.fn(),
   listButlerControlEvents: vi.fn(),
+  promoteAssistantSandbox: vi.fn(),
+  removeAssistantSandbox: vi.fn(),
+  skipAssistantAutomationWait: vi.fn(),
   getCurrentButlerControlSession: vi.fn(),
   resetButlerControlSession: vi.fn(),
   startButlerControlSession: vi.fn(),
@@ -146,20 +155,29 @@ import { useToast } from "../../../shared/toast";
 import { ButlerPage } from "./ButlerPage";
 import {
   analyzeButlerInboxItem,
+  cancelAssistantAutomation,
   cancelButlerControlTimer,
   cancelButlerVerificationRun,
+  createAssistantSandbox,
+  expireAssistantSandbox,
   getButlerProfile,
   initButlerProfile,
   updateButlerProfile,
   getButlerOverview,
   cancelButlerFollowUpTask,
   getButlerFollowUpTask,
+  listAssistantSandboxes,
   listButlerControlSessions,
   listButlerControlTimers,
+  listAssistantAutomations,
+  listRecentAssistantAutomationRuns,
   listButlerPatrolPlans,
   listButlerFollowUpTasks,
   listButlerInboxItems,
   listButlerControlEvents,
+  promoteAssistantSandbox,
+  removeAssistantSandbox,
+  skipAssistantAutomationWait,
   getCurrentButlerControlSession,
   resetButlerControlSession,
   startButlerControlSession,
@@ -174,20 +192,29 @@ import {
 
 const mockedUseToast = vi.mocked(useToast);
 const mockedAnalyzeButlerInboxItem = vi.mocked(analyzeButlerInboxItem);
+const mockedCancelAssistantAutomation = vi.mocked(cancelAssistantAutomation);
 const mockedCancelButlerControlTimer = vi.mocked(cancelButlerControlTimer);
 const mockedCancelButlerVerificationRun = vi.mocked(cancelButlerVerificationRun);
+const mockedCreateAssistantSandbox = vi.mocked(createAssistantSandbox);
+const mockedExpireAssistantSandbox = vi.mocked(expireAssistantSandbox);
 const mockedGetButlerProfile = vi.mocked(getButlerProfile);
 const mockedInitButlerProfile = vi.mocked(initButlerProfile);
 const mockedUpdateButlerProfile = vi.mocked(updateButlerProfile);
 const mockedGetButlerOverview = vi.mocked(getButlerOverview);
 const mockedCancelButlerFollowUpTask = vi.mocked(cancelButlerFollowUpTask);
 const mockedGetButlerFollowUpTask = vi.mocked(getButlerFollowUpTask);
+const mockedListAssistantSandboxes = vi.mocked(listAssistantSandboxes);
 const mockedListButlerControlSessions = vi.mocked(listButlerControlSessions);
 const mockedListButlerControlTimers = vi.mocked(listButlerControlTimers);
+const mockedListAssistantAutomations = vi.mocked(listAssistantAutomations);
+const mockedListRecentAssistantAutomationRuns = vi.mocked(listRecentAssistantAutomationRuns);
 const mockedListButlerPatrolPlans = vi.mocked(listButlerPatrolPlans);
 const mockedListButlerFollowUpTasks = vi.mocked(listButlerFollowUpTasks);
 const mockedListButlerInboxItems = vi.mocked(listButlerInboxItems);
 const mockedListButlerControlEvents = vi.mocked(listButlerControlEvents);
+const mockedPromoteAssistantSandbox = vi.mocked(promoteAssistantSandbox);
+const mockedRemoveAssistantSandbox = vi.mocked(removeAssistantSandbox);
+const mockedSkipAssistantAutomationWait = vi.mocked(skipAssistantAutomationWait);
 const mockedGetCurrentButlerControlSession = vi.mocked(getCurrentButlerControlSession);
 const mockedResetButlerControlSession = vi.mocked(resetButlerControlSession);
 const mockedStartButlerControlSession = vi.mocked(startButlerControlSession);
@@ -302,6 +329,26 @@ describe("ButlerPage", () => {
     mockedCancelButlerControlTimer.mockResolvedValue({
       timer: {} as never
     });
+    mockedCancelAssistantAutomation.mockResolvedValue({
+      payload: {
+        automation: {} as never
+      }
+    });
+    mockedSkipAssistantAutomationWait.mockResolvedValue({
+      payload: {
+        automation: {} as never
+      }
+    });
+    mockedCreateAssistantSandbox.mockResolvedValue({
+      payload: {
+        sandbox: {} as never
+      }
+    });
+    mockedExpireAssistantSandbox.mockResolvedValue({
+      payload: {
+        sandbox: {} as never
+      }
+    });
     mockedCancelButlerVerificationRun.mockResolvedValue({
       run: {
         id: "verification-1",
@@ -367,8 +414,23 @@ describe("ButlerPage", () => {
     mockedListButlerControlSessions.mockResolvedValue({
       items: []
     } as never);
+    mockedListAssistantSandboxes.mockResolvedValue({
+      payload: {
+        items: []
+      }
+    });
     mockedListButlerControlTimers.mockResolvedValue({
       items: []
+    });
+    mockedListAssistantAutomations.mockResolvedValue({
+      payload: {
+        items: []
+      }
+    });
+    mockedListRecentAssistantAutomationRuns.mockResolvedValue({
+      payload: {
+        items: []
+      }
     });
     mockedListButlerFollowUpTasks.mockResolvedValue({
       items: []
@@ -377,6 +439,16 @@ describe("ButlerPage", () => {
       items: []
     });
     mockedListButlerControlEvents.mockResolvedValue({ items: [] });
+    mockedPromoteAssistantSandbox.mockResolvedValue({
+      payload: {
+        sandbox: {} as never
+      }
+    });
+    mockedRemoveAssistantSandbox.mockResolvedValue({
+      payload: {
+        sandbox: {} as never
+      }
+    });
     mockedGetCurrentButlerControlSession.mockResolvedValue({ controlSession: null });
     mockedResetButlerControlSession.mockResolvedValue({ controlSession: null } as never);
     mockedAnalyzeButlerInboxItem.mockResolvedValue({
@@ -1400,6 +1472,170 @@ describe("ButlerPage", () => {
     expect(renderedPanel.getByRole("button", { name: t("shell.butlerTodoOpenSessionAction") })).toBeInTheDocument();
   });
 
+  it("信息标签页顶部可以进入沙箱管理并执行创建与删除", async () => {
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "阿尔文",
+        providerId: "codex",
+        workspacePath: "/tmp/butler",
+        agentsMode: "inline",
+        agentsFilePath: null,
+        agentsContent: "测试",
+        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
+        initializedAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z"
+      }
+    });
+    mockedListAssistantSandboxes.mockResolvedValue({
+      payload: {
+        items: [
+          {
+            id: "sandbox-1",
+            userId: "user-1",
+            workspaceId: "workspace-sandbox-1",
+            title: "现有沙箱",
+            description: null,
+            sourceKind: "blank",
+            sourceRef: "/tmp/butler/sandboxes/existing",
+            visibility: "assistant_only",
+            status: "active",
+            purpose: "验证旧问题",
+            expiresAt: null,
+            promotedAt: null,
+            createdAt: "2026-04-17T10:00:00.000Z",
+            updatedAt: "2026-04-17T10:00:00.000Z",
+            workspace: {
+              id: "workspace-sandbox-1",
+              name: "现有沙箱",
+              path: "/tmp/butler/sandboxes/existing",
+              repoRoot: "/tmp/butler/sandboxes/existing",
+              favorite: false,
+              sortOrder: 0,
+              createdAt: "2026-04-17T10:00:00.000Z",
+              updatedAt: "2026-04-17T10:00:00.000Z",
+              removedAt: null
+            }
+          }
+        ]
+      }
+    });
+    mockedCreateAssistantSandbox.mockResolvedValue({
+      payload: {
+        sandbox: {
+          id: "sandbox-2",
+          userId: "user-1",
+          workspaceId: "workspace-sandbox-2",
+          title: "临时验证",
+          description: null,
+          sourceKind: "blank",
+          sourceRef: "/tmp/butler/sandboxes/new-one",
+          visibility: "assistant_only",
+          status: "active",
+          purpose: "验证 Butler 入口",
+          expiresAt: null,
+          promotedAt: null,
+          createdAt: "2026-04-17T10:10:00.000Z",
+          updatedAt: "2026-04-17T10:10:00.000Z",
+          workspace: {
+            id: "workspace-sandbox-2",
+            name: "临时验证",
+            path: "/tmp/butler/sandboxes/new-one",
+            repoRoot: "/tmp/butler/sandboxes/new-one",
+            favorite: false,
+            sortOrder: 0,
+            createdAt: "2026-04-17T10:10:00.000Z",
+            updatedAt: "2026-04-17T10:10:00.000Z",
+            removedAt: null
+          }
+        }
+      }
+    });
+    mockedRemoveAssistantSandbox.mockResolvedValue({
+      payload: {
+        sandbox: {
+          id: "sandbox-1",
+          userId: "user-1",
+          workspaceId: "workspace-sandbox-1",
+          title: "现有沙箱",
+          description: null,
+          sourceKind: "blank",
+          sourceRef: "/tmp/butler/sandboxes/existing",
+          visibility: "assistant_only",
+          status: "deleted",
+          purpose: "验证旧问题",
+          expiresAt: null,
+          promotedAt: null,
+          createdAt: "2026-04-17T10:00:00.000Z",
+          updatedAt: "2026-04-17T10:20:00.000Z",
+          workspace: null
+        }
+      }
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(setAuxiliaryPanelMock).toHaveBeenCalled();
+    });
+
+    const renderedPanel = render(getLatestSidePanel());
+
+    fireEvent.click(
+      renderedPanel.getByRole("button", { name: t("shell.butlerSandboxManageAction") })
+    );
+
+    await waitFor(() => {
+      expect(mockedListAssistantSandboxes).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("dialog", { name: t("shell.butlerSandboxManagerTitle") })).toBeInTheDocument();
+      expect(screen.getByText("现有沙箱")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText(t("shell.butlerSandboxTitlePlaceholder")), {
+      target: {
+        value: "临时验证"
+      }
+    });
+    fireEvent.change(screen.getByPlaceholderText(t("shell.butlerSandboxPurposePlaceholder")), {
+      target: {
+        value: "验证 Butler 入口"
+      }
+    });
+    fireEvent.click(screen.getByRole("button", { name: t("shell.butlerSandboxCreateAction") }));
+
+    await waitFor(() => {
+      expect(mockedCreateAssistantSandbox).toHaveBeenCalledWith({
+        title: "临时验证",
+        purpose: "验证 Butler 入口",
+        sourceKind: "blank",
+        repositoryUrl: null,
+        directoryName: null
+      });
+      expect(screen.getByText("临时验证")).toBeInTheDocument();
+    });
+
+    const existingSandboxCard = screen.getByText("现有沙箱").closest("article");
+    expect(existingSandboxCard).toBeTruthy();
+
+    fireEvent.click(
+      within(existingSandboxCard as HTMLElement).getByRole("button", {
+        name: t("shell.butlerSandboxRemoveAction")
+      })
+    );
+
+    await waitFor(() => {
+      expect(mockedRemoveAssistantSandbox).toHaveBeenCalledWith("sandbox-1");
+      expect(showToastMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: t("shell.butlerSandboxRemoveSucceeded"),
+          tone: "success"
+        })
+      );
+    });
+  });
+
   it("代办提示词支持从预览区和动作区复制", async () => {
     mockedGetButlerProfile.mockResolvedValueOnce({
       initialized: true,
@@ -1664,18 +1900,261 @@ describe("ButlerPage", () => {
         }
       ]
     });
+    mockedListAssistantAutomations.mockResolvedValue({
+      payload: {
+        items: [
+          {
+            id: "automation-1",
+            userId: "user-1",
+            controlSessionId: "control-1",
+            projectId: "project-1",
+            title: "登录页开发",
+            triggerType: "condition",
+            triggerConfigJson: "{}",
+            triggerConfig: {
+              type: "condition",
+              conditionKind: "session.runtime_idle",
+              pollIntervalSeconds: 300,
+              expiresAt: null,
+              maxChecks: null,
+              stateJson: "{}"
+            },
+            actionType: "send_control_message",
+            actionConfigJson: "{}",
+            actionConfig: {
+              content: "把验证码功能真正做完",
+              includeTriggerContext: true,
+              targetSessionId: "session-1"
+            },
+            status: "active",
+            nextRunAt: "2026-04-07T01:05:00.000Z",
+            lastRunAt: null,
+            lastRunSummary: null,
+            lastError: null,
+            createdAt: "2026-04-07T00:50:00.000Z",
+            updatedAt: "2026-04-07T01:00:00.000Z",
+            cancelledAt: null,
+            controlSession: {
+              id: "control-1",
+              providerId: "codex",
+              sessionId: "assistant-session-1",
+              purpose: "chat",
+              title: "控制会话一",
+              sourceItemId: null,
+              status: "running",
+              lastContextVersion: null,
+              lastSummary: null,
+              createdAt: "2026-04-07T00:00:00.000Z",
+              updatedAt: "2026-04-07T00:00:00.000Z",
+              session: {
+                sessionId: "assistant-session-1",
+                workspaceId: "workspace-1"
+              } as never
+            }
+          },
+          {
+            id: "automation-2",
+            userId: "user-1",
+            controlSessionId: "control-1",
+            projectId: "project-1",
+            title: "每日项目巡检",
+            triggerType: "interval",
+            triggerConfigJson: "{}",
+            triggerConfig: {
+              type: "interval",
+              seconds: null,
+              minutes: null,
+              hours: 1,
+              stopAt: null
+            },
+            actionType: "send_control_message",
+            actionConfigJson: "{}",
+            actionConfig: {
+              content: "执行每日项目巡检",
+              includeTriggerContext: false,
+              targetSessionId: null
+            },
+            status: "active",
+            nextRunAt: "2026-04-07T02:00:00.000Z",
+            lastRunAt: "2026-04-07T00:30:00.000Z",
+            lastRunSummary: "本轮巡检还在执行中。",
+            lastError: null,
+            createdAt: "2026-04-01T00:00:00.000Z",
+            updatedAt: "2026-04-07T00:30:00.000Z",
+            cancelledAt: null,
+            controlSession: {
+              id: "control-1",
+              providerId: "codex",
+              sessionId: "assistant-session-1",
+              purpose: "chat",
+              title: "控制会话一",
+              sourceItemId: null,
+              status: "running",
+              lastContextVersion: null,
+              lastSummary: null,
+              createdAt: "2026-04-07T00:00:00.000Z",
+              updatedAt: "2026-04-07T00:00:00.000Z",
+              session: {
+                sessionId: "assistant-session-1",
+                workspaceId: "workspace-1"
+              } as never
+            }
+          },
+          {
+            id: "automation-3",
+            userId: "user-1",
+            controlSessionId: "control-2",
+            projectId: "project-2",
+            title: "注册流程收尾",
+            triggerType: "condition",
+            triggerConfigJson: "{}",
+            triggerConfig: {
+              type: "condition",
+              conditionKind: "session.runtime_idle",
+              pollIntervalSeconds: 300,
+              expiresAt: null,
+              maxChecks: null,
+              stateJson: "{}"
+            },
+            actionType: "send_control_message",
+            actionConfigJson: "{}",
+            actionConfig: {
+              content: "补完注册流程收尾",
+              includeTriggerContext: true,
+              targetSessionId: "session-2"
+            },
+            status: "completed",
+            nextRunAt: null,
+            lastRunAt: "2026-04-07T01:08:00.000Z",
+            lastRunSummary: "当前目标已经完成，跟进任务已收尾。",
+            lastError: null,
+            createdAt: "2026-04-07T00:30:00.000Z",
+            updatedAt: "2026-04-07T01:10:00.000Z",
+            cancelledAt: null,
+            controlSession: {
+              id: "control-2",
+              providerId: "codex",
+              sessionId: "assistant-session-2",
+              purpose: "chat",
+              title: "控制会话二",
+              sourceItemId: null,
+              status: "running",
+              lastContextVersion: null,
+              lastSummary: null,
+              createdAt: "2026-04-07T00:00:00.000Z",
+              updatedAt: "2026-04-07T00:00:00.000Z",
+              session: {
+                sessionId: "assistant-session-2",
+                workspaceId: "workspace-1"
+              } as never
+            }
+          }
+        ]
+      }
+    });
+    mockedListRecentAssistantAutomationRuns.mockResolvedValue({
+      payload: {
+        items: [
+          {
+            id: "automation-run-active-1",
+            automationId: "automation-2",
+            runSeq: 2,
+            triggerType: "interval",
+            triggerSnapshotJson: "{}",
+            triggerSnapshot: {
+              type: "interval",
+              seconds: null,
+              minutes: null,
+              hours: 1,
+              stopAt: null
+            },
+            actionType: "send_control_message",
+            actionSnapshotJson: "{}",
+            actionSnapshot: {
+              content: "执行每日项目巡检",
+              includeTriggerContext: false,
+              targetSessionId: null
+            },
+            status: "running",
+            summary: "本轮巡检还在执行中。",
+            error: null,
+            scheduledAt: "2026-04-07T01:05:00.000Z",
+            startedAt: "2026-04-07T01:05:00.000Z",
+            finishedAt: null,
+            createdAt: "2026-04-07T01:05:00.000Z"
+          },
+          {
+            id: "automation-run-history-1",
+            automationId: "automation-3",
+            runSeq: 1,
+            triggerType: "condition",
+            triggerSnapshotJson: "{}",
+            triggerSnapshot: {
+              type: "condition",
+              conditionKind: "session.runtime_idle",
+              pollIntervalSeconds: 300,
+              expiresAt: null,
+              maxChecks: null,
+              stateJson: "{}"
+            },
+            actionType: "send_control_message",
+            actionSnapshotJson: "{}",
+            actionSnapshot: {
+              content: "补完注册流程收尾",
+              includeTriggerContext: true,
+              targetSessionId: "session-2"
+            },
+            status: "succeeded",
+            summary: "当前目标已经完成，跟进任务已收尾。",
+            error: null,
+            scheduledAt: "2026-04-07T01:08:00.000Z",
+            startedAt: "2026-04-07T01:08:00.000Z",
+            finishedAt: "2026-04-07T01:08:10.000Z",
+            createdAt: "2026-04-07T01:08:00.000Z"
+          },
+          {
+            id: "automation-run-history-2",
+            automationId: "automation-2",
+            runSeq: 1,
+            triggerType: "interval",
+            triggerSnapshotJson: "{}",
+            triggerSnapshot: {
+              type: "interval",
+              seconds: null,
+              minutes: null,
+              hours: 1,
+              stopAt: null
+            },
+            actionType: "send_control_message",
+            actionSnapshotJson: "{}",
+            actionSnapshot: {
+              content: "执行每日项目巡检",
+              includeTriggerContext: false,
+              targetSessionId: null
+            },
+            status: "succeeded",
+            summary: "本轮巡检未发现新的高风险问题。",
+            error: null,
+            scheduledAt: "2026-04-07T00:40:00.000Z",
+            startedAt: "2026-04-07T00:40:00.000Z",
+            finishedAt: "2026-04-07T00:45:00.000Z",
+            createdAt: "2026-04-07T00:40:00.000Z"
+          }
+        ]
+      }
+    });
 
     renderPage();
 
     await waitFor(() => {
       const latestSidePanel = getLatestSidePanel() as {
         props: {
-          followUpTasks?: unknown[];
-          patrolPlans?: unknown[];
+          assistantAutomations?: unknown[];
+          assistantAutomationRuns?: unknown[];
         };
       };
-      expect(latestSidePanel.props.followUpTasks).toHaveLength(2);
-      expect(latestSidePanel.props.patrolPlans).toHaveLength(1);
+      expect(latestSidePanel.props.assistantAutomations).toHaveLength(3);
+      expect(latestSidePanel.props.assistantAutomationRuns).toHaveLength(3);
     });
 
     const latestSidePanel = getLatestSidePanel();
@@ -1683,19 +2162,24 @@ describe("ButlerPage", () => {
 
     fireEvent.click(renderedPanel.getByRole("tab", { name: t("shell.butlerSidebarAutomationTab") }));
 
-    expect(renderedPanel.getByText(t("shell.butlerAutomationTasksTitle"))).toBeInTheDocument();
-    expect(renderedPanel.getByText("登录页开发")).toBeInTheDocument();
-    expect(renderedPanel.getByText(t("shell.butlerAutomationStatusActive"))).toBeInTheDocument();
-    expect(renderedPanel.getByText("每日项目巡检")).toBeInTheDocument();
-    expect(renderedPanel.getAllByText(t("shell.butlerAutomationTaskTypeFollowUp")).length).toBeGreaterThan(0);
-    expect(renderedPanel.getByText(t("shell.butlerAutomationTaskTypeInterval"))).toBeInTheDocument();
-    expect(renderedPanel.getAllByText(t("shell.butlerAutomationTaskNextRunLabel")).length).toBeGreaterThan(0);
-    expect(renderedPanel.getByText(t("shell.butlerAutomationRunsTitle"))).toBeInTheDocument();
-    expect(renderedPanel.queryByText("注册流程收尾")).not.toBeInTheDocument();
-    expect(renderedPanel.queryByText("当前目标已经完成，跟进任务已收尾。")).not.toBeInTheDocument();
-    expect(renderedPanel.queryByText("本轮巡检未发现新的高风险问题。")).not.toBeInTheDocument();
-    expect(renderedPanel.getByText(t("shell.butlerAutomationRunSourcePatrol"))).toBeInTheDocument();
-    expect(renderedPanel.getByText("本轮巡检还在执行中。")).toBeInTheDocument();
+    const automationTasksSection = renderedPanel.getByText(t("shell.butlerAutomationTasksTitle")).closest("section") as HTMLElement;
+    const automationRunsSection = renderedPanel.getByText(t("shell.butlerAutomationRunsTitle")).closest("section") as HTMLElement;
+
+    expect(within(automationTasksSection).getByText("登录页开发")).toBeInTheDocument();
+    expect(within(automationTasksSection).getAllByText(t("shell.butlerAutomationStatusActive")).length).toBeGreaterThan(0);
+    expect(within(automationTasksSection).getByText("每日项目巡检")).toBeInTheDocument();
+    expect(within(automationTasksSection).getByText("把验证码功能真正做完")).toBeInTheDocument();
+    expect(within(automationTasksSection).getByText("本轮巡检还在执行中。")).toBeInTheDocument();
+    expect(within(automationTasksSection).getAllByText(t("shell.butlerAutomationTaskTypeFollowUp")).length).toBeGreaterThan(0);
+    expect(within(automationTasksSection).getByText(t("shell.butlerAutomationTaskTypeInterval"))).toBeInTheDocument();
+    expect(within(automationTasksSection).getAllByText(t("shell.butlerAutomationTaskNextRunLabel")).length).toBeGreaterThan(0);
+    expect(within(automationTasksSection).queryByText("注册流程收尾")).not.toBeInTheDocument();
+    expect(within(automationRunsSection).queryByText("注册流程收尾")).not.toBeInTheDocument();
+    expect(within(automationRunsSection).queryByText("当前目标已经完成，跟进任务已收尾。")).not.toBeInTheDocument();
+    expect(within(automationRunsSection).queryByText("本轮巡检未发现新的高风险问题。")).not.toBeInTheDocument();
+    expect(within(automationRunsSection).getByText(t("shell.butlerAutomationRunSourcePatrol"))).toBeInTheDocument();
+    expect(within(automationRunsSection).getByText("本轮巡检还在执行中。")).toBeInTheDocument();
+    expect(within(automationRunsSection).getByText("执行每日项目巡检")).toBeInTheDocument();
     expect(renderedPanel.queryByRole("button", { name: t("shell.butlerAutomationViewRoundsAction") })).not.toBeInTheDocument();
 
     fireEvent.click(renderedPanel.getAllByRole("button", { name: t("shell.butlerFollowUpHistoryAction") })[0]!);
@@ -1705,9 +2189,186 @@ describe("ButlerPage", () => {
     });
 
     const automationHistoryDialog = screen.getByRole("dialog", { name: t("shell.butlerAutomationHistoryTitle") });
-    expect(within(automationHistoryDialog).getByText("注册流程收尾")).toBeInTheDocument();
+    expect(within(automationHistoryDialog).getAllByText("注册流程收尾").length).toBeGreaterThan(0);
     expect(within(automationHistoryDialog).getByText("当前目标已经完成，跟进任务已收尾。")).toBeInTheDocument();
     expect(within(automationHistoryDialog).getByText("本轮巡检未发现新的高风险问题。")).toBeInTheDocument();
+  });
+
+  it("重复自动化 banner 会调用只跳过本次等待的接口，并保留会话跳转入口", async () => {
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "阿尔文",
+        providerId: "codex",
+        workspacePath: "/tmp/butler",
+        agentsMode: "inline",
+        agentsFilePath: null,
+        agentsContent: "测试",
+        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
+        initializedAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z"
+      }
+    });
+    mockedGetCurrentButlerControlSession.mockResolvedValue({
+      controlSession: {
+        id: "control-1",
+        providerId: "codex",
+        sessionId: "assistant-session-1",
+        purpose: "chat",
+        title: "控制会话一",
+        sourceItemId: null,
+        model: "gpt-5.4",
+        reasoningLevel: "high",
+        permissionMode: "default",
+        status: "running",
+        lastContextVersion: null,
+        lastSummary: null,
+        createdAt: "2026-04-07T00:00:00.000Z",
+        updatedAt: "2026-04-07T00:00:00.000Z",
+        session: {
+          sessionId: "assistant-session-1",
+          workspaceId: "workspace-1",
+          title: "控制会话一"
+        }
+      }
+    } as never);
+    mockedListAssistantAutomations.mockResolvedValue({
+      payload: {
+        items: [
+          {
+            id: "automation-interval-1",
+            userId: "user-1",
+            controlSessionId: "control-1",
+            projectId: "project-1",
+            title: "每小时巡检",
+            triggerType: "interval",
+            triggerConfigJson: "{}",
+            triggerConfig: {
+              type: "interval",
+              seconds: null,
+              minutes: null,
+              hours: 1,
+              stopAt: null
+            },
+            actionType: "send_control_message",
+            actionConfigJson: "{}",
+            actionConfig: {
+              content: "执行每小时巡检",
+              includeTriggerContext: false,
+              targetSessionId: "session-1"
+            },
+            status: "active",
+            nextRunAt: "2026-04-07T02:00:00.000Z",
+            lastRunAt: "2026-04-07T00:00:00.000Z",
+            lastRunSummary: "上一轮已完成",
+            lastError: null,
+            createdAt: "2026-04-07T00:00:00.000Z",
+            updatedAt: "2026-04-07T00:00:00.000Z",
+            cancelledAt: null,
+            controlSession: {
+              id: "control-1",
+              providerId: "codex",
+              sessionId: "assistant-session-1",
+              purpose: "chat",
+              title: "控制会话一",
+              sourceItemId: null,
+              status: "running",
+              lastContextVersion: null,
+              lastSummary: null,
+              createdAt: "2026-04-07T00:00:00.000Z",
+              updatedAt: "2026-04-07T00:00:00.000Z",
+              session: {
+                sessionId: "assistant-session-1",
+                workspaceId: "workspace-1",
+                title: "控制会话一"
+              } as never
+            }
+          }
+        ]
+      }
+    });
+    mockedSkipAssistantAutomationWait.mockResolvedValueOnce({
+      payload: {
+        automation: {
+          id: "automation-interval-1",
+          userId: "user-1",
+          controlSessionId: "control-1",
+          projectId: "project-1",
+          title: "每小时巡检",
+          triggerType: "interval",
+          triggerConfigJson: "{}",
+          triggerConfig: {
+            type: "interval",
+            seconds: null,
+            minutes: null,
+            hours: 1,
+            stopAt: null
+          },
+          actionType: "send_control_message",
+          actionConfigJson: "{}",
+          actionConfig: {
+            content: "执行每小时巡检",
+            includeTriggerContext: false,
+            targetSessionId: "session-1"
+          },
+          status: "active",
+          nextRunAt: "2026-04-07T03:00:00.000Z",
+          lastRunAt: "2026-04-07T00:00:00.000Z",
+          lastRunSummary: "上一轮已完成",
+          lastError: null,
+          createdAt: "2026-04-07T00:00:00.000Z",
+          updatedAt: "2026-04-07T01:00:00.000Z",
+          cancelledAt: null,
+          controlSession: {
+            id: "control-1",
+            providerId: "codex",
+            sessionId: "assistant-session-1",
+            purpose: "chat",
+            title: "控制会话一",
+            sourceItemId: null,
+            status: "running",
+            lastContextVersion: null,
+            lastSummary: null,
+            createdAt: "2026-04-07T00:00:00.000Z",
+            updatedAt: "2026-04-07T01:00:00.000Z",
+            session: {
+              sessionId: "assistant-session-1",
+              workspaceId: "workspace-1",
+              title: "控制会话一"
+            } as never
+          }
+        } as never
+      }
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: t("shell.butlerControlTimerCancelAction") })).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(t("shell.butlerControlTimerTypeRepeat"))).toBeInTheDocument();
+
+    const sessionButton = screen.getByRole("button", {
+      name: `${t("shell.butlerControlTimerSessionLabel")}：登录页改造`
+    });
+    fireEvent.click(sessionButton);
+    expect(navigateMock).toHaveBeenCalledWith("/workspaces/workspace-1/sessions/session-1");
+
+    fireEvent.click(screen.getByRole("button", { name: t("shell.butlerControlTimerCancelAction") }));
+
+    await waitFor(() => {
+      expect(mockedSkipAssistantAutomationWait).toHaveBeenCalledWith("automation-interval-1");
+    });
+    expect(mockedCancelAssistantAutomation).not.toHaveBeenCalled();
+    expect(showToastMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: t("shell.butlerControlTimerCancelSucceeded"),
+        tone: "success"
+      })
+    );
   });
 
   it("会话跟进历史和状态卡都可以查看轮次详情", async () => {

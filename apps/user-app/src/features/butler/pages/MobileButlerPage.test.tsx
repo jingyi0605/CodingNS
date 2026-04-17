@@ -16,6 +16,10 @@ const mockListButlerInboxItems = vi.fn();
 const mockListButlerPatrolPlans = vi.fn();
 const mockListButlerControlSessions = vi.fn();
 const mockListButlerControlTimers = vi.fn();
+const mockListAssistantAutomations = vi.fn();
+const mockListRecentAssistantAutomationRuns = vi.fn();
+const mockCancelAssistantAutomation = vi.fn();
+const mockUpdateAssistantAutomation = vi.fn();
 const mockCancelButlerControlTimer = vi.fn();
 const mockCancelButlerFollowUpTask = vi.fn();
 const mockCancelButlerVerificationRun = vi.fn();
@@ -58,7 +62,8 @@ const mockRuntimeState: any = {
     session: {
       sessionId: "butler-session-1",
       title: "继续改移动端",
-      runningState: "running"
+      runningState: "running",
+      activityState: "running"
     }
   },
   capabilities: {
@@ -152,11 +157,15 @@ vi.mock("../runtime/butler-runtime-store", () => ({
 }));
 
 vi.mock("../api/butler-api", () => ({
+  cancelAssistantAutomation: (...args: unknown[]) => mockCancelAssistantAutomation(...args),
+  updateAssistantAutomation: (...args: unknown[]) => mockUpdateAssistantAutomation(...args),
   cancelButlerControlTimer: (...args: unknown[]) => mockCancelButlerControlTimer(...args),
   cancelButlerFollowUpTask: (...args: unknown[]) => mockCancelButlerFollowUpTask(...args),
   cancelButlerVerificationRun: (...args: unknown[]) => mockCancelButlerVerificationRun(...args),
   getButlerProfile: (...args: unknown[]) => mockGetButlerProfile(...args),
   getButlerOverview: (...args: unknown[]) => mockGetButlerOverview(...args),
+  listAssistantAutomations: (...args: unknown[]) => mockListAssistantAutomations(...args),
+  listRecentAssistantAutomationRuns: (...args: unknown[]) => mockListRecentAssistantAutomationRuns(...args),
   listButlerFollowUpTasks: (...args: unknown[]) => mockListButlerFollowUpTasks(...args),
   listButlerInboxItems: (...args: unknown[]) => mockListButlerInboxItems(...args),
   listButlerPatrolPlans: (...args: unknown[]) => mockListButlerPatrolPlans(...args),
@@ -173,6 +182,9 @@ describe("MobileButlerPage", () => {
     vi.clearAllMocks();
     mockRuntimeState.runtimeHasActiveRun = true;
     mockRuntimeState.runtimeCanInterrupt = true;
+    mockRuntimeState.controlSession.status = "running";
+    mockRuntimeState.controlSession.session.runningState = "running";
+    mockRuntimeState.controlSession.session.activityState = "running";
 
     mockUseWorkbenchShell.mockReturnValue({
       navigationGroups: [
@@ -230,6 +242,57 @@ describe("MobileButlerPage", () => {
         status: "cancelled"
       }
     });
+    mockUpdateAssistantAutomation.mockImplementation(async (_automationId: string, payload: any) => ({
+      payload: {
+        automation: {
+          id: "automation-1",
+          userId: "user-1",
+          controlSessionId: "control-1",
+          projectId: "project-1",
+          title: payload.title ?? "修复首页布局",
+          triggerType: "condition",
+          triggerConfigJson: "{}",
+          triggerConfig: {
+            type: "condition",
+            conditionKind: "session.runtime_idle",
+            pollIntervalSeconds: payload.pollIntervalSeconds ?? 300,
+            expiresAt: payload.expiresAt ?? null,
+            maxChecks: payload.maxChecks ?? null,
+            stateJson: "{}"
+          },
+          actionType: "send_control_message",
+          actionConfigJson: "{}",
+          actionConfig: {
+            content: payload.content ?? "补齐移动端摘要",
+            includeTriggerContext: payload.includeTriggerContext ?? true,
+            targetSessionId: "session-1"
+          },
+          status: "active",
+          nextRunAt: "2026-04-09T10:05:00.000Z",
+          lastRunAt: "2026-04-09T10:00:00.000Z",
+          lastRunSummary: "会话暂时空闲，准备继续推进。",
+          lastError: null,
+          createdAt: "2026-04-09T09:50:00.000Z",
+          updatedAt: "2026-04-09T10:01:00.000Z",
+          cancelledAt: null,
+          controlSession: {
+            id: "control-1",
+            sessionId: "butler-session-1",
+            title: "继续改移动端",
+            purpose: "chat",
+            status: "running",
+            updatedAt: "2026-04-09T10:00:00.000Z",
+            lastSummary: "继续推进布局调整",
+            session: {
+              sessionId: "butler-session-1",
+              title: "继续改移动端",
+              workspaceId: "workspace-1",
+              runningState: "running"
+            }
+          }
+        }
+      }
+    }));
     mockGetButlerOverview.mockResolvedValue({
       overview: {
         version: "overview-1",
@@ -532,6 +595,294 @@ describe("MobileButlerPage", () => {
         }
       ]
     });
+    mockListAssistantAutomations.mockResolvedValue({
+      payload: {
+        items: [
+          {
+            id: "automation-1",
+            userId: "user-1",
+            controlSessionId: "control-1",
+            projectId: "project-1",
+            title: "修复首页布局",
+            triggerType: "condition",
+            triggerConfigJson: "{}",
+            triggerConfig: {
+              type: "condition",
+              conditionKind: "session.runtime_idle",
+              pollIntervalSeconds: 300,
+              expiresAt: null,
+              maxChecks: null,
+              stateJson: "{}"
+            },
+            actionType: "send_control_message",
+            actionConfigJson: "{}",
+            actionConfig: {
+              content: "补齐移动端摘要",
+              includeTriggerContext: true,
+              targetSessionId: "session-1"
+            },
+            status: "active",
+            nextRunAt: "2026-04-09T10:05:00.000Z",
+            lastRunAt: "2026-04-09T10:00:00.000Z",
+            lastRunSummary: "会话暂时空闲，准备继续推进。",
+            lastError: null,
+            createdAt: "2026-04-09T09:50:00.000Z",
+            updatedAt: "2026-04-09T10:00:00.000Z",
+            cancelledAt: null,
+            controlSession: {
+              id: "control-1",
+              sessionId: "butler-session-1",
+              title: "继续改移动端",
+              purpose: "chat",
+              status: "running",
+              updatedAt: "2026-04-09T10:00:00.000Z",
+              lastSummary: "继续推进布局调整",
+              session: {
+                sessionId: "butler-session-1",
+                title: "继续改移动端",
+                workspaceId: "workspace-1",
+                runningState: "running"
+              }
+            }
+          },
+          {
+            id: "automation-2",
+            userId: "user-1",
+            controlSessionId: "control-1",
+            projectId: "project-1",
+            title: "夜间巡视",
+            triggerType: "interval",
+            triggerConfigJson: "{}",
+            triggerConfig: {
+              type: "interval",
+              seconds: null,
+              minutes: 30,
+              hours: null,
+              stopAt: null
+            },
+            actionType: "send_control_message",
+            actionConfigJson: "{}",
+            actionConfig: {
+              content: "执行项目巡视",
+              includeTriggerContext: false,
+              targetSessionId: null
+            },
+            status: "active",
+            nextRunAt: "2026-04-09T10:30:00.000Z",
+            lastRunAt: "2026-04-09T10:00:00.000Z",
+            lastRunSummary: "本轮巡检还在执行中。",
+            lastError: null,
+            createdAt: "2026-04-09T09:00:00.000Z",
+            updatedAt: "2026-04-09T10:00:00.000Z",
+            cancelledAt: null,
+            controlSession: {
+              id: "control-1",
+              sessionId: "butler-session-1",
+              title: "继续改移动端",
+              purpose: "chat",
+              status: "running",
+              updatedAt: "2026-04-09T10:00:00.000Z",
+              lastSummary: "继续推进布局调整",
+              session: {
+                sessionId: "butler-session-1",
+                title: "继续改移动端",
+                workspaceId: "workspace-1",
+                runningState: "running"
+              }
+            }
+          },
+          {
+            id: "automation-3",
+            userId: "user-1",
+            controlSessionId: "control-2",
+            projectId: "project-1",
+            title: "历史收尾任务",
+            triggerType: "condition",
+            triggerConfigJson: "{}",
+            triggerConfig: {
+              type: "condition",
+              conditionKind: "session.runtime_idle",
+              pollIntervalSeconds: 300,
+              expiresAt: null,
+              maxChecks: null,
+              stateJson: "{}"
+            },
+            actionType: "send_control_message",
+            actionConfigJson: "{}",
+            actionConfig: {
+              content: "历史任务已完成。",
+              includeTriggerContext: true,
+              targetSessionId: "session-3"
+            },
+            status: "completed",
+            nextRunAt: null,
+            lastRunAt: "2026-04-09T09:20:00.000Z",
+            lastRunSummary: "历史任务已完成。",
+            lastError: null,
+            createdAt: "2026-04-09T09:00:00.000Z",
+            updatedAt: "2026-04-09T09:20:00.000Z",
+            cancelledAt: null,
+            controlSession: {
+              id: "control-2",
+              sessionId: "butler-session-3",
+              title: "历史收尾任务",
+              purpose: "chat",
+              status: "running",
+              updatedAt: "2026-04-09T09:20:00.000Z",
+              lastSummary: "历史任务已完成。",
+              session: {
+                sessionId: "butler-session-3",
+                title: "历史收尾任务",
+                workspaceId: "workspace-1",
+                runningState: "completed"
+              }
+            }
+          }
+        ]
+      }
+    });
+    mockListRecentAssistantAutomationRuns.mockResolvedValue({
+      payload: {
+        items: [
+          {
+            id: "automation-run-active-1",
+            automationId: "automation-2",
+            runSeq: 2,
+            triggerType: "interval",
+            triggerSnapshotJson: "{}",
+            triggerSnapshot: {
+              type: "interval",
+              seconds: null,
+              minutes: 30,
+              hours: null,
+              stopAt: null
+            },
+            actionType: "send_control_message",
+            actionSnapshotJson: "{}",
+            actionSnapshot: {
+              content: "执行项目巡视",
+              includeTriggerContext: false,
+              targetSessionId: null
+            },
+            status: "running",
+            summary: "本轮巡检还在执行中。",
+            error: null,
+            scheduledAt: "2026-04-09T10:00:00.000Z",
+            startedAt: "2026-04-09T10:00:00.000Z",
+            finishedAt: null,
+            createdAt: "2026-04-09T10:00:00.000Z"
+          },
+          {
+            id: "automation-run-history-1",
+            automationId: "automation-3",
+            runSeq: 1,
+            triggerType: "condition",
+            triggerSnapshotJson: "{}",
+            triggerSnapshot: {
+              type: "condition",
+              conditionKind: "session.runtime_idle",
+              pollIntervalSeconds: 300,
+              expiresAt: null,
+              maxChecks: null,
+              stateJson: "{}"
+            },
+            actionType: "send_control_message",
+            actionSnapshotJson: "{}",
+            actionSnapshot: {
+              content: "历史任务已完成。",
+              includeTriggerContext: true,
+              targetSessionId: "session-3"
+            },
+            status: "succeeded",
+            summary: "历史任务已完成。",
+            error: null,
+            scheduledAt: "2026-04-09T09:20:00.000Z",
+            startedAt: "2026-04-09T09:20:00.000Z",
+            finishedAt: "2026-04-09T09:20:10.000Z",
+            createdAt: "2026-04-09T09:20:00.000Z"
+          },
+          {
+            id: "automation-run-history-2",
+            automationId: "automation-2",
+            runSeq: 1,
+            triggerType: "interval",
+            triggerSnapshotJson: "{}",
+            triggerSnapshot: {
+              type: "interval",
+              seconds: null,
+              minutes: 30,
+              hours: null,
+              stopAt: null
+            },
+            actionType: "send_control_message",
+            actionSnapshotJson: "{}",
+            actionSnapshot: {
+              content: "执行项目巡视",
+              includeTriggerContext: false,
+              targetSessionId: null
+            },
+            status: "succeeded",
+            summary: "旧巡检计划已经完成。",
+            error: null,
+            scheduledAt: "2026-04-09T08:00:00.000Z",
+            startedAt: "2026-04-09T08:00:00.000Z",
+            finishedAt: "2026-04-09T08:10:00.000Z",
+            createdAt: "2026-04-09T08:00:00.000Z"
+          }
+        ]
+      }
+    });
+    mockCancelAssistantAutomation.mockResolvedValue({
+      payload: {
+        automation: {
+          id: "automation-1",
+          userId: "user-1",
+          controlSessionId: "control-1",
+          projectId: "project-1",
+          title: "修复首页布局",
+          triggerType: "condition",
+          triggerConfigJson: "{}",
+          triggerConfig: {
+            type: "condition",
+            conditionKind: "session.runtime_idle",
+            pollIntervalSeconds: 300,
+            expiresAt: null,
+            maxChecks: null,
+            stateJson: "{}"
+          },
+          actionType: "send_control_message",
+          actionConfigJson: "{}",
+          actionConfig: {
+            content: "补齐移动端摘要",
+            includeTriggerContext: true,
+            targetSessionId: "session-1"
+          },
+          status: "cancelled",
+          nextRunAt: null,
+          lastRunAt: "2026-04-09T10:00:00.000Z",
+          lastRunSummary: "会话暂时空闲，准备继续推进。",
+          lastError: null,
+          createdAt: "2026-04-09T09:50:00.000Z",
+          updatedAt: "2026-04-09T10:01:00.000Z",
+          cancelledAt: "2026-04-09T10:01:00.000Z",
+          controlSession: {
+            id: "control-1",
+            sessionId: "butler-session-1",
+            title: "继续改移动端",
+            purpose: "chat",
+            status: "running",
+            updatedAt: "2026-04-09T10:00:00.000Z",
+            lastSummary: "继续推进布局调整",
+            session: {
+              sessionId: "butler-session-1",
+              title: "继续改移动端",
+              workspaceId: "workspace-1",
+              runningState: "running"
+            }
+          }
+        }
+      }
+    });
     mockCancelButlerControlTimer.mockResolvedValue({
       timer: {
         id: "timer-1",
@@ -713,8 +1064,11 @@ describe("MobileButlerPage", () => {
     });
   });
 
-  it("聊天区底部会显示等待中的计时器，并且自动化页可以取消", async () => {
+  it("聊天区底部会显示等待中的调度项，并且自动化页可以取消", async () => {
     mockRuntimeState.runtimeHasActiveRun = false;
+    mockRuntimeState.controlSession.status = "idle";
+    mockRuntimeState.controlSession.session.runningState = "idle";
+    mockRuntimeState.controlSession.session.activityState = "idle";
     const view = renderPage();
 
     await waitFor(() => {
@@ -725,7 +1079,7 @@ describe("MobileButlerPage", () => {
     expect(screen.getByText(t("shell.butlerControlTimerSessionLabel"))).toBeInTheDocument();
     expect(screen.getByText("登录页改造")).toBeInTheDocument();
     expect(
-      screen.queryByText("请在 4 分钟后重新检查移动端布局，然后继续这个真实会话。")
+      screen.queryByText("补齐移动端摘要")
     ).not.toBeInTheDocument();
 
     fireEvent.click(
@@ -734,7 +1088,7 @@ describe("MobileButlerPage", () => {
 
     expect(screen.getAllByText(t("shell.butlerControlTimerPromptTitle")).length).toBeGreaterThanOrEqual(1);
     expect(
-      screen.getAllByText("请在 4 分钟后重新检查移动端布局，然后继续这个真实会话。").length
+      screen.getAllByText("补齐移动端摘要").length
     ).toBeGreaterThanOrEqual(1);
 
     const stage = view.container.querySelector(".mobile-butler-main-stage") as HTMLElement;
@@ -748,13 +1102,16 @@ describe("MobileButlerPage", () => {
     const automationTab = await screen.findByRole("tab", { name: "Automation" });
     fireEvent.click(automationTab);
 
-    const cancelButtons = await screen.findAllByRole("button", {
+    const automationSection = await waitFor(() =>
+      screen.getByText(t("shell.butlerAutomationTasksTitle")).closest("section") as HTMLElement
+    );
+    const cancelButtons = within(automationSection).getAllByRole("button", {
       name: t("shell.butlerControlTimerStopAction")
     });
     fireEvent.click(cancelButtons[0]!);
 
     await waitFor(() => {
-      expect(mockCancelButlerControlTimer).toHaveBeenCalledWith("timer-1");
+      expect(mockCancelAssistantAutomation).toHaveBeenCalledWith("automation-1");
       expect(mockShowToast).toHaveBeenCalledWith(
         expect.objectContaining({
           title: t("shell.butlerControlTimerCancelSucceeded"),
@@ -764,8 +1121,38 @@ describe("MobileButlerPage", () => {
     });
   });
 
+  it("点击底部调度项的会话名称会跳到对应真实会话", async () => {
+    mockRuntimeState.runtimeHasActiveRun = false;
+    mockRuntimeState.controlSession.status = "idle";
+    mockRuntimeState.controlSession.session.runningState = "idle";
+    mockRuntimeState.controlSession.session.activityState = "idle";
+    renderPage({ withRouteProbe: true });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", {
+        name: `${t("shell.butlerControlTimerSessionLabel")}：登录页改造`
+      })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", {
+      name: `${t("shell.butlerControlTimerSessionLabel")}：登录页改造`
+    }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route-probe")).toHaveTextContent("/workspaces/workspace-1/sessions/session-1");
+    });
+  });
+
   it("聊天区底部支持停止计时后立即执行，并显示按钮说明", async () => {
     mockRuntimeState.runtimeHasActiveRun = false;
+    mockRuntimeState.controlSession.status = "idle";
+    mockRuntimeState.controlSession.session.runningState = "idle";
+    mockRuntimeState.controlSession.session.activityState = "idle";
+    mockListAssistantAutomations.mockResolvedValue({
+      payload: {
+        items: []
+      }
+    });
     const view = renderPage();
 
     await waitFor(() => {
@@ -807,16 +1194,21 @@ describe("MobileButlerPage", () => {
     const automationTab = await screen.findByRole("tab", { name: "Automation" });
     fireEvent.click(automationTab);
 
-    await waitFor(() => {
-      expect(screen.getByText("夜间巡视")).toBeInTheDocument();
-      expect(screen.getByText("修复首页布局")).toBeInTheDocument();
-      expect(screen.queryByText("历史收尾任务")).not.toBeInTheDocument();
-      expect(screen.queryByText("旧巡检计划已经完成。")).not.toBeInTheDocument();
-    });
-
-    const automationSection = screen
-      .getByText(t("shell.butlerAutomationTasksTitle"))
+    const automationSection = await waitFor(() =>
+      screen.getByText(t("shell.butlerAutomationTasksTitle")).closest("section") as HTMLElement
+    );
+    const automationRunsSection = screen
+      .getByText(t("shell.butlerAutomationRunsTitle"))
       .closest("section") as HTMLElement;
+
+    await waitFor(() => {
+      expect(within(automationSection).getByText("夜间巡视")).toBeInTheDocument();
+      expect(within(automationSection).getByText("修复首页布局")).toBeInTheDocument();
+      expect(within(automationSection).queryByText("历史收尾任务")).not.toBeInTheDocument();
+      expect(within(automationRunsSection).getByText("夜间巡视")).toBeInTheDocument();
+      expect(within(automationRunsSection).getByText(/本轮巡检还在执行中。/)).toBeInTheDocument();
+      expect(within(automationRunsSection).queryByText("旧巡检计划已经完成。")).not.toBeInTheDocument();
+    });
 
     fireEvent.click(within(automationSection).getByRole("button", {
       name: t("shell.butlerFollowUpHistoryAction")
@@ -827,6 +1219,61 @@ describe("MobileButlerPage", () => {
       expect(screen.getAllByText(/历史收尾任务/).length).toBeGreaterThan(0);
       expect(screen.getByText(/历史任务已完成。/)).toBeInTheDocument();
       expect(screen.getByText(/旧巡检计划已经完成。/)).toBeInTheDocument();
+    });
+  });
+
+  it("自动化卡片支持打开详情并保存配置", async () => {
+    const view = renderPage();
+    const stage = view.container.querySelector(".mobile-butler-main-stage") as HTMLElement;
+
+    fireEvent.touchStart(stage, {
+      changedTouches: [{ clientX: 300, clientY: 180 }]
+    });
+    fireEvent.touchEnd(stage, {
+      changedTouches: [{ clientX: 168, clientY: 186 }]
+    });
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Automation" }));
+
+    const automationSection = await waitFor(() =>
+      screen.getByText(t("shell.butlerAutomationTasksTitle")).closest("section") as HTMLElement
+    );
+
+    fireEvent.click(within(automationSection).getAllByRole("button", {
+      name: t("shell.butlerAutomationOpenDetailsAction")
+    })[0]!);
+
+    await waitFor(() => {
+      expect(screen.getByText(t("shell.butlerAutomationDetailTitle"))).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByDisplayValue("修复首页布局"), {
+      target: { value: "修复首页布局增强版" }
+    });
+    fireEvent.change(screen.getByDisplayValue("补齐移动端摘要"), {
+      target: { value: "补齐首页自动化摘要卡片" }
+    });
+    fireEvent.change(screen.getByDisplayValue("300"), {
+      target: { value: "180" }
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: t("shell.butlerAutomationSaveAction") }));
+
+    await waitFor(() => {
+      expect(mockUpdateAssistantAutomation).toHaveBeenCalledWith("automation-1", {
+        title: "修复首页布局增强版",
+        content: "补齐首页自动化摘要卡片",
+        includeTriggerContext: true,
+        pollIntervalSeconds: 180,
+        expiresAt: null,
+        maxChecks: null
+      });
+      expect(mockShowToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: t("shell.butlerAutomationSaveSucceeded"),
+          tone: "success"
+        })
+      );
     });
   });
 });
@@ -843,6 +1290,10 @@ function renderPage(options?: { withRouteProbe?: boolean }) {
               {options?.withRouteProbe ? <RouteProbe /> : null}
             </>
           }
+        />
+        <Route
+          path="/workspaces/:workspaceId/sessions/:sessionId"
+          element={options?.withRouteProbe ? <RouteProbe /> : <div />}
         />
       </Routes>
     </MemoryRouter>
