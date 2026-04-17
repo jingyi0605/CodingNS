@@ -21,7 +21,8 @@ function createService() {
       ...message,
       origin: null,
       originRef: null
-    }))
+    })),
+    resolveMessageOriginByClientRequestId: vi.fn()
   };
   const sessionMessageAttachmentService = {
     persistAttachments: vi.fn(() => ({
@@ -224,6 +225,103 @@ describe("SessionLiveRuntimeService", () => {
     );
     expect(result.providerSessionId).toBe("claude-session-1");
     expect(result.message?.content).toBe("继续补充这轮任务的要求");
+  });
+
+  it("sendLiveMessage 拿到真实用户消息后会按 clientRequestId 回填来源绑定", async () => {
+    const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
+      createService();
+    const providerRuntimeService = {
+      getSnapshot: vi.fn(() => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "claude-code",
+        providerSessionId: "claude-session-1",
+        rawStoreRef: "/tmp/.claude/projects/workspace/claude-session-1.jsonl",
+        runningState: "running",
+        attachedClients: 1,
+        startedAt: "2026-03-26T10:00:00.000Z",
+        lastEventAt: "2026-03-26T10:00:01.000Z",
+        completedAt: null,
+        detail: null,
+        errorCode: null,
+        supportsInterrupt: true
+      })),
+      submitToActiveRun: vi.fn(async () => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "claude-code",
+        providerSessionId: "claude-session-1",
+        rawStoreRef: "/tmp/.claude/projects/workspace/claude-session-1.jsonl",
+        runningState: "running",
+        attachedClients: 1,
+        startedAt: "2026-03-26T10:00:00.000Z",
+        lastEventAt: "2026-03-26T10:00:02.000Z",
+        completedAt: null,
+        detail: null,
+        errorCode: null,
+        supportsInterrupt: true
+      }))
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "/tmp/.claude/projects/workspace/claude-session-1.jsonl",
+      messageCount: 3
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "claude-code",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "streaming_guidance",
+      supportsSubagents: true,
+      supportsInterrupt: false,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      limitations: []
+    });
+    sessionHistoryService.getBindingOrThrow.mockReturnValue({
+      providerSessionId: "claude-session-1"
+    });
+    sessionHistoryService.findLatestUserMessage.mockResolvedValue({
+      messageId: "message-1",
+      role: "user",
+      content: "继续推进",
+      timestamp: "2026-03-26T10:00:03.000Z",
+      sequence: 4,
+      rawRef: "claude://message-1",
+      attachments: []
+    });
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+    sessionMessageAttachmentService.bindClientRequestToMessage.mockReturnValue([]);
+
+    await service.sendLiveMessage({
+      sessionId: "session-1",
+      userId: "user-1",
+      content: "继续推进",
+      clientRequestId: "butler-follow-up:task-1:123"
+    });
+
+    expect(sessionHistoryService.resolveMessageOriginByClientRequestId).toHaveBeenCalledWith(
+      "session-1",
+      "butler-follow-up:task-1:123",
+      "message-1",
+      "2026-03-26T10:00:03.000Z"
+    );
   });
 
   it("sendLiveMessage 在终态后立即续跑时会用最近历史修正下一条用户 sequence，避免插到上一条 AI 回复前面", async () => {

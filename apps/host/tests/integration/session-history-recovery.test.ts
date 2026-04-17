@@ -162,7 +162,7 @@ describe("SessionHistoryService 恢复缺失索引", () => {
     });
   });
 
-  it("实时用户消息先到时，resolveMessageOrigin 会命中未回填 messageId 的代理来源并补写 messageId", () => {
+  it("未回填 messageId 的代理来源不会再按内容误命中手动用户消息", () => {
     const { service, sessionBindingRepository, sessionIndexRepository, sessionMessageOriginRepository } =
       createHarness();
 
@@ -207,8 +207,56 @@ describe("SessionHistoryService 恢复缺失索引", () => {
       attachments: []
     });
 
-    expect(resolved.origin).toBe("butler_proxy");
-    expect(resolved.originRef).toBe("control-1");
+    expect(resolved.origin).toBeNull();
+    expect(resolved.originRef).toBeNull();
+    expect(
+      sessionMessageOriginRepository.listBySessionAndMessageIds("session-1", ["message-1"])
+    ).toEqual([]);
+  });
+
+  it("拿到真实 messageId 后会按 clientRequestId 回填代理来源绑定", () => {
+    const { service, sessionBindingRepository, sessionIndexRepository, sessionMessageOriginRepository } =
+      createHarness();
+
+    sessionBindingRepository.upsert({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "provider-session-1",
+      rawStoreRef: "pending://codex/session-1",
+      createdAt: "2026-04-16T08:00:30.000Z",
+      updatedAt: "2026-04-16T08:00:30.000Z"
+    });
+    sessionIndexRepository.upsert({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      title: "真实会话",
+      messageCount: 0,
+      isArchived: false,
+      lastMessageAt: null,
+      createdAt: "2026-04-16T08:00:30.000Z",
+      updatedAt: "2026-04-16T08:00:30.000Z"
+    });
+
+    sessionMessageOriginRepository.upsert({
+      sessionId: "session-1",
+      clientRequestId: "assistant-origin:test-unresolved",
+      messageId: null,
+      origin: "butler_proxy",
+      originRef: "control-1",
+      content: "继续推进",
+      createdAt: "2026-04-16T08:01:00.000Z",
+      updatedAt: "2026-04-16T08:01:00.000Z"
+    });
+
+    service.resolveMessageOriginByClientRequestId(
+      "session-1",
+      "assistant-origin:test-unresolved",
+      "message-1",
+      "2026-04-16T08:01:05.000Z"
+    );
+
     expect(
       sessionMessageOriginRepository.listBySessionAndMessageIds("session-1", ["message-1"])
     ).toEqual([
