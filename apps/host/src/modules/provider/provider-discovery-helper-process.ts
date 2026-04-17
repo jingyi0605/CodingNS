@@ -48,6 +48,12 @@ type HelperRequest =
     };
 
 const activeRequests = new Map<string, AbortController>();
+const PROVIDER_HELPER_RSS_HIGH_WATER_BYTES = 768 * 1024 * 1024;
+const PROVIDER_HELPER_IDLE_EXIT_MS = 5_000;
+let idleExitTimer: NodeJS.Timeout | null = null;
+
+// helper 启动后立刻进入空闲计时，避免“只创建不请求”的僵尸进程常驻。
+scheduleIdleExit();
 
 const stdinReader = readline.createInterface({
   input: process.stdin,
@@ -58,7 +64,13 @@ stdinReader.on("line", (line) => {
   void handleLine(line);
 });
 
+stdinReader.on("close", () => {
+  clearIdleExitTimer();
+  process.exit(0);
+});
+
 async function handleLine(line: string): Promise<void> {
+  clearIdleExitTimer();
   let payload: HelperRequest;
 
   try {
@@ -122,10 +134,13 @@ async function handleLine(line: string): Promise<void> {
     emitError(payload.id, error instanceof Error ? error.message : String(error));
   } finally {
     if ("targetId" in payload) {
+      scheduleIdleExit();
       return;
     }
 
     activeRequests.delete(payload.id);
+    maybeRecycleProcess();
+    scheduleIdleExit();
   }
 }
 
@@ -149,6 +164,46 @@ function emitError(id: string, error: string): void {
       error
     })}\n`
   );
+}
+
+function maybeRecycleProcess(): void {
+  if (activeRequests.size > 0) {
+    return;
+  }
+
+  if (process.memoryUsage.rss() < PROVIDER_HELPER_RSS_HIGH_WATER_BYTES) {
+    return;
+  }
+
+  process.stderr.write(
+    `[provider-discovery-helper] rss 高水位回收，rss=${process.memoryUsage.rss()}\n`
+  );
+  setImmediate(() => {
+    process.exit(0);
+  });
+}
+
+function scheduleIdleExit(): void {
+  if (activeRequests.size > 0) {
+    return;
+  }
+
+  clearIdleExitTimer();
+  idleExitTimer = setTimeout(() => {
+    if (activeRequests.size === 0) {
+      process.exit(0);
+    }
+  }, PROVIDER_HELPER_IDLE_EXIT_MS);
+  idleExitTimer.unref?.();
+}
+
+function clearIdleExitTimer(): void {
+  if (!idleExitTimer) {
+    return;
+  }
+
+  clearTimeout(idleExitTimer);
+  idleExitTimer = null;
 }
 
 async function readCodexAppServerState(

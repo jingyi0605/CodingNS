@@ -969,3 +969,53 @@ test("ClaudeCodeAdapter 会优先使用 fork 点击当下的消息快照，而�
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("ClaudeCodeAdapter discovery 第二轮会复用文件摘要缓存", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-summary-cache-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const projectDir = join(tempDir, "projects", "-Users-jackson-Documents-Code-CodingNS");
+  const sessionId = "cache-session-1";
+  const rawStoreRef = join(projectDir, `${sessionId}.jsonl`);
+
+  try {
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          type: "user",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-04-17T10:00:00.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "Claude cache test" }]
+          }
+        }),
+        JSON.stringify({
+          type: "ai-title",
+          sessionId,
+          aiTitle: "Claude cache title"
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new ClaudeCodeAdapter({ homeDir: tempDir });
+    const firstSessions = await adapter.detectSessions(workspacePath);
+
+    assert.equal(firstSessions.length, 1);
+
+    adapter.parseMessages = () => {
+      throw new Error("should not reparse unchanged claude session");
+    };
+
+    const secondSessions = await adapter.detectSessions(workspacePath);
+
+    assert.equal(secondSessions.length, 1);
+    assert.equal(secondSessions[0]?.providerSessionId, sessionId);
+    assert.equal(secondSessions[0]?.title, "Claude cache title");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});

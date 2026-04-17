@@ -24,49 +24,52 @@ type HelperResponse =
       error: string;
     };
 
+const GLOBAL_TASK_HELPER_PROCESS_CLIENT_KEY = "__codingnsTaskHelperProcessClient__";
+
 let sharedTaskHelperProcessClient: TaskHelperProcessClient | null = null;
 
 export class TaskHelperProcessClient {
-  private readonly child: ChildProcessWithoutNullStreams;
-  private readonly stdoutReader: readline.Interface;
+  private child: ChildProcessWithoutNullStreams | null = null;
+  private stdoutReader: readline.Interface | null = null;
   private readonly pendingRequests = new Map<string, PendingRequest<unknown>>();
   private nextRequestId = 1;
   private disposed = false;
 
   constructor() {
-    const launch = resolveHelperLaunch();
-    this.child = spawn(launch.command, launch.args, {
-      cwd: process.cwd(),
-      env: process.env,
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-    this.stdoutReader = readline.createInterface({
-      input: this.child.stdout
-    });
-
-    this.stdoutReader.on("line", (line) => {
-      this.handleResponseLine(line);
-    });
-    this.child.stderr.on("data", (chunk) => {
-      const content = String(chunk).trim();
-
-      if (content) {
-        console.warn(`[task-helper] ${content}`);
-      }
-    });
-    this.child.on("error", (error) => {
-      this.rejectAll(error);
-    });
-    this.child.on("exit", (code, signal) => {
-      this.rejectAll(
-        new Error(
-          `task helper 已退出：code=${code ?? "null"} signal=${signal ?? "null"}`
-        )
-      );
-    });
+    this.ensureChild();
   }
 
   async execute<TResult>(
+    handler: TaskHelperProcessHandlerName,
+    input: unknown,
+    signal?: AbortSignal
+  ): Promise<TResult> {
+    let attempt = 0;
+
+    while (true) {
+      try {
+        return await this.executeOnce<TResult>(handler, input, signal);
+      } catch (error) {
+        if (
+          attempt >= 1 ||
+          this.disposed ||
+          signal?.aborted ||
+          !isRetryableHelperClientError(error)
+        ) {
+          throw error;
+        }
+
+        attempt += 1;
+        this.handleChildTermination(
+          error instanceof Error
+            ? error
+            : new Error("task helper pipe 已断开")
+        );
+      }
+    }
+  }
+
+  private async executeOnce<TResult>(
     handler: TaskHelperProcessHandlerName,
     input: unknown,
     signal?: AbortSignal
@@ -75,6 +78,7 @@ export class TaskHelperProcessClient {
       return Promise.reject(new Error("task helper 已关闭"));
     }
 
+    const child = this.ensureChild();
     const id = String(this.nextRequestId++);
 
     return await new Promise<TResult>((resolve, reject) => {
@@ -118,7 +122,7 @@ export class TaskHelperProcessClient {
         }
       });
 
-      this.child.stdin.write(
+      child.stdin.write(
         `${JSON.stringify({
           id,
           type: "run",
@@ -147,13 +151,15 @@ export class TaskHelperProcessClient {
     }
 
     this.disposed = true;
-    this.stdoutReader.close();
+    this.stdoutReader?.close();
 
-    if (!this.child.killed) {
+    if (this.child && !this.child.killed) {
       this.child.kill("SIGTERM");
     }
 
     this.rejectAll(new Error("task helper 已关闭"));
+    this.child = null;
+    this.stdoutReader = null;
   }
 
   private handleResponseLine(line: string): void {
@@ -196,39 +202,146 @@ export class TaskHelperProcessClient {
   }
 
   private async sendCancel(targetId: string): Promise<void> {
-    if (this.disposed || this.child.killed || this.child.stdin.destroyed) {
+    if (
+      this.disposed ||
+      !this.child ||
+      this.child.killed ||
+      this.child.stdin.destroyed
+    ) {
       return;
     }
+    const child = this.child;
 
     await new Promise<void>((resolve) => {
-      this.child.stdin.write(
-        `${JSON.stringify({
-          id: `cancel:${targetId}`,
-          type: "cancel",
-          targetId
-        })}\n`,
-        () => {
-          resolve();
-        }
+      try {
+        child.stdin.write(
+          `${JSON.stringify({
+            id: `cancel:${targetId}`,
+            type: "cancel",
+            targetId
+          })}\n`,
+          () => {
+            resolve();
+          }
+        );
+      } catch {
+        resolve();
+      }
+    });
+  }
+
+  private ensureChild(): ChildProcessWithoutNullStreams {
+    if (this.child && this.stdoutReader && !this.child.killed && !this.child.stdin.destroyed) {
+      return this.child;
+    }
+
+    const launch = resolveHelperLaunch();
+    const child = spawn(launch.command, launch.args, {
+      cwd: process.cwd(),
+      env: process.env,
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    const stdoutReader = readline.createInterface({
+      input: child.stdout
+    });
+
+    stdoutReader.on("line", (line) => {
+      this.handleResponseLine(line);
+    });
+    child.stderr.on("data", (chunk) => {
+      const content = String(chunk).trim();
+
+      if (content) {
+        console.warn(`[task-helper] ${content}`);
+      }
+    });
+    child.stdin.on("error", (error) => {
+      this.handleChildTermination(
+        error instanceof Error
+          ? error
+          : new Error("task helper stdin 已断开")
       );
     });
+    child.on("error", (error) => {
+      this.handleChildTermination(error);
+    });
+    child.on("exit", (code, signal) => {
+      this.handleChildTermination(
+        new Error(
+          `task helper 已退出：code=${code ?? "null"} signal=${signal ?? "null"}`
+        )
+      );
+    });
+
+    this.child = child;
+    this.stdoutReader = stdoutReader;
+    return child;
+  }
+
+  private handleChildTermination(error: Error): void {
+    const child = this.child;
+
+    if (this.stdoutReader) {
+      this.stdoutReader.close();
+    }
+
+    if (child && !child.killed) {
+      child.kill("SIGTERM");
+    }
+
+    this.child = null;
+    this.stdoutReader = null;
+    this.rejectAll(error);
   }
 }
 
+function isRetryableHelperClientError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const code = "code" in error ? error.code : null;
+
+  if (code === "EPIPE" || code === "ECONNRESET") {
+    return true;
+  }
+
+  const message = "message" in error ? String(error.message ?? "") : "";
+  return message.includes("task helper 已退出");
+}
+
 export function getSharedTaskHelperProcessClient(): TaskHelperProcessClient {
+  const scope = globalThis as typeof globalThis & {
+    [GLOBAL_TASK_HELPER_PROCESS_CLIENT_KEY]?: TaskHelperProcessClient | null;
+  };
+  const globalClient = scope[GLOBAL_TASK_HELPER_PROCESS_CLIENT_KEY];
+
+  if (globalClient) {
+    sharedTaskHelperProcessClient = globalClient;
+    return globalClient;
+  }
+
   if (!sharedTaskHelperProcessClient) {
     sharedTaskHelperProcessClient = new TaskHelperProcessClient();
   }
 
+  scope[GLOBAL_TASK_HELPER_PROCESS_CLIENT_KEY] = sharedTaskHelperProcessClient;
   return sharedTaskHelperProcessClient;
 }
 
 export function disposeSharedTaskHelperProcessClient(): void {
-  if (!sharedTaskHelperProcessClient) {
+  const scope = globalThis as typeof globalThis & {
+    [GLOBAL_TASK_HELPER_PROCESS_CLIENT_KEY]?: TaskHelperProcessClient | null;
+  };
+  const sharedClient =
+    scope[GLOBAL_TASK_HELPER_PROCESS_CLIENT_KEY] ?? sharedTaskHelperProcessClient;
+
+  if (!sharedClient) {
     return;
   }
 
-  sharedTaskHelperProcessClient.dispose();
+  sharedClient.dispose();
+  scope[GLOBAL_TASK_HELPER_PROCESS_CLIENT_KEY] = null;
   sharedTaskHelperProcessClient = null;
 }
 

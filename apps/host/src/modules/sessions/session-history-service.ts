@@ -152,6 +152,7 @@ interface PersistedSessionDescriptor {
   sessionId: string;
   createdAt: string;
   existingIndex: SessionIndexRecord | null;
+  pass1Index: SessionIndexRecord;
 }
 
 const RECONSTRUCTED_FORK_TARGET_PROVIDERS = new Set(["codex", "claude-code", "opencode"]);
@@ -162,6 +163,22 @@ const SYNTHETIC_CODEX_SESSION_CLEANUP_GRACE_MS = 120_000;
 interface WorkspaceDiscoveryStatus {
   refreshedAt: number;
   isComplete: boolean;
+}
+
+type WorkspaceStateRefreshPhase = "fresh" | "stale" | "running" | "cooldown" | "failed";
+
+interface WorkspaceStateRefreshStatus {
+  phase: WorkspaceStateRefreshPhase;
+  dirtyReasons: Set<string>;
+  pendingSessions: Map<string, SessionListItem>;
+  runningPromise: Promise<void> | null;
+  cooldownTimer: NodeJS.Timeout | null;
+  lastRequestedAt: number | null;
+  lastStartedAt: number | null;
+  lastCompletedAt: number | null;
+  lastFailedAt: number | null;
+  nextAllowedAt: number | null;
+  runningTaskId: string | null;
 }
 
 interface ProviderCapabilityCacheEntry {
@@ -209,9 +226,13 @@ const SESSION_START_DEFERRED_PROVIDERS = new Set([
 ]);
 const MUTABLE_HISTORY_TAIL_REFRESH_INTERVAL_MS = 1_200;
 const WORKSPACE_DISCOVERY_BACKGROUND_MAX_AGE_MS = 15_000;
+const WORKSPACE_DISCOVERY_SCAN_CONCURRENCY = 2;
 const PROVIDER_CAPABILITY_CACHE_MAX_AGE_MS = 5_000;
 const WORKSPACE_DISCOVERY_PERSIST_BATCH_SIZE = 25;
 const SESSION_TRANSACTION_HOTSPOT_THRESHOLD_MS = 150;
+const WORKSPACE_STATE_REFRESH_COOLDOWN_MS = 1_500;
+const SQLITE_BUSY_RETRY_LIMIT = 3;
+const SQLITE_BUSY_RETRY_DELAY_MS = 100;
 
 export class SessionHistoryService {
   private readonly providerRegistry: ProviderRegistry;
@@ -228,13 +249,14 @@ export class SessionHistoryService {
   private readonly providerSessionDiscoveryConfig: ProviderSessionDiscoveryHelperConfig;
   private readonly taskManager: TaskManager;
   private readonly workspaceDiscoveryStatuses = new Map<string, WorkspaceDiscoveryStatus>();
-  private readonly workspaceStateRefreshInflight = new Map<string, Promise<void>>();
+  private readonly workspaceStateRefreshStatuses = new Map<string, WorkspaceStateRefreshStatus>();
   private readonly providerCapabilityCache = new Map<string, ProviderCapabilityCacheEntry>();
   private readonly liveActivityObservationResolvers = new Set<LiveActivityObservationResolver>();
   private readonly workspaceSessionRelations = new Map<
     string,
     Map<string, SessionRelationDescriptor>
   >();
+  private workspaceStateRefreshTaskSequence = 0;
 
   constructor(
     private readonly db: Database.Database,
@@ -364,6 +386,7 @@ export class SessionHistoryService {
       }, ProviderSessionDiscovery>({
         taskType: HOST_TASK_TYPES.workspaceDiscoveryScan,
         executionLane: "helper_process",
+        concurrency: WORKSPACE_DISCOVERY_SCAN_CONCURRENCY,
         helperProcessHandler: "session.workspace_discovery",
         run: async ({ config, workspacePath, knownSessions }, context) =>
           await discoverWorkspaceSessionsInRuntime(
@@ -1927,8 +1950,7 @@ export class SessionHistoryService {
           const existingIndex = existing
             ? this.sessionIndexRepository.findIndexRecordBySessionId(existing.sessionId)
             : null;
-
-          this.sessionBindingRepository.upsert({
+          const nextBinding: SessionBinding = {
             sessionId,
             workspaceId: workspace.id,
             provider: session.provider,
@@ -1936,7 +1958,11 @@ export class SessionHistoryService {
             rawStoreRef: session.rawStoreRef,
             createdAt,
             updatedAt: timestamp
-          });
+          };
+
+          if (!areEquivalentSessionBindings(existing, nextBinding)) {
+            this.sessionBindingRepository.upsert(nextBinding);
+          }
           const preservedParentSessionId =
             existingIndex?.parentSessionId
             ?? this.sessionForkRepository.findBySessionId(sessionId)?.parentSessionId
@@ -1951,7 +1977,7 @@ export class SessionHistoryService {
             existingIndex?.title ?? null,
             preservedParentTitle
           );
-          this.sessionIndexRepository.upsert({
+          const nextIndex: SessionIndexRecord = {
             sessionId,
             workspaceId: workspace.id,
             provider: session.provider,
@@ -1971,8 +1997,13 @@ export class SessionHistoryService {
             lastMessageAt: session.lastMessageAt,
             createdAt,
             updatedAt: timestamp
-          });
-          this.sessionStatusSnapshotRepository.upsert({
+          };
+
+          if (!areEquivalentSessionIndexRecords(existingIndex, nextIndex)) {
+            this.sessionIndexRepository.upsert(nextIndex);
+          }
+
+          const nextSnapshot: SessionStatusSnapshot = {
             sessionId,
             syncStatus: currentSnapshot?.syncStatus ?? "idle",
             syncCursor: currentSnapshot?.syncCursor ?? null,
@@ -1981,7 +2012,11 @@ export class SessionHistoryService {
             lastErrorDetail: currentSnapshot?.lastErrorDetail ?? null,
             resumedAt: currentSnapshot?.resumedAt ?? null,
             updatedAt: timestamp
-          });
+          };
+
+          if (!areEquivalentSessionStatusSnapshots(currentSnapshot, nextSnapshot)) {
+            this.sessionStatusSnapshotRepository.upsert(nextSnapshot);
+          }
           discoveredSessionIds.set(
             buildProviderSessionKey(session.provider, session.providerSessionId),
             sessionId
@@ -1990,7 +2025,8 @@ export class SessionHistoryService {
             session,
             sessionId,
             createdAt,
-            existingIndex
+            existingIndex,
+            pass1Index: nextIndex
           });
         }
       });
@@ -2031,7 +2067,7 @@ export class SessionHistoryService {
               ? this.sessionIndexRepository.findIndexRecordBySessionId(resolvedParentSessionId)?.title ?? null
               : null;
 
-          this.sessionIndexRepository.upsert({
+          const nextIndex: SessionIndexRecord = {
             sessionId: persistedSession.sessionId,
             workspaceId: workspace.id,
             provider: persistedSession.session.provider,
@@ -2071,7 +2107,11 @@ export class SessionHistoryService {
             lastMessageAt: persistedSession.session.lastMessageAt,
             createdAt: persistedSession.createdAt,
             updatedAt: timestamp
-          });
+          };
+
+          if (!areEquivalentSessionIndexRecords(persistedSession.pass1Index, nextIndex)) {
+            this.sessionIndexRepository.upsert(nextIndex);
+          }
         }
       });
 
@@ -2155,9 +2195,23 @@ export class SessionHistoryService {
           discoveredSessions: sessions.length,
           returnedSessions: nextItems.length,
           discoveryComplete: discovery.isComplete,
-          providerDiagnostics: (discovery.providerDiagnostics ?? []).map((entry) =>
-            `${entry.provider}:${entry.status}:${Math.round(entry.durationMs)}ms`
-          ),
+          providerDiagnostics: (discovery.providerDiagnostics ?? []).map((entry) => {
+            const scannedFiles = entry.scannedFiles ?? 0;
+            const skippedByMtimeSize = entry.skippedByMtimeSize ?? 0;
+            const parsedFiles = entry.parsedFiles ?? 0;
+            const bytesRead = entry.bytesRead ?? 0;
+
+            return [
+              entry.provider,
+              entry.status,
+              `${Math.round(entry.durationMs)}ms`,
+              `sessions=${entry.sessionCount}`,
+              `scanned=${scannedFiles}`,
+              `skipped=${skippedByMtimeSize}`,
+              `parsed=${parsedFiles}`,
+              `bytes=${bytesRead}`
+            ].join(":");
+          }),
           refreshedStates: refreshCandidates.length,
           discoverMs: discoverDurationMs,
           persistMs: persistDurationMs,
@@ -2711,6 +2765,10 @@ export class SessionHistoryService {
       return;
     }
 
+    if (!shouldSyncSessionTitleFromProvider(binding.provider, currentIndex.title)) {
+      return;
+    }
+
     const nextTitle = (
       await this.providerDiscoveryHelperClient.readSessionTitle({
         config: this.providerSessionDiscoveryConfig,
@@ -3025,15 +3083,93 @@ export class SessionHistoryService {
     }
 
     const inflightKey = `${workspaceId}:${userId}`;
+    const refreshState = this.getOrCreateWorkspaceStateRefreshStatus(inflightKey);
+    const now = Date.now();
 
-    if (this.workspaceStateRefreshInflight.has(inflightKey)) {
+    refreshState.lastRequestedAt = now;
+    refreshState.phase = refreshState.phase === "fresh" ? "stale" : refreshState.phase;
+    refreshState.dirtyReasons.add("workspace.discovery.deferred_state_refresh");
+    mergeWorkspaceStateRefreshSessions(refreshState.pendingSessions, sessions);
+
+    if (refreshState.phase === "running" && refreshState.runningPromise) {
       return;
     }
+
+    if (this.isWorkspaceStateRefreshCoolingDown(refreshState, now)) {
+      refreshState.phase = "stale";
+      this.ensureWorkspaceStateRefreshCooldownTimer(inflightKey, workspaceId, userId, refreshState);
+      return;
+    }
+
+    this.startWorkspaceStateRefreshTask(inflightKey, workspaceId, userId, refreshState);
+  }
+
+  private getOrCreateWorkspaceStateRefreshStatus(key: string): WorkspaceStateRefreshStatus {
+    const existing = this.workspaceStateRefreshStatuses.get(key);
+
+    if (existing) {
+      return existing;
+    }
+
+    const created: WorkspaceStateRefreshStatus = {
+      phase: "fresh",
+      dirtyReasons: new Set<string>(),
+      pendingSessions: new Map<string, SessionListItem>(),
+      runningPromise: null,
+      cooldownTimer: null,
+      lastRequestedAt: null,
+      lastStartedAt: null,
+      lastCompletedAt: null,
+      lastFailedAt: null,
+      nextAllowedAt: null,
+      runningTaskId: null
+    };
+
+    this.workspaceStateRefreshStatuses.set(key, created);
+    return created;
+  }
+
+  private isWorkspaceStateRefreshCoolingDown(
+    state: WorkspaceStateRefreshStatus,
+    now: number
+  ): boolean {
+    if (state.nextAllowedAt === null || now >= state.nextAllowedAt) {
+      return false;
+    }
+
+    return state.phase === "cooldown" || state.phase === "failed";
+  }
+
+  private startWorkspaceStateRefreshTask(
+    key: string,
+    workspaceId: string,
+    userId: string,
+    state: WorkspaceStateRefreshStatus
+  ): void {
+    if (state.runningPromise) {
+      return;
+    }
+
+    const sessions = [...state.pendingSessions.values()];
+    if (sessions.length === 0) {
+      state.phase = "fresh";
+      state.dirtyReasons.clear();
+      return;
+    }
+
+    state.pendingSessions.clear();
+    state.phase = "running";
+    state.lastStartedAt = Date.now();
+    state.runningTaskId = `${key}:${++this.workspaceStateRefreshTaskSequence}`;
 
     const startedAt = Date.now();
     const task = delay(0)
       .then(() => this.refreshRecentSessionStates(sessions, userId))
       .then(() => {
+        state.lastCompletedAt = Date.now();
+        state.phase = "cooldown";
+        state.nextAllowedAt = state.lastCompletedAt + WORKSPACE_STATE_REFRESH_COOLDOWN_MS;
+        state.dirtyReasons.clear();
         logPerformance(
           "workspace.refresh_recent_session_states",
           Date.now() - startedAt,
@@ -3047,6 +3183,9 @@ export class SessionHistoryService {
         );
       })
       .catch((error) => {
+        state.lastFailedAt = Date.now();
+        state.phase = "failed";
+        state.nextAllowedAt = state.lastFailedAt + WORKSPACE_STATE_REFRESH_COOLDOWN_MS;
         logPerformance(
           "workspace.refresh_recent_session_states.failed",
           Date.now() - startedAt,
@@ -3062,10 +3201,56 @@ export class SessionHistoryService {
         );
       })
       .finally(() => {
-        this.workspaceStateRefreshInflight.delete(inflightKey);
+        state.runningPromise = null;
+        state.runningTaskId = null;
+
+        if (state.pendingSessions.size === 0) {
+          if (state.phase === "cooldown") {
+            this.ensureWorkspaceStateRefreshCooldownTimer(key, workspaceId, userId, state);
+            return;
+          }
+
+          if (state.phase === "failed") {
+            this.ensureWorkspaceStateRefreshCooldownTimer(key, workspaceId, userId, state);
+            return;
+          }
+
+          state.phase = "fresh";
+          return;
+        }
+
+        state.phase = "stale";
+        this.ensureWorkspaceStateRefreshCooldownTimer(key, workspaceId, userId, state);
       });
 
-    this.workspaceStateRefreshInflight.set(inflightKey, task);
+    state.runningPromise = task;
+  }
+
+  private ensureWorkspaceStateRefreshCooldownTimer(
+    key: string,
+    workspaceId: string,
+    userId: string,
+    state: WorkspaceStateRefreshStatus
+  ): void {
+    if (state.cooldownTimer) {
+      return;
+    }
+
+    const now = Date.now();
+    const delayMs = Math.max(0, (state.nextAllowedAt ?? now) - now);
+    state.cooldownTimer = setTimeout(() => {
+      state.cooldownTimer = null;
+
+      if (state.pendingSessions.size === 0) {
+        state.phase = "fresh";
+        state.dirtyReasons.clear();
+        state.nextAllowedAt = null;
+        return;
+      }
+
+      state.phase = "stale";
+      this.startWorkspaceStateRefreshTask(key, workspaceId, userId, state);
+    }, delayMs);
   }
 
   private async cleanupStaleHiddenSessions(
@@ -3881,6 +4066,15 @@ function buildSessionStateRefreshCandidates(
   }
 
   return Array.from(deduped.values());
+}
+
+function mergeWorkspaceStateRefreshSessions(
+  target: Map<string, SessionListItem>,
+  sessions: SessionListItem[]
+): void {
+  for (const session of sessions) {
+    target.set(session.sessionId, session);
+  }
 }
 
 function isSessionStateRefreshCandidate(item: SessionListItem): boolean {
@@ -4848,6 +5042,23 @@ function isSyntheticCodexSessionTitle(title: string): boolean {
   );
 }
 
+function shouldSyncSessionTitleFromProvider(
+  provider: string,
+  currentTitle: string | null
+): boolean {
+  const normalizedTitle = currentTitle?.trim() ?? "";
+
+  if (normalizedTitle.length === 0) {
+    return true;
+  }
+
+  if (provider === "codex" && isSyntheticCodexSessionTitle(normalizedTitle)) {
+    return true;
+  }
+
+  return false;
+}
+
 function shouldRemoveHiddenClaudeDebugSession(session: {
   providerSessionId: string;
   rawStoreRef: string;
@@ -5114,6 +5325,80 @@ function getAbortMessage(reason: unknown): string {
   return "任务已取消";
 }
 
+function areEquivalentSessionBindings(
+  current: SessionBinding | null,
+  next: SessionBinding
+): boolean {
+  if (!current) {
+    return false;
+  }
+
+  return (
+    current.sessionId === next.sessionId &&
+    current.workspaceId === next.workspaceId &&
+    current.provider === next.provider &&
+    current.providerSessionId === next.providerSessionId &&
+    current.rawStoreRef === next.rawStoreRef &&
+    current.createdAt === next.createdAt
+  );
+}
+
+function areEquivalentSessionIndexRecords(
+  current: SessionIndexRecord | null,
+  next: SessionIndexRecord
+): boolean {
+  if (!current) {
+    return false;
+  }
+
+  return (
+    current.sessionId === next.sessionId &&
+    current.workspaceId === next.workspaceId &&
+    current.provider === next.provider &&
+    (current.parentSessionId ?? null) === (next.parentSessionId ?? null) &&
+    (current.sessionKind ?? "default") === (next.sessionKind ?? "default") &&
+    (current.annotationSourceMessageId ?? null) === (next.annotationSourceMessageId ?? null) &&
+    (current.annotationSourceText ?? null) === (next.annotationSourceText ?? null) &&
+    (current.isSubagent ?? false) === (next.isSubagent ?? false) &&
+    (current.subagentLabel ?? null) === (next.subagentLabel ?? null) &&
+    current.title === next.title &&
+    current.messageCount === next.messageCount &&
+    current.isArchived === next.isArchived &&
+    (current.lastMessageAt ?? null) === (next.lastMessageAt ?? null) &&
+    current.createdAt === next.createdAt
+  );
+}
+
+function areEquivalentSessionStatusSnapshots(
+  current: SessionStatusSnapshot | null,
+  next: SessionStatusSnapshot
+): boolean {
+  if (!current) {
+    return false;
+  }
+
+  return (
+    current.sessionId === next.sessionId &&
+    current.syncStatus === next.syncStatus &&
+    (current.syncCursor ?? null) === (next.syncCursor ?? null) &&
+    (current.lastSyncAt ?? null) === (next.lastSyncAt ?? null) &&
+    (current.lastErrorCode ?? null) === (next.lastErrorCode ?? null) &&
+    (current.lastErrorDetail ?? null) === (next.lastErrorDetail ?? null) &&
+    (current.resumedAt ?? null) === (next.resumedAt ?? null)
+  );
+}
+
+function isSqliteBusyError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const sqliteCode = "code" in error ? error.code : null;
+  const message = error instanceof Error ? error.message : String(error);
+
+  return sqliteCode === "SQLITE_BUSY" || message.includes("database is locked");
+}
+
 async function runBatchedTransactions<TItem>(
   items: readonly TItem[],
   batchSize: number,
@@ -5134,8 +5419,21 @@ async function runBatchedTransactions<TItem>(
   for (let index = 0; index < items.length; index += normalizedBatchSize) {
     const batch = items.slice(index, index + normalizedBatchSize);
     const batchStartedAt = Date.now();
+    let retryCount = 0;
 
-    transaction(batch);
+    while (true) {
+      try {
+        transaction(batch);
+        break;
+      } catch (error) {
+        if (!isSqliteBusyError(error) || retryCount >= SQLITE_BUSY_RETRY_LIMIT) {
+          throw error;
+        }
+
+        retryCount += 1;
+        await delay(SQLITE_BUSY_RETRY_DELAY_MS * retryCount);
+      }
+    }
 
     const batchDurationMs = Date.now() - batchStartedAt;
     const nextBatchIndex = batchCount + 1;
@@ -5149,6 +5447,7 @@ async function runBatchedTransactions<TItem>(
           batchIndex: nextBatchIndex,
           batchSize: batch.length,
           batchStartIndex: index,
+          retryCount,
           totalItems: items.length,
           configuredBatchSize: normalizedBatchSize
         },

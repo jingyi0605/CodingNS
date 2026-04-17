@@ -7,10 +7,60 @@ describe("ProviderDiscoveryHelperClient", () => {
     vi.resetModules();
   });
 
+  it("构造 client 时不会提前拉起 provider helper，首个请求才会 spawn", async () => {
+    const spawn = vi.fn(() => ({
+      stdout: {},
+      stderr: {
+        on: vi.fn()
+      },
+      stdin: {
+        destroyed: false,
+        on: vi.fn(),
+        write: vi.fn((_content: string, callback?: (error?: Error | null) => void) => {
+          callback?.(null);
+          return true;
+        })
+      },
+      killed: false,
+      kill: vi.fn(),
+      on: vi.fn()
+    }));
+
+    vi.doMock("node:child_process", () => ({
+      spawn
+    }));
+    vi.doMock("node:readline", () => ({
+      default: {
+        createInterface: vi.fn(() => ({
+          on: vi.fn(),
+          close: vi.fn()
+        }))
+      }
+    }));
+
+    const { ProviderDiscoveryHelperClient } = await import(
+      "../../src/modules/provider/provider-discovery-helper-client.js"
+    );
+
+    const client = new ProviderDiscoveryHelperClient();
+    expect(spawn).not.toHaveBeenCalled();
+
+    const pending = client.readOpenCodeCliModels({
+      commandPath: "/tmp/opencode",
+      workspacePath: "/tmp/workspace",
+      timeoutMs: 5000
+    });
+
+    expect(spawn).toHaveBeenCalledTimes(1);
+    client.dispose();
+    await expect(pending).rejects.toThrow("provider discovery helper 已关闭");
+  });
+
   it("AbortSignal 触发后会向 provider helper 发送 cancel 消息", async () => {
     const writes: string[] = [];
     const stdin = {
       destroyed: false,
+      on: vi.fn(),
       write: vi.fn((content: string, callback?: (error?: Error | null) => void) => {
         writes.push(content.trim());
         callback?.(null);
@@ -145,6 +195,7 @@ describe("ProviderDiscoveryHelperClient", () => {
     const writes: string[] = [];
     const stdin = {
       destroyed: false,
+      on: vi.fn(),
       write: vi.fn((content: string, callback?: (error?: Error | null) => void) => {
         writes.push(content.trim());
         callback?.(null);
@@ -193,6 +244,225 @@ describe("ProviderDiscoveryHelperClient", () => {
       id: "cancel:1",
       type: "cancel",
       targetId: "1"
+    });
+  });
+
+  it("provider helper 回收退出后，请求会自动拉起新进程并重试一次", async () => {
+    const childEvents: Array<Record<string, (value?: unknown, extra?: unknown) => void>> = [];
+    const lineHandlers: Array<(line: string) => void> = [];
+    const writesByChild: string[][] = [];
+    const spawn = vi.fn(() => {
+      const writes: string[] = [];
+      const events: Record<string, (value?: unknown, extra?: unknown) => void> = {};
+      writesByChild.push(writes);
+      childEvents.push(events);
+
+      return {
+        stdout: {},
+        stderr: {
+          on: vi.fn()
+        },
+        stdin: {
+          destroyed: false,
+          on: vi.fn(),
+          write: vi.fn((content: string, callback?: (error?: Error | null) => void) => {
+            writes.push(content.trim());
+            callback?.(null);
+            return true;
+          })
+        },
+        killed: false,
+        kill: vi.fn(),
+        on: vi.fn((event: string, handler: (value?: unknown, extra?: unknown) => void) => {
+          events[event] = handler;
+        })
+      };
+    });
+
+    vi.doMock("node:child_process", () => ({
+      spawn
+    }));
+    vi.doMock("node:readline", () => ({
+      default: {
+        createInterface: vi.fn(() => ({
+          on: vi.fn((event: string, handler: (line: string) => void) => {
+            if (event === "line") {
+              lineHandlers.push(handler);
+            }
+          }),
+          close: vi.fn()
+        }))
+      }
+    }));
+
+    const { ProviderDiscoveryHelperClient } = await import(
+      "../../src/modules/provider/provider-discovery-helper-client.js"
+    );
+    const client = new ProviderDiscoveryHelperClient();
+    const config = {
+      claudeCodeHomeDir: "/tmp/claude",
+      codexCliPath: "/tmp/codex",
+      codexHomeDir: "/tmp/codex-home",
+      geminiCliPath: "/tmp/gemini",
+      geminiHomeDir: "/tmp/gemini-home",
+      kimiDefaultModel: null,
+      kimiHomeDir: "/tmp/kimi-home",
+      opencodeBaseUrl: "http://127.0.0.1:4096",
+      opencodeDataDir: "/tmp/opencode",
+      opencodeDbPath: "/tmp/opencode/opencode.db"
+    };
+
+    const firstPromise = client.discoverWorkspaceSessions({
+      config,
+      workspacePath: "/tmp/workspace-a",
+      knownSessions: []
+    });
+    childEvents[0]?.exit?.(0, "SIGTERM");
+
+    await vi.waitFor(() => {
+      expect(lineHandlers.length).toBeGreaterThanOrEqual(2);
+    });
+
+    lineHandlers[1]?.(
+      JSON.stringify({
+        type: "result",
+        id: "2",
+        ok: true,
+        result: {
+          sessions: [],
+          isComplete: true,
+          providerDiagnostics: []
+        }
+      })
+    );
+
+    await expect(firstPromise).resolves.toEqual({
+      sessions: [],
+      isComplete: true,
+      providerDiagnostics: []
+    });
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(writesByChild[0][0] ?? "{}")).toMatchObject({
+      id: "1",
+      type: "workspace_session_discovery",
+      workspacePath: "/tmp/workspace-a"
+    });
+    expect(JSON.parse(writesByChild[1][0] ?? "{}")).toMatchObject({
+      id: "2",
+      type: "workspace_session_discovery",
+      workspacePath: "/tmp/workspace-a"
+    });
+  });
+
+  it("写请求时遇到 EPIPE 会重拉 helper 并自动重试一次", async () => {
+    const lineHandlers: Array<(line: string) => void> = [];
+    const writesByChild: string[][] = [];
+    let spawnCount = 0;
+    const spawn = vi.fn(() => {
+      spawnCount += 1;
+      const writes: string[] = [];
+      writesByChild.push(writes);
+
+      return {
+        stdout: {},
+        stderr: {
+          on: vi.fn()
+        },
+        stdin: {
+          destroyed: false,
+          on: vi.fn(),
+          write: vi.fn((content: string, callback?: (error?: Error | null) => void) => {
+            writes.push(content.trim());
+
+            if (spawnCount === 1) {
+              const error = Object.assign(new Error("broken pipe"), {
+                code: "EPIPE"
+              });
+              callback?.(error);
+              return false;
+            }
+
+            callback?.(null);
+            return true;
+          })
+        },
+        killed: false,
+        kill: vi.fn(),
+        on: vi.fn()
+      };
+    });
+
+    vi.doMock("node:child_process", () => ({
+      spawn
+    }));
+    vi.doMock("node:readline", () => ({
+      default: {
+        createInterface: vi.fn(() => ({
+          on: vi.fn((event: string, handler: (line: string) => void) => {
+            if (event === "line") {
+              lineHandlers.push(handler);
+            }
+          }),
+          close: vi.fn()
+        }))
+      }
+    }));
+
+    const { ProviderDiscoveryHelperClient } = await import(
+      "../../src/modules/provider/provider-discovery-helper-client.js"
+    );
+    const client = new ProviderDiscoveryHelperClient();
+    const config = {
+      claudeCodeHomeDir: "/tmp/claude",
+      codexCliPath: "/tmp/codex",
+      codexHomeDir: "/tmp/codex-home",
+      geminiCliPath: "/tmp/gemini",
+      geminiHomeDir: "/tmp/gemini-home",
+      kimiDefaultModel: null,
+      kimiHomeDir: "/tmp/kimi-home",
+      opencodeBaseUrl: "http://127.0.0.1:4096",
+      opencodeDataDir: "/tmp/opencode",
+      opencodeDbPath: "/tmp/opencode/opencode.db"
+    };
+
+    const promise = client.discoverWorkspaceSessions({
+      config,
+      workspacePath: "/tmp/workspace-retry",
+      knownSessions: []
+    });
+
+    await vi.waitFor(() => {
+      expect(lineHandlers.length).toBeGreaterThanOrEqual(2);
+    });
+
+    lineHandlers[1]?.(
+      JSON.stringify({
+        type: "result",
+        id: "2",
+        ok: true,
+        result: {
+          sessions: [],
+          isComplete: true,
+          providerDiagnostics: []
+        }
+      })
+    );
+
+    await expect(promise).resolves.toEqual({
+      sessions: [],
+      isComplete: true,
+      providerDiagnostics: []
+    });
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(writesByChild[0][0] ?? "{}")).toMatchObject({
+      id: "1",
+      type: "workspace_session_discovery",
+      workspacePath: "/tmp/workspace-retry"
+    });
+    expect(JSON.parse(writesByChild[1][0] ?? "{}")).toMatchObject({
+      id: "2",
+      type: "workspace_session_discovery",
+      workspacePath: "/tmp/workspace-retry"
     });
   });
 });

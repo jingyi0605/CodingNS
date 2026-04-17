@@ -34,7 +34,20 @@ type HelperTaskResponse =
 
 type HelperTaskMessage = HelperTaskRequest | HelperTaskCancelRequest;
 
+interface QueuedHelperTask {
+  payload: HelperTaskRequest;
+  controller: AbortController;
+}
+
+const TASK_HELPER_HANDLER_CONCURRENCY: Partial<Record<TaskHelperProcessHandlerName, number>> = {
+  "session.workspace_discovery": 2
+};
+const TASK_HELPER_RSS_HIGH_WATER_BYTES = 768 * 1024 * 1024;
+
 const activeRequests = new Map<string, AbortController>();
+const queuedRequests = new Map<string, QueuedHelperTask>();
+const queuedRequestsByHandler = new Map<TaskHelperProcessHandlerName, QueuedHelperTask[]>();
+const runningCountByHandler = new Map<TaskHelperProcessHandlerName, number>();
 
 const reader = readline.createInterface({
   input: process.stdin,
@@ -67,12 +80,56 @@ async function handleLine(line: string): Promise<void> {
   }
 
   if (payload.type === "cancel") {
-    activeRequests.get(payload.targetId)?.abort(new Error("helper task aborted"));
+    cancelRequest(payload.targetId);
     return;
   }
 
   const controller = new AbortController();
+  const task = {
+    payload,
+    controller
+  } satisfies QueuedHelperTask;
+
+  if (canStartTask(payload.handler)) {
+    startTask(task);
+    return;
+  }
+
+  queuedRequests.set(payload.id, task);
+  const queue = queuedRequestsByHandler.get(payload.handler) ?? [];
+  queue.push(task);
+  queuedRequestsByHandler.set(payload.handler, queue);
+}
+
+function writeResponse(payload: HelperTaskResponse): void {
+  process.stdout.write(`${JSON.stringify(payload)}\n`);
+}
+
+function canStartTask(handler: TaskHelperProcessHandlerName): boolean {
+  const limit = TASK_HELPER_HANDLER_CONCURRENCY[handler];
+
+  if (!limit || limit <= 0) {
+    return true;
+  }
+
+  return (runningCountByHandler.get(handler) ?? 0) < limit;
+}
+
+function startTask(task: QueuedHelperTask): void {
+  const { payload, controller } = task;
+
+  queuedRequests.delete(payload.id);
   activeRequests.set(payload.id, controller);
+  runningCountByHandler.set(
+    payload.handler,
+    (runningCountByHandler.get(payload.handler) ?? 0) + 1
+  );
+
+  void runTask(task);
+}
+
+async function runTask(task: QueuedHelperTask): Promise<void> {
+  const { payload, controller } = task;
 
   try {
     const result = await runTaskHelperProcessHandler(payload.handler, payload.input, controller.signal);
@@ -91,9 +148,85 @@ async function handleLine(line: string): Promise<void> {
     });
   } finally {
     activeRequests.delete(payload.id);
+    runningCountByHandler.set(
+      payload.handler,
+      Math.max(0, (runningCountByHandler.get(payload.handler) ?? 1) - 1)
+    );
+    drainQueue(payload.handler);
+    maybeRecycleProcess();
   }
 }
 
-function writeResponse(payload: HelperTaskResponse): void {
-  process.stdout.write(`${JSON.stringify(payload)}\n`);
+function drainQueue(handler: TaskHelperProcessHandlerName): void {
+  const queue = queuedRequestsByHandler.get(handler);
+
+  if (!queue || queue.length === 0) {
+    return;
+  }
+
+  while (queue.length > 0 && canStartTask(handler)) {
+    const next = queue.shift();
+
+    if (!next) {
+      continue;
+    }
+
+    if (!queuedRequests.has(next.payload.id)) {
+      continue;
+    }
+
+    startTask(next);
+  }
+
+  if (queue.length === 0) {
+    queuedRequestsByHandler.delete(handler);
+  }
+}
+
+function cancelRequest(targetId: string): void {
+  const active = activeRequests.get(targetId);
+
+  if (active) {
+    active.abort(new Error("helper task aborted"));
+    return;
+  }
+
+  const queued = queuedRequests.get(targetId);
+
+  if (!queued) {
+    return;
+  }
+
+  queuedRequests.delete(targetId);
+  const queue = queuedRequestsByHandler.get(queued.payload.handler);
+
+  if (!queue) {
+    return;
+  }
+
+  const nextQueue = queue.filter((entry) => entry.payload.id !== targetId);
+
+  if (nextQueue.length === 0) {
+    queuedRequestsByHandler.delete(queued.payload.handler);
+    return;
+  }
+
+  queuedRequestsByHandler.set(queued.payload.handler, nextQueue);
+}
+
+function maybeRecycleProcess(): void {
+  if (activeRequests.size > 0 || queuedRequests.size > 0) {
+    return;
+  }
+
+  if (process.memoryUsage.rss() < TASK_HELPER_RSS_HIGH_WATER_BYTES) {
+    return;
+  }
+
+  process.stderr.write(
+    `[task-helper] rss 高水位回收，rss=${process.memoryUsage.rss()}\n`
+  );
+  setImmediate(() => {
+    process.exit(0);
+  });
 }

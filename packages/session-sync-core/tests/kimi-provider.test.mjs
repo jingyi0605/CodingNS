@@ -220,9 +220,9 @@ test("KimiAdapter 支持通过 kimi.json work_dirs 识别新版会话工作区",
     assert.equal(sessions[0].title, "新版 Kimi 会话");
     assert.equal(sessions[0].rawStoreRef, `kimi://session/${fixture.sessionId}`);
     assert.equal(sessions[0].lastMessageAt.startsWith("2026-04-08T"), true);
-    assert.equal(sessions[0].messageCount, 3);
-    assert.equal(history.messages[0]?.role, "system");
-    assert.equal(history.messages[0]?.content, "system prompt");
+    assert.equal(sessions[0].messageCount, 2);
+    assert.equal(history.messages[0]?.role, "user");
+    assert.equal(history.messages[0]?.content, "对话测试");
   } finally {
     rmSync(fixture.rootDir, { recursive: true, force: true });
   }
@@ -313,4 +313,29 @@ test("KimiAdapter capability 会声明单轮命令模式与阶段限制", () => 
     capabilities.limitations.some((item) => item.includes("单轮命令模式")),
     true
   );
+});
+
+test("KimiAdapter discovery 第二轮会复用 mtime/size 摘要缓存", async () => {
+  const fixture = createKimiFixture();
+
+  try {
+    const adapter = new KimiAdapter({
+      homeDir: fixture.homeDir
+    });
+    const firstSessions = await adapter.detectSessions(fixture.workspaceDir);
+
+    assert.equal(firstSessions.length, 1);
+
+    adapter.buildSessionSummary = () => {
+      throw new Error("should not rebuild unchanged kimi summary");
+    };
+
+    const secondSessions = await adapter.detectSessions(fixture.workspaceDir);
+
+    assert.equal(secondSessions.length, 1);
+    assert.equal(secondSessions[0]?.providerSessionId, "kimi-session-1");
+    assert.equal(secondSessions[0]?.title, "Kimi 主会话");
+  } finally {
+    rmSync(fixture.rootDir, { recursive: true, force: true });
+  }
 });

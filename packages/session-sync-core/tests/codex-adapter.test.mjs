@@ -460,6 +460,7 @@ test("CodexAdapter 读取标题时应优先采用 session_index.jsonl 的 thread
         cwd TEXT,
         created_at INTEGER,
         archived INTEGER,
+        archived_at INTEGER,
         first_user_message TEXT,
         agent_nickname TEXT,
         agent_role TEXT,
@@ -496,6 +497,272 @@ test("CodexAdapter 读取标题时应优先采用 session_index.jsonl 的 thread
 
     assert.equal(sessions.length, 1);
     assert.equal(sessions[0]?.title, summarizedTitle);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 读取标题时应优先复用 discovery 摘要缓存，避免重复解析整份会话", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-title-cache-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const sessionDir = join(tempDir, "sessions", "2026", "03", "26");
+  const sessionFile = join(sessionDir, "session.jsonl");
+  const threadId = "12345678-1234-4234-9234-1234567890ad";
+  const sessionTitle = "给工作区扫描补缓存，避免重复读取大文件";
+
+  try {
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: threadId,
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-26T00:00:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: sessionTitle
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const db = new DatabaseSync(join(tempDir, "state_1.sqlite"));
+    db.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        cwd TEXT,
+        created_at INTEGER,
+        archived INTEGER,
+        archived_at INTEGER,
+        first_user_message TEXT,
+        agent_nickname TEXT,
+        agent_role TEXT,
+        rollout_path TEXT
+      );
+    `);
+    db.prepare(
+      `INSERT INTO threads (
+         id,
+         title,
+         cwd,
+         created_at,
+         archived,
+         first_user_message,
+         agent_nickname,
+         agent_role,
+         rollout_path
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      threadId,
+      sessionTitle,
+      workspacePath,
+      Math.floor(Date.parse("2026-03-26T00:00:00.000Z") / 1000),
+      0,
+      sessionTitle,
+      null,
+      null,
+      sessionFile
+    );
+    db.close();
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    await adapter.detectSessions(workspacePath);
+    adapter.parseMessagesFromEntries = () => {
+      throw new Error("SHOULD_NOT_PARSE_MESSAGES");
+    };
+
+    const title = await adapter.readSessionTitle(threadId, sessionFile);
+    assert.equal(title, sessionTitle);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 直接读取过一次标题后，应复用标题缓存避免再次整文件解析", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-title-read-cache-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const sessionDir = join(tempDir, "sessions", "2026", "04", "17");
+  const sessionFile = join(sessionDir, "session.jsonl");
+  const threadId = "22345678-1234-4234-9234-1234567890ad";
+  const sessionTitle = "把标题读取结果也缓存下来，别反复吃整文件";
+
+  try {
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: threadId,
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-17T00:00:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: sessionTitle
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const firstTitle = await adapter.readSessionTitle(threadId, sessionFile);
+    assert.equal(firstTitle, sessionTitle);
+
+    adapter.parseMessagesFromEntries = () => {
+      throw new Error("SHOULD_NOT_PARSE_MESSAGES_TWICE");
+    };
+
+    const secondTitle = await adapter.readSessionTitle(threadId, sessionFile);
+    assert.equal(secondTitle, sessionTitle);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 会根据线程索引只纳入当前工作区的 archived 会话", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-archived-index-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const otherWorkspacePath = "/Users/jackson/Documents/Code/OtherRepo";
+  const archivedDir = join(tempDir, "archived_sessions");
+  const archivedFile = join(archivedDir, "archived-thread.jsonl");
+  const otherArchivedFile = join(archivedDir, "other-thread.jsonl");
+  const threadId = "12345678-1234-4234-9234-1234567890ae";
+  const otherThreadId = "12345678-1234-4234-9234-1234567890af";
+  const archivedTitle = "归档会话仍应能出现在当前工作区里";
+
+  try {
+    mkdirSync(archivedDir, { recursive: true });
+    writeFileSync(
+      archivedFile,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: threadId,
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-26T00:00:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: archivedTitle
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      otherArchivedFile,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: otherThreadId,
+            cwd: otherWorkspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-26T00:00:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "其他工作区的 archived 会话不该被纳入"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const db = new DatabaseSync(join(tempDir, "state_1.sqlite"));
+    db.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        cwd TEXT,
+        created_at INTEGER,
+        archived INTEGER,
+        archived_at INTEGER,
+        first_user_message TEXT,
+        agent_nickname TEXT,
+        agent_role TEXT,
+        rollout_path TEXT
+      );
+    `);
+    db.prepare(
+      `INSERT INTO threads (
+         id,
+         title,
+         cwd,
+         created_at,
+         archived,
+         archived_at,
+         first_user_message,
+         agent_nickname,
+         agent_role,
+         rollout_path
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      threadId,
+      archivedTitle,
+      workspacePath,
+      Math.floor(Date.parse("2026-03-26T00:00:00.000Z") / 1000),
+      1,
+      Math.floor(Date.parse("2026-03-26T00:01:00.000Z") / 1000),
+      archivedTitle,
+      null,
+      null,
+      archivedFile
+    );
+    db.prepare(
+      `INSERT INTO threads (
+         id,
+         title,
+         cwd,
+         created_at,
+         archived,
+         archived_at,
+         first_user_message,
+         agent_nickname,
+         agent_role,
+         rollout_path
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      otherThreadId,
+      "其他工作区 archived",
+      otherWorkspacePath,
+      Math.floor(Date.parse("2026-03-26T00:00:00.000Z") / 1000),
+      1,
+      Math.floor(Date.parse("2026-03-26T00:01:00.000Z") / 1000),
+      "其他工作区 archived",
+      null,
+      null,
+      otherArchivedFile
+    );
+    db.close();
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const sessions = await adapter.detectSessions(workspacePath);
+
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0]?.providerSessionId, threadId);
+    assert.equal(sessions[0]?.isArchived, true);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -552,8 +819,16 @@ test("CodexAdapter 取消归档后即使线程索引 mtime 没变，也不会把
     `);
     db.prepare(
       `INSERT INTO threads (
-         id, title, cwd, created_at, archived, archived_at,
-         first_user_message, agent_nickname, agent_role, rollout_path
+         id,
+         title,
+         cwd,
+         created_at,
+         archived,
+         archived_at,
+         first_user_message,
+         agent_nickname,
+         agent_role,
+         rollout_path
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       threadId,
@@ -571,17 +846,27 @@ test("CodexAdapter 取消归档后即使线程索引 mtime 没变，也不会把
 
     const initialDbStat = statSync(dbPath);
     const adapter = new CodexAdapter({ homeDir: tempDir });
-    await adapter.updateSessionArchiveState(threadId, archivedFile, false);
+    const archivedSessions = await adapter.detectSessions(workspacePath);
+
+    assert.equal(archivedSessions[0]?.isArchived, true);
+
+    const updated = await adapter.updateSessionArchiveState(threadId, archivedFile, false);
     utimesSync(dbPath, new Date(initialDbStat.atimeMs), new Date(initialDbStat.mtimeMs));
 
+    assert.equal(updated.rawStoreRef, activeFile);
+    assert.equal(updated.isArchived, false);
+    assert.equal(statSync(activeFile).isFile(), true);
+
     const restoredSessions = await adapter.detectSessions(workspacePath);
-    assert.equal(restoredSessions[0]?.isArchived, false);
+
+    assert.equal(restoredSessions.length, 1);
+    assert.equal(restoredSessions[0]?.providerSessionId, threadId);
     assert.equal(restoredSessions[0]?.rawStoreRef, activeFile);
+    assert.equal(restoredSessions[0]?.isArchived, false);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
-
 
 test("CodexAdapter 支持原生会话级 fork", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-fork-session-"));

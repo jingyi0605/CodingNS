@@ -121,6 +121,10 @@ export interface ProviderDiscoveryDiagnostic {
   sessionCount: number;
   isComplete: boolean;
   errorMessage?: string | null;
+  scannedFiles?: number;
+  skippedByMtimeSize?: number;
+  parsedFiles?: number;
+  bytesRead?: number;
 }
 
 export interface ProviderSessionDiscovery {

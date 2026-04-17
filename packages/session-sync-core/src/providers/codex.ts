@@ -12,8 +12,10 @@ import type {
   NormalizedMessage,
   ProviderAdapter,
   ProviderCapabilities,
+  ProviderDiscoveryDiagnostic,
   ProviderId,
   ProviderRealtimeEvent,
+  ProviderSessionDiscovery,
   ProviderSessionSummary,
   ProviderSubscription,
   ResumeSessionResult,
@@ -82,6 +84,8 @@ interface CodexSessionSummaryCacheEntry {
   mtimeMs: number;
   size: number;
   workspacePath: string | null;
+  providerSessionId: string | null;
+  title: string | null;
   summary: ProviderSessionSummary | null;
 }
 
@@ -100,10 +104,20 @@ interface CodexThreadMetadata {
   agentNickname: string | null;
   agentRole: string | null;
   isArchived: boolean | null;
+  rolloutPath: string | null;
 }
 
 interface CodexSpawnRelation {
   parentProviderSessionId: string;
+}
+
+interface CodexSpawnRelationScanCacheEntry {
+  filePath: string;
+  mtimeMs: number;
+  size: number;
+  workspacePath: string | null;
+  directRelations: Array<readonly [string, CodexSpawnRelation]>;
+  spawnRecords: CodexSpawnRecord[];
 }
 
 interface CodexSpawnRecord {
@@ -121,6 +135,7 @@ interface CodexSessionIdentity {
 
 const HISTORY_CACHE_LIMIT = 6;
 const SESSION_SUMMARY_CACHE_LIMIT = 512;
+const SPAWN_RELATION_SCAN_CACHE_LIMIT = 512;
 const RECENT_HISTORY_INITIAL_BYTES = 256 * 1024;
 const RECENT_HISTORY_MAX_BYTES = 4 * 1024 * 1024;
 const RECENT_HISTORY_BUFFER_MESSAGES = 24;
@@ -135,6 +150,7 @@ export class CodexAdapter implements ProviderAdapter {
   readonly providerId: ProviderId = "codex";
   private readonly historyCache = new Map<string, CodexHistoryCacheEntry>();
   private readonly sessionSummaryCache = new Map<string, CodexSessionSummaryCacheEntry>();
+  private readonly spawnRelationScanCache = new Map<string, CodexSpawnRelationScanCacheEntry>();
   private threadMetadataIndexCache: CodexThreadMetadataIndexCacheEntry | null = null;
 
   constructor(private readonly options: CodexAdapterOptions) {}
@@ -143,11 +159,21 @@ export class CodexAdapter implements ProviderAdapter {
     workspacePath: string,
     options?: DetectSessionsOptions
   ): Promise<ProviderSessionSummary[]> {
+    const discovery = await this.detectSessionsDetailed(workspacePath, options);
+    return discovery.sessions;
+  }
+
+  async detectSessionsDetailed(
+    workspacePath: string,
+    options?: DetectSessionsOptions
+  ): Promise<ProviderSessionDiscovery> {
+    const startedAt = Date.now();
     const targetPath = normalizeWorkspacePath(workspacePath);
-    const files = this.listSessionFiles();
     const knownSessions = (options?.knownSessions ?? []).filter(
       (session) => session.provider === this.providerId
     );
+    const threadMetadataIndex = this.readThreadMetadataIndex();
+    const files = this.listSessionFiles(targetPath, threadMetadataIndex, knownSessions);
     const knownByRawStoreRef = new Map(
       knownSessions.map((session) => [session.rawStoreRef, session] as const)
     );
@@ -167,8 +193,13 @@ export class CodexAdapter implements ProviderAdapter {
       stats: { mtimeMs: number; size: number };
       sessionIdentity: CodexSessionIdentity | null;
     }> = [];
+    let scannedFiles = 0;
+    let skippedByMtimeSize = 0;
+    let parsedFiles = 0;
+    let bytesRead = 0;
 
     for (const filePath of files) {
+      scannedFiles += 1;
       const stats = statSync(filePath);
       const cachedSummary = this.sessionSummaryCache.get(filePath);
       const fileSessionId = basename(filePath, ".jsonl");
@@ -191,6 +222,7 @@ export class CodexAdapter implements ProviderAdapter {
           && hasUsableCodexTitle(cachedSummary.summary.title)
           && normalizeWorkspacePath(cachedSummary.summary.workspacePath) === targetPath
         ) {
+          skippedByMtimeSize += 1;
           retainedSummaries.push({
             filePath,
             stats,
@@ -220,6 +252,7 @@ export class CodexAdapter implements ProviderAdapter {
           || knownByPath.providerSessionId === sessionIdentity.threadId
         )
       ) {
+        skippedByMtimeSize += 1;
         if (normalizeWorkspacePath(knownByPath.workspacePath) === targetPath) {
           retainedSummaries.push({
             filePath,
@@ -235,6 +268,8 @@ export class CodexAdapter implements ProviderAdapter {
           mtimeMs: stats.mtimeMs,
           size: stats.size,
           workspacePath: knownByPath.workspacePath,
+          providerSessionId: knownByPath.providerSessionId,
+          title: null,
           summary: null
         });
         continue;
@@ -249,6 +284,8 @@ export class CodexAdapter implements ProviderAdapter {
           mtimeMs: stats.mtimeMs,
           size: stats.size,
           workspacePath: sessionIdentity.cwd,
+          providerSessionId: sessionIdentity.threadId,
+          title: null,
           summary: null
         });
         continue;
@@ -266,19 +303,40 @@ export class CodexAdapter implements ProviderAdapter {
     }
 
     if (pendingFiles.length === 0 && retainedSummaries.length === 0) {
-      return [...sessionsByProviderSessionId.values()].sort((left, right) =>
+      const sessions = [...sessionsByProviderSessionId.values()].sort((left, right) =>
         (left.lastMessageAt ?? "").localeCompare(right.lastMessageAt ?? "")
       );
+      const diagnostic: ProviderDiscoveryDiagnostic = {
+        provider: this.providerId,
+        status: "success",
+        durationMs: Date.now() - startedAt,
+        sessionCount: sessions.length,
+        isComplete: true,
+        errorMessage: null,
+        scannedFiles,
+        skippedByMtimeSize,
+        parsedFiles,
+        bytesRead
+      };
+
+      return {
+        sessions,
+        isComplete: true,
+        providerDiagnostics: [diagnostic]
+      };
     }
 
-    const threadMetadataIndex = this.readThreadMetadataIndex();
     const pendingThreadIds = new Set(
       [...pendingFiles, ...retainedSummaries]
         .map((entry) => entry.sessionIdentity?.threadId ?? null)
         .filter((value): value is string => value !== null)
     );
     const spawnedAgentRelationIndex = this.readSpawnedAgentRelationIndex(
-      [...pendingFiles, ...retainedSummaries].map((entry) => entry.filePath),
+      [...pendingFiles, ...retainedSummaries].map((entry) => ({
+        filePath: entry.filePath,
+        stats: entry.stats,
+        sessionIdentity: entry.sessionIdentity
+      })),
       targetPath,
       threadMetadataIndex,
       pendingThreadIds
@@ -304,6 +362,8 @@ export class CodexAdapter implements ProviderAdapter {
         mtimeMs: entry.stats.mtimeMs,
         size: entry.stats.size,
         workspacePath: summary.workspacePath,
+        providerSessionId: summary.providerSessionId,
+        title: summary.title,
         summary
       });
       sessionsByProviderSessionId.set(summary.providerSessionId, summary);
@@ -311,9 +371,12 @@ export class CodexAdapter implements ProviderAdapter {
 
     for (const entry of pendingFiles) {
       const { filePath, fileSessionId, stats, sessionIdentity } = entry;
+      parsedFiles += 1;
+      bytesRead += stats.size;
       const records = readJsonLines(filePath);
       const meta = records.find((record) => record.data.type === "session_meta")?.data;
       const metaPayload = (meta?.payload ?? {}) as Record<string, unknown>;
+      const codexSessionId = this.resolveCodexSessionId(metaPayload, fileSessionId);
 
       if (shouldIgnoreCodingNsDraftSession(metaPayload)) {
         this.touchSessionSummaryCache(filePath, {
@@ -321,6 +384,8 @@ export class CodexAdapter implements ProviderAdapter {
           mtimeMs: stats.mtimeMs,
           size: stats.size,
           workspacePath: null,
+          providerSessionId: codexSessionId,
+          title: null,
           summary: null
         });
         continue;
@@ -336,12 +401,12 @@ export class CodexAdapter implements ProviderAdapter {
           mtimeMs: stats.mtimeMs,
           size: stats.size,
           workspacePath: cachedWorkspacePath,
+          providerSessionId: codexSessionId,
+          title: null,
           summary: null
         });
         continue;
       }
-
-      const codexSessionId = this.resolveCodexSessionId(metaPayload, fileSessionId);
       const currentThreadMetadata =
         threadMetadataIndex.get(codexSessionId) ??
         (sessionIdentity ? threadMetadataIndex.get(sessionIdentity.threadId) : null);
@@ -371,6 +436,8 @@ export class CodexAdapter implements ProviderAdapter {
           mtimeMs: stats.mtimeMs,
           size: stats.size,
           workspacePath: sessionWorkspacePath,
+          providerSessionId: summary.providerSessionId,
+          title: summary.title,
           summary
         });
         sessionsByProviderSessionId.set(codexSessionId, summary);
@@ -401,13 +468,33 @@ export class CodexAdapter implements ProviderAdapter {
         mtimeMs: stats.mtimeMs,
         size: stats.size,
         workspacePath: sessionWorkspacePath,
+        providerSessionId: summary.providerSessionId,
+        title: summary.title,
         summary
       });
     }
 
-    return [...sessionsByProviderSessionId.values()].sort((left, right) =>
+    const sessions = [...sessionsByProviderSessionId.values()].sort((left, right) =>
       (left.lastMessageAt ?? "").localeCompare(right.lastMessageAt ?? "")
     );
+    const diagnostic: ProviderDiscoveryDiagnostic = {
+      provider: this.providerId,
+      status: "success",
+      durationMs: Date.now() - startedAt,
+      sessionCount: sessions.length,
+      isComplete: true,
+      errorMessage: null,
+      scannedFiles,
+      skippedByMtimeSize,
+      parsedFiles,
+      bytesRead
+    };
+
+    return {
+      sessions,
+      isComplete: true,
+      providerDiagnostics: [diagnostic]
+    };
   }
 
   async readSessionHistory(
@@ -754,23 +841,65 @@ export class CodexAdapter implements ProviderAdapter {
     rawStoreRef: string
   ): Promise<string> {
     const resolvedStoreRef = this.resolveSessionFilePath(rawStoreRef, providerSessionId);
-    const records = readJsonLines(resolvedStoreRef);
     const fileSessionId = basename(resolvedStoreRef, ".jsonl");
-    const meta = records.find((record) => record.data.type === "session_meta")?.data;
-    const metaPayload = (meta?.payload ?? {}) as Record<string, unknown>;
     const sessionIdentity = this.readSessionIdentity(resolvedStoreRef, fileSessionId);
-    const codexSessionId = this.resolveCodexSessionId(metaPayload, providerSessionId || fileSessionId);
     const threadMetadataIndex = this.readThreadMetadataIndex();
-    const messages = this.parseMessagesFromEntries(resolvedStoreRef, records, codexSessionId);
-
-    return (
-      this.resolveIndexedTitle(threadMetadataIndex, codexSessionId) ??
+    const indexedTitle =
+      this.resolveIndexedTitle(threadMetadataIndex, providerSessionId) ??
       (sessionIdentity
         ? this.resolveIndexedTitle(threadMetadataIndex, sessionIdentity.threadId)
-        : null) ??
+        : null);
+
+    if (indexedTitle) {
+      return indexedTitle;
+    }
+
+    const stats = statSync(resolvedStoreRef);
+    const cachedSummary = this.sessionSummaryCache.get(resolvedStoreRef);
+
+    if (
+      cachedSummary
+      && cachedSummary.mtimeMs === stats.mtimeMs
+      && cachedSummary.size === stats.size
+      && (
+        cachedSummary.providerSessionId === providerSessionId
+        || (sessionIdentity
+          && cachedSummary.providerSessionId === sessionIdentity.threadId)
+      )
+    ) {
+      this.touchSessionSummaryCache(resolvedStoreRef, cachedSummary);
+
+      if (cachedSummary.title) {
+        return cachedSummary.title;
+      }
+
+      if (cachedSummary.summary) {
+        return cachedSummary.summary.title;
+      }
+    }
+
+    const records = readJsonLines(resolvedStoreRef);
+    const meta = records.find((record) => record.data.type === "session_meta")?.data;
+    const metaPayload = (meta?.payload ?? {}) as Record<string, unknown>;
+    const codexSessionId = this.resolveCodexSessionId(metaPayload, providerSessionId || fileSessionId);
+    const messages = this.parseMessagesFromEntries(resolvedStoreRef, records, codexSessionId);
+    const resolvedTitle = (
+      this.resolveIndexedTitle(threadMetadataIndex, codexSessionId) ??
       resolveCodexFallbackTitle(messages) ??
       fileSessionId
     );
+
+    this.touchSessionSummaryCache(resolvedStoreRef, {
+      filePath: resolvedStoreRef,
+      mtimeMs: stats.mtimeMs,
+      size: stats.size,
+      workspacePath: (sessionIdentity?.cwd ?? ensureText(metaPayload.cwd)) || null,
+      providerSessionId: codexSessionId,
+      title: resolvedTitle,
+      summary: null
+    });
+
+    return resolvedTitle;
   }
 
   async renameSessionTitle(
@@ -989,7 +1118,8 @@ export class CodexAdapter implements ProviderAdapter {
             firstUserMessage: null,
             agentNickname: null,
             agentRole: null,
-            isArchived: null
+            isArchived: null,
+            rolloutPath: null
           });
         } catch {
           continue;
@@ -1059,6 +1189,8 @@ export class CodexAdapter implements ProviderAdapter {
           agentNickname:
             ensureText(row.agent_nickname).trim() || (current?.agentNickname ?? null),
           agentRole: ensureText(row.agent_role).trim() || (current?.agentRole ?? null),
+          rolloutPath:
+            ensureText(row.rollout_path).trim() || (current?.rolloutPath ?? null),
           isArchived:
             typeof row.archived === "number"
               ? row.archived === 1
@@ -1088,10 +1220,66 @@ export class CodexAdapter implements ProviderAdapter {
     return index;
   }
 
-  private listSessionFiles(): string[] {
+  private listSessionFiles(
+    targetPath: string,
+    threadMetadataIndex: Map<string, CodexThreadMetadata>,
+    knownSessions: ProviderSessionSummary[]
+  ): string[] {
     const activeFiles = walkJsonlFiles(join(this.options.homeDir, "sessions"));
-    const archivedFiles = walkJsonlFiles(join(this.options.homeDir, "archived_sessions"));
+    const archivedFiles = this.listArchivedSessionFiles(
+      targetPath,
+      threadMetadataIndex,
+      knownSessions
+    );
     return [...activeFiles, ...archivedFiles];
+  }
+
+  private listArchivedSessionFiles(
+    targetPath: string,
+    threadMetadataIndex: Map<string, CodexThreadMetadata>,
+    knownSessions: ProviderSessionSummary[]
+  ): string[] {
+    const archivedFiles = new Set<string>();
+
+    for (const metadata of threadMetadataIndex.values()) {
+      if (
+        metadata.isArchived !== true
+        || !metadata.rolloutPath
+      ) {
+        continue;
+      }
+
+      if (
+        targetPath.length > 0
+        && normalizeWorkspacePath(metadata.cwd ?? "") !== targetPath
+      ) {
+        continue;
+      }
+
+      archivedFiles.add(metadata.rolloutPath);
+    }
+
+    for (const session of knownSessions) {
+      if (
+        session.isArchived !== true
+        || normalizeWorkspacePath(session.workspacePath) !== targetPath
+        || !isCodexArchivedFilePath(session.rawStoreRef)
+      ) {
+        continue;
+      }
+
+      archivedFiles.add(session.rawStoreRef);
+    }
+
+    if (archivedFiles.size > 0) {
+      return [...archivedFiles].filter((filePath) => existsSync(filePath));
+    }
+
+    if (threadMetadataIndex.size === 0) {
+      return walkJsonlFiles(join(this.options.homeDir, "archived_sessions"));
+    }
+
+    return [];
   }
 
   private resolveSessionFilePath(rawStoreRef: string, providerSessionId: string): string {
@@ -1138,7 +1326,11 @@ export class CodexAdapter implements ProviderAdapter {
   }
 
   private findSessionFileByThreadId(providerSessionId: string): string | null {
-    for (const filePath of this.listSessionFiles()) {
+    const threadMetadataIndex = this.readThreadMetadataIndex();
+    const activeFiles = walkJsonlFiles(join(this.options.homeDir, "sessions"));
+    const archivedFiles = this.listArchivedSessionFiles("", threadMetadataIndex, []);
+
+    for (const filePath of [...activeFiles, ...archivedFiles]) {
       const threadId = this.readThreadIdFromRawStore(filePath);
 
       if (threadId === providerSessionId) {
@@ -1289,6 +1481,24 @@ export class CodexAdapter implements ProviderAdapter {
     this.threadMetadataIndexCache = null;
   }
 
+  private touchSpawnRelationScanCache(
+    filePath: string,
+    entry: CodexSpawnRelationScanCacheEntry
+  ): void {
+    this.spawnRelationScanCache.delete(filePath);
+    this.spawnRelationScanCache.set(filePath, entry);
+
+    while (this.spawnRelationScanCache.size > SPAWN_RELATION_SCAN_CACHE_LIMIT) {
+      const oldestKey = this.spawnRelationScanCache.keys().next().value;
+
+      if (!oldestKey) {
+        break;
+      }
+
+      this.spawnRelationScanCache.delete(oldestKey);
+    }
+  }
+
   private isForkedChildHistoryAligned(
     childThreadReadResult: Record<string, unknown>,
     expectedHistory: unknown[]
@@ -1359,7 +1569,11 @@ export class CodexAdapter implements ProviderAdapter {
   }
 
   private readSpawnedAgentRelationIndex(
-    files: string[],
+    files: Array<{
+      filePath: string;
+      stats: { mtimeMs: number; size: number };
+      sessionIdentity: CodexSessionIdentity | null;
+    }>,
     targetPath: string,
     threadMetadataIndex: Map<string, CodexThreadMetadata>,
     candidateThreadIds?: Iterable<string>
@@ -1367,26 +1581,78 @@ export class CodexAdapter implements ProviderAdapter {
     const directRelations = new Map<string, CodexSpawnRelation>();
     const spawnRecords: CodexSpawnRecord[] = [];
 
-    for (const filePath of files) {
-      const sessionIdentity = this.readSessionIdentity(filePath, basename(filePath, ".jsonl"));
+    for (const entry of files) {
+      const { filePath, stats } = entry;
+      const cached = this.spawnRelationScanCache.get(filePath);
 
-      if (!sessionIdentity) {
+      if (
+        cached
+        && cached.mtimeMs === stats.mtimeMs
+        && cached.size === stats.size
+      ) {
+        this.touchSpawnRelationScanCache(filePath, cached);
+
+        if (cached.workspacePath !== targetPath) {
+          continue;
+        }
+
+        for (const [threadId, relation] of cached.directRelations) {
+          directRelations.set(threadId, relation);
+        }
+
+        spawnRecords.push(...cached.spawnRecords);
         continue;
       }
 
-      if (normalizeWorkspacePath(sessionIdentity.cwd) !== targetPath) {
+      const sessionIdentity =
+        entry.sessionIdentity ?? this.readSessionIdentity(filePath, basename(filePath, ".jsonl"));
+
+      if (!sessionIdentity) {
+        this.touchSpawnRelationScanCache(filePath, {
+          filePath,
+          mtimeMs: stats.mtimeMs,
+          size: stats.size,
+          workspacePath: null,
+          directRelations: [],
+          spawnRecords: []
+        });
+        continue;
+      }
+
+      const workspacePath = normalizeWorkspacePath(sessionIdentity.cwd);
+
+      if (workspacePath !== targetPath) {
+        this.touchSpawnRelationScanCache(filePath, {
+          filePath,
+          mtimeMs: stats.mtimeMs,
+          size: stats.size,
+          workspacePath,
+          directRelations: [],
+          spawnRecords: []
+        });
         continue;
       }
 
       if (sessionIdentity.parentThreadId) {
-        directRelations.set(sessionIdentity.threadId, {
+        const relation = {
           parentProviderSessionId: sessionIdentity.parentThreadId
+        } satisfies CodexSpawnRelation;
+        directRelations.set(sessionIdentity.threadId, relation);
+        this.touchSpawnRelationScanCache(filePath, {
+          filePath,
+          mtimeMs: stats.mtimeMs,
+          size: stats.size,
+          workspacePath,
+          directRelations: [[sessionIdentity.threadId, relation]],
+          spawnRecords: []
         });
         continue;
       }
 
       const records = readJsonLines(filePath).map((record) => record.data);
       const spawnCallById = new Map<string, CodexSpawnRecord>();
+      const fileSpawnRecords: CodexSpawnRecord[] = [];
+      const fileDirectRelations: Array<readonly [string, CodexSpawnRelation]> = [];
 
       for (const record of records) {
         if (record.type !== "response_item") {
@@ -1413,6 +1679,7 @@ export class CodexAdapter implements ProviderAdapter {
           };
 
           spawnCallById.set(callId, spawnRecord);
+          fileSpawnRecords.push(spawnRecord);
           spawnRecords.push(spawnRecord);
           continue;
         }
@@ -1434,10 +1701,21 @@ export class CodexAdapter implements ProviderAdapter {
           continue;
         }
 
-        directRelations.set(agentId, {
+        const relation = {
           parentProviderSessionId: spawnRecord.parentProviderSessionId
-        });
+        } satisfies CodexSpawnRelation;
+        directRelations.set(agentId, relation);
+        fileDirectRelations.push([agentId, relation]);
       }
+
+      this.touchSpawnRelationScanCache(filePath, {
+        filePath,
+        mtimeMs: stats.mtimeMs,
+        size: stats.size,
+        workspacePath,
+        directRelations: fileDirectRelations,
+        spawnRecords: fileSpawnRecords
+      });
     }
 
     const relationCandidates =

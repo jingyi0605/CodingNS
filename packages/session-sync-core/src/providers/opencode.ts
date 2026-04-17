@@ -14,6 +14,7 @@ import type {
   ProviderAdapter,
   ProviderArchiveUpdateResult,
   ProviderCapabilities,
+  ProviderDiscoveryDiagnostic,
   ProviderId,
   ProviderRealtimeEvent,
   ProviderSessionDiscovery,
@@ -148,8 +149,17 @@ interface SessionPageResponse<T> {
   headers: Headers;
 }
 
+interface OpenCodeDiscoveryCacheEntry {
+  cachedAt: number;
+  result: ProviderSessionDiscovery;
+}
+
+const OPENCODE_DISCOVERY_CACHE_MAX_AGE_MS = 3_000;
+const OPENCODE_DISCOVERY_CACHE_LIMIT = 32;
+
 export class OpenCodeAdapter implements ProviderAdapter {
   readonly providerId: ProviderId = "opencode";
+  private readonly discoveryCache = new Map<string, OpenCodeDiscoveryCacheEntry>();
 
   constructor(private readonly options: OpenCodeAdapterOptions = {}) {}
 
@@ -165,7 +175,16 @@ export class OpenCodeAdapter implements ProviderAdapter {
     workspacePath: string,
     options?: DetectSessionsOptions
   ): Promise<ProviderSessionDiscovery> {
+    const startedAt = Date.now();
     const targetPath = normalizeWorkspacePath(workspacePath);
+    const cacheKey = targetPath || "__all__";
+    const cached = this.discoveryCache.get(cacheKey);
+
+    if (cached && Date.now() - cached.cachedAt <= OPENCODE_DISCOVERY_CACHE_MAX_AGE_MS) {
+      this.touchDiscoveryCache(cacheKey, cached.result);
+      return cached.result;
+    }
+
     const knownSessions = (options?.knownSessions ?? []).filter(
       (session) =>
         session.provider === this.providerId &&
@@ -174,7 +193,29 @@ export class OpenCodeAdapter implements ProviderAdapter {
     const serverDiscovery = await this.tryDetectSessionsFromServer(targetPath, knownSessions);
 
     if (serverDiscovery) {
-      return serverDiscovery;
+      const sessions = [...serverDiscovery.sessions].sort(
+        (left, right) => (right.lastMessageAt ?? "").localeCompare(left.lastMessageAt ?? "")
+      );
+      const diagnostic: ProviderDiscoveryDiagnostic = {
+        provider: this.providerId,
+        status: serverDiscovery.isComplete ? "success" : "partial",
+        durationMs: Date.now() - startedAt,
+        sessionCount: sessions.length,
+        isComplete: serverDiscovery.isComplete,
+        errorMessage: null,
+        scannedFiles: 0,
+        skippedByMtimeSize: 0,
+        parsedFiles: 0,
+        bytesRead: 0
+      };
+
+      const result = {
+        ...serverDiscovery,
+        sessions,
+        providerDiagnostics: [diagnostic]
+      };
+      this.touchDiscoveryCache(cacheKey, result);
+      return result;
     }
 
     const rows = this.withReadonlyDb((db) => {
@@ -202,14 +243,31 @@ export class OpenCodeAdapter implements ProviderAdapter {
       ).all() as SessionSummaryRow[];
     });
 
-    return {
-      sessions: rows
+    const sessions = rows
         .map((row) => this.normalizeSqliteSessionSummaryRow(row))
         .filter((summary): summary is ProviderSessionSummary => summary !== null)
         .filter((summary) => workspaceMatches(targetPath, normalizeWorkspacePath(summary.workspacePath)))
-        .sort((left, right) => (right.lastMessageAt ?? "").localeCompare(left.lastMessageAt ?? "")),
-      isComplete: true
+        .sort((left, right) => (right.lastMessageAt ?? "").localeCompare(left.lastMessageAt ?? ""));
+    const diagnostic: ProviderDiscoveryDiagnostic = {
+      provider: this.providerId,
+      status: "success",
+      durationMs: Date.now() - startedAt,
+      sessionCount: sessions.length,
+      isComplete: true,
+      errorMessage: null,
+      scannedFiles: 0,
+      skippedByMtimeSize: 0,
+      parsedFiles: 0,
+      bytesRead: 0
     };
+
+    const result = {
+      sessions,
+      isComplete: true,
+      providerDiagnostics: [diagnostic]
+    };
+    this.touchDiscoveryCache(cacheKey, result);
+    return result;
   }
 
   async readRecentSessionHistory(
@@ -333,6 +391,8 @@ export class OpenCodeAdapter implements ProviderAdapter {
       subagentLabel: null
     };
 
+    this.discoveryCache.clear();
+
     return {
       session: sessionSummary,
       initialCursor: null
@@ -358,6 +418,8 @@ export class OpenCodeAdapter implements ProviderAdapter {
       sourceMessageId: options.sourceMessageId?.trim() || null,
       sourceMessageSnapshot: options.sourceMessageSnapshot ?? null
     });
+
+    this.discoveryCache.clear();
 
     return {
       session: {
@@ -400,6 +462,7 @@ export class OpenCodeAdapter implements ProviderAdapter {
 
     const message = await this.findAcceptedUserMessage(sessionId, trimmed)
       ?? buildSyntheticAcceptedMessage(sessionId, trimmed, acceptedAt);
+    this.discoveryCache.clear();
 
     return {
       acceptedAt,
@@ -463,6 +526,7 @@ export class OpenCodeAdapter implements ProviderAdapter {
       }
     );
 
+    this.discoveryCache.clear();
     return ensureText(response.data.title).trim() || nextTitle;
   }
 
@@ -504,6 +568,24 @@ export class OpenCodeAdapter implements ProviderAdapter {
 
   async getSessionCapabilities(): Promise<ProviderCapabilities> {
     return this.getProviderCapabilities();
+  }
+
+  private touchDiscoveryCache(cacheKey: string, result: ProviderSessionDiscovery): void {
+    this.discoveryCache.delete(cacheKey);
+    this.discoveryCache.set(cacheKey, {
+      cachedAt: Date.now(),
+      result
+    });
+
+    while (this.discoveryCache.size > OPENCODE_DISCOVERY_CACHE_LIMIT) {
+      const oldestKey = this.discoveryCache.keys().next().value;
+
+      if (!oldestKey) {
+        break;
+      }
+
+      this.discoveryCache.delete(oldestKey);
+    }
   }
 
   private async tryDetectSessionsFromServer(

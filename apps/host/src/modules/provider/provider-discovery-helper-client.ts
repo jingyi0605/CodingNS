@@ -33,47 +33,17 @@ interface HelperCancelRequest {
   targetId: string;
 }
 
+const GLOBAL_PROVIDER_DISCOVERY_HELPER_CLIENT_KEY =
+  "__codingnsProviderDiscoveryHelperClient__";
+
 let sharedProviderDiscoveryHelperClient: ProviderDiscoveryHelperClient | null = null;
 
 export class ProviderDiscoveryHelperClient {
-  private readonly child: ChildProcessWithoutNullStreams;
-  private readonly stdoutReader: readline.Interface;
+  private child: ChildProcessWithoutNullStreams | null = null;
+  private stdoutReader: readline.Interface | null = null;
   private readonly pendingRequests = new Map<string, PendingRequest<unknown>>();
   private nextRequestId = 1;
   private disposed = false;
-
-  constructor() {
-    const launch = resolveHelperLaunch();
-    this.child = spawn(launch.command, launch.args, {
-      cwd: process.cwd(),
-      env: process.env,
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-    this.stdoutReader = readline.createInterface({
-      input: this.child.stdout
-    });
-
-    this.stdoutReader.on("line", (line) => {
-      this.handleResponseLine(line);
-    });
-    this.child.stderr.on("data", (chunk) => {
-      const content = String(chunk).trim();
-
-      if (content) {
-        console.warn(`[provider-discovery-helper] ${content}`);
-      }
-    });
-    this.child.on("error", (error) => {
-      this.rejectAll(error);
-    });
-    this.child.on("exit", (code, signal) => {
-      this.rejectAll(
-        new Error(
-          `provider discovery helper 已退出：code=${code ?? "null"} signal=${signal ?? "null"}`
-        )
-      );
-    });
-  }
 
   async readCodexAppServerState(input: {
     commandPath: string;
@@ -140,10 +110,40 @@ export class ProviderDiscoveryHelperClient {
   }
 
   private async sendRequest(payload: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    let attempt = 0;
+
+    while (true) {
+      try {
+        return await this.sendRequestOnce(payload, signal);
+      } catch (error) {
+        if (
+          attempt >= 1 ||
+          this.disposed ||
+          signal?.aborted ||
+          !isRetryableHelperClientError(error)
+        ) {
+          throw error;
+        }
+
+        attempt += 1;
+        this.handleChildTermination(
+          error instanceof Error
+            ? error
+            : new Error("provider discovery helper pipe 已断开")
+        );
+      }
+    }
+  }
+
+  private async sendRequestOnce(
+    payload: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<unknown> {
     if (this.disposed) {
       return Promise.reject(new Error("provider discovery helper 已关闭"));
     }
 
+    const child = this.ensureChild();
     const id = String(this.nextRequestId++);
 
     return await new Promise((resolve, reject) => {
@@ -187,24 +187,33 @@ export class ProviderDiscoveryHelperClient {
         }
       });
 
-      this.child.stdin.write(
-        `${JSON.stringify({
-          id,
-          ...payload
-        })}\n`,
-        (error) => {
-          if (!error) {
-            return;
-          }
+      try {
+        child.stdin.write(
+          `${JSON.stringify({
+            id,
+            ...payload
+          })}\n`,
+          (error) => {
+            if (!error) {
+              return;
+            }
 
-          if (onAbort && signal) {
-            signal.removeEventListener("abort", onAbort);
-          }
+            if (onAbort && signal) {
+              signal.removeEventListener("abort", onAbort);
+            }
 
-          this.pendingRequests.delete(id);
-          reject(error);
+            this.pendingRequests.delete(id);
+            reject(error);
+          }
+        );
+      } catch (error) {
+        if (onAbort && signal) {
+          signal.removeEventListener("abort", onAbort);
         }
-      );
+
+        this.pendingRequests.delete(id);
+        reject(error);
+      }
     });
   }
 
@@ -214,13 +223,15 @@ export class ProviderDiscoveryHelperClient {
     }
 
     this.disposed = true;
-    this.stdoutReader.close();
+    this.stdoutReader?.close();
 
-    if (!this.child.killed) {
+    if (this.child && !this.child.killed) {
       this.child.kill("SIGTERM");
     }
 
     this.rejectAll(new Error("provider discovery helper 已关闭"));
+    this.child = null;
+    this.stdoutReader = null;
   }
 
   private handleResponseLine(line: string): void {
@@ -263,7 +274,12 @@ export class ProviderDiscoveryHelperClient {
   }
 
   private async sendCancel(targetId: string): Promise<void> {
-    if (this.disposed || this.child.killed || this.child.stdin.destroyed) {
+    if (
+      this.disposed ||
+      !this.child ||
+      this.child.killed ||
+      this.child.stdin.destroyed
+    ) {
       return;
     }
 
@@ -272,29 +288,134 @@ export class ProviderDiscoveryHelperClient {
       id: `cancel:${targetId}`,
       targetId
     };
+    const child = this.child;
 
     await new Promise<void>((resolve) => {
-      this.child.stdin.write(`${JSON.stringify(payload)}\n`, () => {
+      try {
+        child.stdin.write(
+          `${JSON.stringify(payload)}\n`,
+          () => {
+            resolve();
+          }
+        );
+      } catch {
         resolve();
-      });
+      }
     });
+  }
+
+  private ensureChild(): ChildProcessWithoutNullStreams {
+    if (this.child && this.stdoutReader && !this.child.killed && !this.child.stdin.destroyed) {
+      return this.child;
+    }
+
+    const launch = resolveHelperLaunch();
+    const child = spawn(launch.command, launch.args, {
+      cwd: process.cwd(),
+      env: process.env,
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    const stdoutReader = readline.createInterface({
+      input: child.stdout
+    });
+
+    stdoutReader.on("line", (line) => {
+      this.handleResponseLine(line);
+    });
+    child.stderr.on("data", (chunk) => {
+      const content = String(chunk).trim();
+
+      if (content) {
+        console.warn(`[provider-discovery-helper] ${content}`);
+      }
+    });
+    child.stdin.on("error", (error) => {
+      this.handleChildTermination(
+        error instanceof Error
+          ? error
+          : new Error("provider discovery helper stdin 已断开")
+      );
+    });
+    child.on("error", (error) => {
+      this.handleChildTermination(error);
+    });
+    child.on("exit", (code, signal) => {
+      this.handleChildTermination(
+        new Error(
+          `provider discovery helper 已退出：code=${code ?? "null"} signal=${signal ?? "null"}`
+        )
+      );
+    });
+
+    this.child = child;
+    this.stdoutReader = stdoutReader;
+    return child;
+  }
+
+  private handleChildTermination(error: Error): void {
+    const child = this.child;
+
+    if (this.stdoutReader) {
+      this.stdoutReader.close();
+    }
+
+    if (child && !child.killed) {
+      child.kill("SIGTERM");
+    }
+
+    this.child = null;
+    this.stdoutReader = null;
+    this.rejectAll(error);
   }
 }
 
+function isRetryableHelperClientError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const code = "code" in error ? error.code : null;
+
+  if (code === "EPIPE" || code === "ECONNRESET") {
+    return true;
+  }
+
+  const message = "message" in error ? String(error.message ?? "") : "";
+  return message.includes("provider discovery helper 已退出");
+}
+
 export function getSharedProviderDiscoveryHelperClient(): ProviderDiscoveryHelperClient {
+  const scope = globalThis as typeof globalThis & {
+    [GLOBAL_PROVIDER_DISCOVERY_HELPER_CLIENT_KEY]?: ProviderDiscoveryHelperClient | null;
+  };
+  const globalClient = scope[GLOBAL_PROVIDER_DISCOVERY_HELPER_CLIENT_KEY];
+
+  if (globalClient) {
+    sharedProviderDiscoveryHelperClient = globalClient;
+    return globalClient;
+  }
+
   if (!sharedProviderDiscoveryHelperClient) {
     sharedProviderDiscoveryHelperClient = new ProviderDiscoveryHelperClient();
   }
 
+  scope[GLOBAL_PROVIDER_DISCOVERY_HELPER_CLIENT_KEY] = sharedProviderDiscoveryHelperClient;
   return sharedProviderDiscoveryHelperClient;
 }
 
 export function disposeSharedProviderDiscoveryHelperClient(): void {
-  if (!sharedProviderDiscoveryHelperClient) {
+  const scope = globalThis as typeof globalThis & {
+    [GLOBAL_PROVIDER_DISCOVERY_HELPER_CLIENT_KEY]?: ProviderDiscoveryHelperClient | null;
+  };
+  const sharedClient =
+    scope[GLOBAL_PROVIDER_DISCOVERY_HELPER_CLIENT_KEY] ?? sharedProviderDiscoveryHelperClient;
+
+  if (!sharedClient) {
     return;
   }
 
-  sharedProviderDiscoveryHelperClient.dispose();
+  sharedClient.dispose();
+  scope[GLOBAL_PROVIDER_DISCOVERY_HELPER_CLIENT_KEY] = null;
   sharedProviderDiscoveryHelperClient = null;
 }
 

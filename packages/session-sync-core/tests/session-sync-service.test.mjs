@@ -138,3 +138,62 @@ test("SessionSyncService 会在所有 provider 都完整成功时返回完整发
     ]
   );
 });
+
+test("SessionSyncService 会保留 provider 自带的扫描诊断字段", async () => {
+  const service = new SessionSyncService({
+    list() {
+      return [
+        {
+          providerId: "provider-a",
+          async detectSessionsDetailed() {
+            return {
+              sessions: [
+                {
+                  provider: "provider-a",
+                  providerSessionId: "session-a",
+                  title: "Session A",
+                  workspacePath: "/tmp/workspace",
+                  rawStoreRef: "a://session/session-a",
+                  lastMessageAt: "2026-04-11T10:00:00.000Z",
+                  messageCount: 1
+                }
+              ],
+              isComplete: true,
+              providerDiagnostics: [
+                {
+                  provider: "provider-a",
+                  status: "success",
+                  durationMs: 12,
+                  sessionCount: 1,
+                  isComplete: true,
+                  errorMessage: null,
+                  scannedFiles: 9,
+                  skippedByMtimeSize: 5,
+                  parsedFiles: 4,
+                  bytesRead: 4096
+                }
+              ]
+            };
+          }
+        }
+      ];
+    }
+  });
+
+  const discovery = await service.discoverWorkspaceSessions("/tmp/workspace");
+
+  assert.deepEqual(discovery.providerDiagnostics, [
+    {
+      provider: "provider-a",
+      status: "success",
+      durationMs: 12,
+      sessionCount: 1,
+      isComplete: true,
+      errorMessage: null,
+      scannedFiles: 9,
+      skippedByMtimeSize: 5,
+      parsedFiles: 4,
+      bytesRead: 4096
+    }
+  ]);
+});

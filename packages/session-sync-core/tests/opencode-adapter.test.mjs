@@ -257,6 +257,47 @@ test("OpenCodeAdapter 在 server 请求超时时会回退 sqlite 发现会话", 
   }
 });
 
+test("OpenCodeAdapter 会复用短 TTL discovery 缓存，避免重复请求 server", async (context) => {
+  const originalFetch = globalThis.fetch;
+  let requestCount = 0;
+
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+    if (url === "http://127.0.0.1:41827/session?directory=%2Fworkspace%2Fdemo&roots=true") {
+      requestCount += 1;
+      return jsonResponse([
+        {
+          id: "ses_demo",
+          directory: "/workspace/demo",
+          title: "Demo Session",
+          time: {
+            created: 1_700_000_000_000,
+            updated: 1_700_000_020_000
+          }
+        }
+      ]);
+    }
+
+    throw new Error(`unexpected request: ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeAdapter({
+    baseUrl: "http://127.0.0.1:41827",
+    dbPath: "/tmp/codingns-opencode.db"
+  });
+  const firstDiscovery = await adapter.detectSessionsDetailed("/workspace/demo");
+  const secondDiscovery = await adapter.detectSessionsDetailed("/workspace/demo");
+
+  assert.equal(firstDiscovery.sessions.length, 1);
+  assert.equal(secondDiscovery.sessions.length, 1);
+  assert.equal(requestCount, 1);
+});
+
 test("OpenCodeAdapter 新建会话时会把 directory 同时写进 query 和 body", async (context) => {
   const originalFetch = globalThis.fetch;
   const requests = [];

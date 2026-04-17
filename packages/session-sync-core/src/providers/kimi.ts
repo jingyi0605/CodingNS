@@ -10,8 +10,10 @@ import type {
   ProviderAdapter,
   ProviderArchiveUpdateResult,
   ProviderCapabilities,
+  ProviderDiscoveryDiagnostic,
   ProviderId,
   ProviderRealtimeEvent,
+  ProviderSessionDiscovery,
   ProviderSessionSummary,
   ProviderSubscription,
   ResumeSessionResult,
@@ -74,10 +76,19 @@ interface KimiMessageDraft {
   sourceOrder: number;
 }
 
+interface KimiSessionSummaryCacheEntry {
+  sourceMtimeMs: number;
+  sourceSizeBytes: number;
+  workspacePath: string | null;
+  summary: ProviderSessionSummary | null;
+}
+
 const SUBSCRIBE_POLL_INTERVAL_MS = 800;
+const KIMI_SESSION_SUMMARY_CACHE_LIMIT = 512;
 
 export class KimiAdapter implements ProviderAdapter {
   readonly providerId: ProviderId = "kimi";
+  private readonly sessionSummaryCache = new Map<string, KimiSessionSummaryCacheEntry>();
 
   constructor(private readonly options: KimiAdapterOptions) {}
 
@@ -85,6 +96,15 @@ export class KimiAdapter implements ProviderAdapter {
     workspacePath: string,
     options?: DetectSessionsOptions
   ): Promise<ProviderSessionSummary[]> {
+    const discovery = await this.detectSessionsDetailed(workspacePath, options);
+    return discovery.sessions;
+  }
+
+  async detectSessionsDetailed(
+    workspacePath: string,
+    options?: DetectSessionsOptions
+  ): Promise<ProviderSessionDiscovery> {
+    const startedAt = Date.now();
     const targetWorkspacePath = normalizeWorkspacePath(workspacePath);
     const workspacePathByHash = buildKimiWorkspacePathByHash(readKimiWorkDirRecords(this.options.homeDir));
     const knownByRawStoreRef = new Map(
@@ -93,10 +113,47 @@ export class KimiAdapter implements ProviderAdapter {
         .map((session) => [session.rawStoreRef, session] as const)
     );
     const sessions: ProviderSessionSummary[] = [];
+    let scannedFiles = 0;
+    let skippedByMtimeSize = 0;
+    let parsedFiles = 0;
+    let bytesRead = 0;
 
     for (const files of this.listSessionFiles()) {
+      scannedFiles += 1;
       const rawStoreRef = buildKimiSessionRawStoreRef(files.sessionId);
+      const cached = this.sessionSummaryCache.get(rawStoreRef);
       const known = knownByRawStoreRef.get(rawStoreRef);
+
+      if (
+        cached &&
+        cached.sourceMtimeMs === files.sourceMtimeMs &&
+        cached.sourceSizeBytes === files.sourceSizeBytes
+      ) {
+        this.touchSessionSummaryCache(rawStoreRef, cached);
+        skippedByMtimeSize += 1;
+
+        if (
+          cached.summary &&
+          normalizeWorkspacePath(cached.summary.workspacePath) === targetWorkspacePath
+        ) {
+          sessions.push({
+            ...cached.summary,
+            provider: this.providerId,
+            providerSessionId: files.sessionId,
+            rawStoreRef,
+            sourceMtimeMs: files.sourceMtimeMs,
+            sourceSizeBytes: files.sourceSizeBytes
+          });
+          continue;
+        }
+
+        if (
+          cached.workspacePath &&
+          normalizeWorkspacePath(cached.workspacePath) !== targetWorkspacePath
+        ) {
+          continue;
+        }
+      }
 
       if (
         known
@@ -104,6 +161,7 @@ export class KimiAdapter implements ProviderAdapter {
         && known.sourceSizeBytes === files.sourceSizeBytes
         && normalizeWorkspacePath(known.workspacePath) === targetWorkspacePath
       ) {
+        skippedByMtimeSize += 1;
         sessions.push({
           ...known,
           provider: this.providerId,
@@ -112,25 +170,76 @@ export class KimiAdapter implements ProviderAdapter {
           sourceMtimeMs: files.sourceMtimeMs,
           sourceSizeBytes: files.sourceSizeBytes
         });
+        this.touchSessionSummaryCache(rawStoreRef, {
+          sourceMtimeMs: files.sourceMtimeMs,
+          sourceSizeBytes: files.sourceSizeBytes,
+          workspacePath: known.workspacePath,
+          summary: {
+            ...known,
+            provider: this.providerId,
+            providerSessionId: files.sessionId,
+            rawStoreRef,
+            sourceMtimeMs: files.sourceMtimeMs,
+            sourceSizeBytes: files.sourceSizeBytes
+          }
+        });
         continue;
       }
 
+      parsedFiles += 1;
+      bytesRead += files.sourceSizeBytes;
       const summary = this.buildSessionSummary(files, workspacePath, false, workspacePathByHash);
 
       if (!summary) {
+        this.touchSessionSummaryCache(rawStoreRef, {
+          sourceMtimeMs: files.sourceMtimeMs,
+          sourceSizeBytes: files.sourceSizeBytes,
+          workspacePath: null,
+          summary: null
+        });
         continue;
       }
 
       if (normalizeWorkspacePath(summary.workspacePath) !== targetWorkspacePath) {
+        this.touchSessionSummaryCache(rawStoreRef, {
+          sourceMtimeMs: files.sourceMtimeMs,
+          sourceSizeBytes: files.sourceSizeBytes,
+          workspacePath: summary.workspacePath,
+          summary: null
+        });
         continue;
       }
 
       sessions.push(summary);
+      this.touchSessionSummaryCache(rawStoreRef, {
+        sourceMtimeMs: files.sourceMtimeMs,
+        sourceSizeBytes: files.sourceSizeBytes,
+        workspacePath: summary.workspacePath,
+        summary
+      });
     }
 
-    return sessions.sort((left, right) =>
+    const sortedSessions = sessions.sort((left, right) =>
       (right.lastMessageAt ?? "").localeCompare(left.lastMessageAt ?? "")
     );
+    const diagnostic: ProviderDiscoveryDiagnostic = {
+      provider: this.providerId,
+      status: "success",
+      durationMs: Date.now() - startedAt,
+      sessionCount: sortedSessions.length,
+      isComplete: true,
+      errorMessage: null,
+      scannedFiles,
+      skippedByMtimeSize,
+      parsedFiles,
+      bytesRead
+    };
+
+    return {
+      sessions: sortedSessions,
+      isComplete: true,
+      providerDiagnostics: [diagnostic]
+    };
   }
 
   async readRecentSessionHistory(
@@ -506,6 +615,24 @@ export class KimiAdapter implements ProviderAdapter {
       sequence: index + 1,
       rawRef: draft.rawRef
     }));
+  }
+
+  private touchSessionSummaryCache(
+    rawStoreRef: string,
+    entry: KimiSessionSummaryCacheEntry
+  ): void {
+    this.sessionSummaryCache.delete(rawStoreRef);
+    this.sessionSummaryCache.set(rawStoreRef, entry);
+
+    while (this.sessionSummaryCache.size > KIMI_SESSION_SUMMARY_CACHE_LIMIT) {
+      const oldestKey = this.sessionSummaryCache.keys().next().value;
+
+      if (!oldestKey) {
+        break;
+      }
+
+      this.sessionSummaryCache.delete(oldestKey);
+    }
   }
 }
 

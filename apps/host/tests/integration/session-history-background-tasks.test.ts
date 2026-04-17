@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { ProviderCapabilities } from "@codingns/session-sync-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -24,6 +24,9 @@ describe("SessionHistoryService background tasks", () => {
   const tempDirs: string[] = [];
 
   afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+
     while (tempDirs.length > 0) {
       const dir = tempDirs.pop();
 
@@ -75,6 +78,123 @@ describe("SessionHistoryService background tasks", () => {
     const metrics = service.instance.observeBackgroundTaskMetrics();
     expect(metrics.taskTypes[HOST_TASK_TYPES.workspaceDiscovery]?.counters.finished).toBe(1);
     expect(metrics.taskTypes[HOST_TASK_TYPES.workspaceDiscovery]?.counters.cache_hit).toBe(1);
+
+    service.dispose();
+  });
+
+  it("workspace discovery scan 同时最多只放 2 个 helper 并发，其余任务进入排队", async () => {
+    const scanDeferredByPath = new Map<string, ReturnType<typeof createDeferred<{
+      sessions: [];
+      isComplete: true;
+      providerDiagnostics: [];
+    }>>>();
+    const startedPaths: string[] = [];
+    let activeScanCount = 0;
+    let maxActiveScanCount = 0;
+    const taskManager = createTaskManager(null, {
+      helper_process: {
+        execute: async (definition, input, context) => {
+          if (definition.taskType !== HOST_TASK_TYPES.workspaceDiscoveryScan) {
+            return await definition.run(input, context);
+          }
+
+          const workspacePath = String((input as { workspacePath: string }).workspacePath);
+          const deferred = scanDeferredByPath.get(workspacePath);
+
+          if (!deferred) {
+            throw new Error(`missing deferred for ${workspacePath}`);
+          }
+
+          startedPaths.push(workspacePath);
+          activeScanCount += 1;
+          maxActiveScanCount = Math.max(maxActiveScanCount, activeScanCount);
+
+          try {
+            return await deferred.promise;
+          } finally {
+            activeScanCount = Math.max(0, activeScanCount - 1);
+          }
+        }
+      }
+    });
+    const service = createSessionHistoryService(taskManager);
+    seedWorkspace(service.workspaceRepository, service.database.db, service.workspacePath);
+
+    const workspacePaths = [
+      service.workspacePath,
+      join(dirname(service.workspacePath), "workspace-2"),
+      join(dirname(service.workspacePath), "workspace-3")
+    ];
+
+    for (const workspacePath of workspacePaths) {
+      mkdirSync(workspacePath, { recursive: true });
+      scanDeferredByPath.set(workspacePath, createDeferred());
+    }
+
+    service.workspaceRepository.create({
+      id: "workspace-2",
+      name: "Workspace 2",
+      path: workspacePaths[1],
+      repoRoot: workspacePaths[1],
+      favorite: false,
+      createdAt: "2026-04-12T00:00:00.000Z",
+      updatedAt: "2026-04-12T00:00:00.000Z",
+      removedAt: null
+    });
+    service.workspaceRepository.create({
+      id: "workspace-3",
+      name: "Workspace 3",
+      path: workspacePaths[2],
+      repoRoot: workspacePaths[2],
+      favorite: false,
+      createdAt: "2026-04-12T00:00:00.000Z",
+      updatedAt: "2026-04-12T00:00:00.000Z",
+      removedAt: null
+    });
+
+    const firstPromise = service.instance.discoverWorkspaceSessions("workspace-1", "user-1", {
+      force: true,
+      refreshStateMode: "deferred"
+    });
+    const secondPromise = service.instance.discoverWorkspaceSessions("workspace-2", "user-1", {
+      force: true,
+      refreshStateMode: "deferred"
+    });
+    const thirdPromise = service.instance.discoverWorkspaceSessions("workspace-3", "user-1", {
+      force: true,
+      refreshStateMode: "deferred"
+    });
+
+    await flushMicrotasks();
+
+    expect(startedPaths).toHaveLength(2);
+    expect(maxActiveScanCount).toBe(2);
+    expect(activeScanCount).toBe(2);
+
+    scanDeferredByPath.get(workspacePaths[0])?.resolve({
+      sessions: [],
+      isComplete: true,
+      providerDiagnostics: []
+    });
+    await flushMicrotasks();
+
+    expect(startedPaths).toHaveLength(3);
+    expect(maxActiveScanCount).toBe(2);
+
+    scanDeferredByPath.get(workspacePaths[1])?.resolve({
+      sessions: [],
+      isComplete: true,
+      providerDiagnostics: []
+    });
+    scanDeferredByPath.get(workspacePaths[2])?.resolve({
+      sessions: [],
+      isComplete: true,
+      providerDiagnostics: []
+    });
+
+    await expect(firstPromise).resolves.toEqual([]);
+    await expect(secondPromise).resolves.toEqual([]);
+    await expect(thirdPromise).resolves.toEqual([]);
 
     service.dispose();
   });
@@ -167,6 +287,242 @@ describe("SessionHistoryService background tasks", () => {
       service.instance.observeBackgroundTaskMetrics().taskTypes[HOST_TASK_TYPES.workspaceDiscoveryScan]?.counters
         .cancelled
     ).toBe(1);
+
+    service.dispose();
+  });
+
+  it("工作区状态补刷在运行中会合并脏请求，并在冷却后只补跑一次", async () => {
+    const service = createSessionHistoryService();
+    const privateService = service.instance as unknown as {
+      scheduleWorkspaceStateRefresh: (
+        workspaceId: string,
+        userId: string,
+        sessions: Array<{ sessionId: string }>
+      ) => void;
+      refreshSessionState: (sessionId: string, userId: string) => Promise<void>;
+      workspaceStateRefreshStatuses: Map<string, {
+        phase: string;
+        pendingSessions: Map<string, { sessionId: string }>;
+      }>;
+    };
+    const firstRefreshDeferred = createDeferred<void>();
+    const refreshedSessionIds: string[] = [];
+    let firstRun = true;
+
+    privateService.refreshSessionState = vi.fn(async (sessionId: string) => {
+      refreshedSessionIds.push(sessionId);
+
+      if (firstRun) {
+        firstRun = false;
+        await firstRefreshDeferred.promise;
+      }
+    });
+
+    privateService.scheduleWorkspaceStateRefresh("workspace-1", "user-1", [
+      { sessionId: "session-1" } as never
+    ]);
+    await flushMicrotasks();
+
+    expect(refreshedSessionIds).toEqual(["session-1"]);
+
+    privateService.scheduleWorkspaceStateRefresh("workspace-1", "user-1", [
+      { sessionId: "session-2" } as never
+    ]);
+    await flushMicrotasks();
+
+    expect(refreshedSessionIds).toEqual(["session-1"]);
+    expect(
+      privateService.workspaceStateRefreshStatuses.get("workspace-1:user-1")?.pendingSessions.size
+    ).toBe(1);
+
+    firstRefreshDeferred.resolve();
+    await flushMicrotasks();
+
+    expect(refreshedSessionIds).toEqual(["session-1"]);
+
+    await waitForDuration(1_400);
+    expect(refreshedSessionIds).toEqual(["session-1"]);
+
+    await waitForDuration(250);
+    expect(refreshedSessionIds).toEqual(["session-1", "session-2"]);
+
+    service.dispose();
+  });
+
+  it("工作区状态补刷失败后会进入冷却，冷却结束前不会立刻重试", async () => {
+    const service = createSessionHistoryService();
+    const privateService = service.instance as unknown as {
+      scheduleWorkspaceStateRefresh: (
+        workspaceId: string,
+        userId: string,
+        sessions: Array<{ sessionId: string }>
+      ) => void;
+      refreshSessionState: (sessionId: string, userId: string) => Promise<void>;
+      workspaceStateRefreshStatuses: Map<string, {
+        phase: string;
+      }>;
+    };
+    const refreshSessionState = vi
+      .fn<Parameters<(sessionId: string, userId: string) => Promise<void>>, Promise<void>>()
+      .mockRejectedValueOnce(new Error("refresh failed"))
+      .mockResolvedValueOnce();
+
+    privateService.refreshSessionState = refreshSessionState;
+
+    privateService.scheduleWorkspaceStateRefresh("workspace-1", "user-1", [
+      { sessionId: "session-1" } as never
+    ]);
+    await flushMicrotasks();
+
+    expect(refreshSessionState).toHaveBeenCalledTimes(1);
+    expect(privateService.workspaceStateRefreshStatuses.get("workspace-1:user-1")?.phase).toBe("failed");
+
+    privateService.scheduleWorkspaceStateRefresh("workspace-1", "user-1", [
+      { sessionId: "session-2" } as never
+    ]);
+    await flushMicrotasks();
+
+    expect(refreshSessionState).toHaveBeenCalledTimes(1);
+
+    await waitForDuration(1_400);
+    expect(refreshSessionState).toHaveBeenCalledTimes(1);
+
+    await waitForDuration(250);
+    expect(refreshSessionState).toHaveBeenCalledTimes(2);
+    expect(refreshSessionState).toHaveBeenLastCalledWith("session-2", "user-1");
+
+    service.dispose();
+  });
+
+  it("workspace discovery 遇到未变化的会话不会重复刷新索引 updated_at", async () => {
+    const taskManager = createTaskManager(null, {
+      helper_process: {
+        execute: async (definition, input, context) => {
+          if (definition.taskType !== HOST_TASK_TYPES.workspaceDiscoveryScan) {
+            return await definition.run(input, context);
+          }
+
+          return {
+            sessions: [
+              {
+                provider: "codex",
+                providerSessionId: "provider-session-1",
+                rawStoreRef: join(String((input as { workspacePath: string }).workspacePath), ".codex", "session-1.json"),
+                workspacePath: String((input as { workspacePath: string }).workspacePath),
+                title: "现有会话",
+                messageCount: 3,
+                lastMessageAt: "2026-04-12T10:00:00.000Z",
+                createdAt: "2026-04-12T10:00:00.000Z",
+                updatedAt: "2026-04-12T10:00:00.000Z",
+                isArchived: false,
+                metadata: {}
+              }
+            ],
+            isComplete: true,
+            providerDiagnostics: []
+          };
+        }
+      }
+    });
+    const service = createSessionHistoryService(taskManager);
+    seedWorkspace(service.workspaceRepository, service.database.db, service.workspacePath);
+    seedSession(service.database.db, {
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "provider-session-1",
+      rawStoreRef: join(service.workspacePath, ".codex", "session-1.json"),
+      title: "现有会话",
+      messageCount: 3,
+      lastMessageAt: "2026-04-12T10:00:00.000Z",
+      createdAt: "2026-04-12T10:00:00.000Z",
+      updatedAt: "2026-04-12T10:00:00.000Z"
+    });
+
+    await service.instance.discoverWorkspaceSessions("workspace-1", "user-1", {
+      force: true,
+      refreshStateMode: "deferred"
+    });
+
+    const indexUpdatedAt = service.database.db
+      .prepare("SELECT updated_at FROM session_indices WHERE session_id = ?")
+      .get("session-1") as { updated_at: string };
+    const bindingUpdatedAt = service.database.db
+      .prepare("SELECT updated_at FROM session_bindings WHERE session_id = ?")
+      .get("session-1") as { updated_at: string };
+    const snapshotUpdatedAt = service.database.db
+      .prepare("SELECT updated_at FROM session_status_snapshots WHERE session_id = ?")
+      .get("session-1") as { updated_at: string };
+
+    expect(indexUpdatedAt.updated_at).toBe("2026-04-12T10:00:00.000Z");
+    expect(bindingUpdatedAt.updated_at).toBe("2026-04-12T10:00:00.000Z");
+    expect(snapshotUpdatedAt.updated_at).toBe("2026-04-12T10:00:00.000Z");
+
+    service.dispose();
+  });
+
+  it("workspace discovery 持久化遇到 SQLITE_BUSY 会退避重试而不是直接失败", async () => {
+    const taskManager = createTaskManager(null, {
+      helper_process: {
+        execute: async (definition, input, context) => {
+          if (definition.taskType !== HOST_TASK_TYPES.workspaceDiscoveryScan) {
+            return await definition.run(input, context);
+          }
+
+          return {
+            sessions: [
+              {
+                provider: "codex",
+                providerSessionId: "provider-session-2",
+                rawStoreRef: join(String((input as { workspacePath: string }).workspacePath), ".codex", "session-2.json"),
+                workspacePath: String((input as { workspacePath: string }).workspacePath),
+                title: "新的会话",
+                messageCount: 1,
+                lastMessageAt: "2026-04-12T11:00:00.000Z",
+                createdAt: "2026-04-12T11:00:00.000Z",
+                updatedAt: "2026-04-12T11:00:00.000Z",
+                isArchived: false,
+                metadata: {}
+              }
+            ],
+            isComplete: true,
+            providerDiagnostics: []
+          };
+        }
+      }
+    });
+    const service = createSessionHistoryService(taskManager);
+    seedWorkspace(service.workspaceRepository, service.database.db, service.workspacePath);
+
+    const originalTransaction = service.database.db.transaction.bind(service.database.db);
+    let shouldThrowBusy = true;
+    vi.spyOn(service.database.db, "transaction").mockImplementation(((fn: (...args: unknown[]) => unknown) => {
+      const wrapped = originalTransaction(fn as Parameters<typeof originalTransaction>[0]);
+
+      return ((...args: unknown[]) => {
+        if (shouldThrowBusy) {
+          shouldThrowBusy = false;
+          const error = new Error("database is locked") as Error & { code: string };
+          error.code = "SQLITE_BUSY";
+          throw error;
+        }
+
+        return wrapped(...args);
+      }) as ReturnType<typeof originalTransaction>;
+    }) as typeof service.database.db.transaction);
+
+    await expect(
+      service.instance.discoverWorkspaceSessions("workspace-1", "user-1", {
+        force: true,
+        refreshStateMode: "deferred"
+      })
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          providerSessionId: "provider-session-2"
+        })
+      ])
+    );
 
     service.dispose();
   });
@@ -267,9 +623,107 @@ function seedWorkspace(
   });
 }
 
+function seedSession(
+  db: ReturnType<typeof createDatabaseClient>["db"],
+  input: {
+    sessionId: string;
+    workspaceId: string;
+    provider: string;
+    providerSessionId: string;
+    rawStoreRef: string;
+    title: string;
+    messageCount: number;
+    lastMessageAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }
+): void {
+  db.prepare(
+    `INSERT INTO session_bindings (
+       session_id,
+       workspace_id,
+       provider,
+       provider_session_id,
+       raw_store_ref,
+       created_at,
+       updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    input.sessionId,
+    input.workspaceId,
+    input.provider,
+    input.providerSessionId,
+    input.rawStoreRef,
+    input.createdAt,
+    input.updatedAt
+  );
+
+  db.prepare(
+    `INSERT INTO session_indices (
+       session_id,
+       workspace_id,
+       provider,
+       parent_session_id,
+       session_kind,
+       annotation_source_message_id,
+       annotation_source_text,
+       is_subagent,
+       subagent_label,
+       title,
+       message_count,
+       is_archived,
+       last_message_at,
+       created_at,
+       updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    input.sessionId,
+    input.workspaceId,
+    input.provider,
+    null,
+    "default",
+    null,
+    null,
+    0,
+    null,
+    input.title,
+    input.messageCount,
+    0,
+    input.lastMessageAt,
+    input.createdAt,
+    input.updatedAt
+  );
+
+  db.prepare(
+    `INSERT INTO session_status_snapshots (
+       session_id,
+       sync_status,
+       sync_cursor,
+       last_sync_at,
+       last_error_code,
+       last_error_detail,
+       resumed_at,
+       updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    input.sessionId,
+    "idle",
+    null,
+    null,
+    null,
+    null,
+    null,
+    input.updatedAt
+  );
+}
+
 async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
   await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+async function waitForDuration(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function createDeferred<T>() {

@@ -24,9 +24,11 @@ import type {
   NormalizedMessage,
   ProviderAdapter,
   ProviderCapabilities,
+  ProviderDiscoveryDiagnostic,
   ProviderId,
   ProviderModelOption,
   ProviderRealtimeEvent,
+  ProviderSessionDiscovery,
   ProviderSessionSummary,
   ProviderSubscription,
   ResumeSessionResult,
@@ -63,6 +65,14 @@ interface ClaudeHistoryCacheEntry {
   messages: NormalizedMessage[];
 }
 
+interface ClaudeSessionSummaryCacheEntry {
+  filePath: string;
+  mtimeMs: number;
+  size: number;
+  workspacePath: string | null;
+  summary: ProviderSessionSummary | null;
+}
+
 interface ClaudeSubagentMetadata {
   providerSessionId: string;
   parentProviderSessionId: string;
@@ -77,6 +87,7 @@ interface ClaudeForkTargetLocation {
 }
 
 const HISTORY_CACHE_LIMIT = 6;
+const SESSION_SUMMARY_CACHE_LIMIT = 512;
 const DEFAULT_CLAUDE_CONTEXT_WINDOW = 200_000;
 const CLAUDE_MODEL_OPTIONS: ProviderModelOption[] = [
   {
@@ -101,6 +112,7 @@ const CLAUDE_MODEL_OPTIONS: ProviderModelOption[] = [
 export class ClaudeCodeAdapter implements ProviderAdapter {
   readonly providerId: ProviderId = "claude-code";
   private readonly historyCache = new Map<string, ClaudeHistoryCacheEntry>();
+  private readonly sessionSummaryCache = new Map<string, ClaudeSessionSummaryCacheEntry>();
 
   constructor(private readonly options: ClaudeCodeAdapterOptions) {}
 
@@ -108,6 +120,15 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     workspacePath: string,
     options?: DetectSessionsOptions
   ): Promise<ProviderSessionSummary[]> {
+    const discovery = await this.detectSessionsDetailed(workspacePath, options);
+    return discovery.sessions;
+  }
+
+  async detectSessionsDetailed(
+    workspacePath: string,
+    options?: DetectSessionsOptions
+  ): Promise<ProviderSessionDiscovery> {
+    const startedAt = Date.now();
     const targetPath = normalizeWorkspacePath(workspacePath);
     const files = this.listWorkspaceFiles(workspacePath);
     const subagentMetadataByFilePath = buildClaudeSubagentMetadataIndex(files);
@@ -117,8 +138,14 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
         .map((session) => [session.rawStoreRef, session] as const)
     );
     const sessions: ProviderSessionSummary[] = [];
+    let scannedFiles = 0;
+    let skippedByMtimeSize = 0;
+    let parsedFiles = 0;
+    let bytesRead = 0;
 
     for (const filePath of files) {
+      scannedFiles += 1;
+
       if (isPendingClaudeRuntimeFile(filePath)) {
         continue;
       }
@@ -128,10 +155,46 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
       }
 
       const stats = statSync(filePath);
+      const cachedSummary = this.sessionSummaryCache.get(filePath);
       const known = knownByRawStoreRef.get(filePath);
       const subagentMetadata = subagentMetadataByFilePath.get(filePath);
       const providerSessionId =
         subagentMetadata?.providerSessionId ?? basename(filePath, ".jsonl");
+
+      if (
+        cachedSummary &&
+        cachedSummary.mtimeMs === stats.mtimeMs &&
+        cachedSummary.size === stats.size
+      ) {
+        this.touchSessionSummaryCache(filePath, cachedSummary);
+        skippedByMtimeSize += 1;
+
+        if (
+          cachedSummary.summary &&
+          normalizeWorkspacePath(cachedSummary.summary.workspacePath) === targetPath
+        ) {
+          sessions.push({
+            ...cachedSummary.summary,
+            provider: this.providerId,
+            providerSessionId,
+            rawStoreRef: filePath,
+            parentProviderSessionId: subagentMetadata?.parentProviderSessionId ?? null,
+            isSubagent: subagentMetadata !== undefined,
+            subagentLabel:
+              cachedSummary.summary.subagentLabel ?? subagentMetadata?.subagentLabel ?? null,
+            sourceMtimeMs: stats.mtimeMs,
+            sourceSizeBytes: stats.size
+          });
+          continue;
+        }
+
+        if (
+          cachedSummary.workspacePath &&
+          normalizeWorkspacePath(cachedSummary.workspacePath) !== targetPath
+        ) {
+          continue;
+        }
+      }
 
       if (
         known
@@ -139,8 +202,10 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
         && known.sourceSizeBytes === stats.size
         && normalizeWorkspacePath(known.workspacePath) === targetPath
       ) {
+        skippedByMtimeSize += 1;
         sessions.push({
           ...known,
+          provider: this.providerId,
           providerSessionId,
           rawStoreRef: filePath,
           parentProviderSessionId: subagentMetadata?.parentProviderSessionId ?? null,
@@ -149,16 +214,44 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
           sourceMtimeMs: stats.mtimeMs,
           sourceSizeBytes: stats.size
         });
+        this.touchSessionSummaryCache(filePath, {
+          filePath,
+          mtimeMs: stats.mtimeMs,
+          size: stats.size,
+          workspacePath: known.workspacePath,
+          summary: {
+            ...known,
+            provider: this.providerId,
+            providerSessionId,
+            rawStoreRef: filePath,
+            parentProviderSessionId: subagentMetadata?.parentProviderSessionId ?? null,
+            isSubagent: subagentMetadata !== undefined,
+            subagentLabel: known.subagentLabel ?? subagentMetadata?.subagentLabel ?? null,
+            sourceMtimeMs: stats.mtimeMs,
+            sourceSizeBytes: stats.size
+          }
+        });
         continue;
       }
 
+      parsedFiles += 1;
+      bytesRead += stats.size;
       const records = readJsonLines(filePath);
       const typedRecords = records.map((record) => record.data);
-      const matchesWorkspace = typedRecords.some(
-        (record) => normalizeWorkspacePath(ensureText(record.cwd)) === targetPath
-      );
+      const detectedWorkspacePath =
+        typedRecords
+          .map((record) => normalizeWorkspacePath(ensureText(record.cwd)))
+          .find((value) => value.length > 0) ?? null;
+      const matchesWorkspace = detectedWorkspacePath === targetPath;
 
       if (!matchesWorkspace) {
+        this.touchSessionSummaryCache(filePath, {
+          filePath,
+          mtimeMs: stats.mtimeMs,
+          size: stats.size,
+          workspacePath: detectedWorkspacePath,
+          summary: null
+        });
         continue;
       }
 
@@ -168,7 +261,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
         messages.at(-1)?.timestamp ??
         (ensureText(typedRecords.at(-1)?.timestamp) || null);
 
-      sessions.push({
+      const summary: ProviderSessionSummary = {
         provider: this.providerId,
         providerSessionId,
         title,
@@ -181,12 +274,38 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
         subagentLabel: subagentMetadata?.subagentLabel ?? null,
         sourceMtimeMs: stats.mtimeMs,
         sourceSizeBytes: stats.size
+      };
+      sessions.push(summary);
+      this.touchSessionSummaryCache(filePath, {
+        filePath,
+        mtimeMs: stats.mtimeMs,
+        size: stats.size,
+        workspacePath,
+        summary
       });
     }
 
-    return sessions.sort((left, right) =>
+    const sortedSessions = sessions.sort((left, right) =>
       (left.lastMessageAt ?? "").localeCompare(right.lastMessageAt ?? "")
     );
+    const diagnostic: ProviderDiscoveryDiagnostic = {
+      provider: this.providerId,
+      status: "success",
+      durationMs: Date.now() - startedAt,
+      sessionCount: sortedSessions.length,
+      isComplete: true,
+      errorMessage: null,
+      scannedFiles,
+      skippedByMtimeSize,
+      parsedFiles,
+      bytesRead
+    };
+
+    return {
+      sessions: sortedSessions,
+      isComplete: true,
+      providerDiagnostics: [diagnostic]
+    };
   }
 
   async readSessionHistory(
@@ -360,6 +479,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
 
     writeFileSync(targetFilePath, `${serializedRecords}\n`, "utf8");
     this.historyCache.delete(targetFilePath);
+    this.sessionSummaryCache.delete(targetFilePath);
 
     const messages = this.getParsedMessages(targetFilePath, forkedSessionId);
     const title = this.resolveClaudeTitle(persistedForkRecords) || "";
@@ -418,6 +538,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
 
     const rawRef = createRawRef(this.providerId, rawStoreRef, lineNumber, 0);
     this.historyCache.delete(rawStoreRef);
+    this.sessionSummaryCache.delete(rawStoreRef);
 
     return {
       acceptedAt,
@@ -470,6 +591,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
       aiTitle: nextTitle
     });
     this.historyCache.delete(rawStoreRef);
+    this.sessionSummaryCache.delete(rawStoreRef);
 
     return nextTitle;
   }
@@ -731,6 +853,21 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
       }
 
       this.historyCache.delete(oldestKey);
+    }
+  }
+
+  private touchSessionSummaryCache(filePath: string, entry: ClaudeSessionSummaryCacheEntry): void {
+    this.sessionSummaryCache.delete(filePath);
+    this.sessionSummaryCache.set(filePath, entry);
+
+    while (this.sessionSummaryCache.size > SESSION_SUMMARY_CACHE_LIMIT) {
+      const oldestKey = this.sessionSummaryCache.keys().next().value;
+
+      if (!oldestKey) {
+        break;
+      }
+
+      this.sessionSummaryCache.delete(oldestKey);
     }
   }
 

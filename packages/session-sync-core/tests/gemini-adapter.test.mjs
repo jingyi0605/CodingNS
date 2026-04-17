@@ -159,6 +159,63 @@ test("Gemini CLI 未安装时仍然把本地 chats 发现视为 complete", async
   }
 });
 
+test("GeminiAdapter discovery 第二轮会复用 mtime/size 轻摘要缓存并输出扫描诊断", async () => {
+  const rootDir = mkdtempSync(join(tmpdir(), "codingns-gemini-diagnostics-"));
+  const homeDir = join(rootDir, "gemini-home");
+  const chatFile = join(homeDir, "tmp", "hash-alpha", "chats", "gemini-session-alpha.json");
+
+  try {
+    mkdirSync(join(homeDir, "tmp", "hash-alpha", "chats"), { recursive: true });
+    writeFileSync(
+      chatFile,
+      JSON.stringify({
+        sessionId: "gemini-session-alpha",
+        workspacePath: "/workspace/alpha",
+        title: "Alpha 本地会话",
+        updatedAt: "2026-04-03T08:10:00.000Z",
+        messages: [
+          {
+            role: "user",
+            timestamp: "2026-04-03T08:00:00.000Z",
+            parts: [{ text: "hello" }]
+          },
+          {
+            role: "assistant",
+            timestamp: "2026-04-03T08:00:01.000Z",
+            parts: [{ text: "world" }]
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const adapter = new GeminiAdapter({
+      homeDir,
+      listSessions: async () => []
+    });
+
+    const firstDiscovery = await adapter.detectSessionsDetailed("/workspace/alpha");
+    const firstDiagnostic = firstDiscovery.providerDiagnostics?.[0];
+
+    assert.equal(firstDiagnostic?.provider, "gemini");
+    assert.equal(firstDiagnostic?.scannedFiles, 1);
+    assert.equal(firstDiagnostic?.skippedByMtimeSize, 0);
+    assert.equal(firstDiagnostic?.parsedFiles, 1);
+    assert.equal(firstDiagnostic?.bytesRead > 0, true);
+
+    const secondDiscovery = await adapter.detectSessionsDetailed("/workspace/alpha");
+    const secondDiagnostic = secondDiscovery.providerDiagnostics?.[0];
+
+    assert.equal(secondDiagnostic?.provider, "gemini");
+    assert.equal(secondDiagnostic?.scannedFiles, 1);
+    assert.equal(secondDiagnostic?.skippedByMtimeSize, 1);
+    assert.equal(secondDiagnostic?.parsedFiles, 0);
+    assert.equal(secondDiagnostic?.bytesRead, 0);
+  } finally {
+    rmSync(rootDir, { recursive: true, force: true });
+  }
+});
+
 test("GeminiAdapter 能把文本、工具调用和工具结果归一化到统一消息模型", async () => {
   const rootDir = mkdtempSync(join(tmpdir(), "codingns-gemini-history-"));
   const homeDir = join(rootDir, "gemini-home");

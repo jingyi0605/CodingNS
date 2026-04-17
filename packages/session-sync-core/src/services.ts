@@ -50,15 +50,27 @@ export class SessionSyncService {
         try {
           if (provider.detectSessionsDetailed) {
             const discovery = await provider.detectSessionsDetailed(workspacePath, options);
+            const providerDurationMs = Date.now() - startedAt;
+            const providerDiagnostics =
+              discovery.providerDiagnostics && discovery.providerDiagnostics.length > 0
+                ? discovery.providerDiagnostics
+                : [
+                    {
+                      provider: provider.providerId,
+                      status: discovery.isComplete ? "success" : "partial",
+                      durationMs: providerDurationMs,
+                      sessionCount: discovery.sessions.length,
+                      isComplete: discovery.isComplete,
+                      errorMessage: null
+                    } satisfies ProviderDiscoveryDiagnostic
+                  ];
 
-            diagnostics.push({
-              provider: provider.providerId,
-              status: discovery.isComplete ? "success" : "partial",
-              durationMs: Date.now() - startedAt,
-              sessionCount: discovery.sessions.length,
-              isComplete: discovery.isComplete,
-              errorMessage: null
-            });
+            diagnostics.push(
+              ...providerDiagnostics.map((entry) => ({
+                ...entry,
+                durationMs: entry.durationMs > 0 ? entry.durationMs : providerDurationMs
+              }))
+            );
             return discovery;
           }
 

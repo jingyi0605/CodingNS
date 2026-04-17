@@ -11,6 +11,7 @@ import type {
   ProviderAdapter,
   ProviderArchiveUpdateResult,
   ProviderCapabilities,
+  ProviderDiscoveryDiagnostic,
   ProviderId,
   ProviderRealtimeEvent,
   ProviderSessionDiscovery,
@@ -73,6 +74,18 @@ interface GeminiParsedChat {
   sourceSizeBytes: number;
 }
 
+interface GeminiParsedChatCacheEntry {
+  mtimeMs: number;
+  size: number;
+  parsedChat: GeminiParsedChat;
+}
+
+interface GeminiLocalSessionCacheEntry {
+  mtimeMs: number;
+  size: number;
+  session: GeminiLocalSessionRecord;
+}
+
 interface GeminiMessageDescriptor {
   role: GeminiRole;
   kind: NormalizedMessage["kind"];
@@ -88,6 +101,8 @@ interface ParsedSessionRef {
 
 export class GeminiAdapter implements ProviderAdapter {
   readonly providerId: ProviderId = "gemini";
+  private readonly parsedChatCache = new Map<string, GeminiParsedChatCacheEntry>();
+  private readonly localSessionCache = new Map<string, GeminiLocalSessionCacheEntry>();
 
   constructor(private readonly options: GeminiAdapterOptions) {}
 
@@ -103,6 +118,7 @@ export class GeminiAdapter implements ProviderAdapter {
     workspacePath: string,
     options?: DetectSessionsOptions
   ): Promise<ProviderSessionDiscovery> {
+    const startedAt = Date.now();
     const targetPath = normalizeWorkspacePath(workspacePath);
     const knownSessions = (options?.knownSessions ?? []).filter(
       (session) => session.provider === this.providerId
@@ -110,7 +126,8 @@ export class GeminiAdapter implements ProviderAdapter {
     const knownByProviderSessionId = new Map(
       knownSessions.map((session) => [session.providerSessionId, session] as const)
     );
-    const localSessions = this.readLocalSessions();
+    const localScan = this.readLocalSessionsDetailed();
+    const localSessions = localScan.sessions;
     const cliResult = await this.readCliSessions(workspacePath);
     const mergedByProviderSessionId = new Map<string, ProviderSessionSummary>();
 
@@ -188,11 +205,25 @@ export class GeminiAdapter implements ProviderAdapter {
       }
     }
 
+    const diagnostic: ProviderDiscoveryDiagnostic = {
+      provider: this.providerId,
+      status: cliResult.isComplete ? "success" : "partial",
+      durationMs: Date.now() - startedAt,
+      sessionCount: mergedByProviderSessionId.size,
+      isComplete: cliResult.isComplete,
+      errorMessage: null,
+      scannedFiles: localScan.scannedFiles,
+      skippedByMtimeSize: localScan.skippedByMtimeSize,
+      parsedFiles: localScan.parsedFiles,
+      bytesRead: localScan.bytesRead
+    };
+
     return {
       sessions: [...mergedByProviderSessionId.values()].sort((left, right) =>
         (right.lastMessageAt ?? "").localeCompare(left.lastMessageAt ?? "")
       ),
-      isComplete: cliResult.isComplete
+      isComplete: cliResult.isComplete,
+      providerDiagnostics: [diagnostic]
     };
   }
 
@@ -472,46 +503,70 @@ export class GeminiAdapter implements ProviderAdapter {
     throw lastError ?? new Error("GEMINI_LIST_SESSIONS_FAILED");
   }
 
-  private readLocalSessions(): GeminiLocalSessionRecord[] {
+  private readLocalSessionsDetailed(): {
+    sessions: GeminiLocalSessionRecord[];
+    scannedFiles: number;
+    skippedByMtimeSize: number;
+    parsedFiles: number;
+    bytesRead: number;
+  } {
     const sessions: GeminiLocalSessionRecord[] = [];
     const latestByProviderSessionId = new Map<string, GeminiLocalSessionRecord>();
+    let scannedFiles = 0;
+    let skippedByMtimeSize = 0;
+    let parsedFiles = 0;
+    let bytesRead = 0;
 
     for (const filePath of listGeminiChatFiles(this.options.homeDir)) {
-      let parsedChat: GeminiParsedChat;
+      scannedFiles += 1;
+
+      let localSession: GeminiLocalSessionRecord;
 
       try {
-        parsedChat = this.parseLocalChatFile(filePath);
+        const stats = statSync(filePath);
+        const cached = this.localSessionCache.get(filePath);
+
+        if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+          skippedByMtimeSize += 1;
+          localSession = cached.session;
+        } else {
+          parsedFiles += 1;
+          bytesRead += stats.size;
+          localSession = this.parseLocalSessionSummary(filePath, stats);
+          this.localSessionCache.set(filePath, {
+            mtimeMs: stats.mtimeMs,
+            size: stats.size,
+            session: localSession
+          });
+        }
       } catch {
         continue;
       }
 
-      const existing = latestByProviderSessionId.get(parsedChat.providerSessionId);
+      const existing = latestByProviderSessionId.get(localSession.providerSessionId);
 
       if (
         existing &&
-        (existing.sourceMtimeMs > parsedChat.sourceMtimeMs ||
+        (existing.sourceMtimeMs > localSession.sourceMtimeMs ||
           (
-            existing.sourceMtimeMs === parsedChat.sourceMtimeMs &&
-            existing.sourceSizeBytes >= parsedChat.sourceSizeBytes
+            existing.sourceMtimeMs === localSession.sourceMtimeMs &&
+            existing.sourceSizeBytes >= localSession.sourceSizeBytes
           ))
       ) {
         continue;
       }
 
-      latestByProviderSessionId.set(parsedChat.providerSessionId, {
-        providerSessionId: parsedChat.providerSessionId,
-        workspacePath: parsedChat.workspacePath,
-        title: parsedChat.title,
-        lastMessageAt: parsedChat.lastMessageAt,
-        messageCount: parsedChat.messages.length,
-        filePath,
-        sourceMtimeMs: parsedChat.sourceMtimeMs,
-        sourceSizeBytes: parsedChat.sourceSizeBytes
-      });
+      latestByProviderSessionId.set(localSession.providerSessionId, localSession);
     }
 
     sessions.push(...latestByProviderSessionId.values());
-    return sessions;
+    return {
+      sessions,
+      scannedFiles,
+      skippedByMtimeSize,
+      parsedFiles,
+      bytesRead
+    };
   }
 
   private readParsedChatBySessionId(providerSessionId: string): GeminiParsedChat {
@@ -523,16 +578,29 @@ export class GeminiAdapter implements ProviderAdapter {
 
     const chatFiles = listGeminiChatFiles(this.options.homeDir);
     let matchedByName: string | null = null;
+    let matchedBySessionId: string | null = null;
 
     for (const filePath of chatFiles) {
       if (basename(filePath, ".json") === sessionId) {
         matchedByName = filePath;
       }
 
-      let parsed: GeminiParsedChat;
+      let summary: GeminiLocalSessionRecord;
 
       try {
-        parsed = this.parseLocalChatFile(filePath);
+        const stats = statSync(filePath);
+        const cached = this.localSessionCache.get(filePath);
+
+        if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+          summary = cached.session;
+        } else {
+          summary = this.parseLocalSessionSummary(filePath, stats);
+          this.localSessionCache.set(filePath, {
+            mtimeMs: stats.mtimeMs,
+            size: stats.size,
+            session: summary
+          });
+        }
       } catch (error) {
         if (basename(filePath, ".json") === sessionId) {
           throw wrapGeminiSchemaError(filePath, error);
@@ -540,14 +608,19 @@ export class GeminiAdapter implements ProviderAdapter {
         continue;
       }
 
-      if (parsed.providerSessionId === sessionId) {
-        return parsed;
+      if (summary.providerSessionId === sessionId) {
+        matchedBySessionId = filePath;
+        break;
       }
+    }
+
+    if (matchedBySessionId) {
+      return this.readCachedLocalChatFile(matchedBySessionId);
     }
 
     if (matchedByName) {
       try {
-        return this.parseLocalChatFile(matchedByName);
+        return this.readCachedLocalChatFile(matchedByName);
       } catch (error) {
         throw wrapGeminiSchemaError(matchedByName, error);
       }
@@ -556,8 +629,24 @@ export class GeminiAdapter implements ProviderAdapter {
     throw new Error("GEMINI_CHAT_NOT_FOUND");
   }
 
-  private parseLocalChatFile(filePath: string): GeminiParsedChat {
+  private readCachedLocalChatFile(filePath: string): GeminiParsedChat {
     const stats = statSync(filePath);
+    const cached = this.parsedChatCache.get(filePath);
+
+    if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+      return cached.parsedChat;
+    }
+
+    const parsedChat = this.parseLocalChatFile(filePath, stats);
+    this.parsedChatCache.set(filePath, {
+      mtimeMs: stats.mtimeMs,
+      size: stats.size,
+      parsedChat
+    });
+    return parsedChat;
+  }
+
+  private parseLocalChatFile(filePath: string, stats: { mtimeMs: number; size: number }): GeminiParsedChat {
     const raw = readFileSync(filePath, "utf8").trim();
 
     if (!raw) {
@@ -610,6 +699,58 @@ export class GeminiAdapter implements ProviderAdapter {
       title,
       lastMessageAt,
       messages,
+      sourceMtimeMs: stats.mtimeMs,
+      sourceSizeBytes: stats.size
+    };
+  }
+
+  private parseLocalSessionSummary(
+    filePath: string,
+    stats: { mtimeMs: number; size: number }
+  ): GeminiLocalSessionRecord {
+    const raw = readFileSync(filePath, "utf8").trim();
+
+    if (!raw) {
+      throw new Error("GEMINI_CHAT_SCHEMA_INVALID");
+    }
+
+    let parsedRaw: unknown;
+
+    try {
+      parsedRaw = JSON.parse(raw) as unknown;
+    } catch (error) {
+      throw wrapGeminiSchemaError(filePath, error);
+    }
+
+    const parsedRecord = toRecord(parsedRaw);
+    const providerSessionId = this.resolveLocalProviderSessionId(parsedRecord, filePath);
+    const messageNodes = readMessageNodes(parsedRecord);
+    const messageSummary = summarizeGeminiMessageNodes(messageNodes);
+    const workspacePath = resolveWorkspacePath(parsedRecord, messageNodes, filePath);
+
+    return {
+      providerSessionId,
+      workspacePath,
+      title:
+        resolveStringField(parsedRecord, ["title", "name", "chatTitle"]) ||
+        messageSummary.firstUserText?.slice(0, DEFAULT_GEMINI_TITLE_LENGTH) ||
+        providerSessionId,
+      lastMessageAt:
+        resolveStringField(parsedRecord, [
+          "updatedAt",
+          "updated_at",
+          "lastUpdated",
+          "last_updated",
+          "lastMessageAt",
+          "last_message_at",
+          "startTime",
+          "start_time",
+          "createdAt",
+          "created_at"
+        ]) ||
+        messageSummary.lastMessageAt,
+      messageCount: resolveGeminiSummaryMessageCount(parsedRecord, messageSummary.messageCount),
+      filePath,
       sourceMtimeMs: stats.mtimeMs,
       sourceSizeBytes: stats.size
     };
@@ -945,6 +1086,93 @@ function normalizeMessageNodes(input: {
   }
 
   return messages;
+}
+
+function summarizeGeminiMessageNodes(messageNodes: unknown[]): {
+  messageCount: number;
+  lastMessageAt: string | null;
+  firstUserText: string | null;
+} {
+  let messageCount = 0;
+  let lastMessageAt: string | null = null;
+  let firstUserText: string | null = null;
+
+  for (const node of messageNodes) {
+    const nodeRecord = toRecord(node);
+    const role = resolveGeminiRole(nodeRecord);
+    const nodeTimestamp = resolveMessageTimestamp(nodeRecord);
+    const descriptors = readMessageDescriptors(nodeRecord, role);
+
+    if (descriptors.length === 0) {
+      continue;
+    }
+
+    messageCount += descriptors.length;
+    lastMessageAt = descriptors.at(-1)?.timestamp ?? nodeTimestamp;
+
+    if (firstUserText) {
+      continue;
+    }
+
+    const firstUserDescriptor = descriptors.find((descriptor) =>
+      descriptor.role === "user" &&
+      descriptor.kind === "text" &&
+      descriptor.content.trim().length > 0
+    );
+
+    if (firstUserDescriptor) {
+      firstUserText = firstUserDescriptor.content.trim();
+    }
+  }
+
+  return {
+    messageCount,
+    lastMessageAt,
+    firstUserText
+  };
+}
+
+function resolveGeminiSummaryMessageCount(
+  record: Record<string, unknown>,
+  fallbackMessageCount: number
+): number {
+  const explicitMessageCount = firstGeminiNumber(
+    record.messageCount,
+    record.message_count,
+    record.totalMessages,
+    record.total_messages,
+    record.messageTotal
+  );
+
+  if (explicitMessageCount !== null && explicitMessageCount >= 0) {
+    return Math.trunc(explicitMessageCount);
+  }
+
+  return fallbackMessageCount;
+}
+
+function firstGeminiNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+
+      if (!trimmed) {
+        continue;
+      }
+
+      const parsed = Number(trimmed);
+
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+
+  return null;
 }
 
 function readMessageDescriptors(
