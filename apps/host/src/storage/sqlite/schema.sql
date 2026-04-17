@@ -729,6 +729,80 @@ CREATE INDEX IF NOT EXISTS idx_butler_control_timers_status_due_at
 CREATE INDEX IF NOT EXISTS idx_butler_control_timers_session
   ON butler_control_timers(control_session_id, status, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS assistant_automation_tasks (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  control_session_id TEXT NOT NULL,
+  project_id TEXT,
+  title TEXT,
+  trigger_type TEXT NOT NULL CHECK (trigger_type IN ('once', 'interval', 'cron', 'condition')),
+  trigger_config_json TEXT NOT NULL,
+  action_type TEXT NOT NULL CHECK (action_type IN ('send_control_message')),
+  action_config_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('active', 'paused', 'completed', 'cancelled', 'failed')),
+  next_run_at TEXT,
+  last_run_at TEXT,
+  last_run_summary TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  cancelled_at TEXT,
+  FOREIGN KEY (control_session_id) REFERENCES butler_control_sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_automation_tasks_status_next_run_at
+  ON assistant_automation_tasks(status, next_run_at ASC, updated_at ASC);
+CREATE INDEX IF NOT EXISTS idx_assistant_automation_tasks_session
+  ON assistant_automation_tasks(control_session_id, status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS assistant_automation_runs (
+  id TEXT PRIMARY KEY,
+  automation_id TEXT NOT NULL,
+  run_seq INTEGER NOT NULL,
+  trigger_type TEXT NOT NULL CHECK (trigger_type IN ('once', 'interval', 'cron', 'condition')),
+  trigger_snapshot_json TEXT NOT NULL,
+  action_type TEXT NOT NULL CHECK (action_type IN ('send_control_message')),
+  action_snapshot_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'skipped')),
+  summary TEXT,
+  error TEXT,
+  scheduled_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (automation_id) REFERENCES assistant_automation_tasks(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_assistant_automation_runs_seq
+  ON assistant_automation_runs(automation_id, run_seq);
+CREATE INDEX IF NOT EXISTS idx_assistant_automation_runs_created_at
+  ON assistant_automation_runs(automation_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS assistant_sandboxes (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  description TEXT,
+  source_kind TEXT NOT NULL CHECK (source_kind IN ('blank', 'clone')),
+  source_ref TEXT,
+  visibility TEXT NOT NULL CHECK (visibility IN ('assistant_only', 'pinned')),
+  status TEXT NOT NULL CHECK (status IN ('active', 'archived', 'expired', 'deleted')),
+  purpose TEXT,
+  expires_at TEXT,
+  promoted_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_sandboxes_user_status
+  ON assistant_sandboxes(user_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_assistant_sandboxes_workspace
+  ON assistant_sandboxes(workspace_id, status, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS butler_control_events (
   id TEXT PRIMARY KEY,
   control_session_id TEXT NOT NULL,
@@ -988,7 +1062,7 @@ CREATE TABLE IF NOT EXISTS verification_runs (
     verification_type IN ('test', 'health', 'browser', 'visual', 'metric')
   ),
   status TEXT NOT NULL CHECK (
-    status IN ('queued', 'running', 'passed', 'failed', 'skipped')
+    status IN ('queued', 'running', 'passed', 'failed', 'skipped', 'cancelled')
   ),
   target_ref TEXT,
   spec_json TEXT NOT NULL,

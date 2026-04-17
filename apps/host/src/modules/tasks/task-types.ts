@@ -9,7 +9,10 @@ export const HOST_TASK_TYPES = {
   terminalManagerSnapshot: "terminal.manager_snapshot",
   templateRuntimeStatusDiscovery: "terminal.template_runtime_status_discovery",
   debugRuntimeStaleReconciliation: "debug_runtime.stale_reconciliation",
-  serviceNpmGlobalUpdateInstall: "service.npm_global_update_install"
+  serviceNpmGlobalUpdateInstall: "service.npm_global_update_install",
+  assistantAutomationTick: "assistant.automation.tick",
+  assistantAutomationEvaluate: "assistant.automation.evaluate",
+  verificationRunExecute: "butler.verification_run.execute"
 } as const;
 
 export type HostTaskType = (typeof HOST_TASK_TYPES)[keyof typeof HOST_TASK_TYPES];

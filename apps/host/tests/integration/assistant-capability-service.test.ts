@@ -41,6 +41,22 @@ describe("AssistantCapabilityService", () => {
         }))
       } as any,
       {
+        listTasks: vi.fn(),
+        getTask: vi.fn(),
+        createTask: vi.fn(),
+        cancelTask: vi.fn(),
+        listRuns: vi.fn()
+      } as any,
+      {
+        listSandboxes: vi.fn(),
+        getSandbox: vi.fn(),
+        createSandbox: vi.fn(),
+        promoteSandbox: vi.fn(),
+        expireSandbox: vi.fn(),
+        removeSandbox: vi.fn(),
+        resolveWorkspaceId: vi.fn()
+      } as any,
+      {
         listTimers: vi.fn(),
         getTimer: vi.fn(),
         createTimer: vi.fn(),
@@ -52,6 +68,7 @@ describe("AssistantCapabilityService", () => {
         forkSession: vi.fn()
       } as any,
       {
+        startLiveSession: vi.fn(),
         getSessionRuntime: vi.fn(),
         sendLiveMessage: vi.fn()
       } as any,
@@ -140,6 +157,22 @@ describe("AssistantCapabilityService", () => {
         getCurrentSession: vi.fn()
       } as any,
       {
+        listTasks: vi.fn(),
+        getTask: vi.fn(),
+        createTask: vi.fn(),
+        cancelTask: vi.fn(),
+        listRuns: vi.fn()
+      } as any,
+      {
+        listSandboxes: vi.fn(),
+        getSandbox: vi.fn(),
+        createSandbox: vi.fn(),
+        promoteSandbox: vi.fn(),
+        expireSandbox: vi.fn(),
+        removeSandbox: vi.fn(),
+        resolveWorkspaceId: vi.fn()
+      } as any,
+      {
         listTimers: vi.fn(),
         getTimer: vi.fn(),
         createTimer: vi.fn(),
@@ -151,6 +184,7 @@ describe("AssistantCapabilityService", () => {
         forkSession: vi.fn()
       } as any,
       {
+        startLiveSession: vi.fn(),
         getSessionRuntime: vi.fn(),
         sendLiveMessage: vi.fn(async () => ({
           sessionId: "session-1",
@@ -240,5 +274,283 @@ describe("AssistantCapabilityService", () => {
         content: "请继续推进"
       })
     );
+  });
+
+  it("按 workspace 目标启动真实会话时会直接走 live session，并继承当前控制会话配置", async () => {
+    const startLiveSession = vi.fn(async () => ({
+      sessionId: "session-2",
+      provider: "codex",
+      providerSessionId: "provider-session-2",
+      acceptedAt: "2026-04-16T12:20:00.000Z",
+      clientRequestId: null,
+      message: {
+        messageId: "message-2",
+        role: "user",
+        content: "请在临时工作区开始处理这个问题",
+        timestamp: "2026-04-16T12:20:00.000Z",
+        sequence: 1,
+        attachments: []
+      },
+      session: {
+        sessionId: "session-2",
+        workspaceId: "workspace-1"
+      }
+    }));
+    const service = new AssistantCapabilityService(
+      {
+        list: vi.fn(),
+        getById: vi.fn(),
+        getOverview: vi.fn()
+      } as any,
+      {
+        listByProject: vi.fn(),
+        ensureProjectSessionsSynced: vi.fn(),
+        startSession: vi.fn()
+      } as any,
+      {
+        getCurrentSession: vi.fn(() => ({
+          id: "control-1",
+          providerId: "codex",
+          sessionId: "assistant-session-1",
+          purpose: "chat",
+          title: null,
+          sourceItemId: null,
+          model: "gpt-5.4",
+          reasoningLevel: "high",
+          permissionMode: "acceptEdits",
+          status: "running",
+          lastContextVersion: null,
+          lastSummary: null,
+          createdAt: "2026-04-16T12:00:00.000Z",
+          updatedAt: "2026-04-16T12:00:00.000Z",
+          session: {
+            sessionId: "assistant-session-1"
+          }
+        }))
+      } as any,
+      {
+        listTasks: vi.fn(),
+        getTask: vi.fn(),
+        createTask: vi.fn(),
+        cancelTask: vi.fn(),
+        listRuns: vi.fn()
+      } as any,
+      {
+        listSandboxes: vi.fn(),
+        getSandbox: vi.fn(),
+        createSandbox: vi.fn(),
+        promoteSandbox: vi.fn(),
+        expireSandbox: vi.fn(),
+        removeSandbox: vi.fn(),
+        resolveWorkspaceId: vi.fn()
+      } as any,
+      {
+        listTimers: vi.fn(),
+        getTimer: vi.fn(),
+        createTimer: vi.fn(),
+        cancelTimer: vi.fn()
+      } as any,
+      {
+        getSession: vi.fn(),
+        readSessionHistory: vi.fn(),
+        forkSession: vi.fn()
+      } as any,
+      {
+        startLiveSession,
+        getSessionRuntime: vi.fn(),
+        sendLiveMessage: vi.fn()
+      } as any,
+      {
+        listTerminals: vi.fn(),
+        readTerminalHistory: vi.fn(),
+        writeInput: vi.fn(),
+        closeTerminal: vi.fn()
+      } as any,
+      {
+        analyze: vi.fn(),
+        getFrameworkAnalysis: vi.fn(),
+        refreshFrameworkAnalysis: vi.fn(),
+        createLaunchPlan: vi.fn(),
+        run: vi.fn(),
+        getLatestRuntimeDetail: vi.fn(),
+        getRecentRuntimeDetails: vi.fn(),
+        getRuntimeDetail: vi.fn(),
+        getCompatibilityMatrix: vi.fn()
+      } as any,
+      {
+        list: vi.fn(),
+        browseDirectories: vi.fn(),
+        createDirectory: vi.fn(),
+        importWorkspace: vi.fn(),
+        cloneWorkspace: vi.fn(),
+        reorderWorkspaces: vi.fn(),
+        getManagementSummary: vi.fn(),
+        removeWorkspace: vi.fn(),
+        updateNavigationState: vi.fn()
+      } as any,
+      {
+        getTree: vi.fn(),
+        create: vi.fn()
+      } as any,
+      {
+        syncRoot: vi.fn()
+      } as any,
+      {
+        preview: vi.fn(),
+        apply: vi.fn()
+      } as any,
+      {
+        cleanup: vi.fn()
+      } as any,
+      {
+        upsert: vi.fn()
+      } as any
+    );
+
+    const receipt = await service.startSession({
+      target: {
+        kind: "workspace",
+        workspaceId: "workspace-1"
+      },
+      userId: "user-1",
+      content: "请在临时工作区开始处理这个问题"
+    });
+
+    expect(receipt.capability).toBe("sessions.start");
+    expect(startLiveSession).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: "workspace-1",
+      provider: "codex",
+      runtimeOptions: expect.objectContaining({
+        model: "gpt-5.4",
+        reasoningLevel: "high",
+        permissionMode: "acceptEdits"
+      })
+    }));
+  });
+
+  it("创建 condition 自动化时会把正式触发器参数映射到自动化服务", () => {
+    const assistantAutomationService = {
+      listTasks: vi.fn(),
+      getTask: vi.fn(),
+      createTask: vi.fn(() => ({
+        id: "automation-1"
+      })),
+      cancelTask: vi.fn(),
+      listRuns: vi.fn(),
+      listRecentRuns: vi.fn()
+    };
+    const service = new AssistantCapabilityService(
+      {
+        list: vi.fn(),
+        getById: vi.fn(),
+        getOverview: vi.fn()
+      } as any,
+      {
+        listByProject: vi.fn(),
+        ensureProjectSessionsSynced: vi.fn(),
+        startSession: vi.fn()
+      } as any,
+      {
+        getCurrentSession: vi.fn()
+      } as any,
+      assistantAutomationService as any,
+      {
+        listSandboxes: vi.fn(),
+        getSandbox: vi.fn(),
+        createSandbox: vi.fn(),
+        promoteSandbox: vi.fn(),
+        expireSandbox: vi.fn(),
+        removeSandbox: vi.fn(),
+        resolveWorkspaceId: vi.fn()
+      } as any,
+      {
+        listTimers: vi.fn(),
+        getTimer: vi.fn(),
+        createTimer: vi.fn(),
+        cancelTimer: vi.fn()
+      } as any,
+      {
+        getSession: vi.fn(),
+        readSessionHistory: vi.fn(),
+        forkSession: vi.fn()
+      } as any,
+      {
+        startLiveSession: vi.fn(),
+        getSessionRuntime: vi.fn(),
+        sendLiveMessage: vi.fn()
+      } as any,
+      {
+        listTerminals: vi.fn(),
+        readTerminalHistory: vi.fn(),
+        writeInput: vi.fn(),
+        closeTerminal: vi.fn()
+      } as any,
+      {
+        analyze: vi.fn(),
+        getFrameworkAnalysis: vi.fn(),
+        refreshFrameworkAnalysis: vi.fn(),
+        createLaunchPlan: vi.fn(),
+        run: vi.fn(),
+        getLatestRuntimeDetail: vi.fn(),
+        getRecentRuntimeDetails: vi.fn(),
+        getRuntimeDetail: vi.fn(),
+        getCompatibilityMatrix: vi.fn()
+      } as any,
+      {
+        list: vi.fn(),
+        browseDirectories: vi.fn(),
+        createDirectory: vi.fn(),
+        importWorkspace: vi.fn(),
+        cloneWorkspace: vi.fn(),
+        reorderWorkspaces: vi.fn(),
+        getManagementSummary: vi.fn(),
+        removeWorkspace: vi.fn(),
+        updateNavigationState: vi.fn()
+      } as any,
+      {
+        getTree: vi.fn(),
+        create: vi.fn()
+      } as any,
+      {
+        syncRoot: vi.fn()
+      } as any,
+      {
+        preview: vi.fn(),
+        apply: vi.fn()
+      } as any,
+      {
+        cleanup: vi.fn()
+      } as any,
+      {
+        upsert: vi.fn()
+      } as any
+    );
+
+    service.createAutomation({
+      userId: "user-1",
+      title: "监控 tag",
+      content: "发现新 tag 后通知我",
+      triggerType: "condition",
+      conditionKind: "git.remote_tag_changed",
+      repositoryUrl: "https://github.com/jingyi0605/codingns.git",
+      pollIntervalSeconds: 3600
+    });
+
+    expect(assistantAutomationService.createTask).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "user-1",
+      title: "监控 tag",
+      trigger: {
+        type: "condition",
+        conditionKind: "git.remote_tag_changed",
+        repositoryUrl: "https://github.com/jingyi0605/codingns.git",
+        pollIntervalSeconds: 3600,
+        expiresAt: null,
+        maxChecks: null
+      },
+      action: expect.objectContaining({
+        content: "发现新 tag 后通知我",
+        includeTriggerContext: true
+      })
+    }));
   });
 });

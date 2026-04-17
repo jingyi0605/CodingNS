@@ -11,6 +11,8 @@ import { AssistantCapabilityController } from "../modules/assistant-capability/a
 import { AssistantCapabilityService } from "../modules/assistant-capability/assistant-capability-service.js";
 import { BootstrapController } from "../modules/bootstrap/bootstrap-controller.js";
 import { BootstrapService } from "../modules/bootstrap/bootstrap-service.js";
+import { AssistantAutomationService } from "../modules/butler/assistant-automation-service.js";
+import { AssistantSandboxService } from "../modules/butler/assistant-sandbox-service.js";
 import { ButlerControlTimerScheduler } from "../modules/butler/butler-control-timer-scheduler.js";
 import { ButlerControlTimerService } from "../modules/butler/butler-control-timer-service.js";
 import { ButlerControlSessionService } from "../modules/butler/butler-control-session-service.js";
@@ -139,6 +141,9 @@ import { registerSystemRoutes } from "../routes/system.js";
 import { DemoCleanupService, DemoOnlineTracker } from "../modules/demo/demo-cleanup-service.js";
 import { setErrorHandler } from "../shared/http/error-handler.js";
 import { startTerminalDebugEventLoopLagMonitor } from "../shared/utils/terminal-debug-log.js";
+import { AssistantAutomationRunRepository } from "../storage/repositories/assistant-automation-run-repository.js";
+import { AssistantSandboxWorkspaceRepository } from "../storage/repositories/assistant-sandbox-workspace-repository.js";
+import { AssistantAutomationTaskRepository } from "../storage/repositories/assistant-automation-task-repository.js";
 import { AuthTokenRepository } from "../storage/repositories/auth-token-repository.js";
 import { AuthLoginAttemptRepository } from "../storage/repositories/auth-login-attempt-repository.js";
 import { AuthUserRepository } from "../storage/repositories/auth-user-repository.js";
@@ -217,6 +222,9 @@ export function createServer(config: HostConfig) {
     authUserRepository: new AuthUserRepository(database.db),
     authTokenRepository: new AuthTokenRepository(database.db),
     authLoginAttemptRepository: new AuthLoginAttemptRepository(database.db),
+    assistantAutomationTaskRepository: new AssistantAutomationTaskRepository(database.db),
+    assistantAutomationRunRepository: new AssistantAutomationRunRepository(database.db),
+    assistantSandboxWorkspaceRepository: new AssistantSandboxWorkspaceRepository(database.db),
     workspaceRepository: new WorkspaceRepository(database.db),
     workspaceWorktreeRepository: new WorkspaceWorktreeRepository(database.db),
     workspaceNavigationStateRepository: new WorkspaceNavigationStateRepository(database.db),
@@ -542,7 +550,14 @@ export function createServer(config: HostConfig) {
     repositories.butlerProjectRepository,
     repositories.butlerSessionRepository,
     repositories.workspaceRepository,
-    butlerProfileService
+    butlerProfileService,
+    repositories.assistantSandboxWorkspaceRepository
+  );
+  const assistantSandboxService = new AssistantSandboxService(
+    repositories.assistantSandboxWorkspaceRepository,
+    butlerProfileService,
+    workspaceService,
+    butlerProjectService
   );
   const butlerInboxService = new ButlerInboxService(
     repositories.butlerProjectRepository,
@@ -684,7 +699,8 @@ export function createServer(config: HostConfig) {
   const butlerActionContextService = new ButlerActionContextService(
     butlerProjectService,
     butlerSessionService,
-    butlerFollowUpService
+    butlerFollowUpService,
+    verificationRunService
   );
   const sessionSummaryScheduler = new SessionSummaryScheduler(
     butlerSessionSummaryService,
@@ -717,10 +733,22 @@ export function createServer(config: HostConfig) {
     butlerRuntimeConfig.claudeCodeHomeDir,
     repositories.sessionMessageOriginRepository
   );
+  const assistantAutomationService = new AssistantAutomationService(
+    butlerProfileService,
+    butlerControlSessionService,
+    repositories.assistantAutomationTaskRepository,
+    repositories.assistantAutomationRunRepository,
+    taskManager,
+    {
+      gitCommandRunner,
+      sessionLiveRuntimeService: butlerSessionLiveRuntimeService
+    }
+  );
   const butlerControlTimerService = new ButlerControlTimerService(
     butlerProfileService,
     butlerControlSessionService,
-    repositories.butlerControlTimerRepository
+    repositories.butlerControlTimerRepository,
+    assistantAutomationService
   );
   const butlerControlTimerScheduler = new ButlerControlTimerScheduler(
     butlerControlTimerService,
@@ -877,6 +905,8 @@ export function createServer(config: HostConfig) {
       butlerProjectService,
       butlerSessionService,
       butlerControlSessionService,
+      assistantAutomationService,
+      assistantSandboxService,
       butlerControlTimerService,
       sessionHistoryService,
       sessionLiveRuntimeService,

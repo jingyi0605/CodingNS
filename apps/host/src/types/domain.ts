@@ -377,6 +377,19 @@ export type ButlerProfileProviderId = "codex" | "claude-code";
 export type ButlerAgentsMode = "inline" | "file";
 export type ButlerControlSessionStatus = "idle" | "running" | "failed" | "closed";
 export type ButlerControlTimerStatus = "active" | "completed" | "cancelled" | "failed";
+export type AssistantAutomationStatus = "active" | "paused" | "completed" | "cancelled" | "failed";
+export type AssistantAutomationTriggerType = "once" | "interval" | "cron" | "condition";
+export type AssistantAutomationActionType = "send_control_message";
+export type AssistantAutomationRunStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "skipped";
+export type AssistantSandboxStatus = "active" | "archived" | "expired" | "deleted";
+export type AssistantSandboxSourceKind = "blank" | "clone";
+export type AssistantSandboxVisibility = "assistant_only" | "pinned";
 export type ButlerControlEventKind = "action";
 export type ButlerControlActionType =
   | "open-project"
@@ -431,7 +444,7 @@ export type PatrolExecutionMode = "readonly" | "controlled";
 export type PatrolRunTriggeredBy = "scheduler" | "user" | "system";
 export type PatrolRunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type VerificationType = "test" | "health" | "browser" | "visual" | "metric";
-export type VerificationRunStatus = "queued" | "running" | "passed" | "failed" | "skipped";
+export type VerificationRunStatus = "queued" | "running" | "passed" | "failed" | "skipped" | "cancelled";
 
 export interface ButlerProfile {
   id: "default";
@@ -480,6 +493,60 @@ export interface ButlerControlTimer {
   createdAt: string;
   updatedAt: string;
   cancelledAt: string | null;
+}
+
+export interface AssistantAutomationTask {
+  id: string;
+  userId: string;
+  controlSessionId: string;
+  projectId: string | null;
+  title: string | null;
+  triggerType: AssistantAutomationTriggerType;
+  triggerConfigJson: string;
+  actionType: AssistantAutomationActionType;
+  actionConfigJson: string;
+  status: AssistantAutomationStatus;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  lastRunSummary: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  cancelledAt: string | null;
+}
+
+export interface AssistantAutomationRun {
+  id: string;
+  automationId: string;
+  runSeq: number;
+  triggerType: AssistantAutomationTriggerType;
+  triggerSnapshotJson: string;
+  actionType: AssistantAutomationActionType;
+  actionSnapshotJson: string;
+  status: AssistantAutomationRunStatus;
+  summary: string | null;
+  error: string | null;
+  scheduledAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+}
+
+export interface AssistantSandboxWorkspace {
+  id: string;
+  userId: string;
+  workspaceId: string;
+  title: string;
+  description: string | null;
+  sourceKind: AssistantSandboxSourceKind;
+  sourceRef: string | null;
+  visibility: AssistantSandboxVisibility;
+  status: AssistantSandboxStatus;
+  purpose: string | null;
+  expiresAt: string | null;
+  promotedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ButlerControlRelatedRef {

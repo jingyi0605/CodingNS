@@ -1,6 +1,4 @@
 import { AppError } from "../../shared/errors/app-error.js";
-import { createId } from "../../shared/utils/id.js";
-import { nowIso } from "../../shared/utils/time.js";
 import type {
   ButlerControlTimer,
   ButlerControlTimerStatus
@@ -11,8 +9,10 @@ import type {
   ButlerControlSessionView
 } from "./butler-control-session-service.js";
 import type { ButlerControlTimerRepository } from "../../storage/repositories/butler-control-timer-repository.js";
-
-const DEFAULT_DUE_TASK_LIMIT = 20;
+import type {
+  AssistantAutomationService,
+  AssistantAutomationTaskView
+} from "./assistant-automation-service.js";
 
 export interface ButlerControlTimerView extends ButlerControlTimer {
   controlSession: ButlerControlSessionView | null;
@@ -43,7 +43,11 @@ export class ButlerControlTimerService {
       ButlerControlSessionService,
       "getCurrentSession" | "getSession" | "sendMessage"
     >,
-    private readonly butlerControlTimerRepository: ButlerControlTimerRepository
+    private readonly butlerControlTimerRepository: ButlerControlTimerRepository,
+    private readonly assistantAutomationService: Pick<
+      AssistantAutomationService,
+      "listTasks" | "getTask" | "createTask" | "cancelTask" | "runDueTasks"
+    >
   ) {}
 
   listTimers(filters: {
@@ -53,198 +57,144 @@ export class ButlerControlTimerService {
     limit?: number;
   }): ButlerControlTimerView[] {
     this.butlerProfileService.ensureInitialized();
-    return this.butlerControlTimerRepository
-      .list({
-        statuses: filters.statuses,
-        controlSessionId: filters.controlSessionId?.trim() || undefined,
+    return this.assistantAutomationService
+      .listTasks({
+        userId: filters.userId,
+        statuses: mapTimerStatusesToAutomationStatuses(filters.statuses),
+        controlSessionId: filters.controlSessionId?.trim() || null,
         limit: filters.limit
       })
-      .map((record) => this.toView(record, filters.userId));
+      .map((task) => this.mapTaskToTimerView(task));
   }
 
   getTimer(timerId: string, userId: string): ButlerControlTimerView {
     this.butlerProfileService.ensureInitialized();
-    const timer = this.butlerControlTimerRepository.findById(timerId.trim());
-
-    if (!timer) {
-      throw new AppError({
-        statusCode: 404,
-        errorCode: "BUTLER_CONTROL_TIMER_NOT_FOUND",
-        detail: "未找到对应的助手计时器"
-      });
-    }
-
-    return this.toView(timer, userId);
+    return this.mapTaskToTimerView(this.assistantAutomationService.getTask(timerId.trim(), userId));
   }
 
   createTimer(input: CreateButlerControlTimerInput): ButlerControlTimerView {
     this.butlerProfileService.ensureInitialized();
-    const controlSession = input.controlSessionId?.trim()
-      ? this.butlerControlSessionService.getSession(input.controlSessionId, input.userId)
-      : this.butlerControlSessionService.getCurrentSession(input.userId);
-
-    if (!controlSession) {
-      throw new AppError({
-        statusCode: 409,
-        errorCode: "BUTLER_CONTROL_SESSION_NOT_FOUND",
-        detail: "当前没有可用的助手控制会话，无法创建计时器"
-      });
-    }
-
-    const timestamp = nowIso();
-    const dueAt = resolveTimerDueAt(input, timestamp);
-    const created = this.butlerControlTimerRepository.create({
-      id: createId(),
-      controlSessionId: controlSession.id,
-      sessionId: controlSession.sessionId,
+    const created = this.assistantAutomationService.createTask({
       userId: input.userId,
-      projectId: normalizeNullableText(input.projectId),
-      targetSessionId: normalizeNullableText(input.targetSessionId),
-      title: normalizeNullableText(input.title),
-      content: requireTimerContent(input.content),
-      dueAt,
-      status: "active",
-      triggeredAt: null,
-      lastError: null,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      cancelledAt: null
+      controlSessionId: input.controlSessionId,
+      projectId: input.projectId,
+      title: input.title,
+      trigger: {
+        type: "once",
+        dueAt: input.dueAt,
+        afterSeconds: input.afterSeconds ?? null
+      },
+      action: {
+        type: "send_control_message",
+        content: input.content,
+        includeTriggerContext: false,
+        targetSessionId: input.targetSessionId
+      }
     });
 
-    return this.toView(created, input.userId);
+    return this.mapTaskToTimerView(created);
   }
 
   cancelTimer(timerId: string, userId: string): ButlerControlTimerView {
     this.butlerProfileService.ensureInitialized();
-    const current = this.requireTimer(timerId);
-    const cancelledAt = nowIso();
-    const updated = this.butlerControlTimerRepository.update({
-      ...current,
-      status: "cancelled",
-      updatedAt: cancelledAt,
-      cancelledAt
-    });
-
-    return this.toView(updated, userId);
+    return this.mapTaskToTimerView(this.assistantAutomationService.cancelTask(timerId.trim(), userId));
   }
 
   async runDueTimers(referenceAt: string): Promise<ButlerControlTimerRunDueTimersResult> {
     this.butlerProfileService.ensureInitialized();
-    const activeTimerCount = this.butlerControlTimerRepository.list({
-      statuses: ["active"]
-    }).length;
-    const dueTimers = this.butlerControlTimerRepository.listDueActive(referenceAt, DEFAULT_DUE_TASK_LIMIT);
-    let processedTaskCount = 0;
-
-    for (const timer of dueTimers) {
-      processedTaskCount += 1;
-      await this.processDueTimer(timer, referenceAt);
-    }
-
+    const result = await this.assistantAutomationService.runDueTasks(referenceAt);
     return {
-      activeTimerCount,
-      dueTimerCount: dueTimers.length,
-      processedTimerCount: processedTaskCount,
-      idle: dueTimers.length === 0
+      activeTimerCount: result.activeTaskCount,
+      dueTimerCount: result.dueTaskCount,
+      processedTimerCount: result.processedTaskCount,
+      idle: result.idle
     };
   }
 
-  private async processDueTimer(timer: ButlerControlTimer, referenceAt: string): Promise<void> {
-    try {
-      const result = await this.butlerControlSessionService.sendMessage(timer.userId, {
-        controlSessionId: timer.controlSessionId,
-        content: timer.content,
-        clientRequestId: buildTimerClientRequestId(timer.id, referenceAt)
-      });
-      this.butlerControlTimerRepository.update({
-        ...timer,
-        status: "completed",
-        triggeredAt: result.acceptedAt,
-        lastError: null,
-        updatedAt: result.acceptedAt
-      });
-    } catch (error) {
-      this.butlerControlTimerRepository.update({
-        ...timer,
-        status: "failed",
-        lastError: error instanceof Error ? error.message : String(error),
-        updatedAt: nowIso()
-      });
-    }
-  }
-
-  private requireTimer(timerId: string): ButlerControlTimer {
-    const timer = this.butlerControlTimerRepository.findById(timerId.trim());
-
-    if (!timer) {
+  private mapTaskToTimerView(task: AssistantAutomationTaskView): ButlerControlTimerView {
+    if (task.triggerType !== "once") {
       throw new AppError({
-        statusCode: 404,
-        errorCode: "BUTLER_CONTROL_TIMER_NOT_FOUND",
-        detail: "未找到对应的助手计时器"
+        statusCode: 409,
+        errorCode: "BUTLER_CONTROL_TIMER_COMPATIBILITY_ERROR",
+        detail: "当前计时器兼容视图只支持 once 类型自动化"
       });
     }
-
-    return timer;
-  }
-
-  private toView(record: ButlerControlTimer, userId: string): ButlerControlTimerView {
+    const triggerConfig = parseOnceTriggerConfig(task.triggerConfigJson);
+    const actionConfig = parseSendControlMessageActionConfig(task.actionConfigJson);
     return {
-      ...record,
-      controlSession: this.butlerControlSessionService.getSession(record.controlSessionId, userId)
+      id: task.id,
+      controlSessionId: task.controlSessionId,
+      sessionId: task.controlSession?.sessionId ?? "",
+      userId: task.userId,
+      projectId: task.projectId,
+      targetSessionId: actionConfig.targetSessionId,
+      title: task.title,
+      content: actionConfig.content,
+      dueAt: triggerConfig.dueAt,
+      status: mapAutomationStatusToTimerStatus(task.status),
+      triggeredAt: task.lastRunAt,
+      lastError: task.lastError,
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
+      cancelledAt: task.cancelledAt,
+      controlSession: task.controlSession
     };
   }
 }
 
-function requireTimerContent(value: string): string {
-  const normalized = value.trim();
+function mapTimerStatusesToAutomationStatuses(
+  statuses: ButlerControlTimerStatus[] | undefined
+): Array<"active" | "completed" | "cancelled" | "failed" | "paused"> | undefined {
+  return statuses?.map((status) => (status === "active" ? "active" : status));
+}
 
-  if (!normalized) {
+function mapAutomationStatusToTimerStatus(
+  status: "active" | "paused" | "completed" | "cancelled" | "failed"
+): ButlerControlTimerStatus {
+  if (status === "paused") {
+    return "active";
+  }
+
+  return status;
+}
+
+function parseOnceTriggerConfig(value: string): { dueAt: string } {
+  const parsed = JSON.parse(value) as Partial<{ dueAt: string }>;
+  const dueAt = parsed.dueAt?.trim();
+
+  if (!dueAt) {
     throw new AppError({
-      statusCode: 400,
-      errorCode: "INVALID_INPUT",
-      detail: "创建助手计时器必须提供 content",
-      field: "content"
+      statusCode: 500,
+      errorCode: "BUTLER_CONTROL_TIMER_COMPATIBILITY_ERROR",
+      detail: "自动化缺少 once 触发时间，无法映射为计时器"
     });
   }
 
-  return normalized;
+  return {
+    dueAt
+  };
 }
 
-function resolveTimerDueAt(input: CreateButlerControlTimerInput, referenceAt: string): string {
-  if (input.dueAt?.trim()) {
-    const dueTimestamp = Date.parse(input.dueAt.trim());
+function parseSendControlMessageActionConfig(value: string): {
+  content: string;
+  targetSessionId: string | null;
+} {
+  const parsed = JSON.parse(value) as Partial<{
+    content: string;
+    targetSessionId: string | null;
+  }>;
+  const content = parsed.content?.trim();
 
-    if (Number.isNaN(dueTimestamp)) {
-      throw new AppError({
-        statusCode: 400,
-        errorCode: "INVALID_INPUT",
-        detail: "dueAt 必须是合法的 ISO 时间",
-        field: "dueAt"
-      });
-    }
-
-    return new Date(dueTimestamp).toISOString();
-  }
-
-  if (input.afterSeconds === null || input.afterSeconds === undefined) {
+  if (!content) {
     throw new AppError({
-      statusCode: 400,
-      errorCode: "INVALID_INPUT",
-      detail: "创建助手计时器必须提供 dueAt 或 afterSeconds",
-      field: "dueAt"
+      statusCode: 500,
+      errorCode: "BUTLER_CONTROL_TIMER_COMPATIBILITY_ERROR",
+      detail: "自动化缺少控制会话消息内容，无法映射为计时器"
     });
   }
 
-  const delaySeconds = Math.max(1, Math.floor(input.afterSeconds));
-  const referenceMs = Date.parse(referenceAt);
-  return new Date(referenceMs + delaySeconds * 1000).toISOString();
-}
-
-function normalizeNullableText(value: string | null | undefined): string | null {
-  const normalized = value?.trim();
-  return normalized ? normalized : null;
-}
-
-function buildTimerClientRequestId(timerId: string, referenceAt: string): string {
-  return `butler-control-timer:${timerId}:${Date.parse(referenceAt) || Date.now()}`;
+  return {
+    content,
+    targetSessionId: parsed.targetSessionId?.trim() || null
+  };
 }

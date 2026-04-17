@@ -1,6 +1,8 @@
 import { createId } from "../../shared/utils/id.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { nowIso } from "../../shared/utils/time.js";
+import type { AssistantAutomationService } from "../butler/assistant-automation-service.js";
+import type { AssistantSandboxService } from "../butler/assistant-sandbox-service.js";
 import type { ButlerControlSessionService } from "../butler/butler-control-session-service.js";
 import type { ButlerControlTimerService } from "../butler/butler-control-timer-service.js";
 import type { ButlerProjectService } from "../butler/butler-project-service.js";
@@ -47,6 +49,8 @@ export interface AssistantCapabilityReceipt<TPayload> {
       | "worktree"
       | "debug_target"
       | "debug_runtime"
+      | "automation"
+      | "sandbox"
       | "timer"
       | "none";
     id: string | null;
@@ -72,6 +76,21 @@ interface SendAssistantSessionMessageInput {
 
 interface StartAssistantProjectSessionInput {
   projectId: string;
+  userId: string;
+  content: string;
+  providerId?: "codex" | "claude-code" | null;
+  model?: string | null;
+  reasoningLevel?: string | null;
+  permissionMode?: string | null;
+}
+
+type AssistantSessionTarget =
+  | { kind: "project"; projectId: string }
+  | { kind: "workspace"; workspaceId: string }
+  | { kind: "sandbox"; sandboxId: string };
+
+interface StartAssistantSessionInput {
+  target: AssistantSessionTarget;
   userId: string;
   content: string;
   providerId?: "codex" | "claude-code" | null;
@@ -115,6 +134,70 @@ interface CreateAssistantTimerInput {
   content: string;
   dueAt?: string | null;
   afterSeconds?: number | null;
+}
+
+interface ListAssistantAutomationsInput {
+  userId: string;
+  status?: "active" | "completed" | "cancelled" | "failed";
+  controlSessionId?: string | null;
+  limit?: number | null;
+}
+
+interface CreateAssistantAutomationInput {
+  userId: string;
+  controlSessionId?: string | null;
+  projectId?: string | null;
+  title?: string | null;
+  content: string;
+  triggerType?: "once" | "interval" | "cron" | "condition";
+  dueAt?: string | null;
+  afterSeconds?: number | null;
+  everySeconds?: number | null;
+  everyMinutes?: number | null;
+  everyHours?: number | null;
+  stopAt?: string | null;
+  cronMinute?: number | null;
+  cronHour?: number | null;
+  cronDaysOfWeek?: number[] | null;
+  conditionKind?: "git.remote_tag_changed" | "session.runtime_idle" | null;
+  repositoryUrl?: string | null;
+  pollIntervalSeconds?: number | null;
+  expiresAt?: string | null;
+  maxChecks?: number | null;
+  conditionSessionId?: string | null;
+  includeTriggerContext?: boolean;
+  targetSessionId?: string | null;
+}
+
+interface ListAssistantAutomationRunsInput {
+  userId: string;
+  controlSessionId?: string | null;
+  limit?: number | null;
+}
+
+interface ListAssistantSandboxesInput {
+  userId: string;
+  status?: "active" | "archived" | "expired" | "deleted";
+}
+
+interface CreateAssistantSandboxInput {
+  userId: string;
+  title?: string | null;
+  description?: string | null;
+  purpose?: string | null;
+  expiresAt?: string | null;
+  sourceKind: "blank" | "clone";
+  repositoryUrl?: string | null;
+  directoryName?: string | null;
+  auth?: CloneWorkspaceInput["auth"];
+}
+
+interface PromoteAssistantSandboxInput {
+  sandboxId: string;
+  userId: string;
+  mode?: "pin" | "project";
+  projectName?: string | null;
+  defaultProvider?: "codex" | "claude-code" | null;
 }
 
 interface AnalyzeAssistantDebugTargetInput {
@@ -201,6 +284,12 @@ const ASSISTANT_CAPABILITIES: AssistantCapabilityDescriptor[] = [
     summary: "按当前助手配置为项目新建真实会话"
   },
   {
+    name: "sessions.start",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "按 project/workspace/sandbox 目标新建真实会话"
+  },
+  {
     name: "sessions.get",
     mode: "read",
     enabled: true,
@@ -229,6 +318,66 @@ const ASSISTANT_CAPABILITIES: AssistantCapabilityDescriptor[] = [
     mode: "proxy_execute",
     enabled: true,
     summary: "从指定会话或消息点 fork 新会话"
+  },
+  {
+    name: "automations.list",
+    mode: "read",
+    enabled: true,
+    summary: "列出当前助手自动化任务"
+  },
+  {
+    name: "automations.get",
+    mode: "read",
+    enabled: true,
+    summary: "读取单个助手自动化任务详情"
+  },
+  {
+    name: "automations.create",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "创建正式助手自动化任务"
+  },
+  {
+    name: "automations.cancel",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "取消助手自动化任务"
+  },
+  {
+    name: "automations.runs.list",
+    mode: "read",
+    enabled: true,
+    summary: "读取助手自动化执行记录"
+  },
+  {
+    name: "sandboxes.list",
+    mode: "read",
+    enabled: true,
+    summary: "列出当前助手沙箱"
+  },
+  {
+    name: "sandboxes.create",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "创建新的助手沙箱"
+  },
+  {
+    name: "sandboxes.promote",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "保留或晋升助手沙箱"
+  },
+  {
+    name: "sandboxes.expire",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "标记助手沙箱过期"
+  },
+  {
+    name: "sandboxes.remove",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "清理助手沙箱"
   },
   {
     name: "timers.list",
@@ -429,6 +578,14 @@ export class AssistantCapabilityService {
       "listByProject" | "ensureProjectSessionsSynced" | "startSession"
     >,
     private readonly butlerControlSessionService: Pick<ButlerControlSessionService, "getCurrentSession">,
+    private readonly assistantAutomationService: Pick<
+      AssistantAutomationService,
+      "listTasks" | "getTask" | "createTask" | "cancelTask" | "listRuns" | "listRecentRuns"
+    >,
+    private readonly assistantSandboxService: Pick<
+      AssistantSandboxService,
+      "listSandboxes" | "getSandbox" | "createSandbox" | "promoteSandbox" | "expireSandbox" | "removeSandbox" | "resolveWorkspaceId"
+    >,
     private readonly butlerControlTimerService: Pick<
       ButlerControlTimerService,
       "listTimers" | "getTimer" | "createTimer" | "cancelTimer"
@@ -439,7 +596,7 @@ export class AssistantCapabilityService {
     >,
     private readonly sessionLiveRuntimeService: Pick<
       SessionLiveRuntimeService,
-      "getSessionRuntime" | "sendLiveMessage"
+      "getSessionRuntime" | "sendLiveMessage" | "startLiveSession"
     >,
     private readonly terminalService: Pick<
       TerminalService,
@@ -554,32 +711,17 @@ export class AssistantCapabilityService {
   ): Promise<AssistantCapabilityReceipt<{
     session: Awaited<ReturnType<ButlerSessionService["startSession"]>>;
   }>> {
-    const controlSession = this.butlerControlSessionService.getCurrentSession(input.userId);
-    const providerId =
-      input.providerId?.trim() as "codex" | "claude-code" | undefined
-      ?? controlSession?.providerId
-      ?? undefined;
-
-    if (!providerId) {
-      throw new AppError({
-        statusCode: 409,
-        errorCode: "ASSISTANT_CONTROL_SESSION_NOT_FOUND",
-        detail: "当前没有可用的助手控制会话，无法继承默认 provider"
-      });
-    }
-
+    const config = this.resolveSessionLaunchConfig(input);
     const session = await this.butlerSessionService.startSession(
       input.projectId,
       {
         role: "adhoc",
         ownershipMode: "managed",
         content: input.content.trim(),
-        providerId,
-        model: normalizeAssistantText(input.model) ?? controlSession?.model ?? null,
-        reasoningLevel:
-          normalizeAssistantText(input.reasoningLevel) ?? controlSession?.reasoningLevel ?? null,
-        permissionMode:
-          normalizeAssistantText(input.permissionMode) ?? controlSession?.permissionMode ?? null
+        providerId: config.providerId,
+        model: config.model,
+        reasoningLevel: config.reasoningLevel,
+        permissionMode: config.permissionMode
       },
       input.userId
     );
@@ -589,6 +731,68 @@ export class AssistantCapabilityService {
       id: input.projectId
     }, {
       session
+    });
+  }
+
+  async startSession(
+    input: StartAssistantSessionInput
+  ): Promise<AssistantCapabilityReceipt<{
+    session:
+      | Awaited<ReturnType<ButlerSessionService["startSession"]>>
+      | Awaited<ReturnType<SessionLiveRuntimeService["startLiveSession"]>>;
+    target: {
+      kind: AssistantSessionTarget["kind"];
+      id: string;
+      workspaceId: string;
+    };
+  }>> {
+    const config = this.resolveSessionLaunchConfig(input);
+    const target = this.resolveAssistantSessionTarget(input.target, input.userId);
+
+    if (target.kind === "project") {
+      const session = await this.butlerSessionService.startSession(
+        target.id,
+        {
+          role: "adhoc",
+          ownershipMode: "managed",
+          content: input.content.trim(),
+          providerId: config.providerId,
+          model: config.model,
+          reasoningLevel: config.reasoningLevel,
+          permissionMode: config.permissionMode
+        },
+        input.userId
+      );
+
+      return this.createReceipt("sessions.start", {
+        kind: "project",
+        id: target.id
+      }, {
+        session,
+        target
+      });
+    }
+
+    const session = await this.sessionLiveRuntimeService.startLiveSession({
+      workspaceId: target.workspaceId,
+      userId: input.userId,
+      provider: config.providerId,
+      content: input.content.trim(),
+      clientRequestId: null,
+      runtimeOptions: {
+        model: config.model,
+        reasoningLevel: config.reasoningLevel,
+        permissionMode: config.permissionMode,
+        attachments: []
+      }
+    });
+
+    return this.createReceipt("sessions.start", {
+      kind: target.kind,
+      id: target.id
+    }, {
+      session,
+      target
     });
   }
 
@@ -725,7 +929,8 @@ export class AssistantCapabilityService {
     const items = this.butlerControlTimerService.listTimers({
       userId: input.userId,
       statuses: input.status ? [input.status] : undefined,
-      controlSessionId: input.controlSessionId ?? null
+      controlSessionId: input.controlSessionId ?? null,
+      limit: input.limit ?? undefined
     });
 
     return this.createReceipt("timers.list", {
@@ -733,6 +938,223 @@ export class AssistantCapabilityService {
       id: null
     }, {
       items
+    });
+  }
+
+  listAutomations(
+    input: ListAssistantAutomationsInput
+  ): AssistantCapabilityReceipt<{
+    items: ReturnType<AssistantAutomationService["listTasks"]>;
+  }> {
+    const items = this.assistantAutomationService.listTasks({
+      userId: input.userId,
+      statuses: input.status ? [input.status] : undefined,
+      controlSessionId: input.controlSessionId ?? null
+    });
+
+    return this.createReceipt("automations.list", {
+      kind: "none",
+      id: null
+    }, {
+      items
+    });
+  }
+
+  getAutomation(
+    automationId: string,
+    userId: string
+  ): AssistantCapabilityReceipt<{
+    automation: ReturnType<AssistantAutomationService["getTask"]>;
+  }> {
+    const automation = this.assistantAutomationService.getTask(automationId, userId);
+
+    return this.createReceipt("automations.get", {
+      kind: "automation",
+      id: automationId
+    }, {
+      automation
+    });
+  }
+
+  createAutomation(
+    input: CreateAssistantAutomationInput
+  ): AssistantCapabilityReceipt<{
+    automation: ReturnType<AssistantAutomationService["createTask"]>;
+  }> {
+    const triggerType = input.triggerType ?? "once";
+    const automation = this.assistantAutomationService.createTask({
+      userId: input.userId,
+      controlSessionId: input.controlSessionId,
+      projectId: input.projectId,
+      title: input.title,
+      trigger: buildAssistantAutomationTriggerInput(triggerType, input),
+      action: {
+        type: "send_control_message",
+        content: input.content,
+        includeTriggerContext:
+          input.includeTriggerContext ?? triggerType === "condition",
+        targetSessionId: input.targetSessionId ?? null
+      }
+    });
+
+    return this.createReceipt("automations.create", {
+      kind: "automation",
+      id: automation.id
+    }, {
+      automation
+    });
+  }
+
+  cancelAutomation(
+    automationId: string,
+    userId: string
+  ): AssistantCapabilityReceipt<{
+    automation: ReturnType<AssistantAutomationService["cancelTask"]>;
+  }> {
+    const automation = this.assistantAutomationService.cancelTask(automationId, userId);
+
+    return this.createReceipt("automations.cancel", {
+      kind: "automation",
+      id: automationId
+    }, {
+      automation
+    });
+  }
+
+  listAutomationRuns(
+    automationId: string,
+    userId: string
+  ): AssistantCapabilityReceipt<{
+    items: ReturnType<AssistantAutomationService["listRuns"]>;
+  }> {
+    const items = this.assistantAutomationService.listRuns(automationId, userId);
+
+    return this.createReceipt("automations.runs.list", {
+      kind: "automation",
+      id: automationId
+    }, {
+      items
+    });
+  }
+
+  listRecentAutomationRuns(
+    input: ListAssistantAutomationRunsInput
+  ): AssistantCapabilityReceipt<{
+    items: ReturnType<AssistantAutomationService["listRecentRuns"]>;
+  }> {
+    const items = this.assistantAutomationService.listRecentRuns({
+      userId: input.userId,
+      controlSessionId: input.controlSessionId ?? null,
+      limit: input.limit ?? undefined
+    });
+
+    return this.createReceipt("automations.runs.recent", {
+      kind: "none",
+      id: null
+    }, {
+      items
+    });
+  }
+
+  listSandboxes(
+    input: ListAssistantSandboxesInput
+  ): AssistantCapabilityReceipt<{
+    items: ReturnType<AssistantSandboxService["listSandboxes"]>;
+  }> {
+    const items = this.assistantSandboxService.listSandboxes({
+      userId: input.userId,
+      statuses: input.status ? [input.status] : undefined
+    });
+
+    return this.createReceipt("sandboxes.list", {
+      kind: "none",
+      id: null
+    }, {
+      items
+    });
+  }
+
+  async createSandbox(
+    input: CreateAssistantSandboxInput
+  ): Promise<AssistantCapabilityReceipt<{
+    sandbox: Awaited<ReturnType<AssistantSandboxService["createSandbox"]>>;
+  }>> {
+    const sandbox = await this.assistantSandboxService.createSandbox({
+      userId: input.userId,
+      title: input.title,
+      description: input.description,
+      purpose: input.purpose,
+      expiresAt: input.expiresAt,
+      source:
+        input.sourceKind === "clone"
+          ? {
+            kind: "clone",
+            repositoryUrl: requireAssistantRepositoryUrl(input.repositoryUrl),
+            directoryName: input.directoryName,
+            auth: input.auth
+          }
+          : {
+            kind: "blank",
+            directoryName: input.directoryName
+          }
+    });
+
+    return this.createReceipt("sandboxes.create", {
+      kind: "sandbox",
+      id: sandbox.id
+    }, {
+      sandbox
+    });
+  }
+
+  promoteSandbox(
+    input: PromoteAssistantSandboxInput
+  ): AssistantCapabilityReceipt<{
+    sandbox: ReturnType<AssistantSandboxService["promoteSandbox"]>;
+  }> {
+    const sandbox = this.assistantSandboxService.promoteSandbox(input.sandboxId, input.userId, {
+      mode: input.mode,
+      projectName: input.projectName,
+      defaultProvider: input.defaultProvider
+    });
+
+    return this.createReceipt("sandboxes.promote", {
+      kind: "sandbox",
+      id: input.sandboxId
+    }, {
+      sandbox
+    });
+  }
+
+  expireSandbox(
+    sandboxId: string,
+    userId: string
+  ): AssistantCapabilityReceipt<{
+    sandbox: ReturnType<AssistantSandboxService["expireSandbox"]>;
+  }> {
+    const sandbox = this.assistantSandboxService.expireSandbox(sandboxId, userId);
+
+    return this.createReceipt("sandboxes.expire", {
+      kind: "sandbox",
+      id: sandboxId
+    }, {
+      sandbox
+    });
+  }
+
+  removeSandbox(
+    sandboxId: string,
+    userId: string
+  ): AssistantCapabilityReceipt<{
+    sandbox: ReturnType<AssistantSandboxService["removeSandbox"]>;
+  }> {
+    const sandbox = this.assistantSandboxService.removeSandbox(sandboxId, userId);
+
+    return this.createReceipt("sandboxes.remove", {
+      kind: "sandbox",
+      id: sandboxId
+    }, {
+      sandbox
     });
   }
 
@@ -1231,9 +1653,162 @@ export class AssistantCapabilityService {
       payload
     };
   }
+
+  private resolveSessionLaunchConfig(
+    input: StartAssistantProjectSessionInput | StartAssistantSessionInput
+  ): {
+    providerId: "codex" | "claude-code";
+    model: string | null;
+    reasoningLevel: string | null;
+    permissionMode: string | null;
+  } {
+    const controlSession = this.butlerControlSessionService.getCurrentSession(input.userId);
+    const providerId =
+      input.providerId?.trim() as "codex" | "claude-code" | undefined
+      ?? controlSession?.providerId
+      ?? undefined;
+
+    if (!providerId) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "ASSISTANT_CONTROL_SESSION_NOT_FOUND",
+        detail: "当前没有可用的助手控制会话，无法继承默认 provider"
+      });
+    }
+
+    return {
+      providerId,
+      model: normalizeAssistantText(input.model) ?? controlSession?.model ?? null,
+      reasoningLevel:
+        normalizeAssistantText(input.reasoningLevel) ?? controlSession?.reasoningLevel ?? null,
+      permissionMode:
+        normalizeAssistantText(input.permissionMode) ?? controlSession?.permissionMode ?? null
+    };
+  }
+
+  private resolveAssistantSessionTarget(
+    target: AssistantSessionTarget,
+    userId: string
+  ): {
+    kind: AssistantSessionTarget["kind"];
+    id: string;
+    workspaceId: string;
+  } {
+    if (target.kind === "project") {
+      const project = this.butlerProjectService.getById(target.projectId);
+      return {
+        kind: "project",
+        id: project.id,
+        workspaceId: project.workspaceId
+      };
+    }
+
+    if (target.kind === "workspace") {
+      return {
+        kind: "workspace",
+        id: target.workspaceId,
+        workspaceId: target.workspaceId
+      };
+    }
+
+    return {
+      kind: "sandbox",
+      id: target.sandboxId,
+      workspaceId: this.assistantSandboxService.resolveWorkspaceId(target.sandboxId, userId)
+    };
+  }
 }
 
 function normalizeAssistantText(value: string | null | undefined): string | null {
   const normalized = value?.trim();
   return normalized ? normalized : null;
+}
+
+function buildAssistantAutomationTriggerInput(
+  triggerType: NonNullable<CreateAssistantAutomationInput["triggerType"]>,
+  input: CreateAssistantAutomationInput
+) {
+  switch (triggerType) {
+    case "once":
+      return {
+        type: "once" as const,
+        dueAt: input.dueAt ?? null,
+        afterSeconds: input.afterSeconds ?? null
+      };
+    case "interval":
+      return {
+        type: "interval" as const,
+        seconds: input.everySeconds ?? null,
+        minutes: input.everyMinutes ?? null,
+        hours: input.everyHours ?? null,
+        stopAt: input.stopAt ?? null
+      };
+    case "cron":
+      return {
+        type: "cron" as const,
+        minute: input.cronMinute ?? null,
+        hour: input.cronHour ?? null,
+        daysOfWeek: input.cronDaysOfWeek ?? null,
+        stopAt: input.stopAt ?? null
+      };
+    case "condition": {
+      const conditionKind = input.conditionKind;
+
+      if (conditionKind === "git.remote_tag_changed") {
+        return {
+          type: "condition" as const,
+          conditionKind,
+          repositoryUrl: input.repositoryUrl ?? null,
+          pollIntervalSeconds: input.pollIntervalSeconds ?? null,
+          expiresAt: input.expiresAt ?? null,
+          maxChecks: input.maxChecks ?? null
+        };
+      }
+
+      return {
+        type: "condition" as const,
+        conditionKind: requireAssistantConditionKind(conditionKind),
+        sessionId: input.conditionSessionId ?? null,
+        pollIntervalSeconds: input.pollIntervalSeconds ?? null,
+        expiresAt: input.expiresAt ?? null,
+        maxChecks: input.maxChecks ?? null
+      };
+    }
+    default:
+      return assertNeverAssistantAutomationTriggerType(triggerType);
+  }
+}
+
+function requireAssistantRepositoryUrl(value: string | null | undefined): string {
+  const normalized = normalizeAssistantText(value);
+
+  if (!normalized) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: "clone 沙箱必须提供 repositoryUrl",
+      field: "repositoryUrl"
+    });
+  }
+
+  return normalized;
+}
+
+function requireAssistantConditionKind(
+  value: CreateAssistantAutomationInput["conditionKind"]
+): "git.remote_tag_changed" | "session.runtime_idle" {
+  if (value === "git.remote_tag_changed" || value === "session.runtime_idle") {
+    return value;
+  }
+
+  throw new AppError({
+    statusCode: 400,
+    errorCode: "INVALID_INPUT",
+    detail: "condition 自动化必须提供 conditionKind",
+    field: "conditionKind"
+  });
+}
+
+function assertNeverAssistantAutomationTriggerType(value: never): never {
+  throw new Error(`Unexpected assistant automation triggerType: ${String(value)}`);
 }

@@ -19,12 +19,20 @@ interface AssistantSessionParams {
   sessionId: string;
 }
 
+interface AssistantSandboxParams {
+  sandboxId: string;
+}
+
 interface AssistantTerminalParams {
   terminalId: string;
 }
 
 interface AssistantTimerParams {
   timerId: string;
+}
+
+interface AssistantAutomationParams {
+  automationId: string;
 }
 
 interface AssistantMessagesQuery {
@@ -36,6 +44,21 @@ interface AssistantMessagesQuery {
 interface AssistantTimerListQuery {
   status?: "active" | "completed" | "cancelled" | "failed";
   controlSessionId?: string;
+}
+
+interface AssistantAutomationListQuery {
+  status?: "active" | "completed" | "cancelled" | "failed";
+  controlSessionId?: string;
+  limit?: string;
+}
+
+interface AssistantAutomationRecentRunsQuery {
+  controlSessionId?: string;
+  limit?: string;
+}
+
+interface AssistantSandboxListQuery {
+  status?: "active" | "archived" | "expired" | "deleted";
 }
 
 interface AssistantTerminalListQuery {
@@ -84,6 +107,12 @@ interface AssistantStartProjectSessionBody {
   permissionMode?: string | null;
 }
 
+interface AssistantStartSessionBody extends AssistantStartProjectSessionBody {
+  projectId?: string | null;
+  workspaceId?: string | null;
+  sandboxId?: string | null;
+}
+
 interface AssistantForkBody {
   sourceType?: "session" | "message";
   sourceMessageId?: string | null;
@@ -103,6 +132,51 @@ interface AssistantCreateTimerBody {
   content?: string;
   dueAt?: string | null;
   afterSeconds?: number | string | null;
+}
+
+interface AssistantCreateAutomationBody {
+  controlSessionId?: string | null;
+  projectId?: string | null;
+  targetSessionId?: string | null;
+  title?: string | null;
+  content?: string;
+  triggerType?: "once" | "interval" | "cron" | "condition" | null;
+  dueAt?: string | null;
+  afterSeconds?: number | string | null;
+  everySeconds?: number | string | null;
+  everyMinutes?: number | string | null;
+  everyHours?: number | string | null;
+  stopAt?: string | null;
+  cronMinute?: number | string | null;
+  cronHour?: number | string | null;
+  cronDaysOfWeek?: Array<number | string> | string | null;
+  conditionKind?: "git.remote_tag_changed" | "session.runtime_idle" | null;
+  repositoryUrl?: string | null;
+  pollIntervalSeconds?: number | string | null;
+  expiresAt?: string | null;
+  maxChecks?: number | string | null;
+  conditionSessionId?: string | null;
+  includeTriggerContext?: boolean | null;
+}
+
+interface AssistantCreateSandboxBody {
+  title?: string | null;
+  description?: string | null;
+  purpose?: string | null;
+  expiresAt?: string | null;
+  sourceKind?: "blank" | "clone" | null;
+  repositoryUrl?: string | null;
+  directoryName?: string | null;
+  auth?:
+    | { mode?: "none" }
+    | { mode: "basic"; username?: string; password?: string }
+    | { mode: "token"; username?: string; token?: string };
+}
+
+interface AssistantPromoteSandboxBody {
+  mode?: "pin" | "project";
+  projectName?: string | null;
+  defaultProvider?: "codex" | "claude-code" | null;
 }
 
 interface AssistantCreateWorkspaceDirectoryBody {
@@ -233,6 +307,21 @@ export class AssistantCapabilityController {
     }));
   };
 
+  readonly startSession = async (
+    request: FastifyRequest<{ Body: AssistantStartSessionBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.assistantCapabilityService.startSession({
+      target: resolveAssistantSessionTarget(request.body),
+      userId: requireUserId(request),
+      content: requireNonEmptyText(request.body.content, "content", "新建会话必须提供 content"),
+      providerId: normalizeAssistantProviderId(request.body.providerId),
+      model: normalizeNullableText(request.body.model),
+      reasoningLevel: normalizeNullableText(request.body.reasoningLevel),
+      permissionMode: normalizeNullableText(request.body.permissionMode)
+    }));
+  };
+
   readonly getSession = async (
     request: FastifyRequest<{ Params: AssistantSessionParams }>,
     reply: FastifyReply
@@ -343,6 +432,156 @@ export class AssistantCapabilityController {
   ): Promise<void> => {
     reply.send(this.assistantCapabilityService.cancelTimer(
       request.params.timerId,
+      requireUserId(request)
+    ));
+  };
+
+  readonly listAutomations = async (
+    request: FastifyRequest<{ Querystring: AssistantAutomationListQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.listAutomations({
+      userId: requireUserId(request),
+      status: request.query.status,
+      controlSessionId: normalizeNullableText(request.query.controlSessionId),
+      limit: normalizeNullableInteger(request.query.limit, "limit")
+    }));
+  };
+
+  readonly getAutomation = async (
+    request: FastifyRequest<{ Params: AssistantAutomationParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.getAutomation(
+      request.params.automationId,
+      requireUserId(request)
+    ));
+  };
+
+  readonly createAutomation = async (
+    request: FastifyRequest<{ Body: AssistantCreateAutomationBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.createAutomation({
+      userId: requireUserId(request),
+      controlSessionId: normalizeNullableText(request.body.controlSessionId),
+      projectId: normalizeNullableText(request.body.projectId),
+      targetSessionId: normalizeNullableText(request.body.targetSessionId),
+      title: normalizeNullableText(request.body.title),
+      content: requireNonEmptyText(request.body.content, "content", "创建自动化必须提供 content"),
+      triggerType: normalizeAutomationTriggerType(request.body.triggerType),
+      dueAt: normalizeNullableText(request.body.dueAt),
+      afterSeconds: normalizeNullableInteger(request.body.afterSeconds, "afterSeconds"),
+      everySeconds: normalizeNullableInteger(request.body.everySeconds, "everySeconds"),
+      everyMinutes: normalizeNullableInteger(request.body.everyMinutes, "everyMinutes"),
+      everyHours: normalizeNullableInteger(request.body.everyHours, "everyHours"),
+      stopAt: normalizeNullableText(request.body.stopAt),
+      cronMinute: normalizeNullableInteger(request.body.cronMinute, "cronMinute"),
+      cronHour: normalizeNullableInteger(request.body.cronHour, "cronHour"),
+      cronDaysOfWeek: normalizeNullableIntegerArray(request.body.cronDaysOfWeek, "cronDaysOfWeek"),
+      conditionKind: normalizeConditionKind(request.body.conditionKind),
+      repositoryUrl: normalizeNullableText(request.body.repositoryUrl),
+      pollIntervalSeconds: normalizeNullableInteger(
+        request.body.pollIntervalSeconds,
+        "pollIntervalSeconds"
+      ),
+      expiresAt: normalizeNullableText(request.body.expiresAt),
+      maxChecks: normalizeNullableInteger(request.body.maxChecks, "maxChecks"),
+      conditionSessionId: normalizeNullableText(request.body.conditionSessionId),
+      includeTriggerContext:
+        typeof request.body.includeTriggerContext === "boolean"
+          ? request.body.includeTriggerContext
+          : undefined
+    }));
+  };
+
+  readonly cancelAutomation = async (
+    request: FastifyRequest<{ Params: AssistantAutomationParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.cancelAutomation(
+      request.params.automationId,
+      requireUserId(request)
+    ));
+  };
+
+  readonly listAutomationRuns = async (
+    request: FastifyRequest<{ Params: AssistantAutomationParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.listAutomationRuns(
+      request.params.automationId,
+      requireUserId(request)
+    ));
+  };
+
+  readonly listRecentAutomationRuns = async (
+    request: FastifyRequest<{ Querystring: AssistantAutomationRecentRunsQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.listRecentAutomationRuns({
+      userId: requireUserId(request),
+      controlSessionId: normalizeNullableText(request.query.controlSessionId),
+      limit: normalizeNullableInteger(request.query.limit, "limit")
+    }));
+  };
+
+  readonly listSandboxes = async (
+    request: FastifyRequest<{ Querystring: AssistantSandboxListQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.listSandboxes({
+      userId: requireUserId(request),
+      status: request.query.status
+    }));
+  };
+
+  readonly createSandbox = async (
+    request: FastifyRequest<{ Body: AssistantCreateSandboxBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.assistantCapabilityService.createSandbox({
+      userId: requireUserId(request),
+      title: normalizeNullableText(request.body.title),
+      description: normalizeNullableText(request.body.description),
+      purpose: normalizeNullableText(request.body.purpose),
+      expiresAt: normalizeNullableText(request.body.expiresAt),
+      sourceKind: request.body.sourceKind === "clone" ? "clone" : "blank",
+      repositoryUrl: normalizeNullableText(request.body.repositoryUrl),
+      directoryName: normalizeNullableText(request.body.directoryName),
+      auth: normalizeAssistantCloneAuth(request.body.auth)
+    }));
+  };
+
+  readonly promoteSandbox = async (
+    request: FastifyRequest<{ Params: AssistantSandboxParams; Body: AssistantPromoteSandboxBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.promoteSandbox({
+      sandboxId: request.params.sandboxId,
+      userId: requireUserId(request),
+      mode: request.body.mode,
+      projectName: normalizeNullableText(request.body.projectName),
+      defaultProvider: normalizeAssistantProviderId(request.body.defaultProvider)
+    }));
+  };
+
+  readonly expireSandbox = async (
+    request: FastifyRequest<{ Params: AssistantSandboxParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.expireSandbox(
+      request.params.sandboxId,
+      requireUserId(request)
+    ));
+  };
+
+  readonly removeSandbox = async (
+    request: FastifyRequest<{ Params: AssistantSandboxParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.removeSandbox(
+      request.params.sandboxId,
       requireUserId(request)
     ));
   };
@@ -791,6 +1030,78 @@ function normalizeNullableInteger(value: number | string | null | undefined, fie
   return parsed;
 }
 
+function normalizeNullableIntegerArray(
+  value: Array<number | string> | string | null | undefined,
+  field: string
+): number[] | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const items = Array.isArray(value)
+    ? value
+    : value.split(",");
+  const normalized = items.map((item) => normalizeNullableInteger(item, field));
+
+  if (normalized.some((item) => item === null)) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: `${field} 必须全部是整数`,
+      field
+    });
+  }
+
+  return Array.from(new Set(normalized as number[]));
+}
+
+function normalizeAutomationTriggerType(
+  value: AssistantCreateAutomationBody["triggerType"]
+): "once" | "interval" | "cron" | "condition" | undefined {
+  const normalized = normalizeNullableText(value);
+
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (
+    normalized === "once"
+    || normalized === "interval"
+    || normalized === "cron"
+    || normalized === "condition"
+  ) {
+    return normalized;
+  }
+
+  throw new AppError({
+    statusCode: 400,
+    errorCode: "INVALID_INPUT",
+    detail: `不支持的 triggerType：${normalized}`,
+    field: "triggerType"
+  });
+}
+
+function normalizeConditionKind(
+  value: AssistantCreateAutomationBody["conditionKind"]
+): "git.remote_tag_changed" | "session.runtime_idle" | null {
+  const normalized = normalizeNullableText(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === "git.remote_tag_changed" || normalized === "session.runtime_idle") {
+    return normalized;
+  }
+
+  throw new AppError({
+    statusCode: 400,
+    errorCode: "INVALID_INPUT",
+    detail: `不支持的 conditionKind：${normalized}`,
+    field: "conditionKind"
+  });
+}
+
 function normalizeAssistantProviderId(
   value: "codex" | "claude-code" | null | undefined
 ): "codex" | "claude-code" | null {
@@ -810,6 +1121,57 @@ function normalizeAssistantProviderId(
     detail: `不支持的 providerId：${normalized}`,
     field: "providerId"
   });
+}
+
+function resolveAssistantSessionTarget(body: AssistantStartSessionBody):
+  | { kind: "project"; projectId: string }
+  | { kind: "workspace"; workspaceId: string }
+  | { kind: "sandbox"; sandboxId: string } {
+  const projectId = normalizeNullableText(body.projectId);
+  const workspaceId = normalizeNullableText(body.workspaceId);
+  const sandboxId = normalizeNullableText(body.sandboxId);
+  const targets: Array<
+    | { kind: "project"; projectId: string }
+    | { kind: "workspace"; workspaceId: string }
+    | { kind: "sandbox"; sandboxId: string }
+  > = [
+    projectId ? { kind: "project" as const, projectId } : null,
+    workspaceId ? { kind: "workspace" as const, workspaceId } : null,
+    sandboxId ? { kind: "sandbox" as const, sandboxId } : null
+  ].filter((target): target is NonNullable<typeof target> => target !== null);
+
+  if (targets.length !== 1) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: "启动真实会话必须且只能提供 projectId、workspaceId、sandboxId 其中一个",
+      field: "projectId"
+    });
+  }
+
+  return targets[0];
+}
+
+function normalizeAssistantCloneAuth(
+  auth: AssistantCreateSandboxBody["auth"]
+): AssistantCreateSandboxBody["auth"] | undefined {
+  if (!auth || auth.mode === undefined || auth.mode === "none") {
+    return auth?.mode === "none" ? { mode: "none" } : undefined;
+  }
+
+  if (auth.mode === "basic") {
+    return {
+      mode: "basic",
+      username: normalizeNullableText(auth.username) ?? undefined,
+      password: normalizeNullableText(auth.password) ?? undefined
+    };
+  }
+
+  return {
+    mode: "token",
+    username: normalizeNullableText("username" in auth ? auth.username : undefined) ?? undefined,
+    token: normalizeNullableText("token" in auth ? auth.token : undefined) ?? undefined
+  };
 }
 
 function normalizeCommandHints(value: unknown): string[] {

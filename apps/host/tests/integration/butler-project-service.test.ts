@@ -171,4 +171,44 @@ describe("ButlerProjectService", () => {
     expect(result[0]?.lifecycleStatus).toBe("archived");
     expect(result[0]?.archivedAt).not.toBeNull();
   });
+
+  it("不会把助手沙箱工作区自动补成正式项目", () => {
+    const workspacePath = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-project-sandbox-"));
+    tempDirs.push(workspacePath);
+    const workspaces: Workspace[] = [
+      {
+        id: "workspace-sandbox",
+        name: "临时沙箱",
+        path: workspacePath,
+        repoRoot: workspacePath,
+        favorite: false,
+        createdAt: "2026-04-17T00:00:00.000Z",
+        updatedAt: "2026-04-17T00:00:00.000Z",
+        removedAt: null
+      }
+    ];
+    const projects: ButlerProject[] = [];
+    const service = new ButlerProjectService(
+      {
+        list: vi.fn(() => projects),
+        create: vi.fn((record: ButlerProject) => {
+          projects.push(record);
+          return record;
+        })
+      } satisfies Pick<ButlerProjectRepository, "list" | "create"> as ButlerProjectRepository,
+      {} as ButlerSessionRepository,
+      {
+        list: vi.fn(() => workspaces)
+      } satisfies Pick<WorkspaceRepository, "list"> as WorkspaceRepository,
+      undefined,
+      {
+        listManagedWorkspaceIds: vi.fn(() => ["workspace-sandbox"])
+      } as any
+    );
+
+    const result = service.list();
+
+    expect(result).toHaveLength(0);
+    expect(projects).toHaveLength(0);
+  });
 });

@@ -232,6 +232,235 @@ describe("assistant capability routes", () => {
     });
   });
 
+  it("通用 sessions.start 路由会校验目标并清洗参数", async () => {
+    const assistantCapabilityService = {
+      startSession: vi.fn(async () => ({
+        ok: true,
+        capability: "sessions.start",
+        auditId: "audit-session-start-generic",
+        timestamp: "2026-04-17T02:00:00.000Z",
+        targetRef: {
+          kind: "workspace",
+          id: "workspace-1"
+        },
+        payload: {
+          session: {
+            sessionId: "session-2"
+          },
+          target: {
+            kind: "workspace",
+            id: "workspace-1",
+            workspaceId: "workspace-1"
+          }
+        }
+      }))
+    };
+    const app = await createAssistantApp(assistantCapabilityService);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/assistant/sessions/start",
+      payload: {
+        workspaceId: "  workspace-1  ",
+        content: "  先在这个工作区里排查问题  ",
+        providerId: "  codex  ",
+        model: "  gpt-5.4  "
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(assistantCapabilityService.startSession).toHaveBeenCalledWith({
+      target: {
+        kind: "workspace",
+        workspaceId: "workspace-1"
+      },
+      userId: "user-1",
+      content: "先在这个工作区里排查问题",
+      providerId: "codex",
+      model: "gpt-5.4",
+      reasoningLevel: null,
+      permissionMode: null
+    });
+  });
+
+  it("自动化路由会把查询和创建参数清洗后传给服务", async () => {
+    const assistantCapabilityService = {
+      listAutomations: vi.fn(() => ({
+        ok: true,
+        capability: "automations.list",
+        auditId: "audit-automation-list",
+        timestamp: "2026-04-17T01:00:00.000Z",
+        targetRef: {
+          kind: "none",
+          id: null
+        },
+        payload: {
+          items: []
+        }
+      })),
+      createAutomation: vi.fn(() => ({
+        ok: true,
+        capability: "automations.create",
+        auditId: "audit-automation-create",
+        timestamp: "2026-04-17T01:01:00.000Z",
+        targetRef: {
+          kind: "automation",
+          id: "automation-1"
+        },
+        payload: {
+          automation: {
+            id: "automation-1"
+          }
+        }
+      }))
+    };
+
+    const app = await createAssistantApp(assistantCapabilityService);
+
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/api/assistant/automations?status=active&controlSessionId=%20control-1%20"
+    });
+    expect(listResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.listAutomations).toHaveBeenCalledWith({
+      userId: "user-1",
+      status: "active",
+      controlSessionId: "control-1"
+    });
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/automations",
+      payload: {
+        content: "  一小时后检查 codingns 新 tag  ",
+        title: "  CodingNS 巡检  ",
+        afterSeconds: "3600",
+        projectId: "  project-1  ",
+        targetSessionId: "  session-1  "
+      }
+    });
+    expect(createResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.createAutomation).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "user-1",
+      controlSessionId: null,
+      projectId: "project-1",
+      targetSessionId: "session-1",
+      title: "CodingNS 巡检",
+      content: "一小时后检查 codingns 新 tag",
+      dueAt: null,
+      afterSeconds: 3600
+    }));
+  });
+
+  it("最近自动化运行路由会把筛选参数传给服务", async () => {
+    const assistantCapabilityService = {
+      listRecentAutomationRuns: vi.fn(() => ({
+        ok: true,
+        capability: "automations.runs.recent",
+        auditId: "audit-automation-runs-recent",
+        timestamp: "2026-04-17T01:05:00.000Z",
+        targetRef: {
+          kind: "none",
+          id: null
+        },
+        payload: {
+          items: []
+        }
+      }))
+    };
+
+    const app = await createAssistantApp(assistantCapabilityService);
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/assistant/automations/runs/recent?controlSessionId=%20control-1%20&limit=20"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(assistantCapabilityService.listRecentAutomationRuns).toHaveBeenCalledWith({
+      userId: "user-1",
+      controlSessionId: "control-1",
+      limit: 20
+    });
+  });
+
+  it("沙箱路由会把创建和晋升参数清洗后传给服务", async () => {
+    const assistantCapabilityService = {
+      createSandbox: vi.fn(async () => ({
+        ok: true,
+        capability: "sandboxes.create",
+        auditId: "audit-sandbox-create",
+        timestamp: "2026-04-17T02:10:00.000Z",
+        targetRef: {
+          kind: "sandbox",
+          id: "sandbox-1"
+        },
+        payload: {
+          sandbox: {
+            id: "sandbox-1"
+          }
+        }
+      })),
+      promoteSandbox: vi.fn(() => ({
+        ok: true,
+        capability: "sandboxes.promote",
+        auditId: "audit-sandbox-promote",
+        timestamp: "2026-04-17T02:11:00.000Z",
+        targetRef: {
+          kind: "sandbox",
+          id: "sandbox-1"
+        },
+        payload: {
+          sandbox: {
+            id: "sandbox-1"
+          }
+        }
+      }))
+    };
+    const app = await createAssistantApp(assistantCapabilityService);
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/sandboxes",
+      payload: {
+        title: "  CodingNS 临时沙箱  ",
+        purpose: "  验证新自动化链路  ",
+        sourceKind: "clone",
+        repositoryUrl: "  https://github.com/jingyi0605/codingns.git  ",
+        directoryName: "  codingns-sbx  "
+      }
+    });
+    expect(createResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.createSandbox).toHaveBeenCalledWith({
+      userId: "user-1",
+      title: "CodingNS 临时沙箱",
+      description: null,
+      purpose: "验证新自动化链路",
+      expiresAt: null,
+      sourceKind: "clone",
+      repositoryUrl: "https://github.com/jingyi0605/codingns.git",
+      directoryName: "codingns-sbx",
+      auth: undefined
+    });
+
+    const promoteResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/sandboxes/sandbox-1/promote",
+      payload: {
+        mode: "project",
+        projectName: "  CodingNS 沙箱项目  ",
+        defaultProvider: "  codex  "
+      }
+    });
+    expect(promoteResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.promoteSandbox).toHaveBeenCalledWith({
+      sandboxId: "sandbox-1",
+      userId: "user-1",
+      mode: "project",
+      projectName: "CodingNS 沙箱项目",
+      defaultProvider: "codex"
+    });
+  });
+
   it("发送会话消息和终端输入时会做基础参数清洗", async () => {
     const assistantCapabilityService = {
       sendSessionMessage: vi.fn(async () => ({
