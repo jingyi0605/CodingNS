@@ -202,6 +202,7 @@ vi.mock("@xterm/xterm", () => ({
     cols = 120;
     rows = 30;
     renderedContent = "";
+    element: HTMLElement | null = null;
     options = {
       fontSize: 14
     };
@@ -258,9 +259,20 @@ vi.mock("@xterm/xterm", () => ({
     }
 
     open(container: HTMLElement) {
+      const xtermRoot = document.createElement("div");
+      xtermRoot.className = "xterm";
+      const viewport = document.createElement("div");
+      viewport.className = "xterm-viewport";
+      const screen = document.createElement("div");
+      screen.className = "xterm-screen";
+      const scrollArea = document.createElement("div");
+      scrollArea.className = "xterm-scroll-area";
       const marker = document.createElement("div");
       marker.setAttribute("data-testid", "mock-xterm");
-      container.append(marker);
+      screen.append(marker);
+      xtermRoot.append(viewport, screen, scrollArea);
+      container.append(xtermRoot);
+      this.element = xtermRoot;
     }
 
     write(_content: string, callback?: () => void) {
@@ -1069,7 +1081,7 @@ describe("TerminalPage", () => {
     await screen.findByText("工作终端");
     await waitFor(() => {
       const terminalMarker = screen.getByTestId("mock-xterm");
-      const viewportHost = terminalMarker.parentElement;
+      const viewportHost = terminalMarker.closest(".terminal-xterm");
       expect(viewportHost).not.toBeNull();
       expect(viewportHost?.style.getPropertyValue("--terminal-bottom-gap")).toBe("28px");
     });
