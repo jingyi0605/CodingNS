@@ -504,7 +504,7 @@ function mergeResolvedUserMessage(
   authoritative: SessionMessageViewModel,
   optimistic: SessionMessageViewModel | null
 ): SessionMessageViewModel {
-  if (!optimistic || !shouldPreserveOptimisticPlacement(optimistic, authoritative)) {
+  if (!optimistic) {
     return authoritative;
   }
 
@@ -512,8 +512,6 @@ function mergeResolvedUserMessage(
 
   return {
     ...authoritative,
-    sequence: optimistic.sequence,
-    timestamp: optimistic.timestamp,
     attachments:
       authoritativeAttachments.length > 0 ? authoritativeAttachments : optimistic.attachments ?? [],
     attachmentPayloads: optimistic.attachmentPayloads ?? null
@@ -549,18 +547,6 @@ function mergeAuthoritativeVersion(
     timestamp: current.timestamp.localeCompare(incoming.timestamp) >= 0 ? current.timestamp : incoming.timestamp,
     sequence: Math.max(current.sequence, incoming.sequence)
   };
-}
-
-function shouldPreserveOptimisticPlacement(
-  optimistic: SessionMessageViewModel,
-  authoritative: SessionMessageViewModel
-): boolean {
-  return (
-    isOptimisticUserMessage(optimistic) &&
-    authoritative.role === "user" &&
-    authoritative.kind === "text" &&
-    optimistic.sequence > authoritative.sequence
-  );
 }
 
 function isEquivalentCodexTextMessage(

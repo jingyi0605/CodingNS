@@ -601,7 +601,7 @@ describe("session runtime machine", () => {
     expect(reconciled[0].deliveryState).toBe("sent");
   });
 
-  it("发送成功后如果正式消息序号更小，会先保留 pending 的底部位置", () => {
+  it("发送成功后会回到权威时间线顺序，避免后续 assistant 插到 user 前面", () => {
     const historical = toViewMessage(
       "session-1",
       createHistoryMessage({
@@ -610,9 +610,9 @@ describe("session runtime machine", () => {
         providerSessionId: "raw-2",
         role: "assistant",
         content: "上一条",
-        timestamp: "2026-03-23T10:00:04.000Z",
-        sequence: 50,
-        rawRef: "claude-code://demo#50&part=0"
+        timestamp: "2026-03-23T10:00:01.000Z",
+        sequence: 1,
+        rawRef: "claude-code://demo#1&part=0"
       })
     );
     const pending = createPendingMessage("session-1", "先发出去", "client-1");
@@ -631,10 +631,30 @@ describe("session runtime machine", () => {
       }),
       "client-1"
     );
+    const merged = mergeAuthoritativeMessages(reconciled, "session-1", [
+      createHistoryMessage({
+        messageId: "assistant-2",
+        provider: "claude-code",
+        providerSessionId: "raw-2",
+        role: "assistant",
+        content: "收到",
+        timestamp: "2026-03-23T10:00:06.000Z",
+        sequence: 4,
+        rawRef: "claude-code://demo#4&part=0"
+      })
+    ]);
 
-    expect(reconciled).toHaveLength(2);
-    expect(reconciled.at(-1)?.id).toBe("server-1");
-    expect(reconciled.at(-1)?.sequence).toBe(Number.MAX_SAFE_INTEGER);
+    expect(merged).toHaveLength(3);
+    expect(merged.map((message) => message.id)).toEqual([
+      "history-1",
+      "server-1",
+      "assistant-2"
+    ]);
+    expect(merged.map((message) => message.role)).toEqual([
+      "assistant",
+      "user",
+      "assistant"
+    ]);
   });
 
   it("会用权威 user 消息替换 synthetic 首条消息，避免重复显示", () => {
