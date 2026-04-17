@@ -17,6 +17,11 @@ import type {
 } from "./butler-auth-service.js";
 import type { SkillManagerService } from "../skills/skill-manager-service.js";
 
+const BUTLER_SHARED_RULES_FILE_NAME = "BUTLER_RULES.md";
+const BUTLER_AGENTS_FILE_NAME = "AGENTS.md";
+const BUTLER_CLAUDE_FILE_NAME = "CLAUDE.md";
+const BUTLER_ASSISTANT_SKILL_DIRECTORY = "codingns-assistant";
+
 export function syncButlerWorkspaceContext(input: {
   profile: ButlerProfile;
   promptContext: ButlerPromptContext;
@@ -25,6 +30,7 @@ export function syncButlerWorkspaceContext(input: {
   skillManagerService: Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">;
   codexHomeDir: string | null;
   sourceCodexHomeDir: string | null;
+  claudeCodeHomeDir: string | null;
 }): void {
   fs.mkdirSync(input.profile.workspacePath, { recursive: true });
   ensureButlerWorkspaceIsolation(input.profile.workspacePath);
@@ -38,6 +44,10 @@ export function syncButlerWorkspaceContext(input: {
     input.codexHomeDir,
     input.sourceCodexHomeDir
   );
+  syncClaudeInstructionConfig(
+    input.skillManagerService,
+    input.claudeCodeHomeDir
+  );
 }
 
 function writeInstructionFiles(
@@ -46,16 +56,14 @@ function writeInstructionFiles(
   auth: ButlerWorkspaceCredential,
   authFilePath: string
 ): void {
-  const rootAgentsPath = path.join(profile.workspacePath, "AGENTS.md");
-  writeFileIfChanged(rootAgentsPath, composeInstructionContent(profile, promptContext));
+  const artifacts = buildButlerInstructionArtifacts(profile, promptContext);
+
+  writeFileIfChanged(artifacts.sharedRulesPath, artifacts.sharedRulesContent);
+  writeFileIfChanged(artifacts.rootAgentsPath, artifacts.agentsContent);
+  writeFileIfChanged(artifacts.rootClaudePath, artifacts.claudeContent);
 
   if (profile.agentsMode === "file" && profile.agentsFilePath) {
-    writeFileIfChanged(profile.agentsFilePath, composeInstructionContent(profile, promptContext));
-  }
-
-  if (profile.providerId === "claude-code") {
-    const claudeFilePath = path.join(profile.workspacePath, "CLAUDE.md");
-    writeFileIfChanged(claudeFilePath, composeInstructionContent(profile, promptContext));
+    writeFileIfChanged(profile.agentsFilePath, artifacts.agentsContent);
   }
 
   writeFileIfChanged(
@@ -106,16 +114,55 @@ function syncCodexInstructionConfig(
   writeFileIfChanged(path.join(targetHomeDir, "config.toml"), `${configContent}\n`);
 }
 
+function syncClaudeInstructionConfig(
+  skillManagerService: Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">,
+  claudeCodeHomeDir: string | null
+): void {
+  if (!claudeCodeHomeDir?.trim()) {
+    return;
+  }
+
+  const targetHomeDir = path.resolve(claudeCodeHomeDir);
+  const managedSettingsPath = path.join(targetHomeDir, "managed-settings.json");
+
+  fs.mkdirSync(targetHomeDir, { recursive: true });
+  syncButlerClaudeSkill(
+    skillManagerService,
+    path.join(targetHomeDir, "skills", "codingns-assistant")
+  );
+  writeFileIfChanged(
+    managedSettingsPath,
+    `${JSON.stringify({
+      managedBy: "codingns-butler",
+      configScope: "assistant-only"
+    }, null, 2)}\n`
+  );
+}
+
 function syncButlerCodexSkill(
   skillManagerService: Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">,
   targetSkillPath: string
 ): void {
-  const skillDirectoryName = "codingns-assistant";
+  syncManagedButlerSkill(skillManagerService, "codex", targetSkillPath);
+}
+
+function syncButlerClaudeSkill(
+  skillManagerService: Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">,
+  targetSkillPath: string
+): void {
+  syncManagedButlerSkill(skillManagerService, "claude-code", targetSkillPath);
+}
+
+function syncManagedButlerSkill(
+  skillManagerService: Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">,
+  targetCli: "codex" | "claude-code",
+  targetSkillPath: string
+): void {
   const overview = skillManagerService.getOverview({
-    targetCli: ["codex"]
+    targetCli: [targetCli]
   });
   const managedSkill = overview.managedSkills.find(
-    (item) => item.skill.directoryName === skillDirectoryName
+    (item) => item.skill.directoryName === BUTLER_ASSISTANT_SKILL_DIRECTORY
   );
 
   if (managedSkill) {
@@ -124,12 +171,12 @@ function syncButlerCodexSkill(
   }
 
   const unmanagedEntry = overview.unmanagedEntries.find(
-    (entry) => entry.targetCli === "codex" && entry.directoryName === skillDirectoryName
+    (entry) => entry.targetCli === targetCli && entry.directoryName === BUTLER_ASSISTANT_SKILL_DIRECTORY
   );
 
   if (unmanagedEntry) {
     const imported = skillManagerService.importUnmanagedSkill({
-      targetCli: "codex",
+      targetCli,
       directoryPath: unmanagedEntry.directoryPath,
       expectedContentHash: unmanagedEntry.contentHash
     });
@@ -140,22 +187,46 @@ function syncButlerCodexSkill(
   fs.rmSync(targetSkillPath, { recursive: true, force: true });
 }
 
-function composeInstructionContent(
+function buildButlerInstructionArtifacts(
+  profile: ButlerProfile,
+  promptContext: ButlerPromptContext
+): {
+  sharedRulesPath: string;
+  rootAgentsPath: string;
+  rootClaudePath: string;
+  sharedRulesContent: string;
+  agentsContent: string;
+  claudeContent: string;
+} {
+  const sharedInstructionBody = composeSharedInstructionBody(profile, promptContext);
+
+  return {
+    sharedRulesPath: path.join(profile.workspacePath, BUTLER_SHARED_RULES_FILE_NAME),
+    rootAgentsPath: path.join(profile.workspacePath, BUTLER_AGENTS_FILE_NAME),
+    rootClaudePath: path.join(profile.workspacePath, BUTLER_CLAUDE_FILE_NAME),
+    sharedRulesContent: composeSharedInstructionSourceDocument(sharedInstructionBody),
+    agentsContent: composeProviderInstructionDocument("codex", sharedInstructionBody),
+    claudeContent: composeProviderInstructionDocument("claude-code", sharedInstructionBody)
+  };
+}
+
+function composeSharedInstructionBody(
   profile: ButlerProfile,
   promptContext: ButlerPromptContext
 ): string {
-  return `${profile.agentsContent.trim()}
+  return `${normalizeSharedInstructionSeed(profile.agentsContent)}
 
-## 代码助手运行附加说明（系统自动生成）
+## 代码助手共享规则正文（系统自动生成）
 
 - 当前工作目录是代码助手专用目录，只使用这里的助手规则，不回退到普通项目会话规则。
+- \`${BUTLER_SHARED_RULES_FILE_NAME}\` 是共享规则源；\`${BUTLER_AGENTS_FILE_NAME}\` 和 \`${BUTLER_CLAUDE_FILE_NAME}\` 都是从这里自动展开出来的下游文件。
 - 你是代码助手控制面，不是项目实现者。默认职责只有：查看、分析、归纳、补查信息、安排下一步、把指令发送给真实项目会话或终端。
 - 禁止直接改业务项目代码、禁止直接生成补丁并落盘、禁止自己在项目目录里写实现。用户要推进开发时，只能通过内部 API 续接/新建项目会话、发送消息、查询结果，或者操作受控终端。
 - 如果用户要求“修改代码”“继续实现”“修 bug”，先定位目标项目和目标会话；没有会话就先新建/续接项目会话，再把任务发给那个会话继续做，不要自己在 Butler 工作目录里动手。
 - 当前聚合后的平台摘要写在 \`BUTLER_CONTEXT.md\`，先看这里，不要把所有项目原始记录一股脑塞进回答。
 - 当前摘要作用域以 \`BUTLER_CONTEXT.md\` 的最新内容为准；这次生成时记录的是：${promptContext.scope === "project" ? `项目 ${promptContext.projectId}` : "全局总览"}。如果后续上下文文件已刷新，以文件里的当前作用域为准，不要被旧缓存绑死。
 - 你自己的主工具入口不是一堆 HTTP 路由，而是 \`codingns assistant ...\`。真正执行前，先用 \`codingns assistant --help\`、\`codingns assistant help <group>\`、\`codingns assistant <group> <action> --help\` 按需查命令。
-- 如果当前 Codex 环境能发现 \`codingns-assistant\` skill，优先按这个 skill 的流程工作：先确认 CLI 的默认认证入口可用，再查能力，再查项目/会话/终端，再决定是否发送消息、fork 或发终端输入。
+- 如果当前 CLI 环境能发现 \`${BUTLER_ASSISTANT_SKILL_DIRECTORY}\` skill，优先按这个 skill 的流程工作：先确认 CLI 的默认认证入口可用，再查能力，再查项目/会话/终端，再决定是否发送消息、fork 或发终端输入。
 - 默认查询顺序固定为：先看 \`BUTLER_CONTEXT.md\`，再确认 CLI 认证入口可用，然后用 \`codingns assistant capabilities list\` 确认能力，再按 \`projects / sessions / terminals\` 分组查具体对象；不要先翻一大堆旧 REST 文档。
 - 如果你在跟进开发会话，且目标或上下文里提到了 spec，只能围绕 spec 明确写出的必做项推进，不能顺着建议项无限扩展开发范围。
 - 如果当前没有 spec，就先从用户要求和会话现状里归纳一句核心任务，后续只围绕这个核心任务推进；不要把建议项、最佳实践、顺手优化当成必做项。
@@ -167,6 +238,61 @@ function composeInstructionContent(
 - 如果你决定“等待真实会话回复”“几分钟后再检查”“到某个具体时间再继续”，不能只在回答里口头承诺，必须立刻用 \`codingns assistant timers create ...\` 创建计时器，让系统到点后自动续回当前助手会话。
 - 不要编造不存在的项目状态；信息不足时直接说缺什么。
 `;
+}
+
+function composeSharedInstructionSourceDocument(sharedInstructionBody: string): string {
+  return `# ${BUTLER_SHARED_RULES_FILE_NAME}
+
+> 这是代码助手的共享规则源。
+> \`${BUTLER_AGENTS_FILE_NAME}\` 和 \`${BUTLER_CLAUDE_FILE_NAME}\` 都会从这里自动同步生成。
+> 如果需要改共享规则，改这里对应的生成源，不要直接手改下游文件。
+
+${sharedInstructionBody.trim()}
+`;
+}
+
+function composeProviderInstructionDocument(
+  provider: "codex" | "claude-code",
+  sharedInstructionBody: string
+): string {
+  const targetFileName = provider === "codex" ? BUTLER_AGENTS_FILE_NAME : BUTLER_CLAUDE_FILE_NAME;
+
+  return `# ${targetFileName}
+
+> 此文件由 \`${BUTLER_SHARED_RULES_FILE_NAME}\` 自动生成。
+> 共享正文修改入口是共享规则源；这里只追加 ${provider === "codex" ? "Codex" : "Claude Code"} 的增量覆盖段。
+
+${sharedInstructionBody.trim()}
+
+${composeProviderInstructionOverlay(provider)}
+`;
+}
+
+function composeProviderInstructionOverlay(provider: "codex" | "claude-code"): string {
+  if (provider === "claude-code") {
+    return `## Claude Code 增量覆盖
+
+- 这份规则会通过 \`--system-prompt-file\` 显式注入，不依赖 \`CLAUDE.md\` 自动发现。
+- 当前 Claude Code 会话的 \`CLAUDE_CONFIG_DIR\`、\`HOME\`、\`XDG_*\`、\`APPDATA\` 都会切到助手专用目录。
+- 禁止读取、依赖、假设用户真实 \`~/.claude\` 目录下的 settings、hooks、rules、plugins 还会继续生效。
+- 如果当前 Claude Code 环境能发现 \`${BUTLER_ASSISTANT_SKILL_DIRECTORY}\` skill，按这个 skill 的流程工作；如果 skill 缺失，只能按共享规则和当前工作区文件继续执行。`;
+  }
+
+  return `## Codex 增量覆盖
+
+- 这份规则会通过 Codex 的 \`model_instructions_file\` 显式注入。
+- 当前 Codex 使用的是助手专用 home；如果专用 home 里的规则和普通项目目录冲突，以这份生成文件为准。
+- 如果当前 Codex 环境能发现 \`${BUTLER_ASSISTANT_SKILL_DIRECTORY}\` skill，优先按 skill 的流程工作。`;
+}
+
+function normalizeSharedInstructionSeed(content: string): string {
+  const normalized = content.trim();
+  const strippedTitle = normalized.replace(
+    /^#\s*(AGENTS\.md|CLAUDE\.md|BUTLER_RULES\.md)\s*\n+/i,
+    ""
+  ).trim();
+
+  return strippedTitle || normalized;
 }
 
 function buildApiGuideContent(auth: ButlerWorkspaceCredential, authFilePath: string): string {

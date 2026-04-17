@@ -17,7 +17,7 @@ const builtinSkillRootDir = path.join(
 const builtinSkillSpecs = [
   {
     directoryName: "codingns-assistant",
-    targetCli: ["codex"] as const
+    targetCli: ["codex", "claude-code"] as const
   }
 ] as const;
 
