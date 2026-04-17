@@ -33,7 +33,7 @@ afterEach(async () => {
 });
 
 describe("butler profile routes", () => {
-  it("未初始化时返回 initialized=false，初始化后可持久化读取", async () => {
+  it("未初始化时返回 initialized=false，初始化后可持久化读取 claude-code 档案", async () => {
     const fixture = createEmptyFixture();
     const databasePath = path.join(fixture.rootDir, "host.sqlite");
     const butlerWorkspace = path.join(fixture.rootDir, "butler-workspace");
@@ -71,7 +71,7 @@ describe("butler profile routes", () => {
       },
       payload: {
         displayName: "阿尔文",
-        providerId: "codex",
+        providerId: "claude-code",
         workspacePath: butlerWorkspace,
         agentsMode: "file",
         agentsFilePath,
@@ -94,7 +94,7 @@ describe("butler profile routes", () => {
       initialized: true,
       profile: {
         displayName: "阿尔文",
-        providerId: "codex",
+        providerId: "claude-code",
         workspacePath: butlerWorkspace,
         agentsMode: "file",
         agentsFilePath,
@@ -135,7 +135,7 @@ describe("butler profile routes", () => {
       initialized: true,
       profile: {
         displayName: "阿尔文",
-        providerId: "codex",
+        providerId: "claude-code",
         workspacePath: butlerWorkspace,
         agentsMode: "file",
         agentsFilePath
@@ -216,7 +216,7 @@ describe("butler profile routes", () => {
     });
   });
 
-  it("初始化后可以更新指令模式和关注重点，provider 固定为 codex", async () => {
+  it("初始化后可以更新指令模式、关注重点和 provider", async () => {
     const fixture = createEmptyFixture();
     const databasePath = path.join(fixture.rootDir, "host.sqlite");
     const butlerWorkspace = path.join(fixture.rootDir, "butler-workspace");
@@ -265,7 +265,7 @@ describe("butler profile routes", () => {
         authorization: `Bearer ${accessToken}`
       },
       payload: {
-        providerId: "codex",
+        providerId: "claude-code",
         agentsMode: "inline",
         agentsContent: "# AGENTS.md\n你现在按风险优先汇报。",
         focus: {
@@ -281,7 +281,7 @@ describe("butler profile routes", () => {
       initialized: true,
       profile: {
         displayName: "阿尔文",
-        providerId: "codex",
+        providerId: "claude-code",
         workspacePath: butlerWorkspace,
         agentsMode: "inline",
         agentsFilePath: null,

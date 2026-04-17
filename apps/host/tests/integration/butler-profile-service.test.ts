@@ -176,7 +176,7 @@ describe("ButlerProfileService", () => {
     expect(profile.agentsContent).toContain("如果上层仓库、默认配置或普通项目会话规则和这里冲突");
   });
 
-  it("读取历史档案时会把 claude-code 自动收敛回 codex", () => {
+  it("读取历史档案时会保留 claude-code provider", () => {
     const service = new ButlerProfileService(
       {
         find: vi.fn(() => ({
@@ -208,7 +208,7 @@ describe("ButlerProfileService", () => {
     );
 
     expect(service.getProfile()).toMatchObject({
-      providerId: "codex"
+      providerId: "claude-code"
     });
   });
 });

@@ -23,7 +23,7 @@ afterEach(() => {
 });
 
 describe("SkillManagerService.ensureBuiltinSkill", () => {
-  it("会用内置 skill 更新 SSOT，并强制覆盖目标 Codex 目录", () => {
+  it("会用内置 skill 更新 SSOT，并强制覆盖 Codex 与 Claude Code 目录", () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-skill-builtin-"));
     tempDirs.push(tempDir);
     const database = createDatabaseClient(":memory:");
@@ -32,9 +32,11 @@ describe("SkillManagerService.ensureBuiltinSkill", () => {
     const ssotRootDir = path.join(tempDir, "skill-ssot");
     const builtinRoot = path.join(tempDir, "builtin");
     const codexRoot = path.join(tempDir, "codex-skills");
+    const claudeRoot = path.join(tempDir, "claude-skills");
 
     mkdirSync(builtinRoot, { recursive: true });
     mkdirSync(codexRoot, { recursive: true });
+    mkdirSync(claudeRoot, { recursive: true });
 
     const builtinPath = createSkillDirectory(builtinRoot, "codingns-assistant", {
       "SKILL.md": "# CodingNS Assistant\n\n这是新的内置版本。",
@@ -60,7 +62,10 @@ describe("SkillManagerService.ensureBuiltinSkill", () => {
     const service = new SkillManagerService(
       managedSkillRepository,
       skillTargetBindingRepository,
-      [createAdapter("codex", codexRoot)],
+      [
+        createAdapter("codex", codexRoot),
+        createAdapter("claude-code", claudeRoot)
+      ],
       {
         ssotRootDir,
         now: () => "2026-04-16T10:00:00.000Z"
@@ -69,7 +74,7 @@ describe("SkillManagerService.ensureBuiltinSkill", () => {
 
     const result = service.ensureBuiltinSkill({
       sourcePath: builtinPath,
-      targetCli: ["codex"]
+      targetCli: ["codex", "claude-code"]
     });
 
     database.close();
@@ -84,10 +89,21 @@ describe("SkillManagerService.ensureBuiltinSkill", () => {
         lastSyncedAt: "2026-04-16T10:00:00.000Z",
         errorCode: null,
         errorDetail: null
+      },
+      {
+        targetCli: "claude-code",
+        targetDir: path.join(claudeRoot, "codingns-assistant"),
+        syncStatus: "synced",
+        lastSyncedAt: "2026-04-16T10:00:00.000Z",
+        errorCode: null,
+        errorDetail: null
       }
     ]);
     expect(existsSync(path.join(ssotRootDir, "codingns-assistant", "SKILL.md"))).toBe(true);
     expect(readFileSync(path.join(codexRoot, "codingns-assistant", "SKILL.md"), "utf8")).toContain(
+      "新的内置版本"
+    );
+    expect(readFileSync(path.join(claudeRoot, "codingns-assistant", "SKILL.md"), "utf8")).toContain(
       "新的内置版本"
     );
   });

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 
 import { ClaudeRuntimeAdapter } from "../dist/runtime/claude-runtime.js";
 
-function createRuntimeRequest(workspacePath, permissionMode) {
+function createRuntimeRequest(workspacePath, permissionMode, overrides = {}) {
   return {
     sessionId: "session-1",
     workspaceId: "workspace-1",
@@ -21,7 +21,9 @@ function createRuntimeRequest(workspacePath, permissionMode) {
       reasoningLevel: null,
       permissionMode,
       providerPrompt: "首条消息",
-      attachments: []
+      providerInstructionFilePath: null,
+      attachments: [],
+      ...overrides
     }
   };
 }
@@ -183,6 +185,99 @@ rl.once("line", () => {
     const hookCommand = settings.hooks.PreToolUse[0]?.hooks?.[0]?.command ?? "";
     assert.match(hookCommand, /bridge\.cjs/);
     assert.doesNotMatch(hookCommand, /claude-hook-bridge\.cmd/i);
+  } finally {
+    rmSync(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeRuntimeAdapter 会隔离 Claude 配置目录并显式注入系统规则文件", async () => {
+  const rootDir = mkdtempSync(join(tmpdir(), "codingns-claude-env-"));
+  const scriptPath = join(rootDir, "fake-claude-env.mjs");
+  const argvPath = join(rootDir, "argv.json");
+  const envPath = join(rootDir, "env.json");
+  const homeDir = join(rootDir, ".claude");
+  const instructionFilePath = join(rootDir, "CLAUDE.md");
+
+  writeFileSync(
+    instructionFilePath,
+    "# Claude Rules\n\n- 只读 Butler 专用规则\n",
+    "utf8"
+  );
+  writeFileSync(
+    scriptPath,
+    `#!/usr/bin/env node
+import fs from "node:fs";
+import readline from "node:readline";
+
+fs.writeFileSync(${JSON.stringify(argvPath)}, JSON.stringify(process.argv.slice(2)), "utf8");
+fs.writeFileSync(${JSON.stringify(envPath)}, JSON.stringify({
+  CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR ?? null,
+  HOME: process.env.HOME ?? null,
+  USERPROFILE: process.env.USERPROFILE ?? null,
+  XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME ?? null,
+  XDG_DATA_HOME: process.env.XDG_DATA_HOME ?? null,
+  XDG_STATE_HOME: process.env.XDG_STATE_HOME ?? null,
+  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME ?? null,
+  APPDATA: process.env.APPDATA ?? null,
+  LOCALAPPDATA: process.env.LOCALAPPDATA ?? null
+}), "utf8");
+
+const rl = readline.createInterface({ input: process.stdin });
+rl.once("line", () => {
+  process.stdout.write(JSON.stringify({
+    type: "assistant",
+    session_id: "claude-session-env-1",
+    timestamp: new Date().toISOString(),
+    message: {
+      content: [
+        {
+          type: "text",
+          text: "ok"
+        }
+      ]
+    }
+  }) + "\\n");
+  process.exit(0);
+});
+`,
+    "utf8"
+  );
+  chmodSync(scriptPath, 0o755);
+  const commandPath = createCommandPath(rootDir, scriptPath);
+
+  const adapter = new ClaudeRuntimeAdapter({
+    homeDir,
+    commandPath
+  });
+
+  try {
+    const launch = await adapter.startSession(
+      createRuntimeRequest(rootDir, "default", {
+        providerInstructionFilePath: instructionFilePath
+      }),
+      {
+        emit: async () => undefined,
+        updateSessionBinding: () => undefined
+      }
+    );
+
+    await launch.completed;
+
+    const argv = JSON.parse(readFileSync(argvPath, "utf8"));
+    const env = JSON.parse(readFileSync(envPath, "utf8"));
+    const instructionFlagIndex = argv.indexOf("--system-prompt-file");
+
+    assert.notEqual(instructionFlagIndex, -1);
+    assert.equal(argv[instructionFlagIndex + 1], instructionFilePath);
+    assert.equal(env.CLAUDE_CONFIG_DIR, homeDir);
+    assert.equal(env.HOME, homeDir);
+    assert.equal(env.USERPROFILE, homeDir);
+    assert.equal(env.XDG_CONFIG_HOME, join(homeDir, "xdg-config"));
+    assert.equal(env.XDG_DATA_HOME, join(homeDir, "xdg-data"));
+    assert.equal(env.XDG_STATE_HOME, join(homeDir, "xdg-state"));
+    assert.equal(env.XDG_CACHE_HOME, join(homeDir, "xdg-cache"));
+    assert.equal(env.APPDATA, join(homeDir, "appdata"));
+    assert.equal(env.LOCALAPPDATA, join(homeDir, "localappdata"));
   } finally {
     rmSync(rootDir, { recursive: true, force: true });
   }

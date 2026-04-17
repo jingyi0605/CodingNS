@@ -520,7 +520,7 @@ describe("ButlerPage", () => {
     expect(screen.queryByText("AGENTS 规则内容")).not.toBeInTheDocument();
     const initProviderSelect = screen.getByRole("combobox", { name: t("shell.butlerProviderLabel") });
     expect(within(initProviderSelect).getByRole("option", { name: "Codex" })).toBeInTheDocument();
-    expect(within(initProviderSelect).queryByRole("option", { name: "Claude Code" })).not.toBeInTheDocument();
+    expect(within(initProviderSelect).getByRole("option", { name: "Claude Code" })).toBeInTheDocument();
 
     const submitButton = screen.getByRole("button", { name: t("shell.butlerInitSubmit") });
     fireEvent.click(submitButton);
@@ -539,13 +539,19 @@ describe("ButlerPage", () => {
         value: "阿尔文"
       }
     });
+    fireEvent.change(initProviderSelect, {
+      target: {
+        value: "claude-code"
+      }
+    });
 
     fireEvent.click(submitButton);
 
     await waitFor(() => {
       expect(mockedInitButlerProfile).toHaveBeenCalledWith(
         expect.objectContaining({
-          displayName: "阿尔文"
+          displayName: "阿尔文",
+          providerId: "claude-code"
         })
       );
     });
@@ -646,7 +652,7 @@ describe("ButlerPage", () => {
 
     const providerSelect = screen.getByRole("combobox", { name: t("shell.butlerProviderLabel") });
     expect(within(providerSelect).getByRole("option", { name: "Codex" })).toBeInTheDocument();
-    expect(within(providerSelect).queryByRole("option", { name: "Claude Code" })).not.toBeInTheDocument();
+    expect(within(providerSelect).getByRole("option", { name: "Claude Code" })).toBeInTheDocument();
 
     expect(screen.getByTestId("butler-message-timeline")).toHaveTextContent(/\S/);
 
