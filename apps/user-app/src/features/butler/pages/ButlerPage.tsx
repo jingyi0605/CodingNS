@@ -1,6 +1,16 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent
+} from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
+import { resolveMacOsNativeTitlebarDragRegion } from "../../../platform/desktop/window-drag";
+import { usePlatform } from "../../../platform/platform-provider";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
@@ -32,6 +42,8 @@ import type {
 import {
   analyzeButlerInboxItem,
   cancelButlerControlTimer,
+  cancelButlerFollowUpTask,
+  cancelButlerVerificationRun,
   getButlerFollowUpTask,
   listButlerControlSessions,
   listButlerControlTimers,
@@ -167,6 +179,8 @@ async function writeTextToClipboard(text: string): Promise<void> {
 }
 
 export function ButlerPage() {
+  const platform = usePlatform();
+  const macOsNativeTitlebarDragRegion = resolveMacOsNativeTitlebarDragRegion(platform);
   const { workspaceId = "" } = useParams();
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -194,6 +208,8 @@ export function ButlerPage() {
   const [detailTask, setDetailTask] = useState<ButlerFollowUpTaskDto | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [cancellingFollowUpTaskId, setCancellingFollowUpTaskId] = useState<string | null>(null);
+  const [cancellingVerificationId, setCancellingVerificationId] = useState<string | null>(null);
   const [cancellingTimerId, setCancellingTimerId] = useState<string | null>(null);
   const [executingTimerId, setExecutingTimerId] = useState<string | null>(null);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
@@ -361,6 +377,51 @@ export function ButlerPage() {
       setDetailLoading(false);
     }
   }, []);
+  const handleCancelFollowUpTask = useCallback(async (task: ButlerFollowUpTaskDto) => {
+    setCancellingFollowUpTaskId(task.id);
+
+    try {
+      const response = await cancelButlerFollowUpTask(task.id);
+      setFollowUpTasks((current) => replaceFollowUpTask(current, response.task));
+      showToast({
+        title: t("conversation.butlerFollowUpStopped"),
+        description: t("conversation.butlerFollowUpStoppedDescription"),
+        tone: "success"
+      });
+      await store.reloadEventsAndOverview();
+      requestNavigationRefresh();
+    } catch (error) {
+      showToast({
+        title: t("conversation.butlerFollowUpStopFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error"
+      });
+    } finally {
+      setCancellingFollowUpTaskId(null);
+    }
+  }, [requestNavigationRefresh, showToast, store]);
+  const handleCancelVerificationRun = useCallback(async (verification: ButlerVerificationDigestDto) => {
+    setCancellingVerificationId(verification.id);
+
+    try {
+      await cancelButlerVerificationRun(verification.projectId, verification.id);
+      showToast({
+        title: t("conversation.butlerVerificationStopped"),
+        description: t("conversation.butlerVerificationStoppedDescription"),
+        tone: "success"
+      });
+      await store.reloadEventsAndOverview();
+      requestNavigationRefresh();
+    } catch (error) {
+      showToast({
+        title: t("conversation.butlerVerificationStopFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error"
+      });
+    } finally {
+      setCancellingVerificationId(null);
+    }
+  }, [requestNavigationRefresh, showToast, store]);
   const handleAnalyzeTodo = useCallback(async (item: ButlerInboxItemDto) => {
     setTodoActionState({
       itemId: item.id,
@@ -809,6 +870,8 @@ export function ButlerPage() {
         followUpTasks={followUpTasks}
         patrolPlans={patrolPlans}
         controlTimers={controlTimers}
+        cancellingFollowUpTaskId={cancellingFollowUpTaskId}
+        cancellingVerificationId={cancellingVerificationId}
         cancellingTimerId={cancellingTimerId}
         settingsForm={settingsForm}
         savingSettings={savingSettings}
@@ -816,6 +879,8 @@ export function ButlerPage() {
         onOpenVerificationHistory={handleOpenVerificationHistory}
         onOpenAutomationHistory={handleOpenAutomationHistory}
         onOpenFollowUpDetail={handleOpenFollowUpDetail}
+        onCancelFollowUpTask={handleCancelFollowUpTask}
+        onCancelVerificationRun={handleCancelVerificationRun}
         onCancelControlTimer={handleCancelControlTimer}
         onAnalyzeTodo={handleAnalyzeTodo}
         onStartTodoSession={handleStartTodoSession}
@@ -844,9 +909,13 @@ export function ButlerPage() {
       handleStartTodoSession,
       inboxItems,
       controlTimers,
+      cancellingFollowUpTaskId,
+      cancellingVerificationId,
       overview,
       patrolPlans,
       cancellingTimerId,
+      handleCancelFollowUpTask,
+      handleCancelVerificationRun,
       savingSettings,
       settingsForm,
       todoActionState
@@ -1247,139 +1316,147 @@ export function ButlerPage() {
   return (
     <>
       <main className="workbench-page conversation-page-shell butler-page-shell butler-chat-workspace">
-        <header className="workbench-auxiliary-header butler-main-header" data-window-drag-handle="conversation-header">
-        <div className="butler-header-main">
+        <header
+          className="workbench-auxiliary-header butler-main-header"
+          data-window-drag-handle="conversation-header"
+          data-tauri-drag-region={macOsNativeTitlebarDragRegion}
+        >
           <div
-            className="butler-header-analysis-anchor"
-            onMouseEnter={() => {
-              setAnalysisOpen(true);
-            }}
-            onMouseLeave={() => {
-              setAnalysisOpen(false);
-            }}
+            className="butler-header-main"
+            data-tauri-drag-region={macOsNativeTitlebarDragRegion}
           >
-            <div className="butler-chat-avatar" aria-hidden="true">
-              <span>{butlerAvatar}</span>
-            </div>
-            <div className="butler-main-heading">
-              <h1
-                tabIndex={0}
-                onFocus={() => {
-                  setAnalysisOpen(true);
-                }}
-                onBlur={() => {
-                  setAnalysisOpen(false);
-                }}
-              >
-                {butlerDisplayName}
-              </h1>
-            </div>
-            {analysisOpen ? (
-              <div className="butler-header-analysis-popover" role="status" aria-live="polite">
-                <strong>{t("conversation.butlerAnalysisTitle")}</strong>
-                {analysisTasks.length > 0 ? (
-                  analysisTasks.map((task) => (
-                    <div key={task.id} className="butler-header-analysis-item">
-                      <p>
-                        {t("conversation.butlerAnalysisObjectiveLabel")}：{task.objective}
-                      </p>
-                      <p>
-                        {t("conversation.butlerAnalysisStatusLabel")}：
-                        {resolveFollowUpTaskStatusLabel(task.status)}
-                      </p>
-                      <p>
-                        {t("conversation.butlerAnalysisSummaryLabel")}：
-                        {task.lastAutomationSummary
-                          || task.waitingReason
-                          || t("conversation.butlerAnalysisEmpty")}
-                      </p>
-                    </div>
-                  ))
-                ) : (
-                  <p>{t("conversation.butlerAnalysisEmpty")}</p>
-                )}
-              </div>
-            ) : null}
-          </div>
-        </div>
-        <div className="butler-toolbar-cluster">
-          <div className="butler-provider-switcher">
-            <select
-              aria-label={t("shell.butlerProviderLabel")}
-              value={activeProvider}
-              disabled={providerOptions.length <= 1 || switchingProvider || sending}
-              onChange={(event) => {
-                void handleProviderSwitch(event.target.value as ButlerProviderId);
+            <div
+              className="butler-header-analysis-anchor"
+              onMouseEnter={() => {
+                setAnalysisOpen(true);
+              }}
+              onMouseLeave={() => {
+                setAnalysisOpen(false);
               }}
             >
-              {providerOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+              <div className="butler-chat-avatar" aria-hidden="true">
+                <span>{butlerAvatar}</span>
+              </div>
+              <div className="butler-main-heading">
+                <h1
+                  tabIndex={0}
+                  data-tauri-drag-region={macOsNativeTitlebarDragRegion}
+                  onFocus={() => {
+                    setAnalysisOpen(true);
+                  }}
+                  onBlur={() => {
+                    setAnalysisOpen(false);
+                  }}
+                >
+                  {butlerDisplayName}
+                </h1>
+              </div>
+              {analysisOpen ? (
+                <div className="butler-header-analysis-popover" role="status" aria-live="polite">
+                  <strong>{t("conversation.butlerAnalysisTitle")}</strong>
+                  {analysisTasks.length > 0 ? (
+                    analysisTasks.map((task) => (
+                      <div key={task.id} className="butler-header-analysis-item">
+                        <p>
+                          {t("conversation.butlerAnalysisObjectiveLabel")}：{task.objective}
+                        </p>
+                        <p>
+                          {t("conversation.butlerAnalysisStatusLabel")}：
+                          {resolveFollowUpTaskStatusLabel(task.status)}
+                        </p>
+                        <p>
+                          {t("conversation.butlerAnalysisSummaryLabel")}：
+                          {task.lastAutomationSummary
+                            || task.waitingReason
+                            || t("conversation.butlerAnalysisEmpty")}
+                        </p>
+                      </div>
+                    ))
+                  ) : (
+                    <p>{t("conversation.butlerAnalysisEmpty")}</p>
+                  )}
+                </div>
+              ) : null}
+            </div>
           </div>
-          <button
-            type="button"
-            className="terminal-tab-control butler-header-icon-button"
-            aria-label={t("shell.butlerNewSessionAction")}
-            title={t("shell.butlerNewSessionAction")}
-            disabled={loading || sending || switchingProvider}
-            onClick={() => {
-              void handleStartFreshSession();
-            }}
-          >
-            <span className="terminal-toolbar-icon" aria-hidden="true">
-              <ButlerPlusIcon />
-            </span>
-          </button>
-          <button
-            type="button"
-            className="terminal-tab-control butler-header-icon-button"
-            aria-label={t("shell.butlerHistoryAction")}
-            title={t("shell.butlerHistoryAction")}
-            disabled={loading || sending || switchingProvider}
-            onClick={() => {
-              handleOpenControlHistory();
-            }}
-          >
-            <span className="terminal-toolbar-icon" aria-hidden="true">
-              <ButlerHistoryIcon />
-            </span>
-          </button>
-        </div>
-      </header>
+          <div className="butler-toolbar-cluster">
+            <div className="butler-provider-switcher">
+              <select
+                aria-label={t("shell.butlerProviderLabel")}
+                value={activeProvider}
+                disabled={providerOptions.length <= 1 || switchingProvider || sending}
+                onChange={(event) => {
+                  void handleProviderSwitch(event.target.value as ButlerProviderId);
+                }}
+              >
+                {providerOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="button"
+              className="terminal-tab-control butler-header-icon-button"
+              aria-label={t("shell.butlerNewSessionAction")}
+              title={t("shell.butlerNewSessionAction")}
+              disabled={loading || sending || switchingProvider}
+              onClick={() => {
+                void handleStartFreshSession();
+              }}
+            >
+              <span className="terminal-toolbar-icon" aria-hidden="true">
+                <ButlerPlusIcon />
+              </span>
+            </button>
+            <button
+              type="button"
+              className="terminal-tab-control butler-header-icon-button"
+              aria-label={t("shell.butlerHistoryAction")}
+              title={t("shell.butlerHistoryAction")}
+              disabled={loading || sending || switchingProvider}
+              onClick={() => {
+                handleOpenControlHistory();
+              }}
+            >
+              <span className="terminal-toolbar-icon" aria-hidden="true">
+                <ButlerHistoryIcon />
+              </span>
+            </button>
+          </div>
+        </header>
 
         <section className="butler-main-column">
           <div key={`timeline:${activeProvider}:${viewKey}`} className="butler-conversation-shell">
             <MessageTimeline
-            sessionId={controlSession?.session?.sessionId}
-            messages={messages}
-            historyState={historyState}
-            loadingOlderMessages={loadingOlderMessages}
-            hasOlderMessages={hasOlderMessages}
-            provider={activeProvider}
-            assistantAvatar={
-              <span className="butler-message-avatar" aria-hidden="true">
-                {butlerAvatar}
-              </span>
-            }
-            onLoadOlderMessages={() => {
-              void store.loadOlderMessages();
-            }}
-            onRetryMessage={(clientRequestId) => {
-              const targetMessage = messages.find(
-                (message) => message.clientRequestId === clientRequestId
-              );
-
-              if (targetMessage?.content.trim()) {
-                void store.sendMessage(targetMessage.content);
-                return;
+              sessionId={controlSession?.session?.sessionId}
+              messages={messages}
+              historyState={historyState}
+              loadingOlderMessages={loadingOlderMessages}
+              hasOlderMessages={hasOlderMessages}
+              provider={activeProvider}
+              assistantAvatar={
+                <span className="butler-message-avatar" aria-hidden="true">
+                  {butlerAvatar}
+                </span>
               }
+              onLoadOlderMessages={() => {
+                void store.loadOlderMessages();
+              }}
+              onRetryMessage={(clientRequestId) => {
+                const targetMessage = messages.find(
+                  (message) => message.clientRequestId === clientRequestId
+                );
 
-              void store.retryMessage(clientRequestId);
-            }}
-          />
+                if (targetMessage?.content.trim()) {
+                  void store.sendMessage(targetMessage.content);
+                  return;
+                }
+
+                void store.retryMessage(clientRequestId);
+              }}
+            />
 
             {activeControlTimer ? (
               <ButlerControlTimerBanner
@@ -1447,7 +1524,9 @@ export function ButlerPage() {
       >
         <FollowUpHistoryPanel
           tasks={followUpTasks.filter((task) => !isVisibleFollowUpTask(task.status))}
+          cancellingTaskId={cancellingFollowUpTaskId}
           onOpenFollowUpDetail={handleOpenFollowUpDetail}
+          onCancelFollowUpTask={handleCancelFollowUpTask}
           onClose={() => {
             setFollowUpHistoryOpen(false);
           }}
@@ -1463,6 +1542,8 @@ export function ButlerPage() {
       >
         <VerificationHistoryPanel
           items={buildVerificationRecords(overview?.verifications ?? [], "history")}
+          cancellingVerificationId={cancellingVerificationId}
+          onCancelVerificationRun={handleCancelVerificationRun}
         />
       </WorkbenchModal>
       <WorkbenchModal
@@ -1523,6 +1604,8 @@ function ButlerAuxiliaryPanel(props: {
   followUpTasks: ButlerFollowUpTaskDto[];
   patrolPlans: ButlerPatrolPlanDto[];
   controlTimers: ButlerControlTimerDto[];
+  cancellingFollowUpTaskId: string | null;
+  cancellingVerificationId: string | null;
   cancellingTimerId: string | null;
   settingsForm: ButlerSettingsFormState;
   savingSettings: boolean;
@@ -1530,6 +1613,8 @@ function ButlerAuxiliaryPanel(props: {
   onOpenVerificationHistory: () => void;
   onOpenAutomationHistory: () => void;
   onOpenFollowUpDetail: (taskId: string) => Promise<void>;
+  onCancelFollowUpTask: (task: ButlerFollowUpTaskDto) => Promise<void>;
+  onCancelVerificationRun: (verification: ButlerVerificationDigestDto) => Promise<void>;
   onCancelControlTimer: (timerId: string) => Promise<void>;
   onAnalyzeTodo: (item: ButlerInboxItemDto) => Promise<void>;
   onStartTodoSession: (item: ButlerInboxItemDto) => Promise<void>;
@@ -1554,9 +1639,13 @@ function ButlerAuxiliaryPanel(props: {
         overview={props.overview}
         inboxItems={props.inboxItems}
         followUpTasks={props.followUpTasks}
+        cancellingFollowUpTaskId={props.cancellingFollowUpTaskId}
+        cancellingVerificationId={props.cancellingVerificationId}
         onOpenFollowUpHistory={props.onOpenFollowUpHistory}
         onOpenVerificationHistory={props.onOpenVerificationHistory}
         onOpenFollowUpDetail={props.onOpenFollowUpDetail}
+        onCancelFollowUpTask={props.onCancelFollowUpTask}
+        onCancelVerificationRun={props.onCancelVerificationRun}
         onAnalyzeTodo={props.onAnalyzeTodo}
         onStartTodoSession={props.onStartTodoSession}
         onOpenTodoSession={props.onOpenTodoSession}
@@ -1617,9 +1706,13 @@ function GlobalRecordsSidebarContent(props: {
   overview: ButlerOverviewDto | null;
   inboxItems: ButlerInboxItemDto[];
   followUpTasks: ButlerFollowUpTaskDto[];
+  cancellingFollowUpTaskId: string | null;
+  cancellingVerificationId: string | null;
   onOpenFollowUpHistory: () => void;
   onOpenVerificationHistory: () => void;
   onOpenFollowUpDetail: (taskId: string) => Promise<void>;
+  onCancelFollowUpTask: (task: ButlerFollowUpTaskDto) => Promise<void>;
+  onCancelVerificationRun: (verification: ButlerVerificationDigestDto) => Promise<void>;
   onAnalyzeTodo: (item: ButlerInboxItemDto) => Promise<void>;
   onStartTodoSession: (item: ButlerInboxItemDto) => Promise<void>;
   onOpenTodoSession: (item: ButlerInboxItemDto) => void;
@@ -1646,8 +1739,10 @@ function GlobalRecordsSidebarContent(props: {
     <>
       <FollowUpStatusCard
         tasks={activeFollowUpTasks}
+        cancellingTaskId={props.cancellingFollowUpTaskId}
         onOpenFollowUpHistory={props.onOpenFollowUpHistory}
         onOpenFollowUpDetail={props.onOpenFollowUpDetail}
+        onCancelFollowUpTask={props.onCancelFollowUpTask}
       />
       <GlobalRecordCard
         title={t("shell.butlerInfoVerificationRecordsTitle")}
@@ -1655,6 +1750,8 @@ function GlobalRecordsSidebarContent(props: {
         emptyText={t("shell.butlerInfoVerificationRecordsEmpty")}
         actionLabel={t("shell.butlerFollowUpHistoryAction")}
         onAction={props.onOpenVerificationHistory}
+        cancellingVerificationId={props.cancellingVerificationId}
+        onCancelVerificationRun={props.onCancelVerificationRun}
       />
       <TodoLifecycleCard
         title={t("shell.butlerInfoTodoRecordsTitle")}
@@ -1709,12 +1806,19 @@ function AutomationSidebarContent(props: {
 function GlobalRecordCard(props: {
   title: string;
   items: Array<{
+    id: string;
     title: string;
+    subtitle?: string | null;
+    status?: string | null;
     content: string;
+    meta?: string | null;
+    verification?: ButlerVerificationDigestDto;
   }>;
   emptyText: string;
   actionLabel?: string;
   onAction?: () => void;
+  cancellingVerificationId?: string | null;
+  onCancelVerificationRun?: (verification: ButlerVerificationDigestDto) => Promise<void>;
 }) {
   return (
     <section className="butler-side-card">
@@ -1733,7 +1837,50 @@ function GlobalRecordCard(props: {
       {props.items.length > 0 ? (
         <div className="butler-record-list">
           {props.items.map((item) => (
-            <SimpleInfoBlock key={`${item.title}:${item.content}`} title={item.title} content={item.content} />
+            <article key={item.id} className="butler-follow-up-status-card">
+              <header className="butler-follow-up-status-header">
+                <div className="butler-follow-up-status-title-group">
+                  <strong>{item.title}</strong>
+                  {item.subtitle ? <span>{item.subtitle}</span> : null}
+                </div>
+                {item.status ? (
+                  <span
+                    className="butler-automation-status-badge"
+                    data-status={item.verification ? resolveVerificationBadgeStatus(item.verification.status) : "active"}
+                  >
+                    {item.status}
+                  </span>
+                ) : null}
+              </header>
+              <div className="butler-follow-up-status-body">
+                <p>{item.content}</p>
+              </div>
+              {item.meta || (props.onCancelVerificationRun && item.verification) ? (
+                <footer className="butler-follow-up-status-footer">
+                  <span>{item.meta ?? ""}</span>
+                  {item.verification && props.onCancelVerificationRun ? (
+                    <button
+                      type="button"
+                      className="secondary-button butler-follow-up-status-action"
+                      disabled={
+                        props.cancellingVerificationId === item.verification.id
+                        || !isCancelableVerification(item.verification)
+                      }
+                      onClick={() => {
+                        if (!item.verification) {
+                          return;
+                        }
+                        void props.onCancelVerificationRun?.(item.verification);
+                      }}
+                    >
+                      {props.cancellingVerificationId === item.verification.id
+                        ? t("conversation.butlerVerificationStopping")
+                        : t("conversation.butlerStopVerificationAction")}
+                    </button>
+                  ) : null}
+                </footer>
+              ) : null}
+            </article>
           ))}
         </div>
       ) : (
@@ -1928,8 +2075,10 @@ function SimpleInfoBlock(props: {
 
 function FollowUpStatusCard(props: {
   tasks: ButlerFollowUpTaskDto[];
+  cancellingTaskId: string | null;
   onOpenFollowUpHistory: () => void;
   onOpenFollowUpDetail: (taskId: string) => Promise<void>;
+  onCancelFollowUpTask: (task: ButlerFollowUpTaskDto) => Promise<void>;
 }) {
   const recentTasks = useMemo(
     () => [...props.tasks]
@@ -1958,7 +2107,9 @@ function FollowUpStatusCard(props: {
             <FollowUpStatusItem
               key={task.id}
               task={task}
+              cancelling={props.cancellingTaskId === task.id}
               onOpenFollowUpDetail={props.onOpenFollowUpDetail}
+              onCancelFollowUpTask={props.onCancelFollowUpTask}
             />
           ))}
         </div>
@@ -1973,6 +2124,8 @@ function FollowUpHistoryPanel(props: {
   tasks: ButlerFollowUpTaskDto[];
   onOpenFollowUpDetail: (taskId: string) => Promise<void>;
   onClose: () => void;
+  cancellingTaskId?: string | null;
+  onCancelFollowUpTask?: (task: ButlerFollowUpTaskDto) => Promise<void>;
 }) {
   const sortedTasks = useMemo(
     () => [...props.tasks]
@@ -1988,10 +2141,12 @@ function FollowUpHistoryPanel(props: {
             <FollowUpStatusItem
               key={task.id}
               task={task}
+              cancelling={props.cancellingTaskId === task.id}
               onOpenFollowUpDetail={async (taskId) => {
                 props.onClose();
                 await props.onOpenFollowUpDetail(taskId);
               }}
+              onCancelFollowUpTask={props.onCancelFollowUpTask}
             />
           ))}
         </div>
@@ -2004,7 +2159,9 @@ function FollowUpHistoryPanel(props: {
 
 function FollowUpStatusItem(props: {
   task: ButlerFollowUpTaskDto;
+  cancelling?: boolean;
   onOpenFollowUpDetail: (taskId: string) => Promise<void>;
+  onCancelFollowUpTask?: (task: ButlerFollowUpTaskDto) => Promise<void>;
 }) {
   const { task } = props;
   const title = task.sessionTitle?.trim() || task.projectName;
@@ -2026,15 +2183,31 @@ function FollowUpStatusItem(props: {
       </div>
       <footer className="butler-follow-up-status-footer">
         <span>{formatIsoDateTime(resolveFollowUpTaskUpdatedAt(task))}</span>
-        <button
-          type="button"
-          className="secondary-button butler-follow-up-status-action"
-          onClick={() => {
-            void props.onOpenFollowUpDetail(task.id);
-          }}
-        >
-          {t("shell.butlerAutomationViewRoundsAction")}
-        </button>
+        <div className="butler-inline-actions">
+          {props.onCancelFollowUpTask && isCancelableFollowUpTask(task) ? (
+            <button
+              type="button"
+              className="secondary-button butler-follow-up-status-action"
+              disabled={props.cancelling}
+              onClick={() => {
+                void props.onCancelFollowUpTask!(task);
+              }}
+            >
+              {props.cancelling
+                ? t("conversation.butlerFollowUpStopping")
+                : t("conversation.butlerStopFollowUpAction")}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="secondary-button butler-follow-up-status-action"
+            onClick={() => {
+              void props.onOpenFollowUpDetail(task.id);
+            }}
+          >
+            {t("shell.butlerAutomationViewRoundsAction")}
+          </button>
+        </div>
       </footer>
     </article>
   );
@@ -2788,21 +2961,22 @@ function FollowUpRoundDetailsPanel(props: {
 }
 
 function VerificationHistoryPanel(props: {
-  items: Array<{
-    title: string;
-    content: string;
-  }>;
+  items: ReturnType<typeof buildVerificationRecords>;
+  cancellingVerificationId?: string | null;
+  onCancelVerificationRun?: (verification: ButlerVerificationDigestDto) => Promise<void>;
 }) {
   if (props.items.length === 0) {
     return <p className="butler-secondary-text">{t("shell.butlerVerificationHistoryEmpty")}</p>;
   }
 
   return (
-    <div className="butler-record-list">
-      {props.items.map((item) => (
-        <SimpleInfoBlock key={`${item.title}:${item.content}`} title={item.title} content={item.content} />
-      ))}
-    </div>
+    <GlobalRecordCard
+      title={t("shell.butlerInfoVerificationRecordsTitle")}
+      items={props.items}
+      emptyText={t("shell.butlerVerificationHistoryEmpty")}
+      cancellingVerificationId={props.cancellingVerificationId}
+      onCancelVerificationRun={props.onCancelVerificationRun}
+    />
   );
 }
 
@@ -2877,7 +3051,15 @@ function AutomationHistoryPanel(props: {
 function buildVerificationRecords(
   verifications: ButlerVerificationDigestDto[],
   mode: "active" | "history"
-): Array<{ title: string; content: string }> {
+): Array<{
+  id: string;
+  title: string;
+  subtitle: string | null;
+  status: string | null;
+  content: string;
+  meta: string | null;
+  verification: ButlerVerificationDigestDto;
+}> {
   return [...verifications]
     .filter((verification) => (
       mode === "history"
@@ -2887,12 +3069,17 @@ function buildVerificationRecords(
     .sort((left, right) => parseIsoTime(resolveVerificationTime(right)) - parseIsoTime(resolveVerificationTime(left)))
     .slice(0, 5)
     .map((verification) => ({
+      id: verification.id,
       title: verification.targetRef?.trim() || verification.verificationType,
+      subtitle: verification.verificationType,
+      status: resolveVerificationStatusLabel(verification.status),
       content:
         verification.summary?.trim()
         || t("shell.butlerInfoVerificationFallback", {
           status: verification.status
-        })
+        }),
+      meta: formatIsoDateTime(resolveVerificationTime(verification)),
+      verification
     }));
 }
 
@@ -3108,6 +3295,49 @@ function formatDigitalDurationLabel(durationMs: number): string {
 
 function isVisibleVerification(status: ButlerVerificationDigestDto["status"]): boolean {
   return status === "queued" || status === "running";
+}
+
+function isCancelableFollowUpTask(task: ButlerFollowUpTaskDto): boolean {
+  return task.status === "active" || task.status === "waiting_user";
+}
+
+function isCancelableVerification(verification: ButlerVerificationDigestDto): boolean {
+  return verification.status === "queued" || verification.status === "running";
+}
+
+function resolveVerificationStatusLabel(status: ButlerVerificationDigestDto["status"]): string {
+  switch (status) {
+    case "queued":
+    case "running":
+      return t("shell.butlerAutomationStatusActive");
+    case "passed":
+    case "skipped":
+      return t("shell.butlerAutomationStatusCompleted");
+    case "failed":
+      return t("shell.butlerAutomationStatusFailed");
+    case "cancelled":
+      return t("shell.butlerAutomationStatusCancelled");
+    default:
+      return status;
+  }
+}
+
+function resolveVerificationBadgeStatus(
+  status: ButlerVerificationDigestDto["status"]
+): "active" | "completed" | "failed" | "cancelled" | "waiting_user" {
+  if (status === "failed") {
+    return "failed";
+  }
+
+  if (status === "cancelled") {
+    return "cancelled";
+  }
+
+  if (status === "passed" || status === "skipped") {
+    return "completed";
+  }
+
+  return "active";
 }
 
 function resolveInboxLifecycleStageLabel(stage: ButlerInboxItemDto["assistantState"]["lifecycleStage"]): string {

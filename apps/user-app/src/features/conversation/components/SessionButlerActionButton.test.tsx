@@ -14,6 +14,7 @@ vi.mock("./WorkbenchLayout", () => ({
 }));
 
 vi.mock("../../butler/api/butler-api", () => ({
+  cancelButlerVerificationRun: vi.fn(),
   cancelButlerFollowUpTask: vi.fn(),
   createButlerFollowUpTask: vi.fn(),
   getButlerSessionActionContext: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock("../../butler/api/butler-api", () => ({
 import { useToast } from "../../../shared/toast";
 import { SessionButlerActionButton } from "./SessionButlerActionButton";
 import {
+  cancelButlerVerificationRun,
   cancelButlerFollowUpTask,
   createButlerFollowUpTask,
   getButlerSessionActionContext,
@@ -32,6 +34,7 @@ import type { SessionSummaryDto } from "../api/conversation-api";
 
 const mockedUseToast = vi.mocked(useToast);
 const mockedGetButlerSessionActionContext = vi.mocked(getButlerSessionActionContext);
+const mockedCancelButlerVerificationRun = vi.mocked(cancelButlerVerificationRun);
 const mockedCancelButlerFollowUpTask = vi.mocked(cancelButlerFollowUpTask);
 const mockedCreateButlerFollowUpTask = vi.mocked(createButlerFollowUpTask);
 const mockedStartButlerVerificationAction = vi.mocked(startButlerVerificationAction);
@@ -125,7 +128,8 @@ describe("SessionButlerActionButton", () => {
           createdAt: "2026-04-07T00:00:00.000Z",
           updatedAt: "2026-04-07T00:05:00.000Z",
           completedAt: null
-        }
+        },
+        latestVerificationRun: null
       }
     });
     mockedCreateButlerFollowUpTask.mockResolvedValue({
@@ -139,8 +143,45 @@ describe("SessionButlerActionButton", () => {
         status: "cancelled"
       } as never
     });
+    mockedCancelButlerVerificationRun.mockResolvedValue({
+      run: {
+        id: "verification-run-1",
+        projectId: "project-1",
+        butlerSessionId: "butler-session-1",
+        sourcePatrolRunId: null,
+        verificationType: "manual",
+        status: "cancelled",
+        targetRef: "登录页开发",
+        spec: {},
+        artifactRefs: [],
+        result: {
+          cancelledBy: "user"
+        },
+        summary: "已手动结束当前会话验证，并停止关联自动化执行。",
+        startedAt: "2026-04-07T00:06:00.000Z",
+        finishedAt: "2026-04-07T00:07:00.000Z",
+        createdAt: "2026-04-07T00:06:00.000Z"
+      }
+    });
     mockedStartButlerVerificationAction.mockResolvedValue({
-      result: {}
+      result: {
+        run: {
+          id: "verification-run-1",
+          projectId: "project-1",
+          butlerSessionId: "butler-session-1",
+          sourcePatrolRunId: null,
+          verificationType: "manual",
+          status: "queued",
+          targetRef: "登录页开发",
+          spec: {},
+          artifactRefs: [],
+          result: {},
+          summary: null,
+          startedAt: null,
+          finishedAt: null,
+          createdAt: "2026-04-07T00:06:00.000Z"
+        }
+      }
     });
   });
 
@@ -373,6 +414,76 @@ describe("SessionButlerActionButton", () => {
 
     await waitFor(() => {
       expect(mockedCancelButlerFollowUpTask).toHaveBeenCalledWith("follow-up-1");
+    });
+  });
+
+  it("可以手动停止当前会话的开发验证", async () => {
+    mockedGetButlerSessionActionContext.mockResolvedValueOnce({
+      context: {
+        workspaceId: "workspace-1",
+        project: {
+          id: "project-1",
+          workspaceId: "workspace-1",
+          name: "项目甲",
+          repoRoot: "/tmp/project-a",
+          lifecycleStatus: "active",
+          riskLevel: "low"
+        },
+        session: {
+          id: "butler-session-1",
+          projectId: "project-1",
+          sessionId: "session-1",
+          provider: "codex",
+          title: "登录页开发",
+          role: "adhoc",
+          ownershipMode: "observed",
+          status: "running",
+          runningState: "running",
+          lastSummary: "正在推进",
+          lastCheckpointAt: "2026-04-07T00:05:00.000Z",
+          createdAt: "2026-04-07T00:00:00.000Z",
+          updatedAt: "2026-04-07T00:05:00.000Z"
+        },
+        latestFollowUpTask: null,
+        latestVerificationRun: {
+          id: "verification-run-1",
+          projectId: "project-1",
+          butlerSessionId: "butler-session-1",
+          sourcePatrolRunId: null,
+          verificationType: "manual",
+          status: "running",
+          targetRef: "登录页开发",
+          spec: {},
+          artifactRefs: [],
+          result: {},
+          summary: null,
+          startedAt: "2026-04-07T00:06:00.000Z",
+          finishedAt: null,
+          createdAt: "2026-04-07T00:06:00.000Z"
+        }
+      }
+    });
+
+    render(
+      <SessionButlerActionButton
+        session={createSessionSummary()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(mockedGetButlerSessionActionContext).toHaveBeenCalledWith("session-1");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: t("conversation.butlerActionButton") }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: t("conversation.butlerStopVerificationAction") })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: t("conversation.butlerStopVerificationAction") }));
+
+    await waitFor(() => {
+      expect(mockedCancelButlerVerificationRun).toHaveBeenCalledWith("project-1", "verification-run-1");
     });
   });
 });

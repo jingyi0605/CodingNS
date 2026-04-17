@@ -3,6 +3,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import {
+  cancelButlerVerificationRun,
   cancelButlerFollowUpTask,
   createButlerFollowUpTask,
   getButlerSessionActionContext,
@@ -90,6 +91,7 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
     };
   }, [actionContext]);
   const latestFollowUpTask = actionContext?.latestFollowUpTask ?? null;
+  const latestVerificationRun = actionContext?.latestVerificationRun ?? null;
 
   useEffect(() => {
     setModalOpen(false);
@@ -266,12 +268,20 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
     setRunningAction("verification");
 
     try {
-      await startButlerVerificationAction({
+      const response = await startButlerVerificationAction({
         projectId: target.project.id,
         butlerSessionId: target.session.id,
         verificationType: "browser",
         targetRef: currentTitle || target.session.title || target.project.name
       });
+      setActionContext((current) => (
+        current
+          ? {
+              ...current,
+              latestVerificationRun: response.result.run
+            }
+          : current
+      ));
       requestNavigationRefresh();
       showToast({
         title: t("conversation.butlerVerificationStarted"),
@@ -284,6 +294,44 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
     } catch (error) {
       showToast({
         title: t("conversation.butlerVerificationFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error"
+      });
+    } finally {
+      setRunningAction(null);
+    }
+  }
+
+  async function handleCancelVerification() {
+    if (!latestVerificationRun) {
+      return;
+    }
+
+    setRunningAction("verification");
+
+    try {
+      const response = await cancelButlerVerificationRun(
+        latestVerificationRun.projectId,
+        latestVerificationRun.id
+      );
+      setActionContext((current) => (
+        current
+          ? {
+              ...current,
+              latestVerificationRun: response.run
+            }
+          : current
+      ));
+      requestNavigationRefresh();
+      showToast({
+        title: t("conversation.butlerVerificationStopped"),
+        description: t("conversation.butlerVerificationStoppedDescription"),
+        tone: "success"
+      });
+      setModalOpen(false);
+    } catch (error) {
+      showToast({
+        title: t("conversation.butlerVerificationStopFailed"),
         description: error instanceof Error ? error.message : undefined,
         tone: "error"
       });
@@ -495,6 +543,26 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
                     </button>
                   </div>
                 ) : null}
+
+                {latestVerificationRun && (latestVerificationRun.status === "queued" || latestVerificationRun.status === "running") ? (
+                  <div className="conversation-butler-target-card conversation-butler-current-task-card">
+                    <span>{t("conversation.butlerCurrentVerificationLabel")}</span>
+                    <strong>{renderButlerVerificationStatus(latestVerificationRun.status)}</strong>
+                    <small>
+                      {latestVerificationRun.targetRef || latestVerificationRun.verificationType}
+                    </small>
+                    <button
+                      type="button"
+                      className="workbench-secondary-button"
+                      disabled={runningAction !== null}
+                      onClick={() => {
+                        void handleCancelVerification();
+                      }}
+                    >
+                      {t("conversation.butlerStopVerificationAction")}
+                    </button>
+                  </div>
+                ) : null}
               </div>
 
               <div className="conversation-butler-action-grid">
@@ -542,5 +610,21 @@ function renderButlerTaskStatus(status: ButlerFollowUpTaskDto["status"]): string
     case "active":
     default:
       return t("shell.butlerAutomationStatusActive");
+  }
+}
+
+function renderButlerVerificationStatus(status: "queued" | "running" | "passed" | "failed" | "skipped" | "cancelled"): string {
+  switch (status) {
+    case "queued":
+    case "running":
+      return t("shell.butlerAutomationStatusActive");
+    case "passed":
+    case "skipped":
+      return t("shell.butlerAutomationStatusCompleted");
+    case "failed":
+      return t("shell.butlerAutomationStatusFailed");
+    case "cancelled":
+    default:
+      return t("shell.butlerAutomationStatusCancelled");
   }
 }

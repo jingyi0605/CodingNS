@@ -122,6 +122,7 @@ vi.mock("../../conversation/api/conversation-api", () => ({
 vi.mock("../api/butler-api", () => ({
   analyzeButlerInboxItem: vi.fn(),
   cancelButlerControlTimer: vi.fn(),
+  cancelButlerVerificationRun: vi.fn(),
   getButlerProfile: vi.fn(),
   initButlerProfile: vi.fn(),
   updateButlerProfile: vi.fn(),
@@ -146,6 +147,7 @@ import { ButlerPage } from "./ButlerPage";
 import {
   analyzeButlerInboxItem,
   cancelButlerControlTimer,
+  cancelButlerVerificationRun,
   getButlerProfile,
   initButlerProfile,
   updateButlerProfile,
@@ -173,6 +175,7 @@ import {
 const mockedUseToast = vi.mocked(useToast);
 const mockedAnalyzeButlerInboxItem = vi.mocked(analyzeButlerInboxItem);
 const mockedCancelButlerControlTimer = vi.mocked(cancelButlerControlTimer);
+const mockedCancelButlerVerificationRun = vi.mocked(cancelButlerVerificationRun);
 const mockedGetButlerProfile = vi.mocked(getButlerProfile);
 const mockedInitButlerProfile = vi.mocked(initButlerProfile);
 const mockedUpdateButlerProfile = vi.mocked(updateButlerProfile);
@@ -298,6 +301,13 @@ describe("ButlerPage", () => {
     });
     mockedCancelButlerControlTimer.mockResolvedValue({
       timer: {} as never
+    });
+    mockedCancelButlerVerificationRun.mockResolvedValue({
+      run: {
+        id: "verification-1",
+        projectId: "project-1",
+        status: "cancelled"
+      } as never
     });
     mockedGetButlerFollowUpTask.mockResolvedValue({
       task: {
@@ -864,7 +874,7 @@ describe("ButlerPage", () => {
             id: "verification-2",
             projectId: "project-blocked",
             verificationType: "api",
-            status: "completed",
+            status: "passed",
             targetRef: "支付回归",
             summary: "支付回归验证已经完成。",
             startedAt: "2026-04-05T08:10:00.000Z",

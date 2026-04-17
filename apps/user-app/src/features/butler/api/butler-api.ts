@@ -33,6 +33,7 @@ export type ButlerFollowUpRoundKind =
   | "cancelled"
   | "limit_reached";
 export type ButlerControlTimerStatus = "active" | "completed" | "cancelled" | "failed";
+export type ButlerVerificationRunStatus = "queued" | "running" | "passed" | "failed" | "skipped" | "cancelled";
 
 export interface ButlerProfileDto {
   id: "default";
@@ -250,8 +251,25 @@ export interface ButlerVerificationDigestDto {
   id: string;
   projectId: string;
   verificationType: string;
-  status: string;
+  status: ButlerVerificationRunStatus;
   targetRef: string | null;
+  summary: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+}
+
+export interface ButlerVerificationRunDto {
+  id: string;
+  projectId: string;
+  butlerSessionId: string | null;
+  sourcePatrolRunId: string | null;
+  verificationType: string;
+  status: ButlerVerificationRunStatus;
+  targetRef: string | null;
+  spec: Record<string, unknown>;
+  artifactRefs: Array<Record<string, unknown>>;
+  result: Record<string, unknown>;
   summary: string | null;
   startedAt: string | null;
   finishedAt: string | null;
@@ -415,6 +433,7 @@ export interface ButlerSessionActionContextDto {
   project: ButlerSessionTargetProjectDto;
   session: ButlerSessionTargetSessionDto;
   latestFollowUpTask: ButlerFollowUpTaskDto | null;
+  latestVerificationRun: ButlerVerificationRunDto | null;
 }
 
 export interface ButlerContextSnapshotDto extends ButlerOverviewDto {
@@ -765,6 +784,15 @@ export function cancelButlerFollowUpTask(taskId: string) {
   );
 }
 
+export function cancelButlerVerificationRun(projectId: string, verificationId: string) {
+  return httpClient.request<{ run: ButlerVerificationRunDto }>(
+    `/api/butler/projects/${encodeURIComponent(projectId)}/verifications/${encodeURIComponent(verificationId)}/cancel`,
+    {
+      method: "POST"
+    }
+  );
+}
+
 export function updateButlerInboxItem(itemId: string, payload: {
   projectId?: string;
   itemType?: ButlerInboxItemType;
@@ -922,7 +950,7 @@ export function startButlerVerificationAction(payload: {
   sourcePatrolRunId?: string | null;
   spec?: Record<string, unknown>;
 }) {
-  return httpClient.request<{ result: unknown }>("/api/butler/actions/start-verification", {
+  return httpClient.request<{ result: { run: ButlerVerificationRunDto } }>("/api/butler/actions/start-verification", {
     method: "POST",
     body: JSON.stringify(payload)
   });
