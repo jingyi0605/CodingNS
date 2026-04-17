@@ -1224,7 +1224,8 @@ function normalizeAssistantProviderId(
 function resolveAssistantSessionTarget(body: AssistantStartSessionBody):
   | { kind: "project"; projectId: string }
   | { kind: "workspace"; workspaceId: string }
-  | { kind: "sandbox"; sandboxId: string } {
+  | { kind: "sandbox"; sandboxId: string }
+  | null {
   const projectId = normalizeNullableText(body.projectId);
   const workspaceId = normalizeNullableText(body.workspaceId);
   const sandboxId = normalizeNullableText(body.sandboxId);
@@ -1238,16 +1239,16 @@ function resolveAssistantSessionTarget(body: AssistantStartSessionBody):
     sandboxId ? { kind: "sandbox" as const, sandboxId } : null
   ].filter((target): target is NonNullable<typeof target> => target !== null);
 
-  if (targets.length !== 1) {
+  if (targets.length > 1) {
     throw new AppError({
       statusCode: 400,
       errorCode: "INVALID_INPUT",
-      detail: "启动真实会话必须且只能提供 projectId、workspaceId、sandboxId 其中一个",
+      detail: "启动真实会话最多只能提供 projectId、workspaceId、sandboxId 其中一个",
       field: "projectId"
     });
   }
 
-  return targets[0];
+  return targets[0] ?? null;
 }
 
 function normalizeAssistantCloneAuth(

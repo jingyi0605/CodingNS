@@ -90,7 +90,7 @@ type AssistantSessionTarget =
   | { kind: "sandbox"; sandboxId: string };
 
 interface StartAssistantSessionInput {
-  target: AssistantSessionTarget;
+  target?: AssistantSessionTarget | null;
   userId: string;
   content: string;
   providerId?: "codex" | "claude-code" | null;
@@ -307,7 +307,7 @@ const ASSISTANT_CAPABILITIES: AssistantCapabilityDescriptor[] = [
     name: "sessions.start",
     mode: "proxy_execute",
     enabled: true,
-    summary: "按 project/workspace/sandbox 目标新建真实会话"
+    summary: "按 project/workspace/sandbox 目标新建真实会话；未指定目标时自动创建沙箱"
   },
   {
     name: "sessions.get",
@@ -781,8 +781,10 @@ export class AssistantCapabilityService {
     };
   }>> {
     const config = this.resolveSessionLaunchConfig(input);
-    const target = this.resolveAssistantSessionTarget(input.target, input.userId);
     const currentControlSession = this.butlerControlSessionService.getCurrentSession(input.userId);
+    const target = input.target
+      ? this.resolveAssistantSessionTarget(input.target, input.userId)
+      : await this.createAutomaticSandboxTarget(input, currentControlSession);
 
     if (target.kind === "project") {
       const session = await this.butlerSessionService.startSession(
@@ -1811,11 +1813,56 @@ export class AssistantCapabilityService {
       workspaceId: this.assistantSandboxService.resolveWorkspaceId(target.sandboxId, userId)
     };
   }
+
+  private async createAutomaticSandboxTarget(
+    input: Pick<StartAssistantSessionInput, "userId" | "content">,
+    controlSession: ReturnType<ButlerControlSessionService["getCurrentSession"]>
+  ): Promise<{
+    kind: "sandbox";
+    id: string;
+    workspaceId: string;
+  }> {
+    const sandbox = await this.assistantSandboxService.createSandbox({
+      userId: input.userId,
+      controlSessionId: controlSession?.id ?? null,
+      title: inferAutomaticSandboxTitle(controlSession, input.content),
+      purpose: "当前任务未指定工作区，系统自动创建",
+      source: {
+        kind: "blank"
+      }
+    });
+
+    return {
+      kind: "sandbox",
+      id: sandbox.id,
+      workspaceId: sandbox.workspaceId
+    };
+  }
 }
 
 function normalizeAssistantText(value: string | null | undefined): string | null {
   const normalized = value?.trim();
   return normalized ? normalized : null;
+}
+
+function inferAutomaticSandboxTitle(
+  controlSession: ReturnType<ButlerControlSessionService["getCurrentSession"]>,
+  content: string
+): string {
+  return normalizeAssistantText(controlSession?.title)
+    ?? normalizeAssistantText(controlSession?.lastSummary)
+    ?? summarizeAssistantText(content)
+    ?? "助手临时沙箱";
+}
+
+function summarizeAssistantText(content: string): string | null {
+  const normalized = normalizeAssistantText(content);
+
+  if (!normalized) {
+    return null;
+  }
+
+  return normalized.length > 48 ? `${normalized.slice(0, 45)}...` : normalized;
 }
 
 function buildAssistantAutomationTriggerInput(
