@@ -711,6 +711,10 @@ export function ButlerPage() {
       {
         value: "codex",
         label: "Codex"
+      },
+      {
+        value: "claude-code",
+        label: "Claude Code"
       }
     ] satisfies Array<{ value: ButlerProviderId; label: string }>,
     []
