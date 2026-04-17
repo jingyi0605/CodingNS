@@ -1081,7 +1081,7 @@ describe("TerminalPage", () => {
     await screen.findByText("工作终端");
     await waitFor(() => {
       const terminalMarker = screen.getByTestId("mock-xterm");
-      const viewportHost = terminalMarker.closest(".terminal-xterm");
+      const viewportHost = terminalMarker.closest(".terminal-xterm") as HTMLElement | null;
       expect(viewportHost).not.toBeNull();
       expect(viewportHost?.style.getPropertyValue("--terminal-bottom-gap")).toBe("28px");
     });
