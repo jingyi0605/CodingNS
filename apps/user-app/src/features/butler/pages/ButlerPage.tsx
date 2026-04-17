@@ -1313,6 +1313,7 @@ export function ButlerPage() {
         onOpenFollowUpHistory={handleOpenFollowUpHistory}
         onOpenVerificationHistory={handleOpenVerificationHistory}
         onOpenAutomationHistory={handleOpenAutomationHistory}
+        onOpenAutomationDetail={handleOpenAutomationDetail}
         onOpenFollowUpDetail={handleOpenFollowUpDetail}
         onCancelFollowUpTask={handleCancelFollowUpTask}
         onCancelVerificationRun={handleCancelVerificationRun}
@@ -1335,6 +1336,7 @@ export function ButlerPage() {
       handleOpenSandboxManager,
       handleCopyTodoPrompt,
       handleOpenAutomationHistory,
+      handleOpenAutomationDetail,
       handleOpenFollowUpHistory,
       handleOpenVerificationHistory,
       followUpTasks,
@@ -2013,6 +2015,34 @@ export function ButlerPage() {
         />
       </WorkbenchModal>
       <WorkbenchModal
+        open={selectedAutomation !== null}
+        title={t("shell.butlerAutomationDetailTitle")}
+        description={selectedAutomation?.title?.trim() || selectedAutomation?.actionConfig.content.trim() || t("shell.butlerAutomationDetailDescription")}
+        className="butler-automation-detail-modal"
+        onClose={() => {
+          setSelectedAutomationId(null);
+          setAutomationEditorState(null);
+          setSavingAutomationId(null);
+        }}
+      >
+        {selectedAutomation && automationEditorState ? (
+          <AutomationDetailModalPanel
+            automation={selectedAutomation}
+            editorState={automationEditorState}
+            saving={savingAutomationId === selectedAutomation.id}
+            projectName={resolveAssistantAutomationProjectName(selectedAutomation, projectNameById)}
+            targetSessionTitle={resolveAutomationTargetSessionLabel(selectedAutomation, sessionTitleById)}
+            recentRuns={selectedAutomationRuns}
+            onEditorChange={(patch) => {
+              setAutomationEditorState((current) => (current ? { ...current, ...patch } : current));
+            }}
+            onSave={() => {
+              void handleSaveAutomation();
+            }}
+          />
+        ) : null}
+      </WorkbenchModal>
+      <WorkbenchModal
         open={controlHistoryOpen}
         title={t("shell.butlerHistoryTitle")}
         description={t("shell.butlerHistoryDescription")}
@@ -2088,6 +2118,7 @@ function ButlerAuxiliaryPanel(props: {
   onOpenFollowUpHistory: () => void;
   onOpenVerificationHistory: () => void;
   onOpenAutomationHistory: () => void;
+  onOpenAutomationDetail: (automationId: string) => void;
   onOpenFollowUpDetail: (taskId: string) => Promise<void>;
   onCancelFollowUpTask: (task: ButlerFollowUpTaskDto) => Promise<void>;
   onCancelVerificationRun: (verification: ButlerVerificationDigestDto) => Promise<void>;
@@ -2137,6 +2168,7 @@ function ButlerAuxiliaryPanel(props: {
         runs={props.assistantAutomationRuns}
         cancellingAutomationId={props.cancellingAutomationId}
         onOpenAutomationHistory={props.onOpenAutomationHistory}
+        onOpenAutomationDetail={props.onOpenAutomationDetail}
         onCancelAutomation={props.onCancelAutomation}
       />
     ) : (
@@ -2288,6 +2320,7 @@ function AutomationSidebarContent(props: {
   runs: AssistantAutomationRunDto[];
   cancellingAutomationId: string | null;
   onOpenAutomationHistory: () => void;
+  onOpenAutomationDetail: (automationId: string) => void;
   onCancelAutomation: (automationId: string) => Promise<void>;
 }) {
   const automationTasks = useMemo(
@@ -2305,6 +2338,7 @@ function AutomationSidebarContent(props: {
         items={automationTasks}
         cancellingAutomationId={props.cancellingAutomationId}
         onCancelAutomation={props.onCancelAutomation}
+        onOpenAutomationDetail={props.onOpenAutomationDetail}
         emptyText={t("shell.butlerAutomationTasksEmpty")}
         actionLabel={t("shell.butlerFollowUpHistoryAction")}
         onAction={props.onOpenAutomationHistory}
@@ -2312,6 +2346,7 @@ function AutomationSidebarContent(props: {
       <AutomationRunOverviewCard
         items={automationRuns}
         emptyText={t("shell.butlerAutomationRunsEmpty")}
+        onOpenAutomationDetail={props.onOpenAutomationDetail}
       />
     </>
   );
