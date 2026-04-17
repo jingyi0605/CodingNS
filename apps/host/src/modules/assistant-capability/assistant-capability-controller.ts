@@ -44,6 +44,7 @@ interface AssistantMessagesQuery {
 interface AssistantTimerListQuery {
   status?: "active" | "completed" | "cancelled" | "failed";
   controlSessionId?: string;
+  limit?: string;
 }
 
 interface AssistantAutomationListQuery {
@@ -414,7 +415,8 @@ export class AssistantCapabilityController {
     reply.send(this.assistantCapabilityService.listTimers({
       userId: requireUserId(request),
       status: request.query.status,
-      controlSessionId: normalizeNullableText(request.query.controlSessionId)
+      controlSessionId: normalizeNullableText(request.query.controlSessionId),
+      limit: normalizeNullableInteger(request.query.limit, "limit")
     }));
   };
 
@@ -1019,7 +1021,7 @@ export class AssistantCapabilityController {
   };
 }
 
-function requireNonEmptyText(value: string | undefined, field: string, detail: string): string {
+function requireNonEmptyText(value: string | null | undefined, field: string, detail: string): string {
   const text = value?.trim();
 
   if (!text) {

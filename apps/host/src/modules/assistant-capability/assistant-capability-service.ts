@@ -136,6 +136,13 @@ interface CreateAssistantTimerInput {
   afterSeconds?: number | null;
 }
 
+interface ListAssistantTimersInput {
+  userId: string;
+  status?: "active" | "completed" | "cancelled" | "failed";
+  controlSessionId?: string | null;
+  limit?: number | null;
+}
+
 interface ListAssistantAutomationsInput {
   userId: string;
   status?: "active" | "completed" | "cancelled" | "failed";
@@ -963,11 +970,7 @@ export class AssistantCapabilityService {
   }
 
   listTimers(
-    input: {
-      userId: string;
-      status?: "active" | "completed" | "cancelled" | "failed";
-      controlSessionId?: string | null;
-    }
+    input: ListAssistantTimersInput
   ): AssistantCapabilityReceipt<{
     items: ReturnType<ButlerControlTimerService["listTimers"]>;
   }> {
