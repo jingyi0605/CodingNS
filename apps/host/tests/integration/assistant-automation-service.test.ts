@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AssistantAutomationService } from "../../src/modules/butler/assistant-automation-service.js";
+import { AppError } from "../../src/shared/errors/app-error.js";
 import { AssistantAutomationRunRepository } from "../../src/storage/repositories/assistant-automation-run-repository.js";
 import { AssistantAutomationTaskRepository } from "../../src/storage/repositories/assistant-automation-task-repository.js";
 import { createDatabaseClient, type DatabaseClient } from "../../src/storage/sqlite/client.js";
@@ -257,6 +258,70 @@ describe("AssistantAutomationService", () => {
     });
   });
 
+  it("会更新进行中自动化的提示词和触发配置", () => {
+    const { service } = createService();
+    const automation = service.createTask({
+      userId: "user-1",
+      projectId: "project-1",
+      title: "夜间巡视",
+      trigger: {
+        type: "interval",
+        minutes: 30
+      },
+      action: {
+        type: "send_control_message",
+        content: "执行项目巡视"
+      }
+    });
+
+    const updated = service.updateTask({
+      taskId: automation.id,
+      userId: "user-1",
+      title: "夜间巡视升级版",
+      content: "执行项目巡视并补充摘要",
+      includeTriggerContext: true,
+      everyMinutes: 45,
+      stopAt: "2099-04-16T18:00:00.000Z"
+    });
+
+    expect(updated.title).toBe("夜间巡视升级版");
+    expect(updated.actionConfig).toMatchObject({
+      content: "执行项目巡视并补充摘要",
+      includeTriggerContext: true
+    });
+    expect(updated.triggerConfig).toMatchObject({
+      type: "interval",
+      minutes: 45,
+      stopAt: "2099-04-16T18:00:00.000Z"
+    });
+    expect(updated.nextRunAt).toBeTruthy();
+  });
+
+  it("不允许修改已经结束的自动化", () => {
+    const { service } = createService();
+    const automation = service.createTask({
+      userId: "user-1",
+      projectId: "project-1",
+      title: "单次检查",
+      trigger: {
+        type: "once",
+        dueAt: "2026-04-16T12:05:00.000Z"
+      },
+      action: {
+        type: "send_control_message",
+        content: "检查结果"
+      }
+    });
+
+    service.cancelTask(automation.id, "user-1");
+
+    expect(() => service.updateTask({
+      taskId: automation.id,
+      userId: "user-1",
+      title: "不该成功"
+    })).toThrowError(AppError);
+  });
+
   it("重启后会把已成功但未收口的任务直接补成 completed，不会重复发消息", async () => {
     const { service, butlerControlSessionService, runRepository } = createService();
 
@@ -393,6 +458,73 @@ describe("AssistantAutomationService", () => {
     expect(runs[0]).toMatchObject({
       status: "succeeded",
       triggerType: "interval"
+    });
+  });
+
+  it("interval 自动化可以只取消本次等待并保留后续调度", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-16T12:00:00.000Z"));
+    const { service } = createService();
+
+    const automation = service.createTask({
+      userId: "user-1",
+      projectId: "project-1",
+      title: "每小时巡检",
+      trigger: {
+        type: "interval",
+        hours: 1
+      },
+      action: {
+        type: "send_control_message",
+        content: "每小时检查一次"
+      }
+    });
+
+    const updated = service.skipCurrentWait(automation.id, "user-1");
+
+    expect(updated.status).toBe("active");
+    expect(updated.nextRunAt).toBe("2026-04-16T14:00:00.000Z");
+
+    const runs = service.listRuns(automation.id, "user-1");
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({
+      status: "cancelled",
+      scheduledAt: "2026-04-16T13:00:00.000Z",
+      summary: "已手动取消本次等待，保留自动化并重新安排下一次运行。"
+    });
+  });
+
+  it("单次自动化不支持只取消本次等待", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-16T12:00:00.000Z"));
+    const { service } = createService();
+
+    const automation = service.createTask({
+      userId: "user-1",
+      projectId: "project-1",
+      title: "一次性提醒",
+      trigger: {
+        type: "once",
+        dueAt: "2026-04-16T12:05:00.000Z"
+      },
+      action: {
+        type: "send_control_message",
+        content: "5 分钟后提醒我"
+      }
+    });
+
+    let receivedError: unknown = null;
+
+    try {
+      service.skipCurrentWait(automation.id, "user-1");
+    } catch (error) {
+      receivedError = error;
+    }
+
+    expect(receivedError).toBeInstanceOf(AppError);
+    expect(receivedError).toMatchObject({
+      statusCode: 409,
+      errorCode: "ASSISTANT_AUTOMATION_WAIT_SKIP_UNSUPPORTED"
     });
   });
 

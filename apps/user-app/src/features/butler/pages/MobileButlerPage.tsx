@@ -17,16 +17,22 @@ import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout
 import { ComposerPanel } from "../../conversation/components/ComposerPanel";
 import { MessageTimeline } from "../../conversation/components/MessageTimeline";
 import {
+  cancelAssistantAutomation,
   cancelButlerControlTimer,
   cancelButlerFollowUpTask,
   cancelButlerVerificationRun,
   getButlerOverview,
   getButlerProfile,
+  listAssistantAutomations,
+  listRecentAssistantAutomationRuns,
   listButlerControlSessions,
   listButlerControlTimers,
   listButlerFollowUpTasks,
   listButlerInboxItems,
   listButlerPatrolPlans,
+  updateAssistantAutomation,
+  type AssistantAutomationRunDto,
+  type AssistantAutomationTaskDto,
   type ButlerControlSessionDto,
   type ButlerControlTimerDto,
   type ButlerFollowUpTaskDto,
@@ -40,7 +46,7 @@ import { ButlerLoadingState } from "../components/ButlerLoadingState";
 import { BUTLER_INBOX_UPDATED_EVENT } from "../runtime/butler-inbox-events";
 import { subscribeButlerRecordsUpdated } from "../runtime/butler-records-events";
 import { ButlerRuntimeStore, useButlerRuntimeStore } from "../runtime/butler-runtime-store";
-import { buildWorkspaceButlerPath } from "../../workbench/utils/workbench-navigation";
+import { buildWorkspaceButlerPath, buildWorkspaceSessionPath } from "../../workbench/utils/workbench-navigation";
 
 type MobileButlerTab = "info" | "automation" | "settings";
 type MobileButlerDrawer = "list" | "sidebar" | null;
@@ -56,12 +62,14 @@ interface MobileButlerState {
   patrolPlans: ButlerPatrolPlanDto[];
   controlSessions: ButlerControlSessionDto[];
   controlTimers: ButlerControlTimerDto[];
+  assistantAutomations: AssistantAutomationTaskDto[];
+  assistantAutomationRuns: AssistantAutomationRunDto[];
 }
 
 interface AutomationTaskItem {
   id: string;
-  timerId?: string;
-  kind: "patrol_plan" | "follow_up" | "control_timer";
+  automationId?: string;
+  kind: "assistant_automation";
   title: string;
   projectName: string;
   status: "active" | "waiting_user" | "completed" | "failed" | "cancelled";
@@ -69,11 +77,14 @@ interface AutomationTaskItem {
   statusLabel: string;
   nextRunAt: string | null;
   lastRunAt: string | null;
+  promptPreview: string;
+  lastResultSummary: string | null;
+  targetSessionTitle: string | null;
 }
 
 interface AutomationRunItem {
   id: string;
-  kind: "patrol_run" | "follow_up_round" | "control_timer";
+  kind: "assistant_automation_run";
   title: string;
   projectName: string;
   status: "active" | "waiting_user" | "completed" | "failed" | "cancelled";
@@ -83,12 +94,147 @@ interface AutomationRunItem {
   createdAt: string;
 }
 
+interface AutomationEditorState {
+  title: string;
+  content: string;
+  includeTriggerContext: boolean;
+  dueAt: string;
+  everySeconds: string;
+  everyMinutes: string;
+  everyHours: string;
+  stopAt: string;
+  cronMinute: string;
+  cronHour: string;
+  cronDaysOfWeek: string;
+  pollIntervalSeconds: string;
+  expiresAt: string;
+  maxChecks: string;
+}
+
+type ButlerControlScheduleBannerItem =
+  | {
+      kind: "timer";
+      timer: ButlerControlTimerDto;
+    }
+  | {
+      kind: "automation";
+      automation: AssistantAutomationTaskDto;
+    };
+
 const MOBILE_BUTLER_TAB_STORAGE_KEY = "mobile.butler.active-tab";
 const MOBILE_BUTLER_TAB_ORDER: MobileButlerTab[] = ["info", "automation", "settings"];
 const MOBILE_BUTLER_POLL_INTERVAL_MS = 15_000;
 const MOBILE_BUTLER_SWIPE_THRESHOLD_PX = 56;
 const MOBILE_BUTLER_SWIPE_DOMINANCE_RATIO = 1.2;
 const MOBILE_BUTLER_DRAWER_WIDTH_PX = 360;
+const MOBILE_CONTROL_SCHEDULE_HIDE_DELAY_MS = 1_500;
+const MOBILE_BUTLER_RUNTIME_ACTIVE_HIDE_DELAY_MS = 1_500;
+
+function useStableMobileControlSchedule(
+  schedule: ButlerControlScheduleBannerItem | null
+): ButlerControlScheduleBannerItem | null {
+  const [visibleSchedule, setVisibleSchedule] = useState<ButlerControlScheduleBannerItem | null>(
+    schedule
+  );
+  const hideTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (schedule) {
+      if (hideTimerRef.current !== null) {
+        window.clearTimeout(hideTimerRef.current);
+        hideTimerRef.current = null;
+      }
+
+      setVisibleSchedule(schedule);
+      return;
+    }
+
+    if (!visibleSchedule || hideTimerRef.current !== null) {
+      return;
+    }
+
+    // 移动端同样吃掉 runtime 边界抖动，避免 banner 一闪一灭。
+    hideTimerRef.current = window.setTimeout(() => {
+      hideTimerRef.current = null;
+      setVisibleSchedule(null);
+    }, MOBILE_CONTROL_SCHEDULE_HIDE_DELAY_MS);
+  }, [schedule, visibleSchedule]);
+
+  useEffect(() => {
+    return () => {
+      if (hideTimerRef.current !== null) {
+        window.clearTimeout(hideTimerRef.current);
+      }
+    };
+  }, []);
+
+  return schedule ?? visibleSchedule;
+}
+
+function useStableMobileRuntimeActive(sessionId: string | null, active: boolean): boolean {
+  const [visible, setVisible] = useState(active);
+  const hideTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (hideTimerRef.current !== null) {
+      window.clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+
+    setVisible(active);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (active) {
+      if (hideTimerRef.current !== null) {
+        window.clearTimeout(hideTimerRef.current);
+        hideTimerRef.current = null;
+      }
+
+      setVisible(true);
+      return;
+    }
+
+    if (!visible || hideTimerRef.current !== null) {
+      return;
+    }
+
+    hideTimerRef.current = window.setTimeout(() => {
+      hideTimerRef.current = null;
+      setVisible(false);
+    }, MOBILE_BUTLER_RUNTIME_ACTIVE_HIDE_DELAY_MS);
+  }, [active, visible]);
+
+  useEffect(() => {
+    return () => {
+      if (hideTimerRef.current !== null) {
+        window.clearTimeout(hideTimerRef.current);
+      }
+    };
+  }, []);
+
+  return visible;
+}
+
+function hasMobileButlerActiveRuntimeIndicator(
+  controlSession: ButlerControlSessionDto | null,
+  runtimeHasActiveRun: boolean | null
+): boolean {
+  if (runtimeHasActiveRun === true) {
+    return true;
+  }
+
+  if (!controlSession) {
+    return false;
+  }
+
+  return (
+    controlSession.session.activityState === "running"
+    || controlSession.session.runningState === "starting"
+    || controlSession.session.runningState === "running"
+    || controlSession.session.runningState === "reconnecting"
+  );
+}
 
 function readStoredTab(): MobileButlerTab {
   if (typeof window === "undefined") {
@@ -234,6 +380,15 @@ export function MobileButlerPage() {
       ),
     [navigationGroups]
   );
+  const sessionWorkspaceIdById = useMemo(
+    () =>
+      new Map(
+        navigationGroups.flatMap((group) =>
+          group.sessions.map((session) => [session.sessionId, group.workspace.id] as const)
+        )
+      ),
+    [navigationGroups]
+  );
   const searchTab = new URLSearchParams(location.search).get("tab");
   const storedTabRef = useRef<MobileButlerTab>(readStoredTab());
   const activeTab = resolveTabFromSearch(searchTab, storedTabRef.current);
@@ -247,6 +402,10 @@ export function MobileButlerPage() {
   const [composerPanelElement, setComposerPanelElement] = useState<HTMLElement | null>(null);
   const [cancellingFollowUpTaskId, setCancellingFollowUpTaskId] = useState<string | null>(null);
   const [cancellingVerificationId, setCancellingVerificationId] = useState<string | null>(null);
+  const [cancellingAutomationId, setCancellingAutomationId] = useState<string | null>(null);
+  const [selectedAutomationId, setSelectedAutomationId] = useState<string | null>(null);
+  const [automationEditorState, setAutomationEditorState] = useState<AutomationEditorState | null>(null);
+  const [savingAutomationId, setSavingAutomationId] = useState<string | null>(null);
   const [cancellingTimerId, setCancellingTimerId] = useState<string | null>(null);
   const [executingTimerId, setExecutingTimerId] = useState<string | null>(null);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
@@ -259,7 +418,9 @@ export function MobileButlerPage() {
     inboxItems: [],
     patrolPlans: [],
     controlSessions: [],
-    controlTimers: []
+    controlTimers: [],
+    assistantAutomations: [],
+    assistantAutomationRuns: []
   });
   const projectNameById = useMemo(
     () => new Map((state.overview?.projects ?? []).map((project) => [project.id, project.name] as const)),
@@ -282,6 +443,7 @@ export function MobileButlerPage() {
   const historyState = useButlerRuntimeStore(store, (runtime) => runtime.historyState);
   const loadingOlderMessages = useButlerRuntimeStore(store, (runtime) => runtime.loadingOlderMessages);
   const hasOlderMessages = useButlerRuntimeStore(store, (runtime) => runtime.hasOlderMessages);
+  const runtimeSending = useButlerRuntimeStore(store, (runtime) => runtime.sending);
   const runtimeHasActiveRun = useButlerRuntimeStore(store, (runtime) => runtime.runtimeHasActiveRun);
   const runtimeCanInterrupt = useButlerRuntimeStore(store, (runtime) => runtime.runtimeCanInterrupt);
   const contextUsage = useButlerRuntimeStore(store, (runtime) => runtime.contextUsage);
@@ -345,7 +507,9 @@ export function MobileButlerPage() {
         inboxItems: [],
         patrolPlans: [],
         controlSessions: [],
-        controlTimers: []
+        controlTimers: [],
+        assistantAutomations: [],
+        assistantAutomationRuns: []
       });
       return;
     }
@@ -372,20 +536,36 @@ export function MobileButlerPage() {
               inboxItems: [],
               patrolPlans: [],
               controlSessions: [],
-              controlTimers: []
+              controlTimers: [],
+              assistantAutomations: [],
+              assistantAutomationRuns: []
             });
           }
           return;
         }
 
-        const [overviewResponse, followUpResponse, inboxResponse, controlSessionsResponse, controlTimersResponse] = await Promise.all([
+        const [
+          overviewResponse,
+          followUpResponse,
+          inboxResponse,
+          controlSessionsResponse,
+          controlTimersResponse,
+          automationResponse,
+          automationRunsResponse
+        ] = await Promise.all([
           getButlerOverview(),
           listButlerFollowUpTasks(),
           listButlerInboxItems({
             workspaceId
           }),
           listButlerControlSessions(),
-          listButlerControlTimers()
+          listButlerControlTimers(),
+          listAssistantAutomations({
+            limit: 100
+          }),
+          listRecentAssistantAutomationRuns({
+            limit: 100
+          })
         ]);
 
         const workspaceProjectIds = overviewResponse.overview.projects
@@ -408,7 +588,9 @@ export function MobileButlerPage() {
           inboxItems: inboxResponse.items.filter((item) => item.status !== "closed"),
           patrolPlans: patrolPlanResponses.flatMap((response) => response.items),
           controlSessions: controlSessionsResponse.items,
-          controlTimers: controlTimersResponse.items
+          controlTimers: controlTimersResponse.items,
+          assistantAutomations: automationResponse.payload.items,
+          assistantAutomationRuns: automationRunsResponse.payload.items
         });
       } catch (error) {
         if (disposed) {
@@ -500,25 +682,48 @@ export function MobileButlerPage() {
   );
   const automationTasks = useMemo(
     () => buildAutomationTaskItems(
-      state.patrolPlans,
-      state.followUpTasks,
-      workspaceControlTimers,
+      state.assistantAutomations,
       state.overview,
       workspaceProjectIds,
       "active"
     ),
-    [state.followUpTasks, state.overview, state.patrolPlans, workspaceControlTimers, workspaceProjectIds]
+    [state.assistantAutomations, state.overview, workspaceProjectIds]
   );
   const automationRuns = useMemo(
     () => buildAutomationRunItems(
-      state.followUpTasks,
-      workspaceControlTimers,
+      state.assistantAutomations,
+      state.assistantAutomationRuns,
       state.overview,
       workspaceProjectIds,
       "active"
     ),
-    [state.followUpTasks, state.overview, workspaceControlTimers, workspaceProjectIds]
+    [state.assistantAutomations, state.assistantAutomationRuns, state.overview, workspaceProjectIds]
   );
+  const selectedAutomation = useMemo(
+    () =>
+      selectedAutomationId
+        ? state.assistantAutomations.find((automation) => automation.id === selectedAutomationId) ?? null
+        : null,
+    [selectedAutomationId, state.assistantAutomations]
+  );
+  const selectedAutomationRuns = useMemo(
+    () =>
+      selectedAutomationId
+        ? state.assistantAutomationRuns
+          .filter((run) => run.automationId === selectedAutomationId)
+          .sort((left, right) => parseIsoTime(right.createdAt) - parseIsoTime(left.createdAt))
+          .slice(0, 6)
+        : [],
+    [selectedAutomationId, state.assistantAutomationRuns]
+  );
+
+  useEffect(() => {
+    if (selectedAutomationId && !selectedAutomation) {
+      setSelectedAutomationId(null);
+      setAutomationEditorState(null);
+    }
+  }, [selectedAutomation, selectedAutomationId]);
+
   const followUpHistoryRecords = useMemo(
     () =>
       [...state.followUpTasks]
@@ -529,37 +734,66 @@ export function MobileButlerPage() {
   );
   const automationHistoryTasks = useMemo(
     () => buildAutomationTaskItems(
-      state.patrolPlans,
-      state.followUpTasks,
-      workspaceControlTimers,
+      state.assistantAutomations,
       state.overview,
       workspaceProjectIds,
       "history"
     ),
-    [state.followUpTasks, state.overview, state.patrolPlans, workspaceControlTimers, workspaceProjectIds]
+    [state.assistantAutomations, state.overview, workspaceProjectIds]
   );
   const automationHistoryRuns = useMemo(
     () => buildAutomationRunItems(
-      state.followUpTasks,
-      workspaceControlTimers,
+      state.assistantAutomations,
+      state.assistantAutomationRuns,
       state.overview,
       workspaceProjectIds,
       "history"
     ),
-    [state.followUpTasks, state.overview, workspaceControlTimers, workspaceProjectIds]
+    [state.assistantAutomations, state.assistantAutomationRuns, state.overview, workspaceProjectIds]
   );
-  const activeControlTimer = useMemo(
+  const immediateControlSessionActive = useMemo(
+    () => hasMobileButlerActiveRuntimeIndicator(controlSession, runtimeHasActiveRun),
+    [controlSession, runtimeHasActiveRun]
+  );
+  const isControlSessionActive = useStableMobileRuntimeActive(
+    controlSession?.session.sessionId ?? null,
+    immediateControlSessionActive
+  );
+  const immediateActiveControlSchedule = useMemo(
     () => {
-      if (!controlSession || runtimeHasActiveRun) {
+      if (!controlSession || isControlSessionActive) {
         return null;
       }
 
-      return workspaceControlTimers
+      const timerItems = workspaceControlTimers
         .filter((timer) => timer.status === "active" && timer.controlSessionId === controlSession.id)
-        .sort((left, right) => parseIsoTime(left.dueAt) - parseIsoTime(right.dueAt))[0] ?? null;
+        .map<ButlerControlScheduleBannerItem>((timer) => ({
+          kind: "timer",
+          timer
+        }));
+      const timerIds = new Set(
+        workspaceControlTimers
+          .filter((timer) => timer.status === "active" && timer.controlSessionId === controlSession.id)
+          .map((timer) => timer.id)
+      );
+      const automationItems = state.assistantAutomations
+        .filter((automation) => (
+          automation.status === "active"
+          && automation.controlSessionId === controlSession.id
+          && Boolean(automation.nextRunAt)
+          && !timerIds.has(automation.id)
+        ))
+        .map<ButlerControlScheduleBannerItem>((automation) => ({
+          kind: "automation",
+          automation
+        }));
+
+      return [...timerItems, ...automationItems]
+        .sort((left, right) => parseIsoTime(readControlScheduleDueAt(left)) - parseIsoTime(readControlScheduleDueAt(right)))[0] ?? null;
     },
-    [controlSession, runtimeHasActiveRun, workspaceControlTimers]
+    [controlSession, isControlSessionActive, state.assistantAutomations, workspaceControlTimers]
   );
+  const activeControlSchedule = useStableMobileControlSchedule(immediateActiveControlSchedule);
   const showLoadingState = state.loading || runtimeLoading;
   const showEmptyState = !showLoadingState && (!state.initialized || !runtimeInitialized || !state.profile);
   const butlerDisplayName = runtimeProfile?.displayName?.trim() || state.profile?.displayName?.trim() || t("shell.butlerEntry");
@@ -569,7 +803,7 @@ export function MobileButlerPage() {
   useEffect(() => {
     setCountdownNow(Date.now());
 
-    if (!activeControlTimer) {
+    if (!activeControlSchedule) {
       return;
     }
 
@@ -580,7 +814,7 @@ export function MobileButlerPage() {
     return () => {
       window.clearInterval(timer);
     };
-  }, [activeControlTimer]);
+  }, [activeControlSchedule]);
   useEffect(() => {
     if (openDrawer !== "sidebar") {
       setOpenHistoryPanel(null);
@@ -731,34 +965,41 @@ export function MobileButlerPage() {
           : activeTab === "automation"
             ? (
                 <>
-                  <RecordSection
-                    title={t("shell.butlerAutomationTasksTitle")}
+                  <MobileAutomationOverviewSection
+                    items={automationTasks}
                     emptyText={t("shell.butlerAutomationTasksEmpty")}
                     actionLabel={t("shell.butlerFollowUpHistoryAction")}
                     onAction={() => setOpenHistoryPanel("automation")}
-                    items={automationTasks.map((item) => ({
-                      id: item.id,
-                      title: item.title,
-                      subtitle: item.projectName,
-                      status: item.statusLabel,
-                      content: `${t("shell.butlerAutomationTaskTypeLabel")} · ${item.taskTypeLabel}`,
-                      meta: `${t("shell.butlerAutomationTaskNextRunLabel")} · ${formatIsoDateTime(item.nextRunAt)}`,
-                      actionLabel:
-                        item.kind === "control_timer"
-                          ? cancellingTimerId === item.timerId
-                            ? t("shell.butlerControlTimerCancelling")
-                            : t("shell.butlerControlTimerStopAction")
-                          : null,
-                      actionDisabled:
-                        item.kind === "control_timer" ? cancellingTimerId === item.timerId : false,
-                      onAction:
-                        item.kind === "control_timer" && item.timerId
-                          ? () => {
-                              void handleCancelControlTimer(item.timerId!);
-                            }
-                          : undefined
-                    }))}
+                    selectedAutomationId={selectedAutomationId}
+                    cancellingAutomationId={cancellingAutomationId}
+                    onSelectAutomation={handleSelectAutomation}
+                    onCancelAutomation={(automationId) => {
+                      void handleCancelAutomation(automationId);
+                    }}
                   />
+
+                  {selectedAutomation && automationEditorState ? (
+                    <MobileAutomationDetailPanel
+                      automation={selectedAutomation}
+                      editorState={automationEditorState}
+                      saving={savingAutomationId === selectedAutomation.id}
+                      recentRuns={selectedAutomationRuns}
+                      workspaceNameById={workspaceNameById}
+                      sessionTitleById={sessionTitleById}
+                      onClose={() => {
+                        setSelectedAutomationId(null);
+                        setAutomationEditorState(null);
+                      }}
+                      onEditorChange={(patch) => {
+                        setAutomationEditorState((current) => (
+                          current ? { ...current, ...patch } : current
+                        ));
+                      }}
+                      onSave={() => {
+                        void handleSaveAutomation();
+                      }}
+                    />
+                  ) : null}
 
                   <RecordSection
                     title={t("shell.butlerAutomationRunsTitle")}
@@ -956,9 +1197,15 @@ export function MobileButlerPage() {
   }
 
   async function refreshButlerRecords(): Promise<void> {
-    const [overviewResponse, followUpResponse] = await Promise.all([
+    const [overviewResponse, followUpResponse, automationResponse, automationRunsResponse] = await Promise.all([
       getButlerOverview(),
-      listButlerFollowUpTasks()
+      listButlerFollowUpTasks(),
+      listAssistantAutomations({
+        limit: 100
+      }),
+      listRecentAssistantAutomationRuns({
+        limit: 100
+      })
     ]);
 
     await store.reloadEventsAndOverview();
@@ -966,7 +1213,9 @@ export function MobileButlerPage() {
     setState((current) => ({
       ...current,
       overview: overviewResponse.overview,
-      followUpTasks: followUpResponse.items.filter((task) => task.workspaceId === workspaceId)
+      followUpTasks: followUpResponse.items.filter((task) => task.workspaceId === workspaceId),
+      assistantAutomations: automationResponse.payload.items,
+      assistantAutomationRuns: automationRunsResponse.payload.items
     }));
   }
 
@@ -1047,6 +1296,96 @@ export function MobileButlerPage() {
     }
   }
 
+  function handleSelectAutomation(automationId: string) {
+    if (selectedAutomationId === automationId) {
+      setSelectedAutomationId(null);
+      setAutomationEditorState(null);
+      return;
+    }
+
+    const automation = state.assistantAutomations.find((item) => item.id === automationId);
+
+    if (!automation) {
+      return;
+    }
+
+    setSelectedAutomationId(automationId);
+    setAutomationEditorState(createAutomationEditorState(automation));
+  }
+
+  async function handleSaveAutomation() {
+    if (!selectedAutomation || !automationEditorState) {
+      return;
+    }
+
+    let payload: ReturnType<typeof buildAutomationUpdatePayload>;
+
+    try {
+      payload = buildAutomationUpdatePayload(selectedAutomation, automationEditorState);
+    } catch (error) {
+      showToast({
+        title: t("shell.butlerAutomationSaveFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error"
+      });
+      return;
+    }
+
+    setSavingAutomationId(selectedAutomation.id);
+
+    try {
+      const response = await updateAssistantAutomation(selectedAutomation.id, payload);
+      setState((current) => ({
+        ...current,
+        assistantAutomations: replaceAssistantAutomation(
+          current.assistantAutomations,
+          response.payload.automation
+        )
+      }));
+      setSelectedAutomationId(response.payload.automation.id);
+      setAutomationEditorState(createAutomationEditorState(response.payload.automation));
+      showToast({
+        title: t("shell.butlerAutomationSaveSucceeded"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: t("shell.butlerAutomationSaveFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error"
+      });
+    } finally {
+      setSavingAutomationId(null);
+    }
+  }
+
+  async function handleCancelAutomation(automationId: string) {
+    setCancellingAutomationId(automationId);
+
+    try {
+      const response = await cancelAssistantAutomation(automationId);
+      setState((current) => ({
+        ...current,
+        assistantAutomations: replaceAssistantAutomation(
+          current.assistantAutomations,
+          response.payload.automation
+        )
+      }));
+      showToast({
+        title: t("shell.butlerControlTimerCancelSucceeded"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: t("shell.butlerControlTimerCancelFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error"
+      });
+    } finally {
+      setCancellingAutomationId(null);
+    }
+  }
+
   async function handleExecuteControlTimerNow(timer: ButlerControlTimerDto) {
     const prompt = timer.content.trim();
 
@@ -1081,6 +1420,84 @@ export function MobileButlerPage() {
     } finally {
       setExecutingTimerId(null);
     }
+  }
+
+  async function handleCancelControlSchedule(schedule: ButlerControlScheduleBannerItem) {
+    if (schedule.kind === "timer") {
+      await handleCancelControlTimer(schedule.timer.id);
+      return;
+    }
+
+    await handleCancelAutomation(schedule.automation.id);
+  }
+
+  async function handleExecuteControlScheduleNow(schedule: ButlerControlScheduleBannerItem) {
+    if (schedule.kind === "timer") {
+      await handleExecuteControlTimerNow(schedule.timer);
+      return;
+    }
+
+    if (schedule.automation.triggerType !== "once") {
+      return;
+    }
+
+    const prompt = schedule.automation.actionConfig.content.trim();
+
+    if (!prompt) {
+      showToast({
+        title: t("shell.butlerControlTimerExecuteNowFailed"),
+        tone: "error"
+      });
+      return;
+    }
+
+    setExecutingTimerId(schedule.automation.id);
+
+    try {
+      await cancelAssistantAutomation(schedule.automation.id);
+      setState((current) => ({
+        ...current,
+        assistantAutomations: replaceAssistantAutomation(
+          current.assistantAutomations,
+          {
+            ...schedule.automation,
+            status: "cancelled",
+            nextRunAt: null,
+            cancelledAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }
+        )
+      }));
+      await store.sendMessage(prompt);
+      requestNavigationRefresh();
+      showToast({
+        title: t("shell.butlerControlTimerExecuteNowSucceeded"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: t("shell.butlerControlTimerExecuteNowFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error"
+      });
+    } finally {
+      setExecutingTimerId(null);
+    }
+  }
+
+  function handleOpenControlScheduleSession(schedule: ButlerControlScheduleBannerItem) {
+    const targetSessionId = resolveControlScheduleTargetSessionId(schedule);
+    const targetWorkspaceId =
+      (targetSessionId ? sessionWorkspaceIdById.get(targetSessionId) : null)
+      || readControlScheduleWorkspaceId(schedule)
+      || workspaceId;
+
+    if (!targetSessionId || !targetWorkspaceId) {
+      return;
+    }
+
+    setOpenDrawer(null);
+    navigate(buildWorkspaceSessionPath(targetWorkspaceId, targetSessionId));
   }
 
   if (!currentWorkspace) {
@@ -1226,22 +1643,30 @@ export function MobileButlerPage() {
                   </div>
                 )}
               </div>
-              {activeControlTimer ? (
+              {activeControlSchedule ? (
                 <MobileButlerControlTimerBanner
-                  timer={activeControlTimer}
+                  schedule={activeControlSchedule}
                   currentWorkspaceId={workspaceId}
                   currentWorkspaceName={currentWorkspace?.name ?? null}
                   projectNameById={projectNameById}
                   workspaceNameById={workspaceNameById}
                   sessionTitleById={sessionTitleById}
+                  sessionWorkspaceIdById={sessionWorkspaceIdById}
                   countdownNow={countdownNow}
-                  cancelling={cancellingTimerId === activeControlTimer.id}
-                  executingNow={executingTimerId === activeControlTimer.id}
+                  cancelling={
+                    activeControlSchedule.kind === "timer"
+                      ? cancellingTimerId === activeControlSchedule.timer.id
+                      : cancellingAutomationId === activeControlSchedule.automation.id
+                  }
+                  executingNow={executingTimerId === activeControlScheduleId(activeControlSchedule)}
                   onCancel={() => {
-                    void handleCancelControlTimer(activeControlTimer.id);
+                    void handleCancelControlSchedule(activeControlSchedule);
                   }}
                   onExecuteNow={() => {
-                    void handleExecuteControlTimerNow(activeControlTimer);
+                    void handleExecuteControlScheduleNow(activeControlSchedule);
+                  }}
+                  onOpenSession={() => {
+                    handleOpenControlScheduleSession(activeControlSchedule);
                   }}
                 />
               ) : null}
@@ -1255,11 +1680,11 @@ export function MobileButlerPage() {
                     placeholder={t("shell.butlerComposerPlaceholder", {
                       displayName: butlerDisplayName
                     })}
-                    hasActiveRun={runtimeHasActiveRun ?? false}
+                    hasActiveRun={isControlSessionActive}
                     canInterrupt={runtimeCanInterrupt ?? false}
                     contextUsage={contextUsage}
-                    isSubmitting={runtimeLoading}
-                    isRunning={runtimeHasActiveRun ?? false}
+                    isSubmitting={runtimeSending}
+                    isRunning={isControlSessionActive}
                     onInterrupt={async () => {
                       await store.interrupt();
                       requestNavigationRefresh();
@@ -1327,34 +1752,42 @@ export function MobileButlerPage() {
 }
 
 function MobileButlerControlTimerBanner(props: {
-  timer: ButlerControlTimerDto;
+  schedule: ButlerControlScheduleBannerItem;
   currentWorkspaceId: string;
   currentWorkspaceName: string | null;
   projectNameById: Map<string, string>;
   workspaceNameById: Map<string, string>;
   sessionTitleById: Map<string, string>;
+  sessionWorkspaceIdById: Map<string, string>;
   countdownNow: number;
   cancelling: boolean;
   executingNow: boolean;
   onCancel: () => void;
   onExecuteNow: () => void;
+  onOpenSession: () => void;
 }) {
   const detailButtonId = useId();
   const detailPopoverId = useId();
   const detailRef = useRef<HTMLDivElement | null>(null);
   const detailPopoverRef = useRef<HTMLDivElement | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
-  const countdownText = resolveControlTimerCountdownLabel(props.timer, props.countdownNow);
-  const countdownClockText = resolveControlTimerClockLabel(props.timer, props.countdownNow);
-  const workspaceText = resolveControlTimerWorkspaceLabel(
-    props.timer,
+  const countdownText = resolveControlScheduleCountdownLabel(props.schedule, props.countdownNow);
+  const countdownClockText = resolveControlScheduleClockLabel(props.schedule, props.countdownNow);
+  const workspaceText = resolveControlScheduleWorkspaceLabel(
+    props.schedule,
     props.projectNameById,
     props.workspaceNameById,
     props.currentWorkspaceId,
     props.currentWorkspaceName
   );
-  const sessionText = resolveControlTimerSessionLabel(props.timer, props.sessionTitleById);
-  const promptContent = resolveControlTimerPromptContent(props.timer);
+  const sessionText = resolveControlScheduleSessionLabel(props.schedule, props.sessionTitleById);
+  const promptContent = resolveControlSchedulePromptContent(props.schedule);
+  const targetSessionId = resolveControlScheduleTargetSessionId(props.schedule);
+  const canOpenSession = Boolean(
+    targetSessionId
+    && (props.sessionWorkspaceIdById.has(targetSessionId) || readControlScheduleWorkspaceId(props.schedule))
+  );
+  const canExecuteNow = canExecuteControlScheduleNow(props.schedule);
 
   useEffect(() => {
     if (!detailOpen) {
@@ -1403,7 +1836,33 @@ function MobileButlerControlTimerBanner(props: {
         </div>
         <div className="mobile-butler-timer-meta-card">
           <span>{t("shell.butlerControlTimerSessionLabel")}</span>
-          <strong title={sessionText}>{sessionText}</strong>
+          {canOpenSession ? (
+            <button
+              type="button"
+              className="mobile-butler-timer-session-link"
+              title={sessionText}
+              aria-label={`${t("shell.butlerControlTimerSessionLabel")}：${sessionText}`}
+              style={{
+                padding: 0,
+                border: "none",
+                background: "transparent",
+                color: "inherit",
+                font: "inherit",
+                fontWeight: 600,
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                cursor: "pointer",
+                textDecoration: "underline"
+              }}
+              onClick={props.onOpenSession}
+            >
+              {sessionText}
+            </button>
+          ) : (
+            <strong title={sessionText}>{sessionText}</strong>
+          )}
         </div>
       </div>
       <div className="mobile-butler-timer-actions">
@@ -1442,16 +1901,18 @@ function MobileButlerControlTimerBanner(props: {
             </div>
           </ButlerAnchoredPopover>
         </div>
-        <button
-          type="button"
-          className="secondary-button mobile-butler-timer-action"
-          disabled={props.cancelling || props.executingNow}
-          onClick={props.onExecuteNow}
-        >
-          {props.executingNow
-            ? t("shell.butlerControlTimerExecutingNow")
-            : t("shell.butlerControlTimerExecuteNowAction")}
-        </button>
+        {canExecuteNow ? (
+          <button
+            type="button"
+            className="secondary-button mobile-butler-timer-action"
+            disabled={props.cancelling || props.executingNow}
+            onClick={props.onExecuteNow}
+          >
+            {props.executingNow
+              ? t("shell.butlerControlTimerExecutingNow")
+              : t("shell.butlerControlTimerExecuteNowAction")}
+          </button>
+        ) : null}
         <button
           type="button"
           className="secondary-button mobile-butler-timer-action"
@@ -1463,7 +1924,9 @@ function MobileButlerControlTimerBanner(props: {
             : t("shell.butlerControlTimerStopAction")}
         </button>
       </div>
-      <p className="mobile-butler-timer-note">{t("shell.butlerControlTimerActionNote")}</p>
+      {canExecuteNow ? (
+        <p className="mobile-butler-timer-note">{t("shell.butlerControlTimerActionNote")}</p>
+      ) : null}
     </section>
   );
 }
@@ -1474,6 +1937,475 @@ function InfoMetric({ label, value }: { label: string; value: string }) {
       <span>{label}</span>
       <strong title={value}>{value}</strong>
     </div>
+  );
+}
+
+function MobileAutomationOverviewSection(props: {
+  items: AutomationTaskItem[];
+  emptyText: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  selectedAutomationId: string | null;
+  cancellingAutomationId: string | null;
+  onSelectAutomation: (automationId: string) => void;
+  onCancelAutomation: (automationId: string) => void;
+}) {
+  return (
+    <section className="mobile-feature-panel surface-card mobile-butler-record-section">
+      <div className="mobile-feature-section-header">
+        <div>
+          <h2>{t("shell.butlerAutomationTasksTitle")}</h2>
+          <p>{t("shell.butlerAutomationMobileOverviewDescription")}</p>
+        </div>
+        <div className="mobile-feature-section-actions">
+          {props.actionLabel && props.onAction ? (
+            <button
+              type="button"
+              className="mobile-butler-section-action"
+              onClick={props.onAction}
+            >
+              {props.actionLabel}
+            </button>
+          ) : null}
+          <span className="mobile-feature-counter">{props.items.length}</span>
+        </div>
+      </div>
+      {props.items.length > 0 ? (
+        <div className="mobile-butler-automation-grid">
+          {props.items.map((item) => (
+            <article
+              key={item.id}
+              className="mobile-butler-automation-card"
+              data-selected={props.selectedAutomationId === item.automationId}
+            >
+              <header className="mobile-butler-record-header">
+                <div className="mobile-butler-record-copy">
+                  <strong>{item.title}</strong>
+                  <span>{item.projectName}</span>
+                </div>
+                <span className="mobile-butler-record-badge">{item.statusLabel}</span>
+              </header>
+              <div className="mobile-butler-automation-chip-row">
+                <span className="mobile-butler-automation-chip">{item.taskTypeLabel}</span>
+                {item.targetSessionTitle ? (
+                  <span className="mobile-butler-automation-chip">{item.targetSessionTitle}</span>
+                ) : null}
+              </div>
+              <div className="mobile-butler-automation-metric-grid">
+                <div className="mobile-butler-automation-metric">
+                  <span>{t("shell.butlerAutomationTaskNextRunLabel")}</span>
+                  <strong>{formatIsoDateTime(item.nextRunAt)}</strong>
+                </div>
+                <div className="mobile-butler-automation-metric">
+                  <span>{t("shell.butlerAutomationTaskLastRunLabel")}</span>
+                  <strong>{formatIsoDateTime(item.lastRunAt)}</strong>
+                </div>
+              </div>
+              <p className="mobile-butler-automation-summary">{item.promptPreview}</p>
+              {item.lastResultSummary ? (
+                <p className="mobile-butler-automation-footnote">{item.lastResultSummary}</p>
+              ) : null}
+              <footer className="mobile-butler-record-footer">
+                <button
+                  type="button"
+                  className="secondary-button mobile-butler-record-action"
+                  onClick={() => {
+                    if (item.automationId) {
+                      props.onSelectAutomation(item.automationId);
+                    }
+                  }}
+                >
+                  {props.selectedAutomationId === item.automationId
+                    ? t("shell.butlerAutomationCollapseDetailsAction")
+                    : t("shell.butlerAutomationOpenDetailsAction")}
+                </button>
+                {item.automationId && item.status === "active" ? (
+                  <button
+                    type="button"
+                    className="secondary-button mobile-butler-record-action"
+                    disabled={props.cancellingAutomationId === item.automationId}
+                    onClick={() => {
+                      props.onCancelAutomation(item.automationId!);
+                    }}
+                  >
+                    {props.cancellingAutomationId === item.automationId
+                      ? t("shell.butlerControlTimerCancelling")
+                      : t("shell.butlerControlTimerStopAction")}
+                  </button>
+                ) : null}
+              </footer>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className="mobile-butler-empty-text">{props.emptyText}</p>
+      )}
+    </section>
+  );
+}
+
+function MobileAutomationDetailPanel(props: {
+  automation: AssistantAutomationTaskDto;
+  editorState: AutomationEditorState;
+  saving: boolean;
+  recentRuns: AssistantAutomationRunDto[];
+  sessionTitleById: ReadonlyMap<string, string>;
+  workspaceNameById: ReadonlyMap<string, string>;
+  onEditorChange: (patch: Partial<AutomationEditorState>) => void;
+  onSave: () => void;
+  onClose: () => void;
+}) {
+  const projectLabel = props.automation.projectId?.trim()
+    ? props.workspaceNameById.get(props.automation.controlSession?.session?.workspaceId ?? "")
+    : null;
+  const targetSessionLabel = resolveAutomationTargetSessionLabel(props.automation, props.sessionTitleById);
+
+  return (
+    <section className="mobile-feature-panel surface-card mobile-butler-record-section mobile-butler-automation-detail-panel">
+      <div className="mobile-feature-section-header">
+        <div>
+          <h2>{t("shell.butlerAutomationDetailTitle")}</h2>
+          <p>{t("shell.butlerAutomationDetailDescription")}</p>
+        </div>
+        <button
+          type="button"
+          className="mobile-butler-section-action"
+          onClick={props.onClose}
+        >
+          {t("common.close")}
+        </button>
+      </div>
+      <div className="mobile-butler-automation-detail-summary">
+        <InfoMetric
+          label={t("shell.butlerAutomationTaskTypeLabel")}
+          value={resolveAutomationTaskTypeLabel(props.automation.triggerType)}
+        />
+        <InfoMetric
+          label={t("shell.butlerAutomationStatusLabel")}
+          value={resolveAssistantAutomationTaskStatusLabel(props.automation.status)}
+        />
+        <InfoMetric
+          label={t("shell.butlerAutomationTaskNextRunLabel")}
+          value={formatIsoDateTime(props.automation.nextRunAt)}
+        />
+        <InfoMetric
+          label={t("shell.butlerAutomationTaskLastRunLabel")}
+          value={formatIsoDateTime(props.automation.lastRunAt || props.automation.updatedAt)}
+        />
+        {projectLabel ? (
+          <InfoMetric
+            label={t("shell.mobileButlerAssistantWorkspaceLabel")}
+            value={projectLabel}
+          />
+        ) : null}
+        {targetSessionLabel ? (
+          <InfoMetric
+            label={t("shell.butlerAutomationTargetSessionLabel")}
+            value={targetSessionLabel}
+          />
+        ) : null}
+      </div>
+
+      <div className="mobile-butler-automation-form-grid">
+        <label className="butler-form-field">
+          <span>{t("shell.butlerAutomationTitleLabel")}</span>
+          <input
+            className="butler-form-control"
+            value={props.editorState.title}
+            disabled={props.saving}
+            onChange={(event) => {
+              props.onEditorChange({
+                title: event.target.value
+              });
+            }}
+          />
+        </label>
+
+        <label className="butler-form-field butler-form-field-wide">
+          <span>{t("shell.butlerAutomationPromptLabel")}</span>
+          <textarea
+            className="butler-form-control mobile-butler-automation-textarea"
+            value={props.editorState.content}
+            disabled={props.saving}
+            onChange={(event) => {
+              props.onEditorChange({
+                content: event.target.value
+              });
+            }}
+          />
+        </label>
+
+        <label className="mobile-butler-automation-toggle">
+          <input
+            type="checkbox"
+            checked={props.editorState.includeTriggerContext}
+            disabled={props.saving}
+            onChange={(event) => {
+              props.onEditorChange({
+                includeTriggerContext: event.target.checked
+              });
+            }}
+          />
+          <span>{t("shell.butlerAutomationIncludeTriggerContextLabel")}</span>
+        </label>
+
+        <AutomationTriggerFields
+          automation={props.automation}
+          editorState={props.editorState}
+          saving={props.saving}
+          onEditorChange={props.onEditorChange}
+        />
+      </div>
+
+      {props.recentRuns.length > 0 ? (
+        <div className="mobile-butler-automation-detail-runs">
+          <div className="mobile-feature-section-header">
+            <div>
+              <h2>{t("shell.butlerAutomationRunsTitle")}</h2>
+            </div>
+            <span className="mobile-feature-counter">{props.recentRuns.length}</span>
+          </div>
+          <div className="mobile-butler-record-list">
+            {props.recentRuns.map((run) => (
+              <article key={run.id} className="mobile-butler-record-card">
+                <header className="mobile-butler-record-header">
+                  <div className="mobile-butler-record-copy">
+                    <strong>{t("shell.butlerAutomationRoundLabel", { round: run.runSeq })}</strong>
+                    <span>{resolveAutomationRunSourceLabel(run.triggerType)}</span>
+                  </div>
+                  <span className="mobile-butler-record-badge">
+                    {resolveAssistantAutomationRunStatusLabel(run.status)}
+                  </span>
+                </header>
+                <p>{run.summary?.trim() || run.error?.trim() || t("shell.butlerAutomationRunEmptySummary")}</p>
+                <footer className="mobile-butler-record-footer">
+                  <span>{formatIsoDateTime(run.createdAt)}</span>
+                </footer>
+              </article>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <footer className="mobile-butler-automation-detail-actions">
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={props.saving}
+          onClick={props.onClose}
+        >
+          {t("common.close")}
+        </button>
+        <button
+          type="button"
+          className="primary-button"
+          disabled={props.saving}
+          onClick={props.onSave}
+        >
+          {props.saving ? t("shell.butlerAutomationSaving") : t("shell.butlerAutomationSaveAction")}
+        </button>
+      </footer>
+    </section>
+  );
+}
+
+function AutomationTriggerFields(props: {
+  automation: AssistantAutomationTaskDto;
+  editorState: AutomationEditorState;
+  saving: boolean;
+  onEditorChange: (patch: Partial<AutomationEditorState>) => void;
+}) {
+  const { triggerConfig } = props.automation;
+
+  if (triggerConfig.type === "once") {
+    return (
+      <label className="butler-form-field">
+        <span>{t("shell.butlerAutomationDueAtLabel")}</span>
+        <input
+          type="datetime-local"
+          className="butler-form-control"
+          value={props.editorState.dueAt}
+          disabled={props.saving}
+          onChange={(event) => {
+            props.onEditorChange({
+              dueAt: event.target.value
+            });
+          }}
+        />
+      </label>
+    );
+  }
+
+  if (triggerConfig.type === "interval") {
+    return (
+      <>
+        <label className="butler-form-field">
+          <span>{t("shell.butlerAutomationEverySecondsLabel")}</span>
+          <input
+            inputMode="numeric"
+            className="butler-form-control"
+            value={props.editorState.everySeconds}
+            disabled={props.saving}
+            onChange={(event) => {
+              props.onEditorChange({
+                everySeconds: event.target.value
+              });
+            }}
+          />
+        </label>
+        <label className="butler-form-field">
+          <span>{t("shell.butlerAutomationEveryMinutesLabel")}</span>
+          <input
+            inputMode="numeric"
+            className="butler-form-control"
+            value={props.editorState.everyMinutes}
+            disabled={props.saving}
+            onChange={(event) => {
+              props.onEditorChange({
+                everyMinutes: event.target.value
+              });
+            }}
+          />
+        </label>
+        <label className="butler-form-field">
+          <span>{t("shell.butlerAutomationEveryHoursLabel")}</span>
+          <input
+            inputMode="numeric"
+            className="butler-form-control"
+            value={props.editorState.everyHours}
+            disabled={props.saving}
+            onChange={(event) => {
+              props.onEditorChange({
+                everyHours: event.target.value
+              });
+            }}
+          />
+        </label>
+        <label className="butler-form-field">
+          <span>{t("shell.butlerAutomationStopAtLabel")}</span>
+          <input
+            type="datetime-local"
+            className="butler-form-control"
+            value={props.editorState.stopAt}
+            disabled={props.saving}
+            onChange={(event) => {
+              props.onEditorChange({
+                stopAt: event.target.value
+              });
+            }}
+          />
+        </label>
+      </>
+    );
+  }
+
+  if (triggerConfig.type === "cron") {
+    return (
+      <>
+        <label className="butler-form-field">
+          <span>{t("shell.butlerAutomationCronMinuteLabel")}</span>
+          <input
+            inputMode="numeric"
+            className="butler-form-control"
+            value={props.editorState.cronMinute}
+            disabled={props.saving}
+            onChange={(event) => {
+              props.onEditorChange({
+                cronMinute: event.target.value
+              });
+            }}
+          />
+        </label>
+        <label className="butler-form-field">
+          <span>{t("shell.butlerAutomationCronHourLabel")}</span>
+          <input
+            inputMode="numeric"
+            className="butler-form-control"
+            value={props.editorState.cronHour}
+            disabled={props.saving}
+            onChange={(event) => {
+              props.onEditorChange({
+                cronHour: event.target.value
+              });
+            }}
+          />
+        </label>
+        <label className="butler-form-field butler-form-field-wide">
+          <span>{t("shell.butlerAutomationCronDaysOfWeekLabel")}</span>
+          <input
+            className="butler-form-control"
+            value={props.editorState.cronDaysOfWeek}
+            disabled={props.saving}
+            onChange={(event) => {
+              props.onEditorChange({
+                cronDaysOfWeek: event.target.value
+              });
+            }}
+          />
+        </label>
+        <label className="butler-form-field">
+          <span>{t("shell.butlerAutomationStopAtLabel")}</span>
+          <input
+            type="datetime-local"
+            className="butler-form-control"
+            value={props.editorState.stopAt}
+            disabled={props.saving}
+            onChange={(event) => {
+              props.onEditorChange({
+                stopAt: event.target.value
+              });
+            }}
+          />
+        </label>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <label className="butler-form-field">
+        <span>{t("shell.butlerAutomationPollIntervalLabel")}</span>
+        <input
+          inputMode="numeric"
+          className="butler-form-control"
+          value={props.editorState.pollIntervalSeconds}
+          disabled={props.saving}
+          onChange={(event) => {
+            props.onEditorChange({
+              pollIntervalSeconds: event.target.value
+            });
+          }}
+        />
+      </label>
+      <label className="butler-form-field">
+        <span>{t("shell.butlerAutomationMaxChecksLabel")}</span>
+        <input
+          inputMode="numeric"
+          className="butler-form-control"
+          value={props.editorState.maxChecks}
+          disabled={props.saving}
+          onChange={(event) => {
+            props.onEditorChange({
+              maxChecks: event.target.value
+            });
+          }}
+        />
+      </label>
+      <label className="butler-form-field">
+        <span>{t("shell.butlerAutomationExpiresAtLabel")}</span>
+        <input
+          type="datetime-local"
+          className="butler-form-control"
+          value={props.editorState.expiresAt}
+          disabled={props.saving}
+          onChange={(event) => {
+            props.onEditorChange({
+              expiresAt: event.target.value
+            });
+          }}
+        />
+      </label>
+    </>
   );
 }
 
@@ -1892,6 +2824,15 @@ function replaceControlTimer(
     .sort((left, right) => parseIsoTime(resolveControlTimerSortTime(right)) - parseIsoTime(resolveControlTimerSortTime(left)));
 }
 
+function replaceAssistantAutomation(
+  automations: AssistantAutomationTaskDto[],
+  nextAutomation: AssistantAutomationTaskDto
+): AssistantAutomationTaskDto[] {
+  const nextAutomations = automations.filter((automation) => automation.id !== nextAutomation.id);
+  return [nextAutomation, ...nextAutomations]
+    .sort((left, right) => parseIsoTime(resolveAssistantAutomationSortTime(right)) - parseIsoTime(resolveAssistantAutomationSortTime(left)));
+}
+
 function replaceFollowUpTask(
   tasks: ButlerFollowUpTaskDto[],
   nextTask: ButlerFollowUpTaskDto
@@ -2038,6 +2979,46 @@ function resolveControlTimerWorkspaceLabel(
   return t("shell.butlerControlTimerUnknownWorkspace");
 }
 
+function resolveControlScheduleWorkspaceLabel(
+  item: ButlerControlScheduleBannerItem,
+  projectNameById: Map<string, string>,
+  workspaceNameById: Map<string, string>,
+  currentWorkspaceId: string,
+  currentWorkspaceName: string | null
+): string {
+  if (item.kind === "timer") {
+    return resolveControlTimerWorkspaceLabel(
+      item.timer,
+      projectNameById,
+      workspaceNameById,
+      currentWorkspaceId,
+      currentWorkspaceName
+    );
+  }
+
+  const projectId = item.automation.projectId?.trim();
+
+  if (projectId && projectNameById.has(projectId)) {
+    return projectNameById.get(projectId)!;
+  }
+
+  const workspaceId = readControlScheduleWorkspaceId(item) || currentWorkspaceId.trim();
+
+  if (!workspaceId) {
+    return t("shell.butlerControlTimerUnknownWorkspace");
+  }
+
+  if (workspaceNameById.has(workspaceId)) {
+    return workspaceNameById.get(workspaceId)!;
+  }
+
+  if (workspaceId === currentWorkspaceId.trim() && currentWorkspaceName?.trim()) {
+    return currentWorkspaceName.trim();
+  }
+
+  return t("shell.butlerControlTimerUnknownWorkspace");
+}
+
 function resolveControlTimerSessionLabel(
   timer: ButlerControlTimerDto,
   sessionTitleById: Map<string, string>
@@ -2061,6 +3042,27 @@ function resolveControlTimerSessionLabel(
   return t("shell.butlerControlTimerUnknownSession");
 }
 
+function resolveControlScheduleSessionLabel(
+  item: ButlerControlScheduleBannerItem,
+  sessionTitleById: Map<string, string>
+): string {
+  if (item.kind === "timer") {
+    return resolveControlTimerSessionLabel(item.timer, sessionTitleById);
+  }
+
+  const targetSessionId = resolveControlScheduleTargetSessionId(item);
+
+  if (targetSessionId && sessionTitleById.has(targetSessionId)) {
+    return sessionTitleById.get(targetSessionId)!;
+  }
+
+  if (item.automation.controlSession?.session?.title?.trim()) {
+    return item.automation.controlSession.session.title.trim();
+  }
+
+  return t("shell.butlerControlTimerUnknownSession");
+}
+
 function TimerDetailIcon() {
   return (
     <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
@@ -2073,9 +3075,7 @@ function TimerDetailIcon() {
 }
 
 function buildAutomationTaskItems(
-  patrolPlans: ButlerPatrolPlanDto[],
-  followUpTasks: ButlerFollowUpTaskDto[],
-  controlTimers: ButlerControlTimerDto[],
+  automations: AssistantAutomationTaskDto[],
   overview: ButlerOverviewDto | null,
   workspaceProjectIds: ReadonlySet<string>,
   mode: "active" | "history" = "active"
@@ -2085,51 +3085,30 @@ function buildAutomationTaskItems(
       .filter((project) => workspaceProjectIds.has(project.id))
       .map((project) => [project.id, project.name] as const)
   );
-  const planItems = patrolPlans
-    .filter((plan) => workspaceProjectIds.has(plan.projectId))
-    .filter((plan) => (mode === "history" ? !plan.enabled : plan.enabled))
-    .map<AutomationTaskItem>((plan) => ({
-      id: `patrol-plan:${plan.id}`,
-      kind: "patrol_plan",
-      title: plan.name,
-      projectName: projectNameById.get(plan.projectId) ?? plan.projectId,
-      status: plan.enabled ? "active" : "cancelled",
-      taskTypeLabel: resolveAutomationTaskTypeLabel("patrol_plan", plan.triggerType),
-      statusLabel: plan.enabled ? t("shell.butlerAutomationTaskEnabled") : t("shell.butlerAutomationTaskDisabled"),
-      nextRunAt: plan.nextRunAt,
-      lastRunAt: plan.lastScheduledAt
-    }));
-  const followUpItems = followUpTasks
-    .filter((task) => (
-      mode === "history" ? !isVisibleMobileFollowUpTask(task.status) : isVisibleMobileFollowUpTask(task.status)
+  const items = automations
+    .filter((automation) => isAssistantAutomationVisibleInWorkspace(automation, workspaceProjectIds, overview))
+    .filter((automation) => (
+      mode === "history"
+        ? automation.status !== "active"
+        : automation.status === "active"
     ))
-    .map<AutomationTaskItem>((task) => ({
-      id: `follow-up:${task.id}`,
-      kind: "follow_up",
-      title: task.sessionTitle?.trim() || task.projectName,
-      projectName: task.projectName,
-      status: task.status,
-      taskTypeLabel: resolveAutomationTaskTypeLabel("follow_up"),
-      statusLabel: resolveFollowUpTaskStatusLabel(task.status),
-      nextRunAt: task.nextCheckAt,
-      lastRunAt: task.lastAutomationAt || task.lastCheckedAt || task.updatedAt
-    }));
-  const timerItems = controlTimers
-    .filter((timer) => (mode === "history" ? timer.status !== "active" : timer.status === "active"))
-    .map<AutomationTaskItem>((timer) => ({
-      id: `control-timer:${timer.id}`,
-      timerId: timer.id,
-      kind: "control_timer",
-      title: resolveControlTimerTitle(timer),
-      projectName: resolveControlTimerProjectName(timer, projectNameById),
-      status: timer.status,
-      taskTypeLabel: resolveAutomationTaskTypeLabel("control_timer"),
-      statusLabel: resolveControlTimerStatusLabel(timer.status),
-      nextRunAt: timer.dueAt,
-      lastRunAt: timer.updatedAt
+    .map<AutomationTaskItem>((automation) => ({
+      id: `assistant-automation:${automation.id}`,
+      automationId: automation.id,
+      kind: "assistant_automation",
+      title: resolveAssistantAutomationTitle(automation),
+      projectName: resolveAssistantAutomationProjectName(automation, projectNameById),
+      status: normalizeAutomationTaskStatus(automation.status),
+      taskTypeLabel: resolveAutomationTaskTypeLabel(automation.triggerType),
+      statusLabel: resolveAssistantAutomationTaskStatusLabel(automation.status),
+      nextRunAt: automation.nextRunAt,
+      lastRunAt: automation.lastRunAt || automation.updatedAt,
+      promptPreview: summarizeAutomationPrompt(automation.actionConfig.content),
+      lastResultSummary: automation.lastRunSummary?.trim() || automation.lastError?.trim() || null,
+      targetSessionTitle: resolveAutomationTargetSessionLabel(automation)
     }));
 
-  return [...timerItems, ...planItems, ...followUpItems]
+  return items
     .sort((left, right) => {
       const leftNext = parseIsoTime(left.nextRunAt);
       const rightNext = parseIsoTime(right.nextRunAt);
@@ -2152,8 +3131,8 @@ function buildAutomationTaskItems(
 }
 
 function buildAutomationRunItems(
-  followUpTasks: ButlerFollowUpTaskDto[],
-  controlTimers: ButlerControlTimerDto[],
+  automations: AssistantAutomationTaskDto[],
+  runs: AssistantAutomationRunDto[],
   overview: ButlerOverviewDto | null,
   workspaceProjectIds: ReadonlySet<string>,
   mode: "active" | "history" = "active"
@@ -2163,62 +3142,36 @@ function buildAutomationRunItems(
       .filter((project) => workspaceProjectIds.has(project.id))
       .map((project) => [project.id, project.name] as const)
   );
-  const patrolRunItems = (overview?.patrols ?? [])
-    .filter((run) => workspaceProjectIds.has(run.projectId))
+  const automationById = new Map(
+    automations
+      .filter((automation) => isAssistantAutomationVisibleInWorkspace(automation, workspaceProjectIds, overview))
+      .map((automation) => [automation.id, automation] as const)
+  );
+  const automationRunItems = runs
     .map((run) => ({
       run,
+      automation: automationById.get(run.automationId),
       normalizedStatus: normalizeAutomationRunStatus(run.status)
     }))
+    .filter(({ automation }) => Boolean(automation))
     .filter(({ normalizedStatus }) => (
       mode === "history"
         ? !isActiveMobileAutomationRunStatus(normalizedStatus)
         : isActiveMobileAutomationRunStatus(normalizedStatus)
     ))
-    .map<AutomationRunItem>(({ run, normalizedStatus }) => ({
-      id: `patrol-run:${run.id}`,
-      kind: "patrol_run",
-      title: t("shell.butlerAutomationPatrolRunTitle"),
-      projectName: projectNameById.get(run.projectId) ?? run.projectId,
+    .map<AutomationRunItem>(({ run, automation, normalizedStatus }) => ({
+      id: `assistant-automation-run:${run.id}`,
+      kind: "assistant_automation_run",
+      title: resolveAssistantAutomationTitle(automation!),
+      projectName: resolveAssistantAutomationProjectName(automation!, projectNameById),
       status: normalizedStatus,
-      sourceLabel: resolveAutomationRunSourceLabel("patrol_run"),
-      statusLabel: run.status,
-      summary: run.summary?.trim() || t("shell.butlerAutomationRunEmptySummary"),
+      sourceLabel: resolveAutomationRunSourceLabel(run.triggerType),
+      statusLabel: resolveAssistantAutomationRunStatusLabel(run.status),
+      summary: run.summary?.trim() || run.error?.trim() || t("shell.butlerAutomationRunEmptySummary"),
       createdAt: run.finishedAt || run.startedAt || run.createdAt
     }));
-  const followUpRunItems = followUpTasks.flatMap<AutomationRunItem>((task) =>
-    (task.rounds ?? [])
-      .filter((round) => (
-        mode === "history"
-          ? !isActiveMobileAutomationRunStatus(round.status)
-          : isActiveMobileAutomationRunStatus(round.status)
-      ))
-      .map((round) => ({
-        id: `follow-up-round:${task.id}:${round.roundNumber}`,
-        kind: "follow_up_round",
-        title: `${task.sessionTitle?.trim() || task.projectName} · ${t("shell.butlerAutomationRoundLabel", { round: round.roundNumber })}`,
-        projectName: task.projectName,
-        status: round.status,
-        sourceLabel: resolveAutomationRunSourceLabel("follow_up_round"),
-        statusLabel: resolveFollowUpTaskStatusLabel(round.status),
-        summary: round.summary?.trim() || t("shell.butlerAutomationRunEmptySummary"),
-        createdAt: round.createdAt
-      }))
-  );
-  const timerRunItems = controlTimers
-    .filter((timer) => (mode === "history" ? timer.status !== "active" : false))
-    .map<AutomationRunItem>((timer) => ({
-      id: `control-timer:${timer.id}`,
-      kind: "control_timer",
-      title: resolveControlTimerTitle(timer),
-      projectName: resolveControlTimerProjectName(timer, projectNameById),
-      status: timer.status,
-      sourceLabel: resolveAutomationRunSourceLabel("control_timer"),
-      statusLabel: resolveControlTimerStatusLabel(timer.status),
-      summary: resolveControlTimerRunSummary(timer),
-      createdAt: timer.triggeredAt || timer.cancelledAt || timer.updatedAt
-    }));
 
-  return [...timerRunItems, ...patrolRunItems, ...followUpRunItems]
+  return automationRunItems
     .sort((left, right) => parseIsoTime(right.createdAt) - parseIsoTime(left.createdAt))
     .slice(0, 10);
 }
@@ -2240,6 +3193,72 @@ function resolveFollowUpTaskUpdatedAt(task: ButlerFollowUpTaskDto): string {
   return task.updatedAt || task.lastAutomationAt || task.lastCheckedAt || task.createdAt;
 }
 
+function activeControlScheduleId(item: ButlerControlScheduleBannerItem): string {
+  return item.kind === "timer" ? item.timer.id : item.automation.id;
+}
+
+function readControlScheduleDueAt(item: ButlerControlScheduleBannerItem): string | null {
+  return item.kind === "timer" ? item.timer.dueAt : item.automation.nextRunAt;
+}
+
+function readControlScheduleWorkspaceId(item: ButlerControlScheduleBannerItem): string | null {
+  return item.kind === "timer"
+    ? item.timer.controlSession?.session?.workspaceId?.trim() || null
+    : item.automation.controlSession?.session?.workspaceId?.trim() || null;
+}
+
+function resolveControlScheduleTargetSessionId(item: ButlerControlScheduleBannerItem): string | null {
+  if (item.kind === "timer") {
+    return item.timer.targetSessionId?.trim()
+      || item.timer.controlSession?.session?.sessionId?.trim()
+      || item.timer.sessionId?.trim()
+      || null;
+  }
+
+  return item.automation.actionConfig.targetSessionId?.trim()
+    || item.automation.controlSession?.session?.sessionId?.trim()
+    || item.automation.controlSession?.sessionId?.trim()
+    || null;
+}
+
+function canExecuteControlScheduleNow(item: ButlerControlScheduleBannerItem): boolean {
+  return item.kind === "timer" || item.automation.triggerType === "once";
+}
+
+function resolveControlScheduleCountdownLabel(
+  item: ButlerControlScheduleBannerItem,
+  nowMs: number
+): string {
+  const dueMs = parseIsoTime(readControlScheduleDueAt(item));
+
+  if (!dueMs || dueMs <= nowMs) {
+    return t("shell.butlerControlTimerCountdownDueNow");
+  }
+
+  return t("shell.butlerControlTimerCountdownActive", {
+    duration: formatDurationLabel(dueMs - nowMs)
+  });
+}
+
+function resolveControlScheduleClockLabel(
+  item: ButlerControlScheduleBannerItem,
+  nowMs: number
+): string {
+  const dueMs = parseIsoTime(readControlScheduleDueAt(item));
+
+  if (!dueMs || dueMs <= nowMs) {
+    return "00:00";
+  }
+
+  return formatDigitalDurationLabel(dueMs - nowMs);
+}
+
+function resolveControlSchedulePromptContent(item: ButlerControlScheduleBannerItem): string {
+  return item.kind === "timer"
+    ? resolveControlTimerPromptContent(item.timer)
+    : item.automation.actionConfig.content.trim() || t("conversation.butlerAnalysisEmpty");
+}
+
 function resolveFollowUpTaskStatusLabel(status: ButlerFollowUpTaskDto["status"]): string {
   switch (status) {
     case "active":
@@ -2258,36 +3277,30 @@ function resolveFollowUpTaskStatusLabel(status: ButlerFollowUpTaskDto["status"])
 }
 
 function resolveAutomationTaskTypeLabel(
-  kind: "patrol_plan" | "follow_up" | "control_timer",
-  triggerType?: ButlerPatrolPlanDto["triggerType"]
+  triggerType: AssistantAutomationTaskDto["triggerType"]
 ): string {
-  if (kind === "follow_up") {
-    return t("shell.butlerAutomationTaskTypeFollowUp");
-  }
-
-  if (kind === "control_timer") {
-    return t("shell.butlerAutomationTaskTypeControlTimer");
-  }
-
   switch (triggerType) {
+    case "once":
+      return t("shell.butlerAutomationTaskTypeControlTimer");
     case "interval":
       return t("shell.butlerAutomationTaskTypeInterval");
     case "cron":
       return t("shell.butlerAutomationTaskTypeCron");
-    case "manual":
+    case "condition":
+      return t("shell.butlerAutomationTaskTypeFollowUp");
     default:
-      return t("shell.butlerAutomationTaskTypeManual");
+      return t("shell.butlerAutomationTaskTypeControlTimer");
   }
 }
 
 function resolveAutomationRunSourceLabel(
-  kind: "patrol_run" | "follow_up_round" | "control_timer"
+  triggerType: AssistantAutomationRunDto["triggerType"]
 ): string {
-  if (kind === "patrol_run") {
+  if (triggerType === "interval" || triggerType === "cron") {
     return t("shell.butlerAutomationRunSourcePatrol");
   }
 
-  if (kind === "control_timer") {
+  if (triggerType === "once") {
     return t("shell.butlerAutomationRunSourceControlTimer");
   }
 
@@ -2314,6 +3327,243 @@ function normalizeAutomationRunStatus(status: string): AutomationRunItem["status
   }
 }
 
+function normalizeAutomationTaskStatus(status: AssistantAutomationTaskDto["status"]): AutomationTaskItem["status"] {
+  switch (status) {
+    case "failed":
+      return "failed";
+    case "cancelled":
+      return "cancelled";
+    case "completed":
+      return "completed";
+    case "paused":
+      return "waiting_user";
+    case "active":
+    default:
+      return "active";
+  }
+}
+
+function resolveAssistantAutomationTaskStatusLabel(
+  status: AssistantAutomationTaskDto["status"]
+): string {
+  switch (status) {
+    case "completed":
+      return t("shell.butlerAutomationStatusCompleted");
+    case "failed":
+      return t("shell.butlerAutomationStatusFailed");
+    case "cancelled":
+      return t("shell.butlerAutomationStatusCancelled");
+    case "paused":
+      return t("shell.butlerAutomationStatusWaitingUser");
+    case "active":
+    default:
+      return t("shell.butlerAutomationStatusActive");
+  }
+}
+
+function resolveAssistantAutomationRunStatusLabel(
+  status: AssistantAutomationRunDto["status"]
+): string {
+  switch (status) {
+    case "succeeded":
+      return t("shell.butlerAutomationStatusCompleted");
+    case "failed":
+      return t("shell.butlerAutomationStatusFailed");
+    case "cancelled":
+    case "skipped":
+      return t("shell.butlerAutomationStatusCancelled");
+    case "queued":
+    case "running":
+    default:
+      return t("shell.butlerAutomationStatusActive");
+  }
+}
+
+function resolveAssistantAutomationTitle(automation: AssistantAutomationTaskDto): string {
+  return automation.title?.trim()
+    || automation.actionConfig.targetSessionId?.trim()
+    || automation.actionConfig.content.trim()
+    || automation.id;
+}
+
+function resolveAssistantAutomationProjectName(
+  automation: AssistantAutomationTaskDto,
+  projectNameById: Map<string, string>
+): string {
+  if (automation.projectId && projectNameById.has(automation.projectId)) {
+    return projectNameById.get(automation.projectId)!;
+  }
+
+  return automation.controlSession?.session?.workspaceId || t("shell.butlerControlTimerNoProject");
+}
+
+function resolveAutomationTargetSessionLabel(
+  automation: AssistantAutomationTaskDto,
+  sessionTitleById: ReadonlyMap<string, string> = new Map()
+): string | null {
+  const targetSessionId = automation.actionConfig.targetSessionId?.trim();
+
+  if (targetSessionId && sessionTitleById.has(targetSessionId)) {
+    return sessionTitleById.get(targetSessionId)!;
+  }
+
+  if (automation.controlSession?.session?.title?.trim()) {
+    return automation.controlSession.session.title.trim();
+  }
+
+  if (targetSessionId) {
+    return targetSessionId;
+  }
+
+  return null;
+}
+
+function summarizeAutomationPrompt(content: string): string {
+  const normalized = content.replace(/\s+/g, " ").trim();
+
+  if (!normalized) {
+    return t("conversation.butlerAnalysisEmpty");
+  }
+
+  if (normalized.length <= 72) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, 72)}...`;
+}
+
+function createAutomationEditorState(automation: AssistantAutomationTaskDto): AutomationEditorState {
+  const editorState: AutomationEditorState = {
+    title: automation.title?.trim() || "",
+    content: automation.actionConfig.content,
+    includeTriggerContext: automation.actionConfig.includeTriggerContext,
+    dueAt: "",
+    everySeconds: "",
+    everyMinutes: "",
+    everyHours: "",
+    stopAt: "",
+    cronMinute: "",
+    cronHour: "",
+    cronDaysOfWeek: "",
+    pollIntervalSeconds: "",
+    expiresAt: "",
+    maxChecks: ""
+  };
+
+  if (automation.triggerConfig.type === "once") {
+    editorState.dueAt = formatIsoForDateTimeInput(automation.triggerConfig.dueAt);
+  } else if (automation.triggerConfig.type === "interval") {
+    editorState.everySeconds = toEditableNumber(automation.triggerConfig.seconds);
+    editorState.everyMinutes = toEditableNumber(automation.triggerConfig.minutes);
+    editorState.everyHours = toEditableNumber(automation.triggerConfig.hours);
+    editorState.stopAt = formatIsoForDateTimeInput(automation.triggerConfig.stopAt);
+  } else if (automation.triggerConfig.type === "cron") {
+    editorState.cronMinute = toEditableNumber(automation.triggerConfig.minute);
+    editorState.cronHour = toEditableNumber(automation.triggerConfig.hour);
+    editorState.cronDaysOfWeek = (automation.triggerConfig.daysOfWeek ?? []).join(",");
+    editorState.stopAt = formatIsoForDateTimeInput(automation.triggerConfig.stopAt);
+  } else {
+    editorState.pollIntervalSeconds = toEditableNumber(automation.triggerConfig.pollIntervalSeconds);
+    editorState.expiresAt = formatIsoForDateTimeInput(automation.triggerConfig.expiresAt);
+    editorState.maxChecks = toEditableNumber(automation.triggerConfig.maxChecks);
+  }
+
+  return editorState;
+}
+
+function buildAutomationUpdatePayload(
+  automation: AssistantAutomationTaskDto,
+  editorState: AutomationEditorState
+): {
+  title: string | null;
+  content: string;
+  includeTriggerContext: boolean;
+  dueAt?: string | null;
+  everySeconds?: number | null;
+  everyMinutes?: number | null;
+  everyHours?: number | null;
+  stopAt?: string | null;
+  cronMinute?: number | null;
+  cronHour?: number | null;
+  cronDaysOfWeek?: number[] | null;
+  pollIntervalSeconds?: number | null;
+  expiresAt?: string | null;
+  maxChecks?: number | null;
+} {
+  const payload = {
+    title: normalizeTextInput(editorState.title),
+    content: editorState.content.trim(),
+    includeTriggerContext: editorState.includeTriggerContext
+  } satisfies {
+    title: string | null;
+    content: string;
+    includeTriggerContext: boolean;
+  };
+
+  if (!payload.content) {
+    throw new Error(t("shell.butlerAutomationPromptRequired"));
+  }
+
+  if (automation.triggerConfig.type === "once") {
+    return {
+      ...payload,
+      dueAt: parseRequiredDateTimeInput(editorState.dueAt, t("shell.butlerAutomationDueAtLabel"))
+    };
+  }
+
+  if (automation.triggerConfig.type === "interval") {
+    return {
+      ...payload,
+      everySeconds: parseOptionalPositiveInteger(editorState.everySeconds, t("shell.butlerAutomationEverySecondsLabel")),
+      everyMinutes: parseOptionalPositiveInteger(editorState.everyMinutes, t("shell.butlerAutomationEveryMinutesLabel")),
+      everyHours: parseOptionalPositiveInteger(editorState.everyHours, t("shell.butlerAutomationEveryHoursLabel")),
+      stopAt: parseNullableDateTimeInput(editorState.stopAt, t("shell.butlerAutomationStopAtLabel"))
+    };
+  }
+
+  if (automation.triggerConfig.type === "cron") {
+    return {
+      ...payload,
+      cronMinute: parseRequiredInteger(editorState.cronMinute, t("shell.butlerAutomationCronMinuteLabel")),
+      cronHour: parseOptionalInteger(editorState.cronHour, t("shell.butlerAutomationCronHourLabel")),
+      cronDaysOfWeek: parseCronDaysOfWeekInput(editorState.cronDaysOfWeek),
+      stopAt: parseNullableDateTimeInput(editorState.stopAt, t("shell.butlerAutomationStopAtLabel"))
+    };
+  }
+
+  return {
+    ...payload,
+    pollIntervalSeconds: parseRequiredPositiveInteger(
+      editorState.pollIntervalSeconds,
+      t("shell.butlerAutomationPollIntervalLabel")
+    ),
+    expiresAt: parseNullableDateTimeInput(editorState.expiresAt, t("shell.butlerAutomationExpiresAtLabel")),
+    maxChecks: parseOptionalPositiveInteger(editorState.maxChecks, t("shell.butlerAutomationMaxChecksLabel"))
+  };
+}
+
+function resolveAssistantAutomationSortTime(automation: AssistantAutomationTaskDto): string {
+  return automation.updatedAt || automation.lastRunAt || automation.nextRunAt || automation.createdAt;
+}
+
+function isAssistantAutomationVisibleInWorkspace(
+  automation: AssistantAutomationTaskDto,
+  workspaceProjectIds: ReadonlySet<string>,
+  overview: ButlerOverviewDto | null
+): boolean {
+  if (automation.projectId && workspaceProjectIds.has(automation.projectId)) {
+    return true;
+  }
+
+  const workspaceId = automation.controlSession?.session?.workspaceId?.trim();
+
+  if (!workspaceId) {
+    return false;
+  }
+
+  return (overview?.projects ?? []).some((project) => project.workspaceId === workspaceId && workspaceProjectIds.has(project.id));
+}
+
 function isActiveMobileAutomationRunStatus(status: AutomationRunItem["status"]): boolean {
   return status === "active" || status === "waiting_user";
 }
@@ -2333,6 +3583,135 @@ function parseIsoTime(value: string | null | undefined): number {
 
   const time = new Date(value).getTime();
   return Number.isNaN(time) ? 0 : time;
+}
+
+function toEditableNumber(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "";
+}
+
+function normalizeTextInput(value: string): string | null {
+  const normalized = value.trim();
+  return normalized ? normalized : null;
+}
+
+function formatIsoForDateTimeInput(value: string | null | undefined): string {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function parseNullableDateTimeInput(value: string, label: string): string | null {
+  const normalized = value.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  const timestamp = Date.parse(normalized);
+
+  if (Number.isNaN(timestamp)) {
+    throw new Error(`${label}${t("shell.butlerAutomationInvalidDateSuffix")}`);
+  }
+
+  return new Date(timestamp).toISOString();
+}
+
+function parseRequiredDateTimeInput(value: string, label: string): string {
+  const normalized = parseNullableDateTimeInput(value, label);
+
+  if (!normalized) {
+    throw new Error(`${label}${t("shell.butlerAutomationRequiredSuffix")}`);
+  }
+
+  return normalized;
+}
+
+function parseRequiredInteger(value: string, label: string): number {
+  const normalized = value.trim();
+
+  if (!normalized) {
+    throw new Error(`${label}${t("shell.butlerAutomationRequiredSuffix")}`);
+  }
+
+  const parsed = Number.parseInt(normalized, 10);
+
+  if (!Number.isInteger(parsed)) {
+    throw new Error(`${label}${t("shell.butlerAutomationInvalidNumberSuffix")}`);
+  }
+
+  return parsed;
+}
+
+function parseOptionalInteger(value: string, label: string): number | null {
+  const normalized = value.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(normalized, 10);
+
+  if (!Number.isInteger(parsed)) {
+    throw new Error(`${label}${t("shell.butlerAutomationInvalidNumberSuffix")}`);
+  }
+
+  return parsed;
+}
+
+function parseOptionalPositiveInteger(value: string, label: string): number | null {
+  const parsed = parseOptionalInteger(value, label);
+
+  if (parsed === null) {
+    return null;
+  }
+
+  if (parsed <= 0) {
+    throw new Error(`${label}${t("shell.butlerAutomationInvalidPositiveNumberSuffix")}`);
+  }
+
+  return parsed;
+}
+
+function parseRequiredPositiveInteger(value: string, label: string): number {
+  const parsed = parseRequiredInteger(value, label);
+
+  if (parsed <= 0) {
+    throw new Error(`${label}${t("shell.butlerAutomationInvalidPositiveNumberSuffix")}`);
+  }
+
+  return parsed;
+}
+
+function parseCronDaysOfWeekInput(value: string): number[] | null {
+  const normalized = value.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed = normalized
+    .split(",")
+    .map((item) => Number.parseInt(item.trim(), 10))
+    .filter((item) => Number.isInteger(item));
+
+  if (parsed.length === 0 || parsed.some((item) => item < 0 || item > 6)) {
+    throw new Error(t("shell.butlerAutomationCronDaysValidation"));
+  }
+
+  return Array.from(new Set(parsed)).sort((left, right) => left - right);
 }
 
 function formatIsoDateTime(value: string | null | undefined): string {

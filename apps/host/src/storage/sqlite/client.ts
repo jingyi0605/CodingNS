@@ -405,6 +405,16 @@ function ensureAssistantSandboxSchema(db: Database.Database): void {
     .all() as Array<{ name: string }>;
 
   if (columns.length > 0) {
+    const columnNames = new Set(columns.map((column) => column.name));
+
+    if (!columnNames.has("control_session_id")) {
+      db.exec("ALTER TABLE assistant_sandboxes ADD COLUMN control_session_id TEXT");
+    }
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_assistant_sandboxes_control_session
+        ON assistant_sandboxes(control_session_id, status, updated_at DESC);
+    `);
     return;
   }
 
@@ -413,6 +423,7 @@ function ensureAssistantSandboxSchema(db: Database.Database): void {
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
       workspace_id TEXT NOT NULL UNIQUE,
+      control_session_id TEXT,
       title TEXT NOT NULL,
       description TEXT,
       source_kind TEXT NOT NULL CHECK (source_kind IN ('blank', 'clone')),
@@ -425,13 +436,16 @@ function ensureAssistantSandboxSchema(db: Database.Database): void {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
-      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+      FOREIGN KEY (control_session_id) REFERENCES butler_control_sessions(id) ON DELETE SET NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_assistant_sandboxes_user_status
       ON assistant_sandboxes(user_id, status, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_assistant_sandboxes_workspace
       ON assistant_sandboxes(workspace_id, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_assistant_sandboxes_control_session
+      ON assistant_sandboxes(control_session_id, status, updated_at DESC);
   `);
 }
 

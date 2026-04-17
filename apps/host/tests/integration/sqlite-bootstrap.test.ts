@@ -701,4 +701,59 @@ describe("sqlite 启动引导", () => {
     expect(logFileIndex?.name).toBe("idx_terminal_log_files_terminal_id");
     expect(logSegmentIndex?.name).toBe("idx_terminal_log_segments_terminal_id_start_seq");
   });
+
+  it("可以给旧 assistant_sandboxes 平滑补上控制会话列和索引", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-sandbox-bootstrap-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+    const { default: Database } = await import("better-sqlite3");
+    const seed = new Database(databasePath);
+
+    seed.exec(`
+      CREATE TABLE auth_users (
+        id TEXT PRIMARY KEY
+      );
+
+      CREATE TABLE workspaces (
+        id TEXT PRIMARY KEY
+      );
+
+      CREATE TABLE assistant_sandboxes (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL UNIQUE,
+        title TEXT NOT NULL,
+        description TEXT,
+        source_kind TEXT NOT NULL CHECK (source_kind IN ('blank', 'clone')),
+        source_ref TEXT,
+        visibility TEXT NOT NULL CHECK (visibility IN ('assistant_only', 'pinned')),
+        status TEXT NOT NULL CHECK (status IN ('active', 'archived', 'expired', 'deleted')),
+        purpose TEXT,
+        expires_at TEXT,
+        promoted_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+      );
+    `);
+    seed.close();
+
+    const client = createDatabaseClient(databasePath);
+    const columns = client.db
+      .prepare("PRAGMA table_info(assistant_sandboxes)")
+      .all() as Array<{ name: string }>;
+    const controlSessionIndex = client.db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_assistant_sandboxes_control_session'"
+      )
+      .get() as { name: string } | undefined;
+
+    client.close();
+
+    expect(columns.map((column) => column.name)).toEqual(
+      expect.arrayContaining(["control_session_id"])
+    );
+    expect(controlSessionIndex?.name).toBe("idx_assistant_sandboxes_control_session");
+  });
 });

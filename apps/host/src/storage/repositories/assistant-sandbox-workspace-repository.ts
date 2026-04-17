@@ -15,6 +15,7 @@ export class AssistantSandboxWorkspaceRepository {
            id,
            user_id,
            workspace_id,
+           control_session_id,
            title,
            description,
            source_kind,
@@ -26,12 +27,13 @@ export class AssistantSandboxWorkspaceRepository {
            promoted_at,
            created_at,
            updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         record.id,
         record.userId,
         record.workspaceId,
+        record.controlSessionId,
         record.title,
         record.description,
         record.sourceKind,
@@ -55,6 +57,7 @@ export class AssistantSandboxWorkspaceRepository {
            id,
            user_id,
            workspace_id,
+           control_session_id,
            title,
            description,
            source_kind,
@@ -81,6 +84,7 @@ export class AssistantSandboxWorkspaceRepository {
            id,
            user_id,
            workspace_id,
+           control_session_id,
            title,
            description,
            source_kind,
@@ -102,6 +106,7 @@ export class AssistantSandboxWorkspaceRepository {
 
   list(filters: {
     userId?: string;
+    controlSessionId?: string | null;
     statuses?: AssistantSandboxStatus[];
     limit?: number;
   } = {}): AssistantSandboxWorkspace[] {
@@ -111,6 +116,11 @@ export class AssistantSandboxWorkspaceRepository {
     if (filters.userId?.trim()) {
       whereParts.push("user_id = ?");
       values.push(filters.userId.trim());
+    }
+
+    if (filters.controlSessionId?.trim()) {
+      whereParts.push("control_session_id = ?");
+      values.push(filters.controlSessionId.trim());
     }
 
     if (filters.statuses?.length) {
@@ -131,6 +141,7 @@ export class AssistantSandboxWorkspaceRepository {
            id,
            user_id,
            workspace_id,
+           control_session_id,
            title,
            description,
            source_kind,
@@ -166,7 +177,8 @@ export class AssistantSandboxWorkspaceRepository {
     this.db
       .prepare(
         `UPDATE assistant_sandboxes
-         SET title = ?,
+         SET control_session_id = ?,
+             title = ?,
              description = ?,
              source_kind = ?,
              source_ref = ?,
@@ -179,6 +191,7 @@ export class AssistantSandboxWorkspaceRepository {
          WHERE id = ?`
       )
       .run(
+        record.controlSessionId,
         record.title,
         record.description,
         record.sourceKind,
@@ -200,6 +213,7 @@ interface AssistantSandboxWorkspaceRow {
   id: string;
   user_id: string;
   workspace_id: string;
+  control_session_id: string | null;
   title: string;
   description: string | null;
   source_kind: AssistantSandboxWorkspace["sourceKind"];
@@ -218,6 +232,7 @@ function mapRow(row: AssistantSandboxWorkspaceRow): AssistantSandboxWorkspace {
     id: row.id,
     userId: row.user_id,
     workspaceId: row.workspace_id,
+    controlSessionId: row.control_session_id,
     title: row.title,
     description: row.description,
     sourceKind: row.source_kind,

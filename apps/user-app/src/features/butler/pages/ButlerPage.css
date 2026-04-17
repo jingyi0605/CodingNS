@@ -281,9 +281,8 @@
 .butler-control-timer-banner {
   position: relative;
   z-index: 12;
-  display: flex;
-  justify-content: center;
-  padding: 12px 12px 10px;
+  display: block;
+  padding: 12px var(--conversation-content-gutter, 12px) 10px;
   background: transparent;
   overflow: visible;
 }
@@ -291,14 +290,15 @@
 .butler-control-timer-banner-shell {
   position: relative;
   z-index: 12;
-  width: min(680px, 100%);
-  max-width: 100%;
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 10px;
-  padding: 10px 12px;
+  align-items: stretch;
+  gap: 16px 18px;
+  min-height: 128px;
+  padding: 16px 18px;
   border: 1px solid var(--surface-overlay-border);
   border-radius: 18px;
   background: var(--bg-elevated);
@@ -310,7 +310,7 @@
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: start;
-  gap: 4px 12px;
+  gap: 10px 14px;
 }
 
 .butler-control-timer-banner-status {
@@ -319,7 +319,8 @@
   gap: 6px;
   min-width: 0;
   grid-row: 1 / span 2;
-  align-self: center;
+  align-self: start;
+  padding-top: 6px;
   margin: 0;
 }
 
@@ -333,7 +334,8 @@
 }
 
 .butler-control-timer-banner-caption,
-.butler-control-timer-banner-countdown,
+.butler-control-timer-banner-lead,
+.butler-control-timer-banner-tail,
 .butler-control-timer-display-clock,
 .butler-control-timer-banner-meta {
   margin: 0;
@@ -351,13 +353,24 @@
   display: flex;
   flex-direction: row;
   align-items: baseline;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
+  min-height: 44px;
   padding: 0;
   border: none;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+}
+
+.butler-control-timer-banner-lead,
+.butler-control-timer-banner-tail {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.25;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .butler-control-timer-display-clock {
@@ -376,21 +389,13 @@
   font-variant-numeric: tabular-nums;
 }
 
-.butler-control-timer-banner-countdown {
-  min-width: 0;
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1.25;
-  letter-spacing: 0.02em;
-}
-
 .butler-control-timer-banner-meta {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: max-content minmax(0, 1fr);
   grid-column: 1 / -1;
   justify-self: stretch;
   align-items: start;
-  gap: 4px;
+  gap: 8px 14px;
 }
 
 .butler-control-timer-banner-meta-card {
@@ -427,13 +432,49 @@
   white-space: nowrap;
 }
 
+.butler-control-timer-banner-meta-card[data-kind="session"] {
+  justify-self: start;
+  min-width: 0;
+}
+
+.butler-control-timer-session-link {
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.25;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  text-align: left;
+  text-decoration: none;
+}
+
+.butler-control-timer-session-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.butler-control-timer-session-link:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
 .butler-control-timer-banner-actions {
   flex: 0 0 auto;
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-  align-self: center;
+  display: grid;
+  grid-template-columns: auto auto auto;
+  align-items: start;
+  gap: 10px;
+  align-self: start;
+  margin-top: 4px;
 }
 
 .butler-control-timer-banner-detail {
@@ -507,6 +548,7 @@
 }
 
 .butler-control-timer-banner-action {
+  min-width: 108px;
   min-height: 34px;
   padding-inline: 12px;
   white-space: nowrap;
@@ -534,7 +576,7 @@
 
 @media (max-width: 960px) {
   .butler-control-timer-banner {
-    padding-inline: 12px;
+    padding-inline: var(--conversation-content-gutter, 18px);
   }
 
   .butler-control-timer-banner-shell {
@@ -546,6 +588,7 @@
   }
 
   .butler-control-timer-banner-actions {
+    display: flex;
     justify-content: flex-start;
     align-items: center;
     flex-wrap: wrap;
@@ -556,7 +599,7 @@
   }
 
   .butler-control-timer-banner-shell {
-    width: min(680px, 100%);
+    width: 100%;
   }
 
   .butler-control-timer-banner-status {
@@ -740,6 +783,89 @@
 .butler-side-header-action {
   flex: 0 0 auto;
   align-self: flex-start;
+}
+
+.butler-sandbox-entry-card header {
+  align-items: center;
+}
+
+.butler-sandbox-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.butler-sandbox-panel-card {
+  border: 1px solid color-mix(in srgb, var(--border-primary) 76%, transparent);
+}
+
+.butler-sandbox-select-button {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.butler-automation-card[data-selected="true"] {
+  border-color: color-mix(in srgb, var(--accent-primary) 46%, var(--border-primary));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 28%, transparent);
+}
+
+.butler-sandbox-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.butler-sandbox-form-actions {
+  margin-top: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.butler-sandbox-card-footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.butler-sandbox-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.butler-sandbox-files-card {
+  min-height: 480px;
+}
+
+.butler-sandbox-files-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.butler-sandbox-files-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.butler-sandbox-file-context-panel {
+  min-height: 380px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 68%, transparent);
+  border-radius: 16px;
+  overflow: hidden;
 }
 
 .butler-record-list {
@@ -967,6 +1093,126 @@
 
 .butler-automation-card-action {
   flex: 0 0 auto;
+}
+
+.butler-automation-overview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.butler-automation-overview-card {
+  gap: 12px;
+  padding: 14px 15px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 74%, transparent) !important;
+  border-radius: 16px !important;
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 10%, transparent), transparent 36%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-surface) 98%, transparent),
+      color-mix(in srgb, var(--bg-primary) 95%, var(--bg-surface) 5%)
+    ) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.78),
+    0 8px 24px rgba(15, 23, 42, 0.05) !important;
+}
+
+.butler-automation-overview-card:hover {
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 14%, transparent), transparent 38%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-surface) 100%, transparent),
+      color-mix(in srgb, var(--bg-hover) 94%, var(--bg-surface) 6%)
+    ) !important;
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--border-primary)) !important;
+}
+
+.butler-automation-overview-card .butler-automation-card-title-group strong {
+  font-size: 14px;
+  line-height: 1.3;
+  font-weight: 600;
+  color: var(--text-primary, #111827);
+}
+
+.butler-automation-overview-card .butler-automation-card-title-group span,
+.butler-automation-overview-card .butler-automation-card-footer span {
+  font-size: 11px;
+}
+
+.butler-automation-overview-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.butler-automation-overview-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-hover) 92%, transparent);
+  color: var(--text-secondary, #6b7280);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.butler-automation-overview-summary {
+  margin: 0;
+  color: var(--text-primary, #111827);
+  font-size: 13px;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.butler-automation-overview-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.butler-automation-overview-metric,
+.butler-automation-overview-note {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 11px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-surface-secondary) 90%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-primary) 60%, transparent);
+}
+
+.butler-automation-overview-metric span,
+.butler-automation-overview-note span {
+  font-size: 10px;
+  color: var(--text-tertiary, #9ca3af);
+}
+
+.butler-automation-overview-metric strong,
+.butler-automation-overview-note strong {
+  font-size: 12px;
+  line-height: 1.45;
+  font-weight: 500;
+  color: var(--text-primary, #111827);
+  word-break: break-word;
+}
+
+.butler-automation-overview-card[data-kind="run"] .butler-automation-overview-summary {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.butler-automation-card-footer-hint {
+  color: var(--text-secondary, #6b7280);
+  font-size: 11px;
+}
+
+.butler-automation-overview-card .butler-automation-card-footer {
+  justify-content: flex-end;
 }
 
 .butler-follow-up-history-panel {

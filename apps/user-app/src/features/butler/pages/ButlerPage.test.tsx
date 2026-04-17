@@ -66,6 +66,14 @@ vi.mock("../../conversation/components/MessageTimeline", () => ({
   )
 }));
 
+vi.mock("../../conversation/components/FileContextPanel", () => ({
+  FileContextPanel: ({
+    workspaceId
+  }: {
+    workspaceId?: string | null;
+  }) => <div data-testid="butler-sandbox-file-panel">{workspaceId}</div>
+}));
+
 vi.mock("../../conversation/components/WorkbenchLayout", () => ({
   useWorkbenchShell: () => ({
     navigationGroups: [
@@ -1472,7 +1480,7 @@ describe("ButlerPage", () => {
     expect(renderedPanel.getByRole("button", { name: t("shell.butlerTodoOpenSessionAction") })).toBeInTheDocument();
   });
 
-  it("信息标签页顶部可以进入沙箱管理并执行创建与删除", async () => {
+  it("信息标签页顶部可以进入当前控制会话的沙箱管理并查看文件", async () => {
     mockedGetButlerProfile.mockResolvedValueOnce({
       initialized: true,
       profile: {
@@ -1489,6 +1497,26 @@ describe("ButlerPage", () => {
         updatedAt: "2026-04-05T00:00:00.000Z"
       }
     });
+    mockedGetCurrentButlerControlSession.mockResolvedValue({
+      controlSession: {
+        id: "control-1",
+        providerId: "codex",
+        sessionId: "assistant-session-1",
+        purpose: "chat",
+        title: "当前助手控制会话",
+        sourceItemId: null,
+        status: "running",
+        lastContextVersion: null,
+        lastSummary: "继续处理 Butler 沙箱",
+        createdAt: "2026-04-17T09:50:00.000Z",
+        updatedAt: "2026-04-17T10:00:00.000Z",
+        session: {
+          sessionId: "assistant-session-1",
+          workspaceId: "workspace-1",
+          title: "当前助手控制会话"
+        }
+      }
+    } as never);
     mockedListAssistantSandboxes.mockResolvedValue({
       payload: {
         items: [
@@ -1496,6 +1524,7 @@ describe("ButlerPage", () => {
             id: "sandbox-1",
             userId: "user-1",
             workspaceId: "workspace-sandbox-1",
+            controlSessionId: "control-1",
             title: "现有沙箱",
             description: null,
             sourceKind: "blank",
@@ -1522,43 +1551,13 @@ describe("ButlerPage", () => {
         ]
       }
     });
-    mockedCreateAssistantSandbox.mockResolvedValue({
-      payload: {
-        sandbox: {
-          id: "sandbox-2",
-          userId: "user-1",
-          workspaceId: "workspace-sandbox-2",
-          title: "临时验证",
-          description: null,
-          sourceKind: "blank",
-          sourceRef: "/tmp/butler/sandboxes/new-one",
-          visibility: "assistant_only",
-          status: "active",
-          purpose: "验证 Butler 入口",
-          expiresAt: null,
-          promotedAt: null,
-          createdAt: "2026-04-17T10:10:00.000Z",
-          updatedAt: "2026-04-17T10:10:00.000Z",
-          workspace: {
-            id: "workspace-sandbox-2",
-            name: "临时验证",
-            path: "/tmp/butler/sandboxes/new-one",
-            repoRoot: "/tmp/butler/sandboxes/new-one",
-            favorite: false,
-            sortOrder: 0,
-            createdAt: "2026-04-17T10:10:00.000Z",
-            updatedAt: "2026-04-17T10:10:00.000Z",
-            removedAt: null
-          }
-        }
-      }
-    });
     mockedRemoveAssistantSandbox.mockResolvedValue({
       payload: {
         sandbox: {
           id: "sandbox-1",
           userId: "user-1",
           workspaceId: "workspace-sandbox-1",
+          controlSessionId: "control-1",
           title: "现有沙箱",
           description: null,
           sourceKind: "blank",
@@ -1587,40 +1586,21 @@ describe("ButlerPage", () => {
       renderedPanel.getByRole("button", { name: t("shell.butlerSandboxManageAction") })
     );
 
-    await waitFor(() => {
-      expect(mockedListAssistantSandboxes).toHaveBeenCalledTimes(1);
-      expect(screen.getByRole("dialog", { name: t("shell.butlerSandboxManagerTitle") })).toBeInTheDocument();
-      expect(screen.getByText("现有沙箱")).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog", {
+      name: t("shell.butlerSandboxManagerTitle")
     });
 
-    fireEvent.change(screen.getByPlaceholderText(t("shell.butlerSandboxTitlePlaceholder")), {
-      target: {
-        value: "临时验证"
-      }
-    });
-    fireEvent.change(screen.getByPlaceholderText(t("shell.butlerSandboxPurposePlaceholder")), {
-      target: {
-        value: "验证 Butler 入口"
-      }
-    });
-    fireEvent.click(screen.getByRole("button", { name: t("shell.butlerSandboxCreateAction") }));
-
     await waitFor(() => {
-      expect(mockedCreateAssistantSandbox).toHaveBeenCalledWith({
-        title: "临时验证",
-        purpose: "验证 Butler 入口",
-        sourceKind: "blank",
-        repositoryUrl: null,
-        directoryName: null
+      expect(mockedListAssistantSandboxes).toHaveBeenCalledWith({
+        controlSessionId: "control-1"
       });
-      expect(screen.getByText("临时验证")).toBeInTheDocument();
     });
 
-    const existingSandboxCard = screen.getByText("现有沙箱").closest("article");
-    expect(existingSandboxCard).toBeTruthy();
+    expect(within(dialog).getAllByText("现有沙箱").length).toBeGreaterThan(0);
+    expect(within(dialog).getByTestId("butler-sandbox-file-panel")).toHaveTextContent("workspace-sandbox-1");
 
     fireEvent.click(
-      within(existingSandboxCard as HTMLElement).getByRole("button", {
+      within(dialog).getByRole("button", {
         name: t("shell.butlerSandboxRemoveAction")
       })
     );
@@ -1634,6 +1614,45 @@ describe("ButlerPage", () => {
         })
       );
     });
+  });
+
+  it("当前会话没有沙箱时，沙箱管理直接展示空态", async () => {
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "阿尔文",
+        providerId: "codex",
+        workspacePath: "/tmp/butler",
+        agentsMode: "inline",
+        agentsFilePath: null,
+        agentsContent: "测试",
+        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
+        initializedAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z"
+      }
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(setAuxiliaryPanelMock).toHaveBeenCalled();
+    });
+
+    const renderedPanel = render(getLatestSidePanel());
+
+    fireEvent.click(
+      renderedPanel.getByRole("button", { name: t("shell.butlerSandboxManageAction") })
+    );
+
+    const dialog = await screen.findByRole("dialog", {
+      name: t("shell.butlerSandboxManagerTitle")
+    });
+
+    expect(mockedListAssistantSandboxes).not.toHaveBeenCalled();
+    expect(within(dialog).getByText(t("shell.butlerSandboxEmpty"))).toBeInTheDocument();
+    expect(within(dialog).queryByText(t("shell.butlerSandboxSelectHint"))).not.toBeInTheDocument();
   });
 
   it("代办提示词支持从预览区和动作区复制", async () => {

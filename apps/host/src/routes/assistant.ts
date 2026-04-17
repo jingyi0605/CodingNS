@@ -26,7 +26,9 @@ export async function registerAssistantCapabilityRoutes(
   app.get("/api/assistant/automations/runs/recent", assistantCapabilityController.listRecentAutomationRuns);
   app.get("/api/assistant/automations/:automationId", assistantCapabilityController.getAutomation);
   app.post("/api/assistant/automations", assistantCapabilityController.createAutomation);
+  app.patch("/api/assistant/automations/:automationId", assistantCapabilityController.updateAutomation);
   app.post("/api/assistant/automations/:automationId/cancel", assistantCapabilityController.cancelAutomation);
+  app.post("/api/assistant/automations/:automationId/skip-wait", assistantCapabilityController.skipAutomationWait);
   app.get("/api/assistant/automations/:automationId/runs", assistantCapabilityController.listAutomationRuns);
   app.get("/api/assistant/timers", assistantCapabilityController.listTimers);
   app.get("/api/assistant/timers/:timerId", assistantCapabilityController.getTimer);

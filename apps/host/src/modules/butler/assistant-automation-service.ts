@@ -63,6 +63,25 @@ export interface CreateAssistantAutomationInput {
   };
 }
 
+export interface UpdateAssistantAutomationInput {
+  taskId: string;
+  userId: string;
+  title?: string | null;
+  content?: string;
+  includeTriggerContext?: boolean;
+  dueAt?: string | null;
+  everySeconds?: number | null;
+  everyMinutes?: number | null;
+  everyHours?: number | null;
+  stopAt?: string | null;
+  cronMinute?: number | null;
+  cronHour?: number | null;
+  cronDaysOfWeek?: number[] | null;
+  pollIntervalSeconds?: number | null;
+  expiresAt?: string | null;
+  maxChecks?: number | null;
+}
+
 export interface AssistantAutomationRunDueTasksResult {
   activeTaskCount: number;
   dueTaskCount: number;
@@ -229,6 +248,51 @@ export class AssistantAutomationService {
     return this.toTaskView(task, input.userId);
   }
 
+  updateTask(input: UpdateAssistantAutomationInput): AssistantAutomationTaskView {
+    this.butlerProfileService.ensureInitialized();
+    const current = this.requireTask(input.taskId);
+
+    if (current.status !== "active") {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "ASSISTANT_AUTOMATION_UPDATE_NOT_ALLOWED",
+        detail: "只有进行中的自动化可以修改配置"
+      });
+    }
+
+    const updatedAt = nowIso();
+    const currentTriggerConfig = parseTriggerConfig(current.triggerType, current.triggerConfigJson);
+    const currentActionConfig = parseActionConfig(current.actionConfigJson);
+    const trigger = this.buildUpdatedTrigger(current, currentTriggerConfig, input, updatedAt);
+    const actionConfig: SendControlMessageActionConfig = {
+      content:
+        typeof input.content === "string"
+          ? requireContent(input.content)
+          : currentActionConfig.content,
+      includeTriggerContext:
+        typeof input.includeTriggerContext === "boolean"
+          ? input.includeTriggerContext
+          : currentActionConfig.includeTriggerContext,
+      targetSessionId: currentActionConfig.targetSessionId
+    };
+    const nextTitle =
+      input.title !== undefined
+        ? normalizeNullableText(input.title)
+        : current.title;
+
+    const updated = this.taskRepository.update({
+      ...current,
+      title: nextTitle,
+      triggerConfigJson: trigger.triggerConfigJson,
+      nextRunAt: trigger.nextRunAt,
+      actionConfigJson: JSON.stringify(actionConfig),
+      updatedAt,
+      lastError: null
+    });
+
+    return this.toTaskView(updated, input.userId);
+  }
+
   cancelTask(taskId: string, userId: string): AssistantAutomationTaskView {
     this.butlerProfileService.ensureInitialized();
     const current = this.requireTask(taskId);
@@ -239,6 +303,60 @@ export class AssistantAutomationService {
       updatedAt: cancelledAt,
       cancelledAt,
       nextRunAt: null
+    });
+
+    return this.toTaskView(updated, userId);
+  }
+
+  skipCurrentWait(taskId: string, userId: string): AssistantAutomationTaskView {
+    this.butlerProfileService.ensureInitialized();
+    const current = this.requireTask(taskId);
+
+    if (current.status !== "active" || !current.nextRunAt) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "ASSISTANT_AUTOMATION_WAIT_NOT_ACTIVE",
+        detail: "当前自动化没有可取消的等待"
+      });
+    }
+
+    if (current.triggerType === "once") {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "ASSISTANT_AUTOMATION_WAIT_SKIP_UNSUPPORTED",
+        detail: "单次自动化不支持只取消本次等待"
+      });
+    }
+
+    const referenceAt = nowIso();
+    const triggerConfig = parseTriggerConfig(current.triggerType, current.triggerConfigJson);
+    const nextReferenceAt = current.nextRunAt > referenceAt ? current.nextRunAt : referenceAt;
+    const nextRunAt = computeNextRunAt(triggerConfig, nextReferenceAt);
+    const updatedAt = referenceAt;
+
+    this.runRepository.create({
+      id: createId(),
+      automationId: current.id,
+      runSeq: this.runRepository.getLatestSeq(current.id) + 1,
+      triggerType: current.triggerType,
+      triggerSnapshotJson: current.triggerConfigJson,
+      actionType: current.actionType,
+      actionSnapshotJson: current.actionConfigJson,
+      status: "cancelled",
+      summary: "已手动取消本次等待，保留自动化并重新安排下一次运行。",
+      error: null,
+      scheduledAt: current.nextRunAt,
+      startedAt: updatedAt,
+      finishedAt: updatedAt,
+      createdAt: updatedAt
+    });
+
+    const updated = this.taskRepository.update({
+      ...current,
+      status: nextRunAt === null ? "completed" : "active",
+      nextRunAt,
+      lastError: null,
+      updatedAt
     });
 
     return this.toTaskView(updated, userId);
@@ -690,6 +808,88 @@ export class AssistantAutomationService {
     return task;
   }
 
+  private buildUpdatedTrigger(
+    task: AssistantAutomationTask,
+    currentTriggerConfig: AssistantAutomationTriggerConfig,
+    input: UpdateAssistantAutomationInput,
+    referenceAt: string
+  ): {
+    triggerConfigJson: string;
+    nextRunAt: string | null;
+  } {
+    switch (currentTriggerConfig.type) {
+      case "once": {
+        const nextDueAt =
+          input.dueAt !== undefined
+            ? requireIsoTimestamp(input.dueAt, "dueAt")
+            : currentTriggerConfig.dueAt;
+
+        return {
+          triggerConfigJson: JSON.stringify({
+            type: "once",
+            dueAt: nextDueAt
+          }),
+          nextRunAt: nextDueAt
+        };
+      }
+      case "interval": {
+        const nextTrigger = createTriggerConfig({
+          type: "interval",
+          seconds: input.everySeconds !== undefined ? input.everySeconds : currentTriggerConfig.seconds,
+          minutes: input.everyMinutes !== undefined ? input.everyMinutes : currentTriggerConfig.minutes,
+          hours: input.everyHours !== undefined ? input.everyHours : currentTriggerConfig.hours,
+          stopAt: input.stopAt !== undefined ? input.stopAt : currentTriggerConfig.stopAt
+        }, referenceAt);
+
+        return {
+          triggerConfigJson: nextTrigger.triggerConfigJson,
+          nextRunAt: nextTrigger.nextRunAt
+        };
+      }
+      case "cron": {
+        const nextTrigger = createTriggerConfig({
+          type: "cron",
+          minute: input.cronMinute !== undefined ? input.cronMinute : currentTriggerConfig.minute,
+          hour: input.cronHour !== undefined ? input.cronHour : currentTriggerConfig.hour,
+          daysOfWeek:
+            input.cronDaysOfWeek !== undefined
+              ? input.cronDaysOfWeek
+              : currentTriggerConfig.daysOfWeek,
+          stopAt: input.stopAt !== undefined ? input.stopAt : currentTriggerConfig.stopAt
+        }, referenceAt);
+
+        return {
+          triggerConfigJson: nextTrigger.triggerConfigJson,
+          nextRunAt: nextTrigger.nextRunAt
+        };
+      }
+      case "condition": {
+        const nextTriggerConfig: AssistantAutomationTriggerConfig = {
+          ...currentTriggerConfig,
+          pollIntervalSeconds:
+            input.pollIntervalSeconds !== undefined
+              ? input.pollIntervalSeconds || currentTriggerConfig.pollIntervalSeconds
+              : currentTriggerConfig.pollIntervalSeconds,
+          expiresAt:
+            input.expiresAt !== undefined
+              ? input.expiresAt
+              : currentTriggerConfig.expiresAt,
+          maxChecks:
+            input.maxChecks !== undefined
+              ? input.maxChecks
+              : currentTriggerConfig.maxChecks
+        };
+
+        return {
+          triggerConfigJson: JSON.stringify(nextTriggerConfig),
+          nextRunAt: computeNextRunAt(nextTriggerConfig, referenceAt)
+        };
+      }
+      default:
+        return assertNeverTriggerConfig(currentTriggerConfig);
+    }
+  }
+
   private reconcileTaskWithLatestRun(
     task: AssistantAutomationTask,
     referenceAt: string
@@ -823,6 +1023,36 @@ function requireContent(value: string): string {
   }
 
   return normalized;
+}
+
+function requireIsoTimestamp(value: string | null | undefined, field: string): string {
+  const normalized = normalizeNullableText(value);
+
+  if (!normalized) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: `${field} 必须是合法的 ISO 时间`,
+      field
+    });
+  }
+
+  const timestamp = Date.parse(normalized);
+
+  if (Number.isNaN(timestamp)) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: `${field} 必须是合法的 ISO 时间`,
+      field
+    });
+  }
+
+  return new Date(timestamp).toISOString();
+}
+
+function assertNeverTriggerConfig(value: never): never {
+  throw new Error(`Unsupported trigger config: ${JSON.stringify(value)}`);
 }
 
 function normalizeNullableText(value: string | null | undefined): string | null {

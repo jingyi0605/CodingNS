@@ -64,6 +64,7 @@ export class ButlerControlTimerService {
         controlSessionId: filters.controlSessionId?.trim() || null,
         limit: filters.limit
       })
+      .filter((task) => task.triggerType === "once")
       .map((task) => this.mapTaskToTimerView(task));
   }
 

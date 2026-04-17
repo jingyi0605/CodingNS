@@ -42,6 +42,9 @@ export type AssistantAutomationRunStatus =
   | "failed"
   | "cancelled"
   | "skipped";
+export type AssistantSandboxStatus = "active" | "archived" | "expired" | "deleted";
+export type AssistantSandboxSourceKind = "blank" | "clone";
+export type AssistantSandboxVisibility = "assistant_only" | "pinned";
 export type ButlerVerificationRunStatus = "queued" | "running" | "passed" | "failed" | "skipped" | "cancelled";
 
 export type AssistantAutomationTriggerConfigDto =
@@ -220,6 +223,37 @@ export interface AssistantAutomationRunDto {
   startedAt: string | null;
   finishedAt: string | null;
   createdAt: string;
+}
+
+export interface AssistantSandboxWorkspaceSummaryDto {
+  id: string;
+  name: string;
+  path: string;
+  repoRoot: string | null;
+  favorite: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+  removedAt?: string | null;
+}
+
+export interface AssistantSandboxDto {
+  id: string;
+  userId: string;
+  workspaceId: string;
+  controlSessionId: string | null;
+  title: string;
+  description: string | null;
+  sourceKind: AssistantSandboxSourceKind;
+  sourceRef: string | null;
+  visibility: AssistantSandboxVisibility;
+  status: AssistantSandboxStatus;
+  purpose: string | null;
+  expiresAt: string | null;
+  promotedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  workspace: AssistantSandboxWorkspaceSummaryDto | null;
 }
 
 export interface ButlerResumeControlSessionResponseDto {
@@ -760,6 +794,120 @@ export function cancelAssistantAutomation(automationId: string) {
     {
       method: "POST",
       body: JSON.stringify({})
+    }
+  );
+}
+
+export function updateAssistantAutomation(
+  automationId: string,
+  payload: {
+    title?: string | null;
+    content?: string;
+    includeTriggerContext?: boolean;
+    dueAt?: string | null;
+    everySeconds?: number | null;
+    everyMinutes?: number | null;
+    everyHours?: number | null;
+    stopAt?: string | null;
+    cronMinute?: number | null;
+    cronHour?: number | null;
+    cronDaysOfWeek?: number[] | null;
+    pollIntervalSeconds?: number | null;
+    expiresAt?: string | null;
+    maxChecks?: number | null;
+  }
+) {
+  return httpClient.request<{ payload: { automation: AssistantAutomationTaskDto } }>(
+    `/api/assistant/automations/${encodeURIComponent(automationId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
+export function skipAssistantAutomationWait(automationId: string) {
+  return httpClient.request<{ payload: { automation: AssistantAutomationTaskDto } }>(
+    `/api/assistant/automations/${encodeURIComponent(automationId)}/skip-wait`,
+    {
+      method: "POST",
+      body: JSON.stringify({})
+    }
+  );
+}
+
+export function listAssistantSandboxes(payload: {
+  status?: AssistantSandboxStatus | null;
+  controlSessionId?: string | null;
+} = {}) {
+  const searchParams = new URLSearchParams();
+
+  if (payload.status) {
+    searchParams.set("status", payload.status);
+  }
+
+  if (payload.controlSessionId?.trim()) {
+    searchParams.set("controlSessionId", payload.controlSessionId.trim());
+  }
+
+  const query = searchParams.toString();
+  const path = query ? `/api/assistant/sandboxes?${query}` : "/api/assistant/sandboxes";
+
+  return httpClient.request<{ payload: { items: AssistantSandboxDto[] } }>(path);
+}
+
+export function createAssistantSandbox(payload: {
+  title?: string | null;
+  description?: string | null;
+  purpose?: string | null;
+  expiresAt?: string | null;
+  sourceKind?: AssistantSandboxSourceKind;
+  repositoryUrl?: string | null;
+  directoryName?: string | null;
+}) {
+  return httpClient.request<{ payload: { sandbox: AssistantSandboxDto } }>(
+    "/api/assistant/sandboxes",
+    {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
+export function promoteAssistantSandbox(payload: {
+  sandboxId: string;
+  mode?: "pin" | "project";
+  projectName?: string | null;
+  defaultProvider?: ButlerProviderId | null;
+}) {
+  return httpClient.request<{ payload: { sandbox: AssistantSandboxDto } }>(
+    `/api/assistant/sandboxes/${encodeURIComponent(payload.sandboxId)}/promote`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        mode: payload.mode,
+        projectName: payload.projectName,
+        defaultProvider: payload.defaultProvider
+      })
+    }
+  );
+}
+
+export function expireAssistantSandbox(sandboxId: string) {
+  return httpClient.request<{ payload: { sandbox: AssistantSandboxDto } }>(
+    `/api/assistant/sandboxes/${encodeURIComponent(sandboxId)}/expire`,
+    {
+      method: "POST",
+      body: JSON.stringify({})
+    }
+  );
+}
+
+export function removeAssistantSandbox(sandboxId: string) {
+  return httpClient.request<{ payload: { sandbox: AssistantSandboxDto } }>(
+    `/api/assistant/sandboxes/${encodeURIComponent(sandboxId)}`,
+    {
+      method: "DELETE"
     }
   );
 }

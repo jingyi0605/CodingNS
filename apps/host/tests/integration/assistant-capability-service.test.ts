@@ -54,7 +54,8 @@ describe("AssistantCapabilityService", () => {
         promoteSandbox: vi.fn(),
         expireSandbox: vi.fn(),
         removeSandbox: vi.fn(),
-        resolveWorkspaceId: vi.fn()
+        resolveWorkspaceId: vi.fn(),
+        markSandboxUsedByControlSession: vi.fn()
       } as any,
       {
         listTimers: vi.fn(),
@@ -170,7 +171,8 @@ describe("AssistantCapabilityService", () => {
         promoteSandbox: vi.fn(),
         expireSandbox: vi.fn(),
         removeSandbox: vi.fn(),
-        resolveWorkspaceId: vi.fn()
+        resolveWorkspaceId: vi.fn(),
+        markSandboxUsedByControlSession: vi.fn()
       } as any,
       {
         listTimers: vi.fn(),
@@ -342,7 +344,8 @@ describe("AssistantCapabilityService", () => {
         promoteSandbox: vi.fn(),
         expireSandbox: vi.fn(),
         removeSandbox: vi.fn(),
-        resolveWorkspaceId: vi.fn()
+        resolveWorkspaceId: vi.fn(),
+        markSandboxUsedByControlSession: vi.fn()
       } as any,
       {
         listTimers: vi.fn(),
@@ -428,6 +431,188 @@ describe("AssistantCapabilityService", () => {
     }));
   });
 
+  it.each([
+    {
+      providerId: "codex" as const,
+      model: "gpt-5.4",
+      reasoningLevel: "high",
+      permissionMode: "acceptEdits"
+    },
+    {
+      providerId: "claude-code" as const,
+      model: "claude-sonnet-4-5",
+      reasoningLevel: "medium",
+      permissionMode: "default"
+    }
+  ])("按 sandbox 目标启动真实会话时支持 $providerId", async (scenario) => {
+    const startLiveSession = vi.fn(async () => ({
+      sessionId: `session-${scenario.providerId}`,
+      provider: scenario.providerId,
+      providerSessionId: `provider-session-${scenario.providerId}`,
+      acceptedAt: "2026-04-16T12:30:00.000Z",
+      clientRequestId: null,
+      message: {
+        messageId: `message-${scenario.providerId}`,
+        role: "user",
+        content: "请在沙箱里继续处理这个问题",
+        timestamp: "2026-04-16T12:30:00.000Z",
+        sequence: 1,
+        attachments: []
+      },
+      session: {
+        sessionId: `session-${scenario.providerId}`,
+        workspaceId: "workspace-sandbox-1"
+      }
+    }));
+    const assistantSandboxService = {
+      listSandboxes: vi.fn(),
+      getSandbox: vi.fn(),
+      createSandbox: vi.fn(),
+      promoteSandbox: vi.fn(),
+      expireSandbox: vi.fn(),
+      removeSandbox: vi.fn(),
+      resolveWorkspaceId: vi.fn(() => "workspace-sandbox-1"),
+      markSandboxUsedByControlSession: vi.fn()
+    };
+    const service = new AssistantCapabilityService(
+      {
+        list: vi.fn(),
+        getById: vi.fn(),
+        getOverview: vi.fn()
+      } as any,
+      {
+        listByProject: vi.fn(),
+        ensureProjectSessionsSynced: vi.fn(),
+        startSession: vi.fn()
+      } as any,
+      {
+        getCurrentSession: vi.fn(() => ({
+          id: "control-1",
+          providerId: scenario.providerId,
+          sessionId: "assistant-session-1",
+          purpose: "chat",
+          title: null,
+          sourceItemId: null,
+          model: scenario.model,
+          reasoningLevel: scenario.reasoningLevel,
+          permissionMode: scenario.permissionMode,
+          status: "running",
+          lastContextVersion: null,
+          lastSummary: null,
+          createdAt: "2026-04-16T12:00:00.000Z",
+          updatedAt: "2026-04-16T12:00:00.000Z",
+          session: {
+            sessionId: "assistant-session-1"
+          }
+        }))
+      } as any,
+      {
+        listTasks: vi.fn(),
+        getTask: vi.fn(),
+        createTask: vi.fn(),
+        cancelTask: vi.fn(),
+        listRuns: vi.fn()
+      } as any,
+      assistantSandboxService as any,
+      {
+        listTimers: vi.fn(),
+        getTimer: vi.fn(),
+        createTimer: vi.fn(),
+        cancelTimer: vi.fn()
+      } as any,
+      {
+        getSession: vi.fn(),
+        readSessionHistory: vi.fn(),
+        forkSession: vi.fn()
+      } as any,
+      {
+        startLiveSession,
+        getSessionRuntime: vi.fn(),
+        sendLiveMessage: vi.fn()
+      } as any,
+      {
+        listTerminals: vi.fn(),
+        readTerminalHistory: vi.fn(),
+        writeInput: vi.fn(),
+        closeTerminal: vi.fn()
+      } as any,
+      {
+        analyze: vi.fn(),
+        getFrameworkAnalysis: vi.fn(),
+        refreshFrameworkAnalysis: vi.fn(),
+        createLaunchPlan: vi.fn(),
+        run: vi.fn(),
+        getLatestRuntimeDetail: vi.fn(),
+        getRecentRuntimeDetails: vi.fn(),
+        getRuntimeDetail: vi.fn(),
+        getCompatibilityMatrix: vi.fn()
+      } as any,
+      {
+        list: vi.fn(),
+        browseDirectories: vi.fn(),
+        createDirectory: vi.fn(),
+        importWorkspace: vi.fn(),
+        cloneWorkspace: vi.fn(),
+        reorderWorkspaces: vi.fn(),
+        getManagementSummary: vi.fn(),
+        removeWorkspace: vi.fn(),
+        updateNavigationState: vi.fn()
+      } as any,
+      {
+        getTree: vi.fn(),
+        create: vi.fn()
+      } as any,
+      {
+        syncRoot: vi.fn()
+      } as any,
+      {
+        preview: vi.fn(),
+        apply: vi.fn()
+      } as any,
+      {
+        cleanup: vi.fn()
+      } as any,
+      {
+        upsert: vi.fn()
+      } as any
+    );
+
+    const receipt = await service.startSession({
+      target: {
+        kind: "sandbox",
+        sandboxId: "sandbox-1"
+      },
+      userId: "user-1",
+      content: "请在沙箱里继续处理这个问题"
+    });
+
+    expect(receipt.capability).toBe("sessions.start");
+    expect(receipt.targetRef).toEqual({
+      kind: "sandbox",
+      id: "sandbox-1"
+    });
+    expect(receipt.payload.target).toEqual({
+      kind: "sandbox",
+      id: "sandbox-1",
+      workspaceId: "workspace-sandbox-1"
+    });
+    expect(assistantSandboxService.resolveWorkspaceId).toHaveBeenCalledWith("sandbox-1", "user-1");
+    expect(assistantSandboxService.markSandboxUsedByControlSession).toHaveBeenCalledWith(
+      "sandbox-1",
+      "user-1",
+      "control-1"
+    );
+    expect(startLiveSession).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: "workspace-sandbox-1",
+      provider: scenario.providerId,
+      runtimeOptions: expect.objectContaining({
+        model: scenario.model,
+        reasoningLevel: scenario.reasoningLevel,
+        permissionMode: scenario.permissionMode
+      })
+    }));
+  });
+
   it("创建 condition 自动化时会把正式触发器参数映射到自动化服务", () => {
     const assistantAutomationService = {
       listTasks: vi.fn(),
@@ -461,7 +646,8 @@ describe("AssistantCapabilityService", () => {
         promoteSandbox: vi.fn(),
         expireSandbox: vi.fn(),
         removeSandbox: vi.fn(),
-        resolveWorkspaceId: vi.fn()
+        resolveWorkspaceId: vi.fn(),
+        markSandboxUsedByControlSession: vi.fn()
       } as any,
       {
         listTimers: vi.fn(),

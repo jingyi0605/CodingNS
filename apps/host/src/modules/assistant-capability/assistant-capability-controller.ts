@@ -59,6 +59,7 @@ interface AssistantAutomationRecentRunsQuery {
 
 interface AssistantSandboxListQuery {
   status?: "active" | "archived" | "expired" | "deleted";
+  controlSessionId?: string;
 }
 
 interface AssistantTerminalListQuery {
@@ -157,6 +158,23 @@ interface AssistantCreateAutomationBody {
   maxChecks?: number | string | null;
   conditionSessionId?: string | null;
   includeTriggerContext?: boolean | null;
+}
+
+interface AssistantUpdateAutomationBody {
+  title?: string | null;
+  content?: string | null;
+  includeTriggerContext?: boolean | null;
+  dueAt?: string | null;
+  everySeconds?: number | string | null;
+  everyMinutes?: number | string | null;
+  everyHours?: number | string | null;
+  stopAt?: string | null;
+  cronMinute?: number | string | null;
+  cronHour?: number | string | null;
+  cronDaysOfWeek?: Array<number | string> | string | null;
+  pollIntervalSeconds?: number | string | null;
+  expiresAt?: string | null;
+  maxChecks?: number | string | null;
 }
 
 interface AssistantCreateSandboxBody {
@@ -495,11 +513,90 @@ export class AssistantCapabilityController {
     }));
   };
 
+  readonly updateAutomation = async (
+    request: FastifyRequest<{
+      Params: AssistantAutomationParams;
+      Body: AssistantUpdateAutomationBody;
+    }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.updateAutomation({
+      automationId: request.params.automationId,
+      userId: requireUserId(request),
+      title:
+        request.body.title !== undefined
+          ? normalizeNullableText(request.body.title)
+          : undefined,
+      content:
+        request.body.content !== undefined
+          ? requireNonEmptyText(request.body.content, "content", "更新自动化必须提供 content")
+          : undefined,
+      includeTriggerContext:
+        typeof request.body.includeTriggerContext === "boolean"
+          ? request.body.includeTriggerContext
+          : undefined,
+      dueAt:
+        request.body.dueAt !== undefined
+          ? normalizeNullableText(request.body.dueAt)
+          : undefined,
+      everySeconds:
+        request.body.everySeconds !== undefined
+          ? normalizeNullableInteger(request.body.everySeconds, "everySeconds")
+          : undefined,
+      everyMinutes:
+        request.body.everyMinutes !== undefined
+          ? normalizeNullableInteger(request.body.everyMinutes, "everyMinutes")
+          : undefined,
+      everyHours:
+        request.body.everyHours !== undefined
+          ? normalizeNullableInteger(request.body.everyHours, "everyHours")
+          : undefined,
+      stopAt:
+        request.body.stopAt !== undefined
+          ? normalizeNullableText(request.body.stopAt)
+          : undefined,
+      cronMinute:
+        request.body.cronMinute !== undefined
+          ? normalizeNullableInteger(request.body.cronMinute, "cronMinute")
+          : undefined,
+      cronHour:
+        request.body.cronHour !== undefined
+          ? normalizeNullableInteger(request.body.cronHour, "cronHour")
+          : undefined,
+      cronDaysOfWeek:
+        request.body.cronDaysOfWeek !== undefined
+          ? normalizeNullableIntegerArray(request.body.cronDaysOfWeek, "cronDaysOfWeek")
+          : undefined,
+      pollIntervalSeconds:
+        request.body.pollIntervalSeconds !== undefined
+          ? normalizeNullableInteger(request.body.pollIntervalSeconds, "pollIntervalSeconds")
+          : undefined,
+      expiresAt:
+        request.body.expiresAt !== undefined
+          ? normalizeNullableText(request.body.expiresAt)
+          : undefined,
+      maxChecks:
+        request.body.maxChecks !== undefined
+          ? normalizeNullableInteger(request.body.maxChecks, "maxChecks")
+          : undefined
+    }));
+  };
+
   readonly cancelAutomation = async (
     request: FastifyRequest<{ Params: AssistantAutomationParams }>,
     reply: FastifyReply
   ): Promise<void> => {
     reply.send(this.assistantCapabilityService.cancelAutomation(
+      request.params.automationId,
+      requireUserId(request)
+    ));
+  };
+
+  readonly skipAutomationWait = async (
+    request: FastifyRequest<{ Params: AssistantAutomationParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.skipAutomationWait(
       request.params.automationId,
       requireUserId(request)
     ));
@@ -532,7 +629,8 @@ export class AssistantCapabilityController {
   ): Promise<void> => {
     reply.send(this.assistantCapabilityService.listSandboxes({
       userId: requireUserId(request),
-      status: request.query.status
+      status: request.query.status,
+      controlSessionId: normalizeNullableText(request.query.controlSessionId)
     }));
   };
 

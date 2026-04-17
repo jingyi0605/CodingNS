@@ -536,6 +536,7 @@ export interface AssistantSandboxWorkspace {
   id: string;
   userId: string;
   workspaceId: string;
+  controlSessionId: string | null;
   title: string;
   description: string | null;
   sourceKind: AssistantSandboxSourceKind;

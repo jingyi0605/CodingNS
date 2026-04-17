@@ -783,6 +783,7 @@ CREATE TABLE IF NOT EXISTS assistant_sandboxes (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
   workspace_id TEXT NOT NULL UNIQUE,
+  control_session_id TEXT,
   title TEXT NOT NULL,
   description TEXT,
   source_kind TEXT NOT NULL CHECK (source_kind IN ('blank', 'clone')),
@@ -795,7 +796,8 @@ CREATE TABLE IF NOT EXISTS assistant_sandboxes (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
-  FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+  FOREIGN KEY (control_session_id) REFERENCES butler_control_sessions(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_assistant_sandboxes_user_status

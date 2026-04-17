@@ -16,6 +16,7 @@ export interface AssistantSandboxWorkspaceView extends AssistantSandboxWorkspace
 
 export interface CreateAssistantSandboxInput {
   userId: string;
+  controlSessionId?: string | null;
   title?: string | null;
   description?: string | null;
   purpose?: string | null;
@@ -52,12 +53,14 @@ export class AssistantSandboxService {
 
   listSandboxes(filters: {
     userId: string;
+    controlSessionId?: string | null;
     statuses?: Array<"active" | "archived" | "expired" | "deleted">;
     limit?: number;
   }): AssistantSandboxWorkspaceView[] {
     return this.repository
       .list({
         userId: filters.userId,
+        controlSessionId: filters.controlSessionId ?? null,
         statuses: filters.statuses,
         limit: filters.limit
       })
@@ -78,6 +81,7 @@ export class AssistantSandboxService {
       id: createId(),
       userId: input.userId,
       workspaceId: workspace.id,
+      controlSessionId: normalizeNullableText(input.controlSessionId),
       title: normalizeSandboxTitle(input.title, workspace.name),
       description: normalizeNullableText(input.description),
       sourceKind: input.source.kind,
@@ -132,6 +136,27 @@ export class AssistantSandboxService {
         }
       });
     }
+
+    return this.toView(updated);
+  }
+
+  markSandboxUsedByControlSession(
+    sandboxId: string,
+    userId: string,
+    controlSessionId: string | null
+  ): AssistantSandboxWorkspaceView {
+    const current = this.requireSandbox(sandboxId, userId);
+    const nextControlSessionId = normalizeNullableText(controlSessionId);
+
+    if (current.controlSessionId === nextControlSessionId) {
+      return this.toView(current);
+    }
+
+    const updated = this.repository.update({
+      ...current,
+      controlSessionId: nextControlSessionId,
+      updatedAt: nowIso()
+    });
 
     return this.toView(updated);
   }

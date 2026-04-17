@@ -325,7 +325,8 @@ describe("assistant capability routes", () => {
     expect(assistantCapabilityService.listAutomations).toHaveBeenCalledWith({
       userId: "user-1",
       status: "active",
-      controlSessionId: "control-1"
+      controlSessionId: "control-1",
+      limit: null
     });
 
     const createResponse = await app.inject({
@@ -350,6 +351,94 @@ describe("assistant capability routes", () => {
       dueAt: null,
       afterSeconds: 3600
     }));
+  });
+
+  it("自动化等待跳过路由会把 automationId 和 userId 传给服务", async () => {
+    const assistantCapabilityService = {
+      skipAutomationWait: vi.fn(() => ({
+        ok: true,
+        capability: "automations.wait.skip",
+        auditId: "audit-automation-skip-wait",
+        timestamp: "2026-04-17T01:02:00.000Z",
+        targetRef: {
+          kind: "automation",
+          id: "automation-2"
+        },
+        payload: {
+          automation: {
+            id: "automation-2",
+            status: "active"
+          }
+        }
+      }))
+    };
+
+    const app = await createAssistantApp(assistantCapabilityService);
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/assistant/automations/automation-2/skip-wait",
+      payload: {}
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(assistantCapabilityService.skipAutomationWait).toHaveBeenCalledWith(
+      "automation-2",
+      "user-1"
+    );
+  });
+
+  it("自动化更新路由会把补丁参数清洗后传给服务", async () => {
+    const assistantCapabilityService = {
+      updateAutomation: vi.fn(() => ({
+        ok: true,
+        capability: "automations.update",
+        auditId: "audit-automation-update",
+        timestamp: "2026-04-17T01:03:00.000Z",
+        targetRef: {
+          kind: "automation",
+          id: "automation-1"
+        },
+        payload: {
+          automation: {
+            id: "automation-1",
+            title: "夜间巡视升级版"
+          }
+        }
+      }))
+    };
+
+    const app = await createAssistantApp(assistantCapabilityService);
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/api/assistant/automations/automation-1",
+      payload: {
+        title: "  夜间巡视升级版  ",
+        content: "  执行项目巡视并补充摘要  ",
+        includeTriggerContext: true,
+        everyMinutes: "45",
+        stopAt: " 2026-04-17T02:00:00.000Z "
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(assistantCapabilityService.updateAutomation).toHaveBeenCalledWith({
+      automationId: "automation-1",
+      userId: "user-1",
+      title: "夜间巡视升级版",
+      content: "执行项目巡视并补充摘要",
+      includeTriggerContext: true,
+      dueAt: undefined,
+      everySeconds: undefined,
+      everyMinutes: 45,
+      everyHours: undefined,
+      stopAt: "2026-04-17T02:00:00.000Z",
+      cronMinute: undefined,
+      cronHour: undefined,
+      cronDaysOfWeek: undefined,
+      pollIntervalSeconds: undefined,
+      expiresAt: undefined,
+      maxChecks: undefined
+    });
   });
 
   it("最近自动化运行路由会把筛选参数传给服务", async () => {

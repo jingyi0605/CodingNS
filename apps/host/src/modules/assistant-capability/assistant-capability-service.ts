@@ -169,6 +169,25 @@ interface CreateAssistantAutomationInput {
   targetSessionId?: string | null;
 }
 
+interface UpdateAssistantAutomationInput {
+  userId: string;
+  automationId: string;
+  title?: string | null;
+  content?: string;
+  includeTriggerContext?: boolean;
+  dueAt?: string | null;
+  everySeconds?: number | null;
+  everyMinutes?: number | null;
+  everyHours?: number | null;
+  stopAt?: string | null;
+  cronMinute?: number | null;
+  cronHour?: number | null;
+  cronDaysOfWeek?: number[] | null;
+  pollIntervalSeconds?: number | null;
+  expiresAt?: string | null;
+  maxChecks?: number | null;
+}
+
 interface ListAssistantAutomationRunsInput {
   userId: string;
   controlSessionId?: string | null;
@@ -178,6 +197,7 @@ interface ListAssistantAutomationRunsInput {
 interface ListAssistantSandboxesInput {
   userId: string;
   status?: "active" | "archived" | "expired" | "deleted";
+  controlSessionId?: string | null;
 }
 
 interface CreateAssistantSandboxInput {
@@ -580,11 +600,25 @@ export class AssistantCapabilityService {
     private readonly butlerControlSessionService: Pick<ButlerControlSessionService, "getCurrentSession">,
     private readonly assistantAutomationService: Pick<
       AssistantAutomationService,
-      "listTasks" | "getTask" | "createTask" | "cancelTask" | "listRuns" | "listRecentRuns"
+      | "listTasks"
+      | "getTask"
+      | "createTask"
+      | "updateTask"
+      | "cancelTask"
+      | "skipCurrentWait"
+      | "listRuns"
+      | "listRecentRuns"
     >,
     private readonly assistantSandboxService: Pick<
       AssistantSandboxService,
-      "listSandboxes" | "getSandbox" | "createSandbox" | "promoteSandbox" | "expireSandbox" | "removeSandbox" | "resolveWorkspaceId"
+      | "listSandboxes"
+      | "getSandbox"
+      | "createSandbox"
+      | "promoteSandbox"
+      | "expireSandbox"
+      | "removeSandbox"
+      | "resolveWorkspaceId"
+      | "markSandboxUsedByControlSession"
     >,
     private readonly butlerControlTimerService: Pick<
       ButlerControlTimerService,
@@ -748,6 +782,7 @@ export class AssistantCapabilityService {
   }>> {
     const config = this.resolveSessionLaunchConfig(input);
     const target = this.resolveAssistantSessionTarget(input.target, input.userId);
+    const currentControlSession = this.butlerControlSessionService.getCurrentSession(input.userId);
 
     if (target.kind === "project") {
       const session = await this.butlerSessionService.startSession(
@@ -786,6 +821,14 @@ export class AssistantCapabilityService {
         attachments: []
       }
     });
+
+    if (target.kind === "sandbox") {
+      this.assistantSandboxService.markSandboxUsedByControlSession(
+        target.id,
+        input.userId,
+        currentControlSession?.id ?? null
+      );
+    }
 
     return this.createReceipt("sessions.start", {
       kind: target.kind,
@@ -1005,6 +1048,38 @@ export class AssistantCapabilityService {
     });
   }
 
+  updateAutomation(
+    input: UpdateAssistantAutomationInput
+  ): AssistantCapabilityReceipt<{
+    automation: ReturnType<AssistantAutomationService["updateTask"]>;
+  }> {
+    const automation = this.assistantAutomationService.updateTask({
+      taskId: input.automationId,
+      userId: input.userId,
+      title: input.title,
+      content: input.content,
+      includeTriggerContext: input.includeTriggerContext,
+      dueAt: input.dueAt,
+      everySeconds: input.everySeconds,
+      everyMinutes: input.everyMinutes,
+      everyHours: input.everyHours,
+      stopAt: input.stopAt,
+      cronMinute: input.cronMinute,
+      cronHour: input.cronHour,
+      cronDaysOfWeek: input.cronDaysOfWeek,
+      pollIntervalSeconds: input.pollIntervalSeconds,
+      expiresAt: input.expiresAt,
+      maxChecks: input.maxChecks
+    });
+
+    return this.createReceipt("automations.update", {
+      kind: "automation",
+      id: input.automationId
+    }, {
+      automation
+    });
+  }
+
   cancelAutomation(
     automationId: string,
     userId: string
@@ -1014,6 +1089,22 @@ export class AssistantCapabilityService {
     const automation = this.assistantAutomationService.cancelTask(automationId, userId);
 
     return this.createReceipt("automations.cancel", {
+      kind: "automation",
+      id: automationId
+    }, {
+      automation
+    });
+  }
+
+  skipAutomationWait(
+    automationId: string,
+    userId: string
+  ): AssistantCapabilityReceipt<{
+    automation: ReturnType<AssistantAutomationService["skipCurrentWait"]>;
+  }> {
+    const automation = this.assistantAutomationService.skipCurrentWait(automationId, userId);
+
+    return this.createReceipt("automations.wait.skip", {
       kind: "automation",
       id: automationId
     }, {
@@ -1063,6 +1154,7 @@ export class AssistantCapabilityService {
   }> {
     const items = this.assistantSandboxService.listSandboxes({
       userId: input.userId,
+      controlSessionId: input.controlSessionId ?? null,
       statuses: input.status ? [input.status] : undefined
     });
 
@@ -1079,8 +1171,10 @@ export class AssistantCapabilityService {
   ): Promise<AssistantCapabilityReceipt<{
     sandbox: Awaited<ReturnType<AssistantSandboxService["createSandbox"]>>;
   }>> {
+    const currentControlSession = this.butlerControlSessionService.getCurrentSession(input.userId);
     const sandbox = await this.assistantSandboxService.createSandbox({
       userId: input.userId,
+      controlSessionId: currentControlSession?.id ?? null,
       title: input.title,
       description: input.description,
       purpose: input.purpose,
