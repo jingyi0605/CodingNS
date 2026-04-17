@@ -3,6 +3,7 @@ import type { WebSocket } from "ws";
 import { AppError } from "../shared/errors/app-error.js";
 import { logTerminalDebug, terminalDebugNowMs } from "../shared/utils/terminal-debug-log.js";
 import type { AuthContext } from "../modules/auth/auth-service.js";
+import type { TerminalService } from "../modules/terminal/terminal-service.js";
 import type { WorkbenchService, WorkbenchSnapshot } from "../modules/workbench/workbench-service.js";
 import type {
   FileTreeSnapshot,
@@ -11,11 +12,13 @@ import type {
   WorkspaceManagementSnapshot,
   WorkspacePanelSnapshotService
 } from "../modules/workbench/workspace-panel-snapshot-service.js";
-import type { WorkspaceFileWatcher } from "../modules/workbench/workspace-file-watcher.js";
+import type { WorkspaceFileWatcher, WorkspaceWatcherEvent } from "../modules/workbench/workspace-file-watcher.js";
 
 const WORKBENCH_REFRESH_INTERVAL_MS = 60_000;
-const SIDEBAR_REFRESH_INTERVAL_MS = 5_000;
 const GIT_SUBSCRIPTION_MIN_REFRESH_INTERVAL_MS = 15_000;
+const GIT_REFRESH_QUIET_WINDOW_MS = 800;
+const TERMINAL_MANAGER_REFRESH_QUIET_WINDOW_MS = 300;
+const WORKSPACE_MANAGEMENT_REFRESH_INTERVAL_MS = 5_000;
 const WORKBENCH_REALTIME_BROADCAST_DEBOUNCE_MS = 120;
 const WORKSPACE_MANAGEMENT_TIMER_REFRESH_ENABLED = readBooleanEnv(
   process.env.CODINGNS_WORKSPACE_MANAGEMENT_AUTO_REFRESH,
@@ -88,12 +91,11 @@ interface UserChannelState {
   clients: Set<WebSocket>;
   lastWorkbenchPayload: string | null;
   workbenchTimer: NodeJS.Timeout | null;
-  sidebarTimer: NodeJS.Timeout | null;
+  workspaceManagementTimer: NodeJS.Timeout | null;
   realtimeBroadcastTimer: NodeJS.Timeout | null;
   realtimeBroadcastQueued: boolean;
   realtimeBroadcastTask: Promise<void> | null;
   refreshTask: Promise<void> | null;
-  titleSyncTask: Promise<void> | null;
 }
 
 interface FileTreeClientSubscription {
@@ -108,11 +110,18 @@ interface GitClientSubscription {
   lastRequestedAt: number;
   refreshTask: Promise<void> | null;
   refreshController: AbortController | null;
+  refreshTimer: NodeJS.Timeout | null;
+  queuedRefresh: boolean;
+  queuedForce: boolean;
 }
 
 interface TerminalManagerClientSubscription {
   workspaceId: string;
   lastPayload: string | null;
+  refreshTask: Promise<void> | null;
+  refreshTimer: NodeJS.Timeout | null;
+  queuedRefresh: boolean;
+  queuedForce: boolean;
 }
 
 interface WorkspaceManagementClientSubscription {
@@ -137,10 +146,18 @@ export class WorkbenchWsHub {
   constructor(
     private readonly workbenchService: WorkbenchService,
     private readonly workspacePanelSnapshotService: WorkspacePanelSnapshotService,
-    private readonly fileWatcher: WorkspaceFileWatcher
+    private readonly fileWatcher: WorkspaceFileWatcher,
+    terminalService?: Pick<TerminalService, "on">
   ) {
-    this.fileWatcher.setOnChange((workspaceId) => {
-      this.handleWorkspaceFileChange(workspaceId);
+    this.fileWatcher.setOnChange((event) => {
+      this.handleWorkspaceWatcherChange(event);
+    });
+
+    terminalService?.on("status", (terminal) => {
+      this.handleTerminalManagerChange(terminal.workspaceId);
+    });
+    terminalService?.on("exit", ({ terminal }) => {
+      this.handleTerminalManagerChange(terminal.workspaceId);
     });
   }
 
@@ -159,18 +176,15 @@ export class WorkbenchWsHub {
     switch (message.type) {
       case "workbench.subscribe":
         void this.sendWorkbenchSnapshotToClient(client, userId, channel);
+        if (this.workbenchService.shouldRefreshSnapshot()) {
+          this.workbenchService.scheduleSnapshotRefresh(userId);
+        }
         return true;
       case "workbench.refresh":
-        void this.syncTitlesAndBroadcast(userId);
         void this.refreshAndBroadcast(userId, true);
         return true;
       case "fileTree.subscribe":
-        this.clientFileTreeSubscriptions.set(client, {
-          workspaceId: message.workspaceId.trim(),
-          paths: normalizePanelPaths(message.paths),
-          lastPayloadByPath: new Map<string, string>()
-        });
-        this.fileWatcher.subscribe(message.workspaceId.trim());
+        this.replaceFileTreeSubscription(client, message.workspaceId, message.paths);
         void this.refreshFileTreeSubscriptions(client);
         return true;
       case "fileTree.refresh":
@@ -181,42 +195,29 @@ export class WorkbenchWsHub {
         void this.refreshFileTreeSubscriptions(client, true);
         return true;
       case "git.subscribe":
-        this.clientGitSubscriptions.set(client, {
-          workspaceId: message.workspaceId.trim(),
-          lastPayload: null,
-          lastRequestedAt: 0,
-          refreshTask: null,
-          refreshController: null
+        this.ensureGitSubscription(client, message.workspaceId);
+        void this.refreshGitSubscription(client, false, {
+          deliverIfUnchanged: true,
+          ignoreMinInterval: true
         });
-        this.fileWatcher.subscribe(message.workspaceId.trim());
-        void this.refreshGitSubscription(client);
         return true;
       case "git.refresh":
         this.workspacePanelSnapshotService.invalidateGit(message.workspaceId.trim());
-        this.abortGitRefresh(client, "git subscription replaced");
-        this.clientGitSubscriptions.set(client, {
-          workspaceId: message.workspaceId.trim(),
-          lastPayload: null,
-          lastRequestedAt: 0,
-          refreshTask: null,
-          refreshController: null
+        this.ensureGitSubscription(client, message.workspaceId);
+        this.scheduleGitRefresh(client, {
+          force: true
         });
-        void this.refreshGitSubscription(client, true);
         return true;
       case "terminalManager.subscribe":
-        this.clientTerminalManagerSubscriptions.set(client, {
-          workspaceId: message.workspaceId.trim(),
-          lastPayload: null
-        });
-        void this.refreshTerminalManagerSubscription(client);
+        this.ensureTerminalManagerSubscription(client, message.workspaceId);
+        this.scheduleTerminalManagerRefresh(client);
         return true;
       case "terminalManager.refresh":
         this.workspacePanelSnapshotService.invalidateTerminalManager(message.workspaceId.trim());
-        this.clientTerminalManagerSubscriptions.set(client, {
-          workspaceId: message.workspaceId.trim(),
-          lastPayload: null
+        this.ensureTerminalManagerSubscription(client, message.workspaceId);
+        this.scheduleTerminalManagerRefresh(client, {
+          force: true
         });
-        void this.refreshTerminalManagerSubscription(client, true);
         return true;
       case "workspaceManagement.subscribe":
         this.clientWorkspaceManagementSubscriptions.set(client, {
@@ -258,12 +259,19 @@ export class WorkbenchWsHub {
     // 文件监听器引用计数递减
     const fileTreeSub = this.clientFileTreeSubscriptions.get(client);
     if (fileTreeSub) {
-      this.fileWatcher.unsubscribe(fileTreeSub.workspaceId);
+      this.fileWatcher.unsubscribeFileTree(fileTreeSub.workspaceId, fileTreeSub.paths);
     }
     const gitSub = this.clientGitSubscriptions.get(client);
     if (gitSub) {
       gitSub.refreshController?.abort(new Error("git subscription closed"));
-      this.fileWatcher.unsubscribe(gitSub.workspaceId);
+      if (gitSub.refreshTimer) {
+        clearTimeout(gitSub.refreshTimer);
+      }
+      this.fileWatcher.unsubscribeGit(gitSub.workspaceId);
+    }
+    const terminalManagerSub = this.clientTerminalManagerSubscriptions.get(client);
+    if (terminalManagerSub?.refreshTimer) {
+      clearTimeout(terminalManagerSub.refreshTimer);
     }
 
     this.clientFileTreeSubscriptions.delete(client);
@@ -279,8 +287,8 @@ export class WorkbenchWsHub {
       clearInterval(channel.workbenchTimer);
     }
 
-    if (channel.sidebarTimer) {
-      clearInterval(channel.sidebarTimer);
+    if (channel.workspaceManagementTimer) {
+      clearInterval(channel.workspaceManagementTimer);
     }
 
     if (channel.realtimeBroadcastTimer) {
@@ -365,23 +373,50 @@ export class WorkbenchWsHub {
     this.clientUsers.set(client, userId);
   }
 
-  /**
-   * 文件变化回调：chokidar 检测到工作区文件变化后，失效缓存并推送更新给订阅了该工作区的客户端。
-   */
-  private handleWorkspaceFileChange(workspaceId: string): void {
-    this.workspacePanelSnapshotService.invalidateFileTree(workspaceId);
-    this.workspacePanelSnapshotService.invalidateGit(workspaceId);
+  private handleWorkspaceWatcherChange(event: WorkspaceWatcherEvent): void {
+    if (event.scope === "fileTree") {
+      this.workspacePanelSnapshotService.invalidateFileTree(event.workspaceId);
+      this.workspacePanelSnapshotService.invalidateGit(event.workspaceId);
+    } else {
+      this.workspacePanelSnapshotService.invalidateGit(event.workspaceId);
+    }
 
     for (const [, channel] of this.userChannels) {
       for (const client of channel.clients) {
         const fileTreeSub = this.clientFileTreeSubscriptions.get(client);
-        if (fileTreeSub && fileTreeSub.workspaceId === workspaceId) {
+        if (
+          event.scope === "fileTree" &&
+          fileTreeSub &&
+          fileTreeSub.workspaceId === event.workspaceId
+        ) {
           void this.refreshFileTreeSubscriptions(client, true);
         }
+
         const gitSub = this.clientGitSubscriptions.get(client);
-        if (gitSub && gitSub.workspaceId === workspaceId) {
-          void this.refreshGitSubscription(client, true);
+
+        if (gitSub && gitSub.workspaceId === event.workspaceId) {
+          this.scheduleGitRefresh(client, {
+            quietWindowMs: GIT_REFRESH_QUIET_WINDOW_MS
+          });
         }
+      }
+    }
+  }
+
+  private handleTerminalManagerChange(workspaceId: string): void {
+    this.workspacePanelSnapshotService.invalidateTerminalManager(workspaceId);
+
+    for (const [, channel] of this.userChannels) {
+      for (const client of channel.clients) {
+        const subscription = this.clientTerminalManagerSubscriptions.get(client);
+
+        if (!subscription || subscription.workspaceId !== workspaceId) {
+          continue;
+        }
+
+        this.scheduleTerminalManagerRefresh(client, {
+          quietWindowMs: TERMINAL_MANAGER_REFRESH_QUIET_WINDOW_MS
+        });
       }
     }
   }
@@ -397,12 +432,11 @@ export class WorkbenchWsHub {
       clients: new Set<WebSocket>(),
       lastWorkbenchPayload: null,
       workbenchTimer: null,
-      sidebarTimer: null,
+      workspaceManagementTimer: null,
       realtimeBroadcastTimer: null,
       realtimeBroadcastQueued: false,
       realtimeBroadcastTask: null,
-      refreshTask: null,
-      titleSyncTask: null
+      refreshTask: null
     };
     channel.workbenchTimer = setInterval(() => {
       if (!this.workbenchService.shouldRefreshSnapshot()) {
@@ -413,52 +447,17 @@ export class WorkbenchWsHub {
         this.reportAsyncError("workbenchTimer", error, { userId });
       });
     }, WORKBENCH_REFRESH_INTERVAL_MS);
-    channel.sidebarTimer = setInterval(() => {
-      void this.refreshSidebarSubscriptions(userId).catch((error) => {
-        this.reportAsyncError("sidebarTimer", error, { userId });
-      });
-    }, SIDEBAR_REFRESH_INTERVAL_MS);
-    this.userChannels.set(userId, channel);
-    return channel;
-  }
 
-  private async syncTitlesAndBroadcast(userId: string): Promise<void> {
-    const channel = this.getOrCreateChannel(userId);
-
-    if (channel.titleSyncTask) {
-      return channel.titleSyncTask;
+    if (WORKSPACE_MANAGEMENT_TIMER_REFRESH_ENABLED) {
+      channel.workspaceManagementTimer = setInterval(() => {
+        void this.refreshWorkspaceManagementSubscriptions(userId).catch((error) => {
+          this.reportAsyncError("workspaceManagementTimer", error, { userId });
+        });
+      }, WORKSPACE_MANAGEMENT_REFRESH_INTERVAL_MS);
     }
 
-    channel.titleSyncTask = (async () => {
-      const startedAtMs = terminalDebugNowMs();
-      try {
-        const snapshot = await this.workbenchService
-          .scheduleSessionTitleSync(userId, "workbench_ws.sync_titles")
-          .promise;
-        const payload = buildWorkbenchPayload(snapshot);
-
-        if (payload === channel.lastWorkbenchPayload) {
-          return;
-        }
-
-        channel.lastWorkbenchPayload = payload;
-
-        for (const client of channel.clients) {
-          client.send(payload);
-        }
-        logTerminalDebug("workbench.sync_titles.completed", {
-          userId,
-          clientCount: channel.clients.size,
-          durationMs: terminalDebugNowMs() - startedAtMs
-        });
-      } catch (error) {
-        this.reportAsyncError("syncTitlesAndBroadcast", error, { userId });
-      }
-    })().finally(() => {
-      channel.titleSyncTask = null;
-    });
-
-    return channel.titleSyncTask;
+    this.userChannels.set(userId, channel);
+    return channel;
   }
 
   private async sendWorkbenchSnapshotToClient(
@@ -518,35 +517,6 @@ export class WorkbenchWsHub {
     return channel.refreshTask;
   }
 
-  private async refreshSidebarSubscriptions(userId: string): Promise<void> {
-    const channel = this.userChannels.get(userId);
-
-    if (!channel) {
-      return;
-    }
-
-    const startedAtMs = terminalDebugNowMs();
-    await Promise.all(
-      [...channel.clients].map(async (client) => {
-        const refreshTasks = [
-          this.refreshGitSubscription(client),
-          this.refreshTerminalManagerSubscription(client)
-        ];
-
-        if (WORKSPACE_MANAGEMENT_TIMER_REFRESH_ENABLED) {
-          refreshTasks.push(this.refreshWorkspaceManagementSubscription(client));
-        }
-
-        await Promise.allSettled(refreshTasks);
-      })
-    );
-    logTerminalDebug("workbench.sidebar_refresh.completed", {
-      userId,
-      clientCount: channel.clients.size,
-      durationMs: terminalDebugNowMs() - startedAtMs
-    });
-  }
-
   private ensureFileTreeSubscription(
     client: WebSocket,
     workspaceId: string,
@@ -555,27 +525,37 @@ export class WorkbenchWsHub {
     const current = this.clientFileTreeSubscriptions.get(client);
     const normalizedWorkspaceId = workspaceId.trim();
     const normalizedPaths = normalizePanelPaths(paths);
+    const nextPaths = normalizedPaths.length > 0 ? normalizedPaths : [""];
 
-    if (!current || current.workspaceId !== normalizedWorkspaceId) {
-      const next: FileTreeClientSubscription = {
-        workspaceId: normalizedWorkspaceId,
-        paths: normalizedPaths,
-        lastPayloadByPath: new Map<string, string>()
-      };
-
-      this.clientFileTreeSubscriptions.set(client, next);
-      return next;
+    if (
+      current &&
+      current.workspaceId === normalizedWorkspaceId &&
+      areStringArraysEqual(current.paths, nextPaths)
+    ) {
+      return current;
     }
 
-    if (normalizedPaths.length > 0) {
-      current.paths = normalizedPaths;
+    if (current) {
+      this.fileWatcher.unsubscribeFileTree(current.workspaceId, current.paths);
     }
 
-    if (current.paths.length === 0) {
-      current.paths = [""];
-    }
+    const next: FileTreeClientSubscription = {
+      workspaceId: normalizedWorkspaceId,
+      paths: nextPaths,
+      lastPayloadByPath: new Map<string, string>()
+    };
 
-    return current;
+    this.clientFileTreeSubscriptions.set(client, next);
+    this.fileWatcher.subscribeFileTree(normalizedWorkspaceId, nextPaths);
+    return next;
+  }
+
+  private replaceFileTreeSubscription(
+    client: WebSocket,
+    workspaceId: string,
+    paths?: string[]
+  ): FileTreeClientSubscription {
+    return this.ensureFileTreeSubscription(client, workspaceId, paths);
   }
 
   private async refreshFileTreeSubscriptions(client: WebSocket, force = false): Promise<void> {
@@ -611,7 +591,14 @@ export class WorkbenchWsHub {
     }
   }
 
-  private async refreshGitSubscription(client: WebSocket, force = false): Promise<void> {
+  private async refreshGitSubscription(
+    client: WebSocket,
+    force = false,
+    options?: {
+      deliverIfUnchanged?: boolean;
+      ignoreMinInterval?: boolean;
+    }
+  ): Promise<void> {
     const subscription = this.clientGitSubscriptions.get(client);
 
     if (!subscription) {
@@ -619,20 +606,32 @@ export class WorkbenchWsHub {
     }
 
     if (subscription.refreshTask) {
-      if (!force) {
+      subscription.queuedRefresh = true;
+      subscription.queuedForce = subscription.queuedForce || force;
+      if (!options?.deliverIfUnchanged) {
         return subscription.refreshTask;
       }
 
-      subscription.refreshController?.abort(new Error("git subscription superseded"));
-      await subscription.refreshTask;
+      return await subscription.refreshTask.finally(() => {
+        if (subscription.lastPayload) {
+          client.send(subscription.lastPayload);
+        }
+      });
     }
 
     const now = Date.now();
 
     if (
+      !options?.ignoreMinInterval &&
       !force
       && now - subscription.lastRequestedAt < GIT_SUBSCRIPTION_MIN_REFRESH_INTERVAL_MS
     ) {
+      subscription.queuedRefresh = true;
+      subscription.queuedForce = subscription.queuedForce || force;
+      this.deferQueuedGitRefresh(
+        client,
+        GIT_SUBSCRIPTION_MIN_REFRESH_INTERVAL_MS - (now - subscription.lastRequestedAt)
+      );
       return;
     }
 
@@ -656,7 +655,7 @@ export class WorkbenchWsHub {
 
         const payload = buildGitPayload(snapshot);
 
-        if (payload === subscription.lastPayload) {
+        if (payload === subscription.lastPayload && !options?.deliverIfUnchanged) {
           return;
         }
 
@@ -683,13 +682,199 @@ export class WorkbenchWsHub {
       if (subscription.refreshController === controller) {
         subscription.refreshController = null;
       }
+
+      if (subscription.queuedRefresh && !subscription.refreshTimer) {
+        this.flushQueuedGitRefresh(client);
+      }
     });
 
     return subscription.refreshTask;
   }
 
-  private abortGitRefresh(client: WebSocket, reason: string): void {
-    this.clientGitSubscriptions.get(client)?.refreshController?.abort(new Error(reason));
+  private ensureGitSubscription(client: WebSocket, workspaceId: string): GitClientSubscription {
+    const normalizedWorkspaceId = workspaceId.trim();
+    const current = this.clientGitSubscriptions.get(client);
+
+    if (current && current.workspaceId === normalizedWorkspaceId) {
+      return current;
+    }
+
+    if (current) {
+      current.refreshController?.abort(new Error("git subscription replaced"));
+      if (current.refreshTimer) {
+        clearTimeout(current.refreshTimer);
+      }
+      this.fileWatcher.unsubscribeGit(current.workspaceId);
+    }
+
+    const next: GitClientSubscription = {
+      workspaceId: normalizedWorkspaceId,
+      lastPayload: null,
+      lastRequestedAt: 0,
+      refreshTask: null,
+      refreshController: null,
+      refreshTimer: null,
+      queuedRefresh: false,
+      queuedForce: false
+    };
+
+    this.clientGitSubscriptions.set(client, next);
+    this.fileWatcher.subscribeGit(normalizedWorkspaceId);
+    return next;
+  }
+
+  private scheduleGitRefresh(
+    client: WebSocket,
+    options?: {
+      force?: boolean;
+      quietWindowMs?: number;
+    }
+  ): void {
+    const subscription = this.clientGitSubscriptions.get(client);
+
+    if (!subscription) {
+      return;
+    }
+
+    subscription.queuedRefresh = true;
+    subscription.queuedForce = subscription.queuedForce || (options?.force ?? false);
+
+    if (subscription.refreshTimer) {
+      clearTimeout(subscription.refreshTimer);
+      subscription.refreshTimer = null;
+    }
+
+    const quietWindowMs = options?.quietWindowMs ?? 0;
+
+    if (quietWindowMs > 0) {
+      this.deferQueuedGitRefresh(client, quietWindowMs);
+      return;
+    }
+
+    this.flushQueuedGitRefresh(client);
+  }
+
+  private flushQueuedGitRefresh(client: WebSocket): void {
+    const subscription = this.clientGitSubscriptions.get(client);
+
+    if (!subscription || subscription.refreshTimer || subscription.refreshTask || !subscription.queuedRefresh) {
+      return;
+    }
+
+    const force = subscription.queuedForce;
+    subscription.queuedRefresh = false;
+    subscription.queuedForce = false;
+    void this.refreshGitSubscription(client, force);
+  }
+
+  private deferQueuedGitRefresh(client: WebSocket, delayMs: number): void {
+    const subscription = this.clientGitSubscriptions.get(client);
+
+    if (!subscription) {
+      return;
+    }
+
+    if (subscription.refreshTimer) {
+      clearTimeout(subscription.refreshTimer);
+    }
+
+    subscription.refreshTimer = setTimeout(() => {
+      subscription.refreshTimer = null;
+      this.flushQueuedGitRefresh(client);
+    }, Math.max(0, delayMs));
+  }
+
+  private ensureTerminalManagerSubscription(
+    client: WebSocket,
+    workspaceId: string
+  ): TerminalManagerClientSubscription {
+    const normalizedWorkspaceId = workspaceId.trim();
+    const current = this.clientTerminalManagerSubscriptions.get(client);
+
+    if (current && current.workspaceId === normalizedWorkspaceId) {
+      return current;
+    }
+
+    if (current?.refreshTimer) {
+      clearTimeout(current.refreshTimer);
+    }
+
+    const next: TerminalManagerClientSubscription = {
+      workspaceId: normalizedWorkspaceId,
+      lastPayload: null,
+      refreshTask: null,
+      refreshTimer: null,
+      queuedRefresh: false,
+      queuedForce: false
+    };
+
+    this.clientTerminalManagerSubscriptions.set(client, next);
+    return next;
+  }
+
+  private scheduleTerminalManagerRefresh(
+    client: WebSocket,
+    options?: {
+      force?: boolean;
+      quietWindowMs?: number;
+    }
+  ): void {
+    const subscription = this.clientTerminalManagerSubscriptions.get(client);
+
+    if (!subscription) {
+      return;
+    }
+
+    subscription.queuedRefresh = true;
+    subscription.queuedForce = subscription.queuedForce || (options?.force ?? false);
+
+    if (subscription.refreshTimer) {
+      clearTimeout(subscription.refreshTimer);
+      subscription.refreshTimer = null;
+    }
+
+    const quietWindowMs = options?.quietWindowMs ?? 0;
+
+    if (quietWindowMs > 0) {
+      this.deferQueuedTerminalManagerRefresh(client, quietWindowMs);
+      return;
+    }
+
+    this.flushQueuedTerminalManagerRefresh(client);
+  }
+
+  private flushQueuedTerminalManagerRefresh(client: WebSocket): void {
+    const subscription = this.clientTerminalManagerSubscriptions.get(client);
+
+    if (!subscription || subscription.refreshTimer || !subscription.queuedRefresh) {
+      return;
+    }
+
+    if (subscription.refreshTask) {
+      return;
+    }
+
+    const force = subscription.queuedForce;
+    subscription.queuedRefresh = false;
+    subscription.queuedForce = false;
+    void this.refreshTerminalManagerSubscription(client, force);
+  }
+
+  private deferQueuedTerminalManagerRefresh(client: WebSocket, delayMs: number): void {
+    const subscription = this.clientTerminalManagerSubscriptions.get(client);
+
+    if (!subscription) {
+      return;
+    }
+
+    if (subscription.refreshTimer) {
+      clearTimeout(subscription.refreshTimer);
+    }
+
+    subscription.refreshTimer = setTimeout(() => {
+      subscription.refreshTimer = null;
+      this.flushQueuedTerminalManagerRefresh(client);
+    }, Math.max(0, delayMs));
   }
 
   private async refreshTerminalManagerSubscription(
@@ -702,38 +887,54 @@ export class WorkbenchWsHub {
       return;
     }
 
-    try {
-      const startedAtMs = terminalDebugNowMs();
-      const snapshot = await this.workspacePanelSnapshotService.getTerminalManagerSnapshot(
-        subscription.workspaceId,
-        { force }
-      );
-      const payloadStartedAtMs = terminalDebugNowMs();
-      const payload = buildTerminalManagerPayload(snapshot);
-      const payloadBuildMs = terminalDebugNowMs() - payloadStartedAtMs;
-
-      if (payload === subscription.lastPayload) {
-        return;
-      }
-
-      subscription.lastPayload = payload;
-      const sendStartedAtMs = terminalDebugNowMs();
-      client.send(payload);
-      logTerminalDebug("workbench.terminal_manager_refresh.completed", {
-        workspaceId: subscription.workspaceId,
-        force,
-        terminalCount: snapshot.terminals.length,
-        templateCount: snapshot.templates.length,
-        templateStatusCount: snapshot.templateStatuses.length,
-        payloadBuildMs,
-        sendMs: terminalDebugNowMs() - sendStartedAtMs,
-        durationMs: terminalDebugNowMs() - startedAtMs
-      });
-    } catch (error) {
-      this.reportAsyncError("refreshTerminalManagerSubscription", error, {
-        workspaceId: subscription.workspaceId
-      });
+    if (subscription.refreshTask) {
+      subscription.queuedRefresh = true;
+      subscription.queuedForce = subscription.queuedForce || force;
+      return subscription.refreshTask;
     }
+
+    subscription.refreshTask = (async () => {
+      try {
+        const startedAtMs = terminalDebugNowMs();
+        const snapshot = await this.workspacePanelSnapshotService.getTerminalManagerSnapshot(
+          subscription.workspaceId,
+          { force }
+        );
+        const payloadStartedAtMs = terminalDebugNowMs();
+        const payload = buildTerminalManagerPayload(snapshot);
+        const payloadBuildMs = terminalDebugNowMs() - payloadStartedAtMs;
+
+        if (payload === subscription.lastPayload) {
+          return;
+        }
+
+        subscription.lastPayload = payload;
+        const sendStartedAtMs = terminalDebugNowMs();
+        client.send(payload);
+        logTerminalDebug("workbench.terminal_manager_refresh.completed", {
+          workspaceId: subscription.workspaceId,
+          force,
+          terminalCount: snapshot.terminals.length,
+          templateCount: snapshot.templates.length,
+          templateStatusCount: snapshot.templateStatuses.length,
+          payloadBuildMs,
+          sendMs: terminalDebugNowMs() - sendStartedAtMs,
+          durationMs: terminalDebugNowMs() - startedAtMs
+        });
+      } catch (error) {
+        this.reportAsyncError("refreshTerminalManagerSubscription", error, {
+          workspaceId: subscription.workspaceId
+        });
+      }
+    })().finally(() => {
+      subscription.refreshTask = null;
+
+      if (subscription.queuedRefresh && !subscription.refreshTimer) {
+        this.flushQueuedTerminalManagerRefresh(client);
+      }
+    });
+
+    return subscription.refreshTask;
   }
 
   private async refreshWorkspaceManagementSubscription(
@@ -764,6 +965,18 @@ export class WorkbenchWsHub {
         workspaceId: subscription.workspaceId
       });
     }
+  }
+
+  private async refreshWorkspaceManagementSubscriptions(userId: string): Promise<void> {
+    const channel = this.userChannels.get(userId);
+
+    if (!channel) {
+      return;
+    }
+
+    await Promise.allSettled(
+      [...channel.clients].map((client) => this.refreshWorkspaceManagementSubscription(client))
+    );
   }
 
   private reportAsyncError(
@@ -864,6 +1077,14 @@ function normalizePanelPaths(paths: string[] | undefined): string[] {
   }
 
   return [...uniquePaths];
+}
+
+function areStringArraysEqual(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((value, index) => value === right[index]);
 }
 
 function buildWorkbenchPayload(snapshot: WorkbenchSnapshot): string {

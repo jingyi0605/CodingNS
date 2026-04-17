@@ -60,7 +60,6 @@ export class WorkbenchService {
       navigationStates.map((item) => [item.workspaceId, item] as const)
     );
 
-    this.scheduleWorkspaceRefreshes(allWorkspaces, userId);
     const collapsedWorkspaceIdSet = new Set(
       navigationStates
         .filter((item) => item.collapsed)
@@ -96,9 +95,7 @@ export class WorkbenchService {
 
   async refreshSnapshot(userId: string): Promise<WorkbenchSnapshot> {
     const startedAt = Date.now();
-    const workspaces = this.listWorkbenchWorkspaces();
-
-    this.scheduleWorkspaceRefreshes(workspaces, userId, {
+    this.scheduleSnapshotRefresh(userId, {
       force: true
     });
 
@@ -120,6 +117,15 @@ export class WorkbenchService {
     );
 
     return snapshot;
+  }
+
+  scheduleSnapshotRefresh(
+    userId: string,
+    options?: {
+      force?: boolean;
+    }
+  ): void {
+    this.scheduleWorkspaceRefreshes(this.listWorkbenchWorkspaces(), userId, options);
   }
 
   async syncSessionTitles(userId: string): Promise<WorkbenchSnapshot> {

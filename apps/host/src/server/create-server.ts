@@ -919,7 +919,7 @@ export function createServer(config: HostConfig) {
     sessionHistoryService,
     sessionLiveRuntimeService,
     new TerminalWsHub(terminalService),
-    new WorkbenchWsHub(workbenchService, workspacePanelSnapshotService, fileWatcher),
+    new WorkbenchWsHub(workbenchService, workspacePanelSnapshotService, fileWatcher, terminalService),
     butlerActionContextService
   );
 

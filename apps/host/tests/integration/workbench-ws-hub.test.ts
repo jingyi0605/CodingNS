@@ -5,18 +5,29 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "../../src/shared/errors/app-error.js";
 import { WorkbenchWsHub } from "../../src/ws/workbench-ws-hub.js";
 import type { AuthContext } from "../../src/modules/auth/auth-service.js";
+import type { TerminalService } from "../../src/modules/terminal/terminal-service.js";
 import type { WorkbenchService } from "../../src/modules/workbench/workbench-service.js";
 import type { WorkspacePanelSnapshotService } from "../../src/modules/workbench/workspace-panel-snapshot-service.js";
 import type { WorkspaceFileWatcher } from "../../src/modules/workbench/workspace-file-watcher.js";
-import type { TaskHandle } from "../../src/modules/tasks/task-types.js";
 
 function createMockFileWatcher() {
   return {
     setOnChange: vi.fn(),
-    subscribe: vi.fn(),
-    unsubscribe: vi.fn(),
+    subscribeFileTree: vi.fn(),
+    unsubscribeFileTree: vi.fn(),
+    subscribeGit: vi.fn(),
+    unsubscribeGit: vi.fn(),
     dispose: vi.fn()
-  } satisfies Pick<WorkspaceFileWatcher, "setOnChange" | "subscribe" | "unsubscribe" | "dispose">;
+  } satisfies Pick<
+    WorkspaceFileWatcher,
+    "setOnChange" | "subscribeFileTree" | "unsubscribeFileTree" | "subscribeGit" | "unsubscribeGit" | "dispose"
+  >;
+}
+
+function createMockTerminalService() {
+  return {
+    on: vi.fn()
+  } satisfies Pick<TerminalService, "on">;
 }
 
 describe("WorkbenchWsHub", () => {
@@ -92,9 +103,89 @@ describe("WorkbenchWsHub", () => {
     hub.cleanupClient(client);
   });
 
-  it("Git 订阅刷新会按最小间隔节流，避免高频触发 Git 命令", async () => {
+  it("Git 订阅在没有脏标记时不会因为后台计时器自动重跑", async () => {
     vi.useFakeTimers();
 
+    const client = {
+      send: vi.fn()
+    } as unknown as WebSocket;
+    const authContext: AuthContext = {
+      accessToken: "token",
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    };
+    const workbenchService = {
+      getSnapshot: vi.fn(() => ({ items: [] })),
+      shouldRefreshSnapshot: vi.fn(() => false),
+      refreshSnapshot: vi.fn(async () => ({ items: [] })),
+      syncSessionTitles: vi.fn(async () => ({ items: [] }))
+    } satisfies Pick<
+      WorkbenchService,
+      "getSnapshot" | "shouldRefreshSnapshot" | "refreshSnapshot" | "syncSessionTitles"
+    >;
+    const workspacePanelSnapshotService = {
+      invalidateGit: vi.fn(),
+      getGitPanelSnapshot: vi.fn(async () => ({
+        workspaceId: "workspace-1",
+        status: {
+          snapshot: {
+            workspaceId: "workspace-1",
+            repoRoot: "/repo",
+            branch: "main",
+            ahead: 0,
+            behind: 0,
+            hasRemote: true,
+            isDirty: false,
+            lastFetchedAt: null
+          },
+          changes: []
+        },
+        history: [],
+        historyTotalCount: 0,
+        historyNextCursor: null,
+        branches: {
+          currentBranch: "main",
+          local: [],
+          remote: []
+        }
+      }))
+    } satisfies Pick<WorkspacePanelSnapshotService, "getGitPanelSnapshot">;
+
+    const hub = new WorkbenchWsHub(
+      workbenchService as unknown as WorkbenchService,
+      workspacePanelSnapshotService as unknown as WorkspacePanelSnapshotService,
+      createMockFileWatcher() as unknown as WorkspaceFileWatcher
+    );
+
+    expect(
+      hub.handleMessage(
+        client,
+        {
+          type: "git.subscribe",
+          workspaceId: "workspace-1"
+        },
+        authContext
+      )
+    ).toBe(true);
+
+    await flushAsyncTasks();
+    expect(workspacePanelSnapshotService.getGitPanelSnapshot).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await flushAsyncTasks();
+    expect(workspacePanelSnapshotService.getGitPanelSnapshot).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushAsyncTasks();
+    expect(workspacePanelSnapshotService.getGitPanelSnapshot).toHaveBeenCalledTimes(1);
+
+    hub.cleanupClient(client);
+  });
+
+  it("重新订阅同一工作区的 Git 面板时，即使快照未变化也会重新下发当前数据", async () => {
     const client = {
       send: vi.fn()
     } as unknown as WebSocket;
@@ -160,13 +251,123 @@ describe("WorkbenchWsHub", () => {
     ).toBe(true);
 
     await flushAsyncTasks();
-    expect(workspacePanelSnapshotService.getGitPanelSnapshot).toHaveBeenCalledTimes(1);
+    expect(client.send).toHaveBeenCalledTimes(1);
+    vi.mocked(client.send).mockClear();
 
-    await vi.advanceTimersByTimeAsync(10_000);
+    expect(
+      hub.handleMessage(
+        client,
+        {
+          type: "git.subscribe",
+          workspaceId: "workspace-1"
+        },
+        authContext
+      )
+    ).toBe(true);
+
+    await flushAsyncTasks();
+    expect(workspacePanelSnapshotService.getGitPanelSnapshot).toHaveBeenCalledTimes(2);
+    expect(client.send).toHaveBeenCalledTimes(1);
+
+    hub.cleanupClient(client);
+  });
+
+  it("Git watcher 事件会经过 quiet window 合并，并在最小间隔后补跑一次", async () => {
+    vi.useFakeTimers();
+
+    const client = {
+      send: vi.fn()
+    } as unknown as WebSocket;
+    const authContext: AuthContext = {
+      accessToken: "token",
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    };
+    const fileWatcher = createMockFileWatcher();
+    const workbenchService = {
+      getSnapshot: vi.fn(() => ({ items: [] })),
+      shouldRefreshSnapshot: vi.fn(() => false),
+      refreshSnapshot: vi.fn(async () => ({ items: [] })),
+      syncSessionTitles: vi.fn(async () => ({ items: [] }))
+    } satisfies Pick<
+      WorkbenchService,
+      "getSnapshot" | "shouldRefreshSnapshot" | "refreshSnapshot" | "syncSessionTitles"
+    >;
+    const workspacePanelSnapshotService = {
+      invalidateGit: vi.fn(),
+      getGitPanelSnapshot: vi.fn(async () => ({
+        workspaceId: "workspace-1",
+        status: {
+          snapshot: {
+            workspaceId: "workspace-1",
+            repoRoot: "/repo",
+            branch: "main",
+            ahead: 0,
+            behind: 0,
+            hasRemote: true,
+            isDirty: false,
+            lastFetchedAt: null
+          },
+          changes: []
+        },
+        history: [],
+        historyTotalCount: 0,
+        historyNextCursor: null,
+        branches: {
+          currentBranch: "main",
+          local: [],
+          remote: []
+        }
+      }))
+    } satisfies Pick<WorkspacePanelSnapshotService, "getGitPanelSnapshot" | "invalidateGit">;
+
+    const hub = new WorkbenchWsHub(
+      workbenchService as unknown as WorkbenchService,
+      workspacePanelSnapshotService as unknown as WorkspacePanelSnapshotService,
+      fileWatcher as unknown as WorkspaceFileWatcher
+    );
+
+    expect(
+      hub.handleMessage(
+        client,
+        {
+          type: "git.subscribe",
+          workspaceId: "workspace-1"
+        },
+        authContext
+      )
+    ).toBe(true);
+
     await flushAsyncTasks();
     expect(workspacePanelSnapshotService.getGitPanelSnapshot).toHaveBeenCalledTimes(1);
 
-    await vi.advanceTimersByTimeAsync(5_000);
+    const onChange = vi.mocked(fileWatcher.setOnChange).mock.calls[0]?.[0];
+    expect(typeof onChange).toBe("function");
+
+    onChange?.({
+      workspaceId: "workspace-1",
+      scope: "git"
+    });
+    onChange?.({
+      workspaceId: "workspace-1",
+      scope: "git"
+    });
+
+    await flushAsyncTasks();
+    expect(workspacePanelSnapshotService.getGitPanelSnapshot).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(799);
+    await flushAsyncTasks();
+    expect(workspacePanelSnapshotService.getGitPanelSnapshot).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await flushAsyncTasks();
+    expect(workspacePanelSnapshotService.getGitPanelSnapshot).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(14_200);
     await flushAsyncTasks();
     expect(workspacePanelSnapshotService.getGitPanelSnapshot).toHaveBeenCalledTimes(2);
 
@@ -457,7 +658,10 @@ describe("WorkbenchWsHub", () => {
     hub.cleanupClient(client);
   });
 
-  it("workbench.refresh 会把标题同步改成后台任务调度，不再直接走同步标题链路", async () => {
+  it("workbench.subscribe 会在发送纯读快照后显式调度后台刷新", async () => {
+    const client = {
+      send: vi.fn()
+    } as unknown as WebSocket;
     const authContext: AuthContext = {
       accessToken: "token",
       user: {
@@ -466,24 +670,117 @@ describe("WorkbenchWsHub", () => {
         role: "admin"
       }
     };
-    const scheduleSessionTitleSync = vi.fn(() => ({
-      taskId: "task-1",
-      taskType: "workbench.sync_titles",
-      key: "user-1",
-      executionLane: "host_background",
-      deduped: false,
-      promise: Promise.resolve({ items: [] }),
-      cancel: vi.fn()
-    } satisfies TaskHandle<{ items: [] }>));
+    const scheduleSnapshotRefresh = vi.fn();
+    const workbenchService = {
+      getSnapshot: vi.fn(() => ({ items: [] })),
+      shouldRefreshSnapshot: vi.fn(() => true),
+      refreshSnapshot: vi.fn(async () => ({ items: [] })),
+      syncSessionTitles: vi.fn(async () => ({ items: [] })),
+      scheduleSnapshotRefresh
+    } satisfies Pick<
+      WorkbenchService,
+      "getSnapshot" | "shouldRefreshSnapshot" | "refreshSnapshot" | "syncSessionTitles" | "scheduleSnapshotRefresh"
+    >;
+
+    const hub = new WorkbenchWsHub(
+      workbenchService as unknown as WorkbenchService,
+      {} as WorkspacePanelSnapshotService,
+      createMockFileWatcher() as unknown as WorkspaceFileWatcher
+    );
+
+    expect(
+      hub.handleMessage(
+        client,
+        {
+          type: "workbench.subscribe"
+        },
+        authContext
+      )
+    ).toBe(true);
+
+    await flushAsyncTasks();
+
+    expect(workbenchService.getSnapshot).toHaveBeenCalledWith("user-1");
+    expect(scheduleSnapshotRefresh).toHaveBeenCalledWith("user-1");
+
+    hub.cleanupClient(client);
+  });
+
+  it("fileTree.subscribe 会把 watcher 收缩到当前展开路径，并在关闭时释放", async () => {
+    const client = {
+      send: vi.fn()
+    } as unknown as WebSocket;
+    const authContext: AuthContext = {
+      accessToken: "token",
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    };
+    const fileWatcher = createMockFileWatcher();
     const workbenchService = {
       getSnapshot: vi.fn(() => ({ items: [] })),
       shouldRefreshSnapshot: vi.fn(() => false),
       refreshSnapshot: vi.fn(async () => ({ items: [] })),
-      syncSessionTitles: vi.fn(async () => ({ items: [] })),
-      scheduleSessionTitleSync
+      syncSessionTitles: vi.fn(async () => ({ items: [] }))
     } satisfies Pick<
       WorkbenchService,
-      "getSnapshot" | "shouldRefreshSnapshot" | "refreshSnapshot" | "syncSessionTitles" | "scheduleSessionTitleSync"
+      "getSnapshot" | "shouldRefreshSnapshot" | "refreshSnapshot" | "syncSessionTitles"
+    >;
+    const workspacePanelSnapshotService = {
+      getFileTreeSnapshot: vi.fn(async () => ({
+        workspaceId: "workspace-1",
+        path: "src",
+        items: []
+      }))
+    } satisfies Pick<WorkspacePanelSnapshotService, "getFileTreeSnapshot">;
+
+    const hub = new WorkbenchWsHub(
+      workbenchService as unknown as WorkbenchService,
+      workspacePanelSnapshotService as unknown as WorkspacePanelSnapshotService,
+      fileWatcher as unknown as WorkspaceFileWatcher
+    );
+
+    expect(
+      hub.handleMessage(
+        client,
+        {
+          type: "fileTree.subscribe",
+          workspaceId: "workspace-1",
+          paths: ["src", "src/components"]
+        },
+        authContext
+      )
+    ).toBe(true);
+
+    await flushAsyncTasks();
+
+    expect(fileWatcher.subscribeFileTree).toHaveBeenCalledWith("workspace-1", ["src", "src/components"]);
+
+    hub.cleanupClient(client);
+
+    expect(fileWatcher.unsubscribeFileTree).toHaveBeenCalledWith("workspace-1", ["src", "src/components"]);
+  });
+
+  it("workbench.refresh 只刷新工作台快照，不再顺带触发标题同步", async () => {
+    const authContext: AuthContext = {
+      accessToken: "token",
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    };
+    const refreshSnapshot = vi.fn(async () => ({ items: [] }));
+    const workbenchService = {
+      getSnapshot: vi.fn(() => ({ items: [] })),
+      shouldRefreshSnapshot: vi.fn(() => false),
+      refreshSnapshot,
+      syncSessionTitles: vi.fn(async () => ({ items: [] })),
+    } satisfies Pick<
+      WorkbenchService,
+      "getSnapshot" | "shouldRefreshSnapshot" | "refreshSnapshot" | "syncSessionTitles"
     >;
 
     const hub = new WorkbenchWsHub(
@@ -504,8 +801,91 @@ describe("WorkbenchWsHub", () => {
 
     await flushAsyncTasks();
 
-    expect(scheduleSessionTitleSync).toHaveBeenCalledWith("user-1", "workbench_ws.sync_titles");
+    expect(refreshSnapshot).toHaveBeenCalledWith("user-1");
     expect(workbenchService.syncSessionTitles).not.toHaveBeenCalled();
+  });
+
+  it("Terminal 面板刷新改成事件驱动，状态抖动会经过 quiet window 合并", async () => {
+    vi.useFakeTimers();
+
+    const client = {
+      send: vi.fn()
+    } as unknown as WebSocket;
+    const authContext: AuthContext = {
+      accessToken: "token",
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    };
+    const terminalService = createMockTerminalService();
+    const workbenchService = {
+      getSnapshot: vi.fn(() => ({ items: [] })),
+      shouldRefreshSnapshot: vi.fn(() => false),
+      refreshSnapshot: vi.fn(async () => ({ items: [] })),
+      syncSessionTitles: vi.fn(async () => ({ items: [] }))
+    } satisfies Pick<
+      WorkbenchService,
+      "getSnapshot" | "shouldRefreshSnapshot" | "refreshSnapshot" | "syncSessionTitles"
+    >;
+    const workspacePanelSnapshotService = {
+      invalidateTerminalManager: vi.fn(),
+      getTerminalManagerSnapshot: vi.fn(async () => ({
+        workspaceId: "workspace-1",
+        terminals: [],
+        templates: [],
+        templateStatuses: [],
+        shellOptions: []
+      }))
+    } satisfies Pick<
+      WorkspacePanelSnapshotService,
+      "getTerminalManagerSnapshot" | "invalidateTerminalManager"
+    >;
+
+    const hub = new WorkbenchWsHub(
+      workbenchService as unknown as WorkbenchService,
+      workspacePanelSnapshotService as unknown as WorkspacePanelSnapshotService,
+      createMockFileWatcher() as unknown as WorkspaceFileWatcher,
+      terminalService
+    );
+
+    expect(
+      hub.handleMessage(
+        client,
+        {
+          type: "terminalManager.subscribe",
+          workspaceId: "workspace-1"
+        },
+        authContext
+      )
+    ).toBe(true);
+
+    await flushAsyncTasks();
+    expect(workspacePanelSnapshotService.getTerminalManagerSnapshot).toHaveBeenCalledTimes(1);
+
+    const statusListener = vi.mocked(terminalService.on).mock.calls.find(
+      ([event]) => event === "status"
+    )?.[1] as ((terminal: { workspaceId: string }) => void) | undefined;
+
+    expect(statusListener).toBeDefined();
+
+    statusListener?.({ workspaceId: "workspace-1" });
+    statusListener?.({ workspaceId: "workspace-1" });
+
+    await flushAsyncTasks();
+    expect(workspacePanelSnapshotService.getTerminalManagerSnapshot).toHaveBeenCalledTimes(1);
+    expect(workspacePanelSnapshotService.invalidateTerminalManager).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(299);
+    await flushAsyncTasks();
+    expect(workspacePanelSnapshotService.getTerminalManagerSnapshot).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await flushAsyncTasks();
+    expect(workspacePanelSnapshotService.getTerminalManagerSnapshot).toHaveBeenCalledTimes(2);
+
+    hub.cleanupClient(client);
   });
 
   it("侧边栏定时刷新默认不会自动触发 workspaceManagement A/B 刷新", async () => {

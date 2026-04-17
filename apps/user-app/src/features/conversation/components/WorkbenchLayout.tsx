@@ -63,6 +63,7 @@ import {
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
+import { useTheme } from "../../../shared/theme/theme";
 import { useToast } from "../../../shared/toast";
 import { authStore } from "../../auth/store/auth-store";
 import {
@@ -389,6 +390,25 @@ function isPermissionWatchSession(session: SessionSummaryDto): boolean {
     WORKBENCH_RUNTIME_ACTIVE_STATES.has(session.runningState ?? "idle") ||
     session.activityState === "running"
   );
+}
+
+function buildPermissionRefreshSignature(
+  pendingRequestIdsBySession: Map<string, Set<string>>,
+  watchedSessionIdSet: Set<string>
+): string {
+  const parts: string[] = [];
+
+  for (const sessionId of [...watchedSessionIdSet].sort()) {
+    const requestIds = pendingRequestIdsBySession.get(sessionId);
+
+    if (!requestIds || requestIds.size === 0) {
+      continue;
+    }
+
+    parts.push(`${sessionId}:${[...requestIds].sort().join(",")}`);
+  }
+
+  return parts.join("|");
 }
 
 function normalizeSessionFailureDetail(session: SessionSummaryDto): string | null {
@@ -7121,6 +7141,7 @@ export function WorkbenchLayout({
   );
   const permissionPollBaselineReadyRef = useRef(false);
   const pendingPermissionRequestIdsBySessionRef = useRef(new Map<string, Set<string>>());
+  const permissionRefreshSignatureRef = useRef<string>("");
   const permissionWatchSessionsRef = useRef<
     Array<{ sessionId: string; workspaceId: string; title: string }>
   >([]);
@@ -7195,6 +7216,7 @@ export function WorkbenchLayout({
     && platform.isDesktop
     && platform.ui.osFamily === "macos"
     && platform.ui.prefersOverlayTitlebar;
+  const { theme } = useTheme();
 
   useEffect(() => {
     showToastRef.current = showToast;
@@ -8279,11 +8301,9 @@ export function WorkbenchLayout({
         if (!permissionPollBaselineReadyRef.current) {
           permissionPollBaselineReadyRef.current = true;
         }
+        permissionRefreshSignatureRef.current = "";
         return;
       }
-
-      // 后台会话在运行时，主动拉一次工作台快照，避免完成态只在切回会话时才可见。
-      workbenchRealtimeClientRef.current?.requestRefresh();
 
       const watchedSessionIdSet = new Set(watchedSessions.map((session) => session.sessionId));
       const results = await Promise.all(
@@ -8361,6 +8381,20 @@ export function WorkbenchLayout({
           pendingPermissionRequestIdsBySessionRef.current.delete(sessionId);
         }
       }
+
+      const nextRefreshSignature = buildPermissionRefreshSignature(
+        pendingPermissionRequestIdsBySessionRef.current,
+        watchedSessionIdSet
+      );
+
+      if (
+        permissionPollBaselineReadyRef.current &&
+        nextRefreshSignature !== permissionRefreshSignatureRef.current
+      ) {
+        workbenchRealtimeClientRef.current?.requestRefresh();
+      }
+
+      permissionRefreshSignatureRef.current = nextRefreshSignature;
 
       permissionPollBaselineReadyRef.current = true;
     };
@@ -9181,6 +9215,74 @@ export function WorkbenchLayout({
   const shouldShowAuxiliaryPanel = auxiliaryPanelContent !== null;
   const shouldUseMacOsOverlayTitlebarAlignment =
     platform.isDesktop && platform.ui.osFamily === "macos" && platform.ui.prefersOverlayTitlebar;
+  const nativeSidebarLayout = useMemo(
+    () => ({
+      leftWidth: leftCollapsed ? 0 : leftPanelWidth,
+      rightWidth: shouldShowAuxiliaryPanel && !rightCollapsed ? rightPanelWidth : 0,
+      leftCollapsed,
+      rightCollapsed: !shouldShowAuxiliaryPanel || rightCollapsed,
+      prefersDarkAppearance: theme !== "light"
+    }),
+    [
+      leftCollapsed,
+      leftPanelWidth,
+      rightCollapsed,
+      rightPanelWidth,
+      shouldShowAuxiliaryPanel,
+      theme
+    ]
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    let animationFrameId: number | null = null;
+
+    const syncNativeSidebarLayout = () => {
+      animationFrameId = null;
+      void platform.bridge.syncNativeSidebarLayout(nativeSidebarLayout);
+    };
+
+    const scheduleSync = () => {
+      if (animationFrameId !== null) {
+        window.cancelAnimationFrame(animationFrameId);
+      }
+
+      animationFrameId = window.requestAnimationFrame(syncNativeSidebarLayout);
+    };
+
+    if (!prefersMacOsWorkbenchVibrancy) {
+      void platform.bridge.syncNativeSidebarLayout({
+        leftWidth: 0,
+        rightWidth: 0,
+        leftCollapsed: true,
+        rightCollapsed: true,
+        prefersDarkAppearance: false
+      });
+      return () => {
+        if (animationFrameId !== null) {
+          window.cancelAnimationFrame(animationFrameId);
+        }
+      };
+    }
+
+    scheduleSync();
+    window.addEventListener("resize", scheduleSync);
+
+    return () => {
+      if (animationFrameId !== null) {
+        window.cancelAnimationFrame(animationFrameId);
+      }
+
+      window.removeEventListener("resize", scheduleSync);
+    };
+  }, [
+    nativeSidebarLayout,
+    platform.bridge,
+    prefersMacOsWorkbenchVibrancy
+  ]);
 
   useLayoutEffect(() => {
     const shellElement = workbenchShellRef.current;

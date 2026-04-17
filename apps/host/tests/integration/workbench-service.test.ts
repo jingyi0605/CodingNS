@@ -4,6 +4,7 @@ import { WorkbenchService } from "../../src/modules/workbench/workbench-service.
 
 describe("WorkbenchService", () => {
   it("快照会过滤掉 Butler 控制会话", () => {
+    const requestWorkspaceDiscovery = vi.fn();
     const service = new WorkbenchService(
       {
         list: vi.fn(() => [
@@ -25,7 +26,7 @@ describe("WorkbenchService", () => {
             sessionId: "session-butler"
           }
         ]),
-        requestWorkspaceDiscovery: vi.fn()
+        requestWorkspaceDiscovery
       } as never,
       {
         getProfile: vi.fn(() => null)
@@ -39,6 +40,7 @@ describe("WorkbenchService", () => {
 
     expect(snapshot.items).toHaveLength(1);
     expect(snapshot.items[0]?.sessions.map((session) => session.sessionId)).toEqual(["session-visible"]);
+    expect(requestWorkspaceDiscovery).not.toHaveBeenCalled();
   });
 
   it("快照会过滤 Butler 工作目录及其子目录工作区", () => {
@@ -248,6 +250,44 @@ describe("WorkbenchService", () => {
 
     await expect(handle.promise).rejects.toThrow("manual abort");
     expect(receivedSignal?.aborted).toBe(true);
+  });
+
+  it("显式刷新才会调度工作区 discovery", async () => {
+    const requestWorkspaceDiscovery = vi.fn();
+    const service = new WorkbenchService(
+      {
+        list: vi.fn(() => [
+          {
+            id: "workspace-1",
+            path: "/repo/workspace-1"
+          }
+        ])
+      } as never,
+      {
+        listByUserId: vi.fn(() => [])
+      } as never,
+      {
+        listWorkspaceSessions: vi.fn(() => []),
+        requestWorkspaceDiscovery
+      } as never,
+      {
+        getProfile: vi.fn(() => null)
+      } as never,
+      {
+        listSessionIds: vi.fn(() => [])
+      } as never
+    );
+
+    service.getSnapshot("user-1");
+    expect(requestWorkspaceDiscovery).not.toHaveBeenCalled();
+
+    await service.refreshSnapshot("user-1");
+
+    expect(requestWorkspaceDiscovery).toHaveBeenCalledWith("workspace-1", "user-1", {
+      maxAgeMs: 15_000,
+      force: true,
+      refreshStateMode: "deferred"
+    });
   });
 });
 

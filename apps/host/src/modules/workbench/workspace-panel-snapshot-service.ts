@@ -68,9 +68,15 @@ interface AbortableInflightTask<TResult> {
   settled: boolean;
 }
 
+interface GitSnapshotRefreshState {
+  dirtyVersion: number;
+  lastCompletedDirtyVersion: number;
+}
+
 export class WorkspacePanelSnapshotService {
   private readonly fileTreeCache = new Map<string, SnapshotCacheEntry<FileTreeSnapshot>>();
   private readonly gitSnapshotCache = new Map<string, SnapshotCacheEntry<GitPanelSnapshot>>();
+  private readonly gitRefreshStates = new Map<string, GitSnapshotRefreshState>();
   private readonly terminalManagerCache = new Map<
     string,
     SnapshotCacheEntry<TerminalManagerSnapshot>
@@ -143,8 +149,13 @@ export class WorkspacePanelSnapshotService {
     options?: { force?: boolean; signal?: AbortSignal }
   ): Promise<GitPanelSnapshot> {
     const cached = this.gitSnapshotCache.get(workspaceId);
+    const refreshState = this.getOrCreateGitRefreshState(workspaceId);
+    const needsRefresh = options?.force
+      || refreshState.dirtyVersion !== refreshState.lastCompletedDirtyVersion
+      || !cached
+      || isExpired(cached.cachedAt, GIT_SNAPSHOT_CACHE_MAX_AGE_MS);
 
-    if (!options?.force && cached && !isExpired(cached.cachedAt, GIT_SNAPSHOT_CACHE_MAX_AGE_MS)) {
+    if (!needsRefresh && cached) {
       return cached.snapshot;
     }
 
@@ -161,6 +172,7 @@ export class WorkspacePanelSnapshotService {
     }
 
     const controller = new AbortController();
+    const startedDirtyVersion = refreshState.dirtyVersion;
     const task: AbortableInflightTask<GitPanelSnapshot> = {
       controller,
       consumerCount: 0,
@@ -176,6 +188,7 @@ export class WorkspacePanelSnapshotService {
             snapshot: cached.snapshot,
             cachedAt: Date.now()
           });
+          refreshState.lastCompletedDirtyVersion = startedDirtyVersion;
           return cached.snapshot;
         }
 
@@ -198,6 +211,7 @@ export class WorkspacePanelSnapshotService {
           snapshot,
           cachedAt: Date.now()
         });
+        refreshState.lastCompletedDirtyVersion = startedDirtyVersion;
 
         return snapshot;
       })().finally(() => {
@@ -300,7 +314,8 @@ export class WorkspacePanelSnapshotService {
   }
 
   invalidateGit(workspaceId: string): void {
-    this.gitSnapshotCache.delete(workspaceId);
+    const refreshState = this.getOrCreateGitRefreshState(workspaceId);
+    refreshState.dirtyVersion += 1;
   }
 
   invalidateTerminalManager(workspaceId: string): void {
@@ -309,6 +324,22 @@ export class WorkspacePanelSnapshotService {
 
   invalidateWorkspaceManagement(workspaceId: string): void {
     this.workspaceManagementCache.delete(workspaceId);
+  }
+
+  private getOrCreateGitRefreshState(workspaceId: string): GitSnapshotRefreshState {
+    const existing = this.gitRefreshStates.get(workspaceId);
+
+    if (existing) {
+      return existing;
+    }
+
+    const created: GitSnapshotRefreshState = {
+      dirtyVersion: 0,
+      lastCompletedDirtyVersion: 0
+    };
+
+    this.gitRefreshStates.set(workspaceId, created);
+    return created;
   }
 
   private registerBackgroundTasks(): void {
