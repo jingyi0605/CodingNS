@@ -17,6 +17,8 @@ const mockListButlerPatrolPlans = vi.fn();
 const mockListButlerControlSessions = vi.fn();
 const mockListButlerControlTimers = vi.fn();
 const mockCancelButlerControlTimer = vi.fn();
+const mockCancelButlerFollowUpTask = vi.fn();
+const mockCancelButlerVerificationRun = vi.fn();
 const mockRuntimeSendMessage = vi.fn();
 const mockRequestNavigationRefresh = vi.fn();
 const mockRuntimeState: any = {
@@ -151,6 +153,8 @@ vi.mock("../runtime/butler-runtime-store", () => ({
 
 vi.mock("../api/butler-api", () => ({
   cancelButlerControlTimer: (...args: unknown[]) => mockCancelButlerControlTimer(...args),
+  cancelButlerFollowUpTask: (...args: unknown[]) => mockCancelButlerFollowUpTask(...args),
+  cancelButlerVerificationRun: (...args: unknown[]) => mockCancelButlerVerificationRun(...args),
   getButlerProfile: (...args: unknown[]) => mockGetButlerProfile(...args),
   getButlerOverview: (...args: unknown[]) => mockGetButlerOverview(...args),
   listButlerFollowUpTasks: (...args: unknown[]) => mockListButlerFollowUpTasks(...args),
@@ -212,6 +216,19 @@ describe("MobileButlerPage", () => {
     mockGetButlerProfile.mockResolvedValue({
       initialized: true,
       profile: mockRuntimeState.profile
+    });
+    mockCancelButlerFollowUpTask.mockResolvedValue({
+      task: {
+        id: "follow-up-1",
+        status: "cancelled"
+      }
+    });
+    mockCancelButlerVerificationRun.mockResolvedValue({
+      run: {
+        id: "verification-2",
+        projectId: "project-1",
+        status: "cancelled"
+      }
     });
     mockGetButlerOverview.mockResolvedValue({
       overview: {
@@ -291,7 +308,7 @@ describe("MobileButlerPage", () => {
             id: "verification-3",
             projectId: "project-1",
             verificationType: "browser",
-            status: "completed",
+            status: "passed",
             targetRef: "支付回归",
             summary: "支付回归验证已经完成。",
             startedAt: "2026-04-09T09:40:00.000Z",

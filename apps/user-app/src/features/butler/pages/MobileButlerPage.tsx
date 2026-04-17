@@ -18,6 +18,8 @@ import { ComposerPanel } from "../../conversation/components/ComposerPanel";
 import { MessageTimeline } from "../../conversation/components/MessageTimeline";
 import {
   cancelButlerControlTimer,
+  cancelButlerFollowUpTask,
+  cancelButlerVerificationRun,
   getButlerOverview,
   getButlerProfile,
   listButlerControlSessions,
@@ -243,6 +245,8 @@ export function MobileButlerPage() {
   const [openDrawer, setOpenDrawer] = useState<MobileButlerDrawer>(null);
   const [openHistoryPanel, setOpenHistoryPanel] = useState<MobileButlerHistoryPanel>(null);
   const [composerPanelElement, setComposerPanelElement] = useState<HTMLElement | null>(null);
+  const [cancellingFollowUpTaskId, setCancellingFollowUpTaskId] = useState<string | null>(null);
+  const [cancellingVerificationId, setCancellingVerificationId] = useState<string | null>(null);
   const [cancellingTimerId, setCancellingTimerId] = useState<string | null>(null);
   const [executingTimerId, setExecutingTimerId] = useState<string | null>(null);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
@@ -601,7 +605,18 @@ export function MobileButlerPage() {
               || t("shell.butlerInfoFollowUpFallback", {
                 updatedAt: formatIsoDateTime(resolveFollowUpTaskUpdatedAt(task))
               }),
-            meta: formatIsoDateTime(resolveFollowUpTaskUpdatedAt(task))
+            meta: formatIsoDateTime(resolveFollowUpTaskUpdatedAt(task)),
+            actionLabel: isCancelableMobileFollowUpTask(task.status)
+              ? cancellingFollowUpTaskId === task.id
+                ? t("conversation.butlerFollowUpStopping")
+                : t("conversation.butlerStopFollowUpAction")
+              : null,
+            actionDisabled: cancellingFollowUpTaskId === task.id,
+            onAction: isCancelableMobileFollowUpTask(task.status)
+              ? () => {
+                  void handleCancelFollowUpTask(task);
+                }
+              : undefined
           }))}
         />
       )
@@ -615,10 +630,21 @@ export function MobileButlerPage() {
             items={verificationHistoryRecords.map((item, index) => ({
               id: `${item.title}:${index}`,
               title: item.title,
-              subtitle: null,
-              status: null,
+              subtitle: item.subtitle,
+              status: item.status,
               content: item.content,
-              meta: null
+              meta: item.meta,
+              actionLabel: item.verification && isCancelableMobileVerification(item.verification.status)
+                ? cancellingVerificationId === item.verification.id
+                  ? t("conversation.butlerVerificationStopping")
+                  : t("conversation.butlerStopVerificationAction")
+                : null,
+              actionDisabled: item.verification ? cancellingVerificationId === item.verification.id : false,
+              onAction: item.verification
+                ? () => {
+                    void handleCancelVerificationRun(item.verification!);
+                  }
+                : undefined
             }))}
           />
         )
@@ -633,7 +659,7 @@ export function MobileButlerPage() {
         : activeTab === "info"
           ? (
               <>
-                <CompactRecordSection
+                <RecordSection
                   title={t("shell.butlerInfoFollowUpRecordsTitle")}
                   emptyText={t("shell.butlerInfoFollowUpRecordsEmpty")}
                   actionLabel={t("shell.butlerFollowUpHistoryAction")}
@@ -641,17 +667,31 @@ export function MobileButlerPage() {
                   items={followUpRecords.map((task) => ({
                     id: task.id,
                     title: task.sessionTitle?.trim() || task.projectName,
+                    subtitle: task.projectName,
+                    status: resolveFollowUpTaskStatusLabel(task.status),
                     content:
                       task.waitingReason?.trim()
                       || task.lastAutomationSummary?.trim()
                       || task.objective
                       || t("shell.butlerInfoFollowUpFallback", {
                         updatedAt: formatIsoDateTime(resolveFollowUpTaskUpdatedAt(task))
-                      })
+                      }),
+                    meta: formatIsoDateTime(resolveFollowUpTaskUpdatedAt(task)),
+                    actionLabel: isCancelableMobileFollowUpTask(task.status)
+                      ? cancellingFollowUpTaskId === task.id
+                        ? t("conversation.butlerFollowUpStopping")
+                        : t("conversation.butlerStopFollowUpAction")
+                      : null,
+                    actionDisabled: cancellingFollowUpTaskId === task.id,
+                    onAction: isCancelableMobileFollowUpTask(task.status)
+                      ? () => {
+                          void handleCancelFollowUpTask(task);
+                        }
+                      : undefined
                   }))}
                 />
 
-                <CompactRecordSection
+                <RecordSection
                   title={t("shell.butlerInfoVerificationRecordsTitle")}
                   emptyText={t("shell.butlerInfoVerificationRecordsEmpty")}
                   actionLabel={t("shell.butlerFollowUpHistoryAction")}
@@ -659,7 +699,21 @@ export function MobileButlerPage() {
                   items={verificationRecords.map((item, index) => ({
                     id: `${item.title}:${index}`,
                     title: item.title,
-                    content: item.content
+                    subtitle: item.subtitle,
+                    status: item.status,
+                    content: item.content,
+                    meta: item.meta,
+                    actionLabel: item.verification && isCancelableMobileVerification(item.verification.status)
+                      ? cancellingVerificationId === item.verification.id
+                        ? t("conversation.butlerVerificationStopping")
+                        : t("conversation.butlerStopVerificationAction")
+                      : null,
+                    actionDisabled: item.verification ? cancellingVerificationId === item.verification.id : false,
+                    onAction: item.verification
+                      ? () => {
+                          void handleCancelVerificationRun(item.verification!);
+                        }
+                      : undefined
                   }))}
                 />
 
@@ -899,6 +953,74 @@ export function MobileButlerPage() {
       permissionMode: null
     });
     requestNavigationRefresh();
+  }
+
+  async function refreshButlerRecords(): Promise<void> {
+    const [overviewResponse, followUpResponse] = await Promise.all([
+      getButlerOverview(),
+      listButlerFollowUpTasks()
+    ]);
+
+    await store.reloadEventsAndOverview();
+
+    setState((current) => ({
+      ...current,
+      overview: overviewResponse.overview,
+      followUpTasks: followUpResponse.items.filter((task) => task.workspaceId === workspaceId)
+    }));
+  }
+
+  async function handleCancelFollowUpTask(task: ButlerFollowUpTaskDto) {
+    setCancellingFollowUpTaskId(task.id);
+
+    try {
+      const response = await cancelButlerFollowUpTask(task.id);
+      setState((current) => ({
+        ...current,
+        followUpTasks: replaceFollowUpTask(current.followUpTasks, response.task)
+      }));
+      await refreshButlerRecords();
+      requestNavigationRefresh();
+      showToast({
+        title: t("conversation.butlerFollowUpStopped"),
+        description: t("conversation.butlerFollowUpStoppedDescription"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: t("conversation.butlerFollowUpStopFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error"
+      });
+    } finally {
+      setCancellingFollowUpTaskId(null);
+    }
+  }
+
+  async function handleCancelVerificationRun(verification: {
+    id: string;
+    projectId: string;
+  }) {
+    setCancellingVerificationId(verification.id);
+
+    try {
+      await cancelButlerVerificationRun(verification.projectId, verification.id);
+      await refreshButlerRecords();
+      requestNavigationRefresh();
+      showToast({
+        title: t("conversation.butlerVerificationStopped"),
+        description: t("conversation.butlerVerificationStoppedDescription"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: t("conversation.butlerVerificationStopFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error"
+      });
+    } finally {
+      setCancellingVerificationId(null);
+    }
   }
 
   async function handleCancelControlTimer(timerId: string) {
@@ -1485,6 +1607,9 @@ function MobileHistoryPanel(props: {
     status: string | null;
     content: string;
     meta: string | null;
+    actionLabel?: string | null;
+    actionDisabled?: boolean;
+    onAction?: () => void;
   }>;
 }) {
   return (
@@ -1514,9 +1639,19 @@ function MobileHistoryPanel(props: {
                 {item.status ? <span className="mobile-butler-record-badge">{item.status}</span> : null}
               </header>
               <p>{item.content}</p>
-              {item.meta ? (
+              {item.meta || item.actionLabel ? (
                 <footer className="mobile-butler-record-footer">
-                  <span>{item.meta}</span>
+                  {item.meta ? <span>{item.meta}</span> : <span />}
+                  {item.actionLabel && item.onAction ? (
+                    <button
+                      type="button"
+                      className="secondary-button mobile-butler-record-action"
+                      disabled={item.actionDisabled}
+                      onClick={item.onAction}
+                    >
+                      {item.actionLabel}
+                    </button>
+                  ) : null}
                 </footer>
               ) : null}
             </article>
@@ -1690,6 +1825,8 @@ function useMobileButlerComposerHeightVar(
 
 function buildVerificationRecords(
   verifications: Array<{
+    id: string;
+    projectId: string;
     targetRef: string | null;
     verificationType: string;
     summary: string | null;
@@ -1699,7 +1836,19 @@ function buildVerificationRecords(
     createdAt: string;
   }>,
   mode: "active" | "history"
-): Array<{ title: string; content: string }> {
+): Array<{
+  id: string;
+  title: string;
+  subtitle: string | null;
+  status: string;
+  content: string;
+  meta: string | null;
+  verification: {
+    id: string;
+    projectId: string;
+    status: string;
+  };
+}> {
   return [...verifications]
     .filter((verification) => (
       mode === "history"
@@ -1709,12 +1858,21 @@ function buildVerificationRecords(
     .sort((left, right) => parseIsoTime(resolveVerificationTime(right)) - parseIsoTime(resolveVerificationTime(left)))
     .slice(0, 4)
     .map((verification) => ({
+      id: verification.id,
       title: verification.targetRef?.trim() || verification.verificationType,
+      subtitle: verification.verificationType,
+      status: resolveMobileVerificationStatusLabel(verification.status),
       content:
         verification.summary?.trim()
         || t("shell.butlerInfoVerificationFallback", {
           status: verification.status
-        })
+        }),
+      meta: formatIsoDateTime(resolveVerificationTime(verification)),
+      verification: {
+        id: verification.id,
+        projectId: verification.projectId,
+        status: verification.status
+      }
     }));
 }
 
@@ -1734,12 +1892,46 @@ function replaceControlTimer(
     .sort((left, right) => parseIsoTime(resolveControlTimerSortTime(right)) - parseIsoTime(resolveControlTimerSortTime(left)));
 }
 
+function replaceFollowUpTask(
+  tasks: ButlerFollowUpTaskDto[],
+  nextTask: ButlerFollowUpTaskDto
+): ButlerFollowUpTaskDto[] {
+  const nextTasks = tasks.filter((task) => task.id !== nextTask.id);
+  return [nextTask, ...nextTasks]
+    .sort((left, right) => parseIsoTime(resolveFollowUpTaskUpdatedAt(right)) - parseIsoTime(resolveFollowUpTaskUpdatedAt(left)));
+}
+
 function isVisibleMobileFollowUpTask(status: ButlerFollowUpTaskDto["status"]): boolean {
+  return status === "active" || status === "waiting_user";
+}
+
+function isCancelableMobileFollowUpTask(status: ButlerFollowUpTaskDto["status"]): boolean {
   return status === "active" || status === "waiting_user";
 }
 
 function isVisibleMobileVerification(status: string): boolean {
   return status === "queued" || status === "running";
+}
+
+function isCancelableMobileVerification(status: string): boolean {
+  return status === "queued" || status === "running";
+}
+
+function resolveMobileVerificationStatusLabel(status: string): string {
+  switch (status) {
+    case "queued":
+    case "running":
+      return t("shell.butlerAutomationStatusActive");
+    case "passed":
+    case "skipped":
+      return t("shell.butlerAutomationStatusCompleted");
+    case "failed":
+      return t("shell.butlerAutomationStatusFailed");
+    case "cancelled":
+      return t("shell.butlerAutomationStatusCancelled");
+    default:
+      return status;
+  }
 }
 
 function resolveControlTimerSortTime(timer: ButlerControlTimerDto): string {
