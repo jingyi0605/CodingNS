@@ -33,7 +33,51 @@ export type ButlerFollowUpRoundKind =
   | "cancelled"
   | "limit_reached";
 export type ButlerControlTimerStatus = "active" | "completed" | "cancelled" | "failed";
+export type AssistantAutomationStatus = "active" | "paused" | "completed" | "cancelled" | "failed";
+export type AssistantAutomationTriggerType = "once" | "interval" | "cron" | "condition";
+export type AssistantAutomationRunStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "skipped";
 export type ButlerVerificationRunStatus = "queued" | "running" | "passed" | "failed" | "skipped" | "cancelled";
+
+export type AssistantAutomationTriggerConfigDto =
+  | {
+      type: "once";
+      dueAt: string;
+    }
+  | {
+      type: "interval";
+      seconds: number | null;
+      minutes: number | null;
+      hours: number | null;
+      stopAt: string | null;
+    }
+  | {
+      type: "cron";
+      minute: number;
+      hour: number | null;
+      daysOfWeek: number[] | null;
+      stopAt: string | null;
+    }
+  | {
+      type: "condition";
+      conditionKind: "git.remote_tag_changed" | "session.runtime_idle";
+      pollIntervalSeconds: number;
+      expiresAt: string | null;
+      maxChecks: number | null;
+      stateJson: string;
+      triggerContext?: Record<string, unknown>;
+    };
+
+export interface AssistantAutomationActionConfigDto {
+  content: string;
+  includeTriggerContext: boolean;
+  targetSessionId: string | null;
+}
 
 export interface ButlerProfileDto {
   id: "default";
@@ -134,6 +178,48 @@ export interface ButlerControlTimerDto {
   updatedAt: string;
   cancelledAt: string | null;
   controlSession: ButlerControlSessionDto | null;
+}
+
+export interface AssistantAutomationTaskDto {
+  id: string;
+  userId: string;
+  controlSessionId: string;
+  projectId: string | null;
+  title: string | null;
+  triggerType: AssistantAutomationTriggerType;
+  triggerConfigJson: string;
+  triggerConfig: AssistantAutomationTriggerConfigDto;
+  actionType: "send_control_message";
+  actionConfigJson: string;
+  actionConfig: AssistantAutomationActionConfigDto;
+  status: AssistantAutomationStatus;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  lastRunSummary: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  cancelledAt: string | null;
+  controlSession: ButlerControlSessionDto | null;
+}
+
+export interface AssistantAutomationRunDto {
+  id: string;
+  automationId: string;
+  runSeq: number;
+  triggerType: AssistantAutomationTriggerType;
+  triggerSnapshotJson: string;
+  triggerSnapshot: AssistantAutomationTriggerConfigDto;
+  actionType: "send_control_message";
+  actionSnapshotJson: string;
+  actionSnapshot: AssistantAutomationActionConfigDto;
+  status: AssistantAutomationRunStatus;
+  summary: string | null;
+  error: string | null;
+  scheduledAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
 }
 
 export interface ButlerResumeControlSessionResponseDto {
@@ -619,6 +705,63 @@ export function createButlerControlTimer(payload: {
     method: "POST",
     body: JSON.stringify(payload)
   });
+}
+
+export function listAssistantAutomations(payload: {
+  status?: AssistantAutomationStatus | null;
+  controlSessionId?: string | null;
+  limit?: number | null;
+} = {}) {
+  const searchParams = new URLSearchParams();
+
+  if (payload.status) {
+    searchParams.set("status", payload.status);
+  }
+
+  if (payload.controlSessionId?.trim()) {
+    searchParams.set("controlSessionId", payload.controlSessionId.trim());
+  }
+
+  if (payload.limit && payload.limit > 0) {
+    searchParams.set("limit", String(payload.limit));
+  }
+
+  const query = searchParams.toString();
+  const path = query ? `/api/assistant/automations?${query}` : "/api/assistant/automations";
+
+  return httpClient.request<{ payload: { items: AssistantAutomationTaskDto[] } }>(path);
+}
+
+export function listRecentAssistantAutomationRuns(payload: {
+  controlSessionId?: string | null;
+  limit?: number | null;
+} = {}) {
+  const searchParams = new URLSearchParams();
+
+  if (payload.controlSessionId?.trim()) {
+    searchParams.set("controlSessionId", payload.controlSessionId.trim());
+  }
+
+  if (payload.limit && payload.limit > 0) {
+    searchParams.set("limit", String(payload.limit));
+  }
+
+  const query = searchParams.toString();
+  const path = query
+    ? `/api/assistant/automations/runs/recent?${query}`
+    : "/api/assistant/automations/runs/recent";
+
+  return httpClient.request<{ payload: { items: AssistantAutomationRunDto[] } }>(path);
+}
+
+export function cancelAssistantAutomation(automationId: string) {
+  return httpClient.request<{ payload: { automation: AssistantAutomationTaskDto } }>(
+    `/api/assistant/automations/${encodeURIComponent(automationId)}/cancel`,
+    {
+      method: "POST",
+      body: JSON.stringify({})
+    }
+  );
 }
 
 export function cancelButlerControlTimer(timerId: string) {

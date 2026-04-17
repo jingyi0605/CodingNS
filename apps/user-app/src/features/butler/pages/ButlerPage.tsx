@@ -23,6 +23,8 @@ import {
   buildWorkspaceSessionPath
 } from "../../workbench/utils/workbench-navigation";
 import type {
+  AssistantAutomationRunDto,
+  AssistantAutomationTaskDto,
   ButlerControlEventDto,
   ButlerControlSessionDto,
   ButlerControlTimerDto,
@@ -41,10 +43,13 @@ import type {
 } from "../api/butler-api";
 import {
   analyzeButlerInboxItem,
+  cancelAssistantAutomation,
   cancelButlerControlTimer,
   cancelButlerFollowUpTask,
   cancelButlerVerificationRun,
   getButlerFollowUpTask,
+  listAssistantAutomations,
+  listRecentAssistantAutomationRuns,
   listButlerControlSessions,
   listButlerControlTimers,
   listButlerFollowUpTasks,
@@ -199,6 +204,8 @@ export function ButlerPage() {
   const [patrolPlans, setPatrolPlans] = useState<ButlerPatrolPlanDto[]>([]);
   const [controlSessions, setControlSessions] = useState<ButlerControlSessionDto[]>([]);
   const [controlTimers, setControlTimers] = useState<ButlerControlTimerDto[]>([]);
+  const [assistantAutomations, setAssistantAutomations] = useState<AssistantAutomationTaskDto[]>([]);
+  const [assistantAutomationRuns, setAssistantAutomationRuns] = useState<AssistantAutomationRunDto[]>([]);
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [followUpHistoryOpen, setFollowUpHistoryOpen] = useState(false);
   const [verificationHistoryOpen, setVerificationHistoryOpen] = useState(false);
@@ -210,6 +217,7 @@ export function ButlerPage() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [cancellingFollowUpTaskId, setCancellingFollowUpTaskId] = useState<string | null>(null);
   const [cancellingVerificationId, setCancellingVerificationId] = useState<string | null>(null);
+  const [cancellingAutomationId, setCancellingAutomationId] = useState<string | null>(null);
   const [cancellingTimerId, setCancellingTimerId] = useState<string | null>(null);
   const [executingTimerId, setExecutingTimerId] = useState<string | null>(null);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
@@ -530,6 +538,28 @@ export function ButlerPage() {
       setCancellingTimerId(null);
     }
   }, [showToast]);
+  const handleCancelAutomation = useCallback(async (automationId: string) => {
+    setCancellingAutomationId(automationId);
+
+    try {
+      const response = await cancelAssistantAutomation(automationId);
+      setAssistantAutomations((current) =>
+        replaceAssistantAutomation(current, response.payload.automation)
+      );
+      showToast({
+        title: t("shell.butlerControlTimerCancelSucceeded"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: t("shell.butlerControlTimerCancelFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error"
+      });
+    } finally {
+      setCancellingAutomationId(null);
+    }
+  }, [showToast]);
   const handleExecuteControlTimerNow = useCallback(async (timer: ButlerControlTimerDto) => {
     const prompt = timer.content.trim();
 
@@ -702,6 +732,8 @@ export function ButlerPage() {
       setPatrolPlans([]);
       setControlSessions([]);
       setControlTimers([]);
+      setAssistantAutomations([]);
+      setAssistantAutomationRuns([]);
       return;
     }
 
@@ -709,11 +741,25 @@ export function ButlerPage() {
 
     async function loadSidebarData() {
       try {
-        const [inboxResponse, followUpResponse, controlSessionResponse, controlTimerResponse, patrolPlanResponses] = await Promise.all([
+        const [
+          inboxResponse,
+          followUpResponse,
+          controlSessionResponse,
+          controlTimerResponse,
+          automationResponse,
+          automationRunsResponse,
+          patrolPlanResponses
+        ] = await Promise.all([
           listButlerInboxItems(),
           listButlerFollowUpTasks(),
           listButlerControlSessions(),
           listButlerControlTimers(),
+          listAssistantAutomations({
+            limit: 100
+          }),
+          listRecentAssistantAutomationRuns({
+            limit: 100
+          }),
           Promise.all(overviewProjectIds.map((projectId) => listButlerPatrolPlans(projectId)))
         ]);
 
@@ -722,6 +768,8 @@ export function ButlerPage() {
           setFollowUpTasks(followUpResponse.items);
           setControlSessions(controlSessionResponse.items);
           setControlTimers(controlTimerResponse.items);
+          setAssistantAutomations(automationResponse.payload.items);
+          setAssistantAutomationRuns(automationRunsResponse.payload.items);
           setPatrolPlans(patrolPlanResponses.flatMap((response) => response.items));
         }
       } catch (loadError) {
@@ -734,6 +782,8 @@ export function ButlerPage() {
         setPatrolPlans([]);
         setControlSessions([]);
         setControlTimers([]);
+        setAssistantAutomations([]);
+        setAssistantAutomationRuns([]);
         showToast({
           title: t("shell.butlerSidebarLoadFailed"),
           description: loadError instanceof Error ? loadError.message : undefined,
@@ -868,11 +918,11 @@ export function ButlerPage() {
         events={events}
         inboxItems={inboxItems}
         followUpTasks={followUpTasks}
-        patrolPlans={patrolPlans}
-        controlTimers={controlTimers}
+        assistantAutomations={assistantAutomations}
+        assistantAutomationRuns={assistantAutomationRuns}
         cancellingFollowUpTaskId={cancellingFollowUpTaskId}
         cancellingVerificationId={cancellingVerificationId}
-        cancellingTimerId={cancellingTimerId}
+        cancellingAutomationId={cancellingAutomationId}
         settingsForm={settingsForm}
         savingSettings={savingSettings}
         onOpenFollowUpHistory={handleOpenFollowUpHistory}
@@ -881,7 +931,7 @@ export function ButlerPage() {
         onOpenFollowUpDetail={handleOpenFollowUpDetail}
         onCancelFollowUpTask={handleCancelFollowUpTask}
         onCancelVerificationRun={handleCancelVerificationRun}
-        onCancelControlTimer={handleCancelControlTimer}
+        onCancelAutomation={handleCancelAutomation}
         onAnalyzeTodo={handleAnalyzeTodo}
         onStartTodoSession={handleStartTodoSession}
         onOpenTodoSession={handleOpenTodoSession}
@@ -896,7 +946,7 @@ export function ButlerPage() {
     [
       events,
       handleAnalyzeTodo,
-      handleCancelControlTimer,
+      handleCancelAutomation,
       handleCopyTodoPrompt,
       handleOpenAutomationHistory,
       handleOpenFollowUpHistory,
@@ -907,13 +957,13 @@ export function ButlerPage() {
       handleSaveSettings,
       handleSettingsFormChange,
       handleStartTodoSession,
+      assistantAutomations,
+      assistantAutomationRuns,
       inboxItems,
-      controlTimers,
+      cancellingAutomationId,
       cancellingFollowUpTaskId,
       cancellingVerificationId,
       overview,
-      patrolPlans,
-      cancellingTimerId,
       handleCancelFollowUpTask,
       handleCancelVerificationRun,
       savingSettings,
@@ -1555,8 +1605,8 @@ export function ButlerPage() {
         }}
       >
         <AutomationHistoryPanel
-          taskItems={buildAutomationTaskItems(patrolPlans, followUpTasks, controlTimers, overview, "history")}
-          runItems={buildAutomationRunItems(followUpTasks, controlTimers, overview, "history")}
+          taskItems={buildAutomationTaskItems(assistantAutomations, overview, "history")}
+          runItems={buildAutomationRunItems(assistantAutomations, assistantAutomationRuns, overview, "history")}
         />
       </WorkbenchModal>
       <WorkbenchModal
@@ -1602,11 +1652,11 @@ function ButlerAuxiliaryPanel(props: {
   events: ButlerControlEventDto[];
   inboxItems: ButlerInboxItemDto[];
   followUpTasks: ButlerFollowUpTaskDto[];
-  patrolPlans: ButlerPatrolPlanDto[];
-  controlTimers: ButlerControlTimerDto[];
+  assistantAutomations: AssistantAutomationTaskDto[];
+  assistantAutomationRuns: AssistantAutomationRunDto[];
   cancellingFollowUpTaskId: string | null;
   cancellingVerificationId: string | null;
-  cancellingTimerId: string | null;
+  cancellingAutomationId: string | null;
   settingsForm: ButlerSettingsFormState;
   savingSettings: boolean;
   onOpenFollowUpHistory: () => void;
@@ -1615,7 +1665,7 @@ function ButlerAuxiliaryPanel(props: {
   onOpenFollowUpDetail: (taskId: string) => Promise<void>;
   onCancelFollowUpTask: (task: ButlerFollowUpTaskDto) => Promise<void>;
   onCancelVerificationRun: (verification: ButlerVerificationDigestDto) => Promise<void>;
-  onCancelControlTimer: (timerId: string) => Promise<void>;
+  onCancelAutomation: (automationId: string) => Promise<void>;
   onAnalyzeTodo: (item: ButlerInboxItemDto) => Promise<void>;
   onStartTodoSession: (item: ButlerInboxItemDto) => Promise<void>;
   onOpenTodoSession: (item: ButlerInboxItemDto) => void;
@@ -1655,12 +1705,11 @@ function ButlerAuxiliaryPanel(props: {
     ) : activeTab === "automation" ? (
       <AutomationSidebarContent
         overview={props.overview}
-        followUpTasks={props.followUpTasks}
-        patrolPlans={props.patrolPlans}
-        controlTimers={props.controlTimers}
-        cancellingTimerId={props.cancellingTimerId}
+        automations={props.assistantAutomations}
+        runs={props.assistantAutomationRuns}
+        cancellingAutomationId={props.cancellingAutomationId}
         onOpenAutomationHistory={props.onOpenAutomationHistory}
-        onCancelControlTimer={props.onCancelControlTimer}
+        onCancelAutomation={props.onCancelAutomation}
       />
     ) : (
       <SettingsSidebarContent
@@ -1769,28 +1818,27 @@ function GlobalRecordsSidebarContent(props: {
 
 function AutomationSidebarContent(props: {
   overview: ButlerOverviewDto | null;
-  followUpTasks: ButlerFollowUpTaskDto[];
-  patrolPlans: ButlerPatrolPlanDto[];
-  controlTimers: ButlerControlTimerDto[];
-  cancellingTimerId: string | null;
+  automations: AssistantAutomationTaskDto[];
+  runs: AssistantAutomationRunDto[];
+  cancellingAutomationId: string | null;
   onOpenAutomationHistory: () => void;
-  onCancelControlTimer: (timerId: string) => Promise<void>;
+  onCancelAutomation: (automationId: string) => Promise<void>;
 }) {
   const automationTasks = useMemo(
-    () => buildAutomationTaskItems(props.patrolPlans, props.followUpTasks, props.controlTimers, props.overview, "active"),
-    [props.controlTimers, props.followUpTasks, props.overview, props.patrolPlans]
+    () => buildAutomationTaskItems(props.automations, props.overview, "active"),
+    [props.automations, props.overview]
   );
   const automationRuns = useMemo(
-    () => buildAutomationRunItems(props.followUpTasks, props.controlTimers, props.overview, "active"),
-    [props.controlTimers, props.followUpTasks, props.overview]
+    () => buildAutomationRunItems(props.automations, props.runs, props.overview, "active"),
+    [props.automations, props.overview, props.runs]
   );
 
   return (
     <>
       <AutomationTaskOverviewCard
         items={automationTasks}
-        cancellingTimerId={props.cancellingTimerId}
-        onCancelControlTimer={props.onCancelControlTimer}
+        cancellingAutomationId={props.cancellingAutomationId}
+        onCancelAutomation={props.onCancelAutomation}
         emptyText={t("shell.butlerAutomationTasksEmpty")}
         actionLabel={t("shell.butlerFollowUpHistoryAction")}
         onAction={props.onOpenAutomationHistory}
@@ -2362,8 +2410,8 @@ function ButlerControlTimerBanner(props: {
 
 interface AutomationTaskItem {
   id: string;
-  timerId?: string;
-  kind: "patrol_plan" | "follow_up" | "control_timer";
+  automationId?: string;
+  kind: "assistant_automation";
   title: string;
   projectName: string;
   status: "active" | "waiting_user" | "completed" | "failed" | "cancelled";
@@ -2375,7 +2423,7 @@ interface AutomationTaskItem {
 
 interface AutomationRunItem {
   id: string;
-  kind: "patrol_run" | "follow_up_round" | "control_timer";
+  kind: "assistant_automation_run";
   title: string;
   projectName: string;
   status: "active" | "waiting_user" | "completed" | "failed" | "cancelled";
@@ -2387,8 +2435,8 @@ interface AutomationRunItem {
 
 function AutomationTaskOverviewCard(props: {
   items: AutomationTaskItem[];
-  cancellingTimerId: string | null;
-  onCancelControlTimer: (timerId: string) => Promise<void>;
+  cancellingAutomationId: string | null;
+  onCancelAutomation: (automationId: string) => Promise<void>;
   emptyText: string;
   actionLabel?: string;
   onAction?: () => void;
@@ -2435,16 +2483,16 @@ function AutomationTaskOverviewCard(props: {
                   <span>{t("shell.butlerAutomationTaskNextRunLabel")}</span>
                   <strong>{formatIsoDateTime(item.nextRunAt)}</strong>
                 </div>
-                {item.kind === "control_timer" && item.timerId ? (
+                {item.automationId && item.status === "active" ? (
                   <button
                     type="button"
                     className="secondary-button butler-automation-card-action"
-                    disabled={props.cancellingTimerId === item.timerId}
+                    disabled={props.cancellingAutomationId === item.automationId}
                     onClick={() => {
-                      void props.onCancelControlTimer(item.timerId!);
+                      void props.onCancelAutomation(item.automationId!);
                     }}
                   >
-                    {props.cancellingTimerId === item.timerId
+                    {props.cancellingAutomationId === item.automationId
                       ? t("shell.butlerControlTimerCancelling")
                       : t("shell.butlerControlTimerStopAction")}
                   </button>
