@@ -283,6 +283,54 @@ describe("assistant capability routes", () => {
     });
   });
 
+  it("通用 sessions.start 在没有显式 target 时会交给服务自动落到沙箱", async () => {
+    const assistantCapabilityService = {
+      startSession: vi.fn(async () => ({
+        ok: true,
+        capability: "sessions.start",
+        auditId: "audit-session-start-auto-sandbox",
+        timestamp: "2026-04-17T02:05:00.000Z",
+        targetRef: {
+          kind: "sandbox",
+          id: "sandbox-auto-1"
+        },
+        payload: {
+          session: {
+            sessionId: "session-auto-1"
+          },
+          target: {
+            kind: "sandbox",
+            id: "sandbox-auto-1",
+            workspaceId: "workspace-sandbox-auto-1"
+          }
+        }
+      })),
+      createSandbox: vi.fn()
+    };
+
+    const app = await createAssistantApp(assistantCapabilityService);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/assistant/sessions/start",
+      payload: {
+        content: "请继续处理这个问题，但我没指定项目或工作区"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(assistantCapabilityService.startSession).toHaveBeenCalledWith({
+      target: null,
+      userId: "user-1",
+      content: "请继续处理这个问题，但我没指定项目或工作区",
+      providerId: null,
+      model: null,
+      reasoningLevel: null,
+      permissionMode: null
+    });
+    expect(assistantCapabilityService.createSandbox).not.toHaveBeenCalled();
+  });
+
   it("自动化路由会把查询和创建参数清洗后传给服务", async () => {
     const assistantCapabilityService = {
       listAutomations: vi.fn(() => ({

@@ -431,6 +431,182 @@ describe("AssistantCapabilityService", () => {
     }));
   });
 
+  it("未显式指定 target 时会自动创建空白沙箱并在其中启动真实会话", async () => {
+    const startLiveSession = vi.fn(async () => ({
+      sessionId: "session-auto-sandbox",
+      provider: "codex",
+      providerSessionId: "provider-session-auto-sandbox",
+      acceptedAt: "2026-04-16T12:25:00.000Z",
+      clientRequestId: null,
+      message: {
+        messageId: "message-auto-sandbox",
+        role: "user",
+        content: "请继续处理这个问题，并把需要的文件落下来",
+        timestamp: "2026-04-16T12:25:00.000Z",
+        sequence: 1,
+        attachments: []
+      },
+      session: {
+        sessionId: "session-auto-sandbox",
+        workspaceId: "workspace-sandbox-auto-1"
+      }
+    }));
+    const assistantSandboxService = {
+      listSandboxes: vi.fn(),
+      getSandbox: vi.fn(),
+      createSandbox: vi.fn(async () => ({
+        id: "sandbox-auto-1",
+        workspaceId: "workspace-sandbox-auto-1"
+      })),
+      promoteSandbox: vi.fn(),
+      expireSandbox: vi.fn(),
+      removeSandbox: vi.fn(),
+      resolveWorkspaceId: vi.fn(),
+      markSandboxUsedByControlSession: vi.fn()
+    };
+    const service = new AssistantCapabilityService(
+      {
+        list: vi.fn(),
+        getById: vi.fn(),
+        getOverview: vi.fn()
+      } as any,
+      {
+        listByProject: vi.fn(),
+        ensureProjectSessionsSynced: vi.fn(),
+        startSession: vi.fn()
+      } as any,
+      {
+        getCurrentSession: vi.fn(() => ({
+          id: "control-1",
+          providerId: "codex",
+          sessionId: "assistant-session-1",
+          purpose: "chat",
+          title: "排查缓存异常",
+          sourceItemId: null,
+          model: "gpt-5.4",
+          reasoningLevel: "high",
+          permissionMode: "acceptEdits",
+          status: "running",
+          lastContextVersion: null,
+          lastSummary: "继续处理缓存异常",
+          createdAt: "2026-04-16T12:00:00.000Z",
+          updatedAt: "2026-04-16T12:00:00.000Z",
+          session: {
+            sessionId: "assistant-session-1"
+          }
+        }))
+      } as any,
+      {
+        listTasks: vi.fn(),
+        getTask: vi.fn(),
+        createTask: vi.fn(),
+        cancelTask: vi.fn(),
+        listRuns: vi.fn()
+      } as any,
+      assistantSandboxService as any,
+      {
+        listTimers: vi.fn(),
+        getTimer: vi.fn(),
+        createTimer: vi.fn(),
+        cancelTimer: vi.fn()
+      } as any,
+      {
+        getSession: vi.fn(),
+        readSessionHistory: vi.fn(),
+        forkSession: vi.fn()
+      } as any,
+      {
+        startLiveSession,
+        getSessionRuntime: vi.fn(),
+        sendLiveMessage: vi.fn()
+      } as any,
+      {
+        listTerminals: vi.fn(),
+        readTerminalHistory: vi.fn(),
+        writeInput: vi.fn(),
+        closeTerminal: vi.fn()
+      } as any,
+      {
+        analyze: vi.fn(),
+        getFrameworkAnalysis: vi.fn(),
+        refreshFrameworkAnalysis: vi.fn(),
+        createLaunchPlan: vi.fn(),
+        run: vi.fn(),
+        getLatestRuntimeDetail: vi.fn(),
+        getRecentRuntimeDetails: vi.fn(),
+        getRuntimeDetail: vi.fn(),
+        getCompatibilityMatrix: vi.fn()
+      } as any,
+      {
+        list: vi.fn(),
+        browseDirectories: vi.fn(),
+        createDirectory: vi.fn(),
+        importWorkspace: vi.fn(),
+        cloneWorkspace: vi.fn(),
+        reorderWorkspaces: vi.fn(),
+        getManagementSummary: vi.fn(),
+        removeWorkspace: vi.fn(),
+        updateNavigationState: vi.fn()
+      } as any,
+      {
+        getTree: vi.fn(),
+        create: vi.fn()
+      } as any,
+      {
+        syncRoot: vi.fn()
+      } as any,
+      {
+        preview: vi.fn(),
+        apply: vi.fn()
+      } as any,
+      {
+        cleanup: vi.fn()
+      } as any,
+      {
+        upsert: vi.fn()
+      } as any
+    );
+
+    const receipt = await service.startSession({
+      userId: "user-1",
+      content: "请继续处理这个问题，并把需要的文件落下来"
+    });
+
+    expect(receipt.capability).toBe("sessions.start");
+    expect(receipt.targetRef).toEqual({
+      kind: "sandbox",
+      id: "sandbox-auto-1"
+    });
+    expect(receipt.payload.target).toEqual({
+      kind: "sandbox",
+      id: "sandbox-auto-1",
+      workspaceId: "workspace-sandbox-auto-1"
+    });
+    expect(assistantSandboxService.createSandbox).toHaveBeenCalledWith({
+      userId: "user-1",
+      controlSessionId: "control-1",
+      title: "排查缓存异常",
+      purpose: "当前任务未指定工作区，系统自动创建",
+      source: {
+        kind: "blank"
+      }
+    });
+    expect(assistantSandboxService.markSandboxUsedByControlSession).toHaveBeenCalledWith(
+      "sandbox-auto-1",
+      "user-1",
+      "control-1"
+    );
+    expect(startLiveSession).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: "workspace-sandbox-auto-1",
+      provider: "codex",
+      runtimeOptions: expect.objectContaining({
+        model: "gpt-5.4",
+        reasoningLevel: "high",
+        permissionMode: "acceptEdits"
+      })
+    }));
+  });
+
   it.each([
     {
       providerId: "codex" as const,
