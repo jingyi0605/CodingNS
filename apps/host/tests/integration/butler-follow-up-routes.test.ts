@@ -6,6 +6,7 @@ import type { ButlerControlSessionService } from "../../src/modules/butler/butle
 import type { ButlerContextAggregator } from "../../src/modules/butler/context-aggregator.js";
 import type { ButlerFollowUpService } from "../../src/modules/butler/butler-follow-up-service.js";
 import type { ButlerInboxService } from "../../src/modules/butler/butler-inbox-service.js";
+import type { ButlerNotificationService } from "../../src/modules/butler/butler-notification-service.js";
 import type { ButlerProfileService } from "../../src/modules/butler/butler-profile-service.js";
 import type { ButlerProjectService } from "../../src/modules/butler/butler-project-service.js";
 import type { ButlerSessionService } from "../../src/modules/butler/butler-session-service.js";
@@ -31,6 +32,7 @@ describe("butler follow-up routes", () => {
       {} as ButlerContextAggregator,
       butlerFollowUpService,
       {} as ButlerInboxService,
+      {} as ButlerNotificationService,
       {} as ButlerProjectService,
       {} as ButlerSessionService,
       {} as ProjectMemoryService,
@@ -247,7 +249,7 @@ describe("butler follow-up routes", () => {
       completedAt: "2026-04-07T00:06:30.000Z"
     };
     const butlerFollowUpService = {
-      cancelTask: vi.fn(() => task)
+      cancelTask: vi.fn(async () => task)
     } as unknown as ButlerFollowUpService;
     const app = await createButlerApp(butlerFollowUpService);
 

@@ -244,7 +244,7 @@ interface StartPatrolRunBody {
 }
 
 interface ButlerVerificationListQuery {
-  status?: "queued" | "running" | "passed" | "failed" | "skipped";
+  status?: "queued" | "running" | "passed" | "failed" | "skipped" | "cancelled";
   verificationType?: "test" | "health" | "browser" | "visual" | "metric";
 }
 
@@ -537,7 +537,7 @@ export class ButlerController {
     request: FastifyRequest<{ Params: ButlerFollowUpTaskParams; Body: CancelButlerFollowUpTaskBody }>,
     reply: FastifyReply
   ): Promise<void> => {
-    const task = this.butlerFollowUpService.cancelTask(
+    const task = await this.butlerFollowUpService.cancelTask(
       request.params.taskId,
       requireUserId(request)
     );
@@ -729,6 +729,9 @@ export class ButlerController {
       sessionId,
       limit: 1
     })[0] ?? null;
+    const latestVerificationRun = this.verificationRunService
+      .listRuns(project.id)
+      .find((run) => run.butlerSessionId === target.session.id) ?? null;
 
     reply.send({
       context: {
@@ -742,7 +745,8 @@ export class ButlerController {
           riskLevel: project.riskLevel
         },
         session: target.session,
-        latestFollowUpTask
+        latestFollowUpTask,
+        latestVerificationRun
       }
     });
   };
@@ -791,16 +795,20 @@ export class ButlerController {
     request: FastifyRequest<{ Body: StartButlerVerificationActionBody }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.status(201).send({
-      result: await this.butlerControlActionService.startVerification({
-        projectId: request.body.projectId?.trim() ?? "",
-        verificationType: request.body.verificationType,
-        targetRef: request.body.targetRef?.trim() || null,
-        butlerSessionId: request.body.butlerSessionId?.trim() || null,
-        sourcePatrolRunId: request.body.sourcePatrolRunId?.trim() || null,
-        spec: request.body.spec
-      })
+    const result = await this.butlerControlActionService.startVerification({
+      projectId: request.body.projectId?.trim() ?? "",
+      verificationType: request.body.verificationType,
+      targetRef: request.body.targetRef?.trim() || null,
+      butlerSessionId: request.body.butlerSessionId?.trim() || null,
+      sourcePatrolRunId: request.body.sourcePatrolRunId?.trim() || null,
+      spec: request.body.spec
     });
+
+    if (result.run.butlerSessionId) {
+      this.butlerActionContextService?.invalidateSessionActionContext(result.run.butlerSessionId);
+    }
+
+    reply.status(201).send({ result });
   };
 
   readonly listProjects = async (
@@ -1119,6 +1127,22 @@ export class ButlerController {
     });
 
     reply.status(201).send({ run });
+  };
+
+  readonly cancelVerificationRun = async (
+    request: FastifyRequest<{ Params: ButlerVerificationParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const run = this.verificationRunService.cancelRun(
+      request.params.projectId,
+      request.params.verificationId
+    );
+
+    if (run.butlerSessionId) {
+      this.butlerActionContextService?.invalidateSessionActionContext(run.butlerSessionId);
+    }
+
+    reply.send({ run });
   };
 
   readonly getVerificationRun = async (

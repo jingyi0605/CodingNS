@@ -47,6 +47,7 @@ export interface PatrolProviderAdapter {
   readonly providerId: "codex" | "claude-code";
   startPatrolSession(input: StartPatrolSessionInput): Promise<PatrolSessionLaunchResult>;
   waitForSessionTerminal(sessionId: string): Promise<void>;
+  interruptPatrolSession(sessionId: string): Promise<void>;
   readPatrolResult(sessionId: string): Promise<PatrolSessionResult>;
 }
 
@@ -131,6 +132,26 @@ export class RuntimePatrolProviderAdapter implements PatrolProviderAdapter {
       await this.waitForTerminalWithSubscription(sessionId, userId);
     } finally {
       this.sessionOwnerBySessionId.delete(sessionId);
+    }
+  }
+
+  async interruptPatrolSession(sessionId: string): Promise<void> {
+    const userId = this.sessionOwnerBySessionId.get(sessionId);
+
+    if (!userId) {
+      return;
+    }
+
+    try {
+      await this.sessionLiveRuntimeService.interruptSession(sessionId, userId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      if (message === "SESSION_NOT_RUNNING" || message === "CAPABILITY_NOT_SUPPORTED") {
+        return;
+      }
+
+      throw error;
     }
   }
 

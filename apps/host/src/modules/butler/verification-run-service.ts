@@ -5,6 +5,9 @@ import { AppError } from "../../shared/errors/app-error.js";
 import { resolveCommandLaunch } from "../../shared/utils/command-launch.js";
 import { createId } from "../../shared/utils/id.js";
 import { nowIso } from "../../shared/utils/time.js";
+import { createTaskManager, type TaskManager } from "../tasks/task-manager.js";
+import { HOST_TASK_TYPES } from "../tasks/task-types.js";
+import { TaskCancelledError, type TaskRunContext } from "../tasks/task-types.js";
 import type { ButlerProjectRepository } from "../../storage/repositories/butler-project-repository.js";
 import type { ButlerSessionRepository } from "../../storage/repositories/butler-session-repository.js";
 import type { SessionCheckpointRepository } from "../../storage/repositories/session-checkpoint-repository.js";
@@ -30,6 +33,7 @@ interface CommandExecutionInput {
   cwd: string;
   env?: NodeJS.ProcessEnv;
   timeoutMs: number;
+  signal?: AbortSignal;
 }
 
 interface CommandExecutionResult {
@@ -47,7 +51,7 @@ interface HealthExecutionResult {
 interface VerificationRunServiceOptions {
   now?: () => string;
   runCommand?: (input: CommandExecutionInput) => Promise<CommandExecutionResult>;
-  runHealthCheck?: (url: string, timeoutMs: number) => Promise<HealthExecutionResult>;
+  runHealthCheck?: (url: string, timeoutMs: number, signal?: AbortSignal) => Promise<HealthExecutionResult>;
 }
 
 export interface VerificationRunView {
@@ -102,19 +106,23 @@ type PreparedVerificationPlan =
 
 export class VerificationRunService {
   private readonly now: () => string;
+  private readonly taskManager: TaskManager;
   private readonly runCommand: (input: CommandExecutionInput) => Promise<CommandExecutionResult>;
-  private readonly runHealthCheck: (url: string, timeoutMs: number) => Promise<HealthExecutionResult>;
+  private readonly runHealthCheck: (url: string, timeoutMs: number, signal?: AbortSignal) => Promise<HealthExecutionResult>;
 
   constructor(
     private readonly butlerProjectRepository: ButlerProjectRepository,
     private readonly butlerSessionRepository: ButlerSessionRepository,
     private readonly sessionCheckpointRepository: SessionCheckpointRepository,
     private readonly verificationRunRepository: VerificationRunRepository,
-    options: VerificationRunServiceOptions = {}
+    options: VerificationRunServiceOptions = {},
+    taskManager: TaskManager = createTaskManager()
   ) {
     this.now = options.now ?? nowIso;
+    this.taskManager = taskManager;
     this.runCommand = options.runCommand ?? runCommandExecution;
     this.runHealthCheck = options.runHealthCheck ?? runHttpHealthCheck;
+    this.registerBackgroundTasks();
   }
 
   listRuns(
@@ -147,7 +155,7 @@ export class VerificationRunService {
     const verificationType = normalizeVerificationType(input.verificationType);
     const targetRef = normalizeNullableText(input.targetRef) ?? null;
     const spec = normalizeSpec(input.spec);
-    const plan = prepareVerificationPlan(project, verificationType, targetRef, spec);
+    prepareVerificationPlan(project, verificationType, targetRef, spec);
     const butlerSession = input.butlerSessionId
       ? this.getProjectSessionOrThrow(project.id, input.butlerSessionId)
       : null;
@@ -178,11 +186,130 @@ export class VerificationRunService {
       createdAt: startedAt
     });
 
+    const handle = this.taskManager.enqueue<{ runId: string }, void>(HOST_TASK_TYPES.verificationRunExecute, {
+      key: record.id,
+      source: "verification_run.execute",
+      input: {
+        runId: record.id
+      }
+    });
+
+    void handle.promise.catch(() => undefined);
+
+    return mapVerificationRunRecord(record);
+  }
+
+  cancelRun(projectId: string, runId: string): VerificationRunView {
+    this.getProjectOrThrow(projectId);
+    const record = this.getRunRecordOrThrow(runId);
+
+    if (record.projectId !== projectId) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "VERIFICATION_RUN_NOT_FOUND",
+        detail: "当前项目下不存在该验证记录"
+      });
+    }
+
+    if (record.status !== "queued" && record.status !== "running") {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "VERIFICATION_RUN_NOT_STOPPABLE",
+        detail: "当前验证已经结束，不能再次手动结束"
+      });
+    }
+
+    const project = this.getProjectOrThrow(projectId);
+    const butlerSession = record.butlerSessionId
+      ? this.butlerSessionRepository.findById(record.butlerSessionId)
+      : null;
+    const finishedAt = this.now();
+    const summary = "已手动结束当前会话验证，并停止关联自动化执行。";
+    const cancelled = this.updateRunRecord({
+      ...record,
+      status: "cancelled",
+      summary,
+      artifactRefsJson: record.artifactRefsJson,
+      resultJson: JSON.stringify({
+        ...parseJsonObject(record.resultJson),
+        cancelledBy: "user"
+      }),
+      finishedAt
+    });
+
+    this.writeVerificationProjectStatus(
+      project,
+      normalizeVerificationType(cancelled.verificationType),
+      "cancelled",
+      finishedAt
+    );
+
+    if (butlerSession) {
+      this.writeVerificationCheckpoint(
+        butlerSession,
+        {
+          status: "cancelled",
+          summary,
+          artifactRefs: parseJsonArray(cancelled.artifactRefsJson),
+          result: parseJsonObject(cancelled.resultJson)
+        },
+        finishedAt
+      );
+    }
+
+    this.taskManager.cancel(HOST_TASK_TYPES.verificationRunExecute, record.id, "user_cancelled");
+
+    return mapVerificationRunRecord(cancelled);
+  }
+
+  private registerBackgroundTasks(): void {
+    if (this.taskManager.has(HOST_TASK_TYPES.verificationRunExecute)) {
+      return;
+    }
+
+    this.taskManager.register<{ runId: string }, void>({
+      taskType: HOST_TASK_TYPES.verificationRunExecute,
+      executionLane: "host_background",
+      timeoutMs: 10 * 60_000,
+      run: async ({ runId }, context) => {
+        await this.executeRunTask(runId, context);
+      }
+    });
+  }
+
+  private async executeRunTask(
+    runId: string,
+    context: Pick<TaskRunContext, "signal">
+  ): Promise<void> {
+    const record = this.getRunRecordOrThrow(runId);
+
+    if (record.status !== "running" && record.status !== "queued") {
+      return;
+    }
+
+    const project = this.getProjectOrThrow(record.projectId);
+    const butlerSession = record.butlerSessionId
+      ? this.butlerSessionRepository.findById(record.butlerSessionId)
+      : null;
+    const verificationType = normalizeVerificationType(record.verificationType);
+    const plan = prepareVerificationPlan(
+      project,
+      verificationType,
+      record.targetRef,
+      parseJsonObject(record.specJson)
+    );
+
     try {
-      const outcome = await this.executeVerification(plan);
+      const outcome = await this.executeVerification(plan, context.signal);
+      const latest = this.getRunRecordOrThrow(runId);
+
+      if (latest.status === "cancelled") {
+        return;
+      }
+
       const finishedAt = this.now();
       const updated = this.updateRunRecord({
-        ...record,
+        ...latest,
         status: outcome.status,
         summary: outcome.summary,
         artifactRefsJson: JSON.stringify(outcome.artifactRefs),
@@ -190,27 +317,59 @@ export class VerificationRunService {
         finishedAt
       });
 
-      this.butlerProjectRepository.update({
-        ...project,
-        lastVerificationAt: finishedAt,
-        updatedAt: finishedAt,
-        config: {
-          ...project.config,
-          lastVerificationType: verificationType,
-          lastVerificationStatus: outcome.status
-        }
-      });
+      this.writeVerificationProjectStatus(project, verificationType, outcome.status, finishedAt);
 
       if (butlerSession) {
         this.writeVerificationCheckpoint(butlerSession, outcome, finishedAt);
       }
-
-      return mapVerificationRunRecord(updated);
     } catch (error) {
+      const latest = this.getRunRecordOrThrow(runId);
+
+      if (latest.status === "cancelled") {
+        throw error;
+      }
+
       const finishedAt = this.now();
+
+      if (context.signal.aborted || error instanceof TaskCancelledError) {
+        const cancelled = this.updateRunRecord({
+          ...latest,
+          status: "cancelled",
+          summary: latest.summary ?? "已手动结束当前会话验证，并停止关联自动化执行。",
+          artifactRefsJson: latest.artifactRefsJson,
+          resultJson: JSON.stringify({
+            ...parseJsonObject(latest.resultJson),
+            cancelledBy: "task_signal"
+          }),
+          finishedAt
+        });
+
+        this.writeVerificationProjectStatus(
+          project,
+          verificationType,
+          "cancelled",
+          finishedAt
+        );
+
+        if (butlerSession) {
+          this.writeVerificationCheckpoint(
+            butlerSession,
+            {
+              status: "cancelled",
+              summary: cancelled.summary ?? "已手动结束当前会话验证，并停止关联自动化执行。",
+              artifactRefs: parseJsonArray(cancelled.artifactRefsJson),
+              result: parseJsonObject(cancelled.resultJson)
+            },
+            finishedAt
+          );
+        }
+
+        throw error;
+      }
+
       const detail = error instanceof Error ? error.message : String(error);
-      const failed = this.updateRunRecord({
-        ...record,
+      this.updateRunRecord({
+        ...latest,
         status: "failed",
         summary: detail,
         artifactRefsJson: JSON.stringify([]),
@@ -220,16 +379,7 @@ export class VerificationRunService {
         finishedAt
       });
 
-      this.butlerProjectRepository.update({
-        ...project,
-        lastVerificationAt: finishedAt,
-        updatedAt: finishedAt,
-        config: {
-          ...project.config,
-          lastVerificationType: verificationType,
-          lastVerificationStatus: "failed"
-        }
-      });
+      this.writeVerificationProjectStatus(project, verificationType, "failed", finishedAt);
 
       if (butlerSession) {
         this.writeVerificationCheckpoint(
@@ -246,12 +396,13 @@ export class VerificationRunService {
         );
       }
 
-      return mapVerificationRunRecord(failed);
+      throw error;
     }
   }
 
   private async executeVerification(
-    plan: PreparedVerificationPlan
+    plan: PreparedVerificationPlan,
+    signal?: AbortSignal
   ): Promise<VerificationExecutionOutcome> {
     if (plan.kind === "command") {
       const result = await this.runCommand({
@@ -259,7 +410,8 @@ export class VerificationRunService {
         args: plan.args,
         cwd: plan.cwd,
         env: plan.env,
-        timeoutMs: plan.timeoutMs
+        timeoutMs: plan.timeoutMs,
+        signal
       });
       const passed = result.exitCode === plan.expectedExitCode;
       const summary = passed
@@ -282,7 +434,7 @@ export class VerificationRunService {
       };
     }
 
-    const result = await this.runHealthCheck(plan.url, plan.timeoutMs);
+    const result = await this.runHealthCheck(plan.url, plan.timeoutMs, signal);
     const passed = plan.expectedStatus === null ? result.ok : result.statusCode === plan.expectedStatus;
     const summary = passed
       ? `健康检查通过：${plan.url} 返回 ${result.statusCode}`
@@ -309,13 +461,35 @@ export class VerificationRunService {
     };
   }
 
+  private writeVerificationProjectStatus(
+    project: ButlerProject,
+    verificationType: VerificationType,
+    status: Exclude<VerificationRunStatus, "queued" | "running">,
+    finishedAt: string
+  ): void {
+    this.butlerProjectRepository.update({
+      ...project,
+      lastVerificationAt: finishedAt,
+      updatedAt: finishedAt,
+      config: {
+        ...project.config,
+        lastVerificationType: verificationType,
+        lastVerificationStatus: status
+      }
+    });
+  }
+
   private writeVerificationCheckpoint(
     butlerSession: ButlerSession,
     outcome: VerificationExecutionOutcome,
     capturedAt: string
   ): void {
     const progressState: ButlerCheckpointProgressState =
-      outcome.status === "failed" ? "blocked" : outcome.status === "skipped" ? "unknown" : "done";
+      outcome.status === "failed"
+        ? "blocked"
+        : outcome.status === "skipped" || outcome.status === "cancelled"
+          ? "unknown"
+          : "done";
     this.sessionCheckpointRepository.create({
       id: createId(),
       butlerSessionId: butlerSession.id,
@@ -327,6 +501,8 @@ export class VerificationRunService {
       nextActions:
         outcome.status === "failed"
           ? ["检查验证结果并修复失败原因"]
+          : outcome.status === "cancelled"
+            ? ["如需继续验证，请重新发起一次验证"]
           : ["记录验证结论并继续推进后续任务"],
       capturedAt
     });
@@ -442,6 +618,7 @@ function normalizeVerificationStatus(value: string): VerificationRunStatus {
     case "passed":
     case "failed":
     case "skipped":
+    case "cancelled":
       return value;
     default:
       return "failed";
@@ -791,13 +968,34 @@ async function runCommandExecution(
       callback();
     };
 
+    const cleanupAbort = () => {
+      input.signal?.removeEventListener("abort", handleAbort);
+    };
     const timer = setTimeout(() => {
       child.kill("SIGTERM");
       finish(() => {
+        cleanupAbort();
         reject(new Error(`VERIFICATION_COMMAND_TIMEOUT:${input.command}`));
       });
     }, input.timeoutMs);
     timer.unref?.();
+
+    const handleAbort = () => {
+      child.kill("SIGTERM");
+      finish(() => {
+        cleanupAbort();
+        reject(input.signal?.reason ?? new TaskCancelledError("验证执行已取消"));
+      });
+    };
+
+    if (input.signal) {
+      if (input.signal.aborted) {
+        handleAbort();
+        return;
+      }
+
+      input.signal.addEventListener("abort", handleAbort, { once: true });
+    }
 
     child.stdout.on("data", (chunk) => {
       stdout += String(chunk);
@@ -809,12 +1007,14 @@ async function runCommandExecution(
 
     child.on("error", (error) => {
       finish(() => {
+        cleanupAbort();
         reject(new Error(`VERIFICATION_COMMAND_FAILED:${error.message}`));
       });
     });
 
     child.on("close", (exitCode) => {
       finish(() => {
+        cleanupAbort();
         resolve({
           exitCode: exitCode ?? 1,
           stdout,
@@ -825,12 +1025,31 @@ async function runCommandExecution(
   });
 }
 
-async function runHttpHealthCheck(url: string, timeoutMs: number): Promise<HealthExecutionResult> {
+async function runHttpHealthCheck(
+  url: string,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<HealthExecutionResult> {
   const controller = new AbortController();
+  const cleanupAbort = () => {
+    signal?.removeEventListener("abort", handleAbort);
+  };
   const timer = setTimeout(() => {
     controller.abort();
   }, timeoutMs);
   timer.unref?.();
+
+  const handleAbort = () => {
+    controller.abort(signal?.reason);
+  };
+
+  if (signal) {
+    if (signal.aborted) {
+      throw signal.reason ?? new TaskCancelledError("验证执行已取消");
+    }
+
+    signal.addEventListener("abort", handleAbort, { once: true });
+  }
 
   try {
     const response = await fetch(url, {
@@ -845,9 +1064,14 @@ async function runHttpHealthCheck(url: string, timeoutMs: number): Promise<Healt
       responseText
     };
   } catch (error) {
+    if (controller.signal.aborted && signal?.aborted) {
+      throw signal.reason ?? new TaskCancelledError("验证执行已取消");
+    }
+
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`VERIFICATION_HEALTHCHECK_FAILED:${detail}`);
   } finally {
+    cleanupAbort();
     clearTimeout(timer);
   }
 }

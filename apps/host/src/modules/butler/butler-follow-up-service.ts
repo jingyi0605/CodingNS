@@ -114,8 +114,21 @@ interface ButlerFollowUpEvaluationResult {
   riskLevel: "low" | "medium" | "high" | null;
 }
 
+interface FollowUpTaskExecutionState {
+  cancelled: boolean;
+  evaluatorSessionId: string | null;
+}
+
+class FollowUpTaskCancelledError extends Error {
+  constructor() {
+    super("FOLLOW_UP_TASK_CANCELLED");
+    this.name = "FollowUpTaskCancelledError";
+  }
+}
+
 export class ButlerFollowUpService {
   private readonly permissionRequestSweepAtByTaskId = new Map<string, number>();
+  private readonly activeExecutionStateByTaskId = new Map<string, FollowUpTaskExecutionState>();
 
   constructor(
     private readonly butlerProfileService: Pick<ButlerProfileService, "ensureInitialized">,
@@ -251,7 +264,7 @@ export class ButlerFollowUpService {
     );
   }
 
-  cancelTask(taskId: string, userId: string): ButlerFollowUpTaskView {
+  async cancelTask(taskId: string, userId: string): Promise<ButlerFollowUpTaskView> {
     this.butlerProfileService.ensureInitialized();
     const task = this.butlerFollowUpTaskRepository.findById(taskId);
 
@@ -279,6 +292,7 @@ export class ButlerFollowUpService {
       });
     }
 
+    const execution = this.markTaskExecutionCancelled(task.id);
     const timestamp = nowIso();
     const updated = this.persistWithRound({
       ...task,
@@ -299,6 +313,8 @@ export class ButlerFollowUpService {
       autoContinueCount: task.autoContinueCount,
       createdAt: timestamp
     });
+
+    await this.stopActiveTaskAutomation(execution);
 
     const project = this.butlerProjectService.getById(updated.projectId);
     const index = this.sessionIndexRepository.findIndexRecordBySessionId(updated.sessionId);
@@ -365,123 +381,108 @@ export class ButlerFollowUpService {
       return task;
     }
 
-    const profile = this.butlerProfileService.ensureInitialized();
-    const project = this.butlerProjectService.getById(task.projectId);
-    const inspection = await this.inspectTask(task);
-    const runningState = normalizeRunningState(inspection.runningState);
-    const baseUpdate: ButlerFollowUpTask = {
-      ...task,
-      lastCheckedAt: referenceAt,
-      lastObservedRunningState: runningState,
-      lastObservedMessageAt: inspection.messageAt,
-      lastObservedMessageCount: inspection.messageCount,
-      updatedAt: referenceAt
-    };
-
-    if (runningState === "starting" || runningState === "running") {
-      return this.persist({
-        ...baseUpdate,
-        status: "active",
-        waitingReason: null,
-        nextCheckAt: shiftSeconds(referenceAt, task.checkIntervalSeconds),
-        lastAutomationSummary:
-          hasReachedAutoContinueLimit(task)
-            ? `会话仍在运行，但已达到预设的自动跟进轮数上限（${task.autoContinueCount}/${task.maxAutoContinueCount}），本轮结束后将停止自动续接。`
-            : "会话仍在运行，助手继续观察当前进度。"
-      });
-    }
-
-    if (hasReachedAutoContinueLimit(task)) {
-      const waitingReason = `已达到预设的自动跟进轮数上限（${task.autoContinueCount}/${task.maxAutoContinueCount}），如需继续，请手动重新发起跟进。`;
-      const summary = `自动跟进已按预设上限停止。结束条件：${task.completionCriteria}`;
-
-      return this.persistWithRound({
-        ...baseUpdate,
-        status: "waiting_user",
-        waitingReason,
-        nextCheckAt: null,
-        completedAt: null,
-        lastAutomationAt: referenceAt,
-        lastAutomationSummary: summary
-      }, {
-        kind: "limit_reached",
-        status: "waiting_user",
-        summary,
-        waitingReason,
-        continuePrompt: null,
-        observedRunningState: runningState,
-        autoContinueCount: task.autoContinueCount,
-        createdAt: referenceAt
-      });
-    }
+    const execution = this.beginTaskExecution(task.id);
 
     try {
-      const evaluation = await this.evaluateTask(profile, project, task, inspection, runningState);
+      const profile = this.butlerProfileService.ensureInitialized();
+      const project = this.butlerProjectService.getById(task.projectId);
+      const inspection = await this.inspectTask(task);
+      this.ensureTaskExecutionActive(task.id, execution);
+      const runningState = normalizeRunningState(inspection.runningState);
+      const baseUpdate: ButlerFollowUpTask = {
+        ...task,
+        lastCheckedAt: referenceAt,
+        lastObservedRunningState: runningState,
+        lastObservedMessageAt: inspection.messageAt,
+        lastObservedMessageCount: inspection.messageCount,
+        updatedAt: referenceAt
+      };
 
-      switch (evaluation.decision) {
-        case "completed":
-          return this.persistWithRound({
-            ...baseUpdate,
-            status: "completed",
-            waitingReason: null,
-            nextCheckAt: null,
-            completedAt: referenceAt,
-            lastAutomationAt: referenceAt,
-            lastAutomationSummary: evaluation.summary
-          }, {
-            kind: "completed",
-            status: "completed",
-            summary: evaluation.summary,
-            waitingReason: null,
-            continuePrompt: null,
-            observedRunningState: runningState,
-            autoContinueCount: task.autoContinueCount,
-            createdAt: referenceAt
-          });
-        case "waiting_user":
-          return this.persistWithRound({
-            ...baseUpdate,
-            status: "waiting_user",
-            waitingReason: evaluation.waitingReason ?? evaluation.summary,
-            nextCheckAt: null,
-            completedAt: null,
-            lastAutomationAt: referenceAt,
-            lastAutomationSummary: evaluation.summary
-          }, {
-            kind: "waiting_user",
-            status: "waiting_user",
-            summary: evaluation.summary,
-            waitingReason: evaluation.waitingReason ?? evaluation.summary,
-            continuePrompt: null,
-            observedRunningState: runningState,
-            autoContinueCount: task.autoContinueCount,
-            createdAt: referenceAt
-          });
-        case "failed":
-          return this.persistWithRound({
-            ...baseUpdate,
-            status: "failed",
-            waitingReason: evaluation.waitingReason ?? evaluation.summary,
-            nextCheckAt: null,
-            completedAt: null,
-            lastAutomationAt: referenceAt,
-            lastAutomationSummary: evaluation.summary
-          }, {
-            kind: "failed",
-            status: "failed",
-            summary: evaluation.summary,
-            waitingReason: evaluation.waitingReason ?? evaluation.summary,
-            continuePrompt: null,
-            observedRunningState: runningState,
-            autoContinueCount: task.autoContinueCount,
-            createdAt: referenceAt
-          });
-        case "continue":
-          if (!evaluation.continuePrompt) {
-            return this.persistWithRound({
+      if (runningState === "starting" || runningState === "running") {
+        return this.persistIfExecutionActive(task.id, execution, {
+          ...baseUpdate,
+          status: "active",
+          waitingReason: null,
+          nextCheckAt: shiftSeconds(referenceAt, task.checkIntervalSeconds),
+          lastAutomationSummary:
+            hasReachedAutoContinueLimit(task)
+              ? `会话仍在运行，但已达到预设的自动跟进轮数上限（${task.autoContinueCount}/${task.maxAutoContinueCount}），本轮结束后将停止自动续接。`
+              : "会话仍在运行，助手继续观察当前进度。"
+        });
+      }
+
+      if (hasReachedAutoContinueLimit(task)) {
+        const waitingReason = `已达到预设的自动跟进轮数上限（${task.autoContinueCount}/${task.maxAutoContinueCount}），如需继续，请手动重新发起跟进。`;
+        const summary = `自动跟进已按预设上限停止。结束条件：${task.completionCriteria}`;
+
+        return this.persistWithRoundIfExecutionActive(task.id, execution, {
+          ...baseUpdate,
+          status: "waiting_user",
+          waitingReason,
+          nextCheckAt: null,
+          completedAt: null,
+          lastAutomationAt: referenceAt,
+          lastAutomationSummary: summary
+        }, {
+          kind: "limit_reached",
+          status: "waiting_user",
+          summary,
+          waitingReason,
+          continuePrompt: null,
+          observedRunningState: runningState,
+          autoContinueCount: task.autoContinueCount,
+          createdAt: referenceAt
+        });
+      }
+
+      try {
+        const evaluation = await this.evaluateTask(profile, project, task, inspection, runningState, execution);
+        this.ensureTaskExecutionActive(task.id, execution);
+
+        switch (evaluation.decision) {
+          case "completed":
+            return this.persistWithRoundIfExecutionActive(task.id, execution, {
+              ...baseUpdate,
+              status: "completed",
+              waitingReason: null,
+              nextCheckAt: null,
+              completedAt: referenceAt,
+              lastAutomationAt: referenceAt,
+              lastAutomationSummary: evaluation.summary
+            }, {
+              kind: "completed",
+              status: "completed",
+              summary: evaluation.summary,
+              waitingReason: null,
+              continuePrompt: null,
+              observedRunningState: runningState,
+              autoContinueCount: task.autoContinueCount,
+              createdAt: referenceAt
+            });
+          case "waiting_user":
+            return this.persistWithRoundIfExecutionActive(task.id, execution, {
+              ...baseUpdate,
+              status: "waiting_user",
+              waitingReason: evaluation.waitingReason ?? evaluation.summary,
+              nextCheckAt: null,
+              completedAt: null,
+              lastAutomationAt: referenceAt,
+              lastAutomationSummary: evaluation.summary
+            }, {
+              kind: "waiting_user",
+              status: "waiting_user",
+              summary: evaluation.summary,
+              waitingReason: evaluation.waitingReason ?? evaluation.summary,
+              continuePrompt: null,
+              observedRunningState: runningState,
+              autoContinueCount: task.autoContinueCount,
+              createdAt: referenceAt
+            });
+          case "failed":
+            return this.persistWithRoundIfExecutionActive(task.id, execution, {
               ...baseUpdate,
               status: "failed",
-              waitingReason: "后台评估助手没有返回可继续推进的指令。",
+              waitingReason: evaluation.waitingReason ?? evaluation.summary,
               nextCheckAt: null,
               completedAt: null,
               lastAutomationAt: referenceAt,
@@ -490,105 +491,136 @@ export class ButlerFollowUpService {
               kind: "failed",
               status: "failed",
               summary: evaluation.summary,
-              waitingReason: "后台评估助手没有返回可继续推进的指令。",
+              waitingReason: evaluation.waitingReason ?? evaluation.summary,
               continuePrompt: null,
               observedRunningState: runningState,
               autoContinueCount: task.autoContinueCount,
               createdAt: referenceAt
             });
-          }
+          case "continue":
+            if (!evaluation.continuePrompt) {
+              return this.persistWithRoundIfExecutionActive(task.id, execution, {
+                ...baseUpdate,
+                status: "failed",
+                waitingReason: "后台评估助手没有返回可继续推进的指令。",
+                nextCheckAt: null,
+                completedAt: null,
+                lastAutomationAt: referenceAt,
+                lastAutomationSummary: evaluation.summary
+              }, {
+                kind: "failed",
+                status: "failed",
+                summary: evaluation.summary,
+                waitingReason: "后台评估助手没有返回可继续推进的指令。",
+                continuePrompt: null,
+                observedRunningState: runningState,
+                autoContinueCount: task.autoContinueCount,
+                createdAt: referenceAt
+              });
+            }
 
-          const sendResult = await this.sendContinuePrompt(
-            task,
-            evaluation.continuePrompt,
-            referenceAt
-          );
+            this.ensureTaskExecutionActive(task.id, execution);
+            const sendResult = await this.sendContinuePrompt(
+              task,
+              evaluation.continuePrompt,
+              referenceAt
+            );
+            this.ensureTaskExecutionActive(task.id, execution);
 
-          this.butlerSessionService.captureSessionSnapshot(
-            task.projectId,
-            task.butlerSessionId,
-            task.createdByUserId,
-            { sourceKind: "manual" }
-          );
+            this.butlerSessionService.captureSessionSnapshot(
+              task.projectId,
+              task.butlerSessionId,
+              task.createdByUserId,
+              { sourceKind: "manual" }
+            );
 
-          const nextAutoContinueCount = task.autoContinueCount + 1;
-          const nextSummary =
-            sendResult.delivery === "queued"
-              ? buildQueuedFollowUpSummary(evaluation.summary, sendResult.queueItem)
-              : evaluation.summary;
+            const nextAutoContinueCount = task.autoContinueCount + 1;
+            const nextSummary =
+              sendResult.delivery === "queued"
+                ? buildQueuedFollowUpSummary(evaluation.summary, sendResult.queueItem)
+                : evaluation.summary;
 
-          return this.persistWithRound({
+            return this.persistWithRoundIfExecutionActive(task.id, execution, {
+              ...baseUpdate,
+              status: "active",
+              waitingReason: null,
+              nextCheckAt: shiftSeconds(referenceAt, task.checkIntervalSeconds),
+              lastAutomationAt: referenceAt,
+              autoContinueCount: nextAutoContinueCount,
+              lastAutomationSummary: nextSummary
+            }, {
+              kind: sendResult.delivery === "queued" ? "queued" : "continue",
+              status: "active",
+              summary: nextSummary,
+              waitingReason: null,
+              continuePrompt: evaluation.continuePrompt,
+              observedRunningState: runningState,
+              autoContinueCount: nextAutoContinueCount,
+              createdAt: referenceAt
+            });
+          default:
+            return this.persistWithRoundIfExecutionActive(task.id, execution, {
+              ...baseUpdate,
+              status: "failed",
+              waitingReason: "后台评估助手返回了不支持的决策。",
+              nextCheckAt: null,
+              completedAt: null,
+              lastAutomationAt: referenceAt,
+              lastAutomationSummary: "后台评估助手返回了不支持的决策。"
+            }, {
+              kind: "failed",
+              status: "failed",
+              summary: "后台评估助手返回了不支持的决策。",
+              waitingReason: "后台评估助手返回了不支持的决策。",
+              continuePrompt: null,
+              observedRunningState: runningState,
+              autoContinueCount: task.autoContinueCount,
+              createdAt: referenceAt
+            });
+        }
+      } catch (error) {
+        if (error instanceof FollowUpTaskCancelledError) {
+          return this.butlerFollowUpTaskRepository.findById(task.id) ?? task;
+        }
+
+        if (isDeferredFollowUpSendError(error)) {
+          return this.persistIfExecutionActive(task.id, execution, {
             ...baseUpdate,
             status: "active",
             waitingReason: null,
             nextCheckAt: shiftSeconds(referenceAt, task.checkIntervalSeconds),
-            lastAutomationAt: referenceAt,
-            autoContinueCount: nextAutoContinueCount,
-            lastAutomationSummary: nextSummary
-          }, {
-            kind: sendResult.delivery === "queued" ? "queued" : "continue",
-            status: "active",
-            summary: nextSummary,
-            waitingReason: null,
-            continuePrompt: evaluation.continuePrompt,
-            observedRunningState: runningState,
-            autoContinueCount: nextAutoContinueCount,
-            createdAt: referenceAt
-          });
-        default:
-          return this.persistWithRound({
-            ...baseUpdate,
-            status: "failed",
-            waitingReason: "后台评估助手返回了不支持的决策。",
-            nextCheckAt: null,
             completedAt: null,
             lastAutomationAt: referenceAt,
-            lastAutomationSummary: "后台评估助手返回了不支持的决策。"
-          }, {
-            kind: "failed",
-            status: "failed",
-            summary: "后台评估助手返回了不支持的决策。",
-            waitingReason: "后台评估助手返回了不支持的决策。",
-            continuePrompt: null,
-            observedRunningState: runningState,
-            autoContinueCount: task.autoContinueCount,
-            createdAt: referenceAt
+            lastAutomationSummary: "当前会话又进入运行态，本轮不插话，等待下一次检查。"
           });
-      }
-    } catch (error) {
-      if (isDeferredFollowUpSendError(error)) {
-        return this.persist({
+        }
+
+        const detail = error instanceof Error ? error.message : String(error);
+        const summary = `后台评估助手执行失败：${detail}`;
+
+        return this.persistWithRoundIfExecutionActive(task.id, execution, {
           ...baseUpdate,
-          status: "active",
-          waitingReason: null,
-          nextCheckAt: shiftSeconds(referenceAt, task.checkIntervalSeconds),
+          status: "failed",
+          waitingReason: detail,
+          nextCheckAt: null,
           completedAt: null,
           lastAutomationAt: referenceAt,
-          lastAutomationSummary: "当前会话又进入运行态，本轮不插话，等待下一次检查。"
+          lastAutomationSummary: summary
+        }, {
+          kind: "failed",
+          status: "failed",
+          summary,
+          waitingReason: detail,
+          continuePrompt: null,
+          observedRunningState: runningState,
+          autoContinueCount: task.autoContinueCount,
+          createdAt: referenceAt
         });
       }
-
-      const detail = error instanceof Error ? error.message : String(error);
-      const summary = `后台评估助手执行失败：${detail}`;
-
-      return this.persistWithRound({
-        ...baseUpdate,
-        status: "failed",
-        waitingReason: detail,
-        nextCheckAt: null,
-        completedAt: null,
-        lastAutomationAt: referenceAt,
-        lastAutomationSummary: summary
-      }, {
-        kind: "failed",
-        status: "failed",
-        summary,
-        waitingReason: detail,
-        continuePrompt: null,
-        observedRunningState: runningState,
-        autoContinueCount: task.autoContinueCount,
-        createdAt: referenceAt
-      });
+    } finally {
+      if (this.activeExecutionStateByTaskId.get(task.id) === execution) {
+        this.activeExecutionStateByTaskId.delete(task.id);
+      }
     }
   }
 
@@ -615,6 +647,31 @@ export class ButlerFollowUpService {
       ...task,
       rounds: [...normalizedRounds, createFollowUpRound(normalizedRounds, round)]
     });
+  }
+
+  private persistIfExecutionActive(
+    taskId: string,
+    execution: FollowUpTaskExecutionState,
+    task: ButlerFollowUpTask
+  ): ButlerFollowUpTask {
+    if (!this.isTaskExecutionActive(taskId, execution)) {
+      return this.butlerFollowUpTaskRepository.findById(taskId) ?? task;
+    }
+
+    return this.persist(task);
+  }
+
+  private persistWithRoundIfExecutionActive(
+    taskId: string,
+    execution: FollowUpTaskExecutionState,
+    task: ButlerFollowUpTask,
+    round: Omit<ButlerFollowUpRound, "roundNumber">
+  ): ButlerFollowUpTask {
+    if (!this.isTaskExecutionActive(taskId, execution)) {
+      return this.butlerFollowUpTaskRepository.findById(taskId) ?? task;
+    }
+
+    return this.persistWithRound(task, round);
   }
 
   private async autoApprovePendingPermissionRequestsIfDue(
@@ -806,7 +863,8 @@ export class ButlerFollowUpService {
     project: ButlerProject,
     task: ButlerFollowUpTask,
     inspection: FollowUpTaskInspection,
-    runningState: SessionRunningState | null
+    runningState: SessionRunningState | null,
+    execution: FollowUpTaskExecutionState
   ): Promise<ButlerFollowUpEvaluationResult> {
     const evaluatorWorkspacePath = path.join(profile.workspacePath, FOLLOW_UP_EVALUATOR_DIRNAME);
     ensureButlerWorkspaceIsolation(evaluatorWorkspacePath);
@@ -841,10 +899,68 @@ export class ButlerFollowUpService {
       permissionMode: "default",
       instructionFilePath: resolveFollowUpInstructionFilePath(profile.providerId, evaluatorWorkspacePath)
     });
+    execution.evaluatorSessionId = launch.sessionId;
 
-    await adapter.waitForSessionTerminal(launch.sessionId);
-    const result = await adapter.readPatrolResult(launch.sessionId);
-    return parseEvaluationResult(result);
+    try {
+      await adapter.waitForSessionTerminal(launch.sessionId);
+      this.ensureTaskExecutionActive(task.id, execution);
+      const result = await adapter.readPatrolResult(launch.sessionId);
+      return parseEvaluationResult(result);
+    } finally {
+      if (execution.evaluatorSessionId === launch.sessionId) {
+        execution.evaluatorSessionId = null;
+      }
+    }
+  }
+
+  private beginTaskExecution(taskId: string): FollowUpTaskExecutionState {
+    const execution: FollowUpTaskExecutionState = {
+      cancelled: false,
+      evaluatorSessionId: null
+    };
+    this.activeExecutionStateByTaskId.set(taskId, execution);
+    return execution;
+  }
+
+  private markTaskExecutionCancelled(taskId: string): FollowUpTaskExecutionState | null {
+    const execution = this.activeExecutionStateByTaskId.get(taskId) ?? null;
+
+    if (execution) {
+      execution.cancelled = true;
+    }
+
+    return execution;
+  }
+
+  private ensureTaskExecutionActive(taskId: string, execution: FollowUpTaskExecutionState): void {
+    if (!this.isTaskExecutionActive(taskId, execution)) {
+      throw new FollowUpTaskCancelledError();
+    }
+  }
+
+  private isTaskExecutionActive(taskId: string, execution: FollowUpTaskExecutionState): boolean {
+    const current = this.activeExecutionStateByTaskId.get(taskId);
+    return Boolean(current && current === execution && !execution.cancelled);
+  }
+
+  private async stopActiveTaskAutomation(execution: FollowUpTaskExecutionState | null): Promise<void> {
+    if (!execution?.evaluatorSessionId) {
+      return;
+    }
+
+    const profile = this.butlerProfileService.ensureInitialized();
+    const adapter = this.providerAdapterRegistry.get(profile.providerId);
+
+    try {
+      await adapter.interruptPatrolSession(execution.evaluatorSessionId);
+    } catch (error) {
+      console.warn("[butler-follow-up] interrupt evaluator session failed", {
+        sessionId: execution.evaluatorSessionId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    } finally {
+      execution.evaluatorSessionId = null;
+    }
   }
 
   private writeEvaluationInstructionFiles(

@@ -70,6 +70,10 @@ export async function registerButlerRoutes(
   app.get("/api/butler/projects/:projectId/patrol-runs/:runId", butlerController.getPatrolRun);
   app.get("/api/butler/projects/:projectId/verifications", butlerController.listVerificationRuns);
   app.post("/api/butler/projects/:projectId/verifications", butlerController.startVerificationRun);
+  app.post(
+    "/api/butler/projects/:projectId/verifications/:verificationId/cancel",
+    butlerController.cancelVerificationRun
+  );
   app.get(
     "/api/butler/projects/:projectId/verifications/:verificationId",
     butlerController.getVerificationRun

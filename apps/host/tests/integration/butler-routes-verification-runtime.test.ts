@@ -5,6 +5,7 @@ import type { ButlerControlSessionService } from "../../src/modules/butler/butle
 import type { ButlerControlActionService } from "../../src/modules/butler/butler-control-action-service.js";
 import type { ButlerFollowUpService } from "../../src/modules/butler/butler-follow-up-service.js";
 import type { ButlerInboxService } from "../../src/modules/butler/butler-inbox-service.js";
+import type { ButlerNotificationService } from "../../src/modules/butler/butler-notification-service.js";
 import type { ButlerContextAggregator } from "../../src/modules/butler/context-aggregator.js";
 import type { ButlerProfileService } from "../../src/modules/butler/butler-profile-service.js";
 import type { ButlerProjectService } from "../../src/modules/butler/butler-project-service.js";
@@ -30,6 +31,7 @@ describe("butler routes verification runtime", () => {
       {} as ButlerContextAggregator,
       {} as ButlerFollowUpService,
       {} as ButlerInboxService,
+      {} as ButlerNotificationService,
       {} as ButlerProjectService,
       {} as ButlerSessionService,
       {} as ProjectMemoryService,
@@ -73,7 +75,7 @@ describe("butler routes verification runtime", () => {
         butlerSessionId: "butler-session-1",
         sourcePatrolRunId: "run-1",
         verificationType: "test",
-        status: "passed",
+        status: "running",
         targetRef: null,
         spec: {
           command: "pnpm",
@@ -86,11 +88,32 @@ describe("butler routes verification runtime", () => {
           }
         ],
         result: {
-          exitCode: 0
+          accepted: true
         },
-        summary: "测试验证通过：命令以退出码 0 结束",
+        summary: null,
         startedAt: "2026-04-03T03:00:00.000Z",
-        finishedAt: "2026-04-03T03:00:05.000Z",
+        finishedAt: null,
+        createdAt: "2026-04-03T03:00:00.000Z"
+      })),
+      cancelRun: vi.fn(() => ({
+        id: "verification-1",
+        projectId: "project-1",
+        butlerSessionId: "butler-session-1",
+        sourcePatrolRunId: "run-1",
+        verificationType: "test",
+        status: "cancelled",
+        targetRef: null,
+        spec: {
+          command: "pnpm",
+          args: ["test"]
+        },
+        artifactRefs: [],
+        result: {
+          cancelledBy: "user"
+        },
+        summary: "已手动结束当前会话验证，并停止关联自动化执行。",
+        startedAt: "2026-04-03T03:00:00.000Z",
+        finishedAt: "2026-04-03T03:00:02.000Z",
         createdAt: "2026-04-03T03:00:00.000Z"
       })),
       listRuns: vi.fn(() => [
@@ -155,7 +178,7 @@ describe("butler routes verification runtime", () => {
       }
     });
     expect(created.statusCode).toBe(201);
-    expect(created.json().run.status).toBe("passed");
+    expect(created.json().run.status).toBe("running");
     expect((verificationRunService as unknown as { startRun: ReturnType<typeof vi.fn> }).startRun).toHaveBeenCalledWith(
       "project-1",
       {
@@ -183,6 +206,17 @@ describe("butler routes verification runtime", () => {
     });
     expect(detail.statusCode).toBe(200);
     expect(detail.json().run.summary).toContain("测试验证通过");
+
+    const cancelled = await app.inject({
+      method: "POST",
+      url: "/api/butler/projects/project-1/verifications/verification-1/cancel"
+    });
+    expect(cancelled.statusCode).toBe(200);
+    expect(cancelled.json().run.status).toBe("cancelled");
+    expect((verificationRunService as unknown as { cancelRun: ReturnType<typeof vi.fn> }).cancelRun).toHaveBeenCalledWith(
+      "project-1",
+      "verification-1"
+    );
   });
 
   it("verifications 会透传 VERIFICATION_TYPE_UNSUPPORTED", async () => {

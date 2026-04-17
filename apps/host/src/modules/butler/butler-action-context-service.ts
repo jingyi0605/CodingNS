@@ -2,6 +2,7 @@ import { AppError } from "../../shared/errors/app-error.js";
 import type { ButlerFollowUpService, ButlerFollowUpTaskView } from "./butler-follow-up-service.js";
 import type { ButlerProjectService } from "./butler-project-service.js";
 import type { ButlerProjectSessionView, ButlerSessionService } from "./butler-session-service.js";
+import type { VerificationRunService, VerificationRunView } from "./verification-run-service.js";
 
 const ACTION_CONTEXT_CACHE_TTL_MS = 15_000;
 
@@ -19,6 +20,7 @@ export interface ButlerSessionActionContextView {
   project: ButlerSessionActionContextProjectView;
   session: ButlerProjectSessionView;
   latestFollowUpTask: ButlerFollowUpTaskView | null;
+  latestVerificationRun: VerificationRunView | null;
 }
 
 interface ButlerSessionActionContextCacheEntry {
@@ -36,7 +38,8 @@ export class ButlerActionContextService {
       ButlerSessionService,
       "getSessionWorkspaceId" | "resolveActionTarget"
     >,
-    private readonly butlerFollowUpService: Pick<ButlerFollowUpService, "listTasks">
+    private readonly butlerFollowUpService: Pick<ButlerFollowUpService, "listTasks">,
+    private readonly verificationRunService: Pick<VerificationRunService, "listRuns">
   ) {}
 
   async getSessionActionContext(
@@ -123,6 +126,9 @@ export class ButlerActionContextService {
       sessionId,
       limit: 1
     })[0] ?? null;
+    const latestVerificationRun = this.verificationRunService
+      .listRuns(project.id)
+      .find((run) => run.butlerSessionId === target.session.id) ?? null;
 
     return {
       workspaceId: target.workspaceId,
@@ -135,7 +141,8 @@ export class ButlerActionContextService {
         riskLevel: project.riskLevel
       },
       session: target.session,
-      latestFollowUpTask
+      latestFollowUpTask,
+      latestVerificationRun
     };
   }
 }

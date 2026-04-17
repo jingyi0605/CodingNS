@@ -54,6 +54,22 @@ describe("ButlerActionContextService", () => {
     updatedAt: "2026-04-07T00:05:00.000Z",
     completedAt: null
   };
+  const latestVerificationRun = {
+    id: "verification-1",
+    projectId: "project-1",
+    butlerSessionId: "butler-session-1",
+    sourcePatrolRunId: null,
+    verificationType: "browser",
+    status: "running",
+    targetRef: "登录页开发",
+    spec: {},
+    artifactRefs: [],
+    result: {},
+    summary: "正在做登录页开发验证。",
+    startedAt: "2026-04-07T00:06:00.000Z",
+    finishedAt: null,
+    createdAt: "2026-04-07T00:06:00.000Z"
+  };
 
   let butlerProjectService: {
     resolveWorkspaceActionProject: ReturnType<typeof vi.fn>;
@@ -64,6 +80,9 @@ describe("ButlerActionContextService", () => {
   };
   let butlerFollowUpService: {
     listTasks: ReturnType<typeof vi.fn>;
+  };
+  let verificationRunService: {
+    listRuns: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -80,13 +99,17 @@ describe("ButlerActionContextService", () => {
     butlerFollowUpService = {
       listTasks: vi.fn(() => [latestFollowUpTask])
     };
+    verificationRunService = {
+      listRuns: vi.fn(() => [latestVerificationRun])
+    };
   });
 
   it("会聚合当前会话的助手动作上下文", async () => {
     const service = new ButlerActionContextService(
       butlerProjectService as never,
       butlerSessionService as never,
-      butlerFollowUpService as never
+      butlerFollowUpService as never,
+      verificationRunService as never
     );
 
     const context = await service.getSessionActionContext("session-1", "user-1");
@@ -95,10 +118,12 @@ describe("ButlerActionContextService", () => {
     expect(context.project.id).toBe("project-1");
     expect(context.session.id).toBe("butler-session-1");
     expect(context.latestFollowUpTask?.id).toBe("follow-up-1");
+    expect(context.latestVerificationRun?.id).toBe("verification-1");
     expect(butlerFollowUpService.listTasks).toHaveBeenCalledWith({
       sessionId: "session-1",
       limit: 1
     });
+    expect(verificationRunService.listRuns).toHaveBeenCalledWith("project-1");
   });
 
   it("会复用预热中的上下文构建，避免同一会话重复慢查询", async () => {
@@ -112,7 +137,8 @@ describe("ButlerActionContextService", () => {
     const service = new ButlerActionContextService(
       butlerProjectService as never,
       butlerSessionService as never,
-      butlerFollowUpService as never
+      butlerFollowUpService as never,
+      verificationRunService as never
     );
 
     service.preloadSessionActionContext("session-1", "user-1");
@@ -135,7 +161,8 @@ describe("ButlerActionContextService", () => {
     const service = new ButlerActionContextService(
       butlerProjectService as never,
       butlerSessionService as never,
-      butlerFollowUpService as never
+      butlerFollowUpService as never,
+      verificationRunService as never
     );
 
     await service.getSessionActionContext("session-1", "user-1");
