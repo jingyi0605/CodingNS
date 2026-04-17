@@ -19,6 +19,23 @@
 - 已补 [docs/20260417-最小回归验证清单.md](./docs/20260417-最小回归验证清单.md)，把一次性自动化、周期自动化、条件自动化、沙箱创建、沙箱会话、失败隔离这些最小验证面收清楚。
 - 已确认本子 Spec 的下一步实现不该直接上代码，而是先把任务 3 的 `TaskManager` 接入切片细化，再开始后端落地。
 
+## 2026-04-17 一次性自动化落地补记
+
+- 已完成第一刀后端落地，但范围只收在正式自动化的 `once`：
+  - Host 已新增 `assistant_automation_tasks` / `assistant_automation_runs` 表、仓储和 `AssistantAutomationService`
+  - 旧 `ButlerControlTimerService` 已改成兼容 facade，继续对外保留 `timers.*`
+  - `assistant-capability` 已新增正式 `/automations` API
+  - `codingns assistant automations *` CLI 最小入口已补
+- 这一步明确没做：
+  - 没做 `interval / cron / condition`
+  - 没做临时沙箱工作区
+  - 还没把自动化真正接进 `TaskManager`
+- 已补最小测试覆盖：
+  - `assistant-automation-service.test.ts`
+  - `assistant-capability-routes.test.ts`
+  - `assistant-capability-service.test.ts`
+  - `butler-control-timer-service.test.ts`
+
 ## 任务 1：先把自动化和旧 timer 的边界说死
 
 目标结果：
@@ -75,9 +92,19 @@
 - 不把重活留在轻量扫描环节
 
 当前状态：
-- [ ] 进行中
+- [x] 已完成当前实现切片
 - 已在 `design.md` 中补任务类型、`key` 和执行位点初稿
-- 还未把调度扫描、条件求值、执行回写拆成独立实现切片
+- 已先落一版非 `TaskManager` 的 once 自动化权威对象，先把数据结构、Host API 和兼容 timer 立住
+- 已把一次性自动化扫描/执行正式接进 `TaskManager`
+- 当前落地的任务切片：
+  - `assistant.automation.tick` 负责扫描到期任务并按 `automationId` enqueue
+  - `assistant.automation.evaluate` 负责真正执行一次性自动化并回写 run/task 状态
+  - Host 重启后，如果上一次 run 已成功/失败但 task 没来得及收口，会在下一次 evaluate 前自动补齐 task 状态
+  - Host 重启后，如果上一次 run 卡在 `running`，会先标记为中断失败，再重试当前到期任务
+- 当前仍未做：
+  - `interval / cron / condition`
+  - 自动化清理任务
+  - 更重执行位点拆分到 helper/external process
 
 ## 任务 4：定义沙箱工作区模型和生命周期
 
@@ -116,7 +143,13 @@
 - 不允许不传目标就猜默认对象
 
 当前状态：
-- [ ] 待开始
+- [x] 已完成当前实现切片
+- `assistant-capability` 已支持 `sessions.start`
+- 会话启动目标已明确支持 `project / workspace / sandbox` 三选一
+- 约束已收死：
+  - 不传目标不允许猜默认
+  - `sandbox` 启动前会检查沙箱是否已过期或删除
+  - `project` 继续走 Butler 管理会话；`workspace / sandbox` 走实时会话启动
 
 ## 任务 6：设计兼容迁移和 UI/CLI 入口
 
@@ -138,7 +171,12 @@
 当前状态：
 - [ ] 进行中
 - 已补兼容映射文档初稿
-- 还未把旧 Host API、CLI、前端 DTO 的具体实现切片拆开
+- 已补正式 `/api/assistant/automations` API 和 `codingns assistant automations *` CLI 最小入口
+- 旧 `timers.*` Host 服务兼容入口已切到正式自动化对象
+- 已补 `codingns assistant sessions start` 新入口，支持 `--project / --workspace / --sandbox`
+- 已补 `codingns assistant sandboxes list/create/promote/expire/remove`
+- 前端 DTO 和页面入口还未开始
+- 本轮明确不做旧前端全面迁移，只先把 Host API 和 CLI 正式入口立住
 
 ## 任务 7：补验证清单和最小回归集
 
@@ -161,4 +199,18 @@
 当前状态：
 - [ ] 进行中
 - 已补最小回归验证清单初稿
-- 还未把具体测试文件、测试命令和验收记录落到实现任务里
+- 已补一次性自动化与 timer 兼容的最小集成测试
+- 当前已验证：
+  - `pnpm --dir apps/host exec vitest run tests/integration/assistant-automation-service.test.ts tests/integration/butler-control-timer-service.test.ts tests/integration/assistant-capability-service.test.ts tests/integration/assistant-capability-routes.test.ts`
+  - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
+- 本轮新增验证：
+  - `pnpm --dir apps/host exec vitest run tests/integration/assistant-automation-service.test.ts tests/integration/butler-control-timer-service.test.ts tests/integration/assistant-capability-service.test.ts tests/integration/assistant-capability-routes.test.ts tests/integration/assistant-sandbox-service.test.ts tests/integration/butler-project-service.test.ts`
+  - `node --check packages/codingns/bin/codingns.mjs`
+- 当前已覆盖：
+  - 一次性自动化通过 `TaskManager` 扫描并执行
+  - `timers.*` 继续通过兼容 facade 工作
+  - `sessions.start` 支持 `workspace` 目标
+  - 沙箱创建、晋升、删除与“跳过自动纳管项目”最小链路
+  - Host 重启后的一次性自动化收口恢复：
+    - 已成功 run 不会因为 task 未收口而重复发消息
+    - `running` run 会被标记中断后重试
