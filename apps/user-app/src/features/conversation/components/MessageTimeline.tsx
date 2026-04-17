@@ -153,7 +153,7 @@ interface AssistantCapabilitySnapshot {
   }>;
 }
 
-type FoldedPromptKind = "rules" | "system_prompt";
+type FoldedPromptKind = "rules" | "system_prompt" | "skill_context";
 
 const OLDER_HISTORY_PREFETCH_THRESHOLD_PX = 480;
 const STICK_TO_BOTTOM_DISTANCE_PX = 80;
@@ -1834,7 +1834,30 @@ function looksLikeRulesMessage(provider: ProviderId | null, content: string) {
     && /<\/INSTRUCTIONS>/i.test(normalized);
 }
 
-function getRulesMessageSummary(content: string) {
+function looksLikeSkillContextMessage(provider: ProviderId | null, content: string) {
+  if (provider !== "claude-code") {
+    return false;
+  }
+
+  const normalized = content.trim();
+
+  return /Base directory for this skill:/i.test(normalized)
+    && /^#\s+.+/im.test(normalized)
+    && /\bARGUMENTS:/i.test(normalized);
+}
+
+function getFoldedPromptSummary(kind: FoldedPromptKind, content: string) {
+  if (kind === "skill_context") {
+    const skillHeading = content
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => /^#\s+/.test(line));
+
+    if (skillHeading) {
+      return skillHeading.replace(/^#+\s*/, "");
+    }
+  }
+
   const firstLine = content
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -3186,23 +3209,31 @@ function RulesMessageCard({
   onForkMessage?: ((message: SessionMessageViewModel) => Promise<void> | void) | null;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const summary = getRulesMessageSummary(message.content);
+  const summary = getFoldedPromptSummary(kind, message.content);
   const isUser = tone === "user-message";
   const title =
     kind === "system_prompt"
       ? t("conversation.systemPromptTitle")
+      : kind === "skill_context"
+        ? t("conversation.skillContextTitle")
       : t("conversation.rulesMessageTitle");
   const hint =
     kind === "system_prompt"
       ? t("conversation.systemPromptHint")
+      : kind === "skill_context"
+        ? t("conversation.skillContextHint")
       : t("conversation.rulesMessageHint");
   const actionLabel =
     expanded
       ? kind === "system_prompt"
         ? t("conversation.systemPromptCollapse")
+        : kind === "skill_context"
+          ? t("conversation.skillContextCollapse")
         : t("conversation.rulesMessageCollapse")
       : kind === "system_prompt"
         ? t("conversation.systemPromptExpand")
+        : kind === "skill_context"
+          ? t("conversation.skillContextExpand")
         : t("conversation.rulesMessageExpand");
 
   return (
@@ -3297,7 +3328,9 @@ function MessageItem({
     foldedPromptKind ??
     (looksLikeRulesMessage(provider, message.content)
       ? "rules"
-      : null);
+      : looksLikeSkillContextMessage(provider, message.content)
+        ? "skill_context"
+        : null);
   const richContent = useMemo(() => parseMessageRichContent(message.content), [message.content]);
   const visibleContent = richContent.text;
   const inlineImages = richContent.inlineImages;

@@ -661,7 +661,8 @@ export function createServer(config: HostConfig) {
     butlerAnalysisProviderAdapterRegistry,
     butlerRuntimeConfig.codexHomeDir,
     config.codexHomeDir,
-    butlerRuntimeConfig.claudeCodeHomeDir
+    butlerRuntimeConfig.claudeCodeHomeDir,
+    config.claudeCodeHomeDir
   );
   const butlerSessionSummaryService = new ButlerSessionSummaryService(
     butlerProfileService,
@@ -731,6 +732,7 @@ export function createServer(config: HostConfig) {
     butlerRuntimeConfig.codexHomeDir,
     config.codexHomeDir,
     butlerRuntimeConfig.claudeCodeHomeDir,
+    config.claudeCodeHomeDir,
     repositories.sessionMessageOriginRepository
   );
   const assistantAutomationService = new AssistantAutomationService(

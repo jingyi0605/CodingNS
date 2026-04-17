@@ -440,6 +440,24 @@ export class SessionPermissionRequestService {
       };
     }
 
+    const safeAssistantCliReason = resolveClaudeAssistantCliAutoApprovalReason(normalized.command);
+
+    if (safeAssistantCliReason) {
+      logPermissionDebug("claude_permission.pre_tool_use.auto_allow_safe_assistant_cli", {
+        sessionId: binding.sessionId,
+        providerSessionId,
+        toolName: payload.tool_name ?? null,
+        command: normalized.command,
+        reason: safeAssistantCliReason
+      });
+      return {
+        accepted: true,
+        ignored: false,
+        sessionId: binding.sessionId,
+        bridgeResponse: buildClaudePreToolUseBridgeResponse("allow", safeAssistantCliReason)
+      };
+    }
+
     let resolvedByTimeout = false;
 
     const decision = await new Promise<ClaudePreToolUseDecision>((resolve) => {
@@ -2142,6 +2160,203 @@ function buildClaudeActions(kind: SessionPermissionRequestKind): SessionPermissi
   );
 
   return actions;
+}
+
+function resolveClaudeAssistantCliAutoApprovalReason(command: string | null): string | null {
+  const parsed = parseCodingNsAssistantCommand(command);
+
+  if (!parsed) {
+    return null;
+  }
+
+  if (parsed.mode === "help") {
+    return "CodingNS 已自动放行只读的助手帮助命令";
+  }
+
+  if (!isSupportedAssistantCliAction(parsed.group, parsed.action)) {
+    return null;
+  }
+
+  if (isReadonlyAssistantCliAction(parsed.group, parsed.action)) {
+    return "CodingNS 已自动放行只读的助手 CLI 查询命令";
+  }
+
+  return "CodingNS 已自动放行受控的助手 CLI 执行命令";
+}
+
+function parseCodingNsAssistantCommand(command: string | null): {
+  group: string | null;
+  action: string | null;
+  mode: "help" | "execute";
+} | null {
+  const normalized = normalizeText(command);
+
+  if (!normalized || containsShellControlOperator(normalized)) {
+    return null;
+  }
+
+  const tokens = tokenizeShellCommand(normalized);
+  const startIndex = tokens.findIndex(
+    (token, index) => token === "codingns" && tokens[index + 1] === "assistant"
+  );
+
+  if (startIndex < 0) {
+    return null;
+  }
+
+  const invocation = tokens.slice(startIndex + 2);
+
+  if (invocation.length === 0 || invocation[0] === "--help" || invocation[0] === "-h") {
+    return {
+      group: null,
+      action: null,
+      mode: "help"
+    };
+  }
+
+  if (invocation[0] === "help") {
+    return {
+      group: invocation[1] ?? null,
+      action: invocation[2] ?? null,
+      mode: "help"
+    };
+  }
+
+  const group = invocation[0] ?? null;
+  const actionCandidate = invocation[1];
+  const action =
+    actionCandidate && !actionCandidate.startsWith("-")
+      ? actionCandidate
+      : null;
+
+  if (!action && invocation.some((token) => token === "--help" || token === "-h")) {
+    return {
+      group,
+      action: null,
+      mode: "help"
+    };
+  }
+
+  return {
+    group,
+    action,
+    mode: "execute"
+  };
+}
+
+function containsShellControlOperator(command: string): boolean {
+  return /(^|[^\\])(?:&&|\|\||[;|><]|`|\$\()/.test(command);
+}
+
+function tokenizeShellCommand(command: string): string[] {
+  const tokens: string[] = [];
+  const pattern = /"([^"\\]|\\.)*"|'([^'\\]|\\.)*'|`([^`\\]|\\.)*`|\S+/g;
+
+  for (const match of command.matchAll(pattern)) {
+    const value = match[0] ?? "";
+
+    if (!value) {
+      continue;
+    }
+
+    const quoted = value[0];
+
+    if ((quoted === "\"" || quoted === "'" || quoted === "`") && value[value.length - 1] === quoted) {
+      tokens.push(value.slice(1, -1));
+      continue;
+    }
+
+    tokens.push(value);
+  }
+
+  return tokens;
+}
+
+function isReadonlyAssistantCliAction(group: string | null, action: string | null): boolean {
+  const readonlyActions = getSupportedAssistantCliActions(group);
+
+  if (!readonlyActions) {
+    return false;
+  }
+
+  const normalizedAction = action?.trim();
+
+  if (!normalizedAction) {
+    return false;
+  }
+
+  return readonlyActions.readonly.has(normalizedAction);
+}
+
+function isSupportedAssistantCliAction(group: string | null, action: string | null): boolean {
+  const supportedActions = getSupportedAssistantCliActions(group);
+  const normalizedAction = action?.trim();
+
+  if (!supportedActions || !normalizedAction) {
+    return false;
+  }
+
+  return supportedActions.readonly.has(normalizedAction) || supportedActions.mutating.has(normalizedAction);
+}
+
+function getSupportedAssistantCliActions(group: string | null): {
+  readonly: Set<string>;
+  mutating: Set<string>;
+} | null {
+  const normalizedGroup = group?.trim();
+
+  if (!normalizedGroup) {
+    return null;
+  }
+
+  const supportedActionsByGroup: Record<string, { readonly: Set<string>; mutating: Set<string> }> = {
+    capabilities: {
+      readonly: new Set(["list"]),
+      mutating: new Set()
+    },
+    projects: {
+      readonly: new Set(["list", "get"]),
+      mutating: new Set()
+    },
+    sessions: {
+      readonly: new Set(["list", "get", "messages", "runtime"]),
+      mutating: new Set(["start", "send", "fork"])
+    },
+    automations: {
+      readonly: new Set(["list", "get", "runs"]),
+      mutating: new Set(["create", "cancel"])
+    },
+    sandboxes: {
+      readonly: new Set(["list"]),
+      mutating: new Set(["create", "promote", "expire", "remove"])
+    },
+    timers: {
+      readonly: new Set(["list", "get"]),
+      mutating: new Set(["create", "cancel"])
+    },
+    terminals: {
+      readonly: new Set(["list", "history"]),
+      mutating: new Set(["send", "close"])
+    },
+    "debug-targets": {
+      readonly: new Set(["compatibility-matrix", "framework-analysis", "runtime-latest", "runtimes"]),
+      mutating: new Set(["analyze", "refresh-framework-analysis", "launch-plan", "run"])
+    },
+    "debug-runtimes": {
+      readonly: new Set(["get"]),
+      mutating: new Set()
+    },
+    workspaces: {
+      readonly: new Set(["list", "browse", "management"]),
+      mutating: new Set(["mkdir", "import", "clone", "reorder", "nav-state", "remove"])
+    },
+    worktrees: {
+      readonly: new Set(["tree", "merge-preview"]),
+      mutating: new Set(["create", "merge", "cleanup"])
+    }
+  };
+
+  return supportedActionsByGroup[normalizedGroup] ?? null;
 }
 
 function stringifyPayload(value: unknown): string | null {

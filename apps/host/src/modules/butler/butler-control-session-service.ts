@@ -60,6 +60,7 @@ export class ButlerControlSessionService {
     private readonly codexHomeDir: string | null = null,
     private readonly sourceCodexHomeDir: string | null = null,
     private readonly claudeCodeHomeDir: string | null = null,
+    private readonly sourceClaudeCodeHomeDir: string | null = null,
     private readonly sessionMessageOriginRepository: Pick<
       SessionMessageOriginRepository,
       "upsert"
@@ -338,7 +339,8 @@ export class ButlerControlSessionService {
       skillManagerService: this.skillManagerService,
       codexHomeDir: this.codexHomeDir,
       sourceCodexHomeDir: this.sourceCodexHomeDir,
-      claudeCodeHomeDir: this.claudeCodeHomeDir
+      claudeCodeHomeDir: this.claudeCodeHomeDir,
+      sourceClaudeCodeHomeDir: this.sourceClaudeCodeHomeDir
     });
   }
 

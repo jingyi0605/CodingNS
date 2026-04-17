@@ -52,7 +52,8 @@ export class ButlerInboxAnalysisService {
     private readonly providerAdapterRegistry: ProviderAdapterRegistry,
     private readonly codexHomeDir: string | null,
     private readonly sourceCodexHomeDir: string | null,
-    private readonly claudeCodeHomeDir: string | null
+    private readonly claudeCodeHomeDir: string | null,
+    private readonly sourceClaudeCodeHomeDir: string | null
   ) {}
 
   async prepareTodoAnalysisSession(
@@ -82,7 +83,8 @@ export class ButlerInboxAnalysisService {
       skillManagerService: this.skillManagerService,
       codexHomeDir: this.codexHomeDir,
       sourceCodexHomeDir: this.sourceCodexHomeDir,
-      claudeCodeHomeDir: this.claudeCodeHomeDir
+      claudeCodeHomeDir: this.claudeCodeHomeDir,
+      sourceClaudeCodeHomeDir: this.sourceClaudeCodeHomeDir
     });
 
     const workspace = this.workspaceService.importWorkspace(profile.workspacePath, "代码助手");

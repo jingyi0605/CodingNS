@@ -31,6 +31,7 @@ export function syncButlerWorkspaceContext(input: {
   codexHomeDir: string | null;
   sourceCodexHomeDir: string | null;
   claudeCodeHomeDir: string | null;
+  sourceClaudeCodeHomeDir: string | null;
 }): void {
   fs.mkdirSync(input.profile.workspacePath, { recursive: true });
   ensureButlerWorkspaceIsolation(input.profile.workspacePath);
@@ -46,7 +47,8 @@ export function syncButlerWorkspaceContext(input: {
   );
   syncClaudeInstructionConfig(
     input.skillManagerService,
-    input.claudeCodeHomeDir
+    input.claudeCodeHomeDir,
+    input.sourceClaudeCodeHomeDir
   );
 }
 
@@ -116,27 +118,45 @@ function syncCodexInstructionConfig(
 
 function syncClaudeInstructionConfig(
   skillManagerService: Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">,
-  claudeCodeHomeDir: string | null
+  claudeCodeHomeDir: string | null,
+  sourceClaudeCodeHomeDir: string | null
 ): void {
   if (!claudeCodeHomeDir?.trim()) {
     return;
   }
 
   const targetHomeDir = path.resolve(claudeCodeHomeDir);
-  const managedSettingsPath = path.join(targetHomeDir, "managed-settings.json");
+  const sourceHomeDir = resolveSourceClaudeCodeHomeDir(sourceClaudeCodeHomeDir, targetHomeDir);
 
   fs.mkdirSync(targetHomeDir, { recursive: true });
+  syncOptionalFile(
+    path.join(sourceHomeDir, "config.json"),
+    path.join(targetHomeDir, "config.json")
+  );
+  syncOptionalFile(
+    path.join(sourceHomeDir, "settings.json"),
+    path.join(targetHomeDir, "settings.json")
+  );
+  syncOptionalFile(
+    path.join(sourceHomeDir, "project-config.json"),
+    path.join(targetHomeDir, "project-config.json")
+  );
+  syncOptionalDirectory(
+    path.join(sourceHomeDir, "plugins"),
+    path.join(targetHomeDir, "plugins")
+  );
+  syncOptionalDirectory(
+    path.join(sourceHomeDir, "skills"),
+    path.join(targetHomeDir, "skills")
+  );
   syncButlerClaudeSkill(
     skillManagerService,
     path.join(targetHomeDir, "skills", "codingns-assistant")
   );
-  writeFileIfChanged(
-    managedSettingsPath,
-    `${JSON.stringify({
-      managedBy: "codingns-butler",
-      configScope: "assistant-only"
-    }, null, 2)}\n`
-  );
+  removeFileIfExists(path.join(targetHomeDir, "managed-settings.json"));
+  removeFileIfExists(path.join(targetHomeDir, "CLAUDE.md"));
+  removeFileIfExists(path.join(targetHomeDir, "AGENTS.md"));
+  removeFileIfExists(path.join(targetHomeDir, "BUTLER_RULES.md"));
 }
 
 function syncButlerCodexSkill(
@@ -274,7 +294,8 @@ function composeProviderInstructionOverlay(provider: "codex" | "claude-code"): s
 
 - 这份规则会通过 \`--system-prompt-file\` 显式注入，不依赖 \`CLAUDE.md\` 自动发现。
 - 当前 Claude Code 会话的 \`CLAUDE_CONFIG_DIR\`、\`HOME\`、\`XDG_*\`、\`APPDATA\` 都会切到助手专用目录。
-- 禁止读取、依赖、假设用户真实 \`~/.claude\` 目录下的 settings、hooks、rules、plugins 还会继续生效。
+- 助手专用目录会先继承用户默认 \`~/.claude\` 里的登录态、模型配置、settings、plugins、skills，再覆盖成 Butler 规则环境。
+- 默认 \`~/.claude/CLAUDE.md\` 这类规则文件不会继承到当前会话；当前规则只认 Butler 生成的共享规则和这份注入文件。
 - 如果当前 Claude Code 环境能发现 \`${BUTLER_ASSISTANT_SKILL_DIRECTORY}\` skill，按这个 skill 的流程工作；如果 skill 缺失，只能按共享规则和当前工作区文件继续执行。`;
   }
 
@@ -392,6 +413,26 @@ function resolveSourceCodexHomeDir(sourceCodexHomeDir: string | null, targetHome
   }
 
   const fallbackHomeDir = path.resolve(path.join(os.homedir(), ".codex"));
+
+  if (fallbackHomeDir !== targetHomeDir) {
+    return fallbackHomeDir;
+  }
+
+  return targetHomeDir;
+}
+
+function resolveSourceClaudeCodeHomeDir(sourceClaudeCodeHomeDir: string | null, targetHomeDir: string): string {
+  const configuredSource = sourceClaudeCodeHomeDir?.trim();
+
+  if (configuredSource) {
+    const resolvedConfiguredSource = path.resolve(configuredSource);
+
+    if (resolvedConfiguredSource !== targetHomeDir) {
+      return resolvedConfiguredSource;
+    }
+  }
+
+  const fallbackHomeDir = path.resolve(path.join(os.homedir(), ".claude"));
 
   if (fallbackHomeDir !== targetHomeDir) {
     return fallbackHomeDir;

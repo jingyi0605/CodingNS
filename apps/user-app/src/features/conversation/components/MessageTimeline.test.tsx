@@ -1057,7 +1057,7 @@ describe("MessageTimeline", () => {
     expect(assistantContent?.classList.contains("markdown-content")).toBe(true);
   });
 
-  it("不会折叠非 codex 会话里的同类文本", () => {
+  it("不会把 Claude 会话里的 AGENTS 规则文本误判成折叠消息", () => {
     render(
       <MessageTimeline
         messages={[
@@ -1075,6 +1075,36 @@ describe("MessageTimeline", () => {
 
     expect(screen.getByText((content) => content.includes("不要主动启动开发服务器"))).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: new RegExp(t("conversation.rulesMessageExpand")) })).not.toBeInTheDocument();
+  });
+
+  it("会默认折叠 Claude Code 会话里的 Skill 上下文，并允许手动展开", async () => {
+    render(
+      <MessageTimeline
+        messages={[
+          createTextMessage(`Base directory for this skill: /tmp/claude-home/skills/codingns-assistant
+
+# CodingNS Assistant
+
+## 概述
+
+用这套 Skill 时，永远把 \`codingns assistant ...\` 当成唯一正式入口。
+
+ARGUMENTS: capabilities list`)
+        ]}
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("CodingNS Assistant")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: new RegExp(t("conversation.skillContextExpand")) })).toBeInTheDocument();
+    expect(screen.queryByText((content) => content.includes("永远把"))).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: new RegExp(t("conversation.skillContextExpand")) }));
+
+    expect(screen.getByRole("button", { name: new RegExp(t("conversation.skillContextCollapse")) })).toBeInTheDocument();
+    expect(screen.getByText((content) => content.includes("永远把"))).toBeInTheDocument();
   });
 
   it("会为缺失 toolCall 的工具消息做通用兜底", async () => {

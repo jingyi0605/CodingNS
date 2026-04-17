@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -343,6 +343,7 @@ describe("ButlerControlSessionService", () => {
       codexHomeDir,
       defaultCodexHomeDir,
       claudeHomeDir,
+      null,
       originRepository
     );
 
@@ -389,13 +390,12 @@ describe("ButlerControlSessionService", () => {
     expect(readFileSync(path.join(codexHomeDir, "skills", "codingns-assistant", "SKILL.md"), "utf8")).toContain(
       "codingns-assistant"
     );
-    expect(JSON.parse(readFileSync(path.join(claudeHomeDir, "managed-settings.json"), "utf8"))).toEqual({
-      managedBy: "codingns-butler",
-      configScope: "assistant-only"
-    });
+    expect(readFileSync(path.join(claudeHomeDir, "config.json"), "utf8")).toContain("primaryApiKey");
+    expect(readFileSync(path.join(claudeHomeDir, "settings.json"), "utf8")).toContain("includeCoAuthoredBy");
     expect(readFileSync(path.join(claudeHomeDir, "skills", "codingns-assistant", "SKILL.md"), "utf8")).toContain(
       "codingns-assistant"
     );
+    expect(existsSync(path.join(claudeHomeDir, "CLAUDE.md"))).toBe(false);
     expect(originRepository.upsert).toHaveBeenCalledTimes(1);
     expect(originRepository.upsert).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: "session-1",
@@ -406,11 +406,13 @@ describe("ButlerControlSessionService", () => {
     }));
   });
 
-  it("使用 claude-code 启动控制会话时只同步助手专用规则和 Claude home", async () => {
+  it("使用 claude-code 启动控制会话时会继承默认 Claude 配置并覆盖默认规则", async () => {
     const workspacePath = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-claude-control-"));
     tempDirs.push(workspacePath);
     const claudeHomeDir = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-claude-home-"));
     tempDirs.push(claudeHomeDir);
+    const defaultClaudeHomeDir = mkdtempSync(path.join(os.tmpdir(), "codingns-default-claude-home-"));
+    tempDirs.push(defaultClaudeHomeDir);
     const managedSkillRootDir = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-claude-skill-"));
     tempDirs.push(managedSkillRootDir);
 
@@ -432,6 +434,32 @@ describe("ButlerControlSessionService", () => {
     writeFileSync(
       path.join(workspacePath, ".git", "config"),
       "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+      "utf8"
+    );
+    writeFileSync(
+      path.join(defaultClaudeHomeDir, "config.json"),
+      JSON.stringify({ primaryApiKey: "claude-default-key" }, null, 2),
+      "utf8"
+    );
+    writeFileSync(
+      path.join(defaultClaudeHomeDir, "settings.json"),
+      JSON.stringify({ includeCoAuthoredBy: false }, null, 2),
+      "utf8"
+    );
+    writeFileSync(
+      path.join(defaultClaudeHomeDir, "project-config.json"),
+      JSON.stringify({ project: { model: "sonnet" } }, null, 2),
+      "utf8"
+    );
+    writeFileSync(
+      path.join(defaultClaudeHomeDir, "CLAUDE.md"),
+      "# default claude rules\n\n- should not leak into butler\n",
+      "utf8"
+    );
+    mkdirSync(path.join(defaultClaudeHomeDir, "plugins"), { recursive: true });
+    writeFileSync(
+      path.join(defaultClaudeHomeDir, "plugins", "known_marketplaces.json"),
+      "{}\n",
       "utf8"
     );
 
@@ -617,6 +645,7 @@ describe("ButlerControlSessionService", () => {
       null,
       null,
       claudeHomeDir,
+      defaultClaudeHomeDir,
       {
         upsert: vi.fn()
       }
@@ -631,13 +660,20 @@ describe("ButlerControlSessionService", () => {
     expect(readFileSync(path.join(workspacePath, "AGENTS.md"), "utf8")).toContain("## Codex 增量覆盖");
     expect(readFileSync(path.join(workspacePath, "CLAUDE.md"), "utf8")).toContain("## Claude Code 增量覆盖");
     expect(readFileSync(path.join(workspacePath, "BUTLER_RULES.md"), "utf8")).toContain("共享规则源");
-    expect(JSON.parse(readFileSync(path.join(claudeHomeDir, "managed-settings.json"), "utf8"))).toEqual({
-      managedBy: "codingns-butler",
-      configScope: "assistant-only"
+    expect(JSON.parse(readFileSync(path.join(claudeHomeDir, "config.json"), "utf8"))).toEqual({
+      primaryApiKey: "claude-default-key"
     });
+    expect(JSON.parse(readFileSync(path.join(claudeHomeDir, "settings.json"), "utf8"))).toEqual({
+      includeCoAuthoredBy: false
+    });
+    expect(JSON.parse(readFileSync(path.join(claudeHomeDir, "project-config.json"), "utf8"))).toEqual({
+      project: { model: "sonnet" }
+    });
+    expect(readFileSync(path.join(claudeHomeDir, "plugins", "known_marketplaces.json"), "utf8")).toContain("{}");
     expect(readFileSync(path.join(claudeHomeDir, "skills", "codingns-assistant", "SKILL.md"), "utf8")).toContain(
       "codingns-assistant"
     );
+    expect(existsSync(path.join(claudeHomeDir, "CLAUDE.md"))).toBe(false);
   });
 
   it("发送消息时会直接调用现有 session runtime", async () => {
@@ -783,6 +819,7 @@ describe("ButlerControlSessionService", () => {
         getCredentialFilePath: vi.fn(() => path.join(workspacePath, "BUTLER_AUTH.json"))
       } as unknown as Pick<ButlerAuthService, "ensureWorkspaceCredential" | "getCredentialFilePath">,
       createSkillManagerStub(),
+      null,
       null,
       null,
       null,

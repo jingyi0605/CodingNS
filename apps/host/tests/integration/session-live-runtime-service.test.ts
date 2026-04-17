@@ -2066,6 +2066,168 @@ describe("SessionLiveRuntimeService", () => {
     });
   });
 
+  it("Claude 对只读 codingns assistant 命令会自动放行，不再挂起 Bash 审批", async () => {
+    const {
+      service,
+      workspaceService,
+      sessionBindingRepository,
+      sessionHistoryService
+    } = createService();
+
+    workspaceService.findWorkspaceByPath.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionBindingRepository.findByProviderSession.mockReturnValue({
+      sessionId: "session-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl"
+    });
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-real-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl",
+      runningState: "running",
+      updatedAt: "2026-03-30T15:00:00.000Z",
+      lastEventAt: "2026-03-30T15:00:00.000Z"
+    });
+
+    const result = await service.ingestClaudeHookEvent({
+      hook_event_name: "PreToolUse",
+      session_id: "claude-session-real-1",
+      cwd: "/tmp/workspace",
+      transcript_path: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl",
+      tool_name: "Bash",
+      tool_input: {
+        command: "codingns assistant sessions list --project project-1"
+      }
+    });
+
+    expect(result).toMatchObject({
+      accepted: true,
+      ignored: false,
+      sessionId: "session-1"
+    });
+    expect(result.bridgeResponse).toEqual({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        permissionDecisionReason: "CodingNS 已自动放行只读的助手 CLI 查询命令"
+      }
+    });
+    await expect(service.listPermissionRequests("session-1", "user-1")).resolves.toEqual([]);
+  });
+
+  it("Claude 对受控的 codingns assistant 写操作也会自动放行", async () => {
+    const {
+      service,
+      workspaceService,
+      sessionBindingRepository,
+      sessionHistoryService
+    } = createService();
+
+    workspaceService.findWorkspaceByPath.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionBindingRepository.findByProviderSession.mockReturnValue({
+      sessionId: "session-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl"
+    });
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-real-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl",
+      runningState: "running",
+      updatedAt: "2026-03-30T15:00:00.000Z",
+      lastEventAt: "2026-03-30T15:00:00.000Z"
+    });
+
+    const result = await service.ingestClaudeHookEvent({
+      hook_event_name: "PreToolUse",
+      session_id: "claude-session-real-1",
+      cwd: "/tmp/workspace",
+      transcript_path: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl",
+      tool_name: "Bash",
+      tool_input: {
+        command: "codingns assistant automations create --trigger interval --every-hours 1 --message \"继续推进\""
+      }
+    });
+
+    expect(result.accepted).toBe(true);
+    expect(result.ignored).toBe(false);
+    expect(result.sessionId).toBe("session-1");
+    expect(result.bridgeResponse).toEqual({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        permissionDecisionReason: "CodingNS 已自动放行受控的助手 CLI 执行命令"
+      }
+    });
+    await expect(service.listPermissionRequests("session-1", "user-1")).resolves.toEqual([]);
+  });
+
+  it("Claude 对拼接了 shell 控制符的 assistant 命令仍然保留人工审批", async () => {
+    const {
+      service,
+      workspaceService,
+      sessionBindingRepository,
+      sessionHistoryService
+    } = createService();
+
+    workspaceService.findWorkspaceByPath.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionBindingRepository.findByProviderSession.mockReturnValue({
+      sessionId: "session-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl"
+    });
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-real-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl",
+      runningState: "running",
+      updatedAt: "2026-03-30T15:00:00.000Z",
+      lastEventAt: "2026-03-30T15:00:00.000Z"
+    });
+
+    const resultPromise = service.ingestClaudeHookEvent({
+      hook_event_name: "PreToolUse",
+      session_id: "claude-session-real-1",
+      cwd: "/tmp/workspace",
+      transcript_path: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl",
+      tool_name: "Bash",
+      tool_input: {
+        command: "codingns assistant automations create --message \"继续推进\" && rm -rf /tmp/demo"
+      }
+    });
+    let requests = await service.listPermissionRequests("session-1", "user-1");
+
+    if (requests.length === 0) {
+      await Promise.resolve();
+      requests = await service.listPermissionRequests("session-1", "user-1");
+    }
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.command).toBe(
+      "codingns assistant automations create --message \"继续推进\" && rm -rf /tmp/demo"
+    );
+    await service.replyPermissionRequest("session-1", "user-1", requests[0]!.id, {
+      action: "allow"
+    });
+    const result = await resultPromise;
+
+    expect(result.accepted).toBe(true);
+    expect(result.ignored).toBe(false);
+    expect(result.sessionId).toBe("session-1");
+  });
+
   it("Claude 外部 hook 事件会建立真状态 active run 视图", async () => {
     const {
       service,
