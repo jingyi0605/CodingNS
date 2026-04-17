@@ -768,6 +768,117 @@ describe("ButlerPage", () => {
     });
   });
 
+  it("最近会话弹层支持搜索并按活跃状态分组", async () => {
+    const now = Date.now();
+    const activeUpdatedAt = new Date(now - 3 * 60 * 60 * 1000).toISOString();
+    const inactiveUpdatedAt = new Date(now - 20 * 60 * 60 * 1000).toISOString();
+
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "阿尔文",
+        providerId: "codex",
+        workspacePath: "/tmp/butler",
+        agentsMode: "inline",
+        agentsFilePath: null,
+        agentsContent: "测试",
+        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
+        initializedAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z"
+      }
+    });
+    mockedGetCurrentButlerControlSession.mockResolvedValue({
+      controlSession: {
+        id: "ctrl-active",
+        providerId: "codex",
+        sessionId: "session-control-active",
+        purpose: "chat",
+        title: "支付回归",
+        sourceItemId: null,
+        status: "running",
+        lastContextVersion: "ctx-active",
+        lastSummary: "继续盯支付回归的 flaky 用例，补一轮日志采样。",
+        createdAt: "2026-04-17T12:20:00.000Z",
+        updatedAt: activeUpdatedAt,
+        session: {
+          sessionId: "session-control-active",
+          title: "支付回归"
+        }
+      }
+    } as never);
+    mockedListButlerControlSessions.mockResolvedValue({
+      items: [
+        {
+          id: "ctrl-active",
+          providerId: "codex",
+          sessionId: "session-control-active",
+          purpose: "chat",
+          title: "支付回归",
+          sourceItemId: null,
+          status: "running",
+          lastContextVersion: "ctx-active",
+          lastSummary: "继续盯支付回归的 flaky 用例，补一轮日志采样。",
+          createdAt: "2026-04-17T12:20:00.000Z",
+          updatedAt: activeUpdatedAt,
+          session: {
+            sessionId: "session-control-active",
+            title: "支付回归"
+          }
+        },
+        {
+          id: "ctrl-old",
+          providerId: "codex",
+          sessionId: "session-control-old",
+          purpose: "todo_analysis",
+          title: "旧会话",
+          sourceItemId: null,
+          status: "closed",
+          lastContextVersion: "ctx-old",
+          lastSummary: "旧会话里已经把排查结论写清楚了。",
+          createdAt: "2026-04-16T00:30:00.000Z",
+          updatedAt: inactiveUpdatedAt,
+          session: {
+            sessionId: "session-control-old",
+            title: "旧会话"
+          }
+        }
+      ]
+    } as never);
+
+    renderPage();
+
+    const trigger = await screen.findByRole("button", { name: t("shell.butlerHistoryAction") });
+    fireEvent.click(trigger);
+
+    const historyPopover = await screen.findByRole("dialog", { name: t("shell.butlerHistoryTitle") });
+    expect(within(historyPopover).getByText(t("shell.butlerHistoryActiveSection"))).toBeInTheDocument();
+    expect(within(historyPopover).getByText(t("shell.butlerHistoryInactiveSection"))).toBeInTheDocument();
+    expect(within(historyPopover).getByText("支付回归").closest("button")).toHaveAttribute("aria-current", "true");
+    expect(within(historyPopover).getByText("继续盯支付回归的 flaky 用例，补一轮日志采样。")).toBeInTheDocument();
+
+    const searchInput = within(historyPopover).getByRole("searchbox", {
+      name: t("shell.butlerHistorySearchLabel")
+    });
+    fireEvent.change(searchInput, {
+      target: {
+        value: "旧会话"
+      }
+    });
+
+    await waitFor(() => {
+      expect(within(historyPopover).getByText("旧会话")).toBeInTheDocument();
+      expect(within(historyPopover).queryByText("支付回归")).toBeNull();
+    });
+
+    fireEvent.pointerDown(document.body);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: t("shell.butlerHistoryTitle") })).toBeNull();
+    });
+  });
+
   it("悬浮助手名称时会显示最近的助手分析", async () => {
     mockedGetButlerProfile.mockResolvedValueOnce({
       initialized: true,
