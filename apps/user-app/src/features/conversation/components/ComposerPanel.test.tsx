@@ -456,6 +456,63 @@ describe("ComposerPanel", () => {
     });
   });
 
+  it("输入法组合输入时按 Enter 不发送消息", () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ provider: "codex" })}
+        isSubmitting={false}
+        onInterrupt={vi.fn()}
+        onSend={onSend}
+      />
+    );
+
+    const textarea = screen.getByRole("textbox");
+    fireEvent.change(textarea, {
+      target: {
+        value: "nihao"
+      }
+    });
+    fireEvent.compositionStart(textarea);
+    fireEvent.keyDown(textarea, {
+      key: "Enter",
+      code: "Enter"
+    });
+
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("输入法组合结束后按 Enter 会发送消息", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ provider: "codex" })}
+        isSubmitting={false}
+        onInterrupt={vi.fn()}
+        onSend={onSend}
+      />
+    );
+
+    const textarea = screen.getByRole("textbox");
+    fireEvent.change(textarea, {
+      target: {
+        value: "你好"
+      }
+    });
+    fireEvent.compositionStart(textarea);
+    fireEvent.compositionEnd(textarea);
+    fireEvent.keyDown(textarea, {
+      key: "Enter",
+      code: "Enter"
+    });
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("Claude 运行中且没有草稿时只显示中断按钮", () => {
     const onSend = vi.fn().mockResolvedValue(undefined);
     const onQueueSend = vi.fn().mockResolvedValue(undefined);

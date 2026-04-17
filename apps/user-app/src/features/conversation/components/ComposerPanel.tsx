@@ -368,6 +368,15 @@ function mergeComposerAttachments(
   return next;
 }
 
+function isComposerImeConfirming(
+  event: React.KeyboardEvent<HTMLTextAreaElement>,
+  composing: boolean
+): boolean {
+  const nativeEvent = event.nativeEvent;
+
+  return nativeEvent.isComposing || nativeEvent.keyCode === 229 || composing;
+}
+
 export function ComposerPanel({
   capabilities,
   placeholder,
@@ -416,6 +425,7 @@ export function ComposerPanel({
   const libraryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const submitLockRef = useRef(false);
+  const composingRef = useRef(false);
   const attachmentRegistryRef = useRef(new Set<string>());
   const attachmentDraftCacheRef = useRef(new Map<string, StoredComposerDraftAttachment>());
   const quickPhraseMutationVersionRef = useRef(0);
@@ -1559,6 +1569,12 @@ export function ComposerPanel({
               onChange={(event) => setContent(event.target.value)}
               rows={1}
               onFocus={() => setShowSlashMenu(false)}
+              onCompositionStart={() => {
+                composingRef.current = true;
+              }}
+              onCompositionEnd={() => {
+                composingRef.current = false;
+              }}
               onPaste={(event) => {
                 if (inRunSendBlocked) {
                   return;
@@ -1586,6 +1602,10 @@ export function ComposerPanel({
                 }
 
                 if (event.key === "Enter" && !event.shiftKey) {
+                  if (isComposerImeConfirming(event, composingRef.current)) {
+                    return;
+                  }
+
                   event.preventDefault();
 
                   if (!isDisabled) {
