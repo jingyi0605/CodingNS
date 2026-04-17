@@ -15091,7 +15091,8 @@ textarea:focus-visible {
 }
 
 .workbench-notification-modal-card {
-  width: min(860px, calc(100% - 24px));
+  width: min(60vw, calc(100% - 40px));
+  max-width: min(60vw, calc(100% - 40px));
   max-height: min(80vh, 720px);
   padding: 14px 14px 12px;
   gap: 12px;
@@ -23809,8 +23810,9 @@ textarea:focus-visible {
     max-width: 100%;
   }
 }
- .workspace-inbox-modal-card {
-  max-width: min(960px, calc(100vw - 40px));
+.workspace-inbox-modal-card {
+  width: min(60vw, calc(100% - 40px));
+  max-width: min(60vw, calc(100% - 40px));
 }
 
 .workspace-inbox-modal {
@@ -25254,6 +25256,12 @@ textarea:focus-visible {
 }
 
 @media (max-width: 960px) {
+  .workspace-inbox-modal-card,
+  .workbench-notification-modal-card {
+    width: min(100%, calc(100vw - 24px));
+    max-width: min(100%, calc(100vw - 24px));
+  }
+
   .workspace-inbox-modal {
     grid-template-columns: minmax(0, 1fr);
   }
