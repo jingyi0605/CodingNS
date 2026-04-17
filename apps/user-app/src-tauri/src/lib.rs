@@ -128,6 +128,7 @@ fn apply_window_state(window: &WebviewWindow, state: &str) -> Result<(), String>
   }
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 fn toggle_window_maximize(window: &WebviewWindow) -> Result<(), String> {
   if window.is_maximized().map_err(|error| error.to_string())? {
     window.unmaximize().map_err(|error| error.to_string())
@@ -136,6 +137,7 @@ fn toggle_window_maximize(window: &WebviewWindow) -> Result<(), String> {
   }
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 fn toggle_window_zoom(window: &WebviewWindow) -> Result<(), String> {
   toggle_window_maximize(window)
 }
