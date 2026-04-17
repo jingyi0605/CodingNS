@@ -96,13 +96,20 @@
 - 已在 `design.md` 中补任务类型、`key` 和执行位点初稿
 - 已先落一版非 `TaskManager` 的 once 自动化权威对象，先把数据结构、Host API 和兼容 timer 立住
 - 已把一次性自动化扫描/执行正式接进 `TaskManager`
+- 已把正式自动化四类触发器接进 `TaskManager`：
+  - `once`
+  - `interval`
+  - `cron`
+  - `condition`
+- 当前 `condition` 白名单已落两类：
+  - `git.remote_tag_changed`
+  - `session.runtime_idle`
 - 当前落地的任务切片：
   - `assistant.automation.tick` 负责扫描到期任务并按 `automationId` enqueue
   - `assistant.automation.evaluate` 负责真正执行一次性自动化并回写 run/task 状态
   - Host 重启后，如果上一次 run 已成功/失败但 task 没来得及收口，会在下一次 evaluate 前自动补齐 task 状态
   - Host 重启后，如果上一次 run 卡在 `running`，会先标记为中断失败，再重试当前到期任务
 - 当前仍未做：
-  - `interval / cron / condition`
   - 自动化清理任务
   - 更重执行位点拆分到 helper/external process
 
@@ -150,6 +157,9 @@
   - 不传目标不允许猜默认
   - `sandbox` 启动前会检查沙箱是否已过期或删除
   - `project` 继续走 Butler 管理会话；`workspace / sandbox` 走实时会话启动
+- 已补 `sessions.start --sandbox` 的集成测试，分别覆盖：
+  - 继承 `codex` 控制会话配置后启动沙箱真实会话
+  - 继承 `claude-code` 控制会话配置后启动沙箱真实会话
 
 ## 任务 6：设计兼容迁移和 UI/CLI 入口
 
@@ -171,12 +181,30 @@
 当前状态：
 - [ ] 进行中
 - 已补兼容映射文档初稿
-- 已补正式 `/api/assistant/automations` API 和 `codingns assistant automations *` CLI 最小入口
+- 已补正式 `/api/assistant/automations` API 和 `codingns assistant automations *` CLI 入口
+- 自动化创建入口已支持正式触发器参数：
+  - `once`
+  - `interval`
+  - `cron`
+  - `condition`
+- 已补最近运行记录接口：
+  - `GET /api/assistant/automations/runs/recent`
 - 旧 `timers.*` Host 服务兼容入口已切到正式自动化对象
 - 已补 `codingns assistant sessions start` 新入口，支持 `--project / --workspace / --sandbox`
 - 已补 `codingns assistant sandboxes list/create/promote/expire/remove`
-- 前端 DTO 和页面入口还未开始
-- 本轮明确不做旧前端全面迁移，只先把 Host API 和 CLI 正式入口立住
+- 已补 Butler 自动化标签页迁移：
+  - 桌面 Butler 自动化页已改读正式 `assistant automations + recent runs`
+  - 移动 Butler 自动化页已改读正式 `assistant automations + recent runs`
+  - 自动化主列表现在只展示进行中的正式自动化任务
+  - 自动化历史面板现在展示正式自动化历史任务和最近运行记录
+  - 自动化取消动作已切到 `cancelAssistantAutomation`
+- 已补 Butler 前端最小沙箱入口：
+  - 信息标签页顶部新增“管理沙箱”按钮
+  - 已接前端 `sandboxes list/create/promote/expire/remove` DTO 与 API
+  - 已补桌面 Butler 的最小沙箱管理弹窗，可创建、查看、晋升、过期、删除
+- 当前仍未做：
+  - Butler 移动端的沙箱管理入口
+  - 更完整的沙箱会话创建/跳转前端流转
 
 ## 任务 7：补验证清单和最小回归集
 
@@ -206,11 +234,18 @@
 - 本轮新增验证：
   - `pnpm --dir apps/host exec vitest run tests/integration/assistant-automation-service.test.ts tests/integration/butler-control-timer-service.test.ts tests/integration/assistant-capability-service.test.ts tests/integration/assistant-capability-routes.test.ts tests/integration/assistant-sandbox-service.test.ts tests/integration/butler-project-service.test.ts`
   - `node --check packages/codingns/bin/codingns.mjs`
+  - `pnpm --dir apps/user-app exec vitest run src/features/butler/pages/ButlerPage.test.tsx`
+  - `pnpm --dir apps/user-app exec vitest run src/features/butler/pages/MobileButlerPage.test.tsx`
+  - `pnpm --dir apps/user-app exec tsc -p tsconfig.json --noEmit`
 - 当前已覆盖：
   - 一次性自动化通过 `TaskManager` 扫描并执行
+  - `interval / cron / condition` 正式自动化的 Host 服务、API、CLI 和最近运行记录最小链路
   - `timers.*` 继续通过兼容 facade 工作
   - `sessions.start` 支持 `workspace` 目标
+  - `sessions.start --sandbox` 同时覆盖 `codex / claude-code`
   - 沙箱创建、晋升、删除与“跳过自动纳管项目”最小链路
+  - Butler 桌面端自动化标签页已切到正式 `assistant automations + runs`
+  - Butler 移动端自动化标签页已切到正式 `assistant automations + runs`
   - Host 重启后的一次性自动化收口恢复：
     - 已成功 run 不会因为 task 未收口而重复发消息
     - `running` run 会被标记中断后重试
