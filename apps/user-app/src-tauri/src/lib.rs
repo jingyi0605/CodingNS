@@ -117,20 +117,27 @@ fn apply_window_state(window: &WebviewWindow, state: &str) -> Result<(), String>
 
   #[cfg(not(any(target_os = "ios", target_os = "android")))]
   {
-  match state {
-    "minimize" => window.minimize().map_err(|error| error.to_string()),
-    "maximize" => window.maximize().map_err(|error| error.to_string()),
-    "toggle-maximize" => {
-      if window.is_maximized().map_err(|error| error.to_string())? {
-        window.unmaximize().map_err(|error| error.to_string())
-      } else {
-        window.maximize().map_err(|error| error.to_string())
-      }
+    match state {
+      "minimize" => window.minimize().map_err(|error| error.to_string()),
+      "maximize" => window.maximize().map_err(|error| error.to_string()),
+      "toggle-maximize" => toggle_window_maximize(window),
+      "toggle-zoom" => toggle_window_zoom(window),
+      "close" => window.close().map_err(|error| error.to_string()),
+      _ => Err(format!("不支持的窗口状态: {state}"))
     }
-    "close" => window.close().map_err(|error| error.to_string()),
-    _ => Err(format!("不支持的窗口状态: {state}"))
   }
+}
+
+fn toggle_window_maximize(window: &WebviewWindow) -> Result<(), String> {
+  if window.is_maximized().map_err(|error| error.to_string())? {
+    window.unmaximize().map_err(|error| error.to_string())
+  } else {
+    window.maximize().map_err(|error| error.to_string())
   }
+}
+
+fn toggle_window_zoom(window: &WebviewWindow) -> Result<(), String> {
+  toggle_window_maximize(window)
 }
 
 fn build_runtime_info(app: &AppHandle) -> DesktopRuntimeInfo {
