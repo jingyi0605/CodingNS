@@ -5409,20 +5409,6 @@ function SidebarContent({
           <button
             type="button"
             className={
-              isTerminalActive
-                ? "workbench-nav-segment-button active"
-                : "workbench-nav-segment-button"
-            }
-            role="tab"
-            aria-selected={isTerminalActive}
-            onClick={onNavigateTerminals}
-          >
-            <TerminalIcon />
-            {t("shell.terminalsEntry")}
-          </button>
-          <button
-            type="button"
-            className={
               isButlerActive
                 ? "workbench-nav-segment-button active"
                 : "workbench-nav-segment-button"
@@ -5433,6 +5419,20 @@ function SidebarContent({
           >
             <ButlerIcon />
             {t("shell.butlerEntry")}
+          </button>
+          <button
+            type="button"
+            className={
+              isTerminalActive
+                ? "workbench-nav-segment-button active"
+                : "workbench-nav-segment-button"
+            }
+            role="tab"
+            aria-selected={isTerminalActive}
+            onClick={onNavigateTerminals}
+          >
+            <TerminalIcon />
+            {t("shell.terminalsEntry")}
           </button>
           <button
             type="button"

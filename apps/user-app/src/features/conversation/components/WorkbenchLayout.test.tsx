@@ -2167,7 +2167,7 @@ describe("WorkbenchLayout", () => {
     expect(screen.getByText("src/components/SearchPanel.tsx")).toBeInTheDocument();
   });
 
-  it("桌面侧栏会在终端和搜索之间显示助手入口，并支持跳转", async () => {
+  it("桌面侧栏会按对话、助手、终端、搜索顺序显示顶部入口，并支持跳转", async () => {
     const currentSnapshot = createWorkbenchSnapshot([
       {
         workspace: createWorkspace("workspace-1", "项目一"),
@@ -2205,8 +2205,8 @@ describe("WorkbenchLayout", () => {
     );
     expect(navLabels).toEqual([
       t("shell.conversationEntry"),
-      t("shell.terminalsEntry"),
       t("shell.butlerEntry"),
+      t("shell.terminalsEntry"),
       t("shell.searchEntry")
     ]);
 
