@@ -75,9 +75,9 @@ struct NativeSidebarLayoutPayload {
     is_resizing: bool,
 }
 
-#[cfg(target_os = "macos")]
 #[derive(Debug, Clone, Default)]
 struct MacosNativeSidebarState {
+    #[cfg(target_os = "macos")]
     windows: Arc<Mutex<HashMap<String, MacosNativeSidebarWindowState>>>,
 }
 
@@ -250,12 +250,13 @@ fn set_window_state(window: WebviewWindow, state: String) -> Result<(), String> 
 #[tauri::command]
 fn sync_native_sidebar_layout(
     window: WebviewWindow,
-    #[cfg(target_os = "macos")] native_sidebar_state: State<'_, MacosNativeSidebarState>,
+    native_sidebar_state: State<'_, MacosNativeSidebarState>,
     layout: NativeSidebarLayoutPayload,
 ) -> Result<(), String> {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = window;
+        let _ = native_sidebar_state;
         let _ = layout;
         Ok(())
     }
@@ -1050,9 +1051,8 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .manage(WindowManagerState::default());
-    #[cfg(target_os = "macos")]
-    let builder = builder.manage(MacosNativeSidebarState::default());
+        .manage(WindowManagerState::default())
+        .manage(MacosNativeSidebarState::default());
 
     builder
         .setup(|app| {
