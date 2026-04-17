@@ -846,6 +846,8 @@ export class CodexAdapter implements ProviderAdapter {
 
     this.sessionSummaryCache.delete(resolvedStoreRef);
     this.sessionSummaryCache.delete(nextStoreRef);
+    // 归档切换后线程索引的 archived / rollout_path 也变了，不能继续赌文件系统 mtime 一定会跳。
+    this.invalidateThreadMetadataIndexCache();
 
     return {
       rawStoreRef: nextStoreRef,
@@ -1281,6 +1283,10 @@ export class CodexAdapter implements ProviderAdapter {
 
       this.sessionSummaryCache.delete(oldestKey);
     }
+  }
+
+  private invalidateThreadMetadataIndexCache(): void {
+    this.threadMetadataIndexCache = null;
   }
 
   private isForkedChildHistoryAligned(
