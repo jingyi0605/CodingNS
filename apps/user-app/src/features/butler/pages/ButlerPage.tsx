@@ -1,11 +1,13 @@
 import {
+  useDeferredValue,
   useCallback,
   useEffect,
   useId,
   useMemo,
   useRef,
   useState,
-  type FormEvent
+  type FormEvent,
+  type RefObject
 } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
@@ -129,6 +131,7 @@ const REPORT_PRIORITY_PRESET_VALUES: Record<ButlerReportPriorityPresetId, string
 const DEFAULT_BUTLER_SUMMARY_DEBOUNCE_SECONDS = 300;
 const CONTROL_SCHEDULE_HIDE_DELAY_MS = 1_500;
 const BUTLER_RUNTIME_ACTIVE_HIDE_DELAY_MS = 1_500;
+const ACTIVE_CONTROL_SESSION_WINDOW_MS = 8 * 60 * 60 * 1_000;
 
 const DEFAULT_INIT_FORM_STATE: ButlerInitFormState = {
   displayName: "",
@@ -241,6 +244,7 @@ export function ButlerPage() {
   const [automationEditorState, setAutomationEditorState] = useState<AutomationEditorState | null>(null);
   const [savingAutomationId, setSavingAutomationId] = useState<string | null>(null);
   const [controlHistoryOpen, setControlHistoryOpen] = useState(false);
+  const [controlHistoryQuery, setControlHistoryQuery] = useState("");
   const [sandboxManagerOpen, setSandboxManagerOpen] = useState(false);
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
   const [detailTask, setDetailTask] = useState<ButlerFollowUpTaskDto | null>(null);
@@ -257,6 +261,10 @@ export function ButlerPage() {
   const [cancellingTimerId, setCancellingTimerId] = useState<string | null>(null);
   const [executingTimerId, setExecutingTimerId] = useState<string | null>(null);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
+  const controlHistoryButtonRef = useRef<HTMLDivElement | null>(null);
+  const controlHistoryPopoverRef = useRef<HTMLDivElement | null>(null);
+  const controlHistorySearchInputRef = useRef<HTMLInputElement>(null);
+  const controlHistoryPopoverLabelId = useId();
   const [todoActionState, setTodoActionState] = useState<{
     itemId: string | null;
     kind: "analyze" | "start" | null;
@@ -499,13 +507,72 @@ export function ButlerPage() {
     setAutomationHistoryOpen(true);
   }, []);
   const handleOpenControlHistory = useCallback(() => {
-    setControlHistoryOpen(true);
-    void reloadControlSessionHistory();
-  }, [reloadControlSessionHistory]);
+    if (!controlHistoryOpen) {
+      void reloadControlSessionHistory();
+    }
+
+    setControlHistoryOpen((current) => !current);
+  }, [controlHistoryOpen, reloadControlSessionHistory]);
+  const handleCloseControlHistory = useCallback(() => {
+    setControlHistoryOpen(false);
+    setControlHistoryQuery("");
+  }, []);
   const handleOpenSandboxManager = useCallback(() => {
     setSandboxManagerOpen(true);
     void reloadAssistantSandboxes();
   }, [reloadAssistantSandboxes]);
+
+  useEffect(() => {
+    if (!controlHistoryOpen) {
+      setControlHistoryQuery("");
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      controlHistorySearchInputRef.current?.focus();
+      controlHistorySearchInputRef.current?.select();
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [controlHistoryOpen]);
+
+  useEffect(() => {
+    if (!controlHistoryOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+
+      if (
+        controlHistoryButtonRef.current?.contains(target)
+        || controlHistoryPopoverRef.current?.contains(target)
+      ) {
+        return;
+      }
+
+      handleCloseControlHistory();
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      event.preventDefault();
+      handleCloseControlHistory();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [controlHistoryOpen, handleCloseControlHistory]);
 
   useEffect(() => {
     if (!sandboxManagerOpen) {
@@ -1850,20 +1917,54 @@ export function ButlerPage() {
                 <ButlerPlusIcon />
               </span>
             </button>
-            <button
-              type="button"
-              className="terminal-tab-control butler-header-icon-button"
-              aria-label={t("shell.butlerHistoryAction")}
-              title={t("shell.butlerHistoryAction")}
-              disabled={loading || sending || switchingProvider}
-              onClick={() => {
-                handleOpenControlHistory();
-              }}
-            >
-              <span className="terminal-toolbar-icon" aria-hidden="true">
-                <ButlerHistoryIcon />
-              </span>
-            </button>
+            <div className="butler-session-history-anchor" ref={controlHistoryButtonRef}>
+              <button
+                type="button"
+                className="terminal-tab-control butler-header-icon-button"
+                aria-label={t("shell.butlerHistoryAction")}
+                aria-haspopup="dialog"
+                aria-expanded={controlHistoryOpen}
+                aria-controls={controlHistoryOpen ? "butler-control-history-popover" : undefined}
+                title={t("shell.butlerHistoryAction")}
+                disabled={loading || sending || switchingProvider}
+                onClick={() => {
+                  handleOpenControlHistory();
+                }}
+              >
+                <span className="terminal-toolbar-icon" aria-hidden="true">
+                  <ButlerHistoryIcon />
+                </span>
+              </button>
+              <ButlerAnchoredPopover
+                open={controlHistoryOpen}
+                id="butler-control-history-popover"
+                className="butler-session-history-popover"
+                anchorRef={controlHistoryButtonRef}
+                popoverRef={controlHistoryPopoverRef}
+                labelledBy={controlHistoryPopoverLabelId}
+                maxWidth={420}
+                gap={10}
+                viewportPadding={14}
+              >
+                <ButlerControlHistoryPanel
+                  sessions={controlSessions}
+                  activeControlSessionId={controlSession?.id ?? null}
+                  labelId={controlHistoryPopoverLabelId}
+                  query={controlHistoryQuery}
+                  searchInputRef={controlHistorySearchInputRef}
+                  onQueryChange={setControlHistoryQuery}
+                  onSelectSession={async (targetSession) => {
+                    if (targetSession.id === controlSession?.id) {
+                      handleCloseControlHistory();
+                      return;
+                    }
+
+                    await store.openControlSession(targetSession.id);
+                    handleCloseControlHistory();
+                  }}
+                />
+              </ButlerAnchoredPopover>
+            </div>
           </div>
         </header>
 
@@ -2041,23 +2142,6 @@ export function ButlerPage() {
             }}
           />
         ) : null}
-      </WorkbenchModal>
-      <WorkbenchModal
-        open={controlHistoryOpen}
-        title={t("shell.butlerHistoryTitle")}
-        description={t("shell.butlerHistoryDescription")}
-        onClose={() => {
-          setControlHistoryOpen(false);
-        }}
-      >
-        <ButlerControlHistoryPanel
-          sessions={controlSessions}
-          activeControlSessionId={controlSession?.id ?? null}
-          onSelectSession={async (targetSession) => {
-            await store.openControlSession(targetSession.id);
-            setControlHistoryOpen(false);
-          }}
-        />
       </WorkbenchModal>
       <WorkbenchModal
         open={sandboxManagerOpen}
@@ -2557,56 +2641,169 @@ function TodoLifecycleCard(props: {
 function ButlerControlHistoryPanel(props: {
   sessions: ButlerControlSessionDto[];
   activeControlSessionId: string | null;
+  labelId: string;
+  query: string;
+  searchInputRef: RefObject<HTMLInputElement>;
+  onQueryChange: (value: string) => void;
   onSelectSession: (session: ButlerControlSessionDto) => Promise<void>;
 }) {
-  if (props.sessions.length === 0) {
-    return <p className="butler-secondary-text">{t("shell.butlerHistoryEmpty")}</p>;
-  }
+  const deferredQuery = useDeferredValue(props.query);
+  const filteredSessions = useMemo(() => {
+    const normalizedQuery = deferredQuery.trim().toLowerCase();
+
+    return props.sessions
+      .map((session) => {
+        const title = resolveControlSessionListTitle(session);
+        const preview = resolveControlSessionPreview(session, title);
+        const updatedAtMs = parseIsoTime(session.updatedAt);
+        const searchText = [title, preview, session.sessionId].join("\n").toLowerCase();
+
+        return {
+          session,
+          title,
+          preview,
+          updatedAtMs,
+          active: updatedAtMs > 0 && Date.now() - updatedAtMs <= ACTIVE_CONTROL_SESSION_WINDOW_MS,
+          searchText
+        };
+      })
+      .filter((item) => !normalizedQuery || item.searchText.includes(normalizedQuery))
+      .sort((left, right) => right.updatedAtMs - left.updatedAtMs);
+  }, [deferredQuery, props.sessions]);
+  const activeSessions = filteredSessions.filter((item) => item.active);
+  const inactiveSessions = filteredSessions.filter((item) => !item.active);
+  const isSearching = deferredQuery.trim().length > 0;
 
   return (
-    <div className="butler-record-list">
-      {props.sessions.map((session) => {
-        const selected = session.id === props.activeControlSessionId;
-        const title = session.title?.trim() || session.session.title?.trim() || session.lastSummary?.trim() || session.sessionId;
-
-        return (
-          <article key={session.id} className="butler-todo-card">
-            <header className="butler-todo-card-header">
-              <div>
-                <strong>{title}</strong>
-                <span>{formatTimestamp(session.updatedAt)}</span>
+    <div className="butler-session-history-panel">
+      <div className="butler-session-history-header">
+        <div className="butler-card-header-copy">
+          <strong id={props.labelId}>{t("shell.butlerHistoryTitle")}</strong>
+          <p>{t("shell.butlerHistoryDescription")}</p>
+        </div>
+      </div>
+      <label className="butler-session-history-search">
+        <span className="butler-session-history-search-icon" aria-hidden="true">
+          <ButlerSearchIcon />
+        </span>
+        <input
+          ref={props.searchInputRef}
+          type="search"
+          aria-label={t("shell.butlerHistorySearchLabel")}
+          placeholder={t("shell.butlerHistorySearchPlaceholder")}
+          value={props.query}
+          onChange={(event) => {
+            props.onQueryChange(event.target.value);
+          }}
+        />
+      </label>
+      {filteredSessions.length === 0 ? (
+        <p className="butler-secondary-text">
+          {isSearching ? t("shell.butlerHistorySearchEmpty") : t("shell.butlerHistoryEmpty")}
+        </p>
+      ) : (
+        <div className="butler-session-history-list" role="list">
+          {activeSessions.length > 0 ? (
+            <div className="butler-session-history-section">
+              <div className="butler-session-history-divider">
+                <span>{t("shell.butlerHistoryActiveSection")}</span>
               </div>
-              <div className="butler-todo-card-badges">
-                <span className="butler-inline-badge">
-                  {session.purpose === "todo_analysis"
-                    ? t("shell.butlerControlSessionKindTodoAnalysis")
-                    : t("shell.butlerControlSessionKindChat")}
-                </span>
-                <span className="butler-inline-badge">{resolveControlSessionStatusLabel(session.status)}</span>
-                {selected ? (
-                  <span className="butler-inline-badge">{t("shell.butlerCurrentSessionBadge")}</span>
-                ) : null}
-              </div>
-            </header>
-            <p className="butler-secondary-text">
-              {session.lastSummary?.trim() || session.session.title?.trim() || session.sessionId}
-            </p>
-            <div className="butler-todo-card-actions">
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={selected}
-                onClick={() => {
-                  void props.onSelectSession(session);
-                }}
-              >
-                {selected ? t("shell.butlerCurrentSessionBadge") : t("shell.butlerHistoryOpenAction")}
-              </button>
+              {activeSessions.map((item) => (
+                <ButlerControlHistoryRow
+                  key={item.session.id}
+                  session={item.session}
+                  title={item.title}
+                  preview={item.preview}
+                  selected={item.session.id === props.activeControlSessionId}
+                  onSelectSession={props.onSelectSession}
+                />
+              ))}
             </div>
-          </article>
-        );
-      })}
+          ) : null}
+          {inactiveSessions.length > 0 ? (
+            <div className="butler-session-history-section">
+              <div className="butler-session-history-divider" data-muted={activeSessions.length > 0}>
+                <span>{t("shell.butlerHistoryInactiveSection")}</span>
+              </div>
+              {inactiveSessions.map((item) => (
+                <ButlerControlHistoryRow
+                  key={item.session.id}
+                  session={item.session}
+                  title={item.title}
+                  preview={item.preview}
+                  selected={item.session.id === props.activeControlSessionId}
+                  onSelectSession={props.onSelectSession}
+                />
+              ))}
+            </div>
+          ) : null}
+        </div>
+      )}
     </div>
+  );
+}
+
+function ButlerControlHistoryRow(props: {
+  session: ButlerControlSessionDto;
+  title: string;
+  preview: string;
+  selected: boolean;
+  onSelectSession: (session: ButlerControlSessionDto) => Promise<void>;
+}) {
+  return (
+    <button
+      type="button"
+      role="listitem"
+      className="butler-session-history-item"
+      data-selected={props.selected ? "true" : "false"}
+      aria-current={props.selected ? "true" : undefined}
+      onClick={() => {
+        void props.onSelectSession(props.session);
+      }}
+    >
+      <span className="butler-session-history-item-header">
+        <strong title={props.title}>{props.title}</strong>
+        <time dateTime={props.session.updatedAt}>{formatTimestamp(props.session.updatedAt)}</time>
+      </span>
+      <p title={props.preview}>{props.preview}</p>
+    </button>
+  );
+}
+
+function resolveControlSessionListTitle(session: ButlerControlSessionDto): string {
+  return session.title?.trim()
+    || session.session.title?.trim()
+    || session.lastSummary?.trim()
+    || session.sessionId;
+}
+
+function resolveControlSessionPreview(
+  session: ButlerControlSessionDto,
+  title: string
+): string {
+  const summary = session.lastSummary?.trim();
+
+  if (summary) {
+    return summary;
+  }
+
+  const sessionTitle = session.session.title?.trim();
+
+  if (sessionTitle && sessionTitle !== title) {
+    return sessionTitle;
+  }
+
+  return session.sessionId;
+}
+
+function ButlerSearchIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
+      <path
+        fill="currentColor"
+        d="M6.75 1.75a5 5 0 1 0 3.16 8.875l3.61 3.608a.75.75 0 1 0 1.06-1.06l-3.608-3.61A5 5 0 0 0 6.75 1.75Zm-3.5 5a3.5 3.5 0 1 1 7 0 3.5 3.5 0 0 1-7 0Z"
+      />
+    </svg>
   );
 }
 
@@ -4913,20 +5110,6 @@ function resolveTodoStatusLabel(status: ButlerInboxItemDto["status"]): string {
       return t("shell.butlerInfoTodoInProgress");
     case "closed":
       return t("shell.butlerInfoTodoClosed");
-    default:
-      return t("shell.butlerInfoTodoPending");
-  }
-}
-
-function resolveControlSessionStatusLabel(status: ButlerControlSessionDto["status"]): string {
-  switch (status) {
-    case "running":
-      return t("shell.butlerInfoTodoInProgress");
-    case "failed":
-      return t("shell.butlerTodoLifecycleFailed");
-    case "closed":
-      return t("shell.butlerInfoTodoClosed");
-    case "idle":
     default:
       return t("shell.butlerInfoTodoPending");
   }

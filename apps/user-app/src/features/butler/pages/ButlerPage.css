@@ -232,6 +232,188 @@
   flex: 0 0 auto;
 }
 
+.butler-session-history-anchor {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.butler-session-history-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--surface-overlay-border);
+  border-radius: 18px;
+  background: var(--bg-elevated);
+  box-shadow: var(--desktop-panel-shadow-strong);
+}
+
+.butler-session-history-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.butler-session-history-header strong {
+  display: block;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.butler-session-history-header p {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.butler-session-history-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--surface-overlay-border) 92%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-surface-secondary) 92%, transparent);
+}
+
+.butler-session-history-search:focus-within {
+  border-color: color-mix(in srgb, var(--accent-primary) 38%, var(--surface-overlay-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 14%, transparent);
+}
+
+.butler-session-history-search-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary, #9ca3af);
+  flex: 0 0 auto;
+}
+
+.butler-session-history-search-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.butler-session-history-search input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.4;
+  outline: none;
+}
+
+.butler-session-history-search input::placeholder {
+  color: var(--text-tertiary, #9ca3af);
+}
+
+.butler-session-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: min(60vh, 440px);
+  overflow: auto;
+}
+
+.butler-session-history-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.butler-session-history-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-tertiary, #9ca3af);
+  font-size: 11px;
+  line-height: 1.35;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.butler-session-history-divider::after {
+  content: "";
+  flex: 1 1 auto;
+  min-width: 24px;
+  height: 1px;
+  background: color-mix(in srgb, var(--surface-overlay-border) 86%, transparent);
+}
+
+.butler-session-history-item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--surface-overlay-border) 86%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-surface-secondary) 86%, transparent);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    transform 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.butler-session-history-item:hover {
+  border-color: color-mix(in srgb, var(--accent-primary) 24%, var(--surface-overlay-border));
+  background: color-mix(in srgb, var(--bg-surface-secondary) 70%, var(--accent-primary) 6%);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
+}
+
+.butler-session-history-item[data-selected="true"] {
+  border-color: color-mix(in srgb, var(--accent-primary) 34%, var(--surface-overlay-border));
+  background: color-mix(in srgb, var(--accent-primary) 12%, var(--bg-surface-secondary));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 18%, transparent);
+}
+
+.butler-session-history-item-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.butler-session-history-item-header strong {
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.butler-session-history-item-header time {
+  color: var(--text-tertiary, #9ca3af);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: nowrap;
+}
+
+.butler-session-history-item p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  word-break: break-word;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
 .butler-provider-badge {
   display: inline-flex;
   align-items: center;
