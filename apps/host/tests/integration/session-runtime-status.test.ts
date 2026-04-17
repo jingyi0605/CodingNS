@@ -892,4 +892,186 @@ describe("session runtime status", () => {
       runningState: "running"
     });
   });
+
+  it("active run 已经失活时，runtime 接口和会话列表都会自动回退，不再继续显示运行中", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const setup = await hosted.app.inject({
+      method: "POST",
+      url: "/api/public/setup",
+      payload: {
+        username: "admin",
+        password: "password123"
+      }
+    });
+    expect(setup.statusCode).toBe(201);
+
+    const login = await hosted.app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: {
+        username: "admin",
+        password: "password123"
+      }
+    });
+    expect(login.statusCode).toBe(200);
+    const accessToken = login.json().accessToken as string;
+    const adminUser = hosted.services.repositories.authUserRepository.findByUsername("admin");
+    expect(adminUser).toBeTruthy();
+
+    const imported = await hosted.app.inject({
+      method: "POST",
+      url: "/api/workspaces/import",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        path: fixture.workspaceDir,
+        name: "Fixture Workspace"
+      }
+    });
+    expect(imported.statusCode).toBe(201);
+    const workspaceId = imported.json().id as string;
+
+    const sessionsResponse = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(sessionsResponse.statusCode).toBe(200);
+
+    const codexSession = sessionsResponse
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "codex");
+    expect(codexSession).toBeTruthy();
+
+    hosted.services.repositories.sessionStateRepository.upsert({
+      sessionId: codexSession.sessionId,
+      userId: adminUser!.id,
+      runningState: "running",
+      activitySource: "runtime",
+      lastEventAt: "2026-03-23T09:00:12.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-03-23T09:00:12.000Z"
+    });
+
+    const binding = hosted.services.repositories.sessionBindingRepository.findBySessionId(
+      codexSession.sessionId
+    );
+    expect(binding).toBeTruthy();
+
+    let active = true;
+    const abandonRun = vi.fn(async (sessionId: string) => {
+      if (sessionId === codexSession.sessionId) {
+        active = false;
+      }
+    });
+    const deadRuntimeSnapshot = {
+      sessionId: codexSession.sessionId,
+      workspaceId,
+      provider: "codex" as const,
+      providerSessionId: binding!.providerSessionId,
+      rawStoreRef: binding!.rawStoreRef,
+      runningState: "running" as const,
+      attachedClients: 1,
+      startedAt: "2026-03-23T09:00:11.000Z",
+      lastEventAt: "2026-03-23T09:00:12.000Z",
+      completedAt: null,
+      detail: "native session attached",
+      interruptSource: null,
+      errorCode: null,
+      supportsInterrupt: true
+    };
+
+    const runtimeProvider = (
+      hosted.services.modules.sessionLiveRuntimeService as unknown as {
+        providerRuntimeService: {
+          getSnapshot: (sessionId: string) => unknown;
+          isRunHealthy: (sessionId: string) => boolean | null;
+          abandonRun: (sessionId: string) => Promise<void>;
+        };
+      }
+    ).providerRuntimeService;
+
+    const originalGetSnapshot = runtimeProvider.getSnapshot.bind(runtimeProvider);
+    const originalIsRunHealthy = runtimeProvider.isRunHealthy.bind(runtimeProvider);
+    const originalAbandonRun = runtimeProvider.abandonRun.bind(runtimeProvider);
+
+    runtimeProvider.getSnapshot = ((sessionId: string) => {
+      if (!active || sessionId !== codexSession.sessionId) {
+        return originalGetSnapshot(sessionId);
+      }
+
+      return deadRuntimeSnapshot;
+    }) as typeof runtimeProvider.getSnapshot;
+    runtimeProvider.isRunHealthy = ((sessionId: string) => {
+      if (!active || sessionId !== codexSession.sessionId) {
+        return originalIsRunHealthy(sessionId);
+      }
+
+      return false;
+    }) as typeof runtimeProvider.isRunHealthy;
+    runtimeProvider.abandonRun = (async (sessionId: string) => {
+      if (sessionId === codexSession.sessionId) {
+        active = false;
+        await abandonRun(sessionId);
+        return;
+      }
+
+      await originalAbandonRun(sessionId);
+    }) as typeof runtimeProvider.abandonRun;
+
+    const runtime = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions/${codexSession.sessionId}/runtime`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    expect(runtime.statusCode).toBe(200);
+    expect(runtime.json()).toMatchObject({
+      sessionId: codexSession.sessionId,
+      hasActiveRun: false,
+      canAttach: false,
+      canInterrupt: false,
+      runningState: "interrupted",
+      activityResolutionSource: "authoritative_runtime"
+    });
+
+    for (let attempt = 0; attempt < 20 && abandonRun.mock.calls.length === 0; attempt += 1) {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 25);
+      });
+    }
+
+    expect(abandonRun).toHaveBeenCalledWith(codexSession.sessionId);
+
+    const recoveredList = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(recoveredList.statusCode).toBe(200);
+
+    const recoveredCodexSession = recoveredList
+      .json()
+      .items.find((item: { sessionId: string }) => item.sessionId === codexSession.sessionId);
+    expect(recoveredCodexSession).toMatchObject({
+      sessionId: codexSession.sessionId,
+      runningState: "interrupted",
+      activitySource: "runtime",
+      activityResolutionSource: "authoritative_runtime"
+    });
+  });
 });

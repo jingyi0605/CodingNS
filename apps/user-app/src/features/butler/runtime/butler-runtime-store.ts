@@ -72,6 +72,7 @@ export interface ButlerRuntimeState {
 const BUTLER_MESSAGE_PAGE_SIZE = 60;
 const BUTLER_TERMINAL_SYNC_DEBOUNCE_MS = 400;
 const BUTLER_DIAGNOSTIC_RAW_REF_PREFIX = "butler-diagnostic://";
+const BUTLER_PENDING_RUN_GRACE_MS = 15_000;
 
 export class ButlerRuntimeStore {
   private state: ButlerRuntimeState;
@@ -83,6 +84,10 @@ export class ButlerRuntimeStore {
   private terminalSyncTimer: number | null = null;
   private terminalSyncArmed = false;
   private terminalSyncCompletedControlSessionId: string | null = null;
+  private pendingRunControlSession: {
+    controlSessionId: string;
+    expiresAt: number;
+  } | null = null;
 
   constructor(private readonly workspaceId: string) {
     this.state = {
@@ -127,6 +132,7 @@ export class ButlerRuntimeStore {
       const profileResponse = await getButlerProfile();
 
       if (!profileResponse.initialized || !profileResponse.profile) {
+        this.clearPendingRun();
         this.patch({
           loading: false,
           initialized: false,
@@ -372,6 +378,7 @@ export class ButlerRuntimeStore {
         });
       }
 
+      this.markPendingRun(this.selectedControlSessionId);
       await this.reloadControlSession(this.selectedControlSessionId);
       await Promise.all([this.refreshOverview(), this.refreshEvents()]);
     } catch (error) {
@@ -406,6 +413,7 @@ export class ButlerRuntimeStore {
     }
 
     await interruptSession(sessionId);
+    this.clearPendingRun(this.state.controlSession?.id ?? null);
     this.patch({
       runtimeHasActiveRun: false,
       runtimeCanInterrupt: false
@@ -419,6 +427,7 @@ export class ButlerRuntimeStore {
 
     this.teardownRealtime();
     this.selectedControlSessionId = null;
+    this.clearPendingRun();
     this.terminalSyncArmed = false;
     this.terminalSyncCompletedControlSessionId = null;
     this.patch({
@@ -601,6 +610,7 @@ export class ButlerRuntimeStore {
 
       if (!controlSession) {
         this.selectedControlSessionId = null;
+        this.clearPendingRun();
         this.terminalSyncArmed = false;
         this.terminalSyncCompletedControlSessionId = null;
         this.teardownRealtime();
@@ -630,11 +640,14 @@ export class ButlerRuntimeStore {
         getSessionMessages(controlSession.session.sessionId, null, BUTLER_MESSAGE_PAGE_SIZE, "backward"),
         getSessionRuntime(controlSession.session.sessionId)
       ]);
+      const resolvedControlSession = this.resolvePendingRunControlSession(controlSession, runtime);
       if (this.state.controlSession?.id !== controlSession.id) {
         this.terminalSyncCompletedControlSessionId = null;
       }
-      this.terminalSyncArmed = runtime.hasActiveRun || controlSession.status === "running";
+      this.terminalSyncArmed =
+        runtime.hasActiveRun || resolvedControlSession.status === "running";
       if (runtime.hasActiveRun) {
+        this.clearPendingRun(controlSession.id);
         this.terminalSyncCompletedControlSessionId = null;
       } else if (!this.terminalSyncArmed) {
         this.terminalSyncCompletedControlSessionId = controlSession.id;
@@ -645,8 +658,8 @@ export class ButlerRuntimeStore {
       this.ensureRealtimeSubscription(controlSession.session.sessionId, historyPage.cursor);
 
       this.patch({
-        controlSession,
-        messages: buildButlerVisibleMessages(viewMessages, controlSession, {
+        controlSession: resolvedControlSession,
+        messages: buildButlerVisibleMessages(viewMessages, resolvedControlSession, {
           runningState: runtime.runningState,
           runtimeHasActiveRun: runtime.hasActiveRun,
           runtimeCanInterrupt: runtime.canInterrupt,
@@ -899,6 +912,7 @@ export class ButlerRuntimeStore {
       ),
       historyState: "ready"
     });
+    this.promotePendingRunFromMessages(sessionId, incoming);
     logPerfDebug("butler.runtime.realtime.messages", {
       workspaceId: this.workspaceId,
       sessionId,
@@ -936,9 +950,11 @@ export class ButlerRuntimeStore {
       terminalSyncArmed: this.terminalSyncArmed,
       terminalSyncCompletedControlSessionId: this.terminalSyncCompletedControlSessionId
     });
-    this.patch({
-      runtimeHasActiveRun: event.hasActiveRun,
-      runtimeCanInterrupt: event.canInterrupt
+    this.patchActiveControlSessionRuntimeState({
+      runningState: event.runningState,
+      hasActiveRun: event.hasActiveRun,
+      canInterrupt: event.canInterrupt,
+      updatedAt: event.updatedAt
     });
 
     if (shouldSyncTerminalState) {
@@ -977,11 +993,11 @@ export class ButlerRuntimeStore {
       terminalSyncArmed: this.terminalSyncArmed,
       terminalSyncCompletedControlSessionId: this.terminalSyncCompletedControlSessionId
     });
-    this.patch({
-      runtimeHasActiveRun: nextHasActiveRun,
-      runtimeCanInterrupt: nextHasActiveRun
-        ? true
-        : this.state.runtimeCanInterrupt
+    this.patchActiveControlSessionRuntimeState({
+      runningState: event.status,
+      hasActiveRun: nextHasActiveRun,
+      canInterrupt: nextHasActiveRun,
+      updatedAt: event.timestamp
     });
 
     if (shouldSyncTerminalState) {
@@ -1004,9 +1020,13 @@ export class ButlerRuntimeStore {
       detail: event.detail,
       errorCode: event.error_code
     });
-    this.patch({
-      error: event.detail,
-      runtimeHasActiveRun: false
+    this.patchActiveControlSessionRuntimeState({
+      runningState: "failed",
+      hasActiveRun: false,
+      canInterrupt: false,
+      updatedAt: event.timestamp,
+      status: "failed",
+      error: event.detail
     });
     void this.reloadControlSession();
   }
@@ -1021,12 +1041,186 @@ export class ButlerRuntimeStore {
       sessionId: event.sessionId,
       detail: event.detail
     });
-    this.patch({
-      runtimeHasActiveRun: false,
-      runtimeCanInterrupt: false,
+    this.patchActiveControlSessionRuntimeState({
+      runningState: "interrupted",
+      hasActiveRun: false,
+      canInterrupt: false,
+      updatedAt: event.timestamp,
       error: event.detail
     });
     void this.reloadControlSession();
+  }
+
+  private patchActiveControlSessionRuntimeState(input: {
+    runningState: ButlerControlSessionDto["session"]["runningState"];
+    hasActiveRun: boolean;
+    canInterrupt: boolean;
+    updatedAt: string;
+    status?: ButlerControlSessionDto["status"];
+    error?: string | null;
+  }): void {
+    const currentControlSession = this.state.controlSession;
+
+    if (!currentControlSession) {
+      this.patch({
+        runtimeHasActiveRun: input.hasActiveRun,
+        runtimeCanInterrupt: input.canInterrupt,
+        ...(input.error !== undefined ? { error: input.error } : {})
+      });
+      return;
+    }
+
+    this.clearPendingRun(currentControlSession.id);
+
+    const nextStatus =
+      input.status
+      ?? deriveButlerControlSessionStatus(
+        currentControlSession.status,
+        input.runningState,
+        input.hasActiveRun
+      );
+
+    this.patch({
+      controlSession: {
+        ...currentControlSession,
+        status: nextStatus,
+        updatedAt: input.updatedAt,
+        session: {
+          ...currentControlSession.session,
+          runningState: input.runningState,
+          activitySource: "runtime",
+          activityState: deriveButlerSessionActivityState(
+            currentControlSession.session.activityState,
+            input.runningState,
+            input.hasActiveRun
+          ),
+          lastEventAt: input.updatedAt,
+          updatedAt: input.updatedAt
+        }
+      },
+      runtimeHasActiveRun: input.hasActiveRun,
+      runtimeCanInterrupt: input.canInterrupt,
+      ...(input.error !== undefined ? { error: input.error } : {})
+    });
+  }
+
+  private markPendingRun(controlSessionId: string | null): void {
+    if (!controlSessionId) {
+      return;
+    }
+
+    this.pendingRunControlSession = {
+      controlSessionId,
+      expiresAt: Date.now() + BUTLER_PENDING_RUN_GRACE_MS
+    };
+  }
+
+  private clearPendingRun(controlSessionId?: string | null): void {
+    if (!this.pendingRunControlSession) {
+      return;
+    }
+
+    if (
+      controlSessionId === undefined
+      || controlSessionId === null
+      || this.pendingRunControlSession.controlSessionId === controlSessionId
+    ) {
+      this.pendingRunControlSession = null;
+    }
+  }
+
+  private hasPendingRun(controlSessionId: string | null): boolean {
+    if (!controlSessionId || !this.pendingRunControlSession) {
+      return false;
+    }
+
+    if (this.pendingRunControlSession.controlSessionId !== controlSessionId) {
+      return false;
+    }
+
+    if (this.pendingRunControlSession.expiresAt <= Date.now()) {
+      this.pendingRunControlSession = null;
+      return false;
+    }
+
+    return true;
+  }
+
+  private resolvePendingRunControlSession(
+    controlSession: ButlerControlSessionDto,
+    runtime: {
+      runningState: ButlerControlSessionDto["session"]["runningState"];
+      hasActiveRun: boolean;
+      updatedAt: string;
+    }
+  ): ButlerControlSessionDto {
+    if (!this.hasPendingRun(controlSession.id)) {
+      return controlSession;
+    }
+
+    if (
+      runtime.hasActiveRun
+      || isButlerRuntimeRunningState(runtime.runningState)
+      || isButlerRuntimeTerminalState(runtime.runningState)
+      || isButlerRuntimeRunningState(controlSession.session.runningState)
+      || isButlerRuntimeTerminalState(controlSession.session.runningState)
+      || controlSession.status === "failed"
+      || controlSession.status === "closed"
+    ) {
+      this.clearPendingRun(controlSession.id);
+      return controlSession;
+    }
+
+    const updatedAt = runtime.updatedAt || controlSession.updatedAt || new Date().toISOString();
+    return {
+      ...controlSession,
+      status: "running",
+      updatedAt,
+      session: {
+        ...controlSession.session,
+        runningState: "starting",
+        activitySource: "inferred",
+        activityState: "running",
+        lastEventAt: updatedAt,
+        updatedAt
+      }
+    };
+  }
+
+  private promotePendingRunFromMessages(
+    sessionId: string,
+    incoming: Parameters<typeof toViewMessage>[1][]
+  ): void {
+    const currentControlSession = this.state.controlSession;
+
+    if (
+      !currentControlSession
+      || currentControlSession.session.sessionId !== sessionId
+      || !this.hasPendingRun(currentControlSession.id)
+      || this.state.runtimeHasActiveRun === true
+      || isButlerRuntimeRunningState(currentControlSession.session.runningState)
+      || isButlerRuntimeTerminalState(currentControlSession.session.runningState)
+      || incoming.length === 0
+    ) {
+      return;
+    }
+
+    const updatedAt = incoming.at(-1)?.timestamp ?? new Date().toISOString();
+    this.patch({
+      controlSession: {
+        ...currentControlSession,
+        status: "running",
+        updatedAt,
+        session: {
+          ...currentControlSession.session,
+          runningState: "running",
+          activitySource: "inferred",
+          activityState: "running",
+          lastEventAt: updatedAt,
+          updatedAt
+        }
+      }
+    });
   }
 
   private isActiveControlSession(sessionId: string | null): boolean {
@@ -1224,4 +1418,78 @@ function toErrorMessage(error: unknown): string {
   }
 
   return String(error);
+}
+
+function deriveButlerControlSessionStatus(
+  currentStatus: ButlerControlSessionDto["status"],
+  runningState: ButlerControlSessionDto["session"]["runningState"],
+  hasActiveRun: boolean
+): ButlerControlSessionDto["status"] {
+  if (
+    hasActiveRun
+    || runningState === "starting"
+    || runningState === "running"
+    || runningState === "reconnecting"
+  ) {
+    return "running";
+  }
+
+  if (runningState === "failed") {
+    return "failed";
+  }
+
+  if (currentStatus === "closed") {
+    return "closed";
+  }
+
+  return "idle";
+}
+
+function deriveButlerSessionActivityState(
+  currentState: ButlerControlSessionDto["session"]["activityState"],
+  runningState: ButlerControlSessionDto["session"]["runningState"],
+  hasActiveRun: boolean
+): ButlerControlSessionDto["session"]["activityState"] {
+  if (
+    hasActiveRun
+    || runningState === "starting"
+    || runningState === "running"
+    || runningState === "reconnecting"
+  ) {
+    return "running";
+  }
+
+  if (
+    runningState === "completed"
+    || runningState === "interrupted"
+    || runningState === "failed"
+  ) {
+    return "completed_unread";
+  }
+
+  if (currentState === "running") {
+    return "idle";
+  }
+
+  return currentState;
+}
+
+function isButlerRuntimeRunningState(
+  runningState: ButlerControlSessionDto["session"]["runningState"]
+): boolean {
+  return (
+    runningState === "starting"
+    || runningState === "running"
+    || runningState === "reconnecting"
+  );
+}
+
+function isButlerRuntimeTerminalState(
+  runningState: ButlerControlSessionDto["session"]["runningState"]
+): boolean {
+  return (
+    runningState === "completed"
+    || runningState === "failed"
+    || runningState === "interrupted"
+  );
 }

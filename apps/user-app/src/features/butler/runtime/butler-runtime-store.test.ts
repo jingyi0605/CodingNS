@@ -85,6 +85,55 @@ const mockedGetSessionMessages = vi.mocked(getSessionMessages);
 const mockedGetSessionRuntime = vi.mocked(getSessionRuntime);
 const mockedInterruptSession = vi.mocked(interruptSession);
 
+function createControlSession(
+  overrides: Partial<Record<string, unknown>> = {}
+): Record<string, unknown> {
+  const sessionOverrides =
+    overrides.session && typeof overrides.session === "object"
+      ? (overrides.session as Record<string, unknown>)
+      : {};
+
+  return {
+    id: "ctrl-control-1",
+    providerId: "codex",
+    sessionId: "session-control-1",
+    purpose: "chat",
+    title: "控制会话",
+    sourceItemId: null,
+    status: "idle",
+    lastContextVersion: null,
+    lastSummary: null,
+    createdAt: "2026-04-05T00:00:00.000Z",
+    updatedAt: "2026-04-05T00:00:00.000Z",
+    ...overrides,
+    session: {
+      sessionId: "session-control-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "provider-control-1",
+      rawStoreRef: "raw-control-1",
+      title: "控制会话",
+      messageCount: 1,
+      lastMessageAt: "2026-04-05T00:00:00.000Z",
+      createdAt: "2026-04-05T00:00:00.000Z",
+      updatedAt: "2026-04-05T00:00:00.000Z",
+      syncStatus: "idle",
+      syncCursor: null,
+      lastSyncAt: null,
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      runningState: "idle",
+      activitySource: "runtime",
+      lastEventAt: "2026-04-05T00:00:00.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      activityState: "idle",
+      ...sessionOverrides
+    }
+  };
+}
+
 describe("ButlerRuntimeStore", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -248,6 +297,75 @@ describe("ButlerRuntimeStore", () => {
         content: "继续消息"
       })
     );
+  });
+
+  it("发送消息后首次 reload 仍返回 idle 时，会保留待启动活跃态", async () => {
+    const store = new ButlerRuntimeStore("workspace-1");
+    const controlSession = createControlSession({
+      id: "ctrl-existing"
+    });
+
+    mockedSendButlerControlMessage.mockResolvedValueOnce({
+      controlSession
+    } as never);
+    mockedGetButlerControlSession.mockResolvedValueOnce({
+      controlSession: createControlSession({
+        id: "ctrl-existing",
+        updatedAt: "2026-04-05T00:00:05.000Z",
+        session: {
+          updatedAt: "2026-04-05T00:00:05.000Z",
+          lastEventAt: null,
+          runningState: "idle",
+          activityState: "idle"
+        }
+      })
+    } as never);
+    mockedGetSessionMessages.mockResolvedValueOnce({
+      messages: [],
+      cursor: "cursor-latest",
+      nextCursor: null,
+      total: 0
+    } as never);
+    mockedGetSessionRuntime.mockResolvedValueOnce({
+      sessionId: "session-control-1",
+      runningState: "idle",
+      hasActiveRun: false,
+      canAttach: false,
+      canInterrupt: false,
+      inRunInputMode: "none",
+      provider: "codex",
+      providerSessionId: "provider-control-1",
+      activityResolutionSource: "authoritative_runtime",
+      activityConfidence: "authoritative",
+      runId: null,
+      detail: null,
+      errorCode: null,
+      errorDetail: null,
+      updatedAt: "2026-04-05T00:00:05.000Z",
+      watchdogTriggeredAt: null,
+      contextUsage: null
+    } as never);
+
+    await store.initialize();
+
+    (store as unknown as { patch: (state: Record<string, unknown>) => void }).patch({
+      controlSession
+    });
+
+    await store.sendMessage("继续消息");
+
+    expect(store.getState().controlSession).toEqual(
+      expect.objectContaining({
+        id: "ctrl-existing",
+        status: "running",
+        session: expect.objectContaining({
+          runningState: "starting",
+          activitySource: "inferred",
+          activityState: "running"
+        })
+      })
+    );
+    expect(store.getState().runtimeHasActiveRun).toBe(false);
   });
 
   it("会保留 Butler 会话的 older cursor，并在上翻时继续加载更早消息", async () => {

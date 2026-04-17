@@ -4,6 +4,7 @@ import { performance } from "node:perf_hooks";
 
 import {
   type ActiveRunHandle,
+  type ActiveRunSnapshot,
   ClaudeRuntimeAdapter,
   type ContextUsageSnapshot,
   CodexRuntimeAdapter,
@@ -295,6 +296,7 @@ export class SessionLiveRuntimeService {
   private readonly terminalStateListeners = new Set<
     (event: SessionTerminalStateEvent) => Promise<void> | void
   >();
+  private readonly deadRuntimeReconciliationSessions = new Set<string>();
   private readonly runtimeMessageSeenSessions = new Set<string>();
   private readonly runtimeHistoryFallbackSentSessions = new Set<string>();
   private readonly queueDispatchSessions = new Set<string>();
@@ -588,7 +590,7 @@ export class SessionLiveRuntimeService {
     }
 
     const runtimeSessionId = this.resolveRuntimeSessionId(sessionId);
-    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(runtimeSessionId);
+    const runtimeSnapshot = this.getLiveRuntimeSnapshot(runtimeSessionId);
 
     if (!runtimeSnapshot || !isActiveRuntimeState(runtimeSnapshot.runningState)) {
       throw new AppError({
@@ -842,7 +844,7 @@ export class SessionLiveRuntimeService {
 
   async getSessionRuntime(sessionId: string, userId: string): Promise<SessionRuntimeStatusView> {
     const runtimeSessionId = this.resolveRuntimeSessionId(sessionId);
-    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(runtimeSessionId);
+    const runtimeSnapshot = this.getLiveRuntimeSnapshot(runtimeSessionId);
     const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(runtimeSessionId) ?? null;
     const runtimeHasActiveRun = runtimeSnapshot ? isActiveRuntimeState(runtimeSnapshot.runningState) : false;
     const externalHasActiveRun = externalRuntimeSnapshot
@@ -943,7 +945,7 @@ export class SessionLiveRuntimeService {
 
   resolveLiveActivityObservation(sessionId: string): SessionActivityObservation | null {
     const runtimeSessionId = this.resolveRuntimeSessionId(sessionId);
-    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(runtimeSessionId);
+    const runtimeSnapshot = this.getLiveRuntimeSnapshot(runtimeSessionId);
 
     if (runtimeSnapshot) {
       return createRuntimeActivityObservation(runtimeSessionId, runtimeSnapshot);
@@ -961,7 +963,7 @@ export class SessionLiveRuntimeService {
   async interruptSession(sessionId: string, userId: string): Promise<InterruptSessionResult> {
     this.sessionHistoryService.getSession(sessionId, userId);
     const runtimeSessionId = this.resolveRuntimeSessionId(sessionId);
-    const runtime = this.providerRuntimeService.getSnapshot(runtimeSessionId);
+    const runtime = this.getLiveRuntimeSnapshot(runtimeSessionId);
 
     if (!runtime || (runtime.runningState !== "running" && runtime.runningState !== "starting")) {
       throw new AppError({
@@ -1030,7 +1032,7 @@ export class SessionLiveRuntimeService {
     onEnvelope: (envelope: SessionRuntimeEnvelope | SessionHistoryEnvelope) => Promise<void> | void
   ): ProviderSubscription {
     const runtimeSessionId = this.resolveRuntimeSessionId(sessionId);
-    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(runtimeSessionId);
+    const runtimeSnapshot = this.getLiveRuntimeSnapshot(runtimeSessionId);
     const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(runtimeSessionId) ?? null;
     const initialActivityEnvelope = this.buildSessionActivityEnvelope(sessionId, runtimeSessionId);
 
@@ -1161,11 +1163,94 @@ export class SessionLiveRuntimeService {
     );
   }
 
+  private getLiveRuntimeSnapshot(sessionId: string): ActiveRunSnapshot | null {
+    const snapshot = this.providerRuntimeService.getSnapshot(sessionId);
+
+    if (!snapshot) {
+      return null;
+    }
+
+    if (!isActiveRuntimeState(snapshot.runningState)) {
+      return snapshot;
+    }
+
+    if (this.providerRuntimeService.isRunHealthy(sessionId) === false) {
+      this.demoteDeadRuntimeSnapshot(snapshot);
+      this.scheduleDeadRuntimeReconciliation(snapshot);
+      return null;
+    }
+
+    return snapshot;
+  }
+
+  private demoteDeadRuntimeSnapshot(snapshot: ActiveRunSnapshot): void {
+    const updatedAt = nowIso();
+
+    for (const userId of this.authUserRepository.listIds()) {
+      const current = this.sessionStateRepository.findBySessionAndUser(snapshot.sessionId, userId);
+
+      if (!current || !isPendingSessionRunningState(current.runningState) || current.activitySource !== "runtime") {
+        continue;
+      }
+
+      this.sessionStateRepository.upsert({
+        ...current,
+        runningState: "interrupted",
+        activitySource: "runtime",
+        completedAt: updatedAt,
+        updatedAt
+      });
+    }
+
+    this.sessionActivityAuthorityService.observe({
+      sessionId: snapshot.sessionId,
+      runId: buildRuntimeRunId(snapshot.sessionId, snapshot.startedAt),
+      runningState: "interrupted",
+      source: "authoritative_runtime",
+      confidence: "strong",
+      detail: "Host 检测到这轮运行已经异常结束，已自动回收残留运行态",
+      interruptSource: "runtime",
+      errorCode: null,
+      observedAt: updatedAt
+    });
+  }
+
+  private scheduleDeadRuntimeReconciliation(snapshot: ActiveRunSnapshot): void {
+    if (this.deadRuntimeReconciliationSessions.has(snapshot.sessionId)) {
+      return;
+    }
+
+    this.deadRuntimeReconciliationSessions.add(snapshot.sessionId);
+    void this.reconcileDeadRuntimeSession(snapshot).finally(() => {
+      this.deadRuntimeReconciliationSessions.delete(snapshot.sessionId);
+    });
+  }
+
+  private async reconcileDeadRuntimeSession(snapshot: ActiveRunSnapshot): Promise<void> {
+    await this.providerRuntimeService.abandonRun(snapshot.sessionId).catch(() => {
+      return;
+    });
+
+    for (const userId of this.authUserRepository.listIds()) {
+      await this.sessionHistoryService.refreshRuntimeFallbackSession(snapshot.sessionId, userId).catch(() => {
+        return;
+      });
+    }
+
+    const envelope = this.buildSessionActivityEnvelope(snapshot.sessionId, snapshot.sessionId);
+
+    if (envelope) {
+      await this.emitExternalRuntimeEnvelope(envelope);
+    }
+
+    void this.dispatchNextQueuedMessage(snapshot.sessionId);
+  }
+
   private buildSessionActivityEnvelope(
     sessionId: string,
     runtimeSessionId = sessionId
   ): SessionActivityEnvelope | null {
-    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(runtimeSessionId);
+    const runtimeSnapshot = this.getLiveRuntimeSnapshot(runtimeSessionId);
 
     if (runtimeSnapshot) {
       const resolution = this.sessionActivityAuthorityService.observe(
@@ -1575,7 +1660,7 @@ export class SessionLiveRuntimeService {
       } as const;
 
       const runtimeSessionId = this.resolveRuntimeSessionId(input.sessionId);
-      const activeRun = this.providerRuntimeService.getSnapshot(runtimeSessionId);
+      const activeRun = this.getLiveRuntimeSnapshot(runtimeSessionId);
       const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(runtimeSessionId);
 
       if (
@@ -1689,7 +1774,7 @@ export class SessionLiveRuntimeService {
     this.queueDispatchSessions.add(sessionId);
 
     try {
-      const runtimeSnapshot = this.providerRuntimeService.getSnapshot(sessionId);
+      const runtimeSnapshot = this.getLiveRuntimeSnapshot(sessionId);
       const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(sessionId);
 
       if (
@@ -1780,7 +1865,7 @@ export class SessionLiveRuntimeService {
   private shouldBlockQueueDispatch(
     session: Pick<SessionListItem, "sessionId" | "provider" | "runningState">
   ): boolean {
-    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(session.sessionId);
+    const runtimeSnapshot = this.getLiveRuntimeSnapshot(session.sessionId);
 
     if (runtimeSnapshot && isActiveRuntimeState(runtimeSnapshot.runningState)) {
       return true;
@@ -1839,7 +1924,7 @@ export class SessionLiveRuntimeService {
       return session;
     }
 
-    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(sessionId);
+    const runtimeSnapshot = this.getLiveRuntimeSnapshot(sessionId);
     const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(sessionId);
 
     if (
@@ -2610,7 +2695,7 @@ export class SessionLiveRuntimeService {
   }
 
   private shouldIgnoreClaudeExternalRuntimeUpdate(sessionId: string): boolean {
-    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(sessionId);
+    const runtimeSnapshot = this.getLiveRuntimeSnapshot(sessionId);
 
     return Boolean(
       runtimeSnapshot &&
