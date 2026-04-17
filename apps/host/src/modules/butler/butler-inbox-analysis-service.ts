@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 
 import type {
   ButlerInboxItem,
@@ -50,7 +51,8 @@ export class ButlerInboxAnalysisService {
     private readonly sessionLiveRuntimeService: Pick<SessionLiveRuntimeService, "getSessionRuntime">,
     private readonly providerAdapterRegistry: ProviderAdapterRegistry,
     private readonly codexHomeDir: string | null,
-    private readonly sourceCodexHomeDir: string | null
+    private readonly sourceCodexHomeDir: string | null,
+    private readonly claudeCodeHomeDir: string | null
   ) {}
 
   async prepareTodoAnalysisSession(
@@ -64,6 +66,7 @@ export class ButlerInboxAnalysisService {
     model: string | null;
     reasoningLevel: string;
     permissionMode: string;
+    instructionFilePath: string | null;
   }> {
     const profile = this.butlerProfileService.ensureInitialized();
     const promptContext = await this.butlerContextAggregator.resolvePromptContext(
@@ -78,7 +81,8 @@ export class ButlerInboxAnalysisService {
       butlerAuthService: this.butlerAuthService,
       skillManagerService: this.skillManagerService,
       codexHomeDir: this.codexHomeDir,
-      sourceCodexHomeDir: this.sourceCodexHomeDir
+      sourceCodexHomeDir: this.sourceCodexHomeDir,
+      claudeCodeHomeDir: this.claudeCodeHomeDir
     });
 
     const workspace = this.workspaceService.importWorkspace(profile.workspacePath, "代码助手");
@@ -94,7 +98,8 @@ export class ButlerInboxAnalysisService {
       prompt: instruction.prompt,
       model: resolveAnalysisModel(profile, this.sourceCodexHomeDir),
       reasoningLevel: "medium",
-      permissionMode: "default"
+      permissionMode: "default",
+      instructionFilePath: resolveButlerInstructionFilePath(profile.providerId, profile.workspacePath)
     };
   }
 
@@ -126,7 +131,8 @@ export class ButlerInboxAnalysisService {
       prompt: prepared.prompt,
       model: prepared.model,
       reasoningLevel: prepared.reasoningLevel,
-      permissionMode: prepared.permissionMode
+      permissionMode: prepared.permissionMode,
+      instructionFilePath: prepared.instructionFilePath
     });
 
     return this.readTodoAnalysisResult(launch.sessionId, prepared.providerId, userId);
@@ -516,4 +522,13 @@ function resolveAnalysisModel(
   }
 
   return resolveButlerCodexBackgroundModel("gpt-5.1-codex-mini", sourceCodexHomeDir);
+}
+
+function resolveButlerInstructionFilePath(
+  providerId: ButlerProfile["providerId"],
+  workspacePath: string
+): string | null {
+  return providerId === "claude-code"
+    ? path.resolve(workspacePath, "CLAUDE.md")
+    : path.resolve(workspacePath, "AGENTS.md");
 }

@@ -17,8 +17,8 @@ import type { ButlerProjectRepository } from "../../storage/repositories/butler-
 const BUTLER_PROFILE_ID: ButlerProfile["id"] = "default";
 const DEFAULT_BUTLER_DISPLAY_NAME = "代码助手";
 const DEFAULT_BUTLER_WORKSPACE_DIRNAME = "butler-workspace";
-const SUPPORTED_PROVIDERS: ButlerProfileProviderId[] = ["codex"];
-const PROVIDER_ERROR_DETAIL = "providerId 只允许为 codex";
+const SUPPORTED_PROVIDERS: ButlerProfileProviderId[] = ["codex", "claude-code"];
+const PROVIDER_ERROR_DETAIL = "providerId 只允许为 codex 或 claude-code";
 const SUPPORTED_AGENTS_MODES: ButlerAgentsMode[] = ["inline", "file"];
 const SUPPORTED_PERSONA_TONES = ["direct", "steady", "friendly"] as const;
 const SUPPORTED_PERSONA_LANGUAGES = ["zh-CN", "en-US", "bilingual"] as const;
@@ -201,10 +201,6 @@ function normalizeProviderId(value: unknown): ButlerProfileProviderId {
 }
 
 function hydrateStoredProviderId(value: unknown): ButlerProfileProviderId {
-  if (value === "claude-code") {
-    return "codex";
-  }
-
   return normalizeProviderId(value);
 }
 

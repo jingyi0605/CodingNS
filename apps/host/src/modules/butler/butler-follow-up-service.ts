@@ -838,7 +838,8 @@ export class ButlerFollowUpService {
       prompt: instruction.prompt,
       model: resolveFollowUpModel(profile.providerId, this.sourceCodexHomeDir),
       reasoningLevel: "low",
-      permissionMode: "default"
+      permissionMode: "default",
+      instructionFilePath: resolveFollowUpInstructionFilePath(profile.providerId, evaluatorWorkspacePath)
     });
 
     await adapter.waitForSessionTerminal(launch.sessionId);
@@ -1161,6 +1162,13 @@ function resolveFollowUpModel(
   }
 
   return resolveButlerCodexBackgroundModel("gpt-5.1-codex-mini", sourceCodexHomeDir);
+}
+
+function resolveFollowUpInstructionFilePath(
+  providerId: ButlerProfile["providerId"],
+  workspacePath: string
+): string {
+  return path.join(workspacePath, providerId === "claude-code" ? "CLAUDE.md" : "AGENTS.md");
 }
 
 function parseEvaluationResult(result: PatrolSessionResult): ButlerFollowUpEvaluationResult {

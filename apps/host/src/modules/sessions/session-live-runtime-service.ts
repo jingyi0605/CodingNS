@@ -74,6 +74,7 @@ interface RuntimeSendOptions {
   model?: string | null;
   reasoningLevel?: string | null;
   permissionMode?: string | null;
+  providerInstructionFilePath?: string | null;
   attachments?: SessionAttachmentInput[];
 }
 
@@ -365,6 +366,11 @@ export class SessionLiveRuntimeService {
         input.content,
         persistedAttachments.runtimeAttachments
       );
+      const providerInstructionFilePath = resolveRuntimeInstructionFilePath(
+        input.provider,
+        workspace.path,
+        input.runtimeOptions?.providerInstructionFilePath ?? null
+      );
 
       this.ensureCapability(capabilities.canStartSession, "provider", "provider 不支持 start-live");
       this.ensureCapability(capabilities.canSendMessage, "provider", "provider 不支持实时对话");
@@ -386,6 +392,7 @@ export class SessionLiveRuntimeService {
             reasoningLevel: input.runtimeOptions?.reasoningLevel ?? null,
             permissionMode: input.runtimeOptions?.permissionMode ?? null,
             providerPrompt,
+            providerInstructionFilePath,
             attachments: persistedAttachments.runtimeAttachments
           }
         },
@@ -1539,6 +1546,11 @@ export class SessionLiveRuntimeService {
         input.content,
         resolvedAttachments.runtimeAttachments
       );
+      const providerInstructionFilePath = resolveRuntimeInstructionFilePath(
+        session.provider,
+        workspace.path,
+        input.runtimeOptions?.providerInstructionFilePath ?? null
+      );
 
       this.ensureCapability(capabilities.canSendMessage, "sessionId", "provider 不支持实时对话");
 
@@ -1557,6 +1569,7 @@ export class SessionLiveRuntimeService {
           reasoningLevel: input.runtimeOptions?.reasoningLevel ?? null,
           permissionMode: input.runtimeOptions?.permissionMode ?? null,
           providerPrompt,
+          providerInstructionFilePath,
           attachments: resolvedAttachments.runtimeAttachments
         }
       } as const;
@@ -3154,6 +3167,29 @@ function createProviderRuntimeAdapters(
     ],
     disposables
   };
+}
+
+function resolveRuntimeInstructionFilePath(
+  provider: string,
+  workspacePath: string,
+  explicitFilePath: string | null
+): string | null {
+  const normalizedExplicit = explicitFilePath?.trim();
+
+  if (normalizedExplicit) {
+    const resolvedExplicit = path.resolve(normalizedExplicit);
+    return existsSync(resolvedExplicit) ? resolvedExplicit : null;
+  }
+
+  if (provider !== "claude-code") {
+    return null;
+  }
+
+  const defaultClaudeInstructionPath = path.join(workspacePath, "CLAUDE.md");
+
+  return existsSync(defaultClaudeInstructionPath)
+    ? path.resolve(defaultClaudeInstructionPath)
+    : null;
 }
 
 function buildClaudeHookBridgeConfig(config: HostConfig): ClaudeHookBridgeConfig {

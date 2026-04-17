@@ -141,6 +141,9 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     rawStoreRef: string,
     sessionArgs: string[]
   ): ProviderRuntimeLaunchResult {
+    const instructionFilePath = normalizeOptionalInstructionFilePath(
+      request.options.providerInstructionFilePath
+    );
     const hookSettings = shouldInjectClaudeHookBridge(request.options.permissionMode) && this.options.hookBridge
       ? createClaudeHookSettingsFile(this.options.hookBridge)
       : null;
@@ -157,6 +160,7 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
       "--input-format",
       "stream-json",
       "--include-partial-messages",
+      ...(instructionFilePath ? ["--system-prompt-file", instructionFilePath] : []),
       ...(hookSettings ? ["--settings", hookSettings.filePath] : []),
       ...attachmentDirectories.flatMap((directory) => ["--add-dir", directory]),
       ...sessionArgs
@@ -177,6 +181,7 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
       workspacePath: request.workspacePath,
       commandPath: this.commandPath,
       args,
+      instructionFilePath,
       hookSettingsPath: hookSettings?.filePath ?? null,
       hookDebugLogPath: hookSettings?.debugLogPath ?? null,
       hookSettingsJson: hookSettings?.json ?? null
@@ -240,9 +245,11 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     };
 
     this.ensureRuntimeStoreReady(activeRawStoreRef);
+    const runtimeEnv = buildClaudeRuntimeEnv(this.options.homeDir);
 
     const proc = spawn(this.commandPath, args, {
       cwd: request.workspacePath,
+      env: runtimeEnv,
       shell: shouldSpawnClaudeViaShell(this.commandPath),
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"]
@@ -584,6 +591,16 @@ function buildClaudeStreamingUserInput(
   };
 }
 
+function normalizeOptionalInstructionFilePath(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  return normalized;
+}
+
 export function buildClaudePermissionArgs(permissionMode: string | null): string[] {
   if (
     permissionMode === "default" ||
@@ -598,6 +615,41 @@ export function buildClaudePermissionArgs(permissionMode: string | null): string
 
 function shouldInjectClaudeHookBridge(permissionMode: string | null): boolean {
   return permissionMode !== "bypassPermissions";
+}
+
+function buildClaudeRuntimeEnv(homeDir: string): NodeJS.ProcessEnv {
+  const resolvedHomeDir = join(homeDir);
+  const xdgConfigHome = join(resolvedHomeDir, "xdg-config");
+  const xdgDataHome = join(resolvedHomeDir, "xdg-data");
+  const xdgStateHome = join(resolvedHomeDir, "xdg-state");
+  const xdgCacheHome = join(resolvedHomeDir, "xdg-cache");
+  const appDataHome = join(resolvedHomeDir, "appdata");
+  const localAppDataHome = join(resolvedHomeDir, "localappdata");
+
+  [
+    resolvedHomeDir,
+    xdgConfigHome,
+    xdgDataHome,
+    xdgStateHome,
+    xdgCacheHome,
+    appDataHome,
+    localAppDataHome
+  ].forEach((directoryPath) => {
+    ensureDirectory(directoryPath);
+  });
+
+  return {
+    ...process.env,
+    CLAUDE_CONFIG_DIR: resolvedHomeDir,
+    HOME: resolvedHomeDir,
+    USERPROFILE: resolvedHomeDir,
+    XDG_CONFIG_HOME: xdgConfigHome,
+    XDG_DATA_HOME: xdgDataHome,
+    XDG_STATE_HOME: xdgStateHome,
+    XDG_CACHE_HOME: xdgCacheHome,
+    APPDATA: appDataHome,
+    LOCALAPPDATA: localAppDataHome
+  };
 }
 
 function createClaudeHookSettingsFile(input: {

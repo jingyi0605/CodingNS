@@ -22,6 +22,7 @@ export interface RuntimeSendOptions {
   reasoningLevel: string | null;
   permissionMode: string | null;
   providerPrompt: string | null;
+  providerInstructionFilePath?: string | null;
   attachments: RuntimeAttachment[];
 }
 

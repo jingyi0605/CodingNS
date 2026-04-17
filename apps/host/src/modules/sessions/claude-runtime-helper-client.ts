@@ -103,9 +103,10 @@ export class ClaudeRuntimeHelperAdapter implements ProviderRuntimeAdapter {
     if (options.hookBridge) {
       launch.args.push("--hook-bridge", JSON.stringify(options.hookBridge));
     }
+    const helperEnv = buildClaudeHelperEnv(options.homeDir);
     this.child = spawn(launch.command, launch.args, {
       cwd: process.cwd(),
-      env: process.env,
+      env: helperEnv,
       stdio: ["pipe", "pipe", "pipe"]
     });
     this.stdoutReader = readline.createInterface({
@@ -346,5 +347,28 @@ function resolveHelperLaunch(homeDir: string): { command: string; args: string[]
   return {
     command: process.execPath,
     args: [...baseArgs, "--home-dir", homeDir]
+  };
+}
+
+function buildClaudeHelperEnv(homeDir: string): NodeJS.ProcessEnv {
+  const resolvedHomeDir = path.resolve(homeDir);
+  const xdgConfigHome = path.join(resolvedHomeDir, "xdg-config");
+  const xdgDataHome = path.join(resolvedHomeDir, "xdg-data");
+  const xdgStateHome = path.join(resolvedHomeDir, "xdg-state");
+  const xdgCacheHome = path.join(resolvedHomeDir, "xdg-cache");
+  const appDataHome = path.join(resolvedHomeDir, "appdata");
+  const localAppDataHome = path.join(resolvedHomeDir, "localappdata");
+
+  return {
+    ...process.env,
+    CLAUDE_CONFIG_DIR: resolvedHomeDir,
+    HOME: resolvedHomeDir,
+    USERPROFILE: resolvedHomeDir,
+    XDG_CONFIG_HOME: xdgConfigHome,
+    XDG_DATA_HOME: xdgDataHome,
+    XDG_STATE_HOME: xdgStateHome,
+    XDG_CACHE_HOME: xdgCacheHome,
+    APPDATA: appDataHome,
+    LOCALAPPDATA: localAppDataHome
   };
 }

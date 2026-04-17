@@ -27,6 +27,7 @@ export interface StartPatrolSessionInput {
   model: string | null;
   reasoningLevel: string | null;
   permissionMode: string | null;
+  instructionFilePath: string | null;
 }
 
 export interface PatrolSessionLaunchResult {
@@ -99,7 +100,8 @@ export class RuntimePatrolProviderAdapter implements PatrolProviderAdapter {
       runtimeOptions: {
         model: input.model,
         reasoningLevel: input.reasoningLevel,
-        permissionMode: input.permissionMode
+        permissionMode: input.permissionMode,
+        providerInstructionFilePath: input.instructionFilePath
       }
     });
     this.sessionOwnerBySessionId.set(accepted.sessionId, input.userId);

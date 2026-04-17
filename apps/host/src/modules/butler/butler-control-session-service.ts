@@ -59,6 +59,7 @@ export class ButlerControlSessionService {
     private readonly skillManagerService: Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">,
     private readonly codexHomeDir: string | null = null,
     private readonly sourceCodexHomeDir: string | null = null,
+    private readonly claudeCodeHomeDir: string | null = null,
     private readonly sessionMessageOriginRepository: Pick<
       SessionMessageOriginRepository,
       "upsert"
@@ -336,7 +337,8 @@ export class ButlerControlSessionService {
       butlerAuthService: this.butlerAuthService,
       skillManagerService: this.skillManagerService,
       codexHomeDir: this.codexHomeDir,
-      sourceCodexHomeDir: this.sourceCodexHomeDir
+      sourceCodexHomeDir: this.sourceCodexHomeDir,
+      claudeCodeHomeDir: this.claudeCodeHomeDir
     });
   }
 

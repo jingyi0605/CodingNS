@@ -104,7 +104,8 @@ export class PatrolExecutionService {
         prompt: instruction.prompt,
         model: readProviderStringOption(project, providerId, "model"),
         reasoningLevel: readProviderStringOption(project, providerId, "reasoningLevel"),
-        permissionMode: mapPermissionMode(instruction)
+        permissionMode: mapPermissionMode(instruction),
+        instructionFilePath: null
       });
 
       butlerSession = this.ensureButlerSession(project.id, launch.sessionId, launch.acceptedAt);

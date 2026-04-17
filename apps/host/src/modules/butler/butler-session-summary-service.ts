@@ -322,7 +322,8 @@ export class ButlerSessionSummaryService {
         prompt: instruction.prompt,
         model: resolveSummaryModel(providerId, this.sourceCodexHomeDir),
         reasoningLevel: "low",
-        permissionMode: "default"
+        permissionMode: "default",
+        instructionFilePath: path.join(summaryWorkspacePath, "SUMMARY_AGENTS.md")
       });
 
       await adapter.waitForSessionTerminal(launch.sessionId);
