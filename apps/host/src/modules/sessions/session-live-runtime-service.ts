@@ -1632,6 +1632,12 @@ export class SessionLiveRuntimeService {
         matched: Boolean(acceptedMessage)
       });
       const acceptedAt = acceptedMessage?.timestamp ?? nowIso();
+      this.sessionHistoryService.resolveMessageOriginByClientRequestId(
+        input.sessionId,
+        input.clientRequestId,
+        acceptedMessage?.messageId ?? null,
+        acceptedAt
+      );
       const boundAttachments = this.sessionMessageAttachmentService.bindClientRequestToMessage(
         input.sessionId,
         input.clientRequestId,

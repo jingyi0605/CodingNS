@@ -647,6 +647,24 @@ export class SessionHistoryService {
     };
   }
 
+  resolveMessageOriginByClientRequestId(
+    sessionId: string,
+    clientRequestId: string | null,
+    messageId: string | null,
+    updatedAt: string
+  ): void {
+    if (!this.sessionMessageOriginRepository || !clientRequestId || !messageId) {
+      return;
+    }
+
+    this.sessionMessageOriginRepository.resolveMessageId(
+      sessionId,
+      clientRequestId,
+      messageId,
+      updatedAt
+    );
+  }
+
   async findLatestUserMessage(
     sessionId: string,
     content: string | string[],
@@ -2458,17 +2476,6 @@ export class SessionHistoryService {
         .filter((row) => row.messageId)
         .map((row) => [row.messageId!, row] as const)
     );
-    const unresolvedRows = originRepository.listUnresolvedBySessionAndContents(
-      sessionId,
-      [...new Set(messages.map((message) => message.content).filter((content) => content.trim().length > 0))]
-    );
-    const unresolvedByContent = new Map<string, typeof unresolvedRows>();
-
-    for (const row of unresolvedRows) {
-      const current = unresolvedByContent.get(row.content) ?? [];
-      current.push(row);
-      unresolvedByContent.set(row.content, current);
-    }
 
     return messages.map((message) => {
       const resolved = originByMessageId.get(message.messageId) ?? null;
@@ -2489,32 +2496,10 @@ export class SessionHistoryService {
         };
       }
 
-      const candidates = unresolvedByContent.get(message.content) ?? [];
-      const matched = candidates.find((row) => isMessageAtOrAfter(message.timestamp, row.createdAt)) ?? null;
-
-      if (!matched) {
-        return {
-          ...message,
-          origin: null,
-          originRef: null
-        };
-      }
-
-      originRepository.resolveMessageId(
-        sessionId,
-        matched.clientRequestId,
-        message.messageId,
-        message.timestamp
-      );
-      unresolvedByContent.set(
-        message.content,
-        candidates.filter((candidate) => candidate.clientRequestId !== matched.clientRequestId)
-      );
-
       return {
         ...message,
-        origin: matched.origin,
-        originRef: matched.originRef
+        origin: null,
+        originRef: null
       };
     });
   }
