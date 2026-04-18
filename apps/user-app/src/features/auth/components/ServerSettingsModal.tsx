@@ -7,6 +7,7 @@ import {
   useServerConfigSelector,
   type ServerPresetOption
 } from "../../../config/server-config";
+import { WorkbenchModal } from "../../conversation/components/WorkbenchModal";
 import { t } from "../../../shared/i18n";
 
 interface ServerSettingsModalProps {
@@ -17,6 +18,7 @@ interface ServerSettingsModalProps {
 }
 
 export function ServerSettingsModal({ isOpen, onClose, onSave, theme = "dark" }: ServerSettingsModalProps) {
+  void theme;
   const persistedServerBaseUrl = useServerConfigSelector((state) => state.baseUrl);
   const serverOptions = useServerConfigSelector((state) => state.options);
   const presetOptions = useServerConfigSelector((state) => state.presetOptions);
@@ -62,12 +64,6 @@ export function ServerSettingsModal({ isOpen, onClose, onSave, theme = "dark" }:
     onClose();
   }
 
-  function handleBackdropClick(e: React.MouseEvent): void {
-    if (e.target === e.currentTarget) {
-      onClose();
-    }
-  }
-
   function handleServerBlur(): void {
     if (!normalizedServerBaseUrl) {
       return;
@@ -76,112 +72,87 @@ export function ServerSettingsModal({ isOpen, onClose, onSave, theme = "dark" }:
   }
 
   return (
-    <div
-      className="server-settings-modal-backdrop"
-      data-theme={theme}
-      onClick={handleBackdropClick}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="server-settings-title"
+    <WorkbenchModal
+      open={isOpen}
+      title={t("auth.serverSettingsTitle")}
+      description={t("auth.serverHint")}
+      className="server-settings-modal-card"
+      onClose={onClose}
     >
-      <div className="server-settings-modal">
-        <div className="server-settings-modal-header">
-          <div className="cyber-header-line" />
-          <h2 id="server-settings-title" className="cyber-title">
-            <span className="cyber-title-icon">◈</span>
-            {t("auth.serverSettingsTitle")}
-          </h2>
-          <div className="cyber-header-line" />
-          <button
-            className="server-settings-close"
-            onClick={onClose}
-            aria-label={t("common.close")}
+      <form
+        className="server-settings-modal-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          handleSave();
+        }}
+      >
+        <label className="workbench-modal-field" htmlFor={presetSelectId}>
+          <span>{t("auth.serverPreset")}</span>
+          <select
+            id={presetSelectId}
+            aria-label={t("auth.serverPreset")}
+            value={selectedServerOption}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              if (nextValue === customServerOptionValue) {
+                return;
+              }
+              setServerBaseUrlInput(nextValue);
+              setStatusText(null);
+            }}
           >
-            ×
-          </button>
-        </div>
+            {presetOptions.map((option) => (
+              <option key={`${option.source}:${option.value}`} value={option.value}>
+                {formatPresetOptionLabel(option)}
+              </option>
+            ))}
+            <option value={customServerOptionValue}>{t("auth.serverCustomOption")}</option>
+          </select>
+        </label>
 
-        <div className="server-settings-modal-content">
-          <label className="field-group cyber-field" htmlFor={presetSelectId}>
-            <span className="cyber-label">{t("auth.serverPreset")}</span>
-            <div className="cyber-select-wrapper">
-              <select
-                id={presetSelectId}
-                aria-label={t("auth.serverPreset")}
-                className="cyber-select"
-                value={selectedServerOption}
-                onChange={(event) => {
-                  const nextValue = event.target.value;
-                  if (nextValue === customServerOptionValue) {
-                    return;
-                  }
-                  setServerBaseUrlInput(nextValue);
-                  setStatusText(null);
-                }}
-              >
-                {presetOptions.map((option) => (
-                  <option key={`${option.source}:${option.value}`} value={option.value}>
-                    {formatPresetOptionLabel(option)}
-                  </option>
-                ))}
-                <option value={customServerOptionValue}>{t("auth.serverCustomOption")}</option>
-              </select>
-              <span className="cyber-select-arrow">▼</span>
-            </div>
-            {selectedPresetOption ? (
-              <div className="cyber-select-tags" aria-live="polite">
-                {selectedPresetOption.source === "discovered" ? (
-                  <span className="cyber-select-tag" data-tone="discovered">
-                    {t("auth.serverDiscoveredTag")}
-                  </span>
-                ) : null}
-              </div>
+        {selectedPresetOption ? (
+          <div className="server-settings-modal-tags" aria-live="polite">
+            {selectedPresetOption.source === "discovered" ? (
+              <span className="server-settings-modal-tag" data-tone="discovered">
+                {t("auth.serverDiscoveredTag")}
+              </span>
             ) : null}
-          </label>
+          </div>
+        ) : null}
 
-          <label className="field-group cyber-field" htmlFor={addressInputId}>
-            <span className="cyber-label">{t("auth.serverAddress")}</span>
-            <div className="cyber-input-wrapper">
-              <input
-                id={addressInputId}
-                aria-label={t("auth.serverAddress")}
-                className="cyber-input"
-                value={serverBaseUrlInput}
-                placeholder={t("auth.serverPlaceholder")}
-                onBlur={handleServerBlur}
-                onChange={(event) => {
-                  setServerBaseUrlInput(event.target.value);
-                  setStatusText(null);
-                }}
-              />
-              <div className="cyber-input-glow" />
-            </div>
-          </label>
+        <label className="workbench-modal-field" htmlFor={addressInputId}>
+          <span>{t("auth.serverAddress")}</span>
+          <input
+            id={addressInputId}
+            aria-label={t("auth.serverAddress")}
+            value={serverBaseUrlInput}
+            placeholder={t("auth.serverPlaceholder")}
+            onBlur={handleServerBlur}
+            onChange={(event) => {
+              setServerBaseUrlInput(event.target.value);
+              setStatusText(null);
+            }}
+          />
+        </label>
 
-          <p className="cyber-hint">
-            <span className="cyber-hint-icon">ℹ</span>
-            {t("auth.serverHint")}
+        {statusText ? (
+          <p className="server-settings-modal-status" data-tone="error">
+            {statusText}
           </p>
+        ) : (
+          <p className="server-settings-modal-hint">{t("auth.serverHint")}</p>
+        )}
 
-          {statusText ? (
-            <p className="cyber-status" data-tone="error">
-              <span className="cyber-status-icon">⚠</span>
-              {statusText}
-            </p>
-          ) : null}
-        </div>
-
-        <div className="server-settings-modal-footer">
-          <button className="cyber-button cyber-button-secondary" onClick={onClose}>
+        <div className="workbench-modal-actions">
+          <button type="button" className="secondary-button" onClick={onClose}>
             {t("common.cancel")}
           </button>
-          <button className="cyber-button cyber-button-primary" onClick={handleSave}>
-            <span className="cyber-button-glow" />
-            <span className="cyber-button-text">{t("auth.saveServerSettings")}</span>
+          <button type="submit" className="primary-button">
+            {t("auth.saveServerSettings")}
           </button>
         </div>
-      </div>
-    </div>
+      </form>
+    </WorkbenchModal>
   );
 }
 

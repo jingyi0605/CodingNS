@@ -6829,3 +6829,256 @@ html[data-workbench-macos-vibrancy="true"] .workbench-shell[data-runtime-platfor
 html[data-workbench-macos-vibrancy="true"] .workbench-shell[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-side-resizer:hover::after {
   opacity: 1;
 }
+
+/* portal 弹层直接挂在 body，下层的 .workbench-shell 选择器打不到它们，
+   所以主界面已经是 macOS 风格时，模态框和菜单会退回成网页白框。这里把桌面 macOS 的 overlay 质感提升到 body 级别。 */
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] {
+  --mac-overlay-border: color-mix(in srgb, rgba(255, 255, 255, 0.66) 54%, var(--border-primary));
+  --mac-overlay-divider: color-mix(in srgb, rgba(255, 255, 255, 0.26) 46%, var(--border-primary));
+  --mac-overlay-surface:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-surface) 70%, rgba(255, 255, 255, 0.3)),
+      color-mix(in srgb, var(--bg-elevated) 78%, rgba(255, 255, 255, 0.16))
+    );
+  --mac-overlay-surface-strong:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-surface) 84%, rgba(255, 255, 255, 0.52)),
+      color-mix(in srgb, var(--bg-elevated) 74%, rgba(255, 255, 255, 0.12))
+    );
+  --mac-overlay-shadow:
+    0 30px 80px rgba(15, 23, 42, 0.26),
+    0 12px 28px rgba(15, 23, 42, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  --mac-overlay-shadow-soft:
+    0 20px 48px rgba(15, 23, 42, 0.18),
+    0 8px 18px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.36);
+  --mac-overlay-hover:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 10%, rgba(255, 255, 255, 0.42)),
+      color-mix(in srgb, var(--accent) 8%, rgba(255, 255, 255, 0.08))
+    );
+  --mac-overlay-hover-danger:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--danger) 14%, rgba(255, 255, 255, 0.36)),
+      color-mix(in srgb, var(--danger) 10%, rgba(255, 255, 255, 0.08))
+    );
+  --modal-backdrop-bg:
+    radial-gradient(circle at 20% 18%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 28%),
+    radial-gradient(circle at 84% 22%, color-mix(in srgb, white 18%, transparent), transparent 24%),
+    rgba(8, 12, 24, 0.34);
+  --modal-backdrop-blur: 18px;
+  --modal-frame-border: var(--mac-overlay-border);
+  --modal-frame-surface:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.2), transparent 46%),
+    var(--mac-overlay-surface-strong);
+  --modal-frame-shadow: var(--mac-overlay-shadow);
+  --modal-header-divider: var(--mac-overlay-divider);
+  --modal-close-border: color-mix(in srgb, rgba(255, 255, 255, 0.52) 48%, var(--border-primary));
+  --modal-close-surface:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.48), rgba(255, 255, 255, 0.16)),
+    color-mix(in srgb, var(--bg-elevated) 78%, transparent);
+  --modal-close-surface-hover:
+    linear-gradient(180deg, color-mix(in srgb, white 24%, var(--danger)), color-mix(in srgb, var(--danger) 88%, #d93025));
+  --modal-close-color: color-mix(in srgb, var(--text-secondary) 90%, rgba(28, 28, 30, 0.88));
+  --modal-close-color-hover: #fff;
+  --modal-control-border: var(--mac-overlay-border);
+  --modal-control-surface-hover:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.48), rgba(255, 255, 255, 0.18)),
+    color-mix(in srgb, var(--bg-elevated) 84%, transparent);
+  --modal-control-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.38),
+    0 1px 2px rgba(15, 23, 42, 0.04);
+  --modal-control-border-hover: color-mix(in srgb, var(--accent) 24%, var(--mac-overlay-border));
+  --modal-control-border-focus: color-mix(in srgb, var(--accent) 32%, var(--mac-overlay-border));
+  --modal-control-focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+  --modal-button-secondary-bg: rgba(120, 120, 128, 0.1);
+  --modal-button-secondary-bg-hover: rgba(120, 120, 128, 0.16);
+  --modal-button-secondary-color: color-mix(in srgb, var(--text-secondary) 92%, rgba(28, 28, 30, 0.88));
+  --modal-button-primary-bg: rgba(0, 122, 255, 0.12);
+  --modal-button-primary-bg-hover: rgba(0, 122, 255, 0.18);
+  --modal-button-primary-color: var(--accent);
+  --modal-button-ghost-bg: transparent;
+  --modal-button-ghost-bg-hover: rgba(120, 120, 128, 0.16);
+  --modal-button-ghost-color: var(--accent);
+  --modal-button-danger-bg-hover: var(--mac-overlay-hover-danger);
+  --modal-button-danger-border: color-mix(in srgb, var(--status-danger) 34%, var(--mac-overlay-border));
+  --modal-button-danger-border-hover: color-mix(in srgb, var(--status-danger) 48%, var(--mac-overlay-border));
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-layer {
+  padding: clamp(20px, 3vw, 40px);
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-backdrop {
+  background:
+    radial-gradient(circle at 20% 18%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 28%),
+    radial-gradient(circle at 84% 22%, color-mix(in srgb, white 18%, transparent), transparent 24%),
+    rgba(8, 12, 24, 0.34);
+  backdrop-filter: blur(18px) saturate(135%);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-card,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-branch-dialog {
+  border: 1px solid var(--mac-overlay-border);
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.2), transparent 46%),
+    var(--mac-overlay-surface-strong);
+  box-shadow: var(--mac-overlay-shadow);
+  backdrop-filter: blur(30px) saturate(180%);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-branch-tree-pane {
+  border-color: transparent;
+  background: transparent;
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-header,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-branch-tree-pane-header {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--mac-overlay-divider);
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-title-wrap h2,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-branch-tree-pane-header h3 {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-title-wrap p,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-branch-tree-pane-header p {
+  color: color-mix(in srgb, var(--text-secondary) 88%, rgba(60, 60, 67, 0.72));
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-close,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-branch-preview-close {
+  border-radius: 999px;
+  border-color: color-mix(in srgb, rgba(255, 255, 255, 0.52) 48%, var(--border-primary));
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.48), rgba(255, 255, 255, 0.16)),
+    color-mix(in srgb, var(--bg-elevated) 78%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.44),
+    0 6px 14px rgba(15, 23, 42, 0.08);
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-close:hover,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-branch-preview-close:hover {
+  border-color: color-mix(in srgb, var(--danger) 46%, rgba(255, 255, 255, 0.34));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, white 24%, var(--danger)), color-mix(in srgb, var(--danger) 88%, #d93025));
+  color: #fff;
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-field input,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-field select,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-field textarea {
+  border-color: var(--mac-overlay-border);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.4), rgba(255, 255, 255, 0.12)),
+    color-mix(in srgb, var(--bg-elevated) 84%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.38),
+    0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-field input:hover,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-field select:hover,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-field textarea:hover {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--mac-overlay-border));
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-field input:focus,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-field select:focus,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-field textarea:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  outline-offset: 1px;
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--mac-overlay-border));
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-card .secondary-button,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-card .ghost-button,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-branch-dialog .secondary-button,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-branch-dialog .ghost-button {
+  border: none;
+  background: rgba(120, 120, 128, 0.1);
+  color: color-mix(in srgb, var(--text-secondary) 92%, rgba(28, 28, 30, 0.88));
+  box-shadow: none;
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-card .primary-button,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-branch-dialog .primary-button {
+  border: none;
+  background: rgba(0, 122, 255, 0.12);
+  color: var(--accent);
+  box-shadow: none;
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-card .secondary-button:hover:not(:disabled),
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-card .ghost-button:hover:not(:disabled),
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-card .primary-button:hover:not(:disabled),
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-branch-dialog .secondary-button:hover:not(:disabled),
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-branch-dialog .ghost-button:hover:not(:disabled),
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-branch-dialog .primary-button:hover:not(:disabled) {
+  background: rgba(120, 120, 128, 0.16);
+  color: var(--text-primary);
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-card .primary-button:hover:not(:disabled),
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-branch-dialog .primary-button:hover:not(:disabled) {
+  background: rgba(0, 122, 255, 0.18);
+  color: var(--accent);
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-session-menu,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .git-operations-menu,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .git-history-entry-menu,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .git-selection-menu,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .file-toolbar-menu,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .file-web-context-menu,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .terminal-tab-menu,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-host-switcher-menu,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .composer-slash-menu,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .create-session-worktree-combobox-popover,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-branch-preview-popover {
+  border-color: var(--mac-overlay-border);
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.18), transparent 44%),
+    var(--mac-overlay-surface);
+  box-shadow: var(--mac-overlay-shadow-soft);
+  backdrop-filter: blur(26px) saturate(175%);
+  -webkit-backdrop-filter: blur(26px) saturate(175%);
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-host-switcher-menu-header,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .git-menu-section + .git-menu-section {
+  border-color: var(--mac-overlay-divider);
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-session-menu-item,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .git-menu-item,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .file-toolbar-menu-item,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .file-web-context-menu-item,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .terminal-tab-menu-item {
+  border-radius: 10px;
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-session-menu-item:hover,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .git-menu-item:hover:not(:disabled),
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .file-toolbar-menu-item:hover,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .file-web-context-menu-item:hover:not(:disabled),
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .terminal-tab-menu-item:hover:not(:disabled) {
+  background: var(--mac-overlay-hover);
+  color: var(--text-primary);
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .file-web-context-menu-item.danger:hover:not(:disabled) {
+  background: var(--mac-overlay-hover-danger);
+}

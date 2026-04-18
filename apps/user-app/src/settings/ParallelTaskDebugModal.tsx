@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { ModalCloseButton } from "../components/ModalCloseButton";
 import { httpClient } from "../network/http-client";
@@ -270,7 +271,7 @@ export function ParallelTaskDebugModal({ isOpen, onClose }: ParallelTaskDebugMod
     };
   }, [isOpen, session?.sessionId]);
 
-  if (!isOpen) {
+  if (!isOpen || typeof document === "undefined") {
     return null;
   }
 
@@ -278,12 +279,13 @@ export function ParallelTaskDebugModal({ isOpen, onClose }: ParallelTaskDebugMod
   const schedulerEntries = Object.entries(snapshot?.schedulers.schedulers ?? {});
   const counterEntries = Object.entries(snapshot?.backgroundTasks.totals ?? {});
 
-  return (
-    <div className="workbench-modal-layer" aria-hidden={!isOpen}>
-      <div
-        className="workbench-modal-backdrop"
+  return createPortal(
+    <div className="workbench-modal-layer parallel-task-debug-modal-layer" aria-hidden={!isOpen}>
+      <button
+        type="button"
+        className="workbench-modal-backdrop parallel-task-debug-modal-backdrop"
+        aria-label={t("settings.parallelTaskDebugClose")}
         onClick={onClose}
-        aria-hidden="true"
       />
       <div
         className="workbench-modal-card surface-card parallel-task-debug-modal-card"
@@ -485,7 +487,8 @@ export function ParallelTaskDebugModal({ isOpen, onClose }: ParallelTaskDebugMod
           ) : null}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
