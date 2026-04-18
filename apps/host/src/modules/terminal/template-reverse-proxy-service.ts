@@ -7,6 +7,7 @@ import { AppError } from "../../shared/errors/app-error.js";
 import type { CommandTemplateService } from "./command-template-service.js";
 
 const UPSTREAM_HOST = "127.0.0.1";
+const INTERNAL_PROXY_CONTEXT_COOKIE = "cns_proxy_slug";
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
   "keep-alive",
@@ -62,7 +63,7 @@ export class TemplateReverseProxyService {
         port: template.port,
         method: request.method,
         path: parsed.upstreamPath,
-        headers: buildUpstreamHeaders(request.raw.headers, template.port, false)
+        headers: buildUpstreamHeaders(request.raw.headers, template.port, false, parsed.proxySlug)
       },
       (upstreamResponse) => {
         const statusCode = upstreamResponse.statusCode ?? 502;
@@ -143,7 +144,7 @@ export class TemplateReverseProxyService {
       port: template.port,
       method: "GET",
       path: parsed.upstreamPath,
-      headers: buildUpstreamHeaders(request.headers, template.port, true)
+      headers: buildUpstreamHeaders(request.headers, template.port, true, parsed.proxySlug)
     });
 
     upstreamRequest.on("upgrade", (upstreamResponse, upstreamSocket, upstreamHead) => {
@@ -209,7 +210,8 @@ function parseProxyUrl(rawUrl: string | undefined): ParsedProxyUrl | null {
 function buildUpstreamHeaders(
   requestHeaders: IncomingHttpHeaders,
   port: number,
-  includeUpgradeHeaders: boolean
+  includeUpgradeHeaders: boolean,
+  proxySlug: string
 ): IncomingHttpHeaders {
   const headers: IncomingHttpHeaders = {};
 
@@ -222,6 +224,24 @@ function buildUpstreamHeaders(
 
     // 禁止压缩响应，方便代理层按纯文本改写 HTML 里的根路径资源引用。
     if (!includeUpgradeHeaders && normalizedKey === "accept-encoding") {
+      continue;
+    }
+
+    if (normalizedKey === "cookie") {
+      const sanitizedCookie = sanitizeProxyContextCookieHeader(value);
+
+      if (sanitizedCookie !== undefined) {
+        headers[key] = sanitizedCookie;
+      }
+      continue;
+    }
+
+    if (normalizedKey === "referer") {
+      const sanitizedReferer = sanitizeProxyContextRefererHeader(value, proxySlug, port);
+
+      if (sanitizedReferer !== undefined) {
+        headers[key] = sanitizedReferer;
+      }
       continue;
     }
 
@@ -364,6 +384,80 @@ function rewriteTextResponse(
   }
 
   return rewriteViteClientRuntime(rewriteJavaScriptModulePaths(source));
+}
+
+function sanitizeProxyContextCookieHeader(value: string | string[] | undefined): string | string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (Array.isArray(value)) {
+    const sanitizedValues = value
+      .map((item) => stripInternalProxyCookie(item))
+      .filter((item): item is string => item !== undefined);
+
+    return sanitizedValues.length > 0 ? sanitizedValues : undefined;
+  }
+
+  return stripInternalProxyCookie(value);
+}
+
+function stripInternalProxyCookie(rawCookie: string): string | undefined {
+  const cookiePairs = rawCookie
+    .split(";")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+    .filter((item) => !item.startsWith(`${INTERNAL_PROXY_CONTEXT_COOKIE}=`));
+
+  if (cookiePairs.length === 0) {
+    return undefined;
+  }
+
+  return cookiePairs.join("; ");
+}
+
+function sanitizeProxyContextRefererHeader(
+  value: string | string[] | undefined,
+  proxySlug: string,
+  port: number
+): string | string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (Array.isArray(value)) {
+    const sanitizedValues = value
+      .map((item) => stripProxyPrefixFromAbsoluteUrl(item, proxySlug, port))
+      .filter((item): item is string => item !== undefined);
+
+    return sanitizedValues.length > 0 ? sanitizedValues : undefined;
+  }
+
+  return stripProxyPrefixFromAbsoluteUrl(value, proxySlug, port);
+}
+
+function stripProxyPrefixFromAbsoluteUrl(
+  rawUrl: string,
+  proxySlug: string,
+  port: number
+): string | undefined {
+  try {
+    const parsed = new URL(rawUrl);
+    const proxyPrefix = `/proxy/${proxySlug}`;
+
+    if (parsed.pathname === proxyPrefix || parsed.pathname.startsWith(`${proxyPrefix}/`)) {
+      const upstreamPath = parsed.pathname.slice(proxyPrefix.length) || "/";
+      parsed.protocol = "http:";
+      parsed.hostname = UPSTREAM_HOST;
+      parsed.port = String(port);
+      parsed.pathname = upstreamPath;
+      return parsed.toString();
+    }
+
+    return rawUrl;
+  } catch {
+    return rawUrl;
+  }
 }
 
 function writeRequestBody(request: FastifyRequest, upstreamRequest: http.ClientRequest): void {
