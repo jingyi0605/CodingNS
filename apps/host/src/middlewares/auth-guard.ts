@@ -38,10 +38,6 @@ export function createAuthGuard(authService: AuthService) {
     }
 
     const accessToken = authorization.slice("Bearer ".length).trim();
-
-    request.auth = {
-      accessToken,
-      user: authService.authenticateAccessToken(accessToken)
-    };
+    request.auth = authService.authenticateAccessToken(accessToken);
   };
 }

@@ -24,9 +24,6 @@ export class WsAuthGuard {
       });
     }
 
-    return {
-      accessToken,
-      user: this.authService.authenticateAccessToken(accessToken)
-    };
+    return this.authService.authenticateAccessToken(accessToken);
   }
 }

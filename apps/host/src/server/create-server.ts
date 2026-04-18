@@ -145,6 +145,9 @@ import { startTerminalDebugEventLoopLagMonitor } from "../shared/utils/terminal-
 import { AssistantAutomationRunRepository } from "../storage/repositories/assistant-automation-run-repository.js";
 import { AssistantSandboxWorkspaceRepository } from "../storage/repositories/assistant-sandbox-workspace-repository.js";
 import { AssistantAutomationTaskRepository } from "../storage/repositories/assistant-automation-task-repository.js";
+import { AuthDeviceRepository } from "../storage/repositories/auth-device-repository.js";
+import { AuthDeviceSessionRepository } from "../storage/repositories/auth-device-session-repository.js";
+import { AuthLoginEventRepository } from "../storage/repositories/auth-login-event-repository.js";
 import { AuthTokenRepository } from "../storage/repositories/auth-token-repository.js";
 import { AuthLoginAttemptRepository } from "../storage/repositories/auth-login-attempt-repository.js";
 import { AuthUserRepository } from "../storage/repositories/auth-user-repository.js";
@@ -222,6 +225,9 @@ export function createServer(config: HostConfig) {
     bootstrapStateRepository: new BootstrapStateRepository(database.db),
     authUserRepository: new AuthUserRepository(database.db),
     authTokenRepository: new AuthTokenRepository(database.db),
+    authDeviceRepository: new AuthDeviceRepository(database.db),
+    authDeviceSessionRepository: new AuthDeviceSessionRepository(database.db),
+    authLoginEventRepository: new AuthLoginEventRepository(database.db),
     authLoginAttemptRepository: new AuthLoginAttemptRepository(database.db),
     assistantAutomationTaskRepository: new AssistantAutomationTaskRepository(database.db),
     assistantAutomationRunRepository: new AssistantAutomationRunRepository(database.db),
@@ -297,6 +303,9 @@ export function createServer(config: HostConfig) {
     repositories.bootstrapStateRepository,
     repositories.authUserRepository,
     repositories.authTokenRepository,
+    repositories.authDeviceRepository,
+    repositories.authDeviceSessionRepository,
+    repositories.authLoginEventRepository,
     repositories.authLoginAttemptRepository,
     effectiveConfig,
     demoServices

@@ -1,17 +1,27 @@
 import { randomInt } from "node:crypto";
 
 import type { HostConfig } from "../../config/env.js";
-import type { DemoCleanupService, DemoOnlineTracker } from "../demo/demo-cleanup-service.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { hashToken, verifyPassword } from "../../shared/utils/hash.js";
 import { createId } from "../../shared/utils/id.js";
 import { addSeconds, nowIso } from "../../shared/utils/time.js";
-import { createOpaqueToken } from "../../shared/utils/tokens.js";
-import type { AuthLoginAttemptRecord } from "../../types/domain.js";
+import { createOpaqueToken, isButlerRuntimeAccessToken } from "../../shared/utils/tokens.js";
+import { resolveAuthDeviceInfo } from "./auth-device-display-name.js";
+import type {
+  AuthClientType,
+  AuthDeviceRecord,
+  AuthDeviceSessionRecord,
+  AuthLoginAttemptRecord,
+  AuthLoginEventRecord
+} from "../../types/domain.js";
+import type { AuthDeviceRepository } from "../../storage/repositories/auth-device-repository.js";
+import type { AuthDeviceSessionRepository } from "../../storage/repositories/auth-device-session-repository.js";
 import type { AuthLoginAttemptRepository } from "../../storage/repositories/auth-login-attempt-repository.js";
+import type { AuthLoginEventRepository } from "../../storage/repositories/auth-login-event-repository.js";
 import type { AuthTokenRepository } from "../../storage/repositories/auth-token-repository.js";
 import type { AuthUserRepository } from "../../storage/repositories/auth-user-repository.js";
 import type { BootstrapStateRepository } from "../../storage/repositories/bootstrap-state-repository.js";
+import type { DemoCleanupService, DemoOnlineTracker } from "../demo/demo-cleanup-service.js";
 
 export interface AuthenticatedUser {
   userId: string;
@@ -19,9 +29,23 @@ export interface AuthenticatedUser {
   role: "admin";
 }
 
+export type AuthCallerKind = "interactive_user" | "assistant_runtime";
+
 export interface AuthContext {
   accessToken: string;
+  accessTokenId: string;
+  deviceSessionId: string | null;
+  deviceId: string | null;
+  callerKind: AuthCallerKind;
   user: AuthenticatedUser;
+}
+
+export interface AuthRequestMetadata {
+  clientType: AuthClientType;
+  clientInstanceId: string | null;
+  displayName: string | null;
+  sourceAddress: string | null;
+  userAgent: string | null;
 }
 
 export interface LoginInput {
@@ -39,6 +63,11 @@ export interface LogoutInput {
   refreshToken?: string;
 }
 
+export interface UpdateCurrentDevicePrimaryInput {
+  password: string;
+  primary: boolean;
+}
+
 export interface AuthResponse {
   accessToken: string;
   refreshToken: string;
@@ -46,11 +75,74 @@ export interface AuthResponse {
   user: AuthenticatedUser;
 }
 
+export interface AuthDeviceView {
+  deviceId: string | null;
+  clientType: AuthClientType;
+  clientInstanceId: string | null;
+  displayName: string | null;
+  browserName: string | null;
+  browserVersion: string | null;
+  osName: string | null;
+  osVersion: string | null;
+  lastSourceAddress: string | null;
+  lastSeenAt: string;
+  isPrimary: boolean;
+  isCurrent: boolean;
+  isLegacy: boolean;
+}
+
+export interface RecentLoginRecordView {
+  id: string;
+  deviceId: string | null;
+  clientType: AuthClientType;
+  displayName: string | null;
+  browserName: string | null;
+  browserVersion: string | null;
+  osName: string | null;
+  osVersion: string | null;
+  sourceAddress: string | null;
+  occurredAt: string;
+  isCurrentDevice: boolean;
+  isLegacy: boolean;
+}
+
+export interface AuthDeviceManagementSnapshot {
+  currentDevice: AuthDeviceView | null;
+  otherActiveDevices: AuthDeviceView[];
+  recentLoginRecords: RecentLoginRecordView[];
+}
+
+export interface LogoutOtherDevicesResult {
+  success: true;
+  revokedDeviceCount: number;
+}
+
+export interface LogoutDeviceResult {
+  success: true;
+  revokedSessionCount: number;
+}
+
 interface CaptchaChallengePayload {
   captchaId: string;
   imageDataUrl: string;
 }
 
+interface IssueTokenPairResult {
+  accessToken: string;
+  refreshToken: string;
+  accessTokenId: string;
+  refreshTokenId: string;
+  expiresIn: number;
+}
+
+const DEFAULT_AUTH_REQUEST_METADATA: AuthRequestMetadata = {
+  clientType: "unknown",
+  clientInstanceId: null,
+  displayName: null,
+  sourceAddress: null,
+  userAgent: null
+};
+const MAX_RECENT_LOGIN_EVENTS = 10;
 const LOGIN_CAPTCHA_THRESHOLD = 3;
 const LOGIN_CAPTCHA_LENGTH = 4;
 const LOGIN_CAPTCHA_TTL_SECONDS = 5 * 60;
@@ -66,6 +158,9 @@ export class AuthService {
     private readonly bootstrapStateRepository: BootstrapStateRepository,
     private readonly authUserRepository: AuthUserRepository,
     private readonly authTokenRepository: AuthTokenRepository,
+    private readonly authDeviceRepository: AuthDeviceRepository,
+    private readonly authDeviceSessionRepository: AuthDeviceSessionRepository,
+    private readonly authLoginEventRepository: AuthLoginEventRepository,
     private readonly authLoginAttemptRepository: AuthLoginAttemptRepository,
     private readonly config: HostConfig,
     demoServices?: { cleanupService: DemoCleanupService; onlineTracker: DemoOnlineTracker }
@@ -74,7 +169,7 @@ export class AuthService {
     this.demoOnlineTracker = demoServices?.onlineTracker;
   }
 
-  login(input: LoginInput): AuthResponse {
+  login(input: LoginInput, metadata: AuthRequestMetadata = DEFAULT_AUTH_REQUEST_METADATA): AuthResponse {
     this.ensureInitialized();
     const now = new Date();
     const username = this.normalizeUsername(input.username);
@@ -96,8 +191,24 @@ export class AuthService {
 
     this.authLoginAttemptRepository.deleteByUsername(username);
 
-    const result = {
-      ...this.issueTokenPair(user.id),
+    const issuedAt = nowIso(now);
+    const device = this.resolveOrCreateDevice(user.id, metadata, issuedAt);
+    const deviceSession = this.createDeviceSession(user.id, device?.id ?? null, issuedAt);
+    const result = this.issueTokenPair(user.id, "interactive_user", deviceSession.id, now);
+
+    this.authDeviceSessionRepository.updateBinding(deviceSession.id, {
+      deviceId: device?.id ?? null,
+      accessTokenId: result.accessTokenId,
+      refreshTokenId: result.refreshTokenId,
+      updatedAt: issuedAt
+    });
+
+    this.recordLoginEvent(user.id, device?.id ?? null, metadata.clientType, metadata.sourceAddress, issuedAt);
+
+    const response = {
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+      expiresIn: result.expiresIn,
       user: {
         userId: user.id,
         username: user.username,
@@ -105,15 +216,14 @@ export class AuthService {
       }
     };
 
-    // Demo 模式：追踪在线会话
     if (this.demoOnlineTracker) {
-      this.demoOnlineTracker.trackLogin(user.id, hashToken(result.accessToken));
+      this.demoOnlineTracker.trackLogin(user.id, hashToken(response.accessToken));
     }
 
-    return result;
+    return response;
   }
 
-  refresh(input: RefreshInput): AuthResponse {
+  refresh(input: RefreshInput, metadata: AuthRequestMetadata = DEFAULT_AUTH_REQUEST_METADATA): AuthResponse {
     this.ensureInitialized();
 
     const refreshTokenHash = hashToken(input.refreshToken);
@@ -145,12 +255,34 @@ export class AuthService {
       });
     }
 
-    // Note: Refresh token is not revoked to allow long-term sessions
-    // In a production environment, you may want to implement token rotation
-    // this.authTokenRepository.revokeByHash(refreshTokenHash, nowIso());
+    const now = new Date();
+    const issuedAt = nowIso(now);
+    const existingDeviceSession = refreshRecord.deviceSessionId
+      ? this.authDeviceSessionRepository.findById(refreshRecord.deviceSessionId)
+      : null;
+    const device =
+      this.resolveDeviceForRefresh(user.id, metadata, existingDeviceSession?.deviceId ?? null, issuedAt);
+    const deviceSession =
+      existingDeviceSession
+      ?? this.createDeviceSession(user.id, device?.id ?? null, issuedAt);
+    const result = this.issueTokenPair(
+      user.id,
+      refreshRecord.callerKind ?? "interactive_user",
+      deviceSession.id,
+      now
+    );
+
+    this.authDeviceSessionRepository.updateBinding(deviceSession.id, {
+      deviceId: device?.id ?? existingDeviceSession?.deviceId ?? null,
+      accessTokenId: result.accessTokenId,
+      refreshTokenId: result.refreshTokenId,
+      updatedAt: issuedAt
+    });
 
     return {
-      ...this.issueTokenPair(user.id),
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+      expiresIn: result.expiresIn,
       user: {
         userId: user.id,
         username: user.username,
@@ -162,8 +294,6 @@ export class AuthService {
   logout(accessToken: string, input?: LogoutInput): { success: true } {
     const revokedAt = nowIso();
     const accessHash = hashToken(accessToken);
-
-    // 先查出用户 ID（用于 demo 在线追踪）
     const accessRecord = this.authTokenRepository.findByHash(accessHash, "access");
     const userId = accessRecord?.userId;
 
@@ -173,7 +303,11 @@ export class AuthService {
       this.authTokenRepository.revokeByHash(hashToken(input.refreshToken), revokedAt);
     }
 
-    // Demo 模式：最后一个在线会话注销时清理所有业务数据
+    if (accessRecord?.deviceSessionId) {
+      this.authTokenRepository.revokeByDeviceSessionIds([accessRecord.deviceSessionId], revokedAt);
+      this.authDeviceSessionRepository.revokeById(accessRecord.deviceSessionId, revokedAt);
+    }
+
     if (userId && this.demoOnlineTracker && this.demoCleanupService) {
       const isLastSession = this.demoOnlineTracker.trackLogout(userId, accessHash);
       if (isLastSession) {
@@ -184,7 +318,154 @@ export class AuthService {
     return { success: true };
   }
 
-  authenticateAccessToken(accessToken: string): AuthenticatedUser {
+  listDeviceManagement(auth: AuthContext): AuthDeviceManagementSnapshot {
+    const currentDevice = auth.deviceId ? this.authDeviceRepository.findById(auth.deviceId) : null;
+    const activeDeviceSessions = this.authDeviceSessionRepository.listActiveByUser(auth.user.userId);
+    const otherDeviceIds = Array.from(
+      new Set(
+        activeDeviceSessions
+          .filter((session) => session.deviceId && session.deviceId !== auth.deviceId)
+          .map((session) => session.deviceId as string)
+      )
+    );
+    const otherDevices = this.authDeviceRepository.listByIds(otherDeviceIds).map((device) =>
+      toAuthDeviceView(device, false)
+    );
+    const legacySessions = activeDeviceSessions
+      .filter((session) => !session.deviceId && session.id !== auth.deviceSessionId)
+      .map((session) => toLegacyDeviceView(session.updatedAt));
+    const legacyRefreshTokens = this.authTokenRepository
+      .listActiveLegacyRefreshTokensByUser(auth.user.userId, nowIso())
+      .map((record) => toLegacyDeviceView(record.createdAt));
+    const recentLoginRecords = this.authLoginEventRepository.listRecentByUser(
+      auth.user.userId,
+      MAX_RECENT_LOGIN_EVENTS
+    );
+    const recentDeviceIds = Array.from(
+      new Set(recentLoginRecords.flatMap((event) => (event.deviceId ? [event.deviceId] : [])))
+    );
+    const recentDevices = this.authDeviceRepository.listByIds(recentDeviceIds);
+    const recentDeviceMap = new Map(recentDevices.map((device) => [device.id, device]));
+
+    return {
+      currentDevice: currentDevice ? toAuthDeviceView(currentDevice, true) : null,
+      otherActiveDevices: [...otherDevices, ...legacySessions, ...legacyRefreshTokens],
+      recentLoginRecords: recentLoginRecords.map((event) =>
+        toRecentLoginRecordView(
+          event,
+          event.deviceId ? (recentDeviceMap.get(event.deviceId) ?? null) : null,
+          auth.deviceId
+        )
+      )
+    };
+  }
+
+  updateCurrentDevicePrimary(auth: AuthContext, input: UpdateCurrentDevicePrimaryInput): AuthDeviceView {
+    if (!auth.deviceId) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "DEVICE_CONTEXT_REQUIRED",
+        detail: "当前登录态缺少设备上下文，请重新登录后重试"
+      });
+    }
+
+    const user = this.authUserRepository.findById(auth.user.userId);
+
+    if (!user || !verifyPassword(input.password, user.passwordHash)) {
+      throw new AppError({
+        statusCode: 401,
+        errorCode: "INVALID_CREDENTIALS",
+        detail: "管理员密码错误"
+      });
+    }
+
+    const updatedAt = nowIso();
+    this.authDeviceRepository.updatePrimary(auth.deviceId, {
+      isPrimary: input.primary,
+      primarySetAt: input.primary ? updatedAt : null,
+      updatedAt
+    });
+
+    const nextDevice = this.authDeviceRepository.findById(auth.deviceId);
+
+    if (!nextDevice) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "DEVICE_NOT_FOUND",
+        detail: "当前设备不存在"
+      });
+    }
+
+    return toAuthDeviceView(nextDevice, true);
+  }
+
+  logoutOtherDevices(auth: AuthContext): LogoutOtherDevicesResult {
+    this.ensurePrimaryDeviceAccess(auth);
+
+    const revokedAt = nowIso();
+    const activeSessions = this.authDeviceSessionRepository.listActiveByUser(auth.user.userId);
+    const targetSessions = activeSessions.filter(
+      (session) => session.deviceId !== auth.deviceId && session.id !== auth.deviceSessionId
+    );
+    const targetSessionIds = targetSessions.map((session) => session.id);
+    const legacyRefreshTokens = this.authTokenRepository.listActiveLegacyRefreshTokensByUser(
+      auth.user.userId,
+      revokedAt
+    );
+    const revokedDeviceCount =
+      new Set(targetSessions.map((session) => session.deviceId ?? `legacy-session:${session.id}`)).size
+      + legacyRefreshTokens.length;
+
+    this.authTokenRepository.revokeByDeviceSessionIds(targetSessionIds, revokedAt);
+    this.authDeviceSessionRepository.revokeByIds(targetSessionIds, revokedAt);
+
+    if (legacyRefreshTokens.length > 0) {
+      this.authTokenRepository.revokeLegacyTokensByUser(auth.user.userId, revokedAt);
+    }
+
+    return {
+      success: true,
+      revokedDeviceCount
+    };
+  }
+
+  logoutDevice(auth: AuthContext, deviceId: string): LogoutDeviceResult {
+    this.ensurePrimaryDeviceAccess(auth);
+
+    if (deviceId === auth.deviceId) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "CURRENT_DEVICE_NOT_ALLOWED",
+        detail: "不能直接退出当前设备，请使用退出登录"
+      });
+    }
+
+    const targetDevice = this.authDeviceRepository.findById(deviceId);
+
+    if (!targetDevice || targetDevice.userId !== auth.user.userId) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "DEVICE_NOT_FOUND",
+        detail: "目标设备不存在"
+      });
+    }
+
+    const revokedAt = nowIso();
+    const activeSessions = this.authDeviceSessionRepository.listActiveByUser(auth.user.userId);
+    const targetSessionIds = activeSessions
+      .filter((session) => session.deviceId === deviceId)
+      .map((session) => session.id);
+
+    this.authTokenRepository.revokeByDeviceSessionIds(targetSessionIds, revokedAt);
+    this.authDeviceSessionRepository.revokeByIds(targetSessionIds, revokedAt);
+
+    return {
+      success: true,
+      revokedSessionCount: targetSessionIds.length
+    };
+  }
+
+  authenticateAccessToken(accessToken: string): AuthContext {
     const accessRecord = this.authTokenRepository.findByHash(hashToken(accessToken), "access");
 
     if (!accessRecord || accessRecord.revokedAt) {
@@ -213,11 +494,44 @@ export class AuthService {
       });
     }
 
+    const deviceSession = accessRecord.deviceSessionId
+      ? this.authDeviceSessionRepository.findById(accessRecord.deviceSessionId)
+      : null;
+
     return {
-      userId: user.id,
-      username: user.username,
-      role: user.role
+      accessToken,
+      accessTokenId: accessRecord.id,
+      deviceSessionId: accessRecord.deviceSessionId,
+      deviceId: deviceSession?.deviceId ?? null,
+      callerKind: accessRecord.callerKind ?? resolveAuthCallerKind(accessToken),
+      user: {
+        userId: user.id,
+        username: user.username,
+        role: user.role
+      }
     };
+  }
+
+  private ensurePrimaryDeviceAccess(auth: AuthContext): AuthDeviceRecord {
+    if (!auth.deviceId) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "DEVICE_CONTEXT_REQUIRED",
+        detail: "当前登录态缺少设备上下文，请重新登录后重试"
+      });
+    }
+
+    const currentDevice = this.authDeviceRepository.findById(auth.deviceId);
+
+    if (!currentDevice?.isPrimary) {
+      throw new AppError({
+        statusCode: 403,
+        errorCode: "PRIMARY_DEVICE_REQUIRED",
+        detail: "只有主设备才能退出其他设备"
+      });
+    }
+
+    return currentDevice;
   }
 
   ensureInitialized(): void {
@@ -230,27 +544,142 @@ export class AuthService {
     }
   }
 
-  private issueTokenPair(userId: string): Omit<AuthResponse, "user"> {
-    const now = new Date();
+  private createDeviceSession(userId: string, deviceId: string | null, timestamp: string): AuthDeviceSessionRecord {
+    const record: AuthDeviceSessionRecord = {
+      id: createId(),
+      userId,
+      deviceId,
+      accessTokenId: null,
+      refreshTokenId: null,
+      revokedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+
+    this.authDeviceSessionRepository.create(record);
+    return record;
+  }
+
+  private resolveDeviceForRefresh(
+    userId: string,
+    metadata: AuthRequestMetadata,
+    currentDeviceId: string | null,
+    timestamp: string
+  ): AuthDeviceRecord | null {
+    if (currentDeviceId) {
+      const currentDevice = this.authDeviceRepository.findById(currentDeviceId);
+
+      if (currentDevice) {
+        this.authDeviceRepository.updateActivity(currentDevice.id, {
+          displayName: metadata.displayName ?? currentDevice.displayName,
+          userAgent: metadata.userAgent ?? currentDevice.userAgent,
+          lastSourceAddress: metadata.sourceAddress ?? currentDevice.lastSourceAddress,
+          lastSeenAt: timestamp,
+          updatedAt: timestamp
+        });
+        return this.authDeviceRepository.findById(currentDevice.id);
+      }
+    }
+
+    return this.resolveOrCreateDevice(userId, metadata, timestamp);
+  }
+
+  private resolveOrCreateDevice(
+    userId: string,
+    metadata: AuthRequestMetadata,
+    timestamp: string
+  ): AuthDeviceRecord | null {
+    if (!metadata.clientInstanceId) {
+      return null;
+    }
+
+    const existing = this.authDeviceRepository.findByClientIdentity(
+      userId,
+      metadata.clientType,
+      metadata.clientInstanceId
+    );
+
+    if (existing) {
+      this.authDeviceRepository.updateActivity(existing.id, {
+        displayName: metadata.displayName ?? existing.displayName,
+        userAgent: metadata.userAgent ?? existing.userAgent,
+        lastSourceAddress: metadata.sourceAddress ?? existing.lastSourceAddress,
+        lastSeenAt: timestamp,
+        updatedAt: timestamp
+      });
+      return this.authDeviceRepository.findById(existing.id);
+    }
+
+    const record: AuthDeviceRecord = {
+      id: createId(),
+      userId,
+      clientType: metadata.clientType,
+      clientInstanceId: metadata.clientInstanceId,
+      displayName: metadata.displayName,
+      userAgent: metadata.userAgent,
+      isPrimary: false,
+      lastSourceAddress: metadata.sourceAddress,
+      lastSeenAt: timestamp,
+      primarySetAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+
+    this.authDeviceRepository.create(record);
+    return record;
+  }
+
+  private recordLoginEvent(
+    userId: string,
+    deviceId: string | null,
+    clientType: AuthClientType,
+    sourceAddress: string | null,
+    occurredAt: string
+  ): void {
+    const record: AuthLoginEventRecord = {
+      id: createId(),
+      userId,
+      deviceId,
+      clientType,
+      sourceAddress,
+      occurredAt
+    };
+
+    this.authLoginEventRepository.create(record);
+    this.authLoginEventRepository.trimToLatest(userId, MAX_RECENT_LOGIN_EVENTS);
+  }
+
+  private issueTokenPair(
+    userId: string,
+    callerKind: AuthCallerKind,
+    deviceSessionId: string | null,
+    now: Date
+  ): IssueTokenPairResult {
     const createdAt = nowIso(now);
-    const accessToken = createOpaqueToken();
+    const accessToken = createOpaqueToken(callerKind === "assistant_runtime" ? "butler_" : "");
     const refreshToken = createOpaqueToken();
+    const accessTokenId = createId();
+    const refreshTokenId = createId();
 
     this.authTokenRepository.create({
-      id: createId(),
+      id: accessTokenId,
       userId,
       tokenType: "access",
       tokenHash: hashToken(accessToken),
+      deviceSessionId,
+      callerKind,
       expiresAt: addSeconds(now, this.config.accessTokenTtlSeconds),
       revokedAt: null,
       createdAt
     });
 
     this.authTokenRepository.create({
-      id: createId(),
+      id: refreshTokenId,
       userId,
       tokenType: "refresh",
       tokenHash: hashToken(refreshToken),
+      deviceSessionId,
+      callerKind,
       expiresAt: addSeconds(now, this.config.refreshTokenTtlSeconds),
       revokedAt: null,
       createdAt
@@ -259,6 +688,8 @@ export class AuthService {
     return {
       accessToken,
       refreshToken,
+      accessTokenId,
+      refreshTokenId,
       expiresIn: this.config.accessTokenTtlSeconds
     };
   }
@@ -468,4 +899,69 @@ export class AuthService {
       </svg>
     `.trim();
   }
+}
+
+export function resolveAuthCallerKind(accessToken: string): AuthCallerKind {
+  return isButlerRuntimeAccessToken(accessToken) ? "assistant_runtime" : "interactive_user";
+}
+
+function toAuthDeviceView(device: AuthDeviceRecord, isCurrent: boolean): AuthDeviceView {
+  const deviceInfo = resolveAuthDeviceInfo(device.clientType, device.userAgent);
+
+  return {
+    deviceId: device.id,
+    clientType: device.clientType,
+    clientInstanceId: device.clientInstanceId,
+    displayName: deviceInfo.displayName ?? device.displayName,
+    browserName: deviceInfo.browserName,
+    browserVersion: deviceInfo.browserVersion,
+    osName: deviceInfo.osName,
+    osVersion: deviceInfo.osVersion,
+    lastSourceAddress: device.lastSourceAddress,
+    lastSeenAt: device.lastSeenAt,
+    isPrimary: device.isPrimary,
+    isCurrent,
+    isLegacy: false
+  };
+}
+
+function toLegacyDeviceView(timestamp: string): AuthDeviceView {
+  return {
+    deviceId: null,
+    clientType: "unknown",
+    clientInstanceId: null,
+    displayName: null,
+    browserName: null,
+    browserVersion: null,
+    osName: null,
+    osVersion: null,
+    lastSourceAddress: null,
+    lastSeenAt: timestamp,
+    isPrimary: false,
+    isCurrent: false,
+    isLegacy: true
+  };
+}
+
+function toRecentLoginRecordView(
+  event: AuthLoginEventRecord,
+  device: AuthDeviceRecord | null,
+  currentDeviceId: string | null
+): RecentLoginRecordView {
+  const deviceInfo = device ? resolveAuthDeviceInfo(device.clientType, device.userAgent) : null;
+
+  return {
+    id: event.id,
+    deviceId: event.deviceId,
+    clientType: event.clientType,
+    displayName: deviceInfo?.displayName ?? device?.displayName ?? null,
+    browserName: deviceInfo?.browserName ?? null,
+    browserVersion: deviceInfo?.browserVersion ?? null,
+    osName: deviceInfo?.osName ?? null,
+    osVersion: deviceInfo?.osVersion ?? null,
+    sourceAddress: event.sourceAddress,
+    occurredAt: event.occurredAt,
+    isCurrentDevice: event.deviceId !== null && event.deviceId === currentDeviceId,
+    isLegacy: event.deviceId === null
+  };
 }

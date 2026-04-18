@@ -17,7 +17,10 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   const schemaPath = new URL("./schema.sql", import.meta.url);
   const schema = fs.readFileSync(schemaPath, "utf8");
 
+  ensurePreSchemaCompatibility(db);
   db.exec(schema);
+  ensureAuthTokenDeviceColumns(db);
+  ensureAuthDeviceSchema(db);
   ensureAuthLoginAttemptSchema(db);
   ensureWorkspaceRemovalColumn(db);
   ensureWorkspaceSortOrderColumn(db);
@@ -59,6 +62,111 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
     db,
     close: () => db.close()
   };
+}
+
+function ensurePreSchemaCompatibility(db: Database.Database): void {
+  // 旧库还没有这些列时，schema.sql 里的索引会先炸掉，所以必须先补齐。
+  ensureAuthTokenDeviceColumns(db);
+}
+
+function ensureAuthTokenDeviceColumns(db: Database.Database): void {
+  if (!tableExists(db, "auth_tokens")) {
+    return;
+  }
+
+  const columns = db
+    .prepare("PRAGMA table_info(auth_tokens)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("device_session_id")) {
+    db.exec("ALTER TABLE auth_tokens ADD COLUMN device_session_id TEXT");
+  }
+
+  if (!columnNames.has("caller_kind")) {
+    db.exec(
+      "ALTER TABLE auth_tokens ADD COLUMN caller_kind TEXT CHECK (caller_kind IN ('interactive_user', 'assistant_runtime'))"
+    );
+  }
+
+  db.exec("CREATE INDEX IF NOT EXISTS idx_auth_tokens_device_session_id ON auth_tokens(device_session_id)");
+}
+
+function tableExists(db: Database.Database, tableName: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT name
+       FROM sqlite_master
+       WHERE type = 'table' AND name = ?`
+    )
+    .get(tableName) as { name: string } | undefined;
+
+  return row?.name === tableName;
+}
+
+function ensureAuthDeviceSchema(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS auth_devices (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      client_type TEXT NOT NULL CHECK (client_type IN ('desktop', 'web', 'ios', 'android', 'unknown')),
+      client_instance_id TEXT,
+      display_name TEXT,
+      user_agent TEXT,
+      is_primary INTEGER NOT NULL DEFAULT 0 CHECK (is_primary IN (0, 1)),
+      last_source_address TEXT,
+      last_seen_at TEXT NOT NULL,
+      primary_set_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES auth_users(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_auth_devices_user_id
+      ON auth_devices(user_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_auth_devices_client_lookup
+      ON auth_devices(user_id, client_type, client_instance_id);
+
+    CREATE TABLE IF NOT EXISTS auth_device_sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      device_id TEXT,
+      access_token_id TEXT,
+      refresh_token_id TEXT,
+      revoked_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES auth_users(id),
+      FOREIGN KEY (device_id) REFERENCES auth_devices(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_auth_device_sessions_user_id
+      ON auth_device_sessions(user_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_auth_device_sessions_device_id
+      ON auth_device_sessions(device_id, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS auth_login_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      device_id TEXT,
+      client_type TEXT NOT NULL CHECK (client_type IN ('desktop', 'web', 'ios', 'android', 'unknown')),
+      source_address TEXT,
+      occurred_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES auth_users(id),
+      FOREIGN KEY (device_id) REFERENCES auth_devices(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_auth_login_events_user_id
+      ON auth_login_events(user_id, occurred_at DESC);
+  `);
+
+  const authDeviceColumns = db
+    .prepare("PRAGMA table_info(auth_devices)")
+    .all() as Array<{ name: string }>;
+
+  if (!authDeviceColumns.some((column) => column.name === "user_agent")) {
+    db.exec("ALTER TABLE auth_devices ADD COLUMN user_agent TEXT");
+  }
 }
 
 function ensureAuthLoginAttemptSchema(db: Database.Database): void {

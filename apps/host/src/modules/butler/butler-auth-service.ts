@@ -4,7 +4,10 @@ import path from "node:path";
 import { createId } from "../../shared/utils/id.js";
 import { hashToken } from "../../shared/utils/hash.js";
 import { addSeconds, nowIso } from "../../shared/utils/time.js";
-import { createOpaqueToken } from "../../shared/utils/tokens.js";
+import {
+  createButlerRuntimeAccessToken,
+  isButlerRuntimeAccessToken
+} from "../../shared/utils/tokens.js";
 import type { AuthTokenRepository } from "../../storage/repositories/auth-token-repository.js";
 import type { HostConfig } from "../../config/env.js";
 
@@ -46,7 +49,7 @@ export class ButlerAuthService {
 
   private issueWorkspaceCredential(userId: string): ButlerWorkspaceCredential {
     const now = new Date();
-    const accessToken = createOpaqueToken();
+    const accessToken = createButlerRuntimeAccessToken();
     const issuedAt = nowIso(now);
     const expiresAt = addSeconds(now, BUTLER_AUTH_TTL_SECONDS);
 
@@ -55,6 +58,8 @@ export class ButlerAuthService {
       userId,
       tokenType: "access",
       tokenHash: hashToken(accessToken),
+      deviceSessionId: null,
+      callerKind: "assistant_runtime",
       expiresAt,
       revokedAt: null,
       createdAt: issuedAt
@@ -100,6 +105,10 @@ function isWorkspaceCredentialValid(
   authTokenRepository: Pick<AuthTokenRepository, "findByHash">
 ): boolean {
   if (credential.userId !== userId) {
+    return false;
+  }
+
+  if (!isButlerRuntimeAccessToken(credential.accessToken)) {
     return false;
   }
 

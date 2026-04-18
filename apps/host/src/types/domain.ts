@@ -47,9 +47,48 @@ export interface AuthTokenRecord {
   userId: string;
   tokenType: "access" | "refresh";
   tokenHash: string;
+  deviceSessionId: string | null;
+  callerKind: "interactive_user" | "assistant_runtime" | null;
   expiresAt: string;
   revokedAt: string | null;
   createdAt: string;
+}
+
+export type AuthClientType = "desktop" | "web" | "ios" | "android" | "unknown";
+
+export interface AuthDeviceRecord {
+  id: string;
+  userId: string;
+  clientType: AuthClientType;
+  clientInstanceId: string | null;
+  displayName: string | null;
+  userAgent: string | null;
+  isPrimary: boolean;
+  lastSourceAddress: string | null;
+  lastSeenAt: string;
+  primarySetAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AuthDeviceSessionRecord {
+  id: string;
+  userId: string;
+  deviceId: string | null;
+  accessTokenId: string | null;
+  refreshTokenId: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AuthLoginEventRecord {
+  id: string;
+  userId: string;
+  deviceId: string | null;
+  clientType: AuthClientType;
+  sourceAddress: string | null;
+  occurredAt: string;
 }
 
 export interface AuthLoginAttemptRecord {

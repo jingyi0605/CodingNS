@@ -169,6 +169,90 @@ describe("sqlite 启动引导", () => {
     }
   });
 
+  it("可以给缺少 auth_tokens 设备列的旧数据库平滑补列并完成启动", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-auth-token-device-bootstrap-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+    const { default: Database } = await import("better-sqlite3");
+    const seed = new Database(databasePath);
+
+    seed.exec(`
+      CREATE TABLE auth_users (
+        id TEXT PRIMARY KEY
+      );
+
+      CREATE TABLE auth_tokens (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        token_type TEXT NOT NULL CHECK (token_type IN ('access', 'refresh')),
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES auth_users(id)
+      );
+    `);
+    seed.close();
+
+    const client = createDatabaseClient(databasePath);
+    const columns = client.db
+      .prepare("PRAGMA table_info(auth_tokens)")
+      .all() as Array<{ name: string }>;
+    const deviceSessionIndex = client.db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_auth_tokens_device_session_id'"
+      )
+      .get() as { name: string } | undefined;
+
+    client.close();
+
+    expect(columns.map((column) => column.name)).toEqual(
+      expect.arrayContaining(["device_session_id", "caller_kind"])
+    );
+    expect(deviceSessionIndex?.name).toBe("idx_auth_tokens_device_session_id");
+  });
+
+  it("可以给缺少 auth_devices user_agent 列的旧数据库平滑补列并完成启动", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-auth-device-bootstrap-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+    const { default: Database } = await import("better-sqlite3");
+    const seed = new Database(databasePath);
+
+    seed.exec(`
+      CREATE TABLE auth_users (
+        id TEXT PRIMARY KEY
+      );
+
+      CREATE TABLE auth_devices (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        client_type TEXT NOT NULL CHECK (client_type IN ('desktop', 'web', 'ios', 'android', 'unknown')),
+        client_instance_id TEXT,
+        display_name TEXT,
+        is_primary INTEGER NOT NULL DEFAULT 0 CHECK (is_primary IN (0, 1)),
+        last_source_address TEXT,
+        last_seen_at TEXT NOT NULL,
+        primary_set_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES auth_users(id)
+      );
+    `);
+    seed.close();
+
+    const client = createDatabaseClient(databasePath);
+    const columns = client.db
+      .prepare("PRAGMA table_info(auth_devices)")
+      .all() as Array<{ name: string }>;
+
+    client.close();
+
+    expect(columns.map((column) => column.name)).toEqual(
+      expect.arrayContaining(["user_agent"])
+    );
+  });
+
   it("可以给旧 session_indices 平滑补上子 Agent 关系列", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-session-index-bootstrap-"));
     tempDirs.push(tempDir);

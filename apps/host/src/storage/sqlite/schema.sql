@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
   user_id TEXT NOT NULL,
   token_type TEXT NOT NULL CHECK (token_type IN ('access', 'refresh')),
   token_hash TEXT NOT NULL UNIQUE,
+  device_session_id TEXT,
+  caller_kind TEXT CHECK (caller_kind IN ('interactive_user', 'assistant_runtime')),
   expires_at TEXT NOT NULL,
   revoked_at TEXT,
   created_at TEXT NOT NULL,
@@ -31,6 +33,59 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
 
 CREATE INDEX IF NOT EXISTS idx_auth_tokens_user_id ON auth_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_tokens_expires_at ON auth_tokens(expires_at);
+CREATE INDEX IF NOT EXISTS idx_auth_tokens_device_session_id ON auth_tokens(device_session_id);
+
+CREATE TABLE IF NOT EXISTS auth_devices (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  client_type TEXT NOT NULL CHECK (client_type IN ('desktop', 'web', 'ios', 'android', 'unknown')),
+  client_instance_id TEXT,
+  display_name TEXT,
+  user_agent TEXT,
+  is_primary INTEGER NOT NULL DEFAULT 0 CHECK (is_primary IN (0, 1)),
+  last_source_address TEXT,
+  last_seen_at TEXT NOT NULL,
+  primary_set_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_devices_user_id ON auth_devices(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_auth_devices_client_lookup
+  ON auth_devices(user_id, client_type, client_instance_id);
+
+CREATE TABLE IF NOT EXISTS auth_device_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  device_id TEXT,
+  access_token_id TEXT,
+  refresh_token_id TEXT,
+  revoked_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id),
+  FOREIGN KEY (device_id) REFERENCES auth_devices(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_device_sessions_user_id
+  ON auth_device_sessions(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_auth_device_sessions_device_id
+  ON auth_device_sessions(device_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS auth_login_events (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  device_id TEXT,
+  client_type TEXT NOT NULL CHECK (client_type IN ('desktop', 'web', 'ios', 'android', 'unknown')),
+  source_address TEXT,
+  occurred_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id),
+  FOREIGN KEY (device_id) REFERENCES auth_devices(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_login_events_user_id
+  ON auth_login_events(user_id, occurred_at DESC);
 
 CREATE TABLE IF NOT EXISTS auth_login_attempts (
   username TEXT PRIMARY KEY,
