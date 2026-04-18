@@ -24,6 +24,7 @@ const mockCancelButlerControlTimer = vi.fn();
 const mockCancelButlerFollowUpTask = vi.fn();
 const mockCancelButlerVerificationRun = vi.fn();
 const mockRuntimeSendMessage = vi.fn();
+const mockRuntimeReplyPermissionRequest = vi.fn();
 const mockRequestNavigationRefresh = vi.fn();
 const mockRuntimeState: any = {
   loading: false,
@@ -104,7 +105,8 @@ const mockRuntimeState: any = {
   historyState: "ready",
   runtimeHasActiveRun: true,
   runtimeCanInterrupt: true,
-  contextUsage: null
+  contextUsage: null,
+  permissionRequests: []
 };
 
 vi.mock("../../../shared/toast", () => ({
@@ -149,6 +151,7 @@ vi.mock("../runtime/butler-runtime-store", () => ({
     openControlSession = vi.fn();
     startFreshSession = vi.fn();
     sendMessage = mockRuntimeSendMessage;
+    replyPermissionRequest = mockRuntimeReplyPermissionRequest;
     retryMessage = vi.fn();
     interrupt = vi.fn();
   },
@@ -180,11 +183,13 @@ vi.mock("../runtime/butler-records-events", () => ({
 describe("MobileButlerPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRuntimeReplyPermissionRequest.mockReset();
     mockRuntimeState.runtimeHasActiveRun = true;
     mockRuntimeState.runtimeCanInterrupt = true;
     mockRuntimeState.controlSession.status = "running";
     mockRuntimeState.controlSession.session.runningState = "running";
     mockRuntimeState.controlSession.session.activityState = "running";
+    mockRuntimeState.permissionRequests = [];
 
     mockUseWorkbenchShell.mockReturnValue({
       navigationGroups: [
@@ -1274,6 +1279,58 @@ describe("MobileButlerPage", () => {
           tone: "success"
         })
       );
+    });
+  });
+
+  it("移动端助手页会显示并审批权限请求", async () => {
+    mockRuntimeState.permissionRequests = [
+      {
+        id: "permission-1",
+        sessionId: "butler-session-1",
+        provider: "claude-code",
+        providerSessionId: "provider-control-1",
+        requestKey: "request-1",
+        kind: "command",
+        status: "pending",
+        title: "Claude 请求执行命令",
+        summary: "pwd",
+        detail: null,
+        reason: null,
+        toolName: "Bash",
+        command: "pwd",
+        cwd: "/repo/project-one",
+        paths: [],
+        permissionProfile: null,
+        questions: [],
+        actions: [
+          {
+            value: "allow",
+            label: "允许",
+            tone: "primary",
+            description: "只允许这一次"
+          }
+        ],
+        rawPayload: null,
+        createdAt: "2026-04-09T10:00:00.000Z",
+        updatedAt: "2026-04-09T10:00:00.000Z",
+        resolvedAt: null
+      }
+    ];
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Claude 请求执行命令")).toBeInTheDocument();
+      expect(screen.getByText("pwd")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "允许" }));
+
+    await waitFor(() => {
+      expect(mockRuntimeReplyPermissionRequest).toHaveBeenCalledWith("permission-1", {
+        action: "allow",
+        answers: undefined
+      });
     });
   });
 });

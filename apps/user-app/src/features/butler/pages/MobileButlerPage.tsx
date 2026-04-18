@@ -16,6 +16,7 @@ import { useMobileConversationBottomLayer } from "../../mobile-shell/components/
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import { ComposerPanel } from "../../conversation/components/ComposerPanel";
 import { MessageTimeline } from "../../conversation/components/MessageTimeline";
+import { PermissionRequestList } from "../../conversation/components/PermissionRequestList";
 import {
   cancelAssistantAutomation,
   cancelButlerControlTimer,
@@ -408,6 +409,7 @@ export function MobileButlerPage() {
   const [savingAutomationId, setSavingAutomationId] = useState<string | null>(null);
   const [cancellingTimerId, setCancellingTimerId] = useState<string | null>(null);
   const [executingTimerId, setExecutingTimerId] = useState<string | null>(null);
+  const [replyingPermissionRequestId, setReplyingPermissionRequestId] = useState<string | null>(null);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
   const [state, setState] = useState<MobileButlerState>({
     loading: true,
@@ -447,8 +449,12 @@ export function MobileButlerPage() {
   const runtimeHasActiveRun = useButlerRuntimeStore(store, (runtime) => runtime.runtimeHasActiveRun);
   const runtimeCanInterrupt = useButlerRuntimeStore(store, (runtime) => runtime.runtimeCanInterrupt);
   const contextUsage = useButlerRuntimeStore(store, (runtime) => runtime.contextUsage);
+  const permissionRequests = useButlerRuntimeStore(store, (runtime) => runtime.permissionRequests);
   const { composerPortalTarget } = useMobileConversationBottomLayer();
   const pageRef = useRef<HTMLElement | null>(null);
+  const permissionToastSessionIdRef = useRef<string | null>(null);
+  const permissionToastBaselineReadyRef = useRef(false);
+  const pendingPermissionRequestIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     storedTabRef.current = activeTab;
@@ -495,6 +501,57 @@ export function MobileButlerPage() {
 
     void store.initialize();
   }, [store, workspaceId]);
+
+  useEffect(() => {
+    const sessionId = controlSession?.session?.sessionId ?? null;
+
+    if (permissionToastSessionIdRef.current !== sessionId) {
+      permissionToastSessionIdRef.current = sessionId;
+      permissionToastBaselineReadyRef.current = false;
+      pendingPermissionRequestIdsRef.current = new Set();
+    }
+
+    if (!sessionId) {
+      return;
+    }
+
+    const pendingRequests = permissionRequests.filter((request) => request.status === "pending");
+    const nextPendingIds = new Set(pendingRequests.map((request) => request.id));
+    const sessionTitle =
+      controlSession?.title?.trim()
+      || controlSession?.session?.title?.trim()
+      || runtimeProfile?.displayName?.trim()
+      || t("shell.butlerEntry");
+
+    if (permissionToastBaselineReadyRef.current) {
+      pendingRequests.forEach((request) => {
+        if (pendingPermissionRequestIdsRef.current.has(request.id)) {
+          return;
+        }
+
+        showToast({
+          id: `mobile-butler-permission-request-${request.id}`,
+          title: t("conversation.permissionRequestToastTitle"),
+          description: t("conversation.backgroundPermissionToastDescription", {
+            title: sessionTitle,
+            requestTitle: request.title
+          }),
+          tone: "warning",
+          durationMs: 8_000
+        });
+      });
+    }
+
+    pendingPermissionRequestIdsRef.current = nextPendingIds;
+    permissionToastBaselineReadyRef.current = true;
+  }, [
+    controlSession?.session?.sessionId,
+    controlSession?.session?.title,
+    controlSession?.title,
+    permissionRequests,
+    runtimeProfile?.displayName,
+    showToast
+  ]);
 
   useEffect(() => {
     if (!workspaceId) {
@@ -759,6 +816,12 @@ export function MobileButlerPage() {
     controlSession?.session.sessionId ?? null,
     immediateControlSessionActive
   );
+  const composerHasActiveRun = isControlSessionActive || runtimeSending;
+  const composerCanInterrupt =
+    runtimeCanInterrupt === true || runtimeSending
+      ? true
+      : runtimeCanInterrupt ?? false;
+  const composerIsRunning = isControlSessionActive || runtimeSending;
   const immediateActiveControlSchedule = useMemo(
     () => {
       if (!controlSession || isControlSessionActive) {
@@ -1619,6 +1682,25 @@ export function MobileButlerPage() {
           ) : (
             <>
               <div className="mobile-butler-chat-body">
+                <PermissionRequestList
+                  requests={permissionRequests}
+                  replyingRequestId={replyingPermissionRequestId}
+                  onReply={async (requestId, payload) => {
+                    setReplyingPermissionRequestId(requestId);
+
+                    try {
+                      await store.replyPermissionRequest(requestId, payload);
+                    } catch (replyError) {
+                      showToast({
+                        title: t("conversation.permissionRequestReplyFailed"),
+                        description: replyError instanceof Error ? replyError.message : undefined,
+                        tone: "error"
+                      });
+                    } finally {
+                      setReplyingPermissionRequestId(null);
+                    }
+                  }}
+                />
                 {runtimeEmpty ? (
                   <section className="mobile-butler-empty-panel">
                     <h2>{t("shell.butlerConversationTitle")}</h2>
@@ -1680,11 +1762,11 @@ export function MobileButlerPage() {
                     placeholder={t("shell.butlerComposerPlaceholder", {
                       displayName: butlerDisplayName
                     })}
-                    hasActiveRun={isControlSessionActive}
-                    canInterrupt={runtimeCanInterrupt ?? false}
+                    hasActiveRun={composerHasActiveRun}
+                    canInterrupt={composerCanInterrupt}
                     contextUsage={contextUsage}
                     isSubmitting={runtimeSending}
-                    isRunning={isControlSessionActive}
+                    isRunning={composerIsRunning}
                     onInterrupt={async () => {
                       await store.interrupt();
                       requestNavigationRefresh();

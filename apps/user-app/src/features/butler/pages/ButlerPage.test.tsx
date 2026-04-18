@@ -124,7 +124,9 @@ vi.mock("../../conversation/api/conversation-api", () => ({
   getProviderCapabilities: vi.fn(),
   getSessionMessages: vi.fn(),
   getSessionCapabilities: vi.fn(),
-  getSessionRuntime: vi.fn()
+  getSessionPermissionRequests: vi.fn(),
+  getSessionRuntime: vi.fn(),
+  replySessionPermissionRequest: vi.fn()
 }));
 
 vi.mock("../api/butler-api", () => ({
@@ -197,6 +199,8 @@ import {
   getProviderCapabilities,
   getSessionMessages,
   getSessionCapabilities,
+  getSessionPermissionRequests,
+  replySessionPermissionRequest,
   getSessionRuntime
 } from "../../conversation/api/conversation-api";
 
@@ -233,6 +237,8 @@ const mockedStartButlerInboxItemSession = vi.mocked(startButlerInboxItemSession)
 const mockedGetProviderCapabilities = vi.mocked(getProviderCapabilities);
 const mockedGetSessionMessages = vi.mocked(getSessionMessages);
 const mockedGetSessionCapabilities = vi.mocked(getSessionCapabilities);
+const mockedGetSessionPermissionRequests = vi.mocked(getSessionPermissionRequests);
+const mockedReplySessionPermissionRequest = vi.mocked(replySessionPermissionRequest);
 const mockedGetSessionRuntime = vi.mocked(getSessionRuntime);
 
 function createDeferred<T>() {
@@ -539,6 +545,33 @@ describe("ButlerPage", () => {
       defaultReasoningLevel: null,
       limitations: []
     });
+    mockedGetSessionPermissionRequests.mockResolvedValue({
+      items: []
+    } as never);
+    mockedReplySessionPermissionRequest.mockResolvedValue({
+      id: "permission-1",
+      sessionId: "session-control-1",
+      provider: "claude-code",
+      providerSessionId: "provider-control-1",
+      requestKey: "request-1",
+      kind: "command",
+      status: "approved",
+      title: "Claude 请求执行命令",
+      summary: "pwd",
+      detail: null,
+      reason: null,
+      toolName: "Bash",
+      command: "pwd",
+      cwd: "/tmp/butler",
+      paths: [],
+      permissionProfile: null,
+      questions: [],
+      actions: [],
+      rawPayload: null,
+      createdAt: "2026-04-05T00:00:00.000Z",
+      updatedAt: "2026-04-05T00:00:01.000Z",
+      resolvedAt: "2026-04-05T00:00:01.000Z"
+    } as never);
     mockedGetSessionRuntime.mockResolvedValue({
       sessionId: "session-control-1",
       runningState: "idle",
@@ -764,6 +797,99 @@ describe("ButlerPage", () => {
           title: t("shell.butlerNewSessionStarted"),
           tone: "success"
         })
+      );
+    });
+  });
+
+  it("助手会话里会显示并审批权限请求", async () => {
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "阿尔文",
+        providerId: "claude-code",
+        workspacePath: "/tmp/butler",
+        agentsMode: "inline",
+        agentsFilePath: null,
+        agentsContent: "测试",
+        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
+        initializedAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z"
+      }
+    });
+    mockedGetCurrentButlerControlSession.mockResolvedValueOnce({
+      controlSession: {
+        id: "ctrl-permission",
+        providerId: "claude-code",
+        sessionId: "session-control-1",
+        purpose: "chat",
+        title: "命令审批测试",
+        sourceItemId: null,
+        status: "running",
+        lastContextVersion: null,
+        lastSummary: null,
+        createdAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z",
+        session: {
+          sessionId: "session-control-1",
+          title: "命令审批测试"
+        }
+      }
+    } as never);
+    mockedGetSessionPermissionRequests.mockResolvedValueOnce({
+      items: [
+        {
+          id: "permission-1",
+          sessionId: "session-control-1",
+          provider: "claude-code",
+          providerSessionId: "provider-control-1",
+          requestKey: "request-1",
+          kind: "command",
+          status: "pending",
+          title: "Claude 请求执行命令",
+          summary: "pwd",
+          detail: null,
+          reason: null,
+          toolName: "Bash",
+          command: "pwd",
+          cwd: "/tmp/butler",
+          paths: [],
+          permissionProfile: null,
+          questions: [],
+          actions: [
+            {
+              value: "allow",
+              label: "允许",
+              tone: "primary",
+              description: "只允许这一次"
+            }
+          ],
+          rawPayload: null,
+          createdAt: "2026-04-05T00:00:00.000Z",
+          updatedAt: "2026-04-05T00:00:00.000Z",
+          resolvedAt: null
+        }
+      ]
+    } as never);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Claude 请求执行命令")).toBeInTheDocument();
+      expect(screen.getByText("pwd")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "允许" }));
+
+    await waitFor(() => {
+      expect(mockedReplySessionPermissionRequest).toHaveBeenCalledWith(
+        "session-control-1",
+        "permission-1",
+        {
+          action: "allow",
+          answers: undefined
+        }
       );
     });
   });

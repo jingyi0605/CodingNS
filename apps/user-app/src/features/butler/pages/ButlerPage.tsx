@@ -19,6 +19,7 @@ import { useToast } from "../../../shared/toast";
 import { ComposerPanel } from "../../conversation/components/ComposerPanel";
 import { FileContextPanel } from "../../conversation/components/FileContextPanel";
 import { MessageTimeline } from "../../conversation/components/MessageTimeline";
+import { PermissionRequestList } from "../../conversation/components/PermissionRequestList";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import { WorkbenchModal } from "../../conversation/components/WorkbenchModal";
 import {
@@ -243,6 +244,7 @@ export function ButlerPage() {
   const [selectedAutomationId, setSelectedAutomationId] = useState<string | null>(null);
   const [automationEditorState, setAutomationEditorState] = useState<AutomationEditorState | null>(null);
   const [savingAutomationId, setSavingAutomationId] = useState<string | null>(null);
+  const [replyingPermissionRequestId, setReplyingPermissionRequestId] = useState<string | null>(null);
   const [controlHistoryOpen, setControlHistoryOpen] = useState(false);
   const [controlHistoryQuery, setControlHistoryQuery] = useState("");
   const [sandboxManagerOpen, setSandboxManagerOpen] = useState(false);
@@ -296,8 +298,12 @@ export function ButlerPage() {
   const runtimeHasActiveRun = useButlerRuntimeStore(store, (state) => state.runtimeHasActiveRun);
   const runtimeCanInterrupt = useButlerRuntimeStore(store, (state) => state.runtimeCanInterrupt);
   const contextUsage = useButlerRuntimeStore(store, (state) => state.contextUsage);
+  const permissionRequests = useButlerRuntimeStore(store, (state) => state.permissionRequests);
   const error = useButlerRuntimeStore(store, (state) => state.error);
   const debugRenderStateRef = useRef<string | null>(null);
+  const permissionToastSessionIdRef = useRef<string | null>(null);
+  const permissionToastBaselineReadyRef = useRef(false);
+  const pendingPermissionRequestIdsRef = useRef<Set<string>>(new Set());
 
   const butlerDisplayName = profile?.displayName?.trim() || initForm.displayName.trim() || t("shell.butlerEntry");
   const butlerAvatar = useMemo(
@@ -327,6 +333,12 @@ export function ButlerPage() {
     controlSession?.session.sessionId ?? null,
     immediateControlSessionActive
   );
+  const composerHasActiveRun = isControlSessionActive || sending;
+  const composerCanInterrupt =
+    runtimeCanInterrupt === true || sending
+      ? true
+      : runtimeCanInterrupt;
+  const composerIsRunning = isControlSessionActive || sending;
   const immediateActiveControlSchedule = useMemo(
     () => {
       if (!controlSession || isControlSessionActive) {
@@ -1152,6 +1164,48 @@ export function ButlerPage() {
   }, [error, showToast]);
 
   useEffect(() => {
+    const sessionId = controlSession?.session?.sessionId ?? null;
+
+    if (permissionToastSessionIdRef.current !== sessionId) {
+      permissionToastSessionIdRef.current = sessionId;
+      permissionToastBaselineReadyRef.current = false;
+      pendingPermissionRequestIdsRef.current = new Set();
+    }
+
+    if (!sessionId) {
+      return;
+    }
+
+    const pendingRequests = permissionRequests.filter((request) => request.status === "pending");
+    const nextPendingIds = new Set(pendingRequests.map((request) => request.id));
+
+    if (permissionToastBaselineReadyRef.current) {
+      pendingRequests.forEach((request) => {
+        if (pendingPermissionRequestIdsRef.current.has(request.id)) {
+          return;
+        }
+
+        showToast({
+          id: `butler-permission-request-${request.id}`,
+          title: t("conversation.permissionRequestToastTitle"),
+          description: t("conversation.backgroundPermissionToastDescription", {
+            title:
+              controlSession?.title?.trim()
+              || controlSession?.session?.title?.trim()
+              || butlerDisplayName,
+            requestTitle: request.title
+          }),
+          tone: "warning",
+          durationMs: 8_000
+        });
+      });
+    }
+
+    pendingPermissionRequestIdsRef.current = nextPendingIds;
+    permissionToastBaselineReadyRef.current = true;
+  }, [butlerDisplayName, controlSession?.session?.sessionId, controlSession?.session?.title, controlSession?.title, permissionRequests, showToast]);
+
+  useEffect(() => {
     if (!profile) {
       setSettingsForm(DEFAULT_SETTINGS_FORM_STATE);
       return;
@@ -1970,6 +2024,25 @@ export function ButlerPage() {
 
         <section className="butler-main-column">
           <div key={`timeline:${activeProvider}:${viewKey}`} className="butler-conversation-shell">
+            <PermissionRequestList
+              requests={permissionRequests}
+              replyingRequestId={replyingPermissionRequestId}
+              onReply={async (requestId, payload) => {
+                setReplyingPermissionRequestId(requestId);
+
+                try {
+                  await store.replyPermissionRequest(requestId, payload);
+                } catch (replyError) {
+                  showToast({
+                    title: t("conversation.permissionRequestReplyFailed"),
+                    description: replyError instanceof Error ? replyError.message : undefined,
+                    tone: "error"
+                  });
+                } finally {
+                  setReplyingPermissionRequestId(null);
+                }
+              }}
+            />
             <MessageTimeline
               sessionId={controlSession?.session?.sessionId}
               messages={messages}
@@ -2036,35 +2109,35 @@ export function ButlerPage() {
 
             <div className="butler-composer-shell">
               <ComposerPanel
-              capabilities={capabilities}
-              draftStorageId={`butler:${activeProvider}:${viewKey}`}
-              placeholder={t("shell.butlerComposerPlaceholder", {
-                displayName: butlerDisplayName
-              })}
-              hasActiveRun={isControlSessionActive}
-              canInterrupt={runtimeCanInterrupt}
-              contextUsage={contextUsage}
-              isSubmitting={sending || switchingProvider}
-              isRunning={isControlSessionActive}
-              onInterrupt={async () => {
-                await store.interrupt();
-                requestNavigationRefresh();
-              }}
-              onSend={async (content, options) => {
-                if ((options?.attachments?.length ?? 0) > 0) {
-                  showToast({
-                    title: t("shell.butlerAttachmentUnsupported"),
-                    tone: "warning"
-                  });
-                }
+                capabilities={capabilities}
+                draftStorageId={`butler:${activeProvider}:${viewKey}`}
+                placeholder={t("shell.butlerComposerPlaceholder", {
+                  displayName: butlerDisplayName
+                })}
+                hasActiveRun={composerHasActiveRun}
+                canInterrupt={composerCanInterrupt}
+                contextUsage={contextUsage}
+                isSubmitting={sending || switchingProvider}
+                isRunning={composerIsRunning}
+                onInterrupt={async () => {
+                  await store.interrupt();
+                  requestNavigationRefresh();
+                }}
+                onSend={async (content, options) => {
+                  if ((options?.attachments?.length ?? 0) > 0) {
+                    showToast({
+                      title: t("shell.butlerAttachmentUnsupported"),
+                      tone: "warning"
+                    });
+                  }
 
-                await store.sendMessage(content, {
-                  model: options?.model ?? null,
-                  reasoningLevel: options?.reasoningLevel ?? null,
-                  permissionMode: null
-                });
-                requestNavigationRefresh();
-              }}
+                  await store.sendMessage(content, {
+                    model: options?.model ?? null,
+                    reasoningLevel: options?.reasoningLevel ?? null,
+                    permissionMode: null
+                  });
+                  requestNavigationRefresh();
+                }}
               />
             </div>
           </div>

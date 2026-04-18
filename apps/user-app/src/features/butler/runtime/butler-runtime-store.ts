@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import type {
   SessionActivityEvent,
   SessionInterruptedEvent,
+  SessionPermissionRequestEvent,
+  SessionPermissionRequestResolvedEvent,
   SessionRuntimeErrorEvent,
   SessionRuntimeMessageEvent,
   SessionRuntimeStatusEvent
@@ -13,13 +15,16 @@ import { t } from "../../../shared/i18n";
 import type {
   ContextUsageDto,
   ProviderCapabilitiesDto,
-  ProviderModelOptionDto
+  ProviderModelOptionDto,
+  SessionPermissionRequestDto
 } from "../../conversation/api/conversation-api";
 import {
   getProviderCapabilities,
   getSessionMessages,
+  getSessionPermissionRequests,
   getSessionRuntime,
-  interruptSession
+  interruptSession,
+  replySessionPermissionRequest
 } from "../../conversation/api/conversation-api";
 import type { SessionMessageViewModel } from "../../conversation/runtime/session-runtime-machine";
 import { toViewMessage } from "../../conversation/runtime/session-runtime-machine";
@@ -66,6 +71,7 @@ export interface ButlerRuntimeState {
   runtimeHasActiveRun: boolean | null;
   runtimeCanInterrupt: boolean | null;
   contextUsage: ContextUsageDto | null;
+  permissionRequests: SessionPermissionRequestDto[];
   error: string | null;
 }
 
@@ -109,6 +115,7 @@ export class ButlerRuntimeStore {
       runtimeHasActiveRun: null,
       runtimeCanInterrupt: null,
       contextUsage: null,
+      permissionRequests: [],
       error: null
     };
   }
@@ -149,7 +156,8 @@ export class ButlerRuntimeStore {
           events: [],
           runtimeHasActiveRun: null,
           runtimeCanInterrupt: null,
-          contextUsage: null
+          contextUsage: null,
+          permissionRequests: []
         });
         return;
       }
@@ -420,6 +428,29 @@ export class ButlerRuntimeStore {
     });
   }
 
+  async replyPermissionRequest(
+    requestId: string,
+    payload: { action: string; answers?: Record<string, string[]> }
+  ): Promise<void> {
+    const sessionId = this.state.controlSession?.session.sessionId ?? null;
+
+    if (!sessionId) {
+      return;
+    }
+
+    const request = this.state.permissionRequests.find((item) => item.id === requestId) ?? null;
+
+    if (!request) {
+      return;
+    }
+
+    const updated = await replySessionPermissionRequest(sessionId, requestId, payload);
+
+    this.patch({
+      permissionRequests: upsertPermissionRequest(this.state.permissionRequests, updated)
+    });
+  }
+
   async startFreshSession(options?: { preserveSwitchingState?: boolean }): Promise<void> {
     if (!this.state.initialized) {
       return;
@@ -441,7 +472,8 @@ export class ButlerRuntimeStore {
       hasOlderMessages: false,
       runtimeHasActiveRun: null,
       runtimeCanInterrupt: null,
-      contextUsage: null
+      contextUsage: null,
+      permissionRequests: []
     });
 
     try {
@@ -623,7 +655,8 @@ export class ButlerRuntimeStore {
           hasOlderMessages: false,
           runtimeHasActiveRun: null,
           runtimeCanInterrupt: null,
-          contextUsage: null
+          contextUsage: null,
+          permissionRequests: []
         });
         logPerfDebug("butler.runtime.reload_control_session.empty", {
           workspaceId: this.workspaceId,
@@ -634,11 +667,12 @@ export class ButlerRuntimeStore {
 
       this.selectedControlSessionId = controlSession.id;
 
-      const [historyPage, runtime] = await Promise.all([
+      const [historyPage, runtime, permissionResponse] = await Promise.all([
         // Butler 对话页打开时必须先展示最新一页；长会话如果从 forward 读第一页，
         // 会把已经看到的最近消息回退成最早的旧历史。
         getSessionMessages(controlSession.session.sessionId, null, BUTLER_MESSAGE_PAGE_SIZE, "backward"),
-        getSessionRuntime(controlSession.session.sessionId)
+        getSessionRuntime(controlSession.session.sessionId),
+        getSessionPermissionRequests(controlSession.session.sessionId)
       ]);
       const resolvedControlSession = this.resolvePendingRunControlSession(controlSession, runtime);
       if (this.state.controlSession?.id !== controlSession.id) {
@@ -673,7 +707,8 @@ export class ButlerRuntimeStore {
         hasOlderMessages: Boolean(historyPage.nextCursor),
         runtimeHasActiveRun: runtime.hasActiveRun,
         runtimeCanInterrupt: runtime.canInterrupt,
-        contextUsage: runtime.contextUsage
+        contextUsage: runtime.contextUsage,
+        permissionRequests: permissionResponse.items
       });
       logPerfDebug("butler.runtime.reload_control_session.end", {
         workspaceId: this.workspaceId,
@@ -797,8 +832,12 @@ export class ButlerRuntimeStore {
       onInterrupted: (event) => {
         this.handleRealtimeInterrupted(event);
       },
-      onPermissionRequest: () => undefined,
-      onPermissionRequestResolved: () => undefined,
+      onPermissionRequest: (event) => {
+        this.handlePermissionRequest(event);
+      },
+      onPermissionRequestResolved: (event) => {
+        this.handlePermissionRequestResolved(event);
+      },
       onError: (event) => {
         if (!this.isActiveControlSession(event.sessionId ?? null)) {
           return;
@@ -1049,6 +1088,26 @@ export class ButlerRuntimeStore {
       error: event.detail
     });
     void this.reloadControlSession();
+  }
+
+  private handlePermissionRequest(event: SessionPermissionRequestEvent): void {
+    if (!this.isActiveControlSession(event.sessionId)) {
+      return;
+    }
+
+    this.patch({
+      permissionRequests: upsertPermissionRequest(this.state.permissionRequests, event.request)
+    });
+  }
+
+  private handlePermissionRequestResolved(event: SessionPermissionRequestResolvedEvent): void {
+    if (!this.isActiveControlSession(event.sessionId)) {
+      return;
+    }
+
+    this.patch({
+      permissionRequests: upsertPermissionRequest(this.state.permissionRequests, event.request)
+    });
   }
 
   private patchActiveControlSessionRuntimeState(input: {
@@ -1303,6 +1362,22 @@ function mergeButlerMessages(
 
 function resolveButlerMessageKey(message: Pick<SessionMessageViewModel, "id" | "rawRef">): string {
   return message.id || message.rawRef;
+}
+
+function upsertPermissionRequest(
+  current: SessionPermissionRequestDto[],
+  incoming: SessionPermissionRequestDto
+): SessionPermissionRequestDto[] {
+  const next = current.filter((item) => item.id !== incoming.id);
+  next.push(incoming);
+  next.sort((left, right) => {
+    if (left.status !== right.status) {
+      return left.status === "pending" ? -1 : 1;
+    }
+
+    return right.createdAt.localeCompare(left.createdAt);
+  });
+  return next;
 }
 
 function buildButlerVisibleMessages(
