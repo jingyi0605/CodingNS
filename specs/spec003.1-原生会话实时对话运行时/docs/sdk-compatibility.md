@@ -71,23 +71,28 @@
 
 ### 实测结果
 
-- `@openai/codex-sdk` 可安装版本：`0.116.0`
-- 最小 thread 创建成功
+- `@openai/codex-sdk` 已验证可安装版本：`0.116.0`
+- SDK 最小 thread 创建成功
 - 首轮 prompt `只回复OK` 返回 `OK`
 - 恢复同一 `threadId` 后继续提问，能记住上一轮上下文并再次返回 `OK`
 - 本地 `.codex/sessions/...` 中可见对应原生会话文件
+- 额外补充：
+  - SDK 只覆盖“一轮一调”的 `run()` / `runStreamed()`
+  - 本机 `codex-cli 0.118.0` 的 `app-server` 协议已公开 `turn/steer`
 
 ### 结论
 
-- `Codex` 路线应优先走官方 SDK，而不是桌面 exe。
-- `CodingNS` 的 `Codex Runtime Adapter` 设计可以直接参考：
-  - `new Codex()`
-  - `startThread(...)`
-  - `resumeThread(threadId, ...)`
-  - `thread.runStreamed(prompt, ...)`
+- `Codex` 不该再优先走 npm SDK。
+- `CodingNS` 的 `Codex Runtime Adapter` 应优先走 `codex app-server`：
+  - `thread/start`
+  - `thread/resume`
+  - `turn/start`
+  - `turn/steer`
+  - `turn/interrupt`
+- npm SDK 仍只适合做最小 thread 能力验证，不适合承接运行中追加消息。
 
 ## 建议
 
 1. `Claude Code` 运行时优先走 CLI，调用 `claude.cmd`。
-2. `Codex` 运行时优先走官方 SDK。
+2. `Codex` 运行时优先走 `codex app-server`，不要再把 npm SDK 当成主入口。
 3. 不要把“能读 `.claude/.codex` 会话文件”误当成“能真实继续对话”。

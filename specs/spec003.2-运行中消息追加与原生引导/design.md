@@ -76,7 +76,7 @@ interface SessionQueueCapability {
 
 - 两个 provider 都支持项目统一队列
 - `Claude Code` 继续保留 `streaming_guidance`
-- `Codex` 继续保持 `none`，但不再因此阻断“加入项目队列”
+- `Codex` 改成 `streaming_guidance`，底层通过 `codex app-server` 的 `turn/steer` 直发
 
 ### 2.3 模块职责调整
 
@@ -87,9 +87,9 @@ interface SessionQueueCapability {
 | `SessionSendQueueService` | 不存在 | 负责编排队列、删除等待项、自动续跑 |
 | `ProviderRuntimeService` | 负责 start/continue/interrupt | 保持不变，继续作为真正发送执行器 |
 | `ClaudeRuntimeAdapter` | 已支持运行中直发 | 保留 |
-| `CodexRuntimeAdapter` | 不支持运行中直发 | 保持 |
-| `SessionLiveRuntimeService` | 只负责直接发送 | 增加“排队 / 触发下一条”入口 |
-| `ComposerPanel` | 运行中按能力决定是否禁发 | 运行中统一支持“加入队列”，Claude 额外保留直发 |
+| `CodexRuntimeAdapter` | 不支持运行中直发 | 接入 `turn/steer`，并保留陈旧 active run 回退 |
+| `SessionLiveRuntimeService` | 只负责直接发送 | 增加“排队 / 触发下一条 / steer 失败回退”入口 |
+| `ComposerPanel` | 运行中按能力决定是否禁发 | `Claude` 与 `Codex` 都可显示“追加指导”，队列能力继续独立存在 |
 
 ### 2.3 队列数据结构
 
@@ -217,20 +217,23 @@ interface ProviderRuntimeLaunchResult {
 
 #### 4.2.1 现状问题
 
-- 当前项目依赖的 `@openai/codex-sdk@0.116.0` 公开接口仍是一轮一个 `runStreamed(...)`
-- 该 SDK 每次 turn 都会重新 `spawn codex exec`，一次性写入 `stdin` 后立刻 `end()`
-- 运行中无法直发，但可以靠项目队列在上一条结束后自动继续下一条
+- npm SDK 仍只有一轮一个 `runStreamed(...)`
+- 但 `codex-cli 0.118.0` 的 `app-server` 协议已公开 `turn/steer`
+- 真问题已经不是“Codex 完全不支持运行中输入”，而是“宿主之前没把 `turn/steer` 接进来”
 
 #### 4.2.2 改造方案
 
-- 保持 `inRunInputMode = "none"`
-- 会话运行中时，前端默认走项目队列
-- 当前轮结束后，由 Host 自动触发下一条 `continueSession`
+- `Codex Runtime Adapter` 改走 `codex app-server`
+- active run 启动后保存当前 `turnId`
+- 用户运行中继续发消息时，优先调用 `turn/steer`
+- 如果 steer 撞上刚结束的旧 turn，则丢弃陈旧 active run 并自动续跑当前消息
+- 项目队列继续保留，作为显式排队与兜底路径
 
 #### 4.2.3 结果
 
 - `Codex` 不再卡死在“运行中不能继续发”
-- 也不假装自己已经有宿主可调用的原生直发能力
+- 运行中 steer 现在是真能力，不再是假文案
+- npm SDK 与 CLI app-server 的能力边界也被说清楚了
 
 ## 5. 关键流程
 
@@ -279,7 +282,7 @@ interface ProviderRuntimeLaunchResult {
 
 | 场景 | 主动作 | 次动作 |
 | --- | --- | --- |
-| `Codex` 运行中 | `加入队列` | 无 |
+| `Codex` 运行中 | `追加指导` | `加入队列` |
 | `Claude` 运行中 | `追加指导` | `加入队列` |
 | 未运行 | `发送` | 可选加入队列（非必须） |
 

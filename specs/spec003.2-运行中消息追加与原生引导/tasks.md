@@ -11,10 +11,10 @@
 - 0.1 已完成：
   - 已确认本次 Spec 只处理“运行中输入通道”，不重复覆盖 `spec003.1` 的真实运行时主链路。
 - 0.2 已完成：
-  - 已完成外部能力边界核实：`Claude Code` 可按长连接流式输入路线设计；`Codex` 当前只应对齐已确认的原生 `queue/steer` 语义，不能伪造即时吸收新消息。
+  - 已完成外部能力边界核实：`Claude Code` 可按长连接流式输入路线设计；`Codex` npm SDK 仍不能运行中追加，但 `codex app-server` 已提供可实测的 `turn/steer`，所以实现必须走 app-server，不能把 SDK 和 CLI 能力混为一谈。
 - 1.1 已完成：
   - 已在 `session-sync-core`、`host`、`user-app` 能力接口中新增 `inRunInputMode`。
-  - 默认能力现已明确区分：`Claude Code = streaming_guidance`，`Codex = none`。
+  - 默认能力现已明确区分：`Claude Code = streaming_guidance`，`Codex = streaming_guidance`。
   - `getSessionRuntime` 结果也已带出当前会话的运行中输入模式，不再让前端猜。
 - 1.2 已完成：
   - 已给 `ActiveRunHandle`、`ProviderRuntimeLaunchResult`、`ProviderRuntimeService` 增加运行中输入入口。
@@ -28,7 +28,7 @@
   - 已补 fake Claude CLI 测试，验证首条消息与追加指导都会写入 stream-json stdin。
 - 4.1 已完成：
   - 输入区已按 `inRunInputMode` 切换交互。
-  - 当前效果是：`Claude Code` 运行中可继续“追加指导”，`Codex` 仍按真实现状保持禁用。
+  - 当前效果是：`Claude Code` 与 `Codex` 都可在运行中继续“追加指导”；项目统一队列仍保留，作为无法直接命中当前 turn 时的兜底路径。
 - 2.2 已完成：
   - 已收敛 Claude 运行中追加指导后的事件与消息对账。
   - Host 持久化层现在会保住既有终态，不再被迟到的 `message` / `runtime_error` 事件打回 `running` / `failed`。
@@ -38,7 +38,7 @@
   - 已补 Claude 阶段验收测试，确认首条消息与追加指导都落在同一原生会话，不需要第二个 active run。
   - `ProviderRuntimeService` 已补回归，确认运行中 guidance 走现有 active run，不会重新 start / continue 第二轮。
 - 后续阶段以“统一发送队列”实现为准：
-  - `Codex` 是否具备原生 queue/steer 不再阻断功能落地。
+  - `Codex` 是否具备原生原地排队能力不再阻断功能落地。
   - `Claude Code` 的原生直发能力继续保留，但不再是唯一解。
 - 3.3 已完成：
   - Host 已新增会话级 FIFO 发送队列主链路，包括队列查询、入队、删除、自动续跑与附件恢复/清理。
@@ -236,12 +236,12 @@
 
 ---
 
-## 阶段 3：Codex 先说真话，再决定是否接 queue
+## 阶段 3：Codex 先说真话，再接上 steer
 
 - [x] 3.1 把 Codex 能力显式化为真实现状
   - 状态：DONE
-  - 这一步到底做什么：让 `Codex` 在能力接口和前端上明确表现为当前真实状态，而不是默认跟 Claude 一样。
-  - 做完你能看到什么：用户不会再被误导成“Codex 也支持运行中继续引导”。
+  - 这一步到底做什么：让 `Codex` 在能力接口和前端上明确表现为真实状态：npm SDK 不支持运行中追加，但 `codex app-server` 已支持 `turn/steer`，所以产品能力应声明为可运行中追加指导。
+  - 做完你能看到什么：用户看到的能力声明会和真实接入路径一致，不再把“CLI 能做”和“SDK 能做”说反。
   - 先依赖什么：1.1
   - 开始前先看：
     - `requirements.md` 需求 1、需求 3、需求 5
@@ -249,19 +249,20 @@
   - 主要改哪里：
     - `packages/session-sync-core/src/providers/codex.ts`
     - `apps/user-app`
-  - 这一部先不做什么：先不接 queue 行为。
+  - 这一部先不做什么：先不把 npm SDK 硬改成运行中输入入口。
   - 怎么算完成：
-    1. `Codex` 默认 `inRunInputMode` 明确
+    1. `Codex` 默认 `inRunInputMode` 明确为 `streaming_guidance`
     2. 前端文案与行为一致
+    3. limitation 会明确说明真实实现依赖 `codex app-server turn/steer`
   - 怎么验证：
     - `PATH="$HOME/.nvm/versions/node/v22.22.2/bin:$PATH" pnpm --dir packages/session-sync-core build`
     - `PATH="$HOME/.nvm/versions/node/v22.22.2/bin:$PATH" "$HOME/.nvm/versions/node/v22.22.2/bin/node" --test packages/session-sync-core/tests/codex-adapter.test.mjs`
     - `PATH="$HOME/.nvm/versions/node/v22.22.2/bin:$PATH" "$HOME/.nvm/versions/node/v22.22.2/bin/node" ../../node_modules/.pnpm/vitest@3.2.4_@types+debug@4.1.13_@types+node@24.12.0_jsdom@25.0.1_tsx@4.21.0/node_modules/vitest/vitest.mjs run --config vitest.config.ts src/features/conversation/components/ComposerPanel.test.tsx src/features/conversation/runtime/session-runtime-store.test.ts`
 
-- [ ] 3.2 条件任务：若官方接入层稳定支持 queue/steer，则补齐 `queued_guidance`
-  - 状态：CANCELLED
-  - 这一步到底做什么：仅在当前接入层能稳定暴露原生 queue/steer 时，增加 `queued_guidance` 分支。
-  - 做完你能看到什么：Codex 可按“加入队列”语义工作。
+- [x] 3.2 接入 Codex app-server `turn/steer`，打通运行中追加指导
+  - 状态：DONE
+  - 这一步到底做什么：在 `Codex Runtime`、Host helper 和 active run 入口之间接入 `codex app-server` 的 `turn/steer`，让运行中的 Codex 会话能直接吸收追加指导。
+  - 做完你能看到什么：Codex active run 存在时，新的指导消息会优先直达当前 turn，而不是一律进项目队列。
   - 先依赖什么：3.1
   - 开始前先看：
     - `requirements.md` 需求 3、需求 4、需求 5
@@ -269,14 +270,15 @@
   - 主要改哪里：
     - `packages/session-sync-core/src/runtime/codex-runtime.ts`
     - `apps/host`
-    - `apps/user-app`
-  - 这一部为什么取消：需求方向已经切到“项目统一发送队列”，不再等待 provider 官方 queue/steer 入口落地。
+  - 这一部先不做什么：先不伪造 SDK 级能力，也不把项目统一队列删掉。
   - 怎么算完成：
-    1. queue 行为来自原生能力而不是项目伪造
-    2. UI 文案明确是“加入队列”
+    1. active run 下可调用 `turn/steer`
+    2. 不支持或已失效的 turn 会被映射成明确错误，而不是模糊 I/O 失败
+    3. steer 撞上旧 turn 刚结束的竞争态时，会自动回退到 `abandonRun + startRuntimeRun`
   - 怎么验证：
-    - 集成测试
-    - 手工验证
+    - `PATH="$HOME/.nvm/versions/node/v22.22.2/bin:$PATH" pnpm --dir packages/session-sync-core build`
+    - `PATH="$HOME/.nvm/versions/node/v22.22.2/bin:$PATH" "$HOME/.nvm/versions/node/v22.22.2/bin/node" --test packages/session-sync-core/tests/runtime-service.test.mjs packages/session-sync-core/tests/codex-runtime-sequence.test.mjs`
+    - `PATH="$HOME/.nvm/versions/node/v22.22.2/bin:$PATH" pnpm --dir apps/host exec vitest run tests/integration/codex-runtime-adapter.test.ts tests/integration/session-live-runtime-service.test.ts`
 
 - [x] 3.3 实现项目统一发送队列
   - 状态：DONE
@@ -351,7 +353,7 @@
   - 这一部先不做什么：不额外扩范围。
   - 怎么算完成：
     1. Claude 路线已真打通
-    2. Codex 路线已通过项目统一队列落地
+    2. Codex 路线已通过 `codex app-server turn/steer` 打通运行中追加指导，并保留项目统一队列兜底
     3. 前后端行为与 spec 一致
   - 怎么验证：
     - 文档走查
