@@ -371,6 +371,25 @@ describe("MessageTimeline", () => {
     expect(screen.queryByText("previous turn aborted")).not.toBeInTheDocument();
   });
 
+  it("用户已经继续发送下一条后，不再重复渲染旧的 turn_aborted 提示", () => {
+    render(
+      <MessageTimeline
+        messages={[
+          createTextMessage("3个吧"),
+          createAssistantTextMessage("<turn_aborted>previous turn aborted</turn_aborted>")
+        ]}
+        historyState="ready"
+        onRetryMessage={vi.fn()}
+        provider="codex"
+        interruptedSource="user"
+      />
+    );
+
+    expect(screen.getByText("3个吧")).toBeInTheDocument();
+    expect(screen.queryByText(t("conversation.turnAbortedUser"))).not.toBeInTheDocument();
+    expect(screen.queryByText("previous turn aborted")).not.toBeInTheDocument();
+  });
+
   it("用户消息下方只显示复制按钮并复制正文", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
@@ -2045,6 +2064,197 @@ ARGUMENTS: capabilities list`)
 
       expect(messageList!.scrollTop).toBe(560);
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("恢复阅读位置后用户直接拖动滚动位置，也不会再被手动恢复逻辑拉回旧位置", () => {
+    vi.useFakeTimers();
+
+    try {
+      const sessionMessages = [
+        {
+          ...createAssistantTextMessage("第一条消息", "assistant-pointer-interrupt-1"),
+          sessionId: "session-pointer-interrupt"
+        },
+        {
+          ...createAssistantTextMessage("第二条消息", "assistant-pointer-interrupt-2"),
+          sessionId: "session-pointer-interrupt",
+          sequence: 2,
+          rawRef: "codex://raw#line=pointer-interrupt-2"
+        }
+      ];
+      const { rerender } = render(
+        <MessageTimeline
+          sessionId="session-pointer-interrupt"
+          historyState="ready"
+          provider="codex"
+          onRetryMessage={vi.fn()}
+          messages={sessionMessages}
+        />
+      );
+
+      const messageList = document.querySelector(".message-list") as HTMLDivElement | null;
+
+      expect(messageList).not.toBeNull();
+
+      Object.defineProperty(messageList, "scrollHeight", {
+        value: 2000,
+        configurable: true
+      });
+      Object.defineProperty(messageList, "clientHeight", {
+        value: 600,
+        configurable: true
+      });
+      Object.defineProperty(messageList, "scrollTop", {
+        value: 0,
+        writable: true,
+        configurable: true
+      });
+
+      fireEvent.scroll(messageList!, {
+        target: {
+          scrollTop: 420
+        }
+      });
+
+      rerender(
+        <MessageTimeline
+          sessionId="session-pointer-interrupt-other"
+          historyState="ready"
+          provider="codex"
+          onRetryMessage={vi.fn()}
+          messages={[
+            {
+              ...createAssistantTextMessage("其他会话", "assistant-pointer-interrupt-other"),
+              sessionId: "session-pointer-interrupt-other"
+            }
+          ]}
+        />
+      );
+
+      rerender(
+        <MessageTimeline
+          sessionId="session-pointer-interrupt"
+          historyState="ready"
+          provider="codex"
+          onRetryMessage={vi.fn()}
+          messages={sessionMessages}
+        />
+      );
+
+      expect(messageList!.scrollTop).toBe(420);
+
+      fireEvent.scroll(messageList!, {
+        target: {
+          scrollTop: 560
+        }
+      });
+
+      expect(messageList!.scrollTop).toBe(560);
+
+      vi.advanceTimersByTime(4000);
+
+      expect(messageList!.scrollTop).toBe(560);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("移动端恢复阅读位置时不会持续 3.5 秒强制锁定滚动", () => {
+    vi.useFakeTimers();
+    const originalInnerWidth = window.innerWidth;
+
+    try {
+      Object.defineProperty(window, "innerWidth", {
+        value: 390,
+        configurable: true,
+        writable: true
+      });
+
+      const sessionMessages = [
+        {
+          ...createAssistantTextMessage("第一条消息", "assistant-mobile-restore-1"),
+          sessionId: "session-mobile-restore"
+        },
+        {
+          ...createAssistantTextMessage("第二条消息", "assistant-mobile-restore-2"),
+          sessionId: "session-mobile-restore",
+          sequence: 2,
+          rawRef: "codex://raw#line=mobile-restore-2"
+        }
+      ];
+      const { rerender } = render(
+        <MessageTimeline
+          sessionId="session-mobile-restore"
+          historyState="ready"
+          provider="codex"
+          onRetryMessage={vi.fn()}
+          messages={sessionMessages}
+        />
+      );
+
+      const messageList = document.querySelector(".message-list") as HTMLDivElement | null;
+
+      expect(messageList).not.toBeNull();
+
+      Object.defineProperty(messageList, "scrollHeight", {
+        value: 2000,
+        configurable: true
+      });
+      Object.defineProperty(messageList, "clientHeight", {
+        value: 600,
+        configurable: true
+      });
+      Object.defineProperty(messageList, "scrollTop", {
+        value: 0,
+        writable: true,
+        configurable: true
+      });
+
+      fireEvent.scroll(messageList!, {
+        target: {
+          scrollTop: 420
+        }
+      });
+
+      rerender(
+        <MessageTimeline
+          sessionId="session-mobile-restore-other"
+          historyState="ready"
+          provider="codex"
+          onRetryMessage={vi.fn()}
+          messages={[
+            {
+              ...createAssistantTextMessage("其他会话", "assistant-mobile-restore-other"),
+              sessionId: "session-mobile-restore-other"
+            }
+          ]}
+        />
+      );
+
+      rerender(
+        <MessageTimeline
+          sessionId="session-mobile-restore"
+          historyState="ready"
+          provider="codex"
+          onRetryMessage={vi.fn()}
+          messages={sessionMessages}
+        />
+      );
+
+      expect(messageList!.scrollTop).toBe(420);
+
+      messageList!.scrollTop = 560;
+      vi.advanceTimersByTime(4000);
+
+      expect(messageList!.scrollTop).toBe(560);
+    } finally {
+      Object.defineProperty(window, "innerWidth", {
+        value: originalInnerWidth,
+        configurable: true,
+        writable: true
+      });
       vi.useRealTimers();
     }
   });

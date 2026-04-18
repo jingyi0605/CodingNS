@@ -179,7 +179,7 @@ function createCapabilities(options?: {
     canResumeSession: true,
     canSendMessage: true,
     inRunInputMode:
-      provider === "claude-code" ? "streaming_guidance" : "none",
+      provider === "opencode" ? "none" : "streaming_guidance",
     supportsSubagents: false,
     supportsInterrupt: options?.supportsInterrupt ?? true,
     supportsStructuredToolCalls: true,
@@ -187,6 +187,8 @@ function createCapabilities(options?: {
     supportsAttachments: options?.supportsAttachments ?? false,
     supportsPermissionPrompt: true,
     supportsCheckpoint: false,
+    supportsRunSteering: provider !== "opencode",
+    supportsQueueWhileRunning: provider === "codex" ? true : undefined,
     modelOptions:
       options?.modelOptions ??
       (provider === "codex"
@@ -420,7 +422,71 @@ describe("ComposerPanel", () => {
     });
   });
 
-  it("Codex 运行中且不支持直发时，Enter 会改走项目队列", async () => {
+  it("session 运行态短暂掉边界但 active run 还在时，继续显示停止按钮", () => {
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        hasActiveRun
+        canInterrupt={false}
+        isSubmitting={false}
+        isRunning={false}
+        onInterrupt={vi.fn()}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    expect(screen.getByLabelText(t("conversation.capabilityInterrupt"))).toBeInTheDocument();
+    expect(screen.queryByLabelText(t("conversation.sendButton"))).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(t("conversation.runtimeRunning"))).not.toBeInTheDocument();
+  });
+
+  it("发送请求还没落回空闲时，只要运行已经开始也优先显示停止按钮", async () => {
+    const deferred = createDeferred();
+    const onSend = vi.fn(() => deferred.promise);
+    const onInterrupt = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        isSubmitting={false}
+        isRunning={false}
+        onInterrupt={onInterrupt}
+        onSend={onSend}
+      />
+    );
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: {
+        value: "继续执行当前任务"
+      }
+    });
+    fireEvent.submit(document.querySelector(".composer-form")!);
+
+    expect(screen.getByLabelText(t("conversation.sendingState"))).toBeInTheDocument();
+
+    rerender(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        hasActiveRun
+        canInterrupt
+        isSubmitting
+        isRunning
+        onInterrupt={onInterrupt}
+        onSend={onSend}
+      />
+    );
+
+    expect(screen.queryByLabelText(t("conversation.sendingState"))).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(t("conversation.capabilityInterrupt")));
+
+    await waitFor(() => {
+      expect(onInterrupt).toHaveBeenCalledTimes(1);
+    });
+
+    deferred.resolve();
+    await deferred.promise;
+  });
+
+  it("Codex 运行中输入草稿后会默认先进入队列", async () => {
     const onSend = vi.fn().mockResolvedValue(undefined);
     const onQueueSend = vi.fn().mockResolvedValue(undefined);
 
@@ -438,11 +504,12 @@ describe("ComposerPanel", () => {
     const textarea = screen.getByRole("textbox");
     fireEvent.change(textarea, {
       target: {
-        value: "这条消息不该被送出去"
+        value: "这条消息应该先进入队列，等我手动点引导"
       }
     });
 
     expect(screen.getByLabelText(t("conversation.queueGuidanceButton"))).toBeInTheDocument();
+    expect(screen.queryByLabelText(t("conversation.sendGuidanceButton"))).not.toBeInTheDocument();
     expect(screen.queryByLabelText(t("conversation.capabilityInterrupt"))).not.toBeInTheDocument();
 
     fireEvent.keyDown(textarea, {
@@ -451,10 +518,10 @@ describe("ComposerPanel", () => {
     });
 
     expect(textarea).not.toHaveAttribute("readonly");
-    expect(onSend).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(onQueueSend).toHaveBeenCalledTimes(1);
     });
+    expect(onSend).not.toHaveBeenCalled();
   });
 
   it("输入法组合输入时按 Enter 不发送消息", () => {

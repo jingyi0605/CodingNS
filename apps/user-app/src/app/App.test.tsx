@@ -547,6 +547,56 @@ describe("app routes", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("Codex 运行中输入新草稿时，聊天页主按钮默认显示加入队列", async () => {
+    hydrateAuth();
+
+    const runningCodexSession = {
+      ...createSessionSummary({
+        sessionId: "session-codex-running",
+        title: "Codex 运行中",
+        provider: "codex"
+      }),
+      runningState: "running" as const,
+      activitySource: "inferred" as const,
+      activityState: "running" as const
+    };
+
+    installFetchMock({
+      workbenchSnapshot: createWorkbenchSnapshot([
+        {
+          workspace: createWorkspace(),
+          sessions: [runningCodexSession]
+        }
+      ]),
+      sessions: {
+        "session-codex-running": {
+          detail: runningCodexSession,
+          capabilities: createCapabilities({ provider: "codex" }),
+          runtime: {
+            ...createSessionRuntime(runningCodexSession),
+            provider: "codex",
+            canInterrupt: true,
+            inRunInputMode: "streaming_guidance",
+            hasActiveRun: true
+          },
+          history: createHistoryPage([])
+        }
+      }
+    });
+
+    renderConversationRoute("session-codex-running");
+
+    const input = await screen.findByPlaceholderText(t("conversation.composerPlaceholder"));
+    await userEvent.type(input, "这条先入队，等我手动点击引导");
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: t("conversation.queueGuidanceButton") })).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByRole("button", { name: t("conversation.sendGuidanceButton") })
+    ).not.toBeInTheDocument();
+  });
+
   it("Claude Code 运行中但不可中断时，聊天页显示运行中按钮而不是空闲发送按钮", async () => {
     hydrateAuth();
 
@@ -1274,7 +1324,7 @@ function createCapabilities(options?: {
     canResumeSession: true,
     canSendMessage: true,
     inRunInputMode:
-      options?.inRunInputMode ?? (provider === "claude-code" ? "streaming_guidance" : "none"),
+      options?.inRunInputMode ?? (provider === "opencode" ? "none" : "streaming_guidance"),
     supportsSubagents: false,
     supportsInterrupt: options?.supportsInterrupt ?? true,
     supportsStructuredToolCalls: true,
@@ -1282,6 +1332,8 @@ function createCapabilities(options?: {
     supportsAttachments: false,
     supportsPermissionPrompt: true,
     supportsCheckpoint: false,
+    supportsRunSteering: provider !== "opencode",
+    supportsQueueWhileRunning: provider === "codex" ? true : undefined,
     limitations: []
   };
 }

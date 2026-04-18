@@ -10,6 +10,7 @@ const mockUseWorkbenchShell = vi.fn();
 const mockRuntimeStoreInitialize = vi.fn();
 const mockRuntimeStoreDestroy = vi.fn();
 const mockRuntimeStoreApplyNavigationSession = vi.fn();
+const mockQueuedMessageList = vi.fn((_props: unknown) => null);
 const mockLiveRuntimeState: any = {
   session: {
     sessionId: "session-live-1",
@@ -104,7 +105,7 @@ vi.mock("../components/PermissionRequestList", () => ({
 }));
 
 vi.mock("../components/QueuedMessageList", () => ({
-  QueuedMessageList: () => null
+  QueuedMessageList: (props: unknown) => mockQueuedMessageList(props)
 }));
 
 vi.mock("../components/MobileConversationSessionActions", () => ({
@@ -169,6 +170,16 @@ vi.mock("../runtime/session-runtime-store", () => ({
 describe("ConversationPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockQueuedMessageList.mockClear();
+    mockLiveRuntimeState.session = {
+      ...mockLiveRuntimeState.session,
+      provider: "codex",
+      runningState: "idle",
+      activityState: "idle"
+    };
+    mockLiveRuntimeState.capabilities = null;
+    mockLiveRuntimeState.runtimeHasActiveRun = false;
+    mockLiveRuntimeState.queuedMessages = [];
     window.localStorage.clear();
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
@@ -194,6 +205,52 @@ describe("ConversationPage", () => {
     });
 
     mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue());
+  });
+
+  it("Codex 运行态由 runtime 快照维持时，发送队列仍会显示引导入口", async () => {
+    mockLiveRuntimeState.session = {
+      ...mockLiveRuntimeState.session,
+      provider: "codex",
+      runningState: "idle",
+      activityState: "idle"
+    };
+    mockLiveRuntimeState.capabilities = {
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "streaming_guidance",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      modelOptions: [{ id: "provider-default", name: "跟随 CLI 默认模型", usesProviderDefault: true }],
+      limitations: []
+    };
+    mockLiveRuntimeState.runtimeHasActiveRun = true;
+    mockLiveRuntimeState.queuedMessages = [
+      {
+        id: "queue-1",
+        sessionId: "session-live-1",
+        content: "把这条继续发给当前 Codex 会话",
+        status: "queued",
+        orderIndex: 1,
+        errorDetail: null,
+        createdAt: "2026-04-18T08:00:00.000Z",
+        updatedAt: "2026-04-18T08:00:00.000Z"
+      }
+    ];
+
+    renderLiveConversationPage();
+
+    await waitFor(() => {
+      const lastCall = mockQueuedMessageList.mock.calls[mockQueuedMessageList.mock.calls.length - 1];
+      const props = lastCall?.[0] as { canSteer?: boolean } | undefined;
+      expect(props?.canSteer).toBe(true);
+    });
   });
 
   it("移动端在草稿对话页左滑会打开文件页", async () => {
