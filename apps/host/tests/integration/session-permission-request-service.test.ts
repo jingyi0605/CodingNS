@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   normalizeClaudePreToolUseRequest,
   normalizeCodexServerRequest,
-  normalizeOpenCodePermissionRequest
+  normalizeOpenCodePermissionRequest,
+  resolveClaudeSafeShellAutoApprovalReason
 } from "../../src/modules/sessions/session-permission-request-service.js";
 
 describe("session-permission-request-service normalizers", () => {
@@ -94,5 +95,24 @@ describe("session-permission-request-service normalizers", () => {
       "decline",
       "cancel"
     ]);
+  });
+
+  it("会自动放行 Claude 助手会话里的安全只读 shell 命令", () => {
+    expect(resolveClaudeSafeShellAutoApprovalReason("pwd")).toBe(
+      "CodingNS 已自动放行助手会话里的安全只读命令"
+    );
+    expect(resolveClaudeSafeShellAutoApprovalReason("sed -n '1,20p' src/app.ts")).toBe(
+      "CodingNS 已自动放行助手会话里的安全只读命令"
+    );
+    expect(resolveClaudeSafeShellAutoApprovalReason("git status --short")).toBe(
+      "CodingNS 已自动放行助手会话里的安全只读命令"
+    );
+  });
+
+  it("不会自动放行带副作用或带 shell 控制符的命令", () => {
+    expect(resolveClaudeSafeShellAutoApprovalReason("sed -i 's/a/b/' src/app.ts")).toBeNull();
+    expect(resolveClaudeSafeShellAutoApprovalReason("find . -delete")).toBeNull();
+    expect(resolveClaudeSafeShellAutoApprovalReason("git branch -D feature/foo")).toBeNull();
+    expect(resolveClaudeSafeShellAutoApprovalReason("pwd && ls")).toBeNull();
   });
 });

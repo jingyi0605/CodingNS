@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import type { ProviderId } from "@codingns/session-sync-core";
 
@@ -455,6 +455,24 @@ export class SessionPermissionRequestService {
         ignored: false,
         sessionId: binding.sessionId,
         bridgeResponse: buildClaudePreToolUseBridgeResponse("allow", safeAssistantCliReason)
+      };
+    }
+
+    const safeShellReason = resolveClaudeSafeShellAutoApprovalReason(normalized.command);
+
+    if (safeShellReason) {
+      logPermissionDebug("claude_permission.pre_tool_use.auto_allow_safe_shell", {
+        sessionId: binding.sessionId,
+        providerSessionId,
+        toolName: payload.tool_name ?? null,
+        command: normalized.command,
+        reason: safeShellReason
+      });
+      return {
+        accepted: true,
+        ignored: false,
+        sessionId: binding.sessionId,
+        bridgeResponse: buildClaudePreToolUseBridgeResponse("allow", safeShellReason)
       };
     }
 
@@ -2184,6 +2202,83 @@ function resolveClaudeAssistantCliAutoApprovalReason(command: string | null): st
   return "CodingNS 已自动放行受控的助手 CLI 执行命令";
 }
 
+export function resolveClaudeSafeShellAutoApprovalReason(command: string | null): string | null {
+  const normalized = normalizeText(command);
+
+  if (!normalized || containsShellControlOperator(normalized)) {
+    return null;
+  }
+
+  const tokens = tokenizeShellCommand(normalized);
+
+  if (tokens.length === 0) {
+    return null;
+  }
+
+  const executable = normalizeShellExecutableName(tokens[0]);
+
+  if (!executable) {
+    return null;
+  }
+
+  if (
+    executable === "command"
+    && tokens[1] === "-v"
+    && tokens.length === 3
+    && isSafeShellLookupTarget(tokens[2])
+  ) {
+    return "CodingNS 已自动放行助手会话里的安全只读命令";
+  }
+
+  if (executable === "pwd" || executable === "whoami" || executable === "uname" || executable === "date") {
+    return "CodingNS 已自动放行助手会话里的安全只读命令";
+  }
+
+  if (executable === "ls") {
+    return "CodingNS 已自动放行助手会话里的安全只读命令";
+  }
+
+  if (executable === "cat") {
+    return hasReadableFileTarget(tokens.slice(1))
+      ? "CodingNS 已自动放行助手会话里的安全只读命令"
+      : null;
+  }
+
+  if (executable === "head" || executable === "tail" || executable === "wc" || executable === "stat" || executable === "file") {
+    return hasReadableFileTarget(tokens.slice(1))
+      ? "CodingNS 已自动放行助手会话里的安全只读命令"
+      : null;
+  }
+
+  if (executable === "sed") {
+    return isSafeReadonlySedCommand(tokens)
+      ? "CodingNS 已自动放行助手会话里的安全只读命令"
+      : null;
+  }
+
+  if (executable === "find") {
+    return isSafeReadonlyFindCommand(tokens)
+      ? "CodingNS 已自动放行助手会话里的安全只读命令"
+      : null;
+  }
+
+  if (executable === "rg" || executable === "grep") {
+    return "CodingNS 已自动放行助手会话里的安全只读命令";
+  }
+
+  if (executable === "git") {
+    return isSafeReadonlyGitCommand(tokens)
+      ? "CodingNS 已自动放行助手会话里的安全只读命令"
+      : null;
+  }
+
+  if (isSafeReadonlyVersionCommand(executable, tokens.slice(1))) {
+    return "CodingNS 已自动放行助手会话里的安全只读命令";
+  }
+
+  return null;
+}
+
 function parseCodingNsAssistantCommand(command: string | null): {
   group: string | null;
   action: string | null;
@@ -2242,6 +2337,121 @@ function parseCodingNsAssistantCommand(command: string | null): {
     action,
     mode: "execute"
   };
+}
+
+function normalizeShellExecutableName(token: string | undefined): string | null {
+  const normalized = normalizeText(token);
+
+  if (!normalized) {
+    return null;
+  }
+
+  return basename(normalized).trim().toLowerCase() || null;
+}
+
+function isSafeShellLookupTarget(token: string | undefined): boolean {
+  const normalized = normalizeText(token);
+
+  return Boolean(normalized && /^[a-zA-Z0-9._+-]+$/.test(normalized));
+}
+
+function hasReadableFileTarget(args: string[]): boolean {
+  return args.some((token) => {
+    const normalized = normalizeText(token);
+    return Boolean(normalized && !normalized.startsWith("-"));
+  });
+}
+
+function isSafeReadonlySedCommand(tokens: string[]): boolean {
+  if (tokens.length < 4) {
+    return false;
+  }
+
+  let hasQuietFlag = false;
+  let hasEditableFlag = false;
+
+  for (const token of tokens.slice(1)) {
+    const normalized = normalizeText(token) ?? "";
+
+    if (normalized === "-n" || normalized === "--quiet" || normalized === "--silent") {
+      hasQuietFlag = true;
+      continue;
+    }
+
+    if (normalized === "-i" || normalized === "--in-place" || normalized.startsWith("-i")) {
+      hasEditableFlag = true;
+    }
+  }
+
+  return hasQuietFlag && !hasEditableFlag && hasReadableFileTarget(tokens.slice(1));
+}
+
+function isSafeReadonlyFindCommand(tokens: string[]): boolean {
+  if (tokens.length < 2) {
+    return false;
+  }
+
+  const blockedFlags = new Set([
+    "-delete",
+    "-exec",
+    "-execdir",
+    "-ok",
+    "-okdir",
+    "-fls",
+    "-fprint",
+    "-fprintf"
+  ]);
+
+  return !tokens.some((token) => blockedFlags.has(token));
+}
+
+function isSafeReadonlyGitCommand(tokens: string[]): boolean {
+  const subcommand = normalizeText(tokens[1])?.toLowerCase() ?? null;
+
+  if (!subcommand) {
+    return false;
+  }
+
+  if (
+    subcommand === "status"
+    || subcommand === "diff"
+    || subcommand === "log"
+    || subcommand === "show"
+    || subcommand === "rev-parse"
+    || subcommand === "ls-files"
+    || subcommand === "grep"
+  ) {
+    return true;
+  }
+
+  if (subcommand !== "branch") {
+    return false;
+  }
+
+  const safeBranchFlags = new Set([
+    "-a",
+    "--all",
+    "-r",
+    "--remotes",
+    "-v",
+    "-vv",
+    "--verbose",
+    "--show-current"
+  ]);
+
+  return tokens.slice(2).every((token) => safeBranchFlags.has(token));
+}
+
+function isSafeReadonlyVersionCommand(executable: string, args: string[]): boolean {
+  if (!new Set(["node", "npm", "pnpm", "yarn", "bun", "python", "python3"]).has(executable)) {
+    return false;
+  }
+
+  if (args.length === 1 && (args[0] === "-v" || args[0] === "--version")) {
+    return true;
+  }
+
+  return args.length === 1 && (args[0] === "-h" || args[0] === "--help" || args[0] === "help");
 }
 
 function containsShellControlOperator(command: string): boolean {
