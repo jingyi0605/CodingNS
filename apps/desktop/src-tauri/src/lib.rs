@@ -1036,11 +1036,14 @@ fn configure_macos_window_chrome(app: &tauri::App) -> tauri::Result<()> {
             return;
         };
         let ns_window: &NSWindow = &*ns_window_ptr.cast();
-        let window_background_color = NSColor::windowBackgroundColor();
+        let clear_color = NSColor::clearColor();
 
-        // 主窗口必须保持不透明，缩放动画期间即使 WebView 晚一帧，也只能露出窗口背景，不能露出桌面。
-        ns_window.setBackgroundColor(Some(&window_background_color));
-        ns_window.setOpaque(true);
+        // 原生侧栏毛玻璃依赖透明窗口通道；0.4.0 在这里把窗口改回不透明实底，
+        // 等于直接把左右侧栏的材质能力关掉了。
+        // live resize 期间的补帧仍然由 configure_macos_window_live_resize 负责，
+        // 不需要靠 setOpaque(true) 把整窗打回实色。
+        ns_window.setBackgroundColor(Some(&clear_color));
+        ns_window.setOpaque(false);
     })?;
     configure_macos_window_live_resize(&window).map_err(std::io::Error::other)?;
     Ok(())
