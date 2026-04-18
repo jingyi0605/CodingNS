@@ -655,27 +655,22 @@ export function ComposerPanel({
   const forkSendBlocked = hasForkDraft && Boolean(forkStartDisabledReason);
   const hasDraft = content.trim().length > 0 || attachments.length > 0;
   const interruptAvailable =
-    canInterrupt === false && runHasActiveFlag === true
+    canInterrupt === false && effectiveIsRunning
       ? interruptDecision.allowed
       : canInterrupt ?? interruptDecision.allowed;
   const canInterruptNow =
     effectiveIsRunning && interruptAvailable && Boolean(onInterrupt) && !interrupting;
-  // 按钮只保留一个主状态：只要运行已经开始且当前可中断，就优先给停止。
-  // 发送请求的本地忙态可能会比 runtime 状态多挂一小段时间，不能用它把停止入口盖掉。
-  const showInterruptButton = canInterruptNow && !hasDraft;
-  const showBusyButton =
-    !showInterruptButton &&
+  const showActivityButton =
     !hasDraft &&
     (
       localSubmitting
       || isSubmitting
       || effectiveIsRunning
-      || (!effectiveIsRunning && hasPendingQueuedMessages)
+      || hasPendingQueuedMessages
     );
-  const busyButtonLabel =
-    localSubmitting || isSubmitting || hasPendingQueuedMessages
-      ? t("conversation.sendingState")
-      : t("conversation.runtimeRunning");
+  const activityButtonLabel = canInterruptNow
+    ? t("conversation.capabilityInterrupt")
+    : t("conversation.runtimeRunning");
   const sendButtonLabel = effectiveIsRunning
     ? canQueueDuringRun
         ? t("conversation.queueGuidanceButton")
@@ -1767,63 +1762,41 @@ export function ComposerPanel({
               />
             </div>
 
-            {showBusyButton ? (
+            {showActivityButton ? (
               <div className="composer-send-group">
                 <button
                   className="composer-send composer-send-busy"
                   type="button"
-                  disabled
-                  aria-label={busyButtonLabel}
-                  title={busyButtonLabel}
+                  disabled={!canInterruptNow}
+                  onClick={() => {
+                    if (!canInterruptNow) {
+                      return;
+                    }
+
+                    void handleInterrupt();
+                  }}
+                  aria-label={activityButtonLabel}
+                  title={activityButtonLabel}
                 >
-                  <svg className="composer-send-spinner" width="18" height="18" viewBox="0 0 24 24" fill="none">
-                    <circle
-                      cx="12"
-                      cy="12"
-                      r="8"
-                      stroke="currentColor"
-                      strokeOpacity="0.28"
-                      strokeWidth="2.5"
-                    />
-                    <path
-                      d="M20 12a8 8 0 0 0-8-8"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                    />
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <rect x="6" y="6" width="12" height="12" />
                   </svg>
                 </button>
               </div>
             ) : (
               <div className="composer-send-group">
-                {showInterruptButton ? (
-                  <button
-                    className="composer-send composer-send-busy"
-                    type="button"
-                    onClick={() => {
-                      void handleInterrupt();
-                    }}
-                    aria-label={t("conversation.capabilityInterrupt")}
-                    title={t("conversation.capabilityInterrupt")}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <rect x="6" y="6" width="12" height="12" />
-                    </svg>
-                  </button>
-                ) : (
-                  <button
-                    className="composer-send"
-                    type="submit"
-                    disabled={isDisabled}
-                    aria-label={sendButtonLabel}
-                    title={sendButtonLabel}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <line x1="22" y1="2" x2="11" y2="13" />
-                      <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                    </svg>
-                  </button>
-                )}
+                <button
+                  className="composer-send"
+                  type="submit"
+                  disabled={isDisabled}
+                  aria-label={sendButtonLabel}
+                  title={sendButtonLabel}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <line x1="22" y1="2" x2="11" y2="13" />
+                    <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                  </svg>
+                </button>
               </div>
             )}
           </div>

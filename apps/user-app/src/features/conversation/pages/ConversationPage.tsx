@@ -10,7 +10,7 @@ import {
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
-import { userPreferenceStore } from "../../../preferences/user-preference-store";
+import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import { useLocalUiPreferenceSelector } from "../../../preferences/local-ui-preference-store";
 import { usePlatform } from "../../../platform/platform-provider";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
@@ -249,6 +249,16 @@ function LiveConversationPage({
   const hasPendingQueuedMessages = queuedMessages.some(
     (item) => item.status === "queued" || item.status === "dispatching"
   );
+  const optimisticInterruptibleSendInFlight = sending && !forkDraft;
+  const composerHasActiveRun =
+    runtimeHasActiveRun === true || optimisticInterruptibleSendInFlight
+      ? true
+      : runtimeHasActiveRun;
+  const composerCanInterrupt =
+    runtimeCanInterrupt === true || optimisticInterruptibleSendInFlight
+      ? true
+      : runtimeCanInterrupt;
+  const composerIsRunning = isRunning || optimisticInterruptibleSendInFlight;
   const runtimeThinkingPlaceholder = useStableRuntimeThinkingPlaceholder({
     sessionId,
     provider: session?.provider ?? null,
@@ -601,6 +611,7 @@ function LiveConversationPage({
           globalThis.crypto?.randomUUID?.() ?? `fork-${Date.now()}-${Math.random().toString(16).slice(2)}`,
         model: activeForkDraft.targetModel,
         reasoningLevel: options?.reasoningLevel ?? null,
+        permissionMode: getDefaultSessionPermissionMode(),
         attachments: options?.attachments ?? []
       });
 
@@ -833,14 +844,14 @@ function LiveConversationPage({
                 onForkDraftChange={(nextDraft) => setForkDraft(nextDraft)}
                 panelRef={!showInlineHeader ? setMobileComposerPanelElement : undefined}
                 portalContainer={!showInlineHeader ? composerPortalTarget : null}
-                hasActiveRun={runtimeHasActiveRun}
+                hasActiveRun={composerHasActiveRun}
                 contextUsage={contextUsage}
                 taskProvider={(session ?? navigationSession)?.provider ?? null}
                 taskMessages={messages}
                 hasPendingQueuedMessages={hasPendingQueuedMessages}
-                canInterrupt={runtimeCanInterrupt}
+                canInterrupt={composerCanInterrupt}
                 isSubmitting={sending}
-                isRunning={isRunning}
+                isRunning={composerIsRunning}
                 onInterrupt={async () => {
                   await store.interrupt();
                   requestNavigationRefresh();
@@ -1357,7 +1368,6 @@ function DraftConversationPage({
                 });
 
                 try {
-                  const permissionMode = userPreferenceStore.getState().profile.defaultPermissionMode;
                   const created = await startLiveSession({
                     workspaceId: draft.workspaceId,
                     provider: draft.provider,
@@ -1365,7 +1375,7 @@ function DraftConversationPage({
                     clientRequestId,
                     model: options?.model ?? null,
                     reasoningLevel: options?.reasoningLevel ?? null,
-                    permissionMode: permissionMode === "default" ? null : permissionMode,
+                    permissionMode: getDefaultSessionPermissionMode(),
                     attachments: options?.attachments ?? []
                   });
                   logPerfDebug("session_send.start_live.client_response", {

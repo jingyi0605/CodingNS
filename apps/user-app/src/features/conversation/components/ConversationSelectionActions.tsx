@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type RefObjec
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 
+import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import { usePreferencesSelector } from "../../../preferences/preferences-store";
 import { usePlatform } from "../../../platform/platform-provider";
 import { t } from "../../../shared/i18n";
@@ -702,7 +703,8 @@ export function ConversationSelectionActions({
           content,
           clientRequestId:
             globalThis.crypto?.randomUUID?.() ?? `selection-action-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-          model
+          model,
+          permissionMode: getDefaultSessionPermissionMode()
         });
       } else {
         const response = await startLiveSession({
@@ -712,6 +714,7 @@ export function ConversationSelectionActions({
           clientRequestId:
             globalThis.crypto?.randomUUID?.() ?? `selection-action-${Date.now()}-${Math.random().toString(16).slice(2)}`,
           model,
+          permissionMode: getDefaultSessionPermissionMode(),
           parentSessionId: session.sessionId,
           sessionKind: "annotation",
           annotationSourceMessageId: selection.sourceMessageId ?? null,
@@ -786,18 +789,20 @@ export function ConversationSelectionActions({
                 onMouseDown={() => closeActionDialog(false)}
               />
               <div
-                className={`conversation-selection-action-dialog${isMobileSelectionDialog ? " is-centered" : ""}`}
+                className={`conversation-selection-action-dialog workbench-modal-card surface-card${isMobileSelectionDialog ? " is-centered" : ""}`}
                 style={actionDialogStyle}
                 role="dialog"
                 aria-modal="true"
                 aria-label={t("conversation.selectionActionButton")}
                 onMouseDown={(event) => event.stopPropagation()}
               >
-                <div className="conversation-selection-action-dialog-header">
-                  <strong>{t("conversation.selectionActionButton")}</strong>
+                <div className="conversation-selection-action-dialog-header workbench-modal-header">
+                  <div className="workbench-modal-title-wrap">
+                    <h2>{t("conversation.selectionActionButton")}</h2>
+                  </div>
                   <button
                     type="button"
-                    className="conversation-selection-action-dialog-close"
+                    className="conversation-selection-action-dialog-close workbench-modal-close"
                     aria-label={t("common.close")}
                     onClick={() => closeActionDialog(false)}
                   >
@@ -805,7 +810,7 @@ export function ConversationSelectionActions({
                   </button>
                 </div>
                 <p className="conversation-selection-action-dialog-quote">{selection.text}</p>
-                <label className="conversation-selection-field">
+                <label className="conversation-selection-field workbench-modal-field">
                   <span>{t("conversation.selectionActionPromptLabel")}</span>
                   <textarea
                     value={actionPrompt}
@@ -832,7 +837,7 @@ export function ConversationSelectionActions({
                   <p className="conversation-selection-hint">{selectedProviderDisabledReason}</p>
                 ) : null}
                 <div className="conversation-selection-grid">
-                  <label className="conversation-selection-field">
+                  <label className="conversation-selection-field workbench-modal-field">
                     <span>{t("conversation.forkTargetProviderLabel")}</span>
                     <select
                       value={selectedProvider}
@@ -853,7 +858,7 @@ export function ConversationSelectionActions({
                       ))}
                     </select>
                   </label>
-                  <label className="conversation-selection-field">
+                  <label className="conversation-selection-field workbench-modal-field">
                     <span>{t("conversation.forkTargetModelLabel")}</span>
                     <select
                       value={selectedModel}

@@ -10,6 +10,7 @@ import type {
   SessionRuntimeStatusEvent
 } from "../../../network/realtime-client";
 import { RealtimeClient } from "../../../network/realtime-client";
+import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import type {
@@ -360,17 +361,48 @@ export class ButlerRuntimeStore {
 
     try {
       const currentControlSession = this.state.controlSession;
+      const optimisticCanInterrupt = this.state.capabilities?.supportsInterrupt ?? false;
+      const permissionMode = options?.permissionMode ?? getDefaultSessionPermissionMode();
+
+      if (currentControlSession) {
+        const optimisticUpdatedAt = new Date().toISOString();
+        this.patch({
+          controlSession: {
+            ...currentControlSession,
+            status: "running",
+            updatedAt: optimisticUpdatedAt,
+            ...(currentControlSession.session
+              ? {
+                  session: {
+                    ...currentControlSession.session,
+                    runningState: isButlerRuntimeRunningState(currentControlSession.session.runningState)
+                      ? currentControlSession.session.runningState
+                      : "starting",
+                    activitySource: "inferred",
+                    activityState: "running",
+                    lastEventAt: optimisticUpdatedAt,
+                    updatedAt: optimisticUpdatedAt
+                  }
+                }
+              : {})
+          },
+          runtimeHasActiveRun: true,
+          runtimeCanInterrupt: optimisticCanInterrupt
+        });
+      }
 
       if (!currentControlSession) {
         const started = await startButlerControlSession({
           content: normalizedContent,
           model: options?.model ?? null,
           reasoningLevel: options?.reasoningLevel ?? null,
-          permissionMode: options?.permissionMode ?? null
+          permissionMode
         });
         this.selectedControlSessionId = started.controlSession.id;
         this.patch({
-          controlSession: started.controlSession
+          controlSession: started.controlSession,
+          runtimeHasActiveRun: true,
+          runtimeCanInterrupt: optimisticCanInterrupt
         });
       } else {
         const sent = await sendButlerControlMessage({
@@ -378,11 +410,13 @@ export class ButlerRuntimeStore {
           content: normalizedContent,
           model: options?.model ?? null,
           reasoningLevel: options?.reasoningLevel ?? null,
-          permissionMode: options?.permissionMode ?? null
+          permissionMode
         });
         this.selectedControlSessionId = sent.controlSession.id;
         this.patch({
-          controlSession: sent.controlSession
+          controlSession: sent.controlSession,
+          runtimeHasActiveRun: true,
+          runtimeCanInterrupt: optimisticCanInterrupt
         });
       }
 
@@ -675,12 +709,21 @@ export class ButlerRuntimeStore {
         getSessionPermissionRequests(controlSession.session.sessionId)
       ]);
       const resolvedControlSession = this.resolvePendingRunControlSession(controlSession, runtime);
+      const resolvedRuntime = this.resolvePendingRunRuntimeState(
+        resolvedControlSession,
+        runtime
+      );
+      const hasAuthoritativeRuntimeSignal =
+        runtime.hasActiveRun
+        || runtime.canInterrupt
+        || isButlerRuntimeRunningState(runtime.runningState)
+        || isButlerRuntimeTerminalState(runtime.runningState);
       if (this.state.controlSession?.id !== controlSession.id) {
         this.terminalSyncCompletedControlSessionId = null;
       }
       this.terminalSyncArmed =
-        runtime.hasActiveRun || resolvedControlSession.status === "running";
-      if (runtime.hasActiveRun) {
+        resolvedRuntime.hasActiveRun || resolvedControlSession.status === "running";
+      if (hasAuthoritativeRuntimeSignal) {
         this.clearPendingRun(controlSession.id);
         this.terminalSyncCompletedControlSessionId = null;
       } else if (!this.terminalSyncArmed) {
@@ -695,8 +738,8 @@ export class ButlerRuntimeStore {
         controlSession: resolvedControlSession,
         messages: buildButlerVisibleMessages(viewMessages, resolvedControlSession, {
           runningState: runtime.runningState,
-          runtimeHasActiveRun: runtime.hasActiveRun,
-          runtimeCanInterrupt: runtime.canInterrupt,
+          runtimeHasActiveRun: resolvedRuntime.hasActiveRun,
+          runtimeCanInterrupt: resolvedRuntime.canInterrupt,
           detail: runtime.detail,
           errorDetail: runtime.errorDetail,
           updatedAt: runtime.updatedAt
@@ -705,8 +748,8 @@ export class ButlerRuntimeStore {
         loadingOlderMessages: false,
         olderCursor: historyPage.nextCursor,
         hasOlderMessages: Boolean(historyPage.nextCursor),
-        runtimeHasActiveRun: runtime.hasActiveRun,
-        runtimeCanInterrupt: runtime.canInterrupt,
+        runtimeHasActiveRun: resolvedRuntime.hasActiveRun,
+        runtimeCanInterrupt: resolvedRuntime.canInterrupt,
         contextUsage: runtime.contextUsage,
         permissionRequests: permissionResponse.items
       });
@@ -716,8 +759,8 @@ export class ButlerRuntimeStore {
         sessionId: controlSession.session.sessionId,
         messages: viewMessages.length,
         historyState: "ready",
-        hasActiveRun: runtime.hasActiveRun,
-        canInterrupt: runtime.canInterrupt,
+        hasActiveRun: resolvedRuntime.hasActiveRun,
+        canInterrupt: resolvedRuntime.canInterrupt,
         terminalSyncArmed: this.terminalSyncArmed,
         terminalSyncCompletedControlSessionId: this.terminalSyncCompletedControlSessionId
       });
@@ -1129,15 +1172,55 @@ export class ButlerRuntimeStore {
       return;
     }
 
-    this.clearPendingRun(currentControlSession.id);
+    const currentSession = currentControlSession.session;
+    const shouldPreservePendingRun =
+      currentSession
+      && this.hasPendingRun(currentControlSession.id)
+      && !input.hasActiveRun
+      && !input.canInterrupt
+      && !isButlerRuntimeTerminalState(input.runningState)
+      && !isButlerRuntimeTerminalState(currentSession.runningState)
+      && currentControlSession.status !== "failed"
+      && currentControlSession.status !== "closed";
+    const nextRunningState =
+      shouldPreservePendingRun
+        ? isButlerRuntimeRunningState(input.runningState)
+          ? input.runningState
+          : isButlerRuntimeRunningState(currentSession.runningState)
+            ? currentSession.runningState
+            : "starting"
+        : input.runningState;
+    const nextHasActiveRun = shouldPreservePendingRun ? true : input.hasActiveRun;
+    const nextCanInterrupt =
+      shouldPreservePendingRun
+        ? (this.state.capabilities?.supportsInterrupt ?? this.state.runtimeCanInterrupt ?? input.canInterrupt)
+        : input.canInterrupt;
+
+    if (!shouldPreservePendingRun) {
+      this.clearPendingRun(currentControlSession.id);
+    }
 
     const nextStatus =
       input.status
       ?? deriveButlerControlSessionStatus(
         currentControlSession.status,
-        input.runningState,
-        input.hasActiveRun
+        nextRunningState,
+        nextHasActiveRun
       );
+
+    if (!currentSession) {
+      this.patch({
+        controlSession: {
+          ...currentControlSession,
+          status: nextStatus,
+          updatedAt: input.updatedAt
+        },
+        runtimeHasActiveRun: nextHasActiveRun,
+        runtimeCanInterrupt: nextCanInterrupt,
+        ...(input.error !== undefined ? { error: input.error } : {})
+      });
+      return;
+    }
 
     this.patch({
       controlSession: {
@@ -1145,20 +1228,20 @@ export class ButlerRuntimeStore {
         status: nextStatus,
         updatedAt: input.updatedAt,
         session: {
-          ...currentControlSession.session,
-          runningState: input.runningState,
+          ...currentSession,
+          runningState: nextRunningState,
           activitySource: "runtime",
           activityState: deriveButlerSessionActivityState(
-            currentControlSession.session.activityState,
-            input.runningState,
-            input.hasActiveRun
+            currentSession.activityState,
+            nextRunningState,
+            nextHasActiveRun
           ),
           lastEventAt: input.updatedAt,
           updatedAt: input.updatedAt
         }
       },
-      runtimeHasActiveRun: input.hasActiveRun,
-      runtimeCanInterrupt: input.canInterrupt,
+      runtimeHasActiveRun: nextHasActiveRun,
+      runtimeCanInterrupt: nextCanInterrupt,
       ...(input.error !== undefined ? { error: input.error } : {})
     });
   }
@@ -1243,6 +1326,55 @@ export class ButlerRuntimeStore {
         lastEventAt: updatedAt,
         updatedAt
       }
+    };
+  }
+
+  private resolvePendingRunRuntimeState(
+    controlSession: ButlerControlSessionDto,
+    runtime: {
+      runningState: ButlerControlSessionDto["session"]["runningState"];
+      hasActiveRun: boolean;
+      canInterrupt: boolean;
+    }
+  ): {
+    hasActiveRun: boolean;
+    canInterrupt: boolean;
+  } {
+    if (!this.hasPendingRun(controlSession.id)) {
+      return {
+        hasActiveRun: runtime.hasActiveRun,
+        canInterrupt: runtime.canInterrupt
+      };
+    }
+
+    if (
+      runtime.hasActiveRun
+      || runtime.canInterrupt
+      || isButlerRuntimeTerminalState(runtime.runningState)
+      || isButlerRuntimeTerminalState(controlSession.session.runningState)
+      || controlSession.status === "failed"
+      || controlSession.status === "closed"
+    ) {
+      return {
+        hasActiveRun: runtime.hasActiveRun,
+        canInterrupt: runtime.canInterrupt
+      };
+    }
+
+    if (
+      isButlerRuntimeRunningState(runtime.runningState)
+      || isButlerRuntimeRunningState(controlSession.session.runningState)
+      || controlSession.status === "running"
+    ) {
+      return {
+        hasActiveRun: true,
+        canInterrupt: this.state.capabilities?.supportsInterrupt ?? runtime.canInterrupt
+      };
+    }
+
+    return {
+      hasActiveRun: runtime.hasActiveRun,
+      canInterrupt: runtime.canInterrupt
     };
   }
 

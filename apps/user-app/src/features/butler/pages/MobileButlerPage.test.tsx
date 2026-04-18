@@ -142,7 +142,21 @@ vi.mock("../../conversation/components/MessageTimeline", () => ({
 }));
 
 vi.mock("../../conversation/components/ComposerPanel", () => ({
-  ComposerPanel: () => <div data-testid="butler-composer">composer</div>
+  ComposerPanel: ({
+    hasActiveRun,
+    canInterrupt,
+    isRunning
+  }: {
+    hasActiveRun?: boolean | null;
+    canInterrupt?: boolean | null;
+    isRunning?: boolean;
+  }) => (
+    <div data-testid="butler-composer">
+      <div data-testid="butler-composer-has-active-run">{String(hasActiveRun)}</div>
+      <div data-testid="butler-composer-can-interrupt">{String(canInterrupt)}</div>
+      <div data-testid="butler-composer-is-running">{String(isRunning)}</div>
+    </div>
+  )
 }));
 
 vi.mock("../runtime/butler-runtime-store", () => ({
@@ -1067,6 +1081,21 @@ describe("MobileButlerPage", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("butler-composer")).not.toBeInTheDocument();
     });
+  });
+
+  it("活跃会话即便 runtime 暂时报不可中断，也持续向输入框暴露可停止状态", async () => {
+    mockRuntimeState.runtimeHasActiveRun = false;
+    mockRuntimeState.runtimeCanInterrupt = false;
+    mockRuntimeState.controlSession.status = "running";
+    mockRuntimeState.controlSession.session.runningState = "running";
+    mockRuntimeState.controlSession.session.activityState = "running";
+
+    renderPage();
+
+    expect(await screen.findByTestId("butler-composer")).toBeInTheDocument();
+    expect(screen.getByTestId("butler-composer-is-running")).toHaveTextContent("true");
+    expect(screen.getByTestId("butler-composer-has-active-run")).toHaveTextContent("true");
+    expect(screen.getByTestId("butler-composer-can-interrupt")).toHaveTextContent("false");
   });
 
   it("聊天区底部会显示等待中的调度项，并且自动化页可以取消", async () => {

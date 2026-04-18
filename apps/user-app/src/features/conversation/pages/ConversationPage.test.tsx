@@ -10,7 +10,9 @@ const mockUseWorkbenchShell = vi.fn();
 const mockRuntimeStoreInitialize = vi.fn();
 const mockRuntimeStoreDestroy = vi.fn();
 const mockRuntimeStoreApplyNavigationSession = vi.fn();
+const mockRuntimeStoreSendMessage = vi.fn();
 const mockQueuedMessageList = vi.fn((_props: unknown) => null);
+const mockComposerPanel = vi.fn((_props: unknown) => null);
 const mockLiveRuntimeState: any = {
   session: {
     sessionId: "session-live-1",
@@ -85,7 +87,27 @@ vi.mock("../components/MessageTimeline", () => ({
 }));
 
 vi.mock("../components/ComposerPanel", () => ({
-  ComposerPanel: () => <div data-testid="composer">composer</div>
+  ComposerPanel: (props: unknown) => {
+    mockComposerPanel(props);
+    const composerProps = props as {
+      onSend?: (content: string) => Promise<void>;
+    };
+
+    return (
+      <div data-testid="composer">
+        composer
+        <button
+          type="button"
+          data-testid="composer-send"
+          onClick={() => {
+            void composerProps.onSend?.("继续处理当前会话");
+          }}
+        >
+          发送
+        </button>
+      </div>
+    );
+  }
 }));
 
 vi.mock("../components/SessionHeader", () => ({
@@ -161,7 +183,7 @@ vi.mock("../runtime/session-runtime-store", () => ({
     interrupt = vi.fn();
     deleteQueuedMessage = vi.fn();
     steerQueuedMessage = vi.fn();
-    sendMessage = vi.fn();
+    sendMessage = mockRuntimeStoreSendMessage;
   },
   useSessionRuntimeStore: (_store: unknown, selector: (state: typeof mockLiveRuntimeState) => unknown) =>
     selector(mockLiveRuntimeState)
@@ -171,6 +193,9 @@ describe("ConversationPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockQueuedMessageList.mockClear();
+    mockComposerPanel.mockClear();
+    mockRuntimeStoreSendMessage.mockReset();
+    mockRuntimeStoreSendMessage.mockResolvedValue(undefined);
     mockLiveRuntimeState.session = {
       ...mockLiveRuntimeState.session,
       provider: "codex",
@@ -251,6 +276,33 @@ describe("ConversationPage", () => {
       const props = lastCall?.[0] as { canSteer?: boolean } | undefined;
       expect(props?.canSteer).toBe(true);
     });
+  });
+
+  it("当前会话发送请求未完成时，也会先把 Composer 切到可停止态", async () => {
+    const deferred = createDeferred();
+    mockRuntimeStoreSendMessage.mockReturnValue(deferred.promise);
+    mockLiveRuntimeState.session = {
+      ...mockLiveRuntimeState.session,
+      provider: "codex",
+      runningState: "idle",
+      activityState: "idle"
+    };
+    mockLiveRuntimeState.runtimeHasActiveRun = false;
+    mockLiveRuntimeState.runtimeCanInterrupt = false;
+
+    renderLiveConversationPage();
+    fireEvent.click(await screen.findByTestId("composer-send"));
+
+    await waitFor(() => {
+      const props = readLatestComposerProps();
+      expect(props?.isSubmitting).toBe(true);
+      expect(props?.hasActiveRun).toBe(true);
+      expect(props?.canInterrupt).toBe(true);
+      expect(props?.isRunning).toBe(true);
+    });
+
+    deferred.resolve();
+    await deferred.promise;
   });
 
   it("移动端在草稿对话页左滑会打开文件页", async () => {
@@ -709,6 +761,33 @@ function renderDraftConversationPage(options?: {
       </Routes>
     </MemoryRouter>
   );
+}
+
+function createDeferred() {
+  let resolve: (() => void) | null = null;
+  const promise = new Promise<void>((res) => {
+    resolve = res;
+  });
+
+  return {
+    promise,
+    resolve: resolve!
+  };
+}
+
+function readLatestComposerProps(): {
+  hasActiveRun?: boolean | null;
+  canInterrupt?: boolean | null;
+  isSubmitting?: boolean;
+  isRunning?: boolean;
+} | null {
+  const latestCall = mockComposerPanel.mock.calls[mockComposerPanel.mock.calls.length - 1];
+  return (latestCall?.[0] as {
+    hasActiveRun?: boolean | null;
+    canInterrupt?: boolean | null;
+    isSubmitting?: boolean;
+    isRunning?: boolean;
+  } | undefined) ?? null;
 }
 
 function renderLiveConversationPage(options?: {

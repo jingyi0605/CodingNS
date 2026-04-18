@@ -334,11 +334,11 @@ export function ButlerPage() {
     immediateControlSessionActive
   );
   const composerHasActiveRun = isControlSessionActive || sending;
+  const composerIsRunning = isControlSessionActive || sending;
   const composerCanInterrupt =
     runtimeCanInterrupt === true || sending
       ? true
-      : runtimeCanInterrupt;
-  const composerIsRunning = isControlSessionActive || sending;
+      : runtimeCanInterrupt ?? false;
   const immediateActiveControlSchedule = useMemo(
     () => {
       if (!controlSession || isControlSessionActive) {

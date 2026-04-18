@@ -1926,6 +1926,61 @@ describe("SessionRuntimeStore", () => {
     expect(store.getState().runtimeCanInterrupt).toBe(true);
   });
 
+  it("本地刚发起的新运行即便拿到 running 但不可中断的快照，也会先保住可停止状态", async () => {
+    const store = new SessionRuntimeStore("session-1", {
+      initialSession: {
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "codex-session-1",
+        rawStoreRef: "codex://raw-1",
+        title: "Codex 会话",
+        messageCount: 3,
+        lastMessageAt: "2026-03-24T10:00:00.000Z",
+        createdAt: "2026-03-24T09:00:00.000Z",
+        updatedAt: "2026-03-24T10:00:00.000Z",
+        syncStatus: "idle",
+        syncCursor: "cursor-sync",
+        lastSyncAt: "2026-03-24T10:00:00.000Z",
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "running",
+        activitySource: "runtime",
+        lastEventAt: "2026-03-24T10:00:01.000Z",
+        completedAt: null,
+        lastSeenAt: null,
+        activityState: "running"
+      }
+    });
+
+    (store as any).patch({
+      runtimeHasActiveRun: true,
+      runtimeCanInterrupt: true
+    });
+    mocked.getSessionRuntime.mockResolvedValueOnce({
+      sessionId: "session-1",
+      runningState: "running",
+      hasActiveRun: false,
+      canAttach: false,
+      canInterrupt: false,
+      inRunInputMode: "none",
+      provider: "codex",
+      providerSessionId: "codex-session-1",
+      detail: null,
+      errorCode: null,
+      errorDetail: null,
+      updatedAt: "2026-03-24T10:00:03.000Z",
+      contextUsage: null
+    });
+
+    await (store as any).refreshRuntimeSnapshot("local_send_guard");
+
+    expect(store.getState().session?.runningState).toBe("running");
+    expect(store.getState().runtimeHasActiveRun).toBe(true);
+    expect(store.getState().runtimeCanInterrupt).toBe(true);
+  });
+
   it("默认完整权限开启后，sendLiveMessage 会透传 bypassPermissions", async () => {
     clientConfigStore.hydrate({
       ...clientConfigStore.getState(),

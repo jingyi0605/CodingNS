@@ -42,6 +42,7 @@ vi.mock("../api/butler-api", () => ({
 vi.mock("../../conversation/api/conversation-api", () => ({
   getProviderCapabilities: vi.fn(),
   getSessionMessages: vi.fn(),
+  getSessionPermissionRequests: vi.fn(),
   getSessionRuntime: vi.fn(),
   interruptSession: vi.fn()
 }));
@@ -51,6 +52,7 @@ vi.mock("../../../network/realtime-client", () => ({
 }));
 
 import { ButlerRuntimeStore } from "./butler-runtime-store";
+import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import {
   getButlerProfile,
   initButlerProfile,
@@ -66,6 +68,7 @@ import {
 import {
   getProviderCapabilities,
   getSessionMessages,
+  getSessionPermissionRequests,
   getSessionRuntime,
   interruptSession
 } from "../../conversation/api/conversation-api";
@@ -82,6 +85,7 @@ const mockedStartButlerControlSession = vi.mocked(startButlerControlSession);
 const mockedSendButlerControlMessage = vi.mocked(sendButlerControlMessage);
 const mockedGetProviderCapabilities = vi.mocked(getProviderCapabilities);
 const mockedGetSessionMessages = vi.mocked(getSessionMessages);
+const mockedGetSessionPermissionRequests = vi.mocked(getSessionPermissionRequests);
 const mockedGetSessionRuntime = vi.mocked(getSessionRuntime);
 const mockedInterruptSession = vi.mocked(interruptSession);
 
@@ -138,6 +142,7 @@ describe("ButlerRuntimeStore", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     realtimeMock.instances.length = 0;
+    userPreferenceStore.resetToLocalFallback();
 
     mockedGetButlerProfile.mockResolvedValue({
       initialized: true,
@@ -236,6 +241,9 @@ describe("ButlerRuntimeStore", () => {
       nextCursor: null,
       total: 0
     } as never);
+    mockedGetSessionPermissionRequests.mockResolvedValue({
+      items: []
+    } as never);
     mockedGetSessionRuntime.mockResolvedValue({
       sessionId: "session-control-1",
       runningState: "idle",
@@ -299,7 +307,53 @@ describe("ButlerRuntimeStore", () => {
     );
   });
 
-  it("发送消息后首次 reload 仍返回 idle 时，会保留待启动活跃态", async () => {
+  it("发送消息会继承当前默认会话权限", async () => {
+    const store = new ButlerRuntimeStore("workspace-1");
+    userPreferenceStore.hydrate({
+      ...userPreferenceStore.getState(),
+      profile: {
+        ...userPreferenceStore.getState().profile,
+        defaultPermissionMode: "bypassPermissions"
+      }
+    });
+    await store.initialize();
+
+    await store.sendMessage("首次消息");
+
+    expect(mockedStartButlerControlSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "首次消息",
+        permissionMode: "bypassPermissions"
+      })
+    );
+  });
+
+  it("已有控制会话时继续发送也会继承当前默认会话权限", async () => {
+    const store = new ButlerRuntimeStore("workspace-1");
+    userPreferenceStore.hydrate({
+      ...userPreferenceStore.getState(),
+      profile: {
+        ...userPreferenceStore.getState().profile,
+        defaultPermissionMode: "bypassPermissions"
+      }
+    });
+    await store.initialize();
+
+    (store as unknown as { patch: (state: Record<string, unknown>) => void }).patch({
+      controlSession: { id: "ctrl-existing" }
+    });
+
+    await store.sendMessage("继续消息");
+
+    expect(mockedSendButlerControlMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "继续消息",
+        permissionMode: "bypassPermissions"
+      })
+    );
+  });
+
+  it("发送消息后首次 reload 仍返回 idle 时，会保留待启动活跃态和可中断状态", async () => {
     const store = new ButlerRuntimeStore("workspace-1");
     const controlSession = createControlSession({
       id: "ctrl-existing"
@@ -365,7 +419,95 @@ describe("ButlerRuntimeStore", () => {
         })
       })
     );
-    expect(store.getState().runtimeHasActiveRun).toBe(false);
+    expect(store.getState().runtimeHasActiveRun).toBe(true);
+    expect(store.getState().runtimeCanInterrupt).toBe(true);
+  });
+
+  it("待启动运行收到假阴性的 inactive 活动事件时，不会提前丢掉可停止状态", async () => {
+    const store = new ButlerRuntimeStore("workspace-1");
+    const controlSession = createControlSession({
+      id: "ctrl-existing",
+      status: "running",
+      session: {
+        runningState: "starting",
+        activityState: "running",
+        activitySource: "inferred"
+      }
+    });
+
+    mockedSendButlerControlMessage.mockResolvedValueOnce({
+      controlSession
+    } as never);
+    mockedGetButlerControlSession.mockResolvedValueOnce({
+      controlSession: createControlSession({
+        id: "ctrl-existing",
+        status: "idle",
+        updatedAt: "2026-04-05T00:00:05.000Z",
+        session: {
+          updatedAt: "2026-04-05T00:00:05.000Z",
+          lastEventAt: "2026-04-05T00:00:05.000Z",
+          runningState: "idle",
+          activityState: "idle",
+          activitySource: "runtime"
+        }
+      })
+    } as never);
+    mockedGetSessionMessages.mockResolvedValueOnce({
+      messages: [],
+      cursor: "cursor-latest",
+      nextCursor: null,
+      total: 0
+    } as never);
+    mockedGetSessionRuntime.mockResolvedValueOnce({
+      sessionId: "session-control-1",
+      runningState: "idle",
+      hasActiveRun: false,
+      canAttach: false,
+      canInterrupt: false,
+      inRunInputMode: "none",
+      provider: "codex",
+      providerSessionId: "provider-control-1",
+      activityResolutionSource: "authoritative_runtime",
+      activityConfidence: "authoritative",
+      runId: null,
+      detail: null,
+      errorCode: null,
+      errorDetail: null,
+      updatedAt: "2026-04-05T00:00:05.000Z",
+      watchdogTriggeredAt: null,
+      contextUsage: null
+    } as never);
+
+    await store.initialize();
+    (store as unknown as { patch: (state: Record<string, unknown>) => void }).patch({
+      controlSession
+    });
+    await store.sendMessage("继续消息");
+
+    const realtime = realtimeMock.instances[0];
+    expect(realtime).toBeDefined();
+
+    (realtime?.options.onActivity as ((payload: Record<string, unknown>) => void))({
+      type: "session.activity",
+      sessionId: "session-control-1",
+      runningState: "idle",
+      activityResolutionSource: "authoritative_runtime",
+      activityConfidence: "authoritative",
+      runId: null,
+      detail: null,
+      interruptSource: null,
+      errorCode: null,
+      errorDetail: null,
+      hasActiveRun: false,
+      canInterrupt: false,
+      updatedAt: "2026-04-05T00:00:06.000Z",
+      watchdogTriggeredAt: null
+    });
+
+    expect(store.getState().controlSession?.status).toBe("running");
+    expect(store.getState().controlSession?.session.runningState).toBe("starting");
+    expect(store.getState().runtimeHasActiveRun).toBe(true);
+    expect(store.getState().runtimeCanInterrupt).toBe(true);
   });
 
   it("会保留 Butler 会话的 older cursor，并在上翻时继续加载更早消息", async () => {

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import { authStore } from "../../auth/store/auth-store";
 import { RealtimeClient } from "../../../network/realtime-client";
-import { userPreferenceStore } from "../../../preferences/user-preference-store";
+import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
@@ -68,11 +68,6 @@ const SESSION_RUNTIME_SNAPSHOT_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 const SESSION_MARK_SEEN_DELAY_MS = 600;
 const SESSION_MARK_SEEN_MIN_INTERVAL_MS = 5_000;
 const SESSION_RUNTIME_POLL_DELAY_MS = 10_000;
-
-function getDefaultPermissionMode(): string | null {
-  const permissionMode = userPreferenceStore.getState().profile.defaultPermissionMode;
-  return permissionMode === "default" ? null : permissionMode;
-}
 
 interface SessionRuntimeSnapshot {
   session: SessionSummaryDto | null;
@@ -409,7 +404,7 @@ export class SessionRuntimeStore {
         clientRequestId,
         model: options?.model ?? null,
         reasoningLevel: options?.reasoningLevel ?? null,
-        permissionMode: getDefaultPermissionMode(),
+        permissionMode: getDefaultSessionPermissionMode(),
         attachments: options?.attachments ?? []
       });
 
@@ -941,10 +936,21 @@ export class SessionRuntimeStore {
 
     try {
       const runtime = await getSessionRuntime(this.sessionId);
+      const resolvedRuntimeHasActiveRun = resolveNextRuntimeHasActiveRun(
+        this.state.runtimeHasActiveRun,
+        runtime.runningState,
+        runtime.hasActiveRun
+      );
+      const resolvedRuntimeCanInterrupt = resolveNextRuntimeCanInterrupt(
+        this.state.runtimeCanInterrupt,
+        runtime.runningState,
+        resolvedRuntimeHasActiveRun,
+        runtime.canInterrupt
+      );
       this.patch({
         session: applyRuntimeActivityToSession(this.state.session, runtime),
-        runtimeHasActiveRun: runtime.hasActiveRun,
-        runtimeCanInterrupt: runtime.canInterrupt,
+        runtimeHasActiveRun: resolvedRuntimeHasActiveRun,
+        runtimeCanInterrupt: resolvedRuntimeCanInterrupt,
         contextUsage: runtime.contextUsage,
         ...resolveRuntimeErrorState(runtime, this.state.interruptSource)
       });
@@ -1057,11 +1063,22 @@ export class SessionRuntimeStore {
 
     try {
       const runtime = await getSessionRuntime(this.sessionId);
+      const resolvedRuntimeHasActiveRun = resolveNextRuntimeHasActiveRun(
+        this.state.runtimeHasActiveRun,
+        runtime.runningState,
+        runtime.hasActiveRun
+      );
+      const resolvedRuntimeCanInterrupt = resolveNextRuntimeCanInterrupt(
+        this.state.runtimeCanInterrupt,
+        runtime.runningState,
+        resolvedRuntimeHasActiveRun,
+        runtime.canInterrupt
+      );
 
       this.patch({
         session: applyRuntimeActivityToSession(this.state.session, runtime),
-        runtimeHasActiveRun: runtime.hasActiveRun,
-        runtimeCanInterrupt: runtime.canInterrupt,
+        runtimeHasActiveRun: resolvedRuntimeHasActiveRun,
+        runtimeCanInterrupt: resolvedRuntimeCanInterrupt,
         contextUsage: runtime.contextUsage,
         ...resolveRuntimeErrorState(runtime, this.state.interruptSource)
       });
@@ -1108,7 +1125,7 @@ export class SessionRuntimeStore {
         clientRequestId,
         model: options?.model ?? null,
         reasoningLevel: options?.reasoningLevel ?? null,
-        permissionMode: getDefaultPermissionMode(),
+        permissionMode: getDefaultSessionPermissionMode(),
         attachments: options?.attachments ?? []
       });
     } catch (error) {
@@ -1129,7 +1146,7 @@ export class SessionRuntimeStore {
       return sendSessionMessage(this.sessionId, {
         content,
         clientRequestId,
-        permissionMode: getDefaultPermissionMode()
+        permissionMode: getDefaultSessionPermissionMode()
       });
     }
   }
@@ -1168,10 +1185,21 @@ export class SessionRuntimeStore {
   }
 
   private handleActivity(event: SessionActivityEvent): void {
+    const resolvedRuntimeHasActiveRun = resolveNextRuntimeHasActiveRun(
+      this.state.runtimeHasActiveRun,
+      event.runningState,
+      event.hasActiveRun
+    );
+    const resolvedRuntimeCanInterrupt = resolveNextRuntimeCanInterrupt(
+      this.state.runtimeCanInterrupt,
+      event.runningState,
+      resolvedRuntimeHasActiveRun,
+      event.canInterrupt
+    );
     this.patch({
       session: applyRealtimeActivityToSession(this.state.session, event),
-      runtimeHasActiveRun: event.hasActiveRun,
-      runtimeCanInterrupt: event.canInterrupt,
+      runtimeHasActiveRun: resolvedRuntimeHasActiveRun,
+      runtimeCanInterrupt: resolvedRuntimeCanInterrupt,
       ...resolveRuntimeErrorState(event, this.state.interruptSource)
     });
 
@@ -1915,6 +1943,10 @@ function shouldOptimisticallyAssumeActiveRun(
   session: SessionSummaryDto | null,
   capabilities: ProviderCapabilitiesDto | null
 ): boolean {
+  if (capabilities) {
+    return Boolean(capabilities.canSendMessage);
+  }
+
   if (!session) {
     return false;
   }
@@ -1930,21 +1962,21 @@ function shouldOptimisticallyEnableInterrupt(
   session: SessionSummaryDto | null,
   capabilities: ProviderCapabilitiesDto | null
 ): boolean {
-  if (!session) {
-    return false;
-  }
-
-  if (capabilities && session.provider === capabilities.provider) {
+  if (capabilities) {
     if (!capabilities.supportsInterrupt) {
       return false;
     }
 
     // Claude 仍保留外部推断态，避免把非当前前端持有的会话误判成可中断。
-    if (session.provider === "claude-code" && session.activitySource === "inferred") {
+    if (session?.provider === "claude-code" && session.activitySource === "inferred") {
       return false;
     }
 
     return true;
+  }
+
+  if (!session) {
+    return false;
   }
 
   if (session.provider === "codex" || session.provider === "opencode") {
@@ -1952,6 +1984,33 @@ function shouldOptimisticallyEnableInterrupt(
   }
 
   return session.provider === "claude-code" && session.activitySource !== "inferred";
+}
+
+function resolveNextRuntimeHasActiveRun(
+  currentHasActiveRun: boolean | null,
+  incomingRunningState: SessionRunningState,
+  incomingHasActiveRun: boolean
+): boolean {
+  if (incomingHasActiveRun) {
+    return true;
+  }
+
+  return currentHasActiveRun === true && isRuntimeActiveState(incomingRunningState);
+}
+
+function resolveNextRuntimeCanInterrupt(
+  currentCanInterrupt: boolean | null,
+  incomingRunningState: SessionRunningState,
+  incomingHasActiveRun: boolean,
+  incomingCanInterrupt: boolean
+): boolean {
+  if (incomingCanInterrupt) {
+    return true;
+  }
+
+  return currentCanInterrupt === true && (
+    incomingHasActiveRun || isRuntimeActiveState(incomingRunningState)
+  );
 }
 
 function buildSessionRuntimeSnapshotKey(sessionId: string) {

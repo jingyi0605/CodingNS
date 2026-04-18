@@ -16,6 +16,7 @@ import {
   type DesktopContextMenuItem
 } from "../../../platform/desktop/desktop-context-menu";
 import { usePlatform } from "../../../platform/platform-provider";
+import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { useHaptics } from "../../../shared/haptics";
@@ -1097,7 +1098,8 @@ export function GitSidebar({
         content: buildCommitExplainPrompt(detail),
         clientRequestId:
           globalThis.crypto?.randomUUID?.()
-          ?? `git-explain-${Date.now()}-${Math.random().toString(16).slice(2)}`
+          ?? `git-explain-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        permissionMode: getDefaultSessionPermissionMode()
       });
       const nextSession = response.session ?? await getSessionDetail(response.sessionId);
 

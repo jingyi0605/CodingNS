@@ -358,7 +358,7 @@ describe("ComposerPanel", () => {
     await deferred.promise;
   });
 
-  it("提交后会立刻清空输入框，并切换到发送中按钮", () => {
+  it("提交后会立刻清空输入框，并切换到活动态按钮", () => {
     const deferred = createDeferred();
 
     render(
@@ -380,7 +380,7 @@ describe("ComposerPanel", () => {
 
     expect(textarea.value).toBe("");
     expect(screen.queryByLabelText(t("conversation.sendButton"))).not.toBeInTheDocument();
-    expect(screen.getByLabelText(t("conversation.sendingState"))).toBeInTheDocument();
+    expect(screen.getByLabelText(t("conversation.runtimeRunning"))).toBeInTheDocument();
 
     deferred.resolve();
   });
@@ -440,6 +440,22 @@ describe("ComposerPanel", () => {
     expect(screen.queryByLabelText(t("conversation.runtimeRunning"))).not.toBeInTheDocument();
   });
 
+  it("页面误把 canInterrupt 传成 false 时，只要当前已处于活动态仍允许停止", () => {
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ provider: "claude-code", supportsInterrupt: true })}
+        canInterrupt={false}
+        isSubmitting={false}
+        isRunning
+        onInterrupt={vi.fn()}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    expect(screen.getByLabelText(t("conversation.capabilityInterrupt"))).toBeInTheDocument();
+    expect(screen.queryByLabelText(t("conversation.runtimeRunning"))).not.toBeInTheDocument();
+  });
+
   it("发送请求还没落回空闲时，只要运行已经开始也优先显示停止按钮", async () => {
     const deferred = createDeferred();
     const onSend = vi.fn(() => deferred.promise);
@@ -461,7 +477,7 @@ describe("ComposerPanel", () => {
     });
     fireEvent.submit(document.querySelector(".composer-form")!);
 
-    expect(screen.getByLabelText(t("conversation.sendingState"))).toBeInTheDocument();
+    expect(screen.getByLabelText(t("conversation.runtimeRunning"))).toBeInTheDocument();
 
     rerender(
       <ComposerPanel
@@ -475,7 +491,7 @@ describe("ComposerPanel", () => {
       />
     );
 
-    expect(screen.queryByLabelText(t("conversation.sendingState"))).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(t("conversation.runtimeRunning"))).not.toBeInTheDocument();
     fireEvent.click(screen.getByLabelText(t("conversation.capabilityInterrupt")));
 
     await waitFor(() => {
@@ -717,7 +733,7 @@ describe("ComposerPanel", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it("空闲但队列还有待发消息时，不显示未发送态按钮", () => {
+  it("空闲但队列还有待发消息时，也统一显示活动态按钮", () => {
     render(
       <ComposerPanel
         capabilities={createCapabilities()}
@@ -727,7 +743,7 @@ describe("ComposerPanel", () => {
       />
     );
 
-    expect(screen.getByLabelText(t("conversation.sendingState"))).toBeInTheDocument();
+    expect(screen.getByLabelText(t("conversation.runtimeRunning"))).toBeInTheDocument();
     expect(screen.queryByLabelText(t("conversation.sendButton"))).not.toBeInTheDocument();
   });
 

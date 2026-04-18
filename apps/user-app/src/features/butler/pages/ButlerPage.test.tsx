@@ -20,15 +20,24 @@ vi.mock("react-router-dom", async () => {
 vi.mock("../../conversation/components/ComposerPanel", () => ({
   ComposerPanel: ({
     isSubmitting,
+    hasActiveRun,
+    canInterrupt,
+    isRunning,
     onSend,
     placeholder
   }: {
     isSubmitting?: boolean;
+    hasActiveRun?: boolean | null;
+    canInterrupt?: boolean | null;
+    isRunning?: boolean;
     onSend?: (content: string) => Promise<void>;
     placeholder?: string;
   }) => (
     <div>
       <div data-testid="butler-composer-placeholder">{placeholder}</div>
+      <div data-testid="butler-composer-has-active-run">{String(hasActiveRun)}</div>
+      <div data-testid="butler-composer-can-interrupt">{String(canInterrupt)}</div>
+      <div data-testid="butler-composer-is-running">{String(isRunning)}</div>
       <button
         type="button"
         data-testid="butler-composer-send"
@@ -634,6 +643,73 @@ describe("ButlerPage", () => {
     await waitFor(() => {
       expect(screen.getByText(t("shell.butlerInitTitle"))).toBeInTheDocument();
     });
+  });
+
+  it("活跃会话即便 runtime 暂时报不可中断，也持续向输入框暴露可停止状态", async () => {
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "阿尔文",
+        providerId: "codex",
+        workspacePath: "/tmp/butler",
+        agentsMode: "inline",
+        agentsFilePath: null,
+        agentsContent: "测试",
+        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
+        initializedAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z"
+      }
+    });
+    mockedGetCurrentButlerControlSession.mockResolvedValueOnce({
+      controlSession: {
+        id: "ctrl-runtime-active",
+        providerId: "codex",
+        sessionId: "session-control-1",
+        purpose: "chat",
+        title: "停止按钮回归",
+        sourceItemId: null,
+        status: "running",
+        lastContextVersion: null,
+        lastSummary: null,
+        createdAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z",
+        session: {
+          sessionId: "session-control-1",
+          title: "停止按钮回归",
+          runningState: "running",
+          activityState: "running"
+        }
+      }
+    } as never);
+    mockedGetSessionRuntime.mockResolvedValueOnce({
+      sessionId: "session-control-1",
+      runningState: "running",
+      hasActiveRun: false,
+      canAttach: false,
+      canInterrupt: false,
+      inRunInputMode: "none",
+      provider: "codex",
+      providerSessionId: "provider-control-1",
+      activityResolutionSource: "authoritative_runtime",
+      activityConfidence: "authoritative",
+      runId: null,
+      detail: null,
+      errorCode: null,
+      errorDetail: null,
+      updatedAt: "2026-04-05T00:00:02.000Z",
+      watchdogTriggeredAt: null,
+      contextUsage: null
+    } as never);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("butler-composer-is-running")).toHaveTextContent("true");
+    });
+    expect(screen.getByTestId("butler-composer-has-active-run")).toHaveTextContent("true");
+    expect(screen.getByTestId("butler-composer-can-interrupt")).toHaveTextContent("false");
   });
 
   it("未初始化时展示表单并校验必填字段", async () => {

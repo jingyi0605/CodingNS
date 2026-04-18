@@ -817,11 +817,11 @@ export function MobileButlerPage() {
     immediateControlSessionActive
   );
   const composerHasActiveRun = isControlSessionActive || runtimeSending;
+  const composerIsRunning = isControlSessionActive || runtimeSending;
   const composerCanInterrupt =
     runtimeCanInterrupt === true || runtimeSending
       ? true
       : runtimeCanInterrupt ?? false;
-  const composerIsRunning = isControlSessionActive || runtimeSending;
   const immediateActiveControlSchedule = useMemo(
     () => {
       if (!controlSession || isControlSessionActive) {

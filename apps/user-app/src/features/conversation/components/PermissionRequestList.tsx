@@ -146,7 +146,7 @@ export function PermissionRequestList({
                     onClick={() =>
                       void onReply(request.id, {
                         action: action.value,
-                        answers: request.kind === "user_input" ? answers : undefined
+                        answers: Object.keys(answers).length > 0 ? answers : undefined
                       })
                     }
                   >
