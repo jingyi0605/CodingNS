@@ -219,7 +219,19 @@ function normalizeRuntimeOptions(input: RuntimeOptionsBody) {
 export class SessionController {
   constructor(
     private readonly sessionHistoryService: SessionHistoryService,
-    private readonly sessionLiveRuntimeService: SessionLiveRuntimeService,
+    private readonly sessionLiveRuntimeService: Pick<
+      SessionLiveRuntimeService,
+      | "startLiveSession"
+      | "sendLiveMessage"
+      | "enqueueLiveMessage"
+      | "getSessionRuntime"
+      | "interruptSession"
+      | "replyPermissionRequest"
+      | "listPermissionRequests"
+      | "listQueuedMessages"
+      | "deleteQueuedMessage"
+      | "steerQueuedMessage"
+    >,
     private readonly butlerControlSessionRepository: Pick<ButlerControlSessionRepository, "listSessionIds">
   ) {}
 

@@ -54,7 +54,7 @@ export function createWsServer(
   server: Server,
   wsAuthGuard: WsAuthGuard,
   sessionHistoryService: SessionHistoryService,
-  sessionLiveRuntimeService: SessionLiveRuntimeService,
+  sessionLiveRuntimeService: Pick<SessionLiveRuntimeService, "subscribeRuntime">,
   terminalWsHub: TerminalWsHub,
   workbenchWsHub: WorkbenchWsHub,
   butlerActionContextService?: Pick<ButlerActionContextService, "preloadSessionActionContext">

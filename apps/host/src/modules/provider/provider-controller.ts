@@ -28,7 +28,10 @@ interface ClaudeHookEventBody {
 export class ProviderController {
   constructor(
     private readonly sessionHistoryService: SessionHistoryService,
-    private readonly sessionLiveRuntimeService: SessionLiveRuntimeService,
+    private readonly sessionLiveRuntimeService: Pick<
+      SessionLiveRuntimeService,
+      "getClaudeHookBridgeConfig" | "ingestClaudeHookEvent"
+    >,
     private readonly config: HostConfig
   ) {}
 

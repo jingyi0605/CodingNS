@@ -94,6 +94,7 @@ import { SessionController } from "../modules/sessions/session-controller.js";
 import { SessionChangedFileService } from "../modules/sessions/session-changed-file-service.js";
 import { SessionActivityAuthorityService } from "../modules/sessions/session-activity-authority-service.js";
 import { SessionHistoryService } from "../modules/sessions/session-history-service.js";
+import { SessionLiveRuntimeRouterService } from "../modules/sessions/session-live-runtime-router-service.js";
 import { SessionLiveRuntimeService } from "../modules/sessions/session-live-runtime-service.js";
 import { SessionMessageAttachmentService } from "../modules/sessions/session-message-attachment-service.js";
 import { EventLoopMonitor } from "../modules/tasks/event-loop-monitor.js";
@@ -560,6 +561,14 @@ export function createServer(config: HostConfig) {
   sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
     butlerFollowUpSessionLiveRuntimeService.resolveLiveActivityObservation(sessionId)
   );
+  const routedSessionLiveRuntimeService = new SessionLiveRuntimeRouterService(
+    sessionLiveRuntimeService,
+    [
+      butlerSessionLiveRuntimeService,
+      butlerSummarySessionLiveRuntimeService,
+      butlerFollowUpSessionLiveRuntimeService
+    ]
+  );
   const workbenchService = new WorkbenchService(
     repositories.workspaceRepository,
     repositories.workspaceNavigationStateRepository,
@@ -923,7 +932,7 @@ export function createServer(config: HostConfig) {
   );
   const sessionController = new SessionController(
     sessionHistoryService,
-    sessionLiveRuntimeService,
+    routedSessionLiveRuntimeService,
     repositories.butlerControlSessionRepository
   );
   const assistantCapabilityController = new AssistantCapabilityController(
@@ -948,7 +957,7 @@ export function createServer(config: HostConfig) {
   );
   const providerController = new ProviderController(
     sessionHistoryService,
-    sessionLiveRuntimeService,
+    routedSessionLiveRuntimeService,
     config
   );
   const skillController = new SkillController(skillManagerService);
@@ -975,7 +984,7 @@ export function createServer(config: HostConfig) {
     app.server,
     new WsAuthGuard(authService),
     sessionHistoryService,
-    sessionLiveRuntimeService,
+    routedSessionLiveRuntimeService,
     new TerminalWsHub(terminalService),
     new WorkbenchWsHub(workbenchService, workspacePanelSnapshotService, fileWatcher, terminalService),
     butlerActionContextService
