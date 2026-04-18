@@ -30,7 +30,8 @@ import type {
   ProviderRuntimeAdapter,
   ProviderRuntimeEventSink,
   ProviderRuntimeLaunchResult,
-  ProviderRuntimeRunRequest
+  ProviderRuntimeRunRequest,
+  RuntimeSendOptions
 } from "./types.js";
 
 interface CodexThread {
@@ -178,6 +179,7 @@ export interface CodexAppServerTransport {
     request: ProviderRuntimeRunRequest,
     providerSessionId: string
   ): Promise<{ notification?: Record<string, unknown> | null } | void>;
+  steerTurn(options: RuntimeSendOptions): Promise<{ turnId?: string | null } | void>;
   interruptTurn(): Promise<void>;
   setNotificationHandler(handler: (notification: Record<string, unknown>) => void | Promise<void>): void;
   setServerRequestHandler(handler: (request: Record<string, unknown>) => Promise<unknown>): void;
@@ -320,6 +322,9 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     return {
       providerSessionId,
       rawStoreRef,
+      submitDuringRun: async (options) => {
+        await transport.steerTurn(options);
+      },
       interrupt: async () => {
         abortController.abort();
         await transport.interruptTurn().catch(() => {
@@ -498,6 +503,9 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     return {
       providerSessionId: resolvedSessionId,
       rawStoreRef,
+      submitDuringRun: async (options) => {
+        await transport.steerTurn(options);
+      },
       interrupt: async () => {
         abortController.abort();
         await transport.interruptTurn().catch(() => {
@@ -1464,6 +1472,34 @@ function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppSe
         notification: buildCodexTurnCompletionNotification(turn, providerSessionId)
       };
     },
+    async steerTurn(options) {
+      if (!activeThreadId || !activeTurnId) {
+        throw new Error("SESSION_NOT_RUNNING");
+      }
+
+      try {
+        const result = await sendJsonRpcRequest(
+          child,
+          pendingResponses,
+          () => nextJsonRpcId("turn-steer", () => ++requestSequence),
+          {
+            method: "turn/steer",
+            params: createTurnSteerParams(activeThreadId, activeTurnId, options)
+          }
+        );
+        const turnId = ensureText(readProp(result, "turnId")).trim();
+
+        if (turnId) {
+          activeTurnId = turnId;
+        }
+
+        return {
+          turnId: turnId || activeTurnId
+        };
+      } catch (error) {
+        throw normalizeCodexTurnSteerError(error);
+      }
+    },
     async interruptTurn() {
       if (!activeThreadId || !activeTurnId) {
         return;
@@ -2034,6 +2070,18 @@ function createTurnStartParams(
   return params;
 }
 
+function createTurnSteerParams(
+  providerSessionId: string,
+  activeTurnId: string,
+  options: RuntimeSendOptions
+): Record<string, unknown> {
+  return {
+    threadId: providerSessionId,
+    expectedTurnId: activeTurnId,
+    input: createCodexAppServerInputFromOptions(options)
+  };
+}
+
 function normalizeCodexReasoningEffort(value: string | null): string | null {
   const normalized = value?.trim().toLowerCase() ?? null;
 
@@ -2088,8 +2136,14 @@ function createCodexInput(request: ProviderRuntimeRunRequest): CodexRuntimeInput
 }
 
 function createCodexAppServerInput(request: ProviderRuntimeRunRequest): Array<Record<string, unknown>> {
+  return createCodexAppServerInputFromOptions(request.options);
+}
+
+function createCodexAppServerInputFromOptions(
+  options: Pick<RuntimeSendOptions, "content" | "providerPrompt" | "attachments">
+): Array<Record<string, unknown>> {
   const input: Array<Record<string, unknown>> = [];
-  const promptText = (request.options.providerPrompt ?? request.options.content).trim();
+  const promptText = (options.providerPrompt ?? options.content).trim();
 
   if (promptText.length > 0) {
     input.push({
@@ -2098,7 +2152,7 @@ function createCodexAppServerInput(request: ProviderRuntimeRunRequest): Array<Re
     });
   }
 
-  for (const attachment of request.options.attachments) {
+  for (const attachment of options.attachments) {
     if (attachment.kind !== "image") {
       continue;
     }
@@ -2110,6 +2164,31 @@ function createCodexAppServerInput(request: ProviderRuntimeRunRequest): Array<Re
   }
 
   return input;
+}
+
+function normalizeCodexTurnSteerError(error: unknown): Error {
+  const detail = error instanceof Error ? error.message.trim() : String(error).trim();
+  const normalized = detail.toLowerCase();
+
+  if (
+    normalized.includes("method not found")
+    || (normalized.includes("turn/steer") && normalized.includes("not found"))
+    || normalized.includes("unknown method")
+  ) {
+    return new Error("IN_RUN_INPUT_NOT_SUPPORTED");
+  }
+
+  if (
+    normalized.includes("expectedturnid")
+    || normalized.includes("active turn")
+    || normalized.includes("turn mismatch")
+    || normalized.includes("no active turn")
+    || normalized.includes("not running")
+  ) {
+    return new Error("SESSION_NOT_RUNNING");
+  }
+
+  return error instanceof Error ? error : new Error(detail || "CODEX_TURN_STEER_FAILED");
 }
 
 async function loadCodexClient(): Promise<CodexSdkClient> {

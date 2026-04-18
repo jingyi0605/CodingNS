@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import type {
   CodexAppServerTransport,
   CodexForkTransport,
-  ProviderRuntimeRunRequest
+  ProviderRuntimeRunRequest,
+  RuntimeSendOptions
 } from "@codingns/session-sync-core";
 
 type HelperToParentMessage =
@@ -55,10 +56,13 @@ type ParentToHelperMessage =
         | "rollbackThread"
         | "resumeThreadFromHistory"
         | "startTurn"
+        | "steerTurn"
         | "interruptTurn"
         | "close";
       request?: ProviderRuntimeRunRequest;
+      options?: RuntimeSendOptions;
       providerSessionId?: string;
+      expectedTurnId?: string;
       numTurns?: number;
       workspacePath?: string;
       history?: unknown[];
@@ -167,7 +171,9 @@ export class CodexAppServerHelperClient {
       method: Extract<ParentToHelperMessage, { type: "transport_request" }>["method"],
       input: {
         request?: ProviderRuntimeRunRequest;
+        options?: RuntimeSendOptions;
         providerSessionId?: string;
+        expectedTurnId?: string;
         workspacePath?: string;
         history?: unknown[];
         model?: string | null;
@@ -238,6 +244,14 @@ export class CodexAppServerHelperClient {
           request: runtimeRequest,
           providerSessionId
         });
+      },
+      async steerTurn(options) {
+        const result = await request("steerTurn", {
+          options
+        });
+        return {
+          turnId: normalizeNullableString(result.turnId)
+        };
       },
       async interruptTurn() {
         await request("interruptTurn");

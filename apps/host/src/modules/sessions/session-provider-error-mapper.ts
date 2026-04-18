@@ -56,6 +56,15 @@ export function mapSessionProviderError(error: unknown): AppError {
     });
   }
 
+  if (error instanceof Error && error.message === "SESSION_NOT_RUNNING") {
+    return new AppError({
+      statusCode: 409,
+      errorCode: "SESSION_NOT_RUNNING",
+      detail: "当前会话已不在运行中，请重新发起本轮请求",
+      field: "sessionId"
+    });
+  }
+
   if (error instanceof Error && error.message === "PROVIDER_SESSION_NOT_FOUND") {
     return new AppError({
       statusCode: 404,

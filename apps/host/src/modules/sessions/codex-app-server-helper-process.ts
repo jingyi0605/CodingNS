@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline, { createInterface } from "node:readline";
 
-import type { ProviderRuntimeRunRequest } from "@codingns/session-sync-core";
+import type { ProviderRuntimeRunRequest, RuntimeSendOptions } from "@codingns/session-sync-core";
 import { resolveCommandLaunch } from "../../shared/utils/command-launch.js";
 
 type ParentToHelperMessage =
@@ -18,10 +18,13 @@ type ParentToHelperMessage =
         | "rollbackThread"
         | "resumeThreadFromHistory"
         | "startTurn"
+        | "steerTurn"
         | "interruptTurn"
         | "close";
       request?: ProviderRuntimeRunRequest;
+      options?: RuntimeSendOptions;
       providerSessionId?: string;
+      expectedTurnId?: string;
       numTurns?: number;
       workspacePath?: string;
       history?: unknown[];
@@ -203,6 +206,32 @@ async function handleTransportRequest(message: Extract<ParentToHelperMessage, { 
           ensureText(readProp(readProp(result, "turn"), "id")).trim() || transport.activeTurnId;
         emitResponse(message.transportId, message.requestId, {});
         return;
+      }
+      case "steerTurn": {
+        const options = requireOptions(message.options);
+
+        if (!transport.activeThreadId || !transport.activeTurnId) {
+          throw new Error("SESSION_NOT_RUNNING");
+        }
+
+        try {
+          const result = await sendJsonRpcRequest(transport, {
+            method: "turn/steer",
+            params: createTurnSteerParams(
+              transport.activeThreadId,
+              transport.activeTurnId,
+              options
+            )
+          });
+          const turnId = ensureText(readProp(result, "turnId")).trim() || transport.activeTurnId;
+          transport.activeTurnId = turnId;
+          emitResponse(message.transportId, message.requestId, {
+            turnId
+          });
+          return;
+        } catch (error) {
+          throw normalizeCodexTurnSteerError(error);
+        }
       }
       case "forkThread": {
         const providerSessionId = ensureText(message.providerSessionId).trim();
@@ -593,6 +622,14 @@ function requireRequest(request: ProviderRuntimeRunRequest | undefined): Provide
   return request;
 }
 
+function requireOptions(options: RuntimeSendOptions | undefined): RuntimeSendOptions {
+  if (!options) {
+    throw new Error("CODEX_APP_SERVER_OPTIONS_REQUIRED");
+  }
+
+  return options;
+}
+
 function createThreadStartParams(request: ProviderRuntimeRunRequest): Record<string, unknown> {
   const permissionOptions = createCodexThreadPermissionOptions(
     request.options.permissionMode ?? "default"
@@ -699,11 +736,29 @@ function createTurnStartParams(
   return params;
 }
 
+function createTurnSteerParams(
+  providerSessionId: string,
+  activeTurnId: string,
+  options: RuntimeSendOptions
+): Record<string, unknown> {
+  return {
+    threadId: providerSessionId,
+    expectedTurnId: activeTurnId,
+    input: createCodexAppServerInputFromOptions(options)
+  };
+}
+
 function createCodexAppServerInput(
   request: ProviderRuntimeRunRequest
 ): Array<Record<string, unknown>> {
+  return createCodexAppServerInputFromOptions(request.options);
+}
+
+function createCodexAppServerInputFromOptions(
+  options: Pick<RuntimeSendOptions, "content" | "providerPrompt" | "attachments">
+): Array<Record<string, unknown>> {
   const input: Array<Record<string, unknown>> = [];
-  const promptText = (request.options.providerPrompt ?? request.options.content).trim();
+  const promptText = (options.providerPrompt ?? options.content).trim();
 
   if (promptText.length > 0) {
     input.push({
@@ -712,7 +767,7 @@ function createCodexAppServerInput(
     });
   }
 
-  for (const attachment of request.options.attachments) {
+  for (const attachment of options.attachments) {
     if (attachment.kind !== "image") {
       continue;
     }
@@ -724,6 +779,31 @@ function createCodexAppServerInput(
   }
 
   return input;
+}
+
+function normalizeCodexTurnSteerError(error: unknown): Error {
+  const detail = error instanceof Error ? error.message.trim() : String(error).trim();
+  const normalized = detail.toLowerCase();
+
+  if (
+    normalized.includes("method not found")
+    || (normalized.includes("turn/steer") && normalized.includes("not found"))
+    || normalized.includes("unknown method")
+  ) {
+    return new Error("IN_RUN_INPUT_NOT_SUPPORTED");
+  }
+
+  if (
+    normalized.includes("expectedturnid")
+    || normalized.includes("active turn")
+    || normalized.includes("turn mismatch")
+    || normalized.includes("no active turn")
+    || normalized.includes("not running")
+  ) {
+    return new Error("SESSION_NOT_RUNNING");
+  }
+
+  return error instanceof Error ? error : new Error(detail || "CODEX_TURN_STEER_FAILED");
 }
 
 function createCodexThreadPermissionOptions(

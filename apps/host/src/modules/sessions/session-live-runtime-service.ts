@@ -589,18 +589,6 @@ export class SessionLiveRuntimeService {
       });
     }
 
-    const runtimeSessionId = this.resolveRuntimeSessionId(sessionId);
-    const runtimeSnapshot = this.getLiveRuntimeSnapshot(runtimeSessionId);
-
-    if (!runtimeSnapshot || !isActiveRuntimeState(runtimeSnapshot.runningState)) {
-      throw new AppError({
-        statusCode: 409,
-        errorCode: "SESSION_NOT_RUNNING",
-        detail: "当前会话不在运行中，无法立刻引导这条消息",
-        field: "queueItemId"
-      });
-    }
-
     const capabilities = await this.sessionHistoryService.getSessionCapabilities(sessionId);
 
     if (capabilities.inRunInputMode === "none") {
@@ -636,6 +624,8 @@ export class SessionLiveRuntimeService {
     };
 
     try {
+      // 队列里的“引导”语义是立刻发这条，而不是死盯着“必须命中当前 run”。
+      // 有 active run 时走原生 steer；空闲时就直接起新一轮，把指定队列项先发出去。
       const result = await this.sendLiveMessageDirect(
         {
           sessionId,
@@ -1687,14 +1677,28 @@ export class SessionLiveRuntimeService {
 
       if (activeRun && isActiveRuntimeState(activeRun.runningState)) {
         const submitStartedAtMs = performance.now();
-        await this.providerRuntimeService.submitToActiveRun(runtimeSessionId, runtimeRequest.options)
-          .catch((error) => {
-            throw mapSessionProviderError(error);
+        try {
+          await this.providerRuntimeService.submitToActiveRun(runtimeSessionId, runtimeRequest.options);
+          this.logSendDebugStep(debugTrace, "submit_to_active_run", submitStartedAtMs, {
+            runtimeMode,
+            activeRunState: activeRun.runningState
           });
-        this.logSendDebugStep(debugTrace, "submit_to_active_run", submitStartedAtMs, {
-          runtimeMode,
-          activeRunState: activeRun.runningState
-        });
+        } catch (error) {
+          const mapped = mapSessionProviderError(error);
+
+          // 运行时句柄还没来得及收尾时，steer 可能会撞上 provider 已终态。
+          // 这里直接失败只会把一条正常消息变成偶发 409，属于纯粹的坏味道。
+          if (mapped.errorCode === "SESSION_NOT_RUNNING") {
+            await this.providerRuntimeService.abandonRun(runtimeSessionId);
+            const restartRuntimeStartedAtMs = performance.now();
+            await this.startRuntimeRun(runtimeRequest, input.userId, runtimeMode);
+            this.logSendDebugStep(debugTrace, "restart_runtime_after_stale_active_run", restartRuntimeStartedAtMs, {
+              runtimeMode
+            });
+          } else {
+            throw mapped;
+          }
+        }
       } else {
         const startRuntimeStartedAtMs = performance.now();
         await this.startRuntimeRun(runtimeRequest, input.userId, runtimeMode);

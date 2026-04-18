@@ -991,7 +991,7 @@ export class CodexAdapter implements ProviderAdapter {
       canStartSession: true,
       canResumeSession: true,
       canSendMessage: true,
-      inRunInputMode: "none",
+      inRunInputMode: "streaming_guidance",
       supportsSubagents: true,
       supportsInterrupt: true,
       supportsStructuredToolCalls: true,
@@ -1001,8 +1001,8 @@ export class CodexAdapter implements ProviderAdapter {
       supportsCheckpoint: false,
       supportsSessionFork: true,
       limitations: [
-        "Codex 产品原生支持将指导加入队列，但当前 SDK 0.116.0 仍未向宿主暴露运行中 queue/steer 提交入口。",
-        "当前实现只维护原生会话文件，不负责直接驱动 Codex CLI 进程执行。"
+        "运行中追加消息依赖 Codex CLI app-server 暴露 turn/steer；当前项目实测 codex-cli 0.118.0 可用。",
+        "当前 npm SDK 仍只有 run/runStreamed 轮询式接口，宿主运行时需经由 Codex CLI app-server 才能直发 steer。"
       ]
     };
   }
