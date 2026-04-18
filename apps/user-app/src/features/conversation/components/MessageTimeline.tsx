@@ -1773,6 +1773,10 @@ function buildTimelineRenderItems(messages: SessionMessageViewModel[]): Timeline
   for (let index = 0; index < messages.length; index += 1) {
     const current = messages[index]!;
 
+    if (shouldSuppressTurnAbortedMessage(messages, index)) {
+      continue;
+    }
+
     if (!isToolMessage(current)) {
       items.push({
         type: "message",
@@ -1820,6 +1824,29 @@ function buildTimelineRenderItems(messages: SessionMessageViewModel[]): Timeline
   }
 
   return items;
+}
+
+function shouldSuppressTurnAbortedMessage(
+  messages: SessionMessageViewModel[],
+  index: number
+): boolean {
+  const current = messages[index];
+
+  if (!current || parseTurnAbortedMessage(current.content) === null) {
+    return false;
+  }
+
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    const previous = messages[cursor];
+
+    if (!previous || isToolMessage(previous)) {
+      continue;
+    }
+
+    return previous.role === "user";
+  }
+
+  return false;
 }
 
 function looksLikeRulesMessage(provider: ProviderId | null, content: string) {
@@ -3616,6 +3643,7 @@ export function MessageTimeline({
   assistantAvatar
 }: MessageTimelineProps) {
   const { showToast } = useToast();
+  const platform = usePlatform();
   const listRef = useRef<HTMLDivElement | null>(null);
   const previousSessionIdRef = useRef(sessionId);
   const previousMessageCountRef = useRef(0);
@@ -3634,11 +3662,13 @@ export function MessageTimeline({
   const manualRestoreTargetRef = useRef<number | null>(null);
   const manualRestoreDeadlineRef = useRef(0);
   const manualRestoreInProgressRef = useRef(false);
+  const lastProgrammaticRestoreScrollTopRef = useRef<number | null>(null);
   const touchStartYRef = useRef<number | null>(null);
   const [showScrollToBottomButton, setShowScrollToBottomButton] = useState(false);
   const [hasNewMessagesBelow, setHasNewMessagesBelow] = useState(false);
   const hasNewMessagesBelowRef = useRef(false);
   const renderItems = buildTimelineRenderItems(messages);
+  const manualRestoreDurationMs = platform.isMobile ? 0 : MANUAL_RESTORE_DURATION_MS;
   const leadingSystemPromptMessageIds = useMemo(
     () => collectLeadingSystemPromptMessageIds(messages, provider),
     [messages, provider]
@@ -3744,12 +3774,14 @@ export function MessageTimeline({
     manualRestoreInProgressRef.current = false;
     manualRestoreTargetRef.current = null;
     manualRestoreDeadlineRef.current = 0;
+    lastProgrammaticRestoreScrollTopRef.current = null;
   }
 
   function applyManualRestorePosition(list: HTMLDivElement, targetScrollTop: number) {
     const maxScrollableTop = Math.max(0, list.scrollHeight - list.clientHeight);
     const nextScrollTop = Math.max(0, Math.min(targetScrollTop, maxScrollableTop));
 
+    lastProgrammaticRestoreScrollTopRef.current = nextScrollTop;
     list.scrollTop = nextScrollTop;
     stickToBottomRef.current = false;
     setShowScrollToBottomButton(
@@ -3791,9 +3823,15 @@ export function MessageTimeline({
   }
 
   function startManualRestore(targetScrollTop: number, list: HTMLDivElement) {
+    if (manualRestoreDurationMs <= 0) {
+      applyManualRestorePosition(list, targetScrollTop);
+      finishManualRestore();
+      return;
+    }
+
     manualRestoreInProgressRef.current = true;
     manualRestoreTargetRef.current = targetScrollTop;
-    manualRestoreDeadlineRef.current = Date.now() + MANUAL_RESTORE_DURATION_MS;
+    manualRestoreDeadlineRef.current = Date.now() + manualRestoreDurationMs;
     applyManualRestorePosition(list, targetScrollTop);
     scheduleManualRestoreFrame();
   }
@@ -3977,6 +4015,20 @@ export function MessageTimeline({
       return;
     }
 
+    if (manualRestoreInProgressRef.current) {
+      const lastProgrammaticScrollTop = lastProgrammaticRestoreScrollTopRef.current;
+
+      if (
+        lastProgrammaticScrollTop !== null
+        && Math.abs(list.scrollTop - lastProgrammaticScrollTop) <= 1
+      ) {
+        lastProgrammaticRestoreScrollTopRef.current = null;
+      } else {
+        // 只要用户滚出了程序最后一次写入的位置，就说明用户已经接管，不再继续强制恢复。
+        interruptManualRestore();
+      }
+    }
+
     syncScrollAffordance(list);
     schedulePersistCurrentScrollState();
 
@@ -4007,6 +4059,7 @@ export function MessageTimeline({
   }
 
   function handleTouchStart(event: ReactTouchEvent<HTMLDivElement>) {
+    interruptManualRestore();
     touchStartYRef.current = event.touches[0]?.clientY ?? null;
   }
 
@@ -4048,6 +4101,7 @@ export function MessageTimeline({
         ref={listRef}
         className="message-list"
         onScroll={handleScroll}
+        onPointerDown={interruptManualRestore}
         onWheel={handleWheel}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
