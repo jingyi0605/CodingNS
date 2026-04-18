@@ -1778,6 +1778,42 @@ describe("SessionLiveRuntimeService", () => {
     });
   });
 
+  it("Claude 外部运行态存在时，中断接口会返回能力不支持而不是误报未运行", async () => {
+    const { service, sessionHistoryService } = createService();
+    const providerRuntimeService = {
+      getSnapshot: vi.fn(() => null)
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-1.jsonl",
+      messageCount: 3,
+      runningState: "running"
+    });
+
+    (service as any).externalRuntimeSnapshots.set("session-1", {
+      sessionId: "session-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "claude://raw-1",
+      runningState: "running",
+      detail: null,
+      updatedAt: "2026-03-26T10:00:01.000Z"
+    });
+
+    await expect(service.interruptSession("session-1", "user-1")).rejects.toMatchObject({
+      errorCode: "CAPABILITY_NOT_SUPPORTED",
+      message: "当前 Claude 外部运行仍在进行，但现有链路不支持中断"
+    });
+  });
+
   it("dispatchNextQueuedMessage 遇到 ACTIVE_RUN_EXISTS 时会回到等待并安排重试", async () => {
     vi.useFakeTimers();
     const { service, sessionHistoryService, sessionSendQueueRepository } = createService();
@@ -2509,6 +2545,180 @@ describe("SessionLiveRuntimeService", () => {
     expect(result.accepted).toBe(true);
     expect(result.ignored).toBe(false);
     expect(result.sessionId).toBe("session-1");
+  });
+
+  it("Claude 对同一路径的 Read 在本会话默认允许后会自动放行", async () => {
+    const {
+      service,
+      workspaceService,
+      sessionBindingRepository,
+      sessionHistoryService
+    } = createService();
+
+    workspaceService.findWorkspaceByPath.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionBindingRepository.findByProviderSession.mockReturnValue({
+      sessionId: "session-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl"
+    });
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-real-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl",
+      runningState: "running",
+      updatedAt: "2026-03-30T15:00:00.000Z",
+      lastEventAt: "2026-03-30T15:00:00.000Z"
+    });
+
+    const firstResultPromise = service.ingestClaudeHookEvent({
+      hook_event_name: "PreToolUse",
+      session_id: "claude-session-real-1",
+      cwd: "/tmp/workspace",
+      transcript_path: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl",
+      tool_name: "Read",
+      tool_input: {
+        file_path: "/tmp/workspace/references/cli-workflow.md"
+      }
+    });
+    let requests = await service.listPermissionRequests("session-1", "user-1");
+
+    if (requests.length === 0) {
+      await Promise.resolve();
+      requests = await service.listPermissionRequests("session-1", "user-1");
+    }
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.actions.map((action) => action.value)).toEqual([
+      "allow",
+      "allow_session",
+      "deny"
+    ]);
+    await service.replyPermissionRequest("session-1", "user-1", requests[0]!.id, {
+      action: "allow_session"
+    });
+    const firstResult = await firstResultPromise;
+
+    expect(firstResult.accepted).toBe(true);
+    expect(firstResult.ignored).toBe(false);
+    expect(firstResult.bridgeResponse).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow"
+      }
+    });
+
+    const secondResult = await service.ingestClaudeHookEvent({
+      hook_event_name: "PreToolUse",
+      session_id: "claude-session-real-1",
+      cwd: "/tmp/workspace",
+      transcript_path: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl",
+      tool_name: "Read",
+      tool_input: {
+        file_path: "/tmp/workspace/references/cli-workflow.md"
+      }
+    });
+
+    expect(secondResult.accepted).toBe(true);
+    expect(secondResult.ignored).toBe(false);
+    expect(secondResult.bridgeResponse).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow"
+      }
+    });
+  });
+
+  it("Claude PermissionRequest 对同一路径的 Read 在本会话默认允许后会自动放行", async () => {
+    const {
+      service,
+      workspaceService,
+      sessionBindingRepository,
+      sessionHistoryService
+    } = createService();
+
+    workspaceService.findWorkspaceByPath.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionBindingRepository.findByProviderSession.mockReturnValue({
+      sessionId: "session-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl"
+    });
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-real-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl",
+      runningState: "running",
+      updatedAt: "2026-03-30T15:00:00.000Z",
+      lastEventAt: "2026-03-30T15:00:00.000Z"
+    });
+
+    const firstResultPromise = service.ingestClaudeHookEvent({
+      hook_event_name: "PermissionRequest",
+      session_id: "claude-session-real-1",
+      cwd: "/tmp/workspace",
+      transcript_path: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl",
+      tool_name: "Read",
+      tool_input: {
+        file_path: "/tmp/workspace/references/cli-workflow.md"
+      }
+    });
+    let requests = await service.listPermissionRequests("session-1", "user-1");
+
+    if (requests.length === 0) {
+      await Promise.resolve();
+      requests = await service.listPermissionRequests("session-1", "user-1");
+    }
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.actions.map((action) => action.value)).toEqual([
+      "allow",
+      "allow_session",
+      "deny"
+    ]);
+    await service.replyPermissionRequest("session-1", "user-1", requests[0]!.id, {
+      action: "allow_session"
+    });
+    const firstResult = await firstResultPromise;
+
+    expect(firstResult.accepted).toBe(true);
+    expect(firstResult.ignored).toBe(false);
+    expect(firstResult.bridgeResponse).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PermissionRequest",
+        decision: {
+          behavior: "allow"
+        }
+      }
+    });
+
+    const secondResult = await service.ingestClaudeHookEvent({
+      hook_event_name: "PermissionRequest",
+      session_id: "claude-session-real-1",
+      cwd: "/tmp/workspace",
+      transcript_path: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl",
+      tool_name: "Read",
+      tool_input: {
+        file_path: "/tmp/workspace/references/cli-workflow.md"
+      }
+    });
+
+    expect(secondResult.accepted).toBe(true);
+    expect(secondResult.ignored).toBe(false);
+    expect(secondResult.bridgeResponse).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PermissionRequest",
+        decision: {
+          behavior: "allow"
+        }
+      }
+    });
   });
 
   it("Claude 外部 hook 事件会建立真状态 active run 视图", async () => {

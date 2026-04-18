@@ -954,8 +954,18 @@ export class SessionLiveRuntimeService {
     this.sessionHistoryService.getSession(sessionId, userId);
     const runtimeSessionId = this.resolveRuntimeSessionId(sessionId);
     const runtime = this.getLiveRuntimeSnapshot(runtimeSessionId);
+    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(runtimeSessionId) ?? null;
 
     if (!runtime || (runtime.runningState !== "running" && runtime.runningState !== "starting")) {
+      if (externalRuntimeSnapshot && isActiveRuntimeState(externalRuntimeSnapshot.runningState)) {
+        throw new AppError({
+          statusCode: 409,
+          errorCode: "CAPABILITY_NOT_SUPPORTED",
+          detail: "当前 Claude 外部运行仍在进行，但现有链路不支持中断",
+          field: "sessionId"
+        });
+      }
+
       throw new AppError({
         statusCode: 409,
         errorCode: "SESSION_NOT_RUNNING",

@@ -609,6 +609,26 @@ export class SessionPermissionRequestService {
       payload,
       createdAt: now
     });
+    const allowedScopeKey = buildClaudeAllowedScopeKey(normalized);
+
+    if (allowedScopeKey && this.isClaudeScopeAllowed(binding.sessionId, allowedScopeKey)) {
+      logPermissionDebug("claude_permission.permission_request.auto_allow_session", {
+        sessionId: binding.sessionId,
+        providerSessionId,
+        toolName: payload.tool_name ?? null,
+        scopeKey: allowedScopeKey
+      });
+      return {
+        accepted: true,
+        ignored: false,
+        sessionId: binding.sessionId,
+        bridgeResponse: buildClaudePermissionRequestBridgeResponse(
+          "allow",
+          "CodingNS 已按本会话默认允许自动放行"
+        )
+      };
+    }
+
     let resolvedByTimeout = false;
 
     const decision = await new Promise<ClaudePreToolUseDecision>((resolve) => {
@@ -1481,7 +1501,12 @@ export function normalizeClaudePreToolUseRequest(input: {
     paths: normalized.paths,
     permissionProfile: null,
     questions: [],
-    actions: buildClaudeActions(normalized.kind),
+    actions: buildClaudeActions({
+      kind: normalized.kind,
+      command: normalized.command,
+      paths: normalized.paths,
+      toolName
+    }),
     rawPayload,
     createdAt: input.createdAt,
     updatedAt: input.createdAt,
@@ -1965,6 +1990,7 @@ function buildClaudeKind(
 } {
   const normalizedToolName = toolName.trim().toLowerCase();
   const inputRecord = toRecord(toolInput);
+  const paths = readClaudePaths(inputRecord);
   const command =
     normalizeText(inputRecord?.command) ||
     normalizeText(inputRecord?.cmd) ||
@@ -2003,7 +2029,7 @@ function buildClaudeKind(
     summary: toolName,
     detail: stringifyPayload(toolInput),
     command,
-    paths: []
+    paths
   };
 }
 
@@ -2159,15 +2185,29 @@ function buildClaudeAllowedScopeKey(
     return normalizedPaths.length > 0 ? `file_change:${normalizedPaths.join("|")}` : null;
   }
 
+  if (request.kind === "tool_call") {
+    const normalizedToolName = normalizeText(request.toolName)?.toLowerCase() ?? null;
+    const normalizedPaths = request.paths
+      .map((path) => normalizeText(path))
+      .filter((path): path is string => Boolean(path))
+      .sort();
+
+    if (!normalizedToolName || normalizedPaths.length === 0) {
+      return null;
+    }
+
+    return `tool_call:${normalizedToolName}:${normalizedPaths.join("|")}`;
+  }
+
   return null;
 }
 
-function buildClaudeActions(kind: SessionPermissionRequestKind): SessionPermissionRequestActionView[] {
+function buildClaudeActions(request: Pick<SessionPermissionRequestInternalRecord, "kind" | "command" | "paths" | "toolName">): SessionPermissionRequestActionView[] {
   const actions: SessionPermissionRequestActionView[] = [
     createAction("allow", "允许", "primary", "只允许这一次")
   ];
 
-  if (kind === "command" || kind === "file_change") {
+  if (buildClaudeAllowedScopeKey(request)) {
     actions.push(
       createAction("allow_session", "本会话默认允许", "neutral", "仅对同类操作默认放行")
     );

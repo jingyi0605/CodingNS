@@ -34,6 +34,32 @@ describe("session-permission-request-service normalizers", () => {
     ]);
   });
 
+  it("会把 Claude PreToolUse 的 Read 请求映射成可做会话级默认允许的审批", () => {
+    const request = normalizeClaudePreToolUseRequest({
+      sessionId: "session-1",
+      providerSessionId: "claude-session-1",
+      createdAt: "2026-03-30T10:00:00.000Z",
+      payload: {
+        hook_event_name: "PreToolUse",
+        session_id: "claude-session-1",
+        cwd: "/tmp/workspace",
+        tool_name: "Read",
+        tool_input: {
+          file_path: "/tmp/workspace/references/cli-workflow.md"
+        }
+      }
+    });
+
+    expect(request.provider).toBe("claude-code");
+    expect(request.kind).toBe("tool_call");
+    expect(request.paths).toEqual(["/tmp/workspace/references/cli-workflow.md"]);
+    expect(request.actions.map((action) => action.value)).toEqual([
+      "allow",
+      "allow_session",
+      "deny"
+    ]);
+  });
+
   it("会把 OpenCode permission 对象映射成统一权限申请", () => {
     const request = normalizeOpenCodePermissionRequest({
       sessionId: "session-2",
