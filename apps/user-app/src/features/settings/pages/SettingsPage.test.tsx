@@ -204,7 +204,9 @@ describe("SettingsPage", () => {
     await userEvent.click(screen.getByRole("button", { name: t("settings.skillManageAction") }));
 
     expect(await screen.findByRole("dialog", { name: t("settings.skillConfigModalTitle") })).toBeInTheDocument();
+    expect(screen.getByText(t("settings.skillAssistantRuntimeListTitle"))).toBeInTheDocument();
     expect(screen.getByText("codingns-assistant")).toBeInTheDocument();
+    expect(screen.getAllByText(t("settings.skillTagAssistantOnly")).length).toBeGreaterThan(0);
   });
 
   it("iOS 客户端使用移动布局时仍然允许修改服务器地址", async () => {
@@ -901,10 +903,10 @@ function createSkillOverviewResponse() {
       {
         skill: {
           id: "skill-1",
-          name: "codingns-assistant",
-          directoryName: "codingns-assistant",
+          name: "team-helper",
+          directoryName: "team-helper",
           sourceType: "local-import",
-          sourcePath: "/tmp/skills/codingns-assistant",
+          sourcePath: "/tmp/skills/team-helper",
           contentHash: "hash-1",
           managedState: "active",
           createdAt: "2026-04-14T10:00:00.000Z",
@@ -921,15 +923,23 @@ function createSkillOverviewResponse() {
             lastErrorDetail: null
           }
         ],
-        ssotPath: "/tmp/managed-skills/codingns-assistant"
+        ssotPath: "/tmp/managed-skills/team-helper"
+      }
+    ],
+    assistantRuntimeSkills: [
+      {
+        name: "codingns-assistant",
+        directoryName: "codingns-assistant",
+        sourcePath: "/repo/builtin-skills/codingns-assistant",
+        usedByTargetCli: ["codex", "claude-code"]
       }
     ],
     managedEntries: [
       {
         targetCli: "codex",
-        directoryPath: "/tmp/skills/codingns-assistant",
-        directoryName: "codingns-assistant",
-        name: "codingns-assistant",
+        directoryPath: "/tmp/skills/team-helper",
+        directoryName: "team-helper",
+        name: "team-helper",
         contentHash: "hash-1",
         managementState: "managed",
         managedSkillId: "skill-1"

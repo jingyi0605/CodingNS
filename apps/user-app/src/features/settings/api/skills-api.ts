@@ -50,6 +50,13 @@ export interface ManagedSkillOverviewItemDto {
   ssotPath: string;
 }
 
+export interface AssistantRuntimeSkillOverviewItemDto {
+  name: string;
+  directoryName: string;
+  sourcePath: string;
+  usedByTargetCli: SkillTargetCli[];
+}
+
 export interface SkillOverviewDto {
   summary: {
     managedSkillCount: number;
@@ -59,6 +66,7 @@ export interface SkillOverviewDto {
     diagnosticCount: number;
   };
   managedSkills: ManagedSkillOverviewItemDto[];
+  assistantRuntimeSkills: AssistantRuntimeSkillOverviewItemDto[];
   managedEntries: SkillScanEntryDto[];
   unmanagedEntries: SkillScanEntryDto[];
   conflictedEntries: SkillScanEntryDto[];

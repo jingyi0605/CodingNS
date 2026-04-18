@@ -1,8 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 import type {
+  AssistantRuntimeSkillOverviewItemDto,
   ManagedSkillOverviewItemDto,
   SkillOverviewDto,
+  SkillScanDiagnosticDto,
   SkillScanEntryDto,
   SkillTargetBindingDto,
   SkillTargetCli
@@ -166,6 +168,17 @@ export function SkillManagementPanel() {
     conflictedEntryCount: 0,
     diagnosticCount: 0
   };
+  const assistantRuntimeItems = buildAssistantRuntimeItems(
+    overview?.assistantRuntimeSkills ?? [],
+    overview?.conflictedEntries ?? [],
+    overview?.diagnostics ?? []
+  );
+  const visibleConflictedEntries = (overview?.conflictedEntries ?? []).filter(
+    (entry) => !isAssistantRuntimeEntry(entry, overview?.diagnostics ?? [])
+  );
+  const visibleDiagnostics = (overview?.diagnostics ?? []).filter(
+    (diagnostic) => !isAssistantRuntimeDiagnostic(diagnostic)
+  );
 
   return (
     <div className="settings-skill-panel">
@@ -185,11 +198,15 @@ export function SkillManagementPanel() {
           />
           <SummaryCard
             label={t("settings.skillSummaryConflictedEntries")}
-            value={String(summary.conflictedEntryCount)}
+            value={String(visibleConflictedEntries.length)}
+          />
+          <SummaryCard
+            label={t("settings.skillSummaryAssistantRuntimeEntries")}
+            value={String(assistantRuntimeItems.length)}
           />
           <SummaryCard
             label={t("settings.skillSummaryDiagnostics")}
-            value={String(summary.diagnosticCount)}
+            value={String(visibleDiagnostics.length)}
           />
         </div>
 
@@ -317,45 +334,111 @@ export function SkillManagementPanel() {
         />
 
         <SkillSection
-          title={t("settings.skillConflictedListTitle")}
-          emptyText={t("settings.skillConflictedEmpty")}
-          items={overview?.conflictedEntries ?? []}
-          renderItem={(entry) => (
-            <div key={`${entry.targetCli}:${entry.directoryPath}`} className="settings-skill-entry">
+          title={t("settings.skillAssistantRuntimeListTitle")}
+          description={t("settings.skillAssistantRuntimeListDescription")}
+          emptyText={t("settings.skillAssistantRuntimeEmpty")}
+          items={assistantRuntimeItems}
+          renderItem={(item) => (
+            <div key={`${item.directoryName}:${item.sourcePath}`} className="settings-skill-entry">
               <div className="settings-skill-entry-main">
-                <strong className="settings-skill-entry-title">{entry.name}</strong>
+                <strong className="settings-skill-entry-title">{item.name}</strong>
                 <p className="settings-skill-entry-meta">
-                  {t("settings.skillSourceCli")}: {resolveTargetCliLabel(entry.targetCli)}
+                  {t("settings.skillAssistantRuntimeItemDescription")}
                 </p>
                 <p className="settings-skill-entry-meta">
-                  {t("settings.skillDirectoryPath")}: <span className="settings-skill-path">{entry.directoryPath}</span>
+                  {t("settings.skillDirectoryName")}: {item.directoryName}
                 </p>
+                <p className="settings-skill-entry-meta">
+                  {t("settings.skillAssistantRuntimeUsedBy")}: {item.usedByTargetCli.map(resolveTargetCliLabel).join(" / ")}
+                </p>
+                <p className="settings-skill-entry-meta">
+                  {t("settings.skillAssistantRuntimeSourcePath")}: <span className="settings-skill-path">{item.sourcePath}</span>
+                </p>
+                <div className="settings-skill-tags">
+                  <span className="settings-skill-tag" data-status="assistant-runtime">
+                    {t("settings.skillTagAssistantOnly")}
+                  </span>
+                  {item.usedByTargetCli.map((targetCli) => (
+                    <span
+                      key={`${item.directoryName}:${targetCli}`}
+                      className="settings-skill-tag"
+                      data-status="synced"
+                    >
+                      {resolveTargetCliLabel(targetCli)}
+                    </span>
+                  ))}
+                </div>
               </div>
             </div>
           )}
         />
 
         <SkillSection
+          title={t("settings.skillConflictedListTitle")}
+          emptyText={t("settings.skillConflictedEmpty")}
+          items={visibleConflictedEntries}
+          renderItem={(entry) => {
+            const entryTags = resolveScanEntryTags(entry, overview?.diagnostics ?? []);
+
+            return (
+              <div key={`${entry.targetCli}:${entry.directoryPath}`} className="settings-skill-entry">
+                <div className="settings-skill-entry-main">
+                  <strong className="settings-skill-entry-title">{entry.name}</strong>
+                  <p className="settings-skill-entry-meta">
+                    {t("settings.skillSourceCli")}: {resolveTargetCliLabel(entry.targetCli)}
+                  </p>
+                  <p className="settings-skill-entry-meta">
+                    {t("settings.skillDirectoryPath")}: <span className="settings-skill-path">{entry.directoryPath}</span>
+                  </p>
+                  {entryTags.length > 0 ? (
+                    <div className="settings-skill-tags">
+                      {entryTags.map((tag) => (
+                        <span key={tag.key} className="settings-skill-tag" data-status={tag.status}>
+                          {tag.label}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            );
+          }}
+        />
+
+        <SkillSection
           title={t("settings.skillDiagnosticsTitle")}
           emptyText={t("settings.skillDiagnosticsEmpty")}
-          items={overview?.diagnostics ?? []}
-          renderItem={(diagnostic) => (
-            <div
-              key={`${diagnostic.targetCli}:${diagnostic.code}:${diagnostic.directoryPath ?? diagnostic.rootDir}`}
-              className="settings-skill-entry"
-            >
-              <div className="settings-skill-entry-main">
-                <strong className="settings-skill-entry-title">
-                  {resolveTargetCliLabel(diagnostic.targetCli)} · {diagnostic.code}
-                </strong>
-                <p className="settings-skill-entry-meta">{diagnostic.detail}</p>
-                <p className="settings-skill-entry-meta">
-                  {t("settings.skillDirectoryPath")}:{" "}
-                  <span className="settings-skill-path">{diagnostic.directoryPath ?? diagnostic.rootDir}</span>
-                </p>
+          items={visibleDiagnostics}
+          renderItem={(diagnostic) => {
+            const diagnosticTags = resolveDiagnosticTags(diagnostic);
+
+            return (
+              <div
+                key={`${diagnostic.targetCli}:${diagnostic.code}:${diagnostic.directoryPath ?? diagnostic.rootDir}`}
+                className="settings-skill-entry"
+              >
+                <div className="settings-skill-entry-main">
+                  <strong className="settings-skill-entry-title">
+                    {resolveTargetCliLabel(diagnostic.targetCli)} · {diagnostic.code}
+                  </strong>
+                  <p className="settings-skill-entry-meta">{diagnostic.detail}</p>
+                  <p className="settings-skill-entry-meta">
+                    {t("settings.skillDirectoryPath")}:{" "}
+                    <span className="settings-skill-path">{diagnostic.directoryPath ?? diagnostic.rootDir}</span>
+                  </p>
+                  {diagnosticTags.length > 0 ? (
+                    <div className="settings-skill-tags">
+                      {diagnosticTags.map((tag) => (
+                        <span key={tag.key} className="settings-skill-tag" data-status={tag.status}>
+                          {tag.label}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          }}
         />
       </WorkbenchModal>
     </div>
@@ -364,11 +447,13 @@ export function SkillManagementPanel() {
 
 function SkillSection<T>({
   title,
+  description,
   emptyText,
   items,
   renderItem
 }: {
   title: string;
+  description?: string;
   emptyText: string;
   items: readonly T[];
   renderItem: (item: T) => ReactNode;
@@ -376,6 +461,7 @@ function SkillSection<T>({
   return (
     <section className="settings-skill-section">
       <h3 className="settings-skill-section-title">{title}</h3>
+      {description ? <p className="settings-skill-section-description">{description}</p> : null}
       {items.length > 0 ? (
         <div className="settings-skill-entry-list">{items.map((item) => renderItem(item))}</div>
       ) : (
@@ -448,4 +534,127 @@ function formatDateTime(value: string | null | undefined): string {
   }
 
   return new Date(timestamp).toLocaleString();
+}
+
+interface SkillTagView {
+  key: string;
+  label: string;
+  status: string;
+}
+
+interface AssistantRuntimeItemView {
+  name: string;
+  directoryName: string;
+  sourcePath: string;
+  usedByTargetCli: SkillTargetCli[];
+}
+
+function buildAssistantRuntimeItems(
+  assistantRuntimeSkills: readonly AssistantRuntimeSkillOverviewItemDto[],
+  conflictedEntries: readonly SkillScanEntryDto[],
+  diagnostics: readonly SkillScanDiagnosticDto[]
+): AssistantRuntimeItemView[] {
+  if (assistantRuntimeSkills.length > 0) {
+    return assistantRuntimeSkills.map((item) => ({
+      name: item.name,
+      directoryName: item.directoryName,
+      sourcePath: item.sourcePath,
+      usedByTargetCli: item.usedByTargetCli
+    }));
+  }
+
+  const items = new Map<string, AssistantRuntimeItemView>();
+
+  for (const entry of conflictedEntries) {
+    if (!isAssistantRuntimeEntry(entry, diagnostics)) {
+      continue;
+    }
+
+    items.set(buildSkillEntryKey(entry.targetCli, entry.directoryPath), {
+      name: entry.name,
+      directoryName: entry.directoryName,
+      sourcePath: entry.directoryPath,
+      usedByTargetCli: [entry.targetCli]
+    });
+  }
+
+  for (const diagnostic of diagnostics) {
+    if (!isAssistantRuntimeDiagnostic(diagnostic)) {
+      continue;
+    }
+
+    const directoryPath = diagnostic.directoryPath ?? diagnostic.rootDir;
+    const key = buildSkillEntryKey(diagnostic.targetCli, directoryPath);
+
+    if (items.has(key)) {
+      continue;
+    }
+
+    items.set(key, {
+      name: diagnostic.directoryName ?? "codingns-assistant",
+      directoryName: diagnostic.directoryName ?? "codingns-assistant",
+      sourcePath: directoryPath,
+      usedByTargetCli: [diagnostic.targetCli]
+    });
+  }
+
+  return [...items.values()];
+}
+
+function buildSkillEntryKey(targetCli: SkillTargetCli, directoryPath: string): string {
+  return `${targetCli}:${directoryPath}`;
+}
+
+function isAssistantRuntimeEntry(
+  entry: SkillScanEntryDto,
+  diagnostics: readonly SkillScanDiagnosticDto[]
+): boolean {
+  return diagnostics.some((diagnostic) =>
+    isAssistantRuntimeDiagnostic(diagnostic)
+    && diagnostic.targetCli === entry.targetCli
+    && diagnostic.directoryPath === entry.directoryPath
+    && diagnostic.directoryName === entry.directoryName
+  );
+}
+
+function isAssistantRuntimeDiagnostic(diagnostic: SkillScanDiagnosticDto): boolean {
+  return diagnostic.code === "SKILL_RESERVED_FOR_ASSISTANT_RUNTIME";
+}
+
+function resolveScanEntryTags(
+  entry: SkillScanEntryDto,
+  diagnostics: readonly SkillScanDiagnosticDto[]
+): SkillTagView[] {
+  const matchedDiagnostic = diagnostics.find((diagnostic) =>
+    isAssistantRuntimeDiagnostic(diagnostic)
+    && diagnostic.targetCli === entry.targetCli
+    && diagnostic.directoryName === entry.directoryName
+    && diagnostic.directoryPath === entry.directoryPath
+  );
+
+  if (!matchedDiagnostic) {
+    return [];
+  }
+
+  return [
+    {
+      key: `assistant-runtime:${entry.targetCli}:${entry.directoryPath}`,
+      label: t("settings.skillTagAssistantOnly"),
+      status: "assistant-runtime"
+    }
+  ];
+}
+
+function resolveDiagnosticTags(diagnostic: SkillScanDiagnosticDto): SkillTagView[] {
+  if (!isAssistantRuntimeDiagnostic(diagnostic)) {
+    return [];
+  }
+
+  return [
+    {
+      key: `assistant-runtime:${diagnostic.targetCli}:${diagnostic.directoryPath ?? diagnostic.rootDir}`,
+      label: t("settings.skillTagAssistantOnly"),
+      status: "assistant-runtime"
+    }
+  ];
 }
