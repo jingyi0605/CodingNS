@@ -15,7 +15,7 @@ import type {
   ButlerAuthService,
   ButlerWorkspaceCredential
 } from "./butler-auth-service.js";
-import type { SkillManagerService } from "../skills/skill-manager-service.js";
+import { resolveBuiltinSkillDirectory } from "../skills/builtin-skill-service.js";
 
 const BUTLER_SHARED_RULES_FILE_NAME = "BUTLER_RULES.md";
 const BUTLER_AGENTS_FILE_NAME = "AGENTS.md";
@@ -28,7 +28,7 @@ export function syncButlerWorkspaceContext(input: {
   userId: string;
   workspacePath?: string | null;
   butlerAuthService: Pick<ButlerAuthService, "ensureWorkspaceCredential" | "getCredentialFilePath">;
-  skillManagerService: Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">;
+  skillManagerService?: unknown;
   codexHomeDir: string | null;
   sourceCodexHomeDir: string | null;
   claudeCodeHomeDir: string | null;
@@ -45,12 +45,10 @@ export function syncButlerWorkspaceContext(input: {
   syncCodexInstructionConfig(
     input.profile,
     workspacePath,
-    input.skillManagerService,
     input.codexHomeDir,
     input.sourceCodexHomeDir
   );
   syncClaudeInstructionConfig(
-    input.skillManagerService,
     input.claudeCodeHomeDir,
     input.sourceClaudeCodeHomeDir
   );
@@ -86,7 +84,6 @@ function writeInstructionFiles(
 function syncCodexInstructionConfig(
   profile: ButlerProfile,
   workspacePath: string,
-  skillManagerService: Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">,
   codexHomeDir: string | null,
   sourceCodexHomeDir: string | null
 ): void {
@@ -112,15 +109,11 @@ function syncCodexInstructionConfig(
     path.join(sourceHomeDir, "auth.json"),
     path.join(targetHomeDir, "auth.json")
   );
-  syncButlerCodexSkill(
-    skillManagerService,
-    path.join(targetHomeDir, "skills", "codingns-assistant")
-  );
+  syncButlerRuntimeSkill(path.join(targetHomeDir, "skills", "codingns-assistant"));
   writeFileIfChanged(path.join(targetHomeDir, "config.toml"), `${configContent}\n`);
 }
 
 function syncClaudeInstructionConfig(
-  skillManagerService: Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">,
   claudeCodeHomeDir: string | null,
   sourceClaudeCodeHomeDir: string | null
 ): void {
@@ -152,62 +145,20 @@ function syncClaudeInstructionConfig(
     path.join(sourceHomeDir, "skills"),
     path.join(targetHomeDir, "skills")
   );
-  syncButlerClaudeSkill(
-    skillManagerService,
-    path.join(targetHomeDir, "skills", "codingns-assistant")
-  );
+  syncButlerRuntimeSkill(path.join(targetHomeDir, "skills", "codingns-assistant"));
   removeFileIfExists(path.join(targetHomeDir, "managed-settings.json"));
   removeFileIfExists(path.join(targetHomeDir, "CLAUDE.md"));
   removeFileIfExists(path.join(targetHomeDir, "AGENTS.md"));
   removeFileIfExists(path.join(targetHomeDir, "BUTLER_RULES.md"));
 }
 
-function syncButlerCodexSkill(
-  skillManagerService: Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">,
-  targetSkillPath: string
-): void {
-  syncManagedButlerSkill(skillManagerService, "codex", targetSkillPath);
-}
-
-function syncButlerClaudeSkill(
-  skillManagerService: Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">,
-  targetSkillPath: string
-): void {
-  syncManagedButlerSkill(skillManagerService, "claude-code", targetSkillPath);
-}
-
-function syncManagedButlerSkill(
-  skillManagerService: Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">,
-  targetCli: "codex" | "claude-code",
-  targetSkillPath: string
-): void {
-  const overview = skillManagerService.getOverview({
-    targetCli: [targetCli]
-  });
-  const managedSkill = overview.managedSkills.find(
-    (item) => item.skill.directoryName === BUTLER_ASSISTANT_SKILL_DIRECTORY
-  );
-
-  if (managedSkill) {
-    syncOptionalDirectory(managedSkill.ssotPath, targetSkillPath);
-    return;
+function syncButlerRuntimeSkill(targetSkillPath: string): void {
+  try {
+    const sourceSkillPath = resolveBuiltinSkillDirectory(BUTLER_ASSISTANT_SKILL_DIRECTORY);
+    syncOptionalDirectory(sourceSkillPath, targetSkillPath);
+  } catch {
+    fs.rmSync(targetSkillPath, { recursive: true, force: true });
   }
-
-  const unmanagedEntry = overview.unmanagedEntries.find(
-    (entry) => entry.targetCli === targetCli && entry.directoryName === BUTLER_ASSISTANT_SKILL_DIRECTORY
-  );
-
-  if (unmanagedEntry) {
-    const imported = skillManagerService.importUnmanagedSkill({
-      targetCli,
-      directoryPath: unmanagedEntry.directoryPath,
-      expectedContentHash: unmanagedEntry.contentHash
-    });
-    syncOptionalDirectory(imported.ssotPath, targetSkillPath);
-    return;
-  }
-
-  fs.rmSync(targetSkillPath, { recursive: true, force: true });
 }
 
 function buildButlerInstructionArtifacts(
