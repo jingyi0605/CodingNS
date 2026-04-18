@@ -24,6 +24,7 @@ import { useAppVersion } from "../../../shared/version/app-version";
 import { ParallelTaskDebugModal } from "../../../settings/ParallelTaskDebugModal";
 import { ClientUpdatePanel } from "../../../settings/ClientUpdatePanel";
 import { ModelManagementPanel } from "../../../settings/ModelManagementPanel";
+import { AuthDeviceManagementPanel } from "../../../settings/AuthDeviceManagementPanel";
 import { ServiceUpdatePanel } from "../../../settings/ServiceUpdatePanel";
 import { SkillManagementPanel } from "../../../settings/SkillManagementPanel";
 import { TailscalePanel } from "../../../settings/TailscalePanel";
@@ -585,6 +586,18 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
 
             <div className="settings-row">
               <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.authDeviceManagement")}</span>
+                <span className="settings-row-description">
+                  {t("settings.authDeviceManagementDescription")}
+                </span>
+              </div>
+              <div className="settings-row-control settings-row-control-stretch">
+                <AuthDeviceManagementPanel />
+              </div>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-label">
                 <span className="settings-row-title">{t("settings.notifyOnPermissionRequest")}</span>
                 <span className="settings-row-description">
                   {t("settings.notifyOnPermissionRequestDescription")}
@@ -1045,6 +1058,14 @@ function MobileSecurityPrivacySection({ model }: { model: SettingsPageModel }) {
               ))}
             </select>
           </div>
+        </div>
+      </section>
+
+      <section className="settings-mobile-group-section">
+        <h2 className="settings-mobile-group-title">{t("settings.authDeviceManagement")}</h2>
+        <p className="settings-mobile-group-note">{t("settings.authDeviceManagementDescription")}</p>
+        <div className="settings-mobile-panel-shell">
+          <AuthDeviceManagementPanel compact />
         </div>
       </section>
 

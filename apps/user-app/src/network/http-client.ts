@@ -1,4 +1,5 @@
 import { getHostBaseUrl, getHostRequestUrl } from "../config/env";
+import { getAuthClientHeaders } from "../features/auth/store/client-device";
 import { ApiError, type ApiErrorPayload } from "../shared/network/api-error";
 import { authStore } from "../features/auth/store/auth-store";
 
@@ -37,6 +38,12 @@ class HttpClient {
 
     if (hasRequestBody && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
+    }
+
+    for (const [headerName, headerValue] of Object.entries(getAuthClientHeaders())) {
+      if (!headers.has(headerName)) {
+        headers.set(headerName, headerValue);
+      }
     }
 
     if (!options.skipAuth) {

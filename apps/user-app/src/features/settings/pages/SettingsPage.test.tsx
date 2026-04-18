@@ -35,6 +35,10 @@ vi.mock("../../../settings/ModelManagementPanel", () => ({
   ModelManagementPanel: () => <div data-testid="model-management-panel">model-management-panel</div>
 }));
 
+vi.mock("../../../settings/AuthDeviceManagementPanel", () => ({
+  AuthDeviceManagementPanel: () => <div data-testid="auth-device-management-panel">auth-device-management-panel</div>
+}));
+
 describe("SettingsPage", () => {
   beforeEach(() => {
     resetDesktopUpdateState();
@@ -99,6 +103,7 @@ describe("SettingsPage", () => {
     expect(screen.queryByText(t("settings.tailscaleSectionDescription"))).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: t("settings.serverAddress") })).not.toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: t("settings.defaultPermissionMode") })).toBeInTheDocument();
+    expect(screen.getByTestId("auth-device-management-panel")).toBeInTheDocument();
     expect(screen.getByText(t("settings.serverUpdate"))).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("settings.serverCheckNow") })).toBeInTheDocument();
     expect(screen.queryByText(t("settings.clientUpdate"))).not.toBeInTheDocument();
@@ -422,6 +427,7 @@ describe("SettingsPage", () => {
     const select = await screen.findByRole("combobox", { name: t("settings.defaultPermissionMode") });
 
     expect(select).toHaveValue("default");
+    expect(screen.getByTestId("auth-device-management-panel")).toBeInTheDocument();
 
     await userEvent.selectOptions(select, "bypassPermissions");
 

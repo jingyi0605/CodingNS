@@ -41,6 +41,8 @@ describe("httpClient", () => {
 
     expect(headers.has("Content-Type")).toBe(false);
     expect(headers.get("Authorization")).toBe("Bearer access-token");
+    expect(headers.get("x-codingns-client-type")).toBe("web");
+    expect(headers.get("x-codingns-client-instance-id")).toBeTruthy();
   });
 
   it("204 响应不应继续按 JSON 解析", async () => {
