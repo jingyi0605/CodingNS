@@ -237,6 +237,146 @@ const socket = new WebSocket(\`ws://\${socketHost}?token=demo\`, "vite-hmr");`);
     ws.send("hot-update");
     expect(await wsMessages.next()).toBe("upstream-echo:hot-update");
   });
+
+  it("转发到带代理上下文改写逻辑的 Vite 上游时，会剥离内部代理头避免资源请求回环", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const upstreamServer = http.createServer((request, response) => {
+      if (request.method === "GET" && request.url === "/") {
+        response.setHeader("content-type", "text/html; charset=utf-8");
+        response.end(`<!doctype html>
+<html>
+  <body>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>`);
+        return;
+      }
+
+      if (request.method === "GET" && request.url === "/src/main.tsx") {
+        const referer = String(request.headers.referer ?? "");
+        const cookie = String(request.headers.cookie ?? "");
+
+        // 模拟 user-app Vite dev server 的代理上下文重写；如果外层代理没清理头，这里会误判成 /proxy/* 请求。
+        if (referer.includes("/proxy/") || cookie.includes("cns_proxy_slug=")) {
+          response.statusCode = 404;
+          response.end("proxy context leaked into upstream");
+          return;
+        }
+
+        response.setHeader("content-type", "text/javascript; charset=utf-8");
+        response.end(`import "/@vite/client";
+import "/@react-refresh";`);
+        return;
+      }
+
+      if (
+        request.method === "GET"
+        && (request.url === "/@vite/client" || request.url === "/@react-refresh")
+      ) {
+        const referer = String(request.headers.referer ?? "");
+        const cookie = String(request.headers.cookie ?? "");
+
+        if (referer.includes("/proxy/") || cookie.includes("cns_proxy_slug=")) {
+          response.statusCode = 404;
+          response.end("proxy context leaked into upstream");
+          return;
+        }
+
+        response.setHeader("content-type", "text/javascript; charset=utf-8");
+        response.end("export const ok = true;");
+        return;
+      }
+
+      response.statusCode = 404;
+      response.end(`missing:${request.url ?? "/"}`);
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      upstreamServer.listen(0, "127.0.0.1", (error?: Error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+    activeClosers.push(() => upstreamServer.close());
+
+    const upstreamAddress = upstreamServer.address();
+
+    if (!upstreamAddress || typeof upstreamAddress === "string") {
+      throw new Error("upstream 服务地址异常");
+    }
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, fixture.workspaceDir);
+
+    const createTemplateResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/terminals/templates",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceId,
+        name: "vite dev",
+        cwd: fixture.workspaceDir,
+        command: "pnpm",
+        args: ["dev"],
+        port: upstreamAddress.port,
+        proxyEnabled: true
+      }
+    });
+    expect(createTemplateResponse.statusCode).toBe(201);
+    const proxySlug = createTemplateResponse.json().proxySlug as string;
+
+    await hosted.app.listen({
+      host: "127.0.0.1",
+      port: 0
+    });
+
+    const hostedAddress = hosted.app.server.address();
+
+    if (!hostedAddress || typeof hostedAddress === "string") {
+      throw new Error("host 服务地址异常");
+    }
+
+    const proxyBase = `http://127.0.0.1:${hostedAddress.port}/proxy/${proxySlug}`;
+    const sharedHeaders = {
+      referer: `${proxyBase}/`,
+      cookie: `foo=1; cns_proxy_slug=${proxySlug}; bar=2`
+    };
+
+    const htmlResponse = await fetch(`${proxyBase}/`, {
+      headers: sharedHeaders
+    });
+    expect(htmlResponse.status).toBe(200);
+
+    const entryResponse = await fetch(`${proxyBase}/src/main.tsx`, {
+      headers: sharedHeaders
+    });
+    const entryBody = await entryResponse.text();
+    expect(entryResponse.status).toBe(200);
+    expect(entryBody).toContain(`import "/proxy/${proxySlug}/@vite/client"`);
+    expect(entryBody).toContain(`import "/proxy/${proxySlug}/@react-refresh"`);
+
+    const viteClientResponse = await fetch(`${proxyBase}/@vite/client`, {
+      headers: sharedHeaders
+    });
+    expect(viteClientResponse.status).toBe(200);
+
+    const reactRefreshResponse = await fetch(`${proxyBase}/@react-refresh`, {
+      headers: sharedHeaders
+    });
+    expect(reactRefreshResponse.status).toBe(200);
+  });
 });
 
 async function bootstrapAndLogin(hosted: ReturnType<typeof createTestApp>): Promise<string> {
