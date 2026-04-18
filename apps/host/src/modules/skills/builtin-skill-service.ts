@@ -14,12 +14,7 @@ const builtinSkillRootDir = path.join(
   "builtin-skills"
 );
 
-const builtinSkillSpecs = [
-  {
-    directoryName: "codingns-assistant",
-    targetCli: ["codex", "claude-code"] as const
-  }
-] as const;
+const builtinSkillSpecs = [] as const;
 
 export interface BuiltinSkillSyncSummary {
   directoryName: string;

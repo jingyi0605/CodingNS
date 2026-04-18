@@ -36,9 +36,12 @@ describe("SkillManagerService.scanSkills", () => {
     mkdirSync(codexRoot, { recursive: true });
     mkdirSync(geminiRoot, { recursive: true });
 
-    const managedDirectory = createSkillDirectory(codexRoot, "codingns-assistant", {
-      "SKILL.md": "# CodingNS Assistant\n\n帮助你接管 CodingNS 项目。",
+    const managedDirectory = createSkillDirectory(codexRoot, "team-helper", {
+      "SKILL.md": "# Team Helper\n\n这是一个正常受管 skill。",
       "notes.txt": "managed"
+    });
+    createSkillDirectory(codexRoot, "codingns-assistant", {
+      "SKILL.md": "# CodingNS Assistant\n\n这是错误落在公共目录里的助手专用 skill。"
     });
     createSkillDirectory(codexRoot, "local-helper", {
       "SKILL.md": "# Local Helper\n\n这是一个还没纳管的 skill。"
@@ -49,8 +52,8 @@ describe("SkillManagerService.scanSkills", () => {
 
     managedSkillRepository.upsert({
       id: "skill-managed-1",
-      name: "CodingNS Assistant",
-      directoryName: "codingns-assistant",
+      name: "Team Helper",
+      directoryName: "team-helper",
       sourceType: "builtin",
       sourcePath: null,
       contentHash: computeSkillDirectoryHash(managedDirectory),
@@ -126,9 +129,9 @@ describe("SkillManagerService.scanSkills", () => {
     expect(result.managed).toEqual([
       {
         targetCli: "codex",
-        directoryPath: path.join(codexRoot, "codingns-assistant"),
-        directoryName: "codingns-assistant",
-        name: "CodingNS Assistant",
+        directoryPath: path.join(codexRoot, "team-helper"),
+        directoryName: "team-helper",
+        name: "Team Helper",
         contentHash: computeSkillDirectoryHash(managedDirectory),
         managementState: "managed",
         managedSkillId: "skill-managed-1"
@@ -148,6 +151,15 @@ describe("SkillManagerService.scanSkills", () => {
     expect(result.conflicted).toEqual([
       {
         targetCli: "codex",
+        directoryPath: path.join(codexRoot, "codingns-assistant"),
+        directoryName: "codingns-assistant",
+        name: "CodingNS Assistant",
+        contentHash: computeSkillDirectoryHash(path.join(codexRoot, "codingns-assistant")),
+        managementState: "conflicted",
+        managedSkillId: null
+      },
+      {
+        targetCli: "codex",
         directoryPath: path.join(codexRoot, "conflicted-skill"),
         directoryName: "conflicted-skill",
         name: "Conflicted Skill",
@@ -157,6 +169,15 @@ describe("SkillManagerService.scanSkills", () => {
       }
     ]);
     expect(result.diagnostics).toEqual([
+      {
+        targetCli: "codex",
+        rootDir: codexRoot,
+        code: "SKILL_RESERVED_FOR_ASSISTANT_RUNTIME",
+        detail: "目录名保留给助手专用运行时资产，不能作为公共 skill 管理：codingns-assistant",
+        directoryName: "codingns-assistant",
+        directoryPath: path.join(codexRoot, "codingns-assistant"),
+        managedSkillId: null
+      },
       {
         targetCli: "gemini",
         rootDir: geminiRoot,
@@ -212,6 +233,34 @@ describe("SkillManagerService.scanSkills", () => {
     );
 
     database.close();
+  });
+
+  it("概况接口会单独返回助手专用内置 Skill，即使公共目录里没有残留副本", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-skill-overview-"));
+    tempDirs.push(tempDir);
+    const database = createDatabaseClient(":memory:");
+    const codexRoot = path.join(tempDir, "codex-skills");
+
+    mkdirSync(codexRoot, { recursive: true });
+
+    const service = new SkillManagerService(
+      new ManagedSkillRepository(database.db),
+      new SkillTargetBindingRepository(database.db),
+      [createAdapter("codex", codexRoot)]
+    );
+
+    const overview = service.getOverview();
+
+    database.close();
+
+    expect(overview.assistantRuntimeSkills).toEqual([
+      expect.objectContaining({
+        name: "codingns-assistant",
+        directoryName: "codingns-assistant",
+        usedByTargetCli: ["codex", "claude-code"]
+      })
+    ]);
+    expect(overview.assistantRuntimeSkills[0]?.sourcePath).toContain("builtin-skills/codingns-assistant");
   });
 });
 

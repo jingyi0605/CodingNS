@@ -83,6 +83,7 @@ import { ProviderController } from "../modules/provider/provider-controller.js";
 import { disposeSharedProviderDiscoveryHelperClient } from "../modules/provider/provider-discovery-helper-client.js";
 import { SkillController } from "../modules/skills/skill-controller.js";
 import { syncBuiltinSkillsOnStartup } from "../modules/skills/builtin-skill-service.js";
+import { cleanupLegacyAssistantRuntimeSkillCopies } from "../modules/skills/assistant-runtime-skill-cleanup.js";
 import { SkillManagerService } from "../modules/skills/skill-manager-service.js";
 import { createDefaultSkillTargetAdapters } from "../modules/skills/skill-target-adapter.js";
 import { TailscaleManager } from "../modules/tailscale/tailscale-manager.js";
@@ -394,14 +395,27 @@ export function createServer(config: HostConfig) {
       dbPath: config.ccSwitchDbPath
     })
   );
+  const skillTargetAdapters = createDefaultSkillTargetAdapters(config);
   const skillManagerService = new SkillManagerService(
     repositories.managedSkillRepository,
     repositories.skillTargetBindingRepository,
-    createDefaultSkillTargetAdapters(config),
+    skillTargetAdapters,
     {
       ssotRootDir: path.join(path.dirname(config.databasePath), "skills")
     }
   );
+  for (const result of cleanupLegacyAssistantRuntimeSkillCopies(skillTargetAdapters)) {
+    if (result.status === "removed_legacy_copy") {
+      console.info(`[host] 已清理公共 Skill 根目录里的旧助手副本 ${result.targetCli}: ${result.targetPath}`);
+      continue;
+    }
+
+    if (result.status === "kept_drifted_copy" || result.status === "invalid_entry") {
+      console.warn(
+        `[host] 保留公共 Skill 根目录里的助手专用目录 ${result.targetCli}: ${result.targetPath} (${result.detail ?? "unknown"})`
+      );
+    }
+  }
   for (const result of syncBuiltinSkillsOnStartup(skillManagerService)) {
     if (result.ok) {
       console.info(

@@ -237,6 +237,41 @@ describe("SkillManagerService.addManagedSkill", () => {
 
     database.close();
   });
+
+  it("保留给助手运行时的目录名会直接拒绝纳管", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-skill-add-reserved-"));
+    tempDirs.push(tempDir);
+    const database = createDatabaseClient(":memory:");
+    const ssotRootDir = path.join(tempDir, "skill-ssot");
+    const sourceRoot = path.join(tempDir, "sources");
+    const codexRoot = path.join(tempDir, "codex-skills");
+
+    mkdirSync(sourceRoot, { recursive: true });
+    mkdirSync(codexRoot, { recursive: true });
+
+    const sourcePath = createSkillDirectory(sourceRoot, "codingns-assistant", {
+      "SKILL.md": "# CodingNS Assistant\n\n这是错误的公共来源。"
+    });
+    const service = new SkillManagerService(
+      new ManagedSkillRepository(database.db),
+      new SkillTargetBindingRepository(database.db),
+      [createAdapter("codex", codexRoot)],
+      {
+        ssotRootDir
+      }
+    );
+
+    expect(() =>
+      service.addManagedSkill({
+        sourcePath,
+        targetCli: ["codex"],
+        sourceType: "local-import"
+      })
+    ).toThrowError("目录名保留给助手专用运行时资产");
+    expect(existsSync(path.join(ssotRootDir, "codingns-assistant"))).toBe(false);
+
+    database.close();
+  });
 });
 
 function createSkillDirectory(

@@ -38,15 +38,15 @@ describe("SkillManagerService.ensureBuiltinSkill", () => {
     mkdirSync(codexRoot, { recursive: true });
     mkdirSync(claudeRoot, { recursive: true });
 
-    const builtinPath = createSkillDirectory(builtinRoot, "codingns-assistant", {
-      "SKILL.md": "# CodingNS Assistant\n\n这是新的内置版本。",
+    const builtinPath = createSkillDirectory(builtinRoot, "host-shared-helper", {
+      "SKILL.md": "# Host Shared Helper\n\n这是新的内置版本。",
       "references/cli-workflow.md": "# cli\n"
     });
 
     managedSkillRepository.upsert({
-      id: "skill-codingns-assistant",
-      name: "CodingNS Assistant",
-      directoryName: "codingns-assistant",
+      id: "skill-host-shared-helper",
+      name: "Host Shared Helper",
+      directoryName: "host-shared-helper",
       sourceType: "local-import",
       sourcePath: "/tmp/legacy-skill",
       contentHash: "legacy-hash",
@@ -54,8 +54,8 @@ describe("SkillManagerService.ensureBuiltinSkill", () => {
       createdAt: "2026-04-14T12:00:00.000Z",
       updatedAt: "2026-04-14T12:00:00.000Z"
     });
-    createSkillDirectory(codexRoot, "codingns-assistant", {
-      "SKILL.md": "# CodingNS Assistant\n\n这是旧目录内容。",
+    createSkillDirectory(codexRoot, "host-shared-helper", {
+      "SKILL.md": "# Host Shared Helper\n\n这是旧目录内容。",
       "references/cli-workflow.md": "# old\n"
     });
 
@@ -84,7 +84,7 @@ describe("SkillManagerService.ensureBuiltinSkill", () => {
     expect(result.targetResults).toEqual([
       {
         targetCli: "codex",
-        targetDir: path.join(codexRoot, "codingns-assistant"),
+        targetDir: path.join(codexRoot, "host-shared-helper"),
         syncStatus: "synced",
         lastSyncedAt: "2026-04-16T10:00:00.000Z",
         errorCode: null,
@@ -92,18 +92,18 @@ describe("SkillManagerService.ensureBuiltinSkill", () => {
       },
       {
         targetCli: "claude-code",
-        targetDir: path.join(claudeRoot, "codingns-assistant"),
+        targetDir: path.join(claudeRoot, "host-shared-helper"),
         syncStatus: "synced",
         lastSyncedAt: "2026-04-16T10:00:00.000Z",
         errorCode: null,
         errorDetail: null
       }
     ]);
-    expect(existsSync(path.join(ssotRootDir, "codingns-assistant", "SKILL.md"))).toBe(true);
-    expect(readFileSync(path.join(codexRoot, "codingns-assistant", "SKILL.md"), "utf8")).toContain(
+    expect(existsSync(path.join(ssotRootDir, "host-shared-helper", "SKILL.md"))).toBe(true);
+    expect(readFileSync(path.join(codexRoot, "host-shared-helper", "SKILL.md"), "utf8")).toContain(
       "新的内置版本"
     );
-    expect(readFileSync(path.join(claudeRoot, "codingns-assistant", "SKILL.md"), "utf8")).toContain(
+    expect(readFileSync(path.join(claudeRoot, "host-shared-helper", "SKILL.md"), "utf8")).toContain(
       "新的内置版本"
     );
   });

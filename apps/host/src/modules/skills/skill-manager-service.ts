@@ -9,6 +9,7 @@ import type {
   ManagedSkillRecord,
   SkillSourceType,
   SkillScanDiagnostic,
+  SkillScanEntry,
   SkillScanResult,
   SkillTargetBindingRecord,
   SkillTargetCli,
@@ -25,6 +26,11 @@ import {
   SkillReconciler
 } from "./skill-reconciler.js";
 import { SkillSyncPlanner } from "./skill-sync-planner.js";
+import {
+  getReservedAssistantSkillErrorDetail,
+  isReservedAssistantSkillDirectoryName
+} from "./skill-name-policy.js";
+import { listAssistantRuntimeSkills } from "./assistant-runtime-skill-catalog.js";
 
 export interface ScanSkillsOptions {
   targetCli?: readonly SkillTargetCli[];
@@ -75,6 +81,13 @@ export interface ManagedSkillOverviewItem {
   ssotPath: string;
 }
 
+export interface AssistantRuntimeSkillOverviewItem {
+  name: string;
+  directoryName: string;
+  sourcePath: string;
+  usedByTargetCli: readonly SkillTargetCli[];
+}
+
 export interface SkillOverviewResult {
   summary: {
     managedSkillCount: number;
@@ -84,6 +97,7 @@ export interface SkillOverviewResult {
     diagnosticCount: number;
   };
   managedSkills: ManagedSkillOverviewItem[];
+  assistantRuntimeSkills: AssistantRuntimeSkillOverviewItem[];
   managedEntries: SkillScanResult["managed"];
   unmanagedEntries: SkillScanResult["unmanaged"];
   conflictedEntries: SkillScanResult["conflicted"];
@@ -119,28 +133,55 @@ export class SkillManagerService {
       diagnostics.push(...scanResult.diagnostics);
     }
 
-    const managedSkills = this.managedSkillRepository.list();
-    const bindings = managedSkills.flatMap((skill) =>
+    const publicManagedSkills = this.managedSkillRepository
+      .list()
+      .filter((skill) => !isReservedAssistantSkillDirectoryName(skill.directoryName));
+    const bindings = publicManagedSkills.flatMap((skill) =>
       this.skillTargetBindingRepository.listBySkillId(skill.id)
     );
+    const reservedDirectories = discoveredDirectories.filter((directory) =>
+      isReservedAssistantSkillDirectoryName(directory.directoryName)
+    );
+    const publicDirectories = discoveredDirectories.filter((directory) =>
+      !isReservedAssistantSkillDirectoryName(directory.directoryName)
+    );
 
-    return this.skillReconciler.reconcile({
+    const result = this.skillReconciler.reconcile({
       targetLocations,
-      directories: discoveredDirectories,
-      managedSkills,
+      directories: publicDirectories,
+      managedSkills: publicManagedSkills,
       bindings,
       diagnostics,
       scannedAt: nowIso()
     });
+
+    const reservedDiagnostics = reservedDirectories.map((directory) =>
+      createReservedSkillDiagnostic(directory)
+    );
+    const reservedEntries = reservedDirectories.map((directory) =>
+      createReservedSkillScanEntry(directory)
+    );
+
+    return {
+      managed: result.managed,
+      unmanaged: result.unmanaged,
+      conflicted: sortSkillScanEntries([...result.conflicted, ...reservedEntries]),
+      diagnostics: sortSkillScanDiagnostics([...result.diagnostics, ...reservedDiagnostics]),
+      scannedAt: result.scannedAt
+    };
   }
 
   getOverview(options: ScanSkillsOptions = {}): SkillOverviewResult {
     const scanResult = this.scanSkills(options);
-    const managedSkills = this.managedSkillRepository.list().map((skill) => ({
-      skill,
-      bindings: this.skillTargetBindingRepository.listBySkillId(skill.id),
-      ssotPath: this.resolveSsotPath(skill.directoryName)
-    }));
+    const managedSkills = this.managedSkillRepository
+      .list()
+      .filter((skill) => !isReservedAssistantSkillDirectoryName(skill.directoryName))
+      .map((skill) => ({
+        skill,
+        bindings: this.skillTargetBindingRepository.listBySkillId(skill.id),
+        ssotPath: this.resolveSsotPath(skill.directoryName)
+      }));
+    const assistantRuntimeSkills = listAssistantRuntimeSkills();
 
     return {
       summary: {
@@ -151,6 +192,7 @@ export class SkillManagerService {
         diagnosticCount: scanResult.diagnostics.length
       },
       managedSkills,
+      assistantRuntimeSkills,
       managedEntries: scanResult.managed,
       unmanagedEntries: scanResult.unmanaged,
       conflictedEntries: scanResult.conflicted,
@@ -162,6 +204,7 @@ export class SkillManagerService {
   addManagedSkill(input: AddManagedSkillInput): ManagedSkillMutationResult {
     const sourcePath = resolveSourceDirectoryPath(input.sourcePath);
     const sourceSnapshot = readSkillDirectorySnapshot("codex", sourcePath, sourcePath);
+    assertPublicSkillDirectoryNameAllowed(sourceSnapshot.directoryName, "sourcePath");
     const existingSkill = this.managedSkillRepository.findByDirectoryName(sourceSnapshot.directoryName);
     const existingBindings = existingSkill
       ? this.skillTargetBindingRepository.listBySkillId(existingSkill.id)
@@ -238,6 +281,8 @@ export class SkillManagerService {
       });
     }
 
+    assertPublicSkillDirectoryNameAllowed(skill.directoryName, "skillId");
+
     const existingBindings = this.skillTargetBindingRepository.listBySkillId(skill.id);
     const plannedTargets = this.skillSyncPlanner.planRequestedTargets(input.targetCli, existingBindings);
     const targetResults = this.syncManagedSkillRecord(skill, plannedTargets.map((target) => target.targetCli));
@@ -253,6 +298,7 @@ export class SkillManagerService {
   ensureBuiltinSkill(input: EnsureBuiltinSkillInput): ManagedSkillMutationResult {
     const sourcePath = resolveSourceDirectoryPath(input.sourcePath);
     const sourceSnapshot = readSkillDirectorySnapshot("codex", sourcePath, sourcePath);
+    assertPublicSkillDirectoryNameAllowed(sourceSnapshot.directoryName, "sourcePath");
     const existingSkill = this.managedSkillRepository.findByDirectoryName(sourceSnapshot.directoryName);
     const ssotRootDir = this.requireSsotRootDir();
     const timestamp = this.now();
@@ -316,6 +362,7 @@ export class SkillManagerService {
     }
 
     const sourceSnapshot = readSkillDirectorySnapshot(input.targetCli, sourceLocation.rootDir, directoryPath);
+    assertPublicSkillDirectoryNameAllowed(sourceSnapshot.directoryName, "directoryPath");
 
     if (
       input.expectedContentHash
@@ -548,6 +595,73 @@ export class SkillManagerService {
   private now(): string {
     return this.options.now?.() ?? nowIso();
   }
+}
+
+function assertPublicSkillDirectoryNameAllowed(directoryName: string, field: string): void {
+  if (!isReservedAssistantSkillDirectoryName(directoryName)) {
+    return;
+  }
+
+  throw new AppError({
+    statusCode: 409,
+    errorCode: "SKILL_RESERVED_FOR_ASSISTANT_RUNTIME",
+    detail: getReservedAssistantSkillErrorDetail(directoryName),
+    field
+  });
+}
+
+function createReservedSkillDiagnostic(directory: DiscoveredSkillDirectory): SkillScanDiagnostic {
+  return {
+    targetCli: directory.targetCli,
+    rootDir: directory.rootDir,
+    code: "SKILL_RESERVED_FOR_ASSISTANT_RUNTIME",
+    detail: getReservedAssistantSkillErrorDetail(directory.directoryName),
+    directoryName: directory.directoryName,
+    directoryPath: directory.directoryPath,
+    managedSkillId: null
+  };
+}
+
+function createReservedSkillScanEntry(directory: DiscoveredSkillDirectory): SkillScanEntry {
+  return {
+    targetCli: directory.targetCli,
+    directoryPath: directory.directoryPath,
+    directoryName: directory.directoryName,
+    name: directory.name,
+    contentHash: directory.contentHash,
+    managementState: "conflicted",
+    managedSkillId: null
+  };
+}
+
+function sortSkillScanEntries(entries: SkillScanEntry[]): SkillScanEntry[] {
+  return entries.sort((left, right) => {
+    const targetOrder = left.targetCli.localeCompare(right.targetCli);
+
+    if (targetOrder !== 0) {
+      return targetOrder;
+    }
+
+    return left.directoryName.localeCompare(right.directoryName);
+  });
+}
+
+function sortSkillScanDiagnostics(diagnostics: SkillScanDiagnostic[]): SkillScanDiagnostic[] {
+  return diagnostics.sort((left, right) => {
+    const targetOrder = left.targetCli.localeCompare(right.targetCli);
+
+    if (targetOrder !== 0) {
+      return targetOrder;
+    }
+
+    const codeOrder = left.code.localeCompare(right.code);
+
+    if (codeOrder !== 0) {
+      return codeOrder;
+    }
+
+    return (left.directoryName ?? "").localeCompare(right.directoryName ?? "");
+  });
 }
 
 export function readSkillDirectorySnapshot(

@@ -143,6 +143,39 @@ describe("SkillManagerService.importUnmanagedSkill", () => {
 
     database.close();
   });
+
+  it("保留给助手运行时的目录名不能作为公共 skill 导入", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-skill-import-reserved-"));
+    tempDirs.push(tempDir);
+    const database = createDatabaseClient(":memory:");
+    const ssotRootDir = path.join(tempDir, "skill-ssot");
+    const codexRoot = path.join(tempDir, "codex-skills");
+
+    mkdirSync(codexRoot, { recursive: true });
+
+    const codexPath = createSkillDirectory(codexRoot, "codingns-assistant", {
+      "SKILL.md": "# CodingNS Assistant\n\n这是历史残留。"
+    });
+    const service = new SkillManagerService(
+      new ManagedSkillRepository(database.db),
+      new SkillTargetBindingRepository(database.db),
+      [createAdapter("codex", codexRoot)],
+      {
+        ssotRootDir
+      }
+    );
+
+    expect(() =>
+      service.importUnmanagedSkill({
+        targetCli: "codex",
+        directoryPath: codexPath,
+        expectedContentHash: computeSkillDirectoryHash(codexPath)
+      })
+    ).toThrowError("目录名保留给助手专用运行时资产");
+    expect(existsSync(path.join(ssotRootDir, "codingns-assistant"))).toBe(false);
+
+    database.close();
+  });
 });
 
 function createSkillDirectory(
