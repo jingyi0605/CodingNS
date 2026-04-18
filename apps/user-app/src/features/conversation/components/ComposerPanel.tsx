@@ -633,44 +633,50 @@ export function ComposerPanel({
     );
   }, [effectiveForkCapabilities, forkDraft, forkProviderCapabilities]);
   const runHasActiveFlag = hasActiveRun ?? null;
+  // runtime 快照偶发会先抖掉 runningState，这时仍应以 active run 为准，
+  // 否则输入框按钮会在“运行中”和“空闲发送”之间来回闪。
+  const effectiveIsRunning = isRunning || runHasActiveFlag === true;
   const isUnmanagedStreamingRun =
-    isRunning &&
+    effectiveIsRunning &&
     inRunInputMode === "streaming_guidance" &&
     runHasActiveFlag === false &&
     !shouldSupportRunSteering(capabilities);
   const canStreamDuringRun =
     !hasForkDraft &&
-    isRunning &&
+    effectiveIsRunning &&
     inRunInputMode === "streaming_guidance" &&
     !isUnmanagedStreamingRun;
   const canQueueDuringRun =
     !hasForkDraft &&
-    isRunning &&
+    effectiveIsRunning &&
     typeof onQueueSend === "function" &&
     allowsQueueDuringRun(capabilities, runHasActiveFlag);
-  const inRunSendBlocked = !hasForkDraft && isRunning && !canStreamDuringRun && !canQueueDuringRun;
+  const inRunSendBlocked = !hasForkDraft && effectiveIsRunning && !canStreamDuringRun && !canQueueDuringRun;
   const forkSendBlocked = hasForkDraft && Boolean(forkStartDisabledReason);
   const hasDraft = content.trim().length > 0 || attachments.length > 0;
-  const interruptAvailable = canInterrupt ?? interruptDecision.allowed;
+  const interruptAvailable =
+    canInterrupt === false && runHasActiveFlag === true
+      ? interruptDecision.allowed
+      : canInterrupt ?? interruptDecision.allowed;
   const canInterruptNow =
-    isRunning && interruptAvailable && Boolean(onInterrupt) && !interrupting;
-  // 按钮只保留一个主状态：运行中优先显示停止；只有用户已经写了新内容，才切到可发送态。
-  const showInterruptButton =
-    canInterruptNow && !hasDraft && !localSubmitting && !isSubmitting;
+    effectiveIsRunning && interruptAvailable && Boolean(onInterrupt) && !interrupting;
+  // 按钮只保留一个主状态：只要运行已经开始且当前可中断，就优先给停止。
+  // 发送请求的本地忙态可能会比 runtime 状态多挂一小段时间，不能用它把停止入口盖掉。
+  const showInterruptButton = canInterruptNow && !hasDraft;
   const showBusyButton =
     !showInterruptButton &&
     !hasDraft &&
     (
       localSubmitting
       || isSubmitting
-      || isRunning
-      || (!isRunning && hasPendingQueuedMessages)
+      || effectiveIsRunning
+      || (!effectiveIsRunning && hasPendingQueuedMessages)
     );
   const busyButtonLabel =
     localSubmitting || isSubmitting || hasPendingQueuedMessages
       ? t("conversation.sendingState")
       : t("conversation.runtimeRunning");
-  const sendButtonLabel = isRunning
+  const sendButtonLabel = effectiveIsRunning
     ? canQueueDuringRun
         ? t("conversation.queueGuidanceButton")
         : canStreamDuringRun

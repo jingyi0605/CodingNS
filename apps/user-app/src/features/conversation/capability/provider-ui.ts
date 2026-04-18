@@ -27,6 +27,8 @@ interface ProviderMetadata {
   supportsAttachments?: boolean;
   supportsPermissionPrompt?: boolean;
   supportsSlashMenuByDefault?: boolean;
+  supportsRunSteeringByDefault?: boolean;
+  supportsQueueWhileRunningByDefault?: boolean;
   foldRulesMessagesByDefault?: boolean;
 }
 
@@ -57,6 +59,7 @@ const PROVIDER_METADATA: Record<BuiltinProviderId, ProviderMetadata> = {
     reasoningLevelPersists: false,
     defaultReasoningLevel: undefined,
     supportsSlashMenuByDefault: true,
+    supportsRunSteeringByDefault: true,
     foldRulesMessagesByDefault: false
   },
   codex: {
@@ -64,10 +67,12 @@ const PROVIDER_METADATA: Record<BuiltinProviderId, ProviderMetadata> = {
     draftTitleKey: "conversation.draftTitleCodex",
     defaultModelLabelKey: "conversation.modelUseCliDefault",
     icon: codexIcon,
-    defaultRunInputMode: "none",
+    defaultRunInputMode: "streaming_guidance",
     reasoningLevelPersists: true,
     defaultReasoningLevel: null,
     supportsSlashMenuByDefault: false,
+    supportsRunSteeringByDefault: true,
+    supportsQueueWhileRunningByDefault: true,
     foldRulesMessagesByDefault: true
   },
   opencode: {
@@ -215,6 +220,8 @@ export function createDraftCapabilities(provider: ProviderId): ProviderCapabilit
     supportsCheckpoint: false,
     modelOptions: getMetadataModelOptions(provider),
     defaultReasoningLevel: metadata?.defaultReasoningLevel,
+    supportsRunSteering: metadata?.supportsRunSteeringByDefault,
+    supportsQueueWhileRunning: metadata?.supportsQueueWhileRunningByDefault,
     limitations: []
   };
 }
@@ -253,6 +260,13 @@ export function allowsQueueDuringRun(
     return capabilities.supportsQueueWhileRunning;
   }
 
+  const provider = capabilities?.provider ?? null;
+  const providerDefault = getProviderMetadata(provider)?.supportsQueueWhileRunningByDefault;
+
+  if (providerDefault !== undefined) {
+    return providerDefault;
+  }
+
   const inRunInput = capabilities?.inRunInputMode ?? "none";
   return (
     inRunInput === "queued_guidance"
@@ -266,7 +280,9 @@ export function shouldSupportRunSteering(capabilities: ProviderCapabilitiesDto |
     return capabilities.supportsRunSteering;
   }
 
-  return capabilities?.inRunInputMode === "streaming_guidance";
+  const provider = capabilities?.provider ?? null;
+  return getProviderMetadata(provider)?.supportsRunSteeringByDefault
+    ?? capabilities?.inRunInputMode === "streaming_guidance";
 }
 
 export function shouldPersistReasoningLevel(provider: ProviderId): boolean {

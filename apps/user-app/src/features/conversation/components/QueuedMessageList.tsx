@@ -30,7 +30,10 @@ export function QueuedMessageList({
       <div className="queued-message-list__items">
         {items.map((item, index) => {
           const canDelete = item.status === "queued" || item.status === "failed";
-          const canSteerItem = canSteer && typeof onSteer === "function" && item.status === "queued";
+          const canSteerItem =
+            canSteer &&
+            typeof onSteer === "function" &&
+            (item.status === "queued" || item.status === "failed");
 
           return (
             <article key={item.id} className="queued-message-item">

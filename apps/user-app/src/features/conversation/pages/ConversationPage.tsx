@@ -244,7 +244,6 @@ function LiveConversationPage({
   const [steeringQueueItemId, setSteeringQueueItemId] = useState<string | null>(null);
   const isRunning = isSessionRunning(session);
   const canSteerQueuedMessage =
-    isRunning &&
     shouldSupportRunSteering(capabilities) &&
     session?.provider === capabilities?.provider;
   const hasPendingQueuedMessages = queuedMessages.some(
