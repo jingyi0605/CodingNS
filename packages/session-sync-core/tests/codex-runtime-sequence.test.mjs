@@ -111,6 +111,7 @@ test("CodexRuntimeAdapter continueSession 会直接复用 provider 子线程，�
       async startTurn() {
         closeHandler?.(null);
       },
+      async steerTurn() {},
       async interruptTurn() {},
       setNotificationHandler() {},
       setServerRequestHandler() {},
@@ -196,6 +197,7 @@ test("CodexRuntimeAdapter continueSession 遇到父会话 rawStoreRef 脏绑定�
         async startTurn() {
           closeHandler?.(null);
         },
+        async steerTurn() {},
         async interruptTurn() {},
         setNotificationHandler() {},
         setServerRequestHandler() {},
@@ -233,4 +235,78 @@ test("CodexRuntimeAdapter continueSession 遇到父会话 rawStoreRef 脏绑定�
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test("CodexRuntimeAdapter 会把运行中追加消息转发到 app-server 的 steerTurn", async () => {
+  const steerCalls = [];
+  let closeHandler = null;
+  const adapter = new CodexRuntimeAdapter({
+    homeDir: "/tmp/codingns-codex-runtime-steer",
+    transportFactory: () => ({
+      async initialize() {},
+      async startThread() {
+        return {
+          providerSessionId: "thread-steer",
+          rawStoreRef: "/tmp/thread-steer.jsonl"
+        };
+      },
+      async resumeThread() {
+        throw new Error("UNEXPECTED_RESUME_THREAD");
+      },
+      async resumeThreadFromHistory() {
+        throw new Error("UNEXPECTED_RESUME_THREAD_FROM_HISTORY");
+      },
+      async startTurn() {
+        return {
+          notification: {
+            method: "turn/started",
+            params: {
+              turn: {
+                id: "turn-steer-1"
+              }
+            }
+          }
+        };
+      },
+      async steerTurn(options) {
+        steerCalls.push(options);
+      },
+      async interruptTurn() {},
+      setNotificationHandler() {},
+      setServerRequestHandler() {},
+      setOnClose(handler) {
+        closeHandler = handler;
+      },
+      isClosed() {
+        return false;
+      },
+      close() {
+        closeHandler?.(null);
+      }
+    })
+  });
+
+  const launch = await adapter.startSession(
+    createRunRequest({
+      providerSessionId: null,
+      rawStoreRef: null
+    }),
+    {
+      async emit() {},
+      updateSessionBinding() {}
+    }
+  );
+
+  await launch.submitDuringRun?.({
+    content: "继续补一条要求",
+    clientRequestId: "client-steer-2",
+    model: null,
+    reasoningLevel: null,
+    permissionMode: null,
+    providerPrompt: "继续补一条要求",
+    attachments: []
+  });
+
+  assert.equal(steerCalls.length, 1);
+  assert.equal(steerCalls[0]?.content, "继续补一条要求");
 });

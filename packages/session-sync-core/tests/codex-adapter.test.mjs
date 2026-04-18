@@ -12,14 +12,14 @@ function createStableMessageId(providerSessionId, stableIdentity) {
   return createHash("sha1").update(`codex:${providerSessionId}:${stableIdentity}`).digest("hex");
 }
 
-test("CodexAdapter 会如实声明 queued guidance 的产品语义与当前 SDK 接入限制", async () => {
+test("CodexAdapter 会如实声明 Codex CLI app-server steer 能力与 SDK 限制", async () => {
   const adapter = new CodexAdapter({ homeDir: "/tmp/codingns-codex-capabilities" });
   const capabilities = adapter.getProviderCapabilities();
 
-  assert.equal(capabilities.inRunInputMode, "none");
+  assert.equal(capabilities.inRunInputMode, "streaming_guidance");
   assert.equal(
     capabilities.limitations.some(
-      (item) => item.includes("加入队列") && item.includes("SDK 0.116.0")
+      (item) => item.includes("turn/steer") && item.includes("codex-cli 0.118.0")
     ),
     true
   );

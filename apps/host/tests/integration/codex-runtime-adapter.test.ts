@@ -62,6 +62,7 @@ describe("CodexRuntimeAdapter", () => {
           });
         });
       }),
+      steerTurn: vi.fn(async () => undefined),
       interruptTurn: vi.fn(async () => undefined),
       setNotificationHandler: (handler) => {
         notificationHandler = handler;
@@ -172,6 +173,7 @@ describe("CodexRuntimeAdapter", () => {
           });
         });
       }),
+      steerTurn: vi.fn(async () => undefined),
       interruptTurn: vi.fn(async () => undefined),
       setNotificationHandler: (handler) => {
         notificationHandler = handler;
@@ -276,6 +278,7 @@ describe("CodexRuntimeAdapter", () => {
           }
         }
       })),
+      steerTurn: vi.fn(async () => undefined),
       interruptTurn: vi.fn(async () => undefined),
       setNotificationHandler: () => undefined,
       setServerRequestHandler: () => undefined,
@@ -336,4 +339,94 @@ describe("CodexRuntimeAdapter", () => {
       })
     );
   }, 10000);
+
+  it("运行中追加消息会走 app-server steerTurn，而不是新开第二轮", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-codex-runtime-steer-"));
+    tempDirs.push(tempDir);
+    const rawStoreRef = path.join(tempDir, "session.jsonl");
+    writeFileSync(rawStoreRef, "", "utf8");
+    const steerTurn = vi.fn(async () => undefined);
+    let closed = false;
+
+    const transport: CodexAppServerTransport = {
+      initialize: vi.fn(async () => undefined),
+      startThread: vi.fn(async () => ({
+        providerSessionId: "thread-steer",
+        rawStoreRef
+      })),
+      resumeThread: vi.fn(async () => ({
+        providerSessionId: "thread-steer",
+        rawStoreRef
+      })),
+      resumeThreadFromHistory: vi.fn(async () => ({
+        providerSessionId: "thread-steer",
+        rawStoreRef
+      })),
+      startTurn: vi.fn(async () => ({
+        notification: {
+          method: "turn/started",
+          params: {
+            turn: {
+              id: "turn-steer-1"
+            }
+          }
+        }
+      })),
+      steerTurn,
+      interruptTurn: vi.fn(async () => undefined),
+      setNotificationHandler: () => undefined,
+      setServerRequestHandler: () => undefined,
+      setOnClose: () => undefined,
+      isClosed: () => closed,
+      close: () => {
+        closed = true;
+      }
+    };
+    const adapter = new CodexRuntimeAdapter({
+      transportFactory: () => transport
+    });
+    const sink: ProviderRuntimeEventSink = {
+      emit: vi.fn(async () => undefined),
+      updateSessionBinding: vi.fn()
+    };
+
+    const launched = await adapter.startSession(
+      {
+        sessionId: "session-steer",
+        workspaceId: "workspace-1",
+        workspacePath: tempDir,
+        provider: "codex",
+        providerSessionId: null,
+        rawStoreRef: null,
+        options: {
+          content: "先跑第一条",
+          clientRequestId: null,
+          model: null,
+          reasoningLevel: null,
+          permissionMode: null,
+          providerPrompt: null,
+          attachments: []
+        }
+      },
+      sink
+    );
+
+    await launched.submitDuringRun?.({
+      content: "继续补充一条 steer",
+      clientRequestId: "client-steer-1",
+      model: null,
+      reasoningLevel: null,
+      permissionMode: null,
+      providerPrompt: "继续补充一条 steer",
+      attachments: []
+    });
+
+    expect(steerTurn).toHaveBeenCalledTimes(1);
+    expect(steerTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "继续补充一条 steer",
+        providerPrompt: "继续补充一条 steer"
+      })
+    );
+  });
 });

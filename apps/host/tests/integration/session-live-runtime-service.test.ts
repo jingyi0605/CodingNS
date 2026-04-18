@@ -138,6 +138,7 @@ describe("SessionLiveRuntimeService", () => {
     const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
       createService();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => ({
         sessionId: "session-1",
         workspaceId: "workspace-1",
@@ -227,10 +228,184 @@ describe("SessionLiveRuntimeService", () => {
     expect(result.message?.content).toBe("继续补充这轮任务的要求");
   });
 
+  it("Codex 运行中时会优先走 steer 提交，而不是回退项目队列", async () => {
+    const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
+      createService();
+    const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
+      getSnapshot: vi.fn(() => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "thread-1",
+        rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+        runningState: "running",
+        attachedClients: 1,
+        startedAt: "2026-04-18T10:00:00.000Z",
+        lastEventAt: "2026-04-18T10:00:01.000Z",
+        completedAt: null,
+        detail: null,
+        errorCode: null,
+        supportsInterrupt: true
+      })),
+      submitToActiveRun: vi.fn(async () => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "thread-1",
+        rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+        runningState: "running",
+        attachedClients: 1,
+        startedAt: "2026-04-18T10:00:00.000Z",
+        lastEventAt: "2026-04-18T10:00:02.000Z",
+        completedAt: null,
+        detail: null,
+        errorCode: null,
+        supportsInterrupt: true
+      })),
+      abandonRun: vi.fn(async () => undefined)
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+      messageCount: 3
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "streaming_guidance",
+      supportsSubagents: true,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      limitations: []
+    });
+    sessionHistoryService.getBindingOrThrow.mockReturnValue({
+      providerSessionId: "thread-1"
+    });
+    sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+    sessionMessageAttachmentService.bindClientRequestToMessage.mockReturnValue([]);
+
+    const result = await service.sendLiveMessage({
+      sessionId: "session-1",
+      userId: "user-1",
+      content: "继续修正这轮 Codex 输出",
+      clientRequestId: null
+    });
+
+    expect(providerRuntimeService.submitToActiveRun).toHaveBeenCalledTimes(1);
+    expect(providerRuntimeService.submitToActiveRun).toHaveBeenCalledWith(
+      "session-1",
+      expect.objectContaining({
+        content: "继续修正这轮 Codex 输出"
+      })
+    );
+    expect(result.providerSessionId).toBe("thread-1");
+  });
+
+  it("Codex steer 撞上陈旧 active run 时会丢弃旧句柄并重启本轮", async () => {
+    const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
+      createService();
+    const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
+      getSnapshot: vi.fn(() => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "thread-1",
+        rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+        runningState: "running",
+        attachedClients: 1,
+        startedAt: "2026-04-18T10:00:00.000Z",
+        lastEventAt: "2026-04-18T10:00:01.000Z",
+        completedAt: null,
+        detail: null,
+        errorCode: null,
+        supportsInterrupt: true
+      })),
+      submitToActiveRun: vi.fn(async () => {
+        throw new Error("SESSION_NOT_RUNNING");
+      }),
+      abandonRun: vi.fn(async () => undefined)
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+    Object.defineProperty(service, "startRuntimeRun", {
+      value: vi.fn(async () => undefined),
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+      messageCount: 3
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "streaming_guidance",
+      supportsSubagents: true,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      limitations: []
+    });
+    sessionHistoryService.getBindingOrThrow.mockReturnValue({
+      providerSessionId: "thread-1"
+    });
+    sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+    sessionMessageAttachmentService.bindClientRequestToMessage.mockReturnValue([]);
+
+    await service.sendLiveMessage({
+      sessionId: "session-1",
+      userId: "user-1",
+      content: "turn 结束边缘也别把这条消息丢了",
+      clientRequestId: null
+    });
+
+    expect(providerRuntimeService.submitToActiveRun).toHaveBeenCalledTimes(1);
+    expect(providerRuntimeService.abandonRun).toHaveBeenCalledWith("session-1");
+    expect((service as any).startRuntimeRun).toHaveBeenCalledTimes(1);
+  });
+
   it("sendLiveMessage 拿到真实用户消息后会按 clientRequestId 回填来源绑定", async () => {
     const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
       createService();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => ({
         sessionId: "session-1",
         workspaceId: "workspace-1",
@@ -346,6 +521,7 @@ describe("SessionLiveRuntimeService", () => {
       attach: vi.fn()
     }));
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => null),
       continueSession
     };
@@ -447,6 +623,7 @@ describe("SessionLiveRuntimeService", () => {
       throw new Error("should not continue synthetic rollout session");
     });
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => null),
       startSession,
       continueSession
@@ -517,6 +694,7 @@ describe("SessionLiveRuntimeService", () => {
     const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
       createService();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       startSession: vi.fn(async () => {
         throw new Error("SERVER_UNAVAILABLE");
       })
@@ -590,6 +768,7 @@ describe("SessionLiveRuntimeService", () => {
       }))
     };
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       startSession: vi.fn(async () => handle)
     };
     Object.defineProperty(service, "providerRuntimeService", {
@@ -695,6 +874,7 @@ describe("SessionLiveRuntimeService", () => {
       supportsInterrupt: true
     };
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       startSession: vi.fn(async () => ({
         getSnapshot: vi.fn(() => ({ ...runtimeSnapshot })),
         attach: vi.fn()
@@ -767,6 +947,7 @@ describe("SessionLiveRuntimeService", () => {
     const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
       createService();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       startSession: vi.fn(async () => ({
         getSnapshot: vi.fn(() => ({
           sessionId: "session-1",
@@ -855,6 +1036,7 @@ describe("SessionLiveRuntimeService", () => {
     const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
       createService();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => ({
         sessionId: "session-1",
         workspaceId: "workspace-1",
@@ -949,6 +1131,7 @@ describe("SessionLiveRuntimeService", () => {
   it("getSessionRuntime 在 active run 下仍然返回能力层的 inRunInputMode", async () => {
     const { service, sessionHistoryService } = createService();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => ({
         sessionId: "session-1",
         workspaceId: "workspace-1",
@@ -1010,6 +1193,7 @@ describe("SessionLiveRuntimeService", () => {
   it("getSessionRuntime 在 active run 结束后会回传持久化的错误详情", async () => {
     const { service, sessionHistoryService } = createService();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => null)
     };
     Object.defineProperty(service, "providerRuntimeService", {
@@ -1061,6 +1245,7 @@ describe("SessionLiveRuntimeService", () => {
   it("getSessionRuntime 遇到终态 runtime snapshot 时，不应再标记 hasActiveRun", async () => {
     const { service, sessionHistoryService } = createService();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => ({
         sessionId: "session-1",
         workspaceId: "workspace-1",
@@ -1133,6 +1318,7 @@ describe("SessionLiveRuntimeService", () => {
       sessionSendQueueRepository
     } = createService();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => ({
         sessionId: "session-1",
         workspaceId: "workspace-1",
@@ -1205,6 +1391,7 @@ describe("SessionLiveRuntimeService", () => {
       sessionMessageAttachmentService
     } = createService();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => null)
     };
     Object.defineProperty(service, "providerRuntimeService", {
@@ -1254,6 +1441,7 @@ describe("SessionLiveRuntimeService", () => {
   it("stale 的 Claude running 状态会先回刷成空闲，再继续派发队列", async () => {
     const { service, sessionHistoryService, sessionSendQueueRepository } = createService();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => null)
     };
     Object.defineProperty(service, "providerRuntimeService", {
@@ -1325,6 +1513,7 @@ describe("SessionLiveRuntimeService", () => {
       sessionMessageAttachmentService
     } = createService();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => ({
         sessionId: "session-1",
         workspaceId: "workspace-1",
@@ -1410,9 +1599,96 @@ describe("SessionLiveRuntimeService", () => {
     expect(result.queueItemId).toBe("queue-1");
   });
 
+  it("Codex 空闲时也可以手动引导指定队列项，并立即起新一轮发送", async () => {
+    const {
+      service,
+      sessionHistoryService,
+      sessionSendQueueRepository,
+      sessionMessageAttachmentService
+    } = createService();
+    const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
+      getSnapshot: vi.fn(() => null)
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+    Object.defineProperty(service, "sendLiveMessageDirect", {
+      value: vi.fn().mockResolvedValue({
+        sessionId: "session-1",
+        provider: "codex",
+        providerSessionId: "thread-1",
+        acceptedAt: "2026-04-18T10:00:03.000Z",
+        clientRequestId: "client-queue-codex-1",
+        message: null
+      }),
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+      messageCount: 3,
+      runningState: "idle"
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "streaming_guidance",
+      supportsSubagents: true,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      limitations: []
+    });
+    sessionSendQueueRepository.findBySessionUserAndId.mockReturnValue({
+      id: "queue-codex-1",
+      sessionId: "session-1",
+      userId: "user-1",
+      content: "这条不要继续等，立刻发给 Codex 会话",
+      clientRequestId: "client-queue-codex-1",
+      model: null,
+      reasoningLevel: null,
+      permissionMode: null,
+      status: "failed",
+      orderIndex: 2,
+      errorDetail: "上次 runtime 边界抖动",
+      createdAt: "2026-04-18T10:00:00.000Z",
+      updatedAt: "2026-04-18T10:00:00.000Z",
+      dispatchedAt: null
+    });
+    sessionMessageAttachmentService.getRuntimeAttachments.mockReturnValue([]);
+
+    const result = await service.steerQueuedMessage("session-1", "user-1", "queue-codex-1");
+
+    expect(sessionSendQueueRepository.markDispatching).toHaveBeenCalledWith(
+      "queue-codex-1",
+      expect.any(String)
+    );
+    expect((service as any).sendLiveMessageDirect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "session-1",
+        content: "这条不要继续等，立刻发给 Codex 会话"
+      }),
+      expect.any(Object)
+    );
+    expect(sessionSendQueueRepository.delete).toHaveBeenCalledWith("queue-codex-1");
+    expect(result.queueItemId).toBe("queue-codex-1");
+  });
+
   it("Claude 外部运行态存在时不会提前调度队列", async () => {
     const { service, sessionSendQueueRepository } = createService();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => null)
     };
     Object.defineProperty(service, "providerRuntimeService", {
@@ -1443,6 +1719,7 @@ describe("SessionLiveRuntimeService", () => {
   it("Claude 外部运行态存在时会拒绝直发，避免假装送进当前会话", async () => {
     const { service, sessionHistoryService, workspaceService } = createService();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => null)
     };
     Object.defineProperty(service, "providerRuntimeService", {
@@ -1505,6 +1782,7 @@ describe("SessionLiveRuntimeService", () => {
     vi.useFakeTimers();
     const { service, sessionHistoryService, sessionSendQueueRepository } = createService();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => null)
     };
     Object.defineProperty(service, "providerRuntimeService", {
@@ -1559,6 +1837,7 @@ describe("SessionLiveRuntimeService", () => {
     vi.useFakeTimers();
     const { service, sessionHistoryService, sessionSendQueueRepository } = createService();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => null)
     };
     Object.defineProperty(service, "providerRuntimeService", {
@@ -1623,6 +1902,7 @@ describe("SessionLiveRuntimeService", () => {
   it("运行态进入终态时会发出 terminal 事件回调", async () => {
     const { service, sessionHistoryService, sessionStateRepository, sessionStatusSnapshotRepository } = createService();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => null)
     };
     const terminalListener = vi.fn(async () => {});
@@ -1681,6 +1961,7 @@ describe("SessionLiveRuntimeService", () => {
   it("终态 runtime 快照不会阻塞 Codex 队列续跑", async () => {
     const { service, sessionSendQueueRepository } = createService();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => ({
         sessionId: "session-1",
         workspaceId: "workspace-1",
@@ -1917,6 +2198,7 @@ describe("SessionLiveRuntimeService", () => {
       sessionStateRepository
     } = createService();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => ({
         sessionId: "session-1",
         workspaceId: "workspace-1",
@@ -1985,6 +2267,7 @@ describe("SessionLiveRuntimeService", () => {
     sessionBindingRepository.findByRawStoreRef.mockReturnValue(null);
 
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => null),
       listSnapshots: vi.fn(() => [
         {
@@ -2328,6 +2611,7 @@ describe("SessionLiveRuntimeService", () => {
     const { service, sessionHistoryService } = createService();
     const runtimeListeners: Array<(event: Record<string, unknown>) => Promise<void>> = [];
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => null),
       subscribe: vi.fn((_sessionId: string, listener: (event: Record<string, unknown>) => Promise<void>) => {
         runtimeListeners.push(listener);
@@ -2398,6 +2682,7 @@ describe("SessionLiveRuntimeService", () => {
   it("subscribeRuntime 会先推送统一的 session.activity 裁决事件", () => {
     const { service } = createService();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => ({
         sessionId: "session-1",
         workspaceId: "workspace-1",
@@ -2449,6 +2734,7 @@ describe("SessionLiveRuntimeService", () => {
   it("subscribeRuntime 遇到终态 runtime snapshot 时，session.activity 不应再宣称 hasActiveRun", () => {
     const { service } = createService();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => ({
         sessionId: "session-1",
         workspaceId: "workspace-1",
@@ -2517,6 +2803,7 @@ describe("SessionLiveRuntimeService", () => {
       supportsInterrupt: true
     };
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       startSession: vi.fn(async () => ({
         getSnapshot: vi.fn(() => ({ ...runtimeSnapshot })),
         attach: vi.fn()
@@ -2617,6 +2904,7 @@ describe("SessionLiveRuntimeService", () => {
       supportsInterrupt: true
     };
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       startSession: vi.fn(async () => ({
         getSnapshot: vi.fn(() => ({ ...runtimeSnapshot })),
         attach: vi.fn()
@@ -2716,6 +3004,7 @@ describe("SessionLiveRuntimeService", () => {
       supportsInterrupt: true
     };
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn((sessionId: string) => (sessionId === "session-alias-1" ? aliasRuntimeSnapshot : null)),
       listSnapshots: vi.fn(() => [aliasRuntimeSnapshot])
     };
@@ -2776,6 +3065,7 @@ describe("SessionLiveRuntimeService", () => {
     const { service, sessionBindingRepository } = createService();
     const listeners = new Map<string, (event: Record<string, unknown>) => Promise<void>>();
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn((sessionId: string) =>
         sessionId === "session-alias-1"
           ? {
@@ -2896,6 +3186,7 @@ describe("SessionLiveRuntimeService", () => {
       supportsInterrupt: true
     };
     const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
       startSession: vi.fn(async () => ({
         getSnapshot: vi.fn(() => ({ ...runtimeSnapshot })),
         attach: vi.fn()
