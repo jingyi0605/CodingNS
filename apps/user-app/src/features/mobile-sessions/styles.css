@@ -754,8 +754,10 @@
   height: 2rem;
   padding: 0 0.8rem;
   border-radius: 999px;
-  background: var(--conversation-chip-bg);
-  box-shadow: var(--conversation-chip-shadow);
+  border-color: var(--app-button-border);
+  background: var(--app-button-bg);
+  box-shadow: none;
+  color: var(--app-button-color);
 }
 
 .mobile-conversation-toolbar-title {

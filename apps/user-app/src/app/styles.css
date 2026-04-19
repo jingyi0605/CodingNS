@@ -7662,34 +7662,35 @@ textarea:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  min-width: 36px;
-  height: 36px;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
   padding: 0;
-  border: 1px solid var(--conversation-chip-border);
-  border-radius: 12px;
-  background: var(--conversation-chip-bg);
-  box-shadow: var(--conversation-chip-shadow);
-  color: var(--conversation-chip-text);
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-secondary);
   cursor: pointer;
   transition:
-    border-color 120ms ease,
-    background 120ms ease,
-    box-shadow 120ms ease,
-    transform 120ms ease;
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    opacity var(--transition-fast);
 }
 
-.conversation-header-ai-button:hover {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-primary));
-  background: var(--conversation-chip-bg-hover);
-  box-shadow: var(--conversation-chip-shadow-hover);
-  transform: translateY(-1px);
+.conversation-header-ai-button:hover,
+.conversation-header-ai-button:focus-visible {
+  border-color: var(--panel-border);
+  background: var(--panel-hover);
+  box-shadow: none;
+  color: var(--text-primary);
+  outline: none;
 }
 
 .conversation-header-ai-button:disabled {
   cursor: not-allowed;
   opacity: 0.6;
-  transform: none;
 }
 
 .conversation-header-ai-button-label {
