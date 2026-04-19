@@ -23,6 +23,7 @@ import {
   fetchRelayTrafficWallet,
   fetchRelayTunnelStatus,
   loginRelayControlByEmail,
+  updateRelayTunnelConfig,
   type RelayTrafficOrderSummary,
   type RelayTrafficPackage,
   type RelayTrafficWalletSummary,
@@ -31,16 +32,21 @@ import {
 } from "../platform/server/relay-tunnel-manager";
 import { t } from "../shared/i18n";
 import { ApiError } from "../shared/network/api-error";
+import {
+  RemoteAccessActivationSwitch,
+  RemoteAccessMetricCard,
+  RemoteAccessMetricGrid
+} from "./RemoteAccessPanelAtoms";
 
 type PendingAction =
   | "refresh"
   | "save-config"
   | "login-control"
-  | "bind-host"
   | "enable"
   | "disable"
   | "unbind"
   | "checkout"
+  | "toggle-activation"
   | null;
 
 interface RelayControlSessionState {
@@ -49,7 +55,6 @@ interface RelayControlSessionState {
   email: string;
 }
 
-// 这里固定公共隧道控制站点地址，不再让普通用户在设置页手填。
 const DEFAULT_RELAY_TUNNEL_CONTROL_BASE_URL = "https://channel.codingns.com/";
 
 export function RelayTunnelPanel() {
@@ -69,6 +74,7 @@ export function RelayTunnelPanel() {
   const defaultHostLabel = t("settings.relayTunnelHostLabelDefault");
   const effectiveControlBaseUrl =
     status?.controlBaseUrl?.trim() || DEFAULT_RELAY_TUNNEL_CONTROL_BASE_URL;
+  const activated = status?.activated ?? false;
   const canUseSavedSession =
     controlSession !== null
     && (accountEmailDraft.trim().length === 0 || controlSession.email === accountEmailDraft.trim());
@@ -92,23 +98,33 @@ export function RelayTunnelPanel() {
   useEffect(() => {
     activeRef.current = true;
     void loadStatus(false);
+
+    return () => {
+      activeRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activated) {
+      return;
+    }
+
     const timer = window.setInterval(() => {
       void loadStatus(true);
     }, 5000);
 
     return () => {
-      activeRef.current = false;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [activated]);
 
   useEffect(() => {
-    if (!controlSession || !effectiveControlBaseUrl) {
+    if (!activated || !controlSession || !effectiveControlBaseUrl) {
       return;
     }
 
     void loadBillingData(effectiveControlBaseUrl, controlSession.accessToken);
-  }, [controlSession, effectiveControlBaseUrl]);
+  }, [activated, controlSession, effectiveControlBaseUrl]);
 
   async function loadStatus(silent: boolean): Promise<void> {
     if (!silent) {
@@ -170,6 +186,32 @@ export function RelayTunnelPanel() {
       if (activeRef.current) {
         setPanelError(resolvePanelError(error));
       }
+    }
+  }
+
+  async function handleActivationToggle(nextActivated: boolean): Promise<void> {
+    setPendingAction("toggle-activation");
+    setPanelError(null);
+
+    try {
+      const nextStatus = await updateRelayTunnelConfig({
+        activated: nextActivated,
+        controlBaseUrl: nextActivated ? effectiveControlBaseUrl : undefined
+      });
+
+      if (!nextActivated) {
+        setControlSession(null);
+        setWallet(null);
+        setPackages([]);
+        setOrders([]);
+      }
+
+      applyLoadedStatus(nextStatus);
+    } catch (error) {
+      setPanelError(resolvePanelError(error));
+    } finally {
+      setPendingAction(null);
+      setLoading(false);
     }
   }
 
@@ -283,26 +325,6 @@ export function RelayTunnelPanel() {
     }
   }
 
-  async function runHostAction(action: Exclude<PendingAction, "save-config" | "login-control" | "bind-host" | "checkout" | "refresh" | null>): Promise<void> {
-    setPendingAction(action);
-    setPanelError(null);
-
-    try {
-      const nextStatus =
-        action === "enable"
-          ? await enableRelayTunnel()
-          : action === "disable"
-            ? await disableRelayTunnel()
-            : await unbindRelayTunnel();
-
-      applyLoadedStatus(nextStatus);
-    } catch (error) {
-      setPanelError(resolvePanelError(error));
-    } finally {
-      setPendingAction(null);
-    }
-  }
-
   async function handleRefresh(): Promise<void> {
     setPendingAction("refresh");
     setPanelError(null);
@@ -339,158 +361,192 @@ export function RelayTunnelPanel() {
     }
   }
 
+  async function handleUnbind(): Promise<void> {
+    setPendingAction("unbind");
+    setPanelError(null);
+
+    try {
+      const nextStatus = await unbindRelayTunnel();
+      applyLoadedStatus(nextStatus);
+    } catch (error) {
+      setPanelError(resolvePanelError(error));
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
   return (
     <div className="settings-relay-tunnel-panel">
       <ModalSection
         heading={t("settings.relayTunnelStatus")}
         description={t("settings.relayTunnelDescription")}
-      >
-        {loading && !status ? (
-          <p className="settings-relay-tunnel-inline-note">{t("common.loading")}</p>
-        ) : (
-          <>
-            <ModalList compact>
-              <SummaryLine
-                label={t("settings.relayTunnelPhase")}
-                value={resolveRelayTunnelPhaseLabel(status?.phase ?? "disabled")}
-              />
-              <SummaryLine
-                label={t("settings.relayTunnelDomain")}
-                value={status?.tunnelDomain ?? t("settings.relayTunnelUnbound")}
-              />
-              <SummaryLine
-                label={t("settings.relayTunnelTrafficRemaining")}
-                value={formatTrafficBytes(status?.trafficRemainingBytes)}
-              />
-              <SummaryLine
-                label={t("settings.relayTunnelHostFingerprint")}
-                value={status?.hostKeyFingerprint ?? t("settings.tailscaleUnavailable")}
-              />
-            </ModalList>
-            <p className="settings-relay-tunnel-inline-note">
-              {t("settings.relayTunnelTrustBoundaryNotice")}
-            </p>
-          </>
-        )}
-      </ModalSection>
-
-      <ModalSection
-        heading={t("settings.relayTunnelAccessTitle")}
-        description={t("settings.relayTunnelAccessDescription")}
         actions={(
-          <RelayTunnelSwitch
-            checked={Boolean(status?.enabled)}
-            label={t("settings.relayTunnelEnableToggleLabel")}
-            disabled={pendingAction !== null || (!status?.enabled && !canEnableTunnel)}
+          <RemoteAccessActivationSwitch
+            checked={activated}
+            label={t("settings.relayTunnelMasterSwitchLabel")}
+            disabled={pendingAction !== null}
             onChange={(checked) => {
-              if (checked) {
-                void handleEnableTunnel();
-                return;
-              }
-
-              void handleDisableTunnel();
+              void handleActivationToggle(checked);
             }}
           />
         )}
       >
+        {loading && !status ? (
+          <p className="settings-remote-access-panel-note">{t("common.loading")}</p>
+        ) : (
+          <>
+            <RemoteAccessMetricGrid>
+              <RemoteAccessMetricCard
+                label={t("settings.relayTunnelPhase")}
+                value={activated ? resolveRelayTunnelPhaseLabel(status?.phase ?? "disabled") : t("settings.remoteAccessFeatureDisabledValue")}
+              />
+              <RemoteAccessMetricCard
+                label={t("settings.relayTunnelDomain")}
+                value={status?.tunnelDomain ?? t("settings.relayTunnelUnbound")}
+              />
+              <RemoteAccessMetricCard
+                label={t("settings.relayTunnelTrafficRemaining")}
+                value={activated ? formatTrafficBytes(status?.trafficRemainingBytes) : t("settings.tailscaleUnavailable")}
+              />
+              <RemoteAccessMetricCard
+                label={t("settings.relayTunnelHostFingerprint")}
+                value={status?.hostKeyFingerprint ?? t("settings.tailscaleUnavailable")}
+              />
+            </RemoteAccessMetricGrid>
 
-        <div className="settings-relay-tunnel-form">
-          <ModalField label={t("settings.relayTunnelAccountEmail")}>
-            <input
-              aria-label={t("settings.relayTunnelAccountEmail")}
-              className="settings-text-input"
-              type="email"
-              value={accountEmailDraft}
-              onChange={(event) => setAccountEmailDraft(event.target.value)}
-              placeholder={t("settings.relayTunnelAccountEmailPlaceholder")}
-            />
-          </ModalField>
-
-          <ModalField label={t("settings.relayTunnelAccountPassword")}>
-            <input
-              aria-label={t("settings.relayTunnelAccountPassword")}
-              className="settings-text-input"
-              type="password"
-              value={accountPasswordDraft}
-              onChange={(event) => setAccountPasswordDraft(event.target.value)}
-              placeholder={t("settings.relayTunnelAccountPasswordPlaceholder")}
-            />
-          </ModalField>
-
-          <ModalField label={t("settings.relayTunnelHostLabel")}>
-            <input
-              aria-label={t("settings.relayTunnelHostLabel")}
-              className="settings-text-input"
-              value={hostLabelDraft}
-              onChange={(event) => setHostLabelDraft(event.target.value)}
-              placeholder={t("settings.relayTunnelHostLabelPlaceholder")}
-            />
-          </ModalField>
-        </div>
-
-        {controlSession || status?.bindingId ? (
-          <ModalSection tone="accent">
-            <div className="settings-relay-tunnel-inline-stack">
-              <strong className="modal-section-heading">
-                {status?.enabled
-                  ? t("settings.relayTunnelConnectedBannerActiveTitle")
-                  : t("settings.relayTunnelConnectedBannerTitle")}
-              </strong>
-              <p className="modal-section-description">
-                {status?.enabled
-                  ? t("settings.relayTunnelConnectedBannerActiveDescription")
-                  : t("settings.relayTunnelConnectedBannerDescription")}
+            {!activated ? (
+              <p className="settings-remote-access-panel-note">
+                {t("settings.relayTunnelActivationHint")}
               </p>
-            </div>
-            <div className="settings-relay-tunnel-status-bar-meta">
-              {controlSession ? (
-                <ModalTag className="settings-relay-tunnel-status-chip">
-                  {t("settings.relayTunnelLoggedInAs", { email: controlSession.email })}
-                </ModalTag>
-              ) : null}
-              <ModalTag className="settings-relay-tunnel-status-chip">
-                {t("settings.relayTunnelConnectedDevice", { name: hostLabelDraft.trim() || defaultHostLabel })}
-              </ModalTag>
-              {status?.tunnelDomain ? (
-                <ModalTag className="settings-relay-tunnel-status-chip">
-                  {t("settings.relayTunnelBoundDomain", { domain: status.tunnelDomain })}
-                </ModalTag>
-              ) : null}
-            </div>
-          </ModalSection>
-        ) : null}
+            ) : (
+              <p className="settings-relay-tunnel-inline-note">
+                {t("settings.relayTunnelTrustBoundaryNotice")}
+              </p>
+            )}
 
-        <ModalActions align="start" className="settings-relay-tunnel-actions">
-          <button
-            className="settings-button"
-            disabled={pendingAction !== null || !canLoginControl}
-            type="button"
-            onClick={() => void handleLoginControl()}
-          >
-            {pendingAction === "login-control"
-              ? t("common.loading")
-              : t("settings.relayTunnelLoginAccount")}
-          </button>
-          <button
-            className="secondary-button"
-            disabled={pendingAction !== null}
-            type="button"
-            onClick={() => void handleRefresh()}
-          >
-            {t("settings.relayTunnelRefresh")}
-          </button>
-          <button
-            className="secondary-button"
-            disabled={pendingAction !== null || !status?.bindingId}
-            type="button"
-            onClick={() => void runHostAction("unbind")}
-          >
-            {t("settings.relayTunnelUnbind")}
-          </button>
-        </ModalActions>
+            {panelError ? <p className="settings-relay-tunnel-error">{panelError}</p> : null}
+          </>
+        )}
       </ModalSection>
 
-      {wallet ? (
+      {activated ? (
+        <ModalSection
+          heading={t("settings.relayTunnelAccessTitle")}
+          description={t("settings.relayTunnelAccessDescription")}
+          actions={(
+            <RelayTunnelSwitch
+              checked={Boolean(status?.enabled)}
+              label={t("settings.relayTunnelEnableToggleLabel")}
+              disabled={pendingAction !== null || (!status?.enabled && !canEnableTunnel)}
+              onChange={(checked) => {
+                if (checked) {
+                  void handleEnableTunnel();
+                  return;
+                }
+
+                void handleDisableTunnel();
+              }}
+            />
+          )}
+        >
+          <div className="settings-relay-tunnel-form">
+            <ModalField label={t("settings.relayTunnelAccountEmail")}>
+              <input
+                aria-label={t("settings.relayTunnelAccountEmail")}
+                className="settings-text-input"
+                type="email"
+                value={accountEmailDraft}
+                onChange={(event) => setAccountEmailDraft(event.target.value)}
+                placeholder={t("settings.relayTunnelAccountEmailPlaceholder")}
+              />
+            </ModalField>
+
+            <ModalField label={t("settings.relayTunnelAccountPassword")}>
+              <input
+                aria-label={t("settings.relayTunnelAccountPassword")}
+                className="settings-text-input"
+                type="password"
+                value={accountPasswordDraft}
+                onChange={(event) => setAccountPasswordDraft(event.target.value)}
+                placeholder={t("settings.relayTunnelAccountPasswordPlaceholder")}
+              />
+            </ModalField>
+
+            <ModalField label={t("settings.relayTunnelHostLabel")}>
+              <input
+                aria-label={t("settings.relayTunnelHostLabel")}
+                className="settings-text-input"
+                value={hostLabelDraft}
+                onChange={(event) => setHostLabelDraft(event.target.value)}
+                placeholder={t("settings.relayTunnelHostLabelPlaceholder")}
+              />
+            </ModalField>
+          </div>
+
+          {controlSession || status?.bindingId ? (
+            <ModalSection tone="accent">
+              <div className="settings-relay-tunnel-inline-stack">
+                <strong className="modal-section-heading">
+                  {status?.enabled
+                    ? t("settings.relayTunnelConnectedBannerActiveTitle")
+                    : t("settings.relayTunnelConnectedBannerTitle")}
+                </strong>
+                <p className="modal-section-description">
+                  {status?.enabled
+                    ? t("settings.relayTunnelConnectedBannerActiveDescription")
+                    : t("settings.relayTunnelConnectedBannerDescription")}
+                </p>
+              </div>
+              <div className="settings-relay-tunnel-status-bar-meta">
+                {controlSession ? (
+                  <ModalTag className="settings-relay-tunnel-status-chip">
+                    {t("settings.relayTunnelLoggedInAs", { email: controlSession.email })}
+                  </ModalTag>
+                ) : null}
+                <ModalTag className="settings-relay-tunnel-status-chip">
+                  {t("settings.relayTunnelConnectedDevice", { name: hostLabelDraft.trim() || defaultHostLabel })}
+                </ModalTag>
+                {status?.tunnelDomain ? (
+                  <ModalTag className="settings-relay-tunnel-status-chip">
+                    {t("settings.relayTunnelBoundDomain", { domain: status.tunnelDomain })}
+                  </ModalTag>
+                ) : null}
+              </div>
+            </ModalSection>
+          ) : null}
+
+          <ModalActions align="start" className="settings-relay-tunnel-actions">
+            <button
+              className="settings-button"
+              disabled={pendingAction !== null || !canLoginControl}
+              type="button"
+              onClick={() => void handleLoginControl()}
+            >
+              {pendingAction === "login-control"
+                ? t("common.loading")
+                : t("settings.relayTunnelLoginAccount")}
+            </button>
+            <button
+              className="secondary-button"
+              disabled={pendingAction !== null}
+              type="button"
+              onClick={() => void handleRefresh()}
+            >
+              {t("settings.relayTunnelRefresh")}
+            </button>
+            <button
+              className="secondary-button"
+              disabled={pendingAction !== null || !status?.bindingId}
+              type="button"
+              onClick={() => void handleUnbind()}
+            >
+              {t("settings.relayTunnelUnbind")}
+            </button>
+          </ModalActions>
+        </ModalSection>
+      ) : null}
+
+      {activated && wallet ? (
         <ModalSection
           heading={t("settings.relayTunnelWalletTitle")}
           description={t("settings.relayTunnelWalletDescription")}
@@ -503,7 +559,7 @@ export function RelayTunnelPanel() {
         </ModalSection>
       ) : null}
 
-      {packages.length > 0 ? (
+      {activated && packages.length > 0 ? (
         <ModalSection
           heading={t("settings.relayTunnelPackagesTitle")}
           description={t("settings.relayTunnelPackagesDescription")}
@@ -533,7 +589,7 @@ export function RelayTunnelPanel() {
         </ModalSection>
       ) : null}
 
-      {orders.length > 0 ? (
+      {activated && orders.length > 0 ? (
         <ModalSection
           heading={t("settings.relayTunnelOrdersTitle")}
           description={t("settings.relayTunnelOrdersDescription")}
@@ -549,8 +605,6 @@ export function RelayTunnelPanel() {
           </ModalList>
         </ModalSection>
       ) : null}
-
-      {panelError ? <p className="settings-relay-tunnel-error">{panelError}</p> : null}
     </div>
   );
 
