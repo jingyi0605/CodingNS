@@ -538,6 +538,53 @@ export class OpenCodeAdapter implements ProviderAdapter {
     throw new Error("OPENCODE_ARCHIVE_NOT_SUPPORTED");
   }
 
+  async deleteSession(
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<void> {
+    const sessionId = this.resolveSessionId(providerSessionId, rawStoreRef);
+    let deleted = false;
+
+    try {
+      await this.fetchJson(`/session/${encodeURIComponent(sessionId)}`, {
+        method: "DELETE"
+      });
+      deleted = true;
+    } catch (error) {
+      if (
+        !(error instanceof Error)
+        || (
+          error.message !== "SERVER_UNAVAILABLE"
+          && error.message !== "SERVER_TIMEOUT"
+          && error.message !== "PROVIDER_SESSION_NOT_FOUND"
+          && !error.message.startsWith("OPENCODE_HTTP_")
+        )
+      ) {
+        throw error;
+      }
+    }
+
+    const deletedFromSqlite = this.withWritableDb((db) => {
+      const partChanges = Number(
+        db.prepare("DELETE FROM part WHERE session_id = ?").run(sessionId).changes
+      );
+      const messageChanges = Number(
+        db.prepare("DELETE FROM message WHERE session_id = ?").run(sessionId).changes
+      );
+      const sessionChanges = Number(
+        db.prepare("DELETE FROM session WHERE id = ?").run(sessionId).changes
+      );
+
+      return partChanges + messageChanges + sessionChanges;
+    });
+
+    this.discoveryCache.clear();
+
+    if (!deleted && deletedFromSqlite === 0) {
+      throw new Error("PROVIDER_SESSION_NOT_FOUND");
+    }
+  }
+
   getProviderCapabilities(): ProviderCapabilities {
     return {
       provider: this.providerId,
@@ -556,6 +603,7 @@ export class OpenCodeAdapter implements ProviderAdapter {
       supportsSessionDiff: true,
       supportsPermissionRequests: true,
       supportsSessionFork: true,
+      supportsSessionDelete: true,
       supportsSessionShare: true,
       supportsAsyncPrompt: true,
       supportsNativeAgents: true,

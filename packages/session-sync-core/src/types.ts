@@ -63,6 +63,7 @@ export interface ProviderCapabilities {
   supportsSessionDiff?: boolean;
   supportsPermissionRequests?: boolean;
   supportsSessionFork?: boolean;
+  supportsSessionDelete?: boolean;
   supportsSessionShare?: boolean;
   supportsAsyncPrompt?: boolean;
   supportsNativeAgents?: boolean;
@@ -263,6 +264,10 @@ export interface ProviderAdapter {
     rawStoreRef: string,
     isArchived: boolean
   ): Promise<ProviderArchiveUpdateResult>;
+  deleteSession?(
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<void>;
   readContextUsage?(
     providerSessionId: string,
     rawStoreRef: string

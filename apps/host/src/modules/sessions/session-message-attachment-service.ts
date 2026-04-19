@@ -160,6 +160,32 @@ export class SessionMessageAttachmentService {
     });
   }
 
+  deleteSessionAttachments(sessionId: string): void {
+    const records = this.repository.listBySession(sessionId);
+
+    if (records.length === 0) {
+      return;
+    }
+
+    this.repository.deleteBySession(sessionId);
+
+    records.forEach((record) => {
+      try {
+        fs.rmSync(record.storagePath, { force: true });
+      } catch {
+        return;
+      }
+
+      pruneEmptyParentDirectories(path.dirname(record.storagePath), this.storageRoot);
+    });
+
+    try {
+      fs.rmSync(path.join(this.storageRoot, sessionId), { recursive: true, force: true });
+    } catch {
+      // 会话目录收尾失败不影响主删除流程，避免覆盖原始错误。
+    }
+  }
+
   readAttachmentContent(
     sessionId: string,
     attachmentId: string

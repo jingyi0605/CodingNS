@@ -31,6 +31,7 @@ export async function registerAssistantCapabilityRoutes(
   app.post("/api/assistant/projects/:projectId/sessions", assistantCapabilityController.startProjectSession);
   app.post("/api/assistant/sessions/start", assistantCapabilityController.startSession);
   app.get("/api/assistant/sessions/:sessionId", assistantCapabilityController.getSession);
+  app.delete("/api/assistant/sessions/:sessionId", assistantCapabilityController.deleteSession);
   app.get("/api/assistant/sessions/:sessionId/messages", assistantCapabilityController.listSessionMessages);
   app.get("/api/assistant/sessions/:sessionId/runtime", assistantCapabilityController.getSessionRuntime);
   app.post("/api/assistant/sessions/:sessionId/messages", assistantCapabilityController.sendSessionMessage);

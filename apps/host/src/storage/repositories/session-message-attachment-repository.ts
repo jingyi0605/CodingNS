@@ -32,6 +32,29 @@ export class SessionMessageAttachmentRepository {
     return rows.map(mapSessionMessageAttachmentRow);
   }
 
+  listBySession(sessionId: string): SessionMessageAttachmentRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           id,
+           session_id,
+           client_request_id,
+           message_id,
+           kind,
+           file_name,
+           mime_type,
+           file_size,
+           storage_path,
+           created_at
+         FROM session_message_attachments
+         WHERE session_id = ?
+         ORDER BY created_at ASC`
+      )
+      .all(sessionId) as SessionMessageAttachmentRow[];
+
+    return rows.map(mapSessionMessageAttachmentRow);
+  }
+
   listBySessionAndMessageIds(
     sessionId: string,
     messageIds: string[]
@@ -169,6 +192,12 @@ export class SessionMessageAttachmentRepository {
     this.db
       .prepare(`DELETE FROM session_message_attachments WHERE id IN (${placeholders})`)
       .run(...attachmentIds);
+  }
+
+  deleteBySession(sessionId: string): void {
+    this.db
+      .prepare("DELETE FROM session_message_attachments WHERE session_id = ?")
+      .run(sessionId);
   }
 }
 

@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import type {
@@ -374,6 +374,20 @@ export class KimiAdapter implements ProviderAdapter {
     };
   }
 
+  async deleteSession(
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<void> {
+    const files = this.resolveSessionFiles(providerSessionId, rawStoreRef);
+
+    if (!existsSync(files.sessionDir)) {
+      throw new Error("PROVIDER_SESSION_NOT_FOUND");
+    }
+
+    rmSync(files.sessionDir, { recursive: true, force: true });
+    this.sessionSummaryCache.delete(buildKimiSessionRawStoreRef(files.sessionId));
+  }
+
   getProviderCapabilities(): ProviderCapabilities {
     const currentDefaultModel = normalizeOptionalText(this.options.defaultModel);
 
@@ -390,6 +404,7 @@ export class KimiAdapter implements ProviderAdapter {
       supportsAttachments: false,
       supportsPermissionPrompt: false,
       supportsCheckpoint: false,
+      supportsSessionDelete: true,
       modelOptions: [
         {
           id: "provider-default",

@@ -349,6 +349,12 @@ const ASSISTANT_CAPABILITIES: AssistantCapabilityDescriptor[] = [
     summary: "从指定会话或消息点 fork 新会话"
   },
   {
+    name: "sessions.delete",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "删除指定真实会话"
+  },
+  {
     name: "automations.list",
     mode: "read",
     enabled: true,
@@ -635,7 +641,7 @@ export class AssistantCapabilityService {
     >,
     private readonly sessionHistoryService: Pick<
       SessionHistoryService,
-      "getSession" | "readSessionHistory" | "forkSession"
+      "getSession" | "readSessionHistory" | "forkSession" | "deleteSession"
     >,
     private readonly sessionLiveRuntimeService: Pick<
       SessionLiveRuntimeService,
@@ -968,6 +974,24 @@ export class AssistantCapabilityService {
       id: input.sessionId
     }, {
       session
+    });
+  }
+
+  async deleteSession(
+    sessionId: string,
+    userId: string
+  ): Promise<AssistantCapabilityReceipt<{
+    sessionId: string;
+    deleted: true;
+  }>> {
+    await this.sessionHistoryService.deleteSession(sessionId, userId);
+
+    return this.createReceipt("sessions.delete", {
+      kind: "session",
+      id: sessionId
+    }, {
+      sessionId,
+      deleted: true
     });
   }
 

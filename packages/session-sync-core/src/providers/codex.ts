@@ -1,5 +1,5 @@
 import { basename, dirname, join } from "node:path";
-import { existsSync, readFileSync, readdirSync, renameSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import crypto from "node:crypto";
 
 import type {
@@ -1018,6 +1018,55 @@ export class CodexAdapter implements ProviderAdapter {
     };
   }
 
+  async deleteSession(
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<void> {
+    const resolvedStoreRef = this.resolveSessionFilePath(rawStoreRef, providerSessionId);
+    const threadMetadata = this.readThreadMetadataIndex().get(providerSessionId) ?? null;
+    const resolvedMetadataStoreRef =
+      threadMetadata?.rolloutPath && threadMetadata.rolloutPath.trim()
+        ? this.resolveSessionFilePath(threadMetadata.rolloutPath, providerSessionId)
+        : null;
+    const candidateFilePaths = new Set(
+      [resolvedStoreRef, resolvedMetadataStoreRef].filter(
+        (value): value is string => typeof value === "string" && value.trim().length > 0
+      )
+    );
+    const stateDbPath = findLatestCodexStateDatabase(this.options.homeDir);
+    let deletedAny = false;
+
+    for (const filePath of candidateFilePaths) {
+      if (!existsSync(filePath)) {
+        continue;
+      }
+
+      rmSync(filePath, { force: true });
+      this.historyCache.delete(filePath);
+      this.sessionSummaryCache.delete(filePath);
+      deletedAny = true;
+    }
+
+    if (stateDbPath) {
+      const DatabaseSync = loadDatabaseSync();
+      let db: DatabaseSyncType | null = null;
+
+      try {
+        db = new DatabaseSync(stateDbPath, { open: true });
+        const result = db.prepare("DELETE FROM threads WHERE id = ?").run(providerSessionId);
+        deletedAny = deletedAny || result.changes > 0;
+      } finally {
+        db?.close();
+      }
+    }
+
+    this.invalidateThreadMetadataIndexCache();
+
+    if (!deletedAny) {
+      throw new Error("PROVIDER_SESSION_NOT_FOUND");
+    }
+  }
+
   private async updateArchiveStateViaThreadControlTransport(
     providerSessionId: string,
     resolvedStoreRef: string,
@@ -1078,6 +1127,7 @@ export class CodexAdapter implements ProviderAdapter {
       supportsPermissionPrompt: true,
       supportsCheckpoint: false,
       supportsSessionFork: true,
+      supportsSessionDelete: true,
       limitations: [
         "运行中追加消息依赖 Codex CLI app-server 暴露 turn/steer；当前项目实测 codex-cli 0.118.0 可用。",
         "当前 npm SDK 仍只有 run/runStreamed 轮询式接口，宿主运行时需经由 Codex CLI app-server 才能直发 steer。"

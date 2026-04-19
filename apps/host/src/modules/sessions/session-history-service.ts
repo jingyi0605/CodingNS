@@ -87,6 +87,10 @@ import {
   type TaskMetricsSnapshot
 } from "../tasks/task-types.js";
 import { CodexAppServerHelperClient } from "./codex-app-server-helper-client.js";
+import {
+  CodingnsProviderSessionDeleteCli,
+  type ProviderSessionDeleteCli
+} from "./provider-session-delete-cli.js";
 
 interface StartSessionInput {
   workspaceId: string;
@@ -214,6 +218,7 @@ interface SessionStateRecordRow {
 
 interface SessionHistoryAdapterOverrides {
   codexForkTransportFactory?: () => CodexForkTransport;
+  providerSessionDeleteCli?: ProviderSessionDeleteCli;
 }
 
 type LiveActivityObservationResolver = (sessionId: string) => SessionActivityObservation | null;
@@ -241,6 +246,7 @@ export class SessionHistoryService {
   private readonly capabilityService: CapabilityService;
   private readonly sessionActivityAuthorityService: SessionActivityAuthorityService;
   private readonly sessionForkRepository: Pick<SessionForkRepository, "upsert" | "findBySessionId">;
+  private readonly providerSessionDeleteCli: ProviderSessionDeleteCli;
   private readonly claudeCodeHomeDir: string;
   private readonly codexModelOptionsService: CodexModelOptionsService;
   private readonly openCodeModelOptionsService: OpenCodeModelOptionsService;
@@ -280,6 +286,8 @@ export class SessionHistoryService {
   ) {
     this.sessionActivityAuthorityService = sessionActivityAuthorityService;
     this.sessionForkRepository = sessionForkRepository ?? new SessionForkRepository(db);
+    this.providerSessionDeleteCli =
+      adapterOverrides.providerSessionDeleteCli ?? new CodingnsProviderSessionDeleteCli(config);
     this.taskManager = taskManager;
     this.claudeCodeHomeDir = config.claudeCodeHomeDir;
     this.providerCliCommandPaths = {
@@ -1758,6 +1766,40 @@ export class SessionHistoryService {
       rawStoreRef: nextRawStoreRef,
       isArchived: nextArchivedState
     });
+  }
+
+  async deleteSession(sessionId: string, userId: string): Promise<void> {
+    const binding = this.getBindingOrThrow(sessionId);
+    const existing = this.getSessionListItemOrThrow(sessionId, userId);
+
+    if (existing.runningState === "starting" || existing.runningState === "running") {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "SESSION_DELETE_RUNNING",
+        detail: "运行中的会话不能直接删除，请先等当前执行结束",
+        field: "sessionId"
+      });
+    }
+
+    try {
+      await this.providerSessionDeleteCli.deleteSession({
+        provider: binding.provider,
+        providerSessionId: binding.providerSessionId,
+        rawStoreRef: binding.rawStoreRef
+      });
+    } catch (error) {
+      if (!isProviderSessionMissing(error)) {
+        throw mapSessionProviderError(error);
+      }
+    }
+
+    const deleteTransaction = this.db.transaction((targetSessionId: string) => {
+      this.detachSessionRelationsBeforeDelete(targetSessionId);
+      this.deleteSessionById(targetSessionId);
+    });
+
+    deleteTransaction(sessionId);
+    this.removeWorkspaceSessionRelation(sessionId);
   }
 
   async renameSessionTitle(
@@ -3293,6 +3335,7 @@ export class SessionHistoryService {
 
     const deleteTransaction = this.db.transaction((ids: string[]) => {
       for (const sessionId of ids) {
+        this.detachSessionRelationsBeforeDelete(sessionId);
         this.deleteSessionById(sessionId);
       }
     });
@@ -3686,9 +3729,13 @@ export class SessionHistoryService {
   }
 
   private deleteSessionById(sessionId: string): void {
+    this.sessionMessageAttachmentService.deleteSessionAttachments(sessionId);
     this.sessionChangedFileService.deleteBySessionId(sessionId);
     this.db
       .prepare("DELETE FROM session_message_attachments WHERE session_id = ?")
+      .run(sessionId);
+    this.db
+      .prepare("DELETE FROM session_message_origins WHERE session_id = ?")
       .run(sessionId);
     this.db
       .prepare("DELETE FROM session_send_queue WHERE session_id = ?")
@@ -3711,6 +3758,97 @@ export class SessionHistoryService {
     this.db
       .prepare("DELETE FROM session_bindings WHERE session_id = ?")
       .run(sessionId);
+  }
+
+  private detachSessionRelationsBeforeDelete(sessionId: string): void {
+    this.db
+      .prepare(
+        `UPDATE session_indices
+         SET parent_session_id = NULL
+         WHERE parent_session_id = ?`
+      )
+      .run(sessionId);
+    this.db
+      .prepare(
+        `DELETE FROM session_forks
+         WHERE parent_session_id = ?
+            OR fork_source_session_id = ?`
+      )
+      .run(sessionId, sessionId);
+    this.db
+      .prepare("DELETE FROM butler_control_sessions WHERE session_id = ?")
+      .run(sessionId);
+
+    const butlerSessionIds = this.db
+      .prepare(
+        `SELECT id
+         FROM butler_sessions
+         WHERE session_id = ?`
+      )
+      .all(sessionId)
+      .map((row) => String((row as { id: string }).id));
+
+    if (butlerSessionIds.length === 0) {
+      return;
+    }
+
+    const butlerPlaceholders = butlerSessionIds.map(() => "?").join(", ");
+    const checkpointIds = this.db
+      .prepare(
+        `SELECT id
+         FROM session_checkpoints
+         WHERE butler_session_id IN (${butlerPlaceholders})`
+      )
+      .all(...butlerSessionIds)
+      .map((row) => String((row as { id: string }).id));
+
+    if (checkpointIds.length > 0) {
+      const checkpointPlaceholders = checkpointIds.map(() => "?").join(", ");
+      this.db
+        .prepare(
+          `UPDATE project_memories
+           SET source_checkpoint_id = NULL
+           WHERE source_checkpoint_id IN (${checkpointPlaceholders})`
+        )
+        .run(...checkpointIds);
+    }
+
+    this.db
+      .prepare(
+        `UPDATE project_memories
+         SET source_butler_session_id = NULL
+         WHERE source_butler_session_id IN (${butlerPlaceholders})`
+      )
+      .run(...butlerSessionIds);
+    this.db
+      .prepare(
+        `UPDATE patrol_runs
+         SET butler_session_id = NULL
+         WHERE butler_session_id IN (${butlerPlaceholders})`
+      )
+      .run(...butlerSessionIds);
+    this.db
+      .prepare(
+        `UPDATE verification_runs
+         SET butler_session_id = NULL
+         WHERE butler_session_id IN (${butlerPlaceholders})`
+      )
+      .run(...butlerSessionIds);
+    this.db
+      .prepare("DELETE FROM butler_sessions WHERE session_id = ?")
+      .run(sessionId);
+  }
+
+  private removeWorkspaceSessionRelation(sessionId: string): void {
+    for (const relationMap of this.workspaceSessionRelations.values()) {
+      relationMap.delete(sessionId);
+
+      for (const relation of relationMap.values()) {
+        if (relation.parentSessionId === sessionId) {
+          relation.parentSessionId = null;
+        }
+      }
+    }
   }
 
   private buildKnownSessionSummaries(
@@ -4731,6 +4869,10 @@ function isAcceptedUserMessageTimestamp(
 
 function isSyntheticKimiHistoryTimestamp(timestamp: string): boolean {
   return timestamp.startsWith("2020-01-01T00:");
+}
+
+function isProviderSessionMissing(error: unknown): boolean {
+  return error instanceof Error && error.message === "PROVIDER_SESSION_NOT_FOUND";
 }
 
 function createDeliveredHistoryMessageState(): DeliveredHistoryMessageState {

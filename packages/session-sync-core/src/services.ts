@@ -214,6 +214,20 @@ export class SessionSyncService {
       .sendMessage(providerSessionId, rawStoreRef, content, clientRequestId, permissionMode);
   }
 
+  async deleteSession(
+    providerId: string,
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<void> {
+    const provider = this.registry.get(providerId);
+
+    if (!provider.deleteSession) {
+      throw new Error("PROVIDER_DELETE_NOT_SUPPORTED");
+    }
+
+    await provider.deleteSession(providerSessionId, rawStoreRef);
+  }
+
   async readSessionTitle(
     providerId: string,
     providerSessionId: string,

@@ -9,6 +9,13 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const distRoot = path.join(packageRoot, "dist");
 const ASSISTANT_REQUEST_SOURCE_HEADER = "X-CodingNS-Assistant-Source";
 const ASSISTANT_CLI_REQUEST_SOURCE = "assistant-cli";
+const PROVIDER_SESSION_DELETE_PROVIDERS = new Set([
+  "claude-code",
+  "codex",
+  "opencode",
+  "gemini",
+  "kimi"
+]);
 
 const [command, ...argv] = process.argv.slice(2);
 
@@ -22,6 +29,9 @@ switch (command) {
     break;
   case "assistant":
     await runAssistantCommand(argv);
+    break;
+  case "provider-sessions":
+    await runProviderSessionsCommand(argv);
     break;
   case "skills":
     await runSkillsCommand(argv);
@@ -199,6 +209,16 @@ async function runAssistantCommand(argv) {
         path: `/api/assistant/sessions/${requirePositional(sessionId, "sessionId")}/runtime`,
         argv: tail,
         helpTopic: "sessions.runtime"
+      }));
+      return;
+    }
+    case "sessions:delete": {
+      const [sessionId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "DELETE",
+        path: `/api/assistant/sessions/${requirePositional(sessionId, "sessionId")}`,
+        argv: tail,
+        helpTopic: "sessions.delete"
       }));
       return;
     }
@@ -886,6 +906,116 @@ async function runSkillsCommand(argv) {
   }
 }
 
+async function runProviderSessionsCommand(argv) {
+  const [action, ...rest] = argv;
+
+  if (!action || isHelpToken(action)) {
+    printProviderSessionsHelpTopic(buildProviderSessionsHelpTopic(rest[0]), 0);
+  }
+
+  if (rest.length > 0 && isHelpToken(rest[0])) {
+    printProviderSessionsHelpTopic(buildProviderSessionsHelpTopic(action), 0);
+  }
+
+  switch (action) {
+    case "delete": {
+      const options = parseArgs(rest, {
+        supportedOptions: ["provider", "provider-session-id", "raw-store-ref"]
+      });
+
+      if (options.help) {
+        printProviderSessionsHelpTopic("provider-sessions.delete", 0);
+      }
+
+      if (options.errors.length > 0) {
+        for (const error of options.errors) {
+          console.error(`[codingns] ${error}`);
+        }
+        printProviderSessionsHelpTopic("provider-sessions.delete", 1);
+      }
+
+      const provider = requireOptionValue(options.values.provider, "provider");
+      const providerSessionId = requireOptionValue(
+        options.values["provider-session-id"],
+        "provider-session-id"
+      );
+      const rawStoreRef = requireOptionValue(options.values["raw-store-ref"], "raw-store-ref");
+
+      if (!PROVIDER_SESSION_DELETE_PROVIDERS.has(provider)) {
+        fail(
+          `provider-sessions delete 仅支持 ${[...PROVIDER_SESSION_DELETE_PROVIDERS].join(", ")}`
+        );
+      }
+
+      const { SessionSyncService, ProviderRegistry } = await import("@codingns/session-sync-core");
+      const {
+        ClaudeCodeAdapter,
+        CodexAdapter,
+        GeminiAdapter,
+        KimiAdapter,
+        OpenCodeAdapter
+      } = await import("@codingns/session-sync-core");
+      const homeDir = os.homedir();
+      const registry = new ProviderRegistry([
+        new ClaudeCodeAdapter({
+          homeDir: readStringOption(
+            process.env.CODINGNS_CLAUDE_CODE_HOME,
+            path.join(homeDir, ".claude")
+          )
+        }),
+        new CodexAdapter({
+          homeDir: readStringOption(
+            process.env.CODINGNS_CODEX_HOME,
+            path.join(homeDir, ".codex")
+          )
+        }),
+        new GeminiAdapter({
+          homeDir: readStringOption(
+            process.env.CODINGNS_GEMINI_HOME,
+            path.join(homeDir, ".gemini")
+          ),
+          commandPath: readStringOption(process.env.CODINGNS_GEMINI_COMMAND, "gemini")
+        }),
+        new KimiAdapter({
+          homeDir: readStringOption(
+            process.env.CODINGNS_KIMI_HOME,
+            path.join(homeDir, ".kimi")
+          ),
+          defaultModel: readOptionalTrimmedValue(process.env.CODINGNS_KIMI_DEFAULT_MODEL)
+        }),
+        new OpenCodeAdapter({
+          baseUrl: readOptionalTrimmedValue(process.env.CODINGNS_OPENCODE_BASE_URL) ?? undefined,
+          dataDir:
+            readOptionalTrimmedValue(process.env.CODINGNS_OPENCODE_DATA_DIR) ?? undefined,
+          dbPath:
+            readOptionalTrimmedValue(process.env.CODINGNS_OPENCODE_DB_PATH) ?? undefined
+        })
+      ]);
+      const sessionSyncService = new SessionSyncService(registry);
+
+      try {
+        await sessionSyncService.deleteSession(provider, providerSessionId, rawStoreRef);
+      } catch (error) {
+        console.error(
+          JSON.stringify(normalizeProviderSessionDeleteFailure(error), null, 2)
+        );
+        process.exit(1);
+      }
+
+      await printAssistantResponse({
+        ok: true,
+        provider,
+        providerSessionId,
+        rawStoreRef
+      });
+      return;
+    }
+    default:
+      console.error(`[codingns] 不支持的 provider-sessions 子命令：${action}`);
+      printProviderSessionsHelpTopic("provider-sessions", 1);
+  }
+}
+
 async function requestAssistant(command, buildPayload) {
   const options = parseArgs(command.argv, {
     supportedOptions: [
@@ -1414,6 +1544,7 @@ codingns 用法：
 
   codingns start [--host 0.0.0.0] [--port 3002] [--data-dir ~/.codingns] [--demo]
   codingns assistant <group> <action> [options]
+  codingns provider-sessions <action> [options]
   codingns skills <action> [options]
 
 说明：
@@ -1441,6 +1572,10 @@ skills 例子：
   codingns skills overview --token <token>
   codingns skills add --source ./my-skill --target codex --token <token>
   codingns skills sync <skillId> --target gemini --token <token>
+
+provider-sessions 例子：
+
+  codingns provider-sessions delete --provider codex --provider-session-id <id> --raw-store-ref <ref>
 `.trim();
 
   if (exitCode === 0) {
@@ -1466,6 +1601,18 @@ function printAssistantHelpTopic(topic, exitCode) {
 
 function printSkillsHelpTopic(topic, exitCode) {
   const output = getSkillsHelpText(topic);
+
+  if (exitCode === 0) {
+    console.log(output);
+  } else {
+    console.error(output);
+  }
+
+  process.exit(exitCode);
+}
+
+function printProviderSessionsHelpTopic(topic, exitCode) {
+  const output = getProviderSessionsHelpText(topic);
 
   if (exitCode === 0) {
     console.log(output);
@@ -1640,6 +1787,7 @@ codingns assistant sessions
   get       读取会话详情
   messages  读取消息窗口
   runtime   读取运行态
+  delete    删除真实会话
   send      向真实项目会话发送消息
   fork      从会话或消息点 fork 新会话
 
@@ -1707,6 +1855,16 @@ codingns assistant sessions send
 
 用法：
   codingns assistant sessions send <sessionId> --message "..." [--client-request-id <id>] [--model <model>] [--reasoning-level <level>] [--permission-mode <mode>] --token <token>
+`.trim();
+    case "sessions.delete":
+      return `
+codingns assistant sessions delete
+
+用途：
+  删除指定真实会话；这会同时清理助手侧关联记录和工作区索引。
+
+用法：
+  codingns assistant sessions delete <sessionId> --token <token>
 `.trim();
     case "sessions.fork":
       return `
@@ -2173,6 +2331,7 @@ codingns assistant 用法：
   codingns assistant sessions get <sessionId> [--base-url ...] --token <token>
   codingns assistant sessions messages <sessionId> [--cursor <cursor>] [--limit 40] [--direction forward|backward] --token <token>
   codingns assistant sessions runtime <sessionId> [--base-url ...] --token <token>
+  codingns assistant sessions delete <sessionId> [--base-url ...] --token <token>
   codingns assistant sessions send <sessionId> --message "..." [--client-request-id <id>] [--model <model>] [--reasoning-level <level>] [--permission-mode <mode>] --token <token>
   codingns assistant sessions fork <sessionId> [--source-type session|message] [--message-id <id>] [--strategy auto|native-only|reconstruct-only] [--target-provider <provider>] --token <token>
   codingns assistant sandboxes list [--status active|archived|expired|deleted] [--base-url ...] --token <token>
@@ -2204,6 +2363,39 @@ codingns assistant 用法：
   CODINGNS_BASE_URL      默认 Host 地址，未传时默认 http://127.0.0.1:3002
   CODINGNS_ACCESS_TOKEN  默认 Bearer token
   CODINGNS_AUTH_FILE     可选认证文件，支持读取 apiBaseUrl/accessToken
+`.trim();
+  }
+}
+
+function getProviderSessionsHelpText(topic) {
+  switch (topic) {
+    case "provider-sessions.delete":
+      return `
+codingns provider-sessions delete
+
+用途：
+  直接删除底层 provider 会话，不经过项目会话索引。适合给 Host 或脚本层做真实删除调用。
+
+用法：
+  codingns provider-sessions delete --provider <claude-code|codex|opencode|gemini|kimi> --provider-session-id <id> --raw-store-ref <ref>
+`.trim();
+    default:
+      return `
+codingns provider-sessions 用法：
+
+  codingns provider-sessions delete --provider <claude-code|codex|opencode|gemini|kimi> --provider-session-id <id> --raw-store-ref <ref>
+
+环境变量：
+
+  CODINGNS_CLAUDE_CODE_HOME   Claude Code 数据目录，默认 ~/.claude
+  CODINGNS_CODEX_HOME         Codex 数据目录，默认 ~/.codex
+  CODINGNS_GEMINI_HOME        Gemini 数据目录，默认 ~/.gemini
+  CODINGNS_GEMINI_COMMAND     Gemini CLI 路径，默认 gemini
+  CODINGNS_KIMI_HOME          Kimi 数据目录，默认 ~/.kimi
+  CODINGNS_KIMI_DEFAULT_MODEL Kimi 默认模型，可选
+  CODINGNS_OPENCODE_BASE_URL  OpenCode server 地址，可选
+  CODINGNS_OPENCODE_DATA_DIR  OpenCode 数据目录，可选
+  CODINGNS_OPENCODE_DB_PATH   OpenCode sqlite 路径，可选
 `.trim();
   }
 }
@@ -2427,8 +2619,44 @@ function buildSkillsHelpTopic(action) {
   return `skills.${action}`;
 }
 
+function buildProviderSessionsHelpTopic(action) {
+  if (!action || action === "--help" || action === "-h") {
+    return "provider-sessions";
+  }
+
+  return `provider-sessions.${action}`;
+}
+
 function isHelpToken(value) {
   return value === "help" || value === "--help" || value === "-h";
+}
+
+function normalizeProviderSessionDeleteFailure(error) {
+  const errorCode =
+    error instanceof Error && typeof error.message === "string" && error.message.trim().length > 0
+      ? error.message.trim()
+      : "PROVIDER_DELETE_FAILED";
+
+  return {
+    ok: false,
+    errorCode,
+    detail: describeProviderSessionDeleteFailure(errorCode)
+  };
+}
+
+function describeProviderSessionDeleteFailure(errorCode) {
+  switch (errorCode) {
+    case "PROVIDER_DELETE_NOT_SUPPORTED":
+      return "当前 provider 还没有接入 CLI 删除能力";
+    case "PROVIDER_SESSION_NOT_FOUND":
+      return "provider 会话不存在或已经被删除";
+    case "PROVIDER_SESSION_ID_REQUIRED":
+      return "providerSessionId 不能为空";
+    case "PROVIDER_NOT_SUPPORTED":
+      return "当前 provider 不受支持";
+    default:
+      return errorCode;
+  }
 }
 
 function fail(message) {

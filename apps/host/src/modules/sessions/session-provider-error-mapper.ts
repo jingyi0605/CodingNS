@@ -21,6 +21,14 @@ export function mapSessionProviderError(error: unknown): AppError {
     });
   }
 
+  if (error instanceof Error && error.message === "PROVIDER_DELETE_NOT_SUPPORTED") {
+    return new AppError({
+      statusCode: 400,
+      errorCode: "PROVIDER_DELETE_NOT_SUPPORTED",
+      detail: "当前 provider 还没有接入统一删除能力"
+    });
+  }
+
   if (error instanceof Error && error.message === "FORK_TARGET_PROVIDER_NOT_SUPPORTED") {
     return new AppError({
       statusCode: 400,

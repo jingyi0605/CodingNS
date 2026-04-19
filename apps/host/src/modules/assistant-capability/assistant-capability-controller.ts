@@ -351,6 +351,16 @@ export class AssistantCapabilityController {
     ));
   };
 
+  readonly deleteSession = async (
+    request: FastifyRequest<{ Params: AssistantSessionParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.assistantCapabilityService.deleteSession(
+      request.params.sessionId,
+      requireUserId(request)
+    ));
+  };
+
   readonly listSessionMessages = async (
     request: FastifyRequest<{
       Params: AssistantSessionParams;

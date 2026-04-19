@@ -54,5 +54,6 @@ export async function registerSessionRoutes(
     },
     sessionController.startLive
   );
+  app.delete("/api/sessions/:sessionId", sessionController.deleteSession);
   app.delete("/api/sessions/:sessionId/queue/:queueItemId", sessionController.deleteQueuedMessage);
 }

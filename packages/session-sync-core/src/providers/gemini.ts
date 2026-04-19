@@ -1,5 +1,5 @@
 import { execFile as nodeExecFile } from "node:child_process";
-import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { basename, delimiter, dirname, extname, join } from "node:path";
 import { promisify } from "node:util";
 
@@ -362,6 +362,33 @@ export class GeminiAdapter implements ProviderAdapter {
     throw new Error("GEMINI_ARCHIVE_NOT_SUPPORTED");
   }
 
+  async deleteSession(
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<void> {
+    const resolvedProviderSessionId = this.resolveProviderSessionId(
+      providerSessionId,
+      rawStoreRef
+    );
+    const matchedFilePaths = this.findLocalChatFilePathsBySessionId(resolvedProviderSessionId);
+    let deletedAny = false;
+
+    for (const filePath of matchedFilePaths) {
+      if (!existsSync(filePath)) {
+        continue;
+      }
+
+      rmSync(filePath, { force: true });
+      this.parsedChatCache.delete(filePath);
+      this.localSessionCache.delete(filePath);
+      deletedAny = true;
+    }
+
+    if (!deletedAny) {
+      throw new Error("PROVIDER_SESSION_NOT_FOUND");
+    }
+  }
+
   getProviderCapabilities(): ProviderCapabilities {
     return {
       provider: this.providerId,
@@ -376,6 +403,7 @@ export class GeminiAdapter implements ProviderAdapter {
       supportsAttachments: false,
       supportsPermissionPrompt: false,
       supportsCheckpoint: false,
+      supportsSessionDelete: true,
       limitations: [
         "当前 Gemini 仅接入会话发现与历史只读能力，运行时链路尚未启用",
         "本地 chats schema 属于非稳定公开协议，升级 CLI 后需要通过 fixture 回归"
@@ -627,6 +655,48 @@ export class GeminiAdapter implements ProviderAdapter {
     }
 
     throw new Error("GEMINI_CHAT_NOT_FOUND");
+  }
+
+  private findLocalChatFilePathsBySessionId(providerSessionId: string): string[] {
+    const sessionId = providerSessionId.trim();
+
+    if (!sessionId) {
+      throw new Error("PROVIDER_SESSION_ID_REQUIRED");
+    }
+
+    const matchedFilePaths = new Set<string>();
+
+    for (const filePath of listGeminiChatFiles(this.options.homeDir)) {
+      if (basename(filePath, ".json") === sessionId) {
+        matchedFilePaths.add(filePath);
+        continue;
+      }
+
+      try {
+        const stats = statSync(filePath);
+        const cached = this.localSessionCache.get(filePath);
+        const summary =
+          cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size
+            ? cached.session
+            : this.parseLocalSessionSummary(filePath, stats);
+
+        if (!cached || cached.mtimeMs !== stats.mtimeMs || cached.size !== stats.size) {
+          this.localSessionCache.set(filePath, {
+            mtimeMs: stats.mtimeMs,
+            size: stats.size,
+            session: summary
+          });
+        }
+
+        if (summary.providerSessionId === sessionId) {
+          matchedFilePaths.add(filePath);
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return [...matchedFilePaths];
   }
 
   private readCachedLocalChatFile(filePath: string): GeminiParsedChat {

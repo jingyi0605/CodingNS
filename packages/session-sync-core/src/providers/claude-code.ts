@@ -1,5 +1,5 @@
 import { basename, dirname, join } from "node:path";
-import { existsSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, statSync, writeFileSync } from "node:fs";
 import crypto from "node:crypto";
 
 import {
@@ -600,6 +600,21 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     throw new Error("claude-code archive state is managed by host");
   }
 
+  async deleteSession(
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<void> {
+    const targetFilePath = this.resolveForkSourceFilePath(rawStoreRef, providerSessionId);
+
+    if (!existsSync(targetFilePath)) {
+      throw new Error("PROVIDER_SESSION_NOT_FOUND");
+    }
+
+    rmSync(targetFilePath, { force: true });
+    this.historyCache.delete(targetFilePath);
+    this.sessionSummaryCache.delete(targetFilePath);
+  }
+
   getProviderCapabilities(): ProviderCapabilities {
     return {
       provider: this.providerId,
@@ -615,6 +630,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
       supportsPermissionPrompt: true,
       supportsPermissionRequests: true,
       supportsSessionFork: true,
+      supportsSessionDelete: true,
       supportsCheckpoint: false,
       modelOptions: CLAUDE_MODEL_OPTIONS,
       limitations: ["当前实现只读取原生 jsonl，会话恢复不负责拉起外部 Claude 进程。"]

@@ -390,6 +390,17 @@ export class SessionController {
     );
   };
 
+  readonly deleteSession = async (
+    request: FastifyRequest<{ Params: SessionParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    await this.sessionHistoryService.deleteSession(
+      request.params.sessionId,
+      requireUserId(request)
+    );
+    reply.status(204).send();
+  };
+
   readonly updateArchiveState = async (
     request: FastifyRequest<{ Params: SessionParams; Body: ArchiveSessionBody }>,
     reply: FastifyReply
