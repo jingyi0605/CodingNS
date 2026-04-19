@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -31,12 +31,25 @@ describe("SkillManagementPanel", () => {
 
   it("可以加载 Skill 概况，并支持导入未纳管项与重新同步", async () => {
     let imported = false;
+    let uploaded = false;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
       if (url.endsWith("/api/skills/overview") && method === "GET") {
-        return createJsonResponse(createSkillOverviewResponse({ imported }));
+        return createJsonResponse(createSkillOverviewResponse({ imported, uploaded, assistantUploaded: false }));
+      }
+
+      if (url.endsWith("/api/skills") && method === "POST") {
+        uploaded = true;
+        expect(JSON.parse(String(init?.body))).toEqual({
+          markdownContent: "这是一个通过前端上传的 skill。",
+          scope: "workspace",
+          fileName: "uploaded-skill.md",
+          directoryName: "uploaded-skill",
+          targetCli: ["codex"]
+        });
+        return createJsonResponse({});
       }
 
       if (url.endsWith("/api/skills/import") && method === "POST") {
@@ -69,15 +82,45 @@ describe("SkillManagementPanel", () => {
 
     await userEvent.click(screen.getByRole("button", { name: t("settings.skillManageAction") }));
 
-    expect(await screen.findByRole("dialog", { name: t("settings.skillConfigModalTitle") })).toBeInTheDocument();
-    expect(screen.getByText("team-helper")).toBeInTheDocument();
-    expect(screen.getByText("sample-helper")).toBeInTheDocument();
-    expect(screen.getByText("codingns-assistant")).toBeInTheDocument();
-    expect(screen.getByText(t("settings.skillAssistantRuntimeListTitle"))).toBeInTheDocument();
-    expect(screen.getByText(t("settings.skillAssistantRuntimeListDescription"))).toBeInTheDocument();
-    expect(screen.getByText(t("settings.skillConflictedEmpty"))).toBeInTheDocument();
-    expect(screen.getByText(t("settings.skillDiagnosticsEmpty"))).toBeInTheDocument();
-    expect(screen.getAllByText(t("settings.skillTagAssistantOnly")).length).toBeGreaterThan(0);
+    const dialog = await screen.findByRole("dialog", { name: t("settings.skillConfigModalTitle") });
+
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByText("team-helper")).toBeInTheDocument();
+    expect(within(dialog).getByText("sample-helper")).toBeInTheDocument();
+    expect(within(dialog).getByText("codingns-assistant")).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("heading", {
+        level: 3,
+        name: t("settings.skillAssistantRuntimeListTitle")
+      })
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText(t("settings.skillAssistantRuntimeListDescription"))).toBeInTheDocument();
+    expect(within(dialog).getByText(t("settings.skillConflictedEmpty"))).toBeInTheDocument();
+    expect(within(dialog).getByText(t("settings.skillDiagnosticsEmpty"))).toBeInTheDocument();
+    expect(within(dialog).getAllByText(t("settings.skillTagAssistantOnly")).length).toBeGreaterThan(0);
+
+    const uploadInput = document.querySelector('input[type="file"]');
+    expect(uploadInput).not.toBeNull();
+
+    await userEvent.upload(
+      uploadInput as HTMLInputElement,
+      new File(["这是一个通过前端上传的 skill。"], "uploaded-skill.md", {
+        type: "text/markdown"
+      })
+    );
+
+    expect(await screen.findByText("Uploaded Skill")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: t("settings.skillUploadSubmitAction") }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          t("settings.skillUploadSuccess", {
+            name: "uploaded-skill"
+          })
+        )
+      ).toBeInTheDocument();
+    });
 
     await userEvent.click(screen.getByRole("button", { name: t("settings.skillImportAction") }));
 
@@ -89,7 +132,14 @@ describe("SkillManagementPanel", () => {
       target: t("settings.skillTargetClaudeCode")
     }))).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: t("settings.skillSyncAction") }));
+    const teamHelperTitle = screen.getByText("team-helper");
+    const teamHelperCard = teamHelperTitle.closest(".settings-skill-entry");
+
+    expect(teamHelperCard).not.toBeNull();
+
+    await userEvent.click(
+      within(teamHelperCard as HTMLElement).getByRole("button", { name: t("settings.skillSyncAction") })
+    );
 
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([input, init]) => {
@@ -106,6 +156,54 @@ describe("SkillManagementPanel", () => {
         })
       )
     ).toBeInTheDocument();
+  });
+
+  it("可以把上传的 SKILL 纳管到助手专用作用域", async () => {
+    let assistantUploaded = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (url.endsWith("/api/skills/overview") && method === "GET") {
+        return createJsonResponse(
+          createSkillOverviewResponse({ imported: false, uploaded: false, assistantUploaded })
+        );
+      }
+
+      if (url.endsWith("/api/skills") && method === "POST") {
+        assistantUploaded = true;
+        expect(JSON.parse(String(init?.body))).toEqual({
+          markdownContent: "# Butler Inbox Helper\n\n这是一个助手专用 skill。",
+          scope: "assistant",
+          fileName: "butler-inbox-helper.md",
+          directoryName: "butler-inbox-helper",
+          targetCli: ["codex"]
+        });
+        return createJsonResponse({});
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    global.fetch = fetchMock as typeof fetch;
+
+    renderPanel();
+    await userEvent.click(await screen.findByRole("button", { name: t("settings.skillManageAction") }));
+
+    const uploadInput = document.querySelector('input[type="file"]');
+    expect(uploadInput).not.toBeNull();
+
+    await userEvent.click(screen.getByRole("radio", { name: t("settings.skillUploadScopeAssistant") }));
+    await userEvent.upload(
+      uploadInput as HTMLInputElement,
+      new File(["# Butler Inbox Helper\n\n这是一个助手专用 skill。"], "butler-inbox-helper.md", {
+        type: "text/markdown"
+      })
+    );
+    await userEvent.click(screen.getByRole("button", { name: t("settings.skillUploadSubmitAction") }));
+
+    expect(await screen.findByText("Butler Inbox Helper")).toBeInTheDocument();
+    expect(screen.getByText("/tmp/managed-skills/.assistant-runtime/butler-inbox-helper")).toBeInTheDocument();
   });
 });
 
@@ -139,11 +237,21 @@ function createJsonResponse(payload: unknown): Response {
   });
 }
 
-function createSkillOverviewResponse({ imported }: { imported: boolean }) {
+function createSkillOverviewResponse(
+  {
+    imported,
+    uploaded,
+    assistantUploaded
+  }: {
+    imported: boolean;
+    uploaded: boolean;
+    assistantUploaded: boolean;
+  }
+) {
   return {
     summary: {
-      managedSkillCount: 1,
-      managedEntryCount: 1,
+      managedSkillCount: uploaded ? 2 : 1,
+      managedEntryCount: uploaded ? 2 : 1,
       unmanagedEntryCount: imported ? 0 : 1,
       conflictedEntryCount: 0,
       diagnosticCount: 0
@@ -153,6 +261,7 @@ function createSkillOverviewResponse({ imported }: { imported: boolean }) {
         skill: {
           id: "skill-1",
           name: "team-helper",
+          scope: "workspace",
           directoryName: "team-helper",
           sourceType: "local-import",
           sourcePath: "/tmp/skills/team-helper",
@@ -173,7 +282,37 @@ function createSkillOverviewResponse({ imported }: { imported: boolean }) {
           }
         ],
         ssotPath: "/tmp/managed-skills/codingns-assistant"
-      }
+      },
+      ...(uploaded
+        ? [
+            {
+              skill: {
+                id: "skill-2",
+                name: "Uploaded Skill",
+                scope: "workspace",
+                directoryName: "uploaded-skill",
+                sourceType: "local-import",
+                sourcePath: null,
+                contentHash: "hash-uploaded",
+                managedState: "active",
+                createdAt: "2026-04-14T10:20:00.000Z",
+                updatedAt: "2026-04-14T10:20:00.000Z"
+              },
+              bindings: [
+                {
+                  skillId: "skill-2",
+                  targetCli: "codex",
+                  enabled: true,
+                  syncStatus: "synced",
+                  lastSyncedAt: "2026-04-14T10:20:00.000Z",
+                  lastErrorCode: null,
+                  lastErrorDetail: null
+                }
+              ],
+              ssotPath: "/tmp/managed-skills/uploaded-skill"
+            }
+          ]
+        : [])
     ],
     assistantRuntimeSkills: [
       {
@@ -181,7 +320,17 @@ function createSkillOverviewResponse({ imported }: { imported: boolean }) {
         directoryName: "codingns-assistant",
         sourcePath: "/repo/builtin-skills/codingns-assistant",
         usedByTargetCli: ["codex", "claude-code"]
-      }
+      },
+      ...(assistantUploaded
+        ? [
+            {
+              name: "Butler Inbox Helper",
+              directoryName: "butler-inbox-helper",
+              sourcePath: "/tmp/managed-skills/.assistant-runtime/butler-inbox-helper",
+              usedByTargetCli: ["codex"]
+            }
+          ]
+        : [])
     ],
     managedEntries: [
       {

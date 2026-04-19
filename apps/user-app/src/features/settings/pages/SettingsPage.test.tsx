@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -208,10 +208,17 @@ describe("SettingsPage", () => {
 
     await userEvent.click(screen.getByRole("button", { name: t("settings.skillManageAction") }));
 
-    expect(await screen.findByRole("dialog", { name: t("settings.skillConfigModalTitle") })).toBeInTheDocument();
-    expect(screen.getByText(t("settings.skillAssistantRuntimeListTitle"))).toBeInTheDocument();
-    expect(screen.getByText("codingns-assistant")).toBeInTheDocument();
-    expect(screen.getAllByText(t("settings.skillTagAssistantOnly")).length).toBeGreaterThan(0);
+    const dialog = await screen.findByRole("dialog", { name: t("settings.skillConfigModalTitle") });
+
+    expect(dialog).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("heading", {
+        level: 3,
+        name: t("settings.skillAssistantRuntimeListTitle")
+      })
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText("codingns-assistant")).toBeInTheDocument();
+    expect(within(dialog).getAllByText(t("settings.skillTagAssistantOnly")).length).toBeGreaterThan(0);
   });
 
   it("iOS 客户端使用移动布局时仍然允许修改服务器地址", async () => {
@@ -726,12 +733,13 @@ describe("SettingsPage", () => {
 
     await userEvent.click(screen.getByRole("button", { name: t("settings.parallelTaskDebugAction") }));
 
-    expect(await screen.findByRole("dialog", { name: t("settings.parallelTaskDebugModalTitle") })).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog", { name: t("settings.parallelTaskDebugModalTitle") });
+    expect(dialog).toBeInTheDocument();
     expect((await screen.findAllByText("workspace.discovery")).length).toBeGreaterThan(0);
     expect(screen.getByText(t("settings.parallelTaskDebugEventLoopTitle"))).toBeInTheDocument();
     expect(screen.getByText(t("settings.parallelTaskDebugMetricEnqueue"))).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: t("settings.parallelTaskDebugClose") }));
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.parallelTaskDebugClose") }));
 
     await waitFor(() => {
       expect(
@@ -910,6 +918,7 @@ function createSkillOverviewResponse() {
         skill: {
           id: "skill-1",
           name: "team-helper",
+          scope: "workspace",
           directoryName: "team-helper",
           sourceType: "local-import",
           sourcePath: "/tmp/skills/team-helper",

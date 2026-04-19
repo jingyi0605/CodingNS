@@ -1,8 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 
 import type {
   AssistantRuntimeSkillOverviewItemDto,
   ManagedSkillOverviewItemDto,
+  SkillScope,
   SkillOverviewDto,
   SkillScanDiagnosticDto,
   SkillScanEntryDto,
@@ -10,6 +11,7 @@ import type {
   SkillTargetCli
 } from "../features/settings/api/skills-api";
 import {
+  addSkillFromMarkdown,
   fetchSkillOverview,
   importSkillEntry,
   syncManagedSkillTargets
@@ -23,12 +25,19 @@ type PendingActionKey = string | null;
 
 export function SkillManagementPanel() {
   const accessToken = useAuthSelector((state) => state.session?.accessToken ?? null);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const [overview, setOverview] = useState<SkillOverviewDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [pendingActionKey, setPendingActionKey] = useState<PendingActionKey>(null);
   const [panelError, setPanelError] = useState<string | null>(null);
   const [statusText, setStatusText] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [uploadDraft, setUploadDraft] = useState<SkillUploadDraft | null>(null);
+  const [uploadScope, setUploadScope] = useState<SkillScope>("workspace");
+  const [uploadDirectoryName, setUploadDirectoryName] = useState("");
+  const [uploadTargets, setUploadTargets] = useState<Record<SkillTargetCli, boolean>>(() =>
+    createDefaultUploadTargets("workspace")
+  );
 
   useEffect(() => {
     let active = true;
@@ -161,6 +170,90 @@ export function SkillManagementPanel() {
     }
   }
 
+  async function handleUploadFileChange(event: ChangeEvent<HTMLInputElement>): Promise<void> {
+    const file = event.target.files?.[0] ?? null;
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    setPanelError(null);
+    setStatusText(null);
+
+    try {
+      const markdownContent = await readTextFromFile(file);
+      const draft = prepareSkillUploadDraft(file.name, markdownContent);
+
+      setUploadDraft(draft);
+      setUploadDirectoryName(draft.directoryName);
+      setUploadTargets(createDefaultUploadTargets(uploadScope));
+    } catch (error) {
+      setPanelError(resolveSkillPanelError(error));
+    }
+  }
+
+  async function handleUploadSubmit(): Promise<void> {
+    if (!accessToken || !uploadDraft) {
+      return;
+    }
+
+    const normalizedDirectoryName = normalizeUploadedDirectoryName(uploadDirectoryName);
+
+    if (!normalizedDirectoryName) {
+      setPanelError(t("settings.skillUploadDirectoryInvalid"));
+      return;
+    }
+
+    const selectedTargets = getUploadTargetOptions(uploadScope)
+      .filter((targetCli) => uploadTargets[targetCli])
+      .map((targetCli) => targetCli);
+
+    if (selectedTargets.length === 0) {
+      setPanelError(t("settings.skillUploadTargetRequired"));
+      return;
+    }
+
+    setPendingActionKey("upload");
+    setPanelError(null);
+    setStatusText(null);
+
+    try {
+      await addSkillFromMarkdown({
+        markdownContent: uploadDraft.rawContent,
+        scope: uploadScope,
+        fileName: uploadDraft.fileName,
+        directoryName: normalizedDirectoryName,
+        targetCli: selectedTargets
+      });
+      await reloadOverview();
+      setStatusText(
+        t("settings.skillUploadSuccess", {
+          name: normalizedDirectoryName
+        })
+      );
+      setUploadDraft(null);
+      setUploadDirectoryName("");
+      setUploadTargets(createDefaultUploadTargets(uploadScope));
+    } catch (error) {
+      setPanelError(resolveSkillPanelError(error));
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  function handleUploadScopeChange(scope: SkillScope): void {
+    setUploadScope(scope);
+    setUploadTargets(createDefaultUploadTargets(scope));
+  }
+
+  function handleUploadTargetToggle(targetCli: SkillTargetCli): void {
+    setUploadTargets((current) => ({
+      ...current,
+      [targetCli]: !current[targetCli]
+    }));
+  }
+
   const summary = overview?.summary ?? {
     managedSkillCount: 0,
     managedEntryCount: 0,
@@ -251,6 +344,111 @@ export function SkillManagementPanel() {
 
         {statusText ? <p className="settings-release-status">{statusText}</p> : null}
         {panelError ? <p className="settings-release-status">{panelError}</p> : null}
+
+        <SkillSection
+          title={t("settings.skillUploadSectionTitle")}
+          description={t("settings.skillUploadSectionDescription")}
+          emptyText=""
+          items={[0]}
+          renderItem={() => (
+            <div key="upload-panel" className="settings-skill-upload-panel">
+              <input
+                ref={uploadInputRef}
+                type="file"
+                accept=".md,text/markdown,text/plain"
+                className="settings-skill-upload-input"
+                onChange={(event) => {
+                  void handleUploadFileChange(event);
+                }}
+              />
+              <div className="settings-skill-upload-targets" role="radiogroup" aria-label={t("settings.skillUploadScopeLabel")}>
+                {SKILL_SCOPE_OPTIONS.map((scope) => (
+                  <label key={scope} className="settings-skill-upload-target">
+                    <input
+                      type="radio"
+                      name="skill-upload-scope"
+                      checked={uploadScope === scope}
+                      onChange={() => handleUploadScopeChange(scope)}
+                    />
+                    <span>{resolveSkillScopeLabel(scope)}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="settings-skill-upload-toolbar">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={loading || pendingActionKey !== null}
+                  onClick={() => {
+                    uploadInputRef.current?.click();
+                  }}
+                >
+                  {t("settings.skillUploadPickAction")}
+                </button>
+              </div>
+
+              {uploadDraft ? (
+                <div className="settings-skill-entry">
+                  <div className="settings-skill-entry-main">
+                    <strong className="settings-skill-entry-title">{uploadDraft.previewTitle}</strong>
+                    <p className="settings-skill-entry-meta">
+                      {t("settings.skillUploadPickedFile")}: {uploadDraft.fileName}
+                    </p>
+                    <label className="settings-skill-upload-field">
+                      <span>{t("settings.skillUploadDirectoryLabel")}</span>
+                      <input
+                        className="settings-skill-upload-text"
+                        type="text"
+                        value={uploadDirectoryName}
+                        onChange={(event) => setUploadDirectoryName(event.target.value)}
+                        placeholder={t("settings.skillUploadDirectoryPlaceholder")}
+                      />
+                    </label>
+                    <div className="settings-skill-upload-targets">
+                      {getUploadTargetOptions(uploadScope).map((targetCli) => (
+                        <label key={targetCli} className="settings-skill-upload-target">
+                          <input
+                            type="checkbox"
+                            checked={uploadTargets[targetCli]}
+                            onChange={() => handleUploadTargetToggle(targetCli)}
+                          />
+                          <span>{resolveTargetCliLabel(targetCli)}</span>
+                        </label>
+                      ))}
+                    </div>
+                    {uploadDraft.notes.length > 0 ? (
+                      <div className="settings-skill-tags">
+                        {uploadDraft.notes.map((note, index) => (
+                          <span
+                            key={`${uploadDraft.fileName}:${index}`}
+                            className="settings-skill-tag"
+                            data-status="pending"
+                          >
+                            {note}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="settings-skill-entry-actions">
+                    <button
+                      className="primary-button"
+                      type="button"
+                      disabled={loading || pendingActionKey !== null}
+                      onClick={() => {
+                        void handleUploadSubmit();
+                      }}
+                    >
+                      {pendingActionKey === "upload" ? t("common.loading") : t("settings.skillUploadSubmitAction")}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="settings-skill-empty">{t("settings.skillUploadEmpty")}</div>
+              )}
+            </div>
+          )}
+        />
 
         <SkillSection
           title={t("settings.skillManagedListTitle")}
@@ -488,6 +686,18 @@ function buildSyncActionKey(skillId: string): string {
   return `sync:${skillId}`;
 }
 
+interface SkillUploadDraft {
+  fileName: string;
+  rawContent: string;
+  directoryName: string;
+  previewTitle: string;
+  notes: string[];
+}
+
+const SKILL_TARGET_OPTIONS: readonly SkillTargetCli[] = ["codex", "claude-code", "gemini", "opencode"];
+const ASSISTANT_UPLOAD_TARGET_OPTIONS: readonly SkillTargetCli[] = ["codex", "claude-code"];
+const SKILL_SCOPE_OPTIONS: readonly SkillScope[] = ["workspace", "assistant"];
+
 function resolveSkillPanelError(error: unknown): string {
   if (error instanceof ApiError) {
     return error.message || t("settings.skillLoadFailed");
@@ -507,6 +717,27 @@ function resolveTargetCliLabel(targetCli: SkillTargetCli): string {
     default:
       return t("settings.skillTargetCodex");
   }
+}
+
+function resolveSkillScopeLabel(scope: SkillScope): string {
+  return scope === "assistant"
+    ? t("settings.skillUploadScopeAssistant")
+    : t("settings.skillUploadScopeWorkspace");
+}
+
+function createDefaultUploadTargets(scope: SkillScope): Record<SkillTargetCli, boolean> {
+  const availableTargets = new Set(getUploadTargetOptions(scope));
+
+  return {
+    codex: availableTargets.has("codex"),
+    "claude-code": false,
+    gemini: false,
+    opencode: false
+  };
+}
+
+function getUploadTargetOptions(scope: SkillScope): readonly SkillTargetCli[] {
+  return scope === "assistant" ? ASSISTANT_UPLOAD_TARGET_OPTIONS : SKILL_TARGET_OPTIONS;
 }
 
 function resolveBindingStatusLabel(status: SkillTargetBindingDto["syncStatus"]): string {
@@ -657,4 +888,88 @@ function resolveDiagnosticTags(diagnostic: SkillScanDiagnosticDto): SkillTagView
       status: "assistant-runtime"
     }
   ];
+}
+
+function prepareSkillUploadDraft(fileName: string, markdownContent: string): SkillUploadDraft {
+  const notes: string[] = [];
+  const normalizedContent = markdownContent.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n").trim();
+
+  if (!normalizedContent) {
+    throw new Error(t("settings.skillUploadContentEmpty"));
+  }
+
+  if (normalizedContent !== markdownContent.trim()) {
+    notes.push(t("settings.skillUploadNormalizedNote"));
+  }
+
+  const directoryName = normalizeUploadedDirectoryName(fileName) ?? "";
+  const heading = normalizedContent.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "";
+
+  if (!directoryName) {
+    notes.push(t("settings.skillUploadDirectoryRequiredNote"));
+  }
+
+  if (!heading) {
+    notes.push(t("settings.skillUploadHeadingNote"));
+  }
+
+  return {
+    fileName,
+    rawContent: normalizedContent,
+    directoryName,
+    previewTitle: heading || formatSkillTitleFromDirectoryName(directoryName || "skill"),
+    notes
+  };
+}
+
+async function readTextFromFile(file: File): Promise<string> {
+  if (typeof file.text === "function") {
+    return await file.text();
+  }
+
+  if (typeof FileReader === "undefined") {
+    throw new Error(t("settings.skillUploadReadFailed"));
+  }
+
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onerror = () => {
+      reject(reader.error ?? new Error(t("settings.skillUploadReadFailed")));
+    };
+
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error(t("settings.skillUploadReadFailed")));
+    };
+
+    reader.readAsText(file);
+  });
+}
+
+function normalizeUploadedDirectoryName(input: string): string | null {
+  const basename = input.replace(/\\/g, "/").split("/").pop() ?? input;
+  const withoutExtension = basename.replace(/\.[A-Za-z0-9]+$/, "");
+  const normalized = withoutExtension
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-._]+|[-._]+$/g, "");
+
+  return normalized.length > 0 ? normalized : null;
+}
+
+function formatSkillTitleFromDirectoryName(directoryName: string): string {
+  const title = directoryName
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+
+  return title || directoryName;
 }

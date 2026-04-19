@@ -1,13 +1,15 @@
 import { httpClient } from "../../../network/http-client";
 
 export type SkillTargetCli = "codex" | "claude-code" | "gemini" | "opencode";
+export type SkillScope = "workspace" | "assistant";
 
 export interface ManagedSkillDto {
   id: string;
   name: string;
+  scope: SkillScope;
   directoryName: string;
   sourceType: string;
-  sourcePath: string;
+  sourcePath: string | null;
   contentHash: string;
   managedState: string;
   createdAt: string;
@@ -76,6 +78,19 @@ export interface SkillOverviewDto {
 
 export async function fetchSkillOverview(): Promise<SkillOverviewDto> {
   return await httpClient.request<SkillOverviewDto>("/api/skills/overview");
+}
+
+export async function addSkillFromMarkdown(input: {
+  markdownContent: string;
+  targetCli: SkillTargetCli[];
+  scope: SkillScope;
+  fileName?: string | null;
+  directoryName?: string | null;
+}): Promise<void> {
+  await httpClient.request<void>("/api/skills", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
 }
 
 export async function importSkillEntry(input: {
