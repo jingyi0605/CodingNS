@@ -1168,9 +1168,18 @@ function applyCorsHeaders(origin: string | undefined, reply: {
   reply.header("Access-Control-Allow-Origin", allowedOrigin);
   reply.header("Vary", "Origin");
   reply.header("Access-Control-Allow-Credentials", "true");
-  reply.header("Access-Control-Allow-Headers", "Authorization, Content-Type");
+  reply.header("Access-Control-Allow-Headers", CORS_ALLOWED_HEADERS);
   reply.header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
 }
+
+const CORS_ALLOWED_HEADERS = [
+  "Authorization",
+  "Content-Type",
+  "x-codingns-client-type",
+  "x-codingns-client-instance-id",
+  "x-codingns-assistant-source",
+  "x-codingns-hook-token"
+].join(", ");
 
 function resolveAllowedCorsOrigin(origin: string | undefined, demoMode: boolean): string | null {
   if (!origin) {
