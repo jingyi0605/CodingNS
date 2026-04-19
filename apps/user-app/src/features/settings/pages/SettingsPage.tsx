@@ -26,7 +26,7 @@ import { ClientUpdatePanel } from "../../../settings/ClientUpdatePanel";
 import { ModelManagementPanel } from "../../../settings/ModelManagementPanel";
 import { AuthDeviceManagementPanel } from "../../../settings/AuthDeviceManagementPanel";
 import { ServiceUpdatePanel } from "../../../settings/ServiceUpdatePanel";
-import { TailscalePanel } from "../../../settings/TailscalePanel";
+import { RemoteAccessManagerModal } from "../../../settings/RemoteAccessManagerModal";
 import { authStore } from "../../auth/store/auth-store";
 import { MobilePageHeader } from "../../mobile-shell/components/MobilePageHeader";
 import type { DebugPortPoolConfig } from "../../../preferences/types";
@@ -352,6 +352,7 @@ export function SettingsPage() {
 
 function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; appVersion: string }) {
   const [showParallelTaskDebug, setShowParallelTaskDebug] = useState(false);
+  const [remoteAccessModalOpen, setRemoteAccessModalOpen] = useState(false);
   const {
     theme,
     selectedTheme,
@@ -537,8 +538,20 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
           <h2 className="settings-section-title">{t("settings.remoteAccess")}</h2>
           <div className="settings-card">
             <div className="settings-row">
-              <div className="settings-row-control settings-row-control-stretch">
-                <TailscalePanel />
+              <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.remoteAccessManageTitle")}</span>
+                <span className="settings-row-description">
+                  {t("settings.remoteAccessManageDescription")}
+                </span>
+              </div>
+              <div className="settings-row-control">
+                <button
+                  className="settings-button"
+                  type="button"
+                  onClick={() => setRemoteAccessModalOpen(true)}
+                >
+                  {t("settings.remoteAccessManageAction")}
+                </button>
               </div>
             </div>
           </div>
@@ -736,6 +749,11 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
         isOpen={showParallelTaskDebug}
         onClose={() => setShowParallelTaskDebug(false)}
       />
+      <RemoteAccessManagerModal
+        open={remoteAccessModalOpen}
+        mobile={false}
+        onClose={() => setRemoteAccessModalOpen(false)}
+      />
     </div>
   );
 }
@@ -776,7 +794,7 @@ function MobileSettingsPage({ model, appVersion }: { model: SettingsPageModel; a
       id: "remote-access",
       title: t("settings.remoteAccess"),
       description: t("settings.remoteAccessSectionSummary"),
-      value: t("settings.tailscaleBrand"),
+      value: t("settings.remoteAccessNavValue"),
       icon: <RemoteAccessSectionIcon />
     },
     {
@@ -844,7 +862,7 @@ function MobileSettingsPage({ model, appVersion }: { model: SettingsPageModel; a
         {activeSection === "server-connection" && model.showServerSettings
           ? <MobileServerConnectionSection model={model} />
           : null}
-        {activeSection === "remote-access" ? <MobileRemoteAccessSection /> : null}
+        {activeSection === "remote-access" ? <MobileRemoteAccessSection model={model} /> : null}
         {activeSection === "security-privacy" ? <MobileSecurityPrivacySection model={model} /> : null}
         {activeSection === "software-update" ? <MobileSoftwareUpdateSection model={model} /> : null}
       </div>
@@ -1232,14 +1250,39 @@ function parseDebugPortPoolDraft(draft: DebugPortPoolDraft): DebugPortPoolConfig
   return { start, end };
 }
 
-function MobileRemoteAccessSection() {
+function MobileRemoteAccessSection({ model }: { model: SettingsPageModel }) {
+  const [remoteAccessModalOpen, setRemoteAccessModalOpen] = useState(false);
+
   return (
-    <section className="settings-mobile-group-section">
-      <h2 className="settings-mobile-group-title">{t("settings.remoteAccess")}</h2>
-      <div className="settings-mobile-panel-shell settings-mobile-remote-shell">
-        <TailscalePanel />
-      </div>
-    </section>
+    <>
+      <section className="settings-mobile-group-section">
+        <h2 className="settings-mobile-group-title">{t("settings.remoteAccess")}</h2>
+        <p className="settings-mobile-group-note">{t("settings.remoteAccessManageDescription")}</p>
+        <div className="settings-mobile-list">
+          <div className="settings-mobile-form-row">
+            <div className="settings-mobile-row-copy">
+              <span className="settings-mobile-row-title">{t("settings.remoteAccessManageTitle")}</span>
+              <span className="settings-mobile-row-description">
+                {t("settings.remoteAccessSectionSummary")}
+              </span>
+            </div>
+            <button
+              className="settings-mobile-primary-button"
+              type="button"
+              onClick={() => setRemoteAccessModalOpen(true)}
+            >
+              {t("settings.remoteAccessManageAction")}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <RemoteAccessManagerModal
+        open={remoteAccessModalOpen}
+        mobile
+        onClose={() => setRemoteAccessModalOpen(false)}
+      />
+    </>
   );
 }
 

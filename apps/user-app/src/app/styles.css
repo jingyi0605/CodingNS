@@ -19714,11 +19714,6 @@ textarea:focus-visible {
   width: 100%;
 }
 
-.settings-tailscale-summary + .settings-release-notes,
-.settings-tailscale-summary + .settings-release-status {
-  margin-top: 6px;
-}
-
 .settings-tailscale-panel .settings-release-notes + .settings-release-status {
   margin-top: 6px;
 }
@@ -19750,103 +19745,26 @@ textarea:focus-visible {
   box-shadow: 0 0 0 3px color-mix(in srgb, #ffd60a 18%, transparent);
 }
 
-.settings-tailscale-summary {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.settings-tailscale-summary-card {
-  min-width: 0;
-}
-
-.settings-tailscale-summary-card-main {
-  align-items: center;
-  min-width: 0;
-}
-
 .settings-tailscale-summary-value {
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
+  display: inline-block;
+  max-width: min(36ch, 100%);
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 700;
-  line-height: 1.2;
+  line-height: 1.45;
   text-align: right;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  word-break: break-word;
 }
 
 .settings-tailscale-summary-value .settings-tailscale-link {
-  display: inline-block;
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-@media (max-width: 720px) {
-  .settings-tailscale-summary {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-.settings-tailscale-panel-actions {
-  margin-top: 6px;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .settings-tailscale-form {
   display: grid;
   gap: 12px;
-}
-
-.settings-tailscale-field {
-  display: grid;
-  gap: 6px;
-}
-
-.settings-tailscale-field-label {
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.settings-tailscale-field-description {
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.settings-tailscale-addresses {
-  display: grid;
-  gap: 8px;
-}
-
-.settings-tailscale-address-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: var(--radius-md);
-  background: var(--bg-primary);
-  border: 1px solid var(--border-subtle);
-}
-
-.settings-tailscale-address-label {
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.settings-tailscale-address-value {
-  min-width: 0;
-  color: var(--text-primary);
-  font-size: 12px;
-  text-align: right;
-  word-break: break-all;
 }
 
 .settings-tailscale-link {
@@ -20512,10 +20430,112 @@ textarea:focus-visible {
   gap: 8px;
 }
 
+.settings-tailscale-config-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.settings-tailscale-config-actions .settings-tailscale-modal-actions {
+  margin-right: auto;
+}
+
 .settings-tailscale-login-url {
   margin: 0;
   font-size: 12px;
   line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+  .settings-tailscale-config-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .settings-tailscale-config-actions .settings-tailscale-modal-actions {
+    margin-right: 0;
+  }
+}
+
+.settings-relay-tunnel-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.settings-relay-tunnel-inline-note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.settings-relay-tunnel-summary-value {
+  display: inline-block;
+  max-width: min(32ch, 100%);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.5;
+  text-align: right;
+  word-break: break-word;
+}
+
+.settings-relay-tunnel-form {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-relay-tunnel-status-bar-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-relay-tunnel-status-chip {
+  max-width: 100%;
+  word-break: break-word;
+}
+
+.settings-relay-tunnel-actions,
+.settings-relay-tunnel-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-relay-tunnel-error {
+  margin: 0;
+  color: var(--error);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.settings-mobile-switch[data-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@media (max-width: 720px) {
+  .settings-relay-tunnel-actions,
+  .settings-relay-tunnel-item-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .settings-relay-tunnel-actions .secondary-button,
+  .settings-relay-tunnel-actions .settings-button,
+  .settings-relay-tunnel-item-actions .settings-button {
+    width: 100%;
+  }
+
+  .settings-relay-tunnel-status-bar-meta {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Theme Selector */
@@ -21525,67 +21545,11 @@ textarea:focus-visible {
   background: transparent;
 }
 
-.settings-mobile-remote-shell,
 .settings-mobile-skill-shell,
 .settings-mobile-update-shell {
   padding: 0;
 }
 
-.settings-mobile-remote-shell .settings-release-card,
-.settings-mobile-skill-shell .settings-release-card {
-  gap: 0;
-  padding: 0;
-}
-
-.settings-mobile-remote-shell .settings-tailscale-summary {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
-.settings-mobile-remote-shell .settings-model-card {
-  padding: 14px 0;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.settings-mobile-remote-shell .settings-model-card + .settings-model-card {
-  border-top: 1px solid color-mix(in srgb, var(--border-primary) 48%, transparent);
-}
-
-.settings-mobile-remote-shell .settings-tailscale-summary-card-main {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 6px;
-  align-items: stretch;
-}
-
-.settings-mobile-remote-shell .settings-tailscale-summary-value {
-  justify-content: flex-start;
-  text-align: left;
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
-  word-break: break-word;
-}
-
-.settings-mobile-remote-shell .settings-tailscale-summary-value .settings-tailscale-link {
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
-}
-
-.settings-mobile-remote-shell .settings-release-notes,
-.settings-mobile-remote-shell .settings-release-status {
-  padding: 12px 0 0;
-  border: none;
-  border-top: 1px solid color-mix(in srgb, var(--border-primary) 48%, transparent);
-  border-radius: 0;
-  background: transparent;
-}
-
-.settings-mobile-remote-shell .settings-tailscale-panel-actions,
 .settings-mobile-skill-shell .settings-skill-panel-actions,
 .settings-mobile-update-shell .settings-update-actions {
   margin-top: 10px;
@@ -21593,7 +21557,6 @@ textarea:focus-visible {
   border-top: 1px solid color-mix(in srgb, var(--border-primary) 48%, transparent);
 }
 
-.settings-mobile-remote-shell .settings-release-actions,
 .settings-mobile-update-shell .settings-update-actions {
   display: grid;
   grid-template-columns: 1fr;

@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
+import {
+  ModalActions,
+  ModalField,
+  ModalList,
+  ModalListItem,
+  ModalSection
+} from "../components/ModalAtoms";
 import { WorkbenchModal } from "../features/conversation/components/WorkbenchModal";
 import { usePlatform } from "../platform/platform-provider";
 import {
@@ -25,7 +32,11 @@ type PendingAction =
   | "logout"
   | null;
 
-export function TailscalePanel() {
+interface TailscalePanelProps {
+  readonly configMode?: "modal" | "inline";
+}
+
+export function TailscalePanel({ configMode = "modal" }: TailscalePanelProps) {
   const platform = usePlatform();
   const [status, setStatus] = useState<TailscaleStatusView | null>(null);
   const [controlServerUrlDraft, setControlServerUrlDraft] = useState("");
@@ -125,6 +136,7 @@ export function TailscalePanel() {
     || (status?.hostname ?? "") !== hostnameDraft.trim();
   const cliUnavailable = isTailscaleCliUnavailable(status?.lastError);
   const canInstallTailscale = supportsTailscaleInstall(platform.ui.osFamily) && cliUnavailable;
+  const inlineConfig = configMode === "inline";
 
   async function persistConfig(): Promise<TailscaleStatusView> {
     const nextStatus = await updateTailscaleConfig({
@@ -233,8 +245,11 @@ export function TailscalePanel() {
   return (
     <>
       <div className="settings-tailscale-panel">
-        <div className="settings-release-card">
-          <div className="settings-tailscale-summary">
+        <ModalSection
+          heading={t("settings.tailscaleSectionTitle")}
+          description={t("settings.tailscaleSectionDescription")}
+        >
+          <ModalList compact>
             <SummaryRow
               label={t("settings.tailscaleStatusIndicator")}
               value={(
@@ -260,28 +275,26 @@ export function TailscalePanel() {
               label={t("settings.tailscaleIpAddress")}
               value={resolveIpAddress(status)}
             />
-          </div>
+          </ModalList>
 
           {status?.phase === "needs_login" && status.loginUrl ? (
-            <div className="settings-release-notes">
-              <p className="settings-tailscale-login-url">
-                <a
-                  className="settings-tailscale-link"
-                  href={status.loginUrl}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  {status.loginUrl}
-                </a>
-              </p>
-            </div>
+            <p className="settings-tailscale-login-url">
+              <a
+                className="settings-tailscale-link"
+                href={status.loginUrl}
+                rel="noreferrer"
+                target="_blank"
+              >
+                {status.loginUrl}
+              </a>
+            </p>
           ) : null}
 
           {status?.lastError || panelError ? (
-            <p className="settings-release-status">{panelError ?? status?.lastError}</p>
+            <p className="settings-relay-tunnel-error">{panelError ?? status?.lastError}</p>
           ) : null}
 
-          <div className="settings-release-actions settings-tailscale-panel-actions">
+          <ModalActions align="start">
             {canInstallTailscale ? (
               <button
                 className="settings-button"
@@ -296,14 +309,16 @@ export function TailscalePanel() {
                   : t("settings.tailscaleInstallAction")}
               </button>
             ) : null}
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={loading || pendingAction !== null}
-              onClick={() => setConfigModalOpen(true)}
-            >
-              {t("settings.tailscaleConfigure")}
-            </button>
+            {!inlineConfig ? (
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={loading || pendingAction !== null}
+                onClick={() => setConfigModalOpen(true)}
+              >
+                {t("settings.tailscaleConfigure")}
+              </button>
+            ) : null}
             <button
               className="secondary-button"
               type="button"
@@ -357,64 +372,120 @@ export function TailscalePanel() {
             >
               {pendingAction === "logout" ? t("common.loading") : t("settings.tailscaleLogout")}
             </button>
-          </div>
-        </div>
+          </ModalActions>
+        </ModalSection>
+
+        {inlineConfig ? (
+          <ModalSection
+            heading={t("settings.tailscaleConfigModalTitle")}
+            description={t("settings.tailscaleConfigModalDescription")}
+          >
+            <TailscaleConfigForm
+              controlServerUrlDraft={controlServerUrlDraft}
+              hostnameDraft={hostnameDraft}
+              pendingAction={pendingAction}
+              configDirty={configDirty}
+              onControlServerUrlChange={setControlServerUrlDraft}
+              onHostnameChange={setHostnameDraft}
+              onSave={() => {
+                void handleSaveConfig();
+              }}
+            />
+          </ModalSection>
+        ) : null}
       </div>
 
       <WorkbenchModal
-        open={configModalOpen}
+        open={!inlineConfig && configModalOpen}
         title={t("settings.tailscaleConfigModalTitle")}
         description={t("settings.tailscaleConfigModalDescription")}
         className="settings-tailscale-modal"
         onClose={handleCloseConfigModal}
       >
         <div className="settings-tailscale-modal-body">
-          <div className="settings-tailscale-form">
-            <label className="settings-tailscale-field">
-              <span className="settings-tailscale-field-label">{t("settings.tailscaleControlServer")}</span>
-              <input
-                aria-label={t("settings.tailscaleControlServer")}
-                className="settings-text-input"
-                placeholder={t("settings.tailscaleControlServerPlaceholder")}
-                value={controlServerUrlDraft}
-                onChange={(event) => setControlServerUrlDraft(event.target.value)}
-              />
-            </label>
-
-            <label className="settings-tailscale-field">
-              <span className="settings-tailscale-field-label">{t("settings.tailscaleHostname")}</span>
-              <input
-                aria-label={t("settings.tailscaleHostname")}
-                className="settings-text-input"
-                placeholder={t("settings.tailscaleHostnamePlaceholder")}
-                value={hostnameDraft}
-                onChange={(event) => setHostnameDraft(event.target.value)}
-              />
-            </label>
-          </div>
-
-          <div className="settings-tailscale-modal-actions">
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={pendingAction === "save"}
-              onClick={handleCloseConfigModal}
-            >
-              {t("common.cancel")}
-            </button>
-            <button
-              className="settings-button"
-              type="button"
-              disabled={pendingAction !== null || !configDirty}
-              onClick={() => {
-                void handleSaveConfig();
-              }}
-            >
-              {pendingAction === "save" ? t("common.loading") : t("common.save")}
-            </button>
-          </div>
+          <TailscaleConfigForm
+            controlServerUrlDraft={controlServerUrlDraft}
+            hostnameDraft={hostnameDraft}
+            pendingAction={pendingAction}
+            configDirty={configDirty}
+            footer={(
+              <div className="settings-tailscale-modal-actions">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={pendingAction === "save"}
+                  onClick={handleCloseConfigModal}
+                >
+                  {t("common.cancel")}
+                </button>
+              </div>
+            )}
+            onControlServerUrlChange={setControlServerUrlDraft}
+            onHostnameChange={setHostnameDraft}
+            onSave={() => {
+              void handleSaveConfig();
+            }}
+          />
         </div>
       </WorkbenchModal>
+    </>
+  );
+}
+
+function TailscaleConfigForm({
+  controlServerUrlDraft,
+  hostnameDraft,
+  pendingAction,
+  configDirty,
+  footer,
+  onControlServerUrlChange,
+  onHostnameChange,
+  onSave
+}: {
+  readonly controlServerUrlDraft: string;
+  readonly hostnameDraft: string;
+  readonly pendingAction: PendingAction;
+  readonly configDirty: boolean;
+  readonly footer?: ReactNode;
+  readonly onControlServerUrlChange: (value: string) => void;
+  readonly onHostnameChange: (value: string) => void;
+  readonly onSave: () => void;
+}) {
+  return (
+    <>
+      <div className="settings-tailscale-form">
+        <ModalField label={t("settings.tailscaleControlServer")}>
+          <input
+            aria-label={t("settings.tailscaleControlServer")}
+            className="settings-text-input"
+            placeholder={t("settings.tailscaleControlServerPlaceholder")}
+            value={controlServerUrlDraft}
+            onChange={(event) => onControlServerUrlChange(event.target.value)}
+          />
+        </ModalField>
+
+        <ModalField label={t("settings.tailscaleHostname")}>
+          <input
+            aria-label={t("settings.tailscaleHostname")}
+            className="settings-text-input"
+            placeholder={t("settings.tailscaleHostnamePlaceholder")}
+            value={hostnameDraft}
+            onChange={(event) => onHostnameChange(event.target.value)}
+          />
+        </ModalField>
+      </div>
+
+      <ModalActions align="start" className="settings-tailscale-config-actions">
+        {footer}
+        <button
+          className="settings-button"
+          type="button"
+          disabled={pendingAction !== null || !configDirty}
+          onClick={onSave}
+        >
+          {pendingAction === "save" ? t("common.loading") : t("common.save")}
+        </button>
+      </ModalActions>
     </>
   );
 }
@@ -429,12 +500,10 @@ function SummaryRow({
   href?: string;
 }) {
   return (
-    <section className="settings-model-card settings-tailscale-summary-card">
-      <div className="settings-model-card-main settings-tailscale-summary-card-main">
-        <div className="settings-model-card-copy">
-          <strong className="settings-model-card-title">{label}</strong>
-        </div>
-        <div className="settings-tailscale-summary-value">
+    <ModalListItem
+      label={label}
+      trailing={(
+        <span className="settings-tailscale-summary-value">
           {href && typeof value === "string" ? (
             <a className="settings-tailscale-link" href={href} target="_blank" rel="noreferrer">
               {value}
@@ -442,9 +511,9 @@ function SummaryRow({
           ) : (
             value
           )}
-        </div>
-      </div>
-    </section>
+        </span>
+      )}
+    />
   );
 }
 

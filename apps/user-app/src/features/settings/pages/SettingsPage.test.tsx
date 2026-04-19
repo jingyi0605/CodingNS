@@ -31,6 +31,10 @@ vi.mock("../../../settings/TailscalePanel", () => ({
   TailscalePanel: () => <div data-testid="tailscale-panel">tailscale-panel</div>
 }));
 
+vi.mock("../../../settings/RelayTunnelPanel", () => ({
+  RelayTunnelPanel: () => <div data-testid="relay-tunnel-panel">relay-tunnel-panel</div>
+}));
+
 vi.mock("../../../settings/ModelManagementPanel", () => ({
   ModelManagementPanel: () => <div data-testid="model-management-panel">model-management-panel</div>
 }));
@@ -98,7 +102,9 @@ describe("SettingsPage", () => {
     expect(screen.queryByText(t("settings.skillManagerDescription"))).not.toBeInTheDocument();
     expect(screen.queryByText(t("settings.skills"))).not.toBeInTheDocument();
     expect(screen.getByTestId("model-management-panel")).toBeInTheDocument();
-    expect(screen.getByTestId("tailscale-panel")).toBeInTheDocument();
+    expect(screen.queryByTestId("relay-tunnel-panel")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("tailscale-panel")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("settings.remoteAccessManageAction") })).toBeInTheDocument();
     expect(screen.queryByText(t("settings.tailscaleSectionTitle"))).not.toBeInTheDocument();
     expect(screen.queryByText(t("settings.tailscaleSectionDescription"))).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: t("settings.serverAddress") })).not.toBeInTheDocument();
@@ -164,14 +170,25 @@ describe("SettingsPage", () => {
     serverView.unmount();
   });
 
-  it("移动布局可以进入远程访问分类并显示 Tailscale 面板", async () => {
+  it("移动布局可以进入远程访问分类并在访问方式管理中显示远程接入面板", async () => {
     setViewportWidth(390);
     renderSettingsPage();
 
     await userEvent.click(screen.getByRole("button", { name: new RegExp(t("settings.remoteAccess")) }));
 
-    expect(await screen.findByTestId("tailscale-panel")).toBeInTheDocument();
-    expect(screen.queryByText(t("settings.remoteAccessSectionSummary"))).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("settings.remoteAccessManageAction") })).toBeInTheDocument();
+    expect(screen.queryByTestId("relay-tunnel-panel")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("tailscale-panel")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: t("settings.remoteAccessManageAction") }));
+
+    const dialog = await screen.findByRole("dialog", { name: t("settings.remoteAccessModalTitle") });
+
+    expect(within(dialog).getByTestId("relay-tunnel-panel")).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("tab", { name: t("settings.remoteAccessTailscaleTab") }));
+
+    expect(await within(dialog).findByTestId("tailscale-panel")).toBeInTheDocument();
   });
 
   it("移动布局提供模型管理分类并能进入模型管理页", async () => {
@@ -248,6 +265,21 @@ describe("SettingsPage", () => {
     await waitFor(() => {
       expect(getActiveHostBaseUrl(clientConfigStore.getState())).toBe("http://10.10.1.8:4100");
     });
+  });
+
+  it("桌面端可以通过访问方式管理弹窗切换远程访问方式", async () => {
+    renderSettingsPage();
+
+    await userEvent.click(screen.getByRole("button", { name: t("settings.remoteAccessManageAction") }));
+
+    const dialog = await screen.findByRole("dialog", { name: t("settings.remoteAccessModalTitle") });
+
+    expect(within(dialog).getByTestId("relay-tunnel-panel")).toBeInTheDocument();
+    expect(within(dialog).queryByTestId("tailscale-panel")).not.toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("tab", { name: t("settings.remoteAccessTailscaleTab") }));
+
+    expect(await within(dialog).findByTestId("tailscale-panel")).toBeInTheDocument();
   });
 
   it("H5 移动布局的软件更新分类只显示服务端更新", () => {
