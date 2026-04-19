@@ -4355,15 +4355,6 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
   color: rgba(60, 60, 67, 0.66);
 }
 
-.workbench-auxiliary .terminal-manager-panel-eyebrow {
-  min-height: 20px;
-  padding: 0 8px;
-  background: rgba(0, 122, 255, 0.08);
-  color: #007aff;
-  font-size: 10px;
-  letter-spacing: 0.04em;
-}
-
 .workbench-auxiliary .terminal-manager-overview {
   gap: 8px;
 }
@@ -6229,7 +6220,6 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .file-panel-tab-badge,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .session-provider-badge,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .session-runtime-origin-badge,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel-eyebrow,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-runtime-badge,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-card .badge,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-stat-pill,
@@ -6266,7 +6256,6 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .session-provider-badge,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .session-runtime-origin-badge,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-tree-file-icon,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel-eyebrow,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-runtime-badge,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-card .badge,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-stat-pill {
@@ -6579,7 +6568,6 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-list,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-status-panel,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-detail-item,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel-eyebrow,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-runtime-badge,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel .badge,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-stat-pill,
@@ -6648,7 +6636,6 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-history-ref-pill,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-session-badge,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-panel-tab-badge,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel-eyebrow,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-runtime-badge,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel .badge,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-stat-pill,
@@ -6664,7 +6651,6 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-sidebar .badge,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-history-kind-badge,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .git-history-ref-pill,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel-eyebrow,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-runtime-badge,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-panel .badge,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .terminal-manager-stat-pill,

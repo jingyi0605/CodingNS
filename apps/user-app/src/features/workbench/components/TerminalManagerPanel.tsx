@@ -1009,7 +1009,6 @@ export function TerminalManagerPanel({
       />
       <div className="terminal-manager-header terminal-manager-desktop-header">
         <div className="terminal-manager-panel-heading">
-          <span className="terminal-manager-panel-eyebrow">{t("terminalManager.quickLaunchTitle")}</span>
           <div>
             <h2>{t("terminalManager.templateSectionTitle")}</h2>
             <p className="status-text">{t("terminalManager.desktopPanelDescription")}</p>

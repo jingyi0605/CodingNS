@@ -2697,21 +2697,6 @@ a {
   max-width: 620px;
 }
 
-.terminal-manager-panel-eyebrow {
-  display: inline-flex;
-  align-items: center;
-  width: fit-content;
-  min-height: 26px;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .terminal-manager-overview {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -23846,21 +23831,6 @@ textarea:focus-visible {
   font-size: 0.98rem;
   line-height: 1.5;
   color: color-mix(in srgb, var(--text-secondary) 92%, var(--text-primary) 8%);
-}
-
-.mobile-tool-process-panel .terminal-manager-panel-eyebrow {
-  min-height: 1.95rem;
-  padding: 0.28rem 0.9rem;
-  border: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
-  background: color-mix(in srgb, var(--accent) 9%, white 72%);
-  color: color-mix(in srgb, var(--accent) 92%, #0a84ff 8%);
-  font-size: 0.82rem;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  text-transform: none;
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.85) inset,
-    0 8px 20px rgba(15, 23, 42, 0.05);
 }
 
 .mobile-tool-process-panel .terminal-manager-overview {
