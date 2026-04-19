@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 
-import { ModalCloseButton } from "../../../components/ModalCloseButton";
+import { DesktopModal } from "../../../components/DesktopModal";
+import { ModalActions } from "../../../components/ModalAtoms";
+import { MobileSheet } from "../../../components/MobileSheet";
 import { getHostRequestUrl } from "../../../config/env";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
@@ -240,6 +241,7 @@ function getTerminationScopeLabel(
 
 function TerminalManagerModal({
   open,
+  mobile = false,
   title,
   description,
   onClose,
@@ -247,65 +249,50 @@ function TerminalManagerModal({
   className
 }: {
   open: boolean;
+  mobile?: boolean;
   title: string;
   description: string;
   onClose: () => void;
   children: ReactNode;
   className?: string;
 }) {
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [onClose, open]);
-
-  if (!open || typeof document === "undefined") {
-    return null;
+  if (mobile) {
+    return (
+      <MobileSheet
+        open={open}
+        title={title}
+        description={description}
+        kind="form"
+        height="three-quarter"
+        className={className}
+        bodyClassName="terminal-manager-modal-body"
+        showHandle
+        onClose={onClose}
+      >
+        {children}
+      </MobileSheet>
+    );
   }
 
-  return createPortal(
-    <div className="workbench-modal-layer">
-      <button
-        type="button"
-        className="workbench-modal-backdrop"
-        aria-label={t("common.close")}
-        onClick={onClose}
-      />
-      <section
-        className={["workbench-modal-card", "surface-card", "terminal-manager-modal-card", className]
-          .filter(Boolean)
-          .join(" ")}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-      >
-        <div className="workbench-modal-header">
-          <div className="workbench-modal-title-wrap">
-            <h2>{title}</h2>
-            <p>{description}</p>
-          </div>
-          <ModalCloseButton onClick={onClose} />
-        </div>
-        <div className="workbench-modal-body">{children}</div>
-      </section>
-    </div>,
-    document.body
+  return (
+    <DesktopModal
+      open={open}
+      title={title}
+      description={description}
+      size="regular"
+      layout="form"
+      className={["terminal-manager-modal-card", className].filter(Boolean).join(" ")}
+      bodyClassName="terminal-manager-modal-body"
+      onClose={onClose}
+    >
+      {children}
+    </DesktopModal>
   );
 }
 
 function TerminalManagerConfirmModal({
   open,
+  mobile = false,
   busy,
   title,
   description,
@@ -315,6 +302,7 @@ function TerminalManagerConfirmModal({
   className
 }: {
   open: boolean;
+  mobile?: boolean;
   busy: boolean;
   title: string;
   description: string;
@@ -323,73 +311,65 @@ function TerminalManagerConfirmModal({
   onConfirm: () => void | Promise<void>;
   className?: string;
 }) {
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) {
-        onClose();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [busy, onClose, open]);
-
-  if (!open || typeof document === "undefined") {
-    return null;
-  }
-
-  return createPortal(
-    <div className="workbench-modal-layer">
+  const footer = (
+    <ModalActions className="terminal-manager-confirm-actions">
       <button
         type="button"
-        className="workbench-modal-backdrop"
-        aria-label={t("common.close")}
+        className="secondary-button"
         disabled={busy}
         onClick={onClose}
-      />
-      <section
-        className={["workbench-modal-card", "surface-card", className].filter(Boolean).join(" ")}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
       >
-        <div className="workbench-modal-header">
-          <div className="workbench-modal-title-wrap">
-            <h2>{title}</h2>
-            <p>{description}</p>
-          </div>
-        </div>
-        <div className="workbench-modal-body">
-          <div className="workbench-modal-actions terminal-manager-confirm-actions">
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={busy}
-              onClick={onClose}
-            >
-              {t("common.cancel")}
-            </button>
-            <button
-              type="button"
-              className="secondary-button workbench-danger-button"
-              disabled={busy}
-              onClick={() => {
-                void onConfirm();
-              }}
-            >
-              {busy ? t("terminalManager.templateRemoving") : confirmLabel}
-            </button>
-          </div>
-        </div>
-      </section>
-    </div>,
-    document.body
+        {t("common.cancel")}
+      </button>
+      <button
+        type="button"
+        className="secondary-button workbench-danger-button"
+        disabled={busy}
+        onClick={() => {
+          void onConfirm();
+        }}
+      >
+        {busy ? t("terminalManager.templateRemoving") : confirmLabel}
+      </button>
+    </ModalActions>
+  );
+
+  if (mobile) {
+    return (
+      <MobileSheet
+        open={open}
+        title={title}
+        description={description}
+        kind="action"
+        height="auto"
+        dismissible={!busy}
+        showHandle
+        showCancelButton={false}
+        className={className}
+        bodyClassName="terminal-manager-confirm-body"
+        footer={footer}
+        onClose={onClose}
+      >
+        {null}
+      </MobileSheet>
+    );
+  }
+
+  return (
+    <DesktopModal
+      open={open}
+      title={title}
+      description={description}
+      size="compact"
+      layout="confirm"
+      dismissible={!busy}
+      className={["terminal-manager-confirm-modal", className].filter(Boolean).join(" ")}
+      bodyClassName="terminal-manager-confirm-body"
+      footer={footer}
+      onClose={onClose}
+    >
+      {null}
+    </DesktopModal>
   );
 }
 
@@ -1312,6 +1292,7 @@ export function TerminalManagerPanel({
 
       <TerminalManagerModal
         open={templateEditorOpen}
+        mobile={isMobileProcessPanel}
         title={
           editingTemplateMode
             ? t("terminalManager.editModalTitle")
@@ -1593,6 +1574,7 @@ export function TerminalManagerPanel({
 
       <TerminalManagerConfirmModal
         open={removeConfirmDraft !== null}
+        mobile={isMobileProcessPanel}
         busy={removeConfirmDraft !== null && removingTemplateId === removeConfirmDraft.templateId}
         title={t("terminalManager.removeConfirmTitle")}
         description={

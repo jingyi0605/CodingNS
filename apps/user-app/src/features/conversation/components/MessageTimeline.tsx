@@ -12,11 +12,10 @@ import {
   type WheelEvent as ReactWheelEvent,
   type ReactNode
 } from "react";
-import { createPortal } from "react-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { ModalCloseButton } from "../../../components/ModalCloseButton";
+import { DesktopModal } from "../../../components/DesktopModal";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { usePlatform } from "../../../platform/platform-provider";
@@ -2527,38 +2526,29 @@ function RichMessageAttachments({
         })}
       </div>
 
-      {previewAttachment?.url ? (
-        <div className="workbench-modal-layer message-image-modal" role="dialog" aria-modal="true">
-          <button
-            type="button"
-            className="workbench-modal-backdrop"
-            aria-label={t("conversation.attachmentPreviewClose")}
-            onClick={() => setPreviewAttachmentId(null)}
-          />
-          <div className="workbench-modal-card surface-card message-image-modal-card">
-            <div className="workbench-modal-header message-image-modal-header">
-              <div className="workbench-modal-title-wrap">
-                <h2>{t("conversation.imagePreviewTitle")}</h2>
-                <p>{previewAttachment.fileName}</p>
-              </div>
-              <ModalCloseButton
-                aria-label={t("conversation.attachmentPreviewClose")}
-                onClick={() => setPreviewAttachmentId(null)}
+      <DesktopModal
+        open={Boolean(previewAttachment?.url)}
+        title={t("conversation.imagePreviewTitle")}
+        description={previewAttachment?.fileName}
+        size="xwide"
+        layout="viewer"
+        className="message-image-modal"
+        bodyClassName="message-image-modal-body"
+        onClose={() => setPreviewAttachmentId(null)}
+      >
+        {previewAttachment?.url ? (
+          <>
+            <div className="message-image-modal-stage">
+              <img
+                className="message-image-modal-image"
+                src={previewAttachment.url}
+                alt={previewAttachment.fileName || t("conversation.attachmentPreviewAlt")}
               />
             </div>
-            <div className="message-image-modal-body">
-              <div className="message-image-modal-stage">
-                <img
-                  className="message-image-modal-image"
-                  src={previewAttachment.url}
-                  alt={previewAttachment.fileName || t("conversation.attachmentPreviewAlt")}
-                />
-              </div>
-              <p className="message-image-modal-hint">{t("conversation.imagePreviewHint")}</p>
-            </div>
-          </div>
-        </div>
-      ) : null}
+            <p className="message-image-modal-hint">{t("conversation.imagePreviewHint")}</p>
+          </>
+        ) : null}
+      </DesktopModal>
     </>
   );
 }
@@ -2591,6 +2581,10 @@ function ApplyPatchToolItem({
   preview: ApplyPatchPreview;
 }) {
   const [selectedFileIndex, setSelectedFileIndex] = useState<number | null>(null);
+  const selectedFile =
+    selectedFileIndex === null
+      ? null
+      : preview.files[selectedFileIndex] ?? null;
 
   useEffect(() => {
     if (selectedFileIndex === null) {
@@ -2629,88 +2623,70 @@ function ApplyPatchToolItem({
         ))}
       </div>
 
-      {selectedFileIndex !== null && typeof document !== "undefined"
-        ? createPortal(
-            <div className="workbench-modal-layer apply-patch-modal" role="dialog" aria-modal="true">
-              <button
-                type="button"
-                className="workbench-modal-backdrop"
-                aria-label={t("common.close")}
-                onClick={() => setSelectedFileIndex(null)}
-              />
-              <div className="workbench-modal-card surface-card apply-patch-modal-card">
-                <div className="workbench-modal-header">
-                  <div className="workbench-modal-title-wrap">
-                    <h2>{t("conversation.applyPatchDialogTitle")}</h2>
-                    <p>{t("conversation.applyPatchDialogDescription")}</p>
-                  </div>
-                  <ModalCloseButton onClick={() => setSelectedFileIndex(null)} />
+      <DesktopModal
+        open={selectedFile !== null}
+        title={t("conversation.applyPatchDialogTitle")}
+        description={t("conversation.applyPatchDialogDescription")}
+        size="full"
+        layout="viewer"
+        className="apply-patch-modal"
+        bodyClassName="apply-patch-modal-body"
+        onClose={() => setSelectedFileIndex(null)}
+      >
+        {selectedFile ? (
+          <>
+            <div className="apply-patch-modal-totals">
+              <span className="apply-patch-stat-pill positive">
+                {t("conversation.applyPatchAddedStat")} +{selectedFile.additions}
+              </span>
+              <span className="apply-patch-stat-pill negative">
+                {t("conversation.applyPatchRemovedStat")} -{selectedFile.deletions}
+              </span>
+            </div>
+
+            <section
+              key={buildApplyPatchFileRenderKey(selectedFile, selectedFileIndex ?? 0)}
+              className="apply-patch-file-panel"
+            >
+              <div className="apply-patch-file-panel-header">
+                <div className="apply-patch-file-panel-title">
+                  <span className="apply-patch-summary-label">{getApplyPatchActionLabel(selectedFile.action)}</span>
+                  <strong>{buildApplyPatchFullPathLabel(selectedFile)}</strong>
                 </div>
-
-                {(() => {
-                  const file = preview.files[selectedFileIndex];
-                  if (!file) return null;
-                  return (
-                    <>
-                      <div className="apply-patch-modal-totals">
-                        <span className="apply-patch-stat-pill positive">
-                          {t("conversation.applyPatchAddedStat")} +{file.additions}
-                        </span>
-                        <span className="apply-patch-stat-pill negative">
-                          {t("conversation.applyPatchRemovedStat")} -{file.deletions}
-                        </span>
-                      </div>
-
-                      <div className="apply-patch-modal-body">
-                        <section
-                          key={buildApplyPatchFileRenderKey(file, selectedFileIndex)}
-                          className="apply-patch-file-panel"
-                        >
-                          <div className="apply-patch-file-panel-header">
-                            <div className="apply-patch-file-panel-title">
-                              <span className="apply-patch-summary-label">{getApplyPatchActionLabel(file.action)}</span>
-                              <strong>{buildApplyPatchFullPathLabel(file)}</strong>
-                            </div>
-                            <div className="apply-patch-summary-stats">
-                              <span className="apply-patch-summary-added">+{file.additions}</span>
-                              <span className="apply-patch-summary-removed">-{file.deletions}</span>
-                            </div>
-                          </div>
-                          <div className="apply-patch-diff-view">
-                            <div className="apply-patch-diff-scroll">
-                              {file.lines.map((line, index) => (
-                                <div
-                                  key={`${buildApplyPatchFullPathLabel(file)}:${index}`}
-                                  className={`apply-patch-diff-line ${resolveApplyPatchLineClassName(line.kind)}`}
-                                >
-                                  <span className="apply-patch-line-number">
-                                    {formatApplyPatchLineNumber(line.oldLineNumber)}
-                                  </span>
-                                  <span className="apply-patch-line-number">
-                                    {formatApplyPatchLineNumber(line.newLineNumber)}
-                                  </span>
-                                  <span className="apply-patch-line-content">{line.text || " "}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        </section>
-
-                        {tool.error ? (
-                          <section className="apply-patch-error-panel">
-                            <div className="tool-call-section-label">{t("conversation.toolResultLabel")}</div>
-                            <pre className="tool-call-error">{tool.error}</pre>
-                          </section>
-                        ) : null}
-                      </div>
-                    </>
-                  );
-                })()}
+                <div className="apply-patch-summary-stats">
+                  <span className="apply-patch-summary-added">+{selectedFile.additions}</span>
+                  <span className="apply-patch-summary-removed">-{selectedFile.deletions}</span>
+                </div>
               </div>
-            </div>,
-            document.body
-          )
-        : null}
+              <div className="apply-patch-diff-view">
+                <div className="apply-patch-diff-scroll">
+                  {selectedFile.lines.map((line, index) => (
+                    <div
+                      key={`${buildApplyPatchFullPathLabel(selectedFile)}:${index}`}
+                      className={`apply-patch-diff-line ${resolveApplyPatchLineClassName(line.kind)}`}
+                    >
+                      <span className="apply-patch-line-number">
+                        {formatApplyPatchLineNumber(line.oldLineNumber)}
+                      </span>
+                      <span className="apply-patch-line-number">
+                        {formatApplyPatchLineNumber(line.newLineNumber)}
+                      </span>
+                      <span className="apply-patch-line-content">{line.text || " "}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            {tool.error ? (
+              <section className="apply-patch-error-panel">
+                <div className="tool-call-section-label">{t("conversation.toolResultLabel")}</div>
+                <pre className="tool-call-error">{tool.error}</pre>
+              </section>
+            ) : null}
+          </>
+        ) : null}
+      </DesktopModal>
     </>
   );
 }

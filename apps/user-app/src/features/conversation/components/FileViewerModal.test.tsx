@@ -173,7 +173,7 @@ describe("FileViewerModal", () => {
       "src",
       expect.stringContaining("/preview/files/preview-token/site/index.html?_preview=0")
     );
-    expect(dialog).toHaveAttribute("data-size", "default");
+    expect(dialog).toHaveAttribute("data-size", "regular");
 
     await user.click(screen.getByRole("button", { name: t("conversation.fileViewerSizeFull") }));
     expect(screen.getByRole("dialog", { name: "site/index.html" })).toHaveAttribute("data-size", "full");

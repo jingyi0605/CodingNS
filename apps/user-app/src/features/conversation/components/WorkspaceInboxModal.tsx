@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { createPortal } from "react-dom";
 
+import { ModalList, ModalListItem } from "../../../components/ModalAtoms";
+import { MobileSheet } from "../../../components/MobileSheet";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import {
@@ -741,60 +742,50 @@ function MobilePickerSheet<T extends string>({
   onClose: () => void;
   onSelect: (value: T) => void;
 }) {
-  if (!open || typeof document === "undefined") {
+  if (!open) {
     return null;
   }
 
-  return createPortal(
-    <div
-      className="ios-action-sheet-overlay workspace-inbox-picker-sheet-overlay"
-      role="presentation"
-      onClick={onClose}
+  return (
+    <MobileSheet
+      open={open}
+      title={title}
+      kind="picker"
+      height="half"
+      className="workspace-inbox-picker-sheet"
+      cardClassName="workspace-inbox-picker-sheet-card"
+      bodyClassName="workspace-inbox-picker-sheet-body"
+      showHandle
+      onClose={onClose}
     >
-      <div
-        className="mobile-workspace-home-sheet workspace-inbox-picker-sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="mobile-workspace-home-sheet-card workspace-inbox-picker-sheet-card">
-          <div className="mobile-workspace-home-sheet-header workspace-inbox-picker-sheet-header">
-            <strong>{title}</strong>
-          </div>
+      <ModalList className="workspace-inbox-picker-sheet-options" role="listbox" aria-label={title}>
+        {options.map((option) => {
+          const selected = option.value === selectedValue;
 
-          <div className="mobile-workspace-home-group workspace-inbox-picker-sheet-options" role="listbox" aria-label={title}>
-            {options.map((option) => {
-              const selected = option.value === selectedValue;
-
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  className="mobile-workspace-home-row workspace-inbox-picker-option"
-                  role="option"
-                  aria-selected={selected}
-                  onClick={() => onSelect(option.value)}
-                >
-                  <span className="workspace-inbox-picker-option-copy">
-                    <strong>{option.label}</strong>
-                    {option.description ? <span>{option.description}</span> : null}
-                  </span>
-                  <span className="workspace-inbox-picker-option-indicator" aria-hidden="true">
-                    {selected ? <CheckIcon /> : null}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <button type="button" className="ios-action-sheet-cancel" onClick={onClose}>
-          {t("common.cancel")}
-        </button>
-      </div>
-    </div>,
-    document.body
+          return (
+            <ModalListItem
+              key={option.value}
+              as="button"
+              className="workspace-inbox-picker-option"
+              role="option"
+              aria-selected={selected}
+              selected={selected}
+              trailing={
+                <span className="workspace-inbox-picker-option-indicator" aria-hidden="true">
+                  {selected ? <CheckIcon /> : null}
+                </span>
+              }
+              onClick={() => onSelect(option.value)}
+            >
+              <span className="workspace-inbox-picker-option-copy">
+                <strong>{option.label}</strong>
+                {option.description ? <span>{option.description}</span> : null}
+              </span>
+            </ModalListItem>
+          );
+        })}
+      </ModalList>
+    </MobileSheet>
   );
 }
 

@@ -1,6 +1,13 @@
-import { createPortal } from "react-dom";
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
+import {
+  ModalField,
+  ModalList,
+  ModalListItem,
+  ModalSection,
+  ModalTag
+} from "../../../components/ModalAtoms";
+import { MobileSheet } from "../../../components/MobileSheet";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import type { ProviderId, WorkspaceDto } from "../../conversation/api/conversation-api";
@@ -53,7 +60,7 @@ export function MobileCreateSessionSheet({
     setWorkspacePickerOpen(false);
   }, [initialWorkspaceId, open, selectionOptionKey]);
 
-  if (!open || typeof document === "undefined") {
+  if (!open) {
     return null;
   }
 
@@ -62,108 +69,102 @@ export function MobileCreateSessionSheet({
     selectionOptions[0] ??
     null;
 
-  return createPortal(
-    <div className="ios-action-sheet-overlay" role="presentation" onClick={onClose}>
-      <div
-        className="mobile-workspace-home-sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t("shell.createSessionModalTitle")}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="mobile-workspace-home-sheet-card">
-          <div className="mobile-workspace-home-sheet-header">
-            <strong>{t("shell.createSessionModalTitle")}</strong>
-          </div>
-          <div className="mobile-feature-form mobile-workspace-home-form mobile-create-session-form">
-            <p className="mobile-create-session-description">{t("shell.createSessionModalDescription")}</p>
-            <div className="mobile-feature-field">
-              <span>{t("shell.createSessionWorkspaceLabel")}</span>
-              <button
-                type="button"
-                className="mobile-create-session-workspace-trigger"
-                aria-label={`${t("shell.createSessionWorkspaceLabel")} ${selectedWorkspaceOption?.label ?? ""}`.trim()}
-                aria-expanded={workspacePickerOpen ? "true" : "false"}
-                disabled={selectionOptions.length === 0}
-                onClick={() => {
-                  void haptics.trigger("selection");
-                  setWorkspacePickerOpen((current) => !current);
-                }}
-              >
-                <span className="mobile-create-session-workspace-copy">
-                  <strong>{selectedWorkspaceOption?.label ?? t("common.unknown")}</strong>
-                  <span>{selectedWorkspaceOption?.subtitle ?? t("common.unknown")}</span>
-                </span>
-                <ChevronDownIcon expanded={workspacePickerOpen} />
-              </button>
-              {workspacePickerOpen ? (
-                <div className="mobile-workspace-home-group mobile-create-session-workspace-list" role="list">
-                  {selectionOptions.map((item) => (
-                    <button
-                      key={item.workspace.id}
-                      type="button"
-                      className="mobile-workspace-home-row mobile-create-session-workspace-row"
-                      data-worktree-kind={item.kind}
-                      data-worktree-depth={item.depth}
-                      onClick={() => {
-                        if (item.workspace.id !== selectedWorkspaceId) {
-                          void haptics.trigger("selection");
-                        }
-                        setSelectedWorkspaceId(item.workspace.id);
-                        setWorkspacePickerOpen(false);
-                      }}
-                    >
-                      <span
-                        className="mobile-create-session-workspace-option-copy"
-                        style={
-                          {
-                            "--mobile-workspace-tree-depth": String(item.depth)
-                          } as CSSProperties
-                        }
-                      >
-                        <strong>
-                          {item.kind === "worktree" ? (
-                            <span className="mobile-workspace-home-worktree-badge">
-                              {t("shell.mobileWorktreeBadge")}
-                            </span>
-                          ) : null}
-                          {item.label}
-                        </strong>
-                        <span>{item.subtitle}</span>
-                      </span>
-                      <span className="mobile-workspace-home-row-trailing">
-                        {item.workspace.id === selectedWorkspaceId ? <CheckIcon /> : <ChevronRightIcon />}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-            <div className="mobile-create-session-provider-block">
-              <div className="mobile-create-session-provider-header">
-                <span className="mobile-create-session-provider-label">{t("shell.createSessionProviderLabel")}</span>
-                <span className="mobile-create-session-provider-hint">{t("shell.providerOptionHint")}</span>
-              </div>
-              <SessionProviderPicker
-                disabled={!selectedWorkspaceId}
-                workspaceId={selectedWorkspaceId || null}
-                onSelect={(provider) => {
-                  if (!selectedWorkspaceId) {
-                    return;
+  return (
+    <MobileSheet
+      open={open}
+      title={t("shell.createSessionModalTitle")}
+      description={t("shell.createSessionModalDescription")}
+      kind="form"
+      height="three-quarter"
+      className="mobile-create-session-sheet"
+      cardClassName="mobile-create-session-sheet-card"
+      bodyClassName="mobile-feature-form mobile-workspace-home-form mobile-create-session-form"
+      showHandle
+      onClose={onClose}
+    >
+      <ModalSection className="mobile-create-session-section" tone="accent">
+        <ModalField label={t("shell.createSessionWorkspaceLabel")}>
+          <button
+            type="button"
+            className="mobile-create-session-workspace-trigger"
+            aria-label={`${t("shell.createSessionWorkspaceLabel")} ${selectedWorkspaceOption?.label ?? ""}`.trim()}
+            aria-expanded={workspacePickerOpen ? "true" : "false"}
+            disabled={selectionOptions.length === 0}
+            onClick={() => {
+              void haptics.trigger("selection");
+              setWorkspacePickerOpen((current) => !current);
+            }}
+          >
+            <span className="mobile-create-session-workspace-copy">
+              <strong>{selectedWorkspaceOption?.label ?? t("common.unknown")}</strong>
+              <span>{selectedWorkspaceOption?.subtitle ?? t("common.unknown")}</span>
+            </span>
+            <ChevronDownIcon expanded={workspacePickerOpen} />
+          </button>
+          {workspacePickerOpen ? (
+            <ModalList className="mobile-workspace-home-group mobile-create-session-workspace-list" role="list">
+              {selectionOptions.map((item) => (
+                <ModalListItem
+                  key={item.workspace.id}
+                  as="button"
+                  className="mobile-workspace-home-row mobile-create-session-workspace-row"
+                  data-worktree-kind={item.kind}
+                  data-worktree-depth={item.depth}
+                  selected={item.workspace.id === selectedWorkspaceId}
+                  trailing={
+                    <span className="mobile-workspace-home-row-trailing">
+                      {item.workspace.id === selectedWorkspaceId ? <CheckIcon /> : <ChevronRightIcon />}
+                    </span>
                   }
+                  style={
+                    {
+                      "--mobile-workspace-tree-depth": String(item.depth)
+                    } as CSSProperties
+                  }
+                  onClick={() => {
+                    if (item.workspace.id !== selectedWorkspaceId) {
+                      void haptics.trigger("selection");
+                    }
+                    setSelectedWorkspaceId(item.workspace.id);
+                    setWorkspacePickerOpen(false);
+                  }}
+                >
+                  <span className="mobile-create-session-workspace-option-copy">
+                    <strong>
+                      {item.kind === "worktree" ? (
+                        <ModalTag className="mobile-workspace-home-worktree-badge">
+                          {t("shell.mobileWorktreeBadge")}
+                        </ModalTag>
+                      ) : null}
+                      {item.label}
+                    </strong>
+                    <span>{item.subtitle}</span>
+                  </span>
+                </ModalListItem>
+              ))}
+            </ModalList>
+          ) : null}
+        </ModalField>
+      </ModalSection>
 
-                  onSelect(selectedWorkspaceId, provider);
-                }}
-              />
-            </div>
-          </div>
-        </div>
-        <button type="button" className="ios-action-sheet-cancel" onClick={onClose}>
-          {t("common.cancel")}
-        </button>
-      </div>
-    </div>,
-    document.body
+      <ModalSection
+        className="mobile-create-session-provider-block"
+        heading={t("shell.createSessionProviderLabel")}
+        description={t("shell.providerOptionHint")}
+      >
+        <SessionProviderPicker
+          disabled={!selectedWorkspaceId}
+          workspaceId={selectedWorkspaceId || null}
+          onSelect={(provider) => {
+            if (!selectedWorkspaceId) {
+              return;
+            }
+
+            onSelect(selectedWorkspaceId, provider);
+          }}
+        />
+      </ModalSection>
+    </MobileSheet>
   );
 }
 

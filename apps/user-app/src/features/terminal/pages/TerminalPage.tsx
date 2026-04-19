@@ -12,13 +12,13 @@ import {
   type MouseEvent as ReactMouseEvent,
   type TouchEvent as ReactTouchEvent
 } from "react";
-import { createPortal } from "react-dom";
 import { useNavigate, useParams } from "react-router-dom";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
+import { MobileSheet } from "../../../components/MobileSheet";
 import { resolveMacOsNativeTitlebarDragRegion } from "../../../platform/desktop/window-drag";
 import { usePlatform } from "../../../platform/platform-provider";
 import {
@@ -2615,130 +2615,121 @@ function MobileTerminalActionSheet({
   const canControlConnection =
     pendingMutation === null && assignedPaneId !== null && terminal.status === "running";
 
-  return createPortal(
-    <div className="ios-action-sheet-overlay" role="presentation" onClick={onClose}>
-      <div
-        className="mobile-workspace-home-sheet terminal-mobile-action-sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t("terminal.moreActions")}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="mobile-workspace-home-sheet-card terminal-mobile-action-sheet-card">
-          <div className="mobile-workspace-home-sheet-header">
-            <strong>{terminal.name}</strong>
-          </div>
-          <div className="terminal-mobile-action-list">
-            {splitDirection !== "single" ? (
-              <>
-                <button
-                  type="button"
-                  className="terminal-mobile-action-item"
-                  disabled={pendingMutation !== null || paneBindings.primary === terminal.id}
-                  onClick={() => {
-                    onBindToPane(terminal.id, "primary");
-                  }}
-                >
-                  {t("terminal.bindToPrimaryPaneAction")}
-                </button>
-                <button
-                  type="button"
-                  className="terminal-mobile-action-item"
-                  disabled={pendingMutation !== null || paneBindings.secondary === terminal.id}
-                  onClick={() => {
-                    onBindToPane(terminal.id, "secondary");
-                  }}
-                >
-                  {t("terminal.bindToSecondaryPaneAction")}
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                className="terminal-mobile-action-item"
-                disabled={pendingMutation !== null || paneBindings.primary === terminal.id}
-                onClick={() => {
-                  onBindToActivePane(terminal.id);
-                }}
-              >
-                {t("terminal.bindToPaneAction")}
-              </button>
-            )}
-            <button
-              type="button"
-              className="terminal-mobile-action-item"
-              disabled={pendingMutation !== null}
-              onClick={() => {
-                void onDuplicate(terminal);
-              }}
-            >
-              {t("terminal.duplicateAction")}
-            </button>
-            {canControlConnection ? (
-              activeConnectionState === "connected" ? (
-                <button
-                  type="button"
-                  className="terminal-mobile-action-item"
-                  disabled={pendingMutation !== null}
-                  onClick={() => {
-                    onDisconnect(terminal.id);
-                  }}
-                >
-                  {t("terminal.disconnectAction")}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="terminal-mobile-action-item"
-                  disabled={pendingMutation !== null}
-                  onClick={() => {
-                    onReconnect(terminal.id);
-                  }}
-                >
-                  {t("terminal.reconnectAction")}
-                </button>
-              )
-            ) : null}
-            {showCloseAction ? (
-              <button
-                type="button"
-                className="terminal-mobile-action-item"
-                onClick={() => {
-                  void onCloseTerminal(terminal.id);
-                }}
-              >
-                {t("terminal.closeButton")}
-              </button>
-            ) : null}
-            {showDeleteAction ? (
-              <button
-                type="button"
-                className="terminal-mobile-action-item danger"
-                onClick={() => {
-                  void onDeleteTerminal(terminal.id);
-                }}
-              >
-                {t("terminal.deleteAction")}
-              </button>
-            ) : null}
-            <button
-              type="button"
-              className="terminal-mobile-action-item"
-              disabled={pendingMutation !== null}
-              onClick={() => {
-                onTogglePin(terminal.id);
-              }}
-            >
-              {isPinned ? t("terminal.unpinAction") : t("terminal.pinAction")}
-            </button>
-          </div>
-        </div>
-        <button type="button" className="ios-action-sheet-cancel" onClick={onClose}>
-          {t("common.cancel")}
+  return (
+    <MobileSheet
+      open
+      title={t("terminal.moreActions")}
+      description={terminal.name}
+      kind="action"
+      height="auto"
+      className="terminal-mobile-action-sheet"
+      cardClassName="terminal-mobile-action-sheet-card"
+      bodyClassName="terminal-mobile-action-list"
+      onClose={onClose}
+    >
+      {splitDirection !== "single" ? (
+        <>
+          <button
+            type="button"
+            className="terminal-mobile-action-item"
+            disabled={pendingMutation !== null || paneBindings.primary === terminal.id}
+            onClick={() => {
+              onBindToPane(terminal.id, "primary");
+            }}
+          >
+            {t("terminal.bindToPrimaryPaneAction")}
+          </button>
+          <button
+            type="button"
+            className="terminal-mobile-action-item"
+            disabled={pendingMutation !== null || paneBindings.secondary === terminal.id}
+            onClick={() => {
+              onBindToPane(terminal.id, "secondary");
+            }}
+          >
+            {t("terminal.bindToSecondaryPaneAction")}
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          className="terminal-mobile-action-item"
+          disabled={pendingMutation !== null || paneBindings.primary === terminal.id}
+          onClick={() => {
+            onBindToActivePane(terminal.id);
+          }}
+        >
+          {t("terminal.bindToPaneAction")}
         </button>
-      </div>
-    </div>,
-    document.body
+      )}
+      <button
+        type="button"
+        className="terminal-mobile-action-item"
+        disabled={pendingMutation !== null}
+        onClick={() => {
+          void onDuplicate(terminal);
+        }}
+      >
+        {t("terminal.duplicateAction")}
+      </button>
+      {canControlConnection ? (
+        activeConnectionState === "connected" ? (
+          <button
+            type="button"
+            className="terminal-mobile-action-item"
+            disabled={pendingMutation !== null}
+            onClick={() => {
+              onDisconnect(terminal.id);
+            }}
+          >
+            {t("terminal.disconnectAction")}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="terminal-mobile-action-item"
+            disabled={pendingMutation !== null}
+            onClick={() => {
+              onReconnect(terminal.id);
+            }}
+          >
+            {t("terminal.reconnectAction")}
+          </button>
+        )
+      ) : null}
+      {showCloseAction ? (
+        <button
+          type="button"
+          className="terminal-mobile-action-item"
+          onClick={() => {
+            void onCloseTerminal(terminal.id);
+          }}
+        >
+          {t("terminal.closeButton")}
+        </button>
+      ) : null}
+      {showDeleteAction ? (
+        <button
+          type="button"
+          className="terminal-mobile-action-item danger"
+          onClick={() => {
+            void onDeleteTerminal(terminal.id);
+          }}
+        >
+          {t("terminal.deleteAction")}
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className="terminal-mobile-action-item"
+        disabled={pendingMutation !== null}
+        onClick={() => {
+          onTogglePin(terminal.id);
+        }}
+      >
+        {isPinned ? t("terminal.unpinAction") : t("terminal.pinAction")}
+      </button>
+    </MobileSheet>
   );
 }
 
@@ -2862,115 +2853,104 @@ function TerminalCreateSheet({
     !selectedShellChoice ||
     !selectedShellChoice.available;
 
-  return createPortal(
-    <div className="ios-action-sheet-overlay" role="presentation" onClick={onClose}>
-      <div
-        className="mobile-workspace-home-sheet terminal-mobile-create-sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="mobile-workspace-home-sheet-card terminal-mobile-create-sheet-card">
-          <div className="mobile-workspace-home-sheet-header">
-            <strong>{title}</strong>
-          </div>
-
-          <div className="terminal-mobile-create-sheet-body">
-            <section className="terminal-mobile-create-section">
-              <div className="terminal-mobile-create-section-copy">
-                <strong>{shellLabel}</strong>
-                <p>{shellDescription}</p>
-              </div>
-              {loading && shellChoices.length === 0 ? (
-                <div className="terminal-mobile-create-loading">
-                  <span className="terminal-pending-indicator" aria-hidden="true" />
-                  <span>{t("terminal.mobileCreateLoadingShells")}</span>
-                </div>
-              ) : (
-                <div className="terminal-mobile-choice-grid" role="list">
-                  {shellChoices.map((option) => {
-                    const selected = option.value === selectedShell;
-
-                    return (
-                      <button
-                        key={option.id}
-                        type="button"
-                        className="terminal-mobile-choice-card"
-                        data-selected={selected ? "true" : "false"}
-                        disabled={!option.available || creating}
-                        onClick={() => {
-                          onSelectShell(option.value);
-                        }}
-                      >
-                        <span className="terminal-mobile-choice-copy">
-                          <strong>{option.label}</strong>
-                          <span>{option.description}</span>
-                        </span>
-                        {!option.available && option.unavailableReason ? (
-                          <span className="terminal-mobile-choice-badge terminal-mobile-choice-badge-muted">
-                            {option.unavailableReason}
-                          </span>
-                        ) : selected ? (
-                          <span className="terminal-mobile-choice-badge">{t("settings.enabled")}</span>
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-
-            <section className="terminal-mobile-create-section">
-              <div className="terminal-mobile-create-section-copy">
-                <strong>{runtimeLabel}</strong>
-                <p>{runtimeDescription}</p>
-              </div>
-              <div className="terminal-mobile-choice-grid" role="list">
-                {runtimeCards.map((option) => {
-                  const selected = option.value === runtimeType;
-
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      className="terminal-mobile-choice-card"
-                      data-selected={selected ? "true" : "false"}
-                      disabled={creating}
-                      onClick={() => {
-                        onSelectRuntime(option.value);
-                      }}
-                    >
-                      <span className="terminal-mobile-choice-copy">
-                        <strong>{option.title}</strong>
-                        <span>{option.description}</span>
-                      </span>
-                      {selected ? (
-                        <span className="terminal-mobile-choice-badge">{t("settings.enabled")}</span>
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-
-            <button
-              type="button"
-              className="terminal-mobile-primary-action terminal-mobile-create-confirm"
-              disabled={confirmDisabled}
-              onClick={onConfirm}
-            >
-              {creating ? t("terminal.creating") : confirmLabel}
-            </button>
-          </div>
+  return (
+    <MobileSheet
+      open
+      title={title}
+      kind="form"
+      height="three-quarter"
+      className="terminal-mobile-create-sheet"
+      cardClassName="terminal-mobile-create-sheet-card"
+      bodyClassName="terminal-mobile-create-sheet-body"
+      dismissible={!creating}
+      onClose={onClose}
+    >
+      <section className="terminal-mobile-create-section">
+        <div className="terminal-mobile-create-section-copy">
+          <strong>{shellLabel}</strong>
+          <p>{shellDescription}</p>
         </div>
+        {loading && shellChoices.length === 0 ? (
+          <div className="terminal-mobile-create-loading">
+            <span className="terminal-pending-indicator" aria-hidden="true" />
+            <span>{t("terminal.mobileCreateLoadingShells")}</span>
+          </div>
+        ) : (
+          <div className="terminal-mobile-choice-grid" role="list">
+            {shellChoices.map((option) => {
+              const selected = option.value === selectedShell;
 
-        <button type="button" className="ios-action-sheet-cancel" disabled={creating} onClick={onClose}>
-          {t("common.cancel")}
-        </button>
-      </div>
-    </div>,
-    document.body
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  className="terminal-mobile-choice-card"
+                  data-selected={selected ? "true" : "false"}
+                  disabled={!option.available || creating}
+                  onClick={() => {
+                    onSelectShell(option.value);
+                  }}
+                >
+                  <span className="terminal-mobile-choice-copy">
+                    <strong>{option.label}</strong>
+                    <span>{option.description}</span>
+                  </span>
+                  {!option.available && option.unavailableReason ? (
+                    <span className="terminal-mobile-choice-badge terminal-mobile-choice-badge-muted">
+                      {option.unavailableReason}
+                    </span>
+                  ) : selected ? (
+                    <span className="terminal-mobile-choice-badge">{t("settings.enabled")}</span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="terminal-mobile-create-section">
+        <div className="terminal-mobile-create-section-copy">
+          <strong>{runtimeLabel}</strong>
+          <p>{runtimeDescription}</p>
+        </div>
+        <div className="terminal-mobile-choice-grid" role="list">
+          {runtimeCards.map((option) => {
+            const selected = option.value === runtimeType;
+
+            return (
+              <button
+                key={option.value}
+                type="button"
+                className="terminal-mobile-choice-card"
+                data-selected={selected ? "true" : "false"}
+                disabled={creating}
+                onClick={() => {
+                  onSelectRuntime(option.value);
+                }}
+              >
+                <span className="terminal-mobile-choice-copy">
+                  <strong>{option.title}</strong>
+                  <span>{option.description}</span>
+                </span>
+                {selected ? (
+                  <span className="terminal-mobile-choice-badge">{t("settings.enabled")}</span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <button
+        type="button"
+        className="terminal-mobile-primary-action terminal-mobile-create-confirm"
+        disabled={confirmDisabled}
+        onClick={onConfirm}
+      >
+        {creating ? t("terminal.creating") : confirmLabel}
+      </button>
+    </MobileSheet>
   );
 }
 

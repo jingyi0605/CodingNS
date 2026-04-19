@@ -57,6 +57,7 @@
     0 20px 48px rgba(15, 23, 42, 0.16),
     0 8px 18px rgba(15, 23, 42, 0.08),
     inset 0 1px 0 rgba(255, 255, 255, 0.52);
+  --desktop-modal-width-standard: min(max(60vw, 720px), calc(100% - 32px));
   --modal-panel-border: color-mix(in srgb, var(--border-primary, rgba(0, 0, 0, 0.06)) 78%, rgba(255, 255, 255, 0.28));
   --modal-panel-filter: blur(10px);
   --modal-panel-surface:
@@ -123,6 +124,16 @@
   --modal-checkbox-surface: color-mix(in srgb, var(--modal-control-surface) 88%, transparent);
   --modal-checkbox-surface-hover: color-mix(in srgb, var(--modal-control-surface-hover) 92%, transparent);
   --modal-checkbox-check: var(--text-inverse, #ffffff);
+  --app-button-bg: var(--bg-primary, #ffffff);
+  --app-button-bg-hover: var(--bg-hover, rgba(0, 0, 0, 0.03));
+  --app-button-border: var(--border-primary, rgba(0, 0, 0, 0.06));
+  --app-button-border-hover: var(--accent, #007aff);
+  --app-button-color: var(--text-primary, #1a1a1a);
+  --app-button-danger-bg: color-mix(in srgb, var(--error, #ef4444) 10%, var(--bg-primary, #ffffff));
+  --app-button-danger-bg-hover: color-mix(in srgb, var(--error, #ef4444) 14%, var(--bg-primary, #ffffff));
+  --app-button-danger-border: color-mix(in srgb, var(--error, #ef4444) 30%, var(--border-primary, rgba(0, 0, 0, 0.06)));
+  --app-button-danger-border-hover: color-mix(in srgb, var(--error, #ef4444) 48%, var(--border-primary, rgba(0, 0, 0, 0.06)));
+  --app-button-danger-color: var(--error, #ef4444);
   --modal-control-border: color-mix(in srgb, var(--border-primary, rgba(0, 0, 0, 0.06)) 82%, transparent);
   --modal-control-surface-hover: linear-gradient(180deg, color-mix(in srgb, var(--bg-surface, #ffffff) 95%, var(--bg-hover, rgba(0, 0, 0, 0.04)) 5%), color-mix(in srgb, var(--bg-primary, #fafafa) 80%, var(--bg-hover, rgba(0, 0, 0, 0.04)) 20%));
   --modal-control-shadow:
@@ -132,33 +143,25 @@
   --modal-control-border-hover: color-mix(in srgb, var(--border-primary, rgba(0, 0, 0, 0.06)) 54%, var(--accent, #007aff) 16%);
   --modal-control-border-focus: color-mix(in srgb, var(--accent, #007aff) 34%, var(--border-primary, rgba(0, 0, 0, 0.06)));
   --modal-control-focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent, #007aff) 12%, transparent);
-  --modal-button-secondary-bg: color-mix(in srgb, var(--bg-hover, rgba(0, 0, 0, 0.04)) 90%, transparent);
-  --modal-button-secondary-bg-hover: color-mix(in srgb, var(--bg-active, rgba(0, 122, 255, 0.08)) 78%, transparent);
-  --modal-button-secondary-color: var(--text-primary, #1a1a1a);
-  --modal-button-primary-bg: var(--accent, #007aff);
-  --modal-button-primary-bg-hover: var(--accent-hover, #0066d4);
-  --modal-button-primary-color: var(--text-inverse, #ffffff);
-  --modal-button-ghost-bg: transparent;
-  --modal-button-ghost-bg-hover: color-mix(in srgb, var(--bg-hover, rgba(0, 0, 0, 0.04)) 88%, transparent);
-  --modal-button-ghost-color: var(--accent, #007aff);
-  --modal-button-danger-bg-hover: color-mix(in srgb, var(--status-danger, #ff3b30) 10%, var(--bg-surface, #ffffff));
-  --modal-button-danger-border: color-mix(in srgb, var(--status-danger, #ff3b30) 34%, var(--border-primary, rgba(0, 0, 0, 0.06)));
-  --modal-button-danger-border-hover: color-mix(in srgb, var(--status-danger, #ff3b30) 48%, var(--border-primary, rgba(0, 0, 0, 0.06)));
-  --modal-button-secondary-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight, rgba(255, 255, 255, 0.88)) 86%, transparent),
-    0 2px 6px rgba(15, 23, 42, 0.05);
-  --modal-button-secondary-shadow-hover:
-    inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight, rgba(255, 255, 255, 0.88)) 92%, transparent),
-    0 6px 14px rgba(15, 23, 42, 0.08);
-  --modal-button-primary-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    0 10px 24px color-mix(in srgb, var(--accent, #007aff) 24%, transparent);
-  --modal-button-primary-shadow-hover:
-    inset 0 1px 0 rgba(255, 255, 255, 0.3),
-    0 12px 28px color-mix(in srgb, var(--accent, #007aff) 30%, transparent);
-  --modal-button-pressed-shadow:
-    inset 0 1px 2px rgba(15, 23, 42, 0.14),
-    0 1px 2px rgba(15, 23, 42, 0.04);
+  --modal-button-secondary-bg: var(--app-button-bg);
+  --modal-button-secondary-bg-hover: var(--app-button-bg-hover);
+  --modal-button-secondary-color: var(--app-button-color);
+  --modal-button-primary-bg: var(--app-button-bg);
+  --modal-button-primary-bg-hover: var(--app-button-bg-hover);
+  --modal-button-primary-color: var(--app-button-color);
+  --modal-button-danger-bg: var(--app-button-danger-bg);
+  --modal-button-danger-bg-hover: var(--app-button-danger-bg-hover);
+  --modal-button-danger-color: var(--app-button-danger-color);
+  --modal-button-ghost-bg: var(--app-button-bg);
+  --modal-button-ghost-bg-hover: var(--app-button-bg-hover);
+  --modal-button-ghost-color: var(--app-button-color);
+  --modal-button-danger-border: var(--app-button-danger-border);
+  --modal-button-danger-border-hover: var(--app-button-danger-border-hover);
+  --modal-button-secondary-shadow: none;
+  --modal-button-secondary-shadow-hover: none;
+  --modal-button-primary-shadow: none;
+  --modal-button-primary-shadow-hover: none;
+  --modal-button-pressed-shadow: none;
 }
 
 /* Light Theme (Default) */
@@ -293,41 +296,25 @@
   --modal-control-border-hover: color-mix(in srgb, var(--accent) 16%, rgba(255, 255, 255, 0.58));
   --modal-control-border-focus: color-mix(in srgb, var(--accent) 30%, rgba(255, 255, 255, 0.58));
   --modal-control-focus-ring: 0 0 0 3px rgba(0, 122, 255, 0.12);
-  --modal-button-secondary-bg:
-    linear-gradient(
-      180deg,
-      rgba(255, 255, 255, 0.94),
-      rgba(228, 232, 238, 0.92)
-    );
-  --modal-button-secondary-bg-hover:
-    linear-gradient(
-      180deg,
-      rgba(255, 255, 255, 0.98),
-      rgba(236, 240, 245, 0.95)
-    );
-  --modal-button-secondary-color: var(--text-primary);
-  --modal-button-primary-bg: linear-gradient(180deg, rgba(0, 122, 255, 0.96), rgba(0, 102, 212, 0.98));
-  --modal-button-primary-bg-hover: linear-gradient(180deg, rgba(18, 133, 255, 0.98), rgba(0, 102, 212, 1));
-  --modal-button-primary-color: #ffffff;
-  --modal-button-ghost-bg-hover: rgba(255, 255, 255, 0.28);
-  --modal-button-danger-bg-hover: rgba(255, 59, 48, 0.12);
-  --modal-button-danger-border: color-mix(in srgb, var(--danger) 36%, rgba(255, 255, 255, 0.42));
-  --modal-button-danger-border-hover: color-mix(in srgb, var(--danger) 48%, rgba(255, 255, 255, 0.42));
-  --modal-button-secondary-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.94),
-    0 2px 6px rgba(15, 23, 42, 0.06);
-  --modal-button-secondary-shadow-hover:
-    inset 0 1px 0 rgba(255, 255, 255, 0.98),
-    0 7px 18px rgba(15, 23, 42, 0.1);
-  --modal-button-primary-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.24),
-    0 12px 28px rgba(0, 102, 212, 0.24);
-  --modal-button-primary-shadow-hover:
-    inset 0 1px 0 rgba(255, 255, 255, 0.32),
-    0 14px 32px rgba(0, 102, 212, 0.28);
-  --modal-button-pressed-shadow:
-    inset 0 1px 2px rgba(15, 23, 42, 0.14),
-    0 1px 2px rgba(15, 23, 42, 0.05);
+  --modal-button-secondary-bg: var(--app-button-bg);
+  --modal-button-secondary-bg-hover: var(--app-button-bg-hover);
+  --modal-button-secondary-color: var(--app-button-color);
+  --modal-button-primary-bg: var(--app-button-bg);
+  --modal-button-primary-bg-hover: var(--app-button-bg-hover);
+  --modal-button-primary-color: var(--app-button-color);
+  --modal-button-danger-bg: var(--app-button-danger-bg);
+  --modal-button-danger-bg-hover: var(--app-button-danger-bg-hover);
+  --modal-button-danger-color: var(--app-button-danger-color);
+  --modal-button-ghost-bg: var(--app-button-bg);
+  --modal-button-ghost-bg-hover: var(--app-button-bg-hover);
+  --modal-button-ghost-color: var(--app-button-color);
+  --modal-button-danger-border: var(--app-button-danger-border);
+  --modal-button-danger-border-hover: var(--app-button-danger-border-hover);
+  --modal-button-secondary-shadow: none;
+  --modal-button-secondary-shadow-hover: none;
+  --modal-button-primary-shadow: none;
+  --modal-button-primary-shadow-hover: none;
+  --modal-button-pressed-shadow: none;
   --conversation-chip-border: color-mix(in srgb, var(--border-primary) 78%, rgba(255, 255, 255, 0.4));
   --conversation-chip-bg:
     linear-gradient(
@@ -593,44 +580,25 @@
   --modal-control-border-hover: color-mix(in srgb, var(--accent) 26%, rgba(255, 255, 255, 0.12));
   --modal-control-border-focus: color-mix(in srgb, var(--accent) 42%, rgba(255, 255, 255, 0.12));
   --modal-control-focus-ring: 0 0 0 3px rgba(10, 132, 255, 0.18);
-  --modal-button-secondary-bg:
-    linear-gradient(
-      180deg,
-      rgba(88, 92, 101, 0.86),
-      rgba(56, 60, 69, 0.96)
-    );
-  --modal-button-secondary-bg-hover:
-    linear-gradient(
-      180deg,
-      rgba(98, 103, 112, 0.9),
-      rgba(62, 66, 76, 0.98)
-    );
-  --modal-button-secondary-color: var(--text-primary);
-  --modal-button-primary-bg:
-    linear-gradient(180deg, color-mix(in srgb, white 10%, var(--accent)), var(--accent));
-  --modal-button-primary-bg-hover:
-    linear-gradient(180deg, color-mix(in srgb, white 18%, var(--accent)), var(--accent-hover));
-  --modal-button-primary-color: #ffffff;
-  --modal-button-ghost-bg-hover: rgba(255, 255, 255, 0.08);
-  --modal-button-ghost-color: color-mix(in srgb, var(--accent) 92%, white 8%);
-  --modal-button-danger-bg-hover: rgba(255, 69, 58, 0.16);
-  --modal-button-danger-border: color-mix(in srgb, var(--danger) 42%, rgba(255, 255, 255, 0.12));
-  --modal-button-danger-border-hover: color-mix(in srgb, var(--danger) 56%, rgba(255, 255, 255, 0.12));
-  --modal-button-secondary-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 8px 18px rgba(0, 0, 0, 0.18);
-  --modal-button-secondary-shadow-hover:
-    inset 0 1px 0 rgba(255, 255, 255, 0.1),
-    0 10px 22px rgba(0, 0, 0, 0.24);
-  --modal-button-primary-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.2),
-    0 12px 28px color-mix(in srgb, var(--accent) 32%, rgba(0, 0, 0, 0.2));
-  --modal-button-primary-shadow-hover:
-    inset 0 1px 0 rgba(255, 255, 255, 0.26),
-    0 14px 30px color-mix(in srgb, var(--accent) 38%, rgba(0, 0, 0, 0.24));
-  --modal-button-pressed-shadow:
-    inset 0 1px 2px rgba(0, 0, 0, 0.34),
-    0 1px 2px rgba(0, 0, 0, 0.14);
+  --modal-button-secondary-bg: var(--app-button-bg);
+  --modal-button-secondary-bg-hover: var(--app-button-bg-hover);
+  --modal-button-secondary-color: var(--app-button-color);
+  --modal-button-primary-bg: var(--app-button-bg);
+  --modal-button-primary-bg-hover: var(--app-button-bg-hover);
+  --modal-button-primary-color: var(--app-button-color);
+  --modal-button-danger-bg: var(--app-button-danger-bg);
+  --modal-button-danger-bg-hover: var(--app-button-danger-bg-hover);
+  --modal-button-danger-color: var(--app-button-danger-color);
+  --modal-button-ghost-bg: var(--app-button-bg);
+  --modal-button-ghost-bg-hover: var(--app-button-bg-hover);
+  --modal-button-ghost-color: var(--app-button-color);
+  --modal-button-danger-border: var(--app-button-danger-border);
+  --modal-button-danger-border-hover: var(--app-button-danger-border-hover);
+  --modal-button-secondary-shadow: none;
+  --modal-button-secondary-shadow-hover: none;
+  --modal-button-primary-shadow: none;
+  --modal-button-primary-shadow-hover: none;
+  --modal-button-pressed-shadow: none;
   --conversation-chip-border: color-mix(in srgb, var(--border-primary) 74%, rgba(255, 255, 255, 0.16));
   --conversation-chip-bg: color-mix(in srgb, var(--bg-surface) 82%, #2c2c2e 18%);
   --conversation-chip-bg-hover: color-mix(in srgb, var(--bg-surface) 74%, #3a3a3c 26%);
@@ -3154,11 +3122,11 @@ a {
 }
 
 .terminal-manager-modal-card {
-  width: min(680px, 100%);
+  max-height: min(88vh, 920px);
 }
 
 .terminal-manager-confirm-modal {
-  width: min(520px, calc(100vw - 32px));
+  max-height: min(72vh, 480px);
 }
 
 .terminal-manager-modal-form {
@@ -3193,9 +3161,20 @@ a {
 
 .terminal-runtime-fallback-list {
   margin: 0;
-  padding-left: 18px;
+  padding: 4px;
   color: var(--text-secondary);
   line-height: 1.7;
+}
+
+.terminal-runtime-fallback-list .modal-list-item {
+  padding: 8px 10px;
+  border-radius: 12px;
+}
+
+.terminal-runtime-fallback-list .modal-list-item-label {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.6;
 }
 
 /* ========================================
@@ -3287,50 +3266,81 @@ a {
 /* Buttons */
 .primary-button,
 .secondary-button,
-.ghost-button {
+.ghost-button,
+.settings-button,
+.settings-button-danger,
+.workbench-secondary-button,
+.workbench-danger-button,
+.settings-mobile-primary-button,
+.settings-mobile-danger-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  border: none;
-  border-radius: var(--radius-md);
+  min-height: 34px;
   padding: 8px 14px;
+  border: 1px solid var(--app-button-border);
+  border-radius: var(--radius-md);
+  background: var(--app-button-bg);
+  color: var(--app-button-color);
   font-size: 13px;
-  font-weight: 500;
-  transition: all var(--transition-fast);
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: none;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    opacity var(--transition-fast);
 }
 
-.primary-button {
-  background: var(--accent);
-  color: var(--text-inverse);
+.primary-button:hover:not(:disabled),
+.secondary-button:hover:not(:disabled),
+.ghost-button:hover:not(:disabled),
+.settings-button:hover:not(:disabled),
+.workbench-secondary-button:hover:not(:disabled),
+.settings-mobile-primary-button:hover:not(:disabled) {
+  background: var(--app-button-bg-hover);
+  border-color: var(--app-button-border-hover);
 }
 
-.primary-button:hover:not(:disabled) {
-  background: var(--accent-hover);
+.settings-button-danger,
+.workbench-danger-button,
+.settings-mobile-danger-button {
+  border-color: var(--app-button-danger-border);
+  background: var(--app-button-danger-bg);
+  color: var(--app-button-danger-color);
 }
 
-.secondary-button {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-  border: 1px solid var(--border-subtle);
+.settings-button-danger:hover:not(:disabled),
+.workbench-danger-button:hover:not(:disabled),
+.settings-mobile-danger-button:hover:not(:disabled) {
+  background: var(--app-button-danger-bg-hover);
+  border-color: var(--app-button-danger-border-hover);
+  color: var(--app-button-danger-color);
 }
 
-.secondary-button:hover:not(:disabled) {
-  background: var(--border-subtle);
-}
-
-.ghost-button {
-  background: transparent;
-  color: var(--accent);
+.settings-mobile-primary-button,
+.settings-mobile-danger-button {
+  width: 100%;
+  min-height: 46px;
+  border-radius: 14px;
+  font-size: 16px;
 }
 
 .ghost-button:hover:not(:disabled) {
-  background: var(--bg-hover);
+  color: var(--app-button-color);
 }
 
 .primary-button:disabled,
 .secondary-button:disabled,
-.ghost-button:disabled {
+.ghost-button:disabled,
+.settings-button:disabled,
+.settings-button-danger:disabled,
+.workbench-secondary-button:disabled,
+.workbench-danger-button:disabled,
+.settings-mobile-primary-button:disabled,
+.settings-mobile-danger-button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
 }
@@ -7074,12 +7084,12 @@ textarea:focus-visible {
   gap: 1rem;
 }
 
-.composer-attachment-sheet-overlay {
-  z-index: 2400;
-}
-
 .composer-attachment-sheet {
   z-index: 2401;
+}
+
+.composer-attachment-sheet-body {
+  padding-top: 0;
 }
 
 .composer-attachment-sheet-actions {
@@ -7087,21 +7097,13 @@ textarea:focus-visible {
   flex-direction: column;
 }
 
-.composer-attachment-sheet-option-copy {
-  display: flex;
-  min-width: 0;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-
-.composer-attachment-sheet-option-copy strong {
+.composer-attachment-sheet-option .modal-list-item-label {
   color: var(--text-primary);
   font-size: 0.98rem;
   font-weight: 600;
 }
 
-.composer-attachment-sheet-option-copy span {
+.composer-attachment-sheet-option .modal-list-item-description {
   color: var(--text-secondary);
   font-size: 0.84rem;
   line-height: 1.45;
@@ -9669,13 +9671,11 @@ textarea:focus-visible {
   z-index: 1900;
 }
 
-.message-image-modal-card {
-  width: min(880px, 100%);
+.workbench-modal-card.message-image-modal {
   max-height: min(86vh, 900px);
-  padding: 18px;
 }
 
-.message-image-modal-header {
+.workbench-modal-card.message-image-modal .workbench-modal-header {
   align-items: center;
 }
 
@@ -13420,6 +13420,111 @@ textarea:focus-visible {
   color: var(--status-danger);
 }
 
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-list {
+  gap: 0;
+}
+
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-item {
+  border: 0;
+  border-top: 1px solid var(--modal-list-item-border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-item:first-child {
+  border-top: 0;
+}
+
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-item[data-workspace-tone="worktree"] {
+  border-color: var(--modal-list-item-border);
+  background: transparent;
+}
+
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-item-toggle {
+  padding: 16px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-item[data-workspace-tone="worktree"] .workbench-manage-item-toggle,
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-item[data-workspace-tone="worktree"] .workbench-manage-item-toggle:hover {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-item-body {
+  gap: 0;
+  padding: 0 0 12px;
+}
+
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-detail-block {
+  padding: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--modal-list-item-border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-item[data-workspace-tone="worktree"] .workbench-manage-detail-block {
+  border-color: var(--modal-list-item-border);
+  background: transparent;
+}
+
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-kv-list,
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-type-list {
+  gap: 0;
+}
+
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-kv-item,
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-type-item {
+  padding: 8px 0;
+  border-top: 1px solid var(--modal-list-item-border);
+}
+
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-kv-item:first-child,
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-type-item:first-child {
+  border-top: 0;
+}
+
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-color-actions {
+  gap: 10px;
+}
+
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-modal-actions {
+  padding-top: 12px;
+  border-top: 1px solid var(--modal-list-item-border);
+}
+
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-item[data-workspace-tone="worktree"] .workbench-section-counter {
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-item .ghost-button:not(.workbench-danger-button),
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-item .secondary-button:not(.workbench-danger-button) {
+  border: 0;
+  background: var(--modal-button-secondary-bg);
+  color: var(--modal-button-secondary-color);
+}
+
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-item .ghost-button:not(.workbench-danger-button):hover:not(:disabled),
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-item .secondary-button:not(.workbench-danger-button):hover:not(:disabled) {
+  border: 0;
+  background: var(--modal-button-secondary-bg-hover);
+  color: var(--modal-button-secondary-color);
+}
+
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-item .workbench-danger-button,
+.workbench-modal-layer .workbench-modal-card.workbench-manage-workspaces-modal .workbench-manage-item .workbench-danger-button:hover:not(:disabled) {
+  border: 0;
+  background: var(--modal-button-danger-bg);
+  color: var(--modal-button-danger-color);
+}
+
 .workbench-manage-children {
   display: flex;
   flex-direction: column;
@@ -13431,14 +13536,15 @@ textarea:focus-visible {
 }
 
 .workbench-danger-button {
-  border-color: color-mix(in srgb, var(--status-danger) 34%, var(--border-primary));
-  color: var(--status-danger);
+  border-color: var(--app-button-danger-border);
+  background: var(--app-button-danger-bg);
+  color: var(--app-button-danger-color);
 }
 
 .workbench-danger-button:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--status-danger) 10%, var(--bg-surface));
-  border-color: color-mix(in srgb, var(--status-danger) 48%, var(--border-primary));
-  color: var(--status-danger);
+  background: var(--app-button-danger-bg-hover);
+  border-color: var(--app-button-danger-border-hover);
+  color: var(--app-button-danger-color);
 }
 
 /* ========================================
@@ -14975,35 +15081,34 @@ textarea:focus-visible {
   color: #b91c1c;
 }
 
-.workbench-modal-card.apply-patch-modal-card {
-  width: min(1480px, calc(100vw - clamp(32px, 4vw, 64px)), max(728px, 72vw));
-  max-width: calc(100vw - clamp(32px, 4vw, 64px));
-  max-height: min(90vh, 980px);
+.workbench-modal-card.apply-patch-modal {
+  max-height: min(96vh, 100vh);
 }
 
 .apply-patch-modal-totals {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--modal-list-item-border);
 }
 
 .apply-patch-modal-body {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 0;
   min-height: 0;
   overflow: auto;
-  padding-right: 4px;
 }
 
 .apply-patch-file-panel {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 76%, transparent);
-  border-radius: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--modal-list-item-border);
   overflow: hidden;
-  background: color-mix(in srgb, var(--bg-primary) 97%, transparent);
+  background: transparent;
 }
 
 .apply-patch-file-panel-header {
@@ -15011,8 +15116,7 @@ textarea:focus-visible {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 14px;
-  background: color-mix(in srgb, var(--bg-hover) 58%, transparent);
+  padding: 0 0 12px;
 }
 
 .apply-patch-file-panel-title {
@@ -15207,9 +15311,8 @@ textarea:focus-visible {
   padding: 0;
 }
 
-.apply-patch-modal {
+.workbench-modal-card.apply-patch-modal {
   z-index: 2400;
-  padding: clamp(16px, 2.5vw, 32px);
 }
 
 .workbench-modal-backdrop {
@@ -15223,7 +15326,7 @@ textarea:focus-visible {
 .workbench-modal-card {
   position: relative;
   z-index: 1;
-  width: min(560px, 100%);
+  width: var(--desktop-modal-width-standard);
   max-height: min(80vh, 720px);
   display: flex;
   flex-direction: column;
@@ -15246,16 +15349,43 @@ textarea:focus-visible {
   -webkit-backdrop-filter: var(--modal-frame-filter);
 }
 
+.workbench-modal-card.desktop-modal-card[data-size="narrow"] {
+  width: var(--desktop-modal-width-standard);
+}
+
+.workbench-modal-card.desktop-modal-card[data-size="compact"] {
+  width: var(--desktop-modal-width-standard);
+}
+
+.workbench-modal-card.desktop-modal-card[data-size="regular"] {
+  width: var(--desktop-modal-width-standard);
+}
+
+.workbench-modal-card.desktop-modal-card[data-size="wide"] {
+  width: var(--desktop-modal-width-standard);
+}
+
+.workbench-modal-card.desktop-modal-card[data-size="xwide"] {
+  width: var(--desktop-modal-width-standard);
+}
+
+.workbench-modal-card.desktop-modal-card[data-size="full"] {
+  width: calc(100% - 32px);
+  max-width: calc(100% - 32px);
+  max-height: calc(100vh - 32px);
+  border-radius: 24px;
+}
+
 .workbench-modal-card.workbench-create-session-modal {
-  width: min(840px, calc(100% - 40px));
+  width: var(--desktop-modal-width-standard);
 }
 
 .workbench-modal-card.workbench-create-worktree-modal {
-  width: min(1080px, calc(100% - 40px));
+  width: var(--desktop-modal-width-standard);
 }
 
 .workbench-modal-card.workbench-manage-workspaces-modal {
-  width: min(60vw, calc(100% - 40px));
+  width: var(--desktop-modal-width-standard);
 }
 
 .workbench-modal-card.debug-readiness-matrix-modal-card {
@@ -15631,8 +15761,8 @@ textarea:focus-visible {
 }
 
 .workbench-notification-modal-card {
-  width: min(60vw, calc(100% - 40px));
-  max-width: min(60vw, calc(100% - 40px));
+  width: var(--desktop-modal-width-standard);
+  max-width: var(--desktop-modal-width-standard);
   max-height: min(80vh, 720px);
   padding: 14px 14px 12px;
   gap: 12px;
@@ -15927,9 +16057,75 @@ textarea:focus-visible {
 .workbench-modal-body {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 0;
   min-height: 0;
   overflow-y: auto;
+}
+
+.modal-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 0;
+  border: 0;
+  border-top: 1px solid var(--modal-list-item-border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.modal-section[data-tone="accent"] {
+  border-color: var(--modal-list-item-border);
+  background: transparent;
+}
+
+.modal-section[data-tone="danger"] {
+  border-color: var(--modal-list-item-border);
+  background: transparent;
+}
+
+.modal-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-section-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.modal-section-heading {
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+
+.modal-section-description {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.modal-section-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.workbench-modal-body > .modal-section:first-child,
+.workbench-modal-body > .modal-list:first-child,
+.workbench-modal-body > .modal-empty-state:first-child {
+  padding-top: 0;
+  border-top: 0;
 }
 
 .workbench-rename-form {
@@ -15944,6 +16140,25 @@ textarea:focus-visible {
   gap: 8px;
   color: var(--text-secondary);
   font-size: 13px;
+}
+
+.modal-field-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.modal-field-label {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.modal-field-description {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .workbench-clone-form {
@@ -16019,10 +16234,261 @@ textarea:focus-visible {
   gap: 10px;
 }
 
+.modal-actions {
+  flex-wrap: wrap;
+}
+
+.modal-actions[data-align="start"] {
+  justify-content: flex-start;
+}
+
+.modal-actions[data-align="between"] {
+  justify-content: space-between;
+}
+
+.modal-actions[data-stack="true"] {
+  flex-direction: column-reverse;
+  align-items: stretch;
+}
+
+.modal-actions[data-stack="true"] > * {
+  width: 100%;
+}
+
+.modal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  border: 0;
+  border-top: 1px solid var(--modal-list-item-border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.modal-list[data-compact="true"] {
+  gap: 0;
+  padding: 0;
+}
+
+.modal-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 1px solid var(--modal-list-item-border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.modal-list-item[data-interactive="true"] {
+  cursor: pointer;
+}
+
+.modal-list-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.modal-list-item[data-interactive="true"]:hover:not(:disabled) {
+  border-color: var(--modal-list-item-border);
+  background: transparent;
+  transform: none;
+}
+
+.modal-list-item[data-selected="true"] {
+  border-color: var(--modal-list-item-border);
+  background: transparent;
+}
+
+.modal-list-item[data-tone="danger"] {
+  border-color: color-mix(in srgb, var(--status-danger) 24%, var(--modal-list-item-border));
+}
+
+.modal-list-item:last-child {
+  border-bottom: 0;
+}
+
+.modal-list-item-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.modal-list-item-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.modal-list-item-label {
+  display: block;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.modal-list-item-description {
+  display: block;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.modal-list-item-leading,
+.modal-list-item-trailing {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.modal-empty-state {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 16px 0;
+  border: 0;
+  border-top: 1px solid var(--modal-list-item-border);
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.modal-empty-state[data-compact="true"] {
+  min-height: 0;
+  padding: 14px 0;
+}
+
+.modal-empty-state-title {
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.modal-empty-state-description {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.modal-empty-state-action {
+  display: inline-flex;
+  justify-content: center;
+  margin-top: 2px;
+}
+
+.modal-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 0;
+  width: fit-content;
+  padding: 0;
+  border-radius: 0;
+  border: 0;
+  background: transparent;
+  color: var(--modal-pill-color);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.modal-tag[data-tone="accent"],
+.modal-tag[data-tone="success"] {
+  border-color: transparent;
+  background: transparent;
+  color: color-mix(in srgb, var(--accent) 76%, var(--text-primary));
+}
+
+.modal-tag[data-tone="warning"] {
+  border-color: transparent;
+  background: transparent;
+  color: var(--warning);
+}
+
+.modal-tag[data-tone="danger"] {
+  border-color: transparent;
+  background: transparent;
+  color: var(--status-danger);
+}
+
+.workbench-modal-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--modal-header-divider);
+}
+
+.workbench-modal-layer .workbench-modal-card .settings-skill-entry-list,
+.workbench-modal-layer .workbench-modal-card .settings-model-switcher-list,
+.workbench-modal-layer .workbench-modal-card .git-remote-select-list,
+.workbench-modal-layer .workbench-modal-card .workbench-directory-browser-list,
+.workbench-modal-layer .workbench-modal-card .settings-model-modal-summary-row,
+.workbench-modal-layer .workbench-modal-card .settings-model-empty,
+.workbench-modal-layer .workbench-modal-card .settings-skill-empty,
+.workbench-modal-layer .workbench-modal-card .settings-device-compat-banner,
+.workbench-modal-layer .workbench-modal-card .terminal-runtime-fallback-section,
+.workbench-modal-layer .workbench-modal-card .git-remote-auth-banner,
+.workbench-modal-layer .workbench-modal-card .workbench-directory-browser-current-path {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.workbench-modal-layer .workbench-modal-card .settings-skill-entry-list,
+.workbench-modal-layer .workbench-modal-card .settings-model-switcher-list,
+.workbench-modal-layer .workbench-modal-card .git-remote-select-list,
+.workbench-modal-layer .workbench-modal-card .workbench-directory-browser-list {
+  padding: 0;
+}
+
+.workbench-modal-layer .workbench-modal-card .settings-skill-entry,
+.workbench-modal-layer .workbench-modal-card .git-remote-item,
+.workbench-modal-layer .workbench-modal-card .workbench-directory-browser-item {
+  border-radius: 0;
+  border-bottom: 1px solid var(--modal-list-item-border);
+}
+
+.workbench-modal-layer .workbench-modal-card .settings-skill-entry:last-child,
+.workbench-modal-layer .workbench-modal-card .git-remote-item:last-child,
+.workbench-modal-layer .workbench-modal-card .workbench-directory-browser-item:last-child {
+  border-bottom: 0;
+}
+
 .workbench-modal-card .primary-button,
 .workbench-modal-card .secondary-button,
 .workbench-modal-card .ghost-button,
 .workbench-modal-card .workbench-secondary-button,
+.mobile-sheet .primary-button,
+.mobile-sheet .secondary-button,
+.mobile-sheet .ghost-button,
 .conversation-selection-action-dialog .primary-button,
 .conversation-selection-action-dialog .secondary-button,
 .conversation-selection-action-dialog .ghost-button {
@@ -16031,25 +16497,29 @@ textarea:focus-visible {
 
 .workbench-modal-card .secondary-button,
 .workbench-modal-card .workbench-secondary-button,
+.mobile-sheet .secondary-button,
 .conversation-selection-action-dialog .secondary-button {
-  border: 1px solid var(--modal-control-border);
+  border: 0;
   background: var(--modal-button-secondary-bg);
   color: var(--modal-button-secondary-color);
 }
 
 .workbench-modal-card .secondary-button:hover:not(:disabled),
 .workbench-modal-card .workbench-secondary-button:hover:not(:disabled),
+.mobile-sheet .secondary-button:hover:not(:disabled),
 .conversation-selection-action-dialog .secondary-button:hover:not(:disabled) {
   background: var(--modal-button-secondary-bg-hover);
 }
 
 .workbench-modal-card .primary-button,
+.mobile-sheet .primary-button,
 .conversation-selection-action-dialog .primary-button {
   background: var(--modal-button-primary-bg);
   color: var(--modal-button-primary-color);
 }
 
 .workbench-modal-card .primary-button:hover:not(:disabled),
+.mobile-sheet .primary-button:hover:not(:disabled),
 .conversation-selection-action-dialog .primary-button:hover:not(:disabled) {
   background: var(--modal-button-primary-bg-hover);
 }
@@ -16066,14 +16536,17 @@ textarea:focus-visible {
 }
 
 .workbench-modal-card .workbench-danger-button,
+.mobile-sheet .workbench-danger-button,
 .conversation-selection-action-dialog .workbench-danger-button {
-  border-color: var(--modal-button-danger-border);
+  border: 0;
+  background: var(--modal-button-danger-bg);
+  color: var(--modal-button-danger-color);
 }
 
 .workbench-modal-card .workbench-danger-button:hover:not(:disabled),
+.mobile-sheet .workbench-danger-button:hover:not(:disabled),
 .conversation-selection-action-dialog .workbench-danger-button:hover:not(:disabled) {
   background: var(--modal-button-danger-bg-hover);
-  border-color: var(--modal-button-danger-border-hover);
 }
 
 /* H5 模态框内部控件统一基线：
@@ -16083,91 +16556,114 @@ textarea:focus-visible {
 .workbench-modal-layer .workbench-modal-card .secondary-button,
 .workbench-modal-layer .workbench-modal-card .ghost-button,
 .workbench-modal-layer .workbench-modal-card .settings-button,
+.workbench-modal-layer .workbench-modal-card .settings-button-danger,
 .workbench-modal-layer .workbench-modal-card .workbench-secondary-button,
+.workbench-modal-layer .workbench-modal-card .workbench-danger-button,
+.mobile-sheet .primary-button,
+.mobile-sheet .secondary-button,
+.mobile-sheet .ghost-button,
+.mobile-sheet .settings-button,
+.mobile-sheet .workbench-secondary-button,
+.mobile-sheet .workbench-danger-button,
 .workbench-modal-layer .conversation-selection-action-dialog .primary-button,
 .workbench-modal-layer .conversation-selection-action-dialog .secondary-button,
 .workbench-modal-layer .conversation-selection-action-dialog .ghost-button {
   min-height: 34px;
   padding: 8px 14px;
   border-radius: 12px;
-  box-shadow: var(--modal-button-secondary-shadow);
+  border: 1px solid var(--app-button-border);
+  background: var(--app-button-bg);
+  color: var(--app-button-color);
+  box-shadow: none;
   transition:
-    transform var(--transition-fast),
     border-color var(--transition-fast),
     background var(--transition-fast),
     color var(--transition-fast),
-    box-shadow var(--transition-fast);
+    opacity var(--transition-fast);
 }
 
 .workbench-modal-layer .workbench-modal-card .secondary-button,
 .workbench-modal-layer .workbench-modal-card .settings-button,
 .workbench-modal-layer .workbench-modal-card .workbench-secondary-button,
+.mobile-sheet .secondary-button,
+.mobile-sheet .workbench-secondary-button,
 .workbench-modal-layer .conversation-selection-action-dialog .secondary-button {
-  border: 1px solid var(--modal-control-border);
-  background: var(--modal-button-secondary-bg);
-  color: var(--modal-button-secondary-color);
+  border-color: var(--app-button-border);
+  background: var(--app-button-bg);
+  color: var(--app-button-color);
 }
 
 .workbench-modal-layer .workbench-modal-card .secondary-button:hover:not(:disabled),
 .workbench-modal-layer .workbench-modal-card .settings-button:hover:not(:disabled),
 .workbench-modal-layer .workbench-modal-card .workbench-secondary-button:hover:not(:disabled),
+.mobile-sheet .secondary-button:hover:not(:disabled),
+.mobile-sheet .workbench-secondary-button:hover:not(:disabled),
 .workbench-modal-layer .conversation-selection-action-dialog .secondary-button:hover:not(:disabled) {
-  border-color: var(--modal-control-border-hover);
-  background: var(--modal-button-secondary-bg-hover);
-  box-shadow: var(--modal-button-secondary-shadow-hover);
-  transform: translateY(-0.5px);
+  background: var(--app-button-bg-hover);
+  border-color: var(--app-button-border-hover);
 }
 
 .workbench-modal-layer .workbench-modal-card .primary-button,
+.mobile-sheet .primary-button,
 .workbench-modal-layer .conversation-selection-action-dialog .primary-button {
-  border: 1px solid transparent;
-  background: var(--modal-button-primary-bg);
-  color: var(--modal-button-primary-color);
-  box-shadow: var(--modal-button-primary-shadow);
+  border-color: var(--app-button-border);
+  background: var(--app-button-bg);
+  color: var(--app-button-color);
+  box-shadow: none;
 }
 
 .workbench-modal-layer .workbench-modal-card .primary-button:hover:not(:disabled),
+.mobile-sheet .primary-button:hover:not(:disabled),
 .workbench-modal-layer .conversation-selection-action-dialog .primary-button:hover:not(:disabled) {
-  background: var(--modal-button-primary-bg-hover);
-  box-shadow: var(--modal-button-primary-shadow-hover);
-  transform: translateY(-0.5px);
+  background: var(--app-button-bg-hover);
+  border-color: var(--app-button-border-hover);
 }
 
 .workbench-modal-layer .workbench-modal-card .ghost-button,
+.mobile-sheet .ghost-button,
 .workbench-modal-layer .conversation-selection-action-dialog .ghost-button {
-  border: 1px solid transparent;
-  background: var(--modal-button-ghost-bg);
-  color: var(--modal-button-ghost-color);
+  border-color: var(--app-button-border);
+  background: var(--app-button-bg);
+  color: var(--app-button-color);
   box-shadow: none;
 }
 
 .workbench-modal-layer .workbench-modal-card .ghost-button:hover:not(:disabled),
+.mobile-sheet .ghost-button:hover:not(:disabled),
 .workbench-modal-layer .conversation-selection-action-dialog .ghost-button:hover:not(:disabled) {
-  background: var(--modal-button-ghost-bg-hover);
+  background: var(--app-button-bg-hover);
+  border-color: var(--app-button-border-hover);
+  color: var(--app-button-color);
 }
 
 .workbench-modal-layer .workbench-modal-card .settings-button.settings-button-danger,
 .workbench-modal-layer .workbench-modal-card .workbench-danger-button,
+.mobile-sheet .workbench-danger-button,
 .workbench-modal-layer .conversation-selection-action-dialog .workbench-danger-button {
-  border-color: var(--modal-button-danger-border);
+  border-color: var(--app-button-danger-border);
+  background: var(--app-button-danger-bg);
+  color: var(--app-button-danger-color);
 }
 
 .workbench-modal-layer .workbench-modal-card .settings-button.settings-button-danger:hover:not(:disabled),
 .workbench-modal-layer .workbench-modal-card .workbench-danger-button:hover:not(:disabled),
+.mobile-sheet .workbench-danger-button:hover:not(:disabled),
 .workbench-modal-layer .conversation-selection-action-dialog .workbench-danger-button:hover:not(:disabled) {
-  background: var(--modal-button-danger-bg-hover);
-  border-color: var(--modal-button-danger-border-hover);
+  background: var(--app-button-danger-bg-hover);
+  border-color: var(--app-button-danger-border-hover);
 }
 
 .workbench-modal-layer .workbench-modal-card .primary-button:active:not(:disabled),
 .workbench-modal-layer .workbench-modal-card .secondary-button:active:not(:disabled),
 .workbench-modal-layer .workbench-modal-card .ghost-button:active:not(:disabled),
 .workbench-modal-layer .workbench-modal-card .settings-button:active:not(:disabled),
+.mobile-sheet .primary-button:active:not(:disabled),
+.mobile-sheet .secondary-button:active:not(:disabled),
+.mobile-sheet .ghost-button:active:not(:disabled),
 .workbench-modal-layer .conversation-selection-action-dialog .primary-button:active:not(:disabled),
 .workbench-modal-layer .conversation-selection-action-dialog .secondary-button:active:not(:disabled),
 .workbench-modal-layer .conversation-selection-action-dialog .ghost-button:active:not(:disabled) {
-  transform: translateY(0);
-  box-shadow: var(--modal-button-pressed-shadow);
+  box-shadow: none;
 }
 
 .workbench-modal-layer .workbench-modal-card input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="submit"]):not([type="button"]):not([type="reset"]),
@@ -16314,26 +16810,33 @@ textarea:focus-visible {
 .workbench-modal-layer .workbench-modal-card .settings-model-switcher-list,
 .workbench-modal-layer .workbench-modal-card .git-remote-select-list,
 .workbench-modal-layer .workbench-modal-card .workbench-directory-browser-list {
-  padding: 6px;
-  border-radius: 16px;
-  border: 1px solid var(--modal-list-shell-border);
-  background: var(--modal-list-shell-surface);
-  box-shadow: var(--modal-subtle-shadow);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .workbench-modal-layer .workbench-modal-card .settings-skill-entry,
 .workbench-modal-layer .workbench-modal-card .git-remote-item,
 .workbench-modal-layer .workbench-modal-card .workbench-directory-browser-item {
-  border-radius: 12px;
+  border-radius: 0;
+  border-bottom: 1px solid var(--modal-list-item-border);
   transition:
     background var(--transition-fast),
     border-color var(--transition-fast);
 }
 
+.workbench-modal-layer .workbench-modal-card .settings-skill-entry:last-child,
+.workbench-modal-layer .workbench-modal-card .git-remote-item:last-child,
+.workbench-modal-layer .workbench-modal-card .workbench-directory-browser-item:last-child {
+  border-bottom: 0;
+}
+
 .workbench-modal-layer .workbench-modal-card .settings-skill-entry:hover,
 .workbench-modal-layer .workbench-modal-card .git-remote-item:hover,
 .workbench-modal-layer .workbench-modal-card .workbench-directory-browser-item:hover {
-  background: var(--modal-list-item-hover);
+  background: transparent;
 }
 
 .workbench-modal-layer .workbench-modal-card .settings-model-modal-summary-row,
@@ -16343,9 +16846,10 @@ textarea:focus-visible {
 .workbench-modal-layer .workbench-modal-card .terminal-runtime-fallback-section,
 .workbench-modal-layer .workbench-modal-card .git-remote-auth-banner,
 .workbench-modal-layer .workbench-modal-card .workbench-directory-browser-current-path {
-  border-color: var(--modal-subtle-border);
-  background: var(--modal-subtle-surface);
-  box-shadow: var(--modal-subtle-shadow);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .workbench-modal-layer .workbench-modal-card .badge,
@@ -16354,40 +16858,40 @@ textarea:focus-visible {
 .workbench-modal-layer .workbench-modal-card .settings-device-tag,
 .workbench-modal-layer .workbench-modal-card .server-settings-modal-tag,
 .workbench-modal-layer .workbench-modal-card .create-session-worktree-combobox-badge {
-  border: 1px solid var(--modal-pill-border);
-  background: var(--modal-pill-surface);
+  border: 0;
+  background: transparent;
   color: var(--modal-pill-color);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 72%, transparent),
-    0 1px 1px rgba(15, 23, 42, 0.03);
+  box-shadow: none;
   font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .workbench-modal-layer .workbench-modal-card .badge[data-tone="success"],
 .workbench-modal-layer .workbench-modal-card .badge[data-tone="connected"],
 .workbench-modal-layer .workbench-modal-card .settings-skill-tag[data-status="synced"],
 .workbench-modal-layer .workbench-modal-card .server-settings-modal-tag[data-tone="discovered"] {
-  border-color: color-mix(in srgb, var(--accent) 32%, var(--modal-pill-border));
-  background: color-mix(in srgb, var(--accent) 12%, var(--modal-pill-surface));
+  border-color: transparent;
+  background: transparent;
   color: color-mix(in srgb, var(--accent) 76%, var(--text-primary));
 }
 
 .workbench-modal-layer .workbench-modal-card .badge[data-tone="error"],
 .workbench-modal-layer .workbench-modal-card .settings-skill-tag[data-status="failed"] {
-  border-color: color-mix(in srgb, var(--status-danger) 36%, var(--modal-pill-border));
-  background: color-mix(in srgb, var(--status-danger) 12%, var(--modal-pill-surface));
+  border-color: transparent;
+  background: transparent;
   color: var(--status-danger);
 }
 
 .workbench-modal-layer .workbench-modal-card .settings-skill-tag[data-status="conflicted"] {
-  border-color: color-mix(in srgb, var(--warning) 34%, var(--modal-pill-border));
-  background: color-mix(in srgb, var(--warning) 12%, var(--modal-pill-surface));
+  border-color: transparent;
+  background: transparent;
   color: var(--warning);
 }
 
 .workbench-modal-layer .workbench-modal-card .settings-skill-tag[data-status="assistant-runtime"] {
-  border-color: color-mix(in srgb, #0ea5a4 34%, var(--modal-pill-border));
-  background: color-mix(in srgb, #0ea5a4 12%, var(--modal-pill-surface));
+  border-color: transparent;
+  background: transparent;
   color: color-mix(in srgb, #0b7c7b 88%, var(--text-primary) 12%);
 }
 
@@ -16525,38 +17029,31 @@ textarea:focus-visible {
 }
 
 .file-viewer-modal {
-  width: min(1100px, 96vw);
-  max-width: 96vw;
   max-height: min(88vh, 920px);
   min-height: min(78vh, 760px);
-  padding: 18px;
-  border: none;
-  box-shadow: none;
   text-size-adjust: 100%;
   -webkit-text-size-adjust: 100%;
 }
 
-.file-viewer-modal[data-size="wide"] {
-  width: min(1360px, 98vw);
-  max-width: 98vw;
+.file-viewer-modal[data-size="xwide"] {
   max-height: min(92vh, 980px);
   min-height: min(82vh, 820px);
 }
 
 .file-viewer-modal[data-size="full"] {
-  width: 100vw;
-  max-width: 100vw;
   height: 100vh;
   max-height: 100vh;
   min-height: 100vh;
-  padding: 20px;
-  border-radius: 0;
 }
 
-.file-viewer-modal[data-resizable="true"] {
+.file-viewer-modal.is-resizable {
   min-width: min(780px, 96vw);
   min-height: min(72vh, 720px);
   resize: both;
+}
+
+.file-viewer-modal-body {
+  gap: 12px;
 }
 
 .file-viewer-toolbar {
@@ -16863,17 +17360,13 @@ textarea:focus-visible {
 
 @media (max-width: 720px) {
   .file-viewer-modal,
-  .file-viewer-modal[data-size="wide"],
+  .file-viewer-modal[data-size="xwide"],
   .file-viewer-modal[data-size="full"] {
-    width: 100vw;
-    max-width: 100vw;
     min-height: 100dvh;
     max-height: 100dvh;
-    border-radius: 0;
-    padding: 16px;
   }
 
-  .file-viewer-modal[data-resizable="true"] {
+  .file-viewer-modal.is-resizable {
     resize: none;
   }
 
@@ -19880,6 +20373,55 @@ textarea:focus-visible {
   margin-top: 6px;
 }
 
+.settings-skill-upload-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-skill-upload-input {
+  display: none;
+}
+
+.settings-skill-upload-toolbar {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.settings-skill-upload-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-skill-upload-text {
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-primary);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.settings-skill-upload-targets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.settings-skill-upload-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .settings-skill-modal {
   width: min(920px, calc(100% - 24px));
   max-height: min(84vh, 860px);
@@ -19999,31 +20541,25 @@ textarea:focus-visible {
 
 /* Settings Button */
 .settings-button {
-  padding: 8px 14px;
-  border-radius: var(--radius-md);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  border: 1px solid var(--border-primary);
-  background: var(--bg-primary);
-  color: var(--text-primary);
+  border-color: var(--app-button-border);
+  background: var(--app-button-bg);
+  color: var(--app-button-color);
 }
 
-.settings-button:hover {
-  background: var(--bg-hover);
-  border-color: var(--accent);
+.settings-button:hover:not(:disabled) {
+  background: var(--app-button-bg-hover);
+  border-color: var(--app-button-border-hover);
 }
 
 .settings-button-danger {
-  background: rgba(239, 68, 68, 0.1);
-  border-color: rgba(239, 68, 68, 0.3);
-  color: #ef4444;
+  border-color: var(--app-button-danger-border);
+  background: var(--app-button-danger-bg);
+  color: var(--app-button-danger-color);
 }
 
-.settings-button-danger:hover {
-  background: rgba(239, 68, 68, 0.15);
-  border-color: rgba(239, 68, 68, 0.5);
+.settings-button-danger:hover:not(:disabled) {
+  background: var(--app-button-danger-bg-hover);
+  border-color: var(--app-button-danger-border-hover);
 }
 
 /* Settings Footer */
@@ -20759,23 +21295,15 @@ textarea:focus-visible {
 .settings-mobile-danger-button {
   width: 100%;
   min-height: 46px;
-  border: none;
   border-radius: 14px;
   font-size: 16px;
   font-weight: 600;
-  cursor: pointer;
-  transition:
-    transform var(--transition-fast),
-    opacity var(--transition-fast),
-    background var(--transition-fast);
 }
 
 .settings-mobile-primary-button {
-  background: linear-gradient(180deg, color-mix(in srgb, white 10%, var(--accent)), var(--accent));
-  color: #ffffff;
-  box-shadow:
-    0 10px 22px rgba(10, 132, 255, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  border-color: var(--app-button-border);
+  background: var(--app-button-bg);
+  color: var(--app-button-color);
 }
 
 .settings-mobile-primary-button:disabled {
@@ -20784,16 +21312,19 @@ textarea:focus-visible {
 }
 
 .settings-mobile-danger-button {
-  background: linear-gradient(180deg, color-mix(in srgb, white 22%, color-mix(in srgb, var(--error) 12%, var(--bg-primary))), color-mix(in srgb, var(--error) 14%, var(--bg-primary)));
-  color: var(--error);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.66),
-    0 6px 18px rgba(239, 68, 68, 0.05);
+  border-color: var(--app-button-danger-border);
+  background: var(--app-button-danger-bg);
+  color: var(--app-button-danger-color);
 }
 
-.settings-mobile-primary-button:hover:not(:disabled),
-.settings-mobile-danger-button:hover {
-  transform: translateY(-1px);
+.settings-mobile-primary-button:hover:not(:disabled) {
+  background: var(--app-button-bg-hover);
+  border-color: var(--app-button-border-hover);
+}
+
+.settings-mobile-danger-button:hover:not(:disabled) {
+  background: var(--app-button-danger-bg-hover);
+  border-color: var(--app-button-danger-border-hover);
 }
 
 .settings-mobile-switch {
@@ -22052,13 +22583,87 @@ textarea:focus-visible {
   width: 100%;
   margin-top: 0.5rem;
   padding: 0.95rem 1rem;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+  border: 0;
   border-radius: 1rem;
-  background: var(--modal-control-surface);
-  color: var(--accent);
+  background: var(--modal-button-secondary-bg);
+  color: var(--modal-button-secondary-color);
   font-size: 1rem;
   font-weight: 700;
-  box-shadow: 0 10px 24px color-mix(in srgb, #000 10%, transparent);
+  box-shadow: var(--modal-button-secondary-shadow);
+}
+
+.mobile-sheet[data-height="half"] .mobile-sheet-card {
+  max-height: min(50vh, 32rem);
+}
+
+.mobile-sheet[data-height="three-quarter"] .mobile-sheet-card {
+  max-height: min(75vh, 46rem);
+}
+
+.mobile-sheet[data-height="full"] .mobile-sheet-card {
+  max-height: calc(100vh - max(1rem, env(safe-area-inset-top)) - 0.5rem);
+}
+
+.mobile-sheet-header {
+  justify-content: center;
+}
+
+.mobile-sheet-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-items: center;
+  text-align: center;
+}
+
+.mobile-sheet-title-wrap p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.mobile-sheet-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.mobile-sheet-footer {
+  padding: 0 1rem 1rem;
+}
+
+.mobile-sheet-handle {
+  width: 2.4rem;
+  height: 0.28rem;
+  margin: 0.72rem auto 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-secondary) 22%, transparent);
+}
+
+.mobile-sheet .mobile-workspace-home-form,
+.mobile-sheet .mobile-feature-form {
+  padding: 0;
+}
+
+.mobile-sheet .mobile-workspace-home-group {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.mobile-sheet .mobile-workspace-home-row {
+  padding-inline: 0;
+  border-bottom: 1px solid var(--modal-list-item-border);
+}
+
+.mobile-sheet .mobile-workspace-home-row:first-child {
+  border-top: 1px solid var(--modal-list-item-border);
+}
+
+.mobile-sheet .mobile-workspace-home-worktree-badge,
+.mobile-sheet .mobile-host-workspace-switcher-host-badge {
+  background: transparent;
 }
 
 .mobile-workspace-card-main,
@@ -23444,9 +24049,15 @@ textarea:focus-visible {
   letter-spacing: -0.03em;
 }
 
-.terminal-manager-mobile-modal .workbench-modal-title-wrap p {
+.terminal-manager-mobile-modal .mobile-sheet-title-wrap p {
   font-size: 0.96rem;
   line-height: 1.5;
+}
+
+.terminal-manager-mobile-modal .terminal-manager-confirm-body,
+.terminal-manager-confirm-body {
+  min-height: 0;
+  padding: 0;
 }
 
 .terminal-manager-mobile-modal .terminal-manager-modal-form {
@@ -25524,67 +26135,24 @@ textarea:focus-visible {
   transform: rotate(180deg);
 }
 
-.workspace-inbox-picker-sheet-overlay {
-  z-index: 2400;
-  align-items: center;
-  padding-top: max(1rem, env(safe-area-inset-top));
-  padding-bottom: max(1rem, env(safe-area-inset-bottom));
-}
-
-.workspace-inbox-picker-sheet {
-  width: min(100%, 32rem);
-}
-
-.workspace-inbox-picker-sheet-card {
-  overflow: hidden;
-  border-radius: 1.35rem;
-  border: 1px solid var(--modal-list-shell-border);
-  background: var(--modal-list-shell-surface);
-  box-shadow: var(--modal-subtle-shadow);
-}
-
-.workspace-inbox-picker-sheet-header {
-  align-items: center;
-  flex-direction: column;
-  gap: 0.18rem;
-  padding-top: 0.9rem;
-  padding-bottom: 0.82rem;
-  text-align: center;
-}
-
-.workspace-inbox-picker-sheet-header strong {
-  font-size: 0.96rem;
-  font-weight: 700;
-  color: var(--text-primary);
+.workspace-inbox-picker-sheet-body {
+  padding: 0;
 }
 
 .workspace-inbox-picker-sheet-options {
-  display: flex;
-  flex-direction: column;
+  border-top: 0;
 }
 
 .workspace-inbox-picker-option {
   position: relative;
-  display: flex;
-  width: 100%;
   min-height: 3.45rem;
-  align-items: center;
-  justify-content: center;
   gap: 0.8rem;
-  padding: 0.88rem 1rem;
-  border: 0;
-  border-top: 1px solid var(--modal-list-item-border);
-  background: transparent;
-  color: var(--text-primary);
-  text-align: center;
-}
-
-.workspace-inbox-picker-option:first-child {
-  border-top: none;
+  padding: 0.88rem 0;
+  text-align: left;
 }
 
 .workspace-inbox-picker-option[aria-selected="true"] {
-  background: var(--modal-pill-active-surface);
+  background: transparent;
 }
 
 .workspace-inbox-picker-option-copy {
@@ -25593,8 +26161,8 @@ textarea:focus-visible {
   flex: 1 1 auto;
   flex-direction: column;
   gap: 0.18rem;
-  align-items: center;
-  text-align: center;
+  align-items: flex-start;
+  text-align: left;
 }
 
 .workspace-inbox-picker-option-copy strong {
@@ -25614,8 +26182,6 @@ textarea:focus-visible {
 }
 
 .workspace-inbox-picker-option-indicator {
-  position: absolute;
-  right: 1rem;
   display: inline-flex;
   width: 1.25rem;
   height: 1.25rem;

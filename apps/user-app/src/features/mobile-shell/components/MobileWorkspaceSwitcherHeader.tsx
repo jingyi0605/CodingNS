@@ -1,7 +1,8 @@
-import { createPortal } from "react-dom";
 import { useState, type CSSProperties, type ReactNode, type Ref, type TouchEventHandler } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { ModalList, ModalListItem, ModalTag } from "../../../components/ModalAtoms";
+import { MobileSheet } from "../../../components/MobileSheet";
 import { useClientConfigSelector } from "../../../config/client-config-store";
 import { getActiveHost } from "../../../config/client-config-types";
 import { HostSwitchError, hostSwitchCoordinator } from "../../../config/host-switch-coordinator";
@@ -161,26 +162,53 @@ export function MobileWorkspaceSwitcherHeader({
       </MobileTopHeaderFrame>
 
       {switcherOpen && !onTriggerClick
-        ? renderSheet(
+        ? (
             <WorkspaceSwitcherSheet
+              open={switcherOpen}
               title={t("shell.hostWorkspaceSwitcherTitle")}
               onClose={() => setSwitcherOpen(false)}
             >
-              <div className="mobile-workspace-home-group mobile-workspace-home-sheet-group">
+              <ModalList className="mobile-workspace-home-group mobile-workspace-home-sheet-group">
                 {hostSwitcherItems.map((item) => (
-                  <button
+                  <ModalListItem
                     key={
                       item.kind === "host"
                         ? `host-${item.host.id}`
                         : `workspace-${item.host.id}-${item.workspace.id}`
                     }
-                    type="button"
+                    as="button"
                     className="mobile-workspace-home-row mobile-workspace-home-sheet-row"
                     data-host-entry-kind={item.kind}
                     data-host-active={item.host.id === runtimeConfig.activeHostId}
                     data-worktree-kind={item.kind === "workspace" ? item.option.kind : undefined}
                     data-worktree-depth={item.kind === "workspace" ? item.option.depth + 1 : 0}
                     disabled={pendingSelectionKey !== null}
+                    selected={
+                      (item.kind === "host" && item.host.id === runtimeConfig.activeHostId)
+                      || (item.kind === "workspace"
+                        && item.workspace.id === currentWorkspace?.id
+                        && item.host.id === runtimeConfig.activeHostId)
+                    }
+                    trailing={
+                      <span className="mobile-workspace-home-row-trailing">
+                        {item.kind === "host" && item.host.id === runtimeConfig.activeHostId ? (
+                          <CheckIcon />
+                        ) : item.kind === "workspace"
+                          && item.workspace.id === currentWorkspace?.id
+                          && item.host.id === runtimeConfig.activeHostId ? (
+                            <CheckIcon />
+                          ) : (
+                            <ChevronRightIcon />
+                          )}
+                      </span>
+                    }
+                    style={
+                      {
+                        "--mobile-workspace-tree-depth": String(
+                          item.kind === "host" ? 0 : item.option.depth + 1
+                        )
+                      } as CSSProperties
+                    }
                     onClick={() => {
                       void handleItemSelect(item);
                     }}
@@ -191,24 +219,17 @@ export function MobileWorkspaceSwitcherHeader({
                           ? "mobile-workspace-home-session-main mobile-host-workspace-switcher-host-main"
                           : "mobile-workspace-home-session-main"
                       }
-                      style={
-                        {
-                          "--mobile-workspace-tree-depth": String(
-                            item.kind === "host" ? 0 : item.option.depth + 1
-                          )
-                        } as CSSProperties
-                      }
                     >
                       <span className="mobile-workspace-home-session-title">
                         {item.kind === "host" ? (
-                          <span className="mobile-host-workspace-switcher-host-badge">
+                          <ModalTag className="mobile-host-workspace-switcher-host-badge">
                             {t("shell.hostSwitcherNodeBadge")}
-                          </span>
+                          </ModalTag>
                         ) : null}
                         {item.kind === "workspace" && item.option.kind === "worktree" ? (
-                          <span className="mobile-workspace-home-worktree-badge">
+                          <ModalTag className="mobile-workspace-home-worktree-badge">
                             {t("shell.mobileWorktreeBadge")}
-                          </span>
+                          </ModalTag>
                         ) : null}
                         {item.kind === "host" ? item.host.name : item.option.label}
                       </span>
@@ -218,20 +239,9 @@ export function MobileWorkspaceSwitcherHeader({
                           : item.option.subtitle}
                       </span>
                     </div>
-                    <span className="mobile-workspace-home-row-trailing">
-                      {item.kind === "host" && item.host.id === runtimeConfig.activeHostId ? (
-                        <CheckIcon />
-                      ) : item.kind === "workspace"
-                        && item.workspace.id === currentWorkspace?.id
-                        && item.host.id === runtimeConfig.activeHostId ? (
-                          <CheckIcon />
-                        ) : (
-                          <ChevronRightIcon />
-                        )}
-                    </span>
-                  </button>
+                  </ModalListItem>
                 ))}
-              </div>
+              </ModalList>
               {sheetContent ? sheetContent(() => setSwitcherOpen(false)) : null}
             </WorkspaceSwitcherSheet>
           )
@@ -272,43 +282,30 @@ function formatHostSummary(
     : host.baseUrl;
 }
 
-function renderSheet(content: ReactNode) {
-  if (typeof document === "undefined") {
-    return null;
-  }
-
-  return createPortal(content, document.body);
-}
-
 function WorkspaceSwitcherSheet({
+  open,
   title,
   onClose,
   children
 }: {
+  readonly open: boolean;
   readonly title: string;
   readonly onClose: () => void;
   readonly children: ReactNode;
 }) {
   return (
-    <div className="ios-action-sheet-overlay" role="presentation" onClick={onClose}>
-      <div
-        className="mobile-workspace-home-sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="mobile-workspace-home-sheet-card">
-          <div className="mobile-workspace-home-sheet-header">
-            <strong>{title}</strong>
-          </div>
-          {children}
-        </div>
-        <button type="button" className="ios-action-sheet-cancel" onClick={onClose}>
-          {t("common.cancel")}
-        </button>
-      </div>
-    </div>
+    <MobileSheet
+      open={open}
+      title={title}
+      kind="picker"
+      height="three-quarter"
+      className="mobile-host-workspace-switcher-sheet"
+      bodyClassName="mobile-workspace-home-form"
+      showHandle
+      onClose={onClose}
+    >
+      {children}
+    </MobileSheet>
   );
 }
 

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type Ref } from "react";
 import { createPortal } from "react-dom";
 
+import { ModalList, ModalListItem } from "../../../components/ModalAtoms";
+import { MobileSheet } from "../../../components/MobileSheet";
 import { usePlatform } from "../../../platform/platform-provider";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
@@ -2001,58 +2003,40 @@ function AttachmentSourceSheet({
   onSelectCamera: () => void;
   onSelectLibrary: () => void;
 }) {
-  if (!open || typeof document === "undefined") {
-    return null;
-  }
-
-  return createPortal(
-    <div className="ios-action-sheet-overlay composer-attachment-sheet-overlay" role="presentation" onClick={onClose}>
-      <div
-        className="mobile-workspace-home-sheet composer-attachment-sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t("conversation.attachmentSourceSheetTitle")}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="mobile-workspace-home-sheet-card composer-attachment-sheet-card">
-          <div className="mobile-workspace-home-sheet-header">
-            <strong>{t("conversation.attachmentSourceSheetTitle")}</strong>
-            <span>{t("conversation.attachmentSourceSheetDescription")}</span>
-          </div>
-
-          <div className="mobile-workspace-home-group composer-attachment-sheet-actions">
-            <button
-              type="button"
-              className="mobile-workspace-home-row composer-attachment-sheet-option"
-              aria-label={t("conversation.attachmentTakePhoto")}
-              onClick={onSelectCamera}
-            >
-              <span className="composer-attachment-sheet-option-copy">
-                <strong>{t("conversation.attachmentTakePhoto")}</strong>
-                <span>{t("conversation.attachmentTakePhotoHint")}</span>
-              </span>
-              <CameraIcon />
-            </button>
-            <button
-              type="button"
-              className="mobile-workspace-home-row composer-attachment-sheet-option"
-              aria-label={t("conversation.attachmentChooseFromLibrary")}
-              onClick={onSelectLibrary}
-            >
-              <span className="composer-attachment-sheet-option-copy">
-                <strong>{t("conversation.attachmentChooseFromLibrary")}</strong>
-                <span>{t("conversation.attachmentChooseFromLibraryHint")}</span>
-              </span>
-              <LibraryIcon />
-            </button>
-          </div>
-        </div>
-        <button type="button" className="ios-action-sheet-cancel" onClick={onClose}>
-          {t("common.cancel")}
-        </button>
-      </div>
-    </div>,
-    document.body
+  return (
+    <MobileSheet
+      open={open}
+      title={t("conversation.attachmentSourceSheetTitle")}
+      description={t("conversation.attachmentSourceSheetDescription")}
+      kind="action"
+      height="auto"
+      className="composer-attachment-sheet"
+      cardClassName="composer-attachment-sheet-card"
+      bodyClassName="composer-attachment-sheet-body"
+      showHandle
+      onClose={onClose}
+    >
+      <ModalList className="composer-attachment-sheet-actions">
+        <ModalListItem
+          as="button"
+          className="mobile-workspace-home-row composer-attachment-sheet-option"
+          aria-label={t("conversation.attachmentTakePhoto")}
+          label={t("conversation.attachmentTakePhoto")}
+          description={t("conversation.attachmentTakePhotoHint")}
+          trailing={<CameraIcon />}
+          onClick={onSelectCamera}
+        />
+        <ModalListItem
+          as="button"
+          className="mobile-workspace-home-row composer-attachment-sheet-option"
+          aria-label={t("conversation.attachmentChooseFromLibrary")}
+          label={t("conversation.attachmentChooseFromLibrary")}
+          description={t("conversation.attachmentChooseFromLibraryHint")}
+          trailing={<LibraryIcon />}
+          onClick={onSelectLibrary}
+        />
+      </ModalList>
+    </MobileSheet>
   );
 }
 

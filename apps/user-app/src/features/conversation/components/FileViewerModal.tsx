@@ -1,9 +1,11 @@
-import { createPortal } from "react-dom";
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { ModalCloseButton } from "../../../components/ModalCloseButton";
+import {
+  DesktopModal,
+  type DesktopModalSizePreset
+} from "../../../components/DesktopModal";
 import { usePlatform } from "../../../platform/platform-provider";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
@@ -24,7 +26,7 @@ interface FileViewerModalProps {
 }
 
 type ViewerMode = "preview" | "code" | "edit";
-type ViewerModalSizePreset = "default" | "wide" | "full";
+type ViewerModalSizePreset = Extract<DesktopModalSizePreset, "regular" | "xwide" | "full">;
 type ImageScaleMode = "fit" | "custom" | "actual";
 type TokenKind =
   | "plain"
@@ -247,7 +249,7 @@ export function FileViewerModal({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [mode, setMode] = useState<ViewerMode>("preview");
-  const [modalSizePreset, setModalSizePreset] = useState<ViewerModalSizePreset>("default");
+  const [modalSizePreset, setModalSizePreset] = useState<ViewerModalSizePreset>("regular");
   const [resourceRefreshVersion, setResourceRefreshVersion] = useState(0);
   const [imageScaleMode, setImageScaleMode] = useState<ImageScaleMode>("fit");
   const [imageScale, setImageScale] = useState(1);
@@ -309,7 +311,7 @@ export function FileViewerModal({
         setPdfScale,
         setPdfFitWidth
       });
-      setModalSizePreset("default");
+      setModalSizePreset("regular");
       return;
     }
 
@@ -363,25 +365,7 @@ export function FileViewerModal({
     };
   }, [filePath, open, workspaceId]);
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [onClose, open]);
-
-  if (!open || !filePath || typeof document === "undefined") {
+  if (!open || !filePath) {
     return null;
   }
 
@@ -494,164 +478,149 @@ export function FileViewerModal({
     setPdfFitWidth
   });
 
-  return createPortal(
-    <div className="workbench-modal-layer">
-      <button
-        type="button"
-        className="workbench-modal-backdrop"
-        aria-label={t("common.close")}
-        onClick={onClose}
-      />
-      <section
-        className="workbench-modal-card surface-card file-viewer-modal"
-        data-size={modalSizePreset}
-        data-resizable={platform.isDesktop && modalSizePreset !== "full" ? "true" : undefined}
-        role="dialog"
-        aria-modal="true"
-        aria-label={filePath}
-      >
-        <div className="workbench-modal-header">
-          <div className="workbench-modal-title-wrap">
-            <h2>{filePath}</h2>
-            <p>{t("conversation.fileViewerHint").replace("{language}", viewerLabel)}</p>
-          </div>
-          <ModalCloseButton onClick={onClose} />
-        </div>
-
-        <div className="file-viewer-toolbar">
-          <div className="file-viewer-toolbar-start">
-            <div className="file-viewer-tabs" role="tablist" aria-label={t("conversation.fileViewerModeLabel")}>
-              {viewerTabs.includes("preview") ? (
-                <button
-                  type="button"
-                  className="file-viewer-tab"
-                  data-active={mode === "preview"}
-                  role="tab"
-                  aria-selected={mode === "preview"}
-                  onClick={() => setMode("preview")}
-                >
-                  {t("conversation.fileViewerPreview")}
-                </button>
-              ) : null}
-              {viewerTabs.includes("code") ? (
-                <button
-                  type="button"
-                  className="file-viewer-tab"
-                  data-active={mode === "code"}
-                  role="tab"
-                  aria-selected={mode === "code"}
-                  onClick={() => setMode("code")}
-                >
-                  {t("conversation.fileViewerCode")}
-                </button>
-              ) : null}
-              {viewerTabs.includes("edit") ? (
-                <button
-                  type="button"
-                  className="file-viewer-tab"
-                  data-active={mode === "edit"}
-                  role="tab"
-                  aria-selected={mode === "edit"}
-                  onClick={() => setMode("edit")}
-                  disabled={!canEdit}
-                >
-                  {t("conversation.fileViewerEdit")}
-                </button>
-              ) : null}
-            </div>
-            <span className="file-viewer-language">{viewerLabel}</span>
-          </div>
-          <div className="file-viewer-toolbar-end">
-            <div className="file-viewer-size-group" role="group" aria-label={t("conversation.fileViewerSizeLabel")}>
+  return (
+    <DesktopModal
+      open={open}
+      title={filePath}
+      description={t("conversation.fileViewerHint").replace("{language}", viewerLabel)}
+      size={modalSizePreset}
+      layout="viewer"
+      className={`file-viewer-modal${platform.isDesktop && modalSizePreset !== "full" ? " is-resizable" : ""}`}
+      bodyClassName="file-viewer-modal-body"
+      onClose={onClose}
+    >
+      <div className="file-viewer-toolbar">
+        <div className="file-viewer-toolbar-start">
+          <div className="file-viewer-tabs" role="tablist" aria-label={t("conversation.fileViewerModeLabel")}>
+            {viewerTabs.includes("preview") ? (
               <button
                 type="button"
-                className="secondary-button file-viewer-action-button"
-                data-active={modalSizePreset === "default"}
-                onClick={() => setModalSizePreset("default")}
+                className="file-viewer-tab"
+                data-active={mode === "preview"}
+                role="tab"
+                aria-selected={mode === "preview"}
+                onClick={() => setMode("preview")}
               >
-                {t("conversation.fileViewerSizeDefault")}
+                {t("conversation.fileViewerPreview")}
               </button>
+            ) : null}
+            {viewerTabs.includes("code") ? (
               <button
                 type="button"
-                className="secondary-button file-viewer-action-button"
-                data-active={modalSizePreset === "wide"}
-                onClick={() => setModalSizePreset("wide")}
+                className="file-viewer-tab"
+                data-active={mode === "code"}
+                role="tab"
+                aria-selected={mode === "code"}
+                onClick={() => setMode("code")}
               >
-                {t("conversation.fileViewerSizeWide")}
+                {t("conversation.fileViewerCode")}
               </button>
+            ) : null}
+            {viewerTabs.includes("edit") ? (
               <button
                 type="button"
-                className="secondary-button file-viewer-action-button"
-                data-active={modalSizePreset === "full"}
-                onClick={() => setModalSizePreset("full")}
+                className="file-viewer-tab"
+                data-active={mode === "edit"}
+                role="tab"
+                aria-selected={mode === "edit"}
+                onClick={() => setMode("edit")}
+                disabled={!canEdit}
               >
-                {t("conversation.fileViewerSizeFull")}
-              </button>
-            </div>
-            <div className="file-viewer-actions">
-              {formatActions.map((action) => (
-                <button
-                  key={action.id}
-                  type="button"
-                  className="secondary-button file-viewer-action-button"
-                  data-active={action.active ? "true" : undefined}
-                  onClick={() => void action.onClick()}
-                  disabled={action.disabled}
-                >
-                  {action.label}
-                </button>
-              ))}
-            </div>
-            {canEdit ? (
-              <button
-                type="button"
-                className="primary-button"
-                onClick={() => void handleSave()}
-                disabled={!isDirty || saving}
-              >
-                {saving ? t("conversation.filePanelSaving") : t("conversation.filePanelSave")}
+                {t("conversation.fileViewerEdit")}
               </button>
             ) : null}
           </div>
+          <span className="file-viewer-language">{viewerLabel}</span>
         </div>
+        <div className="file-viewer-toolbar-end">
+          <div className="file-viewer-size-group" role="group" aria-label={t("conversation.fileViewerSizeLabel")}>
+            <button
+              type="button"
+              className="secondary-button file-viewer-action-button"
+              data-active={modalSizePreset === "regular"}
+              onClick={() => setModalSizePreset("regular")}
+            >
+              {t("conversation.fileViewerSizeDefault")}
+            </button>
+            <button
+              type="button"
+              className="secondary-button file-viewer-action-button"
+              data-active={modalSizePreset === "xwide"}
+              onClick={() => setModalSizePreset("xwide")}
+            >
+              {t("conversation.fileViewerSizeWide")}
+            </button>
+            <button
+              type="button"
+              className="secondary-button file-viewer-action-button"
+              data-active={modalSizePreset === "full"}
+              onClick={() => setModalSizePreset("full")}
+            >
+              {t("conversation.fileViewerSizeFull")}
+            </button>
+          </div>
+          <div className="file-viewer-actions">
+            {formatActions.map((action) => (
+              <button
+                key={action.id}
+                type="button"
+                className="secondary-button file-viewer-action-button"
+                data-active={action.active ? "true" : undefined}
+                onClick={() => void action.onClick()}
+                disabled={action.disabled}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+          {canEdit ? (
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => void handleSave()}
+              disabled={!isDirty || saving}
+            >
+              {saving ? t("conversation.filePanelSaving") : t("conversation.filePanelSave")}
+            </button>
+          ) : null}
+        </div>
+      </div>
 
-        <div className="workbench-modal-body file-viewer-body">
-          {loading ? (
-            <p className="status-text">{t("common.loading")}</p>
-          ) : preview?.supported === false ? (
-            <p className="status-text">{preview.reason ?? t("conversation.filePanelUnsupported")}</p>
-          ) : mode === "edit" ? (
-            <textarea
-              className="file-viewer-editor"
-              data-testid="file-viewer-editor"
-              value={editorContent}
-              onChange={(event) => setEditorContent(event.target.value)}
-              spellCheck={false}
-            />
-          ) : mode === "preview" && previewKind === "html" ? (
-            <HtmlPreview src={htmlPreviewUrl} filePath={filePath} />
-          ) : mode === "preview" && previewKind === "image" ? (
-            <ImagePreview
-              src={imagePreviewUrl}
-              filePath={filePath}
-              scale={imageScale}
-              scaleMode={imageScaleMode}
-            />
-          ) : mode === "preview" && previewKind === "pdf" ? (
-            <PdfPreview src={pdfPreviewUrl} filePath={filePath} />
-          ) : mode === "preview" && previewKind === "markdown" ? (
-            <MarkdownPreview content={editorContent} />
-          ) : (
-            <CodePreview
-              content={editorContent}
-              language={detectedLanguage}
-              overviewMarkers={overviewMarkers}
-            />
-          )}
-        </div>
-      </section>
-    </div>,
-    document.body
+      <div className="file-viewer-body">
+        {loading ? (
+          <p className="status-text">{t("common.loading")}</p>
+        ) : preview?.supported === false ? (
+          <p className="status-text">{preview.reason ?? t("conversation.filePanelUnsupported")}</p>
+        ) : mode === "edit" ? (
+          <textarea
+            className="file-viewer-editor"
+            data-testid="file-viewer-editor"
+            value={editorContent}
+            onChange={(event) => setEditorContent(event.target.value)}
+            spellCheck={false}
+          />
+        ) : mode === "preview" && previewKind === "html" ? (
+          <HtmlPreview src={htmlPreviewUrl} filePath={filePath} />
+        ) : mode === "preview" && previewKind === "image" ? (
+          <ImagePreview
+            src={imagePreviewUrl}
+            filePath={filePath}
+            scale={imageScale}
+            scaleMode={imageScaleMode}
+          />
+        ) : mode === "preview" && previewKind === "pdf" ? (
+          <PdfPreview src={pdfPreviewUrl} filePath={filePath} />
+        ) : mode === "preview" && previewKind === "markdown" ? (
+          <MarkdownPreview content={editorContent} />
+        ) : (
+          <CodePreview
+            content={editorContent}
+            language={detectedLanguage}
+            overviewMarkers={overviewMarkers}
+          />
+        )}
+      </div>
+    </DesktopModal>
   );
 }
 

@@ -7,9 +7,15 @@ import {
   type RefObject,
   type TouchEvent as ReactTouchEvent
 } from "react";
-import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
+import { DesktopModal } from "../../../components/DesktopModal";
+import {
+  ModalActions,
+  ModalEmptyState,
+  ModalList,
+  ModalListItem
+} from "../../../components/ModalAtoms";
 import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import { useLocalUiPreferenceSelector } from "../../../preferences/local-ui-preference-store";
 import { usePlatform } from "../../../platform/platform-provider";
@@ -2795,74 +2801,41 @@ function ConversationArchiveConfirmModal({
   onClose: () => void;
   onConfirm: () => void | Promise<void>;
 }) {
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) {
-        onClose();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [busy, onClose, open]);
-
-  if (!open || typeof document === "undefined") {
-    return null;
-  }
-
-  return createPortal(
-    <div className="workbench-modal-layer">
-      <button
-        type="button"
-        className="workbench-modal-backdrop"
-        aria-label={t("common.close")}
-        disabled={busy}
-        onClick={onClose}
-      />
-      <section
-        className="workbench-modal-card surface-card"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t("shell.archiveConfirmTitle")}
-      >
-        <div className="workbench-modal-header">
-          <div className="workbench-modal-title-wrap">
-            <h2>{t("shell.archiveConfirmTitle")}</h2>
-            <p>{t("shell.archiveConfirmDescription")}</p>
-          </div>
-        </div>
-        <div className="workbench-modal-body">
-          <div className="workbench-modal-actions">
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={busy}
-              onClick={onClose}
-            >
-              {t("common.cancel")}
-            </button>
-            <button
-              type="button"
-              className="secondary-button workbench-danger-button"
-              disabled={busy}
-              onClick={() => {
-                void onConfirm();
-              }}
-            >
-              {t("shell.archiveAction")}
-            </button>
-          </div>
-        </div>
-      </section>
-    </div>,
-    document.body
+  return (
+    <DesktopModal
+      open={open}
+      title={t("shell.archiveConfirmTitle")}
+      description={t("shell.archiveConfirmDescription")}
+      size="narrow"
+      layout="confirm"
+      dismissible={!busy}
+      showCloseButton={false}
+      footer={(
+        <ModalActions>
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={busy}
+            onClick={onClose}
+          >
+            {t("common.cancel")}
+          </button>
+          <button
+            type="button"
+            className="secondary-button workbench-danger-button"
+            disabled={busy}
+            onClick={() => {
+              void onConfirm();
+            }}
+          >
+            {t("shell.archiveAction")}
+          </button>
+        </ModalActions>
+      )}
+      onClose={onClose}
+    >
+      <></>
+    </DesktopModal>
   );
 }
 
@@ -2881,86 +2854,59 @@ function ConversationArchiveFolderModal({
   onClose: () => void;
   onRestore: (sessionId: string) => void | Promise<void>;
 }) {
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !restoringSessionId) {
-        onClose();
+  return (
+    <DesktopModal
+      open={open}
+      title={t("shell.archiveModalTitle")}
+      description={
+        workspaceName
+          ? `${workspaceName} · ${t("shell.archiveModalDescription")}`
+          : t("shell.archiveModalDescription")
       }
-    }
+      size="regular"
+      layout="list"
+      dismissible={!restoringSessionId}
+      showCloseButton={false}
+      onClose={onClose}
+    >
+      {sessions.length > 0 ? (
+        <ModalList className="workbench-archive-list">
+          {sessions.map((session) => {
+            const titlePresentation = buildSessionTitlePresentation(session.title, t("common.unknown"));
 
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [onClose, open, restoringSessionId]);
-
-  if (!open || typeof document === "undefined") {
-    return null;
-  }
-
-  return createPortal(
-    <div className="workbench-modal-layer">
-      <button
-        type="button"
-        className="workbench-modal-backdrop"
-        aria-label={t("common.close")}
-        disabled={Boolean(restoringSessionId)}
-        onClick={onClose}
-      />
-      <section
-        className="workbench-modal-card surface-card"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t("shell.archiveModalTitle")}
-      >
-        <div className="workbench-modal-header">
-          <div className="workbench-modal-title-wrap">
-            <h2>{t("shell.archiveModalTitle")}</h2>
-            <p>
-              {workspaceName
-                ? `${workspaceName} · ${t("shell.archiveModalDescription")}`
-                : t("shell.archiveModalDescription")}
-            </p>
-          </div>
-        </div>
-        <div className="workbench-modal-body">
-          {sessions.length > 0 ? (
-            <div className="workbench-archive-list">
-              {sessions.map((session) => {
-                const titlePresentation = buildSessionTitlePresentation(session.title, t("common.unknown"));
-
-                return (
-                  <article key={session.sessionId} className="workbench-archive-item">
-                    <div className="workbench-archive-item-main">
-                      <strong title={titlePresentation.fullTitle}>{titlePresentation.displayTitle}</strong>
-                      <p>{formatMobilePreviewMeta(session)}</p>
-                    </div>
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      disabled={restoringSessionId === session.sessionId}
-                      onClick={() => {
-                        void onRestore(session.sessionId);
-                      }}
-                    >
-                      {t("shell.unarchiveAction")}
-                    </button>
-                  </article>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="workbench-section-empty">{t("shell.archiveEmpty")}</p>
-          )}
-        </div>
-      </section>
-    </div>,
-    document.body
+            return (
+              <ModalListItem
+                key={session.sessionId}
+                className="workbench-archive-item"
+                trailing={(
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={restoringSessionId === session.sessionId}
+                    onClick={() => {
+                      void onRestore(session.sessionId);
+                    }}
+                  >
+                    {t("shell.unarchiveAction")}
+                  </button>
+                )}
+              >
+                <div className="workbench-archive-item-main">
+                  <strong title={titlePresentation.fullTitle}>{titlePresentation.displayTitle}</strong>
+                  <p>{formatMobilePreviewMeta(session)}</p>
+                </div>
+              </ModalListItem>
+            );
+          })}
+        </ModalList>
+      ) : (
+        <ModalEmptyState
+          title={t("shell.archiveEmpty")}
+          compact
+          className="workbench-section-empty"
+        />
+      )}
+    </DesktopModal>
   );
 }
 

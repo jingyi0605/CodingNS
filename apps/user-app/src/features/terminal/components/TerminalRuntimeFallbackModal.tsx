@@ -1,7 +1,11 @@
-import { useEffect } from "react";
-import { createPortal } from "react-dom";
-
-import { ModalCloseButton } from "../../../components/ModalCloseButton";
+import { DesktopModal } from "../../../components/DesktopModal";
+import {
+  ModalActions,
+  ModalList,
+  ModalListItem,
+  ModalSection,
+  ModalTag
+} from "../../../components/ModalAtoms";
 import { t } from "../../../shared/i18n";
 
 interface TerminalRuntimeFallbackModalProps {
@@ -17,101 +21,60 @@ export function TerminalRuntimeFallbackModal({
   onClose,
   onConfirmFallback
 }: TerminalRuntimeFallbackModalProps) {
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) {
-        onClose();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [busy, onClose, open]);
-
-  if (!open || typeof document === "undefined") {
-    return null;
-  }
-
-  return createPortal(
-    <div className="workbench-modal-layer">
-      <button
-        type="button"
-        className="workbench-modal-backdrop"
-        aria-label={t("common.close")}
-        onClick={() => {
-          if (!busy) {
-            onClose();
-          }
-        }}
-      />
-      <section
-        className="workbench-modal-card surface-card terminal-runtime-fallback-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t("terminal.runtimeMissingDialogTitle")}
+  return (
+    <DesktopModal
+      open={open}
+      title={t("terminal.runtimeMissingDialogTitle")}
+      description={t("terminal.runtimeMissingDialogDescription")}
+      size="compact"
+      layout="confirm"
+      className="terminal-runtime-fallback-modal"
+      bodyClassName="terminal-runtime-fallback-body"
+      dismissible={!busy}
+      footer={(
+        <ModalActions>
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={busy}
+            onClick={onClose}
+          >
+            {t("terminal.runtimeMissingKeepAction")}
+          </button>
+          <button
+            type="button"
+            className="primary-button"
+            disabled={busy}
+            onClick={onConfirmFallback}
+          >
+            {busy
+              ? t("terminal.runtimeMissingFallbackPending")
+              : t("terminal.runtimeMissingFallbackAction")}
+          </button>
+        </ModalActions>
+      )}
+      onClose={onClose}
+    >
+      <ModalSection
+        className="terminal-runtime-fallback-section"
+        tone="danger"
+        actions={<ModalTag tone="danger">tmux</ModalTag>}
       >
-        <div className="workbench-modal-header">
-          <div className="workbench-modal-title-wrap">
-            <h2>{t("terminal.runtimeMissingDialogTitle")}</h2>
-            <p>{t("terminal.runtimeMissingDialogDescription")}</p>
-          </div>
-          <ModalCloseButton
-            onClick={() => {
-              if (!busy) {
-                onClose();
-              }
-            }}
-          />
-        </div>
+        <p className="status-text">{t("terminal.runtimeMissingInstallDescription")}</p>
+        <ModalList className="terminal-runtime-fallback-list">
+          <ModalListItem label={t("terminal.runtimeMissingInstallMacArm")} />
+          <ModalListItem label={t("terminal.runtimeMissingInstallMacIntel")} />
+          <ModalListItem label={t("terminal.runtimeMissingInstallDebian")} />
+          <ModalListItem label={t("terminal.runtimeMissingInstallFedora")} />
+        </ModalList>
+      </ModalSection>
 
-        <div className="workbench-modal-body terminal-runtime-fallback-body">
-          <section className="terminal-runtime-fallback-section">
-            <span className="badge" data-tone="error">
-              tmux
-            </span>
-            <p className="status-text">{t("terminal.runtimeMissingInstallDescription")}</p>
-            <ul className="terminal-runtime-fallback-list">
-              <li>{t("terminal.runtimeMissingInstallMacArm")}</li>
-              <li>{t("terminal.runtimeMissingInstallMacIntel")}</li>
-              <li>{t("terminal.runtimeMissingInstallDebian")}</li>
-              <li>{t("terminal.runtimeMissingInstallFedora")}</li>
-            </ul>
-          </section>
-
-          <section className="terminal-runtime-fallback-section">
-            <span className="badge">embedded-pty</span>
-            <p className="status-text">{t("terminal.runtimeMissingFallbackDescription")}</p>
-          </section>
-
-          <div className="workbench-modal-actions">
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={busy}
-              onClick={onClose}
-            >
-              {t("terminal.runtimeMissingKeepAction")}
-            </button>
-            <button
-              type="button"
-              className="primary-button"
-              disabled={busy}
-              onClick={onConfirmFallback}
-            >
-              {busy
-                ? t("terminal.runtimeMissingFallbackPending")
-                : t("terminal.runtimeMissingFallbackAction")}
-            </button>
-          </div>
-        </div>
-      </section>
-    </div>,
-    document.body
+      <ModalSection
+        className="terminal-runtime-fallback-section"
+        actions={<ModalTag>embedded-pty</ModalTag>}
+      >
+        <p className="status-text">{t("terminal.runtimeMissingFallbackDescription")}</p>
+      </ModalSection>
+    </DesktopModal>
   );
 }
