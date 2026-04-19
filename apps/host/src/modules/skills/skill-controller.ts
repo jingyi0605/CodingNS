@@ -3,6 +3,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { requireUserId } from "../preferences/common.js";
 import type {
   AddManagedSkillInput,
+  AddManagedSkillFromMarkdownInput,
   ImportUnmanagedSkillInput,
   ScanSkillsOptions,
   SyncManagedSkillInput
@@ -25,11 +26,18 @@ export class SkillController {
   };
 
   readonly add = async (
-    request: FastifyRequest<{ Body: AddManagedSkillInput }>,
+    request: FastifyRequest<{ Body: AddManagedSkillInput | AddManagedSkillFromMarkdownInput }>,
     reply: FastifyReply
   ): Promise<void> => {
     requireUserId(request);
-    reply.send(this.skillManagerService.addManagedSkill(request.body ?? { sourcePath: "", targetCli: [], sourceType: "local-import" }));
+    const body = request.body;
+
+    if (isMarkdownSkillInput(body)) {
+      reply.send(this.skillManagerService.addManagedSkillFromMarkdown(body));
+      return;
+    }
+
+    reply.send(this.skillManagerService.addManagedSkill(body ?? { sourcePath: "", targetCli: [], sourceType: "local-import" }));
   };
 
   readonly import = async (
@@ -47,6 +55,12 @@ export class SkillController {
     requireUserId(request);
     reply.send(this.skillManagerService.syncManagedSkill(request.body ?? { skillId: "", targetCli: [] }));
   };
+}
+
+function isMarkdownSkillInput(
+  input: AddManagedSkillInput | AddManagedSkillFromMarkdownInput | undefined
+): input is AddManagedSkillFromMarkdownInput {
+  return typeof input?.markdownContent === "string";
 }
 
 function normalizeTargetCliQuery(query: SkillOverviewQuery | undefined): ScanSkillsOptions {

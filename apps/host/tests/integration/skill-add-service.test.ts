@@ -65,6 +65,7 @@ describe("SkillManagerService.addManagedSkill", () => {
     expect(result.skill).toEqual({
       id: "skill-team-helper",
       name: "Team Helper",
+      scope: "workspace",
       directoryName: "team-helper",
       sourceType: "local-import",
       sourcePath: path.resolve(sourcePath),
@@ -206,6 +207,7 @@ describe("SkillManagerService.addManagedSkill", () => {
     managedSkillRepository.upsert({
       id: "skill-existing",
       name: "Same Name",
+      scope: "workspace",
       directoryName: "same-name",
       sourceType: "local-import",
       sourcePath: "/tmp/old",
@@ -271,6 +273,117 @@ describe("SkillManagerService.addManagedSkill", () => {
     expect(existsSync(path.join(ssotRootDir, "codingns-assistant"))).toBe(false);
 
     database.close();
+  });
+
+  it("支持直接用 markdown 内容纳管，并在缺少标题时自动补标题", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-skill-upload-"));
+    tempDirs.push(tempDir);
+    const database = createDatabaseClient(":memory:");
+    const ssotRootDir = path.join(tempDir, "skill-ssot");
+    const codexRoot = path.join(tempDir, "codex-skills");
+
+    mkdirSync(codexRoot, { recursive: true });
+
+    const service = new SkillManagerService(
+      new ManagedSkillRepository(database.db),
+      new SkillTargetBindingRepository(database.db),
+      [createAdapter("codex", codexRoot)],
+      {
+        ssotRootDir,
+        now: () => "2026-04-18T11:00:00.000Z",
+        createId: () => "skill-uploaded-helper"
+      }
+    );
+
+    const result = service.addManagedSkillFromMarkdown({
+      markdownContent: "这是从前端上传的一段说明，没有标题。",
+      fileName: "uploaded-helper.md",
+      targetCli: ["codex"]
+    });
+
+    database.close();
+
+    expect(result.skill).toEqual({
+      id: "skill-uploaded-helper",
+      name: "Uploaded Helper",
+      scope: "workspace",
+      directoryName: "uploaded-helper",
+      sourceType: "local-import",
+      sourcePath: null,
+      contentHash: computeSkillDirectoryHash(path.join(ssotRootDir, "uploaded-helper")),
+      managedState: "active",
+      createdAt: "2026-04-18T11:00:00.000Z",
+      updatedAt: "2026-04-18T11:00:00.000Z"
+    });
+    expect(readFileSync(path.join(ssotRootDir, "uploaded-helper", "SKILL.md"), "utf8")).toBe(
+      "# Uploaded Helper\n\n这是从前端上传的一段说明，没有标题。\n"
+    );
+    expect(readFileSync(path.join(codexRoot, "uploaded-helper", "SKILL.md"), "utf8")).toContain(
+      "# Uploaded Helper"
+    );
+  });
+
+  it("支持把 markdown 作为助手专用 skill 纳管，并只绑定助手运行时目标", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-skill-upload-assistant-"));
+    tempDirs.push(tempDir);
+    const database = createDatabaseClient(":memory:");
+    const ssotRootDir = path.join(tempDir, "skill-ssot");
+    const codexRoot = path.join(tempDir, "codex-skills");
+
+    mkdirSync(codexRoot, { recursive: true });
+
+    const service = new SkillManagerService(
+      new ManagedSkillRepository(database.db),
+      new SkillTargetBindingRepository(database.db),
+      [createAdapter("codex", codexRoot)],
+      {
+        ssotRootDir,
+        now: () => "2026-04-19T09:00:00.000Z",
+        createId: () => "assistant-skill-1"
+      }
+    );
+
+    const result = service.addManagedSkillFromMarkdown({
+      markdownContent: "# Inbox Helper\n\n这是给助手用的 skill。",
+      fileName: "inbox-helper.md",
+      scope: "assistant",
+      targetCli: ["codex", "claude-code"]
+    });
+
+    database.close();
+
+    expect(result.skill).toEqual({
+      id: "assistant-skill-1",
+      name: "Inbox Helper",
+      scope: "assistant",
+      directoryName: "inbox-helper",
+      sourceType: "local-import",
+      sourcePath: null,
+      contentHash: computeSkillDirectoryHash(path.join(ssotRootDir, ".assistant-runtime", "inbox-helper")),
+      managedState: "active",
+      createdAt: "2026-04-19T09:00:00.000Z",
+      updatedAt: "2026-04-19T09:00:00.000Z"
+    });
+    expect(result.targetResults).toEqual([
+      {
+        targetCli: "codex",
+        targetDir: "assistant-runtime:codex/inbox-helper",
+        syncStatus: "synced",
+        lastSyncedAt: "2026-04-19T09:00:00.000Z",
+        errorCode: null,
+        errorDetail: null
+      },
+      {
+        targetCli: "claude-code",
+        targetDir: "assistant-runtime:claude-code/inbox-helper",
+        syncStatus: "synced",
+        lastSyncedAt: "2026-04-19T09:00:00.000Z",
+        errorCode: null,
+        errorDetail: null
+      }
+    ]);
+    expect(existsSync(path.join(ssotRootDir, ".assistant-runtime", "inbox-helper", "SKILL.md"))).toBe(true);
+    expect(existsSync(path.join(codexRoot, "inbox-helper"))).toBe(false);
   });
 });
 

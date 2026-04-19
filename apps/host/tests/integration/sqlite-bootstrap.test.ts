@@ -253,6 +253,96 @@ describe("sqlite 启动引导", () => {
     );
   });
 
+  it("可以把旧版 managed_skills 平滑升级为带 scope 的结构", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-managed-skill-scope-bootstrap-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+    const { default: Database } = await import("better-sqlite3");
+    const seed = new Database(databasePath);
+
+    seed.exec(`
+      CREATE TABLE managed_skills (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        directory_name TEXT NOT NULL UNIQUE,
+        source_type TEXT NOT NULL CHECK (source_type IN ('builtin', 'local-import', 'managed-copy')),
+        source_path TEXT,
+        content_hash TEXT NOT NULL,
+        managed_state TEXT NOT NULL CHECK (managed_state IN ('active', 'conflicted', 'missing')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO managed_skills (
+        id,
+        name,
+        directory_name,
+        source_type,
+        source_path,
+        content_hash,
+        managed_state,
+        created_at,
+        updated_at
+      ) VALUES (
+        'skill-1',
+        'Legacy Skill',
+        'legacy-skill',
+        'local-import',
+        '/tmp/legacy-skill',
+        'hash-1',
+        'active',
+        '2026-04-18T08:00:00.000Z',
+        '2026-04-18T08:00:00.000Z'
+      );
+    `);
+    seed.close();
+
+    const client = createDatabaseClient(databasePath);
+    const columns = client.db
+      .prepare("PRAGMA table_info(managed_skills)")
+      .all() as Array<{ name: string }>;
+    const row = client.db
+      .prepare("SELECT scope, directory_name FROM managed_skills WHERE id = ?")
+      .get("skill-1") as { scope: string; directory_name: string } | undefined;
+    const duplicateInsert = () =>
+      client.db
+        .prepare(
+          `INSERT INTO managed_skills (
+             id,
+             name,
+             scope,
+             directory_name,
+             source_type,
+             source_path,
+             content_hash,
+             managed_state,
+             created_at,
+             updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          "skill-2",
+          "Assistant Legacy Skill",
+          "assistant",
+          "legacy-skill",
+          "local-import",
+          null,
+          "hash-2",
+          "active",
+          "2026-04-18T08:10:00.000Z",
+          "2026-04-18T08:10:00.000Z"
+        );
+
+    expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining(["scope", "directory_name"]));
+    expect(row).toEqual({
+      scope: "workspace",
+      directory_name: "legacy-skill"
+    });
+    expect(duplicateInsert).not.toThrow();
+
+    client.close();
+  });
+
   it("可以给旧 session_indices 平滑补上子 Agent 关系列", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-session-index-bootstrap-"));
     tempDirs.push(tempDir);

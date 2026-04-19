@@ -1166,6 +1166,7 @@ export interface TerminalTemplateRuntimeStatus {
 }
 
 export type SkillSourceType = "builtin" | "local-import" | "managed-copy";
+export type SkillScope = "workspace" | "assistant";
 export type ManagedSkillState = "active" | "conflicted" | "missing";
 export type SkillTargetCli = "codex" | "claude-code" | "gemini" | "opencode";
 export type SkillTargetSyncStatus = "synced" | "pending" | "failed" | "conflicted";
@@ -1173,6 +1174,7 @@ export type SkillTargetSyncStatus = "synced" | "pending" | "failed" | "conflicte
 export interface ManagedSkillRecord {
   id: string;
   name: string;
+  scope: SkillScope;
   directoryName: string;
   sourceType: SkillSourceType;
   sourcePath: string | null;

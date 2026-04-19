@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { AppError } from "../../shared/errors/app-error.js";
@@ -7,6 +8,7 @@ import { hashContent } from "../../shared/utils/hash.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type {
   ManagedSkillRecord,
+  SkillScope,
   SkillSourceType,
   SkillScanDiagnostic,
   SkillScanEntry,
@@ -40,6 +42,15 @@ export interface AddManagedSkillInput {
   sourcePath: string;
   targetCli: readonly SkillTargetCli[];
   sourceType: SkillSourceType;
+  scope?: SkillScope;
+}
+
+export interface AddManagedSkillFromMarkdownInput {
+  markdownContent: string;
+  targetCli: readonly SkillTargetCli[];
+  fileName?: string | null;
+  directoryName?: string | null;
+  scope?: SkillScope;
 }
 
 export interface SyncManagedSkillInput {
@@ -88,6 +99,13 @@ export interface AssistantRuntimeSkillOverviewItem {
   usedByTargetCli: readonly SkillTargetCli[];
 }
 
+export interface AssistantRuntimeSkillSource {
+  name: string;
+  directoryName: string;
+  sourcePath: string;
+  usedByTargetCli: readonly SkillTargetCli[];
+}
+
 export interface SkillOverviewResult {
   summary: {
     managedSkillCount: number;
@@ -110,6 +128,9 @@ export interface SkillManagerServiceOptions {
   now?: () => string;
   createId?: () => string;
 }
+
+const ASSISTANT_RUNTIME_TARGETS = ["codex", "claude-code"] as const satisfies readonly SkillTargetCli[];
+const ASSISTANT_RUNTIME_SSOT_DIRNAME = ".assistant-runtime";
 
 export class SkillManagerService {
   constructor(
@@ -135,6 +156,7 @@ export class SkillManagerService {
 
     const publicManagedSkills = this.managedSkillRepository
       .list()
+      .filter((skill) => skill.scope === "workspace")
       .filter((skill) => !isReservedAssistantSkillDirectoryName(skill.directoryName));
     const bindings = publicManagedSkills.flatMap((skill) =>
       this.skillTargetBindingRepository.listBySkillId(skill.id)
@@ -175,13 +197,14 @@ export class SkillManagerService {
     const scanResult = this.scanSkills(options);
     const managedSkills = this.managedSkillRepository
       .list()
+      .filter((skill) => skill.scope === "workspace")
       .filter((skill) => !isReservedAssistantSkillDirectoryName(skill.directoryName))
       .map((skill) => ({
         skill,
         bindings: this.skillTargetBindingRepository.listBySkillId(skill.id),
-        ssotPath: this.resolveSsotPath(skill.directoryName)
+        ssotPath: this.resolveSsotPath(skill.scope, skill.directoryName)
       }));
-    const assistantRuntimeSkills = listAssistantRuntimeSkills();
+    const assistantRuntimeSkills = this.listAssistantRuntimeSkillSources();
 
     return {
       summary: {
@@ -204,58 +227,40 @@ export class SkillManagerService {
   addManagedSkill(input: AddManagedSkillInput): ManagedSkillMutationResult {
     const sourcePath = resolveSourceDirectoryPath(input.sourcePath);
     const sourceSnapshot = readSkillDirectorySnapshot("codex", sourcePath, sourcePath);
-    assertPublicSkillDirectoryNameAllowed(sourceSnapshot.directoryName, "sourcePath");
-    const existingSkill = this.managedSkillRepository.findByDirectoryName(sourceSnapshot.directoryName);
-    const existingBindings = existingSkill
-      ? this.skillTargetBindingRepository.listBySkillId(existingSkill.id)
-      : [];
-    const plannedTargets = this.skillSyncPlanner.planRequestedTargets(input.targetCli, existingBindings);
-    const ssotRootDir = this.requireSsotRootDir();
-    const timestamp = this.now();
+    return this.registerManagedSkillFromSource({
+      scope: input.scope ?? "workspace",
+      sourceSnapshot,
+      copySourcePath: sourcePath,
+      sourceType: input.sourceType,
+      sourcePath,
+      targetCli: input.targetCli,
+      field: "sourcePath"
+    });
+  }
 
-    if (existingSkill && existingSkill.contentHash !== sourceSnapshot.contentHash) {
-      throw new AppError({
-        statusCode: 409,
-        errorCode: "SKILL_NAME_CONFLICT",
-        detail: "已存在同名受管 skill，且内容与当前来源目录不一致",
-        field: "sourcePath"
+  addManagedSkillFromMarkdown(input: AddManagedSkillFromMarkdownInput): ManagedSkillMutationResult {
+    const prepared = prepareUploadedSkillMarkdown(input);
+    const tempRootDir = fs.mkdtempSync(path.join(os.tmpdir(), "codingns-skill-upload-"));
+    const sourcePath = path.join(tempRootDir, prepared.directoryName);
+
+    fs.mkdirSync(sourcePath, { recursive: true });
+    fs.writeFileSync(path.join(sourcePath, "SKILL.md"), prepared.skillMarkdown, "utf8");
+
+    try {
+      const sourceSnapshot = readSkillDirectorySnapshot("codex", sourcePath, sourcePath);
+
+      return this.registerManagedSkillFromSource({
+        scope: input.scope ?? "workspace",
+        sourceSnapshot,
+        copySourcePath: sourcePath,
+        sourceType: "local-import",
+        sourcePath: null,
+        targetCli: input.targetCli,
+        field: "markdownContent"
       });
+    } finally {
+      fs.rmSync(tempRootDir, { recursive: true, force: true });
     }
-
-    const skill: ManagedSkillRecord = existingSkill
-      ? {
-          ...existingSkill,
-          name: sourceSnapshot.name,
-          sourceType: input.sourceType,
-          sourcePath,
-          contentHash: sourceSnapshot.contentHash,
-          managedState: "active",
-          updatedAt: timestamp
-        }
-      : {
-          id: this.createManagedSkillId(),
-          name: sourceSnapshot.name,
-          directoryName: sourceSnapshot.directoryName,
-          sourceType: input.sourceType,
-          sourcePath,
-          contentHash: sourceSnapshot.contentHash,
-          managedState: "active",
-          createdAt: timestamp,
-          updatedAt: timestamp
-        };
-    const ssotPath = path.join(ssotRootDir, skill.directoryName);
-
-    copySkillDirectory(sourcePath, ssotPath);
-    this.managedSkillRepository.upsert(skill);
-
-    const targetResults = this.syncManagedSkillRecord(skill, plannedTargets.map((target) => target.targetCli));
-
-    return {
-      skill,
-      bindings: this.skillTargetBindingRepository.listBySkillId(skill.id),
-      targetResults,
-      ssotPath
-    };
   }
 
   syncManagedSkill(input: SyncManagedSkillInput): ManagedSkillMutationResult {
@@ -281,7 +286,16 @@ export class SkillManagerService {
       });
     }
 
-    assertPublicSkillDirectoryNameAllowed(skill.directoryName, "skillId");
+    if (skill.scope !== "workspace") {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "SKILL_SCOPE_NOT_SYNCABLE",
+        detail: "助手专用 skill 不参与工作区同步",
+        field: "skillId"
+      });
+    }
+
+    assertSkillDirectoryNameAllowed(skill.scope, skill.directoryName, "skillId");
 
     const existingBindings = this.skillTargetBindingRepository.listBySkillId(skill.id);
     const plannedTargets = this.skillSyncPlanner.planRequestedTargets(input.targetCli, existingBindings);
@@ -291,52 +305,57 @@ export class SkillManagerService {
       skill: this.managedSkillRepository.findById(skill.id) ?? skill,
       bindings: this.skillTargetBindingRepository.listBySkillId(skill.id),
       targetResults,
-      ssotPath: this.resolveSsotPath(skill.directoryName)
+      ssotPath: this.resolveSsotPath(skill.scope, skill.directoryName)
     };
+  }
+
+  listAssistantRuntimeSkillSources(targetCli?: readonly SkillTargetCli[]): AssistantRuntimeSkillSource[] {
+    const requestedTargets = targetCli?.length ? new Set(targetCli) : null;
+    const builtinSkills = listAssistantRuntimeSkills()
+      .filter((item) => matchesRequestedTargets(item.usedByTargetCli, requestedTargets))
+      .map((item) => ({
+        name: item.name,
+        directoryName: item.directoryName,
+        sourcePath: item.sourcePath,
+        usedByTargetCli: [...item.usedByTargetCli]
+      }));
+    const managedSkills = this.managedSkillRepository
+      .list()
+      .filter((skill) => skill.scope === "assistant")
+      .map((skill) => ({
+        skill,
+        bindings: this.skillTargetBindingRepository
+          .listBySkillId(skill.id)
+          .filter((binding) => binding.enabled && isAssistantRuntimeTarget(binding.targetCli))
+      }))
+      .filter((item) => item.bindings.length > 0)
+      .map((item) => ({
+        name: item.skill.name,
+        directoryName: item.skill.directoryName,
+        sourcePath: this.resolveSsotPath(item.skill.scope, item.skill.directoryName),
+        usedByTargetCli: item.bindings.map((binding) => binding.targetCli)
+      }))
+      .filter((item) => matchesRequestedTargets(item.usedByTargetCli, requestedTargets))
+      .filter((item) => isValidSkillDirectory(item.sourcePath));
+
+    return [...builtinSkills, ...managedSkills].sort((left, right) =>
+      left.directoryName.localeCompare(right.directoryName)
+    );
   }
 
   ensureBuiltinSkill(input: EnsureBuiltinSkillInput): ManagedSkillMutationResult {
     const sourcePath = resolveSourceDirectoryPath(input.sourcePath);
     const sourceSnapshot = readSkillDirectorySnapshot("codex", sourcePath, sourcePath);
-    assertPublicSkillDirectoryNameAllowed(sourceSnapshot.directoryName, "sourcePath");
-    const existingSkill = this.managedSkillRepository.findByDirectoryName(sourceSnapshot.directoryName);
-    const ssotRootDir = this.requireSsotRootDir();
-    const timestamp = this.now();
-
-    const skill: ManagedSkillRecord = existingSkill
-      ? {
-          ...existingSkill,
-          name: sourceSnapshot.name,
-          sourceType: "builtin",
-          sourcePath,
-          contentHash: sourceSnapshot.contentHash,
-          managedState: "active",
-          updatedAt: timestamp
-        }
-      : {
-          id: this.createManagedSkillId(),
-          name: sourceSnapshot.name,
-          directoryName: sourceSnapshot.directoryName,
-          sourceType: "builtin",
-          sourcePath,
-          contentHash: sourceSnapshot.contentHash,
-          managedState: "active",
-          createdAt: timestamp,
-          updatedAt: timestamp
-        };
-    const ssotPath = path.join(ssotRootDir, skill.directoryName);
-
-    copySkillDirectory(sourcePath, ssotPath);
-    this.managedSkillRepository.upsert(skill);
-
-    const targetResults = this.forceSyncManagedSkillRecord(skill, input.targetCli);
-
-    return {
-      skill: this.managedSkillRepository.findById(skill.id) ?? skill,
-      bindings: this.skillTargetBindingRepository.listBySkillId(skill.id),
-      targetResults,
-      ssotPath
-    };
+    return this.registerManagedSkillFromSource({
+      scope: "workspace",
+      sourceSnapshot,
+      copySourcePath: sourcePath,
+      sourceType: "builtin",
+      sourcePath,
+      targetCli: input.targetCli,
+      field: "sourcePath",
+      forceSync: true
+    });
   }
 
   importUnmanagedSkill(input: ImportUnmanagedSkillInput): ManagedSkillMutationResult {
@@ -362,7 +381,7 @@ export class SkillManagerService {
     }
 
     const sourceSnapshot = readSkillDirectorySnapshot(input.targetCli, sourceLocation.rootDir, directoryPath);
-    assertPublicSkillDirectoryNameAllowed(sourceSnapshot.directoryName, "directoryPath");
+    assertSkillDirectoryNameAllowed("workspace", sourceSnapshot.directoryName, "directoryPath");
 
     if (
       input.expectedContentHash
@@ -380,7 +399,8 @@ export class SkillManagerService {
     return this.addManagedSkill({
       sourcePath: directoryPath,
       targetCli: [input.targetCli, ...(input.additionalTargetCli ?? [])],
-      sourceType: "managed-copy"
+      sourceType: "managed-copy",
+      scope: "workspace"
     });
   }
 
@@ -388,7 +408,7 @@ export class SkillManagerService {
     skill: ManagedSkillRecord,
     targetCli: readonly SkillTargetCli[]
   ): SkillTargetSyncResult[] {
-    const ssotPath = this.resolveSsotPath(skill.directoryName);
+    const ssotPath = this.resolveSsotPath(skill.scope, skill.directoryName);
     const timestamp = this.now();
 
     if (!isValidSkillDirectory(ssotPath)) {
@@ -416,7 +436,7 @@ export class SkillManagerService {
     skill: ManagedSkillRecord,
     targetCli: readonly SkillTargetCli[]
   ): SkillTargetSyncResult[] {
-    const ssotPath = this.resolveSsotPath(skill.directoryName);
+    const ssotPath = this.resolveSsotPath(skill.scope, skill.directoryName);
     const timestamp = this.now();
 
     if (!isValidSkillDirectory(ssotPath)) {
@@ -584,7 +604,11 @@ export class SkillManagerService {
     return path.resolve(ssotRootDir);
   }
 
-  private resolveSsotPath(directoryName: string): string {
+  private resolveSsotPath(scope: SkillScope, directoryName: string): string {
+    if (scope === "assistant") {
+      return path.join(this.requireSsotRootDir(), ASSISTANT_RUNTIME_SSOT_DIRNAME, directoryName);
+    }
+
     return path.join(this.requireSsotRootDir(), directoryName);
   }
 
@@ -595,10 +619,128 @@ export class SkillManagerService {
   private now(): string {
     return this.options.now?.() ?? nowIso();
   }
+
+  private registerManagedSkillFromSource(input: {
+    scope: SkillScope;
+    sourceSnapshot: DiscoveredSkillDirectory;
+    copySourcePath: string;
+    sourceType: SkillSourceType;
+    sourcePath: string | null;
+    targetCli: readonly SkillTargetCli[];
+    field: string;
+    forceSync?: boolean;
+  }): ManagedSkillMutationResult {
+    assertSkillDirectoryNameAllowed(input.scope, input.sourceSnapshot.directoryName, input.field);
+    const existingSkill = this.managedSkillRepository.findByScopeAndDirectoryName(
+      input.scope,
+      input.sourceSnapshot.directoryName
+    );
+    const existingBindings = existingSkill
+      ? this.skillTargetBindingRepository.listBySkillId(existingSkill.id)
+      : [];
+    const timestamp = this.now();
+
+    if (existingSkill && existingSkill.contentHash !== input.sourceSnapshot.contentHash) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "SKILL_NAME_CONFLICT",
+        detail: "已存在同名受管 skill，且内容与当前来源目录不一致",
+        field: input.field
+      });
+    }
+
+    const skill: ManagedSkillRecord = existingSkill
+      ? {
+          ...existingSkill,
+          name: input.sourceSnapshot.name,
+          scope: input.scope,
+          sourceType: input.sourceType,
+          sourcePath: input.sourcePath,
+          contentHash: input.sourceSnapshot.contentHash,
+          managedState: "active",
+          updatedAt: timestamp
+        }
+      : {
+          id: this.createManagedSkillId(),
+          name: input.sourceSnapshot.name,
+          scope: input.scope,
+          directoryName: input.sourceSnapshot.directoryName,
+          sourceType: input.sourceType,
+          sourcePath: input.sourcePath,
+          contentHash: input.sourceSnapshot.contentHash,
+          managedState: "active",
+          createdAt: timestamp,
+          updatedAt: timestamp
+        };
+    const ssotPath = this.resolveSsotPath(skill.scope, skill.directoryName);
+
+    copySkillDirectory(input.copySourcePath, ssotPath);
+    this.managedSkillRepository.upsert(skill);
+
+    const targetResults = skill.scope === "assistant"
+      ? this.upsertAssistantRuntimeBindings(skill, input.targetCli, existingBindings, timestamp, input.field)
+      : (() => {
+          const plannedTargets = this.skillSyncPlanner.planRequestedTargets(input.targetCli, existingBindings);
+
+          return input.forceSync
+            ? this.forceSyncManagedSkillRecord(skill, plannedTargets.map((target) => target.targetCli))
+            : this.syncManagedSkillRecord(skill, plannedTargets.map((target) => target.targetCli));
+        })();
+
+    return {
+      skill: this.managedSkillRepository.findById(skill.id) ?? skill,
+      bindings: this.skillTargetBindingRepository.listBySkillId(skill.id),
+      targetResults,
+      ssotPath
+    };
+  }
+
+  private upsertAssistantRuntimeBindings(
+    skill: ManagedSkillRecord,
+    targetCli: readonly SkillTargetCli[],
+    existingBindings: readonly SkillTargetBindingRecord[],
+    timestamp: string,
+    field: string
+  ): SkillTargetSyncResult[] {
+    const normalizedTargets = normalizeAssistantRuntimeTargets(targetCli, field);
+    const requestedTargets = new Set(normalizedTargets);
+    const knownTargets = new Set<SkillTargetCli>([
+      ...ASSISTANT_RUNTIME_TARGETS,
+      ...existingBindings
+        .map((binding) => binding.targetCli)
+        .filter((target): target is SkillTargetCli => isAssistantRuntimeTarget(target))
+    ]);
+
+    for (const target of knownTargets) {
+      const enabled = requestedTargets.has(target);
+      this.skillTargetBindingRepository.upsert(
+        buildBindingRecord(skill.id, target, {
+          enabled,
+          syncStatus: enabled ? "synced" : "pending",
+          lastSyncedAt: enabled ? timestamp : null,
+          lastErrorCode: null,
+          lastErrorDetail: null
+        })
+      );
+    }
+
+    return normalizedTargets.map((target) => ({
+      targetCli: target,
+      targetDir: buildAssistantRuntimeTargetRef(target, skill.directoryName),
+      syncStatus: "synced",
+      lastSyncedAt: timestamp,
+      errorCode: null,
+      errorDetail: null
+    }));
+  }
 }
 
-function assertPublicSkillDirectoryNameAllowed(directoryName: string, field: string): void {
-  if (!isReservedAssistantSkillDirectoryName(directoryName)) {
+function assertSkillDirectoryNameAllowed(scope: SkillScope, directoryName: string, field: string): void {
+  if (scope === "workspace" && !isReservedAssistantSkillDirectoryName(directoryName)) {
+    return;
+  }
+
+  if (scope === "assistant" && !isReservedAssistantSkillDirectoryName(directoryName)) {
     return;
   }
 
@@ -608,6 +750,118 @@ function assertPublicSkillDirectoryNameAllowed(directoryName: string, field: str
     detail: getReservedAssistantSkillErrorDetail(directoryName),
     field
   });
+}
+
+function prepareUploadedSkillMarkdown(input: AddManagedSkillFromMarkdownInput): {
+  directoryName: string;
+  skillMarkdown: string;
+} {
+  const normalizedContent = input.markdownContent.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n").trim();
+
+  if (!normalizedContent) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "SKILL_SOURCE_INVALID",
+      detail: "上传内容不能为空",
+      field: "markdownContent"
+    });
+  }
+
+  const requestedDirectoryName = input.directoryName?.trim() ?? "";
+  const fallbackDirectoryName = requestedDirectoryName || input.fileName?.trim() || "";
+  const normalizedDirectoryName = normalizeUploadedSkillDirectoryName(fallbackDirectoryName);
+  const heading = normalizedContent.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "";
+
+  if (!normalizedDirectoryName) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "SKILL_SOURCE_INVALID",
+      detail: "上传的 skill 缺少合法目录名，请补一个只包含字母、数字、点、下划线和短横线的名称",
+      field: "directoryName"
+    });
+  }
+
+  const skillMarkdown = heading
+    ? `${normalizedContent}\n`
+    : `# ${formatSkillTitleFromDirectoryName(normalizedDirectoryName)}\n\n${normalizedContent}\n`;
+
+  return {
+    directoryName: normalizedDirectoryName,
+    skillMarkdown
+  };
+}
+
+function normalizeUploadedSkillDirectoryName(input: string): string | null {
+  const basename = input.replace(/\\/g, "/").split("/").pop() ?? input;
+  const withoutExtension = basename.replace(/\.[A-Za-z0-9]+$/, "");
+  const normalized = withoutExtension
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-._]+|[-._]+$/g, "");
+
+  return normalized && isSafeSkillDirectoryName(normalized)
+    ? normalized
+    : null;
+}
+
+function formatSkillTitleFromDirectoryName(directoryName: string): string {
+  const title = directoryName
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+
+  return title || directoryName;
+}
+
+function normalizeAssistantRuntimeTargets(
+  targetCli: readonly SkillTargetCli[],
+  field: string
+): SkillTargetCli[] {
+  const normalizedTargets = Array.from(new Set(targetCli.map((item) => item.trim() as SkillTargetCli)));
+
+  if (normalizedTargets.length === 0) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "SKILL_TARGET_NOT_SUPPORTED",
+      detail: "助手专用 skill 至少要选择一个运行时目标",
+      field
+    });
+  }
+
+  const invalidTarget = normalizedTargets.find((target) => !isAssistantRuntimeTarget(target));
+
+  if (invalidTarget) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "SKILL_TARGET_NOT_SUPPORTED",
+      detail: "助手专用 skill 只支持 Codex 和 Claude Code",
+      field
+    });
+  }
+
+  return normalizedTargets;
+}
+
+function isAssistantRuntimeTarget(targetCli: SkillTargetCli): boolean {
+  return (ASSISTANT_RUNTIME_TARGETS as readonly SkillTargetCli[]).includes(targetCli);
+}
+
+function matchesRequestedTargets(
+  targetCli: readonly SkillTargetCli[],
+  requestedTargets: ReadonlySet<SkillTargetCli> | null
+): boolean {
+  if (!requestedTargets || requestedTargets.size === 0) {
+    return true;
+  }
+
+  return targetCli.some((target) => requestedTargets.has(target));
+}
+
+function buildAssistantRuntimeTargetRef(targetCli: SkillTargetCli, directoryName: string): string {
+  return `assistant-runtime:${targetCli}/${directoryName}`;
 }
 
 function createReservedSkillDiagnostic(directory: DiscoveredSkillDirectory): SkillScanDiagnostic {

@@ -1176,17 +1176,19 @@ CREATE TABLE IF NOT EXISTS instance_tailscale_status (
 CREATE TABLE IF NOT EXISTS managed_skills (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  directory_name TEXT NOT NULL UNIQUE,
+  scope TEXT NOT NULL CHECK (scope IN ('workspace', 'assistant')),
+  directory_name TEXT NOT NULL,
   source_type TEXT NOT NULL CHECK (source_type IN ('builtin', 'local-import', 'managed-copy')),
   source_path TEXT,
   content_hash TEXT NOT NULL,
   managed_state TEXT NOT NULL CHECK (managed_state IN ('active', 'conflicted', 'missing')),
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  UNIQUE(scope, directory_name)
 );
 
 CREATE INDEX IF NOT EXISTS idx_managed_skills_state
-  ON managed_skills(managed_state, updated_at DESC);
+  ON managed_skills(scope, managed_state, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS skill_target_bindings (
   skill_id TEXT NOT NULL,

@@ -182,6 +182,7 @@ describe("skills routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       skill: {
+        scope: "workspace",
         directoryName: "api-added-skill",
         sourceType: "local-import"
       },
@@ -194,6 +195,110 @@ describe("skills routes", () => {
     });
     expect(existsSync(path.join(codexSkillsRoot, "api-added-skill", "SKILL.md"))).toBe(true);
     expect(existsSync(path.join(geminiSkillsRoot, "api-added-skill"))).toBe(false);
+  });
+
+  it("add 接口支持直接上传 markdown 内容并纳管", async () => {
+    const fixture = createEmptyFixture();
+    const databasePath = path.join(fixture.rootDir, "host.sqlite");
+    const codexSkillsRoot = path.join(fixture.codexHomeDir, "skills");
+    const ssotRootDir = path.join(fixture.rootDir, "skills");
+    activeFixtures.push(fixture);
+
+    mkdirSync(codexSkillsRoot, { recursive: true });
+
+    const hosted = createTestApp(fixture, {
+      databasePath
+    });
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const response = await hosted.app.inject({
+      method: "POST",
+      url: "/api/skills",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        markdownContent: "这是通过 API 上传的 skill 内容。",
+        scope: "workspace",
+        fileName: "markdown-uploaded-skill.md",
+        targetCli: ["codex"]
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      skill: {
+        scope: "workspace",
+        directoryName: "markdown-uploaded-skill",
+        sourceType: "local-import",
+        sourcePath: null
+      },
+      targetResults: [
+        {
+          targetCli: "codex",
+          syncStatus: "synced"
+        }
+      ]
+    });
+    expect(readFileSync(path.join(ssotRootDir, "markdown-uploaded-skill", "SKILL.md"), "utf8")).toContain(
+      "# Markdown Uploaded Skill"
+    );
+    expect(readFileSync(path.join(codexSkillsRoot, "markdown-uploaded-skill", "SKILL.md"), "utf8")).toContain(
+      "# Markdown Uploaded Skill"
+    );
+  });
+
+  it("add 接口支持把 markdown 上传为助手专用 skill", async () => {
+    const fixture = createEmptyFixture();
+    const databasePath = path.join(fixture.rootDir, "host.sqlite");
+    const assistantSsotRoot = path.join(fixture.rootDir, "skills", ".assistant-runtime");
+    activeFixtures.push(fixture);
+
+    const hosted = createTestApp(fixture, {
+      databasePath
+    });
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const response = await hosted.app.inject({
+      method: "POST",
+      url: "/api/skills",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        markdownContent: "# Butler Inbox Helper\n\n给助手运行时用。",
+        scope: "assistant",
+        fileName: "butler-inbox-helper.md",
+        targetCli: ["codex", "claude-code"]
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      skill: {
+        scope: "assistant",
+        directoryName: "butler-inbox-helper",
+        sourceType: "local-import",
+        sourcePath: null
+      },
+      targetResults: [
+        {
+          targetCli: "codex",
+          syncStatus: "synced"
+        },
+        {
+          targetCli: "claude-code",
+          syncStatus: "synced"
+        }
+      ]
+    });
+    expect(
+      readFileSync(path.join(assistantSsotRoot, "butler-inbox-helper", "SKILL.md"), "utf8")
+    ).toContain("# Butler Inbox Helper");
   });
 });
 

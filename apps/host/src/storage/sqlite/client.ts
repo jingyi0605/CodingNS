@@ -67,6 +67,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
 function ensurePreSchemaCompatibility(db: Database.Database): void {
   // 旧库还没有这些列时，schema.sql 里的索引会先炸掉，所以必须先补齐。
   ensureAuthTokenDeviceColumns(db);
+  ensureManagedSkillScopeSchema(db);
 }
 
 function ensureAuthTokenDeviceColumns(db: Database.Database): void {
@@ -367,6 +368,95 @@ function ensureUserPreferenceProfileSchema(db: Database.Database): void {
     db.exec(`ALTER TABLE user_preference_profiles
       ADD COLUMN debug_port_pools_json TEXT NOT NULL DEFAULT '{"start":43000,"end":47999}'`);
   }
+}
+
+function ensureManagedSkillScopeSchema(db: Database.Database): void {
+  if (!tableExists(db, "managed_skills")) {
+    return;
+  }
+
+  const columns = db
+    .prepare("PRAGMA table_info(managed_skills)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+  const tableSqlRow = db
+    .prepare(
+      `SELECT sql
+       FROM sqlite_master
+       WHERE type = 'table'
+         AND name = 'managed_skills'`
+    )
+    .get() as { sql: string | null } | undefined;
+  const tableSql = tableSqlRow?.sql ?? "";
+  const needsRebuild =
+    !columnNames.has("scope")
+    || tableSql.includes("directory_name TEXT NOT NULL UNIQUE")
+    || !tableSql.includes("UNIQUE(scope, directory_name)");
+
+  if (!needsRebuild) {
+    return;
+  }
+
+  db.exec("DROP INDEX IF EXISTS idx_managed_skills_state");
+  db.exec("PRAGMA foreign_keys = OFF");
+
+  try {
+    db.exec("BEGIN");
+    db.exec(`
+      CREATE TABLE managed_skills__next (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        scope TEXT NOT NULL CHECK (scope IN ('workspace', 'assistant')),
+        directory_name TEXT NOT NULL,
+        source_type TEXT NOT NULL CHECK (source_type IN ('builtin', 'local-import', 'managed-copy')),
+        source_path TEXT,
+        content_hash TEXT NOT NULL,
+        managed_state TEXT NOT NULL CHECK (managed_state IN ('active', 'conflicted', 'missing')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(scope, directory_name)
+      );
+    `);
+    db.exec(`
+      INSERT INTO managed_skills__next (
+        id,
+        name,
+        scope,
+        directory_name,
+        source_type,
+        source_path,
+        content_hash,
+        managed_state,
+        created_at,
+        updated_at
+      )
+      SELECT
+        id,
+        name,
+        'workspace',
+        directory_name,
+        source_type,
+        source_path,
+        content_hash,
+        managed_state,
+        created_at,
+        updated_at
+      FROM managed_skills;
+    `);
+    db.exec("DROP TABLE managed_skills");
+    db.exec("ALTER TABLE managed_skills__next RENAME TO managed_skills");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_managed_skills_state
+      ON managed_skills(scope, managed_state, updated_at DESC);
+  `);
 }
 
 function ensureButlerControlSessionSchema(db: Database.Database): void {

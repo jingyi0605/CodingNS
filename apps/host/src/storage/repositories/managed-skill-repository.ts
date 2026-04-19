@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 
-import type { ManagedSkillRecord } from "../../types/domain.js";
+import type { ManagedSkillRecord, SkillScope } from "../../types/domain.js";
 
 export class ManagedSkillRepository {
   constructor(private readonly db: Database.Database) {}
@@ -11,6 +11,7 @@ export class ManagedSkillRepository {
         `SELECT
            id,
            name,
+           scope,
            directory_name,
            source_type,
            source_path,
@@ -27,11 +28,16 @@ export class ManagedSkillRepository {
   }
 
   findByDirectoryName(directoryName: string): ManagedSkillRecord | null {
+    return this.findByScopeAndDirectoryName("workspace", directoryName);
+  }
+
+  findByScopeAndDirectoryName(scope: SkillScope, directoryName: string): ManagedSkillRecord | null {
     const row = this.db
       .prepare(
         `SELECT
            id,
            name,
+           scope,
            directory_name,
            source_type,
            source_path,
@@ -40,9 +46,10 @@ export class ManagedSkillRepository {
            created_at,
            updated_at
          FROM managed_skills
-         WHERE directory_name = ?`
+         WHERE scope = ?
+           AND directory_name = ?`
       )
-      .get(directoryName) as ManagedSkillRow | undefined;
+      .get(scope, directoryName) as ManagedSkillRow | undefined;
 
     return row ? mapManagedSkillRow(row) : null;
   }
@@ -53,6 +60,7 @@ export class ManagedSkillRepository {
         `SELECT
            id,
            name,
+           scope,
            directory_name,
            source_type,
            source_path,
@@ -73,6 +81,7 @@ export class ManagedSkillRepository {
         `INSERT INTO managed_skills (
            id,
            name,
+           scope,
            directory_name,
            source_type,
            source_path,
@@ -80,9 +89,10 @@ export class ManagedSkillRepository {
            managed_state,
            created_at,
            updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            name = excluded.name,
+           scope = excluded.scope,
            directory_name = excluded.directory_name,
            source_type = excluded.source_type,
            source_path = excluded.source_path,
@@ -93,6 +103,7 @@ export class ManagedSkillRepository {
       .run(
         record.id,
         record.name,
+        record.scope,
         record.directoryName,
         record.sourceType,
         record.sourcePath,
@@ -120,6 +131,7 @@ export class ManagedSkillRepository {
 interface ManagedSkillRow {
   id: string;
   name: string;
+  scope: ManagedSkillRecord["scope"];
   directory_name: string;
   source_type: ManagedSkillRecord["sourceType"];
   source_path: string | null;
@@ -133,6 +145,7 @@ function mapManagedSkillRow(row: ManagedSkillRow): ManagedSkillRecord {
   return {
     id: row.id,
     name: row.name,
+    scope: row.scope,
     directoryName: row.directory_name,
     sourceType: row.source_type,
     sourcePath: row.source_path,
