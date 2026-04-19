@@ -36,8 +36,21 @@ function readAssistantRequestSource(request: FastifyRequest): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-function isAllowedAssistantCaller(callerKind: AuthCallerKind, requestSource: string | null): boolean {
+function isReadOnlyAssistantMethod(method: string): boolean {
+  const normalizedMethod = method.trim().toUpperCase();
+  return normalizedMethod === "GET" || normalizedMethod === "HEAD";
+}
+
+function isAllowedAssistantCaller(
+  callerKind: AuthCallerKind,
+  requestSource: string | null,
+  method: string
+): boolean {
   if (callerKind === "assistant_runtime") {
+    return true;
+  }
+
+  if (callerKind === "interactive_user" && isReadOnlyAssistantMethod(method)) {
     return true;
   }
 
@@ -72,7 +85,7 @@ export function createAuthGuard(authService: AuthService) {
     if (isAssistantRoute(routePath)) {
       const requestSource = readAssistantRequestSource(request);
 
-      if (!isAllowedAssistantCaller(authContext.callerKind, requestSource)) {
+      if (!isAllowedAssistantCaller(authContext.callerKind, requestSource, request.method)) {
         sendError(
           reply,
           403,

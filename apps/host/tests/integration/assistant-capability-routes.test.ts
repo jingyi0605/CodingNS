@@ -192,9 +192,22 @@ describe("assistant capability routes", () => {
     });
   });
 
-  it("普通登录态直接访问能力面时会被拒绝", async () => {
+  it("普通登录态直接读取助手能力面时会被放行", async () => {
     const assistantCapabilityService = {
-      listCapabilities: vi.fn()
+      listCapabilities: vi.fn(() => ({
+        ok: true,
+        capability: "capabilities.list",
+        auditId: "audit-readonly-1",
+        timestamp: "2026-04-19T15:10:00.000Z",
+        targetRef: {
+          kind: "none",
+          id: null
+        },
+        payload: {
+          version: "2026-04-19",
+          items: []
+        }
+      }))
     };
 
     const app = await createAssistantAppWithAuthGuard({
@@ -208,6 +221,36 @@ describe("assistant capability routes", () => {
       }
     });
 
+    expect(response.statusCode).toBe(200);
+    expect(response.headers[ASSISTANT_CALLER_KIND_HEADER]).toBe("interactive_user");
+    expect(response.json()).toMatchObject({
+      callerKind: "interactive_user",
+      payload: {
+        version: "2026-04-19"
+      }
+    });
+    expect(assistantCapabilityService.listCapabilities).toHaveBeenCalledTimes(1);
+  });
+
+  it("普通登录态直接写助手能力面时仍会被拒绝", async () => {
+    const assistantCapabilityService = {
+      startSession: vi.fn()
+    };
+
+    const app = await createAssistantAppWithAuthGuard({
+      assistantCapabilityService
+    });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/assistant/sessions/start",
+      headers: {
+        authorization: "Bearer interactive_token"
+      },
+      payload: {
+        content: "继续跟进"
+      }
+    });
+
     expect(response.statusCode).toBe(403);
     expect(response.json()).toMatchObject({
       error_code: "ASSISTANT_CALLER_NOT_ALLOWED",
@@ -216,7 +259,7 @@ describe("assistant capability routes", () => {
         requestSource: null
       }
     });
-    expect(assistantCapabilityService.listCapabilities).not.toHaveBeenCalled();
+    expect(assistantCapabilityService.startSession).not.toHaveBeenCalled();
   });
 
   it("项目与消息窗口路由会把用户和分页参数传给服务", async () => {
