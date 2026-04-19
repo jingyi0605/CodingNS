@@ -11,7 +11,7 @@ export class InstanceTailscaleRepository {
   findConfig(): InstanceTailscaleConfig | null {
     const row = this.db
       .prepare(
-        `SELECT enabled, control_server_url, hostname, state_dir, updated_at
+        `SELECT activated, enabled, control_server_url, hostname, state_dir, updated_at
          FROM instance_tailscale_config
          WHERE id = 'default'`
       )
@@ -25,13 +25,15 @@ export class InstanceTailscaleRepository {
       .prepare(
         `INSERT INTO instance_tailscale_config (
           id,
+          activated,
           enabled,
           control_server_url,
           hostname,
           state_dir,
           updated_at
-        ) VALUES ('default', ?, ?, ?, ?, ?)
+        ) VALUES ('default', ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
+          activated = excluded.activated,
           enabled = excluded.enabled,
           control_server_url = excluded.control_server_url,
           hostname = excluded.hostname,
@@ -39,6 +41,7 @@ export class InstanceTailscaleRepository {
           updated_at = excluded.updated_at`
       )
       .run(
+        config.activated ? 1 : 0,
         config.enabled ? 1 : 0,
         config.controlServerUrl,
         config.hostname,
@@ -125,6 +128,7 @@ export class InstanceTailscaleRepository {
 }
 
 interface InstanceTailscaleConfigRow {
+  activated: number;
   enabled: number;
   control_server_url: string | null;
   hostname: string | null;
@@ -149,6 +153,7 @@ interface InstanceTailscaleStatusRow {
 
 function mapConfigRow(row: InstanceTailscaleConfigRow): InstanceTailscaleConfig {
   return {
+    activated: Boolean(row.activated),
     enabled: Boolean(row.enabled),
     controlServerUrl: row.control_server_url,
     hostname: row.hostname,

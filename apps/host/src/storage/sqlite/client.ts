@@ -44,7 +44,9 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensurePortLeaseSchema(db);
   ensureRuntimeBindingSchema(db);
   ensureAiFallbackEditSchema(db);
+  ensureInstanceTailscaleConfigSchema(db);
   ensureInstanceTailscaleStatusSchema(db);
+  ensureInstanceRelayTunnelConfigSchema(db);
   ensureTerminalCommandTemplateDebugSchema(db);
   ensureTerminalInstanceDebugSchema(db);
   ensureUserPreferenceProfileSchema(db);
@@ -860,6 +862,32 @@ function ensureInstanceTailscaleStatusSchema(db: Database.Database): void {
   }
 
   db.exec("ALTER TABLE instance_tailscale_status ADD COLUMN account_name TEXT");
+}
+
+function ensureInstanceTailscaleConfigSchema(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(instance_tailscale_config)")
+    .all() as Array<{ name: string }>;
+
+  if (columns.length === 0 || columns.some((column) => column.name === "activated")) {
+    return;
+  }
+
+  db.exec("ALTER TABLE instance_tailscale_config ADD COLUMN activated INTEGER NOT NULL DEFAULT 0 CHECK (activated IN (0, 1))");
+  db.exec("UPDATE instance_tailscale_config SET activated = enabled");
+}
+
+function ensureInstanceRelayTunnelConfigSchema(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(instance_relay_tunnel_config)")
+    .all() as Array<{ name: string }>;
+
+  if (columns.length === 0 || columns.some((column) => column.name === "activated")) {
+    return;
+  }
+
+  db.exec("ALTER TABLE instance_relay_tunnel_config ADD COLUMN activated INTEGER NOT NULL DEFAULT 0 CHECK (activated IN (0, 1))");
+  db.exec("UPDATE instance_relay_tunnel_config SET activated = enabled");
 }
 
 function ensureSessionProviderSchema(db: Database.Database): void {

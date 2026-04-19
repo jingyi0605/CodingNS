@@ -13,11 +13,13 @@ import type {
 import type { TailscaleManager } from "./tailscale-manager.js";
 
 export interface TailscaleConfigUpdateInput {
+  activated?: boolean;
   controlServerUrl?: string | null;
   hostname?: string | null;
 }
 
 export interface InstanceTailscaleStatusDto {
+  activated: boolean;
   enabled: boolean;
   controlServerUrl: string | null;
   hostname: string | null;
@@ -58,7 +60,7 @@ export class TailscaleService {
   async restoreOnStartup(): Promise<void> {
     const snapshot = this.readStateSnapshot();
 
-    if (!snapshot.hasPersistedConfig) {
+    if (!snapshot.hasPersistedConfig || !snapshot.config.activated) {
       return;
     }
 
@@ -80,6 +82,10 @@ export class TailscaleService {
     const timestamp = nowIso();
     const nextConfig: InstanceTailscaleConfig = {
       ...snapshot.config,
+      activated:
+        input.activated !== undefined
+          ? input.activated
+          : snapshot.config.activated,
       controlServerUrl:
         input.controlServerUrl !== undefined
           ? normalizeControlServerUrl(input.controlServerUrl)
@@ -88,18 +94,27 @@ export class TailscaleService {
         input.hostname !== undefined
           ? normalizeHostname(input.hostname)
           : snapshot.config.hostname,
+      enabled:
+        input.activated === false
+          ? false
+          : snapshot.config.enabled,
       updatedAt: timestamp
     };
 
-    const transaction = this.db.transaction(() => {
-      this.repository.upsertConfig(nextConfig);
+    this.repository.upsertConfig(nextConfig);
 
-      if (nextConfig.enabled) {
-        // 这里只同步状态镜像，不主动发起新的登录动作。
-      }
-    });
-
-    transaction();
+    if (!nextConfig.activated) {
+      const status = snapshot.config.enabled
+        ? await this.manager.disable(nextConfig)
+        : this.manager.getStatusSync(nextConfig);
+      return this.buildStatusDto(
+        {
+          config: nextConfig,
+          hasPersistedConfig: true
+        },
+        status
+      );
+    }
 
     if (nextConfig.enabled) {
       await this.manager.syncConfig(nextConfig);
@@ -113,6 +128,7 @@ export class TailscaleService {
     const timestamp = nowIso();
     const nextConfig: InstanceTailscaleConfig = {
       ...snapshot.config,
+      activated: true,
       enabled: true,
       updatedAt: timestamp
     };
@@ -132,6 +148,7 @@ export class TailscaleService {
     const timestamp = nowIso();
     const nextConfig: InstanceTailscaleConfig = {
       ...snapshot.config,
+      activated: true,
       enabled: false,
       updatedAt: timestamp
     };
@@ -175,6 +192,7 @@ export class TailscaleService {
       config:
         persistedConfig
         ?? {
+          activated: false,
           enabled: false,
           controlServerUrl: null,
           hostname: null,
@@ -190,6 +208,7 @@ export class TailscaleService {
     effectiveStatus: InstanceTailscaleStatus
   ): InstanceTailscaleStatusDto {
     return {
+      activated: snapshot.config.activated,
       enabled: snapshot.config.enabled,
       controlServerUrl: snapshot.config.controlServerUrl,
       hostname: snapshot.config.hostname,

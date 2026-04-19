@@ -13,6 +13,7 @@ export class InstanceRelayTunnelRepository {
     const row = this.db
       .prepare(
         `SELECT
+           activated,
            enabled,
            provider,
            relay_base_url,
@@ -37,6 +38,7 @@ export class InstanceRelayTunnelRepository {
       .prepare(
         `INSERT INTO instance_relay_tunnel_config (
           id,
+          activated,
           enabled,
           provider,
           relay_base_url,
@@ -48,8 +50,9 @@ export class InstanceRelayTunnelRepository {
           host_key_fingerprint,
           local_target_base_url,
           updated_at
-        ) VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
+          activated = excluded.activated,
           enabled = excluded.enabled,
           provider = excluded.provider,
           relay_base_url = excluded.relay_base_url,
@@ -63,6 +66,7 @@ export class InstanceRelayTunnelRepository {
           updated_at = excluded.updated_at`
       )
       .run(
+        config.activated ? 1 : 0,
         config.enabled ? 1 : 0,
         config.provider,
         config.relayBaseUrl,
@@ -147,6 +151,7 @@ export class InstanceRelayTunnelRepository {
 }
 
 interface InstanceRelayTunnelConfigRow {
+  activated: number;
   enabled: number;
   provider: RelayTunnelProvider;
   relay_base_url: string | null;
@@ -175,6 +180,7 @@ interface InstanceRelayTunnelStatusRow {
 
 function mapConfigRow(row: InstanceRelayTunnelConfigRow): InstanceRelayTunnelConfig {
   return {
+    activated: Boolean(row.activated),
     enabled: Boolean(row.enabled),
     provider: row.provider,
     relayBaseUrl: row.relay_base_url,

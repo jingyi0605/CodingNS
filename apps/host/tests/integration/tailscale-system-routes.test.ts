@@ -96,6 +96,7 @@ describe("Tailscale 系统接口", () => {
 
     expect(statusResponse.statusCode).toBe(200);
     expect(statusResponse.json()).toEqual({
+      activated: false,
       enabled: false,
       controlServerUrl: null,
       hostname: null,
@@ -126,6 +127,7 @@ describe("Tailscale 系统接口", () => {
 
     expect(configResponse.statusCode).toBe(200);
     expect(configResponse.json()).toEqual({
+      activated: false,
       enabled: false,
       controlServerUrl: "https://headscale.example.com",
       hostname: "codingns-host",
@@ -152,6 +154,7 @@ describe("Tailscale 系统接口", () => {
 
     expect(enableResponse.statusCode).toBe(200);
     expect(enableResponse.json()).toEqual({
+      activated: true,
       enabled: true,
       controlServerUrl: "https://headscale.example.com",
       hostname: "codingns-host",
@@ -178,6 +181,7 @@ describe("Tailscale 系统接口", () => {
 
     expect(loginResponse.statusCode).toBe(200);
     expect(loginResponse.json()).toEqual({
+      activated: true,
       enabled: true,
       controlServerUrl: "https://headscale.example.com",
       hostname: "codingns-host",
@@ -204,6 +208,7 @@ describe("Tailscale 系统接口", () => {
 
     expect(logoutResponse.statusCode).toBe(200);
     expect(logoutResponse.json()).toEqual({
+      activated: true,
       enabled: true,
       controlServerUrl: "https://headscale.example.com",
       hostname: "codingns-host",
@@ -230,6 +235,7 @@ describe("Tailscale 系统接口", () => {
 
     expect(disableResponse.statusCode).toBe(200);
     expect(disableResponse.json()).toEqual({
+      activated: true,
       enabled: false,
       controlServerUrl: "https://headscale.example.com",
       hostname: "codingns-host",
@@ -301,6 +307,7 @@ describe("Tailscale 系统接口", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
+      activated: true,
       enabled: true,
       controlServerUrl: "https://headscale.example.com",
       hostname: "codingns-host",
@@ -329,6 +336,7 @@ describe("Tailscale 系统接口", () => {
 
     bootstrapStateRepository.markInitialized("2026-04-15T03:00:00.000Z", "user-1");
     repository.upsertConfig({
+      activated: true,
       enabled: true,
       controlServerUrl: null,
       hostname: null,

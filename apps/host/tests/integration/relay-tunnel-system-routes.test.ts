@@ -88,6 +88,7 @@ describe("公共隧道系统接口", () => {
 
     expect(statusResponse.statusCode).toBe(200);
     expect(statusResponse.json()).toEqual({
+      activated: false,
       enabled: false,
       provider: "codingns_relay",
       relayBaseUrl: null,
@@ -124,6 +125,7 @@ describe("公共隧道系统接口", () => {
 
     expect(configResponse.statusCode).toBe(200);
     expect(configResponse.json()).toEqual({
+      activated: false,
       enabled: false,
       provider: "codingns_relay",
       relayBaseUrl: "wss://relay.codingns.example",
@@ -141,7 +143,7 @@ describe("公共隧道系统接口", () => {
       trafficRemainingBytes: null,
       quotaResetAt: null,
       lastError: null,
-      observedAt: null,
+      observedAt: expect.any(String),
       updatedAt: expect.any(String)
     });
 
@@ -190,6 +192,7 @@ describe("公共隧道系统接口", () => {
 
     expect(bindResponse.statusCode).toBe(200);
     expect(bindResponse.json()).toEqual({
+      activated: false,
       enabled: false,
       provider: "codingns_relay",
       relayBaseUrl: "wss://relay.codingns.example",
@@ -221,6 +224,7 @@ describe("公共隧道系统接口", () => {
 
     expect(enableResponse.statusCode).toBe(200);
     expect(enableResponse.json()).toEqual({
+      activated: true,
       enabled: true,
       provider: "codingns_relay",
       relayBaseUrl: "wss://relay.codingns.example",
@@ -252,6 +256,7 @@ describe("公共隧道系统接口", () => {
 
     expect(disableResponse.statusCode).toBe(200);
     expect(disableResponse.json()).toEqual({
+      activated: true,
       enabled: false,
       provider: "codingns_relay",
       relayBaseUrl: "wss://relay.codingns.example",
@@ -283,6 +288,7 @@ describe("公共隧道系统接口", () => {
 
     expect(unbindResponse.statusCode).toBe(200);
     expect(unbindResponse.json()).toEqual({
+      activated: true,
       enabled: false,
       provider: "codingns_relay",
       relayBaseUrl: "wss://relay.codingns.example",
@@ -382,6 +388,7 @@ describe("公共隧道系统接口", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
+      activated: true,
       enabled: true,
       provider: "codingns_relay",
       relayBaseUrl: "wss://relay.codingns.example",
