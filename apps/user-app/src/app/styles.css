@@ -20538,6 +20538,11 @@ textarea:focus-visible {
   line-height: 1.6;
 }
 
+.settings-relay-tunnel-inline-stack {
+  display: grid;
+  gap: 4px;
+}
+
 .settings-relay-tunnel-summary-value {
   display: inline-block;
   max-width: min(32ch, 100%);

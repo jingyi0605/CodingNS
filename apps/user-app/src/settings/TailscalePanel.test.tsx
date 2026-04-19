@@ -132,7 +132,7 @@ describe("TailscalePanel", () => {
       expect(screen.queryByRole("dialog", { name: "Configure Tailscale" })).not.toBeInTheDocument();
     });
 
-    await userEvent.click(screen.getByRole("checkbox", { name: "Enable Tailscale" }));
+    await userEvent.click(screen.getByRole("button", { name: "Enable Tailscale" }));
     expect(apiMocks.enableTailscale).toHaveBeenCalledTimes(1);
 
     await userEvent.click(screen.getByRole("button", { name: "Bind Account" }));
@@ -240,7 +240,7 @@ function renderPanel() {
 
 function createStatus(overrides?: Partial<TailscaleStatusView>): TailscaleStatusView {
   return {
-    activated: false,
+    activated: true,
     enabled: false,
     controlServerUrl: null,
     hostname: null,

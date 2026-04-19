@@ -2092,6 +2092,11 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
   line-height: 1.6;
 }
 
+.settings-relay-tunnel-inline-stack {
+  display: grid;
+  gap: 4px;
+}
+
 .settings-tailscale-summary-value {
   display: inline-block;
   max-width: min(36ch, 100%);

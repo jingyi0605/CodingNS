@@ -81,6 +81,7 @@ export const enUS = {
     remoteAccessTabsLabel: "Remote access method tabs",
     remoteAccessTunnelTab: "Tunnel Service",
     remoteAccessTailscaleTab: "Tailscale Access",
+    remoteAccessFeatureDisabledValue: "Off",
     modelManagement: "Model Management",
     modelManagementSectionSummary:
       "Read cc-switch presets and quickly switch models for Codex, Claude Code, Gemini, and OpenCode.",
@@ -234,6 +235,9 @@ export const enUS = {
     relayTunnelStatus: "Tunnel Status",
     relayTunnelDescription:
       "Use the CodingNS tunnel service to let external devices reach this Host securely.",
+    relayTunnelMasterSwitchLabel: "Enable tunnel service",
+    relayTunnelActivationHint:
+      "Turn this on before checking tunnel status or allowing this Host to accept external access.",
     relayTunnelPhase: "Current State",
     relayTunnelDomain: "Access Address",
     relayTunnelUnbound: "Not bound yet",
@@ -312,6 +316,9 @@ export const enUS = {
     tailscaleBrand: "Tailscale",
     tailscaleSectionTitle: "Tailscale Access",
     tailscaleSectionDescription: "Let this Host stay reachable across your devices with Tailscale.",
+    tailscaleMasterSwitchLabel: "Enable Tailscale",
+    tailscaleActivationHint:
+      "Turn this on before checking Tailscale status or continuing with setup and account binding.",
     tailscaleCurrentState: "Current State",
     tailscaleSwitchLabel: "Enabled",
     tailscaleStatusIndicator: "Status",

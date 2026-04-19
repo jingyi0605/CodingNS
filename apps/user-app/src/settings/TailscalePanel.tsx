@@ -345,7 +345,7 @@ export function TailscalePanel({ configMode = "modal" }: TailscalePanelProps) {
                 </p>
               ) : null}
 
-              {activated && (status?.lastError || panelError) ? (
+              {panelError || status?.lastError ? (
                 <p className="settings-relay-tunnel-error">{panelError ?? status?.lastError}</p>
               ) : null}
 
