@@ -1,7 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
@@ -941,6 +950,95 @@ test("CodexAdapter 取消归档后即使线程索引 mtime 没变，也不会把
     assert.equal(restoredSessions[0]?.providerSessionId, threadId);
     assert.equal(restoredSessions[0]?.rawStoreRef, activeFile);
     assert.equal(restoredSessions[0]?.isArchived, false);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 归档时会优先走官方线程归档接口，避免只改本地索引", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-archive-transport-"));
+  const activeFile = join(
+    tempDir,
+    "sessions",
+    "2026",
+    "04",
+    "19",
+    "rollout-2026-04-19T10-00-00-019db000-0000-7000-8000-000000000001.jsonl"
+  );
+  const archivedFile = join(
+    tempDir,
+    "archived_sessions",
+    "rollout-2026-04-19T10-00-00-019db000-0000-7000-8000-000000000001.jsonl"
+  );
+  const threadId = "019db000-0000-7000-8000-000000000001";
+  const calls = [];
+
+  try {
+    mkdirSync(join(tempDir, "sessions", "2026", "04", "19"), { recursive: true });
+    writeFileSync(
+      activeFile,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: threadId,
+            cwd: "/Users/jackson/Code/CodingNS"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-19T10:00:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "优先走 Codex 官方归档接口"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new CodexAdapter({
+      homeDir: tempDir,
+      threadControlTransportFactory: () => ({
+        async initialize() {
+          calls.push("initialize");
+        },
+        async archiveThread(providerSessionId) {
+          calls.push(`archive:${providerSessionId}`);
+          mkdirSync(join(tempDir, "archived_sessions"), { recursive: true });
+          writeFileSync(archivedFile, readFileSync(activeFile, "utf8"), "utf8");
+          rmSync(activeFile, { force: true });
+        },
+        async unarchiveThread() {
+          throw new Error("SHOULD_NOT_UNARCHIVE");
+        },
+        async readThread(providerSessionId) {
+          calls.push(`read:${providerSessionId}`);
+          return {
+            thread: {
+              id: providerSessionId,
+              path: archivedFile
+            }
+          };
+        },
+        close() {
+          calls.push("close");
+        }
+      })
+    });
+
+    const updated = await adapter.updateSessionArchiveState(threadId, activeFile, true);
+
+    assert.equal(updated.isArchived, true);
+    assert.equal(updated.rawStoreRef, archivedFile);
+    assert.deepEqual(calls, [
+      "initialize",
+      `archive:${threadId}`,
+      `read:${threadId}`,
+      "close"
+    ]);
+    assert.equal(existsSync(activeFile), false);
+    assert.equal(existsSync(archivedFile), true);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
