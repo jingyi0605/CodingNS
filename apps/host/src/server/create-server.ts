@@ -781,6 +781,12 @@ export function createServer(config: HostConfig) {
       schedulerMetrics
     }
   );
+  const assistantSandboxCleanupScheduler = new AssistantSandboxCleanupScheduler(
+    assistantSandboxService,
+    {
+      schedulerMetrics
+    }
+  );
   const butlerFollowUpTerminalSubscription = sessionLiveRuntimeService.registerTerminalStateListener(
     async (event) => {
       await butlerFollowUpService.handleSessionTerminal(event.sessionId, event.timestamp);
@@ -821,12 +827,6 @@ export function createServer(config: HostConfig) {
   );
   const butlerControlTimerScheduler = new ButlerControlTimerScheduler(
     butlerControlTimerService,
-    {
-      schedulerMetrics
-    }
-  );
-  const assistantSandboxCleanupScheduler = new AssistantSandboxCleanupScheduler(
-    assistantSandboxService,
     {
       schedulerMetrics
     }
