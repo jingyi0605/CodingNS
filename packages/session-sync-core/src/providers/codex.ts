@@ -48,6 +48,7 @@ import { loadDatabaseSync, type DatabaseSyncType } from "../sqlite/node-sqlite.j
 interface CodexAdapterOptions {
   homeDir: string;
   forkTransportFactory?: () => CodexForkTransport;
+  threadControlTransportFactory?: () => CodexThreadControlTransport;
 }
 
 export interface CodexForkTransport {
@@ -66,6 +67,14 @@ export interface CodexForkTransport {
     history: unknown[];
     model?: string | null;
   }): Promise<{ providerSessionId: string; rawStoreRef: string | null }>;
+  close(): void;
+}
+
+export interface CodexThreadControlTransport {
+  initialize(): Promise<void>;
+  archiveThread(providerSessionId: string): Promise<void>;
+  unarchiveThread(providerSessionId: string): Promise<void>;
+  readThread(providerSessionId: string): Promise<Record<string, unknown>>;
   close(): void;
 }
 
@@ -947,42 +956,105 @@ export class CodexAdapter implements ProviderAdapter {
     const nextStoreRef = isArchived
       ? join(this.options.homeDir, "archived_sessions", currentFileName)
       : buildCodexActiveSessionPath(this.options.homeDir, currentFileName);
-    const stateDbPath = findLatestCodexStateDatabase(this.options.homeDir);
+    const controlResult = await this.updateArchiveStateViaThreadControlTransport(
+      providerSessionId,
+      resolvedStoreRef,
+      nextStoreRef,
+      isArchived
+    );
 
-    statSync(resolvedStoreRef);
+    let finalStoreRef = nextStoreRef;
 
-    if (resolvedStoreRef !== nextStoreRef) {
-      ensureDirectory(dirname(nextStoreRef));
-      renameSync(resolvedStoreRef, nextStoreRef);
-    }
+    if (controlResult) {
+      finalStoreRef = controlResult.rawStoreRef;
+    } else {
+      const stateDbPath = findLatestCodexStateDatabase(this.options.homeDir);
 
-    if (stateDbPath) {
-      const DatabaseSync = loadDatabaseSync();
-      let db: DatabaseSyncType | null = null;
+      statSync(resolvedStoreRef);
 
-      try {
-        db = new DatabaseSync(stateDbPath, { open: true });
-        db.prepare(
-          `UPDATE threads
-           SET archived = ?,
-               archived_at = ?,
-               rollout_path = ?
-           WHERE id = ?`
-        ).run(isArchived ? 1 : 0, isArchived ? Math.floor(Date.now() / 1000) : null, nextStoreRef, providerSessionId);
-      } finally {
-        db?.close();
+      if (resolvedStoreRef !== nextStoreRef) {
+        ensureDirectory(dirname(nextStoreRef));
+        renameSync(resolvedStoreRef, nextStoreRef);
+      }
+
+      if (stateDbPath) {
+        const DatabaseSync = loadDatabaseSync();
+        let db: DatabaseSyncType | null = null;
+
+        try {
+          db = new DatabaseSync(stateDbPath, { open: true });
+          db.prepare(
+            `UPDATE threads
+             SET archived = ?,
+                 archived_at = ?,
+                 rollout_path = ?
+             WHERE id = ?`
+          ).run(
+            isArchived ? 1 : 0,
+            isArchived ? Math.floor(Date.now() / 1000) : null,
+            nextStoreRef,
+            providerSessionId
+          );
+        } finally {
+          db?.close();
+        }
       }
     }
 
     this.sessionSummaryCache.delete(resolvedStoreRef);
-    this.sessionSummaryCache.delete(nextStoreRef);
+    this.sessionSummaryCache.delete(finalStoreRef);
     // 归档切换后线程索引的 archived / rollout_path 也变了，不能继续赌文件系统 mtime 一定会跳。
     this.invalidateThreadMetadataIndexCache();
 
     return {
-      rawStoreRef: nextStoreRef,
+      rawStoreRef: finalStoreRef,
       isArchived
     };
+  }
+
+  private async updateArchiveStateViaThreadControlTransport(
+    providerSessionId: string,
+    resolvedStoreRef: string,
+    nextStoreRef: string,
+    isArchived: boolean
+  ): Promise<{ rawStoreRef: string } | null> {
+    const createTransport = this.options.threadControlTransportFactory;
+
+    if (!createTransport) {
+      return null;
+    }
+
+    const transport = createTransport();
+
+    try {
+      await transport.initialize();
+
+      if (isArchived) {
+        await transport.archiveThread(providerSessionId);
+      } else {
+        await transport.unarchiveThread(providerSessionId);
+      }
+
+      const result = await transport.readThread(providerSessionId).catch(() => null);
+      const thread = result && typeof result === "object"
+        ? ((result.thread ?? null) as Record<string, unknown> | null)
+        : null;
+      const appServerRawStoreRef = ensureText(thread?.path).trim();
+      const resolvedNextStoreRef =
+        appServerRawStoreRef.length > 0
+          ? this.resolveSessionFilePath(appServerRawStoreRef, providerSessionId)
+          : this.resolveSessionFilePath(nextStoreRef, providerSessionId);
+
+      this.sessionSummaryCache.delete(resolvedStoreRef);
+      this.sessionSummaryCache.delete(resolvedNextStoreRef);
+      return {
+        rawStoreRef: resolvedNextStoreRef
+      };
+    } catch {
+      return null;
+    } finally {
+      transport.close();
+    }
   }
 
   getProviderCapabilities(): ProviderCapabilities {
