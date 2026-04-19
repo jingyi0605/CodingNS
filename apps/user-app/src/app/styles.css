@@ -20217,6 +20217,12 @@ textarea:focus-visible {
   width: 100%;
 }
 
+.settings-skill-summary-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .settings-skill-summary-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));

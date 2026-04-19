@@ -23,11 +23,21 @@ import { ApiError } from "../shared/network/api-error";
 
 type PendingActionKey = string | null;
 
-export function SkillManagementPanel() {
+interface SkillManagementPanelProps {
+  readonly triggerClassName?: string;
+  readonly triggerLabel?: string;
+  readonly triggerLeading?: ReactNode;
+}
+
+export function SkillManagementPanel({
+  triggerClassName = "secondary-button",
+  triggerLabel,
+  triggerLeading
+}: SkillManagementPanelProps) {
   const accessToken = useAuthSelector((state) => state.session?.accessToken ?? null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const [overview, setOverview] = useState<SkillOverviewDto | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [pendingActionKey, setPendingActionKey] = useState<PendingActionKey>(null);
   const [panelError, setPanelError] = useState<string | null>(null);
   const [statusText, setStatusText] = useState<string | null>(null);
@@ -41,6 +51,10 @@ export function SkillManagementPanel() {
 
   useEffect(() => {
     let active = true;
+
+    if (!modalOpen) {
+      return;
+    }
 
     if (!accessToken) {
       setOverview(null);
@@ -80,7 +94,7 @@ export function SkillManagementPanel() {
     return () => {
       active = false;
     };
-  }, [accessToken]);
+  }, [accessToken, modalOpen]);
 
   async function reloadOverview(): Promise<void> {
     const nextOverview = await fetchSkillOverview();
@@ -272,50 +286,23 @@ export function SkillManagementPanel() {
   const visibleDiagnostics = (overview?.diagnostics ?? []).filter(
     (diagnostic) => !isAssistantRuntimeDiagnostic(diagnostic)
   );
+  const resolvedTriggerLabel = triggerLabel ?? t("settings.skillManageAction");
 
   return (
-    <div className="settings-skill-panel">
-      <div className="settings-release-card">
-        <div className="settings-skill-summary-grid">
-          <SummaryCard
-            label={t("settings.skillSummaryManagedSkills")}
-            value={String(summary.managedSkillCount)}
-          />
-          <SummaryCard
-            label={t("settings.skillSummaryManagedEntries")}
-            value={String(summary.managedEntryCount)}
-          />
-          <SummaryCard
-            label={t("settings.skillSummaryUnmanagedEntries")}
-            value={String(summary.unmanagedEntryCount)}
-          />
-          <SummaryCard
-            label={t("settings.skillSummaryConflictedEntries")}
-            value={String(visibleConflictedEntries.length)}
-          />
-          <SummaryCard
-            label={t("settings.skillSummaryAssistantRuntimeEntries")}
-            value={String(assistantRuntimeItems.length)}
-          />
-          <SummaryCard
-            label={t("settings.skillSummaryDiagnostics")}
-            value={String(visibleDiagnostics.length)}
-          />
-        </div>
-
-        <div className="settings-release-actions settings-skill-panel-actions">
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={!accessToken}
-            onClick={() => {
-              setModalOpen(true);
-            }}
-          >
-            {t("settings.skillManageAction")}
-          </button>
-        </div>
-      </div>
+    <>
+      <button
+        className={triggerClassName}
+        type="button"
+        data-open={modalOpen ? "true" : "false"}
+        aria-haspopup="dialog"
+        aria-expanded={modalOpen}
+        onClick={() => {
+          setModalOpen(true);
+        }}
+      >
+        {triggerLeading}
+        <span>{resolvedTriggerLabel}</span>
+      </button>
 
       <WorkbenchModal
         open={modalOpen}
@@ -336,14 +323,43 @@ export function SkillManagementPanel() {
         )}
         onClose={() => setModalOpen(false)}
       >
-        <div className="settings-release-meta">
-          <span>
-            {t("settings.skillScannedAt")}: {loading ? t("common.loading") : formatDateTime(overview?.scannedAt)}
-          </span>
-        </div>
+        <section className="settings-skill-summary-block">
+          <div className="settings-skill-summary-grid">
+            <SummaryCard
+              label={t("settings.skillSummaryManagedSkills")}
+              value={String(summary.managedSkillCount)}
+            />
+            <SummaryCard
+              label={t("settings.skillSummaryManagedEntries")}
+              value={String(summary.managedEntryCount)}
+            />
+            <SummaryCard
+              label={t("settings.skillSummaryUnmanagedEntries")}
+              value={String(summary.unmanagedEntryCount)}
+            />
+            <SummaryCard
+              label={t("settings.skillSummaryConflictedEntries")}
+              value={String(visibleConflictedEntries.length)}
+            />
+            <SummaryCard
+              label={t("settings.skillSummaryAssistantRuntimeEntries")}
+              value={String(assistantRuntimeItems.length)}
+            />
+            <SummaryCard
+              label={t("settings.skillSummaryDiagnostics")}
+              value={String(visibleDiagnostics.length)}
+            />
+          </div>
 
-        {statusText ? <p className="settings-release-status">{statusText}</p> : null}
-        {panelError ? <p className="settings-release-status">{panelError}</p> : null}
+          <div className="settings-release-meta">
+            <span>
+              {t("settings.skillScannedAt")}: {loading ? t("common.loading") : formatDateTime(overview?.scannedAt)}
+            </span>
+          </div>
+
+          {statusText ? <p className="settings-release-status">{statusText}</p> : null}
+          {panelError ? <p className="settings-release-status">{panelError}</p> : null}
+        </section>
 
         <SkillSection
           title={t("settings.skillUploadSectionTitle")}
@@ -639,7 +655,7 @@ export function SkillManagementPanel() {
           }}
         />
       </WorkbenchModal>
-    </div>
+    </>
   );
 }
 

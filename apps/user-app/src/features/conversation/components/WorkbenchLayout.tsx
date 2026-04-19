@@ -69,6 +69,7 @@ import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { useTheme } from "../../../shared/theme/theme";
 import { useToast } from "../../../shared/toast";
+import { SkillManagementPanel } from "../../../settings/SkillManagementPanel";
 import { authStore } from "../../auth/store/auth-store";
 import {
   deleteSession,
@@ -2686,6 +2687,15 @@ function ButlerIcon() {
       <circle cx="15" cy="11" r="1" />
       <path d="M8 15h8" />
       <path d="M12 5V3" />
+    </svg>
+  );
+}
+
+function SkillIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
+      <path d="M12 4.5 13.6 8l3.9.4-2.9 2.7.8 3.9L12 13.2 8.6 15l.8-3.9-2.9-2.7L10.4 8 12 4.5Z" />
+      <path d="m18.5 4.5.5 1.3 1.3.5-1.3.5-.5 1.3-.5-1.3-1.3-.5 1.3-.5.5-1.3Z" />
     </svg>
   );
 }
@@ -5505,49 +5515,60 @@ function SidebarContent({
       </div>
 
       <div className="workbench-nav-body">
-        <div className="workbench-nav-segment" role="tablist" aria-label={t("shell.centerTabsLabel")}>
-          <button
-            type="button"
-            className={
-              isConversationActive
-                ? "workbench-nav-segment-button active"
-                : "workbench-nav-segment-button"
-            }
-            role="tab"
-            aria-selected={isConversationActive}
-            onClick={onNavigateConversation}
-          >
-            <ConversationIcon />
-            {t("shell.conversationEntry")}
-          </button>
-          <button
-            type="button"
-            className={
-              isButlerActive
-                ? "workbench-nav-segment-button active"
-                : "workbench-nav-segment-button"
-            }
-            role="tab"
-            aria-selected={isButlerActive}
-            onClick={onNavigateButler}
-          >
-            <ButlerIcon />
-            {t("shell.butlerEntry")}
-          </button>
-          <button
-            type="button"
-            className={
-              isTerminalActive
-                ? "workbench-nav-segment-button active"
-                : "workbench-nav-segment-button"
-            }
-            role="tab"
-            aria-selected={isTerminalActive}
-            onClick={onNavigateTerminals}
-          >
-            <TerminalIcon />
-            {t("shell.terminalsEntry")}
-          </button>
+        <div className="workbench-nav-segment">
+          <div className="workbench-nav-segment-tabs" role="tablist" aria-label={t("shell.centerTabsLabel")}>
+            <div className="workbench-nav-segment-pair">
+              <button
+                type="button"
+                className={
+                  isConversationActive
+                    ? "workbench-nav-segment-button active"
+                    : "workbench-nav-segment-button"
+                }
+                data-layout="paired"
+                role="tab"
+                aria-selected={isConversationActive}
+                onClick={onNavigateConversation}
+              >
+                <ConversationIcon />
+                <span>{t("shell.conversationEntry")}</span>
+              </button>
+              <button
+                type="button"
+                className={
+                  isButlerActive
+                    ? "workbench-nav-segment-button active"
+                    : "workbench-nav-segment-button"
+                }
+                data-layout="paired"
+                role="tab"
+                aria-selected={isButlerActive}
+                onClick={onNavigateButler}
+              >
+                <ButlerIcon />
+                <span>{t("shell.butlerEntry")}</span>
+              </button>
+            </div>
+            <button
+              type="button"
+              className={
+                isTerminalActive
+                  ? "workbench-nav-segment-button active"
+                  : "workbench-nav-segment-button"
+              }
+              role="tab"
+              aria-selected={isTerminalActive}
+              onClick={onNavigateTerminals}
+            >
+              <TerminalIcon />
+              <span>{t("shell.terminalsEntry")}</span>
+            </button>
+          </div>
+          <SkillManagementPanel
+            triggerClassName="workbench-nav-segment-button"
+            triggerLabel={t("shell.skillsEntry")}
+            triggerLeading={<SkillIcon />}
+          />
           <button
             type="button"
             className="workbench-nav-segment-button"

@@ -2344,7 +2344,7 @@ describe("WorkbenchLayout", () => {
     expect(screen.getByText("src/components/SearchPanel.tsx")).toBeInTheDocument();
   });
 
-  it("桌面侧栏会按对话、助手、终端、搜索顺序显示顶部入口，并支持跳转", async () => {
+  it("桌面侧栏会按对话、助手、终端、技能、搜索顺序显示顶部入口，并支持跳转", async () => {
     const currentSnapshot = createWorkbenchSnapshot([
       {
         workspace: createWorkspace("workspace-1", "项目一"),
@@ -2376,6 +2376,7 @@ describe("WorkbenchLayout", () => {
 
     const navSegment = document.querySelector(".workbench-nav-segment");
     expect(navSegment).not.toBeNull();
+    expect(navSegment?.querySelectorAll(".workbench-nav-segment-pair .workbench-nav-segment-button")).toHaveLength(2);
 
     const navLabels = Array.from(navSegment?.querySelectorAll("button") ?? []).map((button) =>
       button.textContent?.trim()
@@ -2384,6 +2385,7 @@ describe("WorkbenchLayout", () => {
       t("shell.conversationEntry"),
       t("shell.butlerEntry"),
       t("shell.terminalsEntry"),
+      t("shell.skillsEntry"),
       t("shell.searchEntry")
     ]);
 
@@ -2392,6 +2394,48 @@ describe("WorkbenchLayout", () => {
     await waitFor(() => {
       expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-1/butler");
     });
+  });
+
+  it("桌面侧栏的技能按钮会打开 Skill 模态框", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/skills/overview") && method === "GET") {
+        return createJsonResponse(createSkillOverviewResponse());
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+
+    await screen.findByText("会话 Alpha");
+    await userEvent.click(screen.getByRole("button", { name: t("shell.skillsEntry") }));
+
+    const dialog = await screen.findByRole("dialog", { name: t("settings.skillConfigModalTitle") });
+
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByText(t("settings.skillSummaryManagedSkills"))).toBeInTheDocument();
+    expect(within(dialog).getByText("codingns-assistant")).toBeInTheDocument();
   });
 
   it("助手路由下不会再显示默认信息侧栏", async () => {
@@ -7091,4 +7135,50 @@ function createJsonResponse(payload: unknown, status = 200): Response {
       "Content-Type": "application/json"
     }
   });
+}
+
+function createSkillOverviewResponse() {
+  return {
+    summary: {
+      managedSkillCount: 1,
+      managedEntryCount: 1,
+      unmanagedEntryCount: 0,
+      conflictedEntryCount: 0,
+      diagnosticCount: 0
+    },
+    managedSkills: [
+      {
+        skill: {
+          id: "skill-1",
+          name: "team-helper",
+          directoryName: "team-helper",
+          scope: "workspace",
+          sourceType: "imported",
+          managedState: "managed",
+          createdAt: "2026-04-18T08:00:00.000Z",
+          updatedAt: "2026-04-18T08:00:00.000Z"
+        },
+        ssotPath: "/tmp/managed-skills/team-helper",
+        bindings: [
+          {
+            targetCli: "codex",
+            syncStatus: "synced",
+            enabled: true
+          }
+        ]
+      }
+    ],
+    unmanagedEntries: [],
+    conflictedEntries: [],
+    diagnostics: [],
+    scannedAt: "2026-04-18T08:30:00.000Z",
+    assistantRuntimeSkills: [
+      {
+        name: "codingns-assistant",
+        directoryName: "codingns-assistant",
+        sourcePath: "/tmp/managed-skills/.assistant-runtime/codingns-assistant",
+        usedByTargetCli: ["codex"]
+      }
+    ]
+  };
 }

@@ -2765,6 +2765,18 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
   gap: 4px;
 }
 
+.workbench-nav-segment-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workbench-nav-segment-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
 .workbench-nav-segment-button {
   display: flex;
   align-items: center;
@@ -2783,6 +2795,12 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
     background var(--transition-fast),
     color var(--transition-fast),
     transform var(--transition-fast);
+}
+
+.workbench-nav-segment-button[data-layout="paired"] {
+  justify-content: center;
+  padding: 0 10px;
+  text-align: center;
 }
 
 .workbench-nav-segment-button svg {
@@ -3478,6 +3496,14 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
   gap: 2px;
 }
 
+.workbench-nav-segment-tabs {
+  gap: 2px;
+}
+
+.workbench-nav-segment-pair {
+  gap: 2px;
+}
+
 .workbench-nav-segment-button {
   gap: 7px;
   min-height: 34px;
@@ -3487,6 +3513,10 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
   font-size: 13px;
   font-weight: 400;
   line-height: 1.2;
+}
+
+.workbench-nav-segment-button[data-layout="paired"] {
+  padding: 0 10px;
 }
 
 .workbench-nav-segment-button svg {
