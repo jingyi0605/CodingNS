@@ -193,6 +193,49 @@ resolve_output_tgz_path() {
   echo "$output_package_dir/${tgz_name%.tgz}-$commit_suffix.tgz"
 }
 
+run_npm_pack_and_resolve_filename() {
+  local staging_dir="$1"
+  local pack_output=""
+  local tgz_name=""
+
+  pack_output="$(
+    cd "$staging_dir"
+    npm pack --ignore-scripts --json
+  )"
+
+  tgz_name="$(
+    printf '%s' "$pack_output" \
+      | node -e '
+        const fs = require("fs");
+        const input = fs.readFileSync(0, "utf8").trim();
+        if (!input) {
+          process.exit(1);
+        }
+
+        const parsed = JSON.parse(input);
+        const firstEntry = Array.isArray(parsed) ? parsed[0] : parsed;
+
+        if (!firstEntry || typeof firstEntry.filename !== "string" || firstEntry.filename.length === 0) {
+          process.exit(1);
+        }
+
+        process.stdout.write(firstEntry.filename);
+      '
+  )"
+
+  if [[ -z "$tgz_name" ]]; then
+    echo "npm pack 未返回有效的 tgz 文件名" >&2
+    exit 1
+  fi
+
+  if [[ ! -f "$staging_dir/$tgz_name" ]]; then
+    echo "未找到 npm pack 产物：$staging_dir/$tgz_name" >&2
+    exit 1
+  fi
+
+  echo "$tgz_name"
+}
+
 execute_publish_flow() {
   local target_root="$1"
   local output_package_dir="$2"
@@ -229,7 +272,7 @@ execute_publish_flow() {
     pack)
       echo ""
       echo "==> 执行 npm pack"
-      tgz="$(cd "$STAGING_DIR" && npm pack --ignore-scripts 2>&1 | tail -1)"
+      tgz="$(run_npm_pack_and_resolve_filename "$STAGING_DIR")"
       output_tgz_path="$(resolve_output_tgz_path "$output_package_dir" "$tgz" "$commit_suffix")"
       mv "$STAGING_DIR/$tgz" "$output_tgz_path"
       echo "已生成：$output_tgz_path"
