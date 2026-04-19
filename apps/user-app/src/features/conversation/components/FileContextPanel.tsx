@@ -48,6 +48,7 @@ interface FileContextPanelProps {
   sessionId: string | null | undefined;
   workspaceId: string | null | undefined;
   hideHeading?: boolean;
+  hideTabs?: boolean;
   externalRevealRequest?: WorkbenchFileRevealRequest | null;
   externalWindowMode?: boolean;
   workbenchShellOverrides?: FileContextPanelWorkbenchShellOverrides;
@@ -128,6 +129,7 @@ export function FileContextPanel({
   sessionId,
   workspaceId,
   hideHeading = false,
+  hideTabs = false,
   externalRevealRequest = null,
   externalWindowMode = false,
   workbenchShellOverrides
@@ -401,6 +403,12 @@ export function FileContextPanel({
       setActiveTab("workspace");
     }
   }, [activeTab, hasSessionContext]);
+
+  useEffect(() => {
+    if (hideTabs && activeTab !== "workspace") {
+      setActiveTab("workspace");
+    }
+  }, [activeTab, hideTabs]);
 
   useEffect(() => {
     if (!copyPathMenuOpen && !mobileActionMenuOpen && !webContextMenu) {
@@ -1984,36 +1992,38 @@ export function FileContextPanel({
               <h2 className="file-panel-heading">{t("conversation.filePanelTitle")}</h2>
             </div>
           )}
-          <div className="file-panel-tabs" role="tablist" aria-label={t("conversation.filePanelTitle")}>
-            <button
-              className={activeTab === "workspace" ? "file-panel-tab active" : "file-panel-tab"}
-              type="button"
-              role="tab"
-              aria-selected={activeTab === "workspace"}
-              onClick={() => setActiveTab("workspace")}
-            >
-              {t("conversation.filePanelWorkspaceTab")}
-            </button>
-            <button
-              className={activeTab === "session" ? "file-panel-tab active" : "file-panel-tab"}
-              type="button"
-              role="tab"
-              aria-selected={activeTab === "session"}
-              onClick={() => {
-                if (!hasSessionContext) {
-                  return;
-                }
+          {hideTabs ? null : (
+            <div className="file-panel-tabs" role="tablist" aria-label={t("conversation.filePanelTitle")}>
+              <button
+                className={activeTab === "workspace" ? "file-panel-tab active" : "file-panel-tab"}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === "workspace"}
+                onClick={() => setActiveTab("workspace")}
+              >
+                {t("conversation.filePanelWorkspaceTab")}
+              </button>
+              <button
+                className={activeTab === "session" ? "file-panel-tab active" : "file-panel-tab"}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === "session"}
+                onClick={() => {
+                  if (!hasSessionContext) {
+                    return;
+                  }
 
-                setActiveTab("session");
-              }}
-              disabled={!hasSessionContext}
-            >
-              {t("conversation.filePanelSessionTab")}
-              <span className="file-panel-tab-badge" aria-label={`${t("conversation.filePanelSessionTab")} ${sessionChangeCount}`}>
-                {sessionChangeCount}
-              </span>
-            </button>
-          </div>
+                  setActiveTab("session");
+                }}
+                disabled={!hasSessionContext}
+              >
+                {t("conversation.filePanelSessionTab")}
+                <span className="file-panel-tab-badge" aria-label={`${t("conversation.filePanelSessionTab")} ${sessionChangeCount}`}>
+                  {sessionChangeCount}
+                </span>
+              </button>
+            </div>
+          )}
 
           {activeTab === "workspace" ? (
             <>

@@ -997,11 +997,23 @@
 .butler-sandbox-panel {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 0;
 }
 
 .butler-sandbox-panel-card {
-  border: 1px solid color-mix(in srgb, var(--border-primary) 76%, transparent);
+  border: none;
+}
+
+.butler-sandbox-current-header {
+  align-items: flex-start;
+}
+
+.butler-sandbox-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .butler-sandbox-select-button {
@@ -1057,20 +1069,108 @@
 .butler-sandbox-files-shell {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .butler-sandbox-files-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 62%, transparent);
+}
+
+.butler-sandbox-files-meta-item {
+  min-width: 0;
+}
+
+.butler-sandbox-files-meta-item strong {
+  word-break: break-word;
 }
 
 .butler-sandbox-file-context-panel {
   min-height: 380px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 68%, transparent);
-  border-radius: 16px;
-  overflow: hidden;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  overflow: visible;
+}
+
+.butler-sandbox-file-context-panel.file-panel {
+  gap: 10px;
+}
+
+.butler-sandbox-file-context-panel .file-panel-section {
+  gap: 10px;
+}
+
+.butler-sandbox-file-context-panel .file-panel-tabs {
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 62%, transparent);
+}
+
+.butler-sandbox-file-context-panel .file-panel-tab {
+  min-height: 30px;
+  padding: 0 0 7px;
+  border: none;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+}
+
+.butler-sandbox-file-context-panel .file-panel-tab:hover,
+.butler-sandbox-file-context-panel .file-panel-tab.active {
+  background: transparent;
+  border-color: transparent;
+}
+
+.butler-sandbox-file-context-panel .file-panel-tab.active {
+  border-bottom-color: color-mix(in srgb, var(--accent) 54%, transparent);
+}
+
+.butler-sandbox-file-context-panel .file-panel-tab-badge {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--border-primary) 72%, transparent);
+  color: var(--text-secondary);
+}
+
+.butler-sandbox-file-context-panel .file-panel-tab.active .file-panel-tab-badge {
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+  color: var(--accent);
+}
+
+.butler-sandbox-file-context-panel .file-tree {
+  min-height: 340px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.butler-sandbox-file-context-panel .file-tree-node + .file-tree-node {
+  border-top: 1px solid color-mix(in srgb, var(--border-primary) 54%, transparent);
+}
+
+.butler-sandbox-file-context-panel .file-tree-item {
+  min-height: 32px;
+  border-radius: 0;
+  background: transparent;
+}
+
+.butler-sandbox-file-context-panel .file-tree-item:hover {
+  background: color-mix(in srgb, var(--bg-hover) 56%, transparent);
+}
+
+.butler-sandbox-file-context-panel .file-tree-item[data-selected="true"],
+.butler-sandbox-file-context-panel .file-tree-item[data-active="true"] {
+  background: color-mix(in srgb, var(--bg-active) 18%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 58%, transparent);
+}
+
+.butler-sandbox-file-context-panel .file-tree-status {
+  padding: 12px 0;
 }
 
 .butler-record-list {
@@ -1083,6 +1183,117 @@
   margin-top: 2px;
   padding-top: 10px;
   border-top: 1px solid color-mix(in srgb, var(--border-primary) 58%, transparent);
+}
+
+.butler-sandbox-record {
+  gap: 6px;
+  padding: 10px 0;
+}
+
+.butler-sandbox-record-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px 16px;
+}
+
+.butler-sandbox-record-header {
+  gap: 10px;
+}
+
+.butler-sandbox-record-title {
+  gap: 3px;
+}
+
+.butler-sandbox-record-title strong {
+  font-size: 13px;
+}
+
+.butler-sandbox-record-title span {
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.butler-sandbox-record-body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+}
+
+.butler-sandbox-record-meta {
+  gap: 2px;
+  min-width: 0;
+}
+
+.butler-sandbox-record-meta strong,
+.butler-sandbox-record-purpose strong {
+  word-break: break-word;
+}
+
+.butler-sandbox-record-footer {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.2fr) auto;
+  align-items: start;
+  gap: 12px 16px;
+}
+
+.butler-sandbox-record-purpose {
+  min-width: 0;
+  gap: 2px;
+}
+
+.butler-sandbox-record-actions {
+  justify-content: flex-end;
+  align-items: flex-start;
+}
+
+.butler-sandbox-browser-list {
+  gap: 0;
+}
+
+.butler-sandbox-browser-item {
+  align-items: stretch;
+}
+
+.butler-sandbox-browser-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 6px;
+  color: var(--text-secondary, #6b7280);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.butler-sandbox-browser-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 900px) {
+  .butler-sandbox-header-actions {
+    justify-content: flex-start;
+  }
+
+  .butler-sandbox-record-top,
+  .butler-sandbox-record-body {
+    grid-template-columns: 1fr;
+  }
+
+  .butler-sandbox-record-footer {
+    grid-template-columns: 1fr;
+  }
+
+  .butler-sandbox-record-actions {
+    justify-content: flex-start;
+  }
+
+  .butler-sandbox-browser-actions {
+    justify-content: flex-start;
+  }
 }
 
 .workbench-auxiliary[data-custom-panel="true"] .butler-simple-info-block,

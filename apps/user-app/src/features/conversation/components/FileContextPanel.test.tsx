@@ -562,6 +562,7 @@ describe("FileContextPanel", () => {
     workspaceId = "workspace-1",
     options?: {
       hideHeading?: boolean;
+      hideTabs?: boolean;
       externalWindowMode?: boolean;
       externalRevealRequest?: {
         requestId: number;
@@ -577,6 +578,7 @@ describe("FileContextPanel", () => {
           sessionId={sessionId}
           workspaceId={workspaceId}
           hideHeading={options?.hideHeading}
+          hideTabs={options?.hideTabs}
           externalWindowMode={options?.externalWindowMode}
           externalRevealRequest={options?.externalRevealRequest}
         />
@@ -640,6 +642,14 @@ describe("FileContextPanel", () => {
     const sessionTab = screen.getByRole("tab", { name: /本次会话 0|Session 0/ });
     expect(sessionTab).toBeDisabled();
     expect(screen.queryByText(t("conversation.filePanelSessionNoSession"))).not.toBeInTheDocument();
+  });
+
+  it("开启单视图模式后不显示工作区和会话标签页", async () => {
+    renderPanel(null, "workspace-1", { hideTabs: true });
+
+    expect(await screen.findByText("config.json")).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: new RegExp(t("conversation.filePanelWorkspaceTab")) })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: new RegExp(t("conversation.filePanelSessionTab")) })).not.toBeInTheDocument();
   });
 
   it("默认隐藏 macOS 和 Windows 常见系统文件", async () => {

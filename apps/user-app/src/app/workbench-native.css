@@ -6250,6 +6250,18 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
   box-shadow: none !important;
 }
 
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-card .butler-sandbox-file-context-panel .file-panel-tab,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-card .butler-sandbox-file-context-panel .file-panel-tab:hover,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-card .butler-sandbox-file-context-panel .file-panel-tab.active {
+  background: transparent !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-card .butler-sandbox-file-context-panel .file-panel-tab.active {
+  border-bottom-color: color-mix(in srgb, var(--accent) 54%, transparent) !important;
+}
+
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .file-panel-tab-badge,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .file-session-badge,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .git-status-badge,
