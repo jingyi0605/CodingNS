@@ -5,6 +5,7 @@ import {
   CapabilityService,
   ClaudeCodeAdapter,
   type CodexForkTransport,
+  type CodexThreadControlTransport,
   type ContextUsageSnapshot,
   CodexAdapter,
   type ForkSourceMessageSnapshot,
@@ -307,7 +308,11 @@ export class SessionHistoryService {
         homeDir: config.codexHomeDir,
         forkTransportFactory:
           adapterOverrides.codexForkTransportFactory
-          ?? createCodexForkTransportFactory(config.codexCliPath, config.codexHomeDir)
+          ?? createCodexForkTransportFactory(config.codexCliPath, config.codexHomeDir),
+        threadControlTransportFactory: createCodexThreadControlTransportFactory(
+          config.codexCliPath,
+          config.codexHomeDir
+        )
       }),
       new GeminiAdapter({
         homeDir: config.geminiHomeDir,
@@ -3934,6 +3939,24 @@ function createCodexForkTransportFactory(
   return () => {
     const client = new CodexAppServerHelperClient(commandPath, { homeDir });
     const transport = client.createForkTransport();
+
+    return {
+      ...transport,
+      close() {
+        transport.close();
+        client.dispose();
+      }
+    };
+  };
+}
+
+function createCodexThreadControlTransportFactory(
+  commandPath: string,
+  homeDir: string
+): () => CodexThreadControlTransport {
+  return () => {
+    const client = new CodexAppServerHelperClient(commandPath, { homeDir });
+    const transport = client.createThreadControlTransport();
 
     return {
       ...transport,

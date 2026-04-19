@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import type {
   CodexAppServerTransport,
   CodexForkTransport,
+  CodexThreadControlTransport,
   ProviderRuntimeRunRequest,
   RuntimeSendOptions
 } from "@codingns/session-sync-core";
@@ -52,6 +53,8 @@ type ParentToHelperMessage =
         | "startThread"
         | "resumeThread"
         | "forkThread"
+        | "archiveThread"
+        | "unarchiveThread"
         | "readThread"
         | "rollbackThread"
         | "resumeThreadFromHistory"
@@ -375,6 +378,89 @@ export class CodexAppServerHelperClient {
           providerSessionId: String(result.providerSessionId ?? ""),
           rawStoreRef: normalizeNullableString(result.rawStoreRef)
         };
+      },
+      close: () => {
+        if (state.closed) {
+          return;
+        }
+
+        state.closed = true;
+        void this.sendMessage({
+          type: "transport_request",
+          transportId,
+          requestId: String(this.nextRequestId++),
+          method: "close"
+        });
+        this.rejectTransportPending(state, new Error("CODEX_APP_SERVER_CLOSED"));
+        this.notifyTransportClosed(state, null);
+        this.transports.delete(transportId);
+      }
+    };
+  }
+
+  createThreadControlTransport(): CodexThreadControlTransport {
+    const transportId = String(this.nextTransportId++);
+    const state: LogicalTransportState = {
+      pendingResponses: new Map(),
+      notificationHandler: () => undefined,
+      serverRequestHandler: async () => {
+        throw new Error("CODEX_APP_SERVER_REQUEST_NOT_SUPPORTED");
+      },
+      closeHandler: null,
+      closed: false
+    };
+
+    this.transports.set(transportId, state);
+
+    const request = async (
+      method: Extract<ParentToHelperMessage, { type: "transport_request" }>["method"],
+      input: {
+        providerSessionId?: string;
+      } = {}
+    ): Promise<Record<string, unknown>> => {
+      if (state.closed) {
+        throw new Error("CODEX_APP_SERVER_CLOSED");
+      }
+
+      const requestId = String(this.nextRequestId++);
+
+      return await new Promise<Record<string, unknown>>((resolve, reject) => {
+        state.pendingResponses.set(requestId, {
+          resolve,
+          reject
+        });
+
+        this.sendMessage({
+          type: "transport_request",
+          transportId,
+          requestId,
+          method,
+          ...input
+        }).catch((error) => {
+          state.pendingResponses.delete(requestId);
+          reject(error);
+        });
+      });
+    };
+
+    return {
+      async initialize() {
+        await request("initialize");
+      },
+      async archiveThread(providerSessionId) {
+        await request("archiveThread", {
+          providerSessionId
+        });
+      },
+      async unarchiveThread(providerSessionId) {
+        await request("unarchiveThread", {
+          providerSessionId
+        });
+      },
+      async readThread(providerSessionId) {
+        return await request("readThread", {
+          providerSessionId
+        });
       },
       close: () => {
         if (state.closed) {

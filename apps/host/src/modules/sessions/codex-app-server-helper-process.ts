@@ -14,6 +14,8 @@ type ParentToHelperMessage =
         | "startThread"
         | "resumeThread"
         | "forkThread"
+        | "archiveThread"
+        | "unarchiveThread"
         | "readThread"
         | "rollbackThread"
         | "resumeThreadFromHistory"
@@ -258,6 +260,38 @@ async function handleTransportRequest(message: Extract<ParentToHelperMessage, { 
           providerSessionId: forkedProviderSessionId,
           rawStoreRef: normalizeText(thread?.path) || null
         });
+        return;
+      }
+      case "archiveThread": {
+        const providerSessionId = ensureText(message.providerSessionId).trim();
+
+        if (!providerSessionId) {
+          throw new Error("CODEX_APP_SERVER_THREAD_ID_REQUIRED");
+        }
+
+        await sendJsonRpcRequest(transport, {
+          method: "thread/archive",
+          params: {
+            threadId: providerSessionId
+          }
+        });
+        emitResponse(message.transportId, message.requestId, {});
+        return;
+      }
+      case "unarchiveThread": {
+        const providerSessionId = ensureText(message.providerSessionId).trim();
+
+        if (!providerSessionId) {
+          throw new Error("CODEX_APP_SERVER_THREAD_ID_REQUIRED");
+        }
+
+        await sendJsonRpcRequest(transport, {
+          method: "thread/unarchive",
+          params: {
+            threadId: providerSessionId
+          }
+        });
+        emitResponse(message.transportId, message.requestId, {});
         return;
       }
       case "readThread": {
