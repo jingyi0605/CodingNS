@@ -77,6 +77,9 @@ import { ProfileController } from "../modules/preferences/profile-controller.js"
 import { PreferenceProfileService } from "../modules/preferences/profile-service.js";
 import { QuickPhraseController } from "../modules/preferences/quick-phrase-controller.js";
 import { QuickPhraseService } from "../modules/preferences/quick-phrase-service.js";
+import { RelayTunnelController } from "../modules/relay-tunnel/relay-tunnel-controller.js";
+import { RelayTunnelRuntimeEdgeAdapter } from "../modules/relay-tunnel/relay-tunnel-runtime-adapter.js";
+import { RelayTunnelService } from "../modules/relay-tunnel/relay-tunnel-service.js";
 import { CcSwitchAdapter } from "../modules/model-switch/cc-switch-adapter.js";
 import { ModelSwitchController } from "../modules/model-switch/model-switch-controller.js";
 import { ModelSwitchService } from "../modules/model-switch/model-switch-service.js";
@@ -191,6 +194,8 @@ import { SessionSendQueueRepository } from "../storage/repositories/session-send
 import { SessionStateRepository } from "../storage/repositories/session-state-repository.js";
 import { SessionStatusSnapshotRepository } from "../storage/repositories/session-status-snapshot-repository.js";
 import { InstanceTailscaleRepository } from "../storage/repositories/instance-tailscale-repository.js";
+import { InstanceRelayTunnelIdentityRepository } from "../storage/repositories/instance-relay-tunnel-identity-repository.js";
+import { InstanceRelayTunnelRepository } from "../storage/repositories/instance-relay-tunnel-repository.js";
 import { SkillTargetBindingRepository } from "../storage/repositories/skill-target-binding-repository.js";
 import { TerminalCommandTemplateRepository } from "../storage/repositories/terminal-command-template-repository.js";
 import { TerminalInstanceRepository } from "../storage/repositories/terminal-instance-repository.js";
@@ -274,6 +279,8 @@ export function createServer(config: HostConfig) {
     sessionStateRepository: new SessionStateRepository(database.db),
     sessionStatusSnapshotRepository: new SessionStatusSnapshotRepository(database.db),
     instanceTailscaleRepository: new InstanceTailscaleRepository(database.db),
+    instanceRelayTunnelIdentityRepository: new InstanceRelayTunnelIdentityRepository(database.db),
+    instanceRelayTunnelRepository: new InstanceRelayTunnelRepository(database.db),
     skillTargetBindingRepository: new SkillTargetBindingRepository(database.db),
     userQuickPhrasePreferenceRepository: new UserQuickPhrasePreferenceRepository(database.db),
     userPreferenceProfileRepository: new UserPreferenceProfileRepository(database.db),
@@ -399,6 +406,20 @@ export function createServer(config: HostConfig) {
     {
       databasePath: config.databasePath
     }
+  );
+  const relayTunnelService = new RelayTunnelService(
+    database.db,
+    repositories.bootstrapStateRepository,
+    repositories.instanceRelayTunnelIdentityRepository,
+    repositories.instanceRelayTunnelRepository,
+    {
+      defaultLocalTargetBaseUrl: `http://127.0.0.1:${config.port}`
+    },
+    taskManager,
+    new RelayTunnelRuntimeEdgeAdapter(
+      repositories.instanceRelayTunnelIdentityRepository,
+      repositories.instanceRelayTunnelRepository
+    )
   );
   const modelSwitchService = new ModelSwitchService(
     new CcSwitchAdapter({
@@ -981,6 +1002,7 @@ export function createServer(config: HostConfig) {
   );
   const skillController = new SkillController(skillManagerService);
   const tailscaleController = new TailscaleController(tailscaleService);
+  const relayTunnelController = new RelayTunnelController(relayTunnelService);
   const modelSwitchController = new ModelSwitchController(modelSwitchService);
   const quickPhraseController = new QuickPhraseController(quickPhraseService);
   const profileController = new ProfileController(preferenceProfileService);
@@ -1045,6 +1067,15 @@ export function createServer(config: HostConfig) {
         error: error instanceof Error ? error.message : String(error)
       });
     });
+    void relayTunnelService.restoreOnStartup().catch((error) => {
+      if (shuttingDown) {
+        return;
+      }
+
+      console.error("[startup-recovery] 公共隧道启动恢复失败", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
   });
 
   // Demo 模式：自动创建演示用户
@@ -1069,7 +1100,7 @@ export function createServer(config: HostConfig) {
   void registerSessionRoutes(app, sessionController);
   void registerPreferenceRoutes(app, quickPhraseController, profileController);
   void registerSkillRoutes(app, skillController);
-  void registerSystemRoutes(app, tailscaleController, modelSwitchController);
+  void registerSystemRoutes(app, tailscaleController, relayTunnelController, modelSwitchController);
   void registerFileRoutes(app, fileController);
   void registerSessionContextRoutes(app, fileContextController);
   void registerTerminalRoutes(app, terminalController);

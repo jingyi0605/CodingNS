@@ -1,4 +1,5 @@
 export const HOST_TASK_TYPES = {
+  relayTunnelConnect: "relay_tunnel.connect",
   workspaceDiscovery: "workspace.discovery",
   workspaceDiscoveryScan: "workspace.discovery_scan",
   providerCapabilityRefresh: "provider.capability_refresh",

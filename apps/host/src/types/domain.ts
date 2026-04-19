@@ -1255,3 +1255,51 @@ export interface InstanceTailscaleStatus {
   lastError: string | null;
   observedAt: string | null;
 }
+
+export type RelayTunnelProvider = "codingns_relay";
+
+export type RelayTunnelPhase =
+  | "disabled"
+  | "blocked_uninitialized"
+  | "unbound"
+  | "binding"
+  | "connecting"
+  | "running"
+  | "quota_exhausted"
+  | "error";
+
+export interface InstanceRelayTunnelConfig {
+  enabled: boolean;
+  provider: RelayTunnelProvider;
+  relayBaseUrl: string | null;
+  controlBaseUrl: string | null;
+  accountId: string | null;
+  tunnelDomain: string | null;
+  bindingId: string | null;
+  hostPublicKey: string | null;
+  hostKeyFingerprint: string | null;
+  localTargetBaseUrl: string;
+  updatedAt: string;
+}
+
+export interface InstanceRelayTunnelIdentity {
+  keyAlgorithm: "x25519";
+  privateKeyPem: string;
+  publicKeyPem: string;
+  keyFingerprint: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InstanceRelayTunnelStatus {
+  phase: RelayTunnelPhase;
+  connected: boolean;
+  bindingId: string | null;
+  tunnelDomain: string | null;
+  hostFingerprint: string | null;
+  trafficUsedBytes: string | null;
+  trafficRemainingBytes: string | null;
+  quotaResetAt: string | null;
+  lastError: string | null;
+  observedAt: string | null;
+}

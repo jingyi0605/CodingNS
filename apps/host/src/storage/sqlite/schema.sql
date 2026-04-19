@@ -1173,6 +1173,56 @@ CREATE TABLE IF NOT EXISTS instance_tailscale_status (
   observed_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS instance_relay_tunnel_config (
+  id TEXT PRIMARY KEY CHECK (id = 'default'),
+  enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+  provider TEXT NOT NULL CHECK (provider = 'codingns_relay'),
+  relay_base_url TEXT,
+  control_base_url TEXT,
+  account_id TEXT,
+  tunnel_domain TEXT,
+  binding_id TEXT,
+  host_public_key TEXT,
+  host_key_fingerprint TEXT,
+  local_target_base_url TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS instance_relay_tunnel_identity (
+  id TEXT PRIMARY KEY CHECK (id = 'default'),
+  key_algorithm TEXT NOT NULL CHECK (key_algorithm = 'x25519'),
+  private_key_pem TEXT NOT NULL,
+  public_key_pem TEXT NOT NULL,
+  key_fingerprint TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS instance_relay_tunnel_status (
+  id TEXT PRIMARY KEY CHECK (id = 'default'),
+  phase TEXT NOT NULL CHECK (
+    phase IN (
+      'disabled',
+      'blocked_uninitialized',
+      'unbound',
+      'binding',
+      'connecting',
+      'running',
+      'quota_exhausted',
+      'error'
+    )
+  ),
+  connected INTEGER NOT NULL DEFAULT 0 CHECK (connected IN (0, 1)),
+  binding_id TEXT,
+  tunnel_domain TEXT,
+  host_fingerprint TEXT,
+  traffic_used_bytes TEXT,
+  traffic_remaining_bytes TEXT,
+  quota_reset_at TEXT,
+  last_error TEXT,
+  observed_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS managed_skills (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
