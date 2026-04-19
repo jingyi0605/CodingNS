@@ -2653,22 +2653,6 @@ function ButlerIcon() {
   );
 }
 
-function ArrowLeftIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <polyline points="15 18 9 12 15 6" />
-    </svg>
-  );
-}
-
-function ArrowRightIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <polyline points="9 18 15 12 9 6" />
-    </svg>
-  );
-}
-
 function SidebarCollapseIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -5394,24 +5378,6 @@ function SidebarContent({
             open={notificationPanelOpen}
             onToggle={onToggleNotificationPanel}
           />
-          <button
-            type="button"
-            className="workbench-nav-toolbar-button"
-            aria-label={t("shell.goBack")}
-            title={t("shell.goBack")}
-            onClick={() => navigate(-1)}
-          >
-            <ArrowLeftIcon />
-          </button>
-          <button
-            type="button"
-            className="workbench-nav-toolbar-button"
-            aria-label={t("shell.goForward")}
-            title={t("shell.goForward")}
-            onClick={() => navigate(1)}
-          >
-            <ArrowRightIcon />
-          </button>
         </div>
       </div>
 
@@ -10052,24 +10018,6 @@ export function WorkbenchLayout({
                     }}
                     collapsed
                   />
-                  <button
-                    type="button"
-                    className="workbench-nav-toolbar-button workbench-collapsed-button"
-                    aria-label={t("shell.goBack")}
-                    title={t("shell.goBack")}
-                    onClick={() => navigate(-1)}
-                  >
-                    <ArrowLeftIcon />
-                  </button>
-                  <button
-                    type="button"
-                    className="workbench-nav-toolbar-button workbench-collapsed-button"
-                    aria-label={t("shell.goForward")}
-                    title={t("shell.goForward")}
-                    onClick={() => navigate(1)}
-                  >
-                    <ArrowRightIcon />
-                  </button>
                 </div>
 
                 {shouldShowAuxiliaryPanel ? (
