@@ -1,7 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { sendError } from "../shared/http/error-handler.js";
-import type { AuthService } from "../modules/auth/auth-service.js";
+import type { AuthCallerKind, AuthService } from "../modules/auth/auth-service.js";
 
 const PUBLIC_ROUTE_RULES = new Set([
   "GET:/api/public/bootstrap-status",
@@ -11,8 +11,37 @@ const PUBLIC_ROUTE_RULES = new Set([
   "POST:/api/providers/claude-code/hook-bridge/events"
 ]);
 
+export const ASSISTANT_REQUEST_SOURCE_HEADER = "x-codingns-assistant-source";
+export const ASSISTANT_CALLER_KIND_HEADER = "x-codingns-assistant-caller-kind";
+export const ASSISTANT_CLI_REQUEST_SOURCE = "assistant-cli";
+export const BUTLER_UI_REQUEST_SOURCE = "butler-ui";
+
 export function isPublicRoute(method: string, routePath: string): boolean {
   return PUBLIC_ROUTE_RULES.has(`${method.toUpperCase()}:${routePath}`);
+}
+
+function isAssistantRoute(routePath: string): boolean {
+  return routePath.startsWith("/api/assistant/");
+}
+
+function readAssistantRequestSource(request: FastifyRequest): string | null {
+  const header = request.headers[ASSISTANT_REQUEST_SOURCE_HEADER];
+  const value = Array.isArray(header) ? header[0] : header;
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function isAllowedAssistantCaller(callerKind: AuthCallerKind, requestSource: string | null): boolean {
+  if (callerKind === "assistant_runtime") {
+    return true;
+  }
+
+  return requestSource === BUTLER_UI_REQUEST_SOURCE;
 }
 
 export function createAuthGuard(authService: AuthService) {
@@ -38,6 +67,29 @@ export function createAuthGuard(authService: AuthService) {
     }
 
     const accessToken = authorization.slice("Bearer ".length).trim();
-    request.auth = authService.authenticateAccessToken(accessToken);
+    const authContext = authService.authenticateAccessToken(accessToken);
+
+    if (isAssistantRoute(routePath)) {
+      const requestSource = readAssistantRequestSource(request);
+
+      if (!isAllowedAssistantCaller(authContext.callerKind, requestSource)) {
+        sendError(
+          reply,
+          403,
+          "ASSISTANT_CALLER_NOT_ALLOWED",
+          "当前调用者没有访问助手能力面的权限",
+          undefined,
+          {
+            callerKind: authContext.callerKind,
+            requestSource
+          }
+        );
+        return;
+      }
+
+      reply.header(ASSISTANT_CALLER_KIND_HEADER, authContext.callerKind);
+    }
+
+    request.auth = authContext;
   };
 }

@@ -1,11 +1,29 @@
 import type { FastifyInstance } from "fastify";
 
 import type { AssistantCapabilityController } from "../modules/assistant-capability/assistant-capability-controller.js";
+import type { AssistantCapabilityReceipt } from "../modules/assistant-capability/assistant-capability-service.js";
 
 export async function registerAssistantCapabilityRoutes(
   app: FastifyInstance,
   assistantCapabilityController: AssistantCapabilityController
 ): Promise<void> {
+  app.addHook("preSerialization", async (request, _reply, payload) => {
+    const routePath = request.url.split("?")[0] ?? request.url;
+
+    if (!routePath.startsWith("/api/assistant/")) {
+      return payload;
+    }
+
+    if (!request.auth?.callerKind || !isAssistantCapabilityReceipt(payload)) {
+      return payload;
+    }
+
+    return {
+      ...payload,
+      callerKind: request.auth.callerKind
+    };
+  });
+
   app.get("/api/assistant/capabilities", assistantCapabilityController.listCapabilities);
   app.get("/api/assistant/projects", assistantCapabilityController.listProjects);
   app.get("/api/assistant/projects/:projectId", assistantCapabilityController.getProject);
@@ -64,4 +82,17 @@ export async function registerAssistantCapabilityRoutes(
   app.get("/api/assistant/debug-targets/:targetId/runtime-latest", assistantCapabilityController.getLatestDebugRuntime);
   app.get("/api/assistant/debug-targets/:targetId/runtimes", assistantCapabilityController.listDebugRuntimes);
   app.get("/api/assistant/debug-runtimes/:runtimeId", assistantCapabilityController.getDebugRuntime);
+}
+
+function isAssistantCapabilityReceipt(payload: unknown): payload is AssistantCapabilityReceipt<unknown> {
+  if (typeof payload !== "object" || payload === null) {
+    return false;
+  }
+
+  const candidate = payload as Partial<AssistantCapabilityReceipt<unknown>>;
+  return (
+    candidate.ok === true
+    && typeof candidate.capability === "string"
+    && typeof candidate.auditId === "string"
+  );
 }

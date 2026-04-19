@@ -1,6 +1,7 @@
 import { createId } from "../../shared/utils/id.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { nowIso } from "../../shared/utils/time.js";
+import type { AuthCallerKind } from "../auth/auth-service.js";
 import type { AssistantAutomationService } from "../butler/assistant-automation-service.js";
 import type { AssistantSandboxService } from "../butler/assistant-sandbox-service.js";
 import type { ButlerControlSessionService } from "../butler/butler-control-session-service.js";
@@ -39,6 +40,7 @@ export interface AssistantCapabilityReceipt<TPayload> {
   ok: true;
   capability: string;
   auditId: string;
+  callerKind?: AuthCallerKind;
   timestamp: string;
   targetRef: {
     kind:

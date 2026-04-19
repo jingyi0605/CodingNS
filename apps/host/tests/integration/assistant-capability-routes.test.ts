@@ -1,8 +1,14 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  ASSISTANT_CALLER_KIND_HEADER,
+  BUTLER_UI_REQUEST_SOURCE,
+  createAuthGuard
+} from "../../src/middlewares/auth-guard.js";
 import { AssistantCapabilityController } from "../../src/modules/assistant-capability/assistant-capability-controller.js";
 import type { AssistantCapabilityService } from "../../src/modules/assistant-capability/assistant-capability-service.js";
+import type { AuthService } from "../../src/modules/auth/auth-service.js";
 import { registerAssistantCapabilityRoutes } from "../../src/routes/assistant.js";
 import { setErrorHandler } from "../../src/shared/http/error-handler.js";
 
@@ -20,6 +26,7 @@ describe("assistant capability routes", () => {
     app.addHook("onRequest", async (request) => {
       (request as any).auth = {
         accessToken: "token",
+        callerKind: "interactive_user",
         user: {
           userId: "user-1",
           username: "admin",
@@ -27,6 +34,33 @@ describe("assistant capability routes", () => {
         }
       };
     });
+    await registerAssistantCapabilityRoutes(app, controller);
+    app.setErrorHandler(setErrorHandler);
+    return app;
+  }
+
+  async function createAssistantAppWithAuthGuard(input: {
+    assistantCapabilityService: Partial<AssistantCapabilityService>;
+    authService?: Partial<AuthService>;
+  }): Promise<FastifyInstance> {
+    const controller = new AssistantCapabilityController(
+      input.assistantCapabilityService as AssistantCapabilityService
+    );
+    const app = Fastify({ logger: false });
+    apps.push(app);
+    app.addHook("onRequest", createAuthGuard({
+      ensureInitialized: vi.fn(),
+      authenticateAccessToken: input.authService?.authenticateAccessToken
+        ?? vi.fn((accessToken: string) => ({
+          accessToken,
+          callerKind: accessToken.startsWith("butler_") ? "assistant_runtime" : "interactive_user",
+          user: {
+            userId: "user-1",
+            username: "admin",
+            role: "admin"
+          }
+        }))
+    } as unknown as AuthService));
     await registerAssistantCapabilityRoutes(app, controller);
     app.setErrorHandler(setErrorHandler);
     return app;
@@ -83,6 +117,106 @@ describe("assistant capability routes", () => {
       }
     });
     expect(assistantCapabilityService.listCapabilities).toHaveBeenCalledTimes(1);
+  });
+
+  it("助手运行时 token 访问能力面时会透传 callerKind", async () => {
+    const assistantCapabilityService = {
+      listCapabilities: vi.fn(() => ({
+        ok: true,
+        capability: "capabilities.list",
+        auditId: "audit-runtime-1",
+        timestamp: "2026-04-18T10:00:00.000Z",
+        targetRef: {
+          kind: "none",
+          id: null
+        },
+        payload: {
+          version: "2026-04-18",
+          items: []
+        }
+      }))
+    };
+
+    const app = await createAssistantAppWithAuthGuard({
+      assistantCapabilityService
+    });
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/assistant/capabilities",
+      headers: {
+        authorization: "Bearer butler_runtime_token"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers[ASSISTANT_CALLER_KIND_HEADER]).toBe("assistant_runtime");
+    expect(response.json()).toMatchObject({
+      callerKind: "assistant_runtime"
+    });
+  });
+
+  it("Butler 页面来源的交互式请求会被放行并标记 interactive_user", async () => {
+    const assistantCapabilityService = {
+      listCapabilities: vi.fn(() => ({
+        ok: true,
+        capability: "capabilities.list",
+        auditId: "audit-ui-1",
+        timestamp: "2026-04-18T10:01:00.000Z",
+        targetRef: {
+          kind: "none",
+          id: null
+        },
+        payload: {
+          version: "2026-04-18",
+          items: []
+        }
+      }))
+    };
+
+    const app = await createAssistantAppWithAuthGuard({
+      assistantCapabilityService
+    });
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/assistant/capabilities",
+      headers: {
+        authorization: "Bearer interactive_token",
+        "x-codingns-assistant-source": BUTLER_UI_REQUEST_SOURCE
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers[ASSISTANT_CALLER_KIND_HEADER]).toBe("interactive_user");
+    expect(response.json()).toMatchObject({
+      callerKind: "interactive_user"
+    });
+  });
+
+  it("普通登录态直接访问能力面时会被拒绝", async () => {
+    const assistantCapabilityService = {
+      listCapabilities: vi.fn()
+    };
+
+    const app = await createAssistantAppWithAuthGuard({
+      assistantCapabilityService
+    });
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/assistant/capabilities",
+      headers: {
+        authorization: "Bearer interactive_token"
+      }
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({
+      error_code: "ASSISTANT_CALLER_NOT_ALLOWED",
+      data: {
+        callerKind: "interactive_user",
+        requestSource: null
+      }
+    });
+    expect(assistantCapabilityService.listCapabilities).not.toHaveBeenCalled();
   });
 
   it("项目与消息窗口路由会把用户和分页参数传给服务", async () => {
