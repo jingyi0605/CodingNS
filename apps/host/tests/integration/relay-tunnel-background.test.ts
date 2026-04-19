@@ -122,6 +122,7 @@ describe("RelayTunnelService 后台任务", () => {
     const persisted = context.repository.findStatus();
 
     expect(result).toMatchObject({
+      activated: true,
       enabled: true,
       phase: "running",
       connected: true,
@@ -183,6 +184,7 @@ describe("RelayTunnelService 后台任务", () => {
     const persisted = context.repository.findStatus();
 
     expect(result).toMatchObject({
+      activated: true,
       enabled: true,
       phase: "blocked_uninitialized",
       connected: false,
@@ -209,6 +211,7 @@ describe("RelayTunnelService 后台任务", () => {
     const result = await context.service.enable();
 
     expect(result).toMatchObject({
+      activated: true,
       enabled: true,
       phase: "connecting",
       connected: false
@@ -305,6 +308,7 @@ function seedBoundConfig(
   overrides?: Partial<InstanceRelayTunnelConfig>
 ) {
   repository.upsertConfig({
+    activated: true,
     enabled: false,
     provider: "codingns_relay",
     relayBaseUrl: "wss://relay.codingns.example",

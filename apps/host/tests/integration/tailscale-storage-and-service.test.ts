@@ -42,6 +42,7 @@ describe("Tailscale 存储与服务骨架", () => {
     expect(configColumns.map((column) => column.name)).toEqual(
       expect.arrayContaining([
         "id",
+        "activated",
         "enabled",
         "control_server_url",
         "hostname",
@@ -74,6 +75,7 @@ describe("Tailscale 存储与服务骨架", () => {
     const firstRepository = new InstanceTailscaleRepository(firstClient.db);
 
     firstRepository.upsertConfig({
+      activated: true,
       enabled: true,
       controlServerUrl: "https://headscale.example.com",
       hostname: "codingns-host",
@@ -100,6 +102,7 @@ describe("Tailscale 存储与服务骨架", () => {
     const secondRepository = new InstanceTailscaleRepository(secondClient.db);
 
     expect(secondRepository.findConfig()).toEqual({
+      activated: true,
       enabled: true,
       controlServerUrl: "https://headscale.example.com",
       hostname: "codingns-host",
@@ -205,6 +208,7 @@ describe("Tailscale 存储与服务骨架", () => {
     client.close();
 
     expect(status).toEqual({
+      activated: true,
       enabled: true,
       controlServerUrl: null,
       hostname: null,
@@ -304,6 +308,7 @@ describe("Tailscale 存储与服务骨架", () => {
     );
 
     repository.upsertConfig({
+      activated: true,
       enabled: true,
       controlServerUrl: null,
       hostname: "codingns-host",

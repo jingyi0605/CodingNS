@@ -16,6 +16,7 @@ import type {
 } from "../../types/domain.js";
 
 export interface RelayTunnelConfigUpdateInput {
+  activated?: boolean;
   relayBaseUrl?: string | null;
   controlBaseUrl?: string | null;
   localTargetBaseUrl?: string | null;
@@ -32,6 +33,7 @@ export interface RelayTunnelBindInput {
 }
 
 export interface InstanceRelayTunnelStatusDto {
+  activated: boolean;
   enabled: boolean;
   provider: RelayTunnelProvider;
   relayBaseUrl: string | null;
@@ -96,7 +98,12 @@ export class RelayTunnelService {
   async restoreOnStartup(): Promise<void> {
     const snapshot = this.readStateSnapshot();
 
-    if (!snapshot.hasPersistedConfig || !snapshot.config.enabled || !isBound(snapshot.config)) {
+    if (
+      !snapshot.hasPersistedConfig
+      || !snapshot.config.activated
+      || !snapshot.config.enabled
+      || !isBound(snapshot.config)
+    ) {
       return;
     }
 
@@ -138,6 +145,10 @@ export class RelayTunnelService {
     const snapshot = this.readStateSnapshot();
     const nextConfig: InstanceRelayTunnelConfig = {
       ...snapshot.config,
+      activated:
+        input.activated !== undefined
+          ? input.activated
+          : snapshot.config.activated,
       relayBaseUrl:
         input.relayBaseUrl !== undefined
           ? normalizeWebsocketBaseUrl(input.relayBaseUrl, "relayBaseUrl")
@@ -150,11 +161,34 @@ export class RelayTunnelService {
         input.localTargetBaseUrl !== undefined
           ? normalizeHttpBaseUrl(input.localTargetBaseUrl, "localTargetBaseUrl")!
           : snapshot.config.localTargetBaseUrl,
+      enabled:
+        input.activated === false
+          ? false
+          : snapshot.config.enabled,
       updatedAt: nowIso()
     };
 
     this.repository.upsertConfig(nextConfig);
     const effectiveConfig = this.resolveConfigWithIdentity(nextConfig);
+
+    if (!effectiveConfig.activated) {
+      const nextStatus = buildSkeletonStatus("disabled", effectiveConfig, {
+        observedAt: nowIso()
+      });
+
+      this.repository.upsertStatus(nextStatus);
+      this.taskManager.cancel(HOST_TASK_TYPES.relayTunnelConnect, "default", "relay_tunnel_deactivated");
+      await this.runtimeAdapter.disconnect?.("relay_tunnel_deactivated");
+
+      return this.buildStatusDto(
+        {
+          config: effectiveConfig,
+          hasPersistedConfig: true
+        },
+        effectiveConfig,
+        nextStatus
+      );
+    }
 
     if (effectiveConfig.enabled && isBound(effectiveConfig) && this.isBootstrapInitialized()) {
       this.requestReconnect("relay_tunnel.config_update");
@@ -279,6 +313,7 @@ export class RelayTunnelService {
     const timestamp = nowIso();
     const nextConfig: InstanceRelayTunnelConfig = {
       ...snapshot.config,
+      activated: true,
       enabled: true,
       updatedAt: timestamp
     };
@@ -359,6 +394,7 @@ export class RelayTunnelService {
       config:
         persistedConfig
         ?? {
+          activated: false,
           enabled: false,
           provider: "codingns_relay",
           relayBaseUrl: null,
@@ -378,7 +414,7 @@ export class RelayTunnelService {
   private resolveEffectiveStatus(config: InstanceRelayTunnelConfig): InstanceRelayTunnelStatus {
     const persisted = this.repository.findStatus();
 
-    if (!config.enabled) {
+    if (!config.activated || !config.enabled) {
       return buildSkeletonStatus("disabled", config, {
         observedAt: persisted?.observedAt ?? null
       });
@@ -489,6 +525,7 @@ export class RelayTunnelService {
     effectiveStatus: InstanceRelayTunnelStatus
   ): InstanceRelayTunnelStatusDto {
     return {
+      activated: effectiveConfig.activated,
       enabled: effectiveConfig.enabled,
       provider: effectiveConfig.provider,
       relayBaseUrl: effectiveConfig.relayBaseUrl,

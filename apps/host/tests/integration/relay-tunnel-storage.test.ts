@@ -42,6 +42,7 @@ describe("公共隧道实例存储", () => {
     expect(configColumns.map((column) => column.name)).toEqual(
       expect.arrayContaining([
         "id",
+        "activated",
         "enabled",
         "provider",
         "relay_base_url",
@@ -91,6 +92,7 @@ describe("公共隧道实例存储", () => {
     const firstRepository = new InstanceRelayTunnelRepository(firstClient.db);
 
     firstRepository.upsertConfig({
+      activated: true,
       enabled: true,
       provider: "codingns_relay",
       relayBaseUrl: "wss://relay.codingns.example",
@@ -121,6 +123,7 @@ describe("公共隧道实例存储", () => {
     const secondRepository = new InstanceRelayTunnelRepository(secondClient.db);
 
     expect(secondRepository.findConfig()).toEqual({
+      activated: true,
       enabled: true,
       provider: "codingns_relay",
       relayBaseUrl: "wss://relay.codingns.example",
