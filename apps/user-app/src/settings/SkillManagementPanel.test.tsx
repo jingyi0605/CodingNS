@@ -208,8 +208,18 @@ describe("SkillManagementPanel", () => {
     expect(within(createDialog).queryByText(t("settings.skillUploadDirectoryLabel"))).not.toBeInTheDocument();
     await userEvent.click(within(createDialog).getByRole("button", { name: t("settings.skillCreateSubmitAction") }));
 
-    expect(await screen.findByText("Butler Inbox Helper")).toBeInTheDocument();
-    expect(screen.getByText("/tmp/managed-skills/.assistant-runtime/butler-inbox-helper")).toBeInTheDocument();
+    const butlerHelperTitle = await screen.findByText("Butler Inbox Helper");
+    const butlerHelperCard = butlerHelperTitle.closest(".settings-skill-entry");
+
+    expect(butlerHelperCard).not.toBeNull();
+    expect(
+      within(butlerHelperCard as HTMLElement).getByText(t("settings.skillAssistantRuntimeItemDescription"))
+    ).toBeInTheDocument();
+    expect(
+      within(butlerHelperCard as HTMLElement).getByText(
+        `${t("settings.skillAssistantRuntimeUsedBy")}: ${t("settings.skillTargetCodex")}`
+      )
+    ).toBeInTheDocument();
   });
 });
 

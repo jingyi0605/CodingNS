@@ -422,12 +422,7 @@ export function SkillManagementPanel({
               <div key={item.skill.id} className="settings-skill-entry">
                 <div className="settings-skill-entry-main">
                   <strong className="settings-skill-entry-title">{item.skill.name}</strong>
-                  <p className="settings-skill-entry-meta">
-                    {t("settings.skillDirectoryName")}: {item.skill.directoryName}
-                  </p>
-                  <p className="settings-skill-entry-meta">
-                    {t("settings.skillSsotPath")}: <span className="settings-skill-path">{item.ssotPath}</span>
-                  </p>
+                  <p className="settings-skill-entry-meta">{resolveManagedSkillDescription(item.bindings)}</p>
                   <div className="settings-skill-tags">
                     {item.bindings.map((binding) => (
                       <span
@@ -468,12 +463,7 @@ export function SkillManagementPanel({
               <div key={`${entry.targetCli}:${entry.directoryPath}`} className="settings-skill-entry">
                 <div className="settings-skill-entry-main">
                   <strong className="settings-skill-entry-title">{entry.name}</strong>
-                  <p className="settings-skill-entry-meta">
-                    {t("settings.skillSourceCli")}: {resolveTargetCliLabel(entry.targetCli)}
-                  </p>
-                  <p className="settings-skill-entry-meta">
-                    {t("settings.skillDirectoryPath")}: <span className="settings-skill-path">{entry.directoryPath}</span>
-                  </p>
+                  <p className="settings-skill-entry-meta">{resolveUnmanagedSkillDescription(entry)}</p>
                 </div>
                 <div className="settings-skill-entry-actions">
                   <button
@@ -505,13 +495,7 @@ export function SkillManagementPanel({
                   {t("settings.skillAssistantRuntimeItemDescription")}
                 </p>
                 <p className="settings-skill-entry-meta">
-                  {t("settings.skillDirectoryName")}: {item.directoryName}
-                </p>
-                <p className="settings-skill-entry-meta">
-                  {t("settings.skillAssistantRuntimeUsedBy")}: {item.usedByTargetCli.map(resolveTargetCliLabel).join(" / ")}
-                </p>
-                <p className="settings-skill-entry-meta">
-                  {t("settings.skillAssistantRuntimeSourcePath")}: <span className="settings-skill-path">{item.sourcePath}</span>
+                  {t("settings.skillAssistantRuntimeUsedBy")}: {formatTargetCliList(item.usedByTargetCli)}
                 </p>
                 <div className="settings-skill-tags">
                   <span className="settings-skill-tag" data-status="assistant-runtime">
@@ -543,12 +527,7 @@ export function SkillManagementPanel({
               <div key={`${entry.targetCli}:${entry.directoryPath}`} className="settings-skill-entry">
                 <div className="settings-skill-entry-main">
                   <strong className="settings-skill-entry-title">{entry.name}</strong>
-                  <p className="settings-skill-entry-meta">
-                    {t("settings.skillSourceCli")}: {resolveTargetCliLabel(entry.targetCli)}
-                  </p>
-                  <p className="settings-skill-entry-meta">
-                    {t("settings.skillDirectoryPath")}: <span className="settings-skill-path">{entry.directoryPath}</span>
-                  </p>
+                  <p className="settings-skill-entry-meta">{resolveConflictedSkillDescription(entry)}</p>
                   {entryTags.length > 0 ? (
                     <div className="settings-skill-tags">
                       {entryTags.map((tag) => (
@@ -570,6 +549,7 @@ export function SkillManagementPanel({
           items={visibleDiagnostics}
           renderItem={(diagnostic) => {
             const diagnosticTags = resolveDiagnosticTags(diagnostic);
+            const diagnosticPresentation = resolveDiagnosticPresentation(diagnostic);
 
             return (
               <div
@@ -577,14 +557,8 @@ export function SkillManagementPanel({
                 className="settings-skill-entry"
               >
                 <div className="settings-skill-entry-main">
-                  <strong className="settings-skill-entry-title">
-                    {resolveTargetCliLabel(diagnostic.targetCli)} · {diagnostic.code}
-                  </strong>
-                  <p className="settings-skill-entry-meta">{diagnostic.detail}</p>
-                  <p className="settings-skill-entry-meta">
-                    {t("settings.skillDirectoryPath")}:{" "}
-                    <span className="settings-skill-path">{diagnostic.directoryPath ?? diagnostic.rootDir}</span>
-                  </p>
+                  <strong className="settings-skill-entry-title">{diagnosticPresentation.title}</strong>
+                  <p className="settings-skill-entry-meta">{diagnosticPresentation.detail}</p>
                   {diagnosticTags.length > 0 ? (
                     <div className="settings-skill-tags">
                       {diagnosticTags.map((tag) => (
@@ -894,6 +868,63 @@ function resolveBindingStatusLabel(status: SkillTargetBindingDto["syncStatus"]):
       return t("settings.skillBindingPending");
     default:
       return t("settings.skillBindingSynced");
+  }
+}
+
+function formatTargetCliList(targetCli: readonly SkillTargetCli[]): string {
+  return targetCli.map(resolveTargetCliLabel).join(" / ");
+}
+
+function resolveManagedSkillDescription(bindings: readonly SkillTargetBindingDto[]): string {
+  const enabledBindings = bindings.filter((binding) => binding.enabled);
+
+  if (enabledBindings.length === 0) {
+    return t("settings.skillManagedItemNoTarget");
+  }
+
+  return t("settings.skillManagedItemDescription", {
+    targets: formatTargetCliList(enabledBindings.map((binding) => binding.targetCli))
+  });
+}
+
+function resolveUnmanagedSkillDescription(entry: SkillScanEntryDto): string {
+  return t("settings.skillUnmanagedItemDescription", {
+    target: resolveTargetCliLabel(entry.targetCli)
+  });
+}
+
+function resolveConflictedSkillDescription(entry: SkillScanEntryDto): string {
+  return t("settings.skillConflictedItemDescription", {
+    target: resolveTargetCliLabel(entry.targetCli)
+  });
+}
+
+function resolveDiagnosticPresentation(diagnostic: SkillScanDiagnosticDto): { title: string; detail: string } {
+  const target = resolveTargetCliLabel(diagnostic.targetCli);
+
+  switch (diagnostic.code) {
+    case "SKILL_TARGET_ROOT_MISSING":
+      return {
+        title: t("settings.skillDiagnosticTargetMissingTitle", { target }),
+        detail: t("settings.skillDiagnosticTargetMissingDetail", { target })
+      };
+    case "SKILL_TARGET_ROOT_INVALID":
+    case "SKILL_TARGET_STAT_FAILED":
+    case "SKILL_TARGET_READ_FAILED":
+      return {
+        title: t("settings.skillDiagnosticReadFailedTitle", { target }),
+        detail: t("settings.skillDiagnosticReadFailedDetail", { target })
+      };
+    case "SKILL_TARGET_SKILL_MISSING":
+      return {
+        title: t("settings.skillDiagnosticSyncMissingTitle", { target }),
+        detail: t("settings.skillDiagnosticSyncMissingDetail", { target })
+      };
+    default:
+      return {
+        title: t("settings.skillDiagnosticGenericTitle", { target }),
+        detail: t("settings.skillDiagnosticGenericDetail", { target })
+      };
   }
 }
 
