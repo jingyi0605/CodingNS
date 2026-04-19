@@ -1985,11 +1985,11 @@ export function ButlerPage() {
                 onClick={() => {
                   handleOpenControlHistory();
                 }}
-              >
-                <span className="terminal-toolbar-icon" aria-hidden="true">
-                  <ButlerHistoryIcon />
-                </span>
-              </button>
+            >
+              <span className="terminal-toolbar-icon butler-history-toolbar-icon" aria-hidden="true">
+                <ButlerHistoryIcon />
+              </span>
+            </button>
               <ButlerAnchoredPopover
                 open={controlHistoryOpen}
                 id="butler-control-history-popover"
@@ -2834,6 +2834,12 @@ function ButlerControlHistoryRow(props: {
       role="listitem"
       className="butler-session-history-item"
       selected={props.selected}
+      style={{
+        paddingTop: "13px",
+        paddingRight: "0",
+        paddingBottom: "12px",
+        paddingLeft: "24px"
+      }}
       label={(
         <span className="butler-session-history-item-title" title={props.title}>
           {props.title}
@@ -5659,8 +5665,8 @@ function ButlerHistoryIcon() {
       strokeLinecap="round"
       strokeLinejoin="round"
     >
-      <circle cx="12" cy="12" r="8.25" />
-      <path d="M12 8.4v4.1l2.75 1.9" />
+      <circle cx="12" cy="12" r="8.25" fill="none" />
+      <path d="M12 8.4v4.1l2.75 1.9" fill="none" />
     </svg>
   );
 }

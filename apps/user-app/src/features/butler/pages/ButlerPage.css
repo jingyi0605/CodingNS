@@ -232,6 +232,11 @@
   flex: 0 0 auto;
 }
 
+.terminal-toolbar-icon.butler-history-toolbar-icon svg,
+.terminal-toolbar-icon.butler-history-toolbar-icon svg * {
+  fill: none;
+}
+
 .butler-session-history-anchor {
   position: relative;
   flex: 0 0 auto;
@@ -353,9 +358,8 @@
   background: var(--modal-list-item-border);
 }
 
-.butler-session-history-item {
+.butler-session-history-item.modal-list-item {
   position: relative;
-  padding: 13px 0 12px 10px;
 }
 
 .butler-session-history-item .modal-list-item-main {
@@ -379,7 +383,7 @@
 .butler-session-history-item[data-selected="true"]::before {
   content: "";
   position: absolute;
-  left: 0;
+  left: 6px;
   top: 11px;
   bottom: 11px;
   width: 2px;
