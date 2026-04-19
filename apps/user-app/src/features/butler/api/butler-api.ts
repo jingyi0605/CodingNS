@@ -1,4 +1,6 @@
 import { httpClient } from "../../../network/http-client";
+import { getHostBaseUrl } from "../../../config/env";
+import { ApiError } from "../../../shared/network/api-error";
 import type {
   HistoryMessageDto,
   SessionSummaryDto
@@ -42,7 +44,7 @@ export type AssistantAutomationRunStatus =
   | "failed"
   | "cancelled"
   | "skipped";
-export type AssistantSandboxStatus = "active" | "archived" | "expired" | "deleted";
+export type AssistantSandboxStatus = "active" | "archived" | "expired" | "orphaned" | "deleted";
 export type AssistantSandboxSourceKind = "blank" | "clone";
 export type AssistantSandboxVisibility = "assistant_only" | "pinned";
 export type ButlerVerificationRunStatus = "queued" | "running" | "passed" | "failed" | "skipped" | "cancelled";
@@ -637,14 +639,71 @@ export interface ButlerInboxItemPayload {
 const ASSISTANT_REQUEST_SOURCE_HEADER = "X-CodingNS-Assistant-Source";
 const BUTLER_UI_REQUEST_SOURCE = "butler-ui";
 
-function requestAssistantCapability<T>(path: string, options: RequestInit = {}) {
+const assistantCapabilityCompatibilityCache = new Map<string, boolean>();
+
+interface AssistantCapabilityCompatibilityOptions<T> {
+  unsupportedFallback?: T | (() => T);
+}
+
+async function requestAssistantCapability<T>(
+  path: string,
+  options: RequestInit = {},
+  compatibility: AssistantCapabilityCompatibilityOptions<T> = {}
+): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set(ASSISTANT_REQUEST_SOURCE_HEADER, BUTLER_UI_REQUEST_SOURCE);
+  const compatibilityHostKey = getAssistantCompatibilityHostKey();
+  const cachedSupport = assistantCapabilityCompatibilityCache.get(compatibilityHostKey);
 
-  return httpClient.request<T>(path, {
-    ...options,
-    headers
-  });
+  if (cachedSupport === false) {
+    if (compatibility.unsupportedFallback !== undefined) {
+      return resolveAssistantCompatibilityFallback(compatibility.unsupportedFallback);
+    }
+
+    throw createAssistantCapabilityUnsupportedError();
+  }
+
+  try {
+    const response = await httpClient.request<T>(path, {
+      ...options,
+      headers
+    });
+
+    assistantCapabilityCompatibilityCache.set(compatibilityHostKey, true);
+    return response;
+  } catch (error) {
+    if (!isAssistantCapabilityUnsupportedError(error)) {
+      throw error;
+    }
+
+    assistantCapabilityCompatibilityCache.set(compatibilityHostKey, false);
+
+    if (compatibility.unsupportedFallback !== undefined) {
+      return resolveAssistantCompatibilityFallback(compatibility.unsupportedFallback);
+    }
+
+    throw createAssistantCapabilityUnsupportedError();
+  }
+}
+
+function getAssistantCompatibilityHostKey(): string {
+  return getHostBaseUrl();
+}
+
+function resolveAssistantCompatibilityFallback<T>(value: T | (() => T)): T {
+  return typeof value === "function" ? (value as () => T)() : value;
+}
+
+function isAssistantCapabilityUnsupportedError(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 404 || error.status === 405 || error.status === 501);
+}
+
+function createAssistantCapabilityUnsupportedError(): Error {
+  return new Error("当前 Host 版本不支持新版助手接口，请先升级 Host。");
+}
+
+export function resetAssistantCapabilityCompatibilityCacheForTesting(): void {
+  assistantCapabilityCompatibilityCache.clear();
 }
 
 export function getButlerProfile() {
@@ -776,7 +835,17 @@ export function listAssistantAutomations(payload: {
   const query = searchParams.toString();
   const path = query ? `/api/assistant/automations?${query}` : "/api/assistant/automations";
 
-  return requestAssistantCapability<{ payload: { items: AssistantAutomationTaskDto[] } }>(path);
+  return requestAssistantCapability<{ payload: { items: AssistantAutomationTaskDto[] } }>(
+    path,
+    {},
+    {
+      unsupportedFallback: () => ({
+        payload: {
+          items: []
+        }
+      })
+    }
+  );
 }
 
 export function listRecentAssistantAutomationRuns(payload: {
@@ -798,7 +867,17 @@ export function listRecentAssistantAutomationRuns(payload: {
     ? `/api/assistant/automations/runs/recent?${query}`
     : "/api/assistant/automations/runs/recent";
 
-  return requestAssistantCapability<{ payload: { items: AssistantAutomationRunDto[] } }>(path);
+  return requestAssistantCapability<{ payload: { items: AssistantAutomationRunDto[] } }>(
+    path,
+    {},
+    {
+      unsupportedFallback: () => ({
+        payload: {
+          items: []
+        }
+      })
+    }
+  );
 }
 
 export function cancelAssistantAutomation(automationId: string) {
@@ -866,7 +945,17 @@ export function listAssistantSandboxes(payload: {
   const query = searchParams.toString();
   const path = query ? `/api/assistant/sandboxes?${query}` : "/api/assistant/sandboxes";
 
-  return requestAssistantCapability<{ payload: { items: AssistantSandboxDto[] } }>(path);
+  return requestAssistantCapability<{ payload: { items: AssistantSandboxDto[] } }>(
+    path,
+    {},
+    {
+      unsupportedFallback: () => ({
+        payload: {
+          items: []
+        }
+      })
+    }
+  );
 }
 
 export function createAssistantSandbox(payload: {

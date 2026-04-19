@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createAssistantSandbox, listAssistantAutomations } from "./butler-api";
+import { ApiError } from "../../../shared/network/api-error";
+import {
+  createAssistantSandbox,
+  listAssistantAutomations,
+  listAssistantSandboxes,
+  resetAssistantCapabilityCompatibilityCacheForTesting
+} from "./butler-api";
 import { httpClient } from "../../../network/http-client";
 
 vi.mock("../../../network/http-client", () => ({
@@ -13,6 +19,7 @@ describe("butler assistant api", () => {
   beforeEach(() => {
     vi.mocked(httpClient.request).mockReset();
     vi.mocked(httpClient.request).mockResolvedValue({} as never);
+    resetAssistantCapabilityCompatibilityCacheForTesting();
   });
 
   it("助手能力读取请求会带上 Butler 页面来源头", async () => {
@@ -51,5 +58,37 @@ describe("butler assistant api", () => {
       })
     );
     expect(headers.get("X-CodingNS-Assistant-Source")).toBe("butler-ui");
+  });
+
+  it("旧 Host 缺少助手能力路由时，读取接口会自动降级为空结果", async () => {
+    vi.mocked(httpClient.request).mockRejectedValueOnce(new ApiError(404, {
+      detail: "Not Found",
+      error_code: "HTTP_ERROR"
+    }));
+
+    await expect(listAssistantAutomations()).resolves.toEqual({
+      payload: {
+        items: []
+      }
+    });
+
+    await expect(listAssistantSandboxes()).resolves.toEqual({
+      payload: {
+        items: []
+      }
+    });
+    expect(vi.mocked(httpClient.request)).toHaveBeenCalledTimes(1);
+  });
+
+  it("旧 Host 缺少助手能力路由时，写接口会抛出明确升级提示", async () => {
+    vi.mocked(httpClient.request).mockRejectedValueOnce(new ApiError(404, {
+      detail: "Not Found",
+      error_code: "HTTP_ERROR"
+    }));
+
+    await expect(createAssistantSandbox({
+      title: "临时沙箱",
+      sourceKind: "blank"
+    })).rejects.toThrow("当前 Host 版本不支持新版助手接口，请先升级 Host。");
   });
 });
