@@ -3,12 +3,11 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ModalActions,
   ModalField,
-  ModalList,
-  ModalListItem,
   ModalSection
 } from "../components/ModalAtoms";
 import { WorkbenchModal } from "../features/conversation/components/WorkbenchModal";
 import { usePlatform } from "../platform/platform-provider";
+import type { PlatformOsFamily } from "../platform/platform-adapter";
 import {
   disableTailscale,
   enableTailscale,
@@ -20,7 +19,11 @@ import {
 } from "../platform/server/tailscale-manager";
 import { t } from "../shared/i18n";
 import { ApiError } from "../shared/network/api-error";
-import type { PlatformOsFamily } from "../platform/platform-adapter";
+import {
+  RemoteAccessActivationSwitch,
+  RemoteAccessMetricCard,
+  RemoteAccessMetricGrid
+} from "./RemoteAccessPanelAtoms";
 
 type PendingAction =
   | "refresh"
@@ -30,6 +33,7 @@ type PendingAction =
   | "disable"
   | "login"
   | "logout"
+  | "toggle-activation"
   | null;
 
 interface TailscalePanelProps {
@@ -49,6 +53,8 @@ export function TailscalePanel({ configMode = "modal" }: TailscalePanelProps) {
   const activeRef = useRef(true);
   const awaitingInstallDetectionRef = useRef(false);
   const loadStatusRef = useRef<(silent: boolean) => Promise<void>>(async () => undefined);
+  const inlineConfig = configMode === "inline";
+  const activated = status?.activated ?? false;
 
   awaitingInstallDetectionRef.current = awaitingInstallDetection;
 
@@ -57,6 +63,12 @@ export function TailscalePanel({ configMode = "modal" }: TailscalePanelProps) {
     setControlServerUrlDraft(nextStatus.controlServerUrl ?? "");
     setHostnameDraft(nextStatus.hostname ?? "");
     setPanelError(null);
+
+    if (!nextStatus.activated) {
+      setAwaitingInstallDetection(false);
+      setConfigModalOpen(false);
+      return;
+    }
 
     if (
       awaitingInstallDetectionRef.current &&
@@ -94,21 +106,29 @@ export function TailscalePanel({ configMode = "modal" }: TailscalePanelProps) {
 
   useEffect(() => {
     activeRef.current = true;
-
-    // 第一阶段继续用轮询同步状态，先把状态真相稳定下来，不提前引入额外实时通道。
     void loadStatusRef.current(false);
+
+    return () => {
+      activeRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activated) {
+      return;
+    }
+
     const timer = window.setInterval(() => {
       void loadStatusRef.current(true);
     }, 5000);
 
     return () => {
-      activeRef.current = false;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [activated]);
 
   useEffect(() => {
-    if (!awaitingInstallDetection) {
+    if (!awaitingInstallDetection || !activated) {
       return;
     }
 
@@ -129,14 +149,13 @@ export function TailscalePanel({ configMode = "modal" }: TailscalePanelProps) {
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [awaitingInstallDetection]);
+  }, [activated, awaitingInstallDetection]);
 
   const configDirty =
     (status?.controlServerUrl ?? "") !== controlServerUrlDraft.trim()
     || (status?.hostname ?? "") !== hostnameDraft.trim();
-  const cliUnavailable = isTailscaleCliUnavailable(status?.lastError);
-  const canInstallTailscale = supportsTailscaleInstall(platform.ui.osFamily) && cliUnavailable;
-  const inlineConfig = configMode === "inline";
+  const cliUnavailable = activated && isTailscaleCliUnavailable(status?.lastError);
+  const canInstallTailscale = activated && supportsTailscaleInstall(platform.ui.osFamily) && cliUnavailable;
 
   async function persistConfig(): Promise<TailscaleStatusView> {
     const nextStatus = await updateTailscaleConfig({
@@ -147,12 +166,28 @@ export function TailscalePanel({ configMode = "modal" }: TailscalePanelProps) {
     return nextStatus;
   }
 
-  async function runAction(action: Exclude<PendingAction, "refresh" | "save">): Promise<void> {
+  async function handleActivationToggle(nextActivated: boolean): Promise<void> {
+    setPendingAction("toggle-activation");
+    setPanelError(null);
+
+    try {
+      const nextStatus = await updateTailscaleConfig({
+        activated: nextActivated
+      });
+      applyLoadedStatus(nextStatus);
+    } catch (error) {
+      setPanelError(resolvePanelError(error));
+    } finally {
+      setPendingAction(null);
+      setLoading(false);
+    }
+  }
+
+  async function runAction(action: Exclude<PendingAction, "refresh" | "save" | "toggle-activation">): Promise<void> {
     setPendingAction(action);
     setPanelError(null);
 
     try {
-      // 启用和绑定前先落盘配置，避免用户刚改完 control server 或 hostname 却没有真正生效。
       if (configDirty && action !== "disable" && action !== "logout") {
         await persistConfig();
       }
@@ -166,9 +201,7 @@ export function TailscalePanel({ configMode = "modal" }: TailscalePanelProps) {
               ? await loginTailscale()
               : await logoutTailscale();
 
-      setStatus(nextStatus);
-      setControlServerUrlDraft(nextStatus.controlServerUrl ?? "");
-      setHostnameDraft(nextStatus.hostname ?? "");
+      applyLoadedStatus(nextStatus);
     } catch (error) {
       setPanelError(resolvePanelError(error));
     } finally {
@@ -181,8 +214,7 @@ export function TailscalePanel({ configMode = "modal" }: TailscalePanelProps) {
     setPanelError(null);
 
     try {
-      const nextStatus = await persistConfig();
-      setStatus(nextStatus);
+      await persistConfig();
       setConfigModalOpen(false);
     } catch (error) {
       setPanelError(resolvePanelError(error));
@@ -242,140 +274,167 @@ export function TailscalePanel({ configMode = "modal" }: TailscalePanelProps) {
     setConfigModalOpen(false);
   }
 
+  const statusValue = activated
+    ? (
+      <span
+        className="settings-tailscale-status-indicator"
+        data-tone={resolveTailscaleIndicatorTone(status?.phase ?? "disabled")}
+      >
+        <span className="settings-tailscale-status-dot" aria-hidden="true" />
+        {resolveTailscalePhaseLabel(status?.phase ?? "disabled")}
+      </span>
+    )
+    : t("settings.remoteAccessFeatureDisabledValue");
+
   return (
     <>
       <div className="settings-tailscale-panel">
         <ModalSection
           heading={t("settings.tailscaleSectionTitle")}
           description={t("settings.tailscaleSectionDescription")}
+          actions={(
+            <RemoteAccessActivationSwitch
+              checked={activated}
+              label={t("settings.tailscaleMasterSwitchLabel")}
+              disabled={pendingAction !== null}
+              onChange={(checked) => {
+                void handleActivationToggle(checked);
+              }}
+            />
+          )}
         >
-          <ModalList compact>
-            <SummaryRow
-              label={t("settings.tailscaleStatusIndicator")}
-              value={(
-                <span
-                  className="settings-tailscale-status-indicator"
-                  data-tone={resolveTailscaleIndicatorTone(status?.phase ?? "disabled")}
-                >
-                  <span className="settings-tailscale-status-dot" aria-hidden="true" />
-                  {resolveTailscalePhaseLabel(status?.phase ?? "disabled")}
-                </span>
-              )}
-            />
-            <SummaryRow
-              label={t("settings.tailscaleServerAddress")}
-              value={status?.reachableBaseUrl ?? t("settings.tailscaleUnavailable")}
-              href={status?.reachableBaseUrl ?? undefined}
-            />
-            <SummaryRow
-              label={t("settings.tailscaleAccountName")}
-              value={status?.accountName ?? t("settings.tailscaleUnavailable")}
-            />
-            <SummaryRow
-              label={t("settings.tailscaleIpAddress")}
-              value={resolveIpAddress(status)}
-            />
-          </ModalList>
+          {loading && !status ? (
+            <p className="settings-remote-access-panel-note">{t("common.loading")}</p>
+          ) : (
+            <>
+              <RemoteAccessMetricGrid>
+                <RemoteAccessMetricCard
+                  label={t("settings.tailscaleStatusIndicator")}
+                  value={statusValue}
+                />
+                <RemoteAccessMetricCard
+                  label={t("settings.tailscaleServerAddress")}
+                  value={activated ? (status?.reachableBaseUrl ?? t("settings.tailscaleUnavailable")) : t("settings.tailscaleUnavailable")}
+                />
+                <RemoteAccessMetricCard
+                  label={t("settings.tailscaleAccountName")}
+                  value={activated ? (status?.accountName ?? t("settings.tailscaleUnavailable")) : t("settings.tailscaleUnavailable")}
+                />
+                <RemoteAccessMetricCard
+                  label={t("settings.tailscaleIpAddress")}
+                  value={activated ? resolveIpAddress(status) : t("settings.tailscaleUnavailable")}
+                />
+              </RemoteAccessMetricGrid>
 
-          {status?.phase === "needs_login" && status.loginUrl ? (
-            <p className="settings-tailscale-login-url">
-              <a
-                className="settings-tailscale-link"
-                href={status.loginUrl}
-                rel="noreferrer"
-                target="_blank"
-              >
-                {status.loginUrl}
-              </a>
-            </p>
-          ) : null}
+              {!activated ? (
+                <p className="settings-remote-access-panel-note">
+                  {t("settings.tailscaleActivationHint")}
+                </p>
+              ) : null}
 
-          {status?.lastError || panelError ? (
-            <p className="settings-relay-tunnel-error">{panelError ?? status?.lastError}</p>
-          ) : null}
+              {activated && status?.phase === "needs_login" && status.loginUrl ? (
+                <p className="settings-tailscale-login-url">
+                  <a
+                    className="settings-tailscale-link"
+                    href={status.loginUrl}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    {status.loginUrl}
+                  </a>
+                </p>
+              ) : null}
 
-          <ModalActions align="start">
-            {canInstallTailscale ? (
-              <button
-                className="settings-button"
-                type="button"
-                disabled={loading || pendingAction !== null}
-                onClick={() => {
-                  void handleInstallTailscale();
-                }}
-              >
-                {pendingAction === "install"
-                  ? t("common.loading")
-                  : t("settings.tailscaleInstallAction")}
-              </button>
-            ) : null}
-            {!inlineConfig ? (
-              <button
-                className="secondary-button"
-                type="button"
-                disabled={loading || pendingAction !== null}
-                onClick={() => setConfigModalOpen(true)}
-              >
-                {t("settings.tailscaleConfigure")}
-              </button>
-            ) : null}
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={loading || pendingAction !== null}
-              onClick={() => {
-                void handleRefresh();
-              }}
-            >
-              {pendingAction === "refresh" ? t("common.loading") : t("settings.tailscaleRefresh")}
-            </button>
-            {status?.enabled ? (
-              <button
-                className="secondary-button"
-                type="button"
-                disabled={loading || pendingAction !== null || cliUnavailable}
-                onClick={() => {
-                  void runAction("disable");
-                }}
-              >
-                {pendingAction === "disable" ? t("common.loading") : t("settings.tailscaleDisable")}
-              </button>
-            ) : (
-              <button
-                className="secondary-button"
-                type="button"
-                disabled={loading || pendingAction !== null || cliUnavailable}
-                onClick={() => {
-                  void runAction("enable");
-                }}
-              >
-                {pendingAction === "enable" ? t("common.loading") : t("settings.tailscaleEnable")}
-              </button>
-            )}
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={loading || pendingAction !== null || !status?.enabled || cliUnavailable}
-              onClick={() => {
-                void runAction("login");
-              }}
-            >
-              {pendingAction === "login" ? t("common.loading") : t("settings.tailscaleLogin")}
-            </button>
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={loading || pendingAction !== null || !status?.enabled || cliUnavailable}
-              onClick={() => {
-                void runAction("logout");
-              }}
-            >
-              {pendingAction === "logout" ? t("common.loading") : t("settings.tailscaleLogout")}
-            </button>
-          </ModalActions>
+              {activated && (status?.lastError || panelError) ? (
+                <p className="settings-relay-tunnel-error">{panelError ?? status?.lastError}</p>
+              ) : null}
+
+              {activated ? (
+                <ModalActions align="start">
+                  {canInstallTailscale ? (
+                    <button
+                      className="settings-button"
+                      type="button"
+                      disabled={loading || pendingAction !== null}
+                      onClick={() => {
+                        void handleInstallTailscale();
+                      }}
+                    >
+                      {pendingAction === "install"
+                        ? t("common.loading")
+                        : t("settings.tailscaleInstallAction")}
+                    </button>
+                  ) : null}
+                  {!inlineConfig ? (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={loading || pendingAction !== null}
+                      onClick={() => setConfigModalOpen(true)}
+                    >
+                      {t("settings.tailscaleConfigure")}
+                    </button>
+                  ) : null}
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={loading || pendingAction !== null}
+                    onClick={() => {
+                      void handleRefresh();
+                    }}
+                  >
+                    {pendingAction === "refresh" ? t("common.loading") : t("settings.tailscaleRefresh")}
+                  </button>
+                  {status?.enabled ? (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={loading || pendingAction !== null || cliUnavailable}
+                      onClick={() => {
+                        void runAction("disable");
+                      }}
+                    >
+                      {pendingAction === "disable" ? t("common.loading") : t("settings.tailscaleDisable")}
+                    </button>
+                  ) : (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={loading || pendingAction !== null || cliUnavailable}
+                      onClick={() => {
+                        void runAction("enable");
+                      }}
+                    >
+                      {pendingAction === "enable" ? t("common.loading") : t("settings.tailscaleEnable")}
+                    </button>
+                  )}
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={loading || pendingAction !== null || !status?.enabled || cliUnavailable}
+                    onClick={() => {
+                      void runAction("login");
+                    }}
+                  >
+                    {pendingAction === "login" ? t("common.loading") : t("settings.tailscaleLogin")}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={loading || pendingAction !== null || !status?.enabled || cliUnavailable}
+                    onClick={() => {
+                      void runAction("logout");
+                    }}
+                  >
+                    {pendingAction === "logout" ? t("common.loading") : t("settings.tailscaleLogout")}
+                  </button>
+                </ModalActions>
+              ) : null}
+            </>
+          )}
         </ModalSection>
 
-        {inlineConfig ? (
+        {inlineConfig && activated ? (
           <ModalSection
             heading={t("settings.tailscaleConfigModalTitle")}
             description={t("settings.tailscaleConfigModalDescription")}
@@ -396,37 +455,35 @@ export function TailscalePanel({ configMode = "modal" }: TailscalePanelProps) {
       </div>
 
       <WorkbenchModal
-        open={!inlineConfig && configModalOpen}
+        open={!inlineConfig && activated && configModalOpen}
         title={t("settings.tailscaleConfigModalTitle")}
         description={t("settings.tailscaleConfigModalDescription")}
-        className="settings-tailscale-modal"
+        size="regular"
         onClose={handleCloseConfigModal}
       >
-        <div className="settings-tailscale-modal-body">
-          <TailscaleConfigForm
-            controlServerUrlDraft={controlServerUrlDraft}
-            hostnameDraft={hostnameDraft}
-            pendingAction={pendingAction}
-            configDirty={configDirty}
-            footer={(
-              <div className="settings-tailscale-modal-actions">
-                <button
-                  className="secondary-button"
-                  type="button"
-                  disabled={pendingAction === "save"}
-                  onClick={handleCloseConfigModal}
-                >
-                  {t("common.cancel")}
-                </button>
-              </div>
-            )}
-            onControlServerUrlChange={setControlServerUrlDraft}
-            onHostnameChange={setHostnameDraft}
-            onSave={() => {
-              void handleSaveConfig();
-            }}
-          />
-        </div>
+        <TailscaleConfigForm
+          controlServerUrlDraft={controlServerUrlDraft}
+          hostnameDraft={hostnameDraft}
+          pendingAction={pendingAction}
+          configDirty={configDirty}
+          footer={(
+            <div className="settings-tailscale-modal-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={pendingAction === "save"}
+                onClick={handleCloseConfigModal}
+              >
+                {t("common.cancel")}
+              </button>
+            </div>
+          )}
+          onControlServerUrlChange={setControlServerUrlDraft}
+          onHostnameChange={setHostnameDraft}
+          onSave={() => {
+            void handleSaveConfig();
+          }}
+        />
       </WorkbenchModal>
     </>
   );
@@ -487,33 +544,6 @@ function TailscaleConfigForm({
         </button>
       </ModalActions>
     </>
-  );
-}
-
-function SummaryRow({
-  label,
-  value,
-  href
-}: {
-  label: string;
-  value: ReactNode;
-  href?: string;
-}) {
-  return (
-    <ModalListItem
-      label={label}
-      trailing={(
-        <span className="settings-tailscale-summary-value">
-          {href && typeof value === "string" ? (
-            <a className="settings-tailscale-link" href={href} target="_blank" rel="noreferrer">
-              {value}
-            </a>
-          ) : (
-            value
-          )}
-        </span>
-      )}
-    />
   );
 }
 

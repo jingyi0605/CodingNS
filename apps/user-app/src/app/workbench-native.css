@@ -2040,6 +2040,58 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
   box-shadow: 0 0 0 3px rgba(255, 214, 10, 0.18);
 }
 
+.settings-remote-access-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-remote-access-metric-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 84px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 74%, transparent);
+  background: var(--settings-model-summary-bg);
+  box-shadow: var(--settings-overview-metric-card-shadow);
+}
+
+.settings-remote-access-metric-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.settings-remote-access-metric-value {
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.settings-remote-access-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-remote-access-switch-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.settings-remote-access-panel-note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .settings-tailscale-summary-value {
   display: inline-block;
   max-width: min(36ch, 100%);

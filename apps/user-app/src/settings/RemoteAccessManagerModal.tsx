@@ -1,7 +1,6 @@
 import { useId, useState } from "react";
 
 import { MobileSheet } from "../components/MobileSheet";
-import { ModalSection } from "../components/ModalAtoms";
 import { WorkbenchModal } from "../features/conversation/components/WorkbenchModal";
 import { t } from "../shared/i18n";
 import { RelayTunnelPanel } from "./RelayTunnelPanel";
@@ -69,12 +68,7 @@ export function RemoteAccessManagerModal({
           aria-labelledby={`${tabsBaseId}-tunnel-tab`}
           role="tabpanel"
         >
-          <ModalSection
-            heading={t("settings.remoteAccessTunnelTab")}
-            description={t("settings.relayTunnelDescription")}
-          >
-            <RelayTunnelPanel />
-          </ModalSection>
+          <RelayTunnelPanel />
         </div>
       ) : (
         <div
@@ -82,12 +76,7 @@ export function RemoteAccessManagerModal({
           aria-labelledby={`${tabsBaseId}-tailscale-tab`}
           role="tabpanel"
         >
-          <ModalSection
-            heading={t("settings.remoteAccessTailscaleTab")}
-            description={t("settings.tailscaleSectionDescription")}
-          >
-            <TailscalePanel configMode="inline" />
-          </ModalSection>
+          <TailscalePanel configMode="inline" />
         </div>
       )}
     </>

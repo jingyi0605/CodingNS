@@ -11,6 +11,7 @@ export type RelayTunnelPhase =
   | "error";
 
 export interface RelayTunnelStatusView {
+  activated: boolean;
   enabled: boolean;
   provider: "codingns_relay";
   relayBaseUrl: string | null;
@@ -33,8 +34,9 @@ export interface RelayTunnelStatusView {
 }
 
 export interface RelayTunnelConfigPayload {
-  relayBaseUrl: string | null;
-  controlBaseUrl: string | null;
+  activated?: boolean;
+  relayBaseUrl?: string | null;
+  controlBaseUrl?: string | null;
   localTargetBaseUrl?: string | null;
 }
 

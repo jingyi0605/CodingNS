@@ -10,6 +10,7 @@ export type TailscalePhase =
   | "error";
 
 export interface TailscaleStatusView {
+  activated: boolean;
   enabled: boolean;
   controlServerUrl: string | null;
   hostname: string | null;
@@ -27,8 +28,9 @@ export interface TailscaleStatusView {
 }
 
 export interface TailscaleConfigPayload {
-  controlServerUrl: string | null;
-  hostname: string | null;
+  activated?: boolean;
+  controlServerUrl?: string | null;
+  hostname?: string | null;
 }
 
 export async function fetchTailscaleStatus(): Promise<TailscaleStatusView> {
