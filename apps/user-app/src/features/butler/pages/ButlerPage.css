@@ -1733,12 +1733,11 @@
   margin: auto;
   padding: 32px 28px;
   border-radius: 24px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.92));
+  border: 1px solid var(--surface-overlay-border);
+  background: var(--surface-overlay-bg);
   box-shadow:
-    0 24px 56px rgba(15, 23, 42, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    0 24px 56px color-mix(in srgb, var(--text-primary) 8%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 84%, transparent);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1782,11 +1781,19 @@
 .butler-loading-core {
   inset: 24px;
   background:
-    radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.16)),
-    linear-gradient(135deg, rgba(14, 165, 233, 0.28), rgba(16, 185, 129, 0.22));
+    radial-gradient(
+      circle at 30% 30%,
+      color-mix(in srgb, var(--surface-overlay-highlight) 88%, transparent),
+      color-mix(in srgb, var(--surface-overlay-highlight) 16%, transparent)
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, rgba(14, 165, 233, 0.72) 28%, var(--bg-elevated)),
+      color-mix(in srgb, rgba(16, 185, 129, 0.64) 22%, var(--bg-surface))
+    );
   box-shadow:
-    0 0 0 1px rgba(14, 165, 233, 0.12),
-    0 10px 24px rgba(14, 165, 233, 0.16);
+    0 0 0 1px color-mix(in srgb, rgba(14, 165, 233, 0.2) 70%, var(--surface-overlay-border)),
+    0 10px 24px color-mix(in srgb, rgba(14, 165, 233, 0.3) 44%, transparent);
 }
 
 .butler-loading-copy {
