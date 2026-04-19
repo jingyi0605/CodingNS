@@ -17,6 +17,7 @@ import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { ModalList, ModalListItem } from "../../../components/ModalAtoms";
+import { deleteSession } from "../../conversation/api/conversation-api";
 import { ComposerPanel } from "../../conversation/components/ComposerPanel";
 import { FileContextPanel } from "../../conversation/components/FileContextPanel";
 import { MessageTimeline } from "../../conversation/components/MessageTimeline";
@@ -248,6 +249,9 @@ export function ButlerPage() {
   const [replyingPermissionRequestId, setReplyingPermissionRequestId] = useState<string | null>(null);
   const [controlHistoryOpen, setControlHistoryOpen] = useState(false);
   const [controlHistoryQuery, setControlHistoryQuery] = useState("");
+  const [controlSessionDeletionTarget, setControlSessionDeletionTarget] =
+    useState<ButlerControlSessionDto | null>(null);
+  const [deletingControlSessionId, setDeletingControlSessionId] = useState<string | null>(null);
   const [sandboxManagerOpen, setSandboxManagerOpen] = useState(false);
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
   const [detailTask, setDetailTask] = useState<ButlerFollowUpTaskDto | null>(null);
@@ -530,6 +534,46 @@ export function ButlerPage() {
     setControlHistoryOpen(false);
     setControlHistoryQuery("");
   }, []);
+  const handleConfirmControlSessionDeletion = useCallback(async () => {
+    if (!controlSessionDeletionTarget || deletingControlSessionId) {
+      return;
+    }
+
+    setDeletingControlSessionId(controlSessionDeletionTarget.id);
+
+    try {
+      await deleteSession(controlSessionDeletionTarget.session.sessionId);
+
+      if (controlSessionDeletionTarget.id === controlSession?.id) {
+        await store.openControlSession("");
+      }
+
+      handleCloseControlHistory();
+      setControlSessionDeletionTarget(null);
+      await reloadControlSessionHistory();
+      requestNavigationRefresh();
+      showToast({
+        title: t("shell.deleteSessionSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("shell.deleteSessionFailed"),
+        tone: "error"
+      });
+    } finally {
+      setDeletingControlSessionId(null);
+    }
+  }, [
+    controlSession?.id,
+    controlSessionDeletionTarget,
+    deletingControlSessionId,
+    handleCloseControlHistory,
+    reloadControlSessionHistory,
+    requestNavigationRefresh,
+    showToast,
+    store
+  ]);
   const handleOpenSandboxManager = useCallback(() => {
     setSandboxManagerOpen(true);
     void reloadAssistantSandboxes();
@@ -2008,6 +2052,7 @@ export function ButlerPage() {
                   query={controlHistoryQuery}
                   searchInputRef={controlHistorySearchInputRef}
                   onQueryChange={setControlHistoryQuery}
+                  deletingSessionId={deletingControlSessionId}
                   onSelectSession={async (targetSession) => {
                     if (targetSession.id === controlSession?.id) {
                       handleCloseControlHistory();
@@ -2016,6 +2061,9 @@ export function ButlerPage() {
 
                     await store.openControlSession(targetSession.id);
                     handleCloseControlHistory();
+                  }}
+                  onDeleteSession={(targetSession) => {
+                    setControlSessionDeletionTarget(targetSession);
                   }}
                 />
               </ButlerAnchoredPopover>
@@ -2144,6 +2192,44 @@ export function ButlerPage() {
           </div>
         </section>
       </main>
+      <WorkbenchModal
+        open={controlSessionDeletionTarget !== null}
+        title={t("shell.deleteSessionConfirmTitle")}
+        description={t("shell.deleteSessionConfirmDescription")}
+        onClose={() => {
+          if (deletingControlSessionId) {
+            return;
+          }
+
+          setControlSessionDeletionTarget(null);
+        }}
+      >
+        <p className="workbench-section-empty">
+          {controlSessionDeletionTarget
+            ? resolveControlSessionListTitle(controlSessionDeletionTarget)
+            : ""}
+        </p>
+        <div className="workbench-modal-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={Boolean(deletingControlSessionId)}
+            onClick={() => setControlSessionDeletionTarget(null)}
+          >
+            {t("common.cancel")}
+          </button>
+          <button
+            type="button"
+            className="secondary-button workbench-danger-button"
+            disabled={Boolean(deletingControlSessionId)}
+            onClick={() => {
+              void handleConfirmControlSessionDeletion();
+            }}
+          >
+            {deletingControlSessionId ? t("common.loading") : t("shell.deleteSessionAction")}
+          </button>
+        </div>
+      </WorkbenchModal>
       <WorkbenchModal
         open={followUpHistoryOpen}
         title={t("shell.butlerFollowUpHistoryTitle")}
@@ -2719,7 +2805,9 @@ function ButlerControlHistoryPanel(props: {
   query: string;
   searchInputRef: RefObject<HTMLInputElement>;
   onQueryChange: (value: string) => void;
+  deletingSessionId: string | null;
   onSelectSession: (session: ButlerControlSessionDto) => Promise<void>;
+  onDeleteSession: (session: ButlerControlSessionDto) => void;
 }) {
   const deferredQuery = useDeferredValue(props.query);
   const filteredSessions = useMemo(() => {
@@ -2790,7 +2878,9 @@ function ButlerControlHistoryPanel(props: {
                     title={item.title}
                     preview={item.preview}
                     selected={item.session.id === props.activeControlSessionId}
+                    deleting={props.deletingSessionId === item.session.id}
                     onSelectSession={props.onSelectSession}
+                    onDeleteSession={props.onDeleteSession}
                   />
                 ))}
               </ModalList>
@@ -2809,7 +2899,9 @@ function ButlerControlHistoryPanel(props: {
                     title={item.title}
                     preview={item.preview}
                     selected={item.session.id === props.activeControlSessionId}
+                    deleting={props.deletingSessionId === item.session.id}
                     onSelectSession={props.onSelectSession}
+                    onDeleteSession={props.onDeleteSession}
                   />
                 ))}
               </ModalList>
@@ -2826,14 +2918,17 @@ function ButlerControlHistoryRow(props: {
   title: string;
   preview: string;
   selected: boolean;
+  deleting: boolean;
   onSelectSession: (session: ButlerControlSessionDto) => Promise<void>;
+  onDeleteSession: (session: ButlerControlSessionDto) => void;
 }) {
   return (
     <ModalListItem
-      as="button"
+      as="div"
       role="listitem"
       className="butler-session-history-item"
       selected={props.selected}
+      tabIndex={0}
       style={{
         paddingTop: "13px",
         paddingRight: "0",
@@ -2851,15 +2946,37 @@ function ButlerControlHistoryRow(props: {
         </span>
       )}
       trailing={(
-        <time
-          className="butler-session-history-item-time"
-          dateTime={props.session.updatedAt}
-        >
-          {formatTimestamp(props.session.updatedAt)}
-        </time>
+        <div className="butler-session-history-item-trailing">
+          <time
+            className="butler-session-history-item-time"
+            dateTime={props.session.updatedAt}
+          >
+            {formatTimestamp(props.session.updatedAt)}
+          </time>
+          <button
+            type="button"
+            className="secondary-button workbench-danger-button butler-session-history-delete-button"
+            disabled={props.deleting}
+            aria-label={t("shell.butlerHistoryDeleteAction")}
+            onClick={(event) => {
+              event.stopPropagation();
+              props.onDeleteSession(props.session);
+            }}
+          >
+            {props.deleting ? t("common.loading") : t("shell.deleteSessionAction")}
+          </button>
+        </div>
       )}
       aria-current={props.selected ? "true" : undefined}
       onClick={() => {
+        void props.onSelectSession(props.session);
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") {
+          return;
+        }
+
+        event.preventDefault();
         void props.onSelectSession(props.session);
       }}
     />
@@ -2954,10 +3071,10 @@ function ButlerSandboxManagerPanel(props: {
               return (
                 <article
                   key={item.id}
-                  className="butler-automation-card"
+                  className="butler-automation-card butler-sandbox-record"
                   data-selected={selected ? "true" : "false"}
                 >
-                  <header className="butler-automation-card-header">
+                  <header className="butler-automation-card-header butler-sandbox-record-header">
                     <button
                       type="button"
                       className="butler-sandbox-select-button"
@@ -2965,7 +3082,7 @@ function ButlerSandboxManagerPanel(props: {
                         props.onSelectSandbox(item.id);
                       }}
                     >
-                      <div className="butler-automation-card-title-group">
+                      <div className="butler-automation-card-title-group butler-sandbox-record-title">
                         <strong>{item.title}</strong>
                         <span>{item.workspace?.path ?? t("shell.butlerSandboxWorkspaceMissing")}</span>
                       </div>
@@ -2977,26 +3094,26 @@ function ButlerSandboxManagerPanel(props: {
                       </span>
                     </button>
                   </header>
-                  <div className="butler-automation-card-body">
-                    <div className="butler-automation-row">
+                  <div className="butler-automation-card-body butler-sandbox-record-body">
+                    <div className="butler-automation-row butler-sandbox-record-meta">
                       <span>{t("shell.butlerSandboxSourceKindLabel")}</span>
                       <strong>{resolveAssistantSandboxSourceLabel(item.sourceKind)}</strong>
                     </div>
-                    <div className="butler-automation-row">
+                    <div className="butler-automation-row butler-sandbox-record-meta">
                       <span>{t("shell.butlerSandboxVisibilityLabel")}</span>
                       <strong>{resolveAssistantSandboxVisibilityLabel(item.visibility)}</strong>
                     </div>
-                    <div className="butler-automation-row">
+                    <div className="butler-automation-row butler-sandbox-record-meta">
                       <span>{t("shell.butlerSandboxUpdatedAtLabel")}</span>
                       <strong>{formatTimestamp(item.updatedAt)}</strong>
                     </div>
                   </div>
-                  <footer className="butler-sandbox-card-footer">
-                    <div className="butler-automation-card-footer-copy">
+                  <footer className="butler-sandbox-card-footer butler-sandbox-record-footer">
+                    <div className="butler-automation-card-footer-copy butler-sandbox-record-purpose">
                       <span>{t("shell.butlerSandboxPurposeLabel")}</span>
                       <strong>{item.purpose?.trim() || t("shell.butlerSandboxPurposeEmpty")}</strong>
                     </div>
-                    <div className="butler-sandbox-card-actions">
+                    <div className="butler-sandbox-card-actions butler-sandbox-record-actions">
                       {canPromote ? (
                         <button
                           type="button"
@@ -3062,11 +3179,11 @@ function ButlerSandboxManagerPanel(props: {
         ) : (
           <div className="butler-sandbox-files-shell">
             <div className="butler-sandbox-files-meta">
-              <div className="butler-automation-row">
+              <div className="butler-automation-row butler-sandbox-files-meta-item">
                 <span>{t("shell.butlerSandboxTitleLabel")}</span>
                 <strong>{props.selectedSandbox.title}</strong>
               </div>
-              <div className="butler-automation-row">
+              <div className="butler-automation-row butler-sandbox-files-meta-item">
                 <span>{t("shell.butlerSandboxWorkspaceLabel")}</span>
                 <strong>{props.selectedSandbox.workspace?.path ?? t("shell.butlerSandboxWorkspaceMissing")}</strong>
               </div>
@@ -3075,6 +3192,7 @@ function ButlerSandboxManagerPanel(props: {
               <FileContextPanel
                 className="butler-sandbox-file-context-panel"
                 hideHeading
+                hideTabs
                 sessionId={null}
                 workspaceId={props.selectedSandbox.workspaceId}
               />

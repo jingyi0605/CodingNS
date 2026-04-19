@@ -71,6 +71,7 @@ import { useTheme } from "../../../shared/theme/theme";
 import { useToast } from "../../../shared/toast";
 import { authStore } from "../../auth/store/auth-store";
 import {
+  deleteSession,
   cleanupWorktree,
   createWorktree,
   getProviderCapabilities,
@@ -99,7 +100,7 @@ import {
   type GitBranchSnapshotDto,
   type GitTagItemDto
 } from "../api/git-api";
-import { getProviderDisplayName } from "../capability/provider-ui";
+import { createDraftCapabilities, getProviderDisplayName } from "../capability/provider-ui";
 import { searchFiles, type FileNodeDto } from "../api/file-context-api";
 import {
   hasSessionDisplayError,
@@ -2810,6 +2811,18 @@ function PencilIcon() {
   );
 }
 
+function TrashIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="M6 6l1 14h10l1-14" />
+      <path d="M10 11v5" />
+      <path d="M14 11v5" />
+    </svg>
+  );
+}
+
 function FolderArchiveIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -3027,6 +3040,7 @@ function SessionCard({
   onOpenContextMenu,
   onToggleFavorite,
   onArchive,
+  onDelete,
   onCloseMenu
 }: {
   menuKey: string;
@@ -3051,9 +3065,11 @@ function SessionCard({
   onOpenContextMenu?: (anchorPoint: ContextMenuAnchorPoint) => void;
   onToggleFavorite: () => void;
   onArchive: () => void;
+  onDelete?: () => void;
   onCloseMenu: () => void;
 }) {
   const platform = usePlatform();
+  const supportsSessionDelete = createDraftCapabilities(session.provider).supportsSessionDelete === true;
   const subagentBadgeLabel = isSubagentSession(session)
     ? session.subagentLabel?.trim() || t("shell.subagentBadge")
     : null;
@@ -3090,7 +3106,7 @@ function SessionCard({
           height: window.innerHeight
         },
         {
-          estimatedHeightPx: 168
+          estimatedHeightPx: supportsSessionDelete && onDelete ? 216 : 168
         }
       );
       setMenuPositionStyle({
@@ -3130,7 +3146,16 @@ function SessionCard({
         id: `archive:${session.sessionId}`,
         label: t("shell.archiveAction"),
         onSelect: onArchive
-      }
+      },
+      ...(supportsSessionDelete && onDelete
+        ? [
+            {
+              id: `delete:${session.sessionId}`,
+              label: t("shell.deleteSessionAction"),
+              onSelect: onDelete
+            }
+          ]
+        : [])
     ]);
   }
 
@@ -3186,6 +3211,19 @@ function SessionCard({
               <ArchiveIcon />
               <span>{t("shell.archiveAction")}</span>
             </button>
+            {supportsSessionDelete && onDelete ? (
+              <button
+                type="button"
+                className="workbench-session-menu-item"
+                onClick={() => {
+                  onDelete();
+                  onCloseMenu();
+                }}
+              >
+                <TrashIcon />
+                <span>{t("shell.deleteSessionAction")}</span>
+              </button>
+            ) : null}
           </div>,
           document.body
         )
@@ -3465,6 +3503,8 @@ function SidebarContent({
     useState<{ top: number; left: number; width: number } | null>(null);
   const [createWorktreeBaseRefPopoverHeight, setCreateWorktreeBaseRefPopoverHeight] = useState<number | null>(null);
   const [archiveWorkspaceId, setArchiveWorkspaceId] = useState<string | null>(null);
+  const [sessionDeletionTarget, setSessionDeletionTarget] = useState<NavigationSessionEntry | null>(null);
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
   const [openSessionMenuKey, setOpenSessionMenuKey] = useState<string | null>(null);
   const [openSessionMenuAnchorPoint, setOpenSessionMenuAnchorPoint] = useState<ContextMenuAnchorPoint | null>(null);
   const [visibleFavoriteCount, setVisibleFavoriteCount] = useState(FAVORITE_SESSION_PAGE_SIZE);
@@ -4832,6 +4872,17 @@ function SidebarContent({
             }
             onToggleFavorite={() => handleToggleFavorite(session.sessionId)}
             onArchive={() => handleArchive(session.sessionId)}
+            onDelete={
+              createDraftCapabilities(session.provider).supportsSessionDelete === true
+                ? () => {
+                    closeSessionMenu();
+                    setSessionDeletionTarget({
+                      session,
+                      workspace
+                    });
+                  }
+                : undefined
+            }
             onCloseMenu={closeSessionMenu}
           />
         </div>
@@ -4999,6 +5050,42 @@ function SidebarContent({
         title: error instanceof Error ? error.message : t("shell.navigationLoadFailed"),
         tone: "error"
       });
+    }
+  }
+
+  async function handleConfirmSessionDeletion() {
+    if (!sessionDeletionTarget || deletingSessionId) {
+      return;
+    }
+
+    const { session, workspace } = sessionDeletionTarget;
+    setDeletingSessionId(session.sessionId);
+    closeSessionMenu();
+
+    try {
+      await deleteSession(session.sessionId);
+      setSelectedSessionIds((current) => current.filter((item) => item !== session.sessionId));
+      setSessionDeletionTarget(null);
+
+      if (activeSessionId === session.sessionId) {
+        navigate(
+          workspace.id
+            ? buildWorkspaceSessionIndexPath(workspace.id)
+            : buildWorkspaceHomePath()
+        );
+      }
+      await onRefreshNavigation();
+      showToast({
+        title: t("shell.deleteSessionSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("shell.deleteSessionFailed"),
+        tone: "error"
+      });
+    } finally {
+      setDeletingSessionId(null);
     }
   }
 
@@ -5735,6 +5822,43 @@ function SidebarContent({
         ) : (
           <p className="workbench-section-empty">{t("shell.manageWorkspaceEmpty")}</p>
         )}
+      </SidebarModal>
+
+      <SidebarModal
+        open={sessionDeletionTarget !== null}
+        title={t("shell.deleteSessionConfirmTitle")}
+        description={t("shell.deleteSessionConfirmDescription")}
+        onClose={() => {
+          if (deletingSessionId) {
+            return;
+          }
+
+          setSessionDeletionTarget(null);
+        }}
+      >
+        <p className="workbench-section-empty">
+          {sessionDeletionTarget ? sessionDeletionTarget.session.title : ""}
+        </p>
+        <div className="workbench-modal-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={Boolean(deletingSessionId)}
+            onClick={() => setSessionDeletionTarget(null)}
+          >
+            {t("common.cancel")}
+          </button>
+          <button
+            type="button"
+            className="secondary-button workbench-danger-button"
+            disabled={Boolean(deletingSessionId)}
+            onClick={() => {
+              void handleConfirmSessionDeletion();
+            }}
+          >
+            {deletingSessionId ? t("common.loading") : t("shell.deleteSessionAction")}
+          </button>
+        </div>
       </SidebarModal>
 
       <SidebarModal

@@ -1379,10 +1379,97 @@ describe("WorkbenchLayout", () => {
       expect.arrayContaining([
         expect.objectContaining({ label: t("shell.renameAction") }),
         expect.objectContaining({ label: t("shell.favoriteAction") }),
-        expect.objectContaining({ label: t("shell.archiveAction") })
+        expect.objectContaining({ label: t("shell.archiveAction") }),
+        expect.objectContaining({ label: t("shell.deleteSessionAction") })
       ])
     );
     expect(document.querySelector(".workbench-session-menu")).toBeNull();
+  });
+
+  it("删除当前工作区会话后会调用真实删除接口并回到会话列表", async () => {
+    showDesktopContextMenuMock.mockResolvedValue(undefined);
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+      platform: "MacIntel"
+    });
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn()
+    };
+
+    const alphaSession = createSessionSummary({
+      sessionId: "session-1",
+      title: "会话 Alpha",
+      workspaceId: "workspace-1"
+    });
+    const betaSession = createSessionSummary({
+      sessionId: "session-2",
+      title: "会话 Beta",
+      workspaceId: "workspace-1"
+    });
+    let currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [alphaSession, betaSession]
+      }
+    ]);
+    const deletedSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [alphaSession]
+      }
+    ]);
+    let deleteRequested = false;
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/sessions/session-2") && init?.method === "DELETE") {
+        deleteRequested = true;
+        currentSnapshot = deletedSnapshot;
+        MockWebSocket.workbenchSnapshot = deletedSnapshot;
+        return createJsonResponse({});
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-2");
+
+    const sessionCard = await findSessionCardByTitle("会话 Beta");
+    openSessionCardContextMenu(sessionCard);
+
+    await waitFor(() => {
+      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+    });
+
+    const items = showDesktopContextMenuMock.mock.calls[0]?.[0] as Array<{
+      label: string;
+      onSelect: () => void | Promise<void>;
+    }>;
+    const deleteItem = items.find((item) => item.label === t("shell.deleteSessionAction"));
+
+    expect(deleteItem).toBeTruthy();
+
+    await act(async () => {
+      await deleteItem?.onSelect();
+    });
+
+    const dialog = await screen.findByRole("dialog", {
+      name: t("shell.deleteSessionConfirmTitle")
+    });
+
+    await userEvent.click(within(dialog).getByRole("button", { name: t("shell.deleteSessionAction") }));
+
+    await waitFor(() => {
+      expect(deleteRequested).toBe(true);
+      expect(screen.getByTestId("current-path")).toHaveTextContent("/workspaces/workspace-1/sessions");
+    });
   });
 
   it("macOS 桌面端只保留原三栏顶部作为拖拽区，不再额外插入统一顶栏", async () => {

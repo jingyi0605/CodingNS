@@ -9,10 +9,12 @@ import {
 } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
+import { MobileSheet } from "../../../components/MobileSheet";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
 import { useMobileConversationBottomLayer } from "../../mobile-shell/components/MobileConversationBottomLayerContext";
+import { deleteSession } from "../../conversation/api/conversation-api";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import { ComposerPanel } from "../../conversation/components/ComposerPanel";
 import { MessageTimeline } from "../../conversation/components/MessageTimeline";
@@ -255,6 +257,13 @@ function readStoredTab(): MobileButlerTab {
   }
 }
 
+function resolveControlSessionListTitle(session: ButlerControlSessionDto): string {
+  return session.title?.trim()
+    || session.session.title?.trim()
+    || session.lastSummary?.trim()
+    || session.sessionId;
+}
+
 function resolveTabFromSearch(searchTab: string | null, fallbackTab: MobileButlerTab): MobileButlerTab {
   if (searchTab === "settings") {
     return "settings";
@@ -411,6 +420,9 @@ export function MobileButlerPage() {
   const [executingTimerId, setExecutingTimerId] = useState<string | null>(null);
   const [replyingPermissionRequestId, setReplyingPermissionRequestId] = useState<string | null>(null);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
+  const [controlSessionDeletionTarget, setControlSessionDeletionTarget] =
+    useState<ButlerControlSessionDto | null>(null);
+  const [deletingControlSessionId, setDeletingControlSessionId] = useState<string | null>(null);
   const [state, setState] = useState<MobileButlerState>({
     loading: true,
     initialized: false,
@@ -1237,6 +1249,46 @@ export function MobileButlerPage() {
     setOpenDrawer(null);
   }
 
+  async function reloadControlSessionHistory() {
+    const response = await listButlerControlSessions();
+    setState((current) => ({
+      ...current,
+      controlSessions: response.items
+    }));
+  }
+
+  async function handleConfirmControlSessionDeletion() {
+    if (!controlSessionDeletionTarget || deletingControlSessionId) {
+      return;
+    }
+
+    setDeletingControlSessionId(controlSessionDeletionTarget.id);
+
+    try {
+      await deleteSession(controlSessionDeletionTarget.session.sessionId);
+
+      if (controlSessionDeletionTarget.id === controlSession?.id) {
+        await store.openControlSession("");
+      }
+
+      setControlSessionDeletionTarget(null);
+      await reloadControlSessionHistory();
+      requestNavigationRefresh();
+      setOpenDrawer(null);
+      showToast({
+        title: t("shell.deleteSessionSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("shell.deleteSessionFailed"),
+        tone: "error"
+      });
+    } finally {
+      setDeletingControlSessionId(null);
+    }
+  }
+
   async function handleStartFreshSession() {
     await store.startFreshSession();
     setOpenDrawer(null);
@@ -1657,9 +1709,13 @@ export function MobileButlerPage() {
           <div className="mobile-butler-list-body">
             <MobileButlerConversationList
               activeControlSessionId={controlSession?.id ?? null}
+              deletingSessionId={deletingControlSessionId}
               sessions={state.controlSessions}
               onSelectSession={(controlSessionId) => {
                 void handleOpenControlSession(controlSessionId);
+              }}
+              onDeleteSession={(targetSession) => {
+                setControlSessionDeletionTarget(targetSession);
               }}
             />
           </div>
@@ -1829,6 +1885,45 @@ export function MobileButlerPage() {
           </div>
         </aside>
       </div>
+      <MobileSheet
+        open={controlSessionDeletionTarget !== null}
+        title={t("shell.deleteSessionConfirmTitle")}
+        description={t("shell.deleteSessionConfirmDescription")}
+        height="auto"
+        onClose={() => {
+          if (deletingControlSessionId) {
+            return;
+          }
+
+          setControlSessionDeletionTarget(null);
+        }}
+        footer={(
+          <div className="workbench-modal-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={Boolean(deletingControlSessionId)}
+              onClick={() => setControlSessionDeletionTarget(null)}
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              type="button"
+              className="secondary-button workbench-danger-button"
+              disabled={Boolean(deletingControlSessionId)}
+              onClick={() => {
+                void handleConfirmControlSessionDeletion();
+              }}
+            >
+              {deletingControlSessionId ? t("common.loading") : t("shell.deleteSessionAction")}
+            </button>
+          </div>
+        )}
+      >
+        <p className="mobile-butler-empty-text">
+          {controlSessionDeletionTarget ? resolveControlSessionListTitle(controlSessionDeletionTarget) : ""}
+        </p>
+      </MobileSheet>
     </main>
   );
 }
@@ -2738,7 +2833,9 @@ function MobileAutomationHistoryPanel(props: {
 function MobileButlerConversationList(props: {
   sessions: ButlerControlSessionDto[];
   activeControlSessionId: string | null;
+  deletingSessionId: string | null;
   onSelectSession: (controlSessionId: string) => void;
+  onDeleteSession: (session: ButlerControlSessionDto) => void;
 }) {
   if (props.sessions.length === 0) {
     return <p className="mobile-butler-empty-text">{t("shell.butlerHistoryEmpty")}</p>;
@@ -2770,15 +2867,28 @@ function MobileButlerConversationList(props: {
               ) : null}
             </header>
             <p>{session.lastSummary?.trim() || session.session.title?.trim() || session.sessionId}</p>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => {
-                props.onSelectSession(session.id);
-              }}
-            >
-              {selected ? t("shell.butlerCurrentSessionBadge") : t("shell.butlerHistoryOpenAction")}
-            </button>
+            <footer className="mobile-butler-record-footer">
+              <button
+                type="button"
+                className="secondary-button mobile-butler-record-action"
+                onClick={() => {
+                  props.onSelectSession(session.id);
+                }}
+              >
+                {selected ? t("shell.butlerCurrentSessionBadge") : t("shell.butlerHistoryOpenAction")}
+              </button>
+              <button
+                type="button"
+                className="secondary-button workbench-danger-button mobile-butler-record-action"
+                disabled={props.deletingSessionId === session.id}
+                aria-label={t("shell.butlerHistoryDeleteAction")}
+                onClick={() => {
+                  props.onDeleteSession(session);
+                }}
+              >
+                {props.deletingSessionId === session.id ? t("common.loading") : t("shell.deleteSessionAction")}
+              </button>
+            </footer>
           </article>
         );
       })}

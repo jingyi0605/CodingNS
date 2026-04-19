@@ -569,6 +569,7 @@ export interface ProviderCapabilitiesDto {
   supportsSessionDiff?: boolean;
   supportsPermissionRequests?: boolean;
   supportsSessionFork?: boolean;
+  supportsSessionDelete?: boolean;
   supportsSessionShare?: boolean;
   supportsAsyncPrompt?: boolean;
   supportsNativeAgents?: boolean;
@@ -1047,6 +1048,12 @@ export function updateSessionFavoriteState(sessionId: string, favorite: boolean)
   return httpClient.request<SessionSummaryDto>(`/api/sessions/${encodeURIComponent(sessionId)}/favorite`, {
     method: "PATCH",
     body: JSON.stringify({ favorite })
+  });
+}
+
+export function deleteSession(sessionId: string) {
+  return httpClient.request<void>(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE"
   });
 }
 

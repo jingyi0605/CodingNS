@@ -130,6 +130,7 @@ vi.mock("../../../shared/toast", () => ({
 }));
 
 vi.mock("../../conversation/api/conversation-api", () => ({
+  deleteSession: vi.fn(),
   getProviderCapabilities: vi.fn(),
   getSessionMessages: vi.fn(),
   getSessionCapabilities: vi.fn(),
@@ -205,6 +206,7 @@ import {
   startButlerInboxItemSession
 } from "../api/butler-api";
 import {
+  deleteSession,
   getProviderCapabilities,
   getSessionMessages,
   getSessionCapabilities,
@@ -244,6 +246,7 @@ const mockedResetButlerControlSession = vi.mocked(resetButlerControlSession);
 const mockedStartButlerControlSession = vi.mocked(startButlerControlSession);
 const mockedStartButlerInboxItemSession = vi.mocked(startButlerInboxItemSession);
 const mockedGetProviderCapabilities = vi.mocked(getProviderCapabilities);
+const mockedDeleteSession = vi.mocked(deleteSession);
 const mockedGetSessionMessages = vi.mocked(getSessionMessages);
 const mockedGetSessionCapabilities = vi.mocked(getSessionCapabilities);
 const mockedGetSessionPermissionRequests = vi.mocked(getSessionPermissionRequests);
@@ -294,6 +297,7 @@ describe("ButlerPage", () => {
       showToast: showToastMock,
       dismissToast: vi.fn()
     } as never);
+    mockedDeleteSession.mockResolvedValue(undefined as never);
 
     mockedGetButlerProfile.mockResolvedValue({
       initialized: false,
@@ -1057,7 +1061,10 @@ describe("ButlerPage", () => {
     const historyPopover = await screen.findByRole("dialog", { name: t("shell.butlerHistoryTitle") });
     expect(within(historyPopover).getByText(t("shell.butlerHistoryActiveSection"))).toBeInTheDocument();
     expect(within(historyPopover).getByText(t("shell.butlerHistoryInactiveSection"))).toBeInTheDocument();
-    expect(within(historyPopover).getByText("支付回归").closest("button")).toHaveAttribute("aria-current", "true");
+    expect(within(historyPopover).getByText("支付回归").closest(".butler-session-history-item")).toHaveAttribute(
+      "aria-current",
+      "true"
+    );
     expect(within(historyPopover).getByText("继续盯支付回归的 flaky 用例，补一轮日志采样。")).toBeInTheDocument();
 
     const searchInput = within(historyPopover).getByRole("searchbox", {
@@ -1078,6 +1085,98 @@ describe("ButlerPage", () => {
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: t("shell.butlerHistoryTitle") })).toBeNull();
+    });
+  });
+
+  it("删除当前助手历史会话时会调用真实会话删除并刷新列表", async () => {
+    const currentControlSession = {
+      id: "control-1",
+      sessionId: "butler-session-1",
+      title: "支付回归",
+      purpose: "chat",
+      status: "running",
+      updatedAt: "2026-04-07T01:00:00.000Z",
+      lastSummary: "继续盯支付回归的 flaky 用例，补一轮日志采样。",
+      session: {
+        sessionId: "butler-session-1",
+        title: "支付回归",
+        workspaceId: "workspace-1",
+        runningState: "running"
+      }
+    };
+    const remainingControlSession = {
+      id: "control-2",
+      sessionId: "butler-session-2",
+      title: "旧会话",
+      purpose: "chat",
+      status: "idle",
+      updatedAt: "2026-04-05T12:00:00.000Z",
+      lastSummary: "已经结案",
+      session: {
+        sessionId: "butler-session-2",
+        title: "旧会话",
+        workspaceId: "workspace-1",
+        runningState: "completed"
+      }
+    };
+    let sessionDeleted = false;
+
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "阿尔文",
+        providerId: "codex",
+        workspacePath: "/tmp/butler",
+        agentsMode: "inline",
+        agentsFilePath: null,
+        agentsContent: "测试",
+        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
+        initializedAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z"
+      }
+    } as never);
+    mockedGetCurrentButlerControlSession
+      .mockResolvedValueOnce({ controlSession: currentControlSession } as never)
+      .mockResolvedValue({ controlSession: null } as never);
+    mockedDeleteSession.mockImplementation((async (sessionId: string) => {
+      sessionDeleted = true;
+      return undefined;
+    }) as never);
+    mockedListButlerControlSessions.mockImplementation(async () => ({
+      items: sessionDeleted
+        ? [remainingControlSession]
+        : [currentControlSession, remainingControlSession]
+    }) as never);
+
+    renderPage();
+
+    const trigger = await screen.findByRole("button", { name: t("shell.butlerHistoryAction") });
+    fireEvent.click(trigger);
+
+    const historyPopover = await screen.findByRole("dialog", { name: t("shell.butlerHistoryTitle") });
+    const currentRow = within(historyPopover)
+      .getByText("支付回归")
+      .closest(".butler-session-history-item");
+
+    expect(currentRow).not.toBeNull();
+    fireEvent.click(
+      within(currentRow as HTMLElement).getByRole("button", { name: t("shell.butlerHistoryDeleteAction") })
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: t("shell.deleteSessionConfirmTitle") });
+    fireEvent.click(within(dialog).getByRole("button", { name: t("shell.deleteSessionAction") }));
+
+    await waitFor(() => {
+      expect(mockedDeleteSession).toHaveBeenCalledWith("butler-session-1");
+      expect(mockedListButlerControlSessions).toHaveBeenCalled();
+      expect(showToastMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: t("shell.deleteSessionSuccess"),
+          tone: "success"
+        })
+      );
     });
   });
 

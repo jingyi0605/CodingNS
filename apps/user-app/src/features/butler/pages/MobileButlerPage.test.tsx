@@ -26,6 +26,8 @@ const mockCancelButlerVerificationRun = vi.fn();
 const mockRuntimeSendMessage = vi.fn();
 const mockRuntimeReplyPermissionRequest = vi.fn();
 const mockRequestNavigationRefresh = vi.fn();
+const mockDeleteSession = vi.fn();
+const runtimeStoreInstances = vi.hoisted(() => [] as Array<{ openControlSession: ReturnType<typeof vi.fn> }>);
 const mockRuntimeState: any = {
   loading: false,
   initialized: true,
@@ -161,6 +163,10 @@ vi.mock("../../conversation/components/ComposerPanel", () => ({
 
 vi.mock("../runtime/butler-runtime-store", () => ({
   ButlerRuntimeStore: class {
+    constructor() {
+      runtimeStoreInstances.push(this as never);
+    }
+
     initialize = vi.fn();
     openControlSession = vi.fn();
     startFreshSession = vi.fn();
@@ -171,6 +177,10 @@ vi.mock("../runtime/butler-runtime-store", () => ({
   },
   useButlerRuntimeStore: (_store: unknown, selector: (state: typeof mockRuntimeState) => unknown) =>
     selector(mockRuntimeState)
+}));
+
+vi.mock("../../conversation/api/conversation-api", () => ({
+  deleteSession: (...args: unknown[]) => mockDeleteSession(...args)
 }));
 
 vi.mock("../api/butler-api", () => ({
@@ -197,6 +207,8 @@ vi.mock("../runtime/butler-records-events", () => ({
 describe("MobileButlerPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    runtimeStoreInstances.length = 0;
+    mockDeleteSession.mockResolvedValue(undefined);
     mockRuntimeReplyPermissionRequest.mockReset();
     mockRuntimeState.runtimeHasActiveRun = true;
     mockRuntimeState.runtimeCanInterrupt = true;
@@ -964,6 +976,55 @@ describe("MobileButlerPage", () => {
     expect(await screen.findByText("继续改移动端")).toBeInTheDocument();
     expect(screen.getByText("继续推进布局调整")).toBeInTheDocument();
     expect(screen.queryByTestId("butler-composer")).not.toBeInTheDocument();
+  });
+
+  it("移动端删除当前助手历史会话时会调用真实会话删除并切回空控制会话", async () => {
+    mockListButlerControlSessions
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: "control-1",
+            sessionId: "butler-session-1",
+            title: "继续改移动端",
+            purpose: "chat",
+            status: "running",
+            updatedAt: "2026-04-09T10:00:00.000Z",
+            lastSummary: "继续推进布局调整",
+            session: {
+              sessionId: "butler-session-1",
+              title: "继续改移动端",
+              runningState: "running"
+            }
+          }
+        ]
+      })
+      .mockResolvedValue({
+        items: []
+      });
+
+    const view = renderPage();
+    const stage = view.container.querySelector(".mobile-butler-main-stage") as HTMLElement;
+
+    fireEvent.touchStart(stage, {
+      changedTouches: [{ clientX: 48, clientY: 180 }]
+    });
+    fireEvent.touchEnd(stage, {
+      changedTouches: [{ clientX: 156, clientY: 186 }]
+    });
+
+    const deleteButton = await screen.findByRole("button", {
+      name: t("shell.butlerHistoryDeleteAction")
+    });
+    fireEvent.click(deleteButton);
+
+    const dialog = await screen.findByRole("dialog", { name: t("shell.deleteSessionConfirmTitle") });
+    fireEvent.click(within(dialog).getByRole("button", { name: t("shell.deleteSessionAction") }));
+
+    await waitFor(() => {
+      expect(mockDeleteSession).toHaveBeenCalledWith("butler-session-1");
+      expect(mockRequestNavigationRefresh).toHaveBeenCalled();
+      expect(runtimeStoreInstances[0]?.openControlSession).toHaveBeenCalledWith("");
+    });
   });
 
   it("左滑主内容会打开右侧信息栏，并只保留记录类内容", async () => {

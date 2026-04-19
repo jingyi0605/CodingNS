@@ -29,6 +29,7 @@ interface ProviderMetadata {
   supportsSlashMenuByDefault?: boolean;
   supportsRunSteeringByDefault?: boolean;
   supportsQueueWhileRunningByDefault?: boolean;
+  supportsSessionDeleteByDefault?: boolean;
   foldRulesMessagesByDefault?: boolean;
 }
 
@@ -60,6 +61,7 @@ const PROVIDER_METADATA: Record<BuiltinProviderId, ProviderMetadata> = {
     defaultReasoningLevel: undefined,
     supportsSlashMenuByDefault: true,
     supportsRunSteeringByDefault: true,
+    supportsSessionDeleteByDefault: true,
     foldRulesMessagesByDefault: false
   },
   codex: {
@@ -73,6 +75,7 @@ const PROVIDER_METADATA: Record<BuiltinProviderId, ProviderMetadata> = {
     supportsSlashMenuByDefault: false,
     supportsRunSteeringByDefault: true,
     supportsQueueWhileRunningByDefault: true,
+    supportsSessionDeleteByDefault: true,
     foldRulesMessagesByDefault: true
   },
   opencode: {
@@ -84,6 +87,7 @@ const PROVIDER_METADATA: Record<BuiltinProviderId, ProviderMetadata> = {
     reasoningLevelPersists: false,
     defaultReasoningLevel: undefined,
     supportsSlashMenuByDefault: false,
+    supportsSessionDeleteByDefault: true,
     foldRulesMessagesByDefault: false
   },
   gemini: {
@@ -98,6 +102,7 @@ const PROVIDER_METADATA: Record<BuiltinProviderId, ProviderMetadata> = {
     supportsAttachments: false,
     supportsPermissionPrompt: false,
     supportsSlashMenuByDefault: false,
+    supportsSessionDeleteByDefault: true,
     foldRulesMessagesByDefault: false
   },
   kimi: {
@@ -112,6 +117,7 @@ const PROVIDER_METADATA: Record<BuiltinProviderId, ProviderMetadata> = {
     supportsAttachments: false,
     supportsPermissionPrompt: false,
     supportsSlashMenuByDefault: false,
+    supportsSessionDeleteByDefault: true,
     foldRulesMessagesByDefault: true
   }
 };
@@ -218,6 +224,7 @@ export function createDraftCapabilities(provider: ProviderId): ProviderCapabilit
     supportsAttachments: metadata?.supportsAttachments ?? true,
     supportsPermissionPrompt: metadata?.supportsPermissionPrompt ?? true,
     supportsCheckpoint: false,
+    supportsSessionDelete: metadata?.supportsSessionDeleteByDefault ?? false,
     modelOptions: getMetadataModelOptions(provider),
     defaultReasoningLevel: metadata?.defaultReasoningLevel,
     supportsRunSteering: metadata?.supportsRunSteeringByDefault,
