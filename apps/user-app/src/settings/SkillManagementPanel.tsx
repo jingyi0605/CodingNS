@@ -48,7 +48,6 @@ export function SkillManagementPanel({
   const [uploadDraft, setUploadDraft] = useState<SkillUploadDraft | null>(null);
   const [uploadSourceMode, setUploadSourceMode] = useState<SkillUploadSourceMode>("file");
   const [uploadScope, setUploadScope] = useState<SkillScope>("workspace");
-  const [uploadDirectoryName, setUploadDirectoryName] = useState("");
   const [pastedMarkdown, setPastedMarkdown] = useState("");
   const [uploadTargets, setUploadTargets] = useState<Record<SkillTargetCli, boolean>>(() =>
     createDefaultUploadTargets("workspace")
@@ -205,7 +204,6 @@ export function SkillManagementPanel({
       const draft = prepareSkillUploadDraft(file.name, markdownContent);
 
       setUploadDraft(draft);
-      setUploadDirectoryName(draft.directoryName);
       setUploadTargets(createDefaultUploadTargets(uploadScope));
     } catch (error) {
       setPanelError(resolveSkillPanelError(error));
@@ -216,7 +214,6 @@ export function SkillManagementPanel({
     const currentUploadDraft = resolveCurrentUploadDraft({
       sourceMode: uploadSourceMode,
       fileDraft: uploadDraft,
-      directoryName: uploadDirectoryName,
       pastedMarkdown
     });
 
@@ -233,7 +230,7 @@ export function SkillManagementPanel({
       return;
     }
 
-    const normalizedDirectoryName = normalizeUploadedDirectoryName(uploadDirectoryName) ?? currentUploadDraft.directoryName;
+    const normalizedDirectoryName = currentUploadDraft.directoryName;
 
     if (!normalizedDirectoryName) {
       setPanelError(t("settings.skillUploadDirectoryInvalid"));
@@ -284,7 +281,6 @@ export function SkillManagementPanel({
   function handleUploadSourceModeChange(mode: SkillUploadSourceMode): void {
     setUploadSourceMode(mode);
     setUploadDraft(null);
-    setUploadDirectoryName("");
     setPastedMarkdown("");
     setUploadTargets(createDefaultUploadTargets(uploadScope));
     setPanelError(null);
@@ -310,7 +306,6 @@ export function SkillManagementPanel({
 
   function resetUploadComposer(scope: SkillScope): void {
     setUploadDraft(null);
-    setUploadDirectoryName("");
     setPastedMarkdown("");
     setUploadSourceMode("file");
     setUploadTargets(createDefaultUploadTargets(scope));
@@ -337,10 +332,8 @@ export function SkillManagementPanel({
   const currentUploadDraft = resolveCurrentUploadDraft({
     sourceMode: uploadSourceMode,
     fileDraft: uploadDraft,
-    directoryName: uploadDirectoryName,
     pastedMarkdown
   });
-  const resolvedUploadDirectoryName = uploadDirectoryName || currentUploadDraft?.directoryName || "";
   const resolvedTriggerLabel = triggerLabel ?? t("settings.skillManageAction");
 
   return (
@@ -712,19 +705,6 @@ export function SkillManagementPanel({
               </div>
             )}
 
-            <label className="settings-skill-upload-field">
-              <span>{t("settings.skillUploadDirectoryLabel")}</span>
-              <input
-                className="settings-skill-upload-text"
-                type="text"
-                aria-label={t("settings.skillUploadDirectoryLabel")}
-                value={resolvedUploadDirectoryName}
-                onChange={(event) => setUploadDirectoryName(event.target.value)}
-                placeholder={t("settings.skillUploadDirectoryPlaceholder")}
-              />
-              <span className="settings-skill-upload-hint">{t("settings.skillUploadDirectoryHint")}</span>
-            </label>
-
             <div className="settings-skill-upload-field">
               <span>{t("settings.skillUploadTargetsLabel")}</span>
               <div className="settings-skill-upload-targets">
@@ -887,12 +867,10 @@ function getUploadTargetOptions(scope: SkillScope): readonly SkillTargetCli[] {
 function resolveCurrentUploadDraft({
   sourceMode,
   fileDraft,
-  directoryName,
   pastedMarkdown
 }: {
   sourceMode: SkillUploadSourceMode;
   fileDraft: SkillUploadDraft | null;
-  directoryName: string;
   pastedMarkdown: string;
 }): SkillUploadDraft | null {
   if (sourceMode === "file") {
@@ -903,7 +881,7 @@ function resolveCurrentUploadDraft({
     return null;
   }
 
-  return prepareSkillUploadDraft(buildPastedSkillFileName(directoryName, pastedMarkdown), pastedMarkdown);
+  return prepareSkillUploadDraft(buildPastedSkillFileName(pastedMarkdown), pastedMarkdown);
 }
 
 function resolveBindingStatusLabel(status: SkillTargetBindingDto["syncStatus"]): string {
@@ -1131,9 +1109,8 @@ function normalizeUploadedDirectoryName(input: string): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-function buildPastedSkillFileName(directoryName: string, markdownContent: string): string {
-  const normalizedDirectoryName = normalizeUploadedDirectoryName(directoryName)
-    ?? normalizeUploadedDirectoryName(extractSkillHeading(markdownContent));
+function buildPastedSkillFileName(markdownContent: string): string {
+  const normalizedDirectoryName = normalizeUploadedDirectoryName(extractSkillHeading(markdownContent));
 
   return normalizedDirectoryName ? `${normalizedDirectoryName}.md` : "pasted-skill.md";
 }
