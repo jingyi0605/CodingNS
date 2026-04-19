@@ -6962,6 +6962,29 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   -webkit-backdrop-filter: blur(30px) saturate(180%);
 }
 
+html[data-theme="dark"] body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] {
+  --mac-overlay-surface: color-mix(in srgb, var(--bg-surface) 84%, rgba(255, 255, 255, 0.1));
+  --mac-overlay-surface-strong: color-mix(in srgb, var(--bg-elevated) 88%, rgba(255, 255, 255, 0.14));
+  --modal-frame-surface: var(--mac-overlay-surface-strong);
+}
+
+html[data-theme="dark"] body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-card,
+html[data-theme="dark"] body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-branch-dialog {
+  background: var(--mac-overlay-surface-strong);
+}
+
+html[data-theme="dark"] body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-field input,
+html[data-theme="dark"] body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-field select,
+html[data-theme="dark"] body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-field textarea {
+  background: color-mix(in srgb, var(--bg-elevated) 90%, rgba(255, 255, 255, 0.08));
+}
+
+html[data-theme="dark"] body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-field input:hover,
+html[data-theme="dark"] body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-field select:hover,
+html[data-theme="dark"] body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-field textarea:hover {
+  background: color-mix(in srgb, var(--bg-elevated) 86%, rgba(255, 255, 255, 0.12));
+}
+
 body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-branch-tree-pane {
   border-color: transparent;
   background: transparent;
