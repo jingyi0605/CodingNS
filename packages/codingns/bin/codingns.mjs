@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = path.join(packageRoot, "dist");
+const ASSISTANT_REQUEST_SOURCE_HEADER = "X-CodingNS-Assistant-Source";
+const ASSISTANT_CLI_REQUEST_SOURCE = "assistant-cli";
 
 const [command, ...argv] = process.argv.slice(2);
 
@@ -927,6 +929,7 @@ async function requestAssistant(command, buildPayload) {
       method: command.method,
       headers: {
         Authorization: `Bearer ${accessToken}`,
+        [ASSISTANT_REQUEST_SOURCE_HEADER]: ASSISTANT_CLI_REQUEST_SOURCE,
         ...(usesJsonBody ? { "Content-Type": "application/json" } : {})
       },
       body: usesJsonBody ? JSON.stringify(payload ?? {}) : undefined

@@ -634,6 +634,19 @@ export interface ButlerInboxItemPayload {
   status?: ButlerInboxItemStatus;
 }
 
+const ASSISTANT_REQUEST_SOURCE_HEADER = "X-CodingNS-Assistant-Source";
+const BUTLER_UI_REQUEST_SOURCE = "butler-ui";
+
+function requestAssistantCapability<T>(path: string, options: RequestInit = {}) {
+  const headers = new Headers(options.headers);
+  headers.set(ASSISTANT_REQUEST_SOURCE_HEADER, BUTLER_UI_REQUEST_SOURCE);
+
+  return httpClient.request<T>(path, {
+    ...options,
+    headers
+  });
+}
+
 export function getButlerProfile() {
   return httpClient.request<ButlerProfileResponseDto>("/api/butler/profile");
 }
@@ -763,7 +776,7 @@ export function listAssistantAutomations(payload: {
   const query = searchParams.toString();
   const path = query ? `/api/assistant/automations?${query}` : "/api/assistant/automations";
 
-  return httpClient.request<{ payload: { items: AssistantAutomationTaskDto[] } }>(path);
+  return requestAssistantCapability<{ payload: { items: AssistantAutomationTaskDto[] } }>(path);
 }
 
 export function listRecentAssistantAutomationRuns(payload: {
@@ -785,11 +798,11 @@ export function listRecentAssistantAutomationRuns(payload: {
     ? `/api/assistant/automations/runs/recent?${query}`
     : "/api/assistant/automations/runs/recent";
 
-  return httpClient.request<{ payload: { items: AssistantAutomationRunDto[] } }>(path);
+  return requestAssistantCapability<{ payload: { items: AssistantAutomationRunDto[] } }>(path);
 }
 
 export function cancelAssistantAutomation(automationId: string) {
-  return httpClient.request<{ payload: { automation: AssistantAutomationTaskDto } }>(
+  return requestAssistantCapability<{ payload: { automation: AssistantAutomationTaskDto } }>(
     `/api/assistant/automations/${encodeURIComponent(automationId)}/cancel`,
     {
       method: "POST",
@@ -817,7 +830,7 @@ export function updateAssistantAutomation(
     maxChecks?: number | null;
   }
 ) {
-  return httpClient.request<{ payload: { automation: AssistantAutomationTaskDto } }>(
+  return requestAssistantCapability<{ payload: { automation: AssistantAutomationTaskDto } }>(
     `/api/assistant/automations/${encodeURIComponent(automationId)}`,
     {
       method: "PATCH",
@@ -827,7 +840,7 @@ export function updateAssistantAutomation(
 }
 
 export function skipAssistantAutomationWait(automationId: string) {
-  return httpClient.request<{ payload: { automation: AssistantAutomationTaskDto } }>(
+  return requestAssistantCapability<{ payload: { automation: AssistantAutomationTaskDto } }>(
     `/api/assistant/automations/${encodeURIComponent(automationId)}/skip-wait`,
     {
       method: "POST",
@@ -853,7 +866,7 @@ export function listAssistantSandboxes(payload: {
   const query = searchParams.toString();
   const path = query ? `/api/assistant/sandboxes?${query}` : "/api/assistant/sandboxes";
 
-  return httpClient.request<{ payload: { items: AssistantSandboxDto[] } }>(path);
+  return requestAssistantCapability<{ payload: { items: AssistantSandboxDto[] } }>(path);
 }
 
 export function createAssistantSandbox(payload: {
@@ -865,7 +878,7 @@ export function createAssistantSandbox(payload: {
   repositoryUrl?: string | null;
   directoryName?: string | null;
 }) {
-  return httpClient.request<{ payload: { sandbox: AssistantSandboxDto } }>(
+  return requestAssistantCapability<{ payload: { sandbox: AssistantSandboxDto } }>(
     "/api/assistant/sandboxes",
     {
       method: "POST",
@@ -880,7 +893,7 @@ export function promoteAssistantSandbox(payload: {
   projectName?: string | null;
   defaultProvider?: ButlerProviderId | null;
 }) {
-  return httpClient.request<{ payload: { sandbox: AssistantSandboxDto } }>(
+  return requestAssistantCapability<{ payload: { sandbox: AssistantSandboxDto } }>(
     `/api/assistant/sandboxes/${encodeURIComponent(payload.sandboxId)}/promote`,
     {
       method: "POST",
@@ -894,7 +907,7 @@ export function promoteAssistantSandbox(payload: {
 }
 
 export function expireAssistantSandbox(sandboxId: string) {
-  return httpClient.request<{ payload: { sandbox: AssistantSandboxDto } }>(
+  return requestAssistantCapability<{ payload: { sandbox: AssistantSandboxDto } }>(
     `/api/assistant/sandboxes/${encodeURIComponent(sandboxId)}/expire`,
     {
       method: "POST",
@@ -904,7 +917,7 @@ export function expireAssistantSandbox(sandboxId: string) {
 }
 
 export function removeAssistantSandbox(sandboxId: string) {
-  return httpClient.request<{ payload: { sandbox: AssistantSandboxDto } }>(
+  return requestAssistantCapability<{ payload: { sandbox: AssistantSandboxDto } }>(
     `/api/assistant/sandboxes/${encodeURIComponent(sandboxId)}`,
     {
       method: "DELETE"
