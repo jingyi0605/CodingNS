@@ -76,6 +76,7 @@ import {
 } from "../capability/provider-ui";
 import {
   buildDraftSessionPath,
+  buildWorkspaceHomePath,
   buildNavigationSessionTree,
   buildWorkspaceSessionIndexPath,
   buildWorkspaceSessionPath,
@@ -295,6 +296,10 @@ function LiveConversationPage({
     () => navigationGroups.map((group) => group.workspace),
     [navigationGroups]
   );
+  const flattenedNavigationEntries = useMemo(
+    () => flattenNavigationSessions(navigationGroups),
+    [navigationGroups]
+  );
   const mobileWorkspaceOptions = useMemo(
     () => flattenMobileWorkspaceOptions(navigationGroups),
     [navigationGroups]
@@ -450,6 +455,53 @@ function LiveConversationPage({
   }, []);
 
   useEffect(() => {
+    if (runtimeErrorCode !== "SESSION_NOT_FOUND" && runtimeErrorCode !== "WORKSPACE_NOT_FOUND") {
+      return;
+    }
+
+    dismissToast("conversation-runtime-error");
+
+    const fallbackWorkspaceId =
+      session?.workspaceId ?? navigationSession?.workspaceId ?? navigationGroups[0]?.workspace.id ?? null;
+    const fallbackSessionEntry =
+      (fallbackWorkspaceId
+        ? flattenedNavigationEntries.find((item) => item.workspace.id === fallbackWorkspaceId) ?? null
+        : null)
+      ?? flattenedNavigationEntries[0]
+      ?? null;
+
+    navigate(
+      fallbackSessionEntry
+        ? buildWorkspaceSessionPath(fallbackSessionEntry.workspace.id, fallbackSessionEntry.session.sessionId)
+        : fallbackWorkspaceId
+          ? buildWorkspaceSessionIndexPath(fallbackWorkspaceId)
+          : (shellMode === "mobile" ? buildWorkspaceHomePath() : "/landing"),
+      { replace: true }
+    );
+  }, [
+    dismissToast,
+    flattenedNavigationEntries,
+    navigate,
+    navigationGroups,
+    navigationSession?.workspaceId,
+    runtimeErrorCode,
+    session?.workspaceId,
+    shellMode
+  ]);
+
+  useEffect(() => {
+    if (runtimeErrorCode === "SESSION_NOT_FOUND" || runtimeErrorCode === "WORKSPACE_NOT_FOUND") {
+      if (delayedRuntimeToastTimerRef.current !== null) {
+        window.clearTimeout(delayedRuntimeToastTimerRef.current);
+        delayedRuntimeToastTimerRef.current = null;
+      }
+
+      pendingRuntimeErrorSignatureRef.current = null;
+      lastRuntimeErrorSignatureRef.current = null;
+      dismissToast("conversation-runtime-error");
+      return;
+    }
+
     if (!runtimeErrorCode || !runtimeErrorDetail) {
       if (delayedRuntimeToastTimerRef.current !== null) {
         window.clearTimeout(delayedRuntimeToastTimerRef.current);

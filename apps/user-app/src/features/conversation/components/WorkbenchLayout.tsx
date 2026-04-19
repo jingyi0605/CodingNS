@@ -814,6 +814,42 @@ function isButlerRoute(pathname: string) {
   return Boolean(matchPath("/workspaces/:workspaceId/butler", pathname));
 }
 
+function resolveFallbackWorkspaceRoute(pathname: string, workspaceId: string): string {
+  if (matchPath("/workspaces/:workspaceId/debug", pathname)) {
+    return buildWorkspaceDebugPath(workspaceId);
+  }
+
+  if (matchPath("/workspaces/:workspaceId", pathname)) {
+    return buildWorkspaceDetailPath(workspaceId);
+  }
+
+  if (matchPath("/workspaces/:workspaceId/tools/files", pathname) || matchPath("/tools/files", pathname)) {
+    return buildWorkspaceToolFilesPath(workspaceId);
+  }
+
+  if (matchPath("/workspaces/:workspaceId/tools/git", pathname) || matchPath("/tools/git", pathname)) {
+    return buildWorkspaceToolGitPath(workspaceId);
+  }
+
+  if (matchPath("/workspaces/:workspaceId/tools/processes", pathname) || matchPath("/tools/processes", pathname)) {
+    return buildWorkspaceToolProcessesPath(workspaceId);
+  }
+
+  if (matchPath("/workspaces/:workspaceId/tools", pathname) || matchPath("/tools", pathname)) {
+    return buildWorkspaceToolsPath(workspaceId);
+  }
+
+  if (isTerminalsRoute(pathname)) {
+    return buildWorkspaceTerminalsPath(workspaceId);
+  }
+
+  if (isButlerRoute(pathname)) {
+    return buildWorkspaceButlerPath(workspaceId);
+  }
+
+  return buildWorkspaceSessionIndexPath(workspaceId);
+}
+
 function normalizeWorkbenchFilePath(filePath: string): string {
   return filePath
     .trim()
@@ -8159,6 +8195,10 @@ export function WorkbenchLayout({
     () => flattenNavigationSessions(navigationGroups),
     [navigationGroups]
   );
+  const knownWorkspaceIds = useMemo(
+    () => new Set(navigationGroups.map((group) => group.workspace.id)),
+    [navigationGroups]
+  );
   const collapsedWorkspaceIdSet = useMemo(() => new Set(collapsedWorkspaceIds), [collapsedWorkspaceIds]);
   const favoriteSessionIds = useMemo(
     () =>
@@ -8530,9 +8570,58 @@ export function WorkbenchLayout({
     currentSessionContext?.workspace.id ??
     (currentSessionId ? sessionWorkspaceMap[currentSessionId] ?? null : null);
   const routeWorkspaceId = resolveRouteWorkspaceId(location.pathname, location.search);
-  const explicitWorkspaceId = sessionWorkspaceId ?? routeWorkspaceId ?? selectedWorkspaceId ?? null;
+  const validatedRouteWorkspaceId =
+    routeWorkspaceId && knownWorkspaceIds.has(routeWorkspaceId) ? routeWorkspaceId : null;
+  const validatedSelectedWorkspaceId =
+    selectedWorkspaceId && knownWorkspaceIds.has(selectedWorkspaceId) ? selectedWorkspaceId : null;
+  const explicitWorkspaceId =
+    sessionWorkspaceId ?? validatedRouteWorkspaceId ?? validatedSelectedWorkspaceId ?? null;
   const currentWorkspaceId =
     explicitWorkspaceId ?? navigationGroups[0]?.workspace.id ?? null;
+  const findFallbackSessionEntry = useCallback((preferredWorkspaceId?: string | null): WorkbenchNavigationEntry | null => {
+    if (preferredWorkspaceId) {
+      const preferredEntry =
+        flattenedSessions.find((item) => item.workspace.id === preferredWorkspaceId) ?? null;
+
+      if (preferredEntry) {
+        return preferredEntry;
+      }
+    }
+
+    return flattenedSessions[0] ?? null;
+  }, [flattenedSessions]);
+  const resolveStoredConversationPath = useCallback((preferredWorkspaceId?: string | null): string | null => {
+    const storedSessionPath =
+      typeof window === "undefined" ? null : window.localStorage.getItem(LAST_SESSION_PATH_KEY);
+
+    if (!storedSessionPath) {
+      return null;
+    }
+
+    const storedPathname = storedSessionPath.split("?")[0] ?? storedSessionPath;
+    const storedSessionMatch = resolveRouteSessionMatch(storedPathname);
+
+    if (!storedSessionMatch) {
+      window.localStorage.removeItem(LAST_SESSION_PATH_KEY);
+      return null;
+    }
+
+    const storedSessionId = storedSessionMatch.sessionId;
+    const storedSessionEntry =
+      flattenedSessions.find((item) => item.session.sessionId === storedSessionId) ?? null;
+    const storedSessionWorkspaceId =
+      storedSessionMatch.workspaceId ?? storedSessionEntry?.workspace.id ?? null;
+
+    if (
+      storedSessionEntry &&
+      (!preferredWorkspaceId || storedSessionWorkspaceId === preferredWorkspaceId)
+    ) {
+      return buildWorkspaceSessionPath(storedSessionEntry.workspace.id, storedSessionEntry.session.sessionId);
+    }
+
+    window.localStorage.removeItem(LAST_SESSION_PATH_KEY);
+    return null;
+  }, [flattenedSessions]);
   const activeNotifications = useMemo(
     () => globalNotifications.filter((item) => !archivedNotificationIds.has(item.id)),
     [archivedNotificationIds, globalNotifications]
@@ -8600,6 +8689,68 @@ export function WorkbenchLayout({
 
     setSelectedWorkspaceId((current) => (current === sessionWorkspaceId ? current : sessionWorkspaceId));
   }, [sessionWorkspaceId]);
+
+  useEffect(() => {
+    if (navigationLoading) {
+      return;
+    }
+
+    const fallbackWorkspaceId = navigationGroups[0]?.workspace.id ?? null;
+    const fallbackSessionWorkspaceId =
+      validatedRouteWorkspaceId ?? fallbackWorkspaceId ?? validatedSelectedWorkspaceId;
+    const fallbackSessionEntry =
+      currentSessionId && !isDraftSession
+        ? findFallbackSessionEntry(fallbackSessionWorkspaceId)
+        : null;
+    const storedSessionPath =
+      currentSessionId && !isDraftSession
+        ? resolveStoredConversationPath(fallbackSessionWorkspaceId)
+        : null;
+    const fallbackSessionPath = fallbackSessionEntry
+      ? buildWorkspaceSessionPath(
+          fallbackSessionEntry.workspace.id,
+          fallbackSessionEntry.session.sessionId
+        )
+      : null;
+
+    if (routeWorkspaceId && !validatedRouteWorkspaceId) {
+      navigate(
+        storedSessionPath
+          ?? fallbackSessionPath
+          ?? (fallbackWorkspaceId
+            ? resolveFallbackWorkspaceRoute(location.pathname, fallbackWorkspaceId)
+            : resolveWorkbenchHomePath(shellMode)),
+        { replace: true }
+      );
+      return;
+    }
+
+    if (currentSessionId && !isDraftSession && !sessionWorkspaceId) {
+      navigate(
+        storedSessionPath
+          ?? fallbackSessionPath
+          ?? (fallbackWorkspaceId
+            ? buildWorkspaceSessionIndexPath(fallbackWorkspaceId)
+            : resolveWorkbenchHomePath(shellMode)),
+        { replace: true }
+      );
+      return;
+    }
+  }, [
+    currentSessionId,
+    findFallbackSessionEntry,
+    isDraftSession,
+    location.pathname,
+    navigate,
+    navigationGroups,
+    navigationLoading,
+    resolveStoredConversationPath,
+    routeWorkspaceId,
+    sessionWorkspaceId,
+    shellMode,
+    validatedSelectedWorkspaceId,
+    validatedRouteWorkspaceId,
+  ]);
 
   useEffect(() => {
     logPerfDebug("workbench.current_workspace_resolved", {
@@ -8779,10 +8930,10 @@ export function WorkbenchLayout({
   }, [currentWorkspaceId, navigationGroups]);
 
   useEffect(() => {
-    if (currentSessionId && !isDraftSession) {
+    if (currentSessionId && !isDraftSession && sessionWorkspaceId) {
       writeStoredValue(LAST_SESSION_PATH_KEY, `${location.pathname}${location.search}`);
     }
-  }, [currentSessionId, isDraftSession, location.pathname, location.search]);
+  }, [currentSessionId, isDraftSession, location.pathname, location.search, sessionWorkspaceId]);
 
   useEffect(() => {
     if (currentSessionId && isDraftSession) {
@@ -9134,7 +9285,7 @@ export function WorkbenchLayout({
   }
 
   function navigateToRememberedConversation(preferredWorkspaceId?: string | null) {
-    if (currentSessionId) {
+    if (currentSessionId && sessionWorkspaceId) {
       if (
         preferredWorkspaceId
         && sessionWorkspaceId
@@ -9164,32 +9315,11 @@ export function WorkbenchLayout({
       return true;
     }
 
-    const storedSessionPath =
-      typeof window === "undefined" ? null : window.localStorage.getItem(LAST_SESSION_PATH_KEY);
+    const storedSessionPath = resolveStoredConversationPath(preferredWorkspaceId);
 
-    // 验证存储的会话路径是否还有效（会话是否还存在于列表中）
     if (storedSessionPath) {
-      const storedPathname = storedSessionPath.split("?")[0] ?? storedSessionPath;
-      const storedSessionMatch = resolveRouteSessionMatch(storedPathname);
-
-      if (storedSessionMatch) {
-        const storedSessionId = storedSessionMatch.sessionId;
-        const storedSessionEntry =
-          flattenedSessions.find((item) => item.session.sessionId === storedSessionId) ?? null;
-        const storedSessionWorkspaceId =
-          storedSessionMatch.workspaceId ?? storedSessionEntry?.workspace.id ?? null;
-        const sessionExists = storedSessionEntry !== null;
-
-        if (
-          sessionExists
-          && (!preferredWorkspaceId || storedSessionWorkspaceId === preferredWorkspaceId)
-        ) {
-          navigate(storedSessionPath);
-          return true;
-        }
-      }
-      // 存储的会话已不存在，清除无效的存储
-      window.localStorage.removeItem(LAST_SESSION_PATH_KEY);
+      navigate(storedSessionPath);
+      return true;
     }
 
     return false;

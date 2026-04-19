@@ -427,6 +427,70 @@ describe("WorkbenchLayout", () => {
     expect(within(settingsButton).getByText("办公室 Host")).toBeInTheDocument();
   });
 
+  it("旧 HOST 的工作区路由切到新 HOST 后会自动收敛到当前 Host 的可用会话", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-2", "项目二"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-2",
+            title: "会话 Beta",
+            workspaceId: "workspace-2"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-2/sessions/session-2");
+    });
+  });
+
+  it("当前工作区存在但路由里的会话不存在时会自动切到该工作区的可用会话", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-2",
+            title: "会话 Beta",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-1/sessions/session-2");
+    });
+  });
+
   it("只有一个 HOST 时设置按钮不显示 HOST 名称标签", async () => {
     clientConfigStore.hydrate({
       platform: "desktop",
