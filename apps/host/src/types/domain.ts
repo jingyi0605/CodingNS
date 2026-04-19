@@ -1234,6 +1234,7 @@ export type TailscalePhase =
   | "error";
 
 export interface InstanceTailscaleConfig {
+  activated: boolean;
   enabled: boolean;
   controlServerUrl: string | null;
   hostname: string | null;
@@ -1269,6 +1270,7 @@ export type RelayTunnelPhase =
   | "error";
 
 export interface InstanceRelayTunnelConfig {
+  activated: boolean;
   enabled: boolean;
   provider: RelayTunnelProvider;
   relayBaseUrl: string | null;

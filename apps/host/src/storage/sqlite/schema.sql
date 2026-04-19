@@ -1140,6 +1140,7 @@ CREATE INDEX IF NOT EXISTS idx_verification_runs_project_status
 
 CREATE TABLE IF NOT EXISTS instance_tailscale_config (
   id TEXT PRIMARY KEY CHECK (id = 'default'),
+  activated INTEGER NOT NULL DEFAULT 0 CHECK (activated IN (0, 1)),
   enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
   control_server_url TEXT,
   hostname TEXT,
@@ -1175,6 +1176,7 @@ CREATE TABLE IF NOT EXISTS instance_tailscale_status (
 
 CREATE TABLE IF NOT EXISTS instance_relay_tunnel_config (
   id TEXT PRIMARY KEY CHECK (id = 'default'),
+  activated INTEGER NOT NULL DEFAULT 0 CHECK (activated IN (0, 1)),
   enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
   provider TEXT NOT NULL CHECK (provider = 'codingns_relay'),
   relay_base_url TEXT,
