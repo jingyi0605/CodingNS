@@ -15878,12 +15878,13 @@ textarea:focus-visible {
   width: 16px;
   height: 16px;
   margin: 0;
+  position: relative;
   appearance: none;
   -webkit-appearance: none;
   border: 1px solid var(--modal-checkbox-border);
   border-radius: 5px;
-  background: var(--modal-checkbox-surface);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 58%, transparent);
+  background: #ffffff;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 8%, transparent);
   transition:
     border-color var(--transition-fast),
     background var(--transition-fast),
@@ -15891,24 +15892,18 @@ textarea:focus-visible {
 }
 
 .workbench-notification-filter input:hover {
-  background: var(--modal-checkbox-surface-hover);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--text-secondary));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .workbench-notification-filter input:checked {
-  border-color: color-mix(in srgb, var(--accent) 44%, var(--modal-checkbox-border));
-  background: var(--modal-button-primary-bg);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 80%, #0a84ff);
+  background: color-mix(in srgb, var(--accent) 88%, #0a84ff);
+  box-shadow: 0 4px 10px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .workbench-notification-filter input:checked::after {
-  content: "";
-  display: block;
-  width: 8px;
-  height: 5px;
-  margin: 3px 0 0 3px;
-  border-left: 2px solid var(--modal-checkbox-check);
-  border-bottom: 2px solid var(--modal-checkbox-check);
-  transform: rotate(-45deg);
+  content: none;
 }
 
 .workbench-notification-list {
@@ -16723,12 +16718,13 @@ textarea:focus-visible {
   width: 16px;
   height: 16px;
   margin: 0;
+  position: relative;
   appearance: none;
   -webkit-appearance: none;
   border: 1px solid var(--modal-checkbox-border);
   border-radius: 5px;
-  background: var(--modal-checkbox-surface);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 58%, transparent);
+  background: #ffffff;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 8%, transparent);
   transition:
     border-color var(--transition-fast),
     background var(--transition-fast),
@@ -16737,26 +16733,20 @@ textarea:focus-visible {
 
 .workbench-modal-layer .workbench-modal-card input[type="checkbox"]:not([role="switch"]):hover,
 .workbench-modal-layer .conversation-selection-action-dialog input[type="checkbox"]:not([role="switch"]):hover {
-  background: var(--modal-checkbox-surface-hover);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--text-secondary));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .workbench-modal-layer .workbench-modal-card input[type="checkbox"]:not([role="switch"]):checked,
 .workbench-modal-layer .conversation-selection-action-dialog input[type="checkbox"]:not([role="switch"]):checked {
-  border-color: color-mix(in srgb, var(--accent) 44%, var(--modal-checkbox-border));
-  background: var(--modal-button-primary-bg);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 80%, #0a84ff);
+  background: color-mix(in srgb, var(--accent) 88%, #0a84ff);
+  box-shadow: 0 4px 10px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .workbench-modal-layer .workbench-modal-card input[type="checkbox"]:not([role="switch"]):checked::after,
 .workbench-modal-layer .conversation-selection-action-dialog input[type="checkbox"]:not([role="switch"]):checked::after {
-  content: "";
-  display: block;
-  width: 8px;
-  height: 5px;
-  margin: 3px 0 0 3px;
-  border-left: 2px solid var(--modal-checkbox-check);
-  border-bottom: 2px solid var(--modal-checkbox-check);
-  transform: rotate(-45deg);
+  content: none;
 }
 
 .workbench-modal-layer .workbench-modal-card .settings-model-tabs,
@@ -16820,6 +16810,7 @@ textarea:focus-visible {
 .workbench-modal-layer .workbench-modal-card .workbench-directory-browser-item {
   border-radius: 0;
   border-bottom: 1px solid var(--modal-list-item-border);
+  background: transparent;
   transition:
     background var(--transition-fast),
     border-color var(--transition-fast);
@@ -16834,7 +16825,7 @@ textarea:focus-visible {
 .workbench-modal-layer .workbench-modal-card .settings-skill-entry:hover,
 .workbench-modal-layer .workbench-modal-card .git-remote-item:hover,
 .workbench-modal-layer .workbench-modal-card .workbench-directory-browser-item:hover {
-  background: transparent;
+  background: var(--bg-surface);
 }
 
 .workbench-modal-layer .workbench-modal-card .settings-model-modal-summary-row,
@@ -20428,12 +20419,6 @@ textarea:focus-visible {
   font: inherit;
 }
 
-.settings-skill-upload-hint {
-  color: var(--text-tertiary);
-  font-size: 11px;
-  line-height: 1.5;
-}
-
 .settings-skill-create-textarea {
   min-height: 184px;
   resize: vertical;
@@ -20448,37 +20433,91 @@ textarea:focus-visible {
 .settings-skill-upload-target {
   display: inline-flex;
   align-items: center;
-  min-height: 36px;
-  padding: 0 12px;
+  min-height: 20px;
+  padding: 0;
   gap: 6px;
-  border: 1px solid var(--border-primary);
-  border-radius: 999px;
-  background: var(--bg-primary);
-  color: var(--text-secondary);
+  color: var(--text-primary);
   font-size: 12px;
+  font-weight: 600;
   line-height: 1.5;
   cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.workbench-modal-layer .workbench-modal-card .settings-skill-upload-target input[type="radio"],
+.settings-skill-upload-target input[type="radio"] {
+  flex-shrink: 0;
+  position: relative;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid color-mix(in srgb, var(--text-secondary) 24%, transparent);
+  background: color-mix(in srgb, var(--bg-primary) 94%, rgba(255, 255, 255, 0.72));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 72%, transparent),
+    0 1px 2px color-mix(in srgb, var(--text-primary) 8%, transparent);
   transition:
     border-color var(--transition-fast),
     background var(--transition-fast),
-    color var(--transition-fast),
-    box-shadow var(--transition-fast);
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast);
 }
 
-.settings-skill-upload-target input {
-  flex-shrink: 0;
+.workbench-modal-layer .workbench-modal-card .settings-skill-upload-target input[type="radio"],
+.settings-skill-upload-target input[type="radio"] {
+  border-radius: 999px;
+}
+
+.workbench-modal-layer .workbench-modal-card .settings-skill-upload-target input[type="radio"]::after,
+.settings-skill-upload-target input[type="radio"]::after {
+  content: "";
+  position: absolute;
+  opacity: 0;
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+}
+
+.workbench-modal-layer .workbench-modal-card .settings-skill-upload-target input[type="radio"]:hover,
+.settings-skill-upload-target input[type="radio"]:hover {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--text-secondary));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 82%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.workbench-modal-layer .workbench-modal-card .settings-skill-upload-target input[type="radio"]:focus-visible,
+.settings-skill-upload-target input[type="radio"]:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 82%, transparent);
+}
+
+.workbench-modal-layer .workbench-modal-card .settings-skill-upload-target input[type="radio"]:checked,
+.settings-skill-upload-target input[type="radio"]:checked {
+  border-color: color-mix(in srgb, var(--accent) 72%, #0a84ff);
+  background: color-mix(in srgb, var(--accent) 14%, rgba(255, 255, 255, 0.92));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, rgba(255, 255, 255, 0.72) 100%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.workbench-modal-layer .workbench-modal-card .settings-skill-upload-target input[type="radio"]:checked::after,
+.settings-skill-upload-target input[type="radio"]:checked::after {
+  inset: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 88%, #0a84ff);
+  opacity: 1;
 }
 
 .settings-skill-upload-target[data-selected="true"] {
-  border-color: color-mix(in srgb, var(--accent) 34%, var(--border-primary));
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-primary));
-  color: var(--text-primary);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text-secondary);
+  font-weight: 400;
 }
 
 .settings-skill-upload-target:hover {
-  border-color: color-mix(in srgb, var(--accent) 18%, var(--border-primary));
-  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .settings-skill-modal {
@@ -25991,12 +26030,13 @@ textarea:focus-visible {
   margin: 0;
   width: 16px;
   height: 16px;
+  position: relative;
   appearance: none;
   -webkit-appearance: none;
   border: 1px solid var(--modal-checkbox-border);
   border-radius: 5px;
-  background: var(--modal-checkbox-surface);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 58%, transparent);
+  background: #ffffff;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 8%, transparent);
   transition:
     border-color var(--transition-fast),
     background var(--transition-fast),
@@ -26004,24 +26044,18 @@ textarea:focus-visible {
 }
 
 .workspace-inbox-closed-toggle input:hover {
-  background: var(--modal-checkbox-surface-hover);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--text-secondary));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .workspace-inbox-closed-toggle input:checked {
-  border-color: color-mix(in srgb, var(--accent) 44%, var(--modal-checkbox-border));
-  background: var(--modal-button-primary-bg);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 80%, #0a84ff);
+  background: color-mix(in srgb, var(--accent) 88%, #0a84ff);
+  box-shadow: 0 4px 10px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .workspace-inbox-closed-toggle input:checked::after {
-  content: "";
-  display: block;
-  width: 8px;
-  height: 5px;
-  margin: 3px 0 0 3px;
-  border-left: 2px solid var(--modal-checkbox-check);
-  border-bottom: 2px solid var(--modal-checkbox-check);
-  transform: rotate(-45deg);
+  content: none;
 }
 
 .workspace-inbox-panel-header h3 {
