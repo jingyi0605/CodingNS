@@ -89,7 +89,14 @@ describe("cors origins", () => {
       headers: {
         origin: "tauri://localhost",
         "access-control-request-method": "POST",
-        "access-control-request-headers": "Authorization, Content-Type"
+        "access-control-request-headers":
+          [
+            "Authorization",
+            "Content-Type",
+            "x-codingns-client-type",
+            "x-codingns-client-instance-id",
+            "x-codingns-assistant-source"
+          ].join(", ")
       }
     });
 
@@ -99,7 +106,14 @@ describe("cors origins", () => {
       "GET,POST,PUT,PATCH,DELETE,OPTIONS"
     );
     expect(response.headers["access-control-allow-headers"]).toBe(
-      "Authorization, Content-Type"
+      [
+        "Authorization",
+        "Content-Type",
+        "x-codingns-client-type",
+        "x-codingns-client-instance-id",
+        "x-codingns-assistant-source",
+        "x-codingns-hook-token"
+      ].join(", ")
     );
   });
 
