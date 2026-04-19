@@ -106,3 +106,4 @@ apps/user-app/src-tauri/gen/apple/Assets.xcassets/AppIcon.appiconset/*.png
 .playwright-cli/*
 apps/host/file-preview-token
 apps/host/git-credential-key
+apps/codingns-proxy/

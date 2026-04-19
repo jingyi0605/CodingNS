@@ -8,6 +8,8 @@
 - 已明确二阶段不是重复第一阶段协议设计，而是收口“控制台站点、正式存储、真实邮件、真实支付、生产化中继、验收文档”这些上线缺口
 - 已明确主仓库继续只负责 Host 侧隧道客户端、客户端接入层、设置页和验收回归
 - 已明确 `apps/codingns-proxy` 子仓库需要从骨架升级成正式可部署服务
+- `console-web` 已从占位 README 升级成最小可运行站点，支持注册、登录、Host 绑定、流量钱包、套餐和订单查看
+- `control-api` 已补控制台最小只读绑定列表接口 `GET /api/v1/hosts`，`shared-contracts` 已补对应契约，前端不再靠猜接口写页面
 
 ## 这份文档是干什么的
 
@@ -73,19 +75,31 @@
 
 ## 阶段 1：先把控制面和用户入口做成正式服务
 
-- [ ] 1.1 实现 `console-web` 最小控制台站点
-  - 状态：TODO
+- [x] 1.1 实现 `console-web` 最小控制台站点
+  - 状态：DONE
   - 这一步到底做什么：在子仓库里实现注册、登录、Host 状态、流量钱包、套餐和订单的最小控制台站点
   - 做完以后能看到什么结果：用户不需要只靠 API 或主仓库设置页就能完成最小操作闭环
   - 依赖什么：0.2
   - 主要改哪些文件：
     - `apps/codingns-proxy/apps/console-web/*`
     - `apps/codingns-proxy/packages/shared-contracts/*`
+    - `apps/codingns-proxy/apps/control-api/src/*`
   - 这一步明确不做什么：不做复杂后台大盘，不做营销官网
   - 怎么验证：
     - 前端构建通过
     - 页面路由走查
     - 最小交互联调
+  - 验证结果：
+    - 已在 `apps/codingns-proxy/apps/console-web/` 落地 `React + Vite + React Router` 最小站点，不再是占位目录
+    - 已实现注册页、登录页、控制台首页，首页可查看 Host 绑定、流量钱包、套餐列表、订单列表，并直接创建 Paddle 托管支付链接
+    - 已补本地 i18n 文案字典、控制面 API client、会话持久化和前端测试
+    - 已在 `control-api` 新增 `GET /api/v1/hosts`，并在 `shared-contracts` 补 `HostBindingsResponse` 与 `hostsPath`
+    - 已通过验证：
+      - `pnpm --filter @codingns-proxy/shared-contracts build`
+      - `pnpm --filter @codingns-proxy/control-api test`
+      - `pnpm --filter @codingns-proxy/console-web lint`
+      - `pnpm --filter @codingns-proxy/console-web test`
+      - `pnpm --filter @codingns-proxy/console-web build`
 
 - [ ] 1.2 接真实邮件通道并补密码找回
   - 状态：TODO
