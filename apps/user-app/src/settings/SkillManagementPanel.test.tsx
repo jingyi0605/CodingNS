@@ -85,6 +85,8 @@ describe("SkillManagementPanel", () => {
     const dialog = await screen.findByRole("dialog", { name: t("settings.skillConfigModalTitle") });
 
     expect(dialog).toBeInTheDocument();
+    expect(within(dialog).queryByText(t("settings.skillSummaryUnmanagedEntries"))).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(t("settings.skillSummaryAssistantRuntimeEntries"))).not.toBeInTheDocument();
     expect(within(dialog).getByText("team-helper")).toBeInTheDocument();
     expect(within(dialog).getByText("sample-helper")).toBeInTheDocument();
     expect(within(dialog).getByText("codingns-assistant")).toBeInTheDocument();
@@ -99,7 +101,10 @@ describe("SkillManagementPanel", () => {
     expect(within(dialog).getByText(t("settings.skillDiagnosticsEmpty"))).toBeInTheDocument();
     expect(within(dialog).getAllByText(t("settings.skillTagAssistantOnly")).length).toBeGreaterThan(0);
 
-    const uploadInput = document.querySelector('input[type="file"]');
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillCreateAction") }));
+
+    const createDialog = await screen.findByRole("dialog", { name: t("settings.skillCreateModalTitle") });
+    const uploadInput = createDialog.querySelector('input[type="file"]');
     expect(uploadInput).not.toBeNull();
 
     await userEvent.upload(
@@ -109,8 +114,8 @@ describe("SkillManagementPanel", () => {
       })
     );
 
-    expect(await screen.findByText("Uploaded Skill")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: t("settings.skillUploadSubmitAction") }));
+    expect(await within(createDialog).findByText("Uploaded Skill")).toBeInTheDocument();
+    await userEvent.click(within(createDialog).getByRole("button", { name: t("settings.skillCreateSubmitAction") }));
 
     await waitFor(() => {
       expect(
@@ -158,7 +163,7 @@ describe("SkillManagementPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("可以把上传的 SKILL 纳管到助手专用作用域", async () => {
+  it("可以通过粘贴文本把 SKILL 纳管到助手专用作用域", async () => {
     let assistantUploaded = false;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -190,17 +195,22 @@ describe("SkillManagementPanel", () => {
     renderPanel();
     await userEvent.click(await screen.findByRole("button", { name: t("settings.skillManageAction") }));
 
-    const uploadInput = document.querySelector('input[type="file"]');
-    expect(uploadInput).not.toBeNull();
+    const dialog = await screen.findByRole("dialog", { name: t("settings.skillConfigModalTitle") });
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillCreateAction") }));
 
-    await userEvent.click(screen.getByRole("radio", { name: t("settings.skillUploadScopeAssistant") }));
-    await userEvent.upload(
-      uploadInput as HTMLInputElement,
-      new File(["# Butler Inbox Helper\n\n这是一个助手专用 skill。"], "butler-inbox-helper.md", {
-        type: "text/markdown"
-      })
+    const createDialog = await screen.findByRole("dialog", { name: t("settings.skillCreateModalTitle") });
+    await userEvent.click(within(createDialog).getByRole("tab", { name: t("settings.skillCreateSourcePaste") }));
+    await userEvent.click(within(createDialog).getByRole("radio", { name: t("settings.skillUploadScopeAssistant") }));
+    await userEvent.type(
+      within(createDialog).getByLabelText(t("settings.skillPasteLabel")),
+      "# Butler Inbox Helper\n\n这是一个助手专用 skill。"
     );
-    await userEvent.click(screen.getByRole("button", { name: t("settings.skillUploadSubmitAction") }));
+    await userEvent.clear(within(createDialog).getByLabelText(t("settings.skillUploadDirectoryLabel")));
+    await userEvent.type(
+      within(createDialog).getByLabelText(t("settings.skillUploadDirectoryLabel")),
+      "butler-inbox-helper"
+    );
+    await userEvent.click(within(createDialog).getByRole("button", { name: t("settings.skillCreateSubmitAction") }));
 
     expect(await screen.findByText("Butler Inbox Helper")).toBeInTheDocument();
     expect(screen.getByText("/tmp/managed-skills/.assistant-runtime/butler-inbox-helper")).toBeInTheDocument();
