@@ -173,69 +173,77 @@ export class WorkbenchWsHub {
 
     this.attachClient(client, userId, channel);
 
-    switch (message.type) {
-      case "workbench.subscribe":
-        void this.sendWorkbenchSnapshotToClient(client, userId, channel);
-        if (this.workbenchService.shouldRefreshSnapshot()) {
-          this.workbenchService.scheduleSnapshotRefresh(userId);
-        }
-        return true;
-      case "workbench.refresh":
-        void this.refreshAndBroadcast(userId, true);
-        return true;
-      case "fileTree.subscribe":
-        this.replaceFileTreeSubscription(client, message.workspaceId, message.paths);
-        void this.refreshFileTreeSubscriptions(client);
-        return true;
-      case "fileTree.refresh":
-        for (const path of normalizePanelPaths(message.paths)) {
-          this.workspacePanelSnapshotService.invalidateFileTree(message.workspaceId.trim(), path);
-        }
-        this.ensureFileTreeSubscription(client, message.workspaceId, message.paths);
-        void this.refreshFileTreeSubscriptions(client, true);
-        return true;
-      case "git.subscribe":
-        this.ensureGitSubscription(client, message.workspaceId);
-        void this.refreshGitSubscription(client, false, {
-          deliverIfUnchanged: true,
-          ignoreMinInterval: true
-        });
-        return true;
-      case "git.refresh":
-        this.workspacePanelSnapshotService.invalidateGit(message.workspaceId.trim());
-        this.ensureGitSubscription(client, message.workspaceId);
-        this.scheduleGitRefresh(client, {
-          force: true
-        });
-        return true;
-      case "terminalManager.subscribe":
-        this.ensureTerminalManagerSubscription(client, message.workspaceId);
-        this.scheduleTerminalManagerRefresh(client);
-        return true;
-      case "terminalManager.refresh":
-        this.workspacePanelSnapshotService.invalidateTerminalManager(message.workspaceId.trim());
-        this.ensureTerminalManagerSubscription(client, message.workspaceId);
-        this.scheduleTerminalManagerRefresh(client, {
-          force: true
-        });
-        return true;
-      case "workspaceManagement.subscribe":
-        this.clientWorkspaceManagementSubscriptions.set(client, {
-          workspaceId: message.workspaceId.trim(),
-          lastPayload: null
-        });
-        void this.refreshWorkspaceManagementSubscription(client);
-        return true;
-      case "workspaceManagement.refresh":
-        this.workspacePanelSnapshotService.invalidateWorkspaceManagement(message.workspaceId.trim());
-        this.clientWorkspaceManagementSubscriptions.set(client, {
-          workspaceId: message.workspaceId.trim(),
-          lastPayload: null
-        });
-        void this.refreshWorkspaceManagementSubscription(client, true);
-        return true;
-      default:
-        return false;
+    try {
+      switch (message.type) {
+        case "workbench.subscribe":
+          void this.sendWorkbenchSnapshotToClient(client, userId, channel);
+          if (this.workbenchService.shouldRefreshSnapshot()) {
+            this.workbenchService.scheduleSnapshotRefresh(userId);
+          }
+          return true;
+        case "workbench.refresh":
+          void this.refreshAndBroadcast(userId, true);
+          return true;
+        case "fileTree.subscribe":
+          this.replaceFileTreeSubscription(client, message.workspaceId, message.paths);
+          void this.refreshFileTreeSubscriptions(client);
+          return true;
+        case "fileTree.refresh":
+          for (const path of normalizePanelPaths(message.paths)) {
+            this.workspacePanelSnapshotService.invalidateFileTree(message.workspaceId.trim(), path);
+          }
+          this.ensureFileTreeSubscription(client, message.workspaceId, message.paths);
+          void this.refreshFileTreeSubscriptions(client, true);
+          return true;
+        case "git.subscribe":
+          this.ensureGitSubscription(client, message.workspaceId);
+          void this.refreshGitSubscription(client, false, {
+            deliverIfUnchanged: true,
+            ignoreMinInterval: true
+          });
+          return true;
+        case "git.refresh":
+          this.workspacePanelSnapshotService.invalidateGit(message.workspaceId.trim());
+          this.ensureGitSubscription(client, message.workspaceId);
+          this.scheduleGitRefresh(client, {
+            force: true
+          });
+          return true;
+        case "terminalManager.subscribe":
+          this.ensureTerminalManagerSubscription(client, message.workspaceId);
+          this.scheduleTerminalManagerRefresh(client);
+          return true;
+        case "terminalManager.refresh":
+          this.workspacePanelSnapshotService.invalidateTerminalManager(message.workspaceId.trim());
+          this.ensureTerminalManagerSubscription(client, message.workspaceId);
+          this.scheduleTerminalManagerRefresh(client, {
+            force: true
+          });
+          return true;
+        case "workspaceManagement.subscribe":
+          this.clientWorkspaceManagementSubscriptions.set(client, {
+            workspaceId: message.workspaceId.trim(),
+            lastPayload: null
+          });
+          void this.refreshWorkspaceManagementSubscription(client);
+          return true;
+        case "workspaceManagement.refresh":
+          this.workspacePanelSnapshotService.invalidateWorkspaceManagement(message.workspaceId.trim());
+          this.clientWorkspaceManagementSubscriptions.set(client, {
+            workspaceId: message.workspaceId.trim(),
+            lastPayload: null
+          });
+          void this.refreshWorkspaceManagementSubscription(client, true);
+          return true;
+        default:
+          return false;
+      }
+    } catch (error) {
+      this.reportAsyncError("handleMessage", error, {
+        userId,
+        workspaceId: extractWorkspaceIdFromWorkbenchMessage(message)
+      });
+      return true;
     }
   }
 
@@ -535,18 +543,19 @@ export class WorkbenchWsHub {
       return current;
     }
 
-    if (current) {
-      this.fileWatcher.unsubscribeFileTree(current.workspaceId, current.paths);
-    }
-
     const next: FileTreeClientSubscription = {
       workspaceId: normalizedWorkspaceId,
       paths: nextPaths,
       lastPayloadByPath: new Map<string, string>()
     };
 
-    this.clientFileTreeSubscriptions.set(client, next);
     this.fileWatcher.subscribeFileTree(normalizedWorkspaceId, nextPaths);
+    this.clientFileTreeSubscriptions.set(client, next);
+
+    if (current) {
+      this.fileWatcher.unsubscribeFileTree(current.workspaceId, current.paths);
+    }
+
     return next;
   }
 
@@ -699,14 +708,6 @@ export class WorkbenchWsHub {
       return current;
     }
 
-    if (current) {
-      current.refreshController?.abort(new Error("git subscription replaced"));
-      if (current.refreshTimer) {
-        clearTimeout(current.refreshTimer);
-      }
-      this.fileWatcher.unsubscribeGit(current.workspaceId);
-    }
-
     const next: GitClientSubscription = {
       workspaceId: normalizedWorkspaceId,
       lastPayload: null,
@@ -718,8 +719,17 @@ export class WorkbenchWsHub {
       queuedForce: false
     };
 
-    this.clientGitSubscriptions.set(client, next);
     this.fileWatcher.subscribeGit(normalizedWorkspaceId);
+    this.clientGitSubscriptions.set(client, next);
+
+    if (current) {
+      current.refreshController?.abort(new Error("git subscription replaced"));
+      if (current.refreshTimer) {
+        clearTimeout(current.refreshTimer);
+      }
+      this.fileWatcher.unsubscribeGit(current.workspaceId);
+    }
+
     return next;
   }
 
@@ -1065,6 +1075,22 @@ function parseWorkbenchMessage(payload: unknown): WorkbenchMessage | null {
         : null;
     default:
       return null;
+  }
+}
+
+function extractWorkspaceIdFromWorkbenchMessage(message: WorkbenchMessage): string | undefined {
+  switch (message.type) {
+    case "fileTree.subscribe":
+    case "fileTree.refresh":
+    case "git.subscribe":
+    case "git.refresh":
+    case "terminalManager.subscribe":
+    case "terminalManager.refresh":
+    case "workspaceManagement.subscribe":
+    case "workspaceManagement.refresh":
+      return message.workspaceId.trim();
+    default:
+      return undefined;
   }
 }
 

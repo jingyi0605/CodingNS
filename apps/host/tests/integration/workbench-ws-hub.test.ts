@@ -772,6 +772,69 @@ describe("WorkbenchWsHub", () => {
     expect(fileWatcher.unsubscribeFileTree).toHaveBeenCalledWith("workspace-1", ["src", "src/components"]);
   });
 
+  it("fileTree.subscribe 遇到不存在的工作区时只记录错误，不会抛出导致 Host 崩溃", () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const client = {
+      send: vi.fn()
+    } as unknown as WebSocket;
+    const authContext: AuthContext = {
+      accessToken: "token",
+      callerKind: "interactive_user",
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    };
+    const fileWatcher = createMockFileWatcher();
+    vi.mocked(fileWatcher.subscribeFileTree).mockImplementation(() => {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "WORKSPACE_NOT_FOUND",
+        detail: "指定工作区不存在"
+      });
+    });
+    const workbenchService = {
+      getSnapshot: vi.fn(() => ({ items: [] })),
+      shouldRefreshSnapshot: vi.fn(() => false),
+      refreshSnapshot: vi.fn(async () => ({ items: [] })),
+      syncSessionTitles: vi.fn(async () => ({ items: [] }))
+    } satisfies Pick<
+      WorkbenchService,
+      "getSnapshot" | "shouldRefreshSnapshot" | "refreshSnapshot" | "syncSessionTitles"
+    >;
+
+    const hub = new WorkbenchWsHub(
+      workbenchService as unknown as WorkbenchService,
+      {} as WorkspacePanelSnapshotService,
+      fileWatcher as unknown as WorkspaceFileWatcher
+    );
+
+    expect(
+      hub.handleMessage(
+        client,
+        {
+          type: "fileTree.subscribe",
+          workspaceId: "missing-workspace",
+          paths: [""]
+        },
+        authContext
+      )
+    ).toBe(true);
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "[workbench-ws-error]",
+      expect.objectContaining({
+        scope: "handleMessage",
+        userId: "user-1",
+        workspaceId: "missing-workspace",
+        errorCode: "WORKSPACE_NOT_FOUND",
+        detail: "指定工作区不存在"
+      })
+    );
+    expect(fileWatcher.unsubscribeFileTree).not.toHaveBeenCalled();
+  });
+
   it("workbench.refresh 只刷新工作台快照，不再顺带触发标题同步", async () => {
     const authContext: AuthContext = {
       accessToken: "token",
