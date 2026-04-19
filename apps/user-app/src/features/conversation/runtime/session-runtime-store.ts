@@ -1939,20 +1939,34 @@ function createClientRequestId(): string {
   return `fallback-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
 }
 
+function getSessionScopedCapabilities(
+  session: SessionSummaryDto | null,
+  capabilities: ProviderCapabilitiesDto | null
+): ProviderCapabilitiesDto | null {
+  if (!capabilities) {
+    return null;
+  }
+
+  // 会话详情未到时先允许使用能力快照；一旦有 session，就只接受同 provider 的能力对象。
+  if (!session || session.provider === capabilities.provider) {
+    return capabilities;
+  }
+
+  return null;
+}
+
 function shouldOptimisticallyAssumeActiveRun(
   session: SessionSummaryDto | null,
   capabilities: ProviderCapabilitiesDto | null
 ): boolean {
-  if (capabilities) {
-    return Boolean(capabilities.canSendMessage);
+  const scopedCapabilities = getSessionScopedCapabilities(session, capabilities);
+
+  if (scopedCapabilities) {
+    return Boolean(scopedCapabilities.canSendMessage);
   }
 
   if (!session) {
     return false;
-  }
-
-  if (capabilities && session.provider === capabilities.provider) {
-    return Boolean(capabilities.canSendMessage);
   }
 
   return isRegisteredProvider(session.provider);
@@ -1962,8 +1976,10 @@ function shouldOptimisticallyEnableInterrupt(
   session: SessionSummaryDto | null,
   capabilities: ProviderCapabilitiesDto | null
 ): boolean {
-  if (capabilities) {
-    if (!capabilities.supportsInterrupt) {
+  const scopedCapabilities = getSessionScopedCapabilities(session, capabilities);
+
+  if (scopedCapabilities) {
+    if (!scopedCapabilities.supportsInterrupt) {
       return false;
     }
 
