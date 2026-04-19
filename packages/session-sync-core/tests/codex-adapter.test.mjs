@@ -1147,6 +1147,130 @@ test("CodexAdapter 支持原生会话级 fork", async () => {
   }
 });
 
+test("CodexAdapter fork 冷启动时如果源 thread 未加载，会按本地 transcript 冷恢复后再继续分叉", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-fork-cold-source-"));
+  const workspacePath = "/Users/jackson/Code/CodingNS";
+  const sourceFile = join(tempDir, "sessions", "2026", "04", "19", "source-thread.jsonl");
+  const childFile = join(tempDir, "sessions", "2026", "04", "19", "child-thread.jsonl");
+  const resumeFromHistoryCalls = [];
+  const forkThreadCalls = [];
+
+  try {
+    mkdirSync(join(tempDir, "sessions", "2026", "04", "19"), { recursive: true });
+    writeFileSync(
+      sourceFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-04-19T08:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "019da3bc-6401-74e1-90f6-52fcb30d225f",
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-19T08:00:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "第一轮问题"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-19T08:00:02.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "第一轮回答"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      childFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-04-19T08:00:03.000Z",
+          type: "session_meta",
+          payload: {
+            id: "child-thread",
+            cwd: workspacePath,
+            forked_from_id: "rebuilt-source-thread"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new CodexAdapter({
+      homeDir: tempDir,
+      forkTransportFactory: () => ({
+        async initialize() {},
+        async forkThread(providerSessionId) {
+          forkThreadCalls.push(providerSessionId);
+
+          if (providerSessionId === "019da3bc-6401-74e1-90f6-52fcb30d225f") {
+            throw new Error("thread not loaded: 019da3bc-6401-74e1-90f6-52fcb30d225f");
+          }
+
+          assert.equal(providerSessionId, "rebuilt-source-thread");
+          return {
+            providerSessionId: "child-thread",
+            rawStoreRef: childFile
+          };
+        },
+        async readThread() {
+          throw new Error("UNEXPECTED_READ_THREAD");
+        },
+        async rollbackThread() {
+          throw new Error("UNEXPECTED_ROLLBACK_THREAD");
+        },
+        async resumeThreadFromHistory(input) {
+          resumeFromHistoryCalls.push(input);
+          return {
+            providerSessionId: "rebuilt-source-thread",
+            rawStoreRef: join(tempDir, "runtime", "rebuilt-source-thread.jsonl")
+          };
+        },
+        close() {}
+      })
+    });
+
+    const result = await adapter.forkSession("019da3bc-6401-74e1-90f6-52fcb30d225f", workspacePath, {
+      rawStoreRef: sourceFile,
+      sourceType: "session",
+      strategy: "auto"
+    });
+
+    assert.deepEqual(forkThreadCalls, [
+      "019da3bc-6401-74e1-90f6-52fcb30d225f",
+      "rebuilt-source-thread"
+    ]);
+    assert.equal(resumeFromHistoryCalls.length, 1);
+    assert.deepEqual(
+      resumeFromHistoryCalls[0]?.history,
+      [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "第一轮问题" }]
+        },
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "第一轮回答" }]
+        }
+      ]
+    );
+    assert.equal(result.forkMethod, "native_session_fork");
+    assert.equal(result.session.providerSessionId, "child-thread");
+    assert.equal(result.session.parentProviderSessionId, "019da3bc-6401-74e1-90f6-52fcb30d225f");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexAdapter 在子线程没有 CLI 标题和首条用户消息时，不再回退父会话标题", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-fork-title-fallback-"));
   const workspacePath = "/Users/jackson/Code/CodingNS";

@@ -43,6 +43,7 @@ import {
   stringifyStructuredValue,
   walkJsonlFiles
 } from "./utils.js";
+import { buildCodexResumeHistoryFromRawStore } from "../codex-resume-history.js";
 import { loadDatabaseSync, type DatabaseSyncType } from "../sqlite/node-sqlite.js";
 
 interface CodexAdapterOptions {
@@ -718,7 +719,12 @@ export class CodexAdapter implements ProviderAdapter {
       await transport.initialize();
 
       if (options.sourceType === "session") {
-        const forked = await transport.forkThread(providerSessionId);
+        const forked = await this.forkThreadWithHistoryFallback(
+          transport,
+          providerSessionId,
+          workspacePath,
+          options.rawStoreRef
+        );
         return await this.buildForkResultFromTransport({
           providerSessionId: forked.providerSessionId,
           rawStoreRef: forked.rawStoreRef,
@@ -1530,6 +1536,34 @@ export class CodexAdapter implements ProviderAdapter {
       inheritedPrefixMessageCount: input.inheritedPrefixMessageCountOverride ?? messages.length,
       providerSourceMessageId: input.providerSourceMessageId
     };
+  }
+
+  private async forkThreadWithHistoryFallback(
+    transport: CodexForkTransport,
+    providerSessionId: string,
+    workspacePath: string,
+    rawStoreRef: string
+  ): Promise<{ providerSessionId: string; rawStoreRef: string | null }> {
+    try {
+      return await transport.forkThread(providerSessionId);
+    } catch (error) {
+      const history = buildCodexResumeHistoryFromRawStore(rawStoreRef);
+
+      if (!shouldFallbackCodexForkFromHistory(error, history)) {
+        throw error;
+      }
+
+      // app-server 的 thread/fork 依赖源 thread 已经挂在当前连接上。
+      // 这个前提跨请求就会失效，所以这里退回到本地 transcript 冷恢复一次。
+      const rebuilt = await transport.resumeThreadFromHistory({
+        providerSessionId: null,
+        workspacePath,
+        history,
+        model: null
+      });
+
+      return await transport.forkThread(rebuilt.providerSessionId);
+    }
   }
 
   private touchSessionSummaryCache(
@@ -3332,4 +3366,25 @@ function stringifyCodexReasoningContent(content: unknown): string {
     .filter((value) => value.length > 0)
     .join("\n")
     .trim();
+}
+
+function shouldFallbackCodexForkFromHistory(
+  error: unknown,
+  history: unknown[]
+): boolean {
+  if (history.length === 0) {
+    return false;
+  }
+
+  return isCodexThreadLoadError(error);
+}
+
+function isCodexThreadLoadError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.trim().toLowerCase();
+
+  return (
+    normalized.includes("thread not loaded") ||
+    normalized.includes("no rollout found for thread id")
+  );
 }

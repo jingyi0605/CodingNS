@@ -18,6 +18,7 @@ import {
   normalizeWorkspacePath,
   readJsonLines
 } from "../providers/utils.js";
+import { buildCodexResumeHistoryFromRawStore } from "../codex-resume-history.js";
 import {
   buildApplyPatchFromFileChangeList,
   extractApplyPatchTargetPathsFromToolOutput,
@@ -399,13 +400,40 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       providerSessionId
     });
     const syntheticRawStoreRef = buildRuntimeRawStoreRef(providerSessionId);
-    const resolvedSessionId = providerSessionId;
+    let resolvedSessionId = providerSessionId;
     const resumeThreadStartedAtMs = performance.now();
-    const resumed = await transport.resumeThread(request, resolvedSessionId);
-    logCodexRuntimeStep("continue_session.thread_resume", resumeThreadStartedAtMs, {
-      sessionId: request.sessionId,
-      providerSessionId: resolvedSessionId
-    });
+    let resumed: { providerSessionId: string; rawStoreRef: string | null };
+
+    try {
+      resumed = await transport.resumeThread(request, resolvedSessionId);
+      logCodexRuntimeStep("continue_session.thread_resume", resumeThreadStartedAtMs, {
+        sessionId: request.sessionId,
+        providerSessionId: resolvedSessionId,
+        fallback: false
+      });
+    } catch (error) {
+      const resumeHistory = buildCodexResumeHistoryFromRawStore(request.rawStoreRef);
+
+      if (!shouldFallbackCodexContinueFromHistory(error, resumeHistory)) {
+        throw error;
+      }
+
+      const resumeFallbackStartedAtMs = performance.now();
+      resumed = await transport.resumeThreadFromHistory({
+        providerSessionId: null,
+        workspacePath: request.workspacePath,
+        history: resumeHistory,
+        model: request.options.model
+      });
+      resolvedSessionId = resumed.providerSessionId;
+      logCodexRuntimeStep("continue_session.thread_resume_from_history_fallback", resumeFallbackStartedAtMs, {
+        sessionId: request.sessionId,
+        requestedProviderSessionId: providerSessionId,
+        providerSessionId: resolvedSessionId,
+        historyLength: resumeHistory.length
+      });
+    }
+
     const rawStoreRef = pickAvailableCodexRawStoreRef(
       resolvedSessionId,
       [request.rawStoreRef, resumed.rawStoreRef],
@@ -2470,75 +2498,28 @@ function buildSyntheticResumeHistory(rawStoreRef: string | null): Array<Record<s
     return [];
   }
 
-  const history: Array<Record<string, unknown>> = [];
-
-  for (const recordEntry of readJsonLines(filePath)) {
-    const record = toRecord(recordEntry.data) ?? {};
-    const recordType = ensureText(record.type).trim();
-
-    if (recordType === "event_msg") {
-      const payload = toRecord(record.payload) ?? {};
-      const eventType = ensureText(payload.type).trim();
-      const content = ensureText(payload.message).trim();
-
-      if (content.length === 0) {
-        continue;
-      }
-
-      if (eventType === "user_message") {
-        history.push(createResumeHistoryMessage("user", content));
-        continue;
-      }
-
-      if (eventType === "agent_message") {
-        history.push(createResumeHistoryMessage("assistant", content));
-      }
-
-      continue;
-    }
-
-    if (recordType !== "response_item") {
-      continue;
-    }
-
-    const payload = toRecord(record.payload) ?? {};
-
-    if (ensureText(payload.type).trim() !== "message") {
-      continue;
-    }
-
-    const role = ensureText(payload.role).trim();
-
-    if (role !== "user" && role !== "assistant") {
-      continue;
-    }
-
-    const content = extractTextBlocks(payload.content).trim();
-
-    if (content.length === 0) {
-      continue;
-    }
-
-    history.push(createResumeHistoryMessage(role, content));
-  }
-
-  return history;
+  return buildCodexResumeHistoryFromRawStore(filePath);
 }
 
-function createResumeHistoryMessage(
-  role: "user" | "assistant",
-  content: string
-): Record<string, unknown> {
-  return {
-    type: "message",
-    role,
-    content: [
-      {
-        type: role === "user" ? "input_text" : "output_text",
-        text: content
-      }
-    ]
-  };
+function shouldFallbackCodexContinueFromHistory(
+  error: unknown,
+  history: unknown[]
+): boolean {
+  if (history.length === 0) {
+    return false;
+  }
+
+  return isCodexThreadLoadError(error);
+}
+
+function isCodexThreadLoadError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.trim().toLowerCase();
+
+  return (
+    normalized.includes("thread not loaded") ||
+    normalized.includes("no rollout found for thread id")
+  );
 }
 
 function readProp(value: unknown, key: string): unknown {

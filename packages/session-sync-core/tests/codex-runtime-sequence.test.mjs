@@ -142,6 +142,115 @@ test("CodexRuntimeAdapter continueSession 会直接复用 provider 子线程，�
   assert.equal(resumeFromHistoryCalled, false);
 });
 
+test("CodexRuntimeAdapter continueSession 遇到未加载的 fork 子线程时，会按本地 transcript 冷恢复", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-runtime-cold-resume-"));
+  const rawStoreRef = join(tempDir, "sessions", "2026", "04", "19", "child-thread.jsonl");
+  const bindings = [];
+  const resumeFromHistoryCalls = [];
+  let closeHandler = null;
+
+  mkdirSync(join(tempDir, "sessions", "2026", "04", "19"), { recursive: true });
+  writeFileSync(
+    rawStoreRef,
+    [
+      JSON.stringify({
+        type: "session_meta",
+        payload: {
+          id: "019da3bc-6401-74e1-90f6-52fcb30d225f",
+          cwd: "/tmp/workspace-1"
+        }
+      }),
+      JSON.stringify({
+        type: "event_msg",
+        payload: {
+          type: "user_message",
+          message: "父会话问题"
+        }
+      }),
+      JSON.stringify({
+        type: "event_msg",
+        payload: {
+          type: "agent_message",
+          message: "父会话回答"
+        }
+      })
+    ].join("\n"),
+    "utf8"
+  );
+
+  try {
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      transportFactory: () => ({
+        async initialize() {},
+        async startThread() {
+          throw new Error("UNEXPECTED_START_THREAD");
+        },
+        async resumeThread() {
+          throw new Error("no rollout found for thread id 019da3bc-6401-74e1-90f6-52fcb30d225f");
+        },
+        async resumeThreadFromHistory(input) {
+          resumeFromHistoryCalls.push(input);
+          return {
+            providerSessionId: "rebuilt-child-thread",
+            rawStoreRef
+          };
+        },
+        async startTurn() {
+          closeHandler?.(null);
+        },
+        async steerTurn() {},
+        async interruptTurn() {},
+        setNotificationHandler() {},
+        setServerRequestHandler() {},
+        setOnClose(handler) {
+          closeHandler = handler;
+        },
+        isClosed() {
+          return false;
+        },
+        close() {}
+      })
+    });
+
+    const launch = await adapter.continueSession(
+      createRunRequest({
+        providerSessionId: "019da3bc-6401-74e1-90f6-52fcb30d225f",
+        rawStoreRef
+      }),
+      {
+        async emit() {},
+        updateSessionBinding(binding) {
+          bindings.push(binding);
+        }
+      }
+    );
+
+    await launch.completed;
+
+    assert.equal(resumeFromHistoryCalls.length, 1);
+    assert.deepEqual(
+      resumeFromHistoryCalls[0]?.history,
+      [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "父会话问题" }]
+        },
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "父会话回答" }]
+        }
+      ]
+    );
+    assert.equal(launch.providerSessionId, "rebuilt-child-thread");
+    assert.equal(bindings.at(0)?.providerSessionId, "rebuilt-child-thread");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexRuntimeAdapter continueSession 遇到父会话 rawStoreRef 脏绑定时，会优先切到当前子线程 transcript", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-runtime-continue-dirty-"));
   const parentRawStoreRef = join(tempDir, "parent-thread.jsonl");
