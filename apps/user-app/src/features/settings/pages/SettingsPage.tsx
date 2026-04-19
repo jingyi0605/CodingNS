@@ -26,7 +26,6 @@ import { ClientUpdatePanel } from "../../../settings/ClientUpdatePanel";
 import { ModelManagementPanel } from "../../../settings/ModelManagementPanel";
 import { AuthDeviceManagementPanel } from "../../../settings/AuthDeviceManagementPanel";
 import { ServiceUpdatePanel } from "../../../settings/ServiceUpdatePanel";
-import { SkillManagementPanel } from "../../../settings/SkillManagementPanel";
 import { TailscalePanel } from "../../../settings/TailscalePanel";
 import { authStore } from "../../auth/store/auth-store";
 import { MobilePageHeader } from "../../mobile-shell/components/MobilePageHeader";
@@ -42,7 +41,6 @@ type SettingsSectionId =
   | "model-management"
   | "server-connection"
   | "remote-access"
-  | "skills"
   | "security-privacy"
   | "software-update";
 
@@ -105,7 +103,6 @@ function isSettingsSectionId(value: string | undefined): value is SettingsSectio
     value === "model-management" ||
     value === "server-connection" ||
     value === "remote-access" ||
-    value === "skills" ||
     value === "security-privacy" ||
     value === "software-update"
   );
@@ -548,17 +545,6 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
         </section>
 
         <section className="settings-section">
-          <h2 className="settings-section-title">{t("settings.skills")}</h2>
-          <div className="settings-card">
-            <div className="settings-row">
-              <div className="settings-row-control settings-row-control-stretch">
-                <SkillManagementPanel />
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section className="settings-section">
           <h2 className="settings-section-title">{t("settings.securityPrivacy")}</h2>
           <div className="settings-card">
             <div className="settings-row">
@@ -794,13 +780,6 @@ function MobileSettingsPage({ model, appVersion }: { model: SettingsPageModel; a
       icon: <RemoteAccessSectionIcon />
     },
     {
-      id: "skills",
-      title: t("settings.skills"),
-      description: t("settings.skillsSectionSummary"),
-      value: t("settings.skillsNavValue"),
-      icon: <SkillsSectionIcon />
-    },
-    {
       id: "security-privacy",
       title: t("settings.securityPrivacy"),
       description: t("settings.securityPrivacySectionSummary"),
@@ -866,7 +845,6 @@ function MobileSettingsPage({ model, appVersion }: { model: SettingsPageModel; a
           ? <MobileServerConnectionSection model={model} />
           : null}
         {activeSection === "remote-access" ? <MobileRemoteAccessSection /> : null}
-        {activeSection === "skills" ? <MobileSkillManagementSection /> : null}
         {activeSection === "security-privacy" ? <MobileSecurityPrivacySection model={model} /> : null}
         {activeSection === "software-update" ? <MobileSoftwareUpdateSection model={model} /> : null}
       </div>
@@ -1276,17 +1254,6 @@ function MobileModelManagementSection() {
   );
 }
 
-function MobileSkillManagementSection() {
-  return (
-    <section className="settings-mobile-group-section">
-      <h2 className="settings-mobile-group-title">{t("settings.skills")}</h2>
-      <div className="settings-mobile-panel-shell settings-mobile-skill-shell">
-        <SkillManagementPanel />
-      </div>
-    </section>
-  );
-}
-
 function MobileSoftwareUpdateSection({ model }: { model: SettingsPageModel }) {
   return (
     <>
@@ -1429,16 +1396,6 @@ function RemoteAccessSectionIcon() {
       <path d="M10 4.2c1.5 1.3 2.4 3.5 2.4 5.8s-.9 4.5-2.4 5.8c-1.5-1.3-2.4-3.5-2.4-5.8s.9-4.5 2.4-5.8Z" />
       <path d="M4.6 8.1h10.8" />
       <path d="M4.6 11.9h10.8" />
-    </svg>
-  );
-}
-
-function SkillsSectionIcon() {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
-      <rect x="3.5" y="4" width="13" height="12" rx="2.5" />
-      <path d="M6 7h8M6 10h8M6 13h4" strokeLinecap="round" />
-      <path d="m12.7 13.2 1.4 1.4 2.6-2.8" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

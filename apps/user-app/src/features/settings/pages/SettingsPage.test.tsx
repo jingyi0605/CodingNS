@@ -96,7 +96,7 @@ describe("SettingsPage", () => {
     expect(screen.getByText(t("settings.remoteAccess"))).toBeInTheDocument();
     expect(screen.queryByText(t("settings.skillManagerTitle"))).not.toBeInTheDocument();
     expect(screen.queryByText(t("settings.skillManagerDescription"))).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: t("settings.skillManageAction") })).toBeInTheDocument();
+    expect(screen.queryByText(t("settings.skills"))).not.toBeInTheDocument();
     expect(screen.getByTestId("model-management-panel")).toBeInTheDocument();
     expect(screen.getByTestId("tailscale-panel")).toBeInTheDocument();
     expect(screen.queryByText(t("settings.tailscaleSectionTitle"))).not.toBeInTheDocument();
@@ -184,41 +184,11 @@ describe("SettingsPage", () => {
     expect(screen.queryByText(t("settings.modelManagementSectionSummary"))).not.toBeInTheDocument();
   });
 
-  it("移动布局提供 Skills 分类并能进入 Skill 管理页", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = (init?.method ?? "GET").toUpperCase();
-
-      if (url.endsWith("/api/skills/overview") && method === "GET") {
-        return createJsonResponse(createSkillOverviewResponse());
-      }
-
-      throw new Error(`Unexpected request: ${method} ${url}`);
-    });
-
-    global.fetch = fetchMock as typeof fetch;
-    authStore.hydrate(createAuthSession());
+  it("移动布局不再提供 Skills 分类", () => {
     setViewportWidth(390);
     renderSettingsPage();
 
-    await userEvent.click(screen.getByRole("button", { name: new RegExp(t("settings.skills")) }));
-
-    expect(await screen.findByRole("button", { name: t("settings.skillManageAction") })).toBeInTheDocument();
-    expect(screen.queryByText(t("settings.skillsSectionSummary"))).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: t("settings.skillManageAction") }));
-
-    const dialog = await screen.findByRole("dialog", { name: t("settings.skillConfigModalTitle") });
-
-    expect(dialog).toBeInTheDocument();
-    expect(
-      within(dialog).getByRole("heading", {
-        level: 3,
-        name: t("settings.skillAssistantRuntimeListTitle")
-      })
-    ).toBeInTheDocument();
-    expect(within(dialog).getByText("codingns-assistant")).toBeInTheDocument();
-    expect(within(dialog).getAllByText(t("settings.skillTagAssistantOnly")).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: new RegExp(t("settings.skills")) })).not.toBeInTheDocument();
   });
 
   it("iOS 客户端使用移动布局时仍然允许修改服务器地址", async () => {
@@ -729,7 +699,7 @@ describe("SettingsPage", () => {
     renderSettingsPage();
 
     expect(screen.getByText(t("settings.advancedSettings"))).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(0);
 
     await userEvent.click(screen.getByRole("button", { name: t("settings.parallelTaskDebugAction") }));
 
