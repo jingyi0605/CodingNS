@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ToastProvider } from "../../../shared/toast";
@@ -151,14 +152,23 @@ function renderPanel(
     externalWindowMode?: boolean;
   }
 ) {
+  function LocationProbe() {
+    const location = useLocation();
+
+    return <div data-testid="location-probe">{`${location.pathname}${location.search}`}</div>;
+  }
+
   return render(
-    <ToastProvider>
-      <TerminalManagerPanel
-        currentWorkspaceId={currentWorkspaceId}
-        navigationGroups={navigationGroups}
-        externalWindowMode={options?.externalWindowMode}
-      />
-    </ToastProvider>
+    <MemoryRouter initialEntries={["/workspaces/workspace-1/tools/processes"]}>
+      <ToastProvider>
+        <TerminalManagerPanel
+          currentWorkspaceId={currentWorkspaceId}
+          navigationGroups={navigationGroups}
+          externalWindowMode={options?.externalWindowMode}
+        />
+        <LocationProbe />
+      </ToastProvider>
+    </MemoryRouter>
   );
 }
 
@@ -374,6 +384,30 @@ describe("TerminalManagerPanel", () => {
     expect(
       await screen.findByText("先选中一条会话，进程管理才能绑定对应的工作区。")
     ).toBeInTheDocument();
+  });
+
+  it("可以从启动项管理头部跳到当前工作区的调试页", async () => {
+    buildMockSnapshot = () => ({
+      workspaceId: "workspace-1",
+      terminals: [],
+      templates: [],
+      templateStatuses: [],
+      shellOptions: [
+        {
+          id: "powershell",
+          label: "PowerShell",
+          shell: "powershell.exe",
+          available: true,
+          unavailableReason: null
+        }
+      ]
+    });
+
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole("button", { name: "调试服务" }));
+
+    expect(screen.getByTestId("location-probe")).toHaveTextContent("/workspaces/workspace-1/debug");
   });
 
   it("详情层支持编辑和移除快捷启动项", async () => {

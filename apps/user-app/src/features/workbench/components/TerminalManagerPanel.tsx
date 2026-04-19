@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { DesktopModal } from "../../../components/DesktopModal";
 import { ModalActions } from "../../../components/ModalAtoms";
@@ -29,6 +30,7 @@ import {
 } from "../../terminal/runtime/terminal-runtime-meta";
 import { isTmuxDependencyMissingError } from "../../terminal/runtime/terminal-runtime-errors";
 import { TerminalRuntimeFallbackModal } from "../../terminal/components/TerminalRuntimeFallbackModal";
+import { buildWorkspaceDebugPath } from "../utils/workbench-navigation";
 import {
   type WorkspaceSessionGroup,
   useWorkbenchShell
@@ -503,6 +505,7 @@ export function TerminalManagerPanel({
   externalWindowMode = false,
   workbenchShellOverrides
 }: TerminalManagerPanelProps) {
+  const navigate = useNavigate();
   const platform = usePlatform();
   const workbenchShell = useWorkbenchShell();
   const {
@@ -1029,6 +1032,18 @@ export function TerminalManagerPanel({
         </div>
 
         <div className="terminal-manager-toolbar terminal-manager-toolbar-header">
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={!activeWorkspaceId}
+            onClick={() => {
+              if (activeWorkspaceId) {
+                navigate(buildWorkspaceDebugPath(activeWorkspaceId));
+              }
+            }}
+          >
+            {t("terminalManager.openWorkspaceDebugAction")}
+          </button>
           <button
             className="ghost-button"
             type="button"
