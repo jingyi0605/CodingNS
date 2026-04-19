@@ -60,7 +60,7 @@ export class SkillController {
 function isMarkdownSkillInput(
   input: AddManagedSkillInput | AddManagedSkillFromMarkdownInput | undefined
 ): input is AddManagedSkillFromMarkdownInput {
-  return typeof input?.markdownContent === "string";
+  return Boolean(input && "markdownContent" in input && typeof input.markdownContent === "string");
 }
 
 function normalizeTargetCliQuery(query: SkillOverviewQuery | undefined): ScanSkillsOptions {
