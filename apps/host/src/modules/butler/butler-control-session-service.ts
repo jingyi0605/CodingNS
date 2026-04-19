@@ -62,7 +62,10 @@ export class ButlerControlSessionService {
     >,
     private readonly butlerContextAggregator: Pick<ButlerContextAggregator, "resolvePromptContext">,
     private readonly butlerAuthService: Pick<ButlerAuthService, "ensureWorkspaceCredential" | "getCredentialFilePath">,
-    private readonly skillManagerService: Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">,
+    private readonly skillManagerService: Pick<
+      SkillManagerService,
+      "getOverview" | "importUnmanagedSkill" | "listAssistantRuntimeSkillSources"
+    >,
     private readonly codexHomeDir: string | null = null,
     private readonly sourceCodexHomeDir: string | null = null,
     private readonly claudeCodeHomeDir: string | null = null,

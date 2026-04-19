@@ -16,11 +16,13 @@ import type {
   ButlerWorkspaceCredential
 } from "./butler-auth-service.js";
 import { resolveBuiltinSkillDirectory } from "../skills/builtin-skill-service.js";
+import type { SkillManagerService } from "../skills/skill-manager-service.js";
 
 const BUTLER_SHARED_RULES_FILE_NAME = "BUTLER_RULES.md";
 const BUTLER_AGENTS_FILE_NAME = "AGENTS.md";
 const BUTLER_CLAUDE_FILE_NAME = "CLAUDE.md";
 const BUTLER_ASSISTANT_SKILL_DIRECTORY = "codingns-assistant";
+const BUTLER_ASSISTANT_SKILL_MANIFEST = ".codingns-assistant-skills.json";
 
 export function syncButlerWorkspaceContext(input: {
   profile: ButlerProfile;
@@ -28,7 +30,7 @@ export function syncButlerWorkspaceContext(input: {
   userId: string;
   workspacePath?: string | null;
   butlerAuthService: Pick<ButlerAuthService, "ensureWorkspaceCredential" | "getCredentialFilePath">;
-  skillManagerService?: unknown;
+  skillManagerService?: Pick<SkillManagerService, "listAssistantRuntimeSkillSources">;
   codexHomeDir: string | null;
   sourceCodexHomeDir: string | null;
   claudeCodeHomeDir: string | null;
@@ -46,11 +48,13 @@ export function syncButlerWorkspaceContext(input: {
     input.profile,
     workspacePath,
     input.codexHomeDir,
-    input.sourceCodexHomeDir
+    input.sourceCodexHomeDir,
+    input.skillManagerService
   );
   syncClaudeInstructionConfig(
     input.claudeCodeHomeDir,
-    input.sourceClaudeCodeHomeDir
+    input.sourceClaudeCodeHomeDir,
+    input.skillManagerService
   );
 }
 
@@ -85,7 +89,8 @@ function syncCodexInstructionConfig(
   profile: ButlerProfile,
   workspacePath: string,
   codexHomeDir: string | null,
-  sourceCodexHomeDir: string | null
+  sourceCodexHomeDir: string | null,
+  skillManagerService?: Pick<SkillManagerService, "listAssistantRuntimeSkillSources">
 ): void {
   if (profile.providerId !== "codex" || !codexHomeDir?.trim()) {
     return;
@@ -109,13 +114,14 @@ function syncCodexInstructionConfig(
     path.join(sourceHomeDir, "auth.json"),
     path.join(targetHomeDir, "auth.json")
   );
-  syncButlerRuntimeSkill(path.join(targetHomeDir, "skills", "codingns-assistant"));
+  syncButlerRuntimeSkills(path.join(targetHomeDir, "skills"), "codex", skillManagerService);
   writeFileIfChanged(path.join(targetHomeDir, "config.toml"), `${configContent}\n`);
 }
 
 function syncClaudeInstructionConfig(
   claudeCodeHomeDir: string | null,
-  sourceClaudeCodeHomeDir: string | null
+  sourceClaudeCodeHomeDir: string | null,
+  skillManagerService?: Pick<SkillManagerService, "listAssistantRuntimeSkillSources">
 ): void {
   if (!claudeCodeHomeDir?.trim()) {
     return;
@@ -145,19 +151,74 @@ function syncClaudeInstructionConfig(
     path.join(sourceHomeDir, "skills"),
     path.join(targetHomeDir, "skills")
   );
-  syncButlerRuntimeSkill(path.join(targetHomeDir, "skills", "codingns-assistant"));
+  syncButlerRuntimeSkills(path.join(targetHomeDir, "skills"), "claude-code", skillManagerService);
   removeFileIfExists(path.join(targetHomeDir, "managed-settings.json"));
   removeFileIfExists(path.join(targetHomeDir, "CLAUDE.md"));
   removeFileIfExists(path.join(targetHomeDir, "AGENTS.md"));
   removeFileIfExists(path.join(targetHomeDir, "BUTLER_RULES.md"));
 }
 
-function syncButlerRuntimeSkill(targetSkillPath: string): void {
+function syncButlerRuntimeSkills(
+  targetSkillsDir: string,
+  targetCli: "codex" | "claude-code",
+  skillManagerService?: Pick<SkillManagerService, "listAssistantRuntimeSkillSources">
+): void {
+  fs.mkdirSync(targetSkillsDir, { recursive: true });
+  const manifestPath = path.join(targetSkillsDir, BUTLER_ASSISTANT_SKILL_MANIFEST);
+  const previousDirectories = readAssistantSkillManifest(manifestPath);
+  const sources = resolveAssistantRuntimeSkillSources(targetCli, skillManagerService);
+  const currentDirectories = new Set(sources.map((item) => item.directoryName));
+
+  for (const directoryName of previousDirectories) {
+    if (!currentDirectories.has(directoryName)) {
+      fs.rmSync(path.join(targetSkillsDir, directoryName), { recursive: true, force: true });
+    }
+  }
+
+  for (const item of sources) {
+    syncOptionalDirectory(item.sourcePath, path.join(targetSkillsDir, item.directoryName));
+  }
+
+  writeFileIfChanged(manifestPath, JSON.stringify([...currentDirectories].sort(), null, 2));
+}
+
+function resolveAssistantRuntimeSkillSources(
+  targetCli: "codex" | "claude-code",
+  skillManagerService?: Pick<SkillManagerService, "listAssistantRuntimeSkillSources">
+): Array<{ directoryName: string; sourcePath: string }> {
+  if (skillManagerService) {
+    return skillManagerService
+      .listAssistantRuntimeSkillSources([targetCli])
+      .map((item) => ({
+        directoryName: item.directoryName,
+        sourcePath: item.sourcePath
+      }));
+  }
+
   try {
-    const sourceSkillPath = resolveBuiltinSkillDirectory(BUTLER_ASSISTANT_SKILL_DIRECTORY);
-    syncOptionalDirectory(sourceSkillPath, targetSkillPath);
+    return [
+      {
+        directoryName: BUTLER_ASSISTANT_SKILL_DIRECTORY,
+        sourcePath: resolveBuiltinSkillDirectory(BUTLER_ASSISTANT_SKILL_DIRECTORY)
+      }
+    ];
   } catch {
-    fs.rmSync(targetSkillPath, { recursive: true, force: true });
+    return [];
+  }
+}
+
+function readAssistantSkillManifest(manifestPath: string): string[] {
+  if (!fs.existsSync(manifestPath) || !fs.statSync(manifestPath).isFile()) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : [];
+  } catch {
+    return [];
   }
 }
 

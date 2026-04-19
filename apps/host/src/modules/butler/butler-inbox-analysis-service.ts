@@ -45,7 +45,10 @@ export class ButlerInboxAnalysisService {
     private readonly workspaceService: Pick<WorkspaceService, "importWorkspace">,
     private readonly butlerContextAggregator: Pick<ButlerContextAggregator, "resolvePromptContext">,
     private readonly butlerAuthService: Pick<ButlerAuthService, "ensureWorkspaceCredential" | "getCredentialFilePath">,
-    private readonly skillManagerService: Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">,
+    private readonly skillManagerService: Pick<
+      SkillManagerService,
+      "getOverview" | "importUnmanagedSkill" | "listAssistantRuntimeSkillSources"
+    >,
     private readonly sessionHistoryService: Pick<SessionHistoryService, "readRecentHistoryEnvelope">
       & Partial<Pick<SessionHistoryService, "getSession">>,
     private readonly sessionLiveRuntimeService: Pick<SessionLiveRuntimeService, "getSessionRuntime">,
