@@ -16,6 +16,7 @@ import { usePlatform } from "../../../platform/platform-provider";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
+import { ModalList, ModalListItem } from "../../../components/ModalAtoms";
 import { ComposerPanel } from "../../conversation/components/ComposerPanel";
 import { FileContextPanel } from "../../conversation/components/FileContextPanel";
 import { MessageTimeline } from "../../conversation/components/MessageTimeline";
@@ -2775,22 +2776,24 @@ function ButlerControlHistoryPanel(props: {
           {isSearching ? t("shell.butlerHistorySearchEmpty") : t("shell.butlerHistoryEmpty")}
         </p>
       ) : (
-        <div className="butler-session-history-list" role="list">
+        <div className="butler-session-history-list">
           {activeSessions.length > 0 ? (
             <div className="butler-session-history-section">
               <div className="butler-session-history-divider">
                 <span>{t("shell.butlerHistoryActiveSection")}</span>
               </div>
-              {activeSessions.map((item) => (
-                <ButlerControlHistoryRow
-                  key={item.session.id}
-                  session={item.session}
-                  title={item.title}
-                  preview={item.preview}
-                  selected={item.session.id === props.activeControlSessionId}
-                  onSelectSession={props.onSelectSession}
-                />
-              ))}
+              <ModalList compact className="butler-session-history-section-list" role="list">
+                {activeSessions.map((item) => (
+                  <ButlerControlHistoryRow
+                    key={item.session.id}
+                    session={item.session}
+                    title={item.title}
+                    preview={item.preview}
+                    selected={item.session.id === props.activeControlSessionId}
+                    onSelectSession={props.onSelectSession}
+                  />
+                ))}
+              </ModalList>
             </div>
           ) : null}
           {inactiveSessions.length > 0 ? (
@@ -2798,16 +2801,18 @@ function ButlerControlHistoryPanel(props: {
               <div className="butler-session-history-divider" data-muted={activeSessions.length > 0}>
                 <span>{t("shell.butlerHistoryInactiveSection")}</span>
               </div>
-              {inactiveSessions.map((item) => (
-                <ButlerControlHistoryRow
-                  key={item.session.id}
-                  session={item.session}
-                  title={item.title}
-                  preview={item.preview}
-                  selected={item.session.id === props.activeControlSessionId}
-                  onSelectSession={props.onSelectSession}
-                />
-              ))}
+              <ModalList compact className="butler-session-history-section-list" role="list">
+                {inactiveSessions.map((item) => (
+                  <ButlerControlHistoryRow
+                    key={item.session.id}
+                    session={item.session}
+                    title={item.title}
+                    preview={item.preview}
+                    selected={item.session.id === props.activeControlSessionId}
+                    onSelectSession={props.onSelectSession}
+                  />
+                ))}
+              </ModalList>
             </div>
           ) : null}
         </div>
@@ -2824,22 +2829,34 @@ function ButlerControlHistoryRow(props: {
   onSelectSession: (session: ButlerControlSessionDto) => Promise<void>;
 }) {
   return (
-    <button
-      type="button"
+    <ModalListItem
+      as="button"
       role="listitem"
       className="butler-session-history-item"
-      data-selected={props.selected ? "true" : "false"}
+      selected={props.selected}
+      label={(
+        <span className="butler-session-history-item-title" title={props.title}>
+          {props.title}
+        </span>
+      )}
+      description={(
+        <span className="butler-session-history-item-preview" title={props.preview}>
+          {props.preview}
+        </span>
+      )}
+      trailing={(
+        <time
+          className="butler-session-history-item-time"
+          dateTime={props.session.updatedAt}
+        >
+          {formatTimestamp(props.session.updatedAt)}
+        </time>
+      )}
       aria-current={props.selected ? "true" : undefined}
       onClick={() => {
         void props.onSelectSession(props.session);
       }}
-    >
-      <span className="butler-session-history-item-header">
-        <strong title={props.title}>{props.title}</strong>
-        <time dateTime={props.session.updatedAt}>{formatTimestamp(props.session.updatedAt)}</time>
-      </span>
-      <p title={props.preview}>{props.preview}</p>
-    </button>
+    />
   );
 }
 
@@ -5632,12 +5649,18 @@ function ButlerPlusIcon() {
 
 function ButlerHistoryIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M12 8v5l3 2" />
-      <path d="M5 3v4" />
-      <path d="M19 3v4" />
-      <path d="M4 7h16" />
-      <rect x="3" y="5" width="18" height="16" rx="2" />
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="8.25" />
+      <path d="M12 8.4v4.1l2.75 1.9" />
     </svg>
   );
 }

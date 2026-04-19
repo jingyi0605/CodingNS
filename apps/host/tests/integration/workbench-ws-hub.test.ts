@@ -43,6 +43,7 @@ describe("WorkbenchWsHub", () => {
     } as unknown as WebSocket;
     const authContext: AuthContext = {
       accessToken: "token",
+      callerKind: "interactive_user",
       user: {
         userId: "user-1",
         username: "admin",
@@ -111,6 +112,7 @@ describe("WorkbenchWsHub", () => {
     } as unknown as WebSocket;
     const authContext: AuthContext = {
       accessToken: "token",
+      callerKind: "interactive_user",
       user: {
         userId: "user-1",
         username: "admin",
@@ -191,6 +193,7 @@ describe("WorkbenchWsHub", () => {
     } as unknown as WebSocket;
     const authContext: AuthContext = {
       accessToken: "token",
+      callerKind: "interactive_user",
       user: {
         userId: "user-1",
         username: "admin",
@@ -280,6 +283,7 @@ describe("WorkbenchWsHub", () => {
     } as unknown as WebSocket;
     const authContext: AuthContext = {
       accessToken: "token",
+      callerKind: "interactive_user",
       user: {
         userId: "user-1",
         username: "admin",
@@ -382,6 +386,7 @@ describe("WorkbenchWsHub", () => {
     } as unknown as WebSocket;
     const authContext: AuthContext = {
       accessToken: "token",
+      callerKind: "interactive_user",
       user: {
         userId: "user-1",
         username: "admin",
@@ -460,6 +465,7 @@ describe("WorkbenchWsHub", () => {
     } as unknown as WebSocket;
     const authContext: AuthContext = {
       accessToken: "token",
+      callerKind: "interactive_user",
       user: {
         userId: "user-1",
         username: "admin",
@@ -544,6 +550,7 @@ describe("WorkbenchWsHub", () => {
     } as unknown as WebSocket;
     const authContext: AuthContext = {
       accessToken: "token",
+      callerKind: "interactive_user",
       user: {
         userId: "user-1",
         username: "admin",
@@ -664,6 +671,7 @@ describe("WorkbenchWsHub", () => {
     } as unknown as WebSocket;
     const authContext: AuthContext = {
       accessToken: "token",
+      callerKind: "interactive_user",
       user: {
         userId: "user-1",
         username: "admin",
@@ -712,6 +720,7 @@ describe("WorkbenchWsHub", () => {
     } as unknown as WebSocket;
     const authContext: AuthContext = {
       accessToken: "token",
+      callerKind: "interactive_user",
       user: {
         userId: "user-1",
         username: "admin",
@@ -766,6 +775,7 @@ describe("WorkbenchWsHub", () => {
   it("workbench.refresh 只刷新工作台快照，不再顺带触发标题同步", async () => {
     const authContext: AuthContext = {
       accessToken: "token",
+      callerKind: "interactive_user",
       user: {
         userId: "user-1",
         username: "admin",
@@ -813,6 +823,7 @@ describe("WorkbenchWsHub", () => {
     } as unknown as WebSocket;
     const authContext: AuthContext = {
       accessToken: "token",
+      callerKind: "interactive_user",
       user: {
         userId: "user-1",
         username: "admin",
@@ -896,6 +907,7 @@ describe("WorkbenchWsHub", () => {
     } as unknown as WebSocket;
     const authContext: AuthContext = {
       accessToken: "token",
+      callerKind: "interactive_user",
       user: {
         userId: "user-1",
         username: "admin",
