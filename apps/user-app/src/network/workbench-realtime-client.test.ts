@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { getHostBaseUrl, getHostWebSocketUrl } from "../config/env";
 import { authStore, type AuthSession } from "../features/auth/store/auth-store";
+import { setHostTransportResolverForTesting } from "./host-transport-registry";
 import { WorkbenchRealtimeClient } from "./workbench-realtime-client";
 
 const session: AuthSession = {
@@ -64,6 +66,7 @@ describe("WorkbenchRealtimeClient", () => {
   afterEach(() => {
     authStore.clear();
     global.WebSocket = originalWebSocket;
+    setHostTransportResolverForTesting(null);
     vi.restoreAllMocks();
   });
 
@@ -155,6 +158,39 @@ describe("WorkbenchRealtimeClient", () => {
       expect(refreshSpy).toHaveBeenCalledTimes(1);
     });
     expect(onUnauthorized).not.toHaveBeenCalled();
+
+    client.close();
+  });
+
+  it("可以通过自定义 Host transport 建立工作台实时连接", () => {
+    const expectedBaseUrl = getHostBaseUrl();
+    const transportSocket = new MockWebSocket("transport://workbench");
+    const createWebSocket = vi.fn(() => transportSocket);
+    setHostTransportResolverForTesting(() => ({
+      fetch: vi.fn(),
+      createWebSocket
+    }));
+
+    const client = new WorkbenchRealtimeClient({
+      onConnectionChange: () => undefined,
+      onSnapshot: () => undefined,
+      onUnauthorized: () => undefined
+    });
+
+    client.start();
+
+    expect(createWebSocket).toHaveBeenCalledTimes(1);
+    expect(createWebSocket).toHaveBeenCalledWith({
+      path: "/ws",
+      baseUrl: expectedBaseUrl,
+      url: `${getHostWebSocketUrl("/ws", expectedBaseUrl)}?access_token=access-token`
+    });
+
+    transportSocket.open();
+
+    expect(transportSocket.sentPayloads.map((payload) => JSON.parse(payload))).toEqual([
+      { type: "workbench.subscribe" }
+    ]);
 
     client.close();
   });

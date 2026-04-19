@@ -1,6 +1,8 @@
-import { getHostWebSocketUrl } from "../config/env";
+import { getHostBaseUrl, getHostWebSocketUrl } from "../config/env";
 import { authStore } from "../features/auth/store/auth-store";
 import { ConnectionManager } from "./connection-manager";
+import type { HostTransportSocket } from "./host-transport";
+import { resolveHostTransport } from "./host-transport-registry";
 
 import type {
   WorkbenchSnapshotDto,
@@ -101,7 +103,7 @@ export interface WorkbenchRealtimeClientOptions {
 }
 
 export class WorkbenchRealtimeClient {
-  private socket: WebSocket | null = null;
+  private socket: HostTransportSocket | null = null;
   private disposed = false;
   private authRecoveryInFlight = false;
   private pendingRefresh = false;
@@ -297,8 +299,13 @@ export class WorkbenchRealtimeClient {
       return;
     }
 
-    const socketUrl = `${getHostWebSocketUrl("/ws")}?access_token=${encodeURIComponent(accessToken)}`;
-    const socket = new WebSocket(socketUrl);
+    const baseUrl = getHostBaseUrl();
+    const socketUrl = `${getHostWebSocketUrl("/ws", baseUrl)}?access_token=${encodeURIComponent(accessToken)}`;
+    const socket = resolveHostTransport(baseUrl).createWebSocket({
+      path: "/ws",
+      baseUrl,
+      url: socketUrl
+    });
 
     this.socket = socket;
 
@@ -367,7 +374,11 @@ export class WorkbenchRealtimeClient {
     });
 
     socket.addEventListener("message", (raw) => {
-      const payload = JSON.parse(raw.data as string) as IncomingEvent;
+      if (!(raw instanceof MessageEvent) || typeof raw.data !== "string") {
+        return;
+      }
+
+      const payload = JSON.parse(raw.data) as IncomingEvent;
 
       if (payload.type === "system.connected") {
         this.connectionManager.markConnected();
@@ -471,9 +482,8 @@ export class WorkbenchRealtimeClient {
   }
 }
 
-function isSocketOpen(socket: WebSocket | null): socket is WebSocket {
-  const openState = typeof WebSocket.OPEN === "number" ? WebSocket.OPEN : 1;
-  return socket !== null && socket.readyState === openState;
+function isSocketOpen(socket: HostTransportSocket | null): socket is HostTransportSocket {
+  return socket !== null && socket.readyState === 1;
 }
 
 function isWorkbenchSnapshot(payload: unknown): payload is WorkbenchSnapshotDto {

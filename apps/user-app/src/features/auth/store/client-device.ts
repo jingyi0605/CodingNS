@@ -1,8 +1,8 @@
 import { resolveRuntimePlatform } from "../../../platform/platform-adapter";
 
 const CLIENT_INSTANCE_STORAGE_KEY = "codingns.auth.client-instance-id";
-const CLIENT_TYPE_HEADER = "x-codingns-client-type";
-const CLIENT_INSTANCE_ID_HEADER = "x-codingns-client-instance-id";
+export const CLIENT_TYPE_HEADER = "x-codingns-client-type";
+export const CLIENT_INSTANCE_ID_HEADER = "x-codingns-client-instance-id";
 
 let inMemoryClientInstanceId: string | null = null;
 

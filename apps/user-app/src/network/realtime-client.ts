@@ -1,4 +1,4 @@
-import { getHostWebSocketUrl } from "../config/env";
+import { getHostBaseUrl, getHostWebSocketUrl } from "../config/env";
 import { authStore } from "../features/auth/store/auth-store";
 import type {
   ProviderId,
@@ -8,6 +8,8 @@ import type {
   SessionPermissionRequestDto
 } from "../features/conversation/api/conversation-api";
 import { ConnectionManager } from "./connection-manager";
+import type { HostTransportSocket } from "./host-transport";
+import { resolveHostTransport } from "./host-transport-registry";
 
 type RuntimeConnectionState = "connected" | "reconnecting" | "reconnect_failed" | "closed";
 
@@ -162,7 +164,7 @@ export interface RealtimeClientOptions {
 }
 
 export class RealtimeClient {
-  private socket: WebSocket | null = null;
+  private socket: HostTransportSocket | null = null;
   private disposed = false;
   private authRecoveryInFlight = false;
   private latestCursor: string | null;
@@ -194,7 +196,7 @@ export class RealtimeClient {
   }
 
   requestOlderMessages(cursor: string | null, limit: number): boolean {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+    if (!isSocketOpen(this.socket)) {
       return false;
     }
 
@@ -234,8 +236,13 @@ export class RealtimeClient {
       return;
     }
 
-    const socketUrl = `${getHostWebSocketUrl("/ws")}?access_token=${encodeURIComponent(accessToken)}`;
-    const socket = new WebSocket(socketUrl);
+    const baseUrl = getHostBaseUrl();
+    const socketUrl = `${getHostWebSocketUrl("/ws", baseUrl)}?access_token=${encodeURIComponent(accessToken)}`;
+    const socket = resolveHostTransport(baseUrl).createWebSocket({
+      path: "/ws",
+      baseUrl,
+      url: socketUrl
+    });
 
     this.subscribed = false;
     this.socket = socket;
@@ -252,7 +259,11 @@ export class RealtimeClient {
     });
 
     socket.addEventListener("message", (raw) => {
-      const payload = JSON.parse(raw.data as string) as IncomingEvent | { type: "system.connected" };
+      if (!(raw instanceof MessageEvent) || typeof raw.data !== "string") {
+        return;
+      }
+
+      const payload = JSON.parse(raw.data) as IncomingEvent | { type: "system.connected" };
 
       if (payload.type === "system.connected") {
         this.connectionManager.markConnected();
@@ -410,4 +421,8 @@ export class RealtimeClient {
     this.pendingOlderRequest = this.inFlightOlderRequest;
     this.inFlightOlderRequest = null;
   }
+}
+
+function isSocketOpen(socket: HostTransportSocket | null): socket is HostTransportSocket {
+  return socket !== null && socket.readyState === 1;
 }

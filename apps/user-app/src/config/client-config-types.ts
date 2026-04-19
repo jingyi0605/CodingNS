@@ -22,9 +22,17 @@ export interface HostProfileBase {
   lastConnectedAt: string | null;
   lastUserId: string | null;
   lastUsername: string | null;
+  relayTunnel?: HostRelayTunnelProfile | null;
 }
 
 export interface HostProfile extends HostProfileBase {}
+
+export interface HostRelayTunnelProfile {
+  provider: "codingns_relay";
+  enabled: boolean;
+  tunnelDomain: string;
+  controlBaseUrl: string;
+}
 
 export interface DesktopLocalHostProcessHit {
   pid: number;
@@ -245,6 +253,21 @@ export function getRuntimeHostById(
   return (
     config.hosts.find((host) => host.id === hostId)
     ?? config.discoveredHosts?.find((host) => host.id === hostId)
+    ?? null
+  );
+}
+
+export function getRuntimeHostByBaseUrl(
+  config: Pick<ClientRuntimeConfig, "hosts"> & Partial<Pick<ClientRuntimeConfig, "discoveredHosts">>,
+  baseUrl: string | null | undefined
+): RuntimeHostProfile | null {
+  if (!baseUrl) {
+    return null;
+  }
+
+  return (
+    config.hosts.find((host) => host.baseUrl === baseUrl)
+    ?? config.discoveredHosts?.find((host) => host.baseUrl === baseUrl)
     ?? null
   );
 }

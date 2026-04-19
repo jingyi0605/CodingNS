@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { authStore, type AuthSession } from "../features/auth/store/auth-store";
 import { ApiError } from "../shared/network/api-error";
-import { httpClient } from "./http-client";
+import { getHostBaseUrl, getHostRequestUrl } from "../config/env";
+import type { HostTransport } from "./host-transport";
+import { setHostTransportResolverForTesting } from "./host-transport-registry";
+import { httpClient, resetLegacyCorsCompatibilityHostsForTesting } from "./http-client";
 
 const session: AuthSession = {
   accessToken: "access-token",
@@ -23,6 +26,8 @@ describe("httpClient", () => {
 
   afterEach(() => {
     authStore.clear();
+    setHostTransportResolverForTesting(null);
+    resetLegacyCorsCompatibilityHostsForTesting();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -220,5 +225,112 @@ describe("httpClient", () => {
 
     expect(authStore.getState().status).toBe("anonymous");
     expect(authStore.getState().session).toBeNull();
+  });
+
+  it("可以改用自定义 Host transport 发送请求", async () => {
+    const expectedBaseUrl = getHostBaseUrl();
+    const transportFetch = vi.fn<HostTransport["fetch"]>().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      })
+    );
+
+    setHostTransportResolverForTesting(() => ({
+      fetch: transportFetch,
+      createWebSocket: vi.fn()
+    }));
+
+    await expect(httpClient.request<{ ok: boolean }>("/api/demo")).resolves.toEqual({
+      ok: true
+    });
+
+    expect(transportFetch).toHaveBeenCalledTimes(1);
+    expect(transportFetch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: "/api/demo",
+        baseUrl: expectedBaseUrl,
+        url: getHostRequestUrl("/api/demo", expectedBaseUrl)
+      })
+    );
+  });
+
+  it("旧 Host 因额外客户端头触发预检失败时，会自动去掉 X-CodingNS 头重试", async () => {
+    const fetchMock = vi.mocked(fetch);
+
+    fetchMock
+      .mockRejectedValueOnce(new TypeError("Load failed"))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        })
+      );
+
+    await expect(
+      httpClient.request<{ ok: boolean }>("/api/demo", {
+        headers: {
+          "X-CodingNS-Assistant-Source": "butler-ui"
+        }
+      })
+    ).resolves.toEqual({ ok: true });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const firstHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    const secondHeaders = new Headers(fetchMock.mock.calls[1]?.[1]?.headers);
+
+    expect(firstHeaders.get("x-codingns-client-type")).toBe("web");
+    expect(firstHeaders.get("x-codingns-client-instance-id")).toBeTruthy();
+    expect(firstHeaders.get("x-codingns-assistant-source")).toBe("butler-ui");
+    expect(secondHeaders.has("x-codingns-client-type")).toBe(false);
+    expect(secondHeaders.has("x-codingns-client-instance-id")).toBe(false);
+    expect(secondHeaders.has("x-codingns-assistant-source")).toBe(false);
+    expect(secondHeaders.get("Authorization")).toBe("Bearer access-token");
+  });
+
+  it("探测到旧 Host 兼容模式后，后续请求会直接省略 X-CodingNS 头", async () => {
+    const fetchMock = vi.mocked(fetch);
+
+    fetchMock
+      .mockRejectedValueOnce(new TypeError("Load failed"))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        })
+      );
+
+    await httpClient.request<{ ok: boolean }>("/api/demo", {
+      headers: {
+        "X-CodingNS-Assistant-Source": "butler-ui"
+      }
+    });
+    await httpClient.request<{ ok: boolean }>("/api/demo-2", {
+      headers: {
+        "X-CodingNS-Assistant-Source": "butler-ui"
+      }
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    const cachedCompatibilityHeaders = new Headers(fetchMock.mock.calls[2]?.[1]?.headers);
+    expect(cachedCompatibilityHeaders.has("x-codingns-client-type")).toBe(false);
+    expect(cachedCompatibilityHeaders.has("x-codingns-client-instance-id")).toBe(false);
+    expect(cachedCompatibilityHeaders.has("x-codingns-assistant-source")).toBe(false);
   });
 });

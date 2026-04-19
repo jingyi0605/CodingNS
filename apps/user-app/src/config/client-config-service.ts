@@ -5,6 +5,7 @@ import {
   type ClientRuntimeConfigPatch,
   DEFAULT_HOST_PROFILE_ID,
   getActiveHost,
+  type HostRelayTunnelProfile,
   type HostProfile,
   type HostProfileKind,
   type LegacyClientRuntimeConfigSnapshot,
@@ -184,7 +185,8 @@ function createHostProfile(baseUrl: string, now: string, overrides: Partial<Host
     updatedAt: normalizeTimestamp(overrides.updatedAt, now),
     lastConnectedAt: normalizeString(overrides.lastConnectedAt) ?? null,
     lastUserId: normalizeString(overrides.lastUserId) ?? null,
-    lastUsername: normalizeString(overrides.lastUsername) ?? null
+    lastUsername: normalizeString(overrides.lastUsername) ?? null,
+    relayTunnel: normalizeRelayTunnelProfile(overrides.relayTunnel)
   };
 }
 
@@ -236,6 +238,38 @@ function normalizeHostProfiles(rawHosts: unknown, now: string): HostProfile[] {
 
 function isRuntimeConfigPatchInput(value: unknown): value is RuntimeConfigPatchInput {
   return typeof value === "object" && value !== null;
+}
+
+function normalizeRelayTunnelProfile(value: unknown): HostRelayTunnelProfile | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+
+  const provider = normalizeString((value as { provider?: unknown }).provider);
+  const enabled = (value as { enabled?: unknown }).enabled;
+  const tunnelDomain = normalizeString((value as { tunnelDomain?: unknown }).tunnelDomain);
+  const controlBaseUrl = normalizeString((value as { controlBaseUrl?: unknown }).controlBaseUrl);
+
+  if (provider !== "codingns_relay" || typeof enabled !== "boolean" || !tunnelDomain || !controlBaseUrl) {
+    return null;
+  }
+
+  try {
+    const normalizedControlBaseUrl = normalizeServerBaseUrl(controlBaseUrl);
+
+    if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(tunnelDomain)) {
+      return null;
+    }
+
+    return {
+      provider,
+      enabled,
+      tunnelDomain: tunnelDomain.trim().toLowerCase(),
+      controlBaseUrl: normalizedControlBaseUrl
+    };
+  } catch {
+    return null;
+  }
 }
 
 function replaceActiveHostBaseUrl(

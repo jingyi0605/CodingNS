@@ -2,11 +2,13 @@ import { getHostBaseUrl, getHostRequestUrl } from "../config/env";
 import { getAuthClientHeaders } from "../features/auth/store/client-device";
 import { ApiError, type ApiErrorPayload } from "../shared/network/api-error";
 import { authStore } from "../features/auth/store/auth-store";
+import { resolveHostTransport } from "./host-transport-registry";
 
 interface RequestOptions extends RequestInit {
   baseUrl?: string;
   skipAuth?: boolean;
   retryAfterRefresh?: boolean;
+  omitCompatibilityHeaders?: boolean;
 }
 
 class HttpClient {
@@ -34,15 +36,25 @@ class HttpClient {
   private async performRequest(path: string, options: RequestOptions): Promise<Response> {
     const headers = new Headers(options.headers);
     const hasRequestBody = options.body !== undefined && options.body !== null;
-    const requestUrl = getHostRequestUrl(path, options.baseUrl ?? getHostBaseUrl());
+    const baseUrl = options.baseUrl ?? getHostBaseUrl();
+    const requestUrl = getHostRequestUrl(path, baseUrl);
+    const transport = resolveHostTransport(baseUrl);
+    const shouldOmitCompatibilityHeaders =
+      options.omitCompatibilityHeaders || shouldUseLegacyCorsCompatibility(baseUrl);
+
+    if (shouldOmitCompatibilityHeaders) {
+      stripCompatibilityHeaders(headers);
+    }
 
     if (hasRequestBody && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
     }
 
-    for (const [headerName, headerValue] of Object.entries(getAuthClientHeaders())) {
-      if (!headers.has(headerName)) {
-        headers.set(headerName, headerValue);
+    if (!shouldOmitCompatibilityHeaders) {
+      for (const [headerName, headerValue] of Object.entries(getAuthClientHeaders())) {
+        if (!headers.has(headerName)) {
+          headers.set(headerName, headerValue);
+        }
       }
     }
 
@@ -63,11 +75,30 @@ class HttpClient {
     let response: Response;
 
     try {
-      response = await fetch(requestUrl, {
-        ...options,
-        headers
+      response = await transport.fetch({
+        path,
+        baseUrl,
+        url: requestUrl,
+        init: {
+          ...options,
+          headers
+        }
       });
     } catch (error) {
+      if (!shouldOmitCompatibilityHeaders) {
+        if (isLikelyCorsPreflightFailure(error)) {
+          const retryable = await this.performRequest(path, {
+            ...options,
+            omitCompatibilityHeaders: true
+          }).catch(() => null);
+
+          if (retryable) {
+            legacyCorsCompatibilityHosts.add(baseUrl);
+            return retryable;
+          }
+        }
+      }
+
       const detail = error instanceof Error ? error.message : "未知网络错误";
 
       throw new ApiError(0, {
@@ -121,6 +152,33 @@ class HttpClient {
 }
 
 export const httpClient = new HttpClient();
+
+const legacyCorsCompatibilityHosts = new Set<string>();
+
+function shouldUseLegacyCorsCompatibility(baseUrl: string): boolean {
+  return legacyCorsCompatibilityHosts.has(baseUrl);
+}
+
+function stripCompatibilityHeaders(headers: Headers): void {
+  for (const headerName of Array.from(headers.keys())) {
+    if (headerName.toLowerCase().startsWith("x-codingns-")) {
+      headers.delete(headerName);
+    }
+  }
+}
+
+function isLikelyCorsPreflightFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.trim().toLowerCase();
+  return message === "load failed" || message === "failed to fetch";
+}
+
+export function resetLegacyCorsCompatibilityHostsForTesting(): void {
+  legacyCorsCompatibilityHosts.clear();
+}
 
 async function parseApiErrorPayload(response: Response): Promise<ApiErrorPayload> {
   const raw = await response.text();

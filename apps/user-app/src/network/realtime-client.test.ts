@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { getHostBaseUrl, getHostWebSocketUrl } from "../config/env";
 import { authStore, type AuthSession } from "../features/auth/store/auth-store";
+import { setHostTransportResolverForTesting } from "./host-transport-registry";
 import { RealtimeClient } from "./realtime-client";
 
 const session: AuthSession = {
@@ -64,6 +66,7 @@ describe("RealtimeClient", () => {
   afterEach(() => {
     authStore.clear();
     global.WebSocket = originalWebSocket;
+    setHostTransportResolverForTesting(null);
     vi.restoreAllMocks();
   });
 
@@ -287,6 +290,59 @@ describe("RealtimeClient", () => {
     );
 
     expect(secondSocket?.sentPayloads.map((payload) => JSON.parse(payload))).toEqual([
+      {
+        type: "session.subscribe",
+        sessionId: "session-1",
+        cursor: "cursor-1",
+        limit: 50
+      }
+    ]);
+
+    client.close();
+  });
+
+  it("可以通过自定义 Host transport 建立实时连接", () => {
+    const expectedBaseUrl = getHostBaseUrl();
+    const transportSocket = new MockWebSocket("transport://realtime");
+    const createWebSocket = vi.fn(() => transportSocket);
+
+    setHostTransportResolverForTesting(() => ({
+      fetch: vi.fn(),
+      createWebSocket
+    }));
+
+    const client = new RealtimeClient({
+      sessionId: "session-1",
+      cursor: "cursor-1",
+      limit: 50,
+      onConnectionChange: () => undefined,
+      onSubscribed: () => undefined,
+      onEnvelope: () => undefined,
+      onOlderHistory: () => undefined,
+      onRuntimeMessage: () => undefined,
+      onActivity: () => undefined,
+      onRuntimeStatus: () => undefined,
+      onRuntimeError: () => undefined,
+      onInterrupted: () => undefined,
+      onPermissionRequest: () => undefined,
+      onPermissionRequestResolved: () => undefined,
+      onError: () => undefined,
+      onUnauthorized: () => undefined
+    });
+
+    client.start();
+
+    expect(createWebSocket).toHaveBeenCalledTimes(1);
+    expect(createWebSocket).toHaveBeenCalledWith({
+      path: "/ws",
+      baseUrl: expectedBaseUrl,
+      url: `${getHostWebSocketUrl("/ws", expectedBaseUrl)}?access_token=access-token`
+    });
+    expect(MockWebSocket.instances).toHaveLength(1);
+
+    transportSocket.open();
+
+    expect(transportSocket.sentPayloads.map((payload) => JSON.parse(payload))).toEqual([
       {
         type: "session.subscribe",
         sessionId: "session-1",
