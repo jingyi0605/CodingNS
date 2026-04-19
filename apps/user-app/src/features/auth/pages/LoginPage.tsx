@@ -629,7 +629,6 @@ export function LoginPage() {
           isOpen={showServerModal}
           onClose={() => setShowServerModal(false)}
           onSave={handleServerSettingsSave}
-          theme={loginTheme}
         />
       ) : null}
     </main>
