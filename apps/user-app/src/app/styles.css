@@ -20225,7 +20225,7 @@ textarea:focus-visible {
 
 .settings-skill-summary-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 8px;
 }
 
@@ -20377,6 +20377,12 @@ textarea:focus-visible {
   margin-top: 6px;
 }
 
+.settings-skill-modal-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .settings-skill-upload-panel {
   display: flex;
   flex-direction: column;
@@ -20388,6 +20394,17 @@ textarea:focus-visible {
 }
 
 .settings-skill-upload-toolbar {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.settings-skill-create-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-skill-create-toolbar {
   display: flex;
   justify-content: flex-start;
 }
@@ -20409,6 +20426,11 @@ textarea:focus-visible {
   background: var(--bg-surface);
   color: var(--text-primary);
   font: inherit;
+}
+
+.settings-skill-create-textarea {
+  min-height: 184px;
+  resize: vertical;
 }
 
 .settings-skill-upload-targets {
@@ -20433,6 +20455,21 @@ textarea:focus-visible {
 
 .settings-skill-modal .workbench-modal-body {
   gap: 14px;
+}
+
+.settings-skill-create-modal {
+  width: min(760px, calc(100% - 24px));
+  max-height: min(84vh, 820px);
+}
+
+.settings-skill-create-modal .workbench-modal-body {
+  gap: 14px;
+}
+
+.settings-skill-create-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .settings-tailscale-modal {
@@ -20817,8 +20854,7 @@ textarea:focus-visible {
 }
 
 @media (max-width: 960px) {
-  .settings-model-grid,
-  .settings-skill-summary-grid {
+  .settings-model-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -20867,6 +20903,11 @@ textarea:focus-visible {
   .settings-model-modal {
     width: min(100vw - 16px, 100%);
     max-height: min(88vh, 860px);
+  }
+
+  .settings-skill-create-modal {
+    width: min(100vw - 16px, 100%);
+    max-height: min(88vh, 820px);
   }
 
   .settings-model-modal .workbench-modal-header {
@@ -20938,7 +20979,9 @@ textarea:focus-visible {
 
   .settings-model-switcher-item-actions,
   .settings-skill-entry-actions,
-  .settings-skill-entry-actions .secondary-button {
+  .settings-skill-entry-actions .secondary-button,
+  .settings-skill-create-actions,
+  .settings-skill-create-actions .primary-button {
     width: 100%;
   }
 
@@ -20977,10 +21020,6 @@ textarea:focus-visible {
   .parallel-task-debug-counter-grid,
   .parallel-task-debug-grid,
   .parallel-task-debug-panel-body {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .settings-skill-summary-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }

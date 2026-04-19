@@ -29,6 +29,8 @@ interface SkillManagementPanelProps {
   readonly triggerLeading?: ReactNode;
 }
 
+type SkillUploadSourceMode = "file" | "paste";
+
 export function SkillManagementPanel({
   triggerClassName = "secondary-button",
   triggerLabel,
@@ -42,9 +44,12 @@ export function SkillManagementPanel({
   const [panelError, setPanelError] = useState<string | null>(null);
   const [statusText, setStatusText] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
   const [uploadDraft, setUploadDraft] = useState<SkillUploadDraft | null>(null);
+  const [uploadSourceMode, setUploadSourceMode] = useState<SkillUploadSourceMode>("file");
   const [uploadScope, setUploadScope] = useState<SkillScope>("workspace");
   const [uploadDirectoryName, setUploadDirectoryName] = useState("");
+  const [pastedMarkdown, setPastedMarkdown] = useState("");
   const [uploadTargets, setUploadTargets] = useState<Record<SkillTargetCli, boolean>>(() =>
     createDefaultUploadTargets("workspace")
   );
@@ -208,7 +213,23 @@ export function SkillManagementPanel({
   }
 
   async function handleUploadSubmit(): Promise<void> {
-    if (!accessToken || !uploadDraft) {
+    const currentUploadDraft = resolveCurrentUploadDraft({
+      sourceMode: uploadSourceMode,
+      fileDraft: uploadDraft,
+      directoryName: uploadDirectoryName,
+      pastedMarkdown
+    });
+
+    if (!accessToken) {
+      return;
+    }
+
+    if (!currentUploadDraft) {
+      setPanelError(
+        uploadSourceMode === "paste"
+          ? t("settings.skillPasteEmpty")
+          : t("settings.skillUploadEmpty")
+      );
       return;
     }
 
@@ -234,9 +255,9 @@ export function SkillManagementPanel({
 
     try {
       await addSkillFromMarkdown({
-        markdownContent: uploadDraft.rawContent,
+        markdownContent: currentUploadDraft.rawContent,
         scope: uploadScope,
-        fileName: uploadDraft.fileName,
+        fileName: currentUploadDraft.fileName,
         directoryName: normalizedDirectoryName,
         targetCli: selectedTargets
       });
@@ -246,9 +267,8 @@ export function SkillManagementPanel({
           name: normalizedDirectoryName
         })
       );
-      setUploadDraft(null);
-      setUploadDirectoryName("");
-      setUploadTargets(createDefaultUploadTargets(uploadScope));
+      resetUploadComposer(uploadScope);
+      setCreateModalOpen(false);
     } catch (error) {
       setPanelError(resolveSkillPanelError(error));
     } finally {
@@ -261,11 +281,39 @@ export function SkillManagementPanel({
     setUploadTargets(createDefaultUploadTargets(scope));
   }
 
+  function handleUploadSourceModeChange(mode: SkillUploadSourceMode): void {
+    setUploadSourceMode(mode);
+    setUploadDraft(null);
+    setUploadDirectoryName("");
+    setPastedMarkdown("");
+    setUploadTargets(createDefaultUploadTargets(uploadScope));
+    setPanelError(null);
+  }
+
   function handleUploadTargetToggle(targetCli: SkillTargetCli): void {
     setUploadTargets((current) => ({
       ...current,
       [targetCli]: !current[targetCli]
     }));
+  }
+
+  function openCreateModal(): void {
+    setCreateModalOpen(true);
+    setPanelError(null);
+  }
+
+  function closeCreateModal(): void {
+    setCreateModalOpen(false);
+    setPanelError(null);
+    resetUploadComposer(uploadScope);
+  }
+
+  function resetUploadComposer(scope: SkillScope): void {
+    setUploadDraft(null);
+    setUploadDirectoryName("");
+    setPastedMarkdown("");
+    setUploadSourceMode("file");
+    setUploadTargets(createDefaultUploadTargets(scope));
   }
 
   const summary = overview?.summary ?? {
@@ -286,6 +334,12 @@ export function SkillManagementPanel({
   const visibleDiagnostics = (overview?.diagnostics ?? []).filter(
     (diagnostic) => !isAssistantRuntimeDiagnostic(diagnostic)
   );
+  const currentUploadDraft = resolveCurrentUploadDraft({
+    sourceMode: uploadSourceMode,
+    fileDraft: uploadDraft,
+    directoryName: uploadDirectoryName,
+    pastedMarkdown
+  });
   const resolvedTriggerLabel = triggerLabel ?? t("settings.skillManageAction");
 
   return (
@@ -310,16 +364,26 @@ export function SkillManagementPanel({
         description={t("settings.skillConfigModalDescription")}
         className="settings-skill-modal"
         headerActions={(
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={!accessToken || loading || pendingActionKey !== null}
-            onClick={() => {
-              void handleRefresh();
-            }}
-          >
-            {pendingActionKey === "refresh" ? t("common.loading") : t("settings.skillRefresh")}
-          </button>
+          <div className="settings-skill-modal-actions">
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={!accessToken || loading || pendingActionKey !== null}
+              onClick={openCreateModal}
+            >
+              {t("settings.skillCreateAction")}
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={!accessToken || loading || pendingActionKey !== null}
+              onClick={() => {
+                void handleRefresh();
+              }}
+            >
+              {pendingActionKey === "refresh" ? t("common.loading") : t("settings.skillRefresh")}
+            </button>
+          </div>
         )}
         onClose={() => setModalOpen(false)}
       >
@@ -334,16 +398,8 @@ export function SkillManagementPanel({
               value={String(summary.managedEntryCount)}
             />
             <SummaryCard
-              label={t("settings.skillSummaryUnmanagedEntries")}
-              value={String(summary.unmanagedEntryCount)}
-            />
-            <SummaryCard
               label={t("settings.skillSummaryConflictedEntries")}
               value={String(visibleConflictedEntries.length)}
-            />
-            <SummaryCard
-              label={t("settings.skillSummaryAssistantRuntimeEntries")}
-              value={String(assistantRuntimeItems.length)}
             />
             <SummaryCard
               label={t("settings.skillSummaryDiagnostics")}
@@ -360,111 +416,6 @@ export function SkillManagementPanel({
           {statusText ? <p className="settings-release-status">{statusText}</p> : null}
           {panelError ? <p className="settings-release-status">{panelError}</p> : null}
         </section>
-
-        <SkillSection
-          title={t("settings.skillUploadSectionTitle")}
-          description={t("settings.skillUploadSectionDescription")}
-          emptyText=""
-          items={[0]}
-          renderItem={() => (
-            <div key="upload-panel" className="settings-skill-upload-panel">
-              <input
-                ref={uploadInputRef}
-                type="file"
-                accept=".md,text/markdown,text/plain"
-                className="settings-skill-upload-input"
-                onChange={(event) => {
-                  void handleUploadFileChange(event);
-                }}
-              />
-              <div className="settings-skill-upload-targets" role="radiogroup" aria-label={t("settings.skillUploadScopeLabel")}>
-                {SKILL_SCOPE_OPTIONS.map((scope) => (
-                  <label key={scope} className="settings-skill-upload-target">
-                    <input
-                      type="radio"
-                      name="skill-upload-scope"
-                      checked={uploadScope === scope}
-                      onChange={() => handleUploadScopeChange(scope)}
-                    />
-                    <span>{resolveSkillScopeLabel(scope)}</span>
-                  </label>
-                ))}
-              </div>
-              <div className="settings-skill-upload-toolbar">
-                <button
-                  className="secondary-button"
-                  type="button"
-                  disabled={loading || pendingActionKey !== null}
-                  onClick={() => {
-                    uploadInputRef.current?.click();
-                  }}
-                >
-                  {t("settings.skillUploadPickAction")}
-                </button>
-              </div>
-
-              {uploadDraft ? (
-                <div className="settings-skill-entry">
-                  <div className="settings-skill-entry-main">
-                    <strong className="settings-skill-entry-title">{uploadDraft.previewTitle}</strong>
-                    <p className="settings-skill-entry-meta">
-                      {t("settings.skillUploadPickedFile")}: {uploadDraft.fileName}
-                    </p>
-                    <label className="settings-skill-upload-field">
-                      <span>{t("settings.skillUploadDirectoryLabel")}</span>
-                      <input
-                        className="settings-skill-upload-text"
-                        type="text"
-                        value={uploadDirectoryName}
-                        onChange={(event) => setUploadDirectoryName(event.target.value)}
-                        placeholder={t("settings.skillUploadDirectoryPlaceholder")}
-                      />
-                    </label>
-                    <div className="settings-skill-upload-targets">
-                      {getUploadTargetOptions(uploadScope).map((targetCli) => (
-                        <label key={targetCli} className="settings-skill-upload-target">
-                          <input
-                            type="checkbox"
-                            checked={uploadTargets[targetCli]}
-                            onChange={() => handleUploadTargetToggle(targetCli)}
-                          />
-                          <span>{resolveTargetCliLabel(targetCli)}</span>
-                        </label>
-                      ))}
-                    </div>
-                    {uploadDraft.notes.length > 0 ? (
-                      <div className="settings-skill-tags">
-                        {uploadDraft.notes.map((note, index) => (
-                          <span
-                            key={`${uploadDraft.fileName}:${index}`}
-                            className="settings-skill-tag"
-                            data-status="pending"
-                          >
-                            {note}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="settings-skill-entry-actions">
-                    <button
-                      className="primary-button"
-                      type="button"
-                      disabled={loading || pendingActionKey !== null}
-                      onClick={() => {
-                        void handleUploadSubmit();
-                      }}
-                    >
-                      {pendingActionKey === "upload" ? t("common.loading") : t("settings.skillUploadSubmitAction")}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="settings-skill-empty">{t("settings.skillUploadEmpty")}</div>
-              )}
-            </div>
-          )}
-        />
 
         <SkillSection
           title={t("settings.skillManagedListTitle")}
@@ -655,6 +606,162 @@ export function SkillManagementPanel({
           }}
         />
       </WorkbenchModal>
+
+      <WorkbenchModal
+        open={createModalOpen}
+        title={t("settings.skillCreateModalTitle")}
+        description={t("settings.skillCreateModalDescription")}
+        className="settings-skill-create-modal"
+        onClose={closeCreateModal}
+      >
+        <section className="settings-skill-section">
+          <h3 className="settings-skill-section-title">{t("settings.skillUploadSectionTitle")}</h3>
+          <p className="settings-skill-section-description">{t("settings.skillUploadSectionDescription")}</p>
+
+          <div className="settings-skill-create-panel">
+            <input
+              ref={uploadInputRef}
+              type="file"
+              accept=".md,text/markdown,text/plain"
+              className="settings-skill-upload-input"
+              onChange={(event) => {
+                void handleUploadFileChange(event);
+              }}
+            />
+
+            <div className="settings-model-tabs" role="tablist" aria-label={t("settings.skillCreateSourceTabsLabel")}>
+              {SKILL_UPLOAD_SOURCE_OPTIONS.map((mode) => {
+                const selected = uploadSourceMode === mode;
+
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    role="tab"
+                    className="settings-model-tab"
+                    aria-selected={selected}
+                    data-active={selected ? "true" : "false"}
+                    onClick={() => handleUploadSourceModeChange(mode)}
+                  >
+                    {resolveSkillUploadSourceModeLabel(mode)}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div
+              className="settings-skill-upload-targets"
+              role="radiogroup"
+              aria-label={t("settings.skillUploadScopeLabel")}
+            >
+              {SKILL_SCOPE_OPTIONS.map((scope) => (
+                <label key={scope} className="settings-skill-upload-target">
+                  <input
+                    type="radio"
+                    name="skill-upload-scope"
+                    checked={uploadScope === scope}
+                    onChange={() => handleUploadScopeChange(scope)}
+                  />
+                  <span>{resolveSkillScopeLabel(scope)}</span>
+                </label>
+              ))}
+            </div>
+
+            {uploadSourceMode === "file" ? (
+              <div className="settings-skill-create-toolbar">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={loading || pendingActionKey !== null}
+                  onClick={() => {
+                    uploadInputRef.current?.click();
+                  }}
+                >
+                  {t("settings.skillUploadPickAction")}
+                </button>
+              </div>
+            ) : (
+              <label className="settings-skill-upload-field">
+                <span>{t("settings.skillPasteLabel")}</span>
+                <textarea
+                  className="settings-skill-create-textarea"
+                  value={pastedMarkdown}
+                  onChange={(event) => setPastedMarkdown(event.target.value)}
+                  placeholder={t("settings.skillPastePlaceholder")}
+                />
+              </label>
+            )}
+
+            {currentUploadDraft ? (
+              <div className="settings-skill-entry">
+                <div className="settings-skill-entry-main">
+                  <strong className="settings-skill-entry-title">{currentUploadDraft.previewTitle}</strong>
+                  <p className="settings-skill-entry-meta">
+                    {t("settings.skillUploadPickedFile")}: {currentUploadDraft.fileName}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="settings-skill-empty">
+                {uploadSourceMode === "paste" ? t("settings.skillPasteEmpty") : t("settings.skillUploadEmpty")}
+              </div>
+            )}
+
+            <label className="settings-skill-upload-field">
+              <span>{t("settings.skillUploadDirectoryLabel")}</span>
+              <input
+                className="settings-skill-upload-text"
+                type="text"
+                value={uploadDirectoryName}
+                onChange={(event) => setUploadDirectoryName(event.target.value)}
+                placeholder={t("settings.skillUploadDirectoryPlaceholder")}
+              />
+            </label>
+
+            <div className="settings-skill-upload-targets">
+              {getUploadTargetOptions(uploadScope).map((targetCli) => (
+                <label key={targetCli} className="settings-skill-upload-target">
+                  <input
+                    type="checkbox"
+                    checked={uploadTargets[targetCli]}
+                    onChange={() => handleUploadTargetToggle(targetCli)}
+                  />
+                  <span>{resolveTargetCliLabel(targetCli)}</span>
+                </label>
+              ))}
+            </div>
+
+            {currentUploadDraft?.notes.length ? (
+              <div className="settings-skill-tags">
+                {currentUploadDraft.notes.map((note, index) => (
+                  <span
+                    key={`${currentUploadDraft.fileName}:${index}`}
+                    className="settings-skill-tag"
+                    data-status="pending"
+                  >
+                    {note}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+
+            {panelError ? <p className="settings-release-status">{panelError}</p> : null}
+
+            <div className="settings-skill-create-actions">
+              <button
+                className="primary-button"
+                type="button"
+                disabled={loading || pendingActionKey !== null}
+                onClick={() => {
+                  void handleUploadSubmit();
+                }}
+              >
+                {pendingActionKey === "upload" ? t("common.loading") : t("settings.skillCreateSubmitAction")}
+              </button>
+            </div>
+          </div>
+        </section>
+      </WorkbenchModal>
     </>
   );
 }
@@ -713,6 +820,7 @@ interface SkillUploadDraft {
 const SKILL_TARGET_OPTIONS: readonly SkillTargetCli[] = ["codex", "claude-code", "gemini", "opencode"];
 const ASSISTANT_UPLOAD_TARGET_OPTIONS: readonly SkillTargetCli[] = ["codex", "claude-code"];
 const SKILL_SCOPE_OPTIONS: readonly SkillScope[] = ["workspace", "assistant"];
+const SKILL_UPLOAD_SOURCE_OPTIONS: readonly SkillUploadSourceMode[] = ["file", "paste"];
 
 function resolveSkillPanelError(error: unknown): string {
   if (error instanceof ApiError) {
@@ -741,6 +849,12 @@ function resolveSkillScopeLabel(scope: SkillScope): string {
     : t("settings.skillUploadScopeWorkspace");
 }
 
+function resolveSkillUploadSourceModeLabel(mode: SkillUploadSourceMode): string {
+  return mode === "paste"
+    ? t("settings.skillCreateSourcePaste")
+    : t("settings.skillCreateSourceFile");
+}
+
 function createDefaultUploadTargets(scope: SkillScope): Record<SkillTargetCli, boolean> {
   const availableTargets = new Set(getUploadTargetOptions(scope));
 
@@ -754,6 +868,28 @@ function createDefaultUploadTargets(scope: SkillScope): Record<SkillTargetCli, b
 
 function getUploadTargetOptions(scope: SkillScope): readonly SkillTargetCli[] {
   return scope === "assistant" ? ASSISTANT_UPLOAD_TARGET_OPTIONS : SKILL_TARGET_OPTIONS;
+}
+
+function resolveCurrentUploadDraft({
+  sourceMode,
+  fileDraft,
+  directoryName,
+  pastedMarkdown
+}: {
+  sourceMode: SkillUploadSourceMode;
+  fileDraft: SkillUploadDraft | null;
+  directoryName: string;
+  pastedMarkdown: string;
+}): SkillUploadDraft | null {
+  if (sourceMode === "file") {
+    return fileDraft;
+  }
+
+  if (!pastedMarkdown.trim()) {
+    return null;
+  }
+
+  return prepareSkillUploadDraft(buildPastedSkillFileName(directoryName), pastedMarkdown);
 }
 
 function resolveBindingStatusLabel(status: SkillTargetBindingDto["syncStatus"]): string {
@@ -978,6 +1114,12 @@ function normalizeUploadedDirectoryName(input: string): string | null {
     .replace(/^[-._]+|[-._]+$/g, "");
 
   return normalized.length > 0 ? normalized : null;
+}
+
+function buildPastedSkillFileName(directoryName: string): string {
+  const normalizedDirectoryName = normalizeUploadedDirectoryName(directoryName);
+
+  return normalizedDirectoryName ? `${normalizedDirectoryName}.md` : "pasted-skill.md";
 }
 
 function formatSkillTitleFromDirectoryName(directoryName: string): string {

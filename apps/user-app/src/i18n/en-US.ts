@@ -118,6 +118,14 @@ export const enUS = {
     skillConfigModalTitle: "Skill Configuration",
     skillConfigModalDescription:
       "Review managed, unmanaged, and exceptional results here. Assistant-only skills are listed separately and are not used as workspace skills.",
+    skillCreateAction: "Add Skill",
+    skillCreateModalTitle: "Add Skill",
+    skillCreateModalDescription:
+      "Bring a new SKILL.md under management. File upload and pasted markdown share the same validation and import flow.",
+    skillCreateSourceTabsLabel: "Add Method",
+    skillCreateSourceFile: "Choose File",
+    skillCreateSourcePaste: "Paste Text",
+    skillCreateSubmitAction: "Add & Manage",
     skillRefresh: "Refresh Overview",
     skillRefreshSuccess: "Skill overview refreshed.",
     skillScannedAt: "Last Scanned",
@@ -135,6 +143,9 @@ export const enUS = {
     skillUploadDirectoryPlaceholder: "For example: team-helper",
     skillUploadDirectoryInvalid:
       "The directory name is invalid. Only letters, numbers, dots, underscores, and dashes are allowed.",
+    skillPasteLabel: "Paste SKILL Content",
+    skillPastePlaceholder: "Paste the full SKILL.md content here",
+    skillPasteEmpty: "There is no SKILL content ready to manage yet.",
     skillUploadDirectoryRequiredNote:
       "The file name does not produce a valid directory name, so you need to fill one in manually.",
     skillUploadTargetRequired: "Select at least one target CLI.",
