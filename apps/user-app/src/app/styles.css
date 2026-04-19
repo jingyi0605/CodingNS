@@ -8405,7 +8405,7 @@ textarea:focus-visible {
 .conversation-butler-modal {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
 }
 
 .conversation-butler-modal-card {
@@ -8441,17 +8441,17 @@ textarea:focus-visible {
 }
 
 .conversation-butler-modal-card .workbench-modal-body {
-  gap: 10px;
+  gap: 14px;
 }
 
 .conversation-butler-modal-field {
-  gap: 6px;
+  gap: 5px;
 }
 
 .conversation-butler-modal-field > label,
 .conversation-butler-field-heading label {
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.01em;
   color: color-mix(in srgb, var(--text-secondary) 84%, var(--text-primary) 16%);
 }
@@ -8472,11 +8472,11 @@ textarea:focus-visible {
 .conversation-butler-modal .workbench-modal-field input,
 .conversation-butler-modal .workbench-modal-field textarea {
   width: 100%;
-  border-radius: 14px;
-  border: 1px solid var(--modal-control-border);
-  background: var(--modal-control-surface);
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--modal-list-item-border) 92%, transparent);
+  background: color-mix(in srgb, var(--bg-hover) 42%, transparent);
   color: var(--text-primary);
-  box-shadow: var(--modal-control-shadow);
+  box-shadow: none;
   transition:
     border-color var(--transition-fast),
     box-shadow var(--transition-fast),
@@ -8503,23 +8503,23 @@ textarea:focus-visible {
 
 .conversation-butler-modal .workbench-modal-field input:hover,
 .conversation-butler-modal .workbench-modal-field textarea:hover {
-  border-color: var(--modal-control-border-hover);
+  border-color: color-mix(in srgb, var(--modal-control-border-hover) 76%, var(--modal-list-item-border));
+  background: color-mix(in srgb, var(--bg-hover) 58%, transparent);
 }
 
 .conversation-butler-modal .workbench-modal-field input:focus,
 .conversation-butler-modal .workbench-modal-field textarea:focus {
   outline: none;
   border-color: var(--modal-control-border-focus);
-  box-shadow:
-    var(--modal-control-focus-ring),
-    inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 88%, transparent);
+  box-shadow: var(--modal-control-focus-ring);
+  background: color-mix(in srgb, var(--bg-hover) 64%, transparent);
 }
 
 .conversation-butler-target-grid,
 .conversation-butler-meta-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 14px;
 }
 
 .conversation-butler-meta-grid > :only-child {
@@ -8529,7 +8529,7 @@ textarea:focus-visible {
 .conversation-butler-preset-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
+  gap: 8px;
 }
 
 .conversation-butler-preset-card {
@@ -8537,41 +8537,34 @@ textarea:focus-visible {
   min-width: 0;
   flex-direction: column;
   align-items: flex-start;
-  gap: 3px;
-  padding: 9px 10px;
-  border: 1px solid color-mix(in srgb, var(--surface-panel-border) 88%, transparent);
+  gap: 4px;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid var(--modal-list-item-border);
   border-radius: 12px;
-  background: var(--surface-panel-bg);
+  background: transparent;
   color: var(--text-primary);
   text-align: left;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 74%, transparent),
-    0 1px 2px rgba(15, 23, 42, 0.03);
+  box-shadow: none;
   transition:
     border-color var(--transition-fast),
     background var(--transition-fast),
-    box-shadow var(--transition-fast),
-    transform var(--transition-fast);
+    color var(--transition-fast);
 }
 
 .conversation-butler-preset-card:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--accent) 26%, var(--surface-panel-border));
-  background: var(--modal-control-surface-active);
-  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--modal-list-item-border));
+  background: color-mix(in srgb, var(--modal-list-item-hover) 52%, transparent);
 }
 
 .conversation-butler-preset-card[data-selected="true"] {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--surface-panel-border));
-  background: var(--modal-control-surface-active);
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 88%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--modal-list-item-border));
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
 
 .conversation-butler-preset-card:disabled {
   opacity: 0.64;
   cursor: not-allowed;
-  transform: none;
 }
 
 .conversation-butler-preset-card strong {
@@ -8736,15 +8729,12 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--surface-panel-border) 88%, transparent);
-  border-radius: 14px;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--surface-panel-bg-strong) 94%, transparent), transparent),
-    var(--surface-panel-bg);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 74%, transparent),
-    0 1px 2px rgba(15, 23, 42, 0.03);
+  padding: 10px 0 12px;
+  border: 0;
+  border-top: 1px solid var(--modal-list-item-border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .conversation-butler-target-card span {
@@ -8768,6 +8758,7 @@ textarea:focus-visible {
   margin-top: 2px;
   padding: 0 10px;
   font-size: 12px;
+  align-self: flex-start;
 }
 
 .conversation-butler-round-limit-field input {
@@ -8777,44 +8768,35 @@ textarea:focus-visible {
 .conversation-butler-action-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 12px;
 }
 
 .conversation-butler-action-card {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  min-height: 86px;
-  padding: 11px 12px;
-  border: 1px solid color-mix(in srgb, var(--surface-panel-border) 88%, transparent);
-  border-radius: 14px;
-  background: var(--surface-panel-bg-strong);
+  gap: 5px;
+  min-height: 72px;
+  padding: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--modal-list-item-border);
+  border-radius: 0;
+  background: transparent;
   color: var(--text-primary);
   text-align: left;
   cursor: pointer;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 78%, transparent),
-    0 1px 2px rgba(15, 23, 42, 0.03);
+  box-shadow: none;
   transition:
-    border-color 120ms ease,
     background 120ms ease,
-    box-shadow 120ms ease,
-    transform 120ms ease;
+    color 120ms ease;
 }
 
 .conversation-butler-action-card:hover {
-  border-color: color-mix(in srgb, var(--accent) 36%, var(--surface-panel-border));
-  background: var(--modal-control-surface-active);
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 84%, transparent);
-  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--modal-list-item-hover) 52%, transparent);
 }
 
 .conversation-butler-action-card:disabled {
   cursor: not-allowed;
   opacity: 0.6;
-  transform: none;
 }
 
 .conversation-butler-action-card strong {
@@ -15787,44 +15769,59 @@ textarea:focus-visible {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: center;
-  gap: 4px;
+  gap: 0;
   width: 100%;
-  padding: 4px;
-  border-radius: 18px;
-  border: 1px solid var(--modal-segmented-shell-border);
-  background: var(--modal-segmented-shell-surface);
-  box-shadow: var(--modal-segmented-shell-shadow);
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--modal-list-item-border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .workbench-notification-tab {
   position: relative;
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 16px;
-  border-radius: 14px;
-  border: 1px solid transparent;
+  border-radius: 0;
+  border: 0;
   color: var(--text-secondary);
   background: transparent;
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.01em;
   transition:
-    transform var(--transition-fast),
     background var(--transition-fast),
     color var(--transition-fast),
-    border-color var(--transition-fast),
-    box-shadow var(--transition-fast);
+    border-color var(--transition-fast);
+}
+
+.workbench-notification-tab::after {
+  content: "";
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 999px;
+  background: transparent;
+  transition: background var(--transition-fast);
 }
 
 .workbench-notification-tab:hover {
-  color: color-mix(in srgb, var(--text-primary) 82%, var(--accent) 18%);
+  color: color-mix(in srgb, var(--text-primary) 88%, var(--accent) 12%);
 }
 
 .workbench-notification-tab.active {
   color: var(--text-primary);
-  border-color: var(--modal-segmented-active-border);
-  background: var(--modal-segmented-active-surface);
-  box-shadow: var(--modal-segmented-active-shadow);
-  transform: translateY(-0.5px);
+  background: none;
+  background-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.workbench-notification-tab.active::after {
+  background: color-mix(in srgb, var(--accent) 48%, transparent);
 }
 
 .workbench-notification-tab:focus-visible {
@@ -15841,22 +15838,22 @@ textarea:focus-visible {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
-  padding: 8px;
-  border-radius: 16px;
-  border: 1px solid var(--modal-subtle-border);
-  background: var(--modal-subtle-surface);
-  box-shadow: var(--modal-subtle-shadow);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .workbench-notification-content[data-tab="notifications"] {
-  padding: 6px;
+  padding: 0;
 }
 
 .workbench-notification-pane {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   min-height: 0;
 }
 
@@ -15864,7 +15861,7 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  padding: 2px 2px 0;
+  padding: 0;
 }
 
 .workbench-notification-filter {
@@ -15921,9 +15918,10 @@ textarea:focus-visible {
   gap: 0;
   min-height: 0;
   overflow-y: auto;
-  border-radius: 12px;
-  border: 1px solid var(--modal-list-shell-border);
-  background: var(--modal-list-shell-surface);
+  border: 0;
+  border-top: 1px solid var(--modal-list-item-border);
+  border-radius: 0;
+  background: transparent;
 }
 
 .workbench-notification-item {
@@ -15955,7 +15953,7 @@ textarea:focus-visible {
   align-items: stretch;
   gap: 8px;
   min-width: 0;
-  padding: 11px 0 10px 12px;
+  padding: 12px 0 12px;
   border: none;
   background: transparent;
   color: inherit;
@@ -16027,12 +16025,12 @@ textarea:focus-visible {
   flex: 1 1 auto;
   align-items: center;
   justify-content: center;
-  min-height: 220px;
-  padding: 24px 20px;
+  min-height: 200px;
+  padding: 22px 0 0;
   text-align: center;
-  border-radius: 12px;
-  border: 1px dashed var(--modal-empty-border);
-  background: var(--modal-empty-surface);
+  border: 0;
+  border-top: 1px solid var(--modal-list-item-border);
+  background: transparent;
 }
 
 .workbench-notification-footer-actions {
@@ -16471,10 +16469,14 @@ textarea:focus-visible {
 .workbench-modal-card .primary-button,
 .workbench-modal-card .secondary-button,
 .workbench-modal-card .ghost-button,
+.workbench-modal-card .settings-button,
+.workbench-modal-card .settings-button-danger,
 .workbench-modal-card .workbench-secondary-button,
+.workbench-modal-card .workbench-danger-button,
 .mobile-sheet .primary-button,
 .mobile-sheet .secondary-button,
 .mobile-sheet .ghost-button,
+.mobile-sheet .settings-button,
 .conversation-selection-action-dialog .primary-button,
 .conversation-selection-action-dialog .secondary-button,
 .conversation-selection-action-dialog .ghost-button {
@@ -16482,57 +16484,57 @@ textarea:focus-visible {
 }
 
 .workbench-modal-card .secondary-button,
+.workbench-modal-card .settings-button,
+.workbench-modal-card .ghost-button,
 .workbench-modal-card .workbench-secondary-button,
 .mobile-sheet .secondary-button,
+.mobile-sheet .settings-button,
+.mobile-sheet .ghost-button,
 .conversation-selection-action-dialog .secondary-button {
   border: 0;
-  background: var(--modal-button-secondary-bg);
-  color: var(--modal-button-secondary-color);
+  background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-surface));
+  color: var(--text-primary);
 }
 
 .workbench-modal-card .secondary-button:hover:not(:disabled),
+.workbench-modal-card .settings-button:hover:not(:disabled),
+.workbench-modal-card .ghost-button:hover:not(:disabled),
 .workbench-modal-card .workbench-secondary-button:hover:not(:disabled),
 .mobile-sheet .secondary-button:hover:not(:disabled),
+.mobile-sheet .settings-button:hover:not(:disabled),
+.mobile-sheet .ghost-button:hover:not(:disabled),
 .conversation-selection-action-dialog .secondary-button:hover:not(:disabled) {
-  background: var(--modal-button-secondary-bg-hover);
+  background: color-mix(in srgb, var(--text-primary) 12%, var(--bg-surface));
 }
 
 .workbench-modal-card .primary-button,
 .mobile-sheet .primary-button,
 .conversation-selection-action-dialog .primary-button {
-  background: var(--modal-button-primary-bg);
-  color: var(--modal-button-primary-color);
+  border: 0;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-surface));
+  color: var(--accent);
 }
 
 .workbench-modal-card .primary-button:hover:not(:disabled),
 .mobile-sheet .primary-button:hover:not(:disabled),
 .conversation-selection-action-dialog .primary-button:hover:not(:disabled) {
-  background: var(--modal-button-primary-bg-hover);
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-surface));
 }
 
-.workbench-modal-card .ghost-button,
-.conversation-selection-action-dialog .ghost-button {
-  background: var(--modal-button-ghost-bg);
-  color: var(--modal-button-ghost-color);
-}
-
-.workbench-modal-card .ghost-button:hover:not(:disabled),
-.conversation-selection-action-dialog .ghost-button:hover:not(:disabled) {
-  background: var(--modal-button-ghost-bg-hover);
-}
-
+.workbench-modal-card .settings-button-danger,
 .workbench-modal-card .workbench-danger-button,
 .mobile-sheet .workbench-danger-button,
 .conversation-selection-action-dialog .workbench-danger-button {
   border: 0;
-  background: var(--modal-button-danger-bg);
-  color: var(--modal-button-danger-color);
+  background: color-mix(in srgb, var(--error) 12%, var(--bg-surface));
+  color: var(--error);
 }
 
+.workbench-modal-card .settings-button-danger:hover:not(:disabled),
 .workbench-modal-card .workbench-danger-button:hover:not(:disabled),
 .mobile-sheet .workbench-danger-button:hover:not(:disabled),
 .conversation-selection-action-dialog .workbench-danger-button:hover:not(:disabled) {
-  background: var(--modal-button-danger-bg-hover);
+  background: color-mix(in srgb, var(--error) 16%, var(--bg-surface));
 }
 
 /* H5 模态框内部控件统一基线：
@@ -16557,12 +16559,9 @@ textarea:focus-visible {
   min-height: 34px;
   padding: 8px 14px;
   border-radius: 12px;
-  border: 1px solid var(--app-button-border);
-  background: var(--app-button-bg);
-  color: var(--app-button-color);
+  border: none;
   box-shadow: none;
   transition:
-    border-color var(--transition-fast),
     background var(--transition-fast),
     color var(--transition-fast),
     opacity var(--transition-fast);
@@ -16570,86 +16569,99 @@ textarea:focus-visible {
 
 .workbench-modal-layer .workbench-modal-card .secondary-button,
 .workbench-modal-layer .workbench-modal-card .settings-button,
+.workbench-modal-layer .workbench-modal-card .ghost-button,
 .workbench-modal-layer .workbench-modal-card .workbench-secondary-button,
 .mobile-sheet .secondary-button,
+.mobile-sheet .settings-button,
+.mobile-sheet .ghost-button,
 .mobile-sheet .workbench-secondary-button,
-.workbench-modal-layer .conversation-selection-action-dialog .secondary-button {
-  border-color: var(--app-button-border);
-  background: var(--app-button-bg);
-  color: var(--app-button-color);
+.workbench-modal-layer .conversation-selection-action-dialog .secondary-button,
+.workbench-modal-layer .conversation-selection-action-dialog .ghost-button {
+  background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-surface));
+  color: var(--text-primary);
 }
 
 .workbench-modal-layer .workbench-modal-card .secondary-button:hover:not(:disabled),
 .workbench-modal-layer .workbench-modal-card .settings-button:hover:not(:disabled),
+.workbench-modal-layer .workbench-modal-card .ghost-button:hover:not(:disabled),
 .workbench-modal-layer .workbench-modal-card .workbench-secondary-button:hover:not(:disabled),
 .mobile-sheet .secondary-button:hover:not(:disabled),
+.mobile-sheet .settings-button:hover:not(:disabled),
+.mobile-sheet .ghost-button:hover:not(:disabled),
 .mobile-sheet .workbench-secondary-button:hover:not(:disabled),
-.workbench-modal-layer .conversation-selection-action-dialog .secondary-button:hover:not(:disabled) {
-  background: var(--app-button-bg-hover);
-  border-color: var(--app-button-border-hover);
+.workbench-modal-layer .conversation-selection-action-dialog .secondary-button:hover:not(:disabled),
+.workbench-modal-layer .conversation-selection-action-dialog .ghost-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 12%, var(--bg-surface));
 }
 
 .workbench-modal-layer .workbench-modal-card .primary-button,
 .mobile-sheet .primary-button,
 .workbench-modal-layer .conversation-selection-action-dialog .primary-button {
-  border-color: var(--app-button-border);
-  background: var(--app-button-bg);
-  color: var(--app-button-color);
-  box-shadow: none;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-surface));
+  color: var(--accent);
 }
 
 .workbench-modal-layer .workbench-modal-card .primary-button:hover:not(:disabled),
 .mobile-sheet .primary-button:hover:not(:disabled),
 .workbench-modal-layer .conversation-selection-action-dialog .primary-button:hover:not(:disabled) {
-  background: var(--app-button-bg-hover);
-  border-color: var(--app-button-border-hover);
-}
-
-.workbench-modal-layer .workbench-modal-card .ghost-button,
-.mobile-sheet .ghost-button,
-.workbench-modal-layer .conversation-selection-action-dialog .ghost-button {
-  border-color: var(--app-button-border);
-  background: var(--app-button-bg);
-  color: var(--app-button-color);
-  box-shadow: none;
-}
-
-.workbench-modal-layer .workbench-modal-card .ghost-button:hover:not(:disabled),
-.mobile-sheet .ghost-button:hover:not(:disabled),
-.workbench-modal-layer .conversation-selection-action-dialog .ghost-button:hover:not(:disabled) {
-  background: var(--app-button-bg-hover);
-  border-color: var(--app-button-border-hover);
-  color: var(--app-button-color);
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-surface));
 }
 
 .workbench-modal-layer .workbench-modal-card .settings-button.settings-button-danger,
 .workbench-modal-layer .workbench-modal-card .workbench-danger-button,
 .mobile-sheet .workbench-danger-button,
 .workbench-modal-layer .conversation-selection-action-dialog .workbench-danger-button {
-  border-color: var(--app-button-danger-border);
-  background: var(--app-button-danger-bg);
-  color: var(--app-button-danger-color);
+  background: color-mix(in srgb, var(--error) 12%, var(--bg-surface));
+  color: var(--error);
 }
 
 .workbench-modal-layer .workbench-modal-card .settings-button.settings-button-danger:hover:not(:disabled),
 .workbench-modal-layer .workbench-modal-card .workbench-danger-button:hover:not(:disabled),
 .mobile-sheet .workbench-danger-button:hover:not(:disabled),
 .workbench-modal-layer .conversation-selection-action-dialog .workbench-danger-button:hover:not(:disabled) {
-  background: var(--app-button-danger-bg-hover);
-  border-color: var(--app-button-danger-border-hover);
+  background: color-mix(in srgb, var(--error) 16%, var(--bg-surface));
 }
 
 .workbench-modal-layer .workbench-modal-card .primary-button:active:not(:disabled),
 .workbench-modal-layer .workbench-modal-card .secondary-button:active:not(:disabled),
 .workbench-modal-layer .workbench-modal-card .ghost-button:active:not(:disabled),
 .workbench-modal-layer .workbench-modal-card .settings-button:active:not(:disabled),
+.workbench-modal-layer .workbench-modal-card .settings-button.settings-button-danger:active:not(:disabled),
+.workbench-modal-layer .workbench-modal-card .workbench-danger-button:active:not(:disabled),
 .mobile-sheet .primary-button:active:not(:disabled),
 .mobile-sheet .secondary-button:active:not(:disabled),
 .mobile-sheet .ghost-button:active:not(:disabled),
+.mobile-sheet .workbench-danger-button:active:not(:disabled),
 .workbench-modal-layer .conversation-selection-action-dialog .primary-button:active:not(:disabled),
 .workbench-modal-layer .conversation-selection-action-dialog .secondary-button:active:not(:disabled),
 .workbench-modal-layer .conversation-selection-action-dialog .ghost-button:active:not(:disabled) {
   box-shadow: none;
+}
+
+.workbench-modal-layer .workbench-modal-card .primary-button:active:not(:disabled),
+.mobile-sheet .primary-button:active:not(:disabled),
+.workbench-modal-layer .conversation-selection-action-dialog .primary-button:active:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 20%, var(--bg-surface));
+}
+
+.workbench-modal-layer .workbench-modal-card .secondary-button:active:not(:disabled),
+.workbench-modal-layer .workbench-modal-card .settings-button:active:not(:disabled),
+.workbench-modal-layer .workbench-modal-card .ghost-button:active:not(:disabled),
+.workbench-modal-layer .workbench-modal-card .workbench-secondary-button:active:not(:disabled),
+.mobile-sheet .secondary-button:active:not(:disabled),
+.mobile-sheet .settings-button:active:not(:disabled),
+.mobile-sheet .ghost-button:active:not(:disabled),
+.mobile-sheet .workbench-secondary-button:active:not(:disabled),
+.workbench-modal-layer .conversation-selection-action-dialog .secondary-button:active:not(:disabled),
+.workbench-modal-layer .conversation-selection-action-dialog .ghost-button:active:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 16%, var(--bg-surface));
+}
+
+.workbench-modal-layer .workbench-modal-card .settings-button.settings-button-danger:active:not(:disabled),
+.workbench-modal-layer .workbench-modal-card .workbench-danger-button:active:not(:disabled),
+.mobile-sheet .workbench-danger-button:active:not(:disabled),
+.workbench-modal-layer .conversation-selection-action-dialog .workbench-danger-button:active:not(:disabled) {
+  background: color-mix(in srgb, var(--error) 20%, var(--bg-surface));
 }
 
 .workbench-modal-layer .workbench-modal-card input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="submit"]):not([type="button"]):not([type="reset"]),
@@ -25857,7 +25869,7 @@ textarea:focus-visible {
 .workspace-inbox-modal {
   display: grid;
   grid-template-columns: minmax(252px, 296px) minmax(0, 1fr);
-  gap: 8px;
+  gap: 18px;
   width: 100%;
   min-height: 0;
 }
@@ -25865,14 +25877,18 @@ textarea:focus-visible {
 .workspace-inbox-panel {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
   min-height: 0;
-  padding: 10px;
-  border-radius: 13px;
-  border: 1px solid var(--modal-subtle-border);
-  background: var(--modal-subtle-surface);
-  box-shadow: var(--modal-subtle-shadow);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.workspace-inbox-panel:last-child {
+  gap: 0;
 }
 
 .workspace-inbox-panel-header {
@@ -25880,8 +25896,8 @@ textarea:focus-visible {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 56%, transparent);
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--modal-list-item-border);
 }
 
 .workspace-inbox-closed-toggle {
@@ -25949,23 +25965,23 @@ textarea:focus-visible {
 .workspace-inbox-form {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .workspace-inbox-form-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  gap: 10px;
 }
 
 .workspace-inbox-panel .workbench-modal-field {
-  gap: 6px;
+  gap: 5px;
 }
 
 .workspace-inbox-panel .workbench-modal-field > span {
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   color: color-mix(in srgb, var(--text-secondary) 84%, var(--text-primary) 16%);
 }
 
@@ -25973,11 +25989,11 @@ textarea:focus-visible {
 .workspace-inbox-panel .workbench-modal-field select,
 .workspace-inbox-panel .workbench-modal-field textarea {
   width: 100%;
-  border-radius: 12px;
-  border: 1px solid var(--modal-control-border);
-  background: var(--modal-control-surface);
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--modal-list-item-border) 92%, transparent);
+  background: transparent;
   color: var(--text-primary);
-  box-shadow: var(--modal-control-shadow);
+  box-shadow: none;
   transition:
     border-color var(--transition-fast),
     box-shadow var(--transition-fast),
@@ -25994,11 +26010,10 @@ textarea:focus-visible {
   appearance: none;
   -webkit-appearance: none;
   background-image:
-    var(--modal-control-surface),
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' stroke='%2364748b' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat, no-repeat;
-  background-position: center, right 12px center;
-  background-size: auto, 12px 12px;
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 12px 12px;
   padding-right: 34px;
 }
 
@@ -26018,7 +26033,8 @@ textarea:focus-visible {
 .workspace-inbox-panel .workbench-modal-field input:hover,
 .workspace-inbox-panel .workbench-modal-field select:hover,
 .workspace-inbox-panel .workbench-modal-field textarea:hover {
-  border-color: var(--modal-control-border-hover);
+  border-color: color-mix(in srgb, var(--modal-control-border-hover) 76%, var(--modal-list-item-border));
+  background: transparent;
 }
 
 .workspace-inbox-panel .workbench-modal-field input:focus,
@@ -26026,9 +26042,8 @@ textarea:focus-visible {
 .workspace-inbox-panel .workbench-modal-field textarea:focus {
   outline: none;
   border-color: var(--modal-control-border-focus);
-  box-shadow:
-    var(--modal-control-focus-ring),
-    inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 88%, transparent);
+  box-shadow: var(--modal-control-focus-ring);
+  background: transparent;
 }
 
 .workspace-inbox-mobile-picker {
@@ -26174,17 +26189,17 @@ textarea:focus-visible {
   min-height: 0;
   max-height: none;
   overflow-y: auto;
-  padding-right: 2px;
-  border-radius: 12px;
-  border: 1px solid var(--modal-list-shell-border);
-  background: var(--modal-list-shell-surface);
+  padding-right: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .workspace-inbox-item {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 11px 11px 10px;
+  padding: 12px 0;
   border-radius: 0;
   border: none;
   border-bottom: 1px solid var(--modal-list-item-border);
@@ -26294,7 +26309,7 @@ textarea:focus-visible {
 }
 
 .workspace-inbox-status {
-  padding: 12px 2px 2px;
+  padding: 14px 0 0;
 }
 
 .workspace-inbox-panel:last-child .workspace-inbox-status {
@@ -26303,11 +26318,10 @@ textarea:focus-visible {
   align-items: center;
   justify-content: center;
   min-height: 180px;
-  padding: 18px;
+  padding: 0;
   text-align: center;
-  border-radius: 12px;
-  border: 1px dashed var(--modal-empty-border);
-  background: var(--modal-empty-surface);
+  border: 0;
+  background: transparent;
 }
 
 .workspace-inbox-modal-create-button {
