@@ -205,11 +205,7 @@ describe("SkillManagementPanel", () => {
       within(createDialog).getByLabelText(t("settings.skillPasteLabel")),
       "# Butler Inbox Helper\n\n这是一个助手专用 skill。"
     );
-    await userEvent.clear(within(createDialog).getByLabelText(t("settings.skillUploadDirectoryLabel")));
-    await userEvent.type(
-      within(createDialog).getByLabelText(t("settings.skillUploadDirectoryLabel")),
-      "butler-inbox-helper"
-    );
+    expect(within(createDialog).getByLabelText(t("settings.skillUploadDirectoryLabel"))).toHaveValue("butler-inbox-helper");
     await userEvent.click(within(createDialog).getByRole("button", { name: t("settings.skillCreateSubmitAction") }));
 
     expect(await screen.findByText("Butler Inbox Helper")).toBeInTheDocument();

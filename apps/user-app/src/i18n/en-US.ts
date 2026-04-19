@@ -141,8 +141,11 @@ export const enUS = {
     skillUploadScopeAssistant: "Assistant Skill",
     skillUploadDirectoryLabel: "Directory Name",
     skillUploadDirectoryPlaceholder: "For example: team-helper",
+    skillUploadDirectoryHint:
+      "Used for the managed folder name and sync target folder. It is generated from the file name or heading by default, so you usually do not need to change it.",
     skillUploadDirectoryInvalid:
       "The directory name is invalid. Only letters, numbers, dots, underscores, and dashes are allowed.",
+    skillUploadTargetsLabel: "Target CLI",
     skillPasteLabel: "Paste SKILL Content",
     skillPastePlaceholder: "Paste the full SKILL.md content here",
     skillPasteEmpty: "There is no SKILL content ready to manage yet.",

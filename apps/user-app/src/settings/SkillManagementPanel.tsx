@@ -233,7 +233,7 @@ export function SkillManagementPanel({
       return;
     }
 
-    const normalizedDirectoryName = normalizeUploadedDirectoryName(uploadDirectoryName);
+    const normalizedDirectoryName = normalizeUploadedDirectoryName(uploadDirectoryName) ?? currentUploadDraft.directoryName;
 
     if (!normalizedDirectoryName) {
       setPanelError(t("settings.skillUploadDirectoryInvalid"));
@@ -340,6 +340,7 @@ export function SkillManagementPanel({
     directoryName: uploadDirectoryName,
     pastedMarkdown
   });
+  const resolvedUploadDirectoryName = uploadDirectoryName || currentUploadDraft?.directoryName || "";
   const resolvedTriggerLabel = triggerLabel ?? t("settings.skillManageAction");
 
   return (
@@ -655,7 +656,11 @@ export function SkillManagementPanel({
               aria-label={t("settings.skillUploadScopeLabel")}
             >
               {SKILL_SCOPE_OPTIONS.map((scope) => (
-                <label key={scope} className="settings-skill-upload-target">
+                <label
+                  key={scope}
+                  className="settings-skill-upload-target"
+                  data-selected={uploadScope === scope ? "true" : "false"}
+                >
                   <input
                     type="radio"
                     name="skill-upload-scope"
@@ -712,23 +717,32 @@ export function SkillManagementPanel({
               <input
                 className="settings-skill-upload-text"
                 type="text"
-                value={uploadDirectoryName}
+                aria-label={t("settings.skillUploadDirectoryLabel")}
+                value={resolvedUploadDirectoryName}
                 onChange={(event) => setUploadDirectoryName(event.target.value)}
                 placeholder={t("settings.skillUploadDirectoryPlaceholder")}
               />
+              <span className="settings-skill-upload-hint">{t("settings.skillUploadDirectoryHint")}</span>
             </label>
 
-            <div className="settings-skill-upload-targets">
-              {getUploadTargetOptions(uploadScope).map((targetCli) => (
-                <label key={targetCli} className="settings-skill-upload-target">
-                  <input
-                    type="checkbox"
-                    checked={uploadTargets[targetCli]}
-                    onChange={() => handleUploadTargetToggle(targetCli)}
-                  />
-                  <span>{resolveTargetCliLabel(targetCli)}</span>
-                </label>
-              ))}
+            <div className="settings-skill-upload-field">
+              <span>{t("settings.skillUploadTargetsLabel")}</span>
+              <div className="settings-skill-upload-targets">
+                {getUploadTargetOptions(uploadScope).map((targetCli) => (
+                  <label
+                    key={targetCli}
+                    className="settings-skill-upload-target"
+                    data-selected={uploadTargets[targetCli] ? "true" : "false"}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={uploadTargets[targetCli]}
+                      onChange={() => handleUploadTargetToggle(targetCli)}
+                    />
+                    <span>{resolveTargetCliLabel(targetCli)}</span>
+                  </label>
+                ))}
+              </div>
             </div>
 
             {currentUploadDraft?.notes.length ? (
@@ -889,7 +903,7 @@ function resolveCurrentUploadDraft({
     return null;
   }
 
-  return prepareSkillUploadDraft(buildPastedSkillFileName(directoryName), pastedMarkdown);
+  return prepareSkillUploadDraft(buildPastedSkillFileName(directoryName, pastedMarkdown), pastedMarkdown);
 }
 
 function resolveBindingStatusLabel(status: SkillTargetBindingDto["syncStatus"]): string {
@@ -1054,8 +1068,8 @@ function prepareSkillUploadDraft(fileName: string, markdownContent: string): Ski
     notes.push(t("settings.skillUploadNormalizedNote"));
   }
 
-  const directoryName = normalizeUploadedDirectoryName(fileName) ?? "";
-  const heading = normalizedContent.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "";
+  const heading = extractSkillHeading(normalizedContent);
+  const directoryName = normalizeUploadedDirectoryName(fileName) ?? normalizeUploadedDirectoryName(heading) ?? "";
 
   if (!directoryName) {
     notes.push(t("settings.skillUploadDirectoryRequiredNote"));
@@ -1111,15 +1125,21 @@ function normalizeUploadedDirectoryName(input: string): string | null {
     .replace(/\s+/g, "-")
     .replace(/[^A-Za-z0-9._-]+/g, "-")
     .replace(/-+/g, "-")
-    .replace(/^[-._]+|[-._]+$/g, "");
+    .replace(/^[-._]+|[-._]+$/g, "")
+    .toLowerCase();
 
   return normalized.length > 0 ? normalized : null;
 }
 
-function buildPastedSkillFileName(directoryName: string): string {
-  const normalizedDirectoryName = normalizeUploadedDirectoryName(directoryName);
+function buildPastedSkillFileName(directoryName: string, markdownContent: string): string {
+  const normalizedDirectoryName = normalizeUploadedDirectoryName(directoryName)
+    ?? normalizeUploadedDirectoryName(extractSkillHeading(markdownContent));
 
   return normalizedDirectoryName ? `${normalizedDirectoryName}.md` : "pasted-skill.md";
+}
+
+function extractSkillHeading(markdownContent: string): string {
+  return markdownContent.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "";
 }
 
 function formatSkillTitleFromDirectoryName(directoryName: string): string {

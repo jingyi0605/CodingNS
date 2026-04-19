@@ -20428,6 +20428,12 @@ textarea:focus-visible {
   font: inherit;
 }
 
+.settings-skill-upload-hint {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .settings-skill-create-textarea {
   min-height: 184px;
   resize: vertical;
@@ -20442,10 +20448,37 @@ textarea:focus-visible {
 .settings-skill-upload-target {
   display: inline-flex;
   align-items: center;
+  min-height: 36px;
+  padding: 0 12px;
   gap: 6px;
+  border: 1px solid var(--border-primary);
+  border-radius: 999px;
+  background: var(--bg-primary);
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.5;
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.settings-skill-upload-target input {
+  flex-shrink: 0;
+}
+
+.settings-skill-upload-target[data-selected="true"] {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--border-primary));
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-primary));
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.settings-skill-upload-target:hover {
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--border-primary));
+  background: var(--bg-hover);
 }
 
 .settings-skill-modal {
