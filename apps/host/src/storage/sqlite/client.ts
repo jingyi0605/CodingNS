@@ -604,12 +604,90 @@ function ensureAssistantSandboxSchema(db: Database.Database): void {
 
   if (columns.length > 0) {
     const columnNames = new Set(columns.map((column) => column.name));
+    const tableSql = (
+      db
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'assistant_sandboxes'"
+        )
+        .get() as { sql?: string } | undefined
+    )?.sql ?? "";
+    const needsStatusConstraintRebuild = !tableSql.includes("'orphaned'");
 
-    if (!columnNames.has("control_session_id")) {
+    if (needsStatusConstraintRebuild) {
+      const hasControlSessionId = columnNames.has("control_session_id");
+      const rebuild = db.transaction(() => {
+        db.exec("ALTER TABLE assistant_sandboxes RENAME TO assistant_sandboxes_legacy");
+        db.exec(`
+          CREATE TABLE assistant_sandboxes (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            workspace_id TEXT NOT NULL UNIQUE,
+            control_session_id TEXT,
+            title TEXT NOT NULL,
+            description TEXT,
+            source_kind TEXT NOT NULL CHECK (source_kind IN ('blank', 'clone')),
+            source_ref TEXT,
+            visibility TEXT NOT NULL CHECK (visibility IN ('assistant_only', 'pinned')),
+            status TEXT NOT NULL CHECK (status IN ('active', 'archived', 'expired', 'orphaned', 'deleted')),
+            purpose TEXT,
+            expires_at TEXT,
+            promoted_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+            FOREIGN KEY (control_session_id) REFERENCES butler_control_sessions(id) ON DELETE SET NULL
+          );
+        `);
+        db.exec(`
+          INSERT INTO assistant_sandboxes (
+            id,
+            user_id,
+            workspace_id,
+            control_session_id,
+            title,
+            description,
+            source_kind,
+            source_ref,
+            visibility,
+            status,
+            purpose,
+            expires_at,
+            promoted_at,
+            created_at,
+            updated_at
+          )
+          SELECT
+            id,
+            user_id,
+            workspace_id,
+            ${hasControlSessionId ? "control_session_id" : "NULL"},
+            title,
+            description,
+            source_kind,
+            source_ref,
+            visibility,
+            status,
+            purpose,
+            expires_at,
+            promoted_at,
+            created_at,
+            updated_at
+          FROM assistant_sandboxes_legacy;
+        `);
+        db.exec("DROP TABLE assistant_sandboxes_legacy");
+      });
+
+      rebuild();
+    } else if (!columnNames.has("control_session_id")) {
       db.exec("ALTER TABLE assistant_sandboxes ADD COLUMN control_session_id TEXT");
     }
 
     db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_assistant_sandboxes_user_status
+        ON assistant_sandboxes(user_id, status, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_assistant_sandboxes_workspace
+        ON assistant_sandboxes(workspace_id, status, updated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_assistant_sandboxes_control_session
         ON assistant_sandboxes(control_session_id, status, updated_at DESC);
     `);
@@ -627,7 +705,7 @@ function ensureAssistantSandboxSchema(db: Database.Database): void {
       source_kind TEXT NOT NULL CHECK (source_kind IN ('blank', 'clone')),
       source_ref TEXT,
       visibility TEXT NOT NULL CHECK (visibility IN ('assistant_only', 'pinned')),
-      status TEXT NOT NULL CHECK (status IN ('active', 'archived', 'expired', 'deleted')),
+      status TEXT NOT NULL CHECK (status IN ('active', 'archived', 'expired', 'orphaned', 'deleted')),
       purpose TEXT,
       expires_at TEXT,
       promoted_at TEXT,

@@ -173,6 +173,36 @@ export class AssistantSandboxWorkspaceRepository {
       .map((row) => (row as { workspace_id: string }).workspace_id);
   }
 
+  listDueCleanup(referenceAt: string, limit: number): AssistantSandboxWorkspace[] {
+    return this.db
+      .prepare(
+        `SELECT
+           id,
+           user_id,
+           workspace_id,
+           control_session_id,
+           title,
+           description,
+           source_kind,
+           source_ref,
+           visibility,
+           status,
+           purpose,
+           expires_at,
+           promoted_at,
+           created_at,
+           updated_at
+         FROM assistant_sandboxes
+         WHERE status = 'orphaned'
+           AND expires_at IS NOT NULL
+           AND expires_at <= ?
+         ORDER BY expires_at ASC, updated_at ASC
+         LIMIT ?`
+      )
+      .all(referenceAt, limit)
+      .map((row) => mapRow(row as AssistantSandboxWorkspaceRow));
+  }
+
   update(record: AssistantSandboxWorkspace): AssistantSandboxWorkspace {
     this.db
       .prepare(

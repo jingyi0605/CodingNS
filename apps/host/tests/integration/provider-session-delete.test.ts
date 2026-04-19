@@ -140,6 +140,34 @@ describe("provider session delete", () => {
     expect(context.sessionBindingRepository.findBySessionId("session-404")).toBeNull();
     expect(context.sessionIndexRepository.findIndexRecordBySessionId("session-404")).toBeNull();
   });
+
+  it("删除会话时会通知已注册的删除观察器", async () => {
+    const fixture = createEmptyFixture();
+    cleanupTargets.push(fixture.rootDir);
+    const cliDelete = {
+      deleteSession: vi.fn(async () => {})
+    };
+    const context = createServiceContext(fixture, cliDelete);
+    const observer = vi.fn(async () => {});
+
+    seedSession(context, {
+      sessionId: "session-observer-1",
+      provider: "gemini",
+      providerSessionId: "gemini-session-observer-1",
+      rawStoreRef: "gemini://session/gemini-session-observer-1",
+      runningState: "idle"
+    });
+
+    context.service.registerSessionDeletedObserver(observer);
+    await context.service.deleteSession("session-observer-1", "user-1");
+
+    expect(observer).toHaveBeenCalledWith({
+      sessionId: "session-observer-1",
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      remainingWorkspaceSessionCount: 0
+    });
+  });
 });
 
 function createTempDir(prefix: string): string {

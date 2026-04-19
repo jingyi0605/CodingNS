@@ -11,6 +11,8 @@ export const HOST_TASK_TYPES = {
   debugRuntimeStaleReconciliation: "debug_runtime.stale_reconciliation",
   serviceNpmGlobalUpdateInstall: "service.npm_global_update_install",
   assistantAutomationTick: "assistant.automation.tick",
+  assistantSandboxTick: "assistant.sandbox.tick",
+  assistantSandboxCleanup: "assistant.sandbox.cleanup",
   assistantAutomationEvaluate: "assistant.automation.evaluate",
   verificationRunExecute: "butler.verification_run.execute"
 } as const;

@@ -844,7 +844,7 @@ CREATE TABLE IF NOT EXISTS assistant_sandboxes (
   source_kind TEXT NOT NULL CHECK (source_kind IN ('blank', 'clone')),
   source_ref TEXT,
   visibility TEXT NOT NULL CHECK (visibility IN ('assistant_only', 'pinned')),
-  status TEXT NOT NULL CHECK (status IN ('active', 'archived', 'expired', 'deleted')),
+  status TEXT NOT NULL CHECK (status IN ('active', 'archived', 'expired', 'orphaned', 'deleted')),
   purpose TEXT,
   expires_at TEXT,
   promoted_at TEXT,

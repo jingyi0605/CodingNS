@@ -59,7 +59,7 @@ interface AssistantAutomationRecentRunsQuery {
 }
 
 interface AssistantSandboxListQuery {
-  status?: "active" | "archived" | "expired" | "deleted";
+  status?: "active" | "archived" | "expired" | "orphaned" | "deleted";
   controlSessionId?: string;
 }
 

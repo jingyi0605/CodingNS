@@ -8,6 +8,8 @@ import type { AssistantSandboxWorkspace, Workspace } from "../../types/domain.js
 import type { AssistantSandboxWorkspaceRepository } from "../../storage/repositories/assistant-sandbox-workspace-repository.js";
 import type { ButlerProfileService } from "./butler-profile-service.js";
 import type { ButlerProjectService } from "./butler-project-service.js";
+import { createTaskManager, type TaskManager } from "../tasks/task-manager.js";
+import { HOST_TASK_TYPES } from "../tasks/task-types.js";
 import type { CloneWorkspaceInput, WorkspaceService } from "../workspace/workspace-service.js";
 
 export interface AssistantSandboxWorkspaceView extends AssistantSandboxWorkspace {
@@ -40,7 +42,18 @@ export interface PromoteAssistantSandboxInput {
   defaultProvider?: "codex" | "claude-code" | null;
 }
 
+export interface AssistantSandboxCleanupResult {
+  dueSandboxCount: number;
+  cleanedSandboxCount: number;
+  idle: boolean;
+}
+
+const DEFAULT_SANDBOX_RETENTION_DAYS = 30;
+const DEFAULT_SANDBOX_CLEANUP_LIMIT = 20;
+
 export class AssistantSandboxService {
+  private readonly taskManager: TaskManager;
+
   constructor(
     private readonly repository: AssistantSandboxWorkspaceRepository,
     private readonly butlerProfileService: Pick<ButlerProfileService, "getProfile">,
@@ -48,13 +61,17 @@ export class AssistantSandboxService {
       WorkspaceService,
       "importWorkspace" | "cloneWorkspace" | "removeWorkspace" | "getWorkspaceOrThrow"
     >,
-    private readonly butlerProjectService?: Pick<ButlerProjectService, "create">
-  ) {}
+    private readonly butlerProjectService?: Pick<ButlerProjectService, "create">,
+    taskManager: TaskManager = createTaskManager()
+  ) {
+    this.taskManager = taskManager;
+    this.registerBackgroundTasks();
+  }
 
   listSandboxes(filters: {
     userId: string;
     controlSessionId?: string | null;
-    statuses?: Array<"active" | "archived" | "expired" | "deleted">;
+    statuses?: Array<"active" | "archived" | "expired" | "orphaned" | "deleted">;
     limit?: number;
   }): AssistantSandboxWorkspaceView[] {
     return this.repository
@@ -110,7 +127,10 @@ export class AssistantSandboxService {
     const promotedAt = nowIso();
     const updated = this.repository.update({
       ...current,
+      controlSessionId: null,
       visibility: "pinned",
+      status: "active",
+      expiresAt: null,
       promotedAt: current.promotedAt ?? promotedAt,
       updatedAt: promotedAt
     });
@@ -161,6 +181,33 @@ export class AssistantSandboxService {
     return this.toView(updated);
   }
 
+  markSandboxOrphanedByWorkspaceId(
+    workspaceId: string,
+    userId: string
+  ): AssistantSandboxWorkspaceView | null {
+    const current = this.repository.findByWorkspaceId(workspaceId.trim());
+
+    if (!current || current.userId !== userId) {
+      return null;
+    }
+
+    if (current.status === "deleted") {
+      return this.toView(current);
+    }
+
+    const updatedAt = nowIso();
+    const nextStatus = isAutomaticCleanupProtected(current) ? current.status : "orphaned";
+    const updated = this.repository.update({
+      ...current,
+      controlSessionId: null,
+      status: nextStatus,
+      expiresAt: nextStatus === "orphaned" ? addDaysIso(updatedAt, DEFAULT_SANDBOX_RETENTION_DAYS) : null,
+      updatedAt
+    });
+
+    return this.toView(updated);
+  }
+
   expireSandbox(sandboxId: string, userId: string): AssistantSandboxWorkspaceView {
     const current = this.requireSandbox(sandboxId, userId);
     const updatedAt = nowIso();
@@ -192,6 +239,19 @@ export class AssistantSandboxService {
     return this.toView(updated);
   }
 
+  async runDueCleanup(referenceAt: string): Promise<AssistantSandboxCleanupResult> {
+    return await this.taskManager.enqueue<{ referenceAt: string }, AssistantSandboxCleanupResult>(
+      HOST_TASK_TYPES.assistantSandboxTick,
+      {
+        key: "global",
+        source: "assistant_sandbox.run_due_cleanup",
+        input: {
+          referenceAt
+        }
+      }
+    ).promise;
+  }
+
   resolveWorkspaceId(sandboxId: string, userId: string): string {
     const sandbox = this.requireSandbox(sandboxId, userId);
 
@@ -211,7 +271,85 @@ export class AssistantSandboxService {
       });
     }
 
+    if (sandbox.status === "orphaned") {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "ASSISTANT_SANDBOX_UNAVAILABLE",
+        detail: "该沙箱已经孤立，不能再用于启动会话"
+      });
+    }
+
     return sandbox.workspaceId;
+  }
+
+  private registerBackgroundTasks(): void {
+    if (!this.taskManager.has(HOST_TASK_TYPES.assistantSandboxTick)) {
+      this.taskManager.register<{ referenceAt: string }, AssistantSandboxCleanupResult>({
+        taskType: HOST_TASK_TYPES.assistantSandboxTick,
+        executionLane: "host_background",
+        timeoutMs: 10_000,
+        run: async ({ referenceAt }) => await this.runDueCleanupDirect(referenceAt)
+      });
+    }
+
+    if (!this.taskManager.has(HOST_TASK_TYPES.assistantSandboxCleanup)) {
+      this.taskManager.register<{ sandboxId: string; referenceAt: string }, boolean>({
+        taskType: HOST_TASK_TYPES.assistantSandboxCleanup,
+        executionLane: "host_background",
+        timeoutMs: 10_000,
+        run: async ({ sandboxId, referenceAt }) => {
+          return this.cleanupSandboxDirect(sandboxId, referenceAt);
+        }
+      });
+    }
+  }
+
+  private async runDueCleanupDirect(referenceAt: string): Promise<AssistantSandboxCleanupResult> {
+    const dueSandboxes = this.repository.listDueCleanup(referenceAt, DEFAULT_SANDBOX_CLEANUP_LIMIT);
+    const handles = dueSandboxes.map((sandbox) =>
+      this.taskManager.enqueue<{ sandboxId: string; referenceAt: string }, boolean>(
+        HOST_TASK_TYPES.assistantSandboxCleanup,
+        {
+          key: sandbox.id,
+          source: "assistant_sandbox.tick.cleanup",
+          input: {
+            sandboxId: sandbox.id,
+            referenceAt
+          }
+        }
+      )
+    );
+
+    const results = await Promise.all(handles.map((handle) => handle.promise));
+    const cleanedSandboxCount = results.filter(Boolean).length;
+
+    return {
+      dueSandboxCount: dueSandboxes.length,
+      cleanedSandboxCount,
+      idle: dueSandboxes.length === 0
+    };
+  }
+
+  private async cleanupSandboxDirect(sandboxId: string, referenceAt: string): Promise<boolean> {
+    const current = this.repository.findById(sandboxId);
+
+    if (!current || current.status !== "orphaned" || !current.expiresAt || current.expiresAt > referenceAt) {
+      return false;
+    }
+
+    if (isAutomaticCleanupProtected(current)) {
+      this.repository.update({
+        ...current,
+        status: "active",
+        expiresAt: null,
+        updatedAt: nowIso()
+      });
+      return false;
+    }
+
+    await this.removeSandboxDirectoryIfSafe(current);
+    this.removeSandbox(current.id, current.userId);
+    return true;
   }
 
   private createBlankWorkspace(
@@ -266,6 +404,12 @@ export class AssistantSandboxService {
   }
 
   private ensureSandboxRootPath(): string {
+    const sandboxRootPath = this.resolveSandboxRootPath();
+    fs.mkdirSync(sandboxRootPath, { recursive: true });
+    return sandboxRootPath;
+  }
+
+  private resolveSandboxRootPath(): string {
     const profile = this.butlerProfileService.getProfile();
 
     if (!profile) {
@@ -277,9 +421,31 @@ export class AssistantSandboxService {
     }
 
     const workspacePath = profile.workspacePath;
-    const sandboxRootPath = path.join(path.resolve(workspacePath), "sandboxes");
-    fs.mkdirSync(sandboxRootPath, { recursive: true });
-    return sandboxRootPath;
+    return path.join(path.resolve(workspacePath), "sandboxes");
+  }
+
+  private async removeSandboxDirectoryIfSafe(record: AssistantSandboxWorkspace): Promise<void> {
+    const sandboxPath = this.toView(record).workspace?.path?.trim() || null;
+
+    if (!sandboxPath) {
+      return;
+    }
+
+    const resolvedSandboxPath = path.resolve(sandboxPath);
+    const sandboxRootPath = this.resolveSandboxRootPath();
+
+    if (!isPathInsideDirectory(resolvedSandboxPath, sandboxRootPath)) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "ASSISTANT_SANDBOX_DELETE_PATH_UNSAFE",
+        detail: "沙箱目录不在允许清理的沙箱根目录内，已拒绝自动删除"
+      });
+    }
+
+    await fs.promises.rm(resolvedSandboxPath, {
+      recursive: true,
+      force: true
+    });
   }
 
   private requireSandbox(sandboxId: string, userId: string): AssistantSandboxWorkspace {
@@ -309,6 +475,10 @@ export class AssistantSandboxService {
       };
     }
   }
+}
+
+function isAutomaticCleanupProtected(sandbox: AssistantSandboxWorkspace): boolean {
+  return sandbox.visibility === "pinned" || sandbox.promotedAt !== null;
 }
 
 function normalizeNullableText(value: string | null | undefined): string | null {
@@ -383,4 +553,13 @@ function normalizeNullableIsoTime(
   }
 
   return new Date(timestamp).toISOString();
+}
+
+function addDaysIso(referenceAt: string, days: number): string {
+  return new Date(new Date(referenceAt).getTime() + days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function isPathInsideDirectory(candidatePath: string, parentPath: string): boolean {
+  const relative = path.relative(path.resolve(parentPath), path.resolve(candidatePath));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }

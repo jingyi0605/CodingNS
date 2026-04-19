@@ -205,7 +205,7 @@ interface ListAssistantAutomationRunsInput {
 
 interface ListAssistantSandboxesInput {
   userId: string;
-  status?: "active" | "archived" | "expired" | "deleted";
+  status?: "active" | "archived" | "expired" | "orphaned" | "deleted";
   controlSessionId?: string | null;
 }
 

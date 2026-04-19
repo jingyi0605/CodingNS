@@ -917,6 +917,49 @@ describe("sqlite 启动引导", () => {
     const columns = client.db
       .prepare("PRAGMA table_info(assistant_sandboxes)")
       .all() as Array<{ name: string }>;
+    client.db.exec(`
+      INSERT INTO auth_users (id) VALUES ('user-1');
+      INSERT INTO workspaces (id) VALUES ('workspace-1');
+    `);
+    expect(() => {
+      client.db
+        .prepare(
+          `INSERT INTO assistant_sandboxes (
+             id,
+             user_id,
+             workspace_id,
+             control_session_id,
+             title,
+             description,
+             source_kind,
+             source_ref,
+             visibility,
+             status,
+             purpose,
+             expires_at,
+             promoted_at,
+             created_at,
+             updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          "sandbox-1",
+          "user-1",
+          "workspace-1",
+          null,
+          "孤立沙箱",
+          null,
+          "blank",
+          null,
+          "assistant_only",
+          "orphaned",
+          null,
+          null,
+          null,
+          "2026-04-17T00:00:00.000Z",
+          "2026-04-17T00:00:00.000Z"
+        );
+    }).not.toThrow();
     const controlSessionIndex = client.db
       .prepare(
         "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_assistant_sandboxes_control_session'"

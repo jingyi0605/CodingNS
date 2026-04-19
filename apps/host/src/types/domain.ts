@@ -426,7 +426,7 @@ export type AssistantAutomationRunStatus =
   | "failed"
   | "cancelled"
   | "skipped";
-export type AssistantSandboxStatus = "active" | "archived" | "expired" | "deleted";
+export type AssistantSandboxStatus = "active" | "archived" | "expired" | "orphaned" | "deleted";
 export type AssistantSandboxSourceKind = "blank" | "clone";
 export type AssistantSandboxVisibility = "assistant_only" | "pinned";
 export type ButlerControlEventKind = "action";

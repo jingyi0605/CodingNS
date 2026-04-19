@@ -13,6 +13,7 @@ import { BootstrapController } from "../modules/bootstrap/bootstrap-controller.j
 import { BootstrapService } from "../modules/bootstrap/bootstrap-service.js";
 import { AssistantAutomationService } from "../modules/butler/assistant-automation-service.js";
 import { AssistantSandboxService } from "../modules/butler/assistant-sandbox-service.js";
+import { AssistantSandboxCleanupScheduler } from "../modules/butler/assistant-sandbox-cleanup-scheduler.js";
 import { ButlerControlTimerScheduler } from "../modules/butler/butler-control-timer-scheduler.js";
 import { ButlerControlTimerService } from "../modules/butler/butler-control-timer-service.js";
 import { ButlerControlSessionService } from "../modules/butler/butler-control-session-service.js";
@@ -589,8 +590,20 @@ export function createServer(config: HostConfig) {
     repositories.assistantSandboxWorkspaceRepository,
     butlerProfileService,
     workspaceService,
-    butlerProjectService
+    butlerProjectService,
+    taskManager
   );
+  sessionHistoryService.registerSessionDeletedObserver(async ({
+    workspaceId,
+    userId,
+    remainingWorkspaceSessionCount
+  }) => {
+    if (remainingWorkspaceSessionCount > 0) {
+      return;
+    }
+
+    assistantSandboxService.markSandboxOrphanedByWorkspaceId(workspaceId, userId);
+  });
   const butlerInboxService = new ButlerInboxService(
     repositories.butlerProjectRepository,
     repositories.butlerInboxItemRepository,
@@ -787,6 +800,12 @@ export function createServer(config: HostConfig) {
   );
   const butlerControlTimerScheduler = new ButlerControlTimerScheduler(
     butlerControlTimerService,
+    {
+      schedulerMetrics
+    }
+  );
+  const assistantSandboxCleanupScheduler = new AssistantSandboxCleanupScheduler(
+    assistantSandboxService,
     {
       schedulerMetrics
     }
@@ -1059,6 +1078,7 @@ export function createServer(config: HostConfig) {
   patrolScheduler.start();
   sessionSummaryScheduler.start();
   butlerFollowUpScheduler.start();
+  assistantSandboxCleanupScheduler.start();
   butlerControlTimerScheduler.start();
   debugRuntimeReconciliationScheduler.start();
 
@@ -1074,6 +1094,7 @@ export function createServer(config: HostConfig) {
     await patrolScheduler.dispose();
     await sessionSummaryScheduler.dispose();
     await butlerFollowUpScheduler.dispose();
+    await assistantSandboxCleanupScheduler.dispose();
     await butlerControlTimerScheduler.dispose();
     await debugRuntimeReconciliationScheduler.dispose();
     terminalService.off("exit", handleDebugTargetTerminalExit);

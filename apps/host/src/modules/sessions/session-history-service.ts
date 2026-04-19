@@ -222,6 +222,12 @@ interface SessionHistoryAdapterOverrides {
 }
 
 type LiveActivityObservationResolver = (sessionId: string) => SessionActivityObservation | null;
+type SessionDeletedObserver = (input: {
+  sessionId: string;
+  userId: string;
+  workspaceId: string;
+  remainingWorkspaceSessionCount: number;
+}) => Promise<void> | void;
 
 const SESSION_START_DEFERRED_PROVIDERS = new Set([
   "codex",
@@ -259,6 +265,7 @@ export class SessionHistoryService {
   private readonly workspaceStateRefreshStatuses = new Map<string, WorkspaceStateRefreshStatus>();
   private readonly providerCapabilityCache = new Map<string, ProviderCapabilityCacheEntry>();
   private readonly liveActivityObservationResolvers = new Set<LiveActivityObservationResolver>();
+  private readonly sessionDeletedObservers = new Set<SessionDeletedObserver>();
   private readonly workspaceSessionRelations = new Map<
     string,
     Map<string, SessionRelationDescriptor>
@@ -368,6 +375,18 @@ export class SessionHistoryService {
 
         closed = true;
         this.liveActivityObservationResolvers.delete(resolver);
+      }
+    };
+  }
+
+  registerSessionDeletedObserver(
+    observer: SessionDeletedObserver
+  ): { close(): void } {
+    this.sessionDeletedObservers.add(observer);
+
+    return {
+      close: () => {
+        this.sessionDeletedObservers.delete(observer);
       }
     };
   }
@@ -1791,6 +1810,18 @@ export class SessionHistoryService {
       if (!isProviderSessionMissing(error)) {
         throw mapSessionProviderError(error);
       }
+    }
+
+    for (const observer of this.sessionDeletedObservers) {
+      await observer({
+        sessionId,
+        userId,
+        workspaceId: binding.workspaceId,
+        remainingWorkspaceSessionCount: this.countOtherWorkspaceSessions(
+          binding.workspaceId,
+          sessionId
+        )
+      });
     }
 
     const deleteTransaction = this.db.transaction((targetSessionId: string) => {
@@ -3758,6 +3789,19 @@ export class SessionHistoryService {
     this.db
       .prepare("DELETE FROM session_bindings WHERE session_id = ?")
       .run(sessionId);
+  }
+
+  private countOtherWorkspaceSessions(workspaceId: string, sessionId: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM session_bindings
+         WHERE workspace_id = ?
+           AND session_id != ?`
+      )
+      .get(workspaceId, sessionId) as { count: number } | undefined;
+
+    return Number(row?.count ?? 0);
   }
 
   private detachSessionRelationsBeforeDelete(sessionId: string): void {

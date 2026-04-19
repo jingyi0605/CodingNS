@@ -5775,6 +5775,8 @@ function resolveAssistantSandboxStatusLabel(
       return t("shell.butlerAutomationStatusCompleted");
     case "expired":
       return t("shell.butlerAutomationStatusCancelled");
+    case "orphaned":
+      return t("shell.butlerSandboxStatusOrphaned");
     case "deleted":
       return t("shell.butlerAutomationStatusFailed");
     case "active":
@@ -5791,6 +5793,8 @@ function resolveAssistantSandboxBadgeStatus(
       return "completed";
     case "expired":
       return "cancelled";
+    case "orphaned":
+      return "waiting_user";
     case "deleted":
       return "failed";
     case "active":
