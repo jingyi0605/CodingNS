@@ -10,6 +10,7 @@
 - 已明确 `apps/codingns-proxy` 子仓库需要从骨架升级成正式可部署服务
 - `console-web` 已从占位 README 升级成最小可运行站点，支持注册、登录、Host 绑定、流量钱包、套餐和订单查看
 - `control-api` 已补控制台最小只读绑定列表接口 `GET /api/v1/hosts`，`shared-contracts` 已补对应契约，前端不再靠猜接口写页面
+- `control-api` 已补 SMTP 发信实现、忘记密码验证码和密码重置闭环，`console-web` 已补忘记密码页
 
 ## 这份文档是干什么的
 
@@ -101,8 +102,8 @@
       - `pnpm --filter @codingns-proxy/console-web test`
       - `pnpm --filter @codingns-proxy/console-web build`
 
-- [ ] 1.2 接真实邮件通道并补密码找回
-  - 状态：TODO
+- [x] 1.2 接真实邮件通道并补密码找回
+  - 状态：DONE
   - 这一步到底做什么：把当前内存验证码发送器替换成真实邮件通道，并新增重置密码闭环
   - 做完以后能看到什么结果：邮箱注册和找回密码不再停留在演示状态
   - 依赖什么：1.1
@@ -115,6 +116,22 @@
     - 测试邮件发送
     - 注册验证码验证
     - 忘记密码流程联调
+  - 验证结果：
+    - 已在 `control-api` 增加 SMTP 发信实现，支持通过环境变量切换 `memory` / `smtp` 模式
+    - 已新增密码找回接口：
+      - `POST /api/public/auth/password-reset/request-code`
+      - `POST /api/public/auth/password-reset/confirm`
+    - 已扩展验证码仓储到 `register / password_reset` 两类用途，并支持密码重置后更新账号密码哈希
+    - 已在 `console-web` 新增忘记密码页，支持申请重置验证码并提交新密码
+    - 已补 README，写清控制面新增接口和 SMTP 配置项
+    - 已通过验证：
+      - `pnpm --filter @codingns-proxy/shared-contracts build`
+      - `pnpm --filter @codingns-proxy/control-api lint`
+      - `pnpm --filter @codingns-proxy/control-api test`
+      - `pnpm --filter @codingns-proxy/control-api build`
+      - `pnpm --filter @codingns-proxy/console-web lint`
+      - `pnpm --filter @codingns-proxy/console-web test`
+      - `pnpm --filter @codingns-proxy/console-web build`
 
 ---
 
