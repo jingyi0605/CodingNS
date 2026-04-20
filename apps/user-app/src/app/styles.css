@@ -8724,51 +8724,6 @@ textarea:focus-visible {
   max-width: 112px;
 }
 
-.conversation-butler-action-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.conversation-butler-action-card {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  min-height: 72px;
-  padding: 12px 0;
-  border: 0;
-  border-top: 1px solid var(--modal-list-item-border);
-  border-radius: 0;
-  background: transparent;
-  color: var(--text-primary);
-  text-align: left;
-  cursor: pointer;
-  box-shadow: none;
-  transition:
-    background 120ms ease,
-    color 120ms ease;
-}
-
-.conversation-butler-action-card:hover {
-  background: color-mix(in srgb, var(--modal-list-item-hover) 52%, transparent);
-}
-
-.conversation-butler-action-card:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.conversation-butler-action-card strong {
-  font-size: 13px;
-  line-height: 1.3;
-}
-
-.conversation-butler-action-card span {
-  font-size: 12px;
-  line-height: 1.4;
-  color: var(--text-secondary);
-}
-
 .conversation-header-eyebrow {
   display: flex;
   align-items: center;
@@ -25961,8 +25916,7 @@ textarea:focus-visible {
 
   .conversation-butler-target-grid,
   .conversation-butler-meta-grid,
-  .conversation-butler-preset-grid,
-  .conversation-butler-action-grid {
+  .conversation-butler-preset-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 

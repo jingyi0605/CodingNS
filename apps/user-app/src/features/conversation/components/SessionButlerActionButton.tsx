@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useState } from "react";
 
+import { ModalActions } from "../../../components/ModalAtoms";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import {
@@ -432,6 +433,30 @@ export function SessionButlerActionButton({
         title={t("conversation.butlerActionModalTitle")}
         description={t("conversation.butlerActionModalDescription")}
         className="conversation-butler-modal-card"
+        footer={!contextLoading && !contextError && target ? (
+          <ModalActions>
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={runningAction !== null}
+              onClick={() => {
+                void handleVerification();
+              }}
+            >
+              {t("conversation.butlerVerificationAction")}
+            </button>
+            <button
+              type="button"
+              className="primary-button"
+              disabled={runningAction !== null}
+              onClick={() => {
+                void handleFollowUp();
+              }}
+            >
+              {t("conversation.butlerFollowUpAction")}
+            </button>
+          </ModalActions>
+        ) : undefined}
         onClose={() => {
           if (runningAction) {
             return;
@@ -582,30 +607,6 @@ export function SessionButlerActionButton({
                 ) : null}
               </div>
 
-              <div className="conversation-butler-action-grid">
-                <button
-                  type="button"
-                  className="conversation-butler-action-card"
-                  disabled={runningAction !== null}
-                  onClick={() => {
-                    void handleFollowUp();
-                  }}
-                >
-                  <strong>{t("conversation.butlerFollowUpAction")}</strong>
-                  <span>{t("conversation.butlerFollowUpActionDescription")}</span>
-                </button>
-                <button
-                  type="button"
-                  className="conversation-butler-action-card"
-                  disabled={runningAction !== null}
-                  onClick={() => {
-                    void handleVerification();
-                  }}
-                >
-                  <strong>{t("conversation.butlerVerificationAction")}</strong>
-                  <span>{t("conversation.butlerVerificationActionDescription")}</span>
-                </button>
-              </div>
             </>
           ) : null}
         </div>

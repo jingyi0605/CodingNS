@@ -243,7 +243,7 @@ describe("SessionButlerActionButton", () => {
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: `${t("conversation.butlerFollowUpAction")} ${t("conversation.butlerFollowUpActionDescription")}`
+        name: t("conversation.butlerFollowUpAction")
       })
     );
 
@@ -277,7 +277,7 @@ describe("SessionButlerActionButton", () => {
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: `${t("conversation.butlerVerificationAction")} ${t("conversation.butlerVerificationActionDescription")}`
+        name: t("conversation.butlerVerificationAction")
       })
     );
 
@@ -329,7 +329,7 @@ describe("SessionButlerActionButton", () => {
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: `${t("conversation.butlerFollowUpAction")} ${t("conversation.butlerFollowUpActionDescription")}`
+        name: t("conversation.butlerFollowUpAction")
       })
     );
 
