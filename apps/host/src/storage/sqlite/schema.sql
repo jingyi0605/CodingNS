@@ -1195,6 +1195,7 @@ CREATE TABLE IF NOT EXISTS instance_relay_tunnel_config (
   host_public_key TEXT,
   host_key_fingerprint TEXT,
   local_target_base_url TEXT NOT NULL,
+  local_target_source TEXT NOT NULL DEFAULT 'default' CHECK (local_target_source IN ('default', 'custom')),
   updated_at TEXT NOT NULL
 );
 

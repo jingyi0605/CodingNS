@@ -53,6 +53,7 @@ describe("公共隧道实例存储", () => {
         "host_public_key",
         "host_key_fingerprint",
         "local_target_base_url",
+        "local_target_source",
         "updated_at"
       ])
     );
@@ -106,6 +107,7 @@ describe("公共隧道实例存储", () => {
       hostPublicKey: "PUBLIC_KEY_DEMO",
       hostKeyFingerprint: "SHA256:demo",
       localTargetBaseUrl: "http://127.0.0.1:4173",
+      localTargetBaseUrlSource: "custom",
       updatedAt: "2026-04-19T11:00:00.000Z"
     });
     firstRepository.upsertStatus({
@@ -140,6 +142,7 @@ describe("公共隧道实例存储", () => {
       hostPublicKey: "PUBLIC_KEY_DEMO",
       hostKeyFingerprint: "SHA256:demo",
       localTargetBaseUrl: "http://127.0.0.1:4173",
+      localTargetBaseUrlSource: "custom",
       updatedAt: "2026-04-19T11:00:00.000Z"
     });
     expect(secondRepository.findStatus()).toEqual({

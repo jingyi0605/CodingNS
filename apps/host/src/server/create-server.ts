@@ -414,7 +414,11 @@ export function createServer(config: HostConfig) {
     repositories.instanceRelayTunnelIdentityRepository,
     repositories.instanceRelayTunnelRepository,
     {
-      defaultLocalTargetBaseUrl: `http://127.0.0.1:${config.port}`,
+      defaultLocalTargetBaseUrl: `http://127.0.0.1:${config.webUiPort}`,
+      legacyLocalTargetBaseUrl:
+        config.webUiPort !== config.port
+          ? `http://127.0.0.1:${config.port}`
+          : null,
       controlSessionSecret: config.gitCredentialSecret
     },
     taskManager,

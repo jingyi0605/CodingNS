@@ -1287,6 +1287,7 @@ export interface InstanceRelayTunnelConfig {
   hostPublicKey: string | null;
   hostKeyFingerprint: string | null;
   localTargetBaseUrl: string;
+  localTargetBaseUrlSource?: "default" | "custom";
   updatedAt: string;
 }
 

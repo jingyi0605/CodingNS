@@ -914,6 +914,12 @@ function ensureInstanceRelayTunnelConfigSchema(db: Database.Database): void {
   if (!columns.some((column) => column.name === "control_session_expires_at")) {
     db.exec("ALTER TABLE instance_relay_tunnel_config ADD COLUMN control_session_expires_at TEXT");
   }
+
+  if (!columns.some((column) => column.name === "local_target_source")) {
+    db.exec(
+      "ALTER TABLE instance_relay_tunnel_config ADD COLUMN local_target_source TEXT NOT NULL DEFAULT 'default' CHECK (local_target_source IN ('default', 'custom'))"
+    );
+  }
 }
 
 function ensureSessionProviderSchema(db: Database.Database): void {

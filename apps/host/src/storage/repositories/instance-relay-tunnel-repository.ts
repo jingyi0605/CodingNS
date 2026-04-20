@@ -27,6 +27,7 @@ export class InstanceRelayTunnelRepository {
            host_public_key,
            host_key_fingerprint,
            local_target_base_url,
+           local_target_source,
            updated_at
          FROM instance_relay_tunnel_config
          WHERE id = 'default'`
@@ -55,8 +56,9 @@ export class InstanceRelayTunnelRepository {
           host_public_key,
           host_key_fingerprint,
           local_target_base_url,
+          local_target_source,
           updated_at
-        ) VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           activated = excluded.activated,
           enabled = excluded.enabled,
@@ -72,6 +74,7 @@ export class InstanceRelayTunnelRepository {
           host_public_key = excluded.host_public_key,
           host_key_fingerprint = excluded.host_key_fingerprint,
           local_target_base_url = excluded.local_target_base_url,
+          local_target_source = excluded.local_target_source,
           updated_at = excluded.updated_at`
       )
       .run(
@@ -89,6 +92,7 @@ export class InstanceRelayTunnelRepository {
         config.hostPublicKey,
         config.hostKeyFingerprint,
         config.localTargetBaseUrl,
+        config.localTargetBaseUrlSource ?? "default",
         config.updatedAt
       );
 
@@ -177,6 +181,7 @@ interface InstanceRelayTunnelConfigRow {
   host_public_key: string | null;
   host_key_fingerprint: string | null;
   local_target_base_url: string;
+  local_target_source: "default" | "custom";
   updated_at: string;
 }
 
@@ -209,6 +214,7 @@ function mapConfigRow(row: InstanceRelayTunnelConfigRow): InstanceRelayTunnelCon
     hostPublicKey: row.host_public_key,
     hostKeyFingerprint: row.host_key_fingerprint,
     localTargetBaseUrl: row.local_target_base_url,
+    localTargetBaseUrlSource: row.local_target_source,
     updatedAt: row.updated_at
   };
 }
