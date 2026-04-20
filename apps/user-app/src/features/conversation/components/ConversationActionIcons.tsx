@@ -78,6 +78,21 @@ export function BranchTreeActionIcon() {
   );
 }
 
+export function MoreActionIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      fill="currentColor"
+      className="conversation-action-icon"
+    >
+      <circle cx="4.5" cy="10" r="1.5" />
+      <circle cx="10" cy="10" r="1.5" />
+      <circle cx="15.5" cy="10" r="1.5" />
+    </svg>
+  );
+}
+
 export function ContextExpandActionIcon({ expanded }: { expanded: boolean }) {
   return (
     <svg

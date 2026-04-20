@@ -760,6 +760,24 @@
   color: var(--app-button-color);
 }
 
+.mobile-conversation-toolbar-main .mobile-conversation-session-actions .mobile-conversation-more-button {
+  padding: 0;
+}
+
+.mobile-conversation-action-menu {
+  min-width: 12rem;
+  padding: 0.45rem;
+  border-radius: 14px;
+}
+
+.mobile-conversation-action-menu-item {
+  min-height: 3rem;
+  padding: 0.8rem 0.95rem;
+  border-radius: 10px;
+  font-size: 1rem;
+  font-weight: 500;
+}
+
 .mobile-conversation-toolbar-title {
   display: -webkit-box;
   flex: 1 1 auto;

@@ -486,4 +486,28 @@ describe("SessionButlerActionButton", () => {
       expect(mockedCancelButlerVerificationRun).toHaveBeenCalledWith("project-1", "verification-run-1");
     });
   });
+
+  it("隐藏触发按钮时也可以通过打开请求直接弹出助手模态框", async () => {
+    const { rerender } = render(
+      <SessionButlerActionButton
+        session={createSessionSummary()}
+        showTrigger={false}
+        openRequestKey={0}
+      />
+    );
+
+    expect(screen.queryByRole("button", { name: t("conversation.butlerActionButton") })).not.toBeInTheDocument();
+
+    rerender(
+      <SessionButlerActionButton
+        session={createSessionSummary()}
+        showTrigger={false}
+        openRequestKey={1}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("项目甲")).toBeInTheDocument();
+    });
+  });
 });

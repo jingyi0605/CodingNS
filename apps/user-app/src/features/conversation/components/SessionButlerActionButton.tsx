@@ -20,6 +20,8 @@ import type { SessionSummaryDto } from "../api/conversation-api";
 
 interface SessionButlerActionButtonProps {
   session: SessionSummaryDto | null;
+  showTrigger?: boolean;
+  openRequestKey?: number;
 }
 
 type ButlerActionKind = "follow-up" | "verification" | null;
@@ -59,7 +61,11 @@ function getDefaultCompletionCriteria(): string {
   return buildCompletionCriteriaPresets()[0]?.value ?? "";
 }
 
-export function SessionButlerActionButton({ session }: SessionButlerActionButtonProps) {
+export function SessionButlerActionButton({
+  session,
+  showTrigger = true,
+  openRequestKey = 0
+}: SessionButlerActionButtonProps) {
   const { showToast } = useToast();
   const { requestNavigationRefresh } = useWorkbenchShell();
   const objectiveFieldId = useId();
@@ -157,6 +163,15 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
       requestContextReload();
     }
   }
+
+  useEffect(() => {
+    if (showTrigger || openRequestKey <= 0) {
+      return;
+    }
+
+    setModalOpen(true);
+    ensureActionContext();
+  }, [contextLoading, openRequestKey, showTrigger, actionContext]);
 
   async function handleFollowUp() {
     if (!target) {
@@ -342,73 +357,75 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
 
   return (
     <>
-      <div
-        className="conversation-butler-entry"
-        onMouseEnter={() => {
-          setAnalysisOpen(true);
-          ensureActionContext();
-        }}
-        onMouseLeave={() => {
-          setAnalysisOpen(false);
-        }}
-      >
-        <button
-          type="button"
-          className="conversation-header-ai-button"
-          aria-label={t("conversation.butlerActionButton")}
-          title={t("conversation.butlerActionButton")}
-          onFocus={() => {
+      {showTrigger ? (
+        <div
+          className="conversation-butler-entry"
+          onMouseEnter={() => {
             setAnalysisOpen(true);
             ensureActionContext();
           }}
-          onBlur={() => {
+          onMouseLeave={() => {
             setAnalysisOpen(false);
           }}
-          onClick={() => {
-            setModalOpen(true);
-            ensureActionContext();
-          }}
         >
-          <span className="conversation-header-ai-button-label" aria-hidden="true">
-            <ButlerActionIcon />
-          </span>
-        </button>
+          <button
+            type="button"
+            className="conversation-header-ai-button"
+            aria-label={t("conversation.butlerActionButton")}
+            title={t("conversation.butlerActionButton")}
+            onFocus={() => {
+              setAnalysisOpen(true);
+              ensureActionContext();
+            }}
+            onBlur={() => {
+              setAnalysisOpen(false);
+            }}
+            onClick={() => {
+              setModalOpen(true);
+              ensureActionContext();
+            }}
+          >
+            <span className="conversation-header-ai-button-label" aria-hidden="true">
+              <ButlerActionIcon />
+            </span>
+          </button>
 
-        {analysisOpen ? (
-          <div className="conversation-butler-analysis-popover" role="status" aria-live="polite">
-            <strong>{t("conversation.butlerAnalysisTitle")}</strong>
-            {contextLoading ? (
-              <p>{t("conversation.butlerActionLoading")}</p>
-            ) : contextError ? (
-              <p>{contextError}</p>
-            ) : latestFollowUpTask ? (
-              <>
-                <p>
-                  {t("conversation.butlerAnalysisObjectiveLabel")}：{latestFollowUpTask.objective}
-                </p>
-                <p>
-                  {t("conversation.butlerAnalysisStatusLabel")}：
-                  {renderButlerTaskStatus(latestFollowUpTask.status)}
-                </p>
-                <p>
-                  {t("conversation.butlerAnalysisSummaryLabel")}：
-                  {latestFollowUpTask.lastAutomationSummary
-                    || latestFollowUpTask.waitingReason
-                    || t("conversation.butlerAnalysisEmpty")}
-                </p>
-                {latestFollowUpTask.waitingReason ? (
+          {analysisOpen ? (
+            <div className="conversation-butler-analysis-popover" role="status" aria-live="polite">
+              <strong>{t("conversation.butlerAnalysisTitle")}</strong>
+              {contextLoading ? (
+                <p>{t("conversation.butlerActionLoading")}</p>
+              ) : contextError ? (
+                <p>{contextError}</p>
+              ) : latestFollowUpTask ? (
+                <>
                   <p>
-                    {t("conversation.butlerAnalysisWaitingReasonLabel")}：
-                    {latestFollowUpTask.waitingReason}
+                    {t("conversation.butlerAnalysisObjectiveLabel")}：{latestFollowUpTask.objective}
                   </p>
-                ) : null}
-              </>
-            ) : (
-              <p>{t("conversation.butlerAnalysisEmpty")}</p>
-            )}
-          </div>
-        ) : null}
-      </div>
+                  <p>
+                    {t("conversation.butlerAnalysisStatusLabel")}：
+                    {renderButlerTaskStatus(latestFollowUpTask.status)}
+                  </p>
+                  <p>
+                    {t("conversation.butlerAnalysisSummaryLabel")}：
+                    {latestFollowUpTask.lastAutomationSummary
+                      || latestFollowUpTask.waitingReason
+                      || t("conversation.butlerAnalysisEmpty")}
+                  </p>
+                  {latestFollowUpTask.waitingReason ? (
+                    <p>
+                      {t("conversation.butlerAnalysisWaitingReasonLabel")}：
+                      {latestFollowUpTask.waitingReason}
+                    </p>
+                  ) : null}
+                </>
+              ) : (
+                <p>{t("conversation.butlerAnalysisEmpty")}</p>
+              )}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <WorkbenchModal
         open={modalOpen}
