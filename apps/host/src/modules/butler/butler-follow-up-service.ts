@@ -27,11 +27,8 @@ import type {
   SessionPermissionReplyInput,
   SessionPermissionRequestView
 } from "../sessions/session-permission-request-service.js";
-import { ProviderAdapterRegistry, type PatrolSessionResult } from "./provider-adapter-registry.js";
-import {
-  ButlerFollowUpEvaluationInstructionAdapter,
-  type ButlerFollowUpEvaluationDecision
-} from "./butler-follow-up-evaluation-instruction-adapter.js";
+import { ProviderAdapterRegistry } from "./provider-adapter-registry.js";
+import { ButlerFollowUpEvaluationInstructionAdapter } from "./butler-follow-up-evaluation-instruction-adapter.js";
 import { resolveButlerCodexBackgroundModel } from "./butler-codex-model-policy.js";
 import type { WorkspaceService } from "../workspace/workspace-service.js";
 import {
@@ -107,6 +104,25 @@ export interface CreateButlerFollowUpTaskInput {
   checkIntervalSeconds?: number;
 }
 
+export interface ContinueButlerFollowUpTaskInput {
+  summary: string;
+  continuePrompt: string;
+}
+
+export interface WaitingUserButlerFollowUpTaskInput {
+  summary: string;
+  waitingReason: string;
+}
+
+export interface CompleteButlerFollowUpTaskInput {
+  summary: string;
+}
+
+export interface FailButlerFollowUpTaskInput {
+  summary: string;
+  reason?: string | null;
+}
+
 interface FollowUpTaskInspection {
   providerId: string | null;
   runningState: SessionRunningState | null;
@@ -118,17 +134,16 @@ interface FollowUpTaskInspection {
   transcriptLines: string[];
 }
 
-interface ButlerFollowUpEvaluationResult {
-  decision: ButlerFollowUpEvaluationDecision;
-  summary: string;
-  waitingReason: string | null;
-  continuePrompt: string | null;
-  riskLevel: "low" | "medium" | "high" | null;
-}
-
 interface FollowUpTaskExecutionState {
   cancelled: boolean;
   assistantSessionId: string | null;
+}
+
+interface FollowUpTaskProgressSnapshot {
+  roundCount: number;
+  updatedAt: string;
+  lastAutomationAt: string | null;
+  autoContinueCount: number;
 }
 
 class FollowUpTaskCancelledError extends Error {
@@ -208,6 +223,43 @@ export class ButlerFollowUpService {
     const index = this.sessionIndexRepository.findIndexRecordBySessionId(task.sessionId);
 
     return mapTaskView(task, project.workspaceId, project.name, index?.title ?? null);
+  }
+
+  private toTaskView(task: ButlerFollowUpTask): ButlerFollowUpTaskView {
+    const project = this.butlerProjectService.getById(task.projectId);
+    const index = this.sessionIndexRepository.findIndexRecordBySessionId(task.sessionId);
+    return mapTaskView(task, project.workspaceId, project.name, index?.title ?? null);
+  }
+
+  private requireTaskForAssistantUpdate(taskId: string, userId: string): ButlerFollowUpTask {
+    this.butlerProfileService.ensureInitialized();
+    const task = this.butlerFollowUpTaskRepository.findById(taskId);
+
+    if (!task) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "BUTLER_FOLLOW_UP_TASK_NOT_FOUND",
+        detail: "未找到对应的跟进任务"
+      });
+    }
+
+    if (task.createdByUserId !== userId) {
+      throw new AppError({
+        statusCode: 403,
+        errorCode: "BUTLER_FOLLOW_UP_TASK_FORBIDDEN",
+        detail: "你没有权限更新这个跟进任务"
+      });
+    }
+
+    if (task.status !== "active") {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "BUTLER_FOLLOW_UP_TASK_NOT_ACTIVE",
+        detail: "当前跟进任务已经不处于可回写状态"
+      });
+    }
+
+    return task;
   }
 
   async createTask(
@@ -306,6 +358,187 @@ export class ButlerFollowUpService {
       project.name,
       session.title ?? null
     );
+  }
+
+  async continueTask(
+    taskId: string,
+    input: ContinueButlerFollowUpTaskInput,
+    userId: string
+  ): Promise<ButlerFollowUpTaskView> {
+    const summary = requireNonEmptyFollowUpText(input.summary, "summary", "继续推进必须提供 summary");
+    const continuePrompt = requireNonEmptyFollowUpText(
+      input.continuePrompt,
+      "continuePrompt",
+      "继续推进必须提供 continuePrompt"
+    );
+    const task = this.requireTaskForAssistantUpdate(taskId, userId);
+
+    if (hasReachedAutoContinueLimit(task)) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "BUTLER_FOLLOW_UP_TASK_LIMIT_REACHED",
+        detail: "当前跟进任务已经达到自动推进上限，不能继续自动推进"
+      });
+    }
+
+    this.butlerSessionService.captureSessionSnapshot(
+      task.projectId,
+      task.butlerSessionId,
+      task.createdByUserId,
+      { sourceKind: "manual" }
+    );
+
+    const inspection = await this.inspectTask(task);
+    const timestamp = nowIso();
+    const runningState = normalizeRunningState(inspection.runningState);
+    const nextAutoContinueCount = task.autoContinueCount + 1;
+    const updated = this.persistWithRound({
+      ...task,
+      status: "active",
+      lastCheckedAt: timestamp,
+      lastObservedRunningState: runningState,
+      lastObservedMessageAt: inspection.messageAt,
+      lastObservedMessageCount: inspection.messageCount,
+      waitingReason: null,
+      nextCheckAt: shiftSeconds(timestamp, task.checkIntervalSeconds),
+      lastAutomationSummary: summary,
+      lastAutomationAt: timestamp,
+      autoContinueCount: nextAutoContinueCount,
+      updatedAt: timestamp,
+      completedAt: null
+    }, {
+      kind: "continue",
+      status: "active",
+      summary,
+      waitingReason: null,
+      continuePrompt,
+      observedRunningState: runningState,
+      autoContinueCount: nextAutoContinueCount,
+      createdAt: timestamp
+    });
+
+    return this.toTaskView(updated);
+  }
+
+  async markTaskWaitingUser(
+    taskId: string,
+    input: WaitingUserButlerFollowUpTaskInput,
+    userId: string
+  ): Promise<ButlerFollowUpTaskView> {
+    const summary = requireNonEmptyFollowUpText(
+      input.summary,
+      "summary",
+      "等待用户必须提供 summary"
+    );
+    const waitingReason = requireNonEmptyFollowUpText(
+      input.waitingReason,
+      "waitingReason",
+      "等待用户必须提供 waitingReason"
+    );
+    const task = this.requireTaskForAssistantUpdate(taskId, userId);
+    const inspection = await this.inspectTask(task);
+    const timestamp = nowIso();
+    const runningState = normalizeRunningState(inspection.runningState);
+    const updated = this.persistWithRound({
+      ...task,
+      status: "waiting_user",
+      lastCheckedAt: timestamp,
+      lastObservedRunningState: runningState,
+      lastObservedMessageAt: inspection.messageAt,
+      lastObservedMessageCount: inspection.messageCount,
+      waitingReason,
+      nextCheckAt: null,
+      lastAutomationSummary: summary,
+      lastAutomationAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null
+    }, {
+      kind: "waiting_user",
+      status: "waiting_user",
+      summary,
+      waitingReason,
+      continuePrompt: null,
+      observedRunningState: runningState,
+      autoContinueCount: task.autoContinueCount,
+      createdAt: timestamp
+    });
+
+    return this.toTaskView(updated);
+  }
+
+  async completeTask(
+    taskId: string,
+    input: CompleteButlerFollowUpTaskInput,
+    userId: string
+  ): Promise<ButlerFollowUpTaskView> {
+    const summary = requireNonEmptyFollowUpText(input.summary, "summary", "完成任务必须提供 summary");
+    const task = this.requireTaskForAssistantUpdate(taskId, userId);
+    const inspection = await this.inspectTask(task);
+    const timestamp = nowIso();
+    const runningState = normalizeRunningState(inspection.runningState);
+    const updated = this.persistWithRound({
+      ...task,
+      status: "completed",
+      lastCheckedAt: timestamp,
+      lastObservedRunningState: runningState,
+      lastObservedMessageAt: inspection.messageAt,
+      lastObservedMessageCount: inspection.messageCount,
+      waitingReason: null,
+      nextCheckAt: null,
+      lastAutomationSummary: summary,
+      lastAutomationAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: timestamp
+    }, {
+      kind: "completed",
+      status: "completed",
+      summary,
+      waitingReason: null,
+      continuePrompt: null,
+      observedRunningState: runningState,
+      autoContinueCount: task.autoContinueCount,
+      createdAt: timestamp
+    });
+
+    return this.toTaskView(updated);
+  }
+
+  async failTask(
+    taskId: string,
+    input: FailButlerFollowUpTaskInput,
+    userId: string
+  ): Promise<ButlerFollowUpTaskView> {
+    const summary = requireNonEmptyFollowUpText(input.summary, "summary", "标记失败必须提供 summary");
+    const reason = normalizeNullableText(input.reason) ?? summary;
+    const task = this.requireTaskForAssistantUpdate(taskId, userId);
+    const inspection = await this.inspectTask(task);
+    const timestamp = nowIso();
+    const runningState = normalizeRunningState(inspection.runningState);
+    const updated = this.persistWithRound({
+      ...task,
+      status: "failed",
+      lastCheckedAt: timestamp,
+      lastObservedRunningState: runningState,
+      lastObservedMessageAt: inspection.messageAt,
+      lastObservedMessageCount: inspection.messageCount,
+      waitingReason: reason,
+      nextCheckAt: null,
+      lastAutomationSummary: summary,
+      lastAutomationAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null
+    }, {
+      kind: "failed",
+      status: "failed",
+      summary,
+      waitingReason: reason,
+      continuePrompt: null,
+      observedRunningState: runningState,
+      autoContinueCount: task.autoContinueCount,
+      createdAt: timestamp
+    });
+
+    return this.toTaskView(updated);
   }
 
   async cancelTask(taskId: string, userId: string): Promise<ButlerFollowUpTaskView> {
@@ -500,135 +733,11 @@ export class ButlerFollowUpService {
       }
 
       try {
-        const evaluation = await this.evaluateTask(project, task, inspection, runningState, execution);
+        const progressBeforeDispatch = snapshotTaskProgress(task);
+        await this.requestAssistantEvaluation(project, task, inspection, runningState, execution);
         this.ensureTaskExecutionActive(task.id, execution);
 
-        switch (evaluation.decision) {
-          case "completed":
-            return this.persistWithRoundIfExecutionActive(task.id, execution, {
-              ...baseUpdate,
-              status: "completed",
-              waitingReason: null,
-              nextCheckAt: null,
-              completedAt: referenceAt,
-              lastAutomationAt: referenceAt,
-              lastAutomationSummary: evaluation.summary
-            }, {
-              kind: "completed",
-              status: "completed",
-              summary: evaluation.summary,
-              waitingReason: null,
-              continuePrompt: null,
-              observedRunningState: runningState,
-              autoContinueCount: task.autoContinueCount,
-              createdAt: referenceAt
-            });
-          case "waiting_user":
-            return this.persistWithRoundIfExecutionActive(task.id, execution, {
-              ...baseUpdate,
-              status: "waiting_user",
-              waitingReason: evaluation.waitingReason ?? evaluation.summary,
-              nextCheckAt: null,
-              completedAt: null,
-              lastAutomationAt: referenceAt,
-              lastAutomationSummary: evaluation.summary
-            }, {
-              kind: "waiting_user",
-              status: "waiting_user",
-              summary: evaluation.summary,
-              waitingReason: evaluation.waitingReason ?? evaluation.summary,
-              continuePrompt: null,
-              observedRunningState: runningState,
-              autoContinueCount: task.autoContinueCount,
-              createdAt: referenceAt
-            });
-          case "failed":
-            return this.persistWithRoundIfExecutionActive(task.id, execution, {
-              ...baseUpdate,
-              status: "failed",
-              waitingReason: evaluation.waitingReason ?? evaluation.summary,
-              nextCheckAt: null,
-              completedAt: null,
-              lastAutomationAt: referenceAt,
-              lastAutomationSummary: evaluation.summary
-            }, {
-              kind: "failed",
-              status: "failed",
-              summary: evaluation.summary,
-              waitingReason: evaluation.waitingReason ?? evaluation.summary,
-              continuePrompt: null,
-              observedRunningState: runningState,
-              autoContinueCount: task.autoContinueCount,
-              createdAt: referenceAt
-            });
-          case "continue":
-            if (!evaluation.continuePrompt) {
-              return this.persistWithRoundIfExecutionActive(task.id, execution, {
-                ...baseUpdate,
-                status: "failed",
-                waitingReason: "跟进助手会话没有声明本轮已发送的继续推进消息。",
-                nextCheckAt: null,
-                completedAt: null,
-                lastAutomationAt: referenceAt,
-                lastAutomationSummary: evaluation.summary
-              }, {
-                kind: "failed",
-                status: "failed",
-                summary: evaluation.summary,
-                waitingReason: "跟进助手会话没有声明本轮已发送的继续推进消息。",
-                continuePrompt: null,
-                observedRunningState: runningState,
-                autoContinueCount: task.autoContinueCount,
-                createdAt: referenceAt
-              });
-            }
-
-            this.butlerSessionService.captureSessionSnapshot(
-              task.projectId,
-              task.butlerSessionId,
-              task.createdByUserId,
-              { sourceKind: "manual" }
-            );
-
-            const nextAutoContinueCount = task.autoContinueCount + 1;
-            return this.persistWithRoundIfExecutionActive(task.id, execution, {
-              ...baseUpdate,
-              status: "active",
-              waitingReason: null,
-              nextCheckAt: shiftSeconds(referenceAt, task.checkIntervalSeconds),
-              lastAutomationAt: referenceAt,
-              autoContinueCount: nextAutoContinueCount,
-              lastAutomationSummary: evaluation.summary
-            }, {
-              kind: "continue",
-              status: "active",
-              summary: evaluation.summary,
-              waitingReason: null,
-              continuePrompt: evaluation.continuePrompt,
-              observedRunningState: runningState,
-              autoContinueCount: nextAutoContinueCount,
-              createdAt: referenceAt
-            });
-          default:
-            return this.persistWithRoundIfExecutionActive(task.id, execution, {
-              ...baseUpdate,
-              status: "failed",
-              waitingReason: "后台评估助手返回了不支持的决策。",
-              nextCheckAt: null,
-              completedAt: null,
-              lastAutomationAt: referenceAt,
-              lastAutomationSummary: "后台评估助手返回了不支持的决策。"
-            }, {
-              kind: "failed",
-              status: "failed",
-              summary: "后台评估助手返回了不支持的决策。",
-              waitingReason: "后台评估助手返回了不支持的决策。",
-              continuePrompt: null,
-              observedRunningState: runningState,
-              autoContinueCount: task.autoContinueCount,
-              createdAt: referenceAt
-            });
-        }
+        return this.requireAssistantDecisionPersisted(task.id, progressBeforeDispatch);
       } catch (error) {
         if (error instanceof FollowUpTaskCancelledError) {
           return this.butlerFollowUpTaskRepository.findById(task.id) ?? task;
@@ -668,7 +777,7 @@ export class ButlerFollowUpService {
         }
 
         const detail = error instanceof Error ? error.message : String(error);
-        const summary = `后台评估助手执行失败：${detail}`;
+        const summary = `跟进助手执行失败：${detail}`;
 
         return this.persistWithRoundIfExecutionActive(task.id, execution, {
           ...baseUpdate,
@@ -707,6 +816,23 @@ export class ButlerFollowUpService {
     }
 
     return this.butlerFollowUpTaskRepository.update(normalizedTask) ?? normalizedTask;
+  }
+
+  private requireAssistantDecisionPersisted(
+    taskId: string,
+    before: FollowUpTaskProgressSnapshot
+  ): ButlerFollowUpTask {
+    const updated = this.butlerFollowUpTaskRepository.findById(taskId);
+
+    if (!updated) {
+      throw new Error("跟进任务在回写结果前已丢失");
+    }
+
+    if (!hasTaskProgressAdvanced(updated, before)) {
+      throw new Error("跟进助手没有通过 follow-ups 命令回写本轮结果");
+    }
+
+    return updated;
   }
 
   private persistWithRound(
@@ -960,18 +1086,20 @@ export class ButlerFollowUpService {
     };
   }
 
-  private async evaluateTask(
+  private async requestAssistantEvaluation(
     project: ButlerProject,
     task: ButlerFollowUpTask,
     inspection: FollowUpTaskInspection,
     runningState: SessionRunningState | null,
     execution: FollowUpTaskExecutionState
-  ): Promise<ButlerFollowUpEvaluationResult> {
+  ): Promise<void> {
     const instruction = this.instructionAdapter.buildInstruction({
+      taskId: task.id,
       providerId: task.providerId,
       project,
       sessionId: task.sessionId,
       butlerSessionId: task.butlerSessionId,
+      assistantSessionId: task.assistantSessionId,
       sessionTitle: inspection.sessionTitle,
       objective: task.objective,
       completionCriteria: task.completionCriteria,
@@ -1003,8 +1131,6 @@ export class ButlerFollowUpService {
       });
       await this.waitForAssistantSessionTerminal(task.assistantSessionId, task.createdByUserId);
       this.ensureTaskExecutionActive(task.id, execution);
-      const result = await this.readAssistantSessionResult(task.assistantSessionId, task.createdByUserId);
-      return parseEvaluationResult(result);
     } finally {
       if (execution.assistantSessionId === task.assistantSessionId) {
         execution.assistantSessionId = null;
@@ -1079,33 +1205,6 @@ export class ButlerFollowUpService {
     }
 
     throw new Error(`BUTLER_FOLLOW_UP_ASSISTANT_WAIT_TIMEOUT:${sessionId}`);
-  }
-
-  private async readAssistantSessionResult(
-    sessionId: string,
-    userId: string
-  ): Promise<PatrolSessionResult> {
-    const history = await this.sessionHistoryService.readRecentHistoryEnvelope(sessionId, 80);
-    const assistantMessages =
-      history?.messages
-        .filter((message) => message.role === "assistant" && message.kind === "text")
-        .map((message) => message.content.trim())
-        .filter((message) => message.length > 0) ?? [];
-    const latestAssistantMessage = assistantMessages.at(-1) ?? null;
-
-    return {
-      assistantMessages,
-      latestAssistantMessage,
-      structured: {
-        summary: null,
-        riskLevel: null,
-        suggestions: [],
-        progressState: "unknown",
-        riskFlags: [],
-        nextActions: [],
-        rawJson: findStructuredJsonCandidate(assistantMessages) ?? extractJsonFromText(latestAssistantMessage)
-      }
-    };
   }
 }
 
@@ -1351,18 +1450,6 @@ function delay(timeoutMs: number): Promise<void> {
   });
 }
 
-function findStructuredJsonCandidate(messages: string[]): string | null {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const candidate = extractJsonFromText(messages[index]);
-
-    if (candidate) {
-      return candidate;
-    }
-  }
-
-  return null;
-}
-
 function isSyntheticMessageId(messageId: string | null | undefined): boolean {
   return typeof messageId === "string" && messageId.startsWith("synthetic-");
 }
@@ -1540,11 +1627,12 @@ function buildFollowUpBootstrapPrompt(input: {
     "你的职责只有三件事：",
     "1. 用 codingns assistant CLI 复核目标项目和目标会话的最新状态。",
     "2. 判断当前是否真的还需要继续跟进，还是应该等待用户决定，或者已经可以结束。",
-    "3. 只要决定继续跟进，就由你自己直接把消息发到目标开发会话，不要等后台代发。",
+    "3. 用 codingns assistant sessions send 和 codingns assistant follow-ups.* 自己完成发消息与任务回写，不要等后台代发或猜结果。",
     "",
     "硬约束：",
     "- 不要直接改当前仓库代码，这条会话只负责跟进判断和向目标开发会话发消息。",
     "- 如果决定继续，必须显式使用 `codingns assistant sessions send` 把中文跟进消息发到目标开发会话。",
+    "- 每一轮正式结论都必须用 `codingns assistant follow-ups continue|waiting-user|complete|fail` 之一回写到跟进任务。",
     "- 如果信息不足或需要用户决策，要明确说明缺口，不要假装已经发消息。",
     "- 跟进边界只围绕当前目标和结束条件，不准顺手扩范围。",
     "",
@@ -1576,174 +1664,67 @@ function resolveFollowUpModel(
   return resolveButlerCodexBackgroundModel("gpt-5.1-codex-mini", sourceCodexHomeDir);
 }
 
-function resolveFollowUpInstructionFilePath(
-  providerId: ButlerProfile["providerId"],
-  workspacePath: string
-): string {
-  return path.join(workspacePath, providerId === "claude-code" ? "CLAUDE.md" : "AGENTS.md");
-}
-
-function parseEvaluationResult(result: PatrolSessionResult): ButlerFollowUpEvaluationResult {
-  const rawJson = result.structured.rawJson ?? extractJsonFromText(result.latestAssistantMessage);
-
-  if (!rawJson) {
-    throw new Error("后台评估助手没有返回结构化 JSON");
-  }
-
-  let parsed: Record<string, unknown>;
-
-  try {
-    parsed = JSON.parse(rawJson) as Record<string, unknown>;
-  } catch (error) {
-    throw new Error(
-      `后台评估助手返回的 JSON 无法解析：${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-
-  const decision = normalizeDecision(parsed.decision);
-
-  if (!decision) {
-    throw new Error("后台评估助手返回的 decision 不合法");
-  }
-
-  const summary = normalizeNonEmptyString(parsed.summary) ?? result.structured.summary ?? "后台评估助手未提供摘要";
-  const waitingReason = normalizeNullableString(parsed.waitingReason);
-  const continuePrompt = normalizeNullableString(parsed.continuePrompt);
-  const riskLevel = normalizeRiskLevel(parsed.riskLevel);
-
+function snapshotTaskProgress(task: ButlerFollowUpTask): FollowUpTaskProgressSnapshot {
   return {
-    decision,
-    summary,
-    waitingReason,
-    continuePrompt,
-    riskLevel
+    roundCount: normalizeFollowUpRounds(task.rounds).length,
+    updatedAt: task.updatedAt,
+    lastAutomationAt: task.lastAutomationAt,
+    autoContinueCount: task.autoContinueCount
   };
 }
 
-function normalizeDecision(value: unknown): ButlerFollowUpEvaluationDecision | null {
-  switch (value) {
-    case "continue":
-    case "waiting_user":
-    case "completed":
-    case "failed":
-      return value;
-    default:
-      return null;
-  }
+function hasTaskProgressAdvanced(
+  task: ButlerFollowUpTask,
+  before: FollowUpTaskProgressSnapshot
+): boolean {
+  const roundCount = normalizeFollowUpRounds(task.rounds).length;
+  return (
+    roundCount > before.roundCount
+    || task.updatedAt !== before.updatedAt
+    || task.lastAutomationAt !== before.lastAutomationAt
+    || task.autoContinueCount !== before.autoContinueCount
+  );
 }
 
-function normalizeRiskLevel(value: unknown): "low" | "medium" | "high" | null {
-  switch (value) {
-    case "low":
-    case "medium":
-    case "high":
-      return value;
-    default:
-      return null;
+function requireNonEmptyFollowUpText(
+  value: unknown,
+  field: string,
+  detail: string
+): string {
+  if (typeof value !== "string") {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "BUTLER_FOLLOW_UP_TASK_INVALID_INPUT",
+      detail
+    });
   }
+
+  const normalized = value.trim();
+
+  if (!normalized) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "BUTLER_FOLLOW_UP_TASK_INVALID_INPUT",
+      detail
+    });
+  }
+
+  if (normalized.length > 4000) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "BUTLER_FOLLOW_UP_TASK_INVALID_INPUT",
+      detail: `${field} 长度不能超过 4000 个字符`
+    });
+  }
+
+  return normalized;
 }
 
-function normalizeNonEmptyString(value: unknown): string | null {
+function normalizeNullableText(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
   }
 
   const normalized = value.trim();
   return normalized || null;
-}
-
-function normalizeNullableString(value: unknown): string | null {
-  if (value === null || value === undefined) {
-    return null;
-  }
-
-  return normalizeNonEmptyString(value);
-}
-
-function extractJsonFromText(value: string | null): string | null {
-  if (!value) {
-    return null;
-  }
-
-  const matched = value.match(/```json\s*([\s\S]*?)```/i);
-  const raw = matched?.[1]?.trim();
-  return raw || null;
-}
-
-function resolveSourceCodexHomeDir(sourceCodexHomeDir: string | null, targetHomeDir: string): string {
-  const configuredSource = sourceCodexHomeDir?.trim();
-
-  if (configuredSource) {
-    const resolvedConfiguredSource = path.resolve(configuredSource);
-
-    if (resolvedConfiguredSource !== targetHomeDir) {
-      return resolvedConfiguredSource;
-    }
-  }
-
-  const fallbackHomeDir = path.resolve(path.join(os.homedir(), ".codex"));
-
-  if (fallbackHomeDir !== targetHomeDir) {
-    return fallbackHomeDir;
-  }
-
-  return targetHomeDir;
-}
-
-function composeCodexConfigContent(sourceConfigContent: string, instructionFilePath: string): string {
-  const normalizedSource = sourceConfigContent
-    .split(/\r?\n/)
-    .filter((line) => {
-      const trimmed = line.trim();
-      return trimmed.length > 0 && !trimmed.startsWith("model_instructions_file");
-    })
-    .join("\n")
-    .trim();
-
-  return [
-    "# 代码助手跟进评估专用 Codex 配置（系统自动生成）",
-    normalizedSource,
-    `model_instructions_file = ${toTomlString(path.resolve(instructionFilePath))}`
-  ]
-    .filter((part) => part.trim().length > 0)
-    .join("\n\n");
-}
-
-function toTomlString(value: string): string {
-  return `"${value.replaceAll("\\", "\\\\").replaceAll("\"", "\\\"")}"`;
-}
-
-function writeFileIfChanged(filePath: string, content: string): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-
-  if (fs.existsSync(filePath) && fs.readFileSync(filePath, "utf8") === content) {
-    return;
-  }
-
-  fs.writeFileSync(filePath, content, "utf8");
-}
-
-function removeFileIfExists(filePath: string): void {
-  if (!fs.existsSync(filePath)) {
-    return;
-  }
-
-  if (fs.statSync(filePath).isFile()) {
-    fs.rmSync(filePath, { force: true });
-  }
-}
-
-function syncOptionalFile(sourcePath: string, targetPath: string): void {
-  if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
-    removeFileIfExists(targetPath);
-    return;
-  }
-
-  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-
-  if (fs.existsSync(targetPath) && fs.readFileSync(targetPath).equals(fs.readFileSync(sourcePath))) {
-    return;
-  }
-
-  fs.copyFileSync(sourcePath, targetPath);
 }

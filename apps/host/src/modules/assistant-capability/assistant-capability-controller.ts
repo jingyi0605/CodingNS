@@ -35,6 +35,10 @@ interface AssistantAutomationParams {
   automationId: string;
 }
 
+interface AssistantFollowUpParams {
+  taskId: string;
+}
+
 interface AssistantMessagesQuery {
   cursor?: string;
   limit?: string;
@@ -55,6 +59,13 @@ interface AssistantAutomationListQuery {
 
 interface AssistantAutomationRecentRunsQuery {
   controlSessionId?: string;
+  limit?: string;
+}
+
+interface AssistantFollowUpListQuery {
+  status?: "active" | "waiting_user" | "completed" | "failed" | "cancelled";
+  projectId?: string;
+  sessionId?: string;
   limit?: string;
 }
 
@@ -134,6 +145,35 @@ interface AssistantCreateTimerBody {
   content?: string;
   dueAt?: string | null;
   afterSeconds?: number | string | null;
+}
+
+interface AssistantCreateFollowUpBody {
+  projectId?: string;
+  butlerSessionId?: string;
+  providerId?: "codex" | "claude-code" | null;
+  objective?: string;
+  completionCriteria?: string | null;
+  maxAutoContinueCount?: number | string | null;
+  checkIntervalSeconds?: number | string | null;
+}
+
+interface AssistantContinueFollowUpBody {
+  summary?: string;
+  continuePrompt?: string;
+}
+
+interface AssistantWaitingUserFollowUpBody {
+  summary?: string;
+  waitingReason?: string;
+}
+
+interface AssistantCompleteFollowUpBody {
+  summary?: string;
+}
+
+interface AssistantFailFollowUpBody {
+  summary?: string;
+  reason?: string | null;
 }
 
 interface AssistantCreateAutomationBody {
@@ -464,6 +504,107 @@ export class AssistantCapabilityController {
       request.params.timerId,
       requireUserId(request)
     ));
+  };
+
+  readonly listFollowUps = async (
+    request: FastifyRequest<{ Querystring: AssistantFollowUpListQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.listFollowUps({
+      userId: requireUserId(request),
+      status: request.query.status,
+      projectId: normalizeNullableText(request.query.projectId),
+      sessionId: normalizeNullableText(request.query.sessionId),
+      limit: normalizeNullableInteger(request.query.limit, "limit")
+    }));
+  };
+
+  readonly getFollowUp = async (
+    request: FastifyRequest<{ Params: AssistantFollowUpParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.getFollowUp(request.params.taskId));
+  };
+
+  readonly createFollowUp = async (
+    request: FastifyRequest<{ Body: AssistantCreateFollowUpBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.assistantCapabilityService.createFollowUp({
+      userId: requireUserId(request),
+      projectId: requireNonEmptyText(request.body.projectId, "projectId", "创建跟进任务必须提供 projectId"),
+      butlerSessionId: requireNonEmptyText(
+        request.body.butlerSessionId,
+        "butlerSessionId",
+        "创建跟进任务必须提供 butlerSessionId"
+      ),
+      providerId: normalizeAssistantProviderId(request.body.providerId),
+      objective: requireNonEmptyText(request.body.objective, "objective", "创建跟进任务必须提供 objective"),
+      completionCriteria: normalizeNullableText(request.body.completionCriteria),
+      maxAutoContinueCount: normalizeNullableInteger(
+        request.body.maxAutoContinueCount,
+        "maxAutoContinueCount"
+      ),
+      checkIntervalSeconds: normalizeNullableInteger(
+        request.body.checkIntervalSeconds,
+        "checkIntervalSeconds"
+      )
+    }));
+  };
+
+  readonly continueFollowUp = async (
+    request: FastifyRequest<{ Params: AssistantFollowUpParams; Body: AssistantContinueFollowUpBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.assistantCapabilityService.continueFollowUp({
+      userId: requireUserId(request),
+      taskId: request.params.taskId,
+      summary: requireNonEmptyText(request.body.summary, "summary", "继续推进必须提供 summary"),
+      continuePrompt: requireNonEmptyText(
+        request.body.continuePrompt,
+        "continuePrompt",
+        "继续推进必须提供 continuePrompt"
+      )
+    }));
+  };
+
+  readonly markFollowUpWaitingUser = async (
+    request: FastifyRequest<{ Params: AssistantFollowUpParams; Body: AssistantWaitingUserFollowUpBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.assistantCapabilityService.markFollowUpWaitingUser({
+      userId: requireUserId(request),
+      taskId: request.params.taskId,
+      summary: requireNonEmptyText(request.body.summary, "summary", "等待用户必须提供 summary"),
+      waitingReason: requireNonEmptyText(
+        request.body.waitingReason,
+        "waitingReason",
+        "等待用户必须提供 waitingReason"
+      )
+    }));
+  };
+
+  readonly completeFollowUp = async (
+    request: FastifyRequest<{ Params: AssistantFollowUpParams; Body: AssistantCompleteFollowUpBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.assistantCapabilityService.completeFollowUp({
+      userId: requireUserId(request),
+      taskId: request.params.taskId,
+      summary: requireNonEmptyText(request.body.summary, "summary", "完成跟进必须提供 summary")
+    }));
+  };
+
+  readonly failFollowUp = async (
+    request: FastifyRequest<{ Params: AssistantFollowUpParams; Body: AssistantFailFollowUpBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.assistantCapabilityService.failFollowUp({
+      userId: requireUserId(request),
+      taskId: request.params.taskId,
+      summary: requireNonEmptyText(request.body.summary, "summary", "标记失败必须提供 summary"),
+      reason: normalizeNullableText(request.body.reason)
+    }));
   };
 
   readonly listAutomations = async (

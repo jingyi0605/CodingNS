@@ -486,6 +486,110 @@ async function runAssistantCommand(argv) {
       }));
       return;
     }
+    case "follow-ups:list":
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: "/api/assistant/follow-ups",
+        argv: rest,
+        supportedOptions: ["status", "project-id", "session-id", "limit"],
+        helpTopic: "follow-ups.list"
+      }, (options) => ({
+        status: readOptionalTrimmedValue(options.values.status),
+        projectId: readOptionalTrimmedValue(options.values["project-id"]),
+        sessionId: readOptionalTrimmedValue(options.values["session-id"]),
+        limit: readOptionalTrimmedValue(options.values.limit)
+      })));
+      return;
+    case "follow-ups:get": {
+      const [taskId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: `/api/assistant/follow-ups/${requirePositional(taskId, "taskId")}`,
+        argv: tail,
+        helpTopic: "follow-ups.get"
+      }));
+      return;
+    }
+    case "follow-ups:create":
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: "/api/assistant/follow-ups",
+        argv: rest,
+        supportedOptions: [
+          "project-id",
+          "butler-session-id",
+          "provider",
+          "objective",
+          "completion-criteria",
+          "max-auto-continue-count",
+          "check-interval-seconds"
+        ],
+        helpTopic: "follow-ups.create"
+      }, (options) => ({
+        projectId: requireOptionValue(options.values["project-id"], "project-id"),
+        butlerSessionId: requireOptionValue(options.values["butler-session-id"], "butler-session-id"),
+        providerId: readOptionalTrimmedValue(options.values.provider),
+        objective: requireOptionValue(options.values.objective, "objective"),
+        completionCriteria: readOptionalTrimmedValue(options.values["completion-criteria"]),
+        maxAutoContinueCount: readOptionalTrimmedValue(options.values["max-auto-continue-count"]),
+        checkIntervalSeconds: readOptionalTrimmedValue(options.values["check-interval-seconds"])
+      })));
+      return;
+    case "follow-ups:continue": {
+      const [taskId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: `/api/assistant/follow-ups/${requirePositional(taskId, "taskId")}/continue`,
+        argv: tail,
+        supportedOptions: ["summary", "continue-prompt"],
+        helpTopic: "follow-ups.continue"
+      }, (options) => ({
+        summary: requireOptionValue(options.values.summary, "summary"),
+        continuePrompt: requireOptionValue(options.values["continue-prompt"], "continue-prompt")
+      })));
+      return;
+    }
+    case "follow-ups:waiting-user": {
+      const [taskId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: `/api/assistant/follow-ups/${requirePositional(taskId, "taskId")}/waiting-user`,
+        argv: tail,
+        supportedOptions: ["summary", "waiting-reason"],
+        helpTopic: "follow-ups.waiting-user"
+      }, (options) => ({
+        summary: requireOptionValue(options.values.summary, "summary"),
+        waitingReason: requireOptionValue(options.values["waiting-reason"], "waiting-reason")
+      })));
+      return;
+    }
+    case "follow-ups:complete": {
+      const [taskId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: `/api/assistant/follow-ups/${requirePositional(taskId, "taskId")}/complete`,
+        argv: tail,
+        supportedOptions: ["summary"],
+        helpTopic: "follow-ups.complete"
+      }, (options) => ({
+        summary: requireOptionValue(options.values.summary, "summary")
+      })));
+      return;
+    }
+    case "follow-ups:fail": {
+      const [taskId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: `/api/assistant/follow-ups/${requirePositional(taskId, "taskId")}/fail`,
+        argv: tail,
+        supportedOptions: ["summary", "reason"],
+        helpTopic: "follow-ups.fail"
+      }, (options) => ({
+        summary: requireOptionValue(options.values.summary, "summary"),
+        reason: readOptionalTrimmedValue(options.values.reason)
+      })));
+      return;
+    }
     case "terminals:list":
       await printAssistantResponse(await requestAssistant({
         method: "GET",
@@ -1564,6 +1668,7 @@ assistant 例子：
   codingns assistant debug-targets launch-plan <targetId> --port-request role=backend,cwd=apps/api,port=44001 --token <token>
   codingns assistant worktrees tree --root-workspace-id <id> --token <token>
   codingns assistant sessions send <sessionId> --message "继续修复类型错误" --token <token>
+  codingns assistant follow-ups continue <taskId> --summary "目标还没完成" --continue-prompt "继续补齐剩余实现" --token <token>
   codingns assistant terminals send <terminalId> --input "npm test\\n" --token <token>
   codingns assistant terminals close <terminalId> --token <token>
 
@@ -2063,6 +2168,93 @@ codingns assistant timers cancel
 用法：
   codingns assistant timers cancel <timerId> --token <token>
 `.trim();
+    case "follow-ups":
+      return `
+codingns assistant follow-ups
+
+可用动作：
+  list          列出跟进任务
+  get           读取单个跟进任务
+  create        创建新的跟进任务
+  continue      回写继续推进结论
+  waiting-user  回写等待用户结论
+  complete      回写已完成结论
+  fail          回写失败结论
+
+示例：
+  codingns assistant follow-ups list --status active --token <token>
+  codingns assistant follow-ups continue <taskId> --summary "目标还没做完" --continue-prompt "继续补齐剩余实现" --token <token>
+`.trim();
+    case "follow-ups.list":
+      return `
+codingns assistant follow-ups list
+
+用途：
+  查看当前用户可见的会话跟进任务。
+
+用法：
+  codingns assistant follow-ups list [--status active|waiting_user|completed|failed|cancelled] [--project-id <projectId>] [--session-id <sessionId>] [--limit <n>] --token <token>
+`.trim();
+    case "follow-ups.get":
+      return `
+codingns assistant follow-ups get
+
+用途：
+  读取单个跟进任务详情和历史轮次。
+
+用法：
+  codingns assistant follow-ups get <taskId> --token <token>
+`.trim();
+    case "follow-ups.create":
+      return `
+codingns assistant follow-ups create
+
+用途：
+  为指定 Butler 会话创建新的跟进任务。
+
+用法：
+  codingns assistant follow-ups create --project-id <projectId> --butler-session-id <butlerSessionId> --objective "..." [--provider codex|claude-code] [--completion-criteria "..."] [--max-auto-continue-count <n>] [--check-interval-seconds <n>] --token <token>
+`.trim();
+    case "follow-ups.continue":
+      return `
+codingns assistant follow-ups continue
+
+用途：
+  回写“继续推进”结论，并安排下一轮自动跟进。
+
+用法：
+  codingns assistant follow-ups continue <taskId> --summary "..." --continue-prompt "..." --token <token>
+`.trim();
+    case "follow-ups.waiting-user":
+      return `
+codingns assistant follow-ups waiting-user
+
+用途：
+  回写“需要等待用户”结论，并写明必须等待的原因。
+
+用法：
+  codingns assistant follow-ups waiting-user <taskId> --summary "..." --waiting-reason "..." --token <token>
+`.trim();
+    case "follow-ups.complete":
+      return `
+codingns assistant follow-ups complete
+
+用途：
+  回写“任务已完成”结论，并结束当前跟进。
+
+用法：
+  codingns assistant follow-ups complete <taskId> --summary "..." --token <token>
+`.trim();
+    case "follow-ups.fail":
+      return `
+codingns assistant follow-ups fail
+
+用途：
+  回写“任务失败”结论，并记录失败原因。
+
+用法：
+  codingns assistant follow-ups fail <taskId> --summary "..." [--reason "..."] --token <token>
+`.trim();
     case "terminals":
       return `
 codingns assistant terminals
@@ -2304,10 +2496,11 @@ codingns assistant worktrees cleanup
       return `
 codingns assistant 用法：
 
-  codingns assistant help [capabilities|projects|sessions|sandboxes|automations|timers|terminals|debug-targets|debug-runtimes|workspaces|worktrees] [action]
+  codingns assistant help [capabilities|projects|sessions|sandboxes|automations|timers|follow-ups|terminals|debug-targets|debug-runtimes|workspaces|worktrees] [action]
   codingns assistant capabilities list [--base-url http://127.0.0.1:3002] --token <token>
   codingns assistant projects list [--workspace-id <id>] [--status active|paused|archived] [--risk-level low|medium|high] --token <token>
   codingns assistant projects get <projectId> [--base-url ...] --token <token>
+  codingns assistant follow-ups continue <taskId> --summary "..." --continue-prompt "..." --token <token>
   codingns assistant debug-targets compatibility-matrix [--base-url ...] --token <token>
   codingns assistant debug-targets analyze --workspace-id <id> --root-path <path> [--command-hint <command>] [--command-hint <command>] [--base-url ...] --token <token>
   codingns assistant debug-targets framework-analysis <targetId> [--base-url ...] --token <token>

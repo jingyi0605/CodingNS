@@ -1,12 +1,6 @@
 import type { ButlerProject, SessionRunningState } from "../../types/domain.js";
 
-const OUTPUT_CONTRACT_VERSION = "butler-follow-up-evaluation-v1";
-
-export type ButlerFollowUpEvaluationDecision =
-  | "continue"
-  | "waiting_user"
-  | "completed"
-  | "failed";
+const OUTPUT_CONTRACT_VERSION = "butler-follow-up-cli-v1";
 
 export interface ButlerFollowUpEvaluationInstructionEnvelope {
   providerId: "codex" | "claude-code";
@@ -22,10 +16,12 @@ export interface ButlerFollowUpEvaluationInstructionEnvelope {
 }
 
 export interface BuildButlerFollowUpEvaluationInstructionInput {
+  taskId: string;
   providerId: "codex" | "claude-code";
   project: ButlerProject;
   sessionId: string;
   butlerSessionId: string;
+  assistantSessionId: string;
   sessionTitle: string | null;
   objective: string;
   completionCriteria: string;
@@ -58,27 +54,32 @@ export class ButlerFollowUpEvaluationInstructionAdapter {
       "如果信息不足，可以明确说信息不足；但只有在真的缺关键决策信息时，才返回 waiting_user。",
       "如果已经达到预设的自动推进轮数上限，你不能再通过新增目标来继续扩会话范围。",
       "你可以直接调用 codingns assistant CLI 检查项目和目标会话状态。",
-      "只要 decision=continue，就必须由你自己直接使用 `codingns assistant sessions send` 把中文跟进消息发到目标开发会话，而不是只给建议。",
-      "decision=continue 时，JSON 里的 continuePrompt 必须回填你刚刚实际发出去的那条消息原文；没有实际发送就不允许返回 continue。",
+      "这一轮的正式结论必须通过 `codingns assistant follow-ups.*` 命令回写到跟进任务，而不是输出 JSON 让 Host 猜。",
+      "只要决定继续推进，就必须先用 `codingns assistant sessions send` 把中文跟进消息发到目标开发会话，再用 `codingns assistant follow-ups continue` 回写。",
+      "如果决定等待用户，就使用 `codingns assistant follow-ups waiting-user`。",
+      "如果决定已经完成，就使用 `codingns assistant follow-ups complete`。",
+      "如果上下文损坏或确实无法可靠继续，就使用 `codingns assistant follow-ups fail`。",
       "",
       "判断标准：",
-      "1. 只有目标已经实质完成，而且满足预设结束条件，才返回 completed；不能把建议项没做当成未完成。",
-      "2. 只有确实需要用户做选择、补业务信息、确认高风险操作，或者已经达到自动推进轮数上限时，才返回 waiting_user。",
-      "3. 只要目标还没完成、而且继续推进不会越权，就返回 continue，并先把下一条明确中文指令发到目标开发会话。",
-      "4. 只有当前上下文已经无法可靠判断，或者会话明显坏掉到无法继续时，才返回 failed。",
+      "1. 只有目标已经实质完成，而且满足预设结束条件，才调用 complete；不能把建议项没做当成未完成。",
+      "2. 只有确实需要用户做选择、补业务信息、确认高风险操作，或者已经达到自动推进轮数上限时，才调用 waiting-user。",
+      "3. 只要目标还没完成、而且继续推进不会越权，就先发消息到目标开发会话，再调用 continue。",
+      "4. 只有当前上下文已经无法可靠判断，或者会话明显坏掉到无法继续时，才调用 fail。",
       "",
-      "输出要求：",
+      "执行要求：",
       "- 全部使用中文。",
-      "- 先写一小段中文结论，控制在 2 句内。",
-      "- 最后必须补一个 JSON 代码块，字段必须完整。",
-      "- decision 只能是 continue / waiting_user / completed / failed。",
-      "- continuePrompt 必须回填你已经发给开发会话的那条中文消息原文；decision 不是 continue 时填 null。",
-      "- waitingReason 只在 decision=waiting_user 时填写，其它情况填 null。",
+      "- 先自己检查当前项目、目标会话、跟进任务，再决定动作。",
+      "- 不要把命令建议写成自然语言结论后就停下，必须真的执行命令。",
+      "- 如果走 continue，`--continue-prompt` 必须回填你刚刚已经发到目标开发会话的那条中文消息原文。",
+      "- `--summary` 要写本轮结构化结论，后端会把它直接写入跟进任务。",
+      "- 命令执行完成后，你可以再补 1 到 2 句中文说明，但这段说明不是结构化结果来源。",
       "",
+      `跟进任务 ID：${input.taskId}`,
       `项目名称：${input.project.name}`,
       `项目路径：${input.project.repoRoot}`,
       `代码助手会话 ID：${input.butlerSessionId}`,
       `真实会话 ID：${input.sessionId}`,
+      `当前跟进助手会话 ID：${input.assistantSessionId}`,
       `会话标题：${input.sessionTitle ?? "未命名会话"}`,
       `用户目标：${input.objective}`,
       `预设结束条件：${input.completionCriteria}`,
@@ -91,24 +92,14 @@ export class ButlerFollowUpEvaluationInstructionAdapter {
       `上一轮自动化摘要：${input.lastAutomationSummary?.trim() || "无"}`,
       `最近一条助手结论：${input.latestAssistantText?.trim() || "无"}`,
       "",
-      "最近消息摘录：",
-      transcript,
+      "命令模板：",
+      `- 继续推进：codingns assistant sessions send ${input.sessionId} --message \"<你刚发给目标会话的中文消息>\" && codingns assistant follow-ups continue ${input.taskId} --summary \"<本轮结论>\" --continue-prompt \"<同一条消息原文>\"`,
+      `- 等待用户：codingns assistant follow-ups waiting-user ${input.taskId} --summary \"<本轮结论>\" --waiting-reason \"<必须等用户的原因>\"`,
+      `- 已完成：codingns assistant follow-ups complete ${input.taskId} --summary \"<完成结论>\"`,
+      `- 失败：codingns assistant follow-ups fail ${input.taskId} --summary \"<失败结论>\" --reason \"<失败原因>\"`,
       "",
-      "最终输出格式：",
-      "```json",
-      JSON.stringify(
-        {
-          decision: "continue",
-          summary: "一句中文结论",
-          waitingReason: null,
-          continuePrompt: "继续未完成的开发工作，先核对当前目标还有哪些没做完，然后直接补齐，不要只做总结。",
-          riskLevel: "medium"
-        },
-        null,
-        2
-      ),
-      "```",
-      "riskLevel 只能是 low / medium / high。"
+      "最近消息摘录：",
+      transcript
     ].join("\n");
 
     return {

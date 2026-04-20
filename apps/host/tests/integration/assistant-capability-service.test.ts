@@ -915,4 +915,136 @@ describe("AssistantCapabilityService", () => {
       })
     }));
   });
+
+  it("follow-ups continue 会调用正式跟进服务回写结构化结果", async () => {
+    const continueTask = vi.fn(async () => ({
+      id: "follow-up-1",
+      status: "active",
+      autoContinueCount: 2
+    }));
+    const service = new AssistantCapabilityService(
+      {
+        list: vi.fn(),
+        getById: vi.fn(),
+        getOverview: vi.fn()
+      } as any,
+      {
+        listByProject: vi.fn(),
+        ensureProjectSessionsSynced: vi.fn(),
+        startSession: vi.fn()
+      } as any,
+      {
+        getCurrentSession: vi.fn()
+      } as any,
+      {
+        listTasks: vi.fn(),
+        getTask: vi.fn(),
+        createTask: vi.fn(),
+        cancelTask: vi.fn(),
+        listRuns: vi.fn()
+      } as any,
+      {
+        listSandboxes: vi.fn(),
+        getSandbox: vi.fn(),
+        createSandbox: vi.fn(),
+        promoteSandbox: vi.fn(),
+        expireSandbox: vi.fn(),
+        removeSandbox: vi.fn(),
+        resolveWorkspaceId: vi.fn(),
+        markSandboxUsedByControlSession: vi.fn()
+      } as any,
+      {
+        listTimers: vi.fn(),
+        getTimer: vi.fn(),
+        createTimer: vi.fn(),
+        cancelTimer: vi.fn()
+      } as any,
+      {
+        getSession: vi.fn(),
+        readSessionHistory: vi.fn(),
+        forkSession: vi.fn(),
+        deleteSession: vi.fn()
+      } as any,
+      {
+        startLiveSession: vi.fn(),
+        getSessionRuntime: vi.fn(),
+        sendLiveMessage: vi.fn()
+      } as any,
+      {
+        listTerminals: vi.fn(),
+        readTerminalHistory: vi.fn(),
+        writeInput: vi.fn(),
+        closeTerminal: vi.fn()
+      } as any,
+      {
+        analyze: vi.fn(),
+        getFrameworkAnalysis: vi.fn(),
+        refreshFrameworkAnalysis: vi.fn(),
+        createLaunchPlan: vi.fn(),
+        run: vi.fn(),
+        getLatestRuntimeDetail: vi.fn(),
+        getRecentRuntimeDetails: vi.fn(),
+        getRuntimeDetail: vi.fn(),
+        getCompatibilityMatrix: vi.fn()
+      } as any,
+      {
+        list: vi.fn(),
+        browseDirectories: vi.fn(),
+        createDirectory: vi.fn(),
+        importWorkspace: vi.fn(),
+        cloneWorkspace: vi.fn(),
+        reorderWorkspaces: vi.fn(),
+        getManagementSummary: vi.fn(),
+        removeWorkspace: vi.fn(),
+        updateNavigationState: vi.fn()
+      } as any,
+      {
+        getTree: vi.fn(),
+        create: vi.fn()
+      } as any,
+      {
+        syncRoot: vi.fn()
+      } as any,
+      {
+        preview: vi.fn(),
+        apply: vi.fn()
+      } as any,
+      {
+        cleanup: vi.fn()
+      } as any,
+      {
+        upsert: vi.fn()
+      } as any,
+      {
+        listTasks: vi.fn(),
+        getTask: vi.fn(),
+        createTask: vi.fn(),
+        continueTask,
+        markTaskWaitingUser: vi.fn(),
+        completeTask: vi.fn(),
+        failTask: vi.fn()
+      } as any
+    );
+
+    const receipt = await service.continueFollowUp({
+      userId: "user-1",
+      taskId: "follow-up-1",
+      summary: "目标还没完成，已经补发继续推进消息。",
+      continuePrompt: "继续补齐剩余实现，不要停在总结。"
+    });
+
+    expect(receipt.capability).toBe("follow-ups.continue");
+    expect(receipt.targetRef).toEqual({
+      kind: "follow_up",
+      id: "follow-up-1"
+    });
+    expect(continueTask).toHaveBeenCalledWith(
+      "follow-up-1",
+      {
+        summary: "目标还没完成，已经补发继续推进消息。",
+        continuePrompt: "继续补齐剩余实现，不要停在总结。"
+      },
+      "user-1"
+    );
+  });
 });

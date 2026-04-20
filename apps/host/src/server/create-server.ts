@@ -413,7 +413,8 @@ export function createServer(config: HostConfig) {
     repositories.instanceRelayTunnelIdentityRepository,
     repositories.instanceRelayTunnelRepository,
     {
-      defaultLocalTargetBaseUrl: `http://127.0.0.1:${config.port}`
+      defaultLocalTargetBaseUrl: `http://127.0.0.1:${config.port}`,
+      controlSessionSecret: config.gitCredentialSecret
     },
     taskManager,
     new RelayTunnelRuntimeEdgeAdapter(
@@ -992,7 +993,8 @@ export function createServer(config: HostConfig) {
       worktreeSyncService,
       worktreeMergeService,
       worktreeCleanupService,
-      repositories.sessionMessageOriginRepository
+      repositories.sessionMessageOriginRepository,
+      butlerFollowUpService
     )
   );
   const providerController = new ProviderController(

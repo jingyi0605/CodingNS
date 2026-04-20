@@ -1374,4 +1374,42 @@ describe("assistant capability routes", () => {
     });
     expect(assistantCapabilityService.getWorktreeTree).not.toHaveBeenCalled();
   });
+
+  it("follow-ups continue 路由会把结构化字段转发给能力服务", async () => {
+    const assistantCapabilityService = {
+      continueFollowUp: vi.fn(async () => ({
+        ok: true,
+        capability: "follow-ups.continue",
+        auditId: "audit-follow-up-1",
+        timestamp: "2026-04-20T10:00:00.000Z",
+        targetRef: {
+          kind: "follow_up",
+          id: "follow-up-1"
+        },
+        payload: {
+          task: {
+            id: "follow-up-1",
+            status: "active"
+          }
+        }
+      }))
+    };
+    const app = await createAssistantApp(assistantCapabilityService);
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/assistant/follow-ups/follow-up-1/continue",
+      payload: {
+        summary: "目标还没完成，已经补发继续推进消息。",
+        continuePrompt: "继续补齐剩余实现，不要停在总结。"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(assistantCapabilityService.continueFollowUp).toHaveBeenCalledWith({
+      userId: "user-1",
+      taskId: "follow-up-1",
+      summary: "目标还没完成，已经补发继续推进消息。",
+      continuePrompt: "继续补齐剩余实现，不要停在总结。"
+    });
+  });
 });

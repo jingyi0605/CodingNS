@@ -6,6 +6,14 @@ import type { AssistantAutomationService } from "../butler/assistant-automation-
 import type { AssistantSandboxService } from "../butler/assistant-sandbox-service.js";
 import type { ButlerControlSessionService } from "../butler/butler-control-session-service.js";
 import type { ButlerControlTimerService } from "../butler/butler-control-timer-service.js";
+import type {
+  ButlerFollowUpService,
+  CompleteButlerFollowUpTaskInput,
+  ContinueButlerFollowUpTaskInput,
+  CreateButlerFollowUpTaskInput,
+  FailButlerFollowUpTaskInput,
+  WaitingUserButlerFollowUpTaskInput
+} from "../butler/butler-follow-up-service.js";
 import type { ButlerProjectService } from "../butler/butler-project-service.js";
 import type { ButlerSessionService } from "../butler/butler-session-service.js";
 import type {
@@ -54,6 +62,7 @@ export interface AssistantCapabilityReceipt<TPayload> {
       | "automation"
       | "sandbox"
       | "timer"
+      | "follow_up"
       | "none";
     id: string | null;
   };
@@ -136,6 +145,45 @@ interface CreateAssistantTimerInput {
   content: string;
   dueAt?: string | null;
   afterSeconds?: number | null;
+}
+
+interface ListAssistantFollowUpsInput {
+  userId: string;
+  status?: "active" | "waiting_user" | "completed" | "failed" | "cancelled";
+  projectId?: string | null;
+  sessionId?: string | null;
+  limit?: number | null;
+}
+
+interface CreateAssistantFollowUpInput {
+  userId: string;
+  projectId: string;
+  butlerSessionId: string;
+  providerId?: "codex" | "claude-code" | null;
+  objective: string;
+  completionCriteria?: string | null;
+  maxAutoContinueCount?: number | null;
+  checkIntervalSeconds?: number | null;
+}
+
+interface ContinueAssistantFollowUpInput extends ContinueButlerFollowUpTaskInput {
+  userId: string;
+  taskId: string;
+}
+
+interface WaitingUserAssistantFollowUpInput extends WaitingUserButlerFollowUpTaskInput {
+  userId: string;
+  taskId: string;
+}
+
+interface CompleteAssistantFollowUpInput extends CompleteButlerFollowUpTaskInput {
+  userId: string;
+  taskId: string;
+}
+
+interface FailAssistantFollowUpInput extends FailButlerFollowUpTaskInput {
+  userId: string;
+  taskId: string;
 }
 
 interface ListAssistantTimersInput {
@@ -383,6 +431,48 @@ const ASSISTANT_CAPABILITIES: AssistantCapabilityDescriptor[] = [
     mode: "read",
     enabled: true,
     summary: "读取助手自动化执行记录"
+  },
+  {
+    name: "follow-ups.list",
+    mode: "read",
+    enabled: true,
+    summary: "列出当前助手可见的会话跟进任务"
+  },
+  {
+    name: "follow-ups.get",
+    mode: "read",
+    enabled: true,
+    summary: "读取单个会话跟进任务详情"
+  },
+  {
+    name: "follow-ups.create",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "创建新的会话跟进任务"
+  },
+  {
+    name: "follow-ups.continue",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "回写继续推进结论并安排下一轮跟进"
+  },
+  {
+    name: "follow-ups.waiting-user",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "回写需要等待用户决策的跟进结论"
+  },
+  {
+    name: "follow-ups.complete",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "回写跟进任务已完成"
+  },
+  {
+    name: "follow-ups.fail",
+    mode: "proxy_execute",
+    enabled: true,
+    summary: "回写跟进任务失败"
   },
   {
     name: "sandboxes.list",
@@ -682,6 +772,16 @@ export class AssistantCapabilityService {
     private readonly sessionMessageOriginRepository: Pick<
       SessionMessageOriginRepository,
       "upsert"
+    > | null = null,
+    private readonly butlerFollowUpService: Pick<
+      ButlerFollowUpService,
+      | "listTasks"
+      | "getTask"
+      | "createTask"
+      | "continueTask"
+      | "markTaskWaitingUser"
+      | "completeTask"
+      | "failTask"
     > | null = null
   ) {}
 
@@ -1175,6 +1275,152 @@ export class AssistantCapabilityService {
       id: null
     }, {
       items
+    });
+  }
+
+  listFollowUps(
+    input: ListAssistantFollowUpsInput
+  ): AssistantCapabilityReceipt<{
+    items: ReturnType<ButlerFollowUpService["listTasks"]>;
+  }> {
+    const service = this.requireFollowUpService();
+    const items = service.listTasks({
+      statuses: input.status ? [input.status] : undefined,
+      projectId: input.projectId ?? undefined,
+      sessionId: input.sessionId ?? undefined,
+      limit: input.limit ?? undefined
+    });
+
+    return this.createReceipt("follow-ups.list", {
+      kind: "none",
+      id: null
+    }, {
+      items
+    });
+  }
+
+  getFollowUp(
+    taskId: string
+  ): AssistantCapabilityReceipt<{
+    task: ReturnType<ButlerFollowUpService["getTask"]>;
+  }> {
+    const service = this.requireFollowUpService();
+    const task = service.getTask(taskId);
+
+    return this.createReceipt("follow-ups.get", {
+      kind: "follow_up",
+      id: taskId
+    }, {
+      task
+    });
+  }
+
+  async createFollowUp(
+    input: CreateAssistantFollowUpInput
+  ): Promise<AssistantCapabilityReceipt<{
+    task: Awaited<ReturnType<ButlerFollowUpService["createTask"]>>;
+  }>> {
+    const service = this.requireFollowUpService();
+    const providerId = input.providerId ?? this.butlerControlSessionService.getCurrentSession(input.userId)?.providerId;
+
+    if (!providerId) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "ASSISTANT_CONTROL_SESSION_NOT_FOUND",
+        detail: "当前没有可用的助手控制会话，无法继承默认 provider"
+      });
+    }
+
+    const task = await service.createTask({
+      projectId: input.projectId,
+      butlerSessionId: input.butlerSessionId,
+      providerId,
+      objective: input.objective,
+      completionCriteria: input.completionCriteria ?? undefined,
+      maxAutoContinueCount: input.maxAutoContinueCount ?? undefined,
+      checkIntervalSeconds: input.checkIntervalSeconds ?? undefined
+    }, input.userId);
+
+    return this.createReceipt("follow-ups.create", {
+      kind: "follow_up",
+      id: task.id
+    }, {
+      task
+    });
+  }
+
+  async continueFollowUp(
+    input: ContinueAssistantFollowUpInput
+  ): Promise<AssistantCapabilityReceipt<{
+    task: Awaited<ReturnType<ButlerFollowUpService["continueTask"]>>;
+  }>> {
+    const service = this.requireFollowUpService();
+    const task = await service.continueTask(input.taskId, {
+      summary: input.summary,
+      continuePrompt: input.continuePrompt
+    }, input.userId);
+
+    return this.createReceipt("follow-ups.continue", {
+      kind: "follow_up",
+      id: input.taskId
+    }, {
+      task
+    });
+  }
+
+  async markFollowUpWaitingUser(
+    input: WaitingUserAssistantFollowUpInput
+  ): Promise<AssistantCapabilityReceipt<{
+    task: Awaited<ReturnType<ButlerFollowUpService["markTaskWaitingUser"]>>;
+  }>> {
+    const service = this.requireFollowUpService();
+    const task = await service.markTaskWaitingUser(input.taskId, {
+      summary: input.summary,
+      waitingReason: input.waitingReason
+    }, input.userId);
+
+    return this.createReceipt("follow-ups.waiting-user", {
+      kind: "follow_up",
+      id: input.taskId
+    }, {
+      task
+    });
+  }
+
+  async completeFollowUp(
+    input: CompleteAssistantFollowUpInput
+  ): Promise<AssistantCapabilityReceipt<{
+    task: Awaited<ReturnType<ButlerFollowUpService["completeTask"]>>;
+  }>> {
+    const service = this.requireFollowUpService();
+    const task = await service.completeTask(input.taskId, {
+      summary: input.summary
+    }, input.userId);
+
+    return this.createReceipt("follow-ups.complete", {
+      kind: "follow_up",
+      id: input.taskId
+    }, {
+      task
+    });
+  }
+
+  async failFollowUp(
+    input: FailAssistantFollowUpInput
+  ): Promise<AssistantCapabilityReceipt<{
+    task: Awaited<ReturnType<ButlerFollowUpService["failTask"]>>;
+  }>> {
+    const service = this.requireFollowUpService();
+    const task = await service.failTask(input.taskId, {
+      summary: input.summary,
+      reason: input.reason ?? null
+    }, input.userId);
+
+    return this.createReceipt("follow-ups.fail", {
+      kind: "follow_up",
+      id: input.taskId
+    }, {
+      task
     });
   }
 
@@ -1777,6 +2023,27 @@ export class AssistantCapabilityService {
       targetRef,
       payload
     };
+  }
+
+  private requireFollowUpService(): Pick<
+    ButlerFollowUpService,
+    | "listTasks"
+    | "getTask"
+    | "createTask"
+    | "continueTask"
+    | "markTaskWaitingUser"
+    | "completeTask"
+    | "failTask"
+  > {
+    if (this.butlerFollowUpService) {
+      return this.butlerFollowUpService;
+    }
+
+    throw new AppError({
+      statusCode: 503,
+      errorCode: "ASSISTANT_FOLLOW_UP_CAPABILITY_UNAVAILABLE",
+      detail: "当前实例没有启用会话跟进能力"
+    });
   }
 
   private resolveSessionLaunchConfig(

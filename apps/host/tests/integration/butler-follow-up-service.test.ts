@@ -23,6 +23,7 @@ describe("ButlerFollowUpService", () => {
     sessionLastMessageAt?: string;
     sendLiveMessageError?: Error;
     enqueueLiveMessageError?: Error;
+    skipAssistantCommand?: boolean;
     permissionRequests?: Array<{
       id: string;
       provider?: "codex" | "claude-code" | "opencode";
@@ -89,13 +90,72 @@ describe("ButlerFollowUpService", () => {
       })
     } as unknown as ButlerFollowUpTaskRepository;
 
-    const sendLiveMessage = vi.fn(async (input: { clientRequestId: string | null }) => {
+    let service: ButlerFollowUpService;
+
+    const sendLiveMessage = vi.fn(async (input: {
+      sessionId: string;
+      userId: string;
+      clientRequestId: string | null;
+      content: string;
+    }) => {
       if (options.sendLiveMessageError) {
         throw options.sendLiveMessageError;
       }
 
+      if (input.sessionId === "assistant-session-1" && service && !options.skipAssistantCommand) {
+        const currentTaskId = Array.from(records.keys()).at(-1) ?? "task-1";
+
+        switch (options.evaluationJson.decision) {
+          case "continue":
+            await service.continueTask(
+              currentTaskId,
+              {
+                summary: options.evaluationJson.summary,
+                continuePrompt:
+                  options.evaluationJson.continuePrompt
+                  ?? "继续补齐剩余实现，不要停在总结。"
+              },
+              input.userId
+            );
+            break;
+          case "waiting_user":
+            await service.markTaskWaitingUser(
+              currentTaskId,
+              {
+                summary: options.evaluationJson.summary,
+                waitingReason:
+                  options.evaluationJson.waitingReason
+                  ?? "需要用户补充缺失信息。"
+              },
+              input.userId
+            );
+            break;
+          case "completed":
+            await service.completeTask(
+              currentTaskId,
+              {
+                summary: options.evaluationJson.summary
+              },
+              input.userId
+            );
+            break;
+          case "failed":
+            await service.failTask(
+              currentTaskId,
+              {
+                summary: options.evaluationJson.summary,
+                reason: options.evaluationJson.waitingReason ?? null
+              },
+              input.userId
+            );
+            break;
+          default:
+            break;
+        }
+      }
+
       return {
-        sessionId: "assistant-session-1",
+        sessionId: input.sessionId,
         acceptedAt: "2026-04-07T00:06:00.000Z",
         clientRequestId: input.clientRequestId,
         provider: "codex",
@@ -105,7 +165,7 @@ describe("ButlerFollowUpService", () => {
           provider: "codex",
           providerSessionId: "provider-follow-up-1",
           role: "user",
-          content: "评估跟进任务",
+          content: input.content,
           timestamp: "2026-04-07T00:06:00.000Z",
           sequence: 13,
           rawRef: "raw-1"
@@ -286,7 +346,7 @@ describe("ButlerFollowUpService", () => {
       | "interruptSession"
     >;
 
-    const service = new ButlerFollowUpService(
+    service = new ButlerFollowUpService(
       {
         ensureInitialized: vi.fn(() => ({
           id: "default",
@@ -396,6 +456,7 @@ describe("ButlerFollowUpService", () => {
     expect(sendLiveMessage.mock.calls[0]?.[0].content).toContain("不要把“建议下一步”");
     expect(sendLiveMessage.mock.calls[0]?.[0].content).toContain("预设结束条件");
     expect(sendLiveMessage.mock.calls[0]?.[0].content).toContain("codingns assistant sessions send");
+    expect(sendLiveMessage.mock.calls[0]?.[0].content).toContain("codingns assistant follow-ups continue");
     expect((sessionMessageOriginRepository.upsert as any).mock.calls).toHaveLength(0);
     expect(created.maxAutoContinueCount).toBe(5);
     expect(created.providerId).toBe("codex");
@@ -433,6 +494,39 @@ describe("ButlerFollowUpService", () => {
         roundNumber: 1,
         kind: "continue",
         autoContinueCount: 1
+      })
+    );
+  });
+
+  it("如果跟进助手没有调用 follow-ups 命令回写结果，任务会直接失败", async () => {
+    const { service } = createService({
+      skipAssistantCommand: true,
+      evaluationJson: {
+        decision: "continue",
+        summary: "目标还没做完。",
+        waitingReason: null,
+        continuePrompt: "继续补齐剩余工作。",
+        riskLevel: "medium"
+      }
+    });
+
+    const created = await service.createTask(
+      {
+        projectId: "project-1",
+        butlerSessionId: "butler-session-1",
+        providerId: "codex",
+        objective: "把这个功能真正做完"
+      },
+      "user-1"
+    );
+
+    expect(created.status).toBe("failed");
+    expect(created.lastAutomationSummary).toContain("跟进助手执行失败");
+    expect(created.waitingReason).toContain("follow-ups 命令回写本轮结果");
+    expect(created.rounds.at(-1)).toEqual(
+      expect.objectContaining({
+        kind: "failed",
+        status: "failed"
       })
     );
   });
@@ -528,7 +622,7 @@ describe("ButlerFollowUpService", () => {
 
     const updated = service.getTask(created.id);
     expect(updated.status).toBe("completed");
-    expect(updated.completedAt).toBe("2026-04-07T00:06:30.000Z");
+    expect(updated.completedAt).not.toBeNull();
   });
 
   it("会把会话里的额度限制提示归一化成自动等待，而不是继续误判", async () => {

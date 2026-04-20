@@ -53,6 +53,13 @@ export async function registerAssistantCapabilityRoutes(
   app.get("/api/assistant/timers/:timerId", assistantCapabilityController.getTimer);
   app.post("/api/assistant/timers", assistantCapabilityController.createTimer);
   app.post("/api/assistant/timers/:timerId/cancel", assistantCapabilityController.cancelTimer);
+  app.get("/api/assistant/follow-ups", assistantCapabilityController.listFollowUps);
+  app.get("/api/assistant/follow-ups/:taskId", assistantCapabilityController.getFollowUp);
+  app.post("/api/assistant/follow-ups", assistantCapabilityController.createFollowUp);
+  app.post("/api/assistant/follow-ups/:taskId/continue", assistantCapabilityController.continueFollowUp);
+  app.post("/api/assistant/follow-ups/:taskId/waiting-user", assistantCapabilityController.markFollowUpWaitingUser);
+  app.post("/api/assistant/follow-ups/:taskId/complete", assistantCapabilityController.completeFollowUp);
+  app.post("/api/assistant/follow-ups/:taskId/fail", assistantCapabilityController.failFollowUp);
   app.get("/api/assistant/terminals", assistantCapabilityController.listTerminals);
   app.get("/api/assistant/terminals/:terminalId/history", assistantCapabilityController.readTerminalHistory);
   app.post("/api/assistant/terminals/:terminalId/input", assistantCapabilityController.sendTerminalInput);
