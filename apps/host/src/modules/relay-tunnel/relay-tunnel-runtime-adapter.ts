@@ -1,5 +1,6 @@
 import WebSocket from "ws";
 
+import { decryptSecret } from "../../shared/utils/secret-box.js";
 import type { InstanceRelayTunnelIdentityRepository } from "../../storage/repositories/instance-relay-tunnel-identity-repository.js";
 import type { InstanceRelayTunnelRepository } from "../../storage/repositories/instance-relay-tunnel-repository.js";
 import { nowIso } from "../../shared/utils/time.js";
@@ -85,6 +86,8 @@ interface ActiveRelaySession {
 const IDLE_POLL_MS = 1_000;
 const ERROR_RETRY_MS = 2_000;
 const CLAIM_TIMEOUT_MS = 8_000;
+const HEARTBEAT_INTERVAL_MS = 5_000;
+const HEARTBEAT_TIMEOUT_MS = 5_000;
 
 export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter {
   private currentConfigKey: string | null = null;
@@ -93,6 +96,7 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
   private activeSessions = new Map<string, ActiveRelaySession>();
   private lastPhase: RelayTunnelPhase = "connecting";
   private latestRemainingBytes: string | null = null;
+  private lastHeartbeatAttemptAtMs: number | null = null;
 
   constructor(
     private readonly identityRepository: InstanceRelayTunnelIdentityRepository,
@@ -100,6 +104,7 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
     private readonly dependencies?: {
       fetchFn?: typeof fetch;
       createWebSocket?: (url: string) => WebSocket;
+      controlSessionSecret?: string;
     }
   ) {}
 
@@ -120,6 +125,7 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
       this.currentConfigKey = configKey;
       this.lastPhase = "connecting";
       this.latestRemainingBytes = null;
+      this.lastHeartbeatAttemptAtMs = null;
       this.runtimeAbortController = new AbortController();
       this.runtimePromise = this.runSupervisor(config, identity, this.runtimeAbortController.signal);
     }
@@ -136,6 +142,7 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
 
     this.runtimeAbortController = null;
     this.currentConfigKey = null;
+    this.lastHeartbeatAttemptAtMs = null;
 
     if (controller) {
       controller.abort();
@@ -165,6 +172,7 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
   ): Promise<void> {
     while (!signal.aborted) {
       try {
+        await this.maybeSendHeartbeat(config, identity, signal);
         const claim = await this.claimNextSession(config, identity, signal);
         const remainingBytes = claim?.remainingBytes ?? this.latestRemainingBytes;
 
@@ -202,6 +210,50 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
     }
   }
 
+  private async maybeSendHeartbeat(
+    config: InstanceRelayTunnelConfig,
+    identity: InstanceRelayTunnelIdentity,
+    signal: AbortSignal
+  ): Promise<void> {
+    const heartbeatRequest = this.buildHeartbeatRequest(config, identity);
+
+    if (!heartbeatRequest) {
+      return;
+    }
+
+    const nowMs = Date.now();
+
+    if (
+      this.lastHeartbeatAttemptAtMs !== null
+      && nowMs - this.lastHeartbeatAttemptAtMs < HEARTBEAT_INTERVAL_MS
+    ) {
+      return;
+    }
+
+    this.lastHeartbeatAttemptAtMs = nowMs;
+    const fetchFn = this.dependencies?.fetchFn ?? fetch;
+
+    try {
+      const response = await fetchWithTimeout(
+        fetchFn,
+        heartbeatRequest.url,
+        {
+          method: "POST",
+          headers: heartbeatRequest.headers,
+          body: heartbeatRequest.body,
+          signal
+        },
+        HEARTBEAT_TIMEOUT_MS
+      );
+
+      if (!response.ok) {
+        throw await buildHttpError(response, "上报 Host 心跳失败");
+      }
+    } catch {
+      // 心跳只负责在线统计，不能反过来把隧道主链路打断。
+    }
+  }
+
   private async claimNextSession(
     config: InstanceRelayTunnelConfig,
     identity: InstanceRelayTunnelIdentity,
@@ -222,7 +274,8 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
           hostFingerprint: identity.keyFingerprint
         }),
         signal
-      }
+      },
+      CLAIM_TIMEOUT_MS
     );
 
     if (!challengeResponse.ok) {
@@ -252,7 +305,8 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
           proof
         }),
         signal
-      }
+      },
+      CLAIM_TIMEOUT_MS
     );
 
     if (!claimResponse.ok) {
@@ -261,6 +315,49 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
 
     const claimPayload = await claimResponse.json() as RelayHostClaimNextSessionResponse;
     return claimPayload.reservation;
+  }
+
+  private buildHeartbeatRequest(
+    config: InstanceRelayTunnelConfig,
+    identity: InstanceRelayTunnelIdentity
+  ): {
+    url: string;
+    headers: Record<string, string>;
+    body: string;
+  } | null {
+    const controlBaseUrl = normalizeRequiredText(config.controlBaseUrl);
+    const bindingId = normalizeRequiredText(config.bindingId);
+    const tunnelDomain = normalizeRequiredText(config.tunnelDomain);
+    const encryptedAccessToken = normalizeRequiredText(config.controlAccessTokenCiphertext);
+    const controlSessionSecret = normalizeRequiredText(this.dependencies?.controlSessionSecret);
+
+    if (
+      !controlBaseUrl
+      || !bindingId
+      || !tunnelDomain
+      || !encryptedAccessToken
+      || !controlSessionSecret
+    ) {
+      return null;
+    }
+
+    try {
+      const accessToken = decryptSecret(controlSessionSecret, encryptedAccessToken);
+
+      return {
+        url: buildControlHttpUrl(controlBaseUrl, `/api/v1/hosts/${bindingId}/heartbeat`),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`
+        },
+        body: JSON.stringify({
+          tunnelDomain,
+          hostFingerprint: identity.keyFingerprint
+        })
+      };
+    } catch {
+      return null;
+    }
   }
 
   private startRelaySession(
@@ -475,18 +572,25 @@ function serializeConfigKey(config: InstanceRelayTunnelConfig): string {
 }
 
 function buildHttpUrl(baseUrl: string, pathname: string): string {
-  const url = new URL(pathname, ensureTrailingSlash(baseUrl));
+  const url = resolveRelayBaseUrl(baseUrl, pathname);
 
-  url.protocol = url.protocol === "wss:" ? "https:" : "http:";
+  url.protocol = url.protocol === "wss:" || url.protocol === "https:" ? "https:" : "http:";
   return url.toString();
 }
 
 function buildRelayWebSocketUrl(relayBaseUrl: string, sessionId: string): string {
-  const url = new URL("/ws", ensureTrailingSlash(relayBaseUrl));
+  const url = resolveRelayBaseUrl(relayBaseUrl, "ws");
 
   url.searchParams.set("sessionId", sessionId);
   url.searchParams.set("role", "upstream");
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.protocol = url.protocol === "https:" || url.protocol === "wss:" ? "wss:" : "ws:";
+  return url.toString();
+}
+
+function buildControlHttpUrl(controlBaseUrl: string, pathname: string): string {
+  const url = new URL(pathname.replace(/^\/+/, ""), ensureTrailingSlash(controlBaseUrl));
+
+  url.protocol = url.protocol === "https:" ? "https:" : "http:";
   return url.toString();
 }
 
@@ -494,13 +598,18 @@ function ensureTrailingSlash(value: string): string {
   return value.endsWith("/") ? value : `${value}/`;
 }
 
+function resolveRelayBaseUrl(baseUrl: string, pathname: string): URL {
+  return new URL(pathname.replace(/^\/+/, ""), ensureTrailingSlash(baseUrl));
+}
+
 async function fetchWithTimeout(
   fetchFn: typeof fetch,
   input: string,
-  init: RequestInit & { signal?: AbortSignal }
+  init: RequestInit & { signal?: AbortSignal },
+  timeoutMs: number
 ): Promise<Response> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), CLAIM_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const linkedAbort = () => controller.abort();
 
   init.signal?.addEventListener("abort", linkedAbort, {
@@ -560,4 +669,15 @@ async function waitForDelay(delayMs: number, signal: AbortSignal): Promise<void>
       once: true
     });
   });
+}
+
+export const __internal__ = {
+  buildHttpUrl,
+  buildRelayWebSocketUrl,
+  buildControlHttpUrl
+};
+
+function normalizeRequiredText(value: string | null | undefined): string | null {
+  const normalized = value?.trim() ?? "";
+  return normalized.length > 0 ? normalized : null;
 }

@@ -19,8 +19,12 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
 
-import { RelayTunnelRuntimeEdgeAdapter } from "../../src/modules/relay-tunnel/relay-tunnel-runtime-adapter.js";
+import {
+  __internal__ as relayTunnelRuntimeAdapterInternal,
+  RelayTunnelRuntimeEdgeAdapter
+} from "../../src/modules/relay-tunnel/relay-tunnel-runtime-adapter.js";
 import { generateRelayTunnelIdentity } from "../../src/modules/relay-tunnel/crypto/relay-tunnel-identity-service.js";
+import { encryptSecret } from "../../src/shared/utils/secret-box.js";
 import {
   createRelayTunnelClientHandshake,
   decryptRelayTunnelFrame,
@@ -60,6 +64,27 @@ afterEach(async () => {
 });
 
 describe("RelayTunnelRuntimeEdgeAdapter", () => {
+  it("会保留 relayBaseUrl 里的路径前缀来构造 challenge 和 ws 地址", () => {
+    expect(
+      relayTunnelRuntimeAdapterInternal.buildHttpUrl(
+        "https://channel.codingns.com:1443/relay",
+        "/api/public/hosts/challenge"
+      )
+    ).toBe("https://channel.codingns.com:1443/relay/api/public/hosts/challenge");
+    expect(
+      relayTunnelRuntimeAdapterInternal.buildRelayWebSocketUrl(
+        "https://channel.codingns.com:1443/relay",
+        "session_demo"
+      )
+    ).toBe("wss://channel.codingns.com:1443/relay/ws?sessionId=session_demo&role=upstream");
+    expect(
+      relayTunnelRuntimeAdapterInternal.buildControlHttpUrl(
+        "https://channel.codingns.com:1443/control",
+        "/api/v1/hosts/binding_demo/heartbeat"
+      )
+    ).toBe("https://channel.codingns.com:1443/control/api/v1/hosts/binding_demo/heartbeat");
+  });
+
   it("可以通过 relay-edge 把加密 HTTP 和 WebSocket 包转发到本地 Host", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-relay-runtime-"));
     tempDirs.push(tempDir);
@@ -87,12 +112,28 @@ describe("RelayTunnelRuntimeEdgeAdapter", () => {
       await relayServer.close();
     });
 
-    const adapter = new RelayTunnelRuntimeEdgeAdapter(identityRepository, relayRepository);
+    const controlServer = await startFakeControlApiServer({
+      bindingId: "binding_demo",
+      tunnelDomain: "demo.codingns.example",
+      hostFingerprint: identity.keyFingerprint,
+      accessToken: "token_demo"
+    });
+    cleanups.push(async () => {
+      await controlServer.close();
+    });
+
+    const adapter = new RelayTunnelRuntimeEdgeAdapter(identityRepository, relayRepository, {
+      controlSessionSecret: "relay-control-secret"
+    });
     const config: InstanceRelayTunnelConfig = {
+      activated: true,
       enabled: true,
       provider: "codingns_relay",
       relayBaseUrl: relayServer.wsBaseUrl,
-      controlBaseUrl: "https://control.example.com",
+      controlBaseUrl: controlServer.baseUrl,
+      controlAccessTokenCiphertext: encryptSecret("relay-control-secret", "token_demo"),
+      controlAccountEmail: null,
+      controlSessionExpiresAt: null,
       accountId: "acct_demo",
       tunnelDomain: "demo.codingns.example",
       bindingId: "binding_demo",
@@ -215,6 +256,12 @@ describe("RelayTunnelRuntimeEdgeAdapter", () => {
     const status = relayRepository.findStatus();
     expect(status?.phase).toBe("running");
     expect(status?.connected).toBe(true);
+    expect(await controlServer.waitForHeartbeat()).toEqual({
+      authorization: "Bearer token_demo",
+      bindingId: "binding_demo",
+      tunnelDomain: "demo.codingns.example",
+      hostFingerprint: identity.keyFingerprint
+    });
 
     await adapter.disconnect("test_done");
   }, 15_000);
@@ -530,6 +577,104 @@ async function startFakeRelayEdgeServer(input: {
       }
 
       wsServer.close();
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      });
+    }
+  };
+}
+
+async function startFakeControlApiServer(input: {
+  bindingId: string;
+  tunnelDomain: string;
+  hostFingerprint: string;
+  accessToken: string;
+}): Promise<{
+  baseUrl: string;
+  waitForHeartbeat: () => Promise<{
+    authorization: string | undefined;
+    bindingId: string;
+    tunnelDomain: string;
+    hostFingerprint: string;
+  }>;
+  close: () => Promise<void>;
+}> {
+  let resolveHeartbeat: ((value: {
+    authorization: string | undefined;
+    bindingId: string;
+    tunnelDomain: string;
+    hostFingerprint: string;
+  }) => void) | null = null;
+  const heartbeatPromise = new Promise<{
+    authorization: string | undefined;
+    bindingId: string;
+    tunnelDomain: string;
+    hostFingerprint: string;
+  }>((resolve) => {
+    resolveHeartbeat = resolve;
+  });
+
+  const httpServer = createHttpServer(async (request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+
+    if (request.method === "POST" && url.pathname === `/api/v1/hosts/${input.bindingId}/heartbeat`) {
+      const body = await readJsonBody(request) as {
+        tunnelDomain?: string;
+        hostFingerprint?: string;
+      };
+      const authorization = request.headers.authorization;
+
+      if (
+        authorization !== `Bearer ${input.accessToken}`
+        || body.tunnelDomain !== input.tunnelDomain
+        || body.hostFingerprint !== input.hostFingerprint
+      ) {
+        writeJson(response, 401, {
+          errorCode: "AUTH_INVALID",
+          detail: "invalid heartbeat"
+        });
+        return;
+      }
+
+      resolveHeartbeat?.({
+        authorization,
+        bindingId: input.bindingId,
+        tunnelDomain: body.tunnelDomain,
+        hostFingerprint: body.hostFingerprint
+      });
+      resolveHeartbeat = null;
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+
+    writeJson(response, 404, {
+      errorCode: "NOT_FOUND",
+      detail: "not found"
+    });
+  });
+
+  await new Promise<void>((resolve) => {
+    httpServer.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = httpServer.address();
+
+  if (!address || typeof address === "string") {
+    throw new Error("control api address unavailable");
+  }
+
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    waitForHeartbeat: async () => await heartbeatPromise,
+    close: async () => {
       await new Promise<void>((resolve, reject) => {
         httpServer.close((error) => {
           if (error) {
