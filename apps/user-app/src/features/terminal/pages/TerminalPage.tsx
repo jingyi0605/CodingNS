@@ -2074,41 +2074,31 @@ export function TerminalPage({
                 </div>
 
                 <div className="terminal-tabbar-inline-actions">
-                  <div className="terminal-toolbar-anchor">
+                  <div className="terminal-toolbar-anchor" data-window-drag="ignore">
                     <div
                       ref={toolbarRef}
                       className="terminal-toolbar-inline"
                       data-open={toolbarOpen}
                       aria-hidden={!toolbarOpen}
+                      data-window-drag="ignore"
                     >
                       <div className="terminal-toolbar-cluster">
-                        <div className="terminal-toolbar-section">
-                          <span className="terminal-toolbar-label">{t("terminal.shellField")}</span>
-                          <select
-                            className="terminal-runtime-select"
-                            value={selectedShell}
-                            aria-label={t("terminal.shellField")}
-                            onChange={(event) => {
-                              setSelectedShell(event.target.value);
+                        {canDetachTerminalWindow ? (
+                          <button
+                            type="button"
+                            className="terminal-toolbar-menu-action"
+                            onClick={() => {
+                              if (!resolvedWorkspaceId) {
+                                return;
+                              }
+
+                              setToolbarOpen(false);
+                              void openDetachedTerminalWindow(resolvedWorkspaceId);
                             }}
                           >
-                            {shellOptions.length > 0 ? (
-                              shellOptions.map((option) => (
-                                <option
-                                  key={option.id}
-                                  value={option.shell}
-                                  disabled={!option.available}
-                                >
-                                  {option.available
-                                    ? option.label
-                                    : `${option.label} - ${t("terminal.shellUnavailable")}`}
-                                </option>
-                              ))
-                            ) : (
-                              <option value="">{t("common.loading")}</option>
-                            )}
-                          </select>
-                        </div>
+                            {t("terminal.openExternalAction")}
+                          </button>
+                        ) : null}
 
                         <div className="terminal-toolbar-section">
                           <span className="terminal-toolbar-label">{t("terminal.runtimeField")}</span>
@@ -4344,6 +4334,7 @@ function createTerminalViewportRuntime(input: {
       return;
     }
 
+    const shouldKeepLatestVisible = shouldAutoRevealLatest();
     syncViewportBottomGap();
 
     if (!hasUsableContainerSize(input.container)) {
@@ -4367,6 +4358,10 @@ function createTerminalViewportRuntime(input: {
     hasCommittedFit = true;
     lastFittedCols = terminal.cols;
     lastFittedRows = terminal.rows;
+
+    if (shouldKeepLatestVisible) {
+      revealLatest();
+    }
   }
 
   function syncViewportBottomGap(): void {
@@ -4582,19 +4577,6 @@ function filterTerminalChunksAfterCursor(
   });
 }
 
-function scrollTerminalToBottom(terminal: Terminal): void {
-  const terminalWithOptionalScrollToBottom = terminal as Terminal & {
-    scrollToBottom?: () => void;
-  };
-
-  if (typeof terminalWithOptionalScrollToBottom.scrollToBottom === "function") {
-    terminalWithOptionalScrollToBottom.scrollToBottom();
-    return;
-  }
-
-  terminal.scrollToLine(terminal.buffer.active.baseY);
-}
-
 function isTerminalViewportNearBottom(terminal: Terminal, slackLines = 1): boolean {
   return terminal.buffer.active.baseY - terminal.buffer.active.viewportY <= slackLines;
 }
@@ -4608,6 +4590,19 @@ function resolveTerminalViewportBottomGapPx(containerHeight: number): number {
     TERMINAL_VIEWPORT_BOTTOM_GAP_MIN_PX,
     Math.ceil(containerHeight * TERMINAL_VIEWPORT_BOTTOM_GAP_RATIO)
   );
+}
+
+function scrollTerminalToBottom(terminal: Terminal): void {
+  const terminalWithOptionalScrollToBottom = terminal as Terminal & {
+    scrollToBottom?: () => void;
+  };
+
+  if (typeof terminalWithOptionalScrollToBottom.scrollToBottom === "function") {
+    terminalWithOptionalScrollToBottom.scrollToBottom();
+    return;
+  }
+
+  terminal.scrollToLine(terminal.buffer.active.baseY);
 }
 
 function hasUsableContainerSize(container: HTMLDivElement): boolean {

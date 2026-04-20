@@ -1147,6 +1147,68 @@ describe("TerminalPage", () => {
     });
   });
 
+  it("自动贴底时会保持跟随最新输出，不会把最新内容滚到视口外面", async () => {
+    setTerminalManagerSnapshot("workspace-1", [buildTerminal()]);
+
+    renderPage();
+
+    await screen.findByText("工作终端");
+    const terminalMarker = await screen.findByTestId("mock-xterm");
+    const viewportHost = terminalMarker.closest(".terminal-xterm") as HTMLElement | null;
+    const viewportElement = terminalMarker.closest(".xterm")?.querySelector(".xterm-viewport") as HTMLElement | null;
+
+    if (!viewportHost || !viewportElement) {
+      throw new Error("未找到终端视口元素");
+    }
+
+    Object.defineProperty(viewportHost, "clientHeight", {
+      configurable: true,
+      value: 400
+    });
+    Object.defineProperty(viewportElement, "clientHeight", {
+      configurable: true,
+      value: 320
+    });
+
+    const terminal = mockXtermInstances.at(-1);
+
+    if (!terminal) {
+      throw new Error("未创建 xterm 实例");
+    }
+
+    terminal.rows = 20;
+    terminal.buffer.active.baseY = 10;
+    terminal.buffer.active.viewportY = 10;
+
+    const socket = MockWebSocket.instances[0];
+
+    if (!socket) {
+      throw new Error("未建立终端 WebSocket 连接");
+    }
+
+    socket.dispatchMessage({
+      type: "terminal.backfill",
+      terminalId: "terminal-1",
+      truncated: false,
+      cursorReset: false,
+      latestCursor: "12",
+      chunks: [
+        {
+          terminalId: "terminal-1",
+          cursor: "12",
+          stream: "stdout",
+          content: Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\r\n") + "\r\n",
+          timestamp: "2026-03-26T08:00:00.000Z"
+        }
+      ]
+    });
+
+    await waitFor(() => {
+      expect(terminal.buffer.active.baseY).toBe(11);
+      expect(terminal.buffer.active.viewportY).toBe(11);
+    });
+  });
+
   it("终端没有发生原生视口滚动时，不会因为滚轮事件就主动拉取更早历史", async () => {
     setTerminalManagerSnapshot("workspace-1", [buildTerminal()]);
 
