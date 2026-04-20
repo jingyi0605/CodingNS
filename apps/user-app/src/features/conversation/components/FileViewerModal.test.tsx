@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import "../../../app/styles.css";
 import { t } from "../../../shared/i18n";
 import { ToastProvider } from "../../../shared/toast";
 import type { FilePreviewDto } from "../api/file-context-api";
@@ -293,6 +294,52 @@ describe("FileViewerModal", () => {
       "src",
       expect.stringContaining("#page=2&zoom=120")
     );
+  });
+
+  it("PDF 预览时由查看器内容区自己承接滚动，不让模态框 body 抢滚动", async () => {
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "docs/spec.pdf",
+        kind: "pdf",
+        content: null,
+        version: null,
+        previewPath: "/preview/files/preview-token/docs/spec.pdf",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/docs/spec.pdf",
+        capabilities: {
+          canEdit: false,
+          canRefresh: true,
+          canResize: true,
+          canZoom: true,
+          canPaginate: true
+        }
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="docs/spec.pdf"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await screen.findByTestId("file-viewer-pdf-preview");
+
+    const modalBody = document.querySelector(".file-viewer-modal-body");
+    const viewerBody = document.querySelector(".file-viewer-body");
+    const pdfShell = document.querySelector(".file-viewer-pdf-shell");
+
+    expect(modalBody).not.toBeNull();
+    expect(viewerBody).not.toBeNull();
+    expect(pdfShell).not.toBeNull();
+
+    expect(getComputedStyle(modalBody as Element).overflowY).toBe("hidden");
+    expect(getComputedStyle(viewerBody as Element).display).toBe("flex");
+    expect(getComputedStyle(pdfShell as Element).overflowY).toBe("auto");
   });
 
   it("Web 代理场景下，外部打开优先使用当前 origin 加 previewPath", async () => {

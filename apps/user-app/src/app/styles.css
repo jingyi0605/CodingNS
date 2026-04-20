@@ -17005,7 +17005,12 @@ textarea:focus-visible {
 }
 
 .file-viewer-modal-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
   gap: 12px;
+  overflow: hidden;
+  overflow-y: hidden;
 }
 
 .file-viewer-toolbar {
@@ -17072,6 +17077,8 @@ textarea:focus-visible {
 }
 
 .file-viewer-body {
+  display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
@@ -17086,6 +17093,7 @@ textarea:focus-visible {
   align-items: center;
   justify-content: center;
   overflow: auto;
+  overflow-y: auto;
   padding: 8px;
   border-radius: 14px;
   background:
@@ -17114,6 +17122,7 @@ textarea:focus-visible {
   align-items: stretch;
   justify-content: center;
   overflow: auto;
+  overflow-y: auto;
   padding: 12px;
   border-radius: 14px;
   background:
