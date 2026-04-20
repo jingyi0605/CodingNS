@@ -38,7 +38,8 @@
 4. 邮箱验证码发送还是内存发送器
 5. 支付测试还是 mock 为主，没做真实 Paddle 沙箱
 6. 域名仍然用 `codingns.example` 这类演示值
-7. 部署、环境变量、对账、出款说明还没写清
+7. 流量钱包还是累计总量模型，没法正确处理多次发量和不同到期时间
+8. 部署、环境变量、对账、出款说明还没写清
 
 如果继续在这个基础上硬往外发版本，后面只会把运营问题、支付问题和生产事故全部堆给人肉处理。
 
@@ -67,6 +68,7 @@
 变化只在于：
 
 - 控制面和数据面要从“最小骨架”升级成“正式服务”
+- 正式支付没接完前，先让激活码兑换走同一套流量 grant 账本
 
 ## 3. 子仓库架构调整
 
@@ -91,9 +93,10 @@
   - `sessions`
   - `tunnel_bindings`
   - `traffic_wallets`
+  - `traffic_grants`
+  - `activation_codes`
   - `traffic_orders`
   - `payment_events`
-  - `traffic_grants`
   - `domain_reservations`
 
 为什么选 `PostgreSQL`：
@@ -191,20 +194,99 @@ interface DomainReservation {
 - 已绑定域名不得重复分配
 - 解绑后进入 `released` 或冷却期，再决定是否可重用
 
-### 4.3 支付与流量账本
+### 4.3 流量账本、激活码与支付发量
 
+这块不能再继续用“给钱包总额度加 5GB”这种烂办法。
+
+原因很简单：
+
+- 用户可能多次兑换
+- 每次兑换的到期时间不同
+- 后续支付恢复后，也会和激活码一起给流量
+
+如果还把所有来源压成一个 `granted_bytes`，那到期逻辑一定会变成一团垃圾。
+
+二阶段先统一改成 grant 账本模型：
+
+```ts
+interface TrafficGrant {
+  grantId: string;
+  accountId: string;
+  sourceType: "activation_code" | "order" | "manual";
+  sourceId: string;
+  totalBytes: string;
+  usedBytes: string;
+  remainingBytes: string;
+  startsAt: string | null;
+  expiresAt: string;
+  createdAt: string;
+}
+```
+
+激活码是 grant 的一个来源，不是单独再造一套钱包逻辑：
+
+```ts
+interface ActivationCodeRecord {
+  activationCodeId: string;
+  code: string;
+  batchTag: string | null;
+  spec: "5g" | "10g" | "20g" | "50g";
+  monthlyBytes: string;
+  redeemedByAccountId: string | null;
+  redeemedGrantId: string | null;
+  redeemedMode: "boost_current_cycle" | "extend_validity_months" | null;
+  redeemedAt: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+}
+```
+
+控制面最小规则：
+
+1. 注册时仍可保留默认试用 grant，但必须也是一条独立 grant
+2. 激活码规格固定为 `5g / 10g / 20g / 50g` 四档，每个码代表“1 个 30 天周期”的对应月流量
+3. 用户一次可以提交多个码，控制面要先做批量校验，再决定是否允许兑换
+4. 兑换模式分两种：
+   - `boost_current_cycle`：把通过校验的激活码全部叠加到当前活跃 30 天周期；允许混合规格
+   - `extend_validity_months`：把通过校验的激活码按月排到未来周期；只允许同规格批量兑换
+5. grant 的 `startsAt` 用来表示未来月份；只有 `startsAt <= now < expiresAt` 的 grant 才算当前可用额度
+6. 扣量时按“当前已生效 grant 里最早到期优先”消耗，避免把长期额度提前吃掉
+7. 钱包摘要不是单表真相，而是由“当前已生效且未过期 grants + 已使用汇总”推导出来
+8. grant 过期后不再参与剩余额度，但历史记录继续保留
+
+周期定义直接写死：
+
+- `30 天 = 1 个有效月`
+- 不按自然月切，不按账单月切
+- 这样实现最笨，但边界最少
+
+为什么不碰自然月：
+
+- 自然月天数不一样
+- 时区和月底边界全是坑
+- 这个阶段要的是可上线，不是给自己挖坑
+
+控制台最小入口：
+
+1. 增加多行激活码输入框，支持一次粘贴多码
+2. 先显示校验结果：有效数量、规格分布、无效原因
+3. 再让用户选择兑换模式
+4. grant 列表至少要能看见“当前已生效”和“未来待生效”两种状态
+5. Paddle 未准备好时，不把支付按钮当成当前主路径
 Paddle 支付链路继续沿用：
 
 - `transaction`
 - `checkout.url`
 - `webhook`
 
+后续支付恢复时，也必须走这套 grant 账本，不能重新把订单发量写回累计总额。
+
 二阶段新增三块真东西：
 
 1. **支付事件表**
    - 保存原始事件 ID、交易 ID、订单 ID、事件类型、验签结果
-2. **发量记录表**
-   - 记录哪一笔订单给哪个钱包发了多少流量
+2. **发量记录表 / grant 记录**
+   - 记录哪一笔订单或哪个激活码给哪个账号发了多少流量、何时过期
 3. **人工补发工具**
    - 用内部命令或受保护接口，按订单号补发或重放发量逻辑
 
@@ -212,6 +294,7 @@ Paddle 支付链路继续沿用：
 
 - 订单状态不是钱包状态
 - 支付事件不是发量结果
+- grant 才是流量可用性的真实来源
 - 这三者必须能对上，但不能混成一个字段
 
 ### 4.4 relay-edge 记账原则
