@@ -16,8 +16,9 @@ import {
 import { useWorkbenchShell } from "./WorkbenchLayout";
 import { WorkbenchModal } from "./WorkbenchModal";
 import { ButlerActionIcon } from "./ConversationActionIcons";
+import { SessionProviderPicker } from "./SessionProviderPicker";
 
-import type { SessionSummaryDto } from "../api/conversation-api";
+import type { ProviderId, SessionSummaryDto } from "../api/conversation-api";
 
 interface SessionButlerActionButtonProps {
   session: SessionSummaryDto | null;
@@ -27,6 +28,7 @@ interface SessionButlerActionButtonProps {
 
 type ButlerActionKind = "follow-up" | "verification" | null;
 const DEFAULT_FOLLOW_UP_ROUND_LIMIT = 5;
+const FOLLOW_UP_PROVIDER_IDS: ProviderId[] = ["codex", "claude-code"];
 
 interface ButlerCompletionCriteriaPreset {
   id: string;
@@ -62,6 +64,12 @@ function getDefaultCompletionCriteria(): string {
   return buildCompletionCriteriaPresets()[0]?.value ?? "";
 }
 
+function resolveDefaultFollowUpProvider(
+  sessionProvider: string | null | undefined
+): "codex" | "claude-code" {
+  return sessionProvider === "claude-code" ? "claude-code" : "codex";
+}
+
 export function SessionButlerActionButton({
   session,
   showTrigger = true,
@@ -78,6 +86,9 @@ export function SessionButlerActionButton({
   const [actionContext, setActionContext] = useState<ButlerSessionActionContextDto | null>(null);
   const [contextError, setContextError] = useState<string | null>(null);
   const [runningAction, setRunningAction] = useState<ButlerActionKind>(null);
+  const [followUpProviderId, setFollowUpProviderId] = useState<"codex" | "claude-code">(
+    resolveDefaultFollowUpProvider(session?.provider)
+  );
   const [followUpObjective, setFollowUpObjective] = useState("");
   const [followUpCompletionCriteria, setFollowUpCompletionCriteria] = useState(() => getDefaultCompletionCriteria());
   const [followUpRoundLimit, setFollowUpRoundLimit] = useState(DEFAULT_FOLLOW_UP_ROUND_LIMIT);
@@ -106,6 +117,7 @@ export function SessionButlerActionButton({
     setContextError(null);
     setActionContext(null);
     setFollowUpObjective("");
+    setFollowUpProviderId(resolveDefaultFollowUpProvider(session?.provider));
     setFollowUpCompletionCriteria(getDefaultCompletionCriteria());
     setFollowUpRoundLimit(DEFAULT_FOLLOW_UP_ROUND_LIMIT);
   }, [session?.sessionId]);
@@ -205,6 +217,7 @@ export function SessionButlerActionButton({
       const response = await createButlerFollowUpTask({
         projectId: target.project.id,
         butlerSessionId: target.session.id,
+        providerId: followUpProviderId,
         objective,
         completionCriteria,
         maxAutoContinueCount: followUpRoundLimit
@@ -485,6 +498,24 @@ export function SessionButlerActionButton({
                   <span>{t("conversation.butlerActionSessionLabel")}</span>
                   <strong>{target.session.title || currentTitle || target.session.sessionId}</strong>
                 </div>
+              </div>
+
+              <div className="workbench-modal-field conversation-butler-modal-field">
+                <div className="conversation-butler-field-heading">
+                  <label>{t("conversation.butlerFollowUpProviderLabel")}</label>
+                  <small>{t("conversation.butlerFollowUpProviderHint")}</small>
+                </div>
+                <SessionProviderPicker
+                  workspaceId={target.workspaceId}
+                  providers={FOLLOW_UP_PROVIDER_IDS}
+                  selectedProvider={followUpProviderId}
+                  disabled={runningAction !== null}
+                  onSelect={(provider) => {
+                    if (provider === "codex" || provider === "claude-code") {
+                      setFollowUpProviderId(provider);
+                    }
+                  }}
+                />
               </div>
 
               <div className="workbench-modal-field conversation-butler-modal-field">

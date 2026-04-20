@@ -460,6 +460,9 @@ export interface ButlerFollowUpTaskDto {
   workspaceId: string;
   butlerSessionId: string;
   sessionId: string;
+  providerId?: "codex" | "claude-code";
+  assistantButlerSessionId?: string;
+  assistantSessionId?: string;
   sessionTitle: string | null;
   objective: string;
   completionCriteria?: string;
@@ -1151,6 +1154,7 @@ export function listButlerFollowUpTasks(payload: {
 export function createButlerFollowUpTask(payload: {
   projectId: string;
   butlerSessionId: string;
+  providerId: "codex" | "claude-code";
   objective: string;
   completionCriteria?: string;
   maxAutoContinueCount?: number;

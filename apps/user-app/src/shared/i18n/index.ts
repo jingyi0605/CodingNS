@@ -1674,6 +1674,8 @@ const extensionZhCN = {
     butlerActionSessionLabel: "当前会话",
     butlerFollowUpAction: "继续跟进",
     butlerFollowUpActionDescription: "让助手持续盯住这条开发会话，并在结束或阻塞后继续推动。",
+    butlerFollowUpProviderLabel: "跟进助手",
+    butlerFollowUpProviderHint: "选择由哪种 CLI 助手负责这条跟进会话。后续每轮跟进都会复用这条可见助手会话。",
     butlerFollowUpObjectiveLabel: "跟进目标",
     butlerFollowUpObjectivePlaceholder:
       "例如：帮我把这个会话的功能真正做完，若 spec 还有未完成项就继续补齐。",
@@ -3701,6 +3703,9 @@ const extensionEnUS = {
     butlerFollowUpAction: "Continue Follow-up",
     butlerFollowUpActionDescription:
       "Let Butler keep watching this session and continue pushing it after each stop or blocker.",
+    butlerFollowUpProviderLabel: "Follow-up Assistant",
+    butlerFollowUpProviderHint:
+      "Choose which CLI-backed assistant should own this follow-up session. Later rounds reuse the same visible assistant session.",
     butlerFollowUpObjectiveLabel: "Follow-up Goal",
     butlerFollowUpObjectivePlaceholder:
       "Example: finish this feature for me; if the spec still has unfinished work, keep going.",

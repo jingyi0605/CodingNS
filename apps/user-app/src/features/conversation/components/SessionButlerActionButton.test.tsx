@@ -13,6 +13,19 @@ vi.mock("./WorkbenchLayout", () => ({
   })
 }));
 
+vi.mock("./SessionProviderPicker", () => ({
+  SessionProviderPicker: ({ selectedProvider, onSelect }: {
+    selectedProvider?: string | null;
+    onSelect: (provider: "codex" | "claude-code") => void;
+  }) => (
+    <div>
+      <button type="button" onClick={() => onSelect("codex")}>Codex</button>
+      <button type="button" onClick={() => onSelect("claude-code")}>Claude Code</button>
+      <span data-testid="follow-up-provider">{selectedProvider}</span>
+    </div>
+  )
+}));
+
 vi.mock("../../butler/api/butler-api", () => ({
   cancelButlerVerificationRun: vi.fn(),
   cancelButlerFollowUpTask: vi.fn(),
@@ -251,6 +264,7 @@ describe("SessionButlerActionButton", () => {
       expect(mockedCreateButlerFollowUpTask).toHaveBeenCalledWith({
         projectId: "project-1",
         butlerSessionId: "butler-session-1",
+        providerId: "codex",
         objective: "帮我把这个会话的功能真正做完",
         completionCriteria: "只有当当前功能按既定需求完成后，才停止自动跟进。",
         maxAutoContinueCount: 4
@@ -336,8 +350,52 @@ describe("SessionButlerActionButton", () => {
     await waitFor(() => {
       expect(mockedCreateButlerFollowUpTask).toHaveBeenCalledWith(
         expect.objectContaining({
+          providerId: "codex",
           completionCriteria: t("conversation.butlerCompletionTemplateRecommendedValue"),
           maxAutoContinueCount: 5
+        })
+      );
+    });
+  });
+
+  it("新建跟进时可以切换要使用的 CLI 提供商", async () => {
+    render(
+      <SessionButlerActionButton
+        session={createSessionSummary()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(mockedGetButlerSessionActionContext).toHaveBeenCalledWith("session-1");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: t("conversation.butlerActionButton") }));
+
+    await waitFor(() => {
+      expect(screen.getByText("项目甲")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Claude Code" }));
+
+    fireEvent.change(
+      screen.getByRole("textbox", { name: t("conversation.butlerFollowUpObjectiveLabel") }),
+      {
+        target: {
+          value: "帮我把这个会话的功能真正做完"
+        }
+      }
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: t("conversation.butlerFollowUpAction")
+      })
+    );
+
+    await waitFor(() => {
+      expect(mockedCreateButlerFollowUpTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerId: "claude-code"
         })
       );
     });
