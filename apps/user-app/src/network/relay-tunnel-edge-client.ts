@@ -80,7 +80,7 @@ export async function reserveRelayTunnelSession(input: {
   fetchFn?: typeof fetch;
 }): Promise<RelayTunnelSessionReservation> {
   const fetchFn = input.fetchFn ?? fetch;
-  const requestUrl = new URL("/api/internal/sessions/reserve", ensureTrailingSlash(input.relayBaseUrl)).toString();
+  const requestUrl = resolveRelayBaseUrl(input.relayBaseUrl, "api/internal/sessions/reserve").toString();
   const response = await fetchFn(requestUrl, {
     method: "POST",
     headers: {
@@ -200,11 +200,11 @@ function buildRelayEdgeWebSocketUrl(
   sessionId: string,
   role: "upstream" | "downstream"
 ): string {
-  const url = new URL("/ws", ensureTrailingSlash(relayBaseUrl));
+  const url = resolveRelayBaseUrl(relayBaseUrl, "ws");
 
   url.searchParams.set("sessionId", sessionId);
   url.searchParams.set("role", role);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.protocol = url.protocol === "https:" || url.protocol === "wss:" ? "wss:" : "ws:";
 
   return url.toString();
 }
@@ -280,6 +280,10 @@ function normalizeTunnelDomain(value: string): string {
 
 function ensureTrailingSlash(baseUrl: string): string {
   return baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+}
+
+function resolveRelayBaseUrl(baseUrl: string, pathname: string): URL {
+  return new URL(pathname.replace(/^\/+/, ""), ensureTrailingSlash(baseUrl));
 }
 
 function defaultCreateWebSocket(url: string): RelayTunnelEdgeSocket {

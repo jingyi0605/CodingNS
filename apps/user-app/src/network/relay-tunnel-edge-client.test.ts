@@ -194,4 +194,78 @@ describe("relay-tunnel-edge-client", () => {
     expect(connected.binding.hostFingerprint).toBe(hostIdentity.keyFingerprint);
     expect(connected.clientSession).toBeDefined();
   });
+
+  it("会保留 relayBaseUrl 里的路径前缀来预留会话并连接 ws", async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            binding: {
+              bindingId: "binding_1",
+              tunnelDomain: "demo.codingns.example",
+              hostPublicKey: "PUBLIC_KEY_DEMO",
+              hostFingerprint: "SHA256:demo",
+              relayBaseUrl: "https://channel.codingns.com:1443/relay",
+              controlBaseUrl: "https://channel.codingns.com:1443",
+              status: "active"
+            }
+          }),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json"
+            }
+          }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            reservation: {
+              sessionId: "session_demo",
+              accountId: "acct_1",
+              bindingId: "binding_1",
+              tunnelDomain: "demo.codingns.example",
+              remainingBytes: "1024",
+              upstreamConnected: false,
+              downstreamConnected: false
+            }
+          }),
+          {
+            status: 201,
+            headers: {
+              "Content-Type": "application/json"
+            }
+          }
+        )
+      );
+    const socket = new MockRelayEdgeSocket(
+      "wss://channel.codingns.com:1443/relay/ws?sessionId=session_demo&role=downstream"
+    );
+    const connectPromise = connectRelayTunnelRawChannel(
+      {
+        controlBaseUrl: "https://channel.codingns.com:1443",
+        tunnelDomain: "demo.codingns.example"
+      },
+      {
+        fetchFn: fetchMock,
+        createSessionId: () => "session_demo",
+        createWebSocket: () => socket
+      }
+    );
+
+    socket.open();
+    await connectPromise;
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "https://channel.codingns.com:1443/relay/api/internal/sessions/reserve",
+      expect.objectContaining({
+        method: "POST"
+      })
+    );
+    expect(socket.url).toBe(
+      "wss://channel.codingns.com:1443/relay/ws?sessionId=session_demo&role=downstream"
+    );
+  });
 });
