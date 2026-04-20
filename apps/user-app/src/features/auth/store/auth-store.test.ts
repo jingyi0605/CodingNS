@@ -95,6 +95,7 @@ describe("authStore", () => {
 
   it("切换 activeHostId 时会切换当前会话上下文", async () => {
     const clientConfigStore = await setupClientConfig();
+    const now = Date.now();
 
     window.localStorage.setItem(
       STORAGE_KEY,
@@ -102,7 +103,7 @@ describe("authStore", () => {
         "host-1": {
           hostId: "host-1",
           session: storedSession,
-          savedAt: 1
+          savedAt: now
         },
         "host-2": {
           hostId: "host-2",
@@ -110,7 +111,7 @@ describe("authStore", () => {
             ...storedSession,
             accessToken: "host-2-token"
           },
-          savedAt: 2
+          savedAt: now
         }
       })
     );
@@ -197,5 +198,29 @@ describe("authStore", () => {
     expect(
       JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null")
     ).not.toHaveProperty("host-2");
+  });
+
+  it("启动时会直接清理已过期的当前 HOST 会话，避免误进工作台", async () => {
+    await setupClientConfig();
+
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        "host-1": {
+          hostId: "host-1",
+          session: {
+            ...storedSession,
+            accessToken: "expired-token"
+          },
+          savedAt: Date.now() - 4000 * 1000
+        }
+      })
+    );
+
+    const { authStore } = await import("./auth-store");
+
+    expect(authStore.getState().status).toBe("anonymous");
+    expect(authStore.getState().session).toBeNull();
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
   });
 });

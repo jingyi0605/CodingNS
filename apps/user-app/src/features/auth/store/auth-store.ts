@@ -8,7 +8,7 @@ import {
   type RuntimeHostProfile
 } from "../../../config/client-config-types";
 import { ApiError } from "../../../shared/network/api-error";
-import { loginRequest, refreshRequest, setupRequest, type LoginPayload } from "../api/auth-api";
+import type { LoginPayload } from "../api/auth-api";
 
 export interface AuthenticatedUser {
   userId: string;
@@ -86,6 +86,7 @@ class AuthStore {
   getState = () => this.state;
 
   async login(payload: LoginPayload, baseUrl?: string): Promise<AuthSession> {
+    const { loginRequest } = await import("../api/auth-api");
     const currentHost = this.getCurrentHost();
 
     if (!currentHost) {
@@ -106,6 +107,7 @@ class AuthStore {
   }
 
   async loginForHost(host: RuntimeHostProfile, payload: LoginPayload, baseUrl?: string): Promise<AuthSession> {
+    const { loginRequest } = await import("../api/auth-api");
     const session = await loginRequest(payload, baseUrl ?? host.baseUrl);
     this.persistSession(host, session);
 
@@ -120,6 +122,7 @@ class AuthStore {
   }
 
   async bootstrap(username: string, password: string, baseUrl?: string): Promise<void> {
+    const { setupRequest } = await import("../api/auth-api");
     await setupRequest({ username, password }, baseUrl);
   }
 
@@ -133,6 +136,7 @@ class AuthStore {
   }
 
   async refresh(): Promise<AuthRefreshResult> {
+    const { refreshRequest } = await import("../api/auth-api");
     const previousSession = this.state.session;
     const refreshToken = previousSession?.refreshToken;
     const currentHost = this.getCurrentHost();
@@ -284,14 +288,15 @@ class AuthStore {
   private syncCurrentHostSession(): void {
     const currentHost = this.getCurrentHost();
     const { sessionMap, migrated } = this.readSessionMapFromStorage(currentHost);
+    const normalizedSessionMap = pruneExpiredSessions(sessionMap);
 
-    this.sessionMap = sessionMap;
+    this.sessionMap = normalizedSessionMap;
 
-    if (migrated) {
+    if (migrated || Object.keys(normalizedSessionMap).length !== Object.keys(sessionMap).length) {
       this.persistSessionMap();
     }
 
-    const nextSession = currentHost ? sessionMap[currentHost.id]?.session ?? null : null;
+    const nextSession = currentHost ? normalizedSessionMap[currentHost.id]?.session ?? null : null;
     this.updateState({
       status: nextSession ? "authenticated" : "anonymous",
       session: nextSession
@@ -490,4 +495,20 @@ function shouldClearSessionAfterRefreshFailure(error: unknown): boolean {
   }
 
   return error.status === 403 && error.errorCode === "BOOTSTRAP_REQUIRED";
+}
+
+function pruneExpiredSessions(sessionMap: HostSessionMap): HostSessionMap {
+  const nextEntries = Object.entries(sessionMap).filter(([, envelope]) => !isSessionExpired(envelope));
+
+  return Object.fromEntries(nextEntries);
+}
+
+function isSessionExpired(envelope: HostSessionEnvelope): boolean {
+  const ttlMs = envelope.session?.expiresIn;
+
+  if (typeof ttlMs !== "number" || !Number.isFinite(ttlMs) || ttlMs <= 0) {
+    return true;
+  }
+
+  return envelope.savedAt + ttlMs * 1000 <= Date.now();
 }

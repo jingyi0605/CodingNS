@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 import {
   Navigate,
   Outlet,
@@ -8,25 +8,10 @@ import {
 } from "react-router-dom";
 
 import { useHostRuntimeBoundaryKey } from "../config/host-runtime-store";
-import { BootstrapPage } from "../features/auth/pages/BootstrapPage";
 import { LoginPage } from "../features/auth/pages/LoginPage";
-import { AdaptiveButlerPage } from "../features/butler/pages/AdaptiveButlerPage";
 import { useAuthSelector } from "../features/auth/store/auth-store";
-import { ConversationPage } from "../features/conversation/pages/ConversationPage";
-import { useWorkbenchShell } from "../features/conversation/components/WorkbenchLayout";
-import { DesktopDetachPreviewPage } from "../features/desktop-window/DesktopDetachPreviewPage";
-import { DesktopWindowPage } from "../features/desktop-window/DesktopWindowPage";
-import { SessionIndexPage } from "../features/mobile-sessions/pages/SessionIndexPage";
-import { ToolFilesPage } from "../features/mobile-tools/ToolFilesPage";
-import { ToolGitPage } from "../features/mobile-tools/ToolGitPage";
-import { ToolProcessesPage } from "../features/mobile-tools/ToolProcessesPage";
-import { ToolsHomePage } from "../features/mobile-tools/ToolsHomePage";
-import { WorkspaceHomePage } from "../features/mobile-workspaces/pages/WorkspaceHomePage";
-import { WorkspaceDetailPage } from "../features/mobile-workspaces/pages/WorkspaceDetailPage";
-import { WorkspaceDebugDetailPage } from "../features/debug-target/pages/WorkspaceDebugDetailPage";
-import { WorkbenchShellRoute } from "../features/workbench/components/WorkbenchShellRoute";
-import { WorkbenchLandingPage } from "../features/workbench/pages/WorkbenchLandingPage";
-import { SettingsPage } from "../features/settings/pages/SettingsPage";
+import { resolveWorkbenchShellMode } from "../features/workbench/components/workbench-shell-mode";
+import { usePlatform } from "../platform/platform-provider";
 
 function RuntimeResetBoundary({
   runtimeKey,
@@ -70,15 +55,32 @@ function RequireAuth() {
 }
 
 function WorkbenchIndexRedirect() {
-  const { shellMode } = useWorkbenchShell();
+  const platform = usePlatform();
+  const shellMode = resolveWorkbenchShellMode(platform);
 
   return <Navigate to={shellMode === "mobile" ? "/workspaces" : "/landing"} replace />;
+}
+
+function lazyRouteComponent<T extends Record<string, unknown>, K extends keyof T>(
+  load: () => Promise<T>,
+  exportName: K
+) {
+  return async () => {
+    const module = await load();
+
+    return {
+      Component: module[exportName] as ComponentType<object>
+    };
+  };
 }
 
 const appRoutes = [
   {
     path: "/bootstrap",
-    element: <BootstrapPage />
+    lazy: lazyRouteComponent(
+      () => import("../features/auth/pages/BootstrapPage"),
+      "BootstrapPage"
+    )
   },
   {
     path: "/login",
@@ -86,7 +88,10 @@ const appRoutes = [
   },
   {
     path: "/desktop-window-preview",
-    element: <DesktopDetachPreviewPage />
+    lazy: lazyRouteComponent(
+      () => import("../features/desktop-window/DesktopDetachPreviewPage"),
+      "DesktopDetachPreviewPage"
+    )
   },
   {
     path: "/",
@@ -94,10 +99,16 @@ const appRoutes = [
     children: [
       {
         path: "desktop-window/:windowId",
-        element: <DesktopWindowPage />
+        lazy: lazyRouteComponent(
+          () => import("../features/desktop-window/DesktopWindowPage"),
+          "DesktopWindowPage"
+        )
       },
       {
-        element: <WorkbenchShellRoute />,
+        lazy: lazyRouteComponent(
+          () => import("../features/workbench/components/WorkbenchShellRoute"),
+          "WorkbenchShellRoute"
+        ),
         children: [
           {
             index: true,
@@ -105,65 +116,101 @@ const appRoutes = [
           },
           {
             path: "landing",
-            element: <WorkbenchLandingPage />
+            lazy: lazyRouteComponent(
+              () => import("../features/workbench/pages/WorkbenchLandingPage"),
+              "WorkbenchLandingPage"
+            )
           },
           {
             path: "workspaces",
-            element: <WorkspaceHomePage />
+            lazy: lazyRouteComponent(
+              () => import("../features/mobile-workspaces/pages/WorkspaceHomePage"),
+              "WorkspaceHomePage"
+            )
           },
           {
             path: "workspaces/:workspaceId",
-            element: <WorkspaceDetailPage />
+            lazy: lazyRouteComponent(
+              () => import("../features/mobile-workspaces/pages/WorkspaceDetailPage"),
+              "WorkspaceDetailPage"
+            )
           },
           {
             path: "workspaces/:workspaceId/debug",
-            element: <WorkspaceDebugDetailPage />
+            lazy: lazyRouteComponent(
+              () => import("../features/debug-target/pages/WorkspaceDebugDetailPage"),
+              "WorkspaceDebugDetailPage"
+            )
           },
           {
             path: "workspaces/:workspaceId/sessions",
-            element: <SessionIndexPage />
+            lazy: lazyRouteComponent(
+              () => import("../features/mobile-sessions/pages/SessionIndexPage"),
+              "SessionIndexPage"
+            )
           },
           {
             path: "workspaces/:workspaceId/sessions/:sessionId",
-            element: <ConversationPage />
+            lazy: lazyRouteComponent(
+              () => import("../features/conversation/pages/ConversationPage"),
+              "ConversationPage"
+            )
           },
           {
             path: "workspaces/:workspaceId/tools",
-            element: <ToolsHomePage />
+            lazy: lazyRouteComponent(
+              () => import("../features/mobile-tools/ToolsHomePage"),
+              "ToolsHomePage"
+            )
           },
           {
             path: "workspaces/:workspaceId/tools/files",
-            element: <ToolFilesPage />
+            lazy: lazyRouteComponent(
+              () => import("../features/mobile-tools/ToolFilesPage"),
+              "ToolFilesPage"
+            )
           },
           {
             path: "workspaces/:workspaceId/tools/git",
-            element: <ToolGitPage />
+            lazy: lazyRouteComponent(
+              () => import("../features/mobile-tools/ToolGitPage"),
+              "ToolGitPage"
+            )
           },
           {
             path: "workspaces/:workspaceId/tools/processes",
-            element: <ToolProcessesPage />
+            lazy: lazyRouteComponent(
+              () => import("../features/mobile-tools/ToolProcessesPage"),
+              "ToolProcessesPage"
+            )
           },
           {
             path: "workspaces/:workspaceId/terminals",
-            lazy: async () => {
-              const module = await import("../features/terminal/pages/TerminalPage");
-
-              return {
-                Component: module.TerminalPage
-              };
-            }
+            lazy: lazyRouteComponent(
+              () => import("../features/terminal/pages/TerminalPage"),
+              "TerminalPage"
+            )
           },
           {
             path: "workspaces/:workspaceId/butler",
-            element: <AdaptiveButlerPage />
+            lazy: lazyRouteComponent(
+              () => import("../features/butler/pages/AdaptiveButlerPage"),
+              "AdaptiveButlerPage"
+            )
           },
           {
             path: "settings",
-            element: <SettingsPage />
+            lazy: lazyRouteComponent(
+              () => import("../features/settings/pages/SettingsPage"),
+              "SettingsPage"
+            )
           },
           {
             path: "settings/:section",
-            element: <SettingsPage />
+            lazy: lazyRouteComponent(
+              () => import("../features/settings/pages/SettingsPage"),
+              "SettingsPage"
+            )
           },
           {
             path: "*",

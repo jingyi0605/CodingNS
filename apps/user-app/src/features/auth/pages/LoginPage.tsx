@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { canConfigureHostBaseUrl } from "../../../config/client-config-service";
@@ -6,10 +6,8 @@ import { useClientConfigSelector } from "../../../config/client-config-store";
 import { getEffectiveActiveHostId } from "../../../config/client-config-types";
 import { serverConfigStore, useServerConfigSelector } from "../../../config/server-config";
 import { authGateway } from "../../../auth/auth-gateway";
-import { probeHost } from "../../../network/host-probe";
-import { consumeAuthExpiredFlag } from "../../../network/http-client";
+import { consumeAuthExpiredFlag } from "../../../network/auth-expired-flag";
 import { usePlatform } from "../../../platform/platform-provider";
-import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import { LanguageSwitcher, t, useT } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { useTheme } from "../../../shared/theme";
@@ -21,7 +19,14 @@ import {
   readRememberedLoginSnapshot,
   supportsRememberPassword
 } from "../store/remembered-login";
-import { ServerSettingsModal } from "../components/ServerSettingsModal";
+
+const ServerSettingsModal = lazy(async () => {
+  const module = await import("../components/ServerSettingsModal");
+
+  return {
+    default: module.ServerSettingsModal
+  };
+});
 
 const DEFAULT_VIEWPORT_CONTENT = "width=device-width, initial-scale=1.0, viewport-fit=cover";
 const NATIVE_MOBILE_LOGIN_VIEWPORT_CONTENT =
@@ -297,29 +302,32 @@ export function LoginPage() {
     }
 
     let disposed = false;
-
-    void probeHost(probeServerBaseUrl)
-      .then((status) => {
-        if (disposed) return;
-        if (status.demoMode) {
-          setDemoMode(true);
-          // 检测是否因 token 过期被踢回登录页
-          if (consumeAuthExpiredFlag()) {
-            setStatusText(t("auth.demoSessionExpired"));
+    const probeTimer = window.setTimeout(() => {
+      void import("../../../network/host-probe")
+        .then(({ probeHost }) => probeHost(probeServerBaseUrl))
+        .then((status) => {
+          if (disposed) return;
+          if (status.demoMode) {
+            setDemoMode(true);
+            // 检测是否因 token 过期被踢回登录页
+            if (consumeAuthExpiredFlag()) {
+              setStatusText(t("auth.demoSessionExpired"));
+            }
           }
-        }
-        if (status.reachable && !status.initialized) {
-          navigate("/bootstrap", { replace: true });
-        }
-      })
-      .catch(() => {
-        if (!disposed) {
-          setStatusText(t("auth.authUnavailable"));
-        }
-      });
+          if (status.reachable && !status.initialized) {
+            navigate("/bootstrap", { replace: true });
+          }
+        })
+        .catch(() => {
+          if (!disposed) {
+            setStatusText(t("auth.authUnavailable"));
+          }
+        });
+    }, 0);
 
     return () => {
       disposed = true;
+      window.clearTimeout(probeTimer);
     };
   }, [authSession, navigate, probeServerBaseUrl, returnTo, t]);
 
@@ -353,6 +361,7 @@ export function LoginPage() {
       );
       setCaptchaChallenge(null);
       setCaptchaCode("");
+      const { userPreferenceStore } = await import("../../../preferences/user-preference-store");
       await userPreferenceStore.refreshForAuthenticatedUser();
 
       if (rememberPasswordSupported && rememberPassword && activeHostId) {
@@ -624,12 +633,14 @@ export function LoginPage() {
       </div>
 
       {/* Server Settings Modal */}
-      {canConfigureServerAddress ? (
-        <ServerSettingsModal
-          isOpen={showServerModal}
-          onClose={() => setShowServerModal(false)}
-          onSave={handleServerSettingsSave}
-        />
+      {canConfigureServerAddress && showServerModal ? (
+        <Suspense fallback={null}>
+          <ServerSettingsModal
+            isOpen={showServerModal}
+            onClose={() => setShowServerModal(false)}
+            onSave={handleServerSettingsSave}
+          />
+        </Suspense>
       ) : null}
     </main>
   );

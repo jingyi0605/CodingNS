@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveWorkbenchShellMode } from "./WorkbenchShellRoute";
+import { resolveWorkbenchShellMode } from "./workbench-shell-mode";
 
 describe("WorkbenchShellRoute", () => {
   it("desktop runtime 永远走桌面壳", () => {
     expect(
       resolveWorkbenchShellMode({
         isDesktop: true,
-        isWeb: false,
         viewportClass: "compact"
       })
     ).toBe("desktop");
@@ -17,7 +16,6 @@ describe("WorkbenchShellRoute", () => {
     expect(
       resolveWorkbenchShellMode({
         isDesktop: false,
-        isWeb: true,
         viewportClass: "expanded"
       })
     ).toBe("desktop");
@@ -25,7 +23,6 @@ describe("WorkbenchShellRoute", () => {
     expect(
       resolveWorkbenchShellMode({
         isDesktop: false,
-        isWeb: true,
         viewportClass: "medium"
       })
     ).toBe("mobile");
@@ -33,7 +30,6 @@ describe("WorkbenchShellRoute", () => {
     expect(
       resolveWorkbenchShellMode({
         isDesktop: false,
-        isWeb: false,
         viewportClass: "expanded"
       })
     ).toBe("desktop");

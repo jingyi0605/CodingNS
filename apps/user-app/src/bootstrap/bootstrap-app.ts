@@ -12,7 +12,8 @@ export async function bootstrapApplication(): Promise<BootstrapAppResult> {
   const adapter = createPlatformAdapter();
   await clientConfigStore.initialize();
   localHostDiscoveryStore.initialize();
-  await initializePreferences();
+  // 偏好配置允许晚到；不能为了等一条远程请求把整个首屏挂死。
+  void initializePreferences().catch(() => undefined);
 
   return {
     platform: adapter.platform

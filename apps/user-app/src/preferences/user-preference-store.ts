@@ -3,10 +3,6 @@ import { useSyncExternalStore } from "react";
 import type { AppLanguage, ClientPermissionMode } from "../config/client-config-types";
 import { clientConfigStore } from "../config/client-config-store";
 import { authStore } from "../features/auth/store/auth-store";
-import {
-  fetchPreferencesProfile,
-  updatePreferencesProfile
-} from "./preferences-service";
 import type {
   AccountPreferenceProviderPatch,
   AccountPreferencesPatch,
@@ -522,6 +518,10 @@ function cloneDebugPortPools(value: DebugPortPoolConfig): DebugPortPoolConfig {
 }
 
 async function fetchRemoteStateWithMigration(): Promise<AccountPreferenceState> {
+  const {
+    fetchPreferencesProfile,
+    updatePreferencesProfile
+  } = await import("./preferences-service");
   const remoteProfile = normalizeProfile(await fetchPreferencesProfile());
 
   if (remoteProfile.updatedAt === null) {
@@ -611,6 +611,7 @@ class UserPreferenceStore {
     }
 
     try {
+      const { updatePreferencesProfile } = await import("./preferences-service");
       const remote = normalizeProfile(await updatePreferencesProfile(patch));
       const nextState = createStateFromProfile(remote, "remote");
       writeShadow(nextState);
