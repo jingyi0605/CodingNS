@@ -87,7 +87,8 @@ describe("RelayTunnelClientTransport", () => {
     const socket = transport.createWebSocket({
       path: "/ws",
       baseUrl: "https://app.codingns.cn",
-      url: "wss://app.codingns.cn/ws"
+      url: "wss://app.codingns.cn/ws",
+      protocols: ["vite-hmr", "vite-ping", "vite-hmr"]
     });
 
     const openPacket = session.sentPackets[0];
@@ -96,7 +97,8 @@ describe("RelayTunnelClientTransport", () => {
       type: "ws.open",
       streamId: "ws-1",
       path: "/ws",
-      headers: {}
+      headers: {},
+      protocols: ["vite-hmr", "vite-ping"]
     });
 
     const openedEvents: string[] = [];
@@ -116,7 +118,8 @@ describe("RelayTunnelClientTransport", () => {
 
     session.emit({
       type: "ws.opened",
-      streamId: "ws-1"
+      streamId: "ws-1",
+      selectedProtocol: "vite-hmr"
     });
 
     expect(openedEvents).toEqual(["open"]);

@@ -59,7 +59,8 @@ export class RelayTunnelClientTransport implements HostTransport {
     const socket = new RelayTunnelTransportSocket({
       streamId,
       path: buildTunnelPath(request.path, request.url),
-      headers: {}
+      headers: {},
+      protocols: normalizeRequestedProtocols(request.protocols)
     }, this.session, () => {
       this.sockets.delete(streamId);
     });
@@ -152,6 +153,7 @@ class RelayTunnelTransportSocket extends EventTarget implements HostTransportSoc
       streamId: string;
       path: string;
       headers: Record<string, string>;
+      protocols: string[];
     },
     private readonly session: RelayTunnelPacketSession,
     private readonly onClosed: () => void
@@ -247,11 +249,35 @@ class RelayTunnelTransportSocket extends EventTarget implements HostTransportSoc
       type: "ws.open",
       streamId: this.streamId,
       path: this.options.path,
-      headers: this.options.headers
+      headers: this.options.headers,
+      protocols: this.options.protocols.length > 0 ? this.options.protocols : undefined
     };
 
     this.session.send(packet);
   }
+}
+
+function normalizeRequestedProtocols(protocols: string | string[] | undefined): string[] {
+  if (!protocols) {
+    return [];
+  }
+
+  const values = Array.isArray(protocols) ? protocols : [protocols];
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const protocol of values) {
+    const trimmed = protocol.trim();
+
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+
+    seen.add(trimmed);
+    normalized.push(trimmed);
+  }
+
+  return normalized;
 }
 
 function normalizeMethod(method: string | undefined): string {
