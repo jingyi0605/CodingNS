@@ -10,6 +10,12 @@ import {
 } from "../components/ModalAtoms";
 import { clientConfigStore } from "../config/client-config-store";
 import { getActiveHost, type HostRelayTunnelProfile } from "../config/client-config-types";
+import {
+  canConfigureRelayControlBaseUrl,
+  getFixedRelayControlBaseUrl,
+  resolveRelayControlBaseUrl,
+  safelyNormalizeRelayControlBaseUrl
+} from "../config/relay-control-site-config";
 import { usePlatform } from "../platform/platform-provider";
 import {
   bindRelayControlHost,
@@ -55,12 +61,11 @@ interface RelayControlSessionState {
   email: string;
 }
 
-const DEFAULT_RELAY_TUNNEL_CONTROL_BASE_URL = "https://channel.codingns.com/";
-
 export function RelayTunnelPanel() {
   const platform = usePlatform();
   const [status, setStatus] = useState<RelayTunnelStatusView | null>(null);
   const [hostLabelDraft, setHostLabelDraft] = useState(() => t("settings.relayTunnelHostLabelDefault"));
+  const [controlBaseUrlDraft, setControlBaseUrlDraft] = useState(() => getFixedRelayControlBaseUrl());
   const [accountEmailDraft, setAccountEmailDraft] = useState("");
   const [accountPasswordDraft, setAccountPasswordDraft] = useState("");
   const [controlSession, setControlSession] = useState<RelayControlSessionState | null>(null);
@@ -72,8 +77,16 @@ export function RelayTunnelPanel() {
   const [panelError, setPanelError] = useState<string | null>(null);
   const activeRef = useRef(true);
   const defaultHostLabel = t("settings.relayTunnelHostLabelDefault");
-  const effectiveControlBaseUrl =
-    status?.controlBaseUrl?.trim() || DEFAULT_RELAY_TUNNEL_CONTROL_BASE_URL;
+  const canConfigureControlBaseUrl = canConfigureRelayControlBaseUrl();
+  const savedControlBaseUrl = resolveRelayControlBaseUrl(status?.controlBaseUrl);
+  const normalizedControlBaseUrlDraft = safelyNormalizeRelayControlBaseUrl(controlBaseUrlDraft);
+  const effectiveControlBaseUrl = canConfigureControlBaseUrl
+    ? normalizedControlBaseUrlDraft ?? savedControlBaseUrl
+    : getFixedRelayControlBaseUrl();
+  const canSaveControlBaseUrl =
+    canConfigureControlBaseUrl
+    && normalizedControlBaseUrlDraft !== null
+    && normalizedControlBaseUrlDraft !== savedControlBaseUrl;
   const activated = status?.activated ?? false;
   const canUseSavedSession =
     controlSession !== null
@@ -125,6 +138,15 @@ export function RelayTunnelPanel() {
 
     void loadBillingData(effectiveControlBaseUrl, controlSession.accessToken);
   }, [activated, controlSession, effectiveControlBaseUrl]);
+
+  useEffect(() => {
+    if (!canConfigureControlBaseUrl) {
+      setControlBaseUrlDraft(getFixedRelayControlBaseUrl());
+      return;
+    }
+
+    setControlBaseUrlDraft(savedControlBaseUrl);
+  }, [canConfigureControlBaseUrl, savedControlBaseUrl]);
 
   async function loadStatus(silent: boolean): Promise<void> {
     if (!silent) {
@@ -375,6 +397,31 @@ export function RelayTunnelPanel() {
     }
   }
 
+  async function handleSaveControlBaseUrl(): Promise<void> {
+    if (!canConfigureControlBaseUrl) {
+      return;
+    }
+
+    if (!normalizedControlBaseUrlDraft) {
+      setPanelError(t("settings.serverInvalid"));
+      return;
+    }
+
+    setPendingAction("save-config");
+    setPanelError(null);
+
+    try {
+      const nextStatus = await updateRelayTunnelConfig({
+        controlBaseUrl: normalizedControlBaseUrlDraft
+      });
+      applyLoadedStatus(nextStatus);
+    } catch (error) {
+      setPanelError(resolvePanelError(error));
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
   return (
     <div className="settings-relay-tunnel-panel">
       <ModalSection
@@ -435,6 +482,40 @@ export function RelayTunnelPanel() {
           </>
         )}
       </ModalSection>
+
+      {canConfigureControlBaseUrl ? (
+        <ModalSection
+          heading={t("settings.serverAddress")}
+          description={t("settings.relayTunnelServerAddressDescription")}
+        >
+          <div className="settings-relay-tunnel-form">
+            <ModalField
+              label={t("settings.serverAddress")}
+              description={t("settings.relayTunnelServerAddressHint")}
+            >
+              <input
+                aria-label={t("settings.serverAddress")}
+                className="settings-text-input"
+                type="url"
+                value={controlBaseUrlDraft}
+                onChange={(event) => setControlBaseUrlDraft(event.target.value)}
+                placeholder={getFixedRelayControlBaseUrl()}
+              />
+            </ModalField>
+          </div>
+
+          <ModalActions align="start" className="settings-relay-tunnel-actions">
+            <button
+              className="settings-button"
+              disabled={loading || pendingAction !== null || !canSaveControlBaseUrl}
+              type="button"
+              onClick={() => void handleSaveControlBaseUrl()}
+            >
+              {pendingAction === "save-config" ? t("common.loading") : t("common.save")}
+            </button>
+          </ModalActions>
+        </ModalSection>
+      ) : null}
 
       {activated ? (
         <ModalSection
@@ -653,7 +734,7 @@ export function RelayTunnelPanel() {
       provider: "codingns_relay",
       enabled: nextStatus.enabled,
       tunnelDomain: nextStatus.tunnelDomain.trim().toLowerCase(),
-      controlBaseUrl: nextStatus.controlBaseUrl?.trim() || DEFAULT_RELAY_TUNNEL_CONTROL_BASE_URL
+      controlBaseUrl: resolveRelayControlBaseUrl(nextStatus.controlBaseUrl)
     };
   }
 }

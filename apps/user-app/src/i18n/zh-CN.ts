@@ -213,6 +213,8 @@ export const zhCN = {
     serverRelayTunnelDomainPlaceholder: "例如：demo.codingns.example",
     serverRelayTunnelControlBaseUrl: "控制站点地址",
     serverRelayTunnelControlBaseUrlPlaceholder: "例如：https://control.codingns.example",
+    relayTunnelServerAddressDescription: "调试环境下可以改远程访问服务地址；正式打包客户端会固定使用官方地址。",
+    relayTunnelServerAddressHint: "这里只改公共隧道控制站点地址，用来调试远程访问链路，不影响当前 Host 的本地 API 地址。",
     relayTunnelStatus: "隧道状态",
     relayTunnelDescription: "通过 CodingNS 隧道服务，让外部设备安全连接到这台 Host。",
     relayTunnelMasterSwitchLabel: "启用隧道服务",

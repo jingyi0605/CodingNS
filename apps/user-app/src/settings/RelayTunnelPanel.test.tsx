@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clientConfigStore } from "../config/client-config-store";
@@ -28,6 +29,13 @@ const platformMock = vi.hoisted(() => ({
   usePlatform: vi.fn()
 }));
 
+const relayControlSiteConfigMocks = vi.hoisted(() => ({
+  canConfigureRelayControlBaseUrl: vi.fn(),
+  getFixedRelayControlBaseUrl: vi.fn(),
+  resolveRelayControlBaseUrl: vi.fn(),
+  safelyNormalizeRelayControlBaseUrl: vi.fn()
+}));
+
 vi.mock("../platform/server/relay-tunnel-manager", () => ({
   fetchRelayTunnelStatus: apiMocks.fetchRelayTunnelStatus,
   ensureRelayTunnelIdentity: apiMocks.ensureRelayTunnelIdentity,
@@ -48,10 +56,25 @@ vi.mock("../platform/platform-provider", () => ({
   usePlatform: platformMock.usePlatform
 }));
 
+vi.mock("../config/relay-control-site-config", () => ({
+  canConfigureRelayControlBaseUrl: relayControlSiteConfigMocks.canConfigureRelayControlBaseUrl,
+  getFixedRelayControlBaseUrl: relayControlSiteConfigMocks.getFixedRelayControlBaseUrl,
+  resolveRelayControlBaseUrl: relayControlSiteConfigMocks.resolveRelayControlBaseUrl,
+  safelyNormalizeRelayControlBaseUrl: relayControlSiteConfigMocks.safelyNormalizeRelayControlBaseUrl
+}));
+
 describe("RelayTunnelPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     platformMock.usePlatform.mockReturnValue(createPlatform());
+    relayControlSiteConfigMocks.canConfigureRelayControlBaseUrl.mockReturnValue(true);
+    relayControlSiteConfigMocks.getFixedRelayControlBaseUrl.mockReturnValue("https://channel.codingns.com:1443");
+    relayControlSiteConfigMocks.resolveRelayControlBaseUrl.mockImplementation(
+      (value: string | null | undefined) => value?.trim() || "https://channel.codingns.com:1443"
+    );
+    relayControlSiteConfigMocks.safelyNormalizeRelayControlBaseUrl.mockImplementation(
+      (value: string | null | undefined) => value?.trim() || null
+    );
     clientConfigStore.hydrate({
       platform: "desktop",
       activeHostId: "host-relay",
@@ -103,6 +126,62 @@ describe("RelayTunnelPanel", () => {
     expect(await screen.findByText("流量耗尽")).toBeInTheDocument();
     expect(screen.getByText("0 B")).toBeInTheDocument();
     expect(screen.getByText("最近错误：该账号的公共隧道流量已经耗尽")).toBeInTheDocument();
+  });
+
+  it("调试环境会显示远程访问服务器地址，并允许保存", async () => {
+    apiMocks.fetchRelayTunnelStatus.mockResolvedValue(createStatus());
+    apiMocks.updateRelayTunnelConfig.mockResolvedValue(
+      createStatus({
+        controlBaseUrl: "https://channel.codingns.com:1443"
+      })
+    );
+
+    renderPanel();
+
+    const addressInput = await screen.findByRole("textbox", { name: "服务地址" });
+    expect(addressInput).toHaveValue("https://channel.codingns.com");
+
+    await userEvent.clear(addressInput);
+    await userEvent.type(addressInput, "https://channel.codingns.com:1443");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(apiMocks.updateRelayTunnelConfig).toHaveBeenCalledWith({
+        controlBaseUrl: "https://channel.codingns.com:1443"
+      });
+    });
+  });
+
+  it("正式包会隐藏远程访问服务器地址，并固定使用官方地址", async () => {
+    relayControlSiteConfigMocks.canConfigureRelayControlBaseUrl.mockReturnValue(false);
+    relayControlSiteConfigMocks.resolveRelayControlBaseUrl.mockReturnValue(
+      "https://channel.codingns.com:1443"
+    );
+    apiMocks.fetchRelayTunnelStatus.mockResolvedValue(
+      createStatus({
+        controlBaseUrl: "https://debug.example.com"
+      })
+    );
+    apiMocks.updateRelayTunnelConfig.mockResolvedValue(
+      createStatus({
+        activated: true,
+        controlBaseUrl: "https://channel.codingns.com:1443"
+      })
+    );
+
+    renderPanel();
+
+    expect(await screen.findByText("未开启")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "服务地址" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("checkbox", { name: "启用隧道服务" }));
+
+    await waitFor(() => {
+      expect(apiMocks.updateRelayTunnelConfig).toHaveBeenCalledWith({
+        activated: true,
+        controlBaseUrl: "https://channel.codingns.com:1443"
+      });
+    });
   });
 });
 

@@ -232,6 +232,10 @@ export const enUS = {
     serverRelayTunnelDomainPlaceholder: "For example: demo.codingns.example",
     serverRelayTunnelControlBaseUrl: "Control Site URL",
     serverRelayTunnelControlBaseUrlPlaceholder: "For example: https://control.codingns.example",
+    relayTunnelServerAddressDescription:
+      "In debug builds you can change the remote access service address here. Packaged clients always use the official fixed address.",
+    relayTunnelServerAddressHint:
+      "This only changes the public tunnel control site used for remote access debugging. It does not change the current Host's local API address.",
     relayTunnelStatus: "Tunnel Status",
     relayTunnelDescription:
       "Use the CodingNS tunnel service to let external devices reach this Host securely.",
