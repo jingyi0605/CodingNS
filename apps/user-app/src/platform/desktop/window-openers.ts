@@ -33,7 +33,7 @@ const EXTERNAL_WINDOW_KIND_CONFIG: Record<ExternalWindowKind, WindowKindConfig> 
   },
   processes: {
     kind: "processes",
-    label: "进程管理",
+    label: "调试",
     defaultFocusOwner: "terminal-manager-panel"
   }
 };
