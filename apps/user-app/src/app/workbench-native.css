@@ -4895,10 +4895,7 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 [data-theme="dark"] .workbench-workspace-icon-button,
 [data-theme="dark"] .workbench-workspace-create,
 [data-theme="dark"] .workbench-nav-settings-button,
-[data-theme="dark"] .workbench-info-tab,
-[data-theme="dark"] .workbench-shell .terminal-tab-control,
-[data-theme="dark"] .workbench-shell .terminal-toolbar-toggle,
-[data-theme="dark"] .workbench-shell .terminal-toolbar-toggle-tool {
+[data-theme="dark"] .workbench-info-tab {
   color: rgba(235, 235, 245, 0.78);
 }
 
@@ -4925,42 +4922,6 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 }
 
 /* 夜间模式终端标签：避免激活态出现浅色白块，统一暗色层级。 */
-[data-theme="dark"] .workbench-shell .terminal-tab-shell[data-active="true"] {
-  border-color: rgba(235, 235, 245, 0.22);
-  background: rgba(118, 118, 128, 0.34);
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
-}
-
-[data-theme="dark"] .workbench-shell .terminal-tab-shell[data-assigned="true"]:not([data-active="true"]) {
-  border-color: rgba(235, 235, 245, 0.1);
-  background: rgba(255, 255, 255, 0.08);
-}
-
-[data-theme="dark"] .workbench-shell .terminal-tab {
-  color: rgba(235, 235, 245, 0.76);
-}
-
-[data-theme="dark"] .workbench-shell .terminal-tab[data-active="true"] {
-  color: rgba(245, 245, 247, 0.96);
-}
-
-[data-theme="dark"] .workbench-shell .terminal-tab:hover {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-[data-theme="dark"] .workbench-shell .terminal-tab-runtime {
-  border-color: rgba(235, 235, 245, 0.14);
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(235, 235, 245, 0.74);
-}
-
-[data-theme="dark"] .workbench-shell .terminal-tab-shell:hover .terminal-tab-inline-action,
-[data-theme="dark"] .workbench-shell .terminal-tab-inline-action[data-open="true"] {
-  border-color: rgba(235, 235, 245, 0.16);
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(245, 245, 247, 0.94);
-}
-
 [data-theme="dark"] .session-provider-badge.codex {
   background: rgba(255, 105, 0, 0.16);
   color: #ffb184;
@@ -4997,10 +4958,7 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 [data-theme="sky-blue"] .workbench-workspace-icon-button,
 [data-theme="sky-blue"] .workbench-workspace-create,
 [data-theme="sky-blue"] .workbench-nav-settings-button,
-[data-theme="sky-blue"] .workbench-info-tab,
-[data-theme="sky-blue"] .workbench-shell .terminal-tab-control,
-[data-theme="sky-blue"] .workbench-shell .terminal-toolbar-toggle,
-[data-theme="sky-blue"] .workbench-shell .terminal-toolbar-toggle-tool {
+[data-theme="sky-blue"] .workbench-info-tab {
   color: rgba(238, 245, 255, 0.8);
 }
 
@@ -5125,7 +5083,12 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
     var(--workbench-header-padding-bottom);
   padding-left: calc(10px + var(--workbench-collapsed-left-content-inset));
   border-bottom: 1px solid var(--panel-separator);
-  background: color-mix(in srgb, var(--panel-bg-strong) 84%, transparent);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--panel-bg-strong) 90%, var(--panel-bg) 10%),
+      color-mix(in srgb, var(--panel-bg) 94%, transparent)
+    );
   box-shadow: none;
   backdrop-filter: blur(20px) saturate(145%);
   border-radius: 0;
@@ -5159,16 +5122,16 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 }
 
 .workbench-shell .terminal-tab-shell[data-active="true"] {
-  border-color: rgba(15, 23, 42, 0.08);
-  background: rgba(255, 255, 255, 0.82);
+  border-color: var(--panel-border-strong);
+  background: color-mix(in srgb, var(--panel-bg-strong) 84%, var(--panel-active) 16%);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.82),
-    0 10px 24px rgba(15, 23, 42, 0.08);
+    inset 0 1px 0 color-mix(in srgb, var(--panel-border-strong) 42%, transparent),
+    0 10px 24px color-mix(in srgb, #000 12%, transparent);
 }
 
 .workbench-shell .terminal-tab-shell[data-assigned="true"]:not([data-active="true"]) {
-  border-color: rgba(15, 23, 42, 0.05);
-  background: rgba(255, 255, 255, 0.46);
+  border-color: var(--panel-border);
+  background: color-mix(in srgb, var(--panel-bg) 84%, var(--panel-hover) 16%);
 }
 
 .workbench-shell .terminal-tab {
@@ -5180,7 +5143,7 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 }
 
 .workbench-shell .terminal-tab:hover {
-  background: rgba(15, 23, 42, 0.045);
+  background: var(--panel-hover);
 }
 
 .workbench-shell .terminal-tab[data-active="true"] {
@@ -5194,8 +5157,8 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 .workbench-shell .terminal-tab-runtime {
   min-height: 18px;
   padding: 0 6px;
-  border: 1px solid rgba(15, 23, 42, 0.06);
-  background: rgba(255, 255, 255, 0.68);
+  border: 1px solid var(--panel-border);
+  background: color-mix(in srgb, var(--panel-bg-strong) 84%, var(--panel-hover) 16%);
 }
 
 .workbench-shell .terminal-tab-operation {
@@ -5219,26 +5182,28 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
   min-width: 28px;
   height: 28px;
   padding: 0 6px;
-  border: 1px solid transparent;
+  border: 1px solid var(--panel-border);
   border-radius: 9px;
-  background: transparent;
+  background: color-mix(in srgb, var(--panel-bg-strong) 90%, var(--panel-bg) 10%);
   color: var(--text-secondary);
-  box-shadow: none;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--panel-border-strong) 32%, transparent);
 }
 
 .workbench-shell .terminal-tab-control:hover,
 .workbench-shell .terminal-toolbar-toggle:hover,
 .workbench-shell .terminal-tab-inline-action:hover {
   background: var(--panel-hover);
-  border-color: var(--panel-border);
+  border-color: var(--panel-border-strong);
   color: var(--text-primary);
 }
 
 .workbench-shell .terminal-toolbar-toggle[data-open="true"] {
-  background: var(--panel-hover);
-  border-color: var(--panel-border);
+  background: color-mix(in srgb, var(--panel-bg-strong) 70%, var(--panel-active) 30%);
+  border-color: var(--panel-border-strong);
   color: var(--text-primary);
-  box-shadow: none;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--panel-border-strong) 42%, transparent),
+    0 10px 24px color-mix(in srgb, #000 14%, transparent);
 }
 
 .workbench-shell .terminal-toolbar-toggle-tool {
@@ -5246,9 +5211,9 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
   min-width: 26px;
   height: 26px;
   padding: 0;
-  border-color: transparent;
+  border-color: var(--panel-border);
   border-radius: 8px;
-  background: transparent;
+  background: color-mix(in srgb, var(--panel-bg-strong) 90%, var(--panel-bg) 10%);
   color: var(--text-secondary);
   box-shadow: none;
   backdrop-filter: none;
@@ -5256,19 +5221,19 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 
 .workbench-shell .terminal-toolbar-toggle-tool:hover {
   background: var(--panel-hover);
-  border-color: var(--panel-border);
+  border-color: var(--panel-border-strong);
   color: var(--text-primary);
   box-shadow: none;
   transform: none;
 }
 
 .workbench-shell .terminal-toolbar-toggle-tool:active {
-  background: var(--panel-hover);
+  background: color-mix(in srgb, var(--panel-bg-strong) 60%, var(--panel-active) 40%);
 }
 
 .workbench-shell .terminal-toolbar-toggle-tool[data-open="true"] {
-  background: var(--panel-hover);
-  border-color: var(--panel-border);
+  background: color-mix(in srgb, var(--panel-bg-strong) 60%, var(--panel-active) 40%);
+  border-color: var(--panel-border-strong);
   color: var(--text-primary);
   box-shadow: none;
 }
@@ -5296,8 +5261,8 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 .workbench-shell .terminal-tab-shell:hover .terminal-tab-inline-action,
 .workbench-shell .terminal-tab-inline-action[data-open="true"] {
   opacity: 1;
-  border-color: rgba(15, 23, 42, 0.06);
-  background: rgba(15, 23, 42, 0.06);
+  border-color: var(--panel-border);
+  background: var(--panel-hover);
   color: var(--text-primary);
 }
 
@@ -5307,10 +5272,10 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
   z-index: 120;
   max-width: min(780px, calc(100vw - 320px));
   padding: 4px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
+  border: 1px solid var(--panel-border-strong);
   border-radius: 14px;
-  background: rgba(248, 248, 250, 0.92);
-  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.14);
+  background: color-mix(in srgb, var(--panel-bg-strong) 96%, var(--panel-bg) 4%);
+  box-shadow: var(--panel-shadow);
   backdrop-filter: blur(28px) saturate(165%);
   transform: translate3d(0, -4px, 0) scale(0.98);
 }
@@ -5326,32 +5291,32 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 .workbench-shell .terminal-layout-button,
 .workbench-shell .terminal-toolbar-menu-action,
 .workbench-shell .terminal-toolbar-save {
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid var(--panel-border);
+  background: color-mix(in srgb, var(--panel-bg-strong) 92%, var(--panel-bg) 8%);
 }
 
 .workbench-shell .terminal-toolbar-section {
   min-height: 30px;
   padding: 3px 5px 3px 8px;
-  border: 1px solid rgba(15, 23, 42, 0.07);
+  border: 1px solid var(--panel-border);
   border-radius: 11px;
-  background: rgba(255, 255, 255, 0.62);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.76);
+  background: color-mix(in srgb, var(--panel-bg-strong) 88%, var(--panel-bg) 12%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--panel-border-strong) 28%, transparent);
 }
 
 .workbench-shell .terminal-runtime-select {
   height: 28px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
+  border: 1px solid var(--panel-border);
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.74);
+  background: color-mix(in srgb, var(--panel-bg-strong) 88%, var(--panel-bg) 12%);
 }
 
 .workbench-shell .terminal-zoom-group,
 .workbench-shell .terminal-layout-switcher {
   padding: 2px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
+  border: 1px solid var(--panel-border);
   border-radius: 11px;
-  background: rgba(255, 255, 255, 0.74);
+  background: color-mix(in srgb, var(--panel-bg-strong) 92%, var(--panel-bg) 8%);
 }
 
 .workbench-shell .terminal-zoom-button,
@@ -5362,20 +5327,20 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 }
 
 .workbench-shell .terminal-layout-button[data-active="true"] {
-  border-color: rgba(15, 23, 42, 0.12);
-  background: rgba(255, 255, 255, 0.92);
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--panel-border));
+  background: color-mix(in srgb, var(--panel-active) 72%, var(--panel-bg-strong));
 }
 
 .workbench-shell .terminal-layout-button:hover,
 .workbench-shell .terminal-toolbar-menu-action:hover,
 .workbench-shell .terminal-toolbar-save:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.92);
-  border-color: rgba(15, 23, 42, 0.12);
+  background: var(--panel-hover);
+  border-color: var(--panel-border-strong);
 }
 
 .workbench-shell .terminal-stage-surface {
   padding: 0;
-  background: color-mix(in srgb, var(--panel-bg-strong) 84%, transparent);
+  background: var(--terminal-theme-background);
 }
 
 .workbench-shell[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .terminal-xterm {
@@ -5386,21 +5351,21 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
   box-sizing: border-box;
   width: 100%;
   height: 100%;
-  padding: 10px 10px max(var(--terminal-bottom-gap), env(safe-area-inset-bottom, 0px));
+  padding: 5px 5px max(var(--terminal-bottom-gap), env(safe-area-inset-bottom, 0px));
 }
 
 .workbench-shell[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .terminal-xterm .xterm-viewport {
-  top: 10px;
-  right: 10px;
+  top: 5px;
+  right: 5px;
   bottom: max(var(--terminal-bottom-gap), env(safe-area-inset-bottom, 0px));
-  left: 10px;
+  left: 5px;
 }
 
 .workbench-shell[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .terminal-xterm .xterm-screen {
-  top: 10px;
-  right: 10px;
+  top: 5px;
+  right: 5px;
   bottom: max(var(--terminal-bottom-gap), env(safe-area-inset-bottom, 0px));
-  left: 10px;
+  left: 5px;
 }
 
 .workbench-shell {

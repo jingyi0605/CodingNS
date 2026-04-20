@@ -1147,6 +1147,21 @@ describe("TerminalPage", () => {
     });
   });
 
+  it("终端视口容器会同步终端主题变量，避免边距回退成默认白底", async () => {
+    setTerminalManagerSnapshot("workspace-1", [buildTerminal()]);
+
+    renderPage();
+
+    await screen.findByText("工作终端");
+    await waitFor(() => {
+      const terminalMarker = screen.getByTestId("mock-xterm");
+      const viewportHost = terminalMarker.closest(".terminal-xterm") as HTMLElement | null;
+      expect(viewportHost).not.toBeNull();
+      expect(viewportHost?.style.getPropertyValue("--terminal-theme-background")).not.toBe("");
+      expect(viewportHost?.style.background).not.toBe("");
+    });
+  });
+
   it("自动贴底时会保持跟随最新输出，不会把最新内容滚到视口外面", async () => {
     setTerminalManagerSnapshot("workspace-1", [buildTerminal()]);
 

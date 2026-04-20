@@ -3918,7 +3918,7 @@ function createTerminalViewportRuntime(input: {
 
   input.container.replaceChildren();
   terminal.open(input.container);
-  input.container.style.background = initialTheme.background ?? "";
+  syncTerminalContainerThemeVariables(input.container, initialTheme);
   const xtermRootElement = input.container.querySelector(".xterm");
   const viewportElement = input.container.querySelector(".xterm-viewport");
   const scrollTarget =
@@ -4380,7 +4380,7 @@ function createTerminalViewportRuntime(input: {
   function applyTheme(): void {
     const nextTheme = readTerminalVisualTheme();
     terminal.options.theme = nextTheme;
-    input.container.style.background = nextTheme.background ?? "";
+    syncTerminalContainerThemeVariables(input.container, nextTheme);
   }
 
   return {
@@ -4610,6 +4610,24 @@ function hasUsableContainerSize(container: HTMLDivElement): boolean {
     container.clientWidth >= MIN_TERMINAL_PIXEL_WIDTH &&
     container.clientHeight >= MIN_TERMINAL_PIXEL_HEIGHT
   );
+}
+
+function syncTerminalContainerThemeVariables(
+  container: HTMLDivElement,
+  theme: NonNullable<Terminal["options"]["theme"]>
+): void {
+  const background = theme.background ?? "";
+  const foreground = theme.foreground ?? "";
+  const cursor = theme.cursor ?? foreground;
+  const cursorAccent = theme.cursorAccent ?? background;
+  const selectionBackground = theme.selectionBackground ?? "";
+
+  container.style.background = background;
+  container.style.setProperty("--terminal-theme-background", background);
+  container.style.setProperty("--terminal-theme-foreground", foreground);
+  container.style.setProperty("--terminal-theme-cursor", cursor);
+  container.style.setProperty("--terminal-theme-cursor-accent", cursorAccent);
+  container.style.setProperty("--terminal-theme-selection", selectionBackground);
 }
 
 function readTerminalVisualTheme(): NonNullable<Terminal["options"]["theme"]> {
