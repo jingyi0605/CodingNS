@@ -7,6 +7,7 @@ import type { PlatformAdapter } from "../platform/platform-adapter";
 import type { RelayTunnelStatusView } from "../platform/server/relay-tunnel-manager";
 import { I18nProvider } from "../shared/i18n";
 import { ThemeProvider } from "../shared/theme";
+import { ToastProvider } from "../shared/toast";
 import { RelayTunnelPanel } from "./RelayTunnelPanel";
 
 const apiMocks = vi.hoisted(() => ({
@@ -25,6 +26,8 @@ const apiMocks = vi.hoisted(() => ({
 const platformMock = vi.hoisted(() => ({
   usePlatform: vi.fn()
 }));
+
+const clipboardWriteTextMock = vi.hoisted(() => vi.fn());
 
 const relayControlSiteConfigMocks = vi.hoisted(() => ({
   canConfigureRelayControlBaseUrl: vi.fn(),
@@ -60,6 +63,14 @@ vi.mock("../config/relay-control-site-config", () => ({
 describe("RelayTunnelPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clipboardWriteTextMock.mockReset();
+    clipboardWriteTextMock.mockResolvedValue(undefined);
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: clipboardWriteTextMock
+      }
+    });
     platformMock.usePlatform.mockReturnValue(createPlatform());
     relayControlSiteConfigMocks.canConfigureRelayControlBaseUrl.mockReturnValue(true);
     relayControlSiteConfigMocks.getFixedRelayControlBaseUrl.mockReturnValue("https://channel.codingns.com:1443");
@@ -368,6 +379,51 @@ describe("RelayTunnelPanel", () => {
     expect(screen.getByRole("button", { name: "注销设备" })).toBeInTheDocument();
   });
 
+  it("远程访问地址支持复制并直接打开页面", async () => {
+    const platform = createPlatform();
+    platformMock.usePlatform.mockReturnValue(platform);
+    apiMocks.fetchRelayTunnelStatus.mockResolvedValue(
+      createStatus({
+        activated: true,
+        enabled: true,
+        accountId: "acct_demo",
+        controlAccountEmail: "demo@example.com",
+        controlSessionExpiresAt: "2026-04-21T00:00:00.000Z",
+        bindingId: "binding_demo",
+        tunnelDomain: "test12344.channel.jacksonz.cn",
+        controlBaseUrl: "https://channel.jacksonz.cn:1443"
+      })
+    );
+    apiMocks.fetchRelayTunnelTrafficWallet.mockResolvedValue({
+      wallet: {
+        accountId: "acct_demo",
+        grantedBytes: "21474836480",
+        usedBytes: "263297024",
+        remainingBytes: "21211539456",
+        exhausted: false,
+        updatedAt: "2026-04-20T00:00:00.000Z"
+      }
+    });
+
+    renderPanel();
+
+    const accessUrl = "https://test12344.channel.jacksonz.cn:1443";
+    expect(await screen.findByText(accessUrl)).toHaveAttribute("title", accessUrl);
+
+    await userEvent.click(screen.getByRole("button", { name: "复制地址" }));
+
+    await waitFor(() => {
+      expect(clipboardWriteTextMock).toHaveBeenCalledWith(accessUrl);
+    });
+    expect(await screen.findByText("访问地址已复制。")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "打开页面" }));
+
+    await waitFor(() => {
+      expect(platform.bridge.openExternal).toHaveBeenCalledWith(accessUrl);
+    });
+  });
+
   it("连接设置右侧的了解按钮会打开隧道站点", async () => {
     const platform = createPlatform();
     platformMock.usePlatform.mockReturnValue(platform);
@@ -394,7 +450,9 @@ function renderPanel() {
   return render(
     <I18nProvider language="zh-CN">
       <ThemeProvider>
-        <RelayTunnelPanel />
+        <ToastProvider>
+          <RelayTunnelPanel />
+        </ToastProvider>
       </ThemeProvider>
     </I18nProvider>
   );

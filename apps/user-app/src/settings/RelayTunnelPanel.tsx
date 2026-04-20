@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
   ModalActions,
@@ -16,6 +16,7 @@ import {
   resolveRelayControlBaseUrl,
   safelyNormalizeRelayControlBaseUrl
 } from "../config/relay-control-site-config";
+import type { PlatformAdapter } from "../platform/platform-adapter";
 import { usePlatform } from "../platform/platform-provider";
 import {
   bindRelayTunnelControlHost,
@@ -34,6 +35,7 @@ import {
 } from "../platform/server/relay-tunnel-manager";
 import { t } from "../shared/i18n";
 import { ApiError } from "../shared/network/api-error";
+import { useToast } from "../shared/toast";
 
 type PendingAction =
   | "save-config"
@@ -56,6 +58,7 @@ const RELAY_TUNNEL_LEARN_URL = "https://channel.jacksonz.cn:1443";
 
 export function RelayTunnelPanel() {
   const platform = usePlatform();
+  const { showToast } = useToast();
   const [status, setStatus] = useState<RelayTunnelStatusView | null>(null);
   const [hostLabelDraft, setHostLabelDraft] = useState("");
   const [controlBaseUrlDraft, setControlBaseUrlDraft] = useState(() => getFixedRelayControlBaseUrl());
@@ -342,6 +345,40 @@ export function RelayTunnelPanel() {
       setPanelError(resolvePanelError(error));
     } finally {
       setPendingAction(null);
+    }
+  }
+
+  async function handleCopyAccessUrl(): Promise<void> {
+    if (!boundAccessUrl) {
+      return;
+    }
+
+    try {
+      await writeTextToClipboard(boundAccessUrl, platform);
+      showToast({
+        title: t("settings.relayTunnelAccessUrlCopied"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("settings.relayTunnelCopyAccessUrlFailed"),
+        tone: "error"
+      });
+    }
+  }
+
+  async function handleOpenAccessUrl(): Promise<void> {
+    if (!boundAccessUrl) {
+      return;
+    }
+
+    try {
+      await openExternalUrl(platform.bridge.openExternal, boundAccessUrl);
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("settings.relayTunnelOpenAccessUrlFailed"),
+        tone: "error"
+      });
     }
   }
 
@@ -769,7 +806,42 @@ export function RelayTunnelPanel() {
           description={t("settings.relayTunnelReadyDescription")}
         >
           <ModalList compact>
-            <SummaryLine label={t("settings.relayTunnelAccessUrlLabel")} value={boundAccessUrl ?? t("settings.relayTunnelUnbound")} />
+            <SummaryLine
+              className="settings-relay-tunnel-summary-line-access-url"
+              label={t("settings.relayTunnelAccessUrlLabel")}
+              trailing={
+                boundAccessUrl ? (
+                  <div className="settings-relay-tunnel-access-url">
+                    <span
+                      className="settings-relay-tunnel-access-url-text"
+                      title={boundAccessUrl}
+                    >
+                      {boundAccessUrl}
+                    </span>
+                    <span className="settings-relay-tunnel-access-url-actions">
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => void handleCopyAccessUrl()}
+                      >
+                        {t("settings.relayTunnelCopyAccessUrl")}
+                      </button>
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => void handleOpenAccessUrl()}
+                      >
+                        {t("settings.relayTunnelOpenAccessUrl")}
+                      </button>
+                    </span>
+                  </div>
+                ) : (
+                  <span className="settings-relay-tunnel-summary-value">
+                    {t("settings.relayTunnelUnbound")}
+                  </span>
+                )
+              }
+            />
             <SummaryLine label={t("settings.relayTunnelTrafficGranted")} value={trafficGrantedValue} />
             <SummaryLine label={t("settings.relayTunnelTrafficUsed")} value={trafficUsedValue} />
             <SummaryLine label={t("settings.relayTunnelTrafficRemaining")} value={trafficRemainingValue} />
@@ -857,11 +929,24 @@ export function RelayTunnelPanel() {
   }
 }
 
-function SummaryLine({ label, value }: { label: string; value: string }) {
+function SummaryLine({
+  label,
+  value,
+  trailing,
+  className
+}: {
+  label: string;
+  value?: string;
+  trailing?: ReactNode;
+  className?: string;
+}) {
   return (
     <ModalListItem
+      className={className}
       label={label}
-      trailing={<span className="settings-relay-tunnel-summary-value">{value}</span>}
+      trailing={
+        trailing ?? <span className="settings-relay-tunnel-summary-value">{value}</span>
+      }
     />
   );
 }
@@ -990,6 +1075,64 @@ async function openExternalUrl(
   if (!result.ok && typeof window !== "undefined") {
     window.open(url, "_blank", "noopener,noreferrer");
   }
+}
+
+function copyTextWithExecCommand(text: string): boolean {
+  if (typeof document === "undefined") {
+    return false;
+  }
+
+  const execCommand = document.execCommand?.bind(document);
+
+  if (typeof execCommand !== "function") {
+    return false;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.top = "-9999px";
+  textarea.style.opacity = "0";
+  document.body.append(textarea);
+  textarea.select();
+
+  try {
+    return execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    textarea.remove();
+  }
+}
+
+async function writeTextToClipboard(text: string, platform: PlatformAdapter): Promise<void> {
+  if (platform.bridge.supported) {
+    try {
+      const result = await platform.bridge.writeClipboardText(text);
+
+      if (result.ok) {
+        return;
+      }
+    } catch {
+      // 桌面桥接失败时继续尝试浏览器回退，不把复制做成死路。
+    }
+  }
+
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // 某些 WebView 会拒绝 clipboard API，继续走同步老回退。
+    }
+  }
+
+  if (copyTextWithExecCommand(text)) {
+    return;
+  }
+
+  throw new Error(t("settings.relayTunnelCopyAccessUrlFailed"));
 }
 
 function equalRelayTunnelProfile(

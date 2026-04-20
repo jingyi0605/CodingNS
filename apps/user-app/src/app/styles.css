@@ -20582,13 +20582,55 @@ textarea:focus-visible {
 
 .settings-relay-tunnel-summary-value {
   display: inline-block;
-  max-width: min(32ch, 100%);
+  max-width: min(52ch, 100%);
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 700;
   line-height: 1.5;
   text-align: right;
-  word-break: break-word;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-relay-tunnel-summary-line-access-url .modal-list-item-trailing {
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+.settings-relay-tunnel-access-url {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  width: min(100%, 72ch);
+  min-width: 0;
+}
+
+.settings-relay-tunnel-access-url-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+}
+
+.settings-relay-tunnel-access-url-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-relay-tunnel-access-url-actions .secondary-button {
+  min-height: 30px;
+  padding: 6px 12px;
 }
 
 .settings-relay-tunnel-form {
@@ -20721,6 +20763,28 @@ textarea:focus-visible {
 
 .settings-relay-tunnel-ready-actions {
   margin-top: 4px;
+}
+
+@media (max-width: 767px) {
+  .settings-relay-tunnel-summary-line-access-url {
+    align-items: flex-start;
+  }
+
+  .settings-relay-tunnel-summary-line-access-url .modal-list-item-trailing {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .settings-relay-tunnel-access-url {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .settings-relay-tunnel-access-url-text {
+    flex-basis: 100%;
+    text-align: left;
+  }
 }
 
 .settings-relay-tunnel-actions {

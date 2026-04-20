@@ -277,6 +277,11 @@ export const enUS = {
     relayTunnelReadyDescription:
       "The setup is complete. This view now keeps only the access URL, traffic info, and maintenance actions.",
     relayTunnelAccessUrlLabel: "Remote Access URL",
+    relayTunnelCopyAccessUrl: "Copy URL",
+    relayTunnelOpenAccessUrl: "Open Page",
+    relayTunnelAccessUrlCopied: "The access URL has been copied.",
+    relayTunnelCopyAccessUrlFailed: "Failed to copy the access URL.",
+    relayTunnelOpenAccessUrlFailed: "Failed to open the access URL.",
     relayTunnelReconnectAction: "Reconnect",
     relayTunnelDisconnectDeviceAction: "Sign Out Device",
     relayTunnelEnableToggleLabel: "Enable tunnel service",
