@@ -9,7 +9,6 @@ import {
   useState,
   type CSSProperties,
   type RefObject,
-  type MouseEvent as ReactMouseEvent,
   type TouchEvent as ReactTouchEvent
 } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -20,6 +19,7 @@ import "@xterm/xterm/css/xterm.css";
 
 import { MobileSheet } from "../../../components/MobileSheet";
 import { resolveMacOsNativeTitlebarDragRegion } from "../../../platform/desktop/window-drag";
+import { openTerminalsExternalWindow } from "../../../platform/desktop/window-openers";
 import { usePlatform } from "../../../platform/platform-provider";
 import {
   readViewSnapshot,
@@ -28,6 +28,7 @@ import {
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
+import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
 import {
@@ -222,12 +223,41 @@ const INITIAL_CONNECTION_STATES: Record<PaneId, TerminalConnectionState> = {
   primary: "closed",
   secondary: "closed"
 };
-export function TerminalPage() {
+
+export interface TerminalPageWorkbenchShellOverrides {
+  navigationGroups?: WorkspaceSessionGroup[];
+  currentWorkspaceId?: string | null;
+  selectWorkspace?: (workspaceId: string) => void;
+  subscribeTerminalManagerSnapshot?: (workspaceId: string) => void;
+  requestTerminalManagerRefresh?: (workspaceId: string) => void;
+  addTerminalManagerSnapshotListener?: (
+    listener: (snapshot: {
+      workspaceId: string;
+      terminals: TerminalDto[];
+      templates: unknown[];
+      templateStatuses: Array<{ occupied: boolean }>;
+      shellOptions?: TerminalShellOptionDto[];
+    }) => void
+  ) => () => void;
+}
+
+interface TerminalPageProps {
+  externalWindowMode?: boolean;
+  externalWindowWorkspaceId?: string | null;
+  workbenchShellOverrides?: TerminalPageWorkbenchShellOverrides;
+}
+
+export function TerminalPage({
+  externalWindowMode = false,
+  externalWindowWorkspaceId = null,
+  workbenchShellOverrides
+}: TerminalPageProps = {}) {
   const platform = usePlatform();
   const macOsNativeTitlebarDragRegion = resolveMacOsNativeTitlebarDragRegion(platform);
   const haptics = useHaptics();
   const navigate = useNavigate();
   const { workspaceId: routeWorkspaceIdParam } = useParams();
+  const shell = useWorkbenchShell();
   const {
     navigationGroups,
     currentWorkspaceId: shellCurrentWorkspaceId,
@@ -235,7 +265,17 @@ export function TerminalPage() {
     subscribeTerminalManagerSnapshot,
     requestTerminalManagerRefresh,
     addTerminalManagerSnapshotListener
-  } = useWorkbenchShell();
+  } = {
+    navigationGroups: workbenchShellOverrides?.navigationGroups ?? shell.navigationGroups,
+    currentWorkspaceId: workbenchShellOverrides?.currentWorkspaceId ?? shell.currentWorkspaceId,
+    selectWorkspace: workbenchShellOverrides?.selectWorkspace ?? shell.selectWorkspace,
+    subscribeTerminalManagerSnapshot:
+      workbenchShellOverrides?.subscribeTerminalManagerSnapshot ?? shell.subscribeTerminalManagerSnapshot,
+    requestTerminalManagerRefresh:
+      workbenchShellOverrides?.requestTerminalManagerRefresh ?? shell.requestTerminalManagerRefresh,
+    addTerminalManagerSnapshotListener:
+      workbenchShellOverrides?.addTerminalManagerSnapshotListener ?? shell.addTerminalManagerSnapshotListener
+  };
   const terminalActionMenuRef = useRef<HTMLDivElement | null>(null);
   const terminalShellRef = useRef<HTMLElement | null>(null);
   const terminalTabbarMainRef = useRef<HTMLDivElement | null>(null);
@@ -259,7 +299,7 @@ export function TerminalPage() {
     () => navigationGroups.map((group) => group.workspace),
     [navigationGroups]
   );
-  const routeWorkspaceId = routeWorkspaceIdParam?.trim() || null;
+  const routeWorkspaceId = routeWorkspaceIdParam?.trim() || externalWindowWorkspaceId?.trim() || null;
 
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
   const [selectedRuntimeType, setSelectedRuntimeType] =
@@ -412,6 +452,8 @@ export function TerminalPage() {
   );
   // 终端页要和工作台壳保持同一套判定，避免 iPad 横屏还挂着手机单栏逻辑。
   const isMobileTerminalPage = !platform.isDesktop && platform.isMobile;
+  const canDetachTerminalWindow =
+    platform.isDesktop && platform.bridge.supported && !externalWindowMode && Boolean(resolvedWorkspaceId);
   const effectiveSplitDirection: SplitDirection = isMobileTerminalPage ? "single" : splitDirection;
   const effectiveActivePaneId: PaneId = isMobileTerminalPage ? "primary" : activePaneId;
   const effectivePaneBindings = useMemo<TerminalPaneBindings>(() => {
@@ -657,7 +699,7 @@ export function TerminalPage() {
   useEffect(() => {
     const persistedWorkspaceId = readPersistedTerminalPageState().selectedWorkspaceId;
     const routeSelectedWorkspaceId =
-      routeWorkspaceId && workspaces.some((workspace) => workspace.id === routeWorkspaceId)
+      routeWorkspaceId && (workspaces.length === 0 || workspaces.some((workspace) => workspace.id === routeWorkspaceId))
         ? routeWorkspaceId
         : null;
     const shellSelectedWorkspaceId =
@@ -667,6 +709,7 @@ export function TerminalPage() {
     const restoredWorkspaceId =
       routeSelectedWorkspaceId ??
       shellSelectedWorkspaceId ??
+      (routeWorkspaceId ?? null) ??
       workspaces.find((workspace) => workspace.id === persistedWorkspaceId)?.id ??
       workspaces[0]?.id ??
       "";
@@ -871,10 +914,25 @@ export function TerminalPage() {
     }
 
     requestTerminalManagerRefresh(selectedWorkspaceId);
+
+    if (externalWindowMode) {
+      void reloadWorkspaceResources(selectedWorkspaceId);
+
+      if (shellOptions.length === 0) {
+        void listTerminalShellOptions()
+          .then((response) => {
+            setShellOptions(response.items ?? []);
+          })
+          .catch(() => undefined);
+      }
+    }
   }, [
     applyWorkspaceTerminalCollection,
+    externalWindowMode,
     requestTerminalManagerRefresh,
+    reloadWorkspaceResources,
     selectedWorkspaceId,
+    shellOptions.length,
     subscribeTerminalManagerSnapshot
   ]);
 
@@ -1666,6 +1724,20 @@ export function TerminalPage() {
     handleMobileStageSwipe("right");
   }
 
+  const openDetachedTerminalWindow = useCallback(async (workspaceId: string) => {
+    const result = await openTerminalsExternalWindow(platform, {
+      workspaceId,
+      focusOwner: "terminal-page"
+    });
+
+    if (!result.ok) {
+      showToast({
+        title: result.detail ?? t("terminal.openExternalFailed"),
+        tone: "error"
+      });
+    }
+  }, [platform, showToast]);
+
   return (
     <main className="terminal-layout mobile-page-fixed-root">
       <TerminalRuntimeFallbackModal
@@ -1837,6 +1909,7 @@ export function TerminalPage() {
                   className="terminal-tabbar-scroll"
                   role="tablist"
                   aria-label={t("terminal.title")}
+                  data-window-drag="ignore"
                 >
                   {orderedTerminals.map((terminal) => {
                     const isActive = terminal.id === activeTerminalId;

@@ -1,5 +1,5 @@
 // 多窗口类型在这里统一收口，后续新增类型只改这里即可。
-export const WINDOW_KINDS = ["chat", "files", "git", "processes"] as const;
+export const WINDOW_KINDS = ["chat", "files", "git", "processes", "terminals"] as const;
 export const WINDOW_MODES = ["docked", "floating", "external"] as const;
 
 export type WindowKind = (typeof WINDOW_KINDS)[number];

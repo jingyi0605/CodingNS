@@ -5,7 +5,8 @@ import {
   buildExternalWorkspaceWindowId,
   openFilesExternalWindow,
   openGitExternalWindow,
-  openProcessesExternalWindow
+  openProcessesExternalWindow,
+  openTerminalsExternalWindow
 } from "./window-openers";
 
 describe("window-openers", () => {
@@ -13,6 +14,7 @@ describe("window-openers", () => {
     expect(buildExternalWorkspaceWindowId("files", "workspace-1")).toBe("files-workspace-1");
     expect(buildExternalWorkspaceWindowId("git", "workspace-1")).toBe("git-workspace-1");
     expect(buildExternalWorkspaceWindowId("processes", "workspace-1")).toBe("processes-workspace-1");
+    expect(buildExternalWorkspaceWindowId("terminals", "workspace-1")).toBe("terminals-workspace-1");
   });
 
   it("openFilesExternalWindow 会注册 descriptor 并调用桌面开窗命令", async () => {
@@ -131,6 +133,39 @@ describe("window-openers", () => {
     });
     expect(windows.getDescriptor("processes-workspace-1")).toBeNull();
     expect(windows.isWindowOpen("processes-workspace-1")).toBe(false);
+  });
+
+  it("openTerminalsExternalWindow 会注册终端页外部窗口 descriptor", async () => {
+    const windows = createWindowRegistryStore();
+    const createWindow = vi.fn().mockResolvedValue({ ok: true });
+
+    const result = await openTerminalsExternalWindow(
+      {
+        isDesktop: true,
+        bridge: {
+          supported: true,
+          createWindow
+        },
+        windows
+      } as never,
+      {
+        workspaceId: "workspace-1"
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(createWindow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        windowId: "terminals-workspace-1",
+        kind: "terminals",
+        workspaceId: "workspace-1",
+        focusOwner: "terminal-page"
+      })
+    );
+    expect(windows.getDescriptor("terminals-workspace-1")).toMatchObject({
+      kind: "terminals",
+      mode: "external"
+    });
   });
 
   it("开窗失败时会恢复已有 descriptor 和打开状态", async () => {

@@ -58,6 +58,7 @@ const {
   mockListTerminalShellOptions: vi.fn(),
   mockListWorkspaceTerminals: vi.fn(),
   mockXtermInstances: [] as Array<{
+    rows: number;
     buffer: {
       active: {
         length: number;
@@ -440,6 +441,23 @@ function renderPage(initialEntry = "/workspaces/workspace-1/terminals") {
   );
 }
 
+function enableDesktopRuntime(
+  invoke: <T>(command: string, args?: Record<string, unknown>) => Promise<T> =
+    vi.fn(async () => undefined) as unknown as <T>(
+      command: string,
+      args?: Record<string, unknown>
+    ) => Promise<T>
+): typeof invoke {
+  Object.defineProperty(window.navigator, "platform", {
+    configurable: true,
+    value: "MacIntel"
+  });
+  window.__TAURI_INTERNALS__ = {
+    invoke
+  };
+  return invoke;
+}
+
 describe("TerminalPage", () => {
   const originalWebSocket = global.WebSocket;
   const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
@@ -656,7 +674,7 @@ describe("TerminalPage", () => {
 
     await userEvent.click(
       screen.getByRole("button", {
-        name: "展开终端工具栏"
+        name: "展开终端工具菜单"
       })
     );
     await userEvent.click(
@@ -671,6 +689,48 @@ describe("TerminalPage", () => {
     expect(screen.getByRole("menuitem", { name: "绑定到主分栏" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "绑定到副分栏" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "绑定到当前分栏" })).not.toBeInTheDocument();
+  });
+
+  it("桌面端工具菜单会提供独立窗口入口，并恢复标签栏原生拖动区域", async () => {
+    const invokeMock = enableDesktopRuntime();
+
+    setTerminalManagerSnapshot("workspace-1", [buildTerminal()]);
+
+    renderPage();
+
+    await screen.findByText("工作终端");
+    expect(document.querySelector(".terminal-tabbar")).toHaveAttribute("data-tauri-drag-region", "");
+    expect(document.querySelector(".terminal-tabbar-scroll")).toHaveAttribute("data-window-drag", "ignore");
+    expect(document.querySelector(".terminal-toolbar-anchor")).toHaveAttribute("data-window-drag", "ignore");
+
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "展开终端工具菜单"
+      })
+    );
+
+    expect(screen.queryByText("新终端使用的 Shell")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Runtime")).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "独立窗口"
+      })
+    );
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        "create_window",
+        expect.objectContaining({
+          descriptor: expect.objectContaining({
+            kind: "terminals",
+            windowId: "terminals-workspace-1",
+            workspaceId: "workspace-1",
+            focusOwner: "terminal-page"
+          })
+        })
+      );
+    });
   });
 
   it("终端标签顺序按创建时间稳定显示，不会因为最近活跃时间变化自动重排", async () => {

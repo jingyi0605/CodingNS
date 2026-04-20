@@ -37,6 +37,8 @@ const platformMock = vi.hoisted(() => ({
 const fileContextPanelMock = vi.hoisted(() => vi.fn());
 const gitSidebarMock = vi.hoisted(() => vi.fn());
 const terminalManagerPanelMock = vi.hoisted(() => vi.fn());
+const terminalPageMock = vi.hoisted(() => vi.fn());
+const setTitleMock = vi.hoisted(() => vi.fn(async () => undefined));
 const realtimeStartMock = vi.hoisted(() => vi.fn());
 const realtimeCloseMock = vi.hoisted(() => vi.fn());
 
@@ -96,6 +98,23 @@ vi.mock("../workbench/components/TerminalManagerPanel", () => ({
   }
 }));
 
+vi.mock("../terminal/pages/TerminalPage", () => ({
+  TerminalPage: (props: {
+    externalWindowMode?: boolean;
+    externalWindowWorkspaceId?: string | null;
+    workbenchShellOverrides?: { navigationGroups?: Array<{ workspace: { id: string } }> };
+  }) => {
+    terminalPageMock(props);
+    return (
+      <div data-testid="desktop-terminal-window">
+        {props.externalWindowWorkspaceId ?? "null"}:
+        {props.externalWindowMode ? "external" : "embedded"}:
+        {props.workbenchShellOverrides?.navigationGroups?.length ?? 0}
+      </div>
+    );
+  }
+}));
+
 vi.mock("../../network/workbench-realtime-client", () => ({
   WorkbenchRealtimeClient: class {
     subscribeFileTree = vi.fn();
@@ -116,6 +135,12 @@ vi.mock("../../network/workbench-realtime-client", () => ({
       realtimeCloseMock();
     }
   }
+}));
+
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({
+    setTitle: setTitleMock
+  })
 }));
 
 describe("DesktopWindowPage", () => {
@@ -280,6 +305,43 @@ describe("DesktopWindowPage", () => {
     );
   });
 
+  it("会根据 descriptor 渲染终端页外部窗口壳", async () => {
+    getWindowDescriptorMock.mockResolvedValue({
+      ok: true,
+      value: {
+        windowId: "terminals-workspace-1",
+        kind: "terminals",
+        workspaceId: "workspace-1",
+        sessionId: null,
+        mode: "external",
+        bounds: {
+          x: null,
+          y: null,
+          width: 1200,
+          height: 780,
+          minWidth: 720,
+          minHeight: 480
+        },
+        focusOwner: "terminal-page"
+      }
+    });
+
+    renderPage("/desktop-window/terminals-workspace-1");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("desktop-terminal-window")).toHaveTextContent(
+        "workspace-1:external:1"
+      );
+    });
+    expect(terminalPageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        externalWindowWorkspaceId: "workspace-1",
+        externalWindowMode: true
+      })
+    );
+    expect(setTitleMock).toHaveBeenLastCalledWith("CodingNS - Terminal（CodingNS）");
+  });
+
   it("descriptor 类型不在第一批范围内时会显示占位错误", async () => {
     getWindowDescriptorMock.mockResolvedValue({
       ok: true,
@@ -304,7 +366,7 @@ describe("DesktopWindowPage", () => {
     renderPage("/desktop-window/chat-workspace-1");
 
     await waitFor(() => {
-      expect(screen.getByText("desktopWindow.unsupportedKind")).toBeInTheDocument();
+      expect(screen.getByText("Rendering the chat window is not supported yet.")).toBeInTheDocument();
     });
   });
 

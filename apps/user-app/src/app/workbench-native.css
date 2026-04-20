@@ -5134,6 +5134,11 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
     padding-right 220ms cubic-bezier(0.2, 0.9, 0.2, 1);
 }
 
+.workbench-shell .terminal-tabbar [data-window-drag="ignore"] {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
 .workbench-shell .terminal-tabbar-main {
   gap: 8px;
 }
@@ -5318,6 +5323,13 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
   gap: 6px;
 }
 
+.workbench-shell .terminal-layout-button,
+.workbench-shell .terminal-toolbar-menu-action,
+.workbench-shell .terminal-toolbar-save {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.74);
+}
+
 .workbench-shell .terminal-toolbar-section {
   min-height: 30px;
   padding: 3px 5px 3px 8px;
@@ -5349,18 +5361,13 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
   border-radius: 9px;
 }
 
-.workbench-shell .terminal-layout-button,
-.workbench-shell .terminal-toolbar-save {
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  background: rgba(255, 255, 255, 0.74);
-}
-
 .workbench-shell .terminal-layout-button[data-active="true"] {
   border-color: rgba(15, 23, 42, 0.12);
   background: rgba(255, 255, 255, 0.92);
 }
 
 .workbench-shell .terminal-layout-button:hover,
+.workbench-shell .terminal-toolbar-menu-action:hover,
 .workbench-shell .terminal-toolbar-save:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.92);
   border-color: rgba(15, 23, 42, 0.12);

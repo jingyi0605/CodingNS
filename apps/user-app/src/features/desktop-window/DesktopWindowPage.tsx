@@ -20,6 +20,10 @@ import {
   TerminalManagerPanel,
   type TerminalManagerPanelWorkbenchShellOverrides
 } from "../workbench/components/TerminalManagerPanel";
+import {
+  TerminalPage,
+  type TerminalPageWorkbenchShellOverrides
+} from "../terminal/pages/TerminalPage";
 import { mapWorkbenchSnapshotToNavigationGroups } from "../workbench/utils/workbench-navigation-snapshot";
 import { WorkbenchRealtimeClient } from "../../network/workbench-realtime-client";
 import type { WindowDescriptor } from "../../platform/desktop/window-descriptor";
@@ -56,6 +60,20 @@ function createEmptyTerminalManagerWorkbenchShellOverrides(): TerminalManagerPan
   };
 }
 
+function createEmptyTerminalWorkbenchShellOverrides(
+  currentWorkspaceId: string | null,
+  navigationGroups: WorkspaceSessionGroup[]
+): TerminalPageWorkbenchShellOverrides {
+  return {
+    navigationGroups,
+    currentWorkspaceId,
+    selectWorkspace: () => undefined,
+    subscribeTerminalManagerSnapshot: () => undefined,
+    requestTerminalManagerRefresh: () => undefined,
+    addTerminalManagerSnapshotListener: () => () => undefined
+  };
+}
+
 function resolveDesktopWindowTitle(descriptor: WindowDescriptor): string {
   if (descriptor.kind === "files") {
     return t("shell.filesEntry");
@@ -69,7 +87,28 @@ function resolveDesktopWindowTitle(descriptor: WindowDescriptor): string {
     return t("shell.terminalManagerEntry");
   }
 
+  if (descriptor.kind === "terminals") {
+    return t("shell.terminalsEntry");
+  }
+
   return descriptor.kind;
+}
+
+function resolveDesktopWindowNativeTitle(
+  descriptor: WindowDescriptor,
+  navigationGroups: WorkspaceSessionGroup[]
+): string {
+  const workspaceName =
+    descriptor.workspaceId
+      ? navigationGroups.find((group) => group.workspace.id === descriptor.workspaceId)?.workspace.name ?? null
+      : null;
+  const sectionTitle = resolveDesktopWindowTitle(descriptor);
+
+  if (!workspaceName) {
+    return `CodingNS - ${sectionTitle}`;
+  }
+
+  return `CodingNS - ${sectionTitle}（${workspaceName}）`;
 }
 
 export function DesktopWindowPage() {
@@ -192,6 +231,19 @@ export function DesktopWindowPage() {
     };
   }, [descriptor, navigate, sessionDisplaySortMode]);
 
+  useEffect(() => {
+    if (!platform.isDesktop || !platform.bridge.supported || !descriptor || descriptor.mode !== "external") {
+      return;
+    }
+
+    const title = resolveDesktopWindowNativeTitle(descriptor, navigationGroups);
+    document.title = title;
+
+    void import("@tauri-apps/api/window")
+      .then(({ getCurrentWindow }) => getCurrentWindow().setTitle(title))
+      .catch(() => undefined);
+  }, [descriptor, navigationGroups, platform.bridge.supported, platform.isDesktop]);
+
   const workbenchShellOverrides = useMemo<FileContextPanelWorkbenchShellOverrides>(() => {
     if (!realtimeClient) {
       return createEmptyWorkbenchShellOverrides(navigationGroups);
@@ -233,6 +285,24 @@ export function DesktopWindowPage() {
           realtimeClient.addTerminalManagerSnapshotListener.bind(realtimeClient)
       };
     }, [realtimeClient]);
+  const terminalWorkbenchShellOverrides = useMemo<TerminalPageWorkbenchShellOverrides>(() => {
+    if (!realtimeClient) {
+      return createEmptyTerminalWorkbenchShellOverrides(
+        descriptor?.workspaceId ?? null,
+        navigationGroups
+      );
+    }
+
+    return {
+      navigationGroups,
+      currentWorkspaceId: descriptor?.workspaceId ?? null,
+      selectWorkspace: () => undefined,
+      subscribeTerminalManagerSnapshot: realtimeClient.subscribeTerminalManager.bind(realtimeClient),
+      requestTerminalManagerRefresh: realtimeClient.requestTerminalManagerRefresh.bind(realtimeClient),
+      addTerminalManagerSnapshotListener:
+        realtimeClient.addTerminalManagerSnapshotListener.bind(realtimeClient)
+    };
+  }, [descriptor?.workspaceId, navigationGroups, realtimeClient]);
   if (!platform.isDesktop) {
     return <Navigate to="/" replace />;
   }
@@ -287,6 +357,14 @@ export function DesktopWindowPage() {
         navigationGroups={navigationGroups}
         externalWindowMode
         workbenchShellOverrides={terminalManagerWorkbenchShellOverrides}
+      />
+    );
+  } else if (descriptor.kind === "terminals") {
+    content = (
+      <TerminalPage
+        externalWindowMode
+        externalWindowWorkspaceId={descriptor.workspaceId}
+        workbenchShellOverrides={terminalWorkbenchShellOverrides}
       />
     );
   }

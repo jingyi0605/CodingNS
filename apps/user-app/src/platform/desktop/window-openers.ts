@@ -6,7 +6,7 @@ import {
   type WindowKind
 } from "./window-descriptor";
 
-type ExternalWindowKind = Extract<WindowKind, "files" | "git" | "processes">;
+type ExternalWindowKind = Extract<WindowKind, "files" | "git" | "processes" | "terminals">;
 
 export interface OpenExternalWorkspaceWindowInput {
   workspaceId: string;
@@ -35,6 +35,11 @@ const EXTERNAL_WINDOW_KIND_CONFIG: Record<ExternalWindowKind, WindowKindConfig> 
     kind: "processes",
     label: "调试",
     defaultFocusOwner: "terminal-manager-panel"
+  },
+  terminals: {
+    kind: "terminals",
+    label: "终端",
+    defaultFocusOwner: "terminal-page"
   }
 };
 
@@ -151,6 +156,10 @@ export function buildProcessesExternalWindowId(workspaceId: string): string {
   return buildExternalWorkspaceWindowId("processes", workspaceId);
 }
 
+export function buildTerminalsExternalWindowId(workspaceId: string): string {
+  return buildExternalWorkspaceWindowId("terminals", workspaceId);
+}
+
 export function openFilesExternalWindow(
   platform: Pick<PlatformAdapter, "isDesktop" | "bridge" | "windows">,
   input: OpenExternalWorkspaceWindowInput
@@ -170,4 +179,11 @@ export function openProcessesExternalWindow(
   input: OpenExternalWorkspaceWindowInput
 ): Promise<DesktopBridgeResult<WindowDescriptor>> {
   return openExternalWorkspaceWindow(platform, "processes", input);
+}
+
+export function openTerminalsExternalWindow(
+  platform: Pick<PlatformAdapter, "isDesktop" | "bridge" | "windows">,
+  input: OpenExternalWorkspaceWindowInput
+): Promise<DesktopBridgeResult<WindowDescriptor>> {
+  return openExternalWorkspaceWindow(platform, "terminals", input);
 }

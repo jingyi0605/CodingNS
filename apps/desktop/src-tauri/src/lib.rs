@@ -285,7 +285,7 @@ async fn create_window(
         return Err(window_manager_error(
             "WINDOW_KIND_NOT_SUPPORTED",
             format!(
-                "当前阶段只允许外部窗口打开 files / git / processes，收到类型：{}",
+                "当前阶段只允许外部窗口打开 files / git / processes / terminals，收到类型：{}",
                 window_kind_label(&descriptor.kind)
             ),
         ));
@@ -977,6 +977,7 @@ fn window_kind_label(kind: &WindowKind) -> &'static str {
         WindowKind::Files => "文件",
         WindowKind::Git => "Git",
         WindowKind::Processes => "进程管理",
+        WindowKind::Terminals => "终端",
     }
 }
 
@@ -1001,6 +1002,7 @@ mod tests {
     fn window_kind_label_stays_human_readable() {
         assert_eq!(window_kind_label(&WindowKind::Files), "文件");
         assert_eq!(window_kind_label(&WindowKind::Processes), "进程管理");
+        assert_eq!(window_kind_label(&WindowKind::Terminals), "终端");
     }
 
     #[test]

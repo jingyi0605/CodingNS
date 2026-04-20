@@ -32,6 +32,7 @@ pub enum WindowKind {
     Files,
     Git,
     Processes,
+    Terminals,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -119,7 +120,10 @@ impl WindowManagerState {
 impl WindowDescriptor {
     pub fn supports_external_window(&self) -> bool {
         self.mode != WindowMode::External
-            || matches!(self.kind, WindowKind::Files | WindowKind::Git | WindowKind::Processes)
+            || matches!(
+                self.kind,
+                WindowKind::Files | WindowKind::Git | WindowKind::Processes | WindowKind::Terminals
+            )
     }
 }
 
@@ -207,5 +211,6 @@ mod tests {
         assert!(create_descriptor("window-files", WindowKind::Files).supports_external_window());
         assert!(!create_descriptor("window-chat", WindowKind::Chat).supports_external_window());
         assert!(create_descriptor("window-git", WindowKind::Git).supports_external_window());
+        assert!(create_descriptor("window-terminals", WindowKind::Terminals).supports_external_window());
     }
 }
