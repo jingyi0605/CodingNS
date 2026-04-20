@@ -21,6 +21,8 @@ describe("ButlerFollowUpService", () => {
     latestAssistantText?: string;
     runningState?: "completed" | "failed" | "interrupted" | "running";
     sessionLastMessageAt?: string;
+    assistantSessionLastErrorDetail?: string;
+    assistantSessionLastMessageAt?: string;
     sendLiveMessageError?: Error;
     enqueueLiveMessageError?: Error;
     skipAssistantCommand?: boolean;
@@ -41,6 +43,9 @@ describe("ButlerFollowUpService", () => {
     };
   }) {
     const sessionLastMessageAt = options.sessionLastMessageAt ?? "2026-04-07T00:05:00.000Z";
+    const assistantSessionLastMessageAt =
+      options.assistantSessionLastMessageAt
+      ?? "2026-04-07T00:05:30.000Z";
     const project: ButlerProject = {
       id: "project-1",
       workspaceId: "workspace-1",
@@ -253,30 +258,57 @@ describe("ButlerFollowUpService", () => {
       upsert: vi.fn()
     } as unknown as Pick<SessionMessageOriginRepository, "upsert">;
     const sessionHistoryService = {
-      getSession: vi.fn(() => ({
-        sessionId: "session-1",
-        workspaceId: "workspace-1",
-        provider: "codex",
-        providerSessionId: "provider-session-1",
-        rawStoreRef: "raw-session-1",
-        title: "登录页开发",
-        messageCount: 12,
-        lastMessageAt: sessionLastMessageAt,
-        createdAt: "2026-04-07T00:00:00.000Z",
-        updatedAt: sessionLastMessageAt,
-        syncStatus: null,
-        syncCursor: null,
-        lastSyncAt: null,
-        lastErrorCode: null,
-        lastErrorDetail: null,
-        resumedAt: null,
-        runningState: options.runningState ?? "completed",
-        activitySource: "runtime",
-        lastEventAt: null,
-        completedAt: "2026-04-07T00:05:00.000Z",
-        lastSeenAt: null,
-        activityState: "completed_unread"
-      })),
+      getSession: vi.fn((sessionId: string) => (
+        sessionId === "assistant-session-1"
+          ? {
+              sessionId,
+              workspaceId: "workspace-follow-up",
+              provider: "codex",
+              providerSessionId: "provider-follow-up-1",
+              rawStoreRef: "raw-follow-up-1",
+              title: "跟进助手",
+              messageCount: 4,
+              lastMessageAt: assistantSessionLastMessageAt,
+              createdAt: "2026-04-07T00:05:30.000Z",
+              updatedAt: assistantSessionLastMessageAt,
+              syncStatus: null,
+              syncCursor: null,
+              lastSyncAt: null,
+              lastErrorCode: options.assistantSessionLastErrorDetail ? "PROVIDER_USAGE_LIMIT_EXCEEDED" : null,
+              lastErrorDetail: options.assistantSessionLastErrorDetail ?? null,
+              resumedAt: null,
+              runningState: "completed",
+              activitySource: "runtime",
+              lastEventAt: null,
+              completedAt: assistantSessionLastMessageAt,
+              lastSeenAt: null,
+              activityState: "completed_unread"
+            }
+          : {
+              sessionId: "session-1",
+              workspaceId: "workspace-1",
+              provider: "codex",
+              providerSessionId: "provider-session-1",
+              rawStoreRef: "raw-session-1",
+              title: "登录页开发",
+              messageCount: 12,
+              lastMessageAt: sessionLastMessageAt,
+              createdAt: "2026-04-07T00:00:00.000Z",
+              updatedAt: sessionLastMessageAt,
+              syncStatus: null,
+              syncCursor: null,
+              lastSyncAt: null,
+              lastErrorCode: null,
+              lastErrorDetail: null,
+              resumedAt: null,
+              runningState: options.runningState ?? "completed",
+              activitySource: "runtime",
+              lastEventAt: null,
+              completedAt: "2026-04-07T00:05:00.000Z",
+              lastSeenAt: null,
+              activityState: "completed_unread"
+            }
+      )),
       readRecentHistoryEnvelope: vi.fn(async (sessionId: string) => {
         if (sessionId === "assistant-session-1") {
           return {
@@ -700,10 +732,46 @@ describe("ButlerFollowUpService", () => {
 
     expect(created.status).toBe("active");
     expect(created.autoContinueCount).toBe(0);
-    expect(created.nextCheckAt).toBe(retryAt);
+    expect(created.nextCheckAt).toBe(new Date(Date.parse(retryAt) + 5 * 60 * 1000).toISOString());
     expect(created.lastAutomationSummary).toContain("额度已达上限");
     expect(sendLiveMessage).toHaveBeenCalledTimes(1);
     expect(enqueueLiveMessage).not.toHaveBeenCalled();
+  });
+
+  it("跟进助手会话上轮如果撞上套餐限额，会在恢复后额外等待 5 分钟再继续", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-07T00:12:00.000Z"));
+    try {
+      const { service, sendLiveMessage } = createService({
+        assistantSessionLastErrorDetail:
+          "You have reached your monthly usage limit. Please try again in 15 minutes.",
+        assistantSessionLastMessageAt: "2026-04-07T00:10:00.000Z",
+        evaluationJson: {
+          decision: "continue",
+          summary: "这里不该进入跟进助手评估。",
+          waitingReason: null,
+          continuePrompt: "继续推进",
+          riskLevel: "medium"
+        }
+      });
+
+      const created = await service.createTask(
+        {
+          projectId: "project-1",
+          butlerSessionId: "butler-session-1",
+          providerId: "codex",
+          objective: "继续把当前会话跟完"
+        },
+        "user-1"
+      );
+
+      expect(created.status).toBe("active");
+      expect(created.nextCheckAt).toBe("2026-04-07T00:30:00.000Z");
+      expect(created.lastAutomationSummary).toContain("跟进助手会话");
+      expect(sendLiveMessage).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("达到自动跟进轮数上限后会停止自动续接，并转成 waiting_user", async () => {

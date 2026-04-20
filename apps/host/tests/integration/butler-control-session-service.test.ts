@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { AppError } from "../../src/shared/errors/app-error.js";
 import type {
   ButlerControlSession,
   ButlerProfile,
@@ -930,6 +931,105 @@ describe("ButlerControlSessionService", () => {
       updatedAt: "2026-04-05T00:01:00.000Z"
     }));
   });
+
+  it("发送消息前如果检测到套餐限额冷却，会直接拒绝继续开工", async () => {
+    const currentSession: ButlerControlSession = {
+      id: "control-1",
+      providerId: "codex",
+      sessionId: "session-1",
+      purpose: "chat",
+      title: null,
+      sourceItemId: null,
+      model: "gpt-5.4",
+      reasoningLevel: "medium",
+      permissionMode: "default",
+      status: "idle",
+      lastContextVersion: null,
+      lastSummary: null,
+      createdAt: "2026-04-05T00:00:00.000Z",
+      updatedAt: "2026-04-05T00:00:00.000Z"
+    };
+    const blockedError = new AppError({
+      statusCode: 429,
+      errorCode: "PROVIDER_USAGE_LIMIT_EXCEEDED",
+      detail: "助手控制会话检测到 provider 套餐限额，系统会在 2026-04-05T00:35:00.000Z 后再继续尝试。",
+      data: {
+        blockedUntil: "2026-04-05T00:35:00.000Z"
+      }
+    });
+    const providerUsageLimitGuardService = {
+      resolveBlockingInspection: vi.fn(async () => ({
+        inspection: {
+          sessionId: "session-1",
+          providerId: "codex",
+          sourceLabel: "助手控制会话",
+          providerUsageLimit: {
+            category: "usage_limit",
+            providerId: "codex",
+            source: "error_detail" as const,
+            retryAt: "2026-04-05T00:30:00.000Z",
+            retryAfterSeconds: null,
+            rawText: "You've hit your usage limit.",
+            summary: "检测到 provider 额度已达上限，系统会按下一次可用时机自动重试。"
+          },
+          detectedAt: "2026-04-05T00:20:00.000Z",
+          blockedUntil: "2026-04-05T00:35:00.000Z"
+        },
+        blockedUntil: "2026-04-05T00:35:00.000Z"
+      })),
+      createBlockedAppError: vi.fn(() => blockedError)
+    };
+
+    const service = new ButlerControlSessionService(
+      {
+        ensureInitialized: vi.fn(() => ({
+          id: "default",
+          providerId: "codex",
+          workspacePath: "/tmp/butler-workspace"
+        }))
+      } as unknown as ButlerProfileService,
+      {
+        findLatestOpenByProvider: vi.fn(() => currentSession),
+        findLatestByProvider: vi.fn(() => currentSession),
+        create: vi.fn(),
+        update: vi.fn((record: ButlerControlSession) => record)
+      } as unknown as ButlerControlSessionRepository,
+      {
+        importWorkspace: vi.fn()
+      } as unknown as Pick<WorkspaceService, "importWorkspace">,
+      {
+        getSession: vi.fn(() => ({
+          sessionId: "session-1"
+        })),
+        resumeSession: vi.fn()
+      } as unknown as Pick<SessionHistoryService, "getSession" | "resumeSession">,
+      {
+        startLiveSession: vi.fn(),
+        sendLiveMessage: vi.fn()
+      } as unknown as Pick<SessionLiveRuntimeService, "startLiveSession" | "sendLiveMessage">,
+      {
+        resolvePromptContext: vi.fn()
+      } as unknown as Pick<ButlerContextAggregator, "resolvePromptContext">,
+      {
+        ensureWorkspaceCredential: vi.fn(),
+        getCredentialFilePath: vi.fn()
+      } as unknown as Pick<ButlerAuthService, "ensureWorkspaceCredential" | "getCredentialFilePath">,
+      createSkillManagerStub(),
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      providerUsageLimitGuardService as any
+    );
+
+    await expect(service.sendMessage("user-1", {
+      content: "继续推进"
+    })).rejects.toMatchObject({
+      errorCode: "PROVIDER_USAGE_LIMIT_EXCEEDED"
+    });
+  });
 });
 
 function createSkillManagerStub(
@@ -956,6 +1056,30 @@ function createSkillManagerStub(
 
   return {
     getOverview: vi.fn(() => overview),
-    importUnmanagedSkill: vi.fn()
-  } as unknown as Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">;
+    importUnmanagedSkill: vi.fn(),
+    listAssistantRuntimeSkillSources: vi.fn((targetClis?: string[]) => {
+      const managedSkills = (overview.managedSkills ?? []).map((item: any) => ({
+        name: item.skill.name,
+        directoryName: item.skill.directoryName,
+        sourcePath: item.ssotPath ?? item.skill.sourcePath,
+        usedByTargetCli: targetClis?.length ? targetClis : ["codex", "claude-code"]
+      }));
+
+      if (managedSkills.length > 0) {
+        return managedSkills;
+      }
+
+      return (overview.managedEntries ?? [])
+        .filter((entry: any) => !targetClis?.length || targetClis.includes(entry.targetCli))
+        .map((entry: any) => ({
+          name: entry.name,
+          directoryName: entry.directoryName,
+          sourcePath: entry.directoryPath,
+          usedByTargetCli: [entry.targetCli]
+        }));
+    })
+  } as unknown as Pick<
+    SkillManagerService,
+    "getOverview" | "importUnmanagedSkill" | "listAssistantRuntimeSkillSources"
+  >;
 }

@@ -20,6 +20,7 @@ import type { SessionLiveRuntimeService } from "../sessions/session-live-runtime
 import type { SessionHistoryService } from "../sessions/session-history-service.js";
 import type { SessionMessageOriginRepository } from "../../storage/repositories/session-message-origin-repository.js";
 import { recordButlerProxyMessageOrigin } from "../sessions/session-message-origin-utils.js";
+import type { SessionProviderUsageLimitGuardService } from "../sessions/session-provider-usage-guard-service.js";
 
 export interface ButlerProjectSessionView {
   id: string;
@@ -90,6 +91,10 @@ export class ButlerSessionService {
     private readonly sessionMessageOriginRepository: Pick<
       SessionMessageOriginRepository,
       "upsert"
+    > | null = null,
+    private readonly providerUsageLimitGuardService: Pick<
+      SessionProviderUsageLimitGuardService,
+      "resolveBlockingInspection" | "createBlockedAppError"
     > | null = null
   ) {}
 
@@ -420,6 +425,20 @@ export class ButlerSessionService {
         errorCode: "BUTLER_SESSION_RESUME_UNAVAILABLE",
         detail: "当前环境未启用 butler 会话续接能力"
       });
+    }
+
+    if (this.providerUsageLimitGuardService) {
+      const blocked = await this.providerUsageLimitGuardService.resolveBlockingInspection([
+        {
+          sessionId: this.resolveCanonicalSessionId(record.sessionId),
+          userId,
+          sourceLabel: "工作区会话"
+        }
+      ], nowIso());
+
+      if (blocked) {
+        throw this.providerUsageLimitGuardService.createBlockedAppError(blocked);
+      }
     }
 
     const resumed = await this.sessionHistoryService.resumeSession(

@@ -35,6 +35,11 @@ import {
   normalizeProviderUsageLimit,
   type NormalizedProviderUsageLimit
 } from "../sessions/session-provider-usage-limit.js";
+import {
+  resolveProviderUsageLimitBlockedUntil,
+  resolveProviderUsageLimitFromError,
+  SessionProviderUsageLimitGuardService
+} from "../sessions/session-provider-usage-guard-service.js";
 
 const DEFAULT_CHECK_INTERVAL_SECONDS = 300;
 const MIN_CHECK_INTERVAL_SECONDS = 60;
@@ -184,7 +189,11 @@ export class ButlerFollowUpService {
     private readonly instructionAdapter: ButlerFollowUpEvaluationInstructionAdapter,
     private readonly followUpCodexHomeDir: string | null = null,
     private readonly sourceCodexHomeDir: string | null = null,
-    private readonly sessionMessageOriginRepository: Pick<SessionMessageOriginRepository, "upsert"> | null = null
+    private readonly sessionMessageOriginRepository: Pick<SessionMessageOriginRepository, "upsert"> | null = null,
+    private readonly providerUsageLimitGuardService: Pick<
+      SessionProviderUsageLimitGuardService,
+      "resolveBlockingInspection"
+    > = new SessionProviderUsageLimitGuardService(sessionHistoryService)
   ) {}
 
   listTasks(filters: {
@@ -711,12 +720,21 @@ export class ButlerFollowUpService {
         });
       }
 
-      if (shouldWaitForProviderUsageLimit(inspection.providerUsageLimit, referenceAt)) {
-        const nextCheckAt = resolveProviderUsageLimitNextCheckAt(
-          inspection.providerUsageLimit,
-          referenceAt,
-          task.checkIntervalSeconds
-        );
+      const usageLimitBlock = await this.providerUsageLimitGuardService.resolveBlockingInspection([
+        {
+          sessionId: task.sessionId,
+          userId: task.createdByUserId,
+          sourceLabel: "跟进目标会话"
+        },
+        {
+          sessionId: task.assistantSessionId,
+          userId: task.createdByUserId,
+          sourceLabel: "跟进助手会话"
+        }
+      ], referenceAt);
+
+      if (usageLimitBlock) {
+        const nextCheckAt = usageLimitBlock.blockedUntil;
 
         return this.persistIfExecutionActive(task.id, execution, {
           ...baseUpdate,
@@ -726,8 +744,8 @@ export class ButlerFollowUpService {
           completedAt: null,
           lastAutomationAt: referenceAt,
           lastAutomationSummary: buildFollowUpUsageLimitSummary(
-            inspection.providerUsageLimit,
-            "检测到当前会话被 provider 额度限制暂时挡住。"
+            usageLimitBlock.inspection.providerUsageLimit,
+            `${usageLimitBlock.inspection.sourceLabel ?? "当前会话"}被 provider 套餐限额暂时挡住。`
           )
         });
       }
@@ -1390,23 +1408,15 @@ function buildFollowUpUsageLimitSummary(
   return `${prefix} ${providerUsageLimit.summary}`;
 }
 
-function shouldWaitForProviderUsageLimit(
-  providerUsageLimit: NormalizedProviderUsageLimit | null,
-  referenceAt: string
-): providerUsageLimit is NormalizedProviderUsageLimit {
-  return Boolean(
-    providerUsageLimit?.retryAt
-    && Date.parse(providerUsageLimit.retryAt) > Date.parse(referenceAt)
-  );
-}
-
 function resolveProviderUsageLimitNextCheckAt(
   providerUsageLimit: NormalizedProviderUsageLimit,
   referenceAt: string,
   fallbackSeconds: number
 ): string {
-  if (providerUsageLimit.retryAt && Date.parse(providerUsageLimit.retryAt) > Date.parse(referenceAt)) {
-    return providerUsageLimit.retryAt;
+  const blockedUntil = resolveProviderUsageLimitBlockedUntil(providerUsageLimit, referenceAt);
+
+  if (blockedUntil && Date.parse(blockedUntil) > Date.parse(referenceAt)) {
+    return blockedUntil;
   }
 
   return shiftSeconds(referenceAt, fallbackSeconds);
@@ -1508,65 +1518,6 @@ function resolveInspectionProviderUsageLimit(
     referenceAt: normalizedReferenceAt,
     source: "message"
   });
-}
-
-function resolveProviderUsageLimitFromError(
-  error: unknown,
-  providerId: string | null,
-  referenceAt: string
-): NormalizedProviderUsageLimit | null {
-  if (error instanceof AppError) {
-    const fromData = readProviderUsageLimitFromErrorData(error.data);
-
-    if (fromData) {
-      return fromData;
-    }
-  }
-
-  if (error instanceof Error) {
-    return normalizeProviderUsageLimit({
-      providerId,
-      text: error.message,
-      referenceAt,
-      source: "error"
-    });
-  }
-
-  return null;
-}
-
-function readProviderUsageLimitFromErrorData(
-  value: Record<string, unknown> | undefined
-): NormalizedProviderUsageLimit | null {
-  const candidate = value?.providerUsageLimit;
-
-  if (!isRecord(candidate) || candidate.category !== "usage_limit") {
-    return null;
-  }
-
-  return {
-    category: "usage_limit",
-    providerId: typeof candidate.providerId === "string" && candidate.providerId.trim().length > 0
-      ? candidate.providerId.trim()
-      : null,
-    source: candidate.source === "error_detail" || candidate.source === "message" ? candidate.source : "error",
-    retryAt: normalizeNullableIso(
-      typeof candidate.retryAt === "string" ? candidate.retryAt : null
-    ),
-    retryAfterSeconds: typeof candidate.retryAfterSeconds === "number"
-      && Number.isFinite(candidate.retryAfterSeconds)
-      && candidate.retryAfterSeconds > 0
-      ? candidate.retryAfterSeconds
-      : null,
-    rawText: typeof candidate.rawText === "string" ? candidate.rawText : "",
-    summary: typeof candidate.summary === "string" && candidate.summary.trim().length > 0
-      ? candidate.summary.trim()
-      : "检测到 provider 额度已达上限，系统会按下一次可用时机自动重试。"
-  };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function resolveLatestAssistantText(envelope: SessionHistoryEnvelope | null): string | null {

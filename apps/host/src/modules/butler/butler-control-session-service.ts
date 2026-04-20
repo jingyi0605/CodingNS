@@ -21,6 +21,7 @@ import type { SkillManagerService } from "../skills/skill-manager-service.js";
 import { syncButlerWorkspaceContext } from "./butler-workspace-context.js";
 import { recordButlerProxyMessageOrigin } from "../sessions/session-message-origin-utils.js";
 import type { AssistantSandboxService } from "./assistant-sandbox-service.js";
+import type { SessionProviderUsageLimitGuardService } from "../sessions/session-provider-usage-guard-service.js";
 
 export interface ButlerControlSessionView extends ButlerControlSession {
   session: SessionListItem;
@@ -77,6 +78,10 @@ export class ButlerControlSessionService {
     private readonly assistantSandboxService: Pick<
       AssistantSandboxService,
       "createSandbox" | "listSandboxes" | "markSandboxUsedByControlSession" | "removeSandbox"
+    > | null = null,
+    private readonly providerUsageLimitGuardService: Pick<
+      SessionProviderUsageLimitGuardService,
+      "resolveBlockingInspection" | "createBlockedAppError"
     > | null = null
   ) {}
 
@@ -220,6 +225,7 @@ export class ButlerControlSessionService {
   }> {
     const profile = this.butlerProfileService.ensureInitialized();
     const current = this.requireCurrentSession(profile.providerId);
+    await this.ensureSessionCanStartWork(current.sessionId, userId, "助手控制会话");
     const promptContext = await this.butlerContextAggregator.resolvePromptContext(userId, null);
     this.syncWorkspaceContext(
       profile,
@@ -266,6 +272,7 @@ export class ButlerControlSessionService {
       input.controlSessionId?.trim()
         ? this.requireSessionById(input.controlSessionId, profile.providerId)
         : this.requireCurrentSession(profile.providerId);
+    await this.ensureSessionCanStartWork(current.sessionId, userId, "助手控制会话");
     const content = normalizeControlContent(input.content, "");
     const requestedAt = nowIso();
     const clientRequestId = recordButlerProxyMessageOrigin(this.sessionMessageOriginRepository, {
@@ -369,6 +376,28 @@ export class ButlerControlSessionService {
       ...record,
       session: this.sessionHistoryService.getSession(record.sessionId, userId)
     };
+  }
+
+  private async ensureSessionCanStartWork(
+    sessionId: string,
+    userId: string,
+    sourceLabel: string
+  ): Promise<void> {
+    if (!this.providerUsageLimitGuardService) {
+      return;
+    }
+
+    const blocked = await this.providerUsageLimitGuardService.resolveBlockingInspection([
+      {
+        sessionId,
+        userId,
+        sourceLabel
+      }
+    ], nowIso());
+
+    if (blocked) {
+      throw this.providerUsageLimitGuardService.createBlockedAppError(blocked);
+    }
   }
 
   private async prepareWorkspace(

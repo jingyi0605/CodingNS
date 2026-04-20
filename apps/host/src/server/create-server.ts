@@ -100,6 +100,7 @@ import { SessionActivityAuthorityService } from "../modules/sessions/session-act
 import { SessionHistoryService } from "../modules/sessions/session-history-service.js";
 import { SessionLiveRuntimeRouterService } from "../modules/sessions/session-live-runtime-router-service.js";
 import { SessionLiveRuntimeService } from "../modules/sessions/session-live-runtime-service.js";
+import { SessionProviderUsageLimitGuardService } from "../modules/sessions/session-provider-usage-guard-service.js";
 import { SessionMessageAttachmentService } from "../modules/sessions/session-message-attachment-service.js";
 import { EventLoopMonitor } from "../modules/tasks/event-loop-monitor.js";
 import { ObservabilityController } from "../modules/tasks/observability-controller.js";
@@ -592,6 +593,9 @@ export function createServer(config: HostConfig) {
       butlerFollowUpSessionLiveRuntimeService
     ]
   );
+  const sessionProviderUsageLimitGuardService = new SessionProviderUsageLimitGuardService(
+    sessionHistoryService
+  );
   const workbenchService = new WorkbenchService(
     repositories.workspaceRepository,
     repositories.workspaceNavigationStateRepository,
@@ -643,7 +647,8 @@ export function createServer(config: HostConfig) {
     repositories.sessionStateRepository,
     sessionLiveRuntimeService,
     sessionHistoryService,
-    repositories.sessionMessageOriginRepository
+    repositories.sessionMessageOriginRepository,
+    sessionProviderUsageLimitGuardService
   );
   const projectMemoryService = new ProjectMemoryService(
     repositories.butlerProjectRepository,
@@ -762,7 +767,8 @@ export function createServer(config: HostConfig) {
     butlerFollowUpEvaluationInstructionAdapter,
     butlerFollowUpRuntimeConfig.codexHomeDir,
     config.codexHomeDir,
-    repositories.sessionMessageOriginRepository
+    repositories.sessionMessageOriginRepository,
+    sessionProviderUsageLimitGuardService
   );
   const butlerActionContextService = new ButlerActionContextService(
     butlerProjectService,
@@ -807,7 +813,8 @@ export function createServer(config: HostConfig) {
     butlerRuntimeConfig.claudeCodeHomeDir,
     config.claudeCodeHomeDir,
     repositories.sessionMessageOriginRepository,
-    assistantSandboxService
+    assistantSandboxService,
+    sessionProviderUsageLimitGuardService
   );
   const assistantAutomationService = new AssistantAutomationService(
     butlerProfileService,

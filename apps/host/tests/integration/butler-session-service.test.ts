@@ -16,6 +16,7 @@ import type { SessionCheckpointRepository } from "../../src/storage/repositories
 import type { SessionIndexRepository } from "../../src/storage/repositories/session-index-repository.js";
 import type { SessionStateRepository } from "../../src/storage/repositories/session-state-repository.js";
 import { ButlerSessionService } from "../../src/modules/butler/butler-session-service.js";
+import type { SessionHistoryService } from "../../src/modules/sessions/session-history-service.js";
 
 describe("ButlerSessionService", () => {
   it("可以把已有 session 纳入代码助手项目", () => {
@@ -655,6 +656,125 @@ describe("ButlerSessionService", () => {
     expect(createdCheckpoints[0]).toMatchObject({
       progressState: "working",
       sourceKind: "manual"
+    });
+  });
+
+  it("恢复项目会话前如果命中套餐限额冷却，会直接拒绝续接", async () => {
+    const project: ButlerProject = {
+      id: "project-4",
+      workspaceId: "workspace-1",
+      name: "repo-d",
+      repoRoot: "/tmp/repo-d",
+      defaultProvider: "codex",
+      instructionProfileId: null,
+      approvalMode: "controlled",
+      lifecycleStatus: "active",
+      riskLevel: "low",
+      config: {},
+      lastPatrolAt: null,
+      lastVerificationAt: null,
+      createdAt: "2026-04-02T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:00:00.000Z",
+      archivedAt: null
+    };
+    const persistedSession: ButlerSession = {
+      id: "butler-session-4",
+      projectId: project.id,
+      sessionId: "session-4",
+      role: "adhoc",
+      ownershipMode: "managed",
+      status: "running",
+      lastSummary: "旧摘要",
+      lastCheckpointAt: "2026-04-02T00:05:00.000Z",
+      createdAt: "2026-04-02T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:05:00.000Z"
+    };
+    const blockedError = new AppError({
+      statusCode: 429,
+      errorCode: "PROVIDER_USAGE_LIMIT_EXCEEDED",
+      detail: "工作区会话检测到 provider 套餐限额，系统会在 2026-04-02T00:35:00.000Z 后再继续尝试。"
+    });
+    const providerUsageLimitGuardService = {
+      resolveBlockingInspection: vi.fn(async () => ({
+        inspection: {
+          sessionId: "session-4",
+          providerId: "codex",
+          sourceLabel: "工作区会话",
+          providerUsageLimit: {
+            category: "usage_limit",
+            providerId: "codex",
+            source: "error_detail" as const,
+            retryAt: "2026-04-02T00:30:00.000Z",
+            retryAfterSeconds: null,
+            rawText: "You've hit your usage limit.",
+            summary: "检测到 provider 额度已达上限，系统会按下一次可用时机自动重试。"
+          },
+          detectedAt: "2026-04-02T00:20:00.000Z",
+          blockedUntil: "2026-04-02T00:35:00.000Z"
+        },
+        blockedUntil: "2026-04-02T00:35:00.000Z"
+      })),
+      createBlockedAppError: vi.fn(() => blockedError)
+    };
+
+    const service = new ButlerSessionService(
+      {
+        findById: vi.fn(() => project)
+      } satisfies Pick<ButlerProjectRepository, "findById"> as ButlerProjectRepository,
+      {
+        findById: vi.fn(() => persistedSession)
+      } satisfies Pick<ButlerSessionRepository, "findById"> as ButlerSessionRepository,
+      {} as SessionCheckpointRepository,
+      {
+        findBySessionId: vi.fn(() => ({
+          sessionId: "session-4",
+          workspaceId: "workspace-1",
+          provider: "codex",
+          providerSessionId: "provider-session-4",
+          rawStoreRef: "raw-session-4",
+          createdAt: "2026-04-02T00:00:00.000Z",
+          updatedAt: "2026-04-02T00:00:00.000Z"
+        }))
+      } as unknown as SessionBindingRepository,
+      {
+        findIndexRecordBySessionId: vi.fn(() => ({
+          sessionId: "session-4",
+          workspaceId: "workspace-1",
+          provider: "codex",
+          parentSessionId: null,
+          isSubagent: false,
+          subagentLabel: null,
+          title: "会话-4",
+          messageCount: 8,
+          isArchived: false,
+          lastMessageAt: "2026-04-02T00:10:00.000Z",
+          createdAt: "2026-04-02T00:00:00.000Z",
+          updatedAt: "2026-04-02T00:10:00.000Z"
+        }))
+      } as unknown as SessionIndexRepository,
+      {
+        findBySessionAndUser: vi.fn(() => ({
+          sessionId: "session-4",
+          userId: "user-1",
+          runningState: "running",
+          activitySource: "runtime",
+          favorite: false,
+          lastEventAt: "2026-04-02T00:11:00.000Z",
+          completedAt: null,
+          lastSeenAt: null,
+          updatedAt: "2026-04-02T00:11:00.000Z"
+        }))
+      } as unknown as SessionStateRepository,
+      undefined,
+      {
+        resumeSession: vi.fn()
+      } as unknown as Pick<SessionHistoryService, "resumeSession">,
+      null,
+      providerUsageLimitGuardService as any
+    );
+
+    await expect(service.resumeSession(project.id, persistedSession.id, "user-1")).rejects.toMatchObject({
+      errorCode: "PROVIDER_USAGE_LIMIT_EXCEEDED"
     });
   });
 
