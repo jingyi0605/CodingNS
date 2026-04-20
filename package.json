@@ -15,6 +15,7 @@
     "docs:preview": "vitepress preview docs/Documentation",
     "dev": "node -e \"console.log('前后端需要分开启动，分别查看日志。');console.log('后端：npm run dev:backend');console.log('前端：npm run dev:frontend');\"",
     "dev:backend": "node scripts/dev-backend.cjs",
+    "dev:backend:tunnel-ui": "node scripts/dev-backend-tunnel-ui.cjs",
     "dev:backend:perf": "node scripts/dev-backend.cjs CODINGNS_PERF_DEBUG=1",
     "dev:frontend": "pnpm --filter user-app dev",
     "dev:desktop": "pnpm --dir apps/desktop dev",
