@@ -8450,21 +8450,21 @@ textarea:focus-visible {
 }
 
 .conversation-butler-modal .session-provider-card {
-  gap: 10px;
-  min-height: 86px;
-  padding: 12px 14px;
-  border-radius: 16px;
+  gap: 8px;
+  min-height: 60px;
+  padding: 8px 12px;
+  border-radius: 14px;
 }
 
 .conversation-butler-modal .session-provider-card-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: 12px;
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
 }
 
 .conversation-butler-modal .session-provider-card-icon img {
-  width: 18px;
-  height: 18px;
+  width: 15px;
+  height: 15px;
 }
 
 .conversation-butler-modal .session-provider-card-copy {
@@ -8472,7 +8472,7 @@ textarea:focus-visible {
 }
 
 .conversation-butler-modal .session-provider-card-copy strong {
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1.15;
 }
 
