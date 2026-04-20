@@ -116,6 +116,7 @@ export interface RelayTunnelRuntimeAdapter {
 
 export class RelayTunnelService {
   private readonly defaultLocalTargetBaseUrl: string;
+  private readonly legacyLocalTargetBaseUrl: string | null;
   private readonly controlSessionSecret: string;
   private readonly fetchFn: typeof fetch;
   private readonly taskManager: TaskManager;
@@ -129,6 +130,7 @@ export class RelayTunnelService {
     private readonly repository: InstanceRelayTunnelRepository,
     options: {
       defaultLocalTargetBaseUrl: string;
+      legacyLocalTargetBaseUrl?: string | null;
       controlSessionSecret: string;
       fetchFn?: typeof fetch;
     },
@@ -147,6 +149,9 @@ export class RelayTunnelService {
       options.defaultLocalTargetBaseUrl,
       "defaultLocalTargetBaseUrl"
     )!;
+    this.legacyLocalTargetBaseUrl = options.legacyLocalTargetBaseUrl
+      ? normalizeHttpBaseUrl(options.legacyLocalTargetBaseUrl, "legacyLocalTargetBaseUrl")
+      : null;
     this.registerBackgroundTasks();
   }
 
@@ -216,6 +221,10 @@ export class RelayTunnelService {
         input.localTargetBaseUrl !== undefined
           ? normalizeHttpBaseUrl(input.localTargetBaseUrl, "localTargetBaseUrl")!
           : snapshot.config.localTargetBaseUrl,
+      localTargetBaseUrlSource:
+        input.localTargetBaseUrl !== undefined
+          ? "custom"
+          : (snapshot.config.localTargetBaseUrlSource ?? "default"),
       enabled:
         input.activated === false
           ? false
@@ -572,7 +581,7 @@ export class RelayTunnelService {
   }
 
   private readStateSnapshot(): RelayTunnelStateSnapshot {
-    const persistedConfig = this.repository.findConfig();
+    const persistedConfig = this.reconcileLegacyLocalTargetBaseUrl(this.repository.findConfig());
 
     return {
       config:
@@ -592,10 +601,38 @@ export class RelayTunnelService {
           hostPublicKey: null,
           hostKeyFingerprint: null,
           localTargetBaseUrl: this.defaultLocalTargetBaseUrl,
+          localTargetBaseUrlSource: "default",
           updatedAt: nowIso()
         },
       hasPersistedConfig: persistedConfig !== null
     };
+  }
+
+  private reconcileLegacyLocalTargetBaseUrl(
+    config: InstanceRelayTunnelConfig | null
+  ): InstanceRelayTunnelConfig | null {
+    if (!config) {
+      return config;
+    }
+
+    if ((config.localTargetBaseUrlSource ?? "default") !== "default") {
+      return config;
+    }
+
+    if (config.localTargetBaseUrl === this.defaultLocalTargetBaseUrl) {
+      return config;
+    }
+
+    // `default` 源的目标地址由当前运行模式决定，不应该把历史默认值永久粘在库里。
+    // 只要默认入口变化了，就在启动时自动收敛到新的默认值；用户显式写入的 custom 配置不动。
+    const migratedConfig: InstanceRelayTunnelConfig = {
+      ...config,
+      localTargetBaseUrl: this.defaultLocalTargetBaseUrl,
+      localTargetBaseUrlSource: "default",
+      updatedAt: nowIso()
+    };
+    this.repository.upsertConfig(migratedConfig);
+    return migratedConfig;
   }
 
   private resolveEffectiveStatus(config: InstanceRelayTunnelConfig): InstanceRelayTunnelStatus {

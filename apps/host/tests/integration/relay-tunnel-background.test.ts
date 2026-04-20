@@ -227,6 +227,48 @@ describe("RelayTunnelService 后台任务", () => {
     context.close();
   });
 
+  it("读取状态时会把历史默认的 Host API 端口迁移到前端入口端口", async () => {
+    const context = createRelayTunnelTestContext({
+      initialized: true,
+      defaultLocalTargetBaseUrl: "http://127.0.0.1:4174",
+      legacyLocalTargetBaseUrl: "http://127.0.0.1:4312"
+    });
+
+    seedBoundConfig(context.repository, {
+      localTargetBaseUrl: "http://127.0.0.1:4312"
+    });
+
+    const status = await context.service.getStatus();
+    const persisted = context.repository.findConfig();
+
+    expect(status.localTargetBaseUrl).toBe("http://127.0.0.1:4174");
+    expect(persisted?.localTargetBaseUrl).toBe("http://127.0.0.1:4174");
+
+    context.close();
+  });
+
+  it("读取状态时会把 default 源的旧前端入口收敛到当前默认值", async () => {
+    const context = createRelayTunnelTestContext({
+      initialized: true,
+      defaultLocalTargetBaseUrl: "http://127.0.0.1:3002",
+      legacyLocalTargetBaseUrl: null
+    });
+
+    seedBoundConfig(context.repository, {
+      localTargetBaseUrl: "http://127.0.0.1:4174",
+      localTargetBaseUrlSource: "default"
+    });
+
+    const status = await context.service.getStatus();
+    const persisted = context.repository.findConfig();
+
+    expect(status.localTargetBaseUrl).toBe("http://127.0.0.1:3002");
+    expect(persisted?.localTargetBaseUrl).toBe("http://127.0.0.1:3002");
+    expect(persisted?.localTargetBaseUrlSource).toBe("default");
+
+    context.close();
+  });
+
   it("未初始化实例启动恢复时不会偷偷连公网，而是写回 blocked_uninitialized", async () => {
     const context = createRelayTunnelTestContext({
       initialized: false,
@@ -253,6 +295,8 @@ describe("RelayTunnelService 后台任务", () => {
 function createRelayTunnelTestContext(options?: {
   initialized?: boolean;
   runtimeAdapter?: RelayTunnelRuntimeAdapter;
+  defaultLocalTargetBaseUrl?: string;
+  legacyLocalTargetBaseUrl?: string | null;
 }) {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-relay-tunnel-background-"));
   tempDirs.push(tempDir);
@@ -285,7 +329,9 @@ function createRelayTunnelTestContext(options?: {
     identityRepository,
     repository,
     {
-      defaultLocalTargetBaseUrl: "http://127.0.0.1:4312",
+      defaultLocalTargetBaseUrl:
+        options?.defaultLocalTargetBaseUrl ?? "http://127.0.0.1:4312",
+      legacyLocalTargetBaseUrl: options?.legacyLocalTargetBaseUrl ?? null,
       controlSessionSecret: "relay-control-secret"
     },
     taskManager,
