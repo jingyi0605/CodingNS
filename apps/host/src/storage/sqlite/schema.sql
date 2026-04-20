@@ -960,6 +960,9 @@ CREATE TABLE IF NOT EXISTS butler_follow_up_tasks (
   project_id TEXT NOT NULL,
   butler_session_id TEXT NOT NULL,
   session_id TEXT NOT NULL,
+  provider_id TEXT NOT NULL CHECK (provider_id IN ('codex', 'claude-code')),
+  assistant_butler_session_id TEXT NOT NULL,
+  assistant_session_id TEXT NOT NULL,
   created_by_user_id TEXT NOT NULL,
   objective TEXT NOT NULL,
   completion_criteria TEXT NOT NULL DEFAULT '',
@@ -984,6 +987,8 @@ CREATE TABLE IF NOT EXISTS butler_follow_up_tasks (
   FOREIGN KEY (project_id) REFERENCES butler_projects(id) ON DELETE CASCADE,
   FOREIGN KEY (butler_session_id) REFERENCES butler_sessions(id) ON DELETE CASCADE,
   FOREIGN KEY (session_id) REFERENCES session_bindings(session_id) ON DELETE CASCADE,
+  FOREIGN KEY (assistant_butler_session_id) REFERENCES butler_sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY (assistant_session_id) REFERENCES session_bindings(session_id) ON DELETE CASCADE,
   FOREIGN KEY (created_by_user_id) REFERENCES auth_users(id)
 );
 
@@ -1260,8 +1265,3 @@ CREATE INDEX IF NOT EXISTS idx_skill_target_bindings_target_cli
 INSERT INTO bootstrap_state (id, initialized)
 VALUES ('default', 0)
 ON CONFLICT(id) DO NOTHING;
-  provider_id TEXT NOT NULL CHECK (provider_id IN ('codex', 'claude-code')),
-  assistant_butler_session_id TEXT NOT NULL,
-  assistant_session_id TEXT NOT NULL,
-  FOREIGN KEY (assistant_butler_session_id) REFERENCES butler_sessions(id) ON DELETE CASCADE,
-  FOREIGN KEY (assistant_session_id) REFERENCES session_bindings(session_id) ON DELETE CASCADE,

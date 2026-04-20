@@ -838,6 +838,18 @@ function ensureButlerFollowUpTaskSchema(db: Database.Database): void {
   if (!columnNames.has("rounds_json")) {
     db.exec("ALTER TABLE butler_follow_up_tasks ADD COLUMN rounds_json TEXT NOT NULL DEFAULT '[]'");
   }
+
+  if (!columnNames.has("provider_id")) {
+    db.exec("ALTER TABLE butler_follow_up_tasks ADD COLUMN provider_id TEXT NOT NULL DEFAULT 'codex'");
+  }
+
+  if (!columnNames.has("assistant_butler_session_id")) {
+    db.exec("ALTER TABLE butler_follow_up_tasks ADD COLUMN assistant_butler_session_id TEXT NOT NULL DEFAULT ''");
+  }
+
+  if (!columnNames.has("assistant_session_id")) {
+    db.exec("ALTER TABLE butler_follow_up_tasks ADD COLUMN assistant_session_id TEXT NOT NULL DEFAULT ''");
+  }
 }
 
 function ensureButlerSessionSummarySchema(db: Database.Database): void {
@@ -1770,15 +1782,3 @@ function readTableSql(db: Database.Database, tableName: string): string {
 
   return row?.sql ?? "";
 }
-
-  if (!columnNames.has("provider_id")) {
-    db.exec("ALTER TABLE butler_follow_up_tasks ADD COLUMN provider_id TEXT NOT NULL DEFAULT 'codex'");
-  }
-
-  if (!columnNames.has("assistant_butler_session_id")) {
-    db.exec("ALTER TABLE butler_follow_up_tasks ADD COLUMN assistant_butler_session_id TEXT NOT NULL DEFAULT ''");
-  }
-
-  if (!columnNames.has("assistant_session_id")) {
-    db.exec("ALTER TABLE butler_follow_up_tasks ADD COLUMN assistant_session_id TEXT NOT NULL DEFAULT ''");
-  }

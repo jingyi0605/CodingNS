@@ -682,6 +682,9 @@ export interface ButlerFollowUpTask {
   projectId: string;
   butlerSessionId: string;
   sessionId: string;
+  providerId: ButlerProfileProviderId;
+  assistantButlerSessionId: string;
+  assistantSessionId: string;
   createdByUserId: string;
   objective: string;
   completionCriteria: string;
@@ -1305,6 +1308,3 @@ export interface InstanceRelayTunnelStatus {
   lastError: string | null;
   observedAt: string | null;
 }
-  providerId: ButlerProfileProviderId;
-  assistantButlerSessionId: string;
-  assistantSessionId: string;
