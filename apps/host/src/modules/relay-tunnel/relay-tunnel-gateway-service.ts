@@ -23,6 +23,7 @@ const HOP_BY_HOP_HEADERS = new Set([
   "host",
   "content-length"
 ]);
+const WS_PROTOCOL_HEADER = "sec-websocket-protocol";
 
 export class RelayTunnelGatewayService {
   private readonly localHttpBaseUrl: URL;
@@ -123,16 +124,22 @@ export class RelayTunnelGatewayService {
     }
 
     const socketUrl = new URL(packet.path, this.localWsBaseUrl);
-    const socket = new WebSocket(socketUrl, {
-      headers: filterRequestHeaders(packet.headers)
-    });
+    const requestedProtocols = resolveRequestedProtocols(packet);
+    const socket = requestedProtocols.length > 0
+      ? new WebSocket(socketUrl, requestedProtocols, {
+        headers: filterRequestHeaders(packet.headers)
+      })
+      : new WebSocket(socketUrl, {
+        headers: filterRequestHeaders(packet.headers)
+      });
 
     this.wsSockets.set(packet.streamId, socket);
 
     socket.on("open", () => {
       const openedPacket: RelayTunnelWsOpenedPacket = {
         type: "ws.opened",
-        streamId: packet.streamId
+        streamId: packet.streamId,
+        selectedProtocol: socket.protocol || null
       };
       void this.onPacket(openedPacket);
     });
@@ -220,7 +227,13 @@ function filterRequestHeaders(headers: Record<string, string>): Record<string, s
   const filtered: Record<string, string> = {};
 
   for (const [headerName, headerValue] of Object.entries(headers)) {
-    if (!headerName || HOP_BY_HOP_HEADERS.has(headerName.toLowerCase())) {
+    const normalizedHeaderName = headerName.toLowerCase();
+
+    if (
+      !headerName
+      || HOP_BY_HOP_HEADERS.has(normalizedHeaderName)
+      || normalizedHeaderName === WS_PROTOCOL_HEADER
+    ) {
       continue;
     }
 
@@ -228,6 +241,40 @@ function filterRequestHeaders(headers: Record<string, string>): Record<string, s
   }
 
   return filtered;
+}
+
+function resolveRequestedProtocols(packet: RelayTunnelWsOpenPacket): string[] {
+  if (Array.isArray(packet.protocols) && packet.protocols.length > 0) {
+    return sanitizeProtocols(packet.protocols);
+  }
+
+  const headerEntry = Object.entries(packet.headers).find(([headerName]) =>
+    headerName.toLowerCase() === WS_PROTOCOL_HEADER
+  );
+
+  if (!headerEntry) {
+    return [];
+  }
+
+  return sanitizeProtocols(headerEntry[1].split(","));
+}
+
+function sanitizeProtocols(protocols: string[]): string[] {
+  const seen = new Set<string>();
+  const sanitized: string[] = [];
+
+  for (const protocol of protocols) {
+    const normalized = protocol.trim();
+
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+
+    seen.add(normalized);
+    sanitized.push(normalized);
+  }
+
+  return sanitized;
 }
 
 function toBuffer(value: WebSocket.RawData): Buffer {

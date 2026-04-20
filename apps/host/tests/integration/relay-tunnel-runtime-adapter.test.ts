@@ -216,7 +216,8 @@ describe("RelayTunnelRuntimeEdgeAdapter", () => {
             type: "ws.open",
             streamId: "ws_1",
             path: "/echo",
-            headers: {}
+            headers: {},
+            protocols: ["vite-hmr"]
           })
         )
       })
@@ -229,6 +230,7 @@ describe("RelayTunnelRuntimeEdgeAdapter", () => {
     );
 
     expect(wsOpenedPacket.streamId).toBe("ws_1");
+    expect(wsOpenedPacket.selectedProtocol).toBe("vite-hmr");
 
     downstream.send(
       JSON.stringify({
@@ -275,7 +277,14 @@ async function startLocalTargetServer(): Promise<{
     handleLocalTargetHttpRequest(request, response);
   });
   const wsServer = new WebSocketServer({
-    noServer: true
+    noServer: true,
+    handleProtocols(protocols) {
+      if (protocols.has("vite-hmr")) {
+        return "vite-hmr";
+      }
+
+      return false;
+    }
   });
 
   wsServer.on("connection", (socket) => {

@@ -87,7 +87,8 @@ describe("RelayTunnelGatewayService", () => {
       path: "/ws-echo?token=demo",
       headers: {
         "x-tunnel-test": "1"
-      }
+      },
+      protocols: ["vite-hmr"]
     });
 
     await waitFor(
@@ -111,6 +112,11 @@ describe("RelayTunnelGatewayService", () => {
       "等待 ws.message 超时"
     );
     expect(Buffer.from(messagePacket.dataBase64Url, "base64url").toString("utf8")).toBe("pong:ping");
+    const openedPacket = packets.find(
+      (packet): packet is Extract<RelayTunnelGatewayPacket, { type: "ws.opened" }> =>
+        packet.type === "ws.opened" && packet.streamId === "stream-ws-1"
+    );
+    expect(openedPacket?.selectedProtocol).toBe("vite-hmr");
 
     await gateway.handlePacket({
       type: "ws.closed",
@@ -165,7 +171,14 @@ async function createLocalEchoServer(): Promise<{
     response.writeHead(404).end();
   });
   const wss = new WebSocketServer({
-    noServer: true
+    noServer: true,
+    handleProtocols(protocols) {
+      if (protocols.has("vite-hmr")) {
+        return "vite-hmr";
+      }
+
+      return false;
+    }
   });
 
   server.on("upgrade", (request, socket, head) => {

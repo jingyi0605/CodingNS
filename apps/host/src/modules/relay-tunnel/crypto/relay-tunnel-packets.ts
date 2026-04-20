@@ -29,11 +29,13 @@ export interface RelayTunnelWsOpenPacket {
   streamId: string;
   path: string;
   headers: Record<string, string>;
+  protocols?: string[];
 }
 
 export interface RelayTunnelWsOpenedPacket {
   type: "ws.opened";
   streamId: string;
+  selectedProtocol?: string | null;
 }
 
 export interface RelayTunnelWsMessagePacket {
