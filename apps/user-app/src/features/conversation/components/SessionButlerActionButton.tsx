@@ -27,8 +27,9 @@ interface SessionButlerActionButtonProps {
 }
 
 type ButlerActionKind = "follow-up" | "verification" | null;
+type FollowUpProviderId = "codex" | "claude-code";
 const DEFAULT_FOLLOW_UP_ROUND_LIMIT = 5;
-const FOLLOW_UP_PROVIDER_IDS: ProviderId[] = ["codex", "claude-code"];
+const FOLLOW_UP_PROVIDER_IDS: FollowUpProviderId[] = ["codex", "claude-code"];
 
 interface ButlerCompletionCriteriaPreset {
   id: string;
@@ -66,8 +67,12 @@ function getDefaultCompletionCriteria(): string {
 
 function resolveDefaultFollowUpProvider(
   sessionProvider: string | null | undefined
-): "codex" | "claude-code" {
+): FollowUpProviderId {
   return sessionProvider === "claude-code" ? "claude-code" : "codex";
+}
+
+function isFollowUpProviderId(provider: ProviderId): provider is FollowUpProviderId {
+  return provider === "codex" || provider === "claude-code";
 }
 
 export function SessionButlerActionButton({
@@ -86,7 +91,7 @@ export function SessionButlerActionButton({
   const [actionContext, setActionContext] = useState<ButlerSessionActionContextDto | null>(null);
   const [contextError, setContextError] = useState<string | null>(null);
   const [runningAction, setRunningAction] = useState<ButlerActionKind>(null);
-  const [followUpProviderId, setFollowUpProviderId] = useState<"codex" | "claude-code">(
+  const [followUpProviderId, setFollowUpProviderId] = useState<FollowUpProviderId>(
     resolveDefaultFollowUpProvider(session?.provider)
   );
   const [followUpObjective, setFollowUpObjective] = useState("");
@@ -520,7 +525,7 @@ export function SessionButlerActionButton({
                     selectedProvider={followUpProviderId}
                     disabled={runningAction !== null}
                     onSelect={(provider) => {
-                      if (provider === "codex" || provider === "claude-code") {
+                      if (isFollowUpProviderId(provider)) {
                         setFollowUpProviderId(provider);
                       }
                     }}
