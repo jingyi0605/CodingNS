@@ -1471,6 +1471,28 @@ describe("ComposerPanel", () => {
     expect(screen.queryByLabelText(t("conversation.quickPhraseTrigger"))).not.toBeInTheDocument();
   });
 
+  it("默认把发送按钮放在输入框右侧，把快捷短语单独放到底部右侧", () => {
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const sendButton = screen.getByLabelText(t("conversation.sendButton"));
+    const quickPhraseButton = screen.getByLabelText(t("conversation.quickPhraseTrigger"));
+    const inputWrapper = container.querySelector(".composer-input-wrapper");
+    const controls = container.querySelector(".composer-controls");
+    const controlsLeft = container.querySelector(".composer-controls-left");
+
+    expect(inputWrapper?.contains(sendButton)).toBe(true);
+    expect(inputWrapper?.contains(quickPhraseButton)).toBe(false);
+    expect(controls?.contains(quickPhraseButton)).toBe(true);
+    expect(controlsLeft?.contains(quickPhraseButton)).toBe(false);
+    expect(sendButton).toBeDisabled();
+  });
+
   it("快捷短语支持新增、调整顺序和删除", async () => {
     render(
       <ComposerPanel

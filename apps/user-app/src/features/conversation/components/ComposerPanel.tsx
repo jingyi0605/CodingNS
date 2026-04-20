@@ -1650,28 +1650,44 @@ export function ComposerPanel({
               }}
             />
 
-            {showQuickPhraseButton ? (
-              <button
-                type="button"
-                className="composer-quick-phrase-trigger"
-                aria-label={t("conversation.quickPhraseTrigger")}
-                title={t("conversation.quickPhraseTrigger")}
-                onClick={() => {
-                  setQuickPhraseModalOpen(true);
-                  setShowSlashMenu(false);
-                }}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M7 8h10" />
-                  <path d="M7 12h8" />
-                  <path d="M7 16h5" />
-                  <path d="M5 5h14v14H9l-4 4V5z" />
-                </svg>
-              </button>
-            ) : null}
+            <div className="composer-input-actions">
+              {showActivityButton ? (
+                <button
+                  className="composer-send composer-send-busy"
+                  type="button"
+                  disabled={!canInterruptNow}
+                  onClick={() => {
+                    if (!canInterruptNow) {
+                      return;
+                    }
+
+                    void handleInterrupt();
+                  }}
+                  aria-label={activityButtonLabel}
+                  title={activityButtonLabel}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <rect x="6" y="6" width="12" height="12" />
+                  </svg>
+                </button>
+              ) : (
+                <button
+                  className="composer-send"
+                  type="submit"
+                  disabled={isDisabled}
+                  aria-label={sendButtonLabel}
+                  title={sendButtonLabel}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <line x1="22" y1="2" x2="11" y2="13" />
+                    <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                  </svg>
+                </button>
+              )}
+            </div>
           </div>
 
-              {showSlashMenu ? (
+          {showSlashMenu ? (
             <div className="composer-slash-menu" role="menu" aria-label={t("conversation.slashMenuTitle")}>
               {slashCommands.map((item) => (
                 <button
@@ -1764,43 +1780,27 @@ export function ComposerPanel({
               />
             </div>
 
-            {showActivityButton ? (
-              <div className="composer-send-group">
+            {showQuickPhraseButton ? (
+              <div className="composer-quick-phrase-group">
                 <button
-                  className="composer-send composer-send-busy"
                   type="button"
-                  disabled={!canInterruptNow}
+                  className="composer-quick-phrase-trigger"
+                  aria-label={t("conversation.quickPhraseTrigger")}
+                  title={t("conversation.quickPhraseTrigger")}
                   onClick={() => {
-                    if (!canInterruptNow) {
-                      return;
-                    }
-
-                    void handleInterrupt();
+                    setQuickPhraseModalOpen(true);
+                    setShowSlashMenu(false);
                   }}
-                  aria-label={activityButtonLabel}
-                  title={activityButtonLabel}
                 >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <rect x="6" y="6" width="12" height="12" />
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M7 8h10" />
+                    <path d="M7 12h8" />
+                    <path d="M7 16h5" />
+                    <path d="M5 5h14v14H9l-4 4V5z" />
                   </svg>
                 </button>
               </div>
-            ) : (
-              <div className="composer-send-group">
-                <button
-                  className="composer-send"
-                  type="submit"
-                  disabled={isDisabled}
-                  aria-label={sendButtonLabel}
-                  title={sendButtonLabel}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <line x1="22" y1="2" x2="11" y2="13" />
-                    <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                  </svg>
-                </button>
-              </div>
-            )}
+            ) : null}
           </div>
         </div>
       </form>

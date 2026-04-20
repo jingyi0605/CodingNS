@@ -1891,6 +1891,22 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
   min-width: 0;
 }
 
+.composer-input-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  justify-content: center;
+  width: 44px;
+}
+
+.composer-quick-phrase-group {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+}
+
 .composer-slash-btn,
 .composer-attach-btn,
 .composer-select-wrapper {
@@ -1905,9 +1921,9 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 }
 
 .composer-send {
-  width: 34px;
-  height: 34px;
-  border-radius: 11px;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
 }
 
 .workbench-info-tab,
@@ -4669,39 +4685,30 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 }
 
 .composer-send {
-  width: 30px;
-  height: 30px;
-  border-radius: 9px;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
   background: rgba(0, 122, 255, 0.1);
   color: #007aff;
 }
 
-.composer-input {
-  padding-right: 44px;
-}
-
 .composer-quick-phrase-trigger {
-  position: absolute;
-  top: 50%;
-  right: 10px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   padding: 0;
-  border-radius: 10px;
+  border-radius: 12px;
   border: 1px solid var(--conversation-chip-border);
   background: var(--conversation-chip-bg);
   box-shadow: var(--conversation-chip-shadow);
   color: var(--conversation-chip-muted-text);
-  transform: translateY(-50%);
   transition:
     background var(--transition-fast),
     border-color var(--transition-fast),
     box-shadow var(--transition-fast),
-    color var(--transition-fast),
-    transform var(--transition-fast);
+    color var(--transition-fast);
 }
 
 .composer-quick-phrase-modal {
