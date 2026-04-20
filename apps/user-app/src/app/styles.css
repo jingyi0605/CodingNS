@@ -8329,18 +8329,18 @@ textarea:focus-visible {
 .conversation-butler-modal {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
 }
 
 .conversation-butler-modal-card {
   width: min(640px, calc(100% - 24px));
-  gap: 10px;
-  padding: 16px 16px 14px;
-  border-radius: 20px;
+  gap: 8px;
+  padding: 14px 16px 12px;
+  border-radius: 18px;
 }
 
 .conversation-butler-modal-card .workbench-modal-header {
-  gap: 10px;
+  gap: 8px;
 }
 
 .conversation-butler-modal-card .workbench-modal-title-wrap h2 {
@@ -8349,9 +8349,9 @@ textarea:focus-visible {
 }
 
 .conversation-butler-modal-card .workbench-modal-title-wrap p {
-  margin-top: 4px;
+  margin-top: 3px;
   font-size: 12px;
-  line-height: 1.45;
+  line-height: 1.4;
 }
 
 .conversation-butler-modal-card .workbench-modal-header-actions {
@@ -8359,17 +8359,22 @@ textarea:focus-visible {
 }
 
 .conversation-butler-modal-card .workbench-modal-close {
-  width: 32px;
-  height: 32px;
-  border-radius: 11px;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
 }
 
 .conversation-butler-modal-card .workbench-modal-body {
-  gap: 14px;
+  gap: 10px;
+}
+
+.conversation-butler-modal-card .workbench-modal-footer {
+  gap: 8px;
+  padding-top: 10px;
 }
 
 .conversation-butler-modal-field {
-  gap: 5px;
+  gap: 4px;
 }
 
 .conversation-butler-modal-field > label,
@@ -8383,7 +8388,7 @@ textarea:focus-visible {
 .conversation-butler-field-heading {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .conversation-butler-field-heading small,
@@ -8408,13 +8413,13 @@ textarea:focus-visible {
 }
 
 .conversation-butler-modal .workbench-modal-field input {
-  min-height: 38px;
+  min-height: 36px;
   padding: 0 12px;
 }
 
 .conversation-butler-modal .workbench-modal-field textarea {
-  min-height: 88px;
-  padding: 10px 12px;
+  min-height: 76px;
+  padding: 9px 12px;
   resize: vertical;
   font: inherit;
   line-height: 1.5;
@@ -8439,11 +8444,53 @@ textarea:focus-visible {
   background: color-mix(in srgb, var(--bg-hover) 64%, transparent);
 }
 
+.conversation-butler-modal .session-provider-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.conversation-butler-modal .session-provider-card {
+  gap: 10px;
+  min-height: 86px;
+  padding: 12px 14px;
+  border-radius: 16px;
+}
+
+.conversation-butler-modal .session-provider-card-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+}
+
+.conversation-butler-modal .session-provider-card-icon img {
+  width: 18px;
+  height: 18px;
+}
+
+.conversation-butler-modal .session-provider-card-copy {
+  gap: 3px;
+}
+
+.conversation-butler-modal .session-provider-card-copy strong {
+  font-size: 15px;
+  line-height: 1.15;
+}
+
+.conversation-butler-modal .session-provider-card-status {
+  font-size: 11px;
+}
+
+.conversation-butler-follow-up-grid,
 .conversation-butler-target-grid,
 .conversation-butler-meta-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 10px;
+}
+
+.conversation-butler-follow-up-grid {
+  grid-template-columns: minmax(0, 1.75fr) minmax(180px, 0.85fr);
+  align-items: end;
 }
 
 .conversation-butler-meta-grid > :only-child {
@@ -8453,7 +8500,7 @@ textarea:focus-visible {
 .conversation-butler-preset-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px;
 }
 
 .conversation-butler-preset-card {
@@ -8461,9 +8508,9 @@ textarea:focus-visible {
   min-width: 0;
   flex-direction: column;
   align-items: flex-start;
-  gap: 4px;
-  min-height: 58px;
-  padding: 10px 12px;
+  gap: 3px;
+  min-height: 50px;
+  padding: 8px 10px;
   border: 1px solid var(--modal-list-item-border);
   border-radius: 12px;
   background: transparent;
@@ -8493,7 +8540,17 @@ textarea:focus-visible {
 
 .conversation-butler-preset-card strong {
   font-size: 12px;
-  line-height: 1.25;
+  line-height: 1.2;
+}
+
+.conversation-butler-round-limit-field {
+  width: min(100%, 220px);
+  justify-self: start;
+  align-self: end;
+}
+
+.conversation-butler-round-limit-field input {
+  max-width: 108px;
 }
 
 .conversation-butler-preset-card span {
@@ -8652,8 +8709,8 @@ textarea:focus-visible {
 .conversation-butler-target-card {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 10px 0 12px;
+  gap: 3px;
+  padding: 8px 0 9px;
   border: 0;
   border-top: 1px solid var(--modal-list-item-border);
   border-radius: 0;
@@ -8678,15 +8735,11 @@ textarea:focus-visible {
 }
 
 .conversation-butler-current-task-card .workbench-secondary-button {
-  min-height: 30px;
+  min-height: 28px;
   margin-top: 2px;
   padding: 0 10px;
   font-size: 12px;
   align-self: flex-start;
-}
-
-.conversation-butler-round-limit-field input {
-  max-width: 112px;
 }
 
 .conversation-header-eyebrow {
@@ -26088,6 +26141,8 @@ textarea:focus-visible {
     width: min(100%, calc(100vw - 24px));
   }
 
+  .conversation-butler-follow-up-grid,
+  .conversation-butler-modal .session-provider-grid,
   .conversation-butler-target-grid,
   .conversation-butler-meta-grid,
   .conversation-butler-preset-grid {

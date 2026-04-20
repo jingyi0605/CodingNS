@@ -110,6 +110,14 @@ export function SessionButlerActionButton({
   }, [actionContext]);
   const latestFollowUpTask = actionContext?.latestFollowUpTask ?? null;
   const latestVerificationRun = actionContext?.latestVerificationRun ?? null;
+  const activeFollowUpTask = latestFollowUpTask
+    && (latestFollowUpTask.status === "active" || latestFollowUpTask.status === "waiting_user")
+    ? latestFollowUpTask
+    : null;
+  const activeVerificationRun = latestVerificationRun
+    && (latestVerificationRun.status === "queued" || latestVerificationRun.status === "running")
+    ? latestVerificationRun
+    : null;
 
   useEffect(() => {
     setModalOpen(false);
@@ -500,22 +508,43 @@ export function SessionButlerActionButton({
                 </div>
               </div>
 
-              <div className="workbench-modal-field conversation-butler-modal-field">
-                <div className="conversation-butler-field-heading">
-                  <label>{t("conversation.butlerFollowUpProviderLabel")}</label>
-                  <small>{t("conversation.butlerFollowUpProviderHint")}</small>
+              <div className="conversation-butler-follow-up-grid">
+                <div className="workbench-modal-field conversation-butler-modal-field">
+                  <div className="conversation-butler-field-heading">
+                    <label>{t("conversation.butlerFollowUpProviderLabel")}</label>
+                    <small>{t("conversation.butlerFollowUpProviderHint")}</small>
+                  </div>
+                  <SessionProviderPicker
+                    workspaceId={target.workspaceId}
+                    providers={FOLLOW_UP_PROVIDER_IDS}
+                    selectedProvider={followUpProviderId}
+                    disabled={runningAction !== null}
+                    onSelect={(provider) => {
+                      if (provider === "codex" || provider === "claude-code") {
+                        setFollowUpProviderId(provider);
+                      }
+                    }}
+                  />
                 </div>
-                <SessionProviderPicker
-                  workspaceId={target.workspaceId}
-                  providers={FOLLOW_UP_PROVIDER_IDS}
-                  selectedProvider={followUpProviderId}
-                  disabled={runningAction !== null}
-                  onSelect={(provider) => {
-                    if (provider === "codex" || provider === "claude-code") {
-                      setFollowUpProviderId(provider);
-                    }
-                  }}
-                />
+
+                <div className="workbench-modal-field conversation-butler-modal-field conversation-butler-round-limit-field">
+                  <div className="conversation-butler-field-heading">
+                    <label htmlFor={roundLimitFieldId}>{t("conversation.butlerFollowUpRoundLimitLabel")}</label>
+                    <small>{t("conversation.butlerFollowUpRoundLimitHint")}</small>
+                  </div>
+                  <input
+                    id={roundLimitFieldId}
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={followUpRoundLimit}
+                    disabled={runningAction !== null}
+                    onChange={(event) => {
+                      const nextValue = Number.parseInt(event.target.value, 10);
+                      setFollowUpRoundLimit(Number.isFinite(nextValue) ? nextValue : DEFAULT_FOLLOW_UP_ROUND_LIMIT);
+                    }}
+                  />
+                </div>
               </div>
 
               <div className="workbench-modal-field conversation-butler-modal-field">
@@ -576,67 +605,52 @@ export function SessionButlerActionButton({
                 </div>
               </div>
 
-              <div className="conversation-butler-meta-grid">
-                <div className="workbench-modal-field conversation-butler-modal-field conversation-butler-round-limit-field">
-                  <label htmlFor={roundLimitFieldId}>{t("conversation.butlerFollowUpRoundLimitLabel")}</label>
-                  <input
-                    id={roundLimitFieldId}
-                    type="number"
-                    min={1}
-                    max={20}
-                    value={followUpRoundLimit}
-                    disabled={runningAction !== null}
-                    onChange={(event) => {
-                      const nextValue = Number.parseInt(event.target.value, 10);
-                      setFollowUpRoundLimit(Number.isFinite(nextValue) ? nextValue : DEFAULT_FOLLOW_UP_ROUND_LIMIT);
-                    }}
-                  />
-                  <small>{t("conversation.butlerFollowUpRoundLimitHint")}</small>
+              {activeFollowUpTask || activeVerificationRun ? (
+                <div className="conversation-butler-meta-grid">
+                  {activeFollowUpTask ? (
+                    <div className="conversation-butler-target-card conversation-butler-current-task-card">
+                      <span>{t("conversation.butlerCurrentFollowUpLabel")}</span>
+                      <strong>{renderButlerTaskStatus(activeFollowUpTask.status)}</strong>
+                      <small>
+                        {t("conversation.butlerCurrentFollowUpProgress", {
+                          current: activeFollowUpTask.autoContinueCount,
+                          max: activeFollowUpTask.maxAutoContinueCount ?? DEFAULT_FOLLOW_UP_ROUND_LIMIT
+                        })}
+                      </small>
+                      <button
+                        type="button"
+                        className="workbench-secondary-button"
+                        disabled={runningAction !== null}
+                        onClick={() => {
+                          void handleCancelFollowUp();
+                        }}
+                      >
+                        {t("conversation.butlerStopFollowUpAction")}
+                      </button>
+                    </div>
+                  ) : null}
+
+                  {activeVerificationRun ? (
+                    <div className="conversation-butler-target-card conversation-butler-current-task-card">
+                      <span>{t("conversation.butlerCurrentVerificationLabel")}</span>
+                      <strong>{renderButlerVerificationStatus(activeVerificationRun.status)}</strong>
+                      <small>
+                        {activeVerificationRun.targetRef || activeVerificationRun.verificationType}
+                      </small>
+                      <button
+                        type="button"
+                        className="workbench-secondary-button"
+                        disabled={runningAction !== null}
+                        onClick={() => {
+                          void handleCancelVerification();
+                        }}
+                      >
+                        {t("conversation.butlerStopVerificationAction")}
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
-
-                {latestFollowUpTask && (latestFollowUpTask.status === "active" || latestFollowUpTask.status === "waiting_user") ? (
-                  <div className="conversation-butler-target-card conversation-butler-current-task-card">
-                    <span>{t("conversation.butlerCurrentFollowUpLabel")}</span>
-                    <strong>{renderButlerTaskStatus(latestFollowUpTask.status)}</strong>
-                    <small>
-                      {t("conversation.butlerCurrentFollowUpProgress", {
-                        current: latestFollowUpTask.autoContinueCount,
-                        max: latestFollowUpTask.maxAutoContinueCount ?? DEFAULT_FOLLOW_UP_ROUND_LIMIT
-                      })}
-                    </small>
-                    <button
-                      type="button"
-                      className="workbench-secondary-button"
-                      disabled={runningAction !== null}
-                      onClick={() => {
-                        void handleCancelFollowUp();
-                      }}
-                    >
-                      {t("conversation.butlerStopFollowUpAction")}
-                    </button>
-                  </div>
-                ) : null}
-
-                {latestVerificationRun && (latestVerificationRun.status === "queued" || latestVerificationRun.status === "running") ? (
-                  <div className="conversation-butler-target-card conversation-butler-current-task-card">
-                    <span>{t("conversation.butlerCurrentVerificationLabel")}</span>
-                    <strong>{renderButlerVerificationStatus(latestVerificationRun.status)}</strong>
-                    <small>
-                      {latestVerificationRun.targetRef || latestVerificationRun.verificationType}
-                    </small>
-                    <button
-                      type="button"
-                      className="workbench-secondary-button"
-                      disabled={runningAction !== null}
-                      onClick={() => {
-                        void handleCancelVerification();
-                      }}
-                    >
-                      {t("conversation.butlerStopVerificationAction")}
-                    </button>
-                  </div>
-                ) : null}
-              </div>
+              ) : null}
 
             </>
           ) : null}
