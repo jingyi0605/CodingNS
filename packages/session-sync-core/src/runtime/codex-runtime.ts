@@ -401,6 +401,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     });
     const syntheticRawStoreRef = buildRuntimeRawStoreRef(providerSessionId);
     let resolvedSessionId = providerSessionId;
+    let resolvedFallbackHistoryRawStoreRef: string | null = null;
     const resumeThreadStartedAtMs = performance.now();
     let resumed: { providerSessionId: string; rawStoreRef: string | null };
 
@@ -412,12 +413,18 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         fallback: false
       });
     } catch (error) {
-      const resumeHistory = buildCodexResumeHistoryFromRawStore(request.rawStoreRef);
+      const fallbackHistorySource = await this.resolveContinueFallbackHistorySource({
+        providerSessionId,
+        rawStoreRef: request.rawStoreRef,
+        workspacePath: request.workspacePath
+      });
+      const resumeHistory = fallbackHistorySource?.history ?? [];
 
       if (!shouldFallbackCodexContinueFromHistory(error, resumeHistory)) {
         throw error;
       }
 
+      resolvedFallbackHistoryRawStoreRef = fallbackHistorySource?.rawStoreRef ?? null;
       const resumeFallbackStartedAtMs = performance.now();
       resumed = await transport.resumeThreadFromHistory({
         providerSessionId: null,
@@ -434,11 +441,15 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       });
     }
 
-    const rawStoreRef = pickAvailableCodexRawStoreRef(
+    const pickedRawStoreRef = pickAvailableCodexRawStoreRef(
       resolvedSessionId,
-      [request.rawStoreRef, resumed.rawStoreRef],
+      [resolvedFallbackHistoryRawStoreRef, request.rawStoreRef, resumed.rawStoreRef],
       syntheticRawStoreRef
     );
+    const rawStoreRef =
+      !resumed.rawStoreRef?.trim() && resolvedFallbackHistoryRawStoreRef
+        ? resolvedFallbackHistoryRawStoreRef
+        : pickedRawStoreRef;
     const abortController = new AbortController();
     const eventQueue = createAsyncEventQueue();
     logCodexRuntimeStep("continue_session.raw_store_ref_ready", runtimeStartedAtMs, {
@@ -556,6 +567,59 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         transport.close();
       })
     };
+  }
+
+  private async resolveContinueFallbackHistorySource(input: {
+    providerSessionId: string;
+    rawStoreRef: string | null;
+    workspacePath: string;
+  }): Promise<{ rawStoreRef: string; history: Array<Record<string, unknown>> } | null> {
+    const candidates: string[] = [];
+    const seen = new Set<string>();
+    const pushCandidate = (candidate: string | null | undefined) => {
+      const normalized = candidate?.trim();
+
+      if (!normalized || seen.has(normalized) || !existsSync(normalized)) {
+        return;
+      }
+
+      seen.add(normalized);
+      candidates.push(normalized);
+    };
+
+    pushCandidate(input.rawStoreRef);
+
+    // 旧会话的 binding 可能只剩 synthetic stream，或者已经指到了父线程 transcript。
+    // 继续会话失败时，额外按真实 thread id 扫一次本地 transcript，尽量把历史恢复链路救回来。
+    pushCandidate(
+      await this.resolveRealRawStoreRef(input.providerSessionId.trim(), input.workspacePath)
+    );
+
+    let fallbackMatch: { rawStoreRef: string; history: Array<Record<string, unknown>> } | null = null;
+
+    for (const candidate of candidates) {
+      const history = buildCodexResumeHistoryFromRawStore(candidate);
+
+      if (history.length === 0) {
+        continue;
+      }
+
+      const meta = readSessionMeta(candidate);
+
+      if (meta?.threadId === input.providerSessionId.trim()) {
+        return {
+          rawStoreRef: candidate,
+          history
+        };
+      }
+
+      fallbackMatch ??= {
+        rawStoreRef: candidate,
+        history
+      };
+    }
+
+    return fallbackMatch;
   }
 
   private async runTurn(

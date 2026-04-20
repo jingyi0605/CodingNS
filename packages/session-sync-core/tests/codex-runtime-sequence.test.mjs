@@ -346,6 +346,125 @@ test("CodexRuntimeAdapter continueSession 遇到父会话 rawStoreRef 脏绑定�
   }
 });
 
+test("CodexRuntimeAdapter continueSession 遇到 no rollout 且请求 rawStoreRef 已失效时，会回退到本地真实 transcript", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-runtime-continue-missing-"));
+  const discoveredRawStoreRef = join(
+    tempDir,
+    "sessions",
+    "2026",
+    "04",
+    "20",
+    "019d9f76-ef93-7202-8294-e66b2d622841.jsonl"
+  );
+  const staleRawStoreRef = join(tempDir, "runtime", "codex", "stale.stream");
+  const bindings = [];
+  const resumeFromHistoryCalls = [];
+  let closeHandler = null;
+
+  mkdirSync(join(tempDir, "sessions", "2026", "04", "20"), { recursive: true });
+  writeFileSync(
+    discoveredRawStoreRef,
+    [
+      JSON.stringify({
+        type: "session_meta",
+        payload: {
+          id: "019d9f76-ef93-7202-8294-e66b2d622841",
+          cwd: "/tmp/workspace-1"
+        }
+      }),
+      JSON.stringify({
+        type: "event_msg",
+        payload: {
+          type: "user_message",
+          message: "旧会话问题"
+        }
+      }),
+      JSON.stringify({
+        type: "event_msg",
+        payload: {
+          type: "agent_message",
+          message: "旧会话回答"
+        }
+      })
+    ].join("\n"),
+    "utf8"
+  );
+
+  try {
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      transportFactory: () => ({
+        async initialize() {},
+        async startThread() {
+          throw new Error("UNEXPECTED_START_THREAD");
+        },
+        async resumeThread() {
+          throw new Error("no rollout found for thread id 019d9f76-ef93-7202-8294-e66b2d622841");
+        },
+        async resumeThreadFromHistory(input) {
+          resumeFromHistoryCalls.push(input);
+          return {
+            providerSessionId: "rebuilt-historical-thread",
+            rawStoreRef: null
+          };
+        },
+        async startTurn() {
+          closeHandler?.(null);
+        },
+        async steerTurn() {},
+        async interruptTurn() {},
+        setNotificationHandler() {},
+        setServerRequestHandler() {},
+        setOnClose(handler) {
+          closeHandler = handler;
+        },
+        isClosed() {
+          return false;
+        },
+        close() {}
+      })
+    });
+
+    const launch = await adapter.continueSession(
+      createRunRequest({
+        providerSessionId: "019d9f76-ef93-7202-8294-e66b2d622841",
+        rawStoreRef: staleRawStoreRef
+      }),
+      {
+        async emit() {},
+        updateSessionBinding(binding) {
+          bindings.push(binding);
+        }
+      }
+    );
+
+    await launch.completed;
+
+    assert.equal(resumeFromHistoryCalls.length, 1);
+    assert.deepEqual(
+      resumeFromHistoryCalls[0]?.history,
+      [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "旧会话问题" }]
+        },
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "旧会话回答" }]
+        }
+      ]
+    );
+    assert.equal(launch.providerSessionId, "rebuilt-historical-thread");
+    assert.equal(launch.rawStoreRef, discoveredRawStoreRef);
+    assert.equal(bindings.at(0)?.providerSessionId, "rebuilt-historical-thread");
+    assert.equal(bindings.at(0)?.rawStoreRef, discoveredRawStoreRef);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexRuntimeAdapter 会把运行中追加消息转发到 app-server 的 steerTurn", async () => {
   const steerCalls = [];
   let closeHandler = null;
