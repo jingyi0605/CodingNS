@@ -1,4 +1,5 @@
 import { AppError } from "../../shared/errors/app-error.js";
+import { normalizeProviderUsageLimit } from "./session-provider-usage-limit.js";
 
 export function mapSessionProviderError(error: unknown): AppError {
   if (error instanceof AppError) {
@@ -252,6 +253,24 @@ export function mapSessionProviderError(error: unknown): AppError {
       errorCode: "PROVIDER_IO_ERROR",
       detail: error.message
     });
+  }
+
+  if (error instanceof Error) {
+    const providerUsageLimit = normalizeProviderUsageLimit({
+      text: error.message,
+      source: "error"
+    });
+
+    if (providerUsageLimit) {
+      return new AppError({
+        statusCode: 429,
+        errorCode: "PROVIDER_USAGE_LIMIT_EXCEEDED",
+        detail: providerUsageLimit.summary,
+        data: {
+          providerUsageLimit
+        }
+      });
+    }
   }
 
   return new AppError({

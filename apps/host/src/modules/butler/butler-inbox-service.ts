@@ -285,6 +285,7 @@ export class ButlerInboxService {
         {
           projectId: project.id,
           butlerSessionId: session.id,
+          providerId: session.provider === "claude-code" ? "claude-code" : "codex",
           objective:
             current.assistantState.analysisSummary?.trim()
               ? [

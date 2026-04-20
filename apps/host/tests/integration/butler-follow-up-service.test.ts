@@ -20,6 +20,7 @@ describe("ButlerFollowUpService", () => {
   function createService(options: {
     latestAssistantText?: string;
     runningState?: "completed" | "failed" | "interrupted" | "running";
+    sessionLastMessageAt?: string;
     sendLiveMessageError?: Error;
     enqueueLiveMessageError?: Error;
     permissionRequests?: Array<{
@@ -38,6 +39,7 @@ describe("ButlerFollowUpService", () => {
       riskLevel?: "low" | "medium" | "high";
     };
   }) {
+    const sessionLastMessageAt = options.sessionLastMessageAt ?? "2026-04-07T00:05:00.000Z";
     const project: ButlerProject = {
       id: "project-1",
       workspaceId: "workspace-1",
@@ -93,17 +95,17 @@ describe("ButlerFollowUpService", () => {
       }
 
       return {
-        sessionId: "session-1",
+        sessionId: "assistant-session-1",
         acceptedAt: "2026-04-07T00:06:00.000Z",
         clientRequestId: input.clientRequestId,
         provider: "codex",
-        providerSessionId: "provider-session-1",
+        providerSessionId: "provider-follow-up-1",
         message: {
           messageId: "message-1",
           provider: "codex",
-          providerSessionId: "provider-session-1",
+          providerSessionId: "provider-follow-up-1",
           role: "user",
-          content: options.evaluationJson.continuePrompt ?? "继续推进",
+          content: "评估跟进任务",
           timestamp: "2026-04-07T00:06:00.000Z",
           sequence: 13,
           rawRef: "raw-1"
@@ -157,35 +159,24 @@ describe("ButlerFollowUpService", () => {
       }
     );
 
-    const startPatrolSession = vi.fn(async () => ({
-      sessionId: "follow-up-eval-session-1",
+    const startAssistantSession = vi.fn(async () => ({
+      id: "assistant-butler-session-1",
+      projectId: "project-1",
+      sessionId: "assistant-session-1",
       provider: "codex",
-      providerSessionId: "provider-follow-up-1",
-      acceptedAt: "2026-04-07T00:05:30.000Z"
-    }));
-    const waitForSessionTerminal = vi.fn(async () => {});
-    const readPatrolResult = vi.fn(async () => ({
-      assistantMessages: [
-        `${options.evaluationJson.summary}\n\`\`\`json\n${JSON.stringify(options.evaluationJson, null, 2)}\n\`\`\``
-      ],
-      latestAssistantMessage:
-        `${options.evaluationJson.summary}\n\`\`\`json\n${JSON.stringify(options.evaluationJson, null, 2)}\n\`\`\``,
-      structured: {
-        summary: options.evaluationJson.summary,
-        riskLevel: options.evaluationJson.riskLevel ?? "medium",
-        suggestions: [],
-        progressState: "working",
-        riskFlags: [],
-        nextActions: [],
-        rawJson: JSON.stringify(options.evaluationJson)
-      }
+      title: "跟进助手",
+      isArchived: false,
+      role: "adhoc",
+      ownershipMode: "managed",
+      status: "running",
+      runningState: "completed",
+      lastSummary: "跟进上下文已建立",
+      lastCheckpointAt: "2026-04-07T00:05:30.000Z",
+      createdAt: "2026-04-07T00:05:30.000Z",
+      updatedAt: "2026-04-07T00:05:30.000Z"
     }));
     const providerAdapterRegistry = {
-      get: vi.fn(() => ({
-        startPatrolSession,
-        waitForSessionTerminal,
-        readPatrolResult
-      }))
+      get: vi.fn(() => ({}))
     } as unknown as ProviderAdapterRegistry;
     const workspaceService = {
       importWorkspace: vi.fn(() => ({
@@ -210,9 +201,9 @@ describe("ButlerFollowUpService", () => {
         rawStoreRef: "raw-session-1",
         title: "登录页开发",
         messageCount: 12,
-        lastMessageAt: "2026-04-07T00:05:00.000Z",
+        lastMessageAt: sessionLastMessageAt,
         createdAt: "2026-04-07T00:00:00.000Z",
-        updatedAt: "2026-04-07T00:05:00.000Z",
+        updatedAt: sessionLastMessageAt,
         syncStatus: null,
         syncCursor: null,
         lastSyncAt: null,
@@ -226,36 +217,65 @@ describe("ButlerFollowUpService", () => {
         lastSeenAt: null,
         activityState: "completed_unread"
       })),
-      readRecentHistoryEnvelope: vi.fn(async () => ({
-        type: "session.delta",
-        sessionId: "session-1",
-        cursor: "cursor-1",
-        messages: [
-          {
-            messageId: "assistant-1",
-            provider: "codex",
-            providerSessionId: "provider-session-1",
-            role: "assistant",
-            kind: "text",
-            content:
-              options.latestAssistantText ??
-              "登录页验证码已经接通，但 spec 里还有收尾项没有完成。",
-            timestamp: "2026-04-07T00:05:00.000Z",
-            sequence: 12,
-            rawRef: "raw-1"
-          }
-        ]
-      }))
+      readRecentHistoryEnvelope: vi.fn(async (sessionId: string) => {
+        if (sessionId === "assistant-session-1") {
+          return {
+            type: "session.delta",
+            sessionId,
+            cursor: "assistant-cursor-1",
+            messages: [
+              {
+                messageId: "assistant-follow-up-1",
+                provider: "codex",
+                providerSessionId: "provider-follow-up-1",
+                role: "assistant",
+                kind: "text",
+                content:
+                  `${options.evaluationJson.summary}\n\`\`\`json\n${JSON.stringify(options.evaluationJson, null, 2)}\n\`\`\``,
+                timestamp: "2026-04-07T00:06:10.000Z",
+                sequence: 4,
+                rawRef: "assistant-raw-1"
+              }
+            ]
+          };
+        }
+
+        return {
+          type: "session.delta",
+          sessionId: "session-1",
+          cursor: "cursor-1",
+          messages: [
+            {
+              messageId: "assistant-1",
+              provider: "codex",
+              providerSessionId: "provider-session-1",
+              role: "assistant",
+              kind: "text",
+              content:
+                options.latestAssistantText ??
+                "登录页验证码已经接通，但 spec 里还有收尾项没有完成。",
+              timestamp: sessionLastMessageAt,
+              sequence: 12,
+              rawRef: "raw-1"
+            }
+          ]
+        };
+      })
     } as unknown as Pick<SessionHistoryService, "getSession" | "readRecentHistoryEnvelope">;
     const sessionLiveRuntimeService = {
-      getSessionRuntime: vi.fn(async () => ({
-        sessionId: "session-1",
-        runningState: options.runningState ?? "completed"
+      getSessionRuntime: vi.fn(async (sessionId: string) => ({
+        sessionId,
+        runningState: sessionId === "assistant-session-1" ? "completed" : (options.runningState ?? "completed")
       })),
       listPermissionRequests,
       replyPermissionRequest,
       sendLiveMessage,
-      enqueueLiveMessage
+      enqueueLiveMessage,
+      interruptSession: vi.fn(async () => ({
+        sessionId: "assistant-session-1",
+        interrupted: true,
+        detail: null
+      }))
     } as unknown as Pick<
       SessionLiveRuntimeService,
       | "getSessionRuntime"
@@ -263,6 +283,7 @@ describe("ButlerFollowUpService", () => {
       | "replyPermissionRequest"
       | "sendLiveMessage"
       | "enqueueLiveMessage"
+      | "interruptSession"
     >;
 
     const service = new ButlerFollowUpService(
@@ -284,8 +305,9 @@ describe("ButlerFollowUpService", () => {
           title: "登录页开发",
           isArchived: false,
           runningState: options.runningState ?? "completed"
-        }))
-      } as unknown as Pick<ButlerSessionService, "captureSessionSnapshot">,
+        })),
+        startSession: startAssistantSession
+      } as unknown as Pick<ButlerSessionService, "captureSessionSnapshot" | "startSession">,
       taskRepository,
       sessionHistoryService,
       {
@@ -296,9 +318,9 @@ describe("ButlerFollowUpService", () => {
           title: "登录页开发",
           messageCount: 12,
           isArchived: false,
-          lastMessageAt: "2026-04-07T00:05:00.000Z",
+          lastMessageAt: sessionLastMessageAt,
           createdAt: "2026-04-07T00:00:00.000Z",
-          updatedAt: "2026-04-07T00:05:00.000Z"
+          updatedAt: sessionLastMessageAt
         }))
       } as unknown as Pick<SessionIndexRepository, "findIndexRecordBySessionId">,
       sessionLiveRuntimeService,
@@ -316,9 +338,7 @@ describe("ButlerFollowUpService", () => {
       enqueueLiveMessage,
       listPermissionRequests,
       replyPermissionRequest,
-      startPatrolSession,
-      waitForSessionTerminal,
-      readPatrolResult,
+      startAssistantSession,
       workspaceService,
       providerAdapterRegistry,
       sessionMessageOriginRepository,
@@ -331,9 +351,7 @@ describe("ButlerFollowUpService", () => {
     const {
       service,
       sendLiveMessage,
-      readPatrolResult,
-      providerAdapterRegistry,
-      startPatrolSession,
+      startAssistantSession,
       sessionMessageOriginRepository
     } = createService({
       evaluationJson: {
@@ -349,6 +367,7 @@ describe("ButlerFollowUpService", () => {
       {
         projectId: "project-1",
         butlerSessionId: "butler-session-1",
+        providerId: "codex",
         objective: "把这个功能真正做完"
       },
       "user-1"
@@ -357,25 +376,31 @@ describe("ButlerFollowUpService", () => {
     expect(created.status).toBe("active");
     expect(created.autoContinueCount).toBe(1);
     expect(created.lastAutomationSummary).toContain("继续推进当前 spec");
-    expect(sendLiveMessage).toHaveBeenCalledTimes(1);
-    expect(sendLiveMessage.mock.calls[0]?.[0].content).toBe(
-      "继续未完成的开发工作，先核对当前 spec 还有哪些收尾项没做完，再直接补齐。"
-    );
-    expect(sendLiveMessage.mock.calls[0]?.[0].clientRequestId).toMatch(/^butler-follow-up:/);
-    expect((sessionMessageOriginRepository.upsert as any).mock.calls[0][0]).toEqual(
+    expect(startAssistantSession).toHaveBeenCalledTimes(1);
+    expect(startAssistantSession.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
-        sessionId: "session-1",
-        origin: "butler_proxy",
-        originRef: expect.any(String),
-        messageId: expect.any(String)
+        providerId: "codex",
+        ownershipMode: "managed"
       })
     );
-    expect((providerAdapterRegistry.get as any).mock.calls[0][0]).toBe("codex");
-    expect(readPatrolResult).toHaveBeenCalledTimes(1);
-    expect(startPatrolSession.mock.calls[0]?.[0].prompt).toContain("只围绕这个核心任务判断是否完成");
-    expect(startPatrolSession.mock.calls[0]?.[0].prompt).toContain("不要把“建议下一步”");
-    expect(startPatrolSession.mock.calls[0]?.[0].prompt).toContain("预设结束条件");
+    expect(startAssistantSession.mock.calls[0]?.[1].content).toContain("专用跟进助手");
+    expect(sendLiveMessage).toHaveBeenCalledTimes(1);
+    expect(sendLiveMessage.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        sessionId: "assistant-session-1",
+        userId: "user-1",
+        clientRequestId: null
+      })
+    );
+    expect(sendLiveMessage.mock.calls[0]?.[0].content).toContain("只围绕这个核心任务判断是否完成");
+    expect(sendLiveMessage.mock.calls[0]?.[0].content).toContain("不要把“建议下一步”");
+    expect(sendLiveMessage.mock.calls[0]?.[0].content).toContain("预设结束条件");
+    expect(sendLiveMessage.mock.calls[0]?.[0].content).toContain("codingns assistant sessions send");
+    expect((sessionMessageOriginRepository.upsert as any).mock.calls).toHaveLength(0);
     expect(created.maxAutoContinueCount).toBe(5);
+    expect(created.providerId).toBe("codex");
+    expect(created.assistantButlerSessionId).toBe("assistant-butler-session-1");
+    expect(created.assistantSessionId).toBe("assistant-session-1");
     expect(created.rounds).toHaveLength(1);
     expect(created.rounds[0]).toEqual(
       expect.objectContaining({
@@ -413,44 +438,36 @@ describe("ButlerFollowUpService", () => {
   });
 
   it("运行时追加受限时会自动降级入队，而不是把跟进任务判成失败", async () => {
-    const { service, sendLiveMessage, enqueueLiveMessage, sessionMessageOriginRepository } =
-      createService({
-        sendLiveMessageError: new AppError({
-          statusCode: 409,
-          errorCode: "IN_RUN_INPUT_NOT_SUPPORTED",
-          detail: "当前会话正在运行，但当前 provider 还不支持在运行中继续输入"
-        }),
-        evaluationJson: {
-          decision: "continue",
-          summary: "目标还没做完，继续推进当前 spec 的剩余开发。",
-          waitingReason: null,
-          continuePrompt: "继续未完成的开发工作，保持故事推进，不要停在总结。",
-          riskLevel: "medium"
-        }
-      });
+    const { service, sendLiveMessage, enqueueLiveMessage } = createService({
+      sendLiveMessageError: new AppError({
+        statusCode: 409,
+        errorCode: "IN_RUN_INPUT_NOT_SUPPORTED",
+        detail: "当前会话正在运行，但当前 provider 还不支持在运行中继续输入"
+      }),
+      evaluationJson: {
+        decision: "continue",
+        summary: "目标还没做完，继续推进当前 spec 的剩余开发。",
+        waitingReason: null,
+        continuePrompt: "继续未完成的开发工作，保持故事推进，不要停在总结。",
+        riskLevel: "medium"
+      }
+    });
 
     const created = await service.createTask(
       {
         projectId: "project-1",
         butlerSessionId: "butler-session-1",
+        providerId: "codex",
         objective: "帮我把这个会话的故事继续写完"
       },
       "user-1"
     );
 
     expect(created.status).toBe("active");
-    expect(created.autoContinueCount).toBe(1);
-    expect(created.lastAutomationSummary).toContain("已转入消息队列");
+    expect(created.autoContinueCount).toBe(0);
+    expect(created.lastAutomationSummary).toContain("等待下一次检查");
     expect(sendLiveMessage).toHaveBeenCalledTimes(1);
-    expect(enqueueLiveMessage).toHaveBeenCalledTimes(1);
-    expect((sessionMessageOriginRepository.upsert as any).mock.calls[0][0]).toEqual(
-      expect.objectContaining({
-        sessionId: "session-1",
-        origin: "butler_proxy",
-        originRef: expect.any(String),
-        messageId: null
-      })
-    );
+    expect(enqueueLiveMessage).not.toHaveBeenCalled();
   });
 
   it("会在会话进入终态时立刻触发重评，而不是继续等下一轮轮询", async () => {
@@ -469,6 +486,7 @@ describe("ButlerFollowUpService", () => {
       {
         projectId: "project-1",
         butlerSessionId: "butler-session-1",
+        providerId: "codex",
         objective: "把这个功能真正做完"
       },
       "user-1"
@@ -513,6 +531,87 @@ describe("ButlerFollowUpService", () => {
     expect(updated.completedAt).toBe("2026-04-07T00:06:30.000Z");
   });
 
+  it("会把会话里的额度限制提示归一化成自动等待，而不是继续误判", async () => {
+    const sessionLastMessageAt = new Date().toISOString();
+    const retryClock = formatRetryClock(new Date(Date.now() + 2 * 60 * 60 * 1000));
+    const { service, sendLiveMessage } = createService({
+      runningState: "failed",
+      sessionLastMessageAt,
+      latestAssistantText:
+        `Error running remote compact task: You've hit your usage limit. Upgrade to Pro or try again at ${retryClock}.`,
+      evaluationJson: {
+        decision: "continue",
+        summary: "这里不该走到评估器",
+        waitingReason: null,
+        continuePrompt: "继续推进",
+        riskLevel: "medium"
+      }
+    });
+
+    const created = await service.createTask(
+      {
+        projectId: "project-1",
+        butlerSessionId: "butler-session-1",
+        providerId: "codex",
+        objective: "继续把当前会话跟完"
+      },
+      "user-1"
+    );
+
+    expect(created.status).toBe("active");
+    expect(created.nextCheckAt).not.toBeNull();
+    expect(Date.parse(created.nextCheckAt!)).toBeGreaterThan(Date.parse(sessionLastMessageAt));
+    expect(created.lastAutomationSummary).toContain("额度已达上限");
+    expect(sendLiveMessage).not.toHaveBeenCalled();
+  });
+
+  it("自动续接时撞上额度限制，会改成冷却等待而不是入队或失败", async () => {
+    const retryAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const { service, sendLiveMessage, enqueueLiveMessage } = createService({
+      sendLiveMessageError: new AppError({
+        statusCode: 429,
+        errorCode: "PROVIDER_USAGE_LIMIT_EXCEEDED",
+        detail: "检测到 provider 额度已达上限，系统会在稍后自动重试。",
+        data: {
+          providerUsageLimit: {
+            category: "usage_limit",
+            providerId: "codex",
+            source: "error",
+            retryAt,
+            retryAfterSeconds: null,
+            rawText:
+              "Error running remote compact task: You've hit your usage limit. Upgrade to Pro or try again at 6:13 PM.",
+            summary: "检测到 provider 额度已达上限，系统会在稍后自动重试。"
+          }
+        }
+      }),
+      evaluationJson: {
+        decision: "continue",
+        summary: "目标还没做完，但先别扩范围。",
+        waitingReason: null,
+        continuePrompt: "继续把剩余工作做完，不要停在总结。",
+        riskLevel: "medium"
+      }
+    });
+
+    const created = await service.createTask(
+      {
+        projectId: "project-1",
+        butlerSessionId: "butler-session-1",
+        providerId: "codex",
+        objective: "继续把当前会话跟完"
+      },
+      "user-1"
+    );
+
+    expect(created.status).toBe("active");
+    expect(created.autoContinueCount).toBe(0);
+    expect(created.nextCheckAt).toBe(retryAt);
+    expect(created.lastAutomationSummary).toContain("额度已达上限");
+    expect(sendLiveMessage).toHaveBeenCalledTimes(1);
+    expect(enqueueLiveMessage).not.toHaveBeenCalled();
+  });
+
   it("达到自动跟进轮数上限后会停止自动续接，并转成 waiting_user", async () => {
     const { service } = createService({
       evaluationJson: {
@@ -528,6 +627,7 @@ describe("ButlerFollowUpService", () => {
       {
         projectId: "project-1",
         butlerSessionId: "butler-session-1",
+        providerId: "codex",
         objective: "把这个功能真正做完",
         maxAutoContinueCount: 1
       },
@@ -559,12 +659,13 @@ describe("ButlerFollowUpService", () => {
       {
         projectId: "project-1",
         butlerSessionId: "butler-session-1",
+        providerId: "codex",
         objective: "把这个功能真正做完"
       },
       "user-1"
     );
 
-    const cancelled = service.cancelTask(created.id, "user-1");
+    const cancelled = await service.cancelTask(created.id, "user-1");
 
     expect(cancelled.status).toBe("cancelled");
     expect(cancelled.nextCheckAt).toBeNull();
@@ -586,6 +687,7 @@ describe("ButlerFollowUpService", () => {
       {
         projectId: "project-1",
         butlerSessionId: "butler-session-1",
+        providerId: "codex",
         objective: "把这个功能真正做完"
       },
       "user-1"
@@ -594,7 +696,7 @@ describe("ButlerFollowUpService", () => {
     expect(created.status).toBe("waiting_user");
     expect(created.waitingReason).toBe("需要你确认失败策略。");
     expect(created.nextCheckAt).toBeNull();
-    expect(sendLiveMessage).not.toHaveBeenCalled();
+    expect(sendLiveMessage).toHaveBeenCalledTimes(1);
   });
 
   it("会在评估结果确认完成时直接收口", async () => {
@@ -612,6 +714,7 @@ describe("ButlerFollowUpService", () => {
       {
         projectId: "project-1",
         butlerSessionId: "butler-session-1",
+        providerId: "codex",
         objective: "把这个功能真正做完"
       },
       "user-1"
@@ -620,7 +723,7 @@ describe("ButlerFollowUpService", () => {
     expect(created.status).toBe("completed");
     expect(created.completedAt).not.toBeNull();
     expect(created.nextCheckAt).toBeNull();
-    expect(sendLiveMessage).not.toHaveBeenCalled();
+    expect(sendLiveMessage).toHaveBeenCalledTimes(1);
   });
 
   it("会把 ACTIVE_RUN_EXISTS 降级成入队等待，而不是直接失败", async () => {
@@ -641,13 +744,14 @@ describe("ButlerFollowUpService", () => {
       {
         projectId: "project-1",
         butlerSessionId: "butler-session-1",
+        providerId: "codex",
         objective: "把这个功能真正做完"
       },
       "user-1"
     );
 
     expect(created.status).toBe("active");
-    expect(created.lastAutomationSummary).toContain("已转入消息队列");
+    expect(created.lastAutomationSummary).toContain("等待下一次检查");
     expect(created.waitingReason).toBeNull();
   });
 
@@ -698,6 +802,7 @@ describe("ButlerFollowUpService", () => {
       {
         projectId: "project-1",
         butlerSessionId: "butler-session-1",
+        providerId: "codex",
         objective: "自动处理当前会话的权限申请"
       },
       "user-1"
@@ -791,6 +896,9 @@ function createLegacyStartedTask(): ButlerFollowUpTask {
     projectId: "project-1",
     butlerSessionId: "butler-session-1",
     sessionId: "session-1",
+    providerId: "codex",
+    assistantButlerSessionId: "assistant-butler-session-1",
+    assistantSessionId: "assistant-session-1",
     createdByUserId: "user-1",
     objective: "清理 started 轮次",
     completionCriteria: "第一次真正跟进必须显示为第 1 轮",
@@ -823,4 +931,13 @@ function createLegacyStartedTask(): ButlerFollowUpTask {
     updatedAt: "2026-04-07T00:05:00.000Z",
     completedAt: null
   };
+}
+
+function formatRetryClock(value: Date): string {
+  const hours = value.getHours();
+  const minutes = String(value.getMinutes()).padStart(2, "0");
+  const meridiem = hours >= 12 ? "PM" : "AM";
+  const displayHour = hours % 12 === 0 ? 12 : hours % 12;
+
+  return `${displayHour}:${minutes} ${meridiem}`;
 }

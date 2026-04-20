@@ -1770,3 +1770,15 @@ function readTableSql(db: Database.Database, tableName: string): string {
 
   return row?.sql ?? "";
 }
+
+  if (!columnNames.has("provider_id")) {
+    db.exec("ALTER TABLE butler_follow_up_tasks ADD COLUMN provider_id TEXT NOT NULL DEFAULT 'codex'");
+  }
+
+  if (!columnNames.has("assistant_butler_session_id")) {
+    db.exec("ALTER TABLE butler_follow_up_tasks ADD COLUMN assistant_butler_session_id TEXT NOT NULL DEFAULT ''");
+  }
+
+  if (!columnNames.has("assistant_session_id")) {
+    db.exec("ALTER TABLE butler_follow_up_tasks ADD COLUMN assistant_session_id TEXT NOT NULL DEFAULT ''");
+  }

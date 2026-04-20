@@ -76,6 +76,9 @@ describe("butler follow-up routes", () => {
       workspaceId: "workspace-1",
       butlerSessionId: "butler-session-1",
       sessionId: "session-1",
+      providerId: "codex",
+      assistantButlerSessionId: "assistant-butler-session-1",
+      assistantSessionId: "assistant-session-1",
       sessionTitle: "登录页开发",
       objective: "把这个功能真正做完",
       completionCriteria: "只有当登录页功能按当前需求完成后才结束跟进。",
@@ -121,6 +124,7 @@ describe("butler follow-up routes", () => {
       payload: {
         projectId: "project-1",
         butlerSessionId: "butler-session-1",
+        providerId: "codex",
         objective: "把这个功能真正做完",
         completionCriteria: "只有当登录页功能按当前需求完成后才结束跟进。",
         maxAutoContinueCount: 4
@@ -132,6 +136,7 @@ describe("butler follow-up routes", () => {
     expect((butlerFollowUpService.createTask as any).mock.calls[0][0]).toEqual({
       projectId: "project-1",
       butlerSessionId: "butler-session-1",
+      providerId: "codex",
       objective: "把这个功能真正做完",
       completionCriteria: "只有当登录页功能按当前需求完成后才结束跟进。",
       maxAutoContinueCount: 4
@@ -147,6 +152,9 @@ describe("butler follow-up routes", () => {
       workspaceId: "workspace-1",
       butlerSessionId: "butler-session-1",
       sessionId: "session-1",
+      providerId: "codex",
+      assistantButlerSessionId: "assistant-butler-session-1",
+      assistantSessionId: "assistant-session-1",
       sessionTitle: "登录页开发",
       objective: "把这个功能真正做完",
       completionCriteria: "只有当登录页功能按当前需求完成后才结束跟进。",
@@ -216,6 +224,9 @@ describe("butler follow-up routes", () => {
       workspaceId: "workspace-1",
       butlerSessionId: "butler-session-1",
       sessionId: "session-1",
+      providerId: "codex",
+      assistantButlerSessionId: "assistant-butler-session-1",
+      assistantSessionId: "assistant-session-1",
       sessionTitle: "登录页开发",
       objective: "把这个功能真正做完",
       completionCriteria: "只有当登录页功能按当前需求完成后才结束跟进。",

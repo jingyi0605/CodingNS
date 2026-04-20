@@ -34,6 +34,10 @@ import {
 } from "./butler-follow-up-evaluation-instruction-adapter.js";
 import { resolveButlerCodexBackgroundModel } from "./butler-codex-model-policy.js";
 import type { WorkspaceService } from "../workspace/workspace-service.js";
+import {
+  normalizeProviderUsageLimit,
+  type NormalizedProviderUsageLimit
+} from "../sessions/session-provider-usage-limit.js";
 
 const DEFAULT_CHECK_INTERVAL_SECONDS = 300;
 const MIN_CHECK_INTERVAL_SECONDS = 60;
@@ -44,6 +48,8 @@ const MAX_MAX_AUTO_CONTINUE_COUNT = 20;
 const FOLLOW_UP_EVALUATOR_DIRNAME = ".butler-follow-up-evaluator";
 const RECENT_HISTORY_LIMIT = 40;
 const FOLLOW_UP_PERMISSION_CHECK_INTERVAL_MS = 10_000;
+const FOLLOW_UP_ASSISTANT_WAIT_TIMEOUT_MS = 20 * 60_000;
+const FOLLOW_UP_ASSISTANT_WAIT_POLL_INTERVAL_MS = 2_000;
 const FOLLOW_UP_AUTO_APPROVE_ACTION_PREFERENCE = [
   "acceptForSession",
   "allow_session",
@@ -60,6 +66,9 @@ export interface ButlerFollowUpTaskView {
   workspaceId: string;
   butlerSessionId: string;
   sessionId: string;
+  providerId: ButlerFollowUpTask["providerId"];
+  assistantButlerSessionId: string;
+  assistantSessionId: string;
   sessionTitle: string | null;
   objective: string;
   completionCriteria: string;
@@ -91,6 +100,7 @@ export interface ButlerFollowUpRunDueTasksResult {
 export interface CreateButlerFollowUpTaskInput {
   projectId: string;
   butlerSessionId: string;
+  providerId: ButlerFollowUpTask["providerId"];
   objective: string;
   completionCriteria?: string;
   maxAutoContinueCount?: number;
@@ -98,10 +108,12 @@ export interface CreateButlerFollowUpTaskInput {
 }
 
 interface FollowUpTaskInspection {
+  providerId: string | null;
   runningState: SessionRunningState | null;
   messageAt: string | null;
   messageCount: number;
   sessionTitle: string | null;
+  providerUsageLimit: NormalizedProviderUsageLimit | null;
   latestAssistantText: string | null;
   transcriptLines: string[];
 }
@@ -116,7 +128,7 @@ interface ButlerFollowUpEvaluationResult {
 
 interface FollowUpTaskExecutionState {
   cancelled: boolean;
-  evaluatorSessionId: string | null;
+  assistantSessionId: string | null;
 }
 
 class FollowUpTaskCancelledError extends Error {
@@ -133,7 +145,10 @@ export class ButlerFollowUpService {
   constructor(
     private readonly butlerProfileService: Pick<ButlerProfileService, "ensureInitialized">,
     private readonly butlerProjectService: Pick<ButlerProjectService, "getById">,
-    private readonly butlerSessionService: Pick<ButlerSessionService, "captureSessionSnapshot">,
+    private readonly butlerSessionService: Pick<
+      ButlerSessionService,
+      "captureSessionSnapshot" | "startSession"
+    >,
     private readonly butlerFollowUpTaskRepository: ButlerFollowUpTaskRepository,
     private readonly sessionHistoryService: Pick<
       SessionHistoryService,
@@ -147,6 +162,7 @@ export class ButlerFollowUpService {
       | "enqueueLiveMessage"
       | "listPermissionRequests"
       | "replyPermissionRequest"
+      | "interruptSession"
     >,
     private readonly workspaceService: Pick<WorkspaceService, "importWorkspace">,
     private readonly providerAdapterRegistry: ProviderAdapterRegistry,
@@ -200,6 +216,7 @@ export class ButlerFollowUpService {
   ): Promise<ButlerFollowUpTaskView> {
     this.butlerProfileService.ensureInitialized();
     const project = this.butlerProjectService.getById(input.projectId);
+    const providerId = normalizeFollowUpProviderId(input.providerId);
     const objective = normalizeObjective(input.objective);
     const completionCriteria = normalizeCompletionCriteria(input.completionCriteria, objective);
     const maxAutoContinueCount = normalizeMaxAutoContinueCount(input.maxAutoContinueCount);
@@ -221,16 +238,43 @@ export class ButlerFollowUpService {
     }
 
     const session = this.sessionHistoryService.getSession(snapshot.sessionId, userId);
+    const inspection = await this.inspectSession(snapshot.sessionId, userId);
+    const assistantSession = await this.butlerSessionService.startSession(
+      project.id,
+      {
+        providerId,
+        role: "adhoc",
+        ownershipMode: "managed",
+        content: buildFollowUpBootstrapPrompt({
+          project,
+          sourceButlerSessionId: input.butlerSessionId,
+          sourceSessionId: snapshot.sessionId,
+          sourceSessionTitle: inspection.sessionTitle,
+          objective,
+          completionCriteria,
+          maxAutoContinueCount,
+          latestAssistantText: inspection.latestAssistantText,
+          transcriptLines: inspection.transcriptLines
+        }),
+        model: resolveFollowUpModel(providerId, this.sourceCodexHomeDir),
+        reasoningLevel: "low",
+        permissionMode: "default"
+      },
+      userId
+    );
     const timestamp = nowIso();
     const initialSummary =
       snapshot.runningState === "starting" || snapshot.runningState === "running"
-        ? `已开始跟进，先等待当前运行结束，再由后台评估助手决定下一步。默认最多自动推进 ${maxAutoContinueCount} 轮。`
-        : `已开始跟进，准备由后台评估助手检查当前进展。默认最多自动推进 ${maxAutoContinueCount} 轮。`;
+        ? `已创建跟进助手会话，先等待当前运行结束，再由该会话决定是否继续推进。默认最多自动推进 ${maxAutoContinueCount} 轮。`
+        : `已创建跟进助手会话，准备由该会话检查当前进展并决定是否继续推进。默认最多自动推进 ${maxAutoContinueCount} 轮。`;
     const task = this.butlerFollowUpTaskRepository.create({
       id: createId(),
       projectId: project.id,
       butlerSessionId: input.butlerSessionId,
       sessionId: snapshot.sessionId,
+      providerId,
+      assistantButlerSessionId: assistantSession.id,
+      assistantSessionId: assistantSession.sessionId,
       createdByUserId: userId,
       objective,
       completionCriteria,
@@ -314,7 +358,7 @@ export class ButlerFollowUpService {
       createdAt: timestamp
     });
 
-    await this.stopActiveTaskAutomation(execution);
+    await this.stopActiveTaskAutomation(task, execution);
 
     const project = this.butlerProjectService.getById(updated.projectId);
     const index = this.sessionIndexRepository.findIndexRecordBySessionId(updated.sessionId);
@@ -384,7 +428,6 @@ export class ButlerFollowUpService {
     const execution = this.beginTaskExecution(task.id);
 
     try {
-      const profile = this.butlerProfileService.ensureInitialized();
       const project = this.butlerProjectService.getById(task.projectId);
       const inspection = await this.inspectTask(task);
       this.ensureTaskExecutionActive(task.id, execution);
@@ -435,8 +478,29 @@ export class ButlerFollowUpService {
         });
       }
 
+      if (shouldWaitForProviderUsageLimit(inspection.providerUsageLimit, referenceAt)) {
+        const nextCheckAt = resolveProviderUsageLimitNextCheckAt(
+          inspection.providerUsageLimit,
+          referenceAt,
+          task.checkIntervalSeconds
+        );
+
+        return this.persistIfExecutionActive(task.id, execution, {
+          ...baseUpdate,
+          status: "active",
+          waitingReason: null,
+          nextCheckAt,
+          completedAt: null,
+          lastAutomationAt: referenceAt,
+          lastAutomationSummary: buildFollowUpUsageLimitSummary(
+            inspection.providerUsageLimit,
+            "检测到当前会话被 provider 额度限制暂时挡住。"
+          )
+        });
+      }
+
       try {
-        const evaluation = await this.evaluateTask(profile, project, task, inspection, runningState, execution);
+        const evaluation = await this.evaluateTask(project, task, inspection, runningState, execution);
         this.ensureTaskExecutionActive(task.id, execution);
 
         switch (evaluation.decision) {
@@ -502,7 +566,7 @@ export class ButlerFollowUpService {
               return this.persistWithRoundIfExecutionActive(task.id, execution, {
                 ...baseUpdate,
                 status: "failed",
-                waitingReason: "后台评估助手没有返回可继续推进的指令。",
+                waitingReason: "跟进助手会话没有声明本轮已发送的继续推进消息。",
                 nextCheckAt: null,
                 completedAt: null,
                 lastAutomationAt: referenceAt,
@@ -511,21 +575,13 @@ export class ButlerFollowUpService {
                 kind: "failed",
                 status: "failed",
                 summary: evaluation.summary,
-                waitingReason: "后台评估助手没有返回可继续推进的指令。",
+                waitingReason: "跟进助手会话没有声明本轮已发送的继续推进消息。",
                 continuePrompt: null,
                 observedRunningState: runningState,
                 autoContinueCount: task.autoContinueCount,
                 createdAt: referenceAt
               });
             }
-
-            this.ensureTaskExecutionActive(task.id, execution);
-            const sendResult = await this.sendContinuePrompt(
-              task,
-              evaluation.continuePrompt,
-              referenceAt
-            );
-            this.ensureTaskExecutionActive(task.id, execution);
 
             this.butlerSessionService.captureSessionSnapshot(
               task.projectId,
@@ -535,11 +591,6 @@ export class ButlerFollowUpService {
             );
 
             const nextAutoContinueCount = task.autoContinueCount + 1;
-            const nextSummary =
-              sendResult.delivery === "queued"
-                ? buildQueuedFollowUpSummary(evaluation.summary, sendResult.queueItem)
-                : evaluation.summary;
-
             return this.persistWithRoundIfExecutionActive(task.id, execution, {
               ...baseUpdate,
               status: "active",
@@ -547,11 +598,11 @@ export class ButlerFollowUpService {
               nextCheckAt: shiftSeconds(referenceAt, task.checkIntervalSeconds),
               lastAutomationAt: referenceAt,
               autoContinueCount: nextAutoContinueCount,
-              lastAutomationSummary: nextSummary
+              lastAutomationSummary: evaluation.summary
             }, {
-              kind: sendResult.delivery === "queued" ? "queued" : "continue",
+              kind: "continue",
               status: "active",
-              summary: nextSummary,
+              summary: evaluation.summary,
               waitingReason: null,
               continuePrompt: evaluation.continuePrompt,
               observedRunningState: runningState,
@@ -583,6 +634,27 @@ export class ButlerFollowUpService {
           return this.butlerFollowUpTaskRepository.findById(task.id) ?? task;
         }
 
+        const providerUsageLimit = resolveProviderUsageLimitFromError(error, task.providerId, referenceAt);
+
+        if (providerUsageLimit) {
+          return this.persistIfExecutionActive(task.id, execution, {
+            ...baseUpdate,
+            status: "active",
+            waitingReason: null,
+            nextCheckAt: resolveProviderUsageLimitNextCheckAt(
+              providerUsageLimit,
+              referenceAt,
+              task.checkIntervalSeconds
+            ),
+            completedAt: null,
+            lastAutomationAt: referenceAt,
+            lastAutomationSummary: buildFollowUpUsageLimitSummary(
+              providerUsageLimit,
+              "跟进助手会话当前被 provider 额度限制暂时挡住。"
+            )
+          });
+        }
+
         if (isDeferredFollowUpSendError(error)) {
           return this.persistIfExecutionActive(task.id, execution, {
             ...baseUpdate,
@@ -591,7 +663,7 @@ export class ButlerFollowUpService {
             nextCheckAt: shiftSeconds(referenceAt, task.checkIntervalSeconds),
             completedAt: null,
             lastAutomationAt: referenceAt,
-            lastAutomationSummary: "当前会话又进入运行态，本轮不插话，等待下一次检查。"
+            lastAutomationSummary: "跟进助手会话当前仍在运行，本轮继续等待下一次检查。"
           });
         }
 
@@ -750,6 +822,7 @@ export class ButlerFollowUpService {
 
   private async sendContinuePrompt(
     task: ButlerFollowUpTask,
+    providerId: string | null,
     continuePrompt: string,
     referenceAt: string
   ): Promise<
@@ -759,6 +832,10 @@ export class ButlerFollowUpService {
     | {
         delivery: "queued";
         queueItem: SessionQueueItemView;
+      }
+    | {
+        delivery: "cooldown";
+        providerUsageLimit: NormalizedProviderUsageLimit;
       }
   > {
     const clientRequestId = buildFollowUpClientRequestId(task.id, referenceAt);
@@ -783,6 +860,15 @@ export class ButlerFollowUpService {
         delivery: "sent"
       };
     } catch (error) {
+      const providerUsageLimit = resolveProviderUsageLimitFromError(error, providerId, referenceAt);
+
+      if (providerUsageLimit) {
+        return {
+          delivery: "cooldown",
+          providerUsageLimit
+        };
+      }
+
       if (!isDeferredFollowUpSendError(error)) {
         throw error;
       }
@@ -829,25 +915,41 @@ export class ButlerFollowUpService {
   }
 
   private async inspectTask(task: ButlerFollowUpTask): Promise<FollowUpTaskInspection> {
-    const session = this.sessionHistoryService.getSession(task.sessionId, task.createdByUserId);
+    return this.inspectSession(task.sessionId, task.createdByUserId);
+  }
+
+  private async inspectSession(
+    sessionId: string,
+    userId: string
+  ): Promise<FollowUpTaskInspection> {
+    const session = this.sessionHistoryService.getSession(sessionId, userId);
     const runtime = await this.sessionLiveRuntimeService.getSessionRuntime(
-      task.sessionId,
-      task.createdByUserId
+      sessionId,
+      userId
     );
     const envelope = await this.sessionHistoryService.readRecentHistoryEnvelope(
-      task.sessionId,
+      sessionId,
       RECENT_HISTORY_LIMIT
     );
+    const latestAssistantText = resolveLatestAssistantText(envelope);
     const sortedMessages = (envelope?.messages ?? [])
       .slice()
       .sort((left, right) => left.sequence - right.sequence);
+    const providerUsageLimit = resolveInspectionProviderUsageLimit(
+      session.provider,
+      session.lastErrorDetail,
+      latestAssistantText,
+      session.lastMessageAt
+    );
 
     return {
+      providerId: session.provider,
       runningState: normalizeRunningState(runtime.runningState),
       messageAt: session.lastMessageAt,
       messageCount: session.messageCount,
       sessionTitle: session.title ?? null,
-      latestAssistantText: resolveLatestAssistantText(envelope),
+      providerUsageLimit,
+      latestAssistantText,
       transcriptLines: sortedMessages.map((message) => renderHistoryLine(
         message.sequence,
         message.role,
@@ -859,20 +961,14 @@ export class ButlerFollowUpService {
   }
 
   private async evaluateTask(
-    profile: ButlerProfile,
     project: ButlerProject,
     task: ButlerFollowUpTask,
     inspection: FollowUpTaskInspection,
     runningState: SessionRunningState | null,
     execution: FollowUpTaskExecutionState
   ): Promise<ButlerFollowUpEvaluationResult> {
-    const evaluatorWorkspacePath = path.join(profile.workspacePath, FOLLOW_UP_EVALUATOR_DIRNAME);
-    ensureButlerWorkspaceIsolation(evaluatorWorkspacePath);
-    this.writeEvaluationInstructionFiles(evaluatorWorkspacePath, profile.providerId);
-    this.syncCodexInstructionConfig(profile.providerId, evaluatorWorkspacePath);
-    const workspace = this.workspaceService.importWorkspace(evaluatorWorkspacePath, "代码助手");
     const instruction = this.instructionAdapter.buildInstruction({
-      providerId: profile.providerId,
+      providerId: task.providerId,
       project,
       sessionId: task.sessionId,
       butlerSessionId: task.butlerSessionId,
@@ -888,27 +984,30 @@ export class ButlerFollowUpService {
       latestAssistantText: inspection.latestAssistantText,
       transcriptLines: inspection.transcriptLines
     });
-    const adapter = this.providerAdapterRegistry.get(profile.providerId);
-    const launch = await adapter.startPatrolSession({
-      workspaceId: workspace.id,
-      userId: task.createdByUserId,
-      providerId: profile.providerId,
-      prompt: instruction.prompt,
-      model: resolveFollowUpModel(profile.providerId, this.sourceCodexHomeDir),
-      reasoningLevel: "low",
-      permissionMode: "default",
-      instructionFilePath: resolveFollowUpInstructionFilePath(profile.providerId, evaluatorWorkspacePath)
-    });
-    execution.evaluatorSessionId = launch.sessionId;
+    execution.assistantSessionId = task.assistantSessionId;
 
     try {
-      await adapter.waitForSessionTerminal(launch.sessionId);
+      await this.waitForAssistantSessionTerminal(task.assistantSessionId, task.createdByUserId);
       this.ensureTaskExecutionActive(task.id, execution);
-      const result = await adapter.readPatrolResult(launch.sessionId);
+      await this.sessionLiveRuntimeService.sendLiveMessage({
+        sessionId: task.assistantSessionId,
+        userId: task.createdByUserId,
+        content: instruction.prompt,
+        clientRequestId: null,
+        runtimeOptions: {
+          model: resolveFollowUpModel(task.providerId, this.sourceCodexHomeDir),
+          reasoningLevel: "low",
+          permissionMode: "default",
+          attachments: []
+        }
+      });
+      await this.waitForAssistantSessionTerminal(task.assistantSessionId, task.createdByUserId);
+      this.ensureTaskExecutionActive(task.id, execution);
+      const result = await this.readAssistantSessionResult(task.assistantSessionId, task.createdByUserId);
       return parseEvaluationResult(result);
     } finally {
-      if (execution.evaluatorSessionId === launch.sessionId) {
-        execution.evaluatorSessionId = null;
+      if (execution.assistantSessionId === task.assistantSessionId) {
+        execution.assistantSessionId = null;
       }
     }
   }
@@ -916,7 +1015,7 @@ export class ButlerFollowUpService {
   private beginTaskExecution(taskId: string): FollowUpTaskExecutionState {
     const execution: FollowUpTaskExecutionState = {
       cancelled: false,
-      evaluatorSessionId: null
+      assistantSessionId: null
     };
     this.activeExecutionStateByTaskId.set(taskId, execution);
     return execution;
@@ -943,77 +1042,70 @@ export class ButlerFollowUpService {
     return Boolean(current && current === execution && !execution.cancelled);
   }
 
-  private async stopActiveTaskAutomation(execution: FollowUpTaskExecutionState | null): Promise<void> {
-    if (!execution?.evaluatorSessionId) {
+  private async stopActiveTaskAutomation(
+    task: ButlerFollowUpTask,
+    execution: FollowUpTaskExecutionState | null
+  ): Promise<void> {
+    if (!execution?.assistantSessionId) {
       return;
     }
 
-    const profile = this.butlerProfileService.ensureInitialized();
-    const adapter = this.providerAdapterRegistry.get(profile.providerId);
-
     try {
-      await adapter.interruptPatrolSession(execution.evaluatorSessionId);
+      await this.sessionLiveRuntimeService.interruptSession(
+        execution.assistantSessionId,
+        task.createdByUserId
+      );
     } catch (error) {
-      console.warn("[butler-follow-up] interrupt evaluator session failed", {
-        sessionId: execution.evaluatorSessionId,
+      console.warn("[butler-follow-up] interrupt assistant follow-up session failed", {
+        sessionId: execution.assistantSessionId,
         error: error instanceof Error ? error.message : String(error)
       });
     } finally {
-      execution.evaluatorSessionId = null;
+      execution.assistantSessionId = null;
     }
   }
 
-  private writeEvaluationInstructionFiles(
-    workspacePath: string,
-    providerId: ButlerProfile["providerId"]
-  ): void {
-    const content = [
-      "# 代码助手后台跟进评估规则",
-      "",
-      "你不是普通项目会话，也不是面向用户的聊天助手。",
-      "你的身份是后台跟进评估器，只负责判断某个开发会话现在该继续推进、等用户决定、还是已经完成。",
-      "如果目标或上下文里提到了 spec，完成标准只能按 spec 明确要求的必做项判断。",
-      "“建议下一步”“最佳实践”“可以顺手优化”这类内容默认都不是必做项，不能据此继续扩范围。",
-      "如果没有 spec，就先从目标和最近消息里归纳一句当前核心任务，后续只能围绕这个核心任务判断，不准无限扩展。",
-      "除非目标本身要求，否则不要把重构、补测试、补体验优化之类建议项升级成必须开发的工作。",
-      "禁止照搬最后一句回复做草率判断，必须结合用户目标、当前运行态和最近消息一起判断。",
-      "如果能继续推进，就直接给出下一条要发给开发会话的中文指令，不要空谈。",
-      "如果确实需要用户决定，要把缺口说清楚，但不要替用户做不存在的决定。",
-      "输出语言必须是中文，先给结论，再给结构化 JSON。"
-    ].join("\n");
+  private async waitForAssistantSessionTerminal(sessionId: string, userId: string): Promise<void> {
+    const startedAt = Date.now();
 
-    writeFileIfChanged(path.join(workspacePath, "AGENTS.md"), `${content}\n`);
+    while (Date.now() - startedAt < FOLLOW_UP_ASSISTANT_WAIT_TIMEOUT_MS) {
+      const runtime = await this.sessionLiveRuntimeService.getSessionRuntime(sessionId, userId);
 
-    if (providerId === "claude-code") {
-      writeFileIfChanged(path.join(workspacePath, "CLAUDE.md"), `${content}\n`);
+      if (isAssistantTerminalRuntimeState(runtime.runningState)) {
+        return;
+      }
+
+      await delay(FOLLOW_UP_ASSISTANT_WAIT_POLL_INTERVAL_MS);
     }
+
+    throw new Error(`BUTLER_FOLLOW_UP_ASSISTANT_WAIT_TIMEOUT:${sessionId}`);
   }
 
-  private syncCodexInstructionConfig(
-    providerId: ButlerProfile["providerId"],
-    workspacePath: string
-  ): void {
-    if (providerId !== "codex" || !this.followUpCodexHomeDir?.trim()) {
-      return;
-    }
+  private async readAssistantSessionResult(
+    sessionId: string,
+    userId: string
+  ): Promise<PatrolSessionResult> {
+    const history = await this.sessionHistoryService.readRecentHistoryEnvelope(sessionId, 80);
+    const assistantMessages =
+      history?.messages
+        .filter((message) => message.role === "assistant" && message.kind === "text")
+        .map((message) => message.content.trim())
+        .filter((message) => message.length > 0) ?? [];
+    const latestAssistantMessage = assistantMessages.at(-1) ?? null;
 
-    const targetHomeDir = path.resolve(this.followUpCodexHomeDir);
-    const sourceHomeDir = resolveSourceCodexHomeDir(this.sourceCodexHomeDir, targetHomeDir);
-    const sourceConfigPath = path.join(sourceHomeDir, "config.toml");
-    const sourceConfigContent =
-      sourceHomeDir !== targetHomeDir && fs.existsSync(sourceConfigPath) && fs.statSync(sourceConfigPath).isFile()
-        ? fs.readFileSync(sourceConfigPath, "utf8")
-        : "";
-    const instructionFilePath = path.join(workspacePath, "AGENTS.md");
-
-    fs.mkdirSync(targetHomeDir, { recursive: true });
-    removeFileIfExists(path.join(targetHomeDir, "AGENTS.md"));
-    removeFileIfExists(path.join(targetHomeDir, "AGENTS.override.md"));
-    syncOptionalFile(path.join(sourceHomeDir, "auth.json"), path.join(targetHomeDir, "auth.json"));
-    writeFileIfChanged(
-      path.join(targetHomeDir, "config.toml"),
-      `${composeCodexConfigContent(sourceConfigContent, instructionFilePath)}\n`
-    );
+    return {
+      assistantMessages,
+      latestAssistantMessage,
+      structured: {
+        summary: null,
+        riskLevel: null,
+        suggestions: [],
+        progressState: "unknown",
+        riskFlags: [],
+        nextActions: [],
+        rawJson: findStructuredJsonCandidate(assistantMessages) ?? extractJsonFromText(latestAssistantMessage)
+      }
+    };
   }
 }
 
@@ -1032,6 +1124,9 @@ function mapTaskView(
     workspaceId,
     butlerSessionId: task.butlerSessionId,
     sessionId: task.sessionId,
+    providerId: task.providerId,
+    assistantButlerSessionId: task.assistantButlerSessionId,
+    assistantSessionId: task.assistantSessionId,
     sessionTitle,
     objective: task.objective,
     completionCriteria: task.completionCriteria,
@@ -1134,6 +1229,25 @@ function normalizeObjective(value: string | undefined): string {
   return normalized;
 }
 
+function normalizeFollowUpProviderId(value: string | undefined): ButlerFollowUpTask["providerId"] {
+  switch (value) {
+    case undefined:
+    case null as never:
+    case "":
+      return "codex";
+    case "codex":
+    case "claude-code":
+      return value;
+    default:
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "会话跟进只允许选择 Codex 或 Claude Code",
+        field: "providerId"
+      });
+  }
+}
+
 function normalizeCompletionCriteria(value: string | undefined, objective: string): string {
   const normalized = value?.trim();
   return normalized && normalized.length > 0
@@ -1170,6 +1284,35 @@ function buildQueuedFollowUpSummary(summary: string, queueItem: SessionQueueItem
   return `${summary} 已转入消息队列，等待当前会话空闲后自动补发（队列项 ${queueItem.orderIndex}）。`;
 }
 
+function buildFollowUpUsageLimitSummary(
+  providerUsageLimit: NormalizedProviderUsageLimit,
+  prefix: string
+): string {
+  return `${prefix} ${providerUsageLimit.summary}`;
+}
+
+function shouldWaitForProviderUsageLimit(
+  providerUsageLimit: NormalizedProviderUsageLimit | null,
+  referenceAt: string
+): providerUsageLimit is NormalizedProviderUsageLimit {
+  return Boolean(
+    providerUsageLimit?.retryAt
+    && Date.parse(providerUsageLimit.retryAt) > Date.parse(referenceAt)
+  );
+}
+
+function resolveProviderUsageLimitNextCheckAt(
+  providerUsageLimit: NormalizedProviderUsageLimit,
+  referenceAt: string,
+  fallbackSeconds: number
+): string {
+  if (providerUsageLimit.retryAt && Date.parse(providerUsageLimit.retryAt) > Date.parse(referenceAt)) {
+    return providerUsageLimit.retryAt;
+  }
+
+  return shiftSeconds(referenceAt, fallbackSeconds);
+}
+
 function isDeferredFollowUpSendError(error: unknown): boolean {
   if (error instanceof AppError) {
     return (
@@ -1196,6 +1339,28 @@ function isDeferredFollowUpSendError(error: unknown): boolean {
     || error.message === "SERVER_TIMEOUT"
     || error.message.includes("当前会话正在运行")
   );
+}
+
+function isAssistantTerminalRuntimeState(state: string | null): boolean {
+  return state === "idle" || state === "completed" || state === "failed" || state === "interrupted";
+}
+
+function delay(timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, timeoutMs);
+  });
+}
+
+function findStructuredJsonCandidate(messages: string[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const candidate = extractJsonFromText(messages[index]);
+
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 function isSyntheticMessageId(messageId: string | null | undefined): boolean {
@@ -1230,6 +1395,91 @@ function isTerminalFollowUpRunningState(
 function normalizeNullableIso(value: string | null | undefined): string | null {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : null;
+}
+
+function resolveInspectionProviderUsageLimit(
+  providerId: string | null | undefined,
+  lastErrorDetail: string | null | undefined,
+  latestAssistantText: string | null | undefined,
+  referenceAt: string | null | undefined
+): NormalizedProviderUsageLimit | null {
+  const normalizedReferenceAt = normalizeNullableIso(referenceAt) ?? undefined;
+  const fromErrorDetail = normalizeProviderUsageLimit({
+    providerId,
+    text: lastErrorDetail,
+    referenceAt: normalizedReferenceAt,
+    source: "error_detail"
+  });
+
+  if (fromErrorDetail) {
+    return fromErrorDetail;
+  }
+
+  return normalizeProviderUsageLimit({
+    providerId,
+    text: latestAssistantText,
+    referenceAt: normalizedReferenceAt,
+    source: "message"
+  });
+}
+
+function resolveProviderUsageLimitFromError(
+  error: unknown,
+  providerId: string | null,
+  referenceAt: string
+): NormalizedProviderUsageLimit | null {
+  if (error instanceof AppError) {
+    const fromData = readProviderUsageLimitFromErrorData(error.data);
+
+    if (fromData) {
+      return fromData;
+    }
+  }
+
+  if (error instanceof Error) {
+    return normalizeProviderUsageLimit({
+      providerId,
+      text: error.message,
+      referenceAt,
+      source: "error"
+    });
+  }
+
+  return null;
+}
+
+function readProviderUsageLimitFromErrorData(
+  value: Record<string, unknown> | undefined
+): NormalizedProviderUsageLimit | null {
+  const candidate = value?.providerUsageLimit;
+
+  if (!isRecord(candidate) || candidate.category !== "usage_limit") {
+    return null;
+  }
+
+  return {
+    category: "usage_limit",
+    providerId: typeof candidate.providerId === "string" && candidate.providerId.trim().length > 0
+      ? candidate.providerId.trim()
+      : null,
+    source: candidate.source === "error_detail" || candidate.source === "message" ? candidate.source : "error",
+    retryAt: normalizeNullableIso(
+      typeof candidate.retryAt === "string" ? candidate.retryAt : null
+    ),
+    retryAfterSeconds: typeof candidate.retryAfterSeconds === "number"
+      && Number.isFinite(candidate.retryAfterSeconds)
+      && candidate.retryAfterSeconds > 0
+      ? candidate.retryAfterSeconds
+      : null,
+    rawText: typeof candidate.rawText === "string" ? candidate.rawText : "",
+    summary: typeof candidate.summary === "string" && candidate.summary.trim().length > 0
+      ? candidate.summary.trim()
+      : "检测到 provider 额度已达上限，系统会按下一次可用时机自动重试。"
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function resolveLatestAssistantText(envelope: SessionHistoryEnvelope | null): string | null {
@@ -1267,6 +1517,52 @@ function truncateText(value: string, maxLength: number): string {
   }
 
   return `${value.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
+function buildFollowUpBootstrapPrompt(input: {
+  project: ButlerProject;
+  sourceButlerSessionId: string;
+  sourceSessionId: string;
+  sourceSessionTitle: string | null;
+  objective: string;
+  completionCriteria: string;
+  maxAutoContinueCount: number;
+  latestAssistantText: string | null;
+  transcriptLines: string[];
+}): string {
+  const transcript =
+    input.transcriptLines.length > 0
+      ? input.transcriptLines.slice(-12).join("\n")
+      : "- 暂时没有可用消息，请先按会话现状建立上下文。";
+
+  return [
+    "你现在是这条开发会话的专用跟进助手，会长期复用当前助手会话推进，不再切回隐藏评估器。",
+    "你的职责只有三件事：",
+    "1. 用 codingns assistant CLI 复核目标项目和目标会话的最新状态。",
+    "2. 判断当前是否真的还需要继续跟进，还是应该等待用户决定，或者已经可以结束。",
+    "3. 只要决定继续跟进，就由你自己直接把消息发到目标开发会话，不要等后台代发。",
+    "",
+    "硬约束：",
+    "- 不要直接改当前仓库代码，这条会话只负责跟进判断和向目标开发会话发消息。",
+    "- 如果决定继续，必须显式使用 `codingns assistant sessions send` 把中文跟进消息发到目标开发会话。",
+    "- 如果信息不足或需要用户决策，要明确说明缺口，不要假装已经发消息。",
+    "- 跟进边界只围绕当前目标和结束条件，不准顺手扩范围。",
+    "",
+    `项目名称：${input.project.name}`,
+    `项目路径：${input.project.repoRoot}`,
+    `目标 Butler 会话 ID：${input.sourceButlerSessionId}`,
+    `目标真实会话 ID：${input.sourceSessionId}`,
+    `目标会话标题：${input.sourceSessionTitle ?? "未命名会话"}`,
+    `跟进目标：${input.objective}`,
+    `结束条件：${input.completionCriteria}`,
+    `最多自动推进轮数：${input.maxAutoContinueCount}`,
+    `最近一条助手消息：${input.latestAssistantText?.trim() || "无"}`,
+    "",
+    "最近消息摘录：",
+    transcript,
+    "",
+    "这条消息只用来建立上下文。请先整理当前理解，后续我会继续给你发送正式的跟进检查请求。"
+  ].join("\n");
 }
 
 function resolveFollowUpModel(

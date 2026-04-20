@@ -1305,3 +1305,6 @@ export interface InstanceRelayTunnelStatus {
   lastError: string | null;
   observedAt: string | null;
 }
+  providerId: ButlerProfileProviderId;
+  assistantButlerSessionId: string;
+  assistantSessionId: string;

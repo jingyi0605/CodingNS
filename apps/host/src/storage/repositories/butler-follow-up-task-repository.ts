@@ -18,6 +18,9 @@ export class ButlerFollowUpTaskRepository {
            project_id,
            butler_session_id,
            session_id,
+           provider_id,
+           assistant_butler_session_id,
+           assistant_session_id,
            created_by_user_id,
            objective,
            completion_criteria,
@@ -37,13 +40,16 @@ export class ButlerFollowUpTaskRepository {
            created_at,
            updated_at,
            completed_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         record.id,
         record.projectId,
         record.butlerSessionId,
         record.sessionId,
+        record.providerId,
+        record.assistantButlerSessionId,
+        record.assistantSessionId,
         record.createdByUserId,
         record.objective,
         record.completionCriteria,
@@ -76,6 +82,9 @@ export class ButlerFollowUpTaskRepository {
            project_id,
            butler_session_id,
            session_id,
+           provider_id,
+           assistant_butler_session_id,
+           assistant_session_id,
            created_by_user_id,
            objective,
            completion_criteria,
@@ -111,6 +120,9 @@ export class ButlerFollowUpTaskRepository {
            project_id,
            butler_session_id,
            session_id,
+           provider_id,
+           assistant_butler_session_id,
+           assistant_session_id,
            created_by_user_id,
            objective,
            completion_criteria,
@@ -179,6 +191,9 @@ export class ButlerFollowUpTaskRepository {
            project_id,
            butler_session_id,
            session_id,
+           provider_id,
+           assistant_butler_session_id,
+           assistant_session_id,
            created_by_user_id,
            objective,
            completion_criteria,
@@ -224,6 +239,9 @@ export class ButlerFollowUpTaskRepository {
          SET project_id = ?,
              butler_session_id = ?,
              session_id = ?,
+             provider_id = ?,
+             assistant_butler_session_id = ?,
+             assistant_session_id = ?,
              created_by_user_id = ?,
              objective = ?,
              completion_criteria = ?,
@@ -249,6 +267,9 @@ export class ButlerFollowUpTaskRepository {
         record.projectId,
         record.butlerSessionId,
         record.sessionId,
+        record.providerId,
+        record.assistantButlerSessionId,
+        record.assistantSessionId,
         record.createdByUserId,
         record.objective,
         record.completionCriteria,
@@ -280,6 +301,9 @@ interface ButlerFollowUpTaskRow {
   project_id: string;
   butler_session_id: string;
   session_id: string;
+  provider_id: ButlerFollowUpTask["providerId"];
+  assistant_butler_session_id: string;
+  assistant_session_id: string;
   created_by_user_id: string;
   objective: string;
   completion_criteria: string;
@@ -307,6 +331,9 @@ function mapRow(row: ButlerFollowUpTaskRow): ButlerFollowUpTask {
     projectId: row.project_id,
     butlerSessionId: row.butler_session_id,
     sessionId: row.session_id,
+    providerId: row.provider_id,
+    assistantButlerSessionId: row.assistant_butler_session_id,
+    assistantSessionId: row.assistant_session_id,
     createdByUserId: row.created_by_user_id,
     objective: row.objective,
     completionCriteria: row.completion_criteria,

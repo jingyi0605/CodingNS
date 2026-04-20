@@ -1260,3 +1260,8 @@ CREATE INDEX IF NOT EXISTS idx_skill_target_bindings_target_cli
 INSERT INTO bootstrap_state (id, initialized)
 VALUES ('default', 0)
 ON CONFLICT(id) DO NOTHING;
+  provider_id TEXT NOT NULL CHECK (provider_id IN ('codex', 'claude-code')),
+  assistant_butler_session_id TEXT NOT NULL,
+  assistant_session_id TEXT NOT NULL,
+  FOREIGN KEY (assistant_butler_session_id) REFERENCES butler_sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY (assistant_session_id) REFERENCES session_bindings(session_id) ON DELETE CASCADE,

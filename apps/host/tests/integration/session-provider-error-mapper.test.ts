@@ -95,4 +95,49 @@ describe("mapSessionProviderError", () => {
     expect(mapped.errorCode).toBe("CODEX_NATIVE_MESSAGE_FORK_DIRTY");
     expect(mapped.message).toContain("所选消息点");
   });
+
+  it("会把 Codex 额度限制归一化成稳定错误，并带上重试时间", () => {
+    const mapped = mapSessionProviderError(
+      new Error(
+        "Error running remote compact task: You've hit your usage limit. Upgrade to Pro, purchase more credits or try again at 6:13 PM."
+      )
+    );
+
+    expect(mapped.statusCode).toBe(429);
+    expect(mapped.errorCode).toBe("PROVIDER_USAGE_LIMIT_EXCEEDED");
+    expect(mapped.message).toContain("自动重试");
+    expect(mapped.data?.providerUsageLimit).toEqual(
+      expect.objectContaining({
+        category: "usage_limit",
+        retryAt: expect.any(String),
+        source: "error"
+      })
+    );
+  });
+
+  it("会把 Claude 与 Gemini 的配额报错归一化成同一种结构", () => {
+    const claudeMapped = mapSessionProviderError(
+      new Error("Claude usage limit reached. Please try again at 11:45 AM.")
+    );
+    const geminiMapped = mapSessionProviderError(
+      new Error("Gemini API quota exceeded. Retry after 15 minutes.")
+    );
+
+    expect(claudeMapped.errorCode).toBe("PROVIDER_USAGE_LIMIT_EXCEEDED");
+    expect(claudeMapped.data?.providerUsageLimit).toEqual(
+      expect.objectContaining({
+        category: "usage_limit",
+        retryAt: expect.any(String)
+      })
+    );
+
+    expect(geminiMapped.errorCode).toBe("PROVIDER_USAGE_LIMIT_EXCEEDED");
+    expect(geminiMapped.data?.providerUsageLimit).toEqual(
+      expect.objectContaining({
+        category: "usage_limit",
+        retryAt: expect.any(String),
+        retryAfterSeconds: 900
+      })
+    );
+  });
 });
