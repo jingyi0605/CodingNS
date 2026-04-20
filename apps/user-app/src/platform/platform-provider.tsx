@@ -5,6 +5,7 @@ import {
   DESKTOP_WINDOW_LIFECYCLE_EVENT,
   type DesktopWindowLifecycleEventPayload
 } from "./desktop/window-events";
+import { installMacOsCopyShortcutFallback } from "./desktop/copy-shortcut-fallback";
 import { createPlatformAdapter, type PlatformAdapter } from "./platform-adapter";
 
 const PlatformContext = createContext<PlatformAdapter | null>(null);
@@ -111,6 +112,25 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     applyPlatformDatasets(adapter);
+  }, [adapter]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") {
+      return;
+    }
+
+    if (!adapter.isDesktop || adapter.ui.osFamily !== "macos" || !adapter.bridge.supported) {
+      return;
+    }
+
+    return installMacOsCopyShortcutFallback({
+      window,
+      document,
+      writeClipboardText: async (text) => {
+        const result = await adapter.bridge.writeClipboardText(text);
+        return result.ok;
+      }
+    });
   }, [adapter]);
 
   useEffect(() => {

@@ -176,6 +176,8 @@ body {
 .workbench-shell input,
 .workbench-shell textarea,
 .workbench-shell select,
+.workbench-shell .terminal-xterm,
+.workbench-shell .terminal-xterm *,
 .workbench-shell [contenteditable="true"],
 .workbench-shell [contenteditable="true"] * {
   -webkit-user-select: text;
