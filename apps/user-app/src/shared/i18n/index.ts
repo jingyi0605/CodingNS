@@ -1672,7 +1672,7 @@ const extensionZhCN = {
     butlerActionLoadFailed: "读取助手动作信息失败",
     butlerActionProjectLabel: "当前项目",
     butlerActionSessionLabel: "当前会话",
-    butlerFollowUpAction: "跟进当前会话",
+    butlerFollowUpAction: "继续跟进",
     butlerFollowUpActionDescription: "让助手持续盯住这条开发会话，并在结束或阻塞后继续推动。",
     butlerFollowUpObjectiveLabel: "跟进目标",
     butlerFollowUpObjectivePlaceholder:
@@ -1704,7 +1704,7 @@ const extensionZhCN = {
     butlerFollowUpObjectiveRequired: "请先写清楚这次希望助手持续推动的目标",
     butlerCurrentVerificationLabel: "当前验证任务",
     butlerStopVerificationAction: "停止当前验证",
-    butlerVerificationAction: "发起开发验证",
+    butlerVerificationAction: "开始验证",
     butlerVerificationActionDescription: "让助手从用户视角对当前会话对应功能发起一次验证。",
     butlerFollowUpStarted: "已交给助手继续跟进",
     butlerFollowUpStartedDescription: "助手会继续跟进 {projectName} 的当前开发会话。",
@@ -3698,7 +3698,7 @@ const extensionEnUS = {
     butlerActionLoadFailed: "Failed to load Butler action context",
     butlerActionProjectLabel: "Project",
     butlerActionSessionLabel: "Session",
-    butlerFollowUpAction: "Follow Up This Session",
+    butlerFollowUpAction: "Continue Follow-up",
     butlerFollowUpActionDescription:
       "Let Butler keep watching this session and continue pushing it after each stop or blocker.",
     butlerFollowUpObjectiveLabel: "Follow-up Goal",
@@ -3734,7 +3734,7 @@ const extensionEnUS = {
     butlerFollowUpObjectiveRequired: "Please describe the goal you want Butler to keep pushing",
     butlerCurrentVerificationLabel: "Current Verification",
     butlerStopVerificationAction: "Stop Current Verification",
-    butlerVerificationAction: "Start Development Verification",
+    butlerVerificationAction: "Start Verification",
     butlerVerificationActionDescription:
       "Let Butler start a user-facing verification run for the feature behind this session.",
     butlerFollowUpStarted: "Butler follow-up started",
