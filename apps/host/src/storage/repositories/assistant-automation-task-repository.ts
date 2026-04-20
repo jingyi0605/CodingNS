@@ -141,6 +141,18 @@ export class AssistantAutomationTaskRepository {
   }
 
   listDueActive(referenceAt: string, limit = 20): AssistantAutomationTask[] {
+    return this.listDueByStatus("active", referenceAt, limit);
+  }
+
+  listDuePaused(referenceAt: string, limit = 20): AssistantAutomationTask[] {
+    return this.listDueByStatus("paused", referenceAt, limit);
+  }
+
+  private listDueByStatus(
+    status: AssistantAutomationStatus,
+    referenceAt: string,
+    limit: number
+  ): AssistantAutomationTask[] {
     return this.db
       .prepare(
         `SELECT
@@ -162,13 +174,13 @@ export class AssistantAutomationTaskRepository {
            updated_at,
            cancelled_at
          FROM assistant_automation_tasks
-         WHERE status = 'active'
+         WHERE status = ?
            AND next_run_at IS NOT NULL
            AND next_run_at <= ?
          ORDER BY next_run_at ASC, created_at ASC
          LIMIT ?`
       )
-      .all(referenceAt, limit)
+      .all(status, referenceAt, limit)
       .map((row) => mapTaskRow(row as AssistantAutomationTaskRow));
   }
 

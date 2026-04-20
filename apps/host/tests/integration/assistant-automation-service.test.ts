@@ -18,6 +18,7 @@ describe("AssistantAutomationService", () => {
 
   function createService(options: {
     sendAcceptedAt?: string;
+    sendMessageError?: Error;
     gitLatestTag?: { tag: string | null; ref: string | null };
     runtime?: {
       runningState: string;
@@ -135,17 +136,23 @@ describe("AssistantAutomationService", () => {
     const butlerControlSessionService = {
       getCurrentSession: vi.fn(() => controlSession),
       getSession: vi.fn(() => controlSession),
-      sendMessage: vi.fn(async () => ({
-        controlSession,
-        sessionId: "assistant-session-1",
-        provider: "codex",
-        providerSessionId: "provider-session-1",
-        acceptedAt: options.sendAcceptedAt ?? "2026-04-16T12:05:00.000Z",
-        clientRequestId: "automation-request-1",
-        message: {
-          messageId: "message-1"
+      sendMessage: vi.fn(async () => {
+        if (options.sendMessageError) {
+          throw options.sendMessageError;
         }
-      }))
+
+        return {
+          controlSession,
+          sessionId: "assistant-session-1",
+          provider: "codex",
+          providerSessionId: "provider-session-1",
+          acceptedAt: options.sendAcceptedAt ?? "2026-04-16T12:05:00.000Z",
+          clientRequestId: "automation-request-1",
+          message: {
+            messageId: "message-1"
+          }
+        };
+      })
     };
     const gitCommandRunner = {
       run: vi.fn(async () => ({
@@ -256,6 +263,52 @@ describe("AssistantAutomationService", () => {
       status: "succeeded",
       summary: "请检查 codingns 是否有新 tag"
     });
+  });
+
+  it("单次自动化遇到套餐限额时会顺延到恢复后 5 分钟", async () => {
+    const { service, butlerControlSessionService } = createService({
+      sendMessageError: new AppError({
+        statusCode: 429,
+        errorCode: "PROVIDER_USAGE_LIMIT_EXCEEDED",
+        detail: "助手控制会话检测到 provider 套餐限额。",
+        data: {
+          providerUsageLimit: {
+            category: "usage_limit",
+            providerId: "codex",
+            source: "error",
+            retryAt: "2026-04-16T13:30:00.000Z",
+            retryAfterSeconds: null,
+            rawText: "You've hit your usage limit.",
+            summary: "检测到 provider 额度已达上限，系统会按下一次可用时机自动重试。"
+          },
+          blockedUntil: "2026-04-16T13:35:00.000Z",
+          sessionId: "assistant-session-1",
+          sourceLabel: "助手控制会话"
+        }
+      })
+    });
+
+    const automation = service.createTask({
+      userId: "user-1",
+      projectId: "project-1",
+      title: "一次性提醒",
+      trigger: {
+        type: "once",
+        dueAt: "2026-04-16T12:05:00.000Z"
+      },
+      action: {
+        type: "send_control_message",
+        content: "5 分钟后提醒我"
+      }
+    });
+
+    await service.runDueTasks("2026-04-16T12:05:01.000Z");
+
+    const updated = service.getTask(automation.id, "user-1");
+    expect(updated.status).toBe("active");
+    expect(updated.nextRunAt).toBe("2026-04-16T13:35:00.000Z");
+    expect(updated.lastRunSummary).toContain("套餐限额");
+    expect(butlerControlSessionService.sendMessage).toHaveBeenCalledTimes(1);
   });
 
   it("会更新进行中自动化的提示词和触发配置", () => {
@@ -459,6 +512,71 @@ describe("AssistantAutomationService", () => {
       status: "succeeded",
       triggerType: "interval"
     });
+  });
+
+  it("循环自动化遇到套餐限额时会暂停，并在恢复后自动继续", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-16T12:00:00.000Z"));
+    const { service, butlerControlSessionService } = createService({
+      sendMessageError: new AppError({
+        statusCode: 429,
+        errorCode: "PROVIDER_USAGE_LIMIT_EXCEEDED",
+        detail: "助手控制会话检测到 provider 套餐限额。",
+        data: {
+          providerUsageLimit: {
+            category: "usage_limit",
+            providerId: "codex",
+            source: "error",
+            retryAt: "2026-04-16T13:30:00.000Z",
+            retryAfterSeconds: null,
+            rawText: "You've hit your usage limit.",
+            summary: "检测到 provider 额度已达上限，系统会按下一次可用时机自动重试。"
+          },
+          blockedUntil: "2026-04-16T13:35:00.000Z",
+          sessionId: "assistant-session-1",
+          sourceLabel: "助手控制会话"
+        }
+      })
+    });
+
+    const automation = service.createTask({
+      userId: "user-1",
+      projectId: "project-1",
+      title: "每小时巡检",
+      trigger: {
+        type: "interval",
+        hours: 1
+      },
+      action: {
+        type: "send_control_message",
+        content: "每小时检查一次"
+      }
+    });
+
+    await service.runDueTasks("2026-04-16T13:00:01.000Z");
+
+    let updated = service.getTask(automation.id, "user-1");
+    expect(updated.status).toBe("paused");
+    expect(updated.nextRunAt).toBe("2026-04-16T13:35:00.000Z");
+    expect(updated.lastRunSummary).toContain("套餐限额");
+
+    (butlerControlSessionService.sendMessage as any).mockResolvedValue({
+      controlSession: updated.controlSession,
+      sessionId: "assistant-session-1",
+      provider: "codex",
+      providerSessionId: "provider-session-1",
+      acceptedAt: "2026-04-16T13:35:10.000Z",
+      clientRequestId: "automation-request-2",
+      message: {
+        messageId: "message-2"
+      }
+    });
+
+    await service.runDueTasks("2026-04-16T13:35:01.000Z");
+
+    updated = service.getTask(automation.id, "user-1");
+    expect(updated.status).toBe("active");
+    expect(updated.nextRunAt).toBe("2026-04-16T14:35:10.000Z");
   });
 
   it("interval 自动化可以只取消本次等待并保留后续调度", () => {

@@ -9,6 +9,7 @@ import type {
   AssistantAutomationTask
 } from "../../types/domain.js";
 import type { SessionRuntimeStatusView } from "../sessions/session-live-runtime-service.js";
+import { readProviderUsageLimitErrorData } from "../sessions/session-provider-usage-guard-service.js";
 import { createTaskManager, type TaskManager } from "../tasks/task-manager.js";
 import { HOST_TASK_TYPES } from "../tasks/task-types.js";
 import type { GitCommandRunner } from "../git/git-command-runner.js";
@@ -403,6 +404,7 @@ export class AssistantAutomationService {
   }
 
   private async runDueTasksDirect(referenceAt: string): Promise<AssistantAutomationRunDueTasksResult> {
+    this.reactivatePausedTasks(referenceAt);
     const activeTaskCount = this.taskRepository.list({
       statuses: ["active"]
     }).length;
@@ -428,6 +430,18 @@ export class AssistantAutomationService {
       processedTaskCount: dueTasks.length,
       idle: dueTasks.length === 0
     };
+  }
+
+  private reactivatePausedTasks(referenceAt: string): void {
+    const pausedTasks = this.taskRepository.listDuePaused(referenceAt, DEFAULT_DUE_TASK_LIMIT);
+
+    for (const task of pausedTasks) {
+      this.taskRepository.update({
+        ...task,
+        status: "active",
+        updatedAt: referenceAt
+      });
+    }
   }
 
   private async evaluateTask(automationId: string, referenceAt: string): Promise<void> {
@@ -489,6 +503,31 @@ export class AssistantAutomationService {
         )
       );
     } catch (error) {
+      const usageLimitBlocked = readProviderUsageLimitErrorData(
+        error instanceof AppError ? error.data : undefined
+      );
+
+      if (usageLimitBlocked?.blockedUntil) {
+        const summary = `${usageLimitBlocked.sourceLabel?.trim() || "当前控制会话"}检测到 provider 套餐限额，已顺延到 ${usageLimitBlocked.blockedUntil} 后再继续。`;
+        this.runRepository.update({
+          ...run,
+          status: "skipped",
+          summary,
+          error: null,
+          finishedAt: referenceAt
+        });
+        this.taskRepository.update(
+          this.buildUsageLimitDeferredTask(
+            task,
+            prepared,
+            referenceAt,
+            usageLimitBlocked.blockedUntil,
+            usageLimitBlocked.sourceLabel
+          )
+        );
+        return;
+      }
+
       const finishedAt = nowIso();
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.runRepository.update({
@@ -791,6 +830,33 @@ export class AssistantAutomationService {
       lastRunSummary: summary,
       lastError: null,
       updatedAt: finishedAt
+    };
+  }
+
+  private buildUsageLimitDeferredTask(
+    task: AssistantAutomationTask,
+    prepared: Extract<PreparedAutomationAction, { kind: "run" }>,
+    referenceAt: string,
+    blockedUntil: string,
+    sourceLabel: string | null
+  ): AssistantAutomationTask {
+    const effectiveLabel = sourceLabel?.trim()
+      || (
+        prepared.actionConfig.targetSessionId?.trim()
+          ? `目标会话 ${prepared.actionConfig.targetSessionId.trim()}`
+          : "当前控制会话"
+      );
+    const summary = `${effectiveLabel}检测到 provider 套餐限额，系统会在 ${blockedUntil} 后自动继续。`;
+    const nextStatus = task.triggerType === "once" ? "active" : "paused";
+
+    return {
+      ...task,
+      status: nextStatus,
+      nextRunAt: blockedUntil,
+      lastRunAt: referenceAt,
+      lastRunSummary: summary,
+      lastError: null,
+      updatedAt: referenceAt
     };
   }
 
