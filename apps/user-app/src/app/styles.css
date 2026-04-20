@@ -7803,52 +7803,21 @@ textarea:focus-visible {
   flex-direction: column;
   gap: 14px;
   min-width: 0;
-  padding: 16px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 76%, transparent);
-  border-radius: 22px;
-  background:
-    radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 10%, transparent), transparent 32%),
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 96%, transparent), color-mix(in srgb, var(--bg-primary) 98%, transparent));
+  min-height: 0;
 }
 
 .conversation-branch-dialog {
   position: relative;
-  width: auto;
+  width: min(100%, calc(100vw - 32px));
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 32px);
   overflow: hidden;
-  box-shadow:
-    0 24px 60px rgba(15, 23, 42, 0.18),
-    0 12px 24px rgba(15, 23, 42, 0.08);
+  padding: 16px;
 }
 
-.conversation-branch-dialog-resizer {
-  position: absolute;
-  top: 16px;
-  right: -6px;
-  bottom: 16px;
-  width: 12px;
-  cursor: col-resize;
-}
-
-.conversation-branch-dialog-resizer::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: 3px;
-  transform: translateX(-50%);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--border-primary) 86%, transparent);
-  transition:
-    background 160ms ease,
-    transform 160ms ease;
-}
-
-.conversation-branch-dialog-resizer:hover::before {
-  background: var(--accent);
-  transform: translateX(-50%) scaleY(1.04);
+.conversation-branch-modal-body {
+  gap: 12px;
+  overflow: hidden;
 }
 
 .conversation-branch-tree-pane-header {
@@ -8256,10 +8225,6 @@ textarea:focus-visible {
     border: none;
     background: transparent;
     box-shadow: none;
-  }
-
-  .conversation-branch-dialog-resizer {
-    display: none;
   }
 
   .conversation-branch-dialog-mobile-bare {
@@ -20508,6 +20473,14 @@ textarea:focus-visible {
   gap: 4px;
 }
 
+.settings-relay-tunnel-section-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .settings-relay-tunnel-summary-value {
   display: inline-block;
   max-width: min(32ch, 100%);
@@ -20522,6 +20495,110 @@ textarea:focus-visible {
 .settings-relay-tunnel-form {
   display: grid;
   gap: 12px;
+}
+
+.settings-relay-tunnel-step-list {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-relay-tunnel-step {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-primary);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-primary) 92%, white 8%);
+}
+
+.settings-relay-tunnel-step[data-state="done"] {
+  border-color: color-mix(in srgb, var(--success) 28%, var(--border-primary));
+  background: color-mix(in srgb, var(--success) 6%, var(--bg-primary));
+}
+
+.settings-relay-tunnel-step[data-state="current"] {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border-primary));
+}
+
+.settings-relay-tunnel-step[data-state="pending"] {
+  opacity: 0.78;
+}
+
+.settings-relay-tunnel-step-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.settings-relay-tunnel-step-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-hover));
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.settings-relay-tunnel-step-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.settings-relay-tunnel-step-title {
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.settings-relay-tunnel-step-description {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.settings-relay-tunnel-step-tag {
+  flex: 0 0 auto;
+}
+
+.settings-relay-tunnel-step-body {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-relay-tunnel-domain-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+}
+
+.settings-relay-tunnel-domain-prefix {
+  flex: 0 0 148px;
+  width: 148px;
+  min-width: 0;
+}
+
+.settings-relay-tunnel-domain-suffix {
+  flex: 0 0 auto;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.settings-relay-tunnel-domain-check {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .settings-relay-tunnel-status-bar-meta {
@@ -20543,9 +20620,56 @@ textarea:focus-visible {
   gap: 8px;
 }
 
+.settings-relay-tunnel-ready-actions {
+  margin-top: 4px;
+}
+
+.settings-relay-tunnel-actions {
+  width: 100%;
+  justify-content: space-between;
+  gap: 12px;
+  padding-inline-end: 12px;
+}
+
+.settings-relay-tunnel-action-buttons {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-relay-tunnel-action-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex: 0 0 auto;
+  min-height: 44px;
+  margin-inline-start: auto;
+  padding-inline-end: 4px;
+  position: relative;
+  z-index: 1;
+}
+
+.settings-relay-tunnel-action-switch-label {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
 .settings-relay-tunnel-error {
   margin: 0;
   color: var(--error);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.settings-relay-tunnel-success {
+  margin: 0;
+  color: var(--success);
   font-size: 12px;
   line-height: 1.6;
 }
@@ -20560,6 +20684,7 @@ textarea:focus-visible {
   .settings-relay-tunnel-item-actions {
     display: grid;
     grid-template-columns: 1fr;
+    padding-inline-end: 0;
   }
 
   .settings-relay-tunnel-actions .secondary-button,
@@ -20568,9 +20693,48 @@ textarea:focus-visible {
     width: 100%;
   }
 
+  .settings-relay-tunnel-action-buttons {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .settings-relay-tunnel-section-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    justify-items: stretch;
+  }
+
   .settings-relay-tunnel-status-bar-meta {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .settings-relay-tunnel-step-header {
+    display: grid;
+    grid-template-columns: auto 1fr;
+  }
+
+  .settings-relay-tunnel-step-tag {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .settings-relay-tunnel-domain-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .settings-relay-tunnel-domain-prefix {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .settings-relay-tunnel-action-switch {
+    justify-content: space-between;
+    width: 100%;
+    margin-inline-start: 0;
+    padding-inline-end: 0;
   }
 }
 

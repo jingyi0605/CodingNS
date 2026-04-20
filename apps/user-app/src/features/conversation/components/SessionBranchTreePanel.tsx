@@ -9,6 +9,7 @@ import {
   type TouchEvent as ReactTouchEvent
 } from "react";
 
+import { DesktopModal } from "../../../components/DesktopModal";
 import { t } from "../../../shared/i18n";
 import {
   getSessionMessages,
@@ -85,8 +86,6 @@ const BRANCH_TREE_SIBLING_GAP = 18;
 const BRANCH_TREE_POPOVER_WIDTH = 332;
 const BRANCH_TREE_PREVIEW_ESTIMATED_HEIGHT = 360;
 const BRANCH_TREE_DESKTOP_BREAKPOINT = 840;
-const BRANCH_TREE_DIALOG_MIN_WIDTH = 520;
-const BRANCH_TREE_DIALOG_HORIZONTAL_CHROME = 36;
 const BRANCH_TREE_MOBILE_VIEWPORT_PADDING = 18;
 const BRANCH_TREE_MOBILE_MIN_SCALE = 0.22;
 const BRANCH_TREE_MOBILE_MAX_SCALE = 2.4;
@@ -269,22 +268,6 @@ export function resolveBranchTreeStageScale(viewportWidth: number, layoutWidth: 
   }
 
   return Math.min(1, viewportWidth / layoutWidth);
-}
-
-export function resolveDesktopBranchTreeDialogBounds(
-  viewportWidth: number,
-  layoutWidth: number
-) {
-  const maxAvailableWidth = Math.max(420, viewportWidth - 32);
-  const preferredWidth = Math.ceil(layoutWidth + BRANCH_TREE_DIALOG_HORIZONTAL_CHROME);
-  const maxWidth = maxAvailableWidth;
-  const minWidth = Math.min(BRANCH_TREE_DIALOG_MIN_WIDTH, maxWidth);
-
-  return {
-    minWidth,
-    maxWidth,
-    defaultWidth: Math.min(maxWidth, Math.max(minWidth, preferredWidth))
-  };
 }
 
 export function resolveDesktopBranchTreeStageLayout(
@@ -990,19 +973,11 @@ function BranchCanvasTree({
 export function SessionBranchTreeExplorer({
   model,
   onOpenSession,
-  onClose,
-  dialogLabel,
-  dialogStyle,
-  showResizeHandle,
-  onBeginResize
+  onClose
 }: {
   model: SessionBranchTreeModel;
   onOpenSession: (session: SessionSummaryDto) => void;
   onClose?: (() => void) | undefined;
-  dialogLabel?: string | undefined;
-  dialogStyle?: CSSProperties | undefined;
-  showResizeHandle?: boolean | undefined;
-  onBeginResize?: ((startClientX: number) => void) | undefined;
 }) {
   const layout = useMemo(() => buildBranchTreeLayout(model.root), [model.root]);
   const canvasViewportRef = useRef<HTMLDivElement>(null);
@@ -1126,6 +1101,7 @@ export function SessionBranchTreeExplorer({
         }
       : null;
   const showMobileBareCanvas = isMobileViewport && Boolean(onClose);
+  const showPaneHeader = Boolean(onClose) && !showMobileBareCanvas;
 
   useEffect(() => {
     if (!selectedSessionId) {
@@ -1438,10 +1414,9 @@ export function SessionBranchTreeExplorer({
         className={`conversation-branch-tree-pane${onClose ? " conversation-branch-dialog" : ""}${showMobileBareCanvas ? " conversation-branch-dialog-mobile-bare" : ""}`}
         role={onClose ? "dialog" : undefined}
         aria-modal={onClose ? "true" : undefined}
-        aria-label={dialogLabel}
-        style={dialogStyle}
+        aria-label={onClose ? t("conversation.branchTreeTitle") : undefined}
       >
-        {!showMobileBareCanvas ? (
+        {showPaneHeader ? (
           <div className="conversation-branch-tree-pane-header">
             <div className="conversation-branch-tree-pane-topbar">
               <div className="conversation-branch-tree-pane-heading">
@@ -1504,16 +1479,6 @@ export function SessionBranchTreeExplorer({
             onViewportTouchEnd={handleViewportTouchEnd}
           />
         </div>
-
-        {showResizeHandle ? (
-          <div
-            className="conversation-branch-dialog-resizer"
-            role="separator"
-            aria-orientation="vertical"
-            aria-label={t("conversation.branchTreeResizeHandle")}
-            onMouseDown={(event) => onBeginResize?.(event.clientX)}
-          />
-        ) : null}
       </section>
 
       {selectedSession && selectedLayoutNode && previewEntry && previewAnchorRect && typeof document !== "undefined"
@@ -1550,26 +1515,9 @@ export function SessionBranchTreePanel({
     () => buildSessionBranchTreeModel(navigationGroups, workspaceId, sessionId),
     [navigationGroups, sessionId, workspaceId]
   );
-  const layout = useMemo(() => (model ? buildBranchTreeLayout(model.root) : null), [model]);
-  const [dialogWidth, setDialogWidth] = useState<number | null>(null);
   const [isDesktopViewport, setIsDesktopViewport] = useState(
     typeof window !== "undefined" ? window.innerWidth > BRANCH_TREE_DESKTOP_BREAKPOINT : true
   );
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose, open]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1577,59 +1525,36 @@ export function SessionBranchTreePanel({
     }
 
     function syncViewportState() {
-      const desktop = window.innerWidth > BRANCH_TREE_DESKTOP_BREAKPOINT;
-      setIsDesktopViewport(desktop);
-
-      if (!desktop) {
-        setDialogWidth(null);
-        return;
-      }
-
-      const bounds = resolveDesktopBranchTreeDialogBounds(window.innerWidth, layout?.width ?? 0);
-      setDialogWidth((current) => {
-        if (current === null) {
-          return bounds.defaultWidth;
-        }
-
-        return Math.min(bounds.maxWidth, Math.max(bounds.minWidth, current));
-      });
+      setIsDesktopViewport(window.innerWidth > BRANCH_TREE_DESKTOP_BREAKPOINT);
     }
 
     syncViewportState();
     window.addEventListener("resize", syncViewportState);
     return () => window.removeEventListener("resize", syncViewportState);
-  }, [layout?.width]);
-
-  function beginDesktopResize(startClientX: number) {
-    if (typeof window === "undefined" || !isDesktopViewport) {
-      return;
-    }
-
-    const bounds = resolveDesktopBranchTreeDialogBounds(window.innerWidth, layout?.width ?? 0);
-    const startWidth = dialogWidth ?? bounds.defaultWidth;
-
-    function handlePointerMove(event: MouseEvent) {
-      const delta = event.clientX - startClientX;
-      setDialogWidth(Math.min(bounds.maxWidth, Math.max(bounds.minWidth, startWidth + delta)));
-    }
-
-    function stopResize() {
-      document.removeEventListener("mousemove", handlePointerMove);
-      document.removeEventListener("mouseup", stopResize);
-    }
-
-    document.addEventListener("mousemove", handlePointerMove);
-    document.addEventListener("mouseup", stopResize);
-  }
+  }, []);
 
   if (!open || !model || typeof document === "undefined") {
     return null;
   }
 
-  const desktopBounds = resolveDesktopBranchTreeDialogBounds(window.innerWidth, layout?.width ?? 0);
-  const resolvedDialogWidth = isDesktopViewport
-    ? dialogWidth ?? desktopBounds.defaultWidth
-    : undefined;
+  if (isDesktopViewport) {
+    return (
+      <DesktopModal
+        open={open}
+        title={t("conversation.branchTreeMapTitle")}
+        description={t("conversation.branchTreeMapDescription")}
+        size="regular"
+        layout="viewer"
+        bodyClassName="conversation-branch-modal-body"
+        onClose={onClose}
+      >
+        <SessionBranchTreeExplorer
+          model={model}
+          onOpenSession={onOpenSession}
+        />
+      </DesktopModal>
+    );
+  }
 
   return createPortal(
     <div className="workbench-modal-layer conversation-branch-panel-layer">
@@ -1643,18 +1568,6 @@ export function SessionBranchTreePanel({
         model={model}
         onOpenSession={onOpenSession}
         onClose={onClose}
-        dialogLabel={t("conversation.branchTreeTitle")}
-        dialogStyle={
-          resolvedDialogWidth
-            ? {
-                width: resolvedDialogWidth,
-                maxWidth: desktopBounds.maxWidth,
-                minWidth: desktopBounds.minWidth
-              }
-            : undefined
-        }
-        showResizeHandle={isDesktopViewport}
-        onBeginResize={beginDesktopResize}
       />
     </div>,
     document.body

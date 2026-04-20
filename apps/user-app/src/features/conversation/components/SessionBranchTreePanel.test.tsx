@@ -6,7 +6,6 @@ import { t } from "../../../shared/i18n";
 import { getSessionMessages } from "../api/conversation-api";
 import {
   buildSessionBranchTreeModel,
-  resolveDesktopBranchTreeDialogBounds,
   resolveDesktopBranchTreeStageLayout,
   resolveMobileBranchTreeFitScale,
   hasSessionBranchRelations,
@@ -59,24 +58,6 @@ describe("SessionBranchTreePanel", () => {
   it("桌面端只会在宽度超出可视区时缩小分支树", () => {
     expect(resolveBranchTreeStageScale(640, 1280)).toBe(0.5);
     expect(resolveBranchTreeStageScale(640, 320)).toBe(1);
-  });
-
-  it("桌面端弹窗宽度会优先贴合分支树内容，超出窗口时再卡到可用宽度", () => {
-    expect(resolveDesktopBranchTreeDialogBounds(1000, 420)).toEqual({
-      minWidth: 520,
-      maxWidth: 968,
-      defaultWidth: 520
-    });
-    expect(resolveDesktopBranchTreeDialogBounds(1000, 900)).toEqual({
-      minWidth: 520,
-      maxWidth: 968,
-      defaultWidth: 936
-    });
-    expect(resolveDesktopBranchTreeDialogBounds(860, 1200)).toEqual({
-      minWidth: 520,
-      maxWidth: 828,
-      defaultWidth: 828
-    });
   });
 
   it("桌面端会给较小分支图补上默认水平居中偏移", () => {
@@ -175,11 +156,11 @@ describe("SessionBranchTreePanel", () => {
     );
 
     expect(
-      screen.getByRole("dialog", { name: t("conversation.branchTreeTitle") })
+      screen.getByRole("dialog", { name: t("conversation.branchTreeMapTitle") })
     ).toBeInTheDocument();
-    expect(screen.getByText(t("conversation.branchTreeMapTitle"))).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: t("conversation.branchTreeMapTitle") })).toBeInTheDocument();
     expect(document.querySelector(".conversation-branch-panel")).toBeNull();
-    expect(screen.getByRole("separator", { name: t("conversation.branchTreeResizeHandle") })).toBeInTheDocument();
+    expect(screen.queryByRole("separator", { name: t("conversation.branchTreeResizeHandle") })).toBeNull();
     expect(mockedGetSessionMessages).not.toHaveBeenCalled();
 
     await userEvent.click(screen.getByRole("button", { name: /Child Session/i }));
