@@ -6,11 +6,20 @@ import { ManagedRelayTunnelHostTransport } from "./relay-tunnel-managed-transpor
 
 const relayTransportCache = new Map<string, { signature: string; transport: ManagedRelayTunnelHostTransport }>();
 
-let hostTransportResolver: HostTransportResolver = ({ baseUrl }) => {
+const defaultHostTransportResolver: HostTransportResolver = ({ baseUrl }) => {
   const host = getRuntimeHostByBaseUrl(clientConfigStore.getState(), baseUrl);
   const relayTunnel = host?.relayTunnel;
 
   if (!host || !relayTunnel?.enabled) {
+    if (host) {
+      const cached = relayTransportCache.get(host.id);
+
+      if (cached) {
+        cached.transport.close();
+        relayTransportCache.delete(host.id);
+      }
+    }
+
     return directHostTransport;
   }
 
@@ -40,6 +49,8 @@ let hostTransportResolver: HostTransportResolver = ({ baseUrl }) => {
   return transport;
 };
 
+let hostTransportResolver: HostTransportResolver = defaultHostTransportResolver;
+
 export function resolveHostTransport(baseUrl: string): HostTransport {
   return hostTransportResolver({ baseUrl });
 }
@@ -53,4 +64,13 @@ export function setHostTransportResolverForTesting(
 
   relayTransportCache.clear();
   hostTransportResolver = resolver ?? (() => directHostTransport);
+}
+
+export function resetHostTransportRegistryForTesting(): void {
+  for (const cached of relayTransportCache.values()) {
+    cached.transport.close();
+  }
+
+  relayTransportCache.clear();
+  hostTransportResolver = defaultHostTransportResolver;
 }

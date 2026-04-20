@@ -223,6 +223,7 @@ export const zhCN = {
     relayTunnelTrafficRemaining: "剩余流量",
     relayTunnelHostFingerprint: "Host 指纹",
     relayTunnelTrustBoundaryNotice: "隧道服务只负责转发加密后的流量，无法看到你和 Host 之间的通信内容。",
+    relayTunnelRecentError: "最近错误：{message}",
     relayTunnelAccessTitle: "连接设置",
     relayTunnelAccessDescription: "先登录隧道服务账号，再打开开关把这台设备接入公网访问。",
     relayTunnelEnableToggleLabel: "启用隧道服务",

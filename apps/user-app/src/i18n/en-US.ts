@@ -245,6 +245,7 @@ export const enUS = {
     relayTunnelHostFingerprint: "Host Fingerprint",
     relayTunnelTrustBoundaryNotice:
       "The tunnel service only forwards encrypted traffic and cannot read the content between the client and this Host.",
+    relayTunnelRecentError: "Recent error: {message}",
     relayTunnelAccessTitle: "Connection Settings",
     relayTunnelAccessDescription:
       "Sign in with your tunnel account first, then turn the switch on to bring this device online for external access.",

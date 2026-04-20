@@ -419,9 +419,16 @@ export function RelayTunnelPanel() {
                 {t("settings.relayTunnelActivationHint")}
               </p>
             ) : (
-              <p className="settings-relay-tunnel-inline-note">
-                {t("settings.relayTunnelTrustBoundaryNotice")}
-              </p>
+              <div className="settings-relay-tunnel-inline-stack">
+                <p className="settings-relay-tunnel-inline-note">
+                  {t("settings.relayTunnelTrustBoundaryNotice")}
+                </p>
+                {status?.lastError ? (
+                  <p className="settings-relay-tunnel-error">
+                    {t("settings.relayTunnelRecentError", { message: status.lastError })}
+                  </p>
+                ) : null}
+              </div>
             )}
 
             {panelError ? <p className="settings-relay-tunnel-error">{panelError}</p> : null}
