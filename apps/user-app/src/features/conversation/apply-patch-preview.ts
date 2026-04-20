@@ -11,6 +11,7 @@ export interface ApplyPatchFileChange {
   action: "update" | "add" | "delete";
   additions: number;
   deletions: number;
+  statsKnown: boolean;
   lines: ApplyPatchDiffLine[];
 }
 
@@ -110,6 +111,7 @@ export function parseApplyPatchPreview(input: string): ApplyPatchPreview | null 
 
     if (currentFile.action === "add" && rawLine.startsWith("+")) {
       currentFile.additions += 1;
+      currentFile.statsKnown = true;
       currentFile.lines.push({
         kind: "add",
         text: rawLine,
@@ -135,6 +137,7 @@ export function parseApplyPatchPreview(input: string): ApplyPatchPreview | null 
 
     if (rawLine.startsWith("+")) {
       currentFile.additions += 1;
+      currentFile.statsKnown = true;
       currentFile.lines.push({
         kind: "add",
         text: rawLine,
@@ -147,6 +150,7 @@ export function parseApplyPatchPreview(input: string): ApplyPatchPreview | null 
 
     if (rawLine.startsWith("-")) {
       currentFile.deletions += 1;
+      currentFile.statsKnown = true;
       currentFile.lines.push({
         kind: "remove",
         text: rawLine,
@@ -275,6 +279,7 @@ function createFileChange(
     action,
     additions: 0,
     deletions: 0,
+    statsKnown: false,
     lines: []
   };
 }

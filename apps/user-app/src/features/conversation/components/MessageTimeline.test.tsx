@@ -93,6 +93,10 @@ const SAMPLE_LOOSE_APPLY_PATCH_OUTPUT = JSON.stringify({
   }
 });
 
+const SAMPLE_FILE_ONLY_APPLY_PATCH_INPUT = `*** Begin Patch
+*** Update File: /Users/jackson/Code/CodingNS/apps/host/src/modules/sessions/butler-session-service.ts
+*** End Patch`;
+
 function createTextMessage(content: string): SessionMessageViewModel {
   return {
     id: "message-1",
@@ -1239,6 +1243,39 @@ ARGUMENTS: capabilities list`)
     const diffViewText = document.querySelector(".apply-patch-diff-view")?.textContent ?? "";
     expect(diffViewText).toContain("+// 先把基础记录建出来，再回放 runtime 缓存事件");
     expect(diffViewText).toContain("-this.attachRuntimePersistence(handle, sessionId, workspace.id, input.userId);");
+  });
+
+  it("只有文件路径没有真实 diff 的 apply_patch 只显示已编辑", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "tool-result-file-only-apply-patch",
+            callId: "call-file-only-apply-patch",
+            name: "apply_patch",
+            kind: "tool_result",
+            content: SAMPLE_FILE_ONLY_APPLY_PATCH_INPUT,
+            toolInput: SAMPLE_FILE_ONLY_APPLY_PATCH_INPUT,
+            toolOutput: SAMPLE_FILE_ONLY_APPLY_PATCH_INPUT,
+            status: "completed"
+          })
+        ]}
+      />
+    );
+
+    expect(screen.getByText("butler-session-service.ts")).toBeInTheDocument();
+    expect(screen.getAllByText(t("conversation.applyPatchEditedStat")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("+0")).not.toBeInTheDocument();
+    expect(screen.queryByText("-0")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /butler-session-service\.ts/i }));
+
+    expect(screen.getAllByText(t("conversation.applyPatchEditedStat")).length).toBeGreaterThan(1);
+    expect(screen.queryByText("+0")).not.toBeInTheDocument();
+    expect(screen.queryByText("-0")).not.toBeInTheDocument();
   });
 
   it("renders Claude Write tool with the same edit-style preview", async () => {

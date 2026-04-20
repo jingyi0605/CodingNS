@@ -1556,6 +1556,7 @@ function buildEditableToolPreview(tool: ResolvedToolCall): ApplyPatchPreview | n
           action: "add",
           additions: contentLines.length,
           deletions: 0,
+          statsKnown: true,
           lines: contentLines.map((line, index) => ({
             kind: "add" as const,
             text: `+${line}`,
@@ -1656,6 +1657,7 @@ function buildUpdatePreview(
         action: "update",
         additions,
         deletions,
+        statsKnown: true,
         lines
       }
     ],
@@ -2615,10 +2617,7 @@ function ApplyPatchToolItem({
             <span className="apply-patch-summary-file" title={buildApplyPatchFullPathLabel(file)}>
               {getApplyPatchDisplayName(file.nextPath ?? file.path)}
             </span>
-            <span className="apply-patch-summary-stats">
-              <span className="apply-patch-summary-added">+{file.additions}</span>
-              <span className="apply-patch-summary-removed">-{file.deletions}</span>
-            </span>
+            {renderApplyPatchSummaryStats(file)}
           </button>
         ))}
       </div>
@@ -2636,12 +2635,7 @@ function ApplyPatchToolItem({
         {selectedFile ? (
           <>
             <div className="apply-patch-modal-totals">
-              <span className="apply-patch-stat-pill positive">
-                {t("conversation.applyPatchAddedStat")} +{selectedFile.additions}
-              </span>
-              <span className="apply-patch-stat-pill negative">
-                {t("conversation.applyPatchRemovedStat")} -{selectedFile.deletions}
-              </span>
+              {renderApplyPatchModalStats(selectedFile)}
             </div>
 
             <section
@@ -2653,10 +2647,7 @@ function ApplyPatchToolItem({
                   <span className="apply-patch-summary-label">{getApplyPatchActionLabel(selectedFile.action)}</span>
                   <strong>{buildApplyPatchFullPathLabel(selectedFile)}</strong>
                 </div>
-                <div className="apply-patch-summary-stats">
-                  <span className="apply-patch-summary-added">+{selectedFile.additions}</span>
-                  <span className="apply-patch-summary-removed">-{selectedFile.deletions}</span>
-                </div>
+                {renderApplyPatchSummaryStats(selectedFile)}
               </div>
               <div className="apply-patch-diff-view">
                 <div className="apply-patch-diff-scroll">
@@ -3049,6 +3040,44 @@ function buildApplyPatchFullPathLabel(file: ApplyPatchFileChange) {
 
 function buildApplyPatchFileRenderKey(file: ApplyPatchFileChange, index: number) {
   return `${file.path}:${file.nextPath ?? ""}:${index}`;
+}
+
+function renderApplyPatchSummaryStats(file: ApplyPatchFileChange) {
+  if (!file.statsKnown) {
+    return (
+      <span className="apply-patch-summary-stats">
+        <span className="apply-patch-summary-edited">{t("conversation.applyPatchEditedStat")}</span>
+      </span>
+    );
+  }
+
+  return (
+    <span className="apply-patch-summary-stats">
+      <span className="apply-patch-summary-added">+{file.additions}</span>
+      <span className="apply-patch-summary-removed">-{file.deletions}</span>
+    </span>
+  );
+}
+
+function renderApplyPatchModalStats(file: ApplyPatchFileChange) {
+  if (!file.statsKnown) {
+    return (
+      <span className="apply-patch-stat-pill neutral">
+        {t("conversation.applyPatchEditedStat")}
+      </span>
+    );
+  }
+
+  return (
+    <>
+      <span className="apply-patch-stat-pill positive">
+        {t("conversation.applyPatchAddedStat")} +{file.additions}
+      </span>
+      <span className="apply-patch-stat-pill negative">
+        {t("conversation.applyPatchRemovedStat")} -{file.deletions}
+      </span>
+    </>
+  );
 }
 
 function resolveApplyPatchLineClassName(kind: ApplyPatchFileChange["lines"][number]["kind"]) {

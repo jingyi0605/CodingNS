@@ -14859,6 +14859,12 @@ textarea:focus-visible {
   border-color: rgba(239, 68, 68, 0.18);
 }
 
+.apply-patch-stat-pill.neutral {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
+  border-color: color-mix(in srgb, var(--border-primary) 72%, transparent);
+}
+
 .apply-patch-summary-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -14926,6 +14932,10 @@ textarea:focus-visible {
 
 .apply-patch-summary-removed {
   color: #b91c1c;
+}
+
+.apply-patch-summary-edited {
+  color: var(--text-secondary);
 }
 
 .workbench-modal-card.apply-patch-modal {
