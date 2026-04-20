@@ -10,6 +10,9 @@
     "preinstall": "node scripts/ensure-pnpm.cjs",
     "postinstall": "node scripts/fix-node-pty-helper-permissions.cjs && echo '\n✅ 依赖安装完成！现在可以运行开发命令了。\n'",
     "version:sync": "node scripts/sync-version.mjs",
+    "docs:dev": "vitepress dev docs/Documentation",
+    "docs:build": "vitepress build docs/Documentation",
+    "docs:preview": "vitepress preview docs/Documentation",
     "dev": "node -e \"console.log('前后端需要分开启动，分别查看日志。');console.log('后端：npm run dev:backend');console.log('前端：npm run dev:frontend');\"",
     "dev:backend": "node scripts/dev-backend.cjs",
     "dev:backend:perf": "node scripts/dev-backend.cjs CODINGNS_PERF_DEBUG=1",
@@ -30,6 +33,7 @@
     "test:user-app": "pnpm --dir apps/user-app test"
   },
   "devDependencies": {
-    "concurrently": "9.2.1"
+    "concurrently": "9.2.1",
+    "vitepress": "^1.6.4"
   }
 }
