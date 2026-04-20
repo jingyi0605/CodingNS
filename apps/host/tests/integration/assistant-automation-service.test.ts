@@ -514,7 +514,7 @@ describe("AssistantAutomationService", () => {
     });
   });
 
-  it("循环自动化遇到套餐限额时会暂停，并在恢复后自动继续", async () => {
+  it("循环自动化遇到套餐限额时会跳过冷却窗口内的轮次，并从下一次自然调度点继续", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-16T12:00:00.000Z"));
     const { service, butlerControlSessionService } = createService({
@@ -560,23 +560,12 @@ describe("AssistantAutomationService", () => {
     expect(updated.nextRunAt).toBe("2026-04-16T13:35:00.000Z");
     expect(updated.lastRunSummary).toContain("套餐限额");
 
-    (butlerControlSessionService.sendMessage as any).mockResolvedValue({
-      controlSession: updated.controlSession,
-      sessionId: "assistant-session-1",
-      provider: "codex",
-      providerSessionId: "provider-session-1",
-      acceptedAt: "2026-04-16T13:35:10.000Z",
-      clientRequestId: "automation-request-2",
-      message: {
-        messageId: "message-2"
-      }
-    });
-
     await service.runDueTasks("2026-04-16T13:35:01.000Z");
 
     updated = service.getTask(automation.id, "user-1");
     expect(updated.status).toBe("active");
-    expect(updated.nextRunAt).toBe("2026-04-16T14:35:10.000Z");
+    expect(updated.nextRunAt).toBe("2026-04-16T14:35:01.000Z");
+    expect(butlerControlSessionService.sendMessage).toHaveBeenCalledTimes(1);
   });
 
   it("interval 自动化可以只取消本次等待并保留后续调度", () => {

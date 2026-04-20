@@ -436,9 +436,13 @@ export class AssistantAutomationService {
     const pausedTasks = this.taskRepository.listDuePaused(referenceAt, DEFAULT_DUE_TASK_LIMIT);
 
     for (const task of pausedTasks) {
+      const triggerConfig = parseTriggerConfig(task.triggerType, task.triggerConfigJson);
+      const nextRunAt = computeNextRunAt(triggerConfig, referenceAt);
       this.taskRepository.update({
         ...task,
-        status: "active",
+        status: nextRunAt ? "active" : "completed",
+        nextRunAt,
+        lastError: null,
         updatedAt: referenceAt
       });
     }
