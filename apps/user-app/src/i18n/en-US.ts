@@ -253,6 +253,32 @@ export const enUS = {
     relayTunnelAccessTitle: "Connection Settings",
     relayTunnelAccessDescription:
       "Sign in with your tunnel account first, then turn the switch on to bring this device online for external access.",
+    relayTunnelLearnService: "Learn About Tunnel Service",
+    relayTunnelWizardTitle: "Remote Access Wizard",
+    relayTunnelWizardDescription:
+      "Finish account login, host label confirmation, and tunnel startup in three steps. After that, the panel stays focused on the actual remote access info.",
+    relayTunnelStepPending: "Pending",
+    relayTunnelStepCurrent: "In Progress",
+    relayTunnelStepDone: "Done",
+    relayTunnelStepLocked: "Finish the previous step first.",
+    relayTunnelStepLoginTitle: "Log In",
+    relayTunnelStepLoginDescription:
+      "Connect your tunnel account first. Host label checks and traffic queries both depend on it.",
+    relayTunnelStepLoginConnected: "The account is already connected. Continue to the next step.",
+    relayTunnelStepHostLabelTitle: "Set Host Label",
+    relayTunnelStepHostLabelDescription:
+      "Choose the fourth-level domain prefix you will use later and verify that it is available now.",
+    relayTunnelStepStartTitle: "Start Tunnel",
+    relayTunnelStepStartDescription:
+      "After the first two steps are ready, bring the current Host online through the tunnel service.",
+    relayTunnelStepStartReady: "The host label is confirmed. You can start the tunnel now.",
+    relayTunnelStartAction: "Start Tunnel",
+    relayTunnelReadyTitle: "Remote Access Is Ready",
+    relayTunnelReadyDescription:
+      "The setup is complete. This view now keeps only the access URL, traffic info, and maintenance actions.",
+    relayTunnelAccessUrlLabel: "Remote Access URL",
+    relayTunnelReconnectAction: "Reconnect",
+    relayTunnelDisconnectDeviceAction: "Sign Out Device",
     relayTunnelEnableToggleLabel: "Enable tunnel service",
     relayTunnelConfigTitle: "Tunnel Site Configuration",
     relayTunnelConfigDescription:
@@ -263,7 +289,7 @@ export const enUS = {
     relayTunnelRefresh: "Refresh Status",
     relayTunnelAccountTitle: "Tunnel Account Login",
     relayTunnelAccountDescription:
-      "Sign in with your public tunnel account to bind this Host, view the traffic wallet, and buy traffic packages.",
+      "Sign in with your public tunnel account to bind this Host and review the remaining traffic quota.",
     relayTunnelAccountEmail: "Email",
     relayTunnelAccountEmailPlaceholder: "Enter your email",
     relayTunnelAccountPassword: "Password",
@@ -281,9 +307,19 @@ export const enUS = {
     relayTunnelBindTitle: "Bind Current Host",
     relayTunnelBindDescription:
       "Binding first reads the current Host long-term public key, then registers this machine on the public tunnel site.",
+    relayTunnelHostLabelTitle: "Device Name",
+    relayTunnelHostLabelDescription:
+      "After you sign in, enter the fourth-level domain prefix you plan to use later and check whether that name is currently available.",
     relayTunnelHostLabel: "Host Label",
-    relayTunnelHostLabelPlaceholder: "For example: Jackson's dev machine",
-    relayTunnelHostLabelDefault: "My Device",
+    relayTunnelHostLabelPlaceholder: "Enter the prefix",
+    relayTunnelHostLabelSuffix: ".channel.codingns.com",
+    relayTunnelHostLabelCheck: "Check Name",
+    relayTunnelHostLabelChecking: "Checking whether this name is available.",
+    relayTunnelHostLabelAvailable: "This name is available. The public access address will be {domain}",
+    relayTunnelHostLabelReserved: "This name hits a reserved prefix. Choose a different name.",
+    relayTunnelHostLabelOccupied: "This name is already taken. Choose a different name.",
+    relayTunnelHostLabelUnavailable: "The name cannot be verified right now. Try again later.",
+    relayTunnelHostLabelRequired: "Enter a device name first.",
     relayTunnelBindAction: "Login And Bind Host",
     relayTunnelActionsTitle: "Tunnel Controls",
     relayTunnelActionsDescription: "After binding, you can enable, disable, or unbind the public tunnel here.",
@@ -595,6 +631,7 @@ export const enUS = {
     zoomInAction: "Zoom in terminal display",
     zoomOutAction: "Zoom out terminal display",
     zoomResetAction: "Reset terminal zoom",
+    openExternalFailed: "Failed to open the detached terminal window.",
     toolbarToggleAction: "Open terminal toolbar",
     mobileSwipeHint: "Swipe left or right to switch terminals",
     mobileSwipePosition: "{current} / {total}",

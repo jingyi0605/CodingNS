@@ -16,6 +16,8 @@ export interface RelayTunnelStatusView {
   provider: "codingns_relay";
   relayBaseUrl: string | null;
   controlBaseUrl: string | null;
+  controlAccountEmail: string | null;
+  controlSessionExpiresAt: string | null;
   accountId: string | null;
   tunnelDomain: string | null;
   bindingId: string | null;
@@ -77,6 +79,13 @@ export interface RelayControlBindResponse {
   };
 }
 
+export interface RelayControlHostLabelAvailability {
+  hostLabel: string;
+  tunnelDomain: string | null;
+  available: boolean;
+  reason: "available" | "occupied" | "reserved" | "unavailable";
+}
+
 export interface RelayTrafficWalletSummary {
   accountId: string;
   grantedBytes: string;
@@ -133,6 +142,45 @@ export async function updateRelayTunnelConfig(
     method: "PUT",
     body: JSON.stringify(payload)
   });
+}
+
+export async function loginRelayTunnelControl(input: {
+  email: string;
+  password: string;
+}): Promise<RelayTunnelStatusView> {
+  return await httpClient.request<RelayTunnelStatusView>("/api/system/relay-tunnel/control/login", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function logoutRelayTunnelControl(): Promise<RelayTunnelStatusView> {
+  return await httpClient.request<RelayTunnelStatusView>("/api/system/relay-tunnel/control/logout", {
+    method: "POST"
+  });
+}
+
+export async function checkRelayTunnelHostLabelAvailability(input: {
+  hostLabel: string;
+}): Promise<RelayControlHostLabelAvailability> {
+  const hostLabel = input.hostLabel.trim();
+  const path = `/api/system/relay-tunnel/control/host-label-availability?hostLabel=${encodeURIComponent(hostLabel)}`;
+  return await httpClient.request<RelayControlHostLabelAvailability>(path);
+}
+
+export async function bindRelayTunnelControlHost(input: {
+  hostLabel: string;
+}): Promise<RelayTunnelStatusView> {
+  return await httpClient.request<RelayTunnelStatusView>("/api/system/relay-tunnel/control/bind", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function fetchRelayTunnelTrafficWallet(): Promise<{ wallet: RelayTrafficWalletSummary }> {
+  return await httpClient.request<{ wallet: RelayTrafficWalletSummary }>(
+    "/api/system/relay-tunnel/control/wallet"
+  );
 }
 
 export async function bindRelayTunnelHost(
@@ -197,6 +245,23 @@ export async function bindRelayControlHost(input: {
       hostPublicKey: input.hostPublicKey,
       hostFingerprint: input.hostFingerprint
     })
+  });
+}
+
+export async function checkRelayControlHostLabelAvailability(input: {
+  controlBaseUrl: string;
+  accessToken: string;
+  hostLabel: string;
+}): Promise<RelayControlHostLabelAvailability> {
+  const hostLabel = input.hostLabel.trim();
+  const path = `/api/v1/hosts/availability?hostLabel=${encodeURIComponent(hostLabel)}`;
+
+  return await httpClient.request<RelayControlHostLabelAvailability>(path, {
+    baseUrl: input.controlBaseUrl,
+    skipAuth: true,
+    headers: {
+      Authorization: `Bearer ${input.accessToken}`
+    }
   });
 }
 
