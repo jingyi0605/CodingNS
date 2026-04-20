@@ -894,12 +894,26 @@ function ensureInstanceRelayTunnelConfigSchema(db: Database.Database): void {
     .prepare("PRAGMA table_info(instance_relay_tunnel_config)")
     .all() as Array<{ name: string }>;
 
-  if (columns.length === 0 || columns.some((column) => column.name === "activated")) {
+  if (columns.length === 0) {
     return;
   }
 
-  db.exec("ALTER TABLE instance_relay_tunnel_config ADD COLUMN activated INTEGER NOT NULL DEFAULT 0 CHECK (activated IN (0, 1))");
-  db.exec("UPDATE instance_relay_tunnel_config SET activated = enabled");
+  if (!columns.some((column) => column.name === "activated")) {
+    db.exec("ALTER TABLE instance_relay_tunnel_config ADD COLUMN activated INTEGER NOT NULL DEFAULT 0 CHECK (activated IN (0, 1))");
+    db.exec("UPDATE instance_relay_tunnel_config SET activated = enabled");
+  }
+
+  if (!columns.some((column) => column.name === "control_access_token_ciphertext")) {
+    db.exec("ALTER TABLE instance_relay_tunnel_config ADD COLUMN control_access_token_ciphertext TEXT");
+  }
+
+  if (!columns.some((column) => column.name === "control_account_email")) {
+    db.exec("ALTER TABLE instance_relay_tunnel_config ADD COLUMN control_account_email TEXT");
+  }
+
+  if (!columns.some((column) => column.name === "control_session_expires_at")) {
+    db.exec("ALTER TABLE instance_relay_tunnel_config ADD COLUMN control_session_expires_at TEXT");
+  }
 }
 
 function ensureSessionProviderSchema(db: Database.Database): void {

@@ -285,7 +285,8 @@ function createRelayTunnelTestContext(options?: {
     identityRepository,
     repository,
     {
-      defaultLocalTargetBaseUrl: "http://127.0.0.1:4312"
+      defaultLocalTargetBaseUrl: "http://127.0.0.1:4312",
+      controlSessionSecret: "relay-control-secret"
     },
     taskManager,
     runtimeAdapter
@@ -313,6 +314,9 @@ function seedBoundConfig(
     provider: "codingns_relay",
     relayBaseUrl: "wss://relay.codingns.example",
     controlBaseUrl: "https://control.codingns.example",
+    controlAccessTokenCiphertext: null,
+    controlAccountEmail: null,
+    controlSessionExpiresAt: null,
     accountId: "acct_demo",
     tunnelDomain: "demo.codingns.example",
     bindingId: "binding_demo",

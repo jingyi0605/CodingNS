@@ -1278,6 +1278,9 @@ export interface InstanceRelayTunnelConfig {
   provider: RelayTunnelProvider;
   relayBaseUrl: string | null;
   controlBaseUrl: string | null;
+  controlAccessTokenCiphertext: string | null;
+  controlAccountEmail: string | null;
+  controlSessionExpiresAt: string | null;
   accountId: string | null;
   tunnelDomain: string | null;
   bindingId: string | null;

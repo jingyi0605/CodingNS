@@ -420,7 +420,10 @@ export function createServer(config: HostConfig) {
     taskManager,
     new RelayTunnelRuntimeEdgeAdapter(
       repositories.instanceRelayTunnelIdentityRepository,
-      repositories.instanceRelayTunnelRepository
+      repositories.instanceRelayTunnelRepository,
+      {
+        controlSessionSecret: config.gitCredentialSecret
+      }
     )
   );
   const modelSwitchService = new ModelSwitchService(

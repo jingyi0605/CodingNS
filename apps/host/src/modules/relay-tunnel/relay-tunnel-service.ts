@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 
 import { AppError } from "../../shared/errors/app-error.js";
+import { decryptSecret, encryptSecret } from "../../shared/utils/secret-box.js";
 import { nowIso } from "../../shared/utils/time.js";
 import { RelayTunnelIdentityService } from "./crypto/relay-tunnel-identity-service.js";
 import type { BootstrapStateRepository } from "../../storage/repositories/bootstrap-state-repository.js";
@@ -38,6 +39,8 @@ export interface InstanceRelayTunnelStatusDto {
   provider: RelayTunnelProvider;
   relayBaseUrl: string | null;
   controlBaseUrl: string | null;
+  controlAccountEmail: string | null;
+  controlSessionExpiresAt: string | null;
   accountId: string | null;
   tunnelDomain: string | null;
   bindingId: string | null;
@@ -55,9 +58,52 @@ export interface InstanceRelayTunnelStatusDto {
   updatedAt: string | null;
 }
 
+export interface RelayTunnelControlLoginInput {
+  email?: string | null;
+  password?: string | null;
+}
+
+export interface RelayTunnelControlHostLabelAvailability {
+  hostLabel: string;
+  tunnelDomain: string | null;
+  available: boolean;
+  reason: "available" | "occupied" | "reserved" | "unavailable";
+}
+
+export interface RelayTunnelTrafficWalletSummary {
+  accountId: string;
+  grantedBytes: string;
+  usedBytes: string;
+  remainingBytes: string;
+  exhausted: boolean;
+  updatedAt: string;
+}
+
 interface RelayTunnelStateSnapshot {
   config: InstanceRelayTunnelConfig;
   hasPersistedConfig: boolean;
+}
+
+interface RelayControlLoginResponse {
+  account: {
+    accountId: string;
+    email: string;
+  };
+  accessToken: string;
+  expiresAt: string;
+}
+
+interface RelayControlBindResponse {
+  created: boolean;
+  binding: {
+    bindingId: string;
+    tunnelDomain: string;
+    hostPublicKey: string;
+    hostFingerprint: string;
+    relayBaseUrl: string;
+    controlBaseUrl: string;
+    status: "active" | "disabled";
+  };
 }
 
 export interface RelayTunnelRuntimeAdapter {
@@ -70,6 +116,8 @@ export interface RelayTunnelRuntimeAdapter {
 
 export class RelayTunnelService {
   private readonly defaultLocalTargetBaseUrl: string;
+  private readonly controlSessionSecret: string;
+  private readonly fetchFn: typeof fetch;
   private readonly taskManager: TaskManager;
   private readonly runtimeAdapter: RelayTunnelRuntimeAdapter;
   private readonly identityService: RelayTunnelIdentityService;
@@ -81,6 +129,8 @@ export class RelayTunnelService {
     private readonly repository: InstanceRelayTunnelRepository,
     options: {
       defaultLocalTargetBaseUrl: string;
+      controlSessionSecret: string;
+      fetchFn?: typeof fetch;
     },
     taskManager: TaskManager = createTaskManager(),
     runtimeAdapter: RelayTunnelRuntimeAdapter = new NoopRelayTunnelRuntimeAdapter()
@@ -88,6 +138,11 @@ export class RelayTunnelService {
     this.taskManager = taskManager;
     this.runtimeAdapter = runtimeAdapter;
     this.identityService = new RelayTunnelIdentityService(identityRepository);
+    this.controlSessionSecret = normalizeRequiredText(
+      options.controlSessionSecret,
+      "controlSessionSecret"
+    );
+    this.fetchFn = options.fetchFn ?? fetch;
     this.defaultLocalTargetBaseUrl = normalizeHttpBaseUrl(
       options.defaultLocalTargetBaseUrl,
       "defaultLocalTargetBaseUrl"
@@ -204,6 +259,132 @@ export class RelayTunnelService {
     );
   }
 
+  async loginControl(input: RelayTunnelControlLoginInput): Promise<InstanceRelayTunnelStatusDto> {
+    const snapshot = this.readStateSnapshot();
+    const controlBaseUrl = requireConfiguredControlBaseUrl(snapshot.config);
+    const email = normalizeRequiredText(input.email, "email");
+    const password = normalizeRequiredText(input.password, "password");
+    const response = await this.requestControlApi<RelayControlLoginResponse>({
+      controlBaseUrl,
+      path: "/api/public/auth/login",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        email,
+        password
+      }),
+      failurePrefix: "控制站登录失败"
+    });
+    const timestamp = nowIso();
+    const nextConfig: InstanceRelayTunnelConfig = {
+      ...snapshot.config,
+      accountId: response.account.accountId,
+      controlAccessTokenCiphertext: encryptSecret(this.controlSessionSecret, response.accessToken),
+      controlAccountEmail: response.account.email.trim(),
+      controlSessionExpiresAt: normalizeOptionalText(response.expiresAt),
+      updatedAt: timestamp
+    };
+
+    this.repository.upsertConfig(nextConfig);
+    return this.buildStatusDto(
+      {
+        config: nextConfig,
+        hasPersistedConfig: true
+      },
+      this.resolveConfigWithIdentity(nextConfig),
+      this.resolveEffectiveStatus(nextConfig)
+    );
+  }
+
+  async logoutControl(): Promise<InstanceRelayTunnelStatusDto> {
+    const snapshot = this.readStateSnapshot();
+    const nextConfig = clearRelayTunnelControlSession(snapshot.config, {
+      clearAccountId: !snapshot.config.bindingId,
+      updatedAt: nowIso()
+    });
+
+    this.repository.upsertConfig(nextConfig);
+    return this.buildStatusDto(
+      {
+        config: nextConfig,
+        hasPersistedConfig: true
+      },
+      this.resolveConfigWithIdentity(nextConfig),
+      this.resolveEffectiveStatus(nextConfig)
+    );
+  }
+
+  async checkHostLabelAvailability(hostLabel: string): Promise<RelayTunnelControlHostLabelAvailability> {
+    const snapshot = this.readStateSnapshot();
+    const normalizedHostLabel = normalizeRequiredText(hostLabel, "hostLabel");
+    const { controlBaseUrl, accessToken } = this.requireControlSession(snapshot.config);
+    const path = `/api/v1/hosts/availability?hostLabel=${encodeURIComponent(normalizedHostLabel)}`;
+
+    return await this.requestControlApi<RelayTunnelControlHostLabelAvailability>({
+      controlBaseUrl,
+      path,
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      },
+      failurePrefix: "检查 Host 名称失败"
+    });
+  }
+
+  async bindControlHost(hostLabel: string): Promise<InstanceRelayTunnelStatusDto> {
+    const snapshot = this.readStateSnapshot();
+
+    if (snapshot.config.bindingId && snapshot.config.tunnelDomain) {
+      const effectiveConfig = this.resolveConfigWithIdentity(snapshot.config);
+      return this.buildStatusDto(snapshot, effectiveConfig, this.resolveEffectiveStatus(effectiveConfig));
+    }
+
+    const normalizedHostLabel = normalizeRequiredText(hostLabel, "hostLabel");
+    const { controlBaseUrl, accessToken, accountId } = this.requireControlSession(snapshot.config);
+    const identity = this.identityService.ensureIdentity();
+    const bindResponse = await this.requestControlApi<RelayControlBindResponse>({
+      controlBaseUrl,
+      path: "/api/v1/hosts/bind",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`
+      },
+      body: JSON.stringify({
+        hostLabel: normalizedHostLabel,
+        hostPublicKey: identity.publicKeyPem,
+        hostFingerprint: identity.keyFingerprint
+      }),
+      failurePrefix: "绑定 Host 失败"
+    });
+
+    return await this.bind({
+      accountId,
+      bindingId: bindResponse.binding.bindingId,
+      tunnelDomain: bindResponse.binding.tunnelDomain,
+      relayBaseUrl: bindResponse.binding.relayBaseUrl,
+      controlBaseUrl
+    });
+  }
+
+  async getTrafficWallet(): Promise<RelayTunnelTrafficWalletSummary> {
+    const snapshot = this.readStateSnapshot();
+    const { controlBaseUrl, accessToken } = this.requireControlSession(snapshot.config);
+    const response = await this.requestControlApi<{ wallet: RelayTunnelTrafficWalletSummary }>({
+      controlBaseUrl,
+      path: "/api/v1/traffic-wallet/me",
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      },
+      failurePrefix: "读取控制站流量信息失败"
+    });
+
+    return response.wallet;
+  }
+
   async bind(input: RelayTunnelBindInput): Promise<InstanceRelayTunnelStatusDto> {
     const snapshot = this.readStateSnapshot();
     const accountId = normalizeRequiredText(input.accountId, "accountId");
@@ -271,13 +452,16 @@ export class RelayTunnelService {
   async unbind(): Promise<InstanceRelayTunnelStatusDto> {
     const snapshot = this.readStateSnapshot();
     const timestamp = nowIso();
-    const nextConfig: InstanceRelayTunnelConfig = {
+    const nextConfig = clearRelayTunnelControlSession({
       ...snapshot.config,
       enabled: false,
       bindingId: null,
       tunnelDomain: null,
       updatedAt: timestamp
-    };
+    }, {
+      clearAccountId: true,
+      updatedAt: timestamp
+    });
     const nextStatus = buildSkeletonStatus("disabled", nextConfig, {
       observedAt: timestamp
     });
@@ -399,6 +583,9 @@ export class RelayTunnelService {
           provider: "codingns_relay",
           relayBaseUrl: null,
           controlBaseUrl: null,
+          controlAccessTokenCiphertext: null,
+          controlAccountEmail: null,
+          controlSessionExpiresAt: null,
           accountId: null,
           tunnelDomain: null,
           bindingId: null,
@@ -530,6 +717,8 @@ export class RelayTunnelService {
       provider: effectiveConfig.provider,
       relayBaseUrl: effectiveConfig.relayBaseUrl,
       controlBaseUrl: effectiveConfig.controlBaseUrl,
+      controlAccountEmail: effectiveConfig.controlAccountEmail,
+      controlSessionExpiresAt: effectiveConfig.controlSessionExpiresAt,
       accountId: effectiveConfig.accountId,
       tunnelDomain: effectiveConfig.tunnelDomain,
       bindingId: effectiveConfig.bindingId,
@@ -584,6 +773,67 @@ export class RelayTunnelService {
   private isBootstrapInitialized(): boolean {
     return this.bootstrapStateRepository.getState().initialized;
   }
+
+  private requireControlSession(config: InstanceRelayTunnelConfig): {
+    controlBaseUrl: string;
+    accessToken: string;
+    accountId: string;
+  } {
+    const controlBaseUrl = requireConfiguredControlBaseUrl(config);
+    const encryptedAccessToken = normalizeOptionalText(config.controlAccessTokenCiphertext);
+    const accountId = normalizeOptionalText(config.accountId);
+
+    if (!encryptedAccessToken || !accountId) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "RELAY_TUNNEL_CONTROL_SESSION_REQUIRED",
+        detail: "当前还没有登录控制站账号"
+      });
+    }
+
+    try {
+      return {
+        controlBaseUrl,
+        accessToken: decryptSecret(this.controlSessionSecret, encryptedAccessToken),
+        accountId
+      };
+    } catch {
+      const nextConfig = clearRelayTunnelControlSession(config, {
+        clearAccountId: !config.bindingId,
+        updatedAt: nowIso()
+      });
+      this.repository.upsertConfig(nextConfig);
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "RELAY_TUNNEL_CONTROL_SESSION_REQUIRED",
+        detail: "控制站登录态已失效，请重新登录"
+      });
+    }
+  }
+
+  private async requestControlApi<T>(input: {
+    controlBaseUrl: string;
+    path: string;
+    method: "GET" | "POST";
+    headers?: Record<string, string>;
+    body?: string;
+    failurePrefix: string;
+  }): Promise<T> {
+    const response = await this.fetchFn(
+      new URL(input.path, ensureTrailingSlash(input.controlBaseUrl)),
+      {
+        method: input.method,
+        headers: input.headers,
+        body: input.body
+      }
+    );
+
+    if (!response.ok) {
+      throw await buildControlApiError(response, input.failurePrefix);
+    }
+
+    return await response.json() as T;
+  }
 }
 
 class NoopRelayTunnelRuntimeAdapter implements RelayTunnelRuntimeAdapter {
@@ -635,6 +885,11 @@ function normalizeRequiredText(value: string | null | undefined, field: string):
   }
 
   return normalized;
+}
+
+function normalizeOptionalText(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
 }
 
 function normalizeTunnelDomain(value: string | null | undefined, field: string): string {
@@ -717,16 +972,21 @@ function normalizeWebsocketBaseUrl(value: string | null | undefined, field: stri
     throw new AppError({
       statusCode: 400,
       errorCode: "INVALID_INPUT",
-      detail: `${field} 必须是合法的 ws 或 wss 地址`,
+      detail: `${field} 必须是合法的 ws、wss、http 或 https 地址`,
       field
     });
   }
 
-  if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
+  if (
+    parsed.protocol !== "ws:"
+    && parsed.protocol !== "wss:"
+    && parsed.protocol !== "http:"
+    && parsed.protocol !== "https:"
+  ) {
     throw new AppError({
       statusCode: 400,
       errorCode: "INVALID_INPUT",
-      detail: `${field} 只允许使用 ws 或 wss 协议`,
+      detail: `${field} 只允许使用 ws、wss、http 或 https 协议`,
       field
     });
   }
@@ -741,5 +1001,83 @@ function normalizeWebsocketBaseUrl(value: string | null | undefined, field: stri
   }
 
   const pathname = parsed.pathname === "/" ? "" : parsed.pathname.replace(/\/+$/, "");
-  return `${parsed.protocol}//${parsed.host}${pathname}`;
+  const normalizedProtocol =
+    parsed.protocol === "https:"
+      ? "wss:"
+      : parsed.protocol === "http:"
+        ? "ws:"
+        : parsed.protocol;
+
+  return `${normalizedProtocol}//${parsed.host}${pathname}`;
+}
+
+function requireConfiguredControlBaseUrl(config: InstanceRelayTunnelConfig): string {
+  const controlBaseUrl = normalizeOptionalText(config.controlBaseUrl);
+
+  if (!controlBaseUrl) {
+    throw new AppError({
+      statusCode: 409,
+      errorCode: "RELAY_TUNNEL_CONTROL_BASE_URL_REQUIRED",
+      detail: "当前还没有配置控制站点地址"
+    });
+  }
+
+  return controlBaseUrl;
+}
+
+function ensureTrailingSlash(value: string): string {
+  return value.endsWith("/") ? value : `${value}/`;
+}
+
+function clearRelayTunnelControlSession(
+  config: InstanceRelayTunnelConfig,
+  options: {
+    clearAccountId: boolean;
+    updatedAt: string;
+  }
+): InstanceRelayTunnelConfig {
+  return {
+    ...config,
+    controlAccessTokenCiphertext: null,
+    controlAccountEmail: null,
+    controlSessionExpiresAt: null,
+    accountId: options.clearAccountId ? null : config.accountId,
+    updatedAt: options.updatedAt
+  };
+}
+
+async function buildControlApiError(response: Response, failurePrefix: string): Promise<AppError> {
+  const detail = await readControlApiErrorDetail(response);
+  return new AppError({
+    statusCode: response.status,
+    errorCode: "RELAY_TUNNEL_CONTROL_API_ERROR",
+    detail: `${failurePrefix}：${detail}`
+  });
+}
+
+async function readControlApiErrorDetail(response: Response): Promise<string> {
+  const contentType = response.headers.get("content-type") ?? "";
+
+  if (contentType.includes("application/json")) {
+    try {
+      const payload = await response.json() as Record<string, unknown>;
+      const detail =
+        readJsonErrorText(payload.detail)
+        ?? readJsonErrorText(payload.message)
+        ?? readJsonErrorText(payload.error);
+
+      if (detail) {
+        return detail;
+      }
+    } catch {
+      // 忽略 JSON 解析失败，回退到纯文本。
+    }
+  }
+
+  const text = normalizeOptionalText(await response.text());
+  return text ?? `HTTP ${response.status}`;
+}
+
+function readJsonErrorText(value: unknown): string | null {
+  return typeof value === "string" ? normalizeOptionalText(value) : null;
 }

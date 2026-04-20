@@ -19,6 +19,14 @@ export async function registerSystemRoutes(
   app.get("/api/system/relay-tunnel/status", relayTunnelController.getStatus);
   app.post("/api/system/relay-tunnel/identity/ensure", relayTunnelController.ensureIdentity);
   app.put("/api/system/relay-tunnel/config", relayTunnelController.updateConfig);
+  app.post("/api/system/relay-tunnel/control/login", relayTunnelController.loginControl);
+  app.post("/api/system/relay-tunnel/control/logout", relayTunnelController.logoutControl);
+  app.get(
+    "/api/system/relay-tunnel/control/host-label-availability",
+    relayTunnelController.checkHostLabelAvailability
+  );
+  app.post("/api/system/relay-tunnel/control/bind", relayTunnelController.bindControlHost);
+  app.get("/api/system/relay-tunnel/control/wallet", relayTunnelController.getTrafficWallet);
   app.post("/api/system/relay-tunnel/bind", relayTunnelController.bind);
   app.post("/api/system/relay-tunnel/unbind", relayTunnelController.unbind);
   app.post("/api/system/relay-tunnel/enable", relayTunnelController.enable);

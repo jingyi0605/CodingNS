@@ -18,6 +18,9 @@ export class InstanceRelayTunnelRepository {
            provider,
            relay_base_url,
            control_base_url,
+           control_access_token_ciphertext,
+           control_account_email,
+           control_session_expires_at,
            account_id,
            tunnel_domain,
            binding_id,
@@ -43,6 +46,9 @@ export class InstanceRelayTunnelRepository {
           provider,
           relay_base_url,
           control_base_url,
+          control_access_token_ciphertext,
+          control_account_email,
+          control_session_expires_at,
           account_id,
           tunnel_domain,
           binding_id,
@@ -50,13 +56,16 @@ export class InstanceRelayTunnelRepository {
           host_key_fingerprint,
           local_target_base_url,
           updated_at
-        ) VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           activated = excluded.activated,
           enabled = excluded.enabled,
           provider = excluded.provider,
           relay_base_url = excluded.relay_base_url,
           control_base_url = excluded.control_base_url,
+          control_access_token_ciphertext = excluded.control_access_token_ciphertext,
+          control_account_email = excluded.control_account_email,
+          control_session_expires_at = excluded.control_session_expires_at,
           account_id = excluded.account_id,
           tunnel_domain = excluded.tunnel_domain,
           binding_id = excluded.binding_id,
@@ -71,6 +80,9 @@ export class InstanceRelayTunnelRepository {
         config.provider,
         config.relayBaseUrl,
         config.controlBaseUrl,
+        config.controlAccessTokenCiphertext,
+        config.controlAccountEmail,
+        config.controlSessionExpiresAt,
         config.accountId,
         config.tunnelDomain,
         config.bindingId,
@@ -156,6 +168,9 @@ interface InstanceRelayTunnelConfigRow {
   provider: RelayTunnelProvider;
   relay_base_url: string | null;
   control_base_url: string | null;
+  control_access_token_ciphertext: string | null;
+  control_account_email: string | null;
+  control_session_expires_at: string | null;
   account_id: string | null;
   tunnel_domain: string | null;
   binding_id: string | null;
@@ -185,6 +200,9 @@ function mapConfigRow(row: InstanceRelayTunnelConfigRow): InstanceRelayTunnelCon
     provider: row.provider,
     relayBaseUrl: row.relay_base_url,
     controlBaseUrl: row.control_base_url,
+    controlAccessTokenCiphertext: row.control_access_token_ciphertext,
+    controlAccountEmail: row.control_account_email,
+    controlSessionExpiresAt: row.control_session_expires_at,
     accountId: row.account_id,
     tunnelDomain: row.tunnel_domain,
     bindingId: row.binding_id,
