@@ -27,52 +27,62 @@ const WORKSPACE_MANAGEMENT_TIMER_REFRESH_ENABLED = readBooleanEnv(
 
 interface WorkbenchSubscribeMessage {
   type: "workbench.subscribe";
+  knownRevision?: string;
 }
 
 interface WorkbenchRefreshMessage {
   type: "workbench.refresh";
+  knownRevision?: string;
 }
 
 interface FileTreeSubscribeMessage {
   type: "fileTree.subscribe";
   workspaceId: string;
   paths?: string[];
+  knownRevisions?: Record<string, string>;
 }
 
 interface FileTreeRefreshMessage {
   type: "fileTree.refresh";
   workspaceId: string;
   paths?: string[];
+  knownRevisions?: Record<string, string>;
 }
 
 interface GitSubscribeMessage {
   type: "git.subscribe";
   workspaceId: string;
+  knownRevision?: string;
 }
 
 interface GitRefreshMessage {
   type: "git.refresh";
   workspaceId: string;
+  knownRevision?: string;
 }
 
 interface TerminalManagerSubscribeMessage {
   type: "terminalManager.subscribe";
   workspaceId: string;
+  knownRevision?: string;
 }
 
 interface TerminalManagerRefreshMessage {
   type: "terminalManager.refresh";
   workspaceId: string;
+  knownRevision?: string;
 }
 
 interface WorkspaceManagementSubscribeMessage {
   type: "workspaceManagement.subscribe";
   workspaceId: string;
+  knownRevision?: string;
 }
 
 interface WorkspaceManagementRefreshMessage {
   type: "workspaceManagement.refresh";
   workspaceId: string;
+  knownRevision?: string;
 }
 
 type WorkbenchMessage =
@@ -90,6 +100,7 @@ type WorkbenchMessage =
 interface UserChannelState {
   clients: Set<WebSocket>;
   lastWorkbenchPayload: string | null;
+  lastWorkbenchRevision: string | null;
   workbenchTimer: NodeJS.Timeout | null;
   workspaceManagementTimer: NodeJS.Timeout | null;
   realtimeBroadcastTimer: NodeJS.Timeout | null;
@@ -102,11 +113,13 @@ interface FileTreeClientSubscription {
   workspaceId: string;
   paths: string[];
   lastPayloadByPath: Map<string, string>;
+  knownRevisionByPath: Map<string, string>;
 }
 
 interface GitClientSubscription {
   workspaceId: string;
   lastPayload: string | null;
+  knownRevision: string | null;
   lastRequestedAt: number;
   refreshTask: Promise<void> | null;
   refreshController: AbortController | null;
@@ -118,6 +131,7 @@ interface GitClientSubscription {
 interface TerminalManagerClientSubscription {
   workspaceId: string;
   lastPayload: string | null;
+  knownRevision: string | null;
   refreshTask: Promise<void> | null;
   refreshTimer: NodeJS.Timeout | null;
   queuedRefresh: boolean;
@@ -127,6 +141,7 @@ interface TerminalManagerClientSubscription {
 interface WorkspaceManagementClientSubscription {
   workspaceId: string;
   lastPayload: string | null;
+  knownRevision: string | null;
 }
 
 export class WorkbenchWsHub {
@@ -176,7 +191,7 @@ export class WorkbenchWsHub {
     try {
       switch (message.type) {
         case "workbench.subscribe":
-          void this.sendWorkbenchSnapshotToClient(client, userId, channel);
+          void this.sendWorkbenchSnapshotToClient(client, userId, channel, message.knownRevision);
           if (this.workbenchService.shouldRefreshSnapshot()) {
             this.workbenchService.scheduleSnapshotRefresh(userId);
           }
@@ -185,18 +200,28 @@ export class WorkbenchWsHub {
           void this.refreshAndBroadcast(userId, true);
           return true;
         case "fileTree.subscribe":
-          this.replaceFileTreeSubscription(client, message.workspaceId, message.paths);
+          this.replaceFileTreeSubscription(
+            client,
+            message.workspaceId,
+            message.paths,
+            message.knownRevisions
+          );
           void this.refreshFileTreeSubscriptions(client);
           return true;
         case "fileTree.refresh":
           for (const path of normalizePanelPaths(message.paths)) {
             this.workspacePanelSnapshotService.invalidateFileTree(message.workspaceId.trim(), path);
           }
-          this.ensureFileTreeSubscription(client, message.workspaceId, message.paths);
+          this.ensureFileTreeSubscription(
+            client,
+            message.workspaceId,
+            message.paths,
+            message.knownRevisions
+          );
           void this.refreshFileTreeSubscriptions(client, true);
           return true;
         case "git.subscribe":
-          this.ensureGitSubscription(client, message.workspaceId);
+          this.ensureGitSubscription(client, message.workspaceId, message.knownRevision);
           void this.refreshGitSubscription(client, false, {
             deliverIfUnchanged: true,
             ignoreMinInterval: true
@@ -204,18 +229,18 @@ export class WorkbenchWsHub {
           return true;
         case "git.refresh":
           this.workspacePanelSnapshotService.invalidateGit(message.workspaceId.trim());
-          this.ensureGitSubscription(client, message.workspaceId);
+          this.ensureGitSubscription(client, message.workspaceId, message.knownRevision);
           this.scheduleGitRefresh(client, {
             force: true
           });
           return true;
         case "terminalManager.subscribe":
-          this.ensureTerminalManagerSubscription(client, message.workspaceId);
+          this.ensureTerminalManagerSubscription(client, message.workspaceId, message.knownRevision);
           this.scheduleTerminalManagerRefresh(client);
           return true;
         case "terminalManager.refresh":
           this.workspacePanelSnapshotService.invalidateTerminalManager(message.workspaceId.trim());
-          this.ensureTerminalManagerSubscription(client, message.workspaceId);
+          this.ensureTerminalManagerSubscription(client, message.workspaceId, message.knownRevision);
           this.scheduleTerminalManagerRefresh(client, {
             force: true
           });
@@ -223,7 +248,8 @@ export class WorkbenchWsHub {
         case "workspaceManagement.subscribe":
           this.clientWorkspaceManagementSubscriptions.set(client, {
             workspaceId: message.workspaceId.trim(),
-            lastPayload: null
+            lastPayload: null,
+            knownRevision: normalizeKnownRevision(message.knownRevision) ?? null
           });
           void this.refreshWorkspaceManagementSubscription(client);
           return true;
@@ -231,7 +257,8 @@ export class WorkbenchWsHub {
           this.workspacePanelSnapshotService.invalidateWorkspaceManagement(message.workspaceId.trim());
           this.clientWorkspaceManagementSubscriptions.set(client, {
             workspaceId: message.workspaceId.trim(),
-            lastPayload: null
+            lastPayload: null,
+            knownRevision: normalizeKnownRevision(message.knownRevision) ?? null
           });
           void this.refreshWorkspaceManagementSubscription(client, true);
           return true;
@@ -345,13 +372,15 @@ export class WorkbenchWsHub {
       const startedAtMs = terminalDebugNowMs();
 
       try {
-        const payload = buildWorkbenchPayload(this.workbenchService.getSnapshot(userId));
+        const snapshot = this.workbenchService.getSnapshot(userId);
+        const payload = buildWorkbenchPayload(snapshot);
 
         if (payload === channel.lastWorkbenchPayload) {
           return;
         }
 
         channel.lastWorkbenchPayload = payload;
+        channel.lastWorkbenchRevision = snapshot.revision;
 
         for (const client of channel.clients) {
           client.send(payload);
@@ -439,6 +468,7 @@ export class WorkbenchWsHub {
     channel = {
       clients: new Set<WebSocket>(),
       lastWorkbenchPayload: null,
+      lastWorkbenchRevision: null,
       workbenchTimer: null,
       workspaceManagementTimer: null,
       realtimeBroadcastTimer: null,
@@ -471,18 +501,23 @@ export class WorkbenchWsHub {
   private async sendWorkbenchSnapshotToClient(
     client: WebSocket,
     userId: string,
-    channel: UserChannelState
+    channel: UserChannelState,
+    knownRevision?: string
   ): Promise<void> {
     try {
-      const payload = buildWorkbenchPayload(this.workbenchService.getSnapshot(userId));
-      channel.lastWorkbenchPayload = payload;
-      client.send(payload);
+      const snapshot = this.workbenchService.getSnapshot(userId);
+      channel.lastWorkbenchPayload = buildWorkbenchPayload(snapshot);
+      channel.lastWorkbenchRevision = snapshot.revision;
+      client.send(buildWorkbenchPayload(snapshot, knownRevision));
     } catch (error) {
       this.reportAsyncError("sendWorkbenchSnapshotToClient", error, { userId });
     }
   }
 
-  private async refreshAndBroadcast(userId: string, force = false): Promise<void> {
+  private async refreshAndBroadcast(
+    userId: string,
+    force = false
+  ): Promise<void> {
     const channel = this.getOrCreateChannel(userId);
 
     if (channel.refreshTask) {
@@ -504,6 +539,7 @@ export class WorkbenchWsHub {
         }
 
         channel.lastWorkbenchPayload = payload;
+        channel.lastWorkbenchRevision = snapshot.revision;
 
         for (const client of channel.clients) {
           client.send(payload);
@@ -528,25 +564,29 @@ export class WorkbenchWsHub {
   private ensureFileTreeSubscription(
     client: WebSocket,
     workspaceId: string,
-    paths?: string[]
+    paths?: string[],
+    knownRevisions?: Record<string, string>
   ): FileTreeClientSubscription {
     const current = this.clientFileTreeSubscriptions.get(client);
     const normalizedWorkspaceId = workspaceId.trim();
     const normalizedPaths = normalizePanelPaths(paths);
     const nextPaths = normalizedPaths.length > 0 ? normalizedPaths : [""];
+    const nextKnownRevisionByPath = buildKnownRevisionByPathMap(nextPaths, knownRevisions);
 
     if (
       current &&
       current.workspaceId === normalizedWorkspaceId &&
       areStringArraysEqual(current.paths, nextPaths)
     ) {
+      current.knownRevisionByPath = nextKnownRevisionByPath;
       return current;
     }
 
     const next: FileTreeClientSubscription = {
       workspaceId: normalizedWorkspaceId,
       paths: nextPaths,
-      lastPayloadByPath: new Map<string, string>()
+      lastPayloadByPath: new Map<string, string>(),
+      knownRevisionByPath: nextKnownRevisionByPath
     };
 
     this.fileWatcher.subscribeFileTree(normalizedWorkspaceId, nextPaths);
@@ -562,9 +602,10 @@ export class WorkbenchWsHub {
   private replaceFileTreeSubscription(
     client: WebSocket,
     workspaceId: string,
-    paths?: string[]
+    paths?: string[],
+    knownRevisions?: Record<string, string>
   ): FileTreeClientSubscription {
-    return this.ensureFileTreeSubscription(client, workspaceId, paths);
+    return this.ensureFileTreeSubscription(client, workspaceId, paths, knownRevisions);
   }
 
   private async refreshFileTreeSubscriptions(client: WebSocket, force = false): Promise<void> {
@@ -583,13 +624,17 @@ export class WorkbenchWsHub {
           path,
           { force }
         );
-        const payload = buildFileTreePayload(snapshot);
+        const payload = buildFileTreePayload(
+          snapshot,
+          subscription.knownRevisionByPath.get(path) ?? null
+        );
         const lastPayload = subscription.lastPayloadByPath.get(path) ?? null;
 
         if (payload === lastPayload) {
           continue;
         }
 
+        subscription.knownRevisionByPath.set(path, snapshot.revision);
         subscription.lastPayloadByPath.set(path, payload);
         client.send(payload);
       }
@@ -662,12 +707,13 @@ export class WorkbenchWsHub {
           return;
         }
 
-        const payload = buildGitPayload(snapshot);
+        const payload = buildGitPayload(snapshot, subscription.knownRevision);
 
         if (payload === subscription.lastPayload && !options?.deliverIfUnchanged) {
           return;
         }
 
+        subscription.knownRevision = snapshot.revision;
         subscription.lastPayload = payload;
         client.send(payload);
         logTerminalDebug("workbench.git_refresh.completed", {
@@ -700,17 +746,24 @@ export class WorkbenchWsHub {
     return subscription.refreshTask;
   }
 
-  private ensureGitSubscription(client: WebSocket, workspaceId: string): GitClientSubscription {
+  private ensureGitSubscription(
+    client: WebSocket,
+    workspaceId: string,
+    knownRevision?: string
+  ): GitClientSubscription {
     const normalizedWorkspaceId = workspaceId.trim();
     const current = this.clientGitSubscriptions.get(client);
+    const normalizedKnownRevision = normalizeKnownRevision(knownRevision) ?? null;
 
     if (current && current.workspaceId === normalizedWorkspaceId) {
+      current.knownRevision = normalizedKnownRevision;
       return current;
     }
 
     const next: GitClientSubscription = {
       workspaceId: normalizedWorkspaceId,
       lastPayload: null,
+      knownRevision: normalizedKnownRevision,
       lastRequestedAt: 0,
       refreshTask: null,
       refreshController: null,
@@ -796,12 +849,15 @@ export class WorkbenchWsHub {
 
   private ensureTerminalManagerSubscription(
     client: WebSocket,
-    workspaceId: string
+    workspaceId: string,
+    knownRevision?: string
   ): TerminalManagerClientSubscription {
     const normalizedWorkspaceId = workspaceId.trim();
     const current = this.clientTerminalManagerSubscriptions.get(client);
+    const normalizedKnownRevision = normalizeKnownRevision(knownRevision) ?? null;
 
     if (current && current.workspaceId === normalizedWorkspaceId) {
+      current.knownRevision = normalizedKnownRevision;
       return current;
     }
 
@@ -812,6 +868,7 @@ export class WorkbenchWsHub {
     const next: TerminalManagerClientSubscription = {
       workspaceId: normalizedWorkspaceId,
       lastPayload: null,
+      knownRevision: normalizedKnownRevision,
       refreshTask: null,
       refreshTimer: null,
       queuedRefresh: false,
@@ -911,13 +968,14 @@ export class WorkbenchWsHub {
           { force }
         );
         const payloadStartedAtMs = terminalDebugNowMs();
-        const payload = buildTerminalManagerPayload(snapshot);
+        const payload = buildTerminalManagerPayload(snapshot, subscription.knownRevision);
         const payloadBuildMs = terminalDebugNowMs() - payloadStartedAtMs;
 
         if (payload === subscription.lastPayload) {
           return;
         }
 
+        subscription.knownRevision = snapshot.revision;
         subscription.lastPayload = payload;
         const sendStartedAtMs = terminalDebugNowMs();
         client.send(payload);
@@ -962,12 +1020,13 @@ export class WorkbenchWsHub {
         subscription.workspaceId,
         { force }
       );
-      const payload = buildWorkspaceManagementPayload(snapshot);
+      const payload = buildWorkspaceManagementPayload(snapshot, subscription.knownRevision);
 
       if (payload === subscription.lastPayload) {
         return;
       }
 
+      subscription.knownRevision = snapshot.revision;
       subscription.lastPayload = payload;
       client.send(payload);
     } catch (error) {
@@ -1042,7 +1101,8 @@ function parseWorkbenchMessage(payload: unknown): WorkbenchMessage | null {
     case "workbench.subscribe":
     case "workbench.refresh":
       return {
-        type: candidate.type
+        type: candidate.type,
+        knownRevision: normalizeKnownRevision(candidate.knownRevision)
       };
     case "fileTree.subscribe":
     case "fileTree.refresh":
@@ -1052,16 +1112,18 @@ function parseWorkbenchMessage(payload: unknown): WorkbenchMessage | null {
             workspaceId: candidate.workspaceId,
             paths: Array.isArray(candidate.paths)
               ? candidate.paths.filter((value): value is string => typeof value === "string")
-              : undefined
+              : undefined,
+            knownRevisions: normalizeKnownRevisionRecord(candidate.knownRevisions)
           }
         : null;
     case "git.subscribe":
     case "git.refresh":
       return typeof candidate.workspaceId === "string"
         ? {
-            type: candidate.type,
-            workspaceId: candidate.workspaceId
-          }
+          type: candidate.type,
+          workspaceId: candidate.workspaceId,
+          knownRevision: normalizeKnownRevision(candidate.knownRevision)
+        }
         : null;
     case "terminalManager.subscribe":
     case "terminalManager.refresh":
@@ -1069,9 +1131,10 @@ function parseWorkbenchMessage(payload: unknown): WorkbenchMessage | null {
     case "workspaceManagement.refresh":
       return typeof candidate.workspaceId === "string"
         ? {
-            type: candidate.type,
-            workspaceId: candidate.workspaceId
-          }
+          type: candidate.type,
+          workspaceId: candidate.workspaceId,
+          knownRevision: normalizeKnownRevision(candidate.knownRevision)
+        }
         : null;
     default:
       return null;
@@ -1113,37 +1176,139 @@ function areStringArraysEqual(left: string[], right: string[]): boolean {
   return left.every((value, index) => value === right[index]);
 }
 
-function buildWorkbenchPayload(snapshot: WorkbenchSnapshot): string {
+function buildWorkbenchPayload(snapshot: WorkbenchSnapshot, knownRevision?: string | null): string {
+  if (knownRevision && knownRevision === snapshot.revision) {
+    return JSON.stringify({
+      type: "workbench.snapshot",
+      revision: snapshot.revision,
+      unchanged: true,
+      snapshot: null
+    });
+  }
+
   return JSON.stringify({
     type: "workbench.snapshot",
+    revision: snapshot.revision,
+    unchanged: false,
     snapshot
   });
 }
 
-function buildFileTreePayload(snapshot: FileTreeSnapshot): string {
+function buildFileTreePayload(snapshot: FileTreeSnapshot, knownRevision?: string | null): string {
+  if (knownRevision && knownRevision === snapshot.revision) {
+    return JSON.stringify({
+      type: "fileTree.snapshot",
+      revision: snapshot.revision,
+      unchanged: true,
+      snapshot: null
+    });
+  }
+
   return JSON.stringify({
     type: "fileTree.snapshot",
+    revision: snapshot.revision,
+    unchanged: false,
     snapshot
   });
 }
 
-function buildGitPayload(snapshot: GitPanelSnapshot): string {
+function buildGitPayload(snapshot: GitPanelSnapshot, knownRevision?: string | null): string {
+  if (knownRevision && knownRevision === snapshot.revision) {
+    return JSON.stringify({
+      type: "git.snapshot",
+      revision: snapshot.revision,
+      unchanged: true,
+      snapshot: null
+    });
+  }
+
   return JSON.stringify({
     type: "git.snapshot",
+    revision: snapshot.revision,
+    unchanged: false,
     snapshot
   });
 }
 
-function buildTerminalManagerPayload(snapshot: TerminalManagerSnapshot): string {
+function buildTerminalManagerPayload(
+  snapshot: TerminalManagerSnapshot,
+  knownRevision?: string | null
+): string {
+  if (knownRevision && knownRevision === snapshot.revision) {
+    return JSON.stringify({
+      type: "terminalManager.snapshot",
+      revision: snapshot.revision,
+      unchanged: true,
+      snapshot: null
+    });
+  }
+
   return JSON.stringify({
     type: "terminalManager.snapshot",
+    revision: snapshot.revision,
+    unchanged: false,
     snapshot
   });
 }
 
-function buildWorkspaceManagementPayload(snapshot: WorkspaceManagementSnapshot): string {
+function buildWorkspaceManagementPayload(
+  snapshot: WorkspaceManagementSnapshot,
+  knownRevision?: string | null
+): string {
+  if (knownRevision && knownRevision === snapshot.revision) {
+    return JSON.stringify({
+      type: "workspaceManagement.snapshot",
+      revision: snapshot.revision,
+      unchanged: true,
+      snapshot: null
+    });
+  }
+
   return JSON.stringify({
     type: "workspaceManagement.snapshot",
+    revision: snapshot.revision,
+    unchanged: false,
     snapshot
   });
+}
+
+function normalizeKnownRevision(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function normalizeKnownRevisionRecord(value: unknown): Record<string, string> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const normalizedEntries = Object.entries(value)
+    .map(([key, candidate]) => [key.trim(), normalizeKnownRevision(candidate)] as const)
+    .filter((entry): entry is [string, string] => Boolean(entry[1]));
+
+  if (normalizedEntries.length === 0) {
+    return undefined;
+  }
+
+  return Object.fromEntries(normalizedEntries);
+}
+
+function buildKnownRevisionByPathMap(
+  paths: string[],
+  knownRevisions?: Record<string, string>
+): Map<string, string> {
+  const map = new Map<string, string>();
+
+  if (!knownRevisions) {
+    return map;
+  }
+
+  for (const path of paths) {
+    const knownRevision = knownRevisions[path];
+
+    if (knownRevision) {
+      map.set(path, knownRevision);
+    }
+  }
+
+  return map;
 }

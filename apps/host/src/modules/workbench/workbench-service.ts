@@ -10,6 +10,7 @@ import type { ButlerProfileService } from "../butler/butler-profile-service.js";
 import type { ButlerControlSessionRepository } from "../../storage/repositories/butler-control-session-repository.js";
 import { createTaskManager, type TaskManager } from "../tasks/task-manager.js";
 import { HOST_TASK_TYPES, type TaskHandle } from "../tasks/task-types.js";
+import { withSnapshotRevision } from "./snapshot-revision.js";
 
 const WORKBENCH_REFRESH_MAX_AGE_MS = 15_000;
 const SESSION_TITLE_SYNC_CONCURRENCY = 4;
@@ -29,6 +30,7 @@ export interface WorkbenchSnapshotItem {
 }
 
 export interface WorkbenchSnapshot {
+  revision: string;
   items: WorkbenchSnapshotItem[];
 }
 
@@ -66,7 +68,7 @@ export class WorkbenchService {
         .map((item) => item.workspaceId)
     );
 
-    return {
+    return withSnapshotRevision({
       items: workspaces.map((workspace) => ({
         workspace: applyWorkspaceNavigationState(workspace, navigationStateByWorkspaceId.get(workspace.id)),
         sessions: this.filterButlerControlSessions(
@@ -80,7 +82,7 @@ export class WorkbenchService {
         ),
         collapsed: collapsedWorkspaceIdSet.has(workspace.id)
       }))
-    };
+    });
   }
 
   shouldRefreshSnapshot(): boolean {

@@ -21,6 +21,7 @@ import {
 } from "../../shared/utils/terminal-debug-log.js";
 import { createTaskManager, type TaskManager } from "../tasks/task-manager.js";
 import { HOST_TASK_TYPES, type TaskHandle } from "../tasks/task-types.js";
+import { withSnapshotRevision } from "./snapshot-revision.js";
 
 const FILE_TREE_CACHE_MAX_AGE_MS = 5_000;
 const GIT_SNAPSHOT_CACHE_MAX_AGE_MS = 15_000;
@@ -29,12 +30,14 @@ const WORKSPACE_MANAGEMENT_CACHE_MAX_AGE_MS = 30_000;
 const GIT_HISTORY_LIMIT = 20;
 
 export interface FileTreeSnapshot {
+  revision: string;
   workspaceId: string;
   path: string;
   items: FileNode[];
 }
 
 export interface GitPanelSnapshot {
+  revision: string;
   workspaceId: string;
   status: {
     snapshot: GitRepoSnapshot;
@@ -47,6 +50,7 @@ export interface GitPanelSnapshot {
 }
 
 export interface TerminalManagerSnapshot {
+  revision: string;
   workspaceId: string;
   terminals: TerminalInstance[];
   templates: ReturnType<CommandTemplateService["listTemplates"]>;
@@ -54,7 +58,9 @@ export interface TerminalManagerSnapshot {
   shellOptions: TerminalShellOption[];
 }
 
-export type WorkspaceManagementSnapshot = WorkspaceManagementSummary;
+export interface WorkspaceManagementSnapshot extends WorkspaceManagementSummary {
+  revision: string;
+}
 
 interface SnapshotCacheEntry<TSnapshot> {
   snapshot: TSnapshot;
@@ -124,11 +130,11 @@ export class WorkspacePanelSnapshotService {
     }
 
     const task = Promise.resolve().then(() => {
-      const snapshot: FileTreeSnapshot = {
+      const snapshot = withSnapshotRevision({
         workspaceId,
         path: normalizedPath,
         items: this.fileTreeService.list(workspaceId, normalizedPath || undefined, options?.limit)
-      };
+      });
 
       this.fileTreeCache.set(cacheKey, {
         snapshot,
@@ -198,14 +204,14 @@ export class WorkspacePanelSnapshotService {
           this.gitReadService.getBranches(workspaceId, controller.signal)
         ]);
 
-        const snapshot: GitPanelSnapshot = {
+        const snapshot = withSnapshotRevision({
           workspaceId,
           status,
           history: historyPage.items,
           historyTotalCount: historyPage.totalCount,
           historyNextCursor: historyPage.nextCursor,
           branches
-        };
+        });
 
         this.gitSnapshotCache.set(workspaceId, {
           snapshot,
@@ -282,12 +288,13 @@ export class WorkspacePanelSnapshotService {
 
     const task = this.workspaceService.getManagementSummary(workspaceId)
       .then((snapshot) => {
+        const nextSnapshot = withSnapshotRevision(snapshot);
         this.workspaceManagementCache.set(workspaceId, {
-          snapshot,
+          snapshot: nextSnapshot,
           cachedAt: Date.now()
         });
 
-        return snapshot;
+        return nextSnapshot;
       })
       .finally(() => {
         this.workspaceManagementInflight.delete(workspaceId);
@@ -404,13 +411,13 @@ export class WorkspacePanelSnapshotService {
     const shellOptions = listTerminalShellOptions();
     const shellOptionsMs = terminalDebugNowMs() - shellOptionsStartedAtMs;
     const assembleStartedAtMs = terminalDebugNowMs();
-    const snapshot: TerminalManagerSnapshot = {
+    const snapshot = withSnapshotRevision({
       workspaceId,
       terminals,
       templates,
       templateStatuses,
       shellOptions
-    };
+    });
     const assembleMs = terminalDebugNowMs() - assembleStartedAtMs;
 
     this.terminalManagerCache.set(workspaceId, {
