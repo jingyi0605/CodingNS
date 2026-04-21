@@ -136,6 +136,10 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
       return;
     }
 
+    if (this.handshakeState.status === "failed") {
+      throw this.handshakeState.error;
+    }
+
     if (this.handshakeState.status === "waiting_server_hello" && this.connectPromise) {
       this.pendingPackets.push(packet);
       return;
@@ -215,6 +219,10 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
   }
 
   private requireReadySession(): Extract<typeof this.handshakeState, { status: "ready" }> {
+    if (this.handshakeState.status === "failed") {
+      throw this.handshakeState.error;
+    }
+
     if (this.handshakeState.status !== "ready") {
       throw new Error("当前公共隧道会话尚未建立完成");
     }

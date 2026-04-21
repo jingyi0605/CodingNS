@@ -231,6 +231,32 @@ describe("RelayTunnelClientSession", () => {
     });
   });
 
+  it("握手失败后会向上抛出真实错误，而不是继续伪装成未就绪", async () => {
+    const channel = new MockRawChannel();
+    const clientSession = new RelayTunnelClientSession(channel, {
+      expectedHostPublicKey: "PUBLIC_KEY_DEMO",
+      expectedHostFingerprint: "SHA256:demo"
+    });
+
+    channel.emit(JSON.stringify({
+      type: "error",
+      errorCode: "HANDSHAKE_REQUIRED",
+      detail: "当前会话还没有完成握手"
+    }));
+    await vi.waitFor(() => {
+      expect(() => {
+        clientSession.send({
+          type: "http.request",
+          streamId: "http-1",
+          method: "GET",
+          path: "/api/demo",
+          headers: {},
+          bodyBase64Url: null
+        });
+      }).toThrowError("HANDSHAKE_REQUIRED: 当前会话还没有完成握手");
+    });
+  });
+
   it("可以把加密会话直接挂给 RelayTunnelClientTransport 使用", async () => {
     const hostIdentity = generateRelayTunnelIdentity("2026-04-19T00:00:00.000Z");
     const channel = new MockRawChannel();
