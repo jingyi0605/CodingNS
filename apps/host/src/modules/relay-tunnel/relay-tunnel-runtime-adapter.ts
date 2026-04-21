@@ -94,6 +94,7 @@ interface ActiveRelaySession {
   gateway: RelayTunnelGatewayService | null;
   cryptoSession: RelayTunnelSession | null;
   closed: boolean;
+  inboundQueue: Promise<void>;
 }
 
 export class RelayTunnelRuntimeHttpError extends Error {
@@ -435,12 +436,20 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
       return;
     }
 
-    await this.handleRelayPayload(
-      activeSession,
-      config,
-      identity,
-      Buffer.from(envelope.payloadBase64Url, "base64url").toString("utf8")
-    );
+    activeSession.inboundQueue = activeSession.inboundQueue
+      .catch(() => undefined)
+      .then(async () => {
+        if (activeSession.closed) {
+          return;
+        }
+
+        await this.handleRelayPayload(
+          activeSession,
+          config,
+          identity,
+          Buffer.from(envelope.payloadBase64Url, "base64url").toString("utf8")
+        );
+      });
   }
 
   private ensureRelaySession(
@@ -459,7 +468,8 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
       clientContext,
       gateway: null,
       cryptoSession: null,
-      closed: false
+      closed: false,
+      inboundQueue: Promise.resolve()
     };
     this.activeSessions.set(sessionId, created);
     return created;
