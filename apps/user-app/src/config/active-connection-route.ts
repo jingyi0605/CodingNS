@@ -35,8 +35,11 @@ export function resolveActiveConnectionRouteSummary(
   }
 
   const relayEnabled = Boolean(activeHost.relayTunnel?.enabled);
+  const allowAutoDirect = !(runtimeConfig.platform === "web" && relayEnabled);
   const selectedEndpoint =
-    runtimeState.activeHostId === activeHost.id && runtimeState.candidateProbePhase === "ready"
+    allowAutoDirect
+    && runtimeState.activeHostId === activeHost.id
+    && runtimeState.candidateProbePhase === "ready"
       ? resolveSelectedCandidateEndpoint(runtimeState)
       : null;
 

@@ -99,6 +99,10 @@ function resolveActiveHostBaseUrl(baseUrl: string): string {
     return baseUrl;
   }
 
+  if (config.platform === "web" && activeHost.relayTunnel?.enabled) {
+    return baseUrl;
+  }
+
   const runtimeState = hostRuntimeStore.getState();
 
   if (runtimeState.activeHostId !== activeHost.id || runtimeState.candidateProbePhase !== "ready") {

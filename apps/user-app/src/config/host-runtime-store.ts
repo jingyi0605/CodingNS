@@ -244,6 +244,20 @@ function buildCandidateProbeInput(
 
   const platform = config.platform === "desktop" ? "desktop" : "web";
 
+  // H5 可信前端固定走 relay E2EE，不再做任何候选直连探测。
+  // 这些探测只会把浏览器带去碰内网 HTTP 地址，制造 Mixed Content 和错误切换。
+  if (platform === "web") {
+    return null;
+  }
+
+  const probeCandidateEndpoints = candidateEndpoints.filter((endpoint) =>
+    shouldProbeCandidateEndpoint(endpoint, platform)
+  );
+
+  if (probeCandidateEndpoints.length === 0) {
+    return null;
+  }
+
   return {
     signature: JSON.stringify({
       hostId: activeHost.id,
@@ -251,7 +265,7 @@ function buildCandidateProbeInput(
       accessToken,
       bindingId,
       hostFingerprint,
-      candidateEndpoints: candidateEndpoints.map((endpoint) => ({
+      candidateEndpoints: probeCandidateEndpoints.map((endpoint) => ({
         endpointId: endpoint.endpointId,
         url: endpoint.url,
         kind: endpoint.kind,
@@ -262,8 +276,15 @@ function buildCandidateProbeInput(
     accessToken,
     expectedBindingId: bindingId,
     expectedHostFingerprint: hostFingerprint,
-    candidateEndpoints
+    candidateEndpoints: probeCandidateEndpoints
   };
+}
+
+function shouldProbeCandidateEndpoint(
+  endpoint: HostCandidateEndpoint,
+  platform: CandidateProbeInput["platform"]
+): boolean {
+  return platform !== "web";
 }
 
 function resolvePreferredCandidateEndpointId(

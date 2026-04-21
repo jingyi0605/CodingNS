@@ -291,14 +291,70 @@ describe("host-transport-registry", () => {
     expect(target.baseUrl).toBe("https://demo.channel.codingns.com");
     expect(target.transport).toBeInstanceOf(ManagedRelayTunnelHostTransport);
   });
+
+  it("Web 可信前端即使验身出可用 lan 地址，也仍然固定使用 relay", () => {
+    clientConfigStore.hydrate(createRuntimeConfig({
+      platform: "web",
+      activeHostId: "relay-host-a"
+    }));
+    vi.mocked(hostRuntimeStore.getState).mockReturnValue({
+      epoch: 1,
+      activeHostId: "relay-host-a",
+      connectionSignature: "relay",
+      candidateProbeSignature: "ready",
+      candidateProbePhase: "ready",
+      candidateProbeStartedAt: "2026-04-21T00:00:00.000Z",
+      candidateProbeFinishedAt: "2026-04-21T00:00:01.000Z",
+      candidateEndpoints: [
+        {
+          endpointId: "host_reported:http://192.168.50.8:3002",
+          kind: "lan",
+          url: "http://192.168.50.8:3002",
+          priority: 200,
+          expiresAt: null,
+          source: "host_reported",
+          status: "verified",
+          checkedAt: "2026-04-21T00:00:01.000Z",
+          errorCode: null,
+          errorDetail: null,
+          responseHostBaseUrl: "http://192.168.50.8:3002",
+          responseBindingId: "binding_demo",
+          responseHostFingerprint: "SHA256:demo"
+        },
+        {
+          endpointId: "relay:https://demo.channel.codingns.com",
+          kind: "relay",
+          url: "https://demo.channel.codingns.com",
+          priority: 400,
+          expiresAt: null,
+          source: "host_reported",
+          status: "verified",
+          checkedAt: "2026-04-21T00:00:01.000Z",
+          errorCode: null,
+          errorDetail: null,
+          responseHostBaseUrl: "https://demo.channel.codingns.com",
+          responseBindingId: "binding_demo",
+          responseHostFingerprint: "SHA256:demo"
+        }
+      ],
+      preferredCandidateEndpointId: "host_reported:http://192.168.50.8:3002",
+      preferredDirectCandidateEndpointId: "host_reported:http://192.168.50.8:3002"
+    });
+
+    const target = resolveHostTransportTarget("https://demo.channel.codingns.com");
+
+    expect(target.baseUrl).toBe("https://demo.channel.codingns.com");
+    expect(target.transport).toBeInstanceOf(ManagedRelayTunnelHostTransport);
+  });
 });
 
 function createRuntimeConfig(overrides?: {
+  platform?: "desktop" | "web";
   activeHostId?: string;
   hosts?: ReturnType<typeof createHost>[];
 }) {
   return {
-    platform: "desktop" as const,
+    platform: overrides?.platform ?? ("desktop" as const),
     activeHostId: overrides?.activeHostId ?? "local-host",
     hosts: overrides?.hosts ?? [
       createHost({

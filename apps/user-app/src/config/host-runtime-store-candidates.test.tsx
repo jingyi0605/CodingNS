@@ -1,5 +1,8 @@
 import { waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { authStore } from "../features/auth/store/auth-store";
+import { clientConfigStore } from "./client-config-store";
+import { hostRuntimeStore } from "./host-runtime-store";
 
 const probeAuthenticatedHostCandidateEndpointMock = vi.hoisted(() => vi.fn());
 
@@ -20,9 +23,28 @@ const storedSession = {
 
 describe("host-runtime-store 候选入口探测", () => {
   beforeEach(() => {
-    vi.resetModules();
     window.localStorage.clear();
     probeAuthenticatedHostCandidateEndpointMock.mockReset();
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: null,
+      hosts: [],
+      discoveredHosts: [],
+      activeDiscoveredHostId: null,
+      localHostDiscovery: {
+        status: "idle",
+        lastScannedAt: null,
+        cooldownUntil: null,
+        errorCode: null,
+        errorDetail: null
+      },
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    authStore.clear();
   });
 
   afterEach(() => {
@@ -30,11 +52,6 @@ describe("host-runtime-store 候选入口探测", () => {
   });
 
   it("会为当前激活 Host 探测候选入口，并产出优先直连入口", async () => {
-    const { clientConfigStore } = await import("./client-config-store");
-    const { authStore } = await import("../features/auth/store/auth-store");
-
-    clientConfigStore.hydrate(createRuntimeConfig());
-    authStore.hydrate(storedSession);
     probeAuthenticatedHostCandidateEndpointMock
       .mockResolvedValueOnce({
         status: "verified",
@@ -54,8 +71,8 @@ describe("host-runtime-store 候选入口探测", () => {
         responseBindingId: "binding_demo",
         responseHostFingerprint: "SHA256:demo"
       });
-
-    const { hostRuntimeStore } = await import("./host-runtime-store");
+    clientConfigStore.hydrate(createRuntimeConfig());
+    authStore.hydrate(storedSession);
 
     await waitFor(() => {
       expect(hostRuntimeStore.getState().candidateProbePhase).toBe("ready");
@@ -74,11 +91,6 @@ describe("host-runtime-store 候选入口探测", () => {
   });
 
   it("只有 relay 入口验身成功时，不会误报可用直连入口", async () => {
-    const { clientConfigStore } = await import("./client-config-store");
-    const { authStore } = await import("../features/auth/store/auth-store");
-
-    clientConfigStore.hydrate(createRuntimeConfig());
-    authStore.hydrate(storedSession);
     probeAuthenticatedHostCandidateEndpointMock
       .mockResolvedValueOnce({
         status: "mismatch",
@@ -98,8 +110,8 @@ describe("host-runtime-store 候选入口探测", () => {
         responseBindingId: "binding_demo",
         responseHostFingerprint: "SHA256:demo"
       });
-
-    const { hostRuntimeStore } = await import("./host-runtime-store");
+    clientConfigStore.hydrate(createRuntimeConfig());
+    authStore.hydrate(storedSession);
 
     await waitFor(() => {
       expect(hostRuntimeStore.getState().candidateProbePhase).toBe("ready");
@@ -112,11 +124,26 @@ describe("host-runtime-store 候选入口探测", () => {
     expect(hostRuntimeStore.getState().candidateEndpoints[0]?.status).toBe("mismatch");
     expect(hostRuntimeStore.getState().candidateEndpoints[1]?.status).toBe("verified");
   });
+
+  it("Web 可信前端不会再做任何候选入口探测", async () => {
+    clientConfigStore.hydrate(createRuntimeConfig({
+      platform: "web"
+    }));
+    authStore.hydrate(storedSession);
+
+    expect(probeAuthenticatedHostCandidateEndpointMock).not.toHaveBeenCalled();
+    expect(hostRuntimeStore.getState().candidateProbePhase).toBe("idle");
+    expect(hostRuntimeStore.getState().candidateEndpoints).toEqual([]);
+    expect(hostRuntimeStore.getState().preferredCandidateEndpointId).toBeNull();
+    expect(hostRuntimeStore.getState().preferredDirectCandidateEndpointId).toBeNull();
+  });
 });
 
-function createRuntimeConfig() {
+function createRuntimeConfig(overrides?: {
+  platform?: "desktop" | "web";
+}) {
   return {
-    platform: "desktop" as const,
+    platform: overrides?.platform ?? ("desktop" as const),
     activeHostId: "host-1",
     hosts: [
       {
