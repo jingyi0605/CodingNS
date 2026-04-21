@@ -19,6 +19,7 @@ pub struct WindowDescriptor {
     pub window_id: String,
     pub kind: WindowKind,
     pub workspace_id: Option<String>,
+    pub workspace_name: Option<String>,
     pub session_id: Option<String>,
     pub mode: WindowMode,
     pub bounds: WindowBounds,
@@ -140,6 +141,7 @@ mod tests {
             window_id: window_id.to_string(),
             kind,
             workspace_id: Some("workspace-1".to_string()),
+            workspace_name: Some("项目一".to_string()),
             session_id: None,
             mode: WindowMode::External,
             bounds: WindowBounds {

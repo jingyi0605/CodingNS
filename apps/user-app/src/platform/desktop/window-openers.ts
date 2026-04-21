@@ -10,6 +10,7 @@ type ExternalWindowKind = Extract<WindowKind, "files" | "git" | "processes" | "t
 
 export interface OpenExternalWorkspaceWindowInput {
   workspaceId: string;
+  workspaceName?: string | null;
   sessionId?: string | null;
   focusOwner?: string | null;
 }
@@ -113,6 +114,7 @@ async function openExternalWorkspaceWindow(
     windowId,
     kind,
     workspaceId,
+    workspaceName: input.workspaceName ?? previousDescriptorSnapshot?.workspaceName ?? null,
     sessionId: input.sessionId ?? previousDescriptorSnapshot?.sessionId ?? null,
     mode: "external",
     bounds: previousDescriptorSnapshot?.bounds,

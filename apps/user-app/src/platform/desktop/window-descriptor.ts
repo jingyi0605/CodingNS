@@ -19,6 +19,7 @@ export interface WindowDescriptor {
   windowId: string;
   kind: WindowKind;
   workspaceId: string | null;
+  workspaceName?: string | null;
   sessionId: string | null;
   mode: WindowMode;
   bounds: WindowBounds;
@@ -29,6 +30,7 @@ export interface CreateWindowDescriptorInput {
   windowId: string;
   kind: WindowKind;
   workspaceId?: string | null;
+  workspaceName?: string | null;
   sessionId?: string | null;
   mode?: WindowMode;
   bounds?: Partial<WindowBounds>;
@@ -53,6 +55,7 @@ export function createWindowDescriptor(input: CreateWindowDescriptorInput): Wind
     windowId: input.windowId,
     kind: input.kind,
     workspaceId: input.workspaceId ?? null,
+    workspaceName: input.workspaceName ?? null,
     sessionId: input.sessionId ?? null,
     mode: input.mode ?? "docked",
     bounds: createWindowBounds(input.bounds),

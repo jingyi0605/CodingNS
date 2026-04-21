@@ -32,6 +32,7 @@ describe("window-openers", () => {
       } as never,
       {
         workspaceId: "workspace-1",
+        workspaceName: "项目一",
         sessionId: "session-1"
       }
     );
@@ -42,6 +43,7 @@ describe("window-openers", () => {
         windowId: "files-workspace-1",
         kind: "files",
         workspaceId: "workspace-1",
+        workspaceName: "项目一",
         sessionId: "session-1",
         focusOwner: "file-context-panel"
       })
@@ -84,7 +86,8 @@ describe("window-openers", () => {
         windows
       } as never,
       {
-        workspaceId: "workspace-1"
+        workspaceId: "workspace-1",
+        workspaceName: "项目一"
       }
     );
 
@@ -122,7 +125,8 @@ describe("window-openers", () => {
         windows
       } as never,
       {
-        workspaceId: "workspace-1"
+        workspaceId: "workspace-1",
+        workspaceName: "项目一"
       }
     );
 
@@ -149,7 +153,8 @@ describe("window-openers", () => {
         windows
       } as never,
       {
-        workspaceId: "workspace-1"
+        workspaceId: "workspace-1",
+        workspaceName: "项目一"
       }
     );
 
@@ -159,6 +164,7 @@ describe("window-openers", () => {
         windowId: "terminals-workspace-1",
         kind: "terminals",
         workspaceId: "workspace-1",
+        workspaceName: "项目一",
         focusOwner: "terminal-page"
       })
     );
@@ -205,6 +211,7 @@ describe("window-openers", () => {
       } as never,
       {
         workspaceId: "workspace-1",
+        workspaceName: "项目一",
         sessionId: "session-new"
       }
     );

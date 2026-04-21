@@ -99,9 +99,12 @@ function resolveDesktopWindowNativeTitle(
   navigationGroups: WorkspaceSessionGroup[]
 ): string {
   const workspaceName =
-    descriptor.workspaceId
-      ? navigationGroups.find((group) => group.workspace.id === descriptor.workspaceId)?.workspace.name ?? null
-      : null;
+    descriptor.workspaceName
+    ?? (
+      descriptor.workspaceId
+        ? navigationGroups.find((group) => group.workspace.id === descriptor.workspaceId)?.workspace.name ?? null
+        : null
+    );
   const sectionTitle = resolveDesktopWindowTitle(descriptor);
 
   if (!workspaceName) {

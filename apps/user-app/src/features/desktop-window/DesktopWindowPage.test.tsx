@@ -312,6 +312,7 @@ describe("DesktopWindowPage", () => {
         windowId: "terminals-workspace-1",
         kind: "terminals",
         workspaceId: "workspace-1",
+        workspaceName: "项目一",
         sessionId: null,
         mode: "external",
         bounds: {
@@ -339,7 +340,7 @@ describe("DesktopWindowPage", () => {
         externalWindowMode: true
       })
     );
-    expect(setTitleMock).toHaveBeenLastCalledWith("CodingNS - Terminal（CodingNS）");
+    expect(setTitleMock).toHaveBeenLastCalledWith("CodingNS - Terminal（项目一）");
   });
 
   it("descriptor 类型不在第一批范围内时会显示占位错误", async () => {

@@ -1739,9 +1739,10 @@ export function TerminalPage({
     handleMobileStageSwipe("right");
   }
 
-  const openDetachedTerminalWindow = useCallback(async (workspaceId: string) => {
+  const openDetachedTerminalWindow = useCallback(async (workspaceId: string, workspaceName?: string | null) => {
     const result = await openTerminalsExternalWindow(platform, {
       workspaceId,
+      workspaceName,
       focusOwner: "terminal-page"
     });
 
@@ -2108,7 +2109,10 @@ export function TerminalPage({
                               }
 
                               setToolbarOpen(false);
-                              void openDetachedTerminalWindow(resolvedWorkspaceId);
+                              void openDetachedTerminalWindow(
+                                resolvedWorkspaceId,
+                                currentWorkspace?.name ?? null
+                              );
                             }}
                           >
                             {t("terminal.openExternalAction")}

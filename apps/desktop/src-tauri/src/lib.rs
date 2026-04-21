@@ -968,7 +968,14 @@ fn sync_descriptor_bounds_from_window(
 }
 
 fn window_title_for_descriptor(descriptor: &WindowDescriptor) -> String {
-    format!("CodingNS - {}", window_kind_label(&descriptor.kind))
+    let section_title = window_kind_label(&descriptor.kind);
+
+    match descriptor.workspace_name.as_deref() {
+        Some(workspace_name) if !workspace_name.trim().is_empty() => {
+            format!("CodingNS - {}（{}）", section_title, workspace_name.trim())
+        }
+        _ => format!("CodingNS - {}", section_title),
+    }
 }
 
 fn window_kind_label(kind: &WindowKind) -> &'static str {
@@ -985,10 +992,11 @@ fn window_kind_label(kind: &WindowKind) -> &'static str {
 mod tests {
     use super::{
         build_external_window_route, clamp_detach_preview_scale, resolve_detach_preview_size,
-        window_kind_label, DETACH_PREVIEW_BASE_HEIGHT, DETACH_PREVIEW_BASE_WIDTH,
-        DETACH_PREVIEW_CURSOR_OFFSET_X, DETACH_PREVIEW_CURSOR_OFFSET_Y,
+        window_kind_label, window_title_for_descriptor, DETACH_PREVIEW_BASE_HEIGHT,
+        DETACH_PREVIEW_BASE_WIDTH, DETACH_PREVIEW_CURSOR_OFFSET_X,
+        DETACH_PREVIEW_CURSOR_OFFSET_Y,
     };
-    use crate::window_manager::WindowKind;
+    use crate::window_manager::{WindowBounds, WindowDescriptor, WindowKind, WindowMode};
 
     #[test]
     fn external_window_route_points_to_desktop_window_shell() {
@@ -1003,6 +1011,29 @@ mod tests {
         assert_eq!(window_kind_label(&WindowKind::Files), "文件");
         assert_eq!(window_kind_label(&WindowKind::Processes), "进程管理");
         assert_eq!(window_kind_label(&WindowKind::Terminals), "终端");
+    }
+
+    #[test]
+    fn window_title_prefers_workspace_name_when_present() {
+        let descriptor = WindowDescriptor {
+            window_id: "terminals-workspace-1".to_string(),
+            kind: WindowKind::Terminals,
+            workspace_id: Some("workspace-1".to_string()),
+            workspace_name: Some("项目一".to_string()),
+            session_id: None,
+            mode: WindowMode::External,
+            bounds: WindowBounds {
+                x: None,
+                y: None,
+                width: 1200,
+                height: 780,
+                min_width: 720,
+                min_height: 480,
+            },
+            focus_owner: Some("terminal-page".to_string()),
+        };
+
+        assert_eq!(window_title_for_descriptor(&descriptor), "CodingNS - 终端（项目一）");
     }
 
     #[test]

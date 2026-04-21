@@ -726,6 +726,7 @@ describe("TerminalPage", () => {
             kind: "terminals",
             windowId: "terminals-workspace-1",
             workspaceId: "workspace-1",
+            workspaceName: "Demo Workspace",
             focusOwner: "terminal-page"
           })
         })
