@@ -4282,6 +4282,83 @@ describe("spec002 会话同步核心", () => {
     expect(unarchive.json().isArchived).toBe(false);
   });
 
+  it("Claude 会话在 progress end_turn 后会显示 completed_unread，并在标记已读后回到 idle", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+    writeFileSync(fixture.codexSessionFile, "", "utf8");
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, fixture.workspaceDir);
+
+    appendFileSync(
+      fixture.claudeSessionFile,
+      `\n${JSON.stringify({
+        type: "progress",
+        sessionId: "claude-session-1",
+        cwd: fixture.workspaceDir,
+        timestamp: "2026-03-23T08:00:20.000Z",
+        data: {
+          type: "agent_progress",
+          message: {
+            type: "assistant",
+            timestamp: "2026-03-23T08:00:20.000Z",
+            message: {
+              role: "assistant",
+              stop_reason: "end_turn",
+              content: [{ type: "text", text: "这轮已经结束。" }]
+            }
+          }
+        }
+      })}`,
+      "utf8"
+    );
+
+    const unreadList = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(unreadList.statusCode).toBe(200);
+
+    const unreadSession = unreadList
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "claude-code");
+    expect(unreadSession.runningState).toBe("idle");
+    expect(unreadSession.activityState).toBe("completed_unread");
+    expect(unreadSession.completedAt).toBe("2026-03-23T08:00:20.000Z");
+    expect(unreadSession.lastSeenAt).toBeNull();
+
+    const seen = await hosted.app.inject({
+      method: "POST",
+      url: `/api/sessions/${unreadSession.sessionId}/seen`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(seen.statusCode).toBe(204);
+
+    const idleList = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(idleList.statusCode).toBe(200);
+
+    const idleSession = idleList
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "claude-code");
+    expect(idleSession.activityState).toBe("idle");
+    expect(idleSession.lastSeenAt).toBeTruthy();
+  });
+
   it("鍙埛鏂版渶杩?10 鏉′細璇濈姸鎬?", async () => {
     const fixture = createProviderFixture();
     activeFixtures.push(fixture);

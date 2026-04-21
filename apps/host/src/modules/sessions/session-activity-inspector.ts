@@ -100,19 +100,16 @@ function inspectClaudeActivity(
   let lastStopAt: string | null = null;
 
   for (const record of records) {
-    const directType = readText(record.type);
-    const recordTimestamp = normalizeTimestamp(record.timestamp);
-
-    if (directType === "assistant") {
-      const stopReason = readText((record.message as Record<string, unknown> | undefined)?.stop_reason);
-
-      if (stopReason === "end_turn" || stopReason === "stop_sequence") {
-        lastStopAt = maxTimestamp(lastStopAt, recordTimestamp);
-      }
-    }
-
     for (const envelope of collectClaudeEnvelopes(record)) {
       lastEventAt = maxTimestamp(lastEventAt, envelope.timestamp);
+
+      if (envelope.type === "assistant") {
+        const stopReason = readText(envelope.message.stop_reason);
+
+        if (stopReason === "end_turn" || stopReason === "stop_sequence") {
+          lastStopAt = maxTimestamp(lastStopAt, envelope.timestamp);
+        }
+      }
 
       const parts = Array.isArray(envelope.message.content) ? envelope.message.content : [];
 

@@ -777,6 +777,64 @@ describe("session runtime status", () => {
     expect(inspection.completedAtCandidate).toBe("2026-03-26T11:00:02.000Z");
   });
 
+  it("Claude 把 end_turn 包在 progress assistant 里时，也必须落成已完成", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-runtime-status-"));
+    tempDirs.push(tempDir);
+    const rawStoreRef = path.join(tempDir, "claude-progress-stop.jsonl");
+
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          type: "progress",
+          timestamp: "2026-03-26T11:03:00.000Z",
+          data: {
+            message: {
+              type: "assistant",
+              timestamp: "2026-03-26T11:03:00.000Z",
+              message: {
+                role: "assistant",
+                content: [
+                  {
+                    type: "tool_use",
+                    id: "toolu-1",
+                    name: "Read"
+                  }
+                ]
+              }
+            }
+          }
+        }),
+        JSON.stringify({
+          type: "progress",
+          timestamp: "2026-03-26T11:03:02.000Z",
+          data: {
+            message: {
+              type: "assistant",
+              timestamp: "2026-03-26T11:03:02.000Z",
+              message: {
+                role: "assistant",
+                stop_reason: "end_turn",
+                content: [{ type: "text", text: "done" }]
+              }
+            }
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const inspection = inspectSessionActivity(
+      "claude-code",
+      rawStoreRef,
+      Date.parse("2026-03-26T11:03:03.000Z")
+    );
+
+    expect(inspection.runningState).toBe("idle");
+    expect(inspection.hasPendingTools).toBe(false);
+    expect(inspection.completedAtCandidate).toBe("2026-03-26T11:03:02.000Z");
+  });
+
   it("Claude 刚收到用户新消息时，即使还没进入 tool_use，也应保持运行中", () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-runtime-status-"));
     tempDirs.push(tempDir);
