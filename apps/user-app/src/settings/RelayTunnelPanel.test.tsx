@@ -75,9 +75,9 @@ describe("RelayTunnelPanel", () => {
     });
     platformMock.usePlatform.mockReturnValue(createPlatform());
     relayControlSiteConfigMocks.canConfigureRelayControlBaseUrl.mockReturnValue(true);
-    relayControlSiteConfigMocks.getFixedRelayControlBaseUrl.mockReturnValue("https://channel.codingns.com:1443");
+    relayControlSiteConfigMocks.getFixedRelayControlBaseUrl.mockReturnValue("https://channel.codingns.com:10247");
     relayControlSiteConfigMocks.resolveRelayControlBaseUrl.mockImplementation(
-      (value: string | null | undefined) => value?.trim() || "https://channel.codingns.com:1443"
+      (value: string | null | undefined) => value?.trim() || "https://channel.codingns.com:10247"
     );
     relayControlSiteConfigMocks.safelyNormalizeRelayControlBaseUrl.mockImplementation(
       (value: string | null | undefined) => value?.trim() || null
@@ -150,7 +150,7 @@ describe("RelayTunnelPanel", () => {
     renderPanel();
 
     const addressInput = await screen.findByRole("textbox", { name: "服务地址" });
-    expect(addressInput).toHaveValue("https://channel.codingns.com:1443");
+    expect(addressInput).toHaveValue("https://channel.codingns.com:10247");
 
     await userEvent.clear(addressInput);
     await userEvent.type(addressInput, "https://channel.codingns.com:4443");
@@ -166,7 +166,7 @@ describe("RelayTunnelPanel", () => {
   it("正式包会隐藏服务地址输入，并通过服务端接口登录控制站", async () => {
     relayControlSiteConfigMocks.canConfigureRelayControlBaseUrl.mockReturnValue(false);
     relayControlSiteConfigMocks.resolveRelayControlBaseUrl.mockReturnValue(
-      "https://channel.codingns.com:1443"
+      "https://channel.codingns.com:10247"
     );
     apiMocks.fetchRelayTunnelStatus.mockResolvedValue(createStatus());
     apiMocks.loginRelayTunnelControl.mockResolvedValue(
@@ -296,7 +296,7 @@ describe("RelayTunnelPanel", () => {
     apiMocks.loginRelayTunnelControl.mockResolvedValue(
       createStatus({
         activated: true,
-        controlBaseUrl: "https://channel.codingns.com:1443",
+        controlBaseUrl: "https://channel.codingns.com:10247",
         controlAccountEmail: "demo@example.com",
         controlSessionExpiresAt: "2026-04-21T00:00:00.000Z"
       })
@@ -338,7 +338,7 @@ describe("RelayTunnelPanel", () => {
     });
 
     expect(
-      await screen.findByText("名称可用，公开访问地址将会是 https://macmini.channel.codingns.com:1443")
+      await screen.findByText("名称可用，公开访问地址将会是 https://macmini.channel.codingns.com:10247")
     ).toBeInTheDocument();
   });
 
@@ -434,7 +434,7 @@ describe("RelayTunnelPanel", () => {
         controlSessionExpiresAt: "2026-04-21T00:00:00.000Z",
         bindingId: "binding_demo",
         tunnelDomain: "demo.channel.codingns.com",
-        controlBaseUrl: "https://channel.codingns.com:1443"
+        controlBaseUrl: "https://channel.codingns.com:10247"
       })
     );
     apiMocks.fetchRelayTunnelTrafficWallet.mockResolvedValue({
@@ -522,7 +522,7 @@ describe("RelayTunnelPanel", () => {
 
     await waitFor(() => {
       expect(platform.bridge.openExternal).toHaveBeenCalledWith(
-        "https://channel.jacksonz.cn:1443"
+        "https://channel.codingns.com:10247"
       );
     });
   });
@@ -597,8 +597,8 @@ function createStatus(overrides?: Partial<RelayTunnelStatusView>): RelayTunnelSt
     activated: false,
     enabled: false,
     provider: "codingns_relay",
-    relayBaseUrl: "https://channel.codingns.com:1443/relay",
-    controlBaseUrl: "https://channel.codingns.com:1443",
+    relayBaseUrl: "https://channel.codingns.com:10247/relay",
+    controlBaseUrl: "https://channel.codingns.com:10247",
     controlAccountEmail: null,
     controlSessionExpiresAt: null,
     accountId: null,

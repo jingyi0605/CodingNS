@@ -62,8 +62,6 @@ type HostLabelCheckState =
   | { status: "available"; hostLabel: string; tunnelDomain: string }
   | { status: "error"; hostLabel: string; message: string };
 
-const RELAY_TUNNEL_LEARN_URL = "https://channel.jacksonz.cn:1443";
-
 export function RelayTunnelPanel() {
   const platform = usePlatform();
   const { showToast } = useToast();
@@ -361,7 +359,7 @@ export function RelayTunnelPanel() {
     setPanelError(null);
 
     try {
-      await openExternalUrl(platform.bridge.openExternal, RELAY_TUNNEL_LEARN_URL);
+      await openExternalUrl(platform.bridge.openExternal, getFixedRelayControlBaseUrl());
     } catch (error) {
       setPanelError(resolvePanelError(error));
     } finally {

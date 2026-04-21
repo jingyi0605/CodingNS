@@ -1,6 +1,6 @@
 import { normalizeServerBaseUrl } from "./server-config-shared";
 
-const FIXED_RELAY_CONTROL_BASE_URL = normalizeServerBaseUrl("https://channel.codingns.com:1443");
+const FIXED_RELAY_CONTROL_BASE_URL = normalizeServerBaseUrl("https://channel.codingns.com:10247");
 
 export function getFixedRelayControlBaseUrl(): string {
   return FIXED_RELAY_CONTROL_BASE_URL;
