@@ -57,6 +57,9 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
   private readonly unsubscribeFromChannel: () => void;
   private connectPromise: Promise<void> | null = null;
   private readonly textEncoder = new TextEncoder();
+  private readonly textDecoder = new TextDecoder();
+  private incomingPayloadChain: Promise<void> = Promise.resolve();
+  private pendingPackets: RelayTunnelGatewayPacket[] = [];
   private handshakeState:
     | {
         status: "idle";
@@ -87,7 +90,7 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
     }
   ) {
     this.unsubscribeFromChannel = channel.subscribe((payload) => {
-      void this.handleIncomingPayload(payload);
+      this.enqueueIncomingPayload(payload);
     });
   }
 
@@ -128,18 +131,17 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
   }
 
   send(packet: RelayTunnelGatewayPacket): void {
-    const state = this.requireReadySession();
+    if (this.handshakeState.status === "ready") {
+      void this.sendEncryptedPacket(packet, this.handshakeState.session).catch(() => undefined);
+      return;
+    }
 
-    void encryptRelayTunnelFrame(state.session, serializeRelayTunnelPacket(packet)).then((frame) => {
-      return this.sendControlPayload(
-        JSON.stringify({
-          type: "encrypted_frame",
-          frame
-        } satisfies RelayTunnelEncryptedFrameEnvelope)
-      );
-    }).catch((error) => {
-      this.failSession(toError(error));
-    });
+    if (this.handshakeState.status === "waiting_server_hello" && this.connectPromise) {
+      this.pendingPackets.push(packet);
+      return;
+    }
+
+    throw new Error("当前公共隧道会话尚未建立完成");
   }
 
   subscribe(listener: (packet: RelayTunnelGatewayPacket) => void): () => void {
@@ -190,6 +192,7 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
         session
       };
       this.connectPromise = null;
+      await this.flushPendingPackets(session);
       resolve();
     } catch (error) {
       this.failSession(toError(error));
@@ -201,7 +204,7 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
 
     try {
       const plaintext = await decryptRelayTunnelFrame(state.session, envelope.frame);
-      const packet = deserializeRelayTunnelPacket(new TextDecoder().decode(plaintext));
+      const packet = deserializeRelayTunnelPacket(this.textDecoder.decode(plaintext));
 
       for (const listener of this.listeners) {
         listener(packet);
@@ -220,6 +223,8 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
   }
 
   private failSession(error: Error): void {
+    this.pendingPackets = [];
+
     if (this.handshakeState.status === "waiting_server_hello") {
       const reject = this.handshakeState.reject;
 
@@ -242,6 +247,51 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
   private sendControlPayload(payload: string): void | Promise<void> {
     this.recordWireBytes("upstream", payload);
     return this.channel.send(payload);
+  }
+
+  private enqueueIncomingPayload(payload: string): void {
+    this.incomingPayloadChain = this.incomingPayloadChain
+      .catch(() => undefined)
+      .then(async () => {
+        await this.handleIncomingPayload(payload);
+      })
+      .catch((error) => {
+        this.failSession(toError(error));
+      });
+  }
+
+  private async flushPendingPackets(session: RelayTunnelSession): Promise<void> {
+    const packets = this.pendingPackets;
+
+    if (packets.length === 0) {
+      return;
+    }
+
+    this.pendingPackets = [];
+
+    for (const packet of packets) {
+      await this.sendEncryptedPacket(packet, session);
+    }
+  }
+
+  private async sendEncryptedPacket(
+    packet: RelayTunnelGatewayPacket,
+    session: RelayTunnelSession
+  ): Promise<void> {
+    try {
+      const frame = await encryptRelayTunnelFrame(session, serializeRelayTunnelPacket(packet));
+      await this.sendControlPayload(
+        JSON.stringify({
+          type: "encrypted_frame",
+          frame
+        } satisfies RelayTunnelEncryptedFrameEnvelope)
+      );
+    } catch (error) {
+      const normalizedError = toError(error);
+
+      this.failSession(normalizedError);
+      throw normalizedError;
+    }
   }
 
   private recordWireBytes(direction: "upstream" | "downstream", payload: string): void {

@@ -173,6 +173,64 @@ describe("RelayTunnelClientSession", () => {
     ]);
   });
 
+  it("握手完成前连续收到 server_hello 和首个业务帧时，不会因为竞态把会话打坏", async () => {
+    const hostIdentity = generateRelayTunnelIdentity("2026-04-19T00:00:00.000Z");
+    const channel = new MockRawChannel();
+    const clientSession = new RelayTunnelClientSession(channel, {
+      expectedHostPublicKey: hostIdentity.publicKeyPem,
+      expectedHostFingerprint: hostIdentity.keyFingerprint
+    });
+    const connectPromise = clientSession.connect();
+    await vi.waitFor(() => {
+      expect(channel.sentPayloads).toHaveLength(1);
+    });
+
+    const clientHelloEnvelope = JSON.parse(channel.sentPayloads[0]) as {
+      type: "client_hello";
+      hello: RelayTunnelClientHello;
+    };
+    const { serverHello, session: hostSession } = acceptRelayTunnelClientHandshake({
+      hostIdentity,
+      clientHello: clientHelloEnvelope.hello
+    });
+    const receivedPackets: RelayTunnelGatewayPacket[] = [];
+
+    clientSession.subscribe((packet) => {
+      receivedPackets.push(packet);
+    });
+
+    channel.emit(JSON.stringify({
+      type: "server_hello",
+      hello: serverHello
+    }));
+    channel.emit(JSON.stringify({
+      type: "encrypted_frame",
+      frame: encryptRelayTunnelFrameOnHost(
+        hostSession,
+        serializeRelayTunnelPacket({
+          type: "http.response",
+          streamId: "http-early",
+          status: 204,
+          headers: {},
+          bodyBase64Url: null
+        } satisfies RelayTunnelHttpResponsePacket)
+      )
+    }));
+
+    await connectPromise;
+    await vi.waitFor(() => {
+      expect(receivedPackets).toEqual([
+        {
+          type: "http.response",
+          streamId: "http-early",
+          status: 204,
+          headers: {},
+          bodyBase64Url: null
+        }
+      ]);
+    });
+  });
+
   it("可以把加密会话直接挂给 RelayTunnelClientTransport 使用", async () => {
     const hostIdentity = generateRelayTunnelIdentity("2026-04-19T00:00:00.000Z");
     const channel = new MockRawChannel();
