@@ -329,12 +329,22 @@ async function readBodyToBytes(body: BodyInit): Promise<Uint8Array> {
 }
 
 function buildTunnelPath(path: string, url: string): string {
-  if (path.trim()) {
-    return path;
+  const parsed = new URL(url);
+  const trimmedPath = path.trim();
+
+  if (!trimmedPath) {
+    return `${parsed.pathname}${parsed.search}`;
   }
 
-  const parsed = new URL(url);
-  return `${parsed.pathname}${parsed.search}`;
+  if (trimmedPath.includes("?")) {
+    return trimmedPath;
+  }
+
+  if (!parsed.search) {
+    return trimmedPath;
+  }
+
+  return `${trimmedPath}${parsed.search}`;
 }
 
 function encodeSocketPayload(data: string | ArrayBufferLike | ArrayBufferView): string {

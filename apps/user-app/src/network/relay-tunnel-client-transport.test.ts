@@ -160,6 +160,25 @@ describe("RelayTunnelClientTransport", () => {
 
     expect(closeCode).toBe(1000);
   });
+
+  it("会保留 WebSocket URL 上的查询参数，避免隧道链路丢失鉴权信息", () => {
+    const session = new MockRelayTunnelSession();
+    const transport = new RelayTunnelClientTransport(session);
+
+    transport.createWebSocket({
+      path: "/ws",
+      baseUrl: "https://app.codingns.cn",
+      url: "wss://app.codingns.cn/ws?access_token=demo-token"
+    });
+
+    expect(session.sentPackets[0]).toEqual({
+      type: "ws.open",
+      streamId: "ws-1",
+      path: "/ws?access_token=demo-token",
+      headers: {},
+      protocols: undefined
+    });
+  });
 });
 
 function encodeBase64Url(value: string): string {
