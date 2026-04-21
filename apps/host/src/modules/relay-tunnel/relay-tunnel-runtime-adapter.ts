@@ -36,18 +36,6 @@ interface RelayHostChallengeResponse {
   };
 }
 
-interface RelayHostClaimNextSessionResponse {
-  reservation: {
-    sessionId: string;
-    accountId: string;
-    bindingId: string;
-    tunnelDomain: string;
-    remainingBytes: string;
-    upstreamConnected: boolean;
-    downstreamConnected: boolean;
-  } | null;
-}
-
 interface RelayTunnelClientHelloEnvelope {
   type: "client_hello";
   hello: RelayTunnelClientHello;
@@ -69,23 +57,57 @@ interface RelayTunnelErrorEnvelope {
   detail: string;
 }
 
+interface RelayEdgeSessionOpenEnvelope {
+  type: "session.open";
+  sessionId: string;
+}
+
+interface RelayEdgeSessionFrameEnvelope {
+  type: "session.frame";
+  sessionId: string;
+  payloadBase64Url: string;
+}
+
+interface RelayEdgeSessionCloseEnvelope {
+  type: "session.close";
+  sessionId: string;
+  code: number;
+  reason: string | null;
+}
+
 type RelayTunnelControlEnvelope =
   | RelayTunnelClientHelloEnvelope
   | RelayTunnelServerHelloEnvelope
   | RelayTunnelEncryptedFrameEnvelope
   | RelayTunnelErrorEnvelope;
 
+type RelayEdgeHostEnvelope =
+  | RelayEdgeSessionOpenEnvelope
+  | RelayEdgeSessionFrameEnvelope
+  | RelayEdgeSessionCloseEnvelope;
+
 interface ActiveRelaySession {
   relaySessionId: string;
-  socket: WebSocket;
   gateway: RelayTunnelGatewayService | null;
   cryptoSession: RelayTunnelSession | null;
   closed: boolean;
 }
 
+export class RelayTunnelRuntimeHttpError extends Error {
+  constructor(
+    readonly statusCode: number,
+    readonly errorCode: string | null,
+    readonly detail: string,
+    prefix: string
+  ) {
+    super(`${prefix}：${detail}`);
+    this.name = "RelayTunnelRuntimeHttpError";
+  }
+}
+
 const IDLE_POLL_MS = 1_000;
 const ERROR_RETRY_MS = 2_000;
-const CLAIM_TIMEOUT_MS = 8_000;
+const CHALLENGE_TIMEOUT_MS = 8_000;
 const HEARTBEAT_INTERVAL_MS = 5_000;
 const HEARTBEAT_TIMEOUT_MS = 5_000;
 
@@ -93,6 +115,7 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
   private currentConfigKey: string | null = null;
   private runtimeAbortController: AbortController | null = null;
   private runtimePromise: Promise<void> | null = null;
+  private hostChannelSocket: WebSocket | null = null;
   private activeSessions = new Map<string, ActiveRelaySession>();
   private lastPhase: RelayTunnelPhase = "connecting";
   private latestRemainingBytes: string | null = null;
@@ -148,18 +171,14 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
       controller.abort();
     }
 
-    for (const activeSession of this.activeSessions.values()) {
-      activeSession.closed = true;
-      activeSession.gateway?.close();
-      activeSession.socket.close();
-    }
-
-    this.activeSessions.clear();
+    this.hostChannelSocket?.close();
+    this.hostChannelSocket = null;
+    this.closeAllSessions();
 
     try {
       await this.runtimePromise;
     } catch {
-      // 这里是停机路径，错误已经在状态里体现，不再向上抛。
+      // 停机路径不再额外抛错。
     }
 
     this.runtimePromise = null;
@@ -173,23 +192,7 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
     while (!signal.aborted) {
       try {
         await this.maybeSendHeartbeat(config, identity, signal);
-        const claim = await this.claimNextSession(config, identity, signal);
-        const remainingBytes = claim?.remainingBytes ?? this.latestRemainingBytes;
-
-        this.latestRemainingBytes = remainingBytes;
-        if (claim) {
-          this.lastPhase = "running";
-          this.startRelaySession(config, identity, claim);
-        } else if (this.lastPhase === "connecting") {
-          this.lastPhase = "running";
-        }
-
-        const status = buildStatus(this.lastPhase, config, identity.keyFingerprint, remainingBytes);
-        this.repository.upsertStatus(status);
-
-        if (!claim) {
-          await waitForDelay(IDLE_POLL_MS, signal);
-        }
+        await this.runHostUpstreamChannel(config, identity, signal);
       } catch (error) {
         if (signal.aborted) {
           break;
@@ -197,17 +200,67 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
 
         const message = error instanceof Error ? error.message : String(error);
         const phase = this.lastPhase === "quota_exhausted" ? "quota_exhausted" : "error";
-        const failedStatus: InstanceRelayTunnelStatus = {
+        this.repository.upsertStatus({
           ...buildStatus(phase, config, identity.keyFingerprint, this.latestRemainingBytes),
           connected: false,
           lastError: message
-        };
-
-        this.repository.upsertStatus(failedStatus);
+        });
 
         await waitForDelay(ERROR_RETRY_MS, signal);
       }
     }
+  }
+
+  private async runHostUpstreamChannel(
+    config: InstanceRelayTunnelConfig,
+    identity: InstanceRelayTunnelIdentity,
+    signal: AbortSignal
+  ): Promise<void> {
+    const socket = await this.openHostUpstreamChannel(config, identity, signal);
+    this.hostChannelSocket = socket;
+    this.lastPhase = "running";
+    this.repository.upsertStatus(
+      buildStatus("running", config, identity.keyFingerprint, this.latestRemainingBytes)
+    );
+
+    const closed = createSocketCloseSignal(socket);
+
+    socket.on("message", (payload, isBinary) => {
+      if (isBinary) {
+        socket.close(1008, "HOST_CHANNEL_BINARY_NOT_SUPPORTED");
+        return;
+      }
+
+      const rawPayload = typeof payload === "string" ? payload : payload.toString("utf8");
+      void this.handleHostChannelPayload(config, identity, rawPayload);
+    });
+
+    while (!signal.aborted) {
+      const result = await Promise.race([
+        closed.promise,
+        waitForDelay(IDLE_POLL_MS, signal).then(() => null)
+      ]);
+
+      if (result) {
+        this.hostChannelSocket = null;
+        this.closeAllSessions();
+
+        if (result.error) {
+          throw result.error;
+        }
+
+        throw new Error(
+          `Host 上游信道已断开（code=${result.code}${result.reason ? `, reason=${result.reason}` : ""}）`
+        );
+      }
+
+      await this.maybeSendHeartbeat(config, identity, signal);
+    }
+
+    socket.close(1000, "relay_tunnel_runtime_abort");
+    await closed.promise;
+    this.hostChannelSocket = null;
+    this.closeAllSessions();
   }
 
   private async maybeSendHeartbeat(
@@ -250,15 +303,15 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
         throw await buildHttpError(response, "上报 Host 心跳失败");
       }
     } catch {
-      // 心跳只负责在线统计，不能反过来把隧道主链路打断。
+      // 心跳只负责在线统计，不能打断主链路。
     }
   }
 
-  private async claimNextSession(
+  private async openHostUpstreamChannel(
     config: InstanceRelayTunnelConfig,
     identity: InstanceRelayTunnelIdentity,
     signal: AbortSignal
-  ): Promise<RelayHostClaimNextSessionResponse["reservation"]> {
+  ): Promise<WebSocket> {
     const fetchFn = this.dependencies?.fetchFn ?? fetch;
     const challengeResponse = await fetchWithTimeout(
       fetchFn,
@@ -275,11 +328,11 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
         }),
         signal
       },
-      CLAIM_TIMEOUT_MS
+      CHALLENGE_TIMEOUT_MS
     );
 
     if (!challengeResponse.ok) {
-      throw await buildHttpError(challengeResponse, "申请 Host 领取挑战失败");
+      throw await buildHttpError(challengeResponse, "申请 Host 上游接入挑战失败");
     }
 
     const challengePayload = await challengeResponse.json() as RelayHostChallengeResponse;
@@ -292,29 +345,17 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
       relayPublicKey: challengePayload.challenge.relayPublicKey,
       hostPrivateKeyPem: identity.privateKeyPem
     });
-    const claimResponse = await fetchWithTimeout(
-      fetchFn,
-      buildHttpUrl(config.relayBaseUrl!, "/api/public/hosts/claim-next-session"),
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          challengeId: challengePayload.challenge.challengeId,
-          proof
-        }),
-        signal
-      },
-      CLAIM_TIMEOUT_MS
+    const socket = (this.dependencies?.createWebSocket ?? ((url) => new WebSocket(url)))(
+      buildRelayHostWebSocketUrl(
+        config.relayBaseUrl!,
+        config.bindingId!,
+        challengePayload.challenge.challengeId,
+        proof
+      )
     );
 
-    if (!claimResponse.ok) {
-      throw await buildHttpError(claimResponse, "领取待接会话失败");
-    }
-
-    const claimPayload = await claimResponse.json() as RelayHostClaimNextSessionResponse;
-    return claimPayload.reservation;
+    await waitForSocketOpen(socket, signal);
+    return socket;
   }
 
   private buildHeartbeatRequest(
@@ -360,59 +401,60 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
     }
   }
 
-  private startRelaySession(
+  private async handleHostChannelPayload(
     config: InstanceRelayTunnelConfig,
     identity: InstanceRelayTunnelIdentity,
-    reservation: NonNullable<RelayHostClaimNextSessionResponse["reservation"]>
-  ): void {
-    if (this.activeSessions.has(reservation.sessionId)) {
+    rawPayload: string
+  ): Promise<void> {
+    let envelope: RelayEdgeHostEnvelope;
+
+    try {
+      envelope = JSON.parse(rawPayload) as RelayEdgeHostEnvelope;
+    } catch {
+      this.hostChannelSocket?.close(1008, "HOST_CHANNEL_INVALID_ENVELOPE");
       return;
     }
 
-    const socket = (this.dependencies?.createWebSocket ?? ((url) => new WebSocket(url)))(
-      buildRelayWebSocketUrl(config.relayBaseUrl!, reservation.sessionId)
+    if (envelope.type === "session.open") {
+      this.ensureRelaySession(envelope.sessionId);
+      return;
+    }
+
+    if (envelope.type === "session.close") {
+      this.teardownRelaySession(envelope.sessionId);
+      return;
+    }
+
+    const activeSession = this.activeSessions.get(envelope.sessionId) ?? null;
+
+    if (!activeSession) {
+      this.sendSessionClose(envelope.sessionId, 1008, "SESSION_NOT_FOUND");
+      return;
+    }
+
+    await this.handleRelayPayload(
+      activeSession,
+      config,
+      identity,
+      Buffer.from(envelope.payloadBase64Url, "base64url").toString("utf8")
     );
-    const activeSession: ActiveRelaySession = {
-      relaySessionId: reservation.sessionId,
-      socket,
+  }
+
+  private ensureRelaySession(sessionId: string): ActiveRelaySession {
+    const existing = this.activeSessions.get(sessionId);
+
+    if (existing) {
+      return existing;
+    }
+
+    const created: ActiveRelaySession = {
+      relaySessionId: sessionId,
       gateway: null,
       cryptoSession: null,
       closed: false
     };
-
-    this.activeSessions.set(reservation.sessionId, activeSession);
-
-    socket.on("message", (payload, isBinary) => {
-      if (isBinary) {
-        void this.emitRelayError(activeSession, "UNSUPPORTED_BINARY_FRAME", "公共隧道控制面不支持二进制帧");
-        return;
-      }
-
-      const rawPayload = typeof payload === "string" ? payload : payload.toString("utf8");
-      void this.handleRelayPayload(activeSession, config, identity, rawPayload);
-    });
-
-    socket.on("close", (code, reason) => {
-      this.teardownRelaySession(reservation.sessionId);
-
-      if (code === 1008 && reason.toString("utf8") === "QUOTA_EXHAUSTED") {
-        this.lastPhase = "quota_exhausted";
-        this.latestRemainingBytes = "0";
-        this.repository.upsertStatus({
-          ...buildStatus("quota_exhausted", config, identity.keyFingerprint, "0"),
-          connected: false,
-          lastError: "公共隧道流量额度已经耗尽"
-        });
-      }
-    });
-
-    socket.on("error", (error) => {
-      this.repository.upsertStatus({
-        ...buildStatus("error", config, identity.keyFingerprint, this.latestRemainingBytes),
-        connected: false,
-        lastError: error.message
-      });
-    });
+    this.activeSessions.set(sessionId, created);
+    return created;
   }
 
   private async handleRelayPayload(
@@ -446,7 +488,7 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
         activeSession.gateway = new RelayTunnelGatewayService({
           localTargetBaseUrl: config.localTargetBaseUrl,
           onPacket: async (packet) => {
-            if (!activeSession.cryptoSession || activeSession.closed || activeSession.socket.readyState !== WebSocket.OPEN) {
+            if (!activeSession.cryptoSession || activeSession.closed) {
               return;
             }
 
@@ -455,20 +497,16 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
               serializeRelayTunnelPacket(packet)
             );
 
-            activeSession.socket.send(
-              JSON.stringify({
-                type: "encrypted_frame",
-                frame
-              } satisfies RelayTunnelEncryptedFrameEnvelope)
-            );
+            await this.sendControlEnvelope(activeSession.relaySessionId, {
+              type: "encrypted_frame",
+              frame
+            } satisfies RelayTunnelEncryptedFrameEnvelope);
           }
         });
-        activeSession.socket.send(
-          JSON.stringify({
-            type: "server_hello",
-            hello: accepted.serverHello
-          } satisfies RelayTunnelServerHelloEnvelope)
-        );
+        await this.sendControlEnvelope(activeSession.relaySessionId, {
+          type: "server_hello",
+          hello: accepted.serverHello
+        } satisfies RelayTunnelServerHelloEnvelope);
       } catch (error) {
         await this.emitRelayError(
           activeSession,
@@ -509,22 +547,44 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
     }
   }
 
+  private async sendControlEnvelope(
+    sessionId: string,
+    envelope: RelayTunnelControlEnvelope
+  ): Promise<void> {
+    if (!this.hostChannelSocket || this.hostChannelSocket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    this.hostChannelSocket.send(JSON.stringify({
+      type: "session.frame",
+      sessionId,
+      payloadBase64Url: Buffer.from(JSON.stringify(envelope), "utf8").toString("base64url")
+    } satisfies RelayEdgeSessionFrameEnvelope));
+  }
+
+  private sendSessionClose(sessionId: string, code: number, reason: string | null): void {
+    if (!this.hostChannelSocket || this.hostChannelSocket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    this.hostChannelSocket.send(JSON.stringify({
+      type: "session.close",
+      sessionId,
+      code,
+      reason
+    } satisfies RelayEdgeSessionCloseEnvelope));
+  }
+
   private async emitRelayError(
     activeSession: ActiveRelaySession,
     errorCode: string,
     detail: string
   ): Promise<void> {
-    if (activeSession.closed || activeSession.socket.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    activeSession.socket.send(
-      JSON.stringify({
-        type: "error",
-        errorCode,
-        detail
-      } satisfies RelayTunnelErrorEnvelope)
-    );
+    await this.sendControlEnvelope(activeSession.relaySessionId, {
+      type: "error",
+      errorCode,
+      detail
+    } satisfies RelayTunnelErrorEnvelope);
   }
 
   private teardownRelaySession(sessionId: string): void {
@@ -537,6 +597,12 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
     activeSession.closed = true;
     activeSession.gateway?.close();
     this.activeSessions.delete(sessionId);
+  }
+
+  private closeAllSessions(): void {
+    for (const sessionId of this.activeSessions.keys()) {
+      this.teardownRelaySession(sessionId);
+    }
   }
 }
 
@@ -578,11 +644,18 @@ function buildHttpUrl(baseUrl: string, pathname: string): string {
   return url.toString();
 }
 
-function buildRelayWebSocketUrl(relayBaseUrl: string, sessionId: string): string {
+function buildRelayHostWebSocketUrl(
+  relayBaseUrl: string,
+  bindingId: string,
+  challengeId: string,
+  proof: string
+): string {
   const url = resolveRelayBaseUrl(relayBaseUrl, "ws");
 
-  url.searchParams.set("sessionId", sessionId);
-  url.searchParams.set("role", "upstream");
+  url.searchParams.set("role", "host-upstream");
+  url.searchParams.set("bindingId", bindingId);
+  url.searchParams.set("challengeId", challengeId);
+  url.searchParams.set("proof", proof);
   url.protocol = url.protocol === "https:" || url.protocol === "wss:" ? "wss:" : "ws:";
   return url.toString();
 }
@@ -600,6 +673,76 @@ function ensureTrailingSlash(value: string): string {
 
 function resolveRelayBaseUrl(baseUrl: string, pathname: string): URL {
   return new URL(pathname.replace(/^\/+/, ""), ensureTrailingSlash(baseUrl));
+}
+
+async function waitForSocketOpen(socket: WebSocket, signal: AbortSignal): Promise<void> {
+  if (socket.readyState === WebSocket.OPEN) {
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const handleOpen = () => {
+      cleanup();
+      resolve();
+    };
+    const handleClose = (code: number, reason: Buffer) => {
+      cleanup();
+      reject(new Error(`Host 上游信道建立失败（code=${code}${reason.length > 0 ? `, reason=${reason.toString("utf8")}` : ""}）`));
+    };
+    const handleError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const handleAbort = () => {
+      cleanup();
+      reject(new Error("操作已取消"));
+    };
+    const cleanup = () => {
+      socket.off("open", handleOpen);
+      socket.off("close", handleClose);
+      socket.off("error", handleError);
+      signal.removeEventListener("abort", handleAbort);
+    };
+
+    socket.on("open", handleOpen);
+    socket.on("close", handleClose);
+    socket.on("error", handleError);
+    signal.addEventListener("abort", handleAbort, {
+      once: true
+    });
+  });
+}
+
+function createSocketCloseSignal(socket: WebSocket): {
+  promise: Promise<{ code: number; reason: string; error?: Error }>;
+} {
+  return {
+    promise: new Promise((resolve) => {
+      let settled = false;
+      const finish = (value: { code: number; reason: string; error?: Error }) => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        resolve(value);
+      };
+
+      socket.once("close", (code, reason) => {
+        finish({
+          code,
+          reason: reason.length > 0 ? reason.toString("utf8") : ""
+        });
+      });
+      socket.once("error", (error) => {
+        finish({
+          code: 1006,
+          reason: error.message,
+          error
+        });
+      });
+    })
+  };
 }
 
 async function fetchWithTimeout(
@@ -631,7 +774,12 @@ async function buildHttpError(response: Response, prefix: string): Promise<Error
   const raw = await response.text();
 
   if (!raw.trim()) {
-    return new Error(`${prefix}（HTTP ${response.status}）`);
+    return new RelayTunnelRuntimeHttpError(
+      response.status,
+      null,
+      `HTTP ${response.status}`,
+      prefix
+    );
   }
 
   try {
@@ -640,14 +788,24 @@ async function buildHttpError(response: Response, prefix: string): Promise<Error
       detail?: string;
     };
 
-    if (parsed.detail) {
-      return new Error(`${prefix}：${parsed.detail}`);
+    if (typeof parsed.detail === "string" && parsed.detail.trim()) {
+      return new RelayTunnelRuntimeHttpError(
+        response.status,
+        typeof parsed.errorCode === "string" ? parsed.errorCode : null,
+        parsed.detail.trim(),
+        prefix
+      );
     }
   } catch {
-    // 这里退回可读文本错误。
+    // 回退到可读文本错误。
   }
 
-  return new Error(`${prefix}：${raw.trim()}`);
+  return new RelayTunnelRuntimeHttpError(
+    response.status,
+    null,
+    raw.trim(),
+    prefix
+  );
 }
 
 async function waitForDelay(delayMs: number, signal: AbortSignal): Promise<void> {
@@ -673,7 +831,7 @@ async function waitForDelay(delayMs: number, signal: AbortSignal): Promise<void>
 
 export const __internal__ = {
   buildHttpUrl,
-  buildRelayWebSocketUrl,
+  buildRelayHostWebSocketUrl,
   buildControlHttpUrl
 };
 

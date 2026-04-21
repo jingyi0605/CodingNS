@@ -8,6 +8,7 @@ import {
   RelayTunnelService,
   type RelayTunnelRuntimeAdapter
 } from "../../src/modules/relay-tunnel/relay-tunnel-service.js";
+import { RelayTunnelRuntimeHttpError } from "../../src/modules/relay-tunnel/relay-tunnel-runtime-adapter.js";
 import { createTaskManager } from "../../src/modules/tasks/task-manager.js";
 import { HOST_TASK_TYPES } from "../../src/modules/tasks/task-types.js";
 import type {
@@ -18,6 +19,7 @@ import { BootstrapStateRepository } from "../../src/storage/repositories/bootstr
 import { InstanceRelayTunnelIdentityRepository } from "../../src/storage/repositories/instance-relay-tunnel-identity-repository.js";
 import { InstanceRelayTunnelRepository } from "../../src/storage/repositories/instance-relay-tunnel-repository.js";
 import { createDatabaseClient } from "../../src/storage/sqlite/client.js";
+import { encryptSecret } from "../../src/shared/utils/secret-box.js";
 
 const tempDirs: string[] = [];
 
@@ -282,6 +284,107 @@ describe("RelayTunnelService 后台任务", () => {
       quotaResetAt: "2026-04-20T00:00:00.000Z",
       lastError: null,
       observedAt: "2026-04-19T12:10:00.000Z"
+    });
+
+    context.close();
+  });
+
+  it("控制站重新绑定后会覆盖本地旧 binding，而不是继续死守陈旧配置", async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        created: true,
+        binding: {
+          bindingId: "binding_next",
+          tunnelDomain: "macmini-v2.channel.codingns.com",
+          hostPublicKey: "relay_public_key",
+          hostFingerprint: "SHA256:relay",
+          relayBaseUrl: "wss://control.codingns.example/relay",
+          controlBaseUrl: "https://control.codingns.example",
+          status: "active"
+        }
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json"
+        }
+      }));
+    const context = createRelayTunnelTestContext({
+      initialized: true,
+      fetchFn: fetchMock
+    });
+
+    seedBoundConfig(context.repository, {
+      enabled: true,
+      controlAccessTokenCiphertext: encryptSecret("relay-control-secret", "relay_access_token"),
+      controlAccountEmail: "demo@example.com",
+      controlSessionExpiresAt: "2026-04-21T00:00:00.000Z",
+      bindingId: "binding_stale",
+      tunnelDomain: "stale.channel.codingns.com"
+    });
+
+    const status = await context.service.bindControlHost("MacMini");
+
+    expect(status.bindingId).toBe("binding_next");
+    expect(status.tunnelDomain).toBe("macmini-v2.channel.codingns.com");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://control.codingns.example/api/v1/hosts/bind",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer relay_access_token"
+        })
+      })
+    );
+    expect(context.repository.findConfig()).toMatchObject({
+      bindingId: "binding_next",
+      tunnelDomain: "macmini-v2.channel.codingns.com"
+    });
+
+    context.close();
+  });
+
+  it("上游 challenge 明确返回绑定不存在时，会自动清掉本地旧 binding", async () => {
+    const context = createRelayTunnelTestContext({
+      initialized: true,
+      runtimeAdapter: {
+        connect: vi.fn(async () => {
+          throw new RelayTunnelRuntimeHttpError(
+            404,
+            "TUNNEL_NOT_FOUND",
+            "没有找到对应的隧道绑定",
+            "申请 Host 上游接入挑战失败"
+          );
+        })
+      }
+    });
+
+    seedBoundConfig(context.repository, {
+      enabled: true,
+      controlAccessTokenCiphertext: encryptSecret("relay-control-secret", "relay_access_token"),
+      controlAccountEmail: "demo@example.com",
+      controlSessionExpiresAt: "2026-04-21T00:00:00.000Z"
+    });
+
+    const status = await context.service.requestReconnect("relay_tunnel.binding_missing").promise;
+    const persistedConfig = context.repository.findConfig();
+    const persistedStatus = context.repository.findStatus();
+
+    expect(status.phase).toBe("unbound");
+    expect(status.bindingId).toBeNull();
+    expect(status.tunnelDomain).toBeNull();
+    expect(status.enabled).toBe(true);
+    expect(status.lastError).toBe("申请 Host 上游接入挑战失败：没有找到对应的隧道绑定");
+    expect(persistedConfig).toMatchObject({
+      accountId: "acct_demo",
+      bindingId: null,
+      tunnelDomain: null,
+      enabled: true
+    });
+    expect(persistedStatus).toMatchObject({
+      phase: "unbound",
+      bindingId: null,
+      tunnelDomain: null,
+      lastError: "申请 Host 上游接入挑战失败：没有找到对应的隧道绑定"
     });
 
     context.close();

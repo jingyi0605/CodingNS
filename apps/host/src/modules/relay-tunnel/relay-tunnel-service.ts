@@ -8,6 +8,7 @@ import { AppError } from "../../shared/errors/app-error.js";
 import { decryptSecret, encryptSecret } from "../../shared/utils/secret-box.js";
 import { nowIso } from "../../shared/utils/time.js";
 import { RelayTunnelIdentityService } from "./crypto/relay-tunnel-identity-service.js";
+import { RelayTunnelRuntimeHttpError } from "./relay-tunnel-runtime-adapter.js";
 import type { BootstrapStateRepository } from "../../storage/repositories/bootstrap-state-repository.js";
 import type { InstanceRelayTunnelIdentityRepository } from "../../storage/repositories/instance-relay-tunnel-identity-repository.js";
 import type { InstanceRelayTunnelRepository } from "../../storage/repositories/instance-relay-tunnel-repository.js";
@@ -369,12 +370,6 @@ export class RelayTunnelService {
 
   async bindControlHost(hostLabel: string): Promise<InstanceRelayTunnelStatusDto> {
     const snapshot = this.readStateSnapshot();
-
-    if (snapshot.config.bindingId && snapshot.config.tunnelDomain) {
-      const effectiveConfig = this.resolveConfigWithIdentity(snapshot.config);
-      return this.buildStatusDto(snapshot, effectiveConfig, this.resolveEffectiveStatus(effectiveConfig));
-    }
-
     const normalizedHostLabel = normalizeRequiredText(hostLabel, "hostLabel");
     const { controlBaseUrl, accessToken, accountId } = this.requireControlSession(snapshot.config);
     const identity = this.identityService.ensureIdentity();
@@ -780,6 +775,30 @@ export class RelayTunnelService {
         );
       }
 
+      if (shouldResetStaleRelayBinding(error)) {
+        const nextConfig = this.clearBoundState(snapshot.config, {
+          updatedAt: nowIso()
+        });
+        const nextStatus: InstanceRelayTunnelStatus = {
+          ...buildSkeletonStatus("unbound", nextConfig, {
+            observedAt: nowIso()
+          }),
+          lastError: error instanceof Error ? error.message : String(error)
+        };
+        this.db.transaction(() => {
+          this.repository.upsertConfig(nextConfig);
+          this.repository.upsertStatus(nextStatus);
+        })();
+        return this.buildStatusDto(
+          {
+            config: nextConfig,
+            hasPersistedConfig: true
+          },
+          nextConfig,
+          nextStatus
+        );
+      }
+
       const failedStatus: InstanceRelayTunnelStatus = {
         ...buildSkeletonStatus("error", snapshot.config, {
           observedAt: nowIso()
@@ -854,6 +873,20 @@ export class RelayTunnelService {
     };
     this.repository.upsertConfig(nextConfig);
     return nextConfig;
+  }
+
+  private clearBoundState(
+    config: InstanceRelayTunnelConfig,
+    options: {
+      updatedAt: string;
+    }
+  ): InstanceRelayTunnelConfig {
+    return {
+      ...config,
+      bindingId: null,
+      tunnelDomain: null,
+      updatedAt: options.updatedAt
+    };
   }
 
   private isBootstrapInitialized(): boolean {
@@ -1309,6 +1342,19 @@ function clearRelayTunnelControlSession(
     accountId: options.clearAccountId ? null : config.accountId,
     updatedAt: options.updatedAt
   };
+}
+
+function shouldResetStaleRelayBinding(error: unknown): boolean {
+  if (!(error instanceof RelayTunnelRuntimeHttpError)) {
+    return false;
+  }
+
+  return (
+    error.errorCode === "TUNNEL_NOT_FOUND"
+    || error.errorCode === "BINDING_NOT_FOUND"
+    || error.errorCode === "HOST_AUTH_INVALID"
+    || error.errorCode === "HOST_BINDING_MISMATCH"
+  );
 }
 
 async function buildControlApiError(

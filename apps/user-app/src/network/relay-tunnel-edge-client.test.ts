@@ -32,41 +32,25 @@ class MockRelayEdgeSocket extends EventTarget {
 }
 
 describe("relay-tunnel-edge-client", () => {
-  it("会先解析绑定、再预留会话，并按 downstream 角色连接 relay-edge", async () => {
+  it("会通过 connect-init 一次拿到建连信息，并按 downstream 角色连接 relay-edge", async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            binding: {
-              bindingId: "binding_1",
-              tunnelDomain: "demo.codingns.example",
-              hostPublicKey: "PUBLIC_KEY_DEMO",
-              hostFingerprint: "SHA256:demo",
-              relayBaseUrl: "https://relay.example.com",
-              controlBaseUrl: "https://control.example.com",
-              status: "active"
-            }
-          }),
-          {
-            status: 200,
-            headers: {
-              "Content-Type": "application/json"
-            }
-          }
-        )
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            reservation: {
-              sessionId: "session_demo",
-              accountId: "acct_1",
-              bindingId: "binding_1",
-              tunnelDomain: "demo.codingns.example",
-              remainingBytes: "1024",
-              upstreamConnected: false,
-              downstreamConnected: false
-            }
+            bindingId: "binding_1",
+            tunnelDomain: "demo.codingns.example",
+            relayBaseUrl: "https://relay.example.com",
+            controlBaseUrl: "https://control.example.com",
+            hostPublicKey: "PUBLIC_KEY_DEMO",
+            hostFingerprint: "SHA256:demo",
+            status: "active",
+            sessionId: "session_demo",
+            connectTicket: "ticket_demo",
+            remainingBytes: "1024",
+            sessionRateLimitBytesPerSecond: "204800",
+            upstreamConnected: false,
+            downstreamConnected: false,
+            expiresAt: "2026-04-21T10:01:00.000Z"
           }),
           {
             status: 201,
@@ -77,7 +61,7 @@ describe("relay-tunnel-edge-client", () => {
         )
       );
     const socket = new MockRelayEdgeSocket(
-      "wss://relay.example.com/ws?sessionId=session_demo&role=downstream"
+      "wss://relay.example.com/ws?sessionId=session_demo&role=downstream&connectTicket=ticket_demo"
     );
     const connectPromise = connectRelayTunnelRawChannel(
       {
@@ -86,7 +70,6 @@ describe("relay-tunnel-edge-client", () => {
       },
       {
         fetchFn: fetchMock,
-        createSessionId: () => "session_demo",
         createWebSocket: () => socket
       }
     );
@@ -96,18 +79,14 @@ describe("relay-tunnel-edge-client", () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "https://control.example.com/api/v1/tunnels/demo.codingns.example"
-    );
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      "https://relay.example.com/api/internal/sessions/reserve",
+      "https://control.example.com/api/v1/tunnels/demo.codingns.example/connect-init",
       expect.objectContaining({
         method: "POST"
       })
     );
     expect(result.binding.hostPublicKey).toBe("PUBLIC_KEY_DEMO");
     expect(result.reservation.sessionId).toBe("session_demo");
-    expect(socket.url).toBe("wss://relay.example.com/ws?sessionId=session_demo&role=downstream");
+    expect(socket.url).toBe("wss://relay.example.com/ws?sessionId=session_demo&role=downstream&connectTicket=ticket_demo");
   });
 
   it("可以通过真实 edge 原始链路驱动客户端加密会话发出 client_hello", async () => {
@@ -116,36 +95,20 @@ describe("relay-tunnel-edge-client", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            binding: {
-              bindingId: "binding_1",
-              tunnelDomain: "demo.codingns.example",
-              hostPublicKey: hostIdentity.publicKeyPem,
-              hostFingerprint: hostIdentity.keyFingerprint,
-              relayBaseUrl: "https://relay.example.com",
-              controlBaseUrl: "https://control.example.com",
-              status: "active"
-            }
-          }),
-          {
-            status: 200,
-            headers: {
-              "Content-Type": "application/json"
-            }
-          }
-        )
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            reservation: {
-              sessionId: "session_demo",
-              accountId: "acct_1",
-              bindingId: "binding_1",
-              tunnelDomain: "demo.codingns.example",
-              remainingBytes: "1024",
-              upstreamConnected: false,
-              downstreamConnected: false
-            }
+            bindingId: "binding_1",
+            tunnelDomain: "demo.codingns.example",
+            relayBaseUrl: "https://relay.example.com",
+            controlBaseUrl: "https://control.example.com",
+            hostPublicKey: hostIdentity.publicKeyPem,
+            hostFingerprint: hostIdentity.keyFingerprint,
+            status: "active",
+            sessionId: "session_demo",
+            connectTicket: "ticket_demo",
+            remainingBytes: "1024",
+            sessionRateLimitBytesPerSecond: "204800",
+            upstreamConnected: false,
+            downstreamConnected: false,
+            expiresAt: "2026-04-21T10:01:00.000Z"
           }),
           {
             status: 201,
@@ -156,7 +119,7 @@ describe("relay-tunnel-edge-client", () => {
         )
       );
     const socket = new MockRelayEdgeSocket(
-      "wss://relay.example.com/ws?sessionId=session_demo&role=downstream"
+      "wss://relay.example.com/ws?sessionId=session_demo&role=downstream&connectTicket=ticket_demo"
     );
     const connectPromise = connectRelayTunnelClientSessionViaEdge(
       {
@@ -165,7 +128,6 @@ describe("relay-tunnel-edge-client", () => {
       },
       {
         fetchFn: fetchMock,
-        createSessionId: () => "session_demo",
         createWebSocket: () => socket
       }
     );
@@ -195,41 +157,25 @@ describe("relay-tunnel-edge-client", () => {
     expect(connected.clientSession).toBeDefined();
   });
 
-  it("会保留 relayBaseUrl 里的路径前缀来预留会话并连接 ws", async () => {
+  it("会保留 relayBaseUrl 里的路径前缀来 connect-init 并连接 ws", async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            binding: {
-              bindingId: "binding_1",
-              tunnelDomain: "demo.codingns.example",
-              hostPublicKey: "PUBLIC_KEY_DEMO",
-              hostFingerprint: "SHA256:demo",
-              relayBaseUrl: "https://channel.codingns.com:1443/relay",
-              controlBaseUrl: "https://channel.codingns.com:1443",
-              status: "active"
-            }
-          }),
-          {
-            status: 200,
-            headers: {
-              "Content-Type": "application/json"
-            }
-          }
-        )
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            reservation: {
-              sessionId: "session_demo",
-              accountId: "acct_1",
-              bindingId: "binding_1",
-              tunnelDomain: "demo.codingns.example",
-              remainingBytes: "1024",
-              upstreamConnected: false,
-              downstreamConnected: false
-            }
+            bindingId: "binding_1",
+            tunnelDomain: "demo.codingns.example",
+            relayBaseUrl: "https://channel.codingns.com:1443/relay",
+            controlBaseUrl: "https://channel.codingns.com:1443",
+            hostPublicKey: "PUBLIC_KEY_DEMO",
+            hostFingerprint: "SHA256:demo",
+            status: "active",
+            sessionId: "session_demo",
+            connectTicket: "ticket_demo",
+            remainingBytes: "1024",
+            sessionRateLimitBytesPerSecond: "204800",
+            upstreamConnected: false,
+            downstreamConnected: false,
+            expiresAt: "2026-04-21T10:01:00.000Z"
           }),
           {
             status: 201,
@@ -240,7 +186,7 @@ describe("relay-tunnel-edge-client", () => {
         )
       );
     const socket = new MockRelayEdgeSocket(
-      "wss://channel.codingns.com:1443/relay/ws?sessionId=session_demo&role=downstream"
+      "wss://channel.codingns.com:1443/relay/ws?sessionId=session_demo&role=downstream&connectTicket=ticket_demo"
     );
     const connectPromise = connectRelayTunnelRawChannel(
       {
@@ -249,7 +195,6 @@ describe("relay-tunnel-edge-client", () => {
       },
       {
         fetchFn: fetchMock,
-        createSessionId: () => "session_demo",
         createWebSocket: () => socket
       }
     );
@@ -258,14 +203,14 @@ describe("relay-tunnel-edge-client", () => {
     await connectPromise;
 
     expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      "https://channel.codingns.com:1443/relay/api/internal/sessions/reserve",
+      1,
+      "https://channel.codingns.com:1443/api/v1/tunnels/demo.codingns.example/connect-init",
       expect.objectContaining({
         method: "POST"
       })
     );
     expect(socket.url).toBe(
-      "wss://channel.codingns.com:1443/relay/ws?sessionId=session_demo&role=downstream"
+      "wss://channel.codingns.com:1443/relay/ws?sessionId=session_demo&role=downstream&connectTicket=ticket_demo"
     );
   });
 });

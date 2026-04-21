@@ -13,22 +13,33 @@ export interface RelayTunnelBindingView {
   status: "active" | "disabled";
 }
 
-export interface RelayTunnelBindingResolveResponse {
-  binding: RelayTunnelBindingView;
-}
-
 export interface RelayTunnelSessionReservation {
   sessionId: string;
-  accountId: string;
   bindingId: string;
   tunnelDomain: string;
   remainingBytes: string;
+  accountId?: string;
+  sessionRateLimitBytesPerSecond?: string | null;
   upstreamConnected: boolean;
   downstreamConnected: boolean;
+  expiresAt?: string;
 }
 
-export interface RelayTunnelSessionReserveResponse {
-  reservation: RelayTunnelSessionReservation;
+export interface RelayTunnelConnectInitResponse {
+  bindingId: string;
+  tunnelDomain: string;
+  relayBaseUrl: string;
+  controlBaseUrl: string;
+  hostPublicKey: string;
+  hostFingerprint: string;
+  status: "active" | "disabled";
+  sessionId: string;
+  connectTicket: string;
+  remainingBytes: string;
+  sessionRateLimitBytesPerSecond: string | null;
+  upstreamConnected: boolean;
+  downstreamConnected: boolean;
+  expiresAt: string;
 }
 
 interface RelayTunnelEdgeSocket {
@@ -50,54 +61,27 @@ interface RelayTunnelEdgeSocket {
 interface RelayTunnelEdgeClientDependencies {
   fetchFn?: typeof fetch;
   createWebSocket?: (url: string) => RelayTunnelEdgeSocket;
-  createSessionId?: () => string;
 }
 
-export async function resolveRelayTunnelBinding(input: {
+export async function connectInitRelayTunnel(input: {
   controlBaseUrl: string;
   tunnelDomain: string;
   fetchFn?: typeof fetch;
-}): Promise<RelayTunnelBindingView> {
+}): Promise<RelayTunnelConnectInitResponse> {
   const fetchFn = input.fetchFn ?? fetch;
   const requestUrl = new URL(
-    `/api/v1/tunnels/${encodeURIComponent(normalizeTunnelDomain(input.tunnelDomain))}`,
+    `/api/v1/tunnels/${encodeURIComponent(normalizeTunnelDomain(input.tunnelDomain))}/connect-init`,
     ensureTrailingSlash(input.controlBaseUrl)
   ).toString();
-  const response = await fetchFn(requestUrl);
-
-  if (!response.ok) {
-    throw await buildRelayTunnelHttpError(response, "解析隧道绑定失败");
-  }
-
-  const payload = await response.json() as RelayTunnelBindingResolveResponse;
-  return payload.binding;
-}
-
-export async function reserveRelayTunnelSession(input: {
-  relayBaseUrl: string;
-  sessionId: string;
-  tunnelDomain: string;
-  fetchFn?: typeof fetch;
-}): Promise<RelayTunnelSessionReservation> {
-  const fetchFn = input.fetchFn ?? fetch;
-  const requestUrl = resolveRelayBaseUrl(input.relayBaseUrl, "api/internal/sessions/reserve").toString();
   const response = await fetchFn(requestUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      sessionId: input.sessionId,
-      tunnelDomain: normalizeTunnelDomain(input.tunnelDomain)
-    })
+    method: "POST"
   });
 
   if (!response.ok) {
-    throw await buildRelayTunnelHttpError(response, "预留隧道会话失败");
+    throw await buildRelayTunnelHttpError(response, "初始化隧道连接失败");
   }
 
-  const payload = await response.json() as RelayTunnelSessionReserveResponse;
-  return payload.reservation;
+  return await response.json() as RelayTunnelConnectInitResponse;
 }
 
 export async function connectRelayTunnelRawChannel(
@@ -111,21 +95,33 @@ export async function connectRelayTunnelRawChannel(
   reservation: RelayTunnelSessionReservation;
   channel: RelayTunnelRawChannel;
 }> {
-  const binding = await resolveRelayTunnelBinding({
+  const connectInit = await connectInitRelayTunnel({
     controlBaseUrl: input.controlBaseUrl,
     tunnelDomain: input.tunnelDomain,
     fetchFn: dependencies.fetchFn
   });
-  const sessionId = (dependencies.createSessionId ?? defaultCreateSessionId)();
-  const reservation = await reserveRelayTunnelSession({
-    relayBaseUrl: binding.relayBaseUrl,
-    sessionId,
-    tunnelDomain: binding.tunnelDomain,
-    fetchFn: dependencies.fetchFn
-  });
+  const binding: RelayTunnelBindingView = {
+    bindingId: connectInit.bindingId,
+    tunnelDomain: connectInit.tunnelDomain,
+    hostPublicKey: connectInit.hostPublicKey,
+    hostFingerprint: connectInit.hostFingerprint,
+    relayBaseUrl: connectInit.relayBaseUrl,
+    controlBaseUrl: connectInit.controlBaseUrl,
+    status: connectInit.status
+  };
+  const reservation: RelayTunnelSessionReservation = {
+    sessionId: connectInit.sessionId,
+    bindingId: connectInit.bindingId,
+    tunnelDomain: connectInit.tunnelDomain,
+    remainingBytes: connectInit.remainingBytes,
+    sessionRateLimitBytesPerSecond: connectInit.sessionRateLimitBytesPerSecond,
+    upstreamConnected: connectInit.upstreamConnected,
+    downstreamConnected: connectInit.downstreamConnected,
+    expiresAt: connectInit.expiresAt
+  };
   const socketFactory = dependencies.createWebSocket ?? defaultCreateWebSocket;
   const socket = socketFactory(
-    buildRelayEdgeWebSocketUrl(binding.relayBaseUrl, reservation.sessionId, "downstream")
+    buildRelayEdgeWebSocketUrl(binding.relayBaseUrl, reservation.sessionId, connectInit.connectTicket)
   );
   await waitForSocketOpen(socket);
 
@@ -200,12 +196,13 @@ class RelayTunnelEdgeRawChannel implements RelayTunnelRawChannel {
 function buildRelayEdgeWebSocketUrl(
   relayBaseUrl: string,
   sessionId: string,
-  role: "upstream" | "downstream"
+  connectTicket: string
 ): string {
   const url = resolveRelayBaseUrl(relayBaseUrl, "ws");
 
   url.searchParams.set("sessionId", sessionId);
-  url.searchParams.set("role", role);
+  url.searchParams.set("role", "downstream");
+  url.searchParams.set("connectTicket", connectTicket);
   url.protocol = url.protocol === "https:" || url.protocol === "wss:" ? "wss:" : "ws:";
 
   return url.toString();
@@ -290,8 +287,4 @@ function resolveRelayBaseUrl(baseUrl: string, pathname: string): URL {
 
 function defaultCreateWebSocket(url: string): RelayTunnelEdgeSocket {
   return new WebSocket(url);
-}
-
-function defaultCreateSessionId(): string {
-  return globalThis.crypto.randomUUID();
 }

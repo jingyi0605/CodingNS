@@ -409,6 +409,8 @@ export function createServer(config: HostConfig) {
     repositories.instanceRelayTunnelIdentityRepository,
     repositories.instanceRelayTunnelRepository,
     {
+      // 开发态默认回源到 user-app Vite 入口，由它继续代理 /api 和 /ws 到 Host。
+      // 正式 npm 包由 Host 自己托管前端，此时 webUiPort 会和 --port 一致。
       defaultLocalTargetBaseUrl: `http://127.0.0.1:${config.webUiPort}`,
       legacyLocalTargetBaseUrl:
         config.webUiPort !== config.port

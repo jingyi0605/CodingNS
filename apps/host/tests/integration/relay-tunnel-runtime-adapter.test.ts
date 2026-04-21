@@ -72,11 +72,13 @@ describe("RelayTunnelRuntimeEdgeAdapter", () => {
       )
     ).toBe("https://channel.codingns.com:1443/relay/api/public/hosts/challenge");
     expect(
-      relayTunnelRuntimeAdapterInternal.buildRelayWebSocketUrl(
+      relayTunnelRuntimeAdapterInternal.buildRelayHostWebSocketUrl(
         "https://channel.codingns.com:1443/relay",
-        "session_demo"
+        "binding_demo",
+        "challenge_demo",
+        "proof_demo"
       )
-    ).toBe("wss://channel.codingns.com:1443/relay/ws?sessionId=session_demo&role=upstream");
+    ).toBe("wss://channel.codingns.com:1443/relay/ws?role=host-upstream&bindingId=binding_demo&challengeId=challenge_demo&proof=proof_demo");
     expect(
       relayTunnelRuntimeAdapterInternal.buildControlHttpUrl(
         "https://channel.codingns.com:1443/control",
@@ -146,6 +148,7 @@ describe("RelayTunnelRuntimeEdgeAdapter", () => {
     const connectStatus = await adapter.connect(config, new AbortController().signal);
     expect(connectStatus.phase).toBe("connecting");
 
+    await relayServer.waitForHostChannel();
     relayServer.enqueueSession("session_demo");
 
     const downstream = new WebSocket(`${relayServer.wsBaseUrl}/ws?sessionId=session_demo&role=downstream`);
@@ -153,7 +156,6 @@ describe("RelayTunnelRuntimeEdgeAdapter", () => {
       downstream.close();
     });
     await once(downstream, "open");
-    await relayServer.waitForUpstream("session_demo");
 
     const clientMessages = createDownstreamEnvelopeQueue(downstream);
     const { pendingHandshake, clientHello } = createRelayTunnelClientHandshake({
@@ -362,7 +364,7 @@ async function startFakeRelayEdgeServer(input: {
 }): Promise<{
   wsBaseUrl: string;
   enqueueSession: (sessionId: string) => void;
-  waitForUpstream: (sessionId: string) => Promise<void>;
+  waitForHostChannel: () => Promise<void>;
   close: () => Promise<void>;
 }> {
   const challenges = new Map<string, {
@@ -373,10 +375,10 @@ async function startFakeRelayEdgeServer(input: {
   }>();
   const reservations = new Map<string, {
     sessionId: string;
-    claimed: boolean;
-    upstream: WebSocket | null;
+    opened: boolean;
     downstream: WebSocket | null;
   }>();
+  let hostChannel: WebSocket | null = null;
   const httpServer = createHttpServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
 
@@ -424,18 +426,28 @@ async function startFakeRelayEdgeServer(input: {
       return;
     }
 
-    if (request.method === "POST" && url.pathname === "/api/public/hosts/claim-next-session") {
-      const body = await readJsonBody(request) as {
-        challengeId?: string;
-        proof?: string;
-      };
-      const challenge = body.challengeId ? challenges.get(body.challengeId) : null;
+    writeJson(response, 404, {
+      errorCode: "NOT_FOUND",
+      detail: "not found"
+    });
+  });
+  const wsServer = new WebSocketServer({
+    noServer: true
+  });
 
-      if (!challenge || !body.proof) {
-        writeJson(response, 401, {
-          errorCode: "HOST_AUTH_INVALID",
-          detail: "Host proof 无效"
-        });
+  wsServer.on("connection", (socket, request) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const sessionId = url.searchParams.get("sessionId");
+    const role = url.searchParams.get("role");
+
+    if (role === "host-upstream") {
+      const bindingId = url.searchParams.get("bindingId");
+      const challengeId = url.searchParams.get("challengeId");
+      const proof = url.searchParams.get("proof");
+      const challenge = challengeId ? challenges.get(challengeId) : null;
+
+      if (!challenge || !bindingId || !proof || bindingId !== input.bindingId) {
+        socket.close(1008, "HOST_AUTH_INVALID");
         return;
       }
 
@@ -451,85 +463,112 @@ async function startFakeRelayEdgeServer(input: {
         hostPublicKeyPem: input.hostPublicKey
       });
 
-      if (expectedProof !== body.proof) {
-        writeJson(response, 401, {
-          errorCode: "HOST_AUTH_INVALID",
-          detail: "Host proof 无效"
-        });
+      if (expectedProof !== proof) {
+        socket.close(1008, "HOST_AUTH_INVALID");
         return;
       }
 
-      const nextReservation = Array.from(reservations.values()).find((item) => !item.claimed);
+      hostChannel = socket;
 
-      if (!nextReservation) {
-        writeJson(response, 200, {
-          reservation: null
-        });
-        return;
-      }
+      socket.on("message", (payload, isBinary) => {
+        if (isBinary) {
+          return;
+        }
 
-      nextReservation.claimed = true;
-      writeJson(response, 200, {
-        reservation: {
-          sessionId: nextReservation.sessionId,
-          accountId: "acct_demo",
-          bindingId: input.bindingId,
-          tunnelDomain: input.tunnelDomain,
-          remainingBytes: "10240",
-          upstreamConnected: false,
-          downstreamConnected: Boolean(nextReservation.downstream)
+        const envelope = JSON.parse(payload.toString("utf8")) as
+          | {
+              type: "session.frame";
+              sessionId: string;
+              payloadBase64Url: string;
+            }
+          | {
+              type: "session.close";
+              sessionId: string;
+              code: number;
+              reason: string | null;
+            };
+        const reservation = reservations.get(envelope.sessionId) ?? null;
+
+        if (!reservation) {
+          return;
+        }
+
+        if (envelope.type === "session.frame") {
+          if (!reservation.downstream || reservation.downstream.readyState !== WebSocket.OPEN) {
+            return;
+          }
+
+          reservation.downstream.send(Buffer.from(envelope.payloadBase64Url, "base64url").toString("utf8"));
+          return;
+        }
+
+        if (reservation.downstream && reservation.downstream.readyState === WebSocket.OPEN) {
+          reservation.downstream.close(envelope.code, envelope.reason ?? undefined);
         }
       });
+
+      socket.on("close", () => {
+        if (hostChannel === socket) {
+          hostChannel = null;
+        }
+      });
+
+      for (const reservation of reservations.values()) {
+        if (!reservation.opened) {
+          socket.send(JSON.stringify({
+            type: "session.open",
+            sessionId: reservation.sessionId
+          }));
+          reservation.opened = true;
+        }
+      }
+
       return;
     }
 
-    writeJson(response, 404, {
-      errorCode: "NOT_FOUND",
-      detail: "not found"
-    });
-  });
-  const wsServer = new WebSocketServer({
-    noServer: true
-  });
-
-  wsServer.on("connection", (socket, request) => {
-    const url = new URL(request.url ?? "/", "http://127.0.0.1");
-    const sessionId = url.searchParams.get("sessionId");
-    const role = url.searchParams.get("role");
     const reservation = sessionId ? reservations.get(sessionId) : null;
 
-    if (!reservation || (role !== "upstream" && role !== "downstream")) {
+    if (!reservation || role !== "downstream") {
       socket.close(1008, "SESSION_NOT_FOUND");
       return;
     }
 
-    if (role === "upstream") {
-      reservation.upstream = socket;
-    } else {
-      reservation.downstream = socket;
-    }
+    reservation.downstream = socket;
 
     socket.on("message", (payload, isBinary) => {
-      const peer = role === "upstream" ? reservation.downstream : reservation.upstream;
-
-      if (!peer || peer.readyState !== WebSocket.OPEN) {
+      if (isBinary || !hostChannel || hostChannel.readyState !== WebSocket.OPEN) {
         return;
       }
 
-      peer.send(payload, {
-        binary: isBinary
-      });
+      hostChannel.send(JSON.stringify({
+        type: "session.frame",
+        sessionId,
+        payloadBase64Url: Buffer.from(payload.toString("utf8"), "utf8").toString("base64url")
+      }));
     });
 
-    socket.on("close", () => {
-      if (role === "upstream" && reservation.upstream === socket) {
-        reservation.upstream = null;
-      }
-
-      if (role === "downstream" && reservation.downstream === socket) {
+    socket.on("close", (code, reason) => {
+      if (reservation.downstream === socket) {
         reservation.downstream = null;
       }
+
+      if (hostChannel && hostChannel.readyState === WebSocket.OPEN) {
+        hostChannel.send(JSON.stringify({
+          type: "session.close",
+          sessionId,
+          code,
+          reason: reason.length > 0 ? reason.toString("utf8") : null
+        }));
+      }
     });
+
+    if (hostChannel && hostChannel.readyState === WebSocket.OPEN && !reservation.opened) {
+      hostChannel.send(JSON.stringify({
+        type: "session.open",
+        sessionId
+      }));
+      reservation.opened = true;
+    }
   });
 
   httpServer.on("upgrade", (request, socket, head) => {
@@ -560,16 +599,26 @@ async function startFakeRelayEdgeServer(input: {
     enqueueSession: (sessionId: string) => {
       reservations.set(sessionId, {
         sessionId,
-        claimed: false,
-        upstream: null,
+        opened: false,
         downstream: null
       });
+      if (hostChannel && hostChannel.readyState === WebSocket.OPEN) {
+        hostChannel.send(JSON.stringify({
+          type: "session.open",
+          sessionId
+        }));
+        const reservation = reservations.get(sessionId);
+
+        if (reservation) {
+          reservation.opened = true;
+        }
+      }
     },
-    waitForUpstream: async (sessionId: string) => {
+    waitForHostChannel: async () => {
       const deadline = Date.now() + 5_000;
 
       while (Date.now() < deadline) {
-        if (reservations.get(sessionId)?.upstream?.readyState === WebSocket.OPEN) {
+        if (hostChannel?.readyState === WebSocket.OPEN) {
           return;
         }
 
@@ -578,7 +627,7 @@ async function startFakeRelayEdgeServer(input: {
         });
       }
 
-      throw new Error("等待 Host 上游接入 relay-edge 超时");
+      throw new Error("等待 Host 持久上游信道接入 relay-edge 超时");
     },
     close: async () => {
       for (const client of wsServer.clients) {
