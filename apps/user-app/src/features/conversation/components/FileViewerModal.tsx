@@ -53,6 +53,9 @@ interface ViewerToolbarAction {
   onClick: () => void | Promise<void>;
 }
 
+const DEFAULT_HTML_PREVIEW_SANDBOX = "allow-forms allow-modals allow-scripts";
+const CROSS_ORIGIN_HTML_PREVIEW_SANDBOX = `${DEFAULT_HTML_PREVIEW_SANDBOX} allow-same-origin`;
+
 const SCRIPT_KEYWORDS = new Set([
   "abstract",
   "as",
@@ -923,6 +926,26 @@ function buildPdfPreviewUrl(
   return nextUrl.toString();
 }
 
+function resolveHtmlPreviewSandbox(src: string): string {
+  if (typeof window === "undefined" || !window.location?.origin) {
+    return DEFAULT_HTML_PREVIEW_SANDBOX;
+  }
+
+  try {
+    const previewUrl = new URL(src, window.location.origin);
+
+    // 桌面端这里通常是 Host 的本地地址，和 Tauri WebView 自身不同源。
+    // macOS 的 WKWebView 对跨源 sandbox 更苛刻，不补 allow-same-origin 时，脚本型 HTML 容易直接白屏。
+    if (previewUrl.origin !== window.location.origin) {
+      return CROSS_ORIGIN_HTML_PREVIEW_SANDBOX;
+    }
+  } catch {
+    return DEFAULT_HTML_PREVIEW_SANDBOX;
+  }
+
+  return DEFAULT_HTML_PREVIEW_SANDBOX;
+}
+
 function roundScale(value: number): number {
   return Math.round(value * 100) / 100;
 }
@@ -932,6 +955,8 @@ function HtmlPreview({ src, filePath }: { src: string | null; filePath: string }
     return <p className="status-text">{t("conversation.fileViewerHtmlPreviewUnavailable")}</p>;
   }
 
+  const sandbox = resolveHtmlPreviewSandbox(src);
+
   return (
     <div className="file-viewer-html-frame-shell">
       <iframe
@@ -940,7 +965,7 @@ function HtmlPreview({ src, filePath }: { src: string | null; filePath: string }
         data-testid="file-viewer-html-preview"
         title={filePath}
         src={src}
-        sandbox="allow-forms allow-modals allow-scripts"
+        sandbox={sandbox}
       />
     </div>
   );

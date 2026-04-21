@@ -174,6 +174,10 @@ describe("FileViewerModal", () => {
       "src",
       expect.stringContaining("/preview/files/preview-token/site/index.html?_preview=0")
     );
+    expect(previewFrame).toHaveAttribute(
+      "sandbox",
+      "allow-forms allow-modals allow-scripts allow-same-origin"
+    );
     expect(dialog).toHaveAttribute("data-size", "regular");
 
     await user.click(screen.getByRole("button", { name: t("conversation.fileViewerSizeFull") }));
@@ -386,6 +390,43 @@ describe("FileViewerModal", () => {
 
     expect(platformMock.openExternal).toHaveBeenCalledWith(
       "http://localhost:3000/preview/files/preview-token/docs/spec.pdf"
+    );
+  });
+
+  it("Web 同源 HTML 预览不放宽 sandbox", async () => {
+    platformMock.isDesktop = false;
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "site/index.html",
+        kind: "html",
+        content: "<!doctype html><html><body>preview</body></html>",
+        version: "html-v1",
+        previewPath: "/preview/files/preview-token/site/index.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/site/index.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="site/index.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    const previewFrame = await screen.findByTestId("file-viewer-html-preview");
+    expect(previewFrame).toHaveAttribute(
+      "src",
+      expect.stringContaining("http://localhost:3000/preview/files/preview-token/site/index.html?_preview=0")
+    );
+    expect(previewFrame).toHaveAttribute(
+      "sandbox",
+      "allow-forms allow-modals allow-scripts"
     );
   });
 });
