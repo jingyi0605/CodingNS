@@ -4389,11 +4389,17 @@ function createTerminalViewportRuntime(input: {
   }
 
   function revealLatest(): void {
-    scrollTerminalToBottom(terminal);
+    scrollTerminalToBottom(
+      terminal,
+      resolveTerminalViewportReservedLines(input.container, terminal)
+    );
   }
 
   function shouldAutoRevealLatest(): boolean {
-    return isTerminalViewportNearBottom(terminal);
+    return isTerminalViewportNearBottom(
+      terminal,
+      resolveTerminalViewportReservedLines(input.container, terminal) + 1
+    );
   }
 
   function applyTheme(): void {
@@ -4611,17 +4617,54 @@ function resolveTerminalViewportBottomGapPx(containerHeight: number): number {
   );
 }
 
-function scrollTerminalToBottom(terminal: Terminal): void {
-  const terminalWithOptionalScrollToBottom = terminal as Terminal & {
-    scrollToBottom?: () => void;
-  };
-
-  if (typeof terminalWithOptionalScrollToBottom.scrollToBottom === "function") {
-    terminalWithOptionalScrollToBottom.scrollToBottom();
-    return;
+function resolveTerminalViewportReservedLines(
+  container: HTMLDivElement,
+  terminal: Terminal
+): number {
+  if (!Number.isFinite(terminal.rows) || terminal.rows <= 0) {
+    return 1;
   }
 
-  terminal.scrollToLine(terminal.buffer.active.baseY);
+  const bottomGapPx = resolveTerminalViewportBottomGapPx(container.clientHeight);
+  const screenElement = container.querySelector(".xterm-screen");
+  const visibleViewportHeight =
+    screenElement instanceof HTMLElement && screenElement.clientHeight > 0
+      ? screenElement.clientHeight
+      : Math.max(terminal.rows, container.clientHeight - bottomGapPx);
+  const estimatedLineHeight = visibleViewportHeight / terminal.rows;
+
+  if (!Number.isFinite(estimatedLineHeight) || estimatedLineHeight <= 0) {
+    return 1;
+  }
+
+  return Math.max(1, Math.round(bottomGapPx / estimatedLineHeight));
+}
+
+function scrollTerminalToBottom(terminal: Terminal, reservedLines = 0): void {
+  const normalizedReservedLines =
+    Number.isFinite(reservedLines) && reservedLines > 0 ? Math.round(reservedLines) : 0;
+  const terminalWithOptionalScrollMethods = terminal as Terminal & {
+    scrollToBottom?: () => void;
+    scrollLines?: (lines: number) => void;
+  };
+
+  if (typeof terminalWithOptionalScrollMethods.scrollToBottom === "function") {
+    terminalWithOptionalScrollMethods.scrollToBottom();
+
+    if (
+      normalizedReservedLines > 0 &&
+      typeof terminalWithOptionalScrollMethods.scrollLines === "function"
+    ) {
+      terminalWithOptionalScrollMethods.scrollLines(-normalizedReservedLines);
+      return;
+    }
+
+    if (normalizedReservedLines <= 0) {
+      return;
+    }
+  }
+
+  terminal.scrollToLine(Math.max(0, terminal.buffer.active.baseY - normalizedReservedLines));
 }
 
 function hasUsableContainerSize(container: HTMLDivElement): boolean {

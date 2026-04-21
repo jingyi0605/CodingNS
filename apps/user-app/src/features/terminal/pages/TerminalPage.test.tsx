@@ -1221,7 +1221,7 @@ describe("TerminalPage", () => {
 
     await waitFor(() => {
       expect(terminal.buffer.active.baseY).toBe(11);
-      expect(terminal.buffer.active.viewportY).toBe(11);
+      expect(terminal.buffer.active.viewportY).toBe(9);
     });
   });
 
