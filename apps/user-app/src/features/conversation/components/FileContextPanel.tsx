@@ -56,8 +56,16 @@ interface FileContextPanelProps {
 
 export interface FileContextPanelWorkbenchShellOverrides {
   navigationGroups?: WorkspaceSessionGroup[];
-  subscribeFileTree?: (workspaceId: string, paths: string[]) => void;
-  requestFileTreeRefresh?: (workspaceId: string, paths?: string[]) => void;
+  subscribeFileTree?: (
+    workspaceId: string,
+    paths: string[],
+    options?: { knownRevisionByPath?: Record<string, string | null | undefined> }
+  ) => void;
+  requestFileTreeRefresh?: (
+    workspaceId: string,
+    paths?: string[],
+    options?: { knownRevisionByPath?: Record<string, string | null | undefined> }
+  ) => void;
   addFileTreeSnapshotListener?: (
     listener: (snapshot: FileTreeRealtimeSnapshotDto) => void
   ) => () => void;
@@ -112,6 +120,7 @@ const SIDEBAR_TREE_DEPTH_STEP_PX = 16;
 
 interface FilePanelWorkspaceSnapshot {
   treeCache: FileTreeCache;
+  treeRevisionByPath: Record<string, string | null>;
   expandedDirectories: string[];
   activeDirectoryPath: string;
 }
@@ -174,6 +183,7 @@ export function FileContextPanel({
   const [showChangesOnly, setShowChangesOnly] = useState(false);
   const [viewerDiffContent, setViewerDiffContent] = useState<string | null>(null);
   const treeCacheRef = useRef<FileTreeCache>({});
+  const treeRevisionByPathRef = useRef<Record<string, string | null>>({});
   const expandedDirectoriesRef = useRef<string[]>([]);
   const activeDirectoryPathRef = useRef(ROOT_DIRECTORY);
   const restoringWorkspaceSnapshotRef = useRef(false);
@@ -241,6 +251,7 @@ export function FileContextPanel({
       rejectAllDirectoryWaiters();
       restoringWorkspaceSnapshotRef.current = false;
       treeCacheRef.current = {};
+      treeRevisionByPathRef.current = {};
       expandedDirectoriesRef.current = [];
       activeDirectoryPathRef.current = ROOT_DIRECTORY;
       updateTreeCache({});
@@ -291,6 +302,10 @@ export function FileContextPanel({
     );
 
     treeCacheRef.current = nextTreeCache;
+    treeRevisionByPathRef.current = pruneTreeRevisionByPath(
+      cachedSnapshot?.treeRevisionByPath ?? {},
+      nextTreeCache
+    );
     expandedDirectoriesRef.current = nextExpandedDirectories;
     activeDirectoryPathRef.current = nextActiveDirectoryPath;
     updateTreeCache(nextTreeCache);
@@ -352,6 +367,10 @@ export function FileContextPanel({
         return;
       }
 
+      treeRevisionByPathRef.current = {
+        ...treeRevisionByPathRef.current,
+        [snapshot.path]: typeof snapshot.revision === "string" ? snapshot.revision : null
+      };
       updateTreeCache((previous) => ({
         ...previous,
         [snapshot.path]: snapshot.items
@@ -379,7 +398,10 @@ export function FileContextPanel({
 
     subscribeFileTree(
       workspaceId,
-      collectSubscribedDirectories(expandedDirectoriesRef.current, activeDirectoryPathRef.current)
+      collectSubscribedDirectories(expandedDirectoriesRef.current, activeDirectoryPathRef.current),
+      {
+        knownRevisionByPath: treeRevisionByPathRef.current
+      }
     );
   }, [activeDirectoryPath, expandedDirectories, subscribeFileTree, workspaceId]);
 
@@ -514,6 +536,7 @@ export function FileContextPanel({
 
     writeViewSnapshot<FilePanelWorkspaceSnapshot>(buildWorkspaceTreeSnapshotKey(workspaceId), {
       treeCache: snapshotTreeCache,
+      treeRevisionByPath: pruneTreeRevisionByPath(treeRevisionByPathRef.current, snapshotTreeCache),
       expandedDirectories: snapshotExpandedDirectories,
       activeDirectoryPath
     });
@@ -604,7 +627,10 @@ export function FileContextPanel({
 
         subscribeFileTree(
           currentWorkspaceId,
-          collectSubscribedDirectories(expandedDirectoriesRef.current, activeDirectoryPathRef.current)
+          collectSubscribedDirectories(expandedDirectoriesRef.current, activeDirectoryPathRef.current),
+          {
+            knownRevisionByPath: treeRevisionByPathRef.current
+          }
         );
         void loadRootTree({ silent: true });
       }, 1500);
@@ -890,8 +916,12 @@ export function FileContextPanel({
       directoryPath || activeDirectoryPathRef.current
     );
 
-    subscribeFileTree(workspaceId, subscribedDirectories);
-    requestFileTreeRefresh(workspaceId, [directoryPath]);
+    subscribeFileTree(workspaceId, subscribedDirectories, {
+      knownRevisionByPath: treeRevisionByPathRef.current
+    });
+    requestFileTreeRefresh(workspaceId, [directoryPath], {
+      knownRevisionByPath: treeRevisionByPathRef.current
+    });
     return waitForDirectorySnapshot(directoryPath, FILE_TREE_SNAPSHOT_TIMEOUT_MS, {
       allowCached: options?.force !== true
     });
@@ -3076,6 +3106,16 @@ function buildWorkspaceTreeSnapshotKey(workspaceId: string) {
 
 function buildSessionChangeCountSnapshotKey(workspaceId: string, sessionId: string) {
   return `file-panel.session-change-count.${workspaceId}.${sessionId}`;
+}
+
+function pruneTreeRevisionByPath(
+  treeRevisionByPath: Record<string, string | null>,
+  treeCache: FileTreeCache
+): Record<string, string | null> {
+  return Object.fromEntries(
+    Object.keys(treeCache)
+      .map((path) => [path, treeRevisionByPath[path] ?? null] as const)
+  );
 }
 
 function collectSubscribedDirectories(

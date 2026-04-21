@@ -264,8 +264,8 @@ export function FileViewerModal({
   const detectedLanguage = useMemo(() => detectLanguage(filePath), [filePath]);
   const overviewMarkers = useMemo(() => buildFileOverviewMarkers(diffContent), [diffContent]);
   const previewKind = preview?.kind ?? null;
-  const canEdit = Boolean(preview?.capabilities.canEdit);
-  const canRefresh = Boolean(preview?.capabilities.canRefresh);
+  const canEdit = Boolean(preview?.capabilities?.canEdit);
+  const canRefresh = Boolean(preview?.capabilities?.canRefresh);
   const viewerLabel = resolveViewerLabel(previewKind, detectedLanguage);
   const previewUrl = useMemo(
     () => resolvePreviewAccessUrl(preview, platform.isDesktop),
@@ -741,7 +741,7 @@ function buildFormatActions(input: {
   }
 
   const actions: ViewerToolbarAction[] = [];
-  const refreshDisabled = !input.preview.capabilities.canRefresh || input.isDirty;
+  const refreshDisabled = !input.preview.capabilities?.canRefresh || input.isDirty;
 
   if (input.preview.kind === "image") {
     actions.push(

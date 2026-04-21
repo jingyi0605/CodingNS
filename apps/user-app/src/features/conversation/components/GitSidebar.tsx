@@ -125,6 +125,7 @@ const GIT_OPERATIONS_MENU_MIN_HEIGHT_PX = 120;
 const GIT_COMMIT_EXPLAIN_DIFF_LIMIT = 60_000;
 
 interface GitSidebarSnapshot {
+  revision?: string | null;
   status: GitStatusDto | null;
   history: GitHistoryItemDto[];
   historyTotalCount: number;
@@ -179,6 +180,7 @@ export function GitSidebar({
     ...workbenchShellOverrides
   };
   const [status, setStatus] = useState<GitStatusDto | null>(null);
+  const [revision, setRevision] = useState<string | null>(null);
   const [history, setHistory] = useState<GitHistoryItemDto[]>([]);
   const [historyTotalCount, setHistoryTotalCount] = useState(0);
   const [historyNextCursor, setHistoryNextCursor] = useState<string | null>(null);
@@ -337,6 +339,7 @@ export function GitSidebar({
   useEffect(() => {
     if (!workspaceId?.trim()) {
       setStatus(null);
+      setRevision(null);
       setHistory([]);
       setHistoryTotalCount(0);
       setHistoryNextCursor(null);
@@ -365,6 +368,7 @@ export function GitSidebar({
     }
 
     setStatus(null);
+    setRevision(null);
     setHistory([]);
     setHistoryTotalCount(0);
     setHistoryNextCursor(null);
@@ -399,21 +403,18 @@ export function GitSidebar({
     }
 
     const currentWorkspaceId = workspaceId.trim();
-    const hasCachedSnapshot =
-      readViewSnapshot<GitSidebarSnapshot>(
-        buildGitSidebarSnapshotKey(currentWorkspaceId),
-        GIT_SNAPSHOT_CACHE_MAX_AGE_MS
-      ) !== null;
+    const cachedSnapshot = readViewSnapshot<GitSidebarSnapshot>(
+      buildGitSidebarSnapshotKey(currentWorkspaceId),
+      GIT_SNAPSHOT_CACHE_MAX_AGE_MS
+    );
 
-    subscribeGitSnapshot(currentWorkspaceId);
+    subscribeGitSnapshot(currentWorkspaceId, {
+      knownRevision: cachedSnapshot?.revision ?? null
+    });
 
-    if (hasCachedSnapshot) {
-      // 命中缓存时仍然主动请求一次后端刷新，避免切回面板后看到过期状态。
-      requestGitRefresh(currentWorkspaceId);
-      return;
+    if (!cachedSnapshot) {
+      requestGitSnapshotRefresh();
     }
-
-    requestGitSnapshotRefresh();
   }, [requestGitRefresh, subscribeGitSnapshot, workspaceId]);
 
   useEffect(() => {
@@ -426,9 +427,11 @@ export function GitSidebar({
 
     // 移动端 Git 面板可能常驻但处于隐藏状态；每次重新切回可见时主动刷新一次。
     if (!wasPanelActive && panelActive) {
-      requestGitRefresh(workspaceId.trim());
+      requestGitRefresh(workspaceId.trim(), {
+        knownRevision: revision
+      });
     }
-  }, [panelActive, requestGitRefresh, workspaceId]);
+  }, [panelActive, requestGitRefresh, revision, workspaceId]);
 
   useEffect(() => {
     if (!workspaceId) {
@@ -436,13 +439,14 @@ export function GitSidebar({
     }
 
     writeViewSnapshot<GitSidebarSnapshot>(buildGitSidebarSnapshotKey(workspaceId), {
+      revision,
       status,
       history,
       historyTotalCount,
       historyNextCursor,
       branches
     });
-  }, [branches, history, historyNextCursor, historyTotalCount, status, workspaceId]);
+  }, [branches, history, historyNextCursor, historyTotalCount, revision, status, workspaceId]);
 
   useEffect(() => {
     if (!status || !selectedPath) {
@@ -497,6 +501,7 @@ export function GitSidebar({
   }
 
   function applyGitSnapshot(snapshot: GitSidebarSnapshot) {
+    setRevision(typeof snapshot.revision === "string" ? snapshot.revision : null);
     setStatus(snapshot.status);
     setHistory(Array.isArray(snapshot.history) ? snapshot.history : []);
     setHistoryTotalCount(typeof snapshot.historyTotalCount === "number" ? snapshot.historyTotalCount : 0);
@@ -514,7 +519,9 @@ export function GitSidebar({
       workspaceId: workspaceId.trim(),
       resetTreeScroll: options?.resetTreeScroll ?? false
     });
-    requestGitRefresh(workspaceId.trim());
+    requestGitRefresh(workspaceId.trim(), {
+      knownRevision: revision
+    });
 
     if (options?.resetTreeScroll) {
       requestAnimationFrame(() => {

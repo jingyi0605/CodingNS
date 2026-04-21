@@ -62,6 +62,7 @@ interface WorkspaceButlerState {
 }
 
 interface WorkspaceHomeGitSnapshotCache {
+  readonly revision?: string | null;
   readonly status: {
     readonly snapshot: {
       readonly branch: string | null;
@@ -71,6 +72,7 @@ interface WorkspaceHomeGitSnapshotCache {
 }
 
 interface WorkspaceHomeTerminalManagerSnapshotCache {
+  readonly revision?: string | null;
   readonly terminals: Array<{
     readonly status: string;
   }>;
@@ -299,6 +301,7 @@ export function WorkspaceHomePage() {
       writeViewSnapshot<WorkspaceHomeTerminalManagerSnapshotCache>(
         buildTerminalManagerSnapshotKey(workspaceId),
         {
+          revision: snapshot.revision ?? null,
           terminals: snapshot.terminals,
           templates: snapshot.templates,
           templateStatuses: snapshot.templateStatuses
@@ -320,15 +323,16 @@ export function WorkspaceHomePage() {
       return;
     }
 
-    const hasCachedSnapshot =
-      readViewSnapshot<WorkspaceHomeGitSnapshotCache>(
-        buildGitSidebarSnapshotKey(workspaceId),
-        WORKSPACE_HOME_SNAPSHOT_CACHE_MAX_AGE_MS
-      ) !== null;
+    const cachedSnapshot = readViewSnapshot<WorkspaceHomeGitSnapshotCache>(
+      buildGitSidebarSnapshotKey(workspaceId),
+      WORKSPACE_HOME_SNAPSHOT_CACHE_MAX_AGE_MS
+    );
 
-    subscribeGitSnapshot(workspaceId);
+    subscribeGitSnapshot(workspaceId, {
+      knownRevision: cachedSnapshot?.revision ?? null
+    });
 
-    if (hasCachedSnapshot) {
+    if (cachedSnapshot) {
       return;
     }
 
@@ -346,15 +350,16 @@ export function WorkspaceHomePage() {
       return;
     }
 
-    const hasCachedSnapshot =
-      readViewSnapshot<WorkspaceHomeTerminalManagerSnapshotCache>(
-        buildTerminalManagerSnapshotKey(workspaceId),
-        WORKSPACE_HOME_SNAPSHOT_CACHE_MAX_AGE_MS
-      ) !== null;
+    const cachedSnapshot = readViewSnapshot<WorkspaceHomeTerminalManagerSnapshotCache>(
+      buildTerminalManagerSnapshotKey(workspaceId),
+      WORKSPACE_HOME_SNAPSHOT_CACHE_MAX_AGE_MS
+    );
 
-    subscribeTerminalManagerSnapshot(workspaceId);
+    subscribeTerminalManagerSnapshot(workspaceId, {
+      knownRevision: cachedSnapshot?.revision ?? null
+    });
 
-    if (hasCachedSnapshot) {
+    if (cachedSnapshot) {
       return;
     }
 

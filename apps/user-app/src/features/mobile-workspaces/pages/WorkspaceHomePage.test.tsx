@@ -556,6 +556,7 @@ describe("WorkspaceHomePage", () => {
   it("命中新鲜缓存时不会主动刷新 Git 和终端面板", async () => {
     const shell = createWorkbenchShell();
     writeViewSnapshot("git-sidebar.snapshot.workspace-1", {
+      revision: "git-rev-1",
       status: {
         snapshot: {
           branch: "feat/cached"
@@ -564,6 +565,7 @@ describe("WorkspaceHomePage", () => {
       }
     });
     writeViewSnapshot("terminal-manager.snapshot.workspace-1", {
+      revision: "terminal-rev-1",
       terminals: [{ id: "terminal-1", status: "running" }],
       templates: [],
       templateStatuses: [{ occupied: false }]
@@ -572,8 +574,12 @@ describe("WorkspaceHomePage", () => {
 
     renderPage();
 
-    expect(shell.subscribeGitSnapshot).toHaveBeenCalledWith("workspace-1");
-    expect(shell.subscribeTerminalManagerSnapshot).toHaveBeenCalledWith("workspace-1");
+    expect(shell.subscribeGitSnapshot).toHaveBeenCalledWith("workspace-1", {
+      knownRevision: "git-rev-1"
+    });
+    expect(shell.subscribeTerminalManagerSnapshot).toHaveBeenCalledWith("workspace-1", {
+      knownRevision: "terminal-rev-1"
+    });
     expect(shell.requestGitRefresh).not.toHaveBeenCalled();
     expect(shell.requestTerminalManagerRefresh).not.toHaveBeenCalled();
   });

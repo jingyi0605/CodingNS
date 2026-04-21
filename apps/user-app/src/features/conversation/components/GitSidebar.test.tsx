@@ -1,8 +1,9 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clearViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
+import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import { ToastProvider } from "../../../shared/toast";
 import { GitSidebar, resolveGitOperationsMenuPosition } from "./GitSidebar";
 
@@ -51,6 +52,43 @@ const clipboardWriteTextMock = vi.hoisted(() => vi.fn());
 const navigateMock = vi.hoisted(() => vi.fn());
 const GIT_SIDEBAR_SNAPSHOT_KEY = "git-sidebar.snapshot.workspace-1";
 let gitSnapshotListener: ((snapshot: ReturnType<typeof createGitSnapshot>) => void) | null = null;
+const initialPreferenceState = userPreferenceStore.getState();
+
+function createPreferenceState(language: "zh-CN" | "en-US") {
+  return {
+    initialized: true,
+    profile: {
+      language,
+      theme: "light" as const,
+      autoTheme: false,
+      defaultPermissionMode: "default" as const
+    },
+    providers: {
+      "claude-code": {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      codex: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      opencode: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      gemini: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      kimi: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      }
+    },
+    updatedAt: null,
+    source: "default" as const
+  };
+}
 
 vi.mock("../api/git-api", () => ({
   getGitStatus: gitApiMock.getGitStatus,
@@ -103,6 +141,7 @@ vi.mock("../../../shared/haptics", () => ({
 describe("GitSidebar", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    userPreferenceStore.hydrate(createPreferenceState("zh-CN"));
     setViewportWidth(430);
     hapticsMock.trigger.mockReset();
     showDesktopContextMenuMock.mockReset();
@@ -269,6 +308,10 @@ describe("GitSidebar", () => {
     });
   });
 
+  afterEach(() => {
+    userPreferenceStore.hydrate(initialPreferenceState);
+  });
+
   it("移动端多选文件后会显示选择工具条，并支持批量暂存", async () => {
     renderSidebar();
 
@@ -304,14 +347,16 @@ describe("GitSidebar", () => {
     });
   });
 
-  it("命中新鲜缓存时也会在挂载后主动触发一次刷新", async () => {
+  it("命中新鲜缓存时挂载阶段只订阅不主动刷新", async () => {
     seedGitSidebarSnapshot();
 
     renderSidebar();
 
     expect(await screen.findByText("App.tsx")).toBeInTheDocument();
-    expect(workbenchShellMock.subscribeGitSnapshot).toHaveBeenCalledWith("workspace-1");
-    expect(workbenchShellMock.requestGitRefresh).toHaveBeenCalledWith("workspace-1");
+    expect(workbenchShellMock.subscribeGitSnapshot).toHaveBeenCalledWith("workspace-1", {
+      knownRevision: "git-rev-1"
+    });
+    expect(workbenchShellMock.requestGitRefresh).not.toHaveBeenCalled();
   });
 
   it("面板从隐藏切回可见时会再次主动刷新", async () => {
@@ -324,7 +369,7 @@ describe("GitSidebar", () => {
     );
 
     expect(await screen.findByText("App.tsx")).toBeInTheDocument();
-    expect(workbenchShellMock.requestGitRefresh).toHaveBeenCalledTimes(1);
+    expect(workbenchShellMock.requestGitRefresh).not.toHaveBeenCalled();
 
     rerender(
       <ToastProvider>
@@ -333,9 +378,11 @@ describe("GitSidebar", () => {
     );
 
     await waitFor(() => {
-      expect(workbenchShellMock.requestGitRefresh).toHaveBeenCalledTimes(2);
+      expect(workbenchShellMock.requestGitRefresh).toHaveBeenCalledTimes(1);
     });
-    expect(workbenchShellMock.requestGitRefresh).toHaveBeenNthCalledWith(2, "workspace-1");
+    expect(workbenchShellMock.requestGitRefresh).toHaveBeenNthCalledWith(1, "workspace-1", {
+      knownRevision: null
+    });
   });
 
   it("撤销上次提交后会把提交标题回填到输入框", async () => {
@@ -947,6 +994,7 @@ function seedGitSidebarSnapshot() {
   const snapshot = createGitSnapshot();
 
   writeViewSnapshot(GIT_SIDEBAR_SNAPSHOT_KEY, {
+    revision: "git-rev-1",
     status: snapshot.status,
     history: snapshot.history,
     historyTotalCount: snapshot.historyTotalCount,

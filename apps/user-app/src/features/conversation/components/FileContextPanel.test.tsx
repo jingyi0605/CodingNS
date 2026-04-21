@@ -8,6 +8,7 @@ import {
   writeViewSnapshot
 } from "../../../shared/cache/view-snapshot-cache";
 import { localUiPreferenceStore } from "../../../preferences/local-ui-preference-store";
+import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import { t } from "../../../shared/i18n";
 import { ToastProvider } from "../../../shared/toast";
 import { FileContextPanel } from "./FileContextPanel";
@@ -40,6 +41,7 @@ const showDesktopContextMenuMock = vi.hoisted(() => vi.fn());
 const createObjectUrlMock = vi.hoisted(() => vi.fn(() => "blob:mock-file"));
 const revokeObjectUrlMock = vi.hoisted(() => vi.fn());
 const anchorClickMock = vi.hoisted(() => vi.fn());
+const initialPreferenceState = userPreferenceStore.getState();
 const fileTreeSnapshotListeners = new Set<
   (snapshot: { workspaceId: string; path: string; items: unknown[] }) => void
 >();
@@ -245,9 +247,46 @@ vi.mock("../../../platform/desktop/desktop-context-menu", () => ({
   showDesktopContextMenu: showDesktopContextMenuMock
 }));
 
+function createPreferenceState(language: "zh-CN" | "en-US") {
+  return {
+    initialized: true,
+    profile: {
+      language,
+      theme: "light" as const,
+      autoTheme: false,
+      defaultPermissionMode: "default" as const
+    },
+    providers: {
+      "claude-code": {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      codex: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      opencode: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      gemini: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      kimi: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      }
+    },
+    updatedAt: null,
+    source: "default" as const
+  };
+}
+
 describe("FileContextPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    userPreferenceStore.hydrate(createPreferenceState("zh-CN"));
     fileTreeSnapshotListeners.clear();
     gitSnapshotListeners.clear();
     window.localStorage.clear();
@@ -553,6 +592,7 @@ describe("FileContextPanel", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    userPreferenceStore.hydrate(initialPreferenceState);
     clearViewSnapshot(WORKSPACE_TREE_SNAPSHOT_KEY);
     clearViewSnapshot(SESSION_COUNT_SNAPSHOT_KEY);
   });

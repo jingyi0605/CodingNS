@@ -74,6 +74,7 @@ const INITIAL_LAUNCH_DRAFT: LaunchDraftState = {
 const TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
 
 interface TerminalManagerSnapshot {
+  revision?: string | null;
   terminals: TerminalDto[];
   templates: TerminalTemplateDto[];
   templateStatuses: TerminalTemplateRuntimeStatusDto[];
@@ -518,6 +519,7 @@ export function TerminalManagerPanel({
   };
   const activeWorkspaceId = currentWorkspaceId?.trim() || null;
   const [terminals, setTerminals] = useState<TerminalDto[]>([]);
+  const [revision, setRevision] = useState<string | null>(null);
   const [templates, setTemplates] = useState<TerminalTemplateDto[]>([]);
   const [templateStatuses, setTemplateStatuses] = useState<TerminalTemplateRuntimeStatusDto[]>([]);
   const [shellOptions, setShellOptions] = useState<TerminalShellOptionDto[]>([]);
@@ -631,6 +633,7 @@ export function TerminalManagerPanel({
   useEffect(() => {
     if (!activeWorkspaceId) {
       setTerminals([]);
+      setRevision(null);
       setTemplates([]);
       setTemplateStatuses([]);
       setLoading(false);
@@ -651,12 +654,14 @@ export function TerminalManagerPanel({
 
     if (cachedSnapshot) {
       setTerminals(cachedSnapshot.terminals);
+      setRevision(typeof cachedSnapshot.revision === "string" ? cachedSnapshot.revision : null);
       setTemplates(cachedSnapshot.templates);
       setTemplateStatuses(cachedSnapshot.templateStatuses);
       setShellOptions(cachedSnapshot.shellOptions ?? []);
       setLoading(false);
     } else {
       setTerminals([]);
+      setRevision(null);
       setTemplates([]);
       setTemplateStatuses([]);
       setShellOptions([]);
@@ -690,25 +695,18 @@ export function TerminalManagerPanel({
       return;
     }
 
-    const hasCachedSnapshot =
-      readViewSnapshot<TerminalManagerSnapshot>(
-        buildTerminalManagerSnapshotKey(activeWorkspaceId),
-        TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS
-      ) !== null;
+    const cachedSnapshot = readViewSnapshot<TerminalManagerSnapshot>(
+      buildTerminalManagerSnapshotKey(activeWorkspaceId),
+      TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS
+    );
 
-    subscribeTerminalManagerSnapshot(activeWorkspaceId);
+    subscribeTerminalManagerSnapshot(activeWorkspaceId, {
+      knownRevision: cachedSnapshot?.revision ?? null
+    });
 
-    if (hasCachedSnapshot) {
-      const timer = window.setTimeout(() => {
-        requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
-      }, 1500);
-
-      return () => {
-        window.clearTimeout(timer);
-      };
+    if (!cachedSnapshot) {
+      requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
     }
-
-    requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
   }, [activeWorkspaceId, requestTerminalManagerRefresh, subscribeTerminalManagerSnapshot]);
 
   useEffect(() => {
@@ -717,14 +715,16 @@ export function TerminalManagerPanel({
     }
 
     writeViewSnapshot<TerminalManagerSnapshot>(buildTerminalManagerSnapshotKey(activeWorkspaceId), {
+      revision,
       terminals,
       templates,
       templateStatuses,
       shellOptions
     });
-  }, [activeWorkspaceId, shellOptions, templateStatuses, templates, terminals]);
+  }, [activeWorkspaceId, revision, shellOptions, templateStatuses, templates, terminals]);
 
   function applyTerminalManagerSnapshot(snapshot: TerminalManagerSnapshot) {
+    setRevision(typeof snapshot.revision === "string" ? snapshot.revision : null);
     setTerminals(snapshot.terminals);
     setTemplates(snapshot.templates);
     setTemplateStatuses(snapshot.templateStatuses);
@@ -735,7 +735,9 @@ export function TerminalManagerPanel({
     logPerfDebug("terminal_manager.refresh_requested", {
       workspaceId
     });
-    requestTerminalManagerRefresh(workspaceId);
+    requestTerminalManagerRefresh(workspaceId, {
+      knownRevision: revision
+    });
   }
 
   function closeTemplateEditor() {

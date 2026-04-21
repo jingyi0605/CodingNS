@@ -969,22 +969,48 @@ interface WorkbenchShellContextValue {
   archiveNotification: (notificationId: string) => void;
   unarchiveNotification: (notificationId: string) => void;
   setAuxiliaryPanel: (panel: ReactNode | null) => void;
-  subscribeFileTree: (workspaceId: string, paths: string[]) => void;
-  requestFileTreeRefresh: (workspaceId: string, paths?: string[]) => void;
+  subscribeFileTree: (
+    workspaceId: string,
+    paths: string[],
+    options?: { knownRevisionByPath?: Record<string, string | null | undefined> }
+  ) => void;
+  requestFileTreeRefresh: (
+    workspaceId: string,
+    paths?: string[],
+    options?: { knownRevisionByPath?: Record<string, string | null | undefined> }
+  ) => void;
   addFileTreeSnapshotListener: (
     listener: (snapshot: FileTreeRealtimeSnapshotDto) => void
   ) => () => void;
-  subscribeGitSnapshot: (workspaceId: string) => void;
-  requestGitRefresh: (workspaceId: string) => void;
+  subscribeGitSnapshot: (
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined }
+  ) => void;
+  requestGitRefresh: (
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined }
+  ) => void;
   addGitSnapshotListener: (listener: (snapshot: GitRealtimeSnapshotDto) => void) => () => void;
-  subscribeWorkspaceManagementSnapshot: (workspaceId: string) => void;
-  requestWorkspaceManagementRefresh: (workspaceId: string) => void;
+  subscribeWorkspaceManagementSnapshot: (
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined }
+  ) => void;
+  requestWorkspaceManagementRefresh: (
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined }
+  ) => void;
   addWorkspaceManagementSnapshotListener: (
     listener: (snapshot: WorkspaceManagementRealtimeSnapshotDto) => void
   ) => () => void;
   workspaceManagementStateById: Record<string, WorkspaceManagementViewState>;
-  subscribeTerminalManagerSnapshot: (workspaceId: string) => void;
-  requestTerminalManagerRefresh: (workspaceId: string) => void;
+  subscribeTerminalManagerSnapshot: (
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined }
+  ) => void;
+  requestTerminalManagerRefresh: (
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined }
+  ) => void;
   addTerminalManagerSnapshotListener: (
     listener: (snapshot: TerminalManagerRealtimeSnapshotDto) => void
   ) => () => void;
@@ -7277,14 +7303,40 @@ export function WorkbenchLayout({
   const terminalManagerSnapshotListenersRef = useRef(
     new Set<(snapshot: TerminalManagerRealtimeSnapshotDto) => void>()
   );
-  const fileTreeSubscriptionRef = useRef<{ workspaceId: string; paths: string[] } | null>(null);
-  const pendingFileTreeRefreshRef = useRef<{ workspaceId: string; paths?: string[] } | null>(null);
-  const gitWorkspaceSubscriptionRef = useRef<string | null>(null);
-  const pendingGitRefreshWorkspaceIdRef = useRef<string | null>(null);
-  const workspaceManagementSubscriptionRef = useRef<string | null>(null);
-  const pendingWorkspaceManagementRefreshWorkspaceIdRef = useRef<string | null>(null);
-  const terminalManagerWorkspaceSubscriptionRef = useRef<string | null>(null);
-  const pendingTerminalManagerRefreshWorkspaceIdRef = useRef<string | null>(null);
+  const fileTreeSubscriptionRef = useRef<{
+    workspaceId: string;
+    paths: string[];
+    knownRevisionByPath?: Record<string, string | null | undefined>;
+  } | null>(null);
+  const pendingFileTreeRefreshRef = useRef<{
+    workspaceId: string;
+    paths?: string[];
+    knownRevisionByPath?: Record<string, string | null | undefined>;
+  } | null>(null);
+  const gitWorkspaceSubscriptionRef = useRef<{
+    workspaceId: string;
+    knownRevision?: string | null | undefined;
+  } | null>(null);
+  const pendingGitRefreshWorkspaceIdRef = useRef<{
+    workspaceId: string;
+    knownRevision?: string | null | undefined;
+  } | null>(null);
+  const workspaceManagementSubscriptionRef = useRef<{
+    workspaceId: string;
+    knownRevision?: string | null | undefined;
+  } | null>(null);
+  const pendingWorkspaceManagementRefreshWorkspaceIdRef = useRef<{
+    workspaceId: string;
+    knownRevision?: string | null | undefined;
+  } | null>(null);
+  const terminalManagerWorkspaceSubscriptionRef = useRef<{
+    workspaceId: string;
+    knownRevision?: string | null | undefined;
+  } | null>(null);
+  const pendingTerminalManagerRefreshWorkspaceIdRef = useRef<{
+    workspaceId: string;
+    knownRevision?: string | null | undefined;
+  } | null>(null);
   const notificationRefreshRequestIdRef = useRef(0);
   const notificationArchiveMutationRequestIdRef = useRef(0);
   const showToastRef = useRef(showToast);
@@ -7753,20 +7805,30 @@ export function WorkbenchLayout({
     [navigate]
   );
 
-  const subscribeFileTree = useCallback((workspaceId: string, paths: string[]) => {
+  const subscribeFileTree = useCallback((
+    workspaceId: string,
+    paths: string[],
+    options?: { knownRevisionByPath?: Record<string, string | null | undefined> }
+  ) => {
     fileTreeSubscriptionRef.current = {
       workspaceId,
-      paths
+      paths,
+      knownRevisionByPath: options?.knownRevisionByPath
     };
-    workbenchRealtimeClientRef.current?.subscribeFileTree(workspaceId, paths);
+    workbenchRealtimeClientRef.current?.subscribeFileTree(workspaceId, paths, options);
   }, []);
 
-  const requestFileTreeRefresh = useCallback((workspaceId: string, paths?: string[]) => {
+  const requestFileTreeRefresh = useCallback((
+    workspaceId: string,
+    paths?: string[],
+    options?: { knownRevisionByPath?: Record<string, string | null | undefined> }
+  ) => {
     pendingFileTreeRefreshRef.current = {
       workspaceId,
-      paths
+      paths,
+      knownRevisionByPath: options?.knownRevisionByPath
     };
-    workbenchRealtimeClientRef.current?.requestFileTreeRefresh(workspaceId, paths);
+    workbenchRealtimeClientRef.current?.requestFileTreeRefresh(workspaceId, paths, options);
   }, []);
 
   const addFileTreeSnapshotListener = useCallback(
@@ -7779,14 +7841,26 @@ export function WorkbenchLayout({
     []
   );
 
-  const subscribeGitSnapshot = useCallback((workspaceId: string) => {
-    gitWorkspaceSubscriptionRef.current = workspaceId;
-    workbenchRealtimeClientRef.current?.subscribeGit(workspaceId);
+  const subscribeGitSnapshot = useCallback((
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined }
+  ) => {
+    gitWorkspaceSubscriptionRef.current = {
+      workspaceId,
+      knownRevision: options?.knownRevision
+    };
+    workbenchRealtimeClientRef.current?.subscribeGit(workspaceId, options);
   }, []);
 
-  const requestGitRefresh = useCallback((workspaceId: string) => {
-    pendingGitRefreshWorkspaceIdRef.current = workspaceId;
-    workbenchRealtimeClientRef.current?.requestGitRefresh(workspaceId);
+  const requestGitRefresh = useCallback((
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined }
+  ) => {
+    pendingGitRefreshWorkspaceIdRef.current = {
+      workspaceId,
+      knownRevision: options?.knownRevision
+    };
+    workbenchRealtimeClientRef.current?.requestGitRefresh(workspaceId, options);
   }, []);
 
   const addGitSnapshotListener = useCallback(
@@ -7799,13 +7873,25 @@ export function WorkbenchLayout({
     []
   );
 
-  const subscribeWorkspaceManagementSnapshot = useCallback((workspaceId: string) => {
-    workspaceManagementSubscriptionRef.current = workspaceId;
-    workbenchRealtimeClientRef.current?.subscribeWorkspaceManagement(workspaceId);
+  const subscribeWorkspaceManagementSnapshot = useCallback((
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined }
+  ) => {
+    workspaceManagementSubscriptionRef.current = {
+      workspaceId,
+      knownRevision: options?.knownRevision
+    };
+    workbenchRealtimeClientRef.current?.subscribeWorkspaceManagement(workspaceId, options);
   }, []);
 
-  const requestWorkspaceManagementRefresh = useCallback((workspaceId: string) => {
-    pendingWorkspaceManagementRefreshWorkspaceIdRef.current = workspaceId;
+  const requestWorkspaceManagementRefresh = useCallback((
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined }
+  ) => {
+    pendingWorkspaceManagementRefreshWorkspaceIdRef.current = {
+      workspaceId,
+      knownRevision: options?.knownRevision
+    };
     setWorkspaceManagementStateById((current) => ({
       ...current,
       [workspaceId]: {
@@ -7814,7 +7900,7 @@ export function WorkbenchLayout({
         error: null
       }
     }));
-    workbenchRealtimeClientRef.current?.requestWorkspaceManagementRefresh(workspaceId);
+    workbenchRealtimeClientRef.current?.requestWorkspaceManagementRefresh(workspaceId, options);
   }, []);
 
   const addWorkspaceManagementSnapshotListener = useCallback(
@@ -8029,14 +8115,26 @@ export function WorkbenchLayout({
     setWorktreeCleanupTarget(meta);
   }, []);
 
-  const subscribeTerminalManagerSnapshot = useCallback((workspaceId: string) => {
-    terminalManagerWorkspaceSubscriptionRef.current = workspaceId;
-    workbenchRealtimeClientRef.current?.subscribeTerminalManager(workspaceId);
+  const subscribeTerminalManagerSnapshot = useCallback((
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined }
+  ) => {
+    terminalManagerWorkspaceSubscriptionRef.current = {
+      workspaceId,
+      knownRevision: options?.knownRevision
+    };
+    workbenchRealtimeClientRef.current?.subscribeTerminalManager(workspaceId, options);
   }, []);
 
-  const requestTerminalManagerRefresh = useCallback((workspaceId: string) => {
-    pendingTerminalManagerRefreshWorkspaceIdRef.current = workspaceId;
-    workbenchRealtimeClientRef.current?.requestTerminalManagerRefresh(workspaceId);
+  const requestTerminalManagerRefresh = useCallback((
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined }
+  ) => {
+    pendingTerminalManagerRefreshWorkspaceIdRef.current = {
+      workspaceId,
+      knownRevision: options?.knownRevision
+    };
+    workbenchRealtimeClientRef.current?.requestTerminalManagerRefresh(workspaceId, options);
   }, []);
 
   const addTerminalManagerSnapshotListener = useCallback(
@@ -8175,6 +8273,7 @@ export function WorkbenchLayout({
       },
       onGitSnapshot: (snapshot) => {
         writeViewSnapshot(buildGitSidebarSnapshotKey(snapshot.workspaceId), {
+          revision: snapshot.revision ?? null,
           status: snapshot.status,
           history: snapshot.history,
           historyTotalCount: snapshot.historyTotalCount,
@@ -8234,6 +8333,7 @@ export function WorkbenchLayout({
         navigate("/login", { replace: true });
       }
     });
+    client.setWorkbenchKnownRevision(initialWorkbenchSnapshotRef.current?.revision ?? null);
 
     workbenchRealtimeClientRef.current = client;
     const fileTreeSubscription = fileTreeSubscriptionRef.current;
@@ -8248,35 +8348,61 @@ export function WorkbenchLayout({
       pendingTerminalManagerRefreshWorkspaceIdRef.current;
 
     if (fileTreeSubscription) {
-      client.subscribeFileTree(fileTreeSubscription.workspaceId, fileTreeSubscription.paths);
+      client.subscribeFileTree(fileTreeSubscription.workspaceId, fileTreeSubscription.paths, {
+        knownRevisionByPath: fileTreeSubscription.knownRevisionByPath
+      });
     }
 
     if (gitWorkspaceSubscription) {
-      client.subscribeGit(gitWorkspaceSubscription);
+      client.subscribeGit(gitWorkspaceSubscription.workspaceId, {
+        knownRevision: gitWorkspaceSubscription.knownRevision
+      });
     }
 
     if (workspaceManagementSubscription) {
-      client.subscribeWorkspaceManagement(workspaceManagementSubscription);
+      client.subscribeWorkspaceManagement(workspaceManagementSubscription.workspaceId, {
+        knownRevision: workspaceManagementSubscription.knownRevision
+      });
     }
 
     if (terminalManagerWorkspaceSubscription) {
-      client.subscribeTerminalManager(terminalManagerWorkspaceSubscription);
+      client.subscribeTerminalManager(terminalManagerWorkspaceSubscription.workspaceId, {
+        knownRevision: terminalManagerWorkspaceSubscription.knownRevision
+      });
     }
 
     if (pendingFileTreeRefresh) {
-      client.requestFileTreeRefresh(pendingFileTreeRefresh.workspaceId, pendingFileTreeRefresh.paths);
+      client.requestFileTreeRefresh(
+        pendingFileTreeRefresh.workspaceId,
+        pendingFileTreeRefresh.paths,
+        {
+          knownRevisionByPath: pendingFileTreeRefresh.knownRevisionByPath
+        }
+      );
     }
 
     if (pendingGitRefreshWorkspaceId) {
-      client.requestGitRefresh(pendingGitRefreshWorkspaceId);
+      client.requestGitRefresh(pendingGitRefreshWorkspaceId.workspaceId, {
+        knownRevision: pendingGitRefreshWorkspaceId.knownRevision
+      });
     }
 
     if (pendingWorkspaceManagementRefreshWorkspaceId) {
-      client.requestWorkspaceManagementRefresh(pendingWorkspaceManagementRefreshWorkspaceId);
+      client.requestWorkspaceManagementRefresh(
+        pendingWorkspaceManagementRefreshWorkspaceId.workspaceId,
+        {
+          knownRevision: pendingWorkspaceManagementRefreshWorkspaceId.knownRevision
+        }
+      );
     }
 
     if (pendingTerminalManagerRefreshWorkspaceId) {
-      client.requestTerminalManagerRefresh(pendingTerminalManagerRefreshWorkspaceId);
+      client.requestTerminalManagerRefresh(
+        pendingTerminalManagerRefreshWorkspaceId.workspaceId,
+        {
+          knownRevision: pendingTerminalManagerRefreshWorkspaceId.knownRevision
+        }
+      );
     }
 
     client.start();

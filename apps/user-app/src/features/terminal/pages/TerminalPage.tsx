@@ -228,10 +228,17 @@ export interface TerminalPageWorkbenchShellOverrides {
   navigationGroups?: WorkspaceSessionGroup[];
   currentWorkspaceId?: string | null;
   selectWorkspace?: (workspaceId: string) => void;
-  subscribeTerminalManagerSnapshot?: (workspaceId: string) => void;
-  requestTerminalManagerRefresh?: (workspaceId: string) => void;
+  subscribeTerminalManagerSnapshot?: (
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined }
+  ) => void;
+  requestTerminalManagerRefresh?: (
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined }
+  ) => void;
   addTerminalManagerSnapshotListener?: (
     listener: (snapshot: {
+      revision?: string | null;
       workspaceId: string;
       terminals: TerminalDto[];
       templates: unknown[];
@@ -787,6 +794,7 @@ export function TerminalPage({
       }
 
       writeViewSnapshot(buildTerminalManagerSnapshotKey(selectedWorkspaceId), {
+        revision: snapshot.revision ?? null,
         terminals: snapshot.terminals,
         templates: snapshot.templates,
         templateStatuses: snapshot.templateStatuses,
@@ -879,6 +887,7 @@ export function TerminalPage({
     setPendingTerminalCreationPaneId(null);
 
     const cachedSnapshot = readViewSnapshot<{
+      revision?: string | null;
       terminals: TerminalDto[];
       templates: unknown[];
       templateStatuses: Array<{ occupied: boolean }>;
@@ -901,11 +910,15 @@ export function TerminalPage({
       setPendingTerminalCreationPaneId(null);
     }
 
-    subscribeTerminalManagerSnapshot(selectedWorkspaceId);
+    subscribeTerminalManagerSnapshot(selectedWorkspaceId, {
+      knownRevision: cachedSnapshot?.revision ?? null
+    });
 
     if (cachedSnapshot) {
       const timer = window.setTimeout(() => {
-        requestTerminalManagerRefresh(selectedWorkspaceId);
+        requestTerminalManagerRefresh(selectedWorkspaceId, {
+          knownRevision: cachedSnapshot.revision ?? null
+        });
       }, 1500);
 
       return () => {
@@ -913,7 +926,9 @@ export function TerminalPage({
       };
     }
 
-    requestTerminalManagerRefresh(selectedWorkspaceId);
+    requestTerminalManagerRefresh(selectedWorkspaceId, {
+      knownRevision: null
+    });
 
     if (externalWindowMode) {
       void reloadWorkspaceResources(selectedWorkspaceId);

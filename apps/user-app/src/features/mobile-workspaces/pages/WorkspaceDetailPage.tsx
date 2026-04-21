@@ -49,6 +49,11 @@ function isArchivedSession(session: SessionSummaryDto) {
 const WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
 const ARCHIVED_SESSIONS_PAGE_SIZE = 10;
 
+interface WorkspaceDetailGitSnapshotCache {
+  revision?: string | null;
+  status: unknown;
+}
+
 export function WorkspaceDetailPage() {
   const { workspaceId = "" } = useParams();
   const navigate = useNavigate();
@@ -109,26 +114,27 @@ export function WorkspaceDetailPage() {
       return;
     }
 
-    subscribeGitSnapshot(workspaceId);
-    subscribeWorkspaceManagementSnapshot(workspaceId);
+    const cachedGitSnapshot = readViewSnapshot<WorkspaceDetailGitSnapshotCache>(
+      buildGitSidebarSnapshotKey(workspaceId),
+      WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS
+    );
+    const cachedManagementSnapshot = readViewSnapshot<WorkspaceManagementSummaryDto>(
+      buildWorkspaceManagementSummarySnapshotKey(workspaceId),
+      WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS
+    );
 
-    const hasCachedGitSnapshot =
-      readViewSnapshot<{ status: unknown }>(
-        buildGitSidebarSnapshotKey(workspaceId),
-        WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS
-      )
-      !== null;
-    const hasCachedManagementSnapshot =
-      readViewSnapshot<WorkspaceManagementSummaryDto>(
-        buildWorkspaceManagementSummarySnapshotKey(workspaceId),
-        WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS
-      ) !== null;
+    subscribeGitSnapshot(workspaceId, {
+      knownRevision: cachedGitSnapshot?.revision ?? null
+    });
+    subscribeWorkspaceManagementSnapshot(workspaceId, {
+      knownRevision: cachedManagementSnapshot?.revision ?? null
+    });
 
-    if (!hasCachedGitSnapshot) {
+    if (!cachedGitSnapshot) {
       requestGitRefresh(workspaceId);
     }
 
-    if (!hasCachedManagementSnapshot) {
+    if (!cachedManagementSnapshot) {
       requestWorkspaceManagementRefresh(workspaceId);
     }
   }, [

@@ -109,6 +109,7 @@ export interface WorkspaceCodeCompositionDto {
 }
 
 export interface WorkspaceManagementSummaryDto {
+  revision?: string;
   workspaceId: string;
   name: string;
   path: string;
@@ -615,6 +616,7 @@ export interface WorkbenchSnapshotItemDto {
 }
 
 export interface WorkbenchSnapshotDto {
+  revision?: string;
   items: WorkbenchSnapshotItemDto[];
 }
 

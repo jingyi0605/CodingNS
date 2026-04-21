@@ -2,7 +2,7 @@ import { getHostBaseUrl, getHostWebSocketUrl } from "../config/env";
 import { authStore } from "../features/auth/store/auth-store";
 import { ConnectionManager } from "./connection-manager";
 import type { HostTransportSocket } from "./host-transport";
-import { resolveHostTransport } from "./host-transport-registry";
+import { resolveHostTransportTarget } from "./host-transport-registry";
 
 import type {
   WorkbenchSnapshotDto,
@@ -29,10 +29,13 @@ interface SystemConnectedEvent {
 
 interface WorkbenchSnapshotEvent {
   type: "workbench.snapshot";
-  snapshot: WorkbenchSnapshotDto;
+  revision: string;
+  unchanged: boolean;
+  snapshot: WorkbenchSnapshotDto | null;
 }
 
 export interface FileTreeRealtimeSnapshotDto {
+  revision?: string;
   workspaceId: string;
   path: string;
   items: FileNodeDto[];
@@ -40,10 +43,13 @@ export interface FileTreeRealtimeSnapshotDto {
 
 interface FileTreeSnapshotEvent {
   type: "fileTree.snapshot";
-  snapshot: FileTreeRealtimeSnapshotDto;
+  revision: string;
+  unchanged: boolean;
+  snapshot: FileTreeRealtimeSnapshotDto | null;
 }
 
 export interface GitRealtimeSnapshotDto {
+  revision?: string;
   workspaceId: string;
   status: GitStatusDto | null;
   history: GitHistoryItemDto[];
@@ -54,10 +60,13 @@ export interface GitRealtimeSnapshotDto {
 
 interface GitSnapshotEvent {
   type: "git.snapshot";
-  snapshot: GitRealtimeSnapshotDto;
+  revision: string;
+  unchanged: boolean;
+  snapshot: GitRealtimeSnapshotDto | null;
 }
 
 export interface TerminalManagerRealtimeSnapshotDto {
+  revision?: string;
   workspaceId: string;
   terminals: TerminalDto[];
   templates: TerminalTemplateDto[];
@@ -67,14 +76,18 @@ export interface TerminalManagerRealtimeSnapshotDto {
 
 interface TerminalManagerSnapshotEvent {
   type: "terminalManager.snapshot";
-  snapshot: TerminalManagerRealtimeSnapshotDto;
+  revision: string;
+  unchanged: boolean;
+  snapshot: TerminalManagerRealtimeSnapshotDto | null;
 }
 
 export type WorkspaceManagementRealtimeSnapshotDto = WorkspaceManagementSummaryDto;
 
 interface WorkspaceManagementSnapshotEvent {
   type: "workspaceManagement.snapshot";
-  snapshot: WorkspaceManagementRealtimeSnapshotDto;
+  revision: string;
+  unchanged: boolean;
+  snapshot: WorkspaceManagementRealtimeSnapshotDto | null;
 }
 
 interface SessionErrorEvent {
@@ -107,14 +120,27 @@ export class WorkbenchRealtimeClient {
   private disposed = false;
   private authRecoveryInFlight = false;
   private pendingRefresh = false;
-  private fileTreeSubscription: { workspaceId: string; paths: string[] } | null = null;
-  private gitWorkspaceId: string | null = null;
-  private terminalManagerWorkspaceId: string | null = null;
-  private workspaceManagementWorkspaceId: string | null = null;
-  private pendingFileTreeRefresh: { workspaceId: string; paths: string[] } | null = null;
-  private pendingGitRefreshWorkspaceId: string | null = null;
-  private pendingTerminalManagerRefreshWorkspaceId: string | null = null;
-  private pendingWorkspaceManagementRefreshWorkspaceId: string | null = null;
+  private workbenchKnownRevision: string | null;
+  private fileTreeSubscription: {
+    workspaceId: string;
+    paths: string[];
+    knownRevisionByPath: Record<string, string>;
+  } | null = null;
+  private gitSubscription: { workspaceId: string; knownRevision: string | null } | null = null;
+  private terminalManagerSubscription: { workspaceId: string; knownRevision: string | null } | null = null;
+  private workspaceManagementSubscription: { workspaceId: string; knownRevision: string | null } | null = null;
+  private pendingFileTreeRefresh: {
+    workspaceId: string;
+    paths: string[];
+    knownRevisionByPath: Record<string, string>;
+  } | null = null;
+  private pendingGitRefresh: { workspaceId: string; knownRevision: string | null } | null = null;
+  private pendingTerminalManagerRefresh: { workspaceId: string; knownRevision: string | null } | null = null;
+  private pendingWorkspaceManagementRefresh: { workspaceId: string; knownRevision: string | null } | null = null;
+  private readonly fileTreeRevisionByPath = new Map<string, string>();
+  private readonly gitRevisionByWorkspaceId = new Map<string, string>();
+  private readonly terminalManagerRevisionByWorkspaceId = new Map<string, string>();
+  private readonly workspaceManagementRevisionByWorkspaceId = new Map<string, string>();
   private readonly fileTreeListeners = new Set<(snapshot: FileTreeRealtimeSnapshotDto) => void>();
   private readonly gitListeners = new Set<(snapshot: GitRealtimeSnapshotDto) => void>();
   private readonly terminalManagerListeners = new Set<
@@ -126,6 +152,7 @@ export class WorkbenchRealtimeClient {
   private readonly connectionManager: ConnectionManager;
 
   constructor(private readonly options: WorkbenchRealtimeClientOptions) {
+    this.workbenchKnownRevision = null;
     this.connectionManager = new ConnectionManager({
       onReconnect: (forceReset) => {
         this.connect(forceReset);
@@ -148,96 +175,180 @@ export class WorkbenchRealtimeClient {
 
     socket.send(
       JSON.stringify({
-        type: "workbench.refresh"
+        type: "workbench.refresh",
+        knownRevision: this.workbenchKnownRevision ?? undefined
       })
     );
     this.pendingRefresh = false;
   }
 
-  subscribeFileTree(workspaceId: string, paths: string[]): void {
+  setWorkbenchKnownRevision(revision: string | null | undefined): void {
+    this.workbenchKnownRevision = normalizeKnownRevision(revision);
+  }
+
+  subscribeFileTree(
+    workspaceId: string,
+    paths: string[],
+    options?: { knownRevisionByPath?: Record<string, string | null | undefined> }
+  ): void {
     this.fileTreeSubscription = {
       workspaceId,
-      paths: normalizePaths(paths)
+      paths: normalizePaths(paths),
+      knownRevisionByPath: normalizeKnownRevisionRecord(options?.knownRevisionByPath)
     };
     this.sendWhenReady({
       type: "fileTree.subscribe",
       workspaceId,
-      paths: this.fileTreeSubscription.paths
+      paths: this.fileTreeSubscription.paths,
+      knownRevisions: resolveFileTreeKnownRevisions(
+        workspaceId,
+        this.fileTreeSubscription.paths,
+        this.fileTreeSubscription.knownRevisionByPath,
+        this.fileTreeRevisionByPath
+      )
     });
   }
 
-  requestFileTreeRefresh(workspaceId: string, paths?: string[]): void {
+  requestFileTreeRefresh(
+    workspaceId: string,
+    paths?: string[],
+    options?: { knownRevisionByPath?: Record<string, string | null | undefined> }
+  ): void {
     const normalizedPaths = normalizePaths(paths);
     const payload = {
       type: "fileTree.refresh",
       workspaceId,
-      paths: normalizedPaths
+      paths: normalizedPaths,
+      knownRevisions: resolveFileTreeKnownRevisions(
+        workspaceId,
+        normalizedPaths,
+        normalizeKnownRevisionRecord(options?.knownRevisionByPath),
+        this.fileTreeRevisionByPath
+      )
     };
 
     if (!this.sendWhenReady(payload)) {
       this.pendingFileTreeRefresh = {
         workspaceId,
-        paths: normalizedPaths
+        paths: normalizedPaths,
+        knownRevisionByPath: normalizeKnownRevisionRecord(options?.knownRevisionByPath)
       };
     } else {
       this.pendingFileTreeRefresh = null;
     }
   }
 
-  subscribeGit(workspaceId: string): void {
-    this.gitWorkspaceId = workspaceId;
+  subscribeGit(
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined }
+  ): void {
+    this.gitSubscription = {
+      workspaceId,
+      knownRevision: normalizeKnownRevision(options?.knownRevision)
+    };
     this.sendWhenReady({
       type: "git.subscribe",
-      workspaceId
+      workspaceId,
+      knownRevision: this.gitSubscription.knownRevision ?? this.gitRevisionByWorkspaceId.get(workspaceId)
     });
   }
 
-  requestGitRefresh(workspaceId: string): void {
-    if (!this.sendWhenReady({
+  requestGitRefresh(
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined }
+  ): void {
+    const payload = {
       type: "git.refresh",
-      workspaceId
-    })) {
-      this.pendingGitRefreshWorkspaceId = workspaceId;
+      workspaceId,
+      knownRevision:
+        normalizeKnownRevision(options?.knownRevision) ?? this.gitRevisionByWorkspaceId.get(workspaceId)
+    };
+
+    if (!this.sendWhenReady(payload)) {
+      this.pendingGitRefresh = {
+        workspaceId,
+        knownRevision: normalizeKnownRevision(options?.knownRevision)
+      };
     } else {
-      this.pendingGitRefreshWorkspaceId = null;
+      this.pendingGitRefresh = null;
     }
   }
 
-  subscribeTerminalManager(workspaceId: string): void {
-    this.terminalManagerWorkspaceId = workspaceId;
+  subscribeTerminalManager(
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined }
+  ): void {
+    this.terminalManagerSubscription = {
+      workspaceId,
+      knownRevision: normalizeKnownRevision(options?.knownRevision)
+    };
     this.sendWhenReady({
       type: "terminalManager.subscribe",
-      workspaceId
+      workspaceId,
+      knownRevision:
+        this.terminalManagerSubscription.knownRevision
+        ?? this.terminalManagerRevisionByWorkspaceId.get(workspaceId)
     });
   }
 
-  requestTerminalManagerRefresh(workspaceId: string): void {
-    if (!this.sendWhenReady({
+  requestTerminalManagerRefresh(
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined }
+  ): void {
+    const payload = {
       type: "terminalManager.refresh",
-      workspaceId
-    })) {
-      this.pendingTerminalManagerRefreshWorkspaceId = workspaceId;
+      workspaceId,
+      knownRevision:
+        normalizeKnownRevision(options?.knownRevision)
+        ?? this.terminalManagerRevisionByWorkspaceId.get(workspaceId)
+    };
+
+    if (!this.sendWhenReady(payload)) {
+      this.pendingTerminalManagerRefresh = {
+        workspaceId,
+        knownRevision: normalizeKnownRevision(options?.knownRevision)
+      };
     } else {
-      this.pendingTerminalManagerRefreshWorkspaceId = null;
+      this.pendingTerminalManagerRefresh = null;
     }
   }
 
-  subscribeWorkspaceManagement(workspaceId: string): void {
-    this.workspaceManagementWorkspaceId = workspaceId;
+  subscribeWorkspaceManagement(
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined }
+  ): void {
+    this.workspaceManagementSubscription = {
+      workspaceId,
+      knownRevision: normalizeKnownRevision(options?.knownRevision)
+    };
     this.sendWhenReady({
       type: "workspaceManagement.subscribe",
-      workspaceId
+      workspaceId,
+      knownRevision:
+        this.workspaceManagementSubscription.knownRevision
+        ?? this.workspaceManagementRevisionByWorkspaceId.get(workspaceId)
     });
   }
 
-  requestWorkspaceManagementRefresh(workspaceId: string): void {
-    if (!this.sendWhenReady({
+  requestWorkspaceManagementRefresh(
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined }
+  ): void {
+    const payload = {
       type: "workspaceManagement.refresh",
-      workspaceId
-    })) {
-      this.pendingWorkspaceManagementRefreshWorkspaceId = workspaceId;
+      workspaceId,
+      knownRevision:
+        normalizeKnownRevision(options?.knownRevision)
+        ?? this.workspaceManagementRevisionByWorkspaceId.get(workspaceId)
+    };
+
+    if (!this.sendWhenReady(payload)) {
+      this.pendingWorkspaceManagementRefresh = {
+        workspaceId,
+        knownRevision: normalizeKnownRevision(options?.knownRevision)
+      };
     } else {
-      this.pendingWorkspaceManagementRefreshWorkspaceId = null;
+      this.pendingWorkspaceManagementRefresh = null;
     }
   }
 
@@ -299,9 +410,11 @@ export class WorkbenchRealtimeClient {
       return;
     }
 
-    const baseUrl = getHostBaseUrl();
+    const requestedBaseUrl = getHostBaseUrl();
+    const transportTarget = resolveHostTransportTarget(requestedBaseUrl);
+    const baseUrl = transportTarget.baseUrl;
     const socketUrl = `${getHostWebSocketUrl("/ws", baseUrl)}?access_token=${encodeURIComponent(accessToken)}`;
-    const socket = resolveHostTransport(baseUrl).createWebSocket({
+    const socket = transportTarget.transport.createWebSocket({
       path: "/ws",
       baseUrl,
       url: socketUrl
@@ -310,7 +423,10 @@ export class WorkbenchRealtimeClient {
     this.socket = socket;
 
     socket.addEventListener("open", () => {
-      socket.send(JSON.stringify({ type: "workbench.subscribe" }));
+      socket.send(JSON.stringify({
+        type: "workbench.subscribe",
+        knownRevision: this.workbenchKnownRevision ?? undefined
+      }));
 
       if (this.pendingRefresh) {
         this.requestRefresh();
@@ -321,7 +437,13 @@ export class WorkbenchRealtimeClient {
           JSON.stringify({
             type: "fileTree.subscribe",
             workspaceId: this.fileTreeSubscription.workspaceId,
-            paths: this.fileTreeSubscription.paths
+            paths: this.fileTreeSubscription.paths,
+            knownRevisions: resolveFileTreeKnownRevisions(
+              this.fileTreeSubscription.workspaceId,
+              this.fileTreeSubscription.paths,
+              this.fileTreeSubscription.knownRevisionByPath,
+              this.fileTreeRevisionByPath
+            )
           })
         );
       }
@@ -329,47 +451,65 @@ export class WorkbenchRealtimeClient {
       if (this.pendingFileTreeRefresh) {
         this.requestFileTreeRefresh(
           this.pendingFileTreeRefresh.workspaceId,
-          this.pendingFileTreeRefresh.paths
+          this.pendingFileTreeRefresh.paths,
+          {
+            knownRevisionByPath: this.pendingFileTreeRefresh.knownRevisionByPath
+          }
         );
       }
 
-      if (this.gitWorkspaceId) {
+      if (this.gitSubscription) {
         socket.send(
           JSON.stringify({
             type: "git.subscribe",
-            workspaceId: this.gitWorkspaceId
+            workspaceId: this.gitSubscription.workspaceId,
+            knownRevision:
+              this.gitSubscription.knownRevision
+              ?? this.gitRevisionByWorkspaceId.get(this.gitSubscription.workspaceId)
           })
         );
       }
 
-      if (this.pendingGitRefreshWorkspaceId) {
-        this.requestGitRefresh(this.pendingGitRefreshWorkspaceId);
+      if (this.pendingGitRefresh) {
+        this.requestGitRefresh(this.pendingGitRefresh.workspaceId, {
+          knownRevision: this.pendingGitRefresh.knownRevision
+        });
       }
 
-      if (this.terminalManagerWorkspaceId) {
+      if (this.terminalManagerSubscription) {
         socket.send(
           JSON.stringify({
             type: "terminalManager.subscribe",
-            workspaceId: this.terminalManagerWorkspaceId
+            workspaceId: this.terminalManagerSubscription.workspaceId,
+            knownRevision:
+              this.terminalManagerSubscription.knownRevision
+              ?? this.terminalManagerRevisionByWorkspaceId.get(this.terminalManagerSubscription.workspaceId)
           })
         );
       }
 
-      if (this.pendingTerminalManagerRefreshWorkspaceId) {
-        this.requestTerminalManagerRefresh(this.pendingTerminalManagerRefreshWorkspaceId);
+      if (this.pendingTerminalManagerRefresh) {
+        this.requestTerminalManagerRefresh(this.pendingTerminalManagerRefresh.workspaceId, {
+          knownRevision: this.pendingTerminalManagerRefresh.knownRevision
+        });
       }
 
-      if (this.workspaceManagementWorkspaceId) {
+      if (this.workspaceManagementSubscription) {
         socket.send(
           JSON.stringify({
             type: "workspaceManagement.subscribe",
-            workspaceId: this.workspaceManagementWorkspaceId
+            workspaceId: this.workspaceManagementSubscription.workspaceId,
+            knownRevision:
+              this.workspaceManagementSubscription.knownRevision
+              ?? this.workspaceManagementRevisionByWorkspaceId.get(this.workspaceManagementSubscription.workspaceId)
           })
         );
       }
 
-      if (this.pendingWorkspaceManagementRefreshWorkspaceId) {
-        this.requestWorkspaceManagementRefresh(this.pendingWorkspaceManagementRefreshWorkspaceId);
+      if (this.pendingWorkspaceManagementRefresh) {
+        this.requestWorkspaceManagementRefresh(this.pendingWorkspaceManagementRefresh.workspaceId, {
+          knownRevision: this.pendingWorkspaceManagementRefresh.knownRevision
+        });
       }
     });
 
@@ -394,31 +534,101 @@ export class WorkbenchRealtimeClient {
       }
 
       if (payload.type === "fileTree.snapshot") {
-        this.options.onFileTreeSnapshot?.(payload.snapshot);
-        this.fileTreeListeners.forEach((listener) => listener(payload.snapshot));
+        const snapshot = payload.snapshot;
+
+        if (snapshot) {
+          snapshot.revision = payload.revision;
+          this.fileTreeRevisionByPath.set(
+            buildFileTreeRevisionKey(snapshot.workspaceId, snapshot.path),
+            payload.revision
+          );
+        } else if (payload.unchanged && this.fileTreeSubscription) {
+          for (const path of this.fileTreeSubscription.paths) {
+            this.fileTreeRevisionByPath.set(
+              buildFileTreeRevisionKey(this.fileTreeSubscription.workspaceId, path),
+              payload.revision
+            );
+          }
+        }
+
+        if (!snapshot) {
+          return;
+        }
+
+        this.options.onFileTreeSnapshot?.(snapshot);
+        this.fileTreeListeners.forEach((listener) => listener(snapshot));
         return;
       }
 
       if (payload.type === "git.snapshot") {
-        this.options.onGitSnapshot?.(payload.snapshot);
-        this.gitListeners.forEach((listener) => listener(payload.snapshot));
+        const snapshot = payload.snapshot;
+
+        if (snapshot) {
+          snapshot.revision = payload.revision;
+          this.gitRevisionByWorkspaceId.set(snapshot.workspaceId, payload.revision);
+        } else if (payload.unchanged && this.gitSubscription) {
+          this.gitRevisionByWorkspaceId.set(this.gitSubscription.workspaceId, payload.revision);
+        }
+
+        if (!snapshot) {
+          return;
+        }
+
+        this.options.onGitSnapshot?.(snapshot);
+        this.gitListeners.forEach((listener) => listener(snapshot));
         return;
       }
 
       if (payload.type === "terminalManager.snapshot") {
-        this.options.onTerminalManagerSnapshot?.(payload.snapshot);
-        this.terminalManagerListeners.forEach((listener) => listener(payload.snapshot));
+        const snapshot = payload.snapshot;
+
+        if (snapshot) {
+          snapshot.revision = payload.revision;
+          this.terminalManagerRevisionByWorkspaceId.set(snapshot.workspaceId, payload.revision);
+        } else if (payload.unchanged && this.terminalManagerSubscription) {
+          this.terminalManagerRevisionByWorkspaceId.set(
+            this.terminalManagerSubscription.workspaceId,
+            payload.revision
+          );
+        }
+
+        if (!snapshot) {
+          return;
+        }
+
+        this.options.onTerminalManagerSnapshot?.(snapshot);
+        this.terminalManagerListeners.forEach((listener) => listener(snapshot));
         return;
       }
 
       if (payload.type === "workspaceManagement.snapshot") {
-        this.options.onWorkspaceManagementSnapshot?.(payload.snapshot);
-        this.workspaceManagementListeners.forEach((listener) => listener(payload.snapshot));
+        const snapshot = payload.snapshot;
+
+        if (snapshot) {
+          snapshot.revision = payload.revision;
+          this.workspaceManagementRevisionByWorkspaceId.set(snapshot.workspaceId, payload.revision);
+        } else if (payload.unchanged && this.workspaceManagementSubscription) {
+          this.workspaceManagementRevisionByWorkspaceId.set(
+            this.workspaceManagementSubscription.workspaceId,
+            payload.revision
+          );
+        }
+
+        if (!snapshot) {
+          return;
+        }
+
+        this.options.onWorkspaceManagementSnapshot?.(snapshot);
+        this.workspaceManagementListeners.forEach((listener) => listener(snapshot));
         return;
       }
 
-      if (payload.type === "workbench.snapshot" && isWorkbenchSnapshot(payload.snapshot)) {
+      if (payload.type === "workbench.snapshot" && payload.snapshot && isWorkbenchSnapshot(payload.snapshot)) {
+        payload.snapshot.revision = payload.revision;
+        this.workbenchKnownRevision = payload.revision;
         this.options.onSnapshot(payload.snapshot);
+      } else if (payload.type === "workbench.snapshot" && payload.unchanged) {
+        this.workbenchKnownRevision = payload.revision;
       }
     });
 
@@ -502,4 +712,51 @@ function normalizePaths(paths: string[] | undefined): string[] {
   }
 
   return [...uniquePaths];
+}
+
+function normalizeKnownRevision(value: string | null | undefined): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function normalizeKnownRevisionRecord(
+  value: Record<string, string | null | undefined> | null | undefined
+): Record<string, string> {
+  if (!value) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([path, revision]) => [path.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, ""), normalizeKnownRevision(revision)] as const)
+      .filter((entry): entry is [string, string] => entry[1] !== null)
+  );
+}
+
+function resolveFileTreeKnownRevisions(
+  workspaceId: string,
+  paths: string[],
+  preferredKnownRevisionByPath: Record<string, string>,
+  revisionByPath: Map<string, string>
+): Record<string, string> | undefined {
+  const entries = paths
+    .map((path) => {
+      const normalizedPath = path.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+      return [
+        normalizedPath,
+        preferredKnownRevisionByPath[normalizedPath]
+        ?? revisionByPath.get(buildFileTreeRevisionKey(workspaceId, normalizedPath))
+        ?? null
+      ] as const;
+    })
+    .filter((entry): entry is [string, string] => Boolean(entry[1]));
+
+  if (entries.length === 0) {
+    return undefined;
+  }
+
+  return Object.fromEntries(entries);
+}
+
+function buildFileTreeRevisionKey(workspaceId: string, path: string): string {
+  return `${workspaceId}::${path}`;
 }

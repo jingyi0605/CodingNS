@@ -478,6 +478,7 @@ describe("WorkspaceDetailPage", () => {
       workspaceManagementStateById: {}
     });
     writeViewSnapshot("git-sidebar.snapshot.workspace-1", {
+      revision: "git-rev-1",
       status: {
         snapshot: {
           branch: "cached/main"
@@ -486,6 +487,7 @@ describe("WorkspaceDetailPage", () => {
       }
     });
     writeViewSnapshot("workspace-management.summary.workspace-1", {
+      revision: "management-rev-1",
       workspaceId: "workspace-1",
       name: "项目一",
       path: "/repo/project-one",
@@ -512,8 +514,12 @@ describe("WorkspaceDetailPage", () => {
       expect(screen.getByText("cached/main")).toBeInTheDocument();
     });
 
-    expect(shell.subscribeGitSnapshot).toHaveBeenCalledWith("workspace-1");
-    expect(shell.subscribeWorkspaceManagementSnapshot).toHaveBeenCalledWith("workspace-1");
+    expect(shell.subscribeGitSnapshot).toHaveBeenCalledWith("workspace-1", {
+      knownRevision: "git-rev-1"
+    });
+    expect(shell.subscribeWorkspaceManagementSnapshot).toHaveBeenCalledWith("workspace-1", {
+      knownRevision: "management-rev-1"
+    });
     expect(shell.requestGitRefresh).not.toHaveBeenCalled();
     expect(shell.requestWorkspaceManagementRefresh).not.toHaveBeenCalled();
   });
