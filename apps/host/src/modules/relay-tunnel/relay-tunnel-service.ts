@@ -856,17 +856,23 @@ export class RelayTunnelService {
     body?: string;
     failurePrefix: string;
   }): Promise<T> {
-    const response = await this.fetchFn(
-      new URL(input.path, ensureTrailingSlash(input.controlBaseUrl)),
-      {
-        method: input.method,
-        headers: input.headers,
-        body: input.body
-      }
-    );
+    let response: Response;
+
+    try {
+      response = await this.fetchFn(
+        new URL(input.path, ensureTrailingSlash(input.controlBaseUrl)),
+        {
+          method: input.method,
+          headers: input.headers,
+          body: input.body
+        }
+      );
+    } catch (error) {
+      throw buildControlFetchError(error, input.controlBaseUrl, input.failurePrefix);
+    }
 
     if (!response.ok) {
-      throw await buildControlApiError(response, input.failurePrefix);
+      throw await buildControlApiError(response, input.controlBaseUrl, input.failurePrefix);
     }
 
     return await response.json() as T;
@@ -1083,12 +1089,56 @@ function clearRelayTunnelControlSession(
   };
 }
 
-async function buildControlApiError(response: Response, failurePrefix: string): Promise<AppError> {
+async function buildControlApiError(
+  response: Response,
+  controlBaseUrl: string,
+  failurePrefix: string
+): Promise<AppError> {
   const detail = await readControlApiErrorDetail(response);
+
+  if (response.status === 401 || response.status === 403) {
+    return new AppError({
+      statusCode: response.status,
+      errorCode: "RELAY_TUNNEL_CONTROL_ACCESS_DENIED",
+      detail:
+        `${failurePrefix}：控制站 ${controlBaseUrl} 拒绝了这次请求（HTTP ${response.status}）。`
+        + ` 请确认这是正确的控制站地址，并检查账号、密码或访问权限。`
+        + appendControlApiDetail(detail)
+    });
+  }
+
+  if (response.status === 404) {
+    return new AppError({
+      statusCode: 404,
+      errorCode: "RELAY_TUNNEL_CONTROL_ENDPOINT_NOT_FOUND",
+      detail:
+        `${failurePrefix}：控制站 ${controlBaseUrl} 上没有这个接口（HTTP 404）。`
+        + " 这通常说明地址写错了，或者目标服务不是 CodingNS 控制站。"
+        + appendControlApiDetail(detail)
+    });
+  }
+
   return new AppError({
     statusCode: response.status,
     errorCode: "RELAY_TUNNEL_CONTROL_API_ERROR",
-    detail: `${failurePrefix}：${detail}`
+    detail:
+      `${failurePrefix}：控制站 ${controlBaseUrl} 返回了异常响应（HTTP ${response.status}）。`
+      + appendControlApiDetail(detail)
+  });
+}
+
+function buildControlFetchError(
+  error: unknown,
+  controlBaseUrl: string,
+  failurePrefix: string
+): AppError {
+  return new AppError({
+    statusCode: 502,
+    errorCode: "RELAY_TUNNEL_CONTROL_UNREACHABLE",
+    detail:
+      `${failurePrefix}：无法连接到控制站 ${controlBaseUrl}。`
+      + " 请确认服务地址、端口和网络连接是否正确。"
+      + appendControlApiDetail(resolveFetchErrorDetail(error))
   });
 }
 
@@ -1117,4 +1167,48 @@ async function readControlApiErrorDetail(response: Response): Promise<string> {
 
 function readJsonErrorText(value: unknown): string | null {
   return typeof value === "string" ? normalizeOptionalText(value) : null;
+}
+
+function resolveFetchErrorDetail(error: unknown): string | null {
+  if (error instanceof Error) {
+    const code = readFetchErrorCode(error);
+
+    if (code === "ECONNREFUSED") {
+      return "连接被目标服务器拒绝。";
+    }
+
+    if (code === "ENOTFOUND" || code === "EAI_AGAIN") {
+      return "域名无法解析。";
+    }
+
+    if (code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT") {
+      return "连接超时。";
+    }
+
+    if (code === "CERT_HAS_EXPIRED" || code === "DEPTH_ZERO_SELF_SIGNED_CERT") {
+      return "TLS 证书无效。";
+    }
+
+    return normalizeOptionalText(error.message);
+  }
+
+  return null;
+}
+
+function readFetchErrorCode(error: Error): string | null {
+  const cause =
+    "cause" in error
+      ? (error as Error & { cause?: { code?: unknown } }).cause
+      : undefined;
+  return typeof cause?.code === "string" ? cause.code : null;
+}
+
+function appendControlApiDetail(detail: string | null | undefined): string {
+  const normalized = normalizeOptionalText(detail);
+
+  if (!normalized) {
+    return "";
+  }
+
+  return ` 详情：${normalized}`;
 }

@@ -34,6 +34,75 @@ afterEach(() => {
 });
 
 describe("RelayTunnelService 后台任务", () => {
+  it("控制站地址不可达时会返回带 URL 的连接错误", async () => {
+    const context = createRelayTunnelTestContext({
+      initialized: true,
+      fetchFn: async () => {
+        const error = new TypeError("fetch failed") as TypeError & {
+          cause?: { code?: string };
+        };
+        error.cause = {
+          code: "ECONNREFUSED"
+        };
+        throw error;
+      }
+    });
+
+    seedBoundConfig(context.repository, {
+      controlBaseUrl: "https://channel.jacksonz.cn:14441"
+    });
+
+    await expect(
+      context.service.loginControl({
+        email: "demo@example.com",
+        password: "password123"
+      })
+    ).rejects.toMatchObject({
+      statusCode: 502,
+      errorCode: "RELAY_TUNNEL_CONTROL_UNREACHABLE",
+      message:
+        "控制站登录失败：无法连接到控制站 https://channel.jacksonz.cn:14441。 请确认服务地址、端口和网络连接是否正确。 详情：连接被目标服务器拒绝。"
+    });
+
+    context.close();
+  });
+
+  it("控制站拒绝访问时会返回带 URL 的权限错误", async () => {
+    const context = createRelayTunnelTestContext({
+      initialized: true,
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            detail: "invalid email or password"
+          }),
+          {
+            status: 403,
+            headers: {
+              "content-type": "application/json"
+            }
+          }
+        )
+    });
+
+    seedBoundConfig(context.repository, {
+      controlBaseUrl: "https://channel.jacksonz.cn:1443"
+    });
+
+    await expect(
+      context.service.loginControl({
+        email: "demo@example.com",
+        password: "password123"
+      })
+    ).rejects.toMatchObject({
+      statusCode: 403,
+      errorCode: "RELAY_TUNNEL_CONTROL_ACCESS_DENIED",
+      message:
+        "控制站登录失败：控制站 https://channel.jacksonz.cn:1443 拒绝了这次请求（HTTP 403）。 请确认这是正确的控制站地址，并检查账号、密码或访问权限。 详情：invalid email or password"
+    });
+
+    context.close();
+  });
+
   it("启动恢复只入队后台连接，不阻塞调用方", async () => {
     const context = createRelayTunnelTestContext({
       initialized: true,
@@ -297,6 +366,7 @@ function createRelayTunnelTestContext(options?: {
   runtimeAdapter?: RelayTunnelRuntimeAdapter;
   defaultLocalTargetBaseUrl?: string;
   legacyLocalTargetBaseUrl?: string | null;
+  fetchFn?: typeof fetch;
 }) {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-relay-tunnel-background-"));
   tempDirs.push(tempDir);
@@ -332,7 +402,8 @@ function createRelayTunnelTestContext(options?: {
       defaultLocalTargetBaseUrl:
         options?.defaultLocalTargetBaseUrl ?? "http://127.0.0.1:4312",
       legacyLocalTargetBaseUrl: options?.legacyLocalTargetBaseUrl ?? null,
-      controlSessionSecret: "relay-control-secret"
+      controlSessionSecret: "relay-control-secret",
+      fetchFn: options?.fetchFn
     },
     taskManager,
     runtimeAdapter
