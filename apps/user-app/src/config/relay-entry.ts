@@ -19,7 +19,7 @@ export function buildRelayEntryConfigPatch(
 ): ClientRuntimeConfigPatch {
   const normalizedTunnelDomain = normalizeTunnelDomain(input.tunnelDomain);
   const normalizedControlBaseUrl = normalizeServerBaseUrl(input.controlBaseUrl);
-  const relayBaseUrl = normalizeServerBaseUrl(`https://${normalizedTunnelDomain}`);
+  const relayBaseUrl = buildRelayAccessBaseUrl(normalizedTunnelDomain, normalizedControlBaseUrl);
   const now = new Date().toISOString();
   const existingHost = findExistingRelayEntryHost(config.hosts, relayBaseUrl, input.bindingId ?? null);
   const relayEndpoint: HostCandidateEndpoint = {
@@ -100,4 +100,16 @@ function normalizeTunnelDomain(value: string): string {
 function normalizeNullableText(value: string | null | undefined): string | null {
   const normalized = value?.trim();
   return normalized ? normalized : null;
+}
+
+function buildRelayAccessBaseUrl(tunnelDomain: string, controlBaseUrl: string): string {
+  const controlUrl = new URL(controlBaseUrl);
+  controlUrl.hostname = tunnelDomain;
+  controlUrl.username = "";
+  controlUrl.password = "";
+  controlUrl.pathname = "";
+  controlUrl.search = "";
+  controlUrl.hash = "";
+
+  return normalizeServerBaseUrl(controlUrl.toString());
 }

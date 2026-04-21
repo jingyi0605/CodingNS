@@ -34,6 +34,27 @@ describe("relay-entry", () => {
     });
   });
 
+  it("会继承控制站地址里的公开端口", () => {
+    const patch = buildRelayEntryConfigPatch(createConfig(), {
+      tunnelDomain: "Demo.Channel.CodingNS.Com",
+      controlBaseUrl: "https://channel.codingns.com:1443",
+      bindingId: "binding_demo",
+      hostFingerprint: "SHA256:demo"
+    });
+
+    expect(patch.hosts?.[0]).toMatchObject({
+      baseUrl: "https://demo.channel.codingns.com:1443",
+      relayTunnel: {
+        candidateEndpoints: [
+          {
+            kind: "relay",
+            url: "https://demo.channel.codingns.com:1443"
+          }
+        ]
+      }
+    });
+  });
+
   it("会复用已有 relay Host，避免覆盖其他保存的 Host", () => {
     const patch = buildRelayEntryConfigPatch(createConfig({
       hosts: [

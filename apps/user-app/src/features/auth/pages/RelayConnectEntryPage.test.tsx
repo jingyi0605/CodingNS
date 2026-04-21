@@ -47,4 +47,29 @@ describe("RelayConnectEntryPage", () => {
       }
     });
   });
+
+  it("会把控制站端口带到四级域名入口地址里", async () => {
+    render(
+      <I18nProvider language="zh-CN">
+        <MemoryRouter
+          initialEntries={[
+            "/connect/demo.channel.codingns.com?controlBaseUrl=https%3A%2F%2Fchannel.codingns.com%3A1443&bindingId=binding_demo&hostFingerprint=SHA256%3Ademo"
+          ]}
+        >
+          <Routes>
+            <Route path="/connect/:tunnelDomain" element={<RelayConnectEntryPage />} />
+            <Route path="/login" element={<div>login-page</div>} />
+          </Routes>
+        </MemoryRouter>
+      </I18nProvider>
+    );
+
+    expect(await screen.findByText("login-page")).toBeInTheDocument();
+    expect(clientConfigStore.getState().hosts[0]).toMatchObject({
+      baseUrl: "https://demo.channel.codingns.com:1443",
+      relayTunnel: {
+        controlBaseUrl: "https://channel.codingns.com:1443"
+      }
+    });
+  });
 });
