@@ -8,7 +8,7 @@ import {
   rewriteToProxyContext
 } from "./src/config/proxy-context-redirect";
 
-const appVersion = readFileSync(new URL("../../VERSION", import.meta.url), "utf8").trim();
+const appVersion = resolveAppVersion();
 const hostApiTarget = "http://127.0.0.1:3002";
 const hostWsTarget = "ws://127.0.0.1:3002";
 const desktopAndLocalOrigins = [
@@ -179,3 +179,11 @@ export default defineConfig({
     css: true
   }
 });
+
+function resolveAppVersion(): string {
+  try {
+    return readFileSync(new URL("../../VERSION", import.meta.url), "utf8").trim();
+  } catch {
+    return process.env.npm_package_version?.trim() || "0.0.0";
+  }
+}

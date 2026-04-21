@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
-const appVersion = readFileSync(new URL("../../VERSION", import.meta.url), "utf8").trim();
+const appVersion = resolveAppVersion();
 
 export default defineConfig({
   define: {
@@ -15,3 +15,11 @@ export default defineConfig({
     css: true
   }
 });
+
+function resolveAppVersion(): string {
+  try {
+    return readFileSync(new URL("../../VERSION", import.meta.url), "utf8").trim();
+  } catch {
+    return process.env.npm_package_version?.trim() || "0.0.0";
+  }
+}
