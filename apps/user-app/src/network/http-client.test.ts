@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { authStore, type AuthSession } from "../features/auth/store/auth-store";
 import { ApiError } from "../shared/network/api-error";
+import { clientConfigStore } from "../config/client-config-store";
 import { getHostBaseUrl, getHostRequestUrl } from "../config/env";
+import { hostRuntimeStore } from "../config/host-runtime-store";
 import type { HostTransport } from "./host-transport";
 import { setHostTransportResolverForTesting } from "./host-transport-registry";
 import { httpClient, resetLegacyCorsCompatibilityHostsForTesting } from "./http-client";
@@ -20,6 +22,7 @@ const session: AuthSession = {
 
 describe("httpClient", () => {
   beforeEach(() => {
+    clientConfigStore.hydrate(createDefaultRuntimeConfig());
     authStore.hydrate(session);
     vi.stubGlobal("fetch", vi.fn());
   });
@@ -257,6 +260,120 @@ describe("httpClient", () => {
     );
   });
 
+  it("当前活跃入口已经切到 lan 时，请求会改写到 lan 地址", async () => {
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: "host-relay",
+      hosts: [
+        {
+          id: "host-relay",
+          name: "demo.channel.codingns.com",
+          baseUrl: "https://demo.channel.codingns.com",
+          kind: "remote",
+          createdAt: "2026-04-21T00:00:00.000Z",
+          updatedAt: "2026-04-21T00:00:00.000Z",
+          lastConnectedAt: null,
+          lastUserId: null,
+          lastUsername: null,
+          relayTunnel: {
+            provider: "codingns_relay",
+            enabled: true,
+            tunnelDomain: "demo.channel.codingns.com",
+            controlBaseUrl: "https://control.codingns.example",
+            bindingId: "binding_demo",
+            hostFingerprint: "SHA256:demo",
+            candidateEndpoints: [
+              {
+                endpointId: "host_reported:http://192.168.50.8:3002",
+                kind: "lan",
+                url: "http://192.168.50.8:3002",
+                priority: 200,
+                expiresAt: null,
+                source: "host_reported"
+              },
+              {
+                endpointId: "relay:https://demo.channel.codingns.com",
+                kind: "relay",
+                url: "https://demo.channel.codingns.com",
+                priority: 400,
+                expiresAt: null,
+                source: "host_reported"
+              }
+            ]
+          }
+        }
+      ],
+      discoveredHosts: [],
+      activeDiscoveredHostId: null,
+      localHostDiscovery: {
+        status: "idle",
+        lastScannedAt: null,
+        cooldownUntil: null,
+        errorCode: null,
+        errorDetail: null
+      },
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    authStore.hydrate(session);
+    vi.spyOn(hostRuntimeStore, "getState").mockReturnValue({
+      epoch: 1,
+      activeHostId: "host-relay",
+      connectionSignature: "relay",
+      candidateProbeSignature: "ready",
+      candidateProbePhase: "ready",
+      candidateProbeStartedAt: "2026-04-21T00:00:00.000Z",
+      candidateProbeFinishedAt: "2026-04-21T00:00:01.000Z",
+      candidateEndpoints: [
+        {
+          endpointId: "host_reported:http://192.168.50.8:3002",
+          kind: "lan",
+          url: "http://192.168.50.8:3002",
+          priority: 200,
+          expiresAt: null,
+          source: "host_reported",
+          status: "verified",
+          checkedAt: "2026-04-21T00:00:01.000Z",
+          errorCode: null,
+          errorDetail: null,
+          responseHostBaseUrl: "http://192.168.50.8:3002",
+          responseBindingId: "binding_demo",
+          responseHostFingerprint: "SHA256:demo"
+        }
+      ],
+      preferredCandidateEndpointId: "host_reported:http://192.168.50.8:3002",
+      preferredDirectCandidateEndpointId: "host_reported:http://192.168.50.8:3002"
+    });
+
+    const transportFetch = vi.fn<HostTransport["fetch"]>().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      })
+    );
+    setHostTransportResolverForTesting(() => ({
+      fetch: transportFetch,
+      createWebSocket: vi.fn()
+    }));
+
+    await expect(httpClient.request<{ ok: boolean }>("/api/demo")).resolves.toEqual({
+      ok: true
+    });
+
+    expect(transportFetch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseUrl: "http://192.168.50.8:3002",
+        url: "http://192.168.50.8:3002/api/demo"
+      })
+    );
+    expect(getHostBaseUrl()).toBe("https://demo.channel.codingns.com");
+  });
+
   it("旧 Host 因额外客户端头触发预检失败时，会自动去掉 X-CodingNS 头重试", async () => {
     const fetchMock = vi.mocked(fetch);
 
@@ -334,3 +451,38 @@ describe("httpClient", () => {
     expect(cachedCompatibilityHeaders.has("x-codingns-assistant-source")).toBe(false);
   });
 });
+
+function createDefaultRuntimeConfig() {
+  return {
+    platform: "web" as const,
+    activeHostId: "default-host",
+    hosts: [
+      {
+        id: "default-host",
+        name: "127.0.0.1:3002",
+        baseUrl: "http://127.0.0.1:3002",
+        kind: "local" as const,
+        createdAt: "2026-04-21T00:00:00.000Z",
+        updatedAt: "2026-04-21T00:00:00.000Z",
+        lastConnectedAt: null,
+        lastUserId: null,
+        lastUsername: null,
+        relayTunnel: null
+      }
+    ],
+    discoveredHosts: [],
+    activeDiscoveredHostId: null,
+    localHostDiscovery: {
+      status: "idle" as const,
+      lastScannedAt: null,
+      cooldownUntil: null,
+      errorCode: null,
+      errorDetail: null
+    },
+    releaseChannel: "stable" as const,
+    autoReconnect: true,
+    autoCheckUpdate: true,
+    language: "zh-CN" as const,
+    defaultPermissionMode: "default" as const
+  };
+}

@@ -9,7 +9,7 @@ import type {
 } from "../features/conversation/api/conversation-api";
 import { ConnectionManager } from "./connection-manager";
 import type { HostTransportSocket } from "./host-transport";
-import { resolveHostTransport } from "./host-transport-registry";
+import { resolveHostTransportTarget } from "./host-transport-registry";
 
 type RuntimeConnectionState = "connected" | "reconnecting" | "reconnect_failed" | "closed";
 
@@ -236,9 +236,11 @@ export class RealtimeClient {
       return;
     }
 
-    const baseUrl = getHostBaseUrl();
+    const requestedBaseUrl = getHostBaseUrl();
+    const transportTarget = resolveHostTransportTarget(requestedBaseUrl);
+    const baseUrl = transportTarget.baseUrl;
     const socketUrl = `${getHostWebSocketUrl("/ws", baseUrl)}?access_token=${encodeURIComponent(accessToken)}`;
-    const socket = resolveHostTransport(baseUrl).createWebSocket({
+    const socket = transportTarget.transport.createWebSocket({
       path: "/ws",
       baseUrl,
       url: socketUrl

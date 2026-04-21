@@ -5,6 +5,11 @@ export const enUS = {
     retry: "Retry",
     back: "Back",
     save: "Save",
+    connectionRouteRelay: "Public Tunnel",
+    connectionRouteLan: "LAN Direct",
+    connectionRouteLoopback: "Local Direct",
+    connectionRouteTailscale: "Tailscale Direct",
+    connectionRouteDirect: "Direct Connection",
     logout: "Log out",
     unknown: "Unknown session",
     close: "Close",
@@ -288,6 +293,20 @@ export const enUS = {
     relayTunnelAccessUrlCopied: "The access URL has been copied.",
     relayTunnelCopyAccessUrlFailed: "Failed to copy the access URL.",
     relayTunnelOpenAccessUrlFailed: "Failed to open the access URL.",
+    relayTunnelClientRouteLabel: "Current Client Route",
+    relayTunnelClientRouteAddressLabel: "Current Client Address",
+    relayTunnelClientRouteHintRelay:
+      "The client is still using the public tunnel for this Host. If a reachable local address is confirmed, it will switch to a lower-traffic direct route automatically.",
+    relayTunnelClientRouteHintRelayProbing:
+      "The client is checking local direct addresses now. When the check finishes, it will switch to the lower-traffic route automatically.",
+    relayTunnelClientRouteHintLan:
+      "The client has already switched to a LAN direct route, which uses less traffic. The remote access URL can still be used on external devices.",
+    relayTunnelClientRouteHintLoopback:
+      "The client is connecting to this device through its local address, without going through the public tunnel.",
+    relayTunnelClientRouteHintTailscale:
+      "The client has already switched to a Tailscale address, without going through the public tunnel.",
+    relayTunnelClientRouteHintDirect:
+      "The client is requesting this Host address directly, without going through the public tunnel.",
     relayTunnelReconnectAction: "Reconnect",
     relayTunnelDisconnectDeviceAction: "Sign Out Device",
     relayTunnelEnableToggleLabel: "Enable tunnel service",
@@ -855,6 +874,10 @@ export const enUS = {
     reconnectExplain: "The realtime link is broken. The system is replaying missing messages.",
     reconnectFailedExplain:
       "Automatic recovery failed. Retry manually, or reopen the session later.",
+    reconnectExplainWithRoute:
+      "The realtime link is broken. The system is replaying missing messages. Current route: {route}.",
+    reconnectFailedExplainWithRoute:
+      "Automatic recovery failed. Retry manually, or reopen the session later. Current route: {route}.",
     capabilityDenied: "This action is not supported in the current session.",
     capabilitySendDisabled: "The current provider does not support sending new messages.",
     capabilityAttachmentDisabled: "This session does not support attachment input yet.",

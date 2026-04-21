@@ -1,10 +1,12 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clientConfigStore } from "../config/client-config-store";
+import { hostRuntimeStore } from "../config/host-runtime-store";
 import { directHostTransport } from "./direct-host-transport";
 import {
   resetHostTransportRegistryForTesting,
-  resolveHostTransport
+  resolveHostTransport,
+  resolveHostTransportTarget
 } from "./host-transport-registry";
 import { ManagedRelayTunnelHostTransport } from "./relay-tunnel-managed-transport";
 
@@ -12,6 +14,22 @@ describe("host-transport-registry", () => {
   beforeEach(() => {
     resetHostTransportRegistryForTesting();
     clientConfigStore.hydrate(createRuntimeConfig());
+    vi.spyOn(hostRuntimeStore, "getState").mockReturnValue({
+      epoch: 0,
+      activeHostId: "local-host",
+      connectionSignature: "default",
+      candidateProbeSignature: null,
+      candidateProbePhase: "idle",
+      candidateProbeStartedAt: null,
+      candidateProbeFinishedAt: null,
+      candidateEndpoints: [],
+      preferredCandidateEndpointId: null,
+      preferredDirectCandidateEndpointId: null
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("本地直连、Tailscale 地址和公共隧道地址可以并存解析", () => {
@@ -165,14 +183,123 @@ describe("host-transport-registry", () => {
     expect(nextTransport).toBe(directHostTransport);
     expect(closeSpy.called).toBe(1);
   });
+
+  it("当前活跃 relay Host 已验身出可用 lan 入口时，会把请求目标改写到 lan", () => {
+    clientConfigStore.hydrate(createRuntimeConfig({
+      activeHostId: "relay-host-a"
+    }));
+    vi.mocked(hostRuntimeStore.getState).mockReturnValue({
+      epoch: 1,
+      activeHostId: "relay-host-a",
+      connectionSignature: "relay",
+      candidateProbeSignature: "ready",
+      candidateProbePhase: "ready",
+      candidateProbeStartedAt: "2026-04-21T00:00:00.000Z",
+      candidateProbeFinishedAt: "2026-04-21T00:00:01.000Z",
+      candidateEndpoints: [
+        {
+          endpointId: "host_reported:http://192.168.50.8:3002",
+          kind: "lan",
+          url: "http://192.168.50.8:3002",
+          priority: 200,
+          expiresAt: null,
+          source: "host_reported",
+          status: "verified",
+          checkedAt: "2026-04-21T00:00:01.000Z",
+          errorCode: null,
+          errorDetail: null,
+          responseHostBaseUrl: "http://192.168.50.8:3002",
+          responseBindingId: "binding_demo",
+          responseHostFingerprint: "SHA256:demo"
+        },
+        {
+          endpointId: "relay:https://demo.channel.codingns.com",
+          kind: "relay",
+          url: "https://demo.channel.codingns.com",
+          priority: 400,
+          expiresAt: null,
+          source: "host_reported",
+          status: "verified",
+          checkedAt: "2026-04-21T00:00:01.000Z",
+          errorCode: null,
+          errorDetail: null,
+          responseHostBaseUrl: "https://demo.channel.codingns.com",
+          responseBindingId: "binding_demo",
+          responseHostFingerprint: "SHA256:demo"
+        }
+      ],
+      preferredCandidateEndpointId: "host_reported:http://192.168.50.8:3002",
+      preferredDirectCandidateEndpointId: "host_reported:http://192.168.50.8:3002"
+    });
+
+    const target = resolveHostTransportTarget("https://demo.channel.codingns.com");
+
+    expect(target.baseUrl).toBe("http://192.168.50.8:3002");
+    expect(target.transport).toBe(directHostTransport);
+  });
+
+  it("没有可用直连入口时，会继续保留 relay 作为活跃入口", () => {
+    clientConfigStore.hydrate(createRuntimeConfig({
+      activeHostId: "relay-host-a"
+    }));
+    vi.mocked(hostRuntimeStore.getState).mockReturnValue({
+      epoch: 1,
+      activeHostId: "relay-host-a",
+      connectionSignature: "relay",
+      candidateProbeSignature: "ready",
+      candidateProbePhase: "ready",
+      candidateProbeStartedAt: "2026-04-21T00:00:00.000Z",
+      candidateProbeFinishedAt: "2026-04-21T00:00:01.000Z",
+      candidateEndpoints: [
+        {
+          endpointId: "host_reported:http://192.168.50.8:3002",
+          kind: "lan",
+          url: "http://192.168.50.8:3002",
+          priority: 200,
+          expiresAt: null,
+          source: "host_reported",
+          status: "mismatch",
+          checkedAt: "2026-04-21T00:00:01.000Z",
+          errorCode: "HOST_IDENTITY_MISMATCH",
+          errorDetail: "候选入口返回的 Host 身份与当前激活 Host 不一致",
+          responseHostBaseUrl: "http://192.168.50.9:3002",
+          responseBindingId: "binding_other",
+          responseHostFingerprint: "SHA256:other"
+        },
+        {
+          endpointId: "relay:https://demo.channel.codingns.com",
+          kind: "relay",
+          url: "https://demo.channel.codingns.com",
+          priority: 400,
+          expiresAt: null,
+          source: "host_reported",
+          status: "verified",
+          checkedAt: "2026-04-21T00:00:01.000Z",
+          errorCode: null,
+          errorDetail: null,
+          responseHostBaseUrl: "https://demo.channel.codingns.com",
+          responseBindingId: "binding_demo",
+          responseHostFingerprint: "SHA256:demo"
+        }
+      ],
+      preferredCandidateEndpointId: "relay:https://demo.channel.codingns.com",
+      preferredDirectCandidateEndpointId: null
+    });
+
+    const target = resolveHostTransportTarget("https://demo.channel.codingns.com");
+
+    expect(target.baseUrl).toBe("https://demo.channel.codingns.com");
+    expect(target.transport).toBeInstanceOf(ManagedRelayTunnelHostTransport);
+  });
 });
 
 function createRuntimeConfig(overrides?: {
+  activeHostId?: string;
   hosts?: ReturnType<typeof createHost>[];
 }) {
   return {
     platform: "desktop" as const,
-    activeHostId: "local-host",
+    activeHostId: overrides?.activeHostId ?? "local-host",
     hosts: overrides?.hosts ?? [
       createHost({
         id: "local-host",

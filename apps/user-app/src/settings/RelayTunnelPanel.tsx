@@ -15,6 +15,10 @@ import {
   type HostRelayTunnelProfile
 } from "../config/client-config-types";
 import {
+  resolveActiveConnectionRouteLabelKey,
+  useActiveConnectionRouteSummary
+} from "../config/active-connection-route";
+import {
   canConfigureRelayControlBaseUrl,
   getFixedRelayControlBaseUrl,
   resolveRelayControlBaseUrl,
@@ -133,6 +137,13 @@ export function RelayTunnelPanel() {
     ? formatTrafficBytes(wallet.remainingBytes)
     : formatTrafficBytes(status?.trafficRemainingBytes);
   const activeHostBaseUrl = getActiveHostBaseUrl(clientConfigStore.getState());
+  const activeConnectionRoute = useActiveConnectionRouteSummary();
+  const activeConnectionRouteLabel = activeConnectionRoute
+    ? t(resolveActiveConnectionRouteLabelKey(activeConnectionRoute.kind))
+    : null;
+  const activeConnectionRouteHint = activeConnectionRoute
+    ? resolveRelayTunnelClientRouteHint(activeConnectionRoute)
+    : null;
 
   useEffect(() => {
     activeRef.current = true;
@@ -835,6 +846,13 @@ export function RelayTunnelPanel() {
           </div>
 
           <div className="settings-relay-tunnel-inline-stack">
+            {activeConnectionRoute && activeConnectionRouteLabel && activeConnectionRouteHint ? (
+              <RelayTunnelClientRouteSummary
+                hint={activeConnectionRouteHint}
+                label={activeConnectionRouteLabel}
+                url={activeConnectionRoute.url}
+              />
+            ) : null}
             <p className="settings-relay-tunnel-inline-note">
               {t("settings.relayTunnelTrustBoundaryNotice")}
             </p>
@@ -854,6 +872,18 @@ export function RelayTunnelPanel() {
           description={t("settings.relayTunnelReadyDescription")}
         >
           <ModalList compact>
+            {activeConnectionRoute && activeConnectionRouteLabel ? (
+              <>
+                <SummaryLine
+                  label={t("settings.relayTunnelClientRouteLabel")}
+                  value={activeConnectionRouteLabel}
+                />
+                <SummaryLine
+                  label={t("settings.relayTunnelClientRouteAddressLabel")}
+                  value={activeConnectionRoute.url}
+                />
+              </>
+            ) : null}
             <SummaryLine
               className="settings-relay-tunnel-summary-line-access-url"
               label={t("settings.relayTunnelAccessUrlLabel")}
@@ -919,6 +949,9 @@ export function RelayTunnelPanel() {
           </ModalActions>
 
           <div className="settings-relay-tunnel-inline-stack">
+            {activeConnectionRoute && activeConnectionRouteLabel && activeConnectionRouteHint ? (
+              <p className="settings-relay-tunnel-inline-note">{activeConnectionRouteHint}</p>
+            ) : null}
             <p className="settings-relay-tunnel-inline-note">
               {t("settings.relayTunnelTrustBoundaryNotice")}
             </p>
@@ -972,9 +1005,32 @@ export function RelayTunnelPanel() {
       provider: "codingns_relay",
       enabled: nextStatus.enabled,
       tunnelDomain: nextStatus.tunnelDomain.trim().toLowerCase(),
-      controlBaseUrl: resolveRelayControlBaseUrl(nextStatus.controlBaseUrl)
+      controlBaseUrl: resolveRelayControlBaseUrl(nextStatus.controlBaseUrl),
+      bindingId: nextStatus.bindingId,
+      hostFingerprint: nextStatus.hostFingerprint,
+      candidateEndpoints: nextStatus.candidateEndpoints
     };
   }
+}
+
+function RelayTunnelClientRouteSummary({
+  label,
+  url,
+  hint
+}: {
+  label: string;
+  url: string;
+  hint: string;
+}) {
+  return (
+    <>
+      <ModalList compact>
+        <SummaryLine label={t("settings.relayTunnelClientRouteLabel")} value={label} />
+        <SummaryLine label={t("settings.relayTunnelClientRouteAddressLabel")} value={url} />
+      </ModalList>
+      <p className="settings-relay-tunnel-inline-note">{hint}</p>
+    </>
+  );
 }
 
 function SummaryLine({
@@ -997,6 +1053,27 @@ function SummaryLine({
       }
     />
   );
+}
+
+function resolveRelayTunnelClientRouteHint(
+  summary: NonNullable<ReturnType<typeof useActiveConnectionRouteSummary>>
+): string {
+  if (summary.probeInProgress) {
+    return t("settings.relayTunnelClientRouteHintRelayProbing");
+  }
+
+  switch (summary.kind) {
+    case "relay":
+      return t("settings.relayTunnelClientRouteHintRelay");
+    case "lan":
+      return t("settings.relayTunnelClientRouteHintLan");
+    case "loopback":
+      return t("settings.relayTunnelClientRouteHintLoopback");
+    case "tailscale":
+      return t("settings.relayTunnelClientRouteHintTailscale");
+    default:
+      return t("settings.relayTunnelClientRouteHintDirect");
+  }
 }
 
 function RelayTunnelFeedbackBanner({
@@ -1242,5 +1319,8 @@ function equalRelayTunnelProfile(
     && left.enabled === right.enabled
     && left.tunnelDomain === right.tunnelDomain
     && left.controlBaseUrl === right.controlBaseUrl
+    && (left.bindingId ?? null) === (right.bindingId ?? null)
+    && (left.hostFingerprint ?? null) === (right.hostFingerprint ?? null)
+    && JSON.stringify(left.candidateEndpoints ?? []) === JSON.stringify(right.candidateEndpoints ?? [])
   );
 }

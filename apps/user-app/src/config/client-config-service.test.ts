@@ -131,4 +131,97 @@ describe("client-config-service", () => {
     expect(config.hosts[0].baseUrl).toBe("http://127.0.0.1:3002");
     expect(config.hosts[1].baseUrl).toBe("http://10.10.1.9:4200");
   });
+
+  it("会按归一化后的 URL 去重 relay 候选入口", async () => {
+    window.localStorage.setItem(
+      "codingns.client.runtime-config",
+      JSON.stringify({
+        platform: "desktop",
+        activeHostId: DEFAULT_HOST_PROFILE_ID,
+        hosts: [
+          {
+            id: DEFAULT_HOST_PROFILE_ID,
+            name: "Demo Host",
+            baseUrl: "http://127.0.0.1:3002",
+            kind: "local",
+            createdAt: "2026-04-21T00:00:00.000Z",
+            updatedAt: "2026-04-21T00:00:00.000Z",
+            lastConnectedAt: null,
+            lastUserId: null,
+            lastUsername: null,
+            relayTunnel: {
+              provider: "codingns_relay",
+              enabled: true,
+              tunnelDomain: "demo.channel.codingns.com",
+              controlBaseUrl: "https://channel.codingns.com:1443/",
+              bindingId: "binding_demo",
+              hostFingerprint: "SHA256:demo",
+              candidateEndpoints: [
+                {
+                  endpointId: "host_reported:https://demo.channel.codingns.com/",
+                  kind: "relay",
+                  url: "https://demo.channel.codingns.com/",
+                  priority: 400,
+                  expiresAt: null,
+                  source: "host_reported"
+                },
+                {
+                  endpointId: "user_saved:https://demo.channel.codingns.com",
+                  kind: "relay",
+                  url: "https://demo.channel.codingns.com",
+                  priority: 401,
+                  expiresAt: null,
+                  source: "user_saved"
+                },
+                {
+                  endpointId: "desktop_scan:http://192.168.50.8:3002/",
+                  kind: "lan",
+                  url: "http://192.168.50.8:3002/",
+                  priority: 200,
+                  expiresAt: null,
+                  source: "desktop_scan"
+                }
+              ]
+            }
+          }
+        ],
+        discoveredHosts: [],
+        activeDiscoveredHostId: null,
+        localHostDiscovery: {
+          status: "idle",
+          lastScannedAt: null,
+          cooldownUntil: null,
+          errorCode: null,
+          errorDetail: null
+        },
+        releaseChannel: "stable",
+        autoReconnect: true,
+        autoCheckUpdate: true,
+        language: "zh-CN",
+        defaultPermissionMode: "default"
+      })
+    );
+    vi.mocked(createPlatformAdapter).mockReturnValue(createMockAdapter({ platform: "desktop" }));
+
+    const config = await loadClientRuntimeConfig();
+
+    expect(config.hosts[0].relayTunnel?.candidateEndpoints).toEqual([
+      {
+        endpointId: "desktop_scan:http://192.168.50.8:3002/",
+        kind: "lan",
+        url: "http://192.168.50.8:3002",
+        priority: 200,
+        expiresAt: null,
+        source: "desktop_scan"
+      },
+      {
+        endpointId: "host_reported:https://demo.channel.codingns.com/",
+        kind: "relay",
+        url: "https://demo.channel.codingns.com",
+        priority: 400,
+        expiresAt: null,
+        source: "host_reported"
+      }
+    ]);
+  });
 });

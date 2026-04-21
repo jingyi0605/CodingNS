@@ -3,7 +3,7 @@ import { getAuthClientHeaders } from "../features/auth/store/client-device";
 import { ApiError, type ApiErrorPayload } from "../shared/network/api-error";
 import { authStore } from "../features/auth/store/auth-store";
 import { markAuthExpiredFlag } from "./auth-expired-flag";
-import { resolveHostTransport } from "./host-transport-registry";
+import { resolveHostTransportTarget } from "./host-transport-registry";
 
 interface RequestOptions extends RequestInit {
   baseUrl?: string;
@@ -37,11 +37,13 @@ class HttpClient {
   private async performRequest(path: string, options: RequestOptions): Promise<Response> {
     const headers = new Headers(options.headers);
     const hasRequestBody = options.body !== undefined && options.body !== null;
-    const baseUrl = options.baseUrl ?? getHostBaseUrl();
+    const requestedBaseUrl = options.baseUrl ?? getHostBaseUrl();
+    const transportTarget = resolveHostTransportTarget(requestedBaseUrl);
+    const baseUrl = transportTarget.baseUrl;
     const requestUrl = getHostRequestUrl(path, baseUrl);
-    const transport = resolveHostTransport(baseUrl);
+    const transport = transportTarget.transport;
     const shouldOmitCompatibilityHeaders =
-      options.omitCompatibilityHeaders || shouldUseLegacyCorsCompatibility(baseUrl);
+      options.omitCompatibilityHeaders || shouldUseLegacyCorsCompatibility(requestedBaseUrl);
 
     if (shouldOmitCompatibilityHeaders) {
       stripCompatibilityHeaders(headers);
@@ -94,7 +96,7 @@ class HttpClient {
           }).catch(() => null);
 
           if (retryable) {
-            legacyCorsCompatibilityHosts.add(baseUrl);
+            legacyCorsCompatibilityHosts.add(requestedBaseUrl);
             return retryable;
           }
         }

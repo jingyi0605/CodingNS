@@ -223,4 +223,26 @@ describe("authStore", () => {
     expect(authStore.getState().session).toBeNull();
     expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
   });
+
+  it("当前 HOST 登录成功后会同步认证态运行时配置", async () => {
+    await setupClientConfig();
+    const syncRuntimeConfigMock = vi.fn(async () => undefined);
+
+    vi.doMock("../api/auth-api", () => ({
+      loginRequest: vi.fn(async () => storedSession)
+    }));
+    vi.doMock("../../../platform/server/client-runtime-manager", () => ({
+      syncActiveHostAuthenticatedRuntimeConfig: syncRuntimeConfigMock
+    }));
+
+    const { authStore } = await import("./auth-store");
+
+    await authStore.login({
+      username: "admin",
+      password: "admin1234"
+    });
+
+    expect(authStore.getState().status).toBe("authenticated");
+    expect(syncRuntimeConfigMock).toHaveBeenCalledTimes(1);
+  });
 });

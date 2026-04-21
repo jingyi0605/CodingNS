@@ -3,6 +3,7 @@ export type ReleaseChannel = "stable" | "beta";
 export type AppLanguage = "zh-CN" | "en-US";
 export type ClientPermissionMode = "default" | "acceptEdits" | "bypassPermissions";
 export type HostProfileKind = "local" | "lan" | "remote" | "custom";
+export type HostCandidateEndpointKind = "relay" | "lan" | "loopback" | "tailscale" | "custom";
 export type LocalHostDiscoveryStatus =
   | "idle"
   | "refreshing"
@@ -32,6 +33,18 @@ export interface HostRelayTunnelProfile {
   enabled: boolean;
   tunnelDomain: string;
   controlBaseUrl: string;
+  bindingId?: string | null;
+  hostFingerprint?: string | null;
+  candidateEndpoints?: HostCandidateEndpoint[];
+}
+
+export interface HostCandidateEndpoint {
+  endpointId: string;
+  kind: HostCandidateEndpointKind;
+  url: string;
+  priority: number;
+  expiresAt: string | null;
+  source: "host_reported" | "desktop_scan" | "user_saved";
 }
 
 export interface DesktopLocalHostProcessHit {

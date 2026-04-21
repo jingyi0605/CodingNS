@@ -6,6 +6,7 @@ import {
   DEFAULT_HOST_PROFILE_ID,
   getActiveHost,
   type HostRelayTunnelProfile,
+  type HostCandidateEndpoint,
   type HostProfile,
   type HostProfileKind,
   type LegacyClientRuntimeConfigSnapshot,
@@ -249,6 +250,11 @@ function normalizeRelayTunnelProfile(value: unknown): HostRelayTunnelProfile | n
   const enabled = (value as { enabled?: unknown }).enabled;
   const tunnelDomain = normalizeString((value as { tunnelDomain?: unknown }).tunnelDomain);
   const controlBaseUrl = normalizeString((value as { controlBaseUrl?: unknown }).controlBaseUrl);
+  const bindingId = normalizeString((value as { bindingId?: unknown }).bindingId);
+  const hostFingerprint = normalizeString((value as { hostFingerprint?: unknown }).hostFingerprint);
+  const candidateEndpoints = normalizeHostCandidateEndpoints(
+    (value as { candidateEndpoints?: unknown }).candidateEndpoints
+  );
 
   if (provider !== "codingns_relay" || typeof enabled !== "boolean" || !tunnelDomain || !controlBaseUrl) {
     return null;
@@ -265,11 +271,85 @@ function normalizeRelayTunnelProfile(value: unknown): HostRelayTunnelProfile | n
       provider,
       enabled,
       tunnelDomain: tunnelDomain.trim().toLowerCase(),
-      controlBaseUrl: normalizedControlBaseUrl
+      controlBaseUrl: normalizedControlBaseUrl,
+      bindingId,
+      hostFingerprint,
+      candidateEndpoints
     };
   } catch {
     return null;
   }
+}
+
+function normalizeHostCandidateEndpoints(value: unknown): HostCandidateEndpoint[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const normalizedEndpoints: HostCandidateEndpoint[] = [];
+  const seenUrls = new Set<string>();
+
+  for (const item of value) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      continue;
+    }
+
+    const endpointId = normalizeString((item as { endpointId?: unknown }).endpointId);
+    const kind = normalizeString((item as { kind?: unknown }).kind);
+    const url = normalizeString((item as { url?: unknown }).url);
+    const priority = (item as { priority?: unknown }).priority;
+    const expiresAt = normalizeString((item as { expiresAt?: unknown }).expiresAt);
+    const source = normalizeString((item as { source?: unknown }).source);
+
+    if (
+      !endpointId
+      || !url
+      || typeof priority !== "number"
+      || !Number.isFinite(priority)
+      || (
+        kind !== "relay"
+        && kind !== "lan"
+        && kind !== "loopback"
+        && kind !== "tailscale"
+        && kind !== "custom"
+      )
+      || (
+        source !== "host_reported"
+        && source !== "desktop_scan"
+        && source !== "user_saved"
+      )
+    ) {
+      continue;
+    }
+
+    try {
+      const normalizedUrl = normalizeServerBaseUrl(url);
+
+      if (seenUrls.has(normalizedUrl)) {
+        continue;
+      }
+
+      normalizedEndpoints.push({
+        endpointId,
+        kind,
+        url: normalizedUrl,
+        priority,
+        expiresAt,
+        source
+      });
+      seenUrls.add(normalizedUrl);
+    } catch {
+      continue;
+    }
+  }
+
+  return normalizedEndpoints.sort((left, right) => {
+    if (left.priority !== right.priority) {
+      return left.priority - right.priority;
+    }
+
+    return left.url.localeCompare(right.url);
+  });
 }
 
 function replaceActiveHostBaseUrl(

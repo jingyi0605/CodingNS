@@ -10,6 +10,17 @@ export type RelayTunnelPhase =
   | "quota_exhausted"
   | "error";
 
+export type HostCandidateEndpointKind = "relay" | "lan" | "loopback" | "tailscale" | "custom";
+
+export interface HostCandidateEndpointView {
+  endpointId: string;
+  kind: HostCandidateEndpointKind;
+  url: string;
+  priority: number;
+  expiresAt: string | null;
+  source: "host_reported" | "desktop_scan" | "user_saved";
+}
+
 export interface RelayTunnelStatusView {
   activated: boolean;
   enabled: boolean;
@@ -24,6 +35,7 @@ export interface RelayTunnelStatusView {
   hostPublicKey: string | null;
   hostKeyFingerprint: string | null;
   localTargetBaseUrl: string;
+  candidateEndpoints: HostCandidateEndpointView[];
   phase: RelayTunnelPhase;
   connected: boolean;
   hostFingerprint: string | null;

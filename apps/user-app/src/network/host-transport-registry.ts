@@ -1,5 +1,6 @@
 import { clientConfigStore } from "../config/client-config-store";
-import { getRuntimeHostByBaseUrl } from "../config/client-config-types";
+import { getActiveHost, getRuntimeHostByBaseUrl } from "../config/client-config-types";
+import { hostRuntimeStore } from "../config/host-runtime-store";
 import { directHostTransport } from "./direct-host-transport";
 import type { HostTransport, HostTransportResolver } from "./host-transport";
 import { ManagedRelayTunnelHostTransport } from "./relay-tunnel-managed-transport";
@@ -10,8 +11,8 @@ const defaultHostTransportResolver: HostTransportResolver = ({ baseUrl }) => {
   const host = getRuntimeHostByBaseUrl(clientConfigStore.getState(), baseUrl);
   const relayTunnel = host?.relayTunnel;
 
-  if (!host || !relayTunnel?.enabled) {
-    if (host) {
+  if (!host || !relayTunnel?.enabled || !shouldUseRelayTransport(baseUrl, host.baseUrl, relayTunnel)) {
+    if (host && !relayTunnel?.enabled) {
       const cached = relayTransportCache.get(host.id);
 
       if (cached) {
@@ -36,6 +37,7 @@ const defaultHostTransportResolver: HostTransportResolver = ({ baseUrl }) => {
   cached?.transport.close();
 
   const transport = new ManagedRelayTunnelHostTransport({
+    hostId: host.id,
     controlBaseUrl: relayTunnel.controlBaseUrl,
     tunnelDomain: relayTunnel.tunnelDomain
   }, {
@@ -51,8 +53,22 @@ const defaultHostTransportResolver: HostTransportResolver = ({ baseUrl }) => {
 
 let hostTransportResolver: HostTransportResolver = defaultHostTransportResolver;
 
+export interface ResolvedHostTransportTarget {
+  baseUrl: string;
+  transport: HostTransport;
+}
+
+export function resolveHostTransportTarget(baseUrl: string): ResolvedHostTransportTarget {
+  const resolvedBaseUrl = resolveActiveHostBaseUrl(baseUrl);
+
+  return {
+    baseUrl: resolvedBaseUrl,
+    transport: hostTransportResolver({ baseUrl: resolvedBaseUrl })
+  };
+}
+
 export function resolveHostTransport(baseUrl: string): HostTransport {
-  return hostTransportResolver({ baseUrl });
+  return resolveHostTransportTarget(baseUrl).transport;
 }
 
 export function setHostTransportResolverForTesting(
@@ -73,4 +89,59 @@ export function resetHostTransportRegistryForTesting(): void {
 
   relayTransportCache.clear();
   hostTransportResolver = defaultHostTransportResolver;
+}
+
+function resolveActiveHostBaseUrl(baseUrl: string): string {
+  const config = clientConfigStore.getState();
+  const activeHost = getActiveHost(config);
+
+  if (!activeHost || activeHost.baseUrl !== baseUrl) {
+    return baseUrl;
+  }
+
+  const runtimeState = hostRuntimeStore.getState();
+
+  if (runtimeState.activeHostId !== activeHost.id || runtimeState.candidateProbePhase !== "ready") {
+    return baseUrl;
+  }
+
+  const preferredEndpointId =
+    runtimeState.preferredDirectCandidateEndpointId
+    ?? runtimeState.preferredCandidateEndpointId;
+
+  if (!preferredEndpointId) {
+    return baseUrl;
+  }
+
+  const preferredEndpoint = runtimeState.candidateEndpoints.find(
+    (endpoint) => endpoint.endpointId === preferredEndpointId && endpoint.status === "verified"
+  );
+
+  return preferredEndpoint?.url ?? baseUrl;
+}
+
+function shouldUseRelayTransport(
+  baseUrl: string,
+  hostBaseUrl: string,
+  relayTunnel: NonNullable<ReturnType<typeof getRuntimeHostByBaseUrl>>["relayTunnel"]
+): boolean {
+  if (baseUrl === hostBaseUrl) {
+    return true;
+  }
+
+  const candidateEndpoint = relayTunnel?.candidateEndpoints?.find((endpoint) => endpoint.url === baseUrl);
+
+  if (candidateEndpoint) {
+    return candidateEndpoint.kind === "relay";
+  }
+
+  if (!relayTunnel?.tunnelDomain) {
+    return false;
+  }
+
+  try {
+    return new URL(baseUrl).hostname.toLowerCase() === relayTunnel.tunnelDomain.trim().toLowerCase();
+  } catch {
+    return false;
+  }
 }

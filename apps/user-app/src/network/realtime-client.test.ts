@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { clientConfigStore } from "../config/client-config-store";
 import { getHostBaseUrl, getHostWebSocketUrl } from "../config/env";
+import { hostRuntimeStore } from "../config/host-runtime-store";
 import { authStore, type AuthSession } from "../features/auth/store/auth-store";
 import { setHostTransportResolverForTesting } from "./host-transport-registry";
 import { RealtimeClient } from "./realtime-client";
@@ -223,6 +225,124 @@ describe("RealtimeClient", () => {
         limit: 20
       }
     ]);
+
+    client.close();
+  });
+
+  it("当前活跃入口切到 lan 时，会用 lan 地址建立实时连接", () => {
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: "host-relay",
+      hosts: [
+        {
+          id: "host-relay",
+          name: "demo.channel.codingns.com",
+          baseUrl: "https://demo.channel.codingns.com",
+          kind: "remote",
+          createdAt: "2026-04-21T00:00:00.000Z",
+          updatedAt: "2026-04-21T00:00:00.000Z",
+          lastConnectedAt: null,
+          lastUserId: null,
+          lastUsername: null,
+          relayTunnel: {
+            provider: "codingns_relay",
+            enabled: true,
+            tunnelDomain: "demo.channel.codingns.com",
+            controlBaseUrl: "https://control.codingns.example",
+            bindingId: "binding_demo",
+            hostFingerprint: "SHA256:demo",
+            candidateEndpoints: [
+              {
+                endpointId: "host_reported:http://192.168.50.8:3002",
+                kind: "lan",
+                url: "http://192.168.50.8:3002",
+                priority: 200,
+                expiresAt: null,
+                source: "host_reported"
+              }
+            ]
+          }
+        }
+      ],
+      discoveredHosts: [],
+      activeDiscoveredHostId: null,
+      localHostDiscovery: {
+        status: "idle",
+        lastScannedAt: null,
+        cooldownUntil: null,
+        errorCode: null,
+        errorDetail: null
+      },
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    authStore.hydrate(session);
+    vi.spyOn(hostRuntimeStore, "getState").mockReturnValue({
+      epoch: 1,
+      activeHostId: "host-relay",
+      connectionSignature: "relay",
+      candidateProbeSignature: "ready",
+      candidateProbePhase: "ready",
+      candidateProbeStartedAt: "2026-04-21T00:00:00.000Z",
+      candidateProbeFinishedAt: "2026-04-21T00:00:01.000Z",
+      candidateEndpoints: [
+        {
+          endpointId: "host_reported:http://192.168.50.8:3002",
+          kind: "lan",
+          url: "http://192.168.50.8:3002",
+          priority: 200,
+          expiresAt: null,
+          source: "host_reported",
+          status: "verified",
+          checkedAt: "2026-04-21T00:00:01.000Z",
+          errorCode: null,
+          errorDetail: null,
+          responseHostBaseUrl: "http://192.168.50.8:3002",
+          responseBindingId: "binding_demo",
+          responseHostFingerprint: "SHA256:demo"
+        }
+      ],
+      preferredCandidateEndpointId: "host_reported:http://192.168.50.8:3002",
+      preferredDirectCandidateEndpointId: "host_reported:http://192.168.50.8:3002"
+    });
+
+    const transportSocket = new MockWebSocket("transport://lan");
+    const createWebSocket = vi.fn(() => transportSocket);
+    setHostTransportResolverForTesting(() => ({
+      fetch: vi.fn(),
+      createWebSocket
+    }));
+
+    const client = new RealtimeClient({
+      sessionId: "session-1",
+      cursor: "cursor-1",
+      limit: 50,
+      onConnectionChange: () => undefined,
+      onSubscribed: () => undefined,
+      onEnvelope: () => undefined,
+      onOlderHistory: () => undefined,
+      onRuntimeMessage: () => undefined,
+      onActivity: () => undefined,
+      onRuntimeStatus: () => undefined,
+      onRuntimeError: () => undefined,
+      onInterrupted: () => undefined,
+      onPermissionRequest: () => undefined,
+      onPermissionRequestResolved: () => undefined,
+      onError: () => undefined,
+      onUnauthorized: () => undefined
+    });
+
+    client.start();
+
+    expect(createWebSocket).toHaveBeenCalledWith({
+      path: "/ws",
+      baseUrl: "http://192.168.50.8:3002",
+      url: "ws://192.168.50.8:3002/ws?access_token=access-token"
+    });
+    expect(getHostBaseUrl()).toBe("https://demo.channel.codingns.com");
 
     client.close();
   });

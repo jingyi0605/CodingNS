@@ -68,6 +68,7 @@ class AuthStore {
 
   private listeners = new Set<AuthListener>();
   private sessionMap: HostSessionMap = {};
+  private lastRuntimeConfigSyncKey: string | null = null;
 
   constructor() {
     this.syncCurrentHostSession();
@@ -116,6 +117,7 @@ class AuthStore {
         status: "authenticated",
         session
       });
+      await this.ensureRuntimeConfigSynced(host, session);
     }
 
     return session;
@@ -158,6 +160,7 @@ class AuthStore {
     try {
       const nextSession = await refreshRequest({ refreshToken }, currentHost?.baseUrl);
       this.setSession(nextSession, currentHost);
+      await this.ensureRuntimeConfigSynced(currentHost, nextSession);
       return {
         status: "refreshed",
         session: nextSession
@@ -187,6 +190,7 @@ class AuthStore {
 
   clear(): void {
     const currentHost = this.getCurrentHost();
+    this.lastRuntimeConfigSyncKey = null;
 
     if (!currentHost) {
       this.sessionMap = {};
@@ -222,6 +226,7 @@ class AuthStore {
     this.persistSessionMap();
 
     if (this.getCurrentHost()?.id === hostId) {
+      this.lastRuntimeConfigSyncKey = null;
       this.updateState({
         status: "anonymous",
         session: null
@@ -301,6 +306,13 @@ class AuthStore {
       status: nextSession ? "authenticated" : "anonymous",
       session: nextSession
     });
+
+    if (!currentHost || !nextSession) {
+      this.lastRuntimeConfigSyncKey = null;
+      return;
+    }
+
+    void this.ensureRuntimeConfigSynced(currentHost, nextSession);
   }
 
   private getCurrentHost(): RuntimeHostProfile | null {
@@ -376,6 +388,37 @@ class AuthStore {
 
     this.state = nextState;
     this.emit();
+  }
+
+  private async ensureRuntimeConfigSynced(
+    host: RuntimeHostProfile | null,
+    session: AuthSession | null
+  ): Promise<void> {
+    if (!host || !session) {
+      this.lastRuntimeConfigSyncKey = null;
+      return;
+    }
+
+    if (this.getCurrentHost()?.id !== host.id) {
+      return;
+    }
+
+    const syncKey = `${host.id}:${session.accessToken}`;
+
+    if (this.lastRuntimeConfigSyncKey === syncKey) {
+      return;
+    }
+
+    this.lastRuntimeConfigSyncKey = syncKey;
+
+    try {
+      const { syncActiveHostAuthenticatedRuntimeConfig } = await import(
+        "../../../platform/server/client-runtime-manager"
+      );
+      await syncActiveHostAuthenticatedRuntimeConfig();
+    } catch {
+      // 运行时配置同步失败不该挡住登录链路，后续仍然允许手动进入设置页刷新。
+    }
   }
 
   private emit(): void {

@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { hostRuntimeStore } from "../config/host-runtime-store";
 import { clientConfigStore } from "../config/client-config-store";
 import type { PlatformAdapter } from "../platform/platform-adapter";
 import type { RelayTunnelStatusView } from "../platform/server/relay-tunnel-manager";
@@ -525,6 +526,58 @@ describe("RelayTunnelPanel", () => {
       );
     });
   });
+
+  it("远程访问已开启后会展示当前客户端链路和实际访问地址", async () => {
+    const getStateSpy = vi.spyOn(hostRuntimeStore, "getState").mockReturnValue({
+      epoch: 1,
+      activeHostId: "host-relay",
+      connectionSignature: "relay",
+      candidateProbeSignature: "ready",
+      candidateProbePhase: "ready",
+      candidateProbeStartedAt: "2026-04-21T00:00:00.000Z",
+      candidateProbeFinishedAt: "2026-04-21T00:00:01.000Z",
+      candidateEndpoints: [
+        {
+          endpointId: "host_reported:http://192.168.50.8:3002",
+          kind: "lan",
+          url: "http://192.168.50.8:3002",
+          priority: 200,
+          expiresAt: null,
+          source: "host_reported",
+          status: "verified",
+          checkedAt: "2026-04-21T00:00:01.000Z",
+          errorCode: null,
+          errorDetail: null,
+          responseHostBaseUrl: "http://192.168.50.8:3002",
+          responseBindingId: "binding_demo",
+          responseHostFingerprint: "SHA256:demo"
+        }
+      ],
+      preferredCandidateEndpointId: "host_reported:http://192.168.50.8:3002",
+      preferredDirectCandidateEndpointId: "host_reported:http://192.168.50.8:3002"
+    });
+    apiMocks.fetchRelayTunnelStatus.mockResolvedValue(
+      createStatus({
+        activated: true,
+        enabled: true,
+        bindingId: "binding_demo",
+        tunnelDomain: "demo.channel.codingns.com",
+        hostFingerprint: "SHA256:demo"
+      })
+    );
+
+    renderPanel();
+
+    expect(await screen.findByText("当前客户端链路")).toBeInTheDocument();
+    expect(screen.getByText("局域网直连")).toBeInTheDocument();
+    expect(screen.getByText("当前客户端地址")).toBeInTheDocument();
+    expect(screen.getByText("http://192.168.50.8:3002")).toBeInTheDocument();
+    expect(
+      screen.getByText("当前客户端已经切到局域网直连，这条链路更省流量；远程访问地址仍然可以继续给外部设备使用。")
+    ).toBeInTheDocument();
+
+    getStateSpy.mockRestore();
+  });
 });
 
 function renderPanel() {
@@ -554,6 +607,16 @@ function createStatus(overrides?: Partial<RelayTunnelStatusView>): RelayTunnelSt
     hostPublicKey: null,
     hostKeyFingerprint: "SHA256:demo",
     localTargetBaseUrl: "http://127.0.0.1:3002",
+    candidateEndpoints: [
+      {
+        endpointId: "host_reported:http://127.0.0.1:3002",
+        kind: "loopback",
+        url: "http://127.0.0.1:3002",
+        priority: 100,
+        expiresAt: null,
+        source: "host_reported"
+      }
+    ],
     phase: "disabled",
     connected: false,
     hostFingerprint: null,
