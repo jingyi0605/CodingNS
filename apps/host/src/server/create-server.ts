@@ -338,11 +338,6 @@ export function createServer(config: HostConfig) {
     taskManager,
     npmGlobalPackageService
   );
-  const clientService = new ClientService(
-    config,
-    npmGlobalPackageService,
-    serviceUpdateTaskService
-  );
   const workspaceService = new WorkspaceService(
     repositories.workspaceRepository,
     gitCommandRunner,
@@ -429,6 +424,12 @@ export function createServer(config: HostConfig) {
         controlSessionSecret: config.gitCredentialSecret
       }
     )
+  );
+  const clientService = new ClientService(
+    config,
+    npmGlobalPackageService,
+    serviceUpdateTaskService,
+    relayTunnelService
   );
   const modelSwitchService = new ModelSwitchService(
     new CcSwitchAdapter({

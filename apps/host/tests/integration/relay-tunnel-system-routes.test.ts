@@ -1,6 +1,7 @@
+import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createEmptyFixture,
@@ -12,7 +13,33 @@ import {
 const activeServers: Array<ReturnType<typeof createTestApp>> = [];
 const activeFixtures: EmptyFixture[] = [];
 
+beforeEach(() => {
+  vi.spyOn(os, "networkInterfaces").mockReturnValue({
+    lo0: [
+      {
+        address: "127.0.0.1",
+        netmask: "255.0.0.0",
+        family: "IPv4",
+        mac: "00:00:00:00:00:00",
+        internal: true,
+        cidr: "127.0.0.1/8"
+      }
+    ],
+    en0: [
+      {
+        address: "192.168.50.8",
+        netmask: "255.255.255.0",
+        family: "IPv4",
+        mac: "00:11:22:33:44:55",
+        internal: false,
+        cidr: "192.168.50.8/24"
+      }
+    ]
+  });
+});
+
 afterEach(async () => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 
   while (activeServers.length > 0) {
@@ -103,6 +130,24 @@ describe("公共隧道系统接口", () => {
       hostPublicKey: null,
       hostKeyFingerprint: null,
       localTargetBaseUrl: "http://127.0.0.1:4174",
+      candidateEndpoints: [
+        {
+          endpointId: "host_reported:http://127.0.0.1:4174",
+          kind: "loopback",
+          url: "http://127.0.0.1:4174",
+          priority: 100,
+          expiresAt: null,
+          source: "host_reported"
+        },
+        {
+          endpointId: "host_reported:http://192.168.50.8:4174",
+          kind: "lan",
+          url: "http://192.168.50.8:4174",
+          priority: 200,
+          expiresAt: null,
+          source: "host_reported"
+        }
+      ],
       phase: "disabled",
       connected: false,
       hostFingerprint: null,
@@ -142,6 +187,24 @@ describe("公共隧道系统接口", () => {
       hostPublicKey: null,
       hostKeyFingerprint: null,
       localTargetBaseUrl: "http://127.0.0.1:4312",
+      candidateEndpoints: [
+        {
+          endpointId: "host_reported:http://127.0.0.1:4312",
+          kind: "loopback",
+          url: "http://127.0.0.1:4312",
+          priority: 100,
+          expiresAt: null,
+          source: "host_reported"
+        },
+        {
+          endpointId: "host_reported:http://192.168.50.8:4312",
+          kind: "lan",
+          url: "http://192.168.50.8:4312",
+          priority: 200,
+          expiresAt: null,
+          source: "host_reported"
+        }
+      ],
       phase: "disabled",
       connected: false,
       hostFingerprint: null,
@@ -211,6 +274,32 @@ describe("公共隧道系统接口", () => {
       hostPublicKey: identityStatus.hostPublicKey,
       hostKeyFingerprint: identityStatus.hostKeyFingerprint,
       localTargetBaseUrl: "http://127.0.0.1:4312",
+      candidateEndpoints: [
+        {
+          endpointId: "host_reported:http://127.0.0.1:4312",
+          kind: "loopback",
+          url: "http://127.0.0.1:4312",
+          priority: 100,
+          expiresAt: null,
+          source: "host_reported"
+        },
+        {
+          endpointId: "host_reported:http://192.168.50.8:4312",
+          kind: "lan",
+          url: "http://192.168.50.8:4312",
+          priority: 200,
+          expiresAt: null,
+          source: "host_reported"
+        },
+        {
+          endpointId: "relay:https://demo.codingns.example",
+          kind: "relay",
+          url: "https://demo.codingns.example",
+          priority: 400,
+          expiresAt: null,
+          source: "host_reported"
+        }
+      ],
       phase: "disabled",
       connected: false,
       hostFingerprint: identityStatus.hostKeyFingerprint,
@@ -245,6 +334,32 @@ describe("公共隧道系统接口", () => {
       hostPublicKey: identityStatus.hostPublicKey,
       hostKeyFingerprint: identityStatus.hostKeyFingerprint,
       localTargetBaseUrl: "http://127.0.0.1:4312",
+      candidateEndpoints: [
+        {
+          endpointId: "host_reported:http://127.0.0.1:4312",
+          kind: "loopback",
+          url: "http://127.0.0.1:4312",
+          priority: 100,
+          expiresAt: null,
+          source: "host_reported"
+        },
+        {
+          endpointId: "host_reported:http://192.168.50.8:4312",
+          kind: "lan",
+          url: "http://192.168.50.8:4312",
+          priority: 200,
+          expiresAt: null,
+          source: "host_reported"
+        },
+        {
+          endpointId: "relay:https://demo.codingns.example",
+          kind: "relay",
+          url: "https://demo.codingns.example",
+          priority: 400,
+          expiresAt: null,
+          source: "host_reported"
+        }
+      ],
       phase: "connecting",
       connected: false,
       hostFingerprint: identityStatus.hostKeyFingerprint,
@@ -279,6 +394,32 @@ describe("公共隧道系统接口", () => {
       hostPublicKey: identityStatus.hostPublicKey,
       hostKeyFingerprint: identityStatus.hostKeyFingerprint,
       localTargetBaseUrl: "http://127.0.0.1:4312",
+      candidateEndpoints: [
+        {
+          endpointId: "host_reported:http://127.0.0.1:4312",
+          kind: "loopback",
+          url: "http://127.0.0.1:4312",
+          priority: 100,
+          expiresAt: null,
+          source: "host_reported"
+        },
+        {
+          endpointId: "host_reported:http://192.168.50.8:4312",
+          kind: "lan",
+          url: "http://192.168.50.8:4312",
+          priority: 200,
+          expiresAt: null,
+          source: "host_reported"
+        },
+        {
+          endpointId: "relay:https://demo.codingns.example",
+          kind: "relay",
+          url: "https://demo.codingns.example",
+          priority: 400,
+          expiresAt: null,
+          source: "host_reported"
+        }
+      ],
       phase: "disabled",
       connected: false,
       hostFingerprint: identityStatus.hostKeyFingerprint,
@@ -313,6 +454,24 @@ describe("公共隧道系统接口", () => {
       hostPublicKey: identityStatus.hostPublicKey,
       hostKeyFingerprint: identityStatus.hostKeyFingerprint,
       localTargetBaseUrl: "http://127.0.0.1:4312",
+      candidateEndpoints: [
+        {
+          endpointId: "host_reported:http://127.0.0.1:4312",
+          kind: "loopback",
+          url: "http://127.0.0.1:4312",
+          priority: 100,
+          expiresAt: null,
+          source: "host_reported"
+        },
+        {
+          endpointId: "host_reported:http://192.168.50.8:4312",
+          kind: "lan",
+          url: "http://192.168.50.8:4312",
+          priority: 200,
+          expiresAt: null,
+          source: "host_reported"
+        }
+      ],
       phase: "disabled",
       connected: false,
       hostFingerprint: identityStatus.hostKeyFingerprint,
@@ -622,6 +781,32 @@ describe("公共隧道系统接口", () => {
       hostPublicKey: identityStatus.hostPublicKey,
       hostKeyFingerprint: identityStatus.hostKeyFingerprint,
       localTargetBaseUrl: "http://127.0.0.1:4174",
+      candidateEndpoints: [
+        {
+          endpointId: "host_reported:http://127.0.0.1:4174",
+          kind: "loopback",
+          url: "http://127.0.0.1:4174",
+          priority: 100,
+          expiresAt: null,
+          source: "host_reported"
+        },
+        {
+          endpointId: "host_reported:http://192.168.50.8:4174",
+          kind: "lan",
+          url: "http://192.168.50.8:4174",
+          priority: 200,
+          expiresAt: null,
+          source: "host_reported"
+        },
+        {
+          endpointId: "relay:https://demo.codingns.example",
+          kind: "relay",
+          url: "https://demo.codingns.example",
+          priority: 400,
+          expiresAt: null,
+          source: "host_reported"
+        }
+      ],
       phase: "connecting",
       connected: false,
       hostFingerprint: identityStatus.hostKeyFingerprint,

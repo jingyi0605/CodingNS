@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
@@ -35,6 +36,31 @@ const activeServers: Array<ReturnType<typeof createTestApp>> = [];
 const activeFixtures: EmptyFixture[] = [];
 const originalFetch = globalThis.fetch;
 
+beforeEach(() => {
+  vi.spyOn(os, "networkInterfaces").mockReturnValue({
+    lo0: [
+      {
+        address: "127.0.0.1",
+        netmask: "255.0.0.0",
+        family: "IPv4",
+        mac: "00:00:00:00:00:00",
+        internal: true,
+        cidr: "127.0.0.1/8"
+      }
+    ],
+    en0: [
+      {
+        address: "192.168.50.8",
+        netmask: "255.255.255.0",
+        family: "IPv4",
+        mac: "00:11:22:33:44:55",
+        internal: false,
+        cidr: "192.168.50.8/24"
+      }
+    ]
+  });
+});
+
 afterEach(async () => {
   vi.restoreAllMocks();
   globalThis.fetch = originalFetch;
@@ -58,6 +84,36 @@ afterEach(async () => {
 });
 
 describe("client routes", () => {
+  it("未登录时拒绝读取运行时配置", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const setupResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/public/setup",
+      payload: {
+        username: "admin",
+        password: "admin1234"
+      }
+    });
+
+    expect(setupResponse.statusCode).toBe(201);
+
+    const response = await hosted.app.inject({
+      method: "GET",
+      url: "/api/client/runtime-config?platform=desktop"
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({
+      error_code: "UNAUTHORIZED"
+    });
+  });
+
   it("返回桌面端运行时配置与发布清单", async () => {
     const fixture = createEmptyFixture();
     activeFixtures.push(fixture);
@@ -113,6 +169,31 @@ describe("client routes", () => {
 
     const tokens = await bootstrapAndLogin(hosted);
 
+    await hosted.app.inject({
+      method: "PUT",
+      url: "/api/system/relay-tunnel/config",
+      headers: {
+        authorization: `Bearer ${tokens.accessToken}`
+      },
+      payload: {
+        relayBaseUrl: "wss://relay.codingns.example",
+        controlBaseUrl: "https://control.codingns.example",
+        localTargetBaseUrl: "http://127.0.0.1:4312"
+      }
+    });
+    await hosted.app.inject({
+      method: "POST",
+      url: "/api/system/relay-tunnel/bind",
+      headers: {
+        authorization: `Bearer ${tokens.accessToken}`
+      },
+      payload: {
+        accountId: "acct_demo",
+        bindingId: "binding_demo",
+        tunnelDomain: "demo.codingns.example"
+      }
+    });
+
     const runtimeConfigResponse = await hosted.app.inject({
       method: "GET",
       url: "/api/client/runtime-config?platform=desktop",
@@ -127,7 +208,41 @@ describe("client routes", () => {
       hostBaseUrl: "http://127.0.0.1:3002",
       releaseChannel: "stable",
       autoReconnect: true,
-      autoCheckUpdate: true
+      autoCheckUpdate: true,
+      relayTunnel: {
+        provider: "codingns_relay",
+        enabled: false,
+        controlBaseUrl: "https://control.codingns.example",
+        tunnelDomain: "demo.codingns.example",
+        bindingId: "binding_demo",
+        hostFingerprint: expect.stringMatching(/^SHA256:/),
+        candidateEndpoints: [
+          {
+            endpointId: "host_reported:http://127.0.0.1:4312",
+            kind: "loopback",
+            url: "http://127.0.0.1:4312",
+            priority: 100,
+            expiresAt: null,
+            source: "host_reported"
+          },
+          {
+            endpointId: "host_reported:http://192.168.50.8:4312",
+            kind: "lan",
+            url: "http://192.168.50.8:4312",
+            priority: 200,
+            expiresAt: null,
+            source: "host_reported"
+          },
+          {
+            endpointId: "relay:https://demo.codingns.example",
+            kind: "relay",
+            url: "https://demo.codingns.example",
+            priority: 400,
+            expiresAt: null,
+            source: "host_reported"
+          }
+        ]
+      }
     });
 
     const releaseManifestResponse = await hosted.app.inject({
@@ -207,7 +322,6 @@ describe("client routes", () => {
         expect.objectContaining({
           packageName: "placeholder-server-package",
           latestVersion: "0.2.0",
-          currentVersion: "0.3.0",
           hasUpdate: false,
           checkStatus: "up_to_date"
         })
@@ -223,8 +337,8 @@ describe("client routes", () => {
       new Response(
         JSON.stringify({
           "dist-tags": {
-            latest: "0.4.0",
-            beta: "0.5.0-beta.1"
+            latest: "0.6.0",
+            beta: "0.6.0-beta.1"
           }
         }),
         {
@@ -280,7 +394,7 @@ describe("client routes", () => {
     expect(taskResponse.json()).toMatchObject({
       taskId: task.taskId,
       packageName: "placeholder-server-package",
-      targetVersion: "0.4.0",
+      targetVersion: "0.6.0",
       status: "succeeded",
       restartRequired: true
     });
@@ -298,8 +412,7 @@ describe("client routes", () => {
       packages: [
         expect.objectContaining({
           packageName: "placeholder-server-package",
-          latestVersion: "0.4.0",
-          currentVersion: "0.3.0",
+          latestVersion: "0.6.0",
           hasUpdate: true,
           restartRequired: true,
           installTask: expect.objectContaining({

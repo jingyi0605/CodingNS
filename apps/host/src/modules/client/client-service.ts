@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 
 import type { HostConfig } from "../../config/env.js";
 import { AppError } from "../../shared/errors/app-error.js";
+import type { HostCandidateEndpoint } from "../../types/domain.js";
+import type { RelayTunnelService } from "../relay-tunnel/relay-tunnel-service.js";
 import type { NpmGlobalPackageService } from "./npm-global-package-service.js";
 import type { ServiceUpdateTaskService } from "./service-update-task-service.js";
 import type { ServiceUpdateListDto, ServiceUpdateTaskDto } from "./service-update-types.js";
@@ -14,6 +16,17 @@ export interface ClientRuntimeConfigDto {
   releaseChannel: "stable" | "beta";
   autoReconnect: boolean;
   autoCheckUpdate: boolean;
+  relayTunnel: ClientRuntimeRelayTunnelDto | null;
+}
+
+export interface ClientRuntimeRelayTunnelDto {
+  provider: "codingns_relay";
+  enabled: boolean;
+  controlBaseUrl: string | null;
+  tunnelDomain: string | null;
+  bindingId: string | null;
+  hostFingerprint: string | null;
+  candidateEndpoints: HostCandidateEndpoint[];
 }
 
 export interface DesktopReleaseManifestDto {
@@ -46,22 +59,24 @@ export class ClientService {
   constructor(
     private readonly config: HostConfig,
     private readonly npmGlobalPackageService: NpmGlobalPackageService,
-    private readonly serviceUpdateTaskService: ServiceUpdateTaskService
+    private readonly serviceUpdateTaskService: ServiceUpdateTaskService,
+    private readonly relayTunnelService: RelayTunnelService
   ) {}
 
-  getRuntimeConfig(
+  async getRuntimeConfig(
     platform: "desktop" | "web",
     requestContext?: {
       readonly protocol?: string | null;
       readonly host?: string | null;
     }
-  ): ClientRuntimeConfigDto {
+  ): Promise<ClientRuntimeConfigDto> {
     return {
       platform,
       hostBaseUrl: resolveClientHostBaseUrl(this.config, platform, requestContext),
       releaseChannel: this.config.releaseChannel,
       autoReconnect: true,
-      autoCheckUpdate: platform === "desktop"
+      autoCheckUpdate: platform === "desktop",
+      relayTunnel: await this.getRelayTunnelRuntime()
     };
   }
 
@@ -122,6 +137,24 @@ export class ClientService {
 
   getServiceUpdateTask(taskId: string): ServiceUpdateTaskDto {
     return this.serviceUpdateTaskService.getTask(taskId);
+  }
+
+  private async getRelayTunnelRuntime(): Promise<ClientRuntimeRelayTunnelDto | null> {
+    const status = await this.relayTunnelService.getStatus();
+
+    if (status.provider !== "codingns_relay") {
+      return null;
+    }
+
+    return {
+      provider: status.provider,
+      enabled: status.enabled,
+      controlBaseUrl: status.controlBaseUrl,
+      tunnelDomain: status.tunnelDomain,
+      bindingId: status.bindingId,
+      hostFingerprint: status.hostFingerprint,
+      candidateEndpoints: status.candidateEndpoints
+    };
   }
 }
 

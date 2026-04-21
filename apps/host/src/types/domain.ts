@@ -1261,6 +1261,16 @@ export interface InstanceTailscaleStatus {
 }
 
 export type RelayTunnelProvider = "codingns_relay";
+export type HostCandidateEndpointKind = "relay" | "lan" | "loopback" | "tailscale" | "custom";
+
+export interface HostCandidateEndpoint {
+  endpointId: string;
+  kind: HostCandidateEndpointKind;
+  url: string;
+  priority: number;
+  expiresAt: string | null;
+  source: "host_reported" | "desktop_scan" | "user_saved";
+}
 
 export type RelayTunnelPhase =
   | "disabled"

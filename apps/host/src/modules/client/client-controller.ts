@@ -19,7 +19,7 @@ export class ClientController {
     }
 
     const platform = normalizePlatform(request.query);
-    reply.send(this.clientService.getRuntimeConfig(platform, {
+    reply.send(await this.clientService.getRuntimeConfig(platform, {
       protocol: readRequestProtocol(request),
       host: request.headers.host ?? null
     }));
