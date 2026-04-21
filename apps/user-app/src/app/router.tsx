@@ -7,11 +7,14 @@ import {
   useLocation
 } from "react-router-dom";
 
+import { useClientConfigSelector } from "../config/client-config-store";
 import { useHostRuntimeBoundaryKey } from "../config/host-runtime-store";
 import { LoginPage } from "../features/auth/pages/LoginPage";
+import { TrustedEntryLandingPage } from "../features/auth/pages/TrustedEntryLandingPage";
 import { useAuthSelector } from "../features/auth/store/auth-store";
 import { resolveWorkbenchShellMode } from "../features/workbench/components/workbench-shell-mode";
 import { usePlatform } from "../platform/platform-provider";
+import { shouldShowTrustedEntryLanding } from "../config/trusted-entry-mode";
 
 function RuntimeResetBoundary({
   runtimeKey,
@@ -34,8 +37,14 @@ function AuthenticatedRuntimeOutlet() {
 }
 
 function RequireAuth() {
+  const config = useClientConfigSelector((state) => state);
+  const platform = usePlatform();
   const session = useAuthSelector((state) => state.session);
   const location = useLocation();
+
+  if (shouldShowTrustedEntryLanding(config, platform.platform)) {
+    return <TrustedEntryLandingPage />;
+  }
 
   if (!session) {
     const returnTo = `${location.pathname}${location.search}`;
@@ -52,6 +61,17 @@ function RequireAuth() {
   }
 
   return <AuthenticatedRuntimeOutlet />;
+}
+
+function TrustedEntryAwareLoginPage() {
+  const config = useClientConfigSelector((state) => state);
+  const platform = usePlatform();
+
+  if (shouldShowTrustedEntryLanding(config, platform.platform)) {
+    return <TrustedEntryLandingPage />;
+  }
+
+  return <LoginPage />;
 }
 
 function WorkbenchIndexRedirect() {
@@ -84,7 +104,7 @@ const appRoutes = [
   },
   {
     path: "/login",
-    element: <LoginPage />
+    element: <TrustedEntryAwareLoginPage />
   },
   {
     path: "/connect/:tunnelDomain",

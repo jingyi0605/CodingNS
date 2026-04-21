@@ -53,7 +53,13 @@ export const enUS = {
     relayEntryTitle: "Connecting To Remote Host",
     relayEntryDescription:
       "Switching to this Host's trusted remote entry. You will be returned to the login page automatically.",
-    relayEntryInvalid: "The remote access entry parameters are incomplete. Open the access URL again."
+    relayEntryInvalid: "The remote access entry parameters are incomplete. Open the access URL again.",
+    trustedEntryOnlyTitle: "Open This Through Your Remote Access URL",
+    trustedEntryOnlyDescription:
+      "This trusted frontend only loads the connection UI. It is not the Host API entry itself. Open the device's remote access URL again.",
+    trustedEntryOnlyHintTitle: "How to enter",
+    trustedEntryOnlyHint:
+      "Use a remote access URL like https://xxxx.channel.codingns.com:1443. The tunnel domain will redirect you to the correct trusted entry automatically."
   },
   settings: {
     title: "Settings",

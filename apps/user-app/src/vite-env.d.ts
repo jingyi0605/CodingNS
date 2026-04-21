@@ -7,3 +7,11 @@ interface Window {
 }
 
 declare const __APP_VERSION__: string;
+
+interface ImportMetaEnv {
+  readonly VITE_TRUSTED_ENTRY_ONLY?: string;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}

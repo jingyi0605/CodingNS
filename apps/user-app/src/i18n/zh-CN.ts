@@ -50,7 +50,13 @@ export const zhCN = {
     saveServerSettings: "保存设置",
     relayEntryTitle: "正在连接远程 Host",
     relayEntryDescription: "正在切换到这台 Host 的可信连接入口，完成后会自动回到登录页。",
-    relayEntryInvalid: "当前远程访问入口参数不完整，请重新打开访问地址。"
+    relayEntryInvalid: "当前远程访问入口参数不完整，请重新打开访问地址。",
+    trustedEntryOnlyTitle: "请通过远程访问地址进入",
+    trustedEntryOnlyDescription:
+      "这个可信前端站点只负责加载连接页面，不直接承载 Host API。请重新打开设备的远程访问地址。",
+    trustedEntryOnlyHintTitle: "如何进入",
+    trustedEntryOnlyHint:
+      "请使用类似 https://xxxx.channel.codingns.com:1443 的远程访问地址进入；四级域名会自动把你带到正确的连接入口。"
   },
   settings: {
     title: "设置",
