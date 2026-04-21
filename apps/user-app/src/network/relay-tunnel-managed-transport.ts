@@ -7,6 +7,7 @@ import type {
 import { RelayTunnelClientTransport } from "./relay-tunnel-client-transport";
 import { connectRelayTunnelClientSessionViaEdge } from "./relay-tunnel-edge-client";
 import type { RelayTunnelPacketSession } from "./relay-tunnel-client-session";
+import { recordRelaySessionWireBytes } from "./relay-session-traffic-store";
 
 interface RelayTunnelClientTransportLike {
   fetch(request: HostTransportFetchRequest): Promise<Response>;
@@ -37,6 +38,7 @@ export class ManagedRelayTunnelHostTransport implements HostTransport {
     private readonly options: {
       controlBaseUrl: string;
       tunnelDomain: string;
+      hostId: string;
     },
     private readonly dependencies: RelayTunnelManagedTransportDependencies = {}
   ) {}
@@ -92,7 +94,10 @@ export class ManagedRelayTunnelHostTransport implements HostTransport {
     try {
       const connected = await connectSession({
         controlBaseUrl: this.options.controlBaseUrl,
-        tunnelDomain: this.options.tunnelDomain
+        tunnelDomain: this.options.tunnelDomain,
+        onWireBytes: (direction, bytes) => {
+          recordRelaySessionWireBytes(this.options.hostId, direction, bytes);
+        }
       });
       const relayTransport = createTransport(connected.clientSession);
 

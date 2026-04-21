@@ -140,6 +140,7 @@ export async function connectRelayTunnelClientSessionViaEdge(
   input: {
     controlBaseUrl: string;
     tunnelDomain: string;
+    onWireBytes?: (direction: "upstream" | "downstream", bytes: number) => void;
   },
   dependencies: RelayTunnelEdgeClientDependencies = {}
 ): Promise<{
@@ -151,7 +152,8 @@ export async function connectRelayTunnelClientSessionViaEdge(
   const { binding, reservation, channel } = await connectRelayTunnelRawChannel(input, dependencies);
   const clientSession = new RelayTunnelClientSession(channel, {
     expectedHostPublicKey: binding.hostPublicKey,
-    expectedHostFingerprint: binding.hostFingerprint
+    expectedHostFingerprint: binding.hostFingerprint,
+    onWireBytes: input.onWireBytes
   });
   await clientSession.connect();
 

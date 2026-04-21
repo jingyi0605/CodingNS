@@ -23,10 +23,32 @@ import {
 import { authStore, useAuthSelector } from "../../auth/store/auth-store";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
+import {
+  resolveActiveConnectionRouteLabelKey,
+  useActiveConnectionRouteSummary
+} from "../../../config/active-connection-route";
+import { ButlerAnchoredPopover } from "../../butler/components/ButlerAnchoredPopover";
+import { httpClient } from "../../../network/http-client";
+import { useRelaySessionTrafficSummary } from "../../../network/relay-session-traffic-store";
 
 interface WorkbenchHostSwitcherProps {
   readonly collapsed?: boolean;
 }
+
+type RelayLatencyState =
+  | {
+      status: "idle" | "probing" | "error";
+      latencyMs: null;
+    }
+  | {
+      status: "ready";
+      latencyMs: number;
+    };
+
+const INITIAL_RELAY_LATENCY_STATE: RelayLatencyState = {
+  status: "idle",
+  latencyMs: null
+};
 
 export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitcherProps) {
   const [open, setOpen] = useState(false);
@@ -38,14 +60,20 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
   const [pendingHostId, setPendingHostId] = useState<string | null>(null);
   const [pendingDeleteHostId, setPendingDeleteHostId] = useState<string | null>(null);
   const [confirmDeleteHostId, setConfirmDeleteHostId] = useState<string | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [relayLatency, setRelayLatency] = useState<RelayLatencyState>(INITIAL_RELAY_LATENCY_STATE);
   const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null);
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const detailButtonRef = useRef<HTMLButtonElement | null>(null);
+  const detailPopoverRef = useRef<HTMLDivElement | null>(null);
   const runtimeConfig = useClientConfigSelector((state) => state);
   const session = useAuthSelector((state) => state.session);
   const { showToast } = useToast();
   const activeHost = getActiveHost(runtimeConfig);
   const activeHostId = getEffectiveActiveHostId(runtimeConfig);
+  const activeRoute = useActiveConnectionRouteSummary();
+  const relaySessionTraffic = useRelaySessionTrafficSummary(activeHostId);
   const orderedHosts = useMemo(
     () => sortHosts(runtimeConfig.hosts, activeHostId),
     [activeHostId, runtimeConfig.hosts]
@@ -100,6 +128,8 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
   useEffect(() => {
     if (!open) {
       setMenuStyle(null);
+      setDetailOpen(false);
+      setRelayLatency(INITIAL_RELAY_LATENCY_STATE);
       return;
     }
 
@@ -113,9 +143,11 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
       if (
         !anchorRef.current?.contains(event.target)
         && !menuRef.current?.contains(event.target)
+        && !detailPopoverRef.current?.contains(event.target)
       ) {
         setOpen(false);
         setFormOpen(false);
+        setDetailOpen(false);
         setConfirmDeleteHostId(null);
       }
     }
@@ -124,6 +156,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
       if (event.key === "Escape") {
         setOpen(false);
         setFormOpen(false);
+        setDetailOpen(false);
         setConfirmDeleteHostId(null);
       }
     }
@@ -141,6 +174,45 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
     };
   }, [open, updateMenuStyle]);
 
+  useEffect(() => {
+    if (!detailOpen || !open || activeRoute?.kind !== "relay") {
+      setRelayLatency(INITIAL_RELAY_LATENCY_STATE);
+      return;
+    }
+
+    let cancelled = false;
+    const startedAt = performance.now();
+
+    setRelayLatency({
+      status: "probing",
+      latencyMs: null
+    });
+
+    void httpClient.request("/api/client/runtime-config").then(() => {
+      if (cancelled) {
+        return;
+      }
+
+      setRelayLatency({
+        status: "ready",
+        latencyMs: performance.now() - startedAt
+      });
+    }).catch(() => {
+      if (cancelled) {
+        return;
+      }
+
+      setRelayLatency({
+        status: "error",
+        latencyMs: null
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRoute?.kind, detailOpen, open]);
+
   async function handleSwitchHost(host: RuntimeHostProfile): Promise<void> {
     if (pendingHostId || pendingDeleteHostId || host.id === activeHostId) {
       setOpen(false);
@@ -153,6 +225,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
       await hostSwitchCoordinator.switchHost(host.id);
       setOpen(false);
       setFormOpen(false);
+      setDetailOpen(false);
       setConfirmDeleteHostId(null);
     } catch (error) {
       showToast({
@@ -288,6 +361,12 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
   const buttonTitle = session?.user.username
     ? `${activeHost.baseUrl} · ${session.user.username}`
     : activeHost.baseUrl;
+  const detailStatusLabel = activeRoute?.kind === "relay"
+    ? t("shell.hostSwitcherDetailStatusRelay")
+    : t("shell.hostSwitcherDetailStatusDirect");
+  const detailRouteLabel = activeRoute
+    ? t(resolveActiveConnectionRouteLabelKey(activeRoute.kind))
+    : t("common.unknown");
 
   return (
     <div
@@ -368,7 +447,23 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                           )}
                         </span>
                       </button>
-                      {!isActive ? (
+                      {isActive ? (
+                        <button
+                          ref={detailButtonRef}
+                          type="button"
+                          className="workbench-host-switcher-item-action"
+                          aria-label={t("shell.hostSwitcherDetailAriaLabel", { name: host.name })}
+                          aria-expanded={detailOpen}
+                          aria-haspopup="dialog"
+                          data-tone="detail"
+                          onClick={() => {
+                            setDetailOpen((current) => !current);
+                            setConfirmDeleteHostId(null);
+                          }}
+                        >
+                          {t("shell.hostSwitcherDetailAction")}
+                        </button>
+                      ) : (
                         <button
                           type="button"
                           className="workbench-host-switcher-item-action"
@@ -390,7 +485,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                               ? t("shell.hostDeleteConfirmAction")
                               : <TrashIcon />}
                         </button>
-                      ) : null}
+                      )}
                     </div>
                   );
                 })}
@@ -445,6 +540,23 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                               )}
                             </span>
                           </button>
+                          {isActive ? (
+                            <button
+                              ref={detailButtonRef}
+                              type="button"
+                              className="workbench-host-switcher-item-action"
+                              aria-label={t("shell.hostSwitcherDetailAriaLabel", { name: host.name })}
+                              aria-expanded={detailOpen}
+                              aria-haspopup="dialog"
+                              data-tone="detail"
+                              onClick={() => {
+                                setDetailOpen((current) => !current);
+                                setConfirmDeleteHostId(null);
+                              }}
+                            >
+                              {t("shell.hostSwitcherDetailAction")}
+                            </button>
+                          ) : null}
                         </div>
                       );
                     })}
@@ -532,6 +644,61 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                   {t("shell.hostSwitcherAddAction")}
                 </button>
               )}
+              <ButlerAnchoredPopover
+                open={detailOpen && activeRoute !== null && detailButtonRef.current !== null}
+                className="workbench-host-switcher-detail-popover"
+                anchorRef={detailButtonRef}
+                popoverRef={detailPopoverRef}
+                labelledBy="workbench-host-switcher-detail-title"
+              >
+                <div className="workbench-host-switcher-detail-header">
+                  <strong id="workbench-host-switcher-detail-title">
+                    {t("shell.hostSwitcherDetailTitle")}
+                  </strong>
+                </div>
+                <div className="workbench-host-switcher-detail-grid">
+                  <div className="workbench-host-switcher-detail-row">
+                    <span className="workbench-host-switcher-detail-label">
+                      {t("shell.hostSwitcherDetailStatusLabel")}
+                    </span>
+                    <span className="workbench-host-switcher-detail-value">{detailStatusLabel}</span>
+                  </div>
+                  <div className="workbench-host-switcher-detail-row">
+                    <span className="workbench-host-switcher-detail-label">
+                      {t("shell.hostSwitcherDetailRouteLabel")}
+                    </span>
+                    <span className="workbench-host-switcher-detail-value">{detailRouteLabel}</span>
+                  </div>
+                  <div className="workbench-host-switcher-detail-row">
+                    <span className="workbench-host-switcher-detail-label">
+                      {t("shell.hostSwitcherDetailAddressLabel")}
+                    </span>
+                    <span className="workbench-host-switcher-detail-value" data-multiline="true">
+                      {activeRoute?.url ?? activeHost.baseUrl}
+                    </span>
+                  </div>
+                  {activeRoute?.kind === "relay" ? (
+                    <>
+                      <div className="workbench-host-switcher-detail-row">
+                        <span className="workbench-host-switcher-detail-label">
+                          {t("shell.hostSwitcherDetailLatencyLabel")}
+                        </span>
+                        <span className="workbench-host-switcher-detail-value">
+                          {formatRelayLatency(relayLatency)}
+                        </span>
+                      </div>
+                      <div className="workbench-host-switcher-detail-row">
+                        <span className="workbench-host-switcher-detail-label">
+                          {t("shell.hostSwitcherDetailTrafficLabel")}
+                        </span>
+                        <span className="workbench-host-switcher-detail-value">
+                          {formatTrafficBytes(relaySessionTraffic.totalBytes)}
+                        </span>
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              </ButlerAnchoredPopover>
             </div>,
             document.body
           )
@@ -614,6 +781,38 @@ function resolveHostSwitchErrorMessage(error: unknown, hostName: string): string
   }
 
   return t("shell.hostSwitchMissing");
+}
+
+function formatRelayLatency(state: RelayLatencyState): string {
+  if (state.status === "probing") {
+    return t("shell.hostSwitcherDetailLatencyLoading");
+  }
+
+  if (state.status === "error") {
+    return t("shell.hostSwitcherDetailUnavailable");
+  }
+
+  if (state.status === "ready") {
+    return `${Math.max(1, Math.round(state.latencyMs))} ms`;
+  }
+
+  return t("shell.hostSwitcherDetailUnavailable");
+}
+
+function formatTrafficBytes(value: number): string {
+  if (!Number.isFinite(value) || value < 1024) {
+    return `${Math.max(0, Math.round(value))} B`;
+  }
+
+  if (value < 1024 ** 2) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+
+  if (value < 1024 ** 3) {
+    return `${(value / 1024 ** 2).toFixed(1)} MB`;
+  }
+
+  return `${(value / 1024 ** 3).toFixed(2)} GB`;
 }
 
 function ServerIcon() {

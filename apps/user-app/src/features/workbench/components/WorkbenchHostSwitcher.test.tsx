@@ -1,15 +1,21 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clientConfigStore } from "../../../config/client-config-store";
 import { authStore } from "../../auth/store/auth-store";
+import { httpClient } from "../../../network/http-client";
+import {
+  recordRelaySessionWireBytes,
+  resetRelaySessionTrafficStoreForTesting
+} from "../../../network/relay-session-traffic-store";
 import { readRememberedLoginCredentials } from "../../auth/store/remembered-login";
 import { ToastProvider } from "../../../shared/toast";
 import { WorkbenchHostSwitcher } from "./WorkbenchHostSwitcher";
 
 const switchHostMock = vi.fn();
 const refreshLocalHostsMock = vi.fn();
+const useActiveConnectionRouteSummaryMock = vi.fn();
 
 vi.mock("../../../config/host-switch-coordinator", async () => {
   const actual = await vi.importActual<typeof import("../../../config/host-switch-coordinator")>(
@@ -37,11 +43,24 @@ vi.mock("../../../config/local-host-discovery-store", async () => {
   };
 });
 
+vi.mock("../../../config/active-connection-route", async () => {
+  const actual = await vi.importActual<typeof import("../../../config/active-connection-route")>(
+    "../../../config/active-connection-route"
+  );
+  return {
+    ...actual,
+    useActiveConnectionRouteSummary: () => useActiveConnectionRouteSummaryMock()
+  };
+});
+
 describe("WorkbenchHostSwitcher", () => {
   beforeEach(() => {
     switchHostMock.mockReset();
     refreshLocalHostsMock.mockReset();
+    useActiveConnectionRouteSummaryMock.mockReset();
+    useActiveConnectionRouteSummaryMock.mockReturnValue(null);
     refreshLocalHostsMock.mockResolvedValue(undefined);
+    resetRelaySessionTrafficStoreForTesting();
     window.localStorage.clear();
     vi.restoreAllMocks();
     clientConfigStore.hydrate({
@@ -240,6 +259,93 @@ describe("WorkbenchHostSwitcher", () => {
 
     await waitFor(() => {
       expect(switchHostMock).toHaveBeenCalledWith("local-discovered:http://127.0.0.1:4100:/tmp/demo");
+    });
+  });
+
+  it("当前 relay Host 的详情浮层会显示连接状态、延时和本次会话流量", async () => {
+    const user = userEvent.setup();
+
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: "host-relay",
+      hosts: [
+        {
+          id: "host-relay",
+          name: "远程 Host",
+          baseUrl: "https://demo.channel.codingns.com",
+          kind: "remote",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-14T00:00:00.000Z",
+          lastUserId: "user-1",
+          lastUsername: "admin",
+          relayTunnel: {
+            provider: "codingns_relay",
+            enabled: true,
+            controlBaseUrl: "https://control.codingns.com",
+            tunnelDomain: "demo.channel.codingns.com",
+            bindingId: "binding-1",
+            hostFingerprint: "host-fingerprint",
+            candidateEndpoints: [
+              {
+                endpointId: "relay:https://demo.channel.codingns.com",
+                kind: "relay",
+                url: "https://demo.channel.codingns.com",
+                priority: 100,
+                expiresAt: null,
+                source: "host_reported"
+              }
+            ]
+          }
+        }
+      ],
+      discoveredHosts: [],
+      activeDiscoveredHostId: null,
+      localHostDiscovery: {
+        status: "idle",
+        lastScannedAt: null,
+        cooldownUntil: null,
+        errorCode: null,
+        errorDetail: null
+      },
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    recordRelaySessionWireBytes("host-relay", "upstream", 1536);
+    recordRelaySessionWireBytes("host-relay", "downstream", 512);
+    useActiveConnectionRouteSummaryMock.mockReturnValue({
+      kind: "relay",
+      url: "https://demo.channel.codingns.com",
+      endpointId: "relay:https://demo.channel.codingns.com",
+      autoDirect: false,
+      probeInProgress: false
+    });
+    vi.spyOn(httpClient, "request").mockResolvedValue({
+      hostBaseUrl: "https://demo.channel.codingns.com"
+    } as never);
+
+    render(
+      <ToastProvider>
+        <WorkbenchHostSwitcher />
+      </ToastProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "切换 HOST" }));
+    await user.click(screen.getByRole("button", { name: "查看 HOST 远程 Host 连接详情" }));
+
+    const detailPopover = await screen.findByRole("dialog", { name: "连接详情" });
+
+    expect(within(detailPopover).getByText("中继")).toBeInTheDocument();
+    expect(within(detailPopover).getByText("公共隧道")).toBeInTheDocument();
+    expect(within(detailPopover).getByText("https://demo.channel.codingns.com")).toBeInTheDocument();
+    expect(within(detailPopover).getByText("2.0 KB")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(httpClient.request).toHaveBeenCalledWith("/api/client/runtime-config");
+      expect(within(detailPopover).getByText(/\d+ ms$/)).toBeInTheDocument();
     });
   });
 });

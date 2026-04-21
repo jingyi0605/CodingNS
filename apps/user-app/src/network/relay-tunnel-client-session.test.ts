@@ -45,9 +45,13 @@ describe("RelayTunnelClientSession", () => {
   it("可以在原始链路上完成握手，并收发加密业务包", async () => {
     const hostIdentity = generateRelayTunnelIdentity("2026-04-19T00:00:00.000Z");
     const channel = new MockRawChannel();
+    const wireSamples: Array<{ direction: "upstream" | "downstream"; bytes: number }> = [];
     const clientSession = new RelayTunnelClientSession(channel, {
       expectedHostPublicKey: hostIdentity.publicKeyPem,
-      expectedHostFingerprint: hostIdentity.keyFingerprint
+      expectedHostFingerprint: hostIdentity.keyFingerprint,
+      onWireBytes: (direction, bytes) => {
+        wireSamples.push({ direction, bytes });
+      }
     });
     const connectPromise = clientSession.connect();
     await vi.waitFor(() => {
@@ -137,6 +141,34 @@ describe("RelayTunnelClientSession", () => {
           "content-type": "application/json"
         },
         bodyBase64Url: toBase64Url(JSON.stringify({ ok: true }))
+      }
+    ]);
+    expect(wireSamples).toEqual([
+      {
+        direction: "upstream",
+        bytes: new TextEncoder().encode(channel.sentPayloads[0]).byteLength
+      },
+      {
+        direction: "downstream",
+        bytes: new TextEncoder().encode(
+          JSON.stringify({
+            type: "server_hello",
+            hello: serverHello
+          })
+        ).byteLength
+      },
+      {
+        direction: "upstream",
+        bytes: new TextEncoder().encode(channel.sentPayloads[1]).byteLength
+      },
+      {
+        direction: "downstream",
+        bytes: new TextEncoder().encode(
+          JSON.stringify({
+            type: "encrypted_frame",
+            frame: hostFrame
+          })
+        ).byteLength
       }
     ]);
   });

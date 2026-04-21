@@ -81,6 +81,7 @@ describe("ManagedRelayTunnelHostTransport", () => {
     })) as unknown as ManagedTransportDependencies["connectSession"];
     const transport = new ManagedRelayTunnelHostTransport(
       {
+        hostId: "host-1",
         controlBaseUrl: "https://control.codingns.example",
         tunnelDomain: "demo.codingns.example"
       },
@@ -133,6 +134,7 @@ describe("ManagedRelayTunnelHostTransport", () => {
   it("连接失败时会把错误映射成 error 和 close 事件", async () => {
     const transport = new ManagedRelayTunnelHostTransport(
       {
+        hostId: "host-1",
         controlBaseUrl: "https://control.codingns.example",
         tunnelDomain: "demo.codingns.example"
       },
@@ -176,6 +178,7 @@ describe("ManagedRelayTunnelHostTransport", () => {
       .mockReturnValue(fallbackSocket);
     const transport = new ManagedRelayTunnelHostTransport(
       {
+        hostId: "host-1",
         controlBaseUrl: "https://control.codingns.example",
         tunnelDomain: "demo.codingns.example"
       },
@@ -230,6 +233,7 @@ describe("ManagedRelayTunnelHostTransport", () => {
     const clientSession = new MockPacketSession();
     const transport = new ManagedRelayTunnelHostTransport(
       {
+        hostId: "host-1",
         controlBaseUrl: "https://control.codingns.example",
         tunnelDomain: "demo.codingns.example"
       },

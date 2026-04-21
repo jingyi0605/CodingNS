@@ -2554,6 +2554,18 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
   background: color-mix(in srgb, #ef4444 10%, transparent);
 }
 
+.workbench-host-switcher-item-action[data-tone="detail"] {
+  width: auto;
+  min-width: 60px;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.workbench-host-switcher-item-action[data-tone="detail"]:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 .workbench-host-switcher-form {
   display: flex;
   flex-direction: column;
@@ -2593,6 +2605,56 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 
 .workbench-host-switcher-state-row[data-tone="error"] {
   color: #ef4444;
+}
+
+.workbench-host-switcher-detail-popover {
+  z-index: 2501;
+  overflow: hidden;
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  background: var(--panel-bg-strong);
+  box-shadow: var(--panel-shadow);
+  backdrop-filter: blur(18px);
+}
+
+.workbench-host-switcher-detail-header {
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--panel-separator);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.workbench-host-switcher-detail-grid {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 14px 12px;
+}
+
+.workbench-host-switcher-detail-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 0;
+}
+
+.workbench-host-switcher-detail-row + .workbench-host-switcher-detail-row {
+  border-top: 1px solid color-mix(in srgb, var(--panel-separator) 84%, transparent);
+}
+
+.workbench-host-switcher-detail-label {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.workbench-host-switcher-detail-value {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.workbench-host-switcher-detail-value[data-multiline="true"] {
+  line-height: 1.45;
 }
 
 .workbench-notification-badge {
@@ -7045,6 +7107,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .file-web-context-menu,
 body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .terminal-tab-menu,
 body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-host-switcher-menu,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-host-switcher-detail-popover,
 body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .composer-slash-menu,
 body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .create-session-worktree-combobox-popover,
 body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .conversation-branch-preview-popover {
@@ -7058,6 +7121,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-host-switcher-menu-header,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-host-switcher-detail-header,
 body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .git-menu-section + .git-menu-section {
   border-color: var(--mac-overlay-divider);
 }

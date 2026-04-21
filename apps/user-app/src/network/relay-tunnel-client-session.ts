@@ -56,6 +56,7 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
   private readonly listeners = new Set<(packet: RelayTunnelGatewayPacket) => void>();
   private readonly unsubscribeFromChannel: () => void;
   private connectPromise: Promise<void> | null = null;
+  private readonly textEncoder = new TextEncoder();
   private handshakeState:
     | {
         status: "idle";
@@ -82,6 +83,7 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
     private readonly options: {
       expectedHostPublicKey: string;
       expectedHostFingerprint: string;
+      onWireBytes?: (direction: "upstream" | "downstream", bytes: number) => void;
     }
   ) {
     this.unsubscribeFromChannel = channel.subscribe((payload) => {
@@ -114,7 +116,7 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
         resolve,
         reject
       };
-      void this.channel.send(
+      void this.sendControlPayload(
         JSON.stringify({
           type: "client_hello",
           hello: clientHello
@@ -129,7 +131,7 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
     const state = this.requireReadySession();
 
     void encryptRelayTunnelFrame(state.session, serializeRelayTunnelPacket(packet)).then((frame) => {
-      return this.channel.send(
+      return this.sendControlPayload(
         JSON.stringify({
           type: "encrypted_frame",
           frame
@@ -153,6 +155,7 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
   }
 
   private async handleIncomingPayload(payload: string): Promise<void> {
+    this.recordWireBytes("downstream", payload);
     const envelope = JSON.parse(payload) as RelayTunnelControlEnvelope;
 
     if (envelope.type === "server_hello") {
@@ -234,6 +237,15 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
       error
     };
     this.connectPromise = null;
+  }
+
+  private sendControlPayload(payload: string): void | Promise<void> {
+    this.recordWireBytes("upstream", payload);
+    return this.channel.send(payload);
+  }
+
+  private recordWireBytes(direction: "upstream" | "downstream", payload: string): void {
+    this.options.onWireBytes?.(direction, this.textEncoder.encode(payload).byteLength);
   }
 }
 
