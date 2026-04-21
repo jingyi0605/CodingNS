@@ -257,6 +257,9 @@ export const enUS = {
     relayTunnelWizardTitle: "Remote Access Wizard",
     relayTunnelWizardDescription:
       "Finish account login, host label confirmation, and tunnel startup in three steps. After that, the panel stays focused on the actual remote access info.",
+    relayTunnelStatusErrorTitle: "Remote access status is unavailable right now",
+    relayTunnelStatusNetworkError:
+      "The client cannot reach this Host right now ({address}), so the remote access status may be outdated. Check the server address, port, and network connection first.",
     relayTunnelStepPending: "Pending",
     relayTunnelStepCurrent: "In Progress",
     relayTunnelStepDone: "Done",
@@ -273,6 +276,9 @@ export const enUS = {
       "After the first two steps are ready, bring the current Host online through the tunnel service.",
     relayTunnelStepStartReady: "The host label is confirmed. You can start the tunnel now.",
     relayTunnelStartAction: "Start Tunnel",
+    relayTunnelLoginErrorTitle: "Failed to log in to the tunnel account",
+    relayTunnelLoginNetworkError:
+      "The login request never reached this Host because it is unavailable right now ({address}). Check the server address and network connection, then try again.",
     relayTunnelReadyTitle: "Remote Access Is Ready",
     relayTunnelReadyDescription:
       "The setup is complete. This view now keeps only the access URL, traffic info, and maintenance actions.",
@@ -288,6 +294,9 @@ export const enUS = {
     relayTunnelConfigTitle: "Tunnel Site Configuration",
     relayTunnelConfigDescription:
       "Configure the public tunnel relay endpoint and control site here. Login, binding, and traffic operations below all use these addresses.",
+    relayTunnelConfigErrorTitle: "Failed to save the tunnel site address",
+    relayTunnelConfigNetworkError:
+      "The new tunnel site address has not been saved to this Host because it is unavailable right now ({address}). Check the server address and network connection first.",
     relayTunnelRelayBaseUrl: "Relay Endpoint URL",
     relayTunnelControlBaseUrl: "Control Site URL",
     relayTunnelSaveConfig: "Save Configuration",

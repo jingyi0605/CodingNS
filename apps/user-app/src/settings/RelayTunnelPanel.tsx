@@ -9,7 +9,11 @@ import {
   ModalTag
 } from "../components/ModalAtoms";
 import { clientConfigStore } from "../config/client-config-store";
-import { getActiveHost, type HostRelayTunnelProfile } from "../config/client-config-types";
+import {
+  getActiveHost,
+  getActiveHostBaseUrl,
+  type HostRelayTunnelProfile
+} from "../config/client-config-types";
 import {
   canConfigureRelayControlBaseUrl,
   getFixedRelayControlBaseUrl,
@@ -70,6 +74,9 @@ export function RelayTunnelPanel() {
   });
   const [loading, setLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [loginError, setLoginError] = useState<string | null>(null);
   const [panelError, setPanelError] = useState<string | null>(null);
   const activeRef = useRef(true);
   const canConfigureControlBaseUrl = canConfigureRelayControlBaseUrl();
@@ -125,6 +132,7 @@ export function RelayTunnelPanel() {
   const trafficRemainingValue = wallet
     ? formatTrafficBytes(wallet.remainingBytes)
     : formatTrafficBytes(status?.trafficRemainingBytes);
+  const activeHostBaseUrl = getActiveHostBaseUrl(clientConfigStore.getState());
 
   useEffect(() => {
     activeRef.current = true;
@@ -191,9 +199,10 @@ export function RelayTunnelPanel() {
       }
 
       applyLoadedStatus(nextStatus);
+      setStatusError(null);
     } catch (error) {
       if (activeRef.current) {
-        setPanelError(resolvePanelError(error));
+        setStatusError(resolveRelayTunnelScopedError(error, "status", activeHostBaseUrl));
       }
     } finally {
       if (activeRef.current && !silent) {
@@ -246,10 +255,11 @@ export function RelayTunnelPanel() {
         email: accountEmailDraft.trim(),
         password: accountPasswordDraft
       });
+      setLoginError(null);
       applyLoadedStatus(nextStatus);
       await loadBillingData();
     } catch (error) {
-      setPanelError(resolvePanelError(error));
+      setLoginError(resolveRelayTunnelScopedError(error, "login", activeHostBaseUrl));
     } finally {
       setPendingAction(null);
     }
@@ -485,20 +495,21 @@ export function RelayTunnelPanel() {
     }
 
     if (!normalizedControlBaseUrlDraft) {
-      setPanelError(t("settings.serverInvalid"));
+      setConfigError(t("settings.serverInvalid"));
       return;
     }
 
     setPendingAction("save-config");
-    setPanelError(null);
+    setConfigError(null);
 
     try {
       const nextStatus = await updateRelayTunnelConfig({
         controlBaseUrl: normalizedControlBaseUrlDraft
       });
+      setConfigError(null);
       applyLoadedStatus(nextStatus);
     } catch (error) {
-      setPanelError(resolvePanelError(error));
+      setConfigError(resolveRelayTunnelScopedError(error, "config", activeHostBaseUrl));
     } finally {
       setPendingAction(null);
     }
@@ -521,10 +532,19 @@ export function RelayTunnelPanel() {
                 className="settings-text-input"
                 type="url"
                 value={controlBaseUrlDraft}
-                onChange={(event) => setControlBaseUrlDraft(event.target.value)}
+                onChange={(event) => {
+                  setControlBaseUrlDraft(event.target.value);
+                  setConfigError(null);
+                }}
                 placeholder={getFixedRelayControlBaseUrl()}
               />
             </ModalField>
+            {configError ? (
+              <RelayTunnelFeedbackBanner
+                title={t("settings.relayTunnelConfigErrorTitle")}
+                message={configError}
+              />
+            ) : null}
           </div>
 
           <ModalActions align="start" className="settings-relay-tunnel-actions">
@@ -564,6 +584,22 @@ export function RelayTunnelPanel() {
             </button>
           )}
         >
+          {statusError ? (
+            <RelayTunnelFeedbackBanner
+              title={t("settings.relayTunnelStatusErrorTitle")}
+              message={statusError}
+              action={(
+                <button
+                  className="secondary-button"
+                  disabled={loading || pendingAction !== null}
+                  type="button"
+                  onClick={() => void loadStatus(false)}
+                >
+                  {t("common.retry")}
+                </button>
+              )}
+            />
+          ) : null}
           <div className="settings-relay-tunnel-step-list">
             <section
               className="settings-relay-tunnel-step"
@@ -622,7 +658,10 @@ export function RelayTunnelPanel() {
                           className="settings-text-input"
                           type="email"
                           value={accountEmailDraft}
-                          onChange={(event) => setAccountEmailDraft(event.target.value)}
+                          onChange={(event) => {
+                            setAccountEmailDraft(event.target.value);
+                            setLoginError(null);
+                          }}
                           placeholder={t("settings.relayTunnelAccountEmailPlaceholder")}
                         />
                       </ModalField>
@@ -633,10 +672,19 @@ export function RelayTunnelPanel() {
                           className="settings-text-input"
                           type="password"
                           value={accountPasswordDraft}
-                          onChange={(event) => setAccountPasswordDraft(event.target.value)}
+                          onChange={(event) => {
+                            setAccountPasswordDraft(event.target.value);
+                            setLoginError(null);
+                          }}
                           placeholder={t("settings.relayTunnelAccountPasswordPlaceholder")}
                         />
                       </ModalField>
+                      {loginError ? (
+                        <RelayTunnelFeedbackBanner
+                          title={t("settings.relayTunnelLoginErrorTitle")}
+                          message={loginError}
+                        />
+                      ) : null}
                     </div>
                     <ModalActions align="start">
                       <button
@@ -951,6 +999,26 @@ function SummaryLine({
   );
 }
 
+function RelayTunnelFeedbackBanner({
+  title,
+  message,
+  action
+}: {
+  title: string;
+  message: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="settings-relay-tunnel-feedback-banner" role="alert">
+      <div className="settings-relay-tunnel-feedback-copy">
+        <strong>{title}</strong>
+        <span>{message}</span>
+      </div>
+      {action ? <div className="settings-relay-tunnel-feedback-action">{action}</div> : null}
+    </div>
+  );
+}
+
 function resolveRelayTunnelStepState(done: boolean, unlocked: boolean): "done" | "current" | "pending" {
   if (done) {
     return "done";
@@ -994,6 +1062,28 @@ function resolvePanelError(error: unknown): string {
   }
 
   return t("settings.relayTunnelLoadFailed");
+}
+
+function resolveRelayTunnelScopedError(
+  error: unknown,
+  scope: "status" | "config" | "login",
+  hostBaseUrl: string | null
+): string {
+  if (error instanceof ApiError && error.errorCode === "NETWORK_ERROR") {
+    const address = hostBaseUrl?.trim() || t("common.unknown");
+
+    if (scope === "login") {
+      return t("settings.relayTunnelLoginNetworkError", { address });
+    }
+
+    if (scope === "config") {
+      return t("settings.relayTunnelConfigNetworkError", { address });
+    }
+
+    return t("settings.relayTunnelStatusNetworkError", { address });
+  }
+
+  return resolvePanelError(error);
 }
 
 function formatTrafficBytes(value: string | null | undefined): string {

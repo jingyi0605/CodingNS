@@ -6,6 +6,7 @@ import { clientConfigStore } from "../config/client-config-store";
 import type { PlatformAdapter } from "../platform/platform-adapter";
 import type { RelayTunnelStatusView } from "../platform/server/relay-tunnel-manager";
 import { I18nProvider } from "../shared/i18n";
+import { ApiError } from "../shared/network/api-error";
 import { ThemeProvider } from "../shared/theme";
 import { ToastProvider } from "../shared/toast";
 import { RelayTunnelPanel } from "./RelayTunnelPanel";
@@ -202,6 +203,86 @@ describe("RelayTunnelPanel", () => {
     });
 
     expect(await screen.findByText("当前已登录：demo@example.com")).toBeInTheDocument();
+  });
+
+  it("状态读取失败时会在向导顶部显示可重试错误提示", async () => {
+    apiMocks.fetchRelayTunnelStatus
+      .mockRejectedValueOnce(
+        new ApiError(0, {
+          detail: "请求 http://127.0.0.1:3002/api/system/relay-tunnel/status 失败：Failed to fetch",
+          error_code: "NETWORK_ERROR"
+        })
+      )
+      .mockResolvedValueOnce(createStatus());
+
+    renderPanel();
+
+    expect(await screen.findByText("暂时无法读取远程访问状态")).toBeInTheDocument();
+    expect(
+      screen.getByText("当前连不上这台 Host（http://127.0.0.1:3002），远程访问状态可能不是最新的。请先确认服务器地址、端口和网络连接。")
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "重新尝试" }));
+
+    await waitFor(() => {
+      expect(apiMocks.fetchRelayTunnelStatus).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("暂时无法读取远程访问状态")).not.toBeInTheDocument();
+    });
+  });
+
+  it("登录失败时会在登录步骤内保留明确错误，并且不清空已输入内容", async () => {
+    apiMocks.fetchRelayTunnelStatus.mockResolvedValue(createStatus());
+    apiMocks.loginRelayTunnelControl.mockRejectedValue(
+      new ApiError(0, {
+        detail: "请求 http://127.0.0.1:3002/api/system/relay-tunnel/control/login 失败：Failed to fetch",
+        error_code: "NETWORK_ERROR"
+      })
+    );
+
+    renderPanel();
+
+    const emailInput = await screen.findByRole("textbox", { name: "邮箱" });
+    const passwordInput = screen.getByLabelText("密码");
+    await userEvent.type(emailInput, "demo@example.com");
+    await userEvent.type(passwordInput, "password123");
+    await userEvent.click(screen.getByRole("button", { name: "登录" }));
+
+    expect(await screen.findByText("登录账号失败")).toBeInTheDocument();
+    expect(
+      screen.getByText("登录请求没有发出去，因为当前连不上这台 Host（http://127.0.0.1:3002）。请先确认服务器地址和网络连接，再重新尝试。")
+    ).toBeInTheDocument();
+    expect(emailInput).toHaveValue("demo@example.com");
+    expect(passwordInput).toHaveValue("password123");
+  });
+
+  it("控制站拒绝访问时会直接显示带地址的后端错误", async () => {
+    apiMocks.fetchRelayTunnelStatus.mockResolvedValue(
+      createStatus({
+        controlBaseUrl: "https://channel.jacksonz.cn:14441"
+      })
+    );
+    apiMocks.loginRelayTunnelControl.mockRejectedValue(
+      new ApiError(403, {
+        detail:
+          "控制站登录失败：控制站 https://channel.jacksonz.cn:14441 拒绝了这次请求（HTTP 403）。 请确认这是正确的控制站地址，并检查账号、密码或访问权限。 详情：invalid email or password",
+        error_code: "RELAY_TUNNEL_CONTROL_ACCESS_DENIED"
+      })
+    );
+
+    renderPanel();
+
+    await userEvent.type(await screen.findByRole("textbox", { name: "邮箱" }), "demo@example.com");
+    await userEvent.type(screen.getByLabelText("密码"), "password123");
+    await userEvent.click(screen.getByRole("button", { name: "登录" }));
+
+    expect(await screen.findByText("登录账号失败")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "控制站登录失败：控制站 https://channel.jacksonz.cn:14441 拒绝了这次请求（HTTP 403）。 请确认这是正确的控制站地址，并检查账号、密码或访问权限。 详情：invalid email or password"
+      )
+    ).toBeInTheDocument();
   });
 
   it("登录后会先检查主机名，再显示公开访问地址", async () => {
