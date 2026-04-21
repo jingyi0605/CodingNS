@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { acceptRelayTunnelClientHandshake, type RelayTunnelClientHello } from "../../../host/src/modules/relay-tunnel/crypto/relay-tunnel-protocol";
 import { generateRelayTunnelIdentity } from "../../../host/src/modules/relay-tunnel/crypto/relay-tunnel-identity-service";
+import { clientConfigStore } from "../config/client-config-store";
 import { connectRelayTunnelClientSessionViaEdge, connectRelayTunnelRawChannel } from "./relay-tunnel-edge-client";
 
 class MockRelayEdgeSocket extends EventTarget {
@@ -33,6 +34,15 @@ class MockRelayEdgeSocket extends EventTarget {
 
 describe("relay-tunnel-edge-client", () => {
   it("会通过 connect-init 一次拿到建连信息，并按 downstream 角色连接 relay-edge", async () => {
+    clientConfigStore.hydrate({
+      platform: "web",
+      hostBaseUrl: "http://127.0.0.1:3002",
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: false,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(
         new Response(
@@ -77,13 +87,18 @@ describe("relay-tunnel-edge-client", () => {
     socket.open();
     const result = await connectPromise;
 
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      1,
-      "https://control.example.com/api/v1/tunnels/demo.codingns.example/connect-init",
-      expect.objectContaining({
-        method: "POST"
-      })
-    );
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "https://control.example.com/api/v1/tunnels/demo.codingns.example/connect-init", expect.objectContaining({
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      }
+    }));
+    expect(JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)).toMatchObject({
+      clientContext: {
+        runtimePlatform: "web",
+        language: expect.any(String)
+      }
+    });
     expect(result.binding.hostPublicKey).toBe("PUBLIC_KEY_DEMO");
     expect(result.reservation.sessionId).toBe("session_demo");
     expect(socket.url).toBe("wss://relay.example.com/ws?sessionId=session_demo&role=downstream&connectTicket=ticket_demo");

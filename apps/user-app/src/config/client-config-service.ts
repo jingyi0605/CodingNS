@@ -404,10 +404,26 @@ function mergeConfig(baseConfig: ClientRuntimeConfig, patch?: RuntimeConfigPatch
   const now = nowIsoString();
 
   if (!canConfigureHostBaseUrl(nextPlatform)) {
+    let nextHosts =
+      patch.hosts !== undefined ? normalizeHostProfiles(patch.hosts, now) : defaultConfig.hosts;
+
+    if (patch.hostBaseUrl) {
+      nextHosts = replaceActiveHostBaseUrl(baseConfig, patch.hostBaseUrl, now);
+    }
+
+    if (nextHosts.length === 0) {
+      nextHosts = defaultConfig.hosts;
+    }
+
+    const requestedActiveHostId = patch.activeHostId ?? baseConfig.activeHostId ?? defaultConfig.activeHostId;
+    const nextActiveHostId = nextHosts.some((host) => host.id === requestedActiveHostId)
+      ? requestedActiveHostId
+      : nextHosts[0]?.id ?? null;
+
     return {
       platform: nextPlatform,
-      activeHostId: defaultConfig.activeHostId,
-      hosts: defaultConfig.hosts,
+      activeHostId: nextActiveHostId,
+      hosts: nextHosts,
       discoveredHosts: baseConfig.discoveredHosts,
       activeDiscoveredHostId: null,
       localHostDiscovery: baseConfig.localHostDiscovery,

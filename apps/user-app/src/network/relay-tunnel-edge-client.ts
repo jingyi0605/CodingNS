@@ -2,6 +2,7 @@ import {
   RelayTunnelClientSession,
   type RelayTunnelRawChannel
 } from "./relay-tunnel-client-session";
+import { clientConfigStore } from "../config/client-config-store";
 
 export interface RelayTunnelBindingView {
   bindingId: string;
@@ -74,7 +75,13 @@ export async function connectInitRelayTunnel(input: {
     ensureTrailingSlash(input.controlBaseUrl)
   ).toString();
   const response = await fetchFn(requestUrl, {
-    method: "POST"
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      clientContext: collectRelayClientContext()
+    })
   });
 
   if (!response.ok) {
@@ -281,10 +288,45 @@ function ensureTrailingSlash(baseUrl: string): string {
   return baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
 }
 
+function collectRelayClientContext(): {
+  runtimePlatform: string | null;
+  systemPlatform: string | null;
+  userAgent: string | null;
+  language: string | null;
+  timezone: string | null;
+} {
+  const runtimePlatform = clientConfigStore.getState().platform ?? null;
+  const userAgent = typeof navigator === "undefined" ? null : normalizeNullableText(navigator.userAgent);
+  const systemPlatform = typeof navigator === "undefined" ? null : normalizeNullableText(navigator.platform);
+  const language = typeof navigator === "undefined" ? null : normalizeNullableText(navigator.language);
+  const timezone = resolveBrowserTimeZone();
+
+  return {
+    runtimePlatform,
+    systemPlatform,
+    userAgent,
+    language,
+    timezone
+  };
+}
+
+function resolveBrowserTimeZone(): string | null {
+  try {
+    return normalizeNullableText(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  } catch {
+    return null;
+  }
+}
+
 function resolveRelayBaseUrl(baseUrl: string, pathname: string): URL {
   return new URL(pathname.replace(/^\/+/, ""), ensureTrailingSlash(baseUrl));
 }
 
 function defaultCreateWebSocket(url: string): RelayTunnelEdgeSocket {
   return new WebSocket(url);
+}
+
+function normalizeNullableText(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
 }

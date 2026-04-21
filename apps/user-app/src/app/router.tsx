@@ -87,6 +87,13 @@ const appRoutes = [
     element: <LoginPage />
   },
   {
+    path: "/connect/:tunnelDomain",
+    lazy: lazyRouteComponent(
+      () => import("../features/auth/pages/RelayConnectEntryPage"),
+      "RelayConnectEntryPage"
+    )
+  },
+  {
     path: "/desktop-window-preview",
     lazy: lazyRouteComponent(
       () => import("../features/desktop-window/DesktopDetachPreviewPage"),

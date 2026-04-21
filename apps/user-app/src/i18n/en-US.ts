@@ -49,7 +49,11 @@ export const enUS = {
     captchaImageAlt: "Login captcha image",
     serverSettings: "Server Settings",
     serverSettingsTitle: "Server Configuration",
-    saveServerSettings: "Save Settings"
+    saveServerSettings: "Save Settings",
+    relayEntryTitle: "Connecting To Remote Host",
+    relayEntryDescription:
+      "Switching to this Host's trusted remote entry. You will be returned to the login page automatically.",
+    relayEntryInvalid: "The remote access entry parameters are incomplete. Open the access URL again."
   },
   settings: {
     title: "Settings",

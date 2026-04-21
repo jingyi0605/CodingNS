@@ -47,7 +47,10 @@ export const zhCN = {
     captchaImageAlt: "登录图形验证码",
     serverSettings: "服务器设置",
     serverSettingsTitle: "服务器配置",
-    saveServerSettings: "保存设置"
+    saveServerSettings: "保存设置",
+    relayEntryTitle: "正在连接远程 Host",
+    relayEntryDescription: "正在切换到这台 Host 的可信连接入口，完成后会自动回到登录页。",
+    relayEntryInvalid: "当前远程访问入口参数不完整，请重新打开访问地址。"
   },
   settings: {
     title: "设置",
