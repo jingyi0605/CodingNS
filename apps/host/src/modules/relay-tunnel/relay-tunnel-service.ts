@@ -1,3 +1,5 @@
+import http from "node:http";
+import https from "node:https";
 import os from "node:os";
 
 import type Database from "better-sqlite3";
@@ -19,6 +21,19 @@ import type {
   RelayTunnelPhase,
   RelayTunnelProvider
 } from "../../types/domain.js";
+
+const DEFAULT_RELAY_TUNNEL_CONTROL_BASE_URL = normalizeHttpBaseUrl(
+  "https://channel.codingns.com:1443",
+  "defaultRelayTunnelControlBaseUrl"
+)!;
+const DEFAULT_RELAY_TUNNEL_CONTROL_REQUEST_TIMEOUT_MS = 10_000;
+const DEFAULT_RELAY_TUNNEL_CONTROL_TLS_ECDH_CURVE = "X25519";
+// 线上 channel:1443 的 TLS 握手对 Node 默认参数比较挑，控制站请求统一收敛到单个 X25519，
+// 避免首连阶段出现随机握手失败。
+const RELAY_TUNNEL_CONTROL_HTTPS_AGENT = new https.Agent({
+  keepAlive: true,
+  ecdhCurve: DEFAULT_RELAY_TUNNEL_CONTROL_TLS_ECDH_CURVE
+});
 
 export interface RelayTunnelConfigUpdateInput {
   activated?: boolean;
@@ -123,6 +138,7 @@ export class RelayTunnelService {
   private readonly defaultLocalTargetBaseUrl: string;
   private readonly legacyLocalTargetBaseUrl: string | null;
   private readonly controlSessionSecret: string;
+  private readonly controlRequestTimeoutMs: number;
   private readonly fetchFn: typeof fetch;
   private readonly taskManager: TaskManager;
   private readonly runtimeAdapter: RelayTunnelRuntimeAdapter;
@@ -137,6 +153,7 @@ export class RelayTunnelService {
       defaultLocalTargetBaseUrl: string;
       legacyLocalTargetBaseUrl?: string | null;
       controlSessionSecret: string;
+      controlRequestTimeoutMs?: number;
       fetchFn?: typeof fetch;
     },
     taskManager: TaskManager = createTaskManager(),
@@ -149,7 +166,11 @@ export class RelayTunnelService {
       options.controlSessionSecret,
       "controlSessionSecret"
     );
-    this.fetchFn = options.fetchFn ?? fetch;
+    this.controlRequestTimeoutMs = normalizePositiveInt(
+      options.controlRequestTimeoutMs,
+      DEFAULT_RELAY_TUNNEL_CONTROL_REQUEST_TIMEOUT_MS
+    );
+    this.fetchFn = resolveRelayTunnelControlFetch(options.fetchFn);
     this.defaultLocalTargetBaseUrl = normalizeHttpBaseUrl(
       options.defaultLocalTargetBaseUrl,
       "defaultLocalTargetBaseUrl"
@@ -208,20 +229,19 @@ export class RelayTunnelService {
 
   async updateConfig(input: RelayTunnelConfigUpdateInput): Promise<InstanceRelayTunnelStatusDto> {
     const snapshot = this.readStateSnapshot();
+    const controlBaseUrl =
+      input.controlBaseUrl !== undefined
+        ? normalizeHttpBaseUrl(input.controlBaseUrl, "controlBaseUrl")
+        : snapshot.config.controlBaseUrl;
     const nextConfig: InstanceRelayTunnelConfig = {
       ...snapshot.config,
       activated:
         input.activated !== undefined
           ? input.activated
           : snapshot.config.activated,
-      relayBaseUrl:
-        input.relayBaseUrl !== undefined
-          ? normalizeWebsocketBaseUrl(input.relayBaseUrl, "relayBaseUrl")
-          : snapshot.config.relayBaseUrl,
-      controlBaseUrl:
-        input.controlBaseUrl !== undefined
-          ? normalizeHttpBaseUrl(input.controlBaseUrl, "controlBaseUrl")
-          : snapshot.config.controlBaseUrl,
+      // relay 入口统一跟随控制站点，同一条地址避免再出现 control 能通、relay 走死路的分裂配置。
+      relayBaseUrl: deriveRelayBaseUrlFromControlBaseUrl(controlBaseUrl),
+      controlBaseUrl,
       localTargetBaseUrl:
         input.localTargetBaseUrl !== undefined
           ? normalizeHttpBaseUrl(input.localTargetBaseUrl, "localTargetBaseUrl")!
@@ -405,20 +425,17 @@ export class RelayTunnelService {
     const bindingId = normalizeRequiredText(input.bindingId, "bindingId");
     const tunnelDomain = normalizeTunnelDomain(input.tunnelDomain, "tunnelDomain");
     const identity = this.identityService.ensureIdentity();
-    const relayBaseUrl =
-      input.relayBaseUrl !== undefined
-        ? normalizeWebsocketBaseUrl(input.relayBaseUrl, "relayBaseUrl")
-        : snapshot.config.relayBaseUrl;
     const controlBaseUrl =
       input.controlBaseUrl !== undefined
         ? normalizeHttpBaseUrl(input.controlBaseUrl, "controlBaseUrl")
         : snapshot.config.controlBaseUrl;
+    const relayBaseUrl = deriveRelayBaseUrlFromControlBaseUrl(controlBaseUrl);
 
     if (!relayBaseUrl || !controlBaseUrl) {
       throw new AppError({
         statusCode: 400,
         errorCode: "INVALID_INPUT",
-        detail: "绑定前必须提供 relayBaseUrl 和 controlBaseUrl"
+        detail: "绑定前必须提供 controlBaseUrl"
       });
     }
 
@@ -586,7 +603,7 @@ export class RelayTunnelService {
   }
 
   private readStateSnapshot(): RelayTunnelStateSnapshot {
-    const persistedConfig = this.reconcileLegacyLocalTargetBaseUrl(this.repository.findConfig());
+    const persistedConfig = this.reconcilePersistedConfig(this.repository.findConfig());
 
     return {
       config:
@@ -596,7 +613,7 @@ export class RelayTunnelService {
           enabled: false,
           provider: "codingns_relay",
           relayBaseUrl: null,
-          controlBaseUrl: null,
+          controlBaseUrl: DEFAULT_RELAY_TUNNEL_CONTROL_BASE_URL,
           controlAccessTokenCiphertext: null,
           controlAccountEmail: null,
           controlSessionExpiresAt: null,
@@ -613,31 +630,57 @@ export class RelayTunnelService {
     };
   }
 
-  private reconcileLegacyLocalTargetBaseUrl(
+  private reconcilePersistedConfig(
     config: InstanceRelayTunnelConfig | null
   ): InstanceRelayTunnelConfig | null {
     if (!config) {
       return config;
     }
 
-    if ((config.localTargetBaseUrlSource ?? "default") !== "default") {
+    let nextConfig = config;
+    let changed = false;
+
+    if ((nextConfig.localTargetBaseUrlSource ?? "default") === "default"
+      && nextConfig.localTargetBaseUrl !== this.defaultLocalTargetBaseUrl) {
+      // `default` 源的目标地址由当前运行模式决定，不应该把历史默认值永久粘在库里。
+      // 只要默认入口变化了，就在启动时自动收敛到新的默认值；用户显式写入的 custom 配置不动。
+      nextConfig = {
+        ...nextConfig,
+        localTargetBaseUrl: this.defaultLocalTargetBaseUrl,
+        localTargetBaseUrlSource: "default",
+        updatedAt: nowIso()
+      };
+      changed = true;
+    }
+
+    if (!normalizeOptionalText(nextConfig.controlBaseUrl)) {
+      // 正式包已经把官方控制站当成固定入口，Host 侧不能继续允许空值漂着，
+      // 否则前端显示的是固定地址，真正发请求时却因为配置为空直接失败。
+      nextConfig = {
+        ...nextConfig,
+        controlBaseUrl: DEFAULT_RELAY_TUNNEL_CONTROL_BASE_URL,
+        updatedAt: nowIso()
+      };
+      changed = true;
+    }
+
+    const managedRelayBaseUrl = deriveRelayBaseUrlFromControlBaseUrl(nextConfig.controlBaseUrl);
+
+    if (nextConfig.relayBaseUrl !== managedRelayBaseUrl) {
+      nextConfig = {
+        ...nextConfig,
+        relayBaseUrl: managedRelayBaseUrl,
+        updatedAt: nowIso()
+      };
+      changed = true;
+    }
+
+    if (!changed) {
       return config;
     }
 
-    if (config.localTargetBaseUrl === this.defaultLocalTargetBaseUrl) {
-      return config;
-    }
-
-    // `default` 源的目标地址由当前运行模式决定，不应该把历史默认值永久粘在库里。
-    // 只要默认入口变化了，就在启动时自动收敛到新的默认值；用户显式写入的 custom 配置不动。
-    const migratedConfig: InstanceRelayTunnelConfig = {
-      ...config,
-      localTargetBaseUrl: this.defaultLocalTargetBaseUrl,
-      localTargetBaseUrlSource: "default",
-      updatedAt: nowIso()
-    };
-    this.repository.upsertConfig(migratedConfig);
-    return migratedConfig;
+    this.repository.upsertConfig(nextConfig);
+    return nextConfig;
   }
 
   private resolveEffectiveStatus(config: InstanceRelayTunnelConfig): InstanceRelayTunnelStatus {
@@ -863,18 +906,27 @@ export class RelayTunnelService {
     failurePrefix: string;
   }): Promise<T> {
     let response: Response;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.controlRequestTimeoutMs);
 
     try {
+      const requestUrl = new URL(
+        input.path,
+        ensureTrailingSlash(input.controlBaseUrl)
+      ).toString();
       response = await this.fetchFn(
-        new URL(input.path, ensureTrailingSlash(input.controlBaseUrl)),
+        requestUrl,
         {
           method: input.method,
           headers: input.headers,
-          body: input.body
+          body: input.body,
+          signal: controller.signal
         }
       );
     } catch (error) {
       throw buildControlFetchError(error, input.controlBaseUrl, input.failurePrefix);
+    } finally {
+      clearTimeout(timeoutId);
     }
 
     if (!response.ok) {
@@ -1213,6 +1265,17 @@ function normalizeWebsocketBaseUrl(value: string | null | undefined, field: stri
   return `${normalizedProtocol}//${parsed.host}${pathname}`;
 }
 
+function deriveRelayBaseUrlFromControlBaseUrl(controlBaseUrl: string | null | undefined): string | null {
+  const normalizedControlBaseUrl = normalizeHttpBaseUrl(controlBaseUrl, "controlBaseUrl");
+
+  if (!normalizedControlBaseUrl) {
+    return null;
+  }
+
+  const relayUrl = new URL("relay", ensureTrailingSlash(normalizedControlBaseUrl));
+  return normalizeWebsocketBaseUrl(relayUrl.toString(), "relayBaseUrl");
+}
+
 function requireConfiguredControlBaseUrl(config: InstanceRelayTunnelConfig): string {
   const controlBaseUrl = normalizeOptionalText(config.controlBaseUrl);
 
@@ -1332,6 +1395,10 @@ function resolveFetchErrorDetail(error: unknown): string | null {
   if (error instanceof Error) {
     const code = readFetchErrorCode(error);
 
+    if (error.name === "AbortError") {
+      return "请求超时。";
+    }
+
     if (code === "ECONNREFUSED") {
       return "连接被目标服务器拒绝。";
     }
@@ -1360,6 +1427,175 @@ function readFetchErrorCode(error: Error): string | null {
       ? (error as Error & { cause?: { code?: unknown } }).cause
       : undefined;
   return typeof cause?.code === "string" ? cause.code : null;
+}
+
+function normalizePositiveInt(value: number | null | undefined, fallback: number): number {
+  if (value === null || value === undefined || !Number.isInteger(value) || value <= 0) {
+    return fallback;
+  }
+
+  return value;
+}
+
+function resolveRelayTunnelControlFetch(fetchFn: typeof fetch | undefined): typeof fetch {
+  if (fetchFn) {
+    return fetchFn;
+  }
+
+  if (isBuiltinNodeFetch(globalThis.fetch)) {
+    return createRelayTunnelControlFetch();
+  }
+
+  return globalThis.fetch;
+}
+
+function isBuiltinNodeFetch(fetchFn: typeof fetch): boolean {
+  const source = Function.prototype.toString.call(fetchFn);
+  return source.includes("internal/deps/undici/undici");
+}
+
+function createRelayTunnelControlFetch(): typeof fetch {
+  return async (input, init) => {
+    const requestUrl = resolveFetchInputUrl(input);
+    const parsedUrl = new URL(requestUrl);
+
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+      throw new TypeError(`Unsupported protocol for relay tunnel control fetch: ${parsedUrl.protocol}`);
+    }
+
+    return await new Promise<Response>((resolve, reject) => {
+      const transport = parsedUrl.protocol === "https:" ? https : http;
+      const headers = normalizeFetchHeaders(init?.headers);
+      const body = normalizeFetchBody(init?.body);
+      const abortHandler = () => request.destroy(createAbortRequestError());
+      const request = transport.request(
+        parsedUrl,
+        {
+          method: init?.method ?? "GET",
+          headers,
+          agent: parsedUrl.protocol === "https:" ? RELAY_TUNNEL_CONTROL_HTTPS_AGENT : undefined
+        },
+        (response) => {
+          const chunks: Buffer[] = [];
+
+          response.on("data", (chunk) => {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          });
+          response.on("end", () => {
+            cleanup();
+            resolve(
+              new Response(Buffer.concat(chunks), {
+                status: response.statusCode ?? 500,
+                headers: buildFetchResponseHeaders(response.headers)
+              })
+            );
+          });
+          response.on("error", (error) => {
+            cleanup();
+            reject(error);
+          });
+        }
+      );
+
+      function cleanup(): void {
+        init?.signal?.removeEventListener("abort", abortHandler);
+      }
+
+      request.on("error", (error) => {
+        cleanup();
+        reject(error);
+      });
+
+      if (init?.signal) {
+        if (init.signal.aborted) {
+          cleanup();
+          request.destroy(createAbortRequestError());
+          return;
+        }
+
+        init.signal.addEventListener("abort", abortHandler, { once: true });
+      }
+
+      if (body !== null) {
+        request.write(body);
+      }
+
+      request.end();
+    });
+  };
+}
+
+type RelayTunnelFetchInput = string | URL | { url: string };
+
+function resolveFetchInputUrl(input: RelayTunnelFetchInput): string {
+  if (typeof input === "string") {
+    return input;
+  }
+
+  if (input instanceof URL) {
+    return input.toString();
+  }
+
+  return input.url;
+}
+
+function normalizeFetchHeaders(headers: unknown): Record<string, string> {
+  if (!headers) {
+    return {};
+  }
+
+  return Object.fromEntries(new Headers(headers as ConstructorParameters<typeof Headers>[0]).entries());
+}
+
+function normalizeFetchBody(body: unknown): string | Buffer | null {
+  if (body === null || body === undefined) {
+    return null;
+  }
+
+  if (typeof body === "string" || Buffer.isBuffer(body)) {
+    return body;
+  }
+
+  if (body instanceof URLSearchParams) {
+    return body.toString();
+  }
+
+  if (body instanceof ArrayBuffer) {
+    return Buffer.from(body);
+  }
+
+  if (ArrayBuffer.isView(body)) {
+    return Buffer.from(body.buffer, body.byteOffset, body.byteLength);
+  }
+
+  throw new TypeError("Unsupported relay tunnel control request body type");
+}
+
+function buildFetchResponseHeaders(
+  headers: http.IncomingHttpHeaders
+): Headers {
+  const responseHeaders = new Headers();
+
+  for (const [name, value] of Object.entries(headers)) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        responseHeaders.append(name, item);
+      }
+      continue;
+    }
+
+    if (typeof value === "string") {
+      responseHeaders.set(name, value);
+    }
+  }
+
+  return responseHeaders;
+}
+
+function createAbortRequestError(): Error {
+  const error = new Error("This operation was aborted");
+  error.name = "AbortError";
+  return error;
 }
 
 function appendControlApiDetail(detail: string | null | undefined): string {

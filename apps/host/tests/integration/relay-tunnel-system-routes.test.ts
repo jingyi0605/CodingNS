@@ -121,7 +121,7 @@ describe("公共隧道系统接口", () => {
       enabled: false,
       provider: "codingns_relay",
       relayBaseUrl: null,
-      controlBaseUrl: null,
+      controlBaseUrl: "https://channel.codingns.com:1443",
       controlAccountEmail: null,
       controlSessionExpiresAt: null,
       accountId: null,
@@ -177,7 +177,7 @@ describe("公共隧道系统接口", () => {
       activated: false,
       enabled: false,
       provider: "codingns_relay",
-      relayBaseUrl: "wss://relay.codingns.example",
+      relayBaseUrl: "wss://control.codingns.example/relay",
       controlBaseUrl: "https://control.codingns.example",
       controlAccountEmail: null,
       controlSessionExpiresAt: null,
@@ -264,7 +264,7 @@ describe("公共隧道系统接口", () => {
       activated: false,
       enabled: false,
       provider: "codingns_relay",
-      relayBaseUrl: "wss://relay.codingns.example",
+      relayBaseUrl: "wss://control.codingns.example/relay",
       controlBaseUrl: "https://control.codingns.example",
       controlAccountEmail: null,
       controlSessionExpiresAt: null,
@@ -324,7 +324,7 @@ describe("公共隧道系统接口", () => {
       activated: true,
       enabled: true,
       provider: "codingns_relay",
-      relayBaseUrl: "wss://relay.codingns.example",
+      relayBaseUrl: "wss://control.codingns.example/relay",
       controlBaseUrl: "https://control.codingns.example",
       controlAccountEmail: null,
       controlSessionExpiresAt: null,
@@ -384,7 +384,7 @@ describe("公共隧道系统接口", () => {
       activated: true,
       enabled: false,
       provider: "codingns_relay",
-      relayBaseUrl: "wss://relay.codingns.example",
+      relayBaseUrl: "wss://control.codingns.example/relay",
       controlBaseUrl: "https://control.codingns.example",
       controlAccountEmail: null,
       controlSessionExpiresAt: null,
@@ -444,7 +444,7 @@ describe("公共隧道系统接口", () => {
       activated: true,
       enabled: false,
       provider: "codingns_relay",
-      relayBaseUrl: "wss://relay.codingns.example",
+      relayBaseUrl: "wss://control.codingns.example/relay",
       controlBaseUrl: "https://control.codingns.example",
       controlAccountEmail: null,
       controlSessionExpiresAt: null,
@@ -521,7 +521,7 @@ describe("公共隧道系统接口", () => {
           tunnelDomain: "macmini.channel.codingns.com",
           hostPublicKey: "relay_public_key",
           hostFingerprint: "SHA256:relay",
-          relayBaseUrl: "wss://relay.codingns.example",
+          relayBaseUrl: "wss://control.codingns.example/relay",
           controlBaseUrl: "https://control.codingns.example",
           status: "active"
         }
@@ -654,14 +654,14 @@ describe("公共隧道系统接口", () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      new URL("/api/public/auth/login", "https://control.codingns.example/"),
+      "https://control.codingns.example/api/public/auth/login",
       expect.objectContaining({
         method: "POST"
       })
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      new URL("/api/v1/hosts/availability?hostLabel=MacMini", "https://control.codingns.example/"),
+      "https://control.codingns.example/api/v1/hosts/availability?hostLabel=MacMini",
       expect.objectContaining({
         method: "GET",
         headers: {
@@ -671,7 +671,7 @@ describe("公共隧道系统接口", () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       3,
-      new URL("/api/v1/hosts/bind", "https://control.codingns.example/"),
+      "https://control.codingns.example/api/v1/hosts/bind",
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({
@@ -681,7 +681,7 @@ describe("公共隧道系统接口", () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       4,
-      new URL("/api/v1/traffic-wallet/me", "https://control.codingns.example/"),
+      "https://control.codingns.example/api/v1/traffic-wallet/me",
       expect.objectContaining({
         method: "GET",
         headers: {
@@ -723,7 +723,7 @@ describe("公共隧道系统接口", () => {
         authorization: `Bearer ${accessToken}`
       },
       payload: {
-        relayBaseUrl: "wss://relay.codingns.example",
+        relayBaseUrl: "wss://control.codingns.example/relay",
         controlBaseUrl: "https://control.codingns.example"
       }
     });
@@ -771,7 +771,7 @@ describe("公共隧道系统接口", () => {
       activated: true,
       enabled: true,
       provider: "codingns_relay",
-      relayBaseUrl: "wss://relay.codingns.example",
+      relayBaseUrl: "wss://control.codingns.example/relay",
       controlBaseUrl: "https://control.codingns.example",
       controlAccountEmail: null,
       controlSessionExpiresAt: null,

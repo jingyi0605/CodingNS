@@ -103,6 +103,80 @@ describe("RelayTunnelService 后台任务", () => {
     context.close();
   });
 
+  it("控制站请求超时时会返回明确的超时错误，而不是一直卡住", async () => {
+    const context = createRelayTunnelTestContext({
+      initialized: true,
+      controlRequestTimeoutMs: 10,
+      fetchFn: async (_input, init) =>
+        await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            const error = new Error("This operation was aborted");
+            error.name = "AbortError";
+            reject(error);
+          }, { once: true });
+        })
+    });
+
+    seedBoundConfig(context.repository, {
+      controlBaseUrl: "https://channel.codingns.com:1443"
+    });
+
+    await expect(
+      context.service.loginControl({
+        email: "demo@example.com",
+        password: "password123"
+      })
+    ).rejects.toMatchObject({
+      statusCode: 502,
+      errorCode: "RELAY_TUNNEL_CONTROL_UNREACHABLE",
+      message:
+        "控制站登录失败：无法连接到控制站 https://channel.codingns.com:1443。 请确认服务地址、端口和网络连接是否正确。 详情：请求超时。"
+    });
+
+    context.close();
+  });
+
+  it("调用控制站时会把请求地址转成字符串，避免 URL 对象触发底层连接异常", async () => {
+    const capturedInputs: unknown[] = [];
+    const context = createRelayTunnelTestContext({
+      initialized: true,
+      fetchFn: async (input) => {
+        capturedInputs.push(input);
+        return new Response(
+          JSON.stringify({
+            account: {
+              accountId: "acct_demo",
+              email: "demo@example.com"
+            },
+            accessToken: "token_demo",
+            expiresAt: "2026-04-21T00:00:00.000Z"
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json"
+            }
+          }
+        );
+      }
+    });
+
+    seedBoundConfig(context.repository, {
+      controlBaseUrl: "https://channel.codingns.com:1443"
+    });
+
+    await context.service.loginControl({
+      email: "demo@example.com",
+      password: "password123"
+    });
+
+    expect(capturedInputs).toHaveLength(1);
+    expect(typeof capturedInputs[0]).toBe("string");
+    expect(capturedInputs[0]).toBe("https://channel.codingns.com:1443/api/public/auth/login");
+
+    context.close();
+  });
+
   it("启动恢复只入队后台连接，不阻塞调用方", async () => {
     const context = createRelayTunnelTestContext({
       initialized: true,
@@ -338,6 +412,45 @@ describe("RelayTunnelService 后台任务", () => {
     context.close();
   });
 
+  it("读取状态时会把历史空控制站地址收敛到官方默认地址", async () => {
+    const context = createRelayTunnelTestContext({
+      initialized: true
+    });
+
+    seedBoundConfig(context.repository, {
+      controlBaseUrl: null
+    });
+
+    const status = await context.service.getStatus();
+    const persisted = context.repository.findConfig();
+
+    expect(status.controlBaseUrl).toBe("https://channel.codingns.com:1443");
+    expect(persisted?.controlBaseUrl).toBe("https://channel.codingns.com:1443");
+    expect(status.relayBaseUrl).toBe("wss://channel.codingns.com:1443/relay");
+    expect(persisted?.relayBaseUrl).toBe("wss://channel.codingns.com:1443/relay");
+
+    context.close();
+  });
+
+  it("读取状态时会把旧的独立 relay 地址收敛到控制站同源 relay 路径", async () => {
+    const context = createRelayTunnelTestContext({
+      initialized: true
+    });
+
+    seedBoundConfig(context.repository, {
+      relayBaseUrl: "wss://channel.codingns.com:10247/relay",
+      controlBaseUrl: "https://channel.codingns.com:1443"
+    });
+
+    const status = await context.service.getStatus();
+    const persisted = context.repository.findConfig();
+
+    expect(status.relayBaseUrl).toBe("wss://channel.codingns.com:1443/relay");
+    expect(persisted?.relayBaseUrl).toBe("wss://channel.codingns.com:1443/relay");
+
+    context.close();
+  });
+
   it("未初始化实例启动恢复时不会偷偷连公网，而是写回 blocked_uninitialized", async () => {
     const context = createRelayTunnelTestContext({
       initialized: false,
@@ -366,6 +479,7 @@ function createRelayTunnelTestContext(options?: {
   runtimeAdapter?: RelayTunnelRuntimeAdapter;
   defaultLocalTargetBaseUrl?: string;
   legacyLocalTargetBaseUrl?: string | null;
+  controlRequestTimeoutMs?: number;
   fetchFn?: typeof fetch;
 }) {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-relay-tunnel-background-"));
@@ -403,6 +517,7 @@ function createRelayTunnelTestContext(options?: {
         options?.defaultLocalTargetBaseUrl ?? "http://127.0.0.1:4312",
       legacyLocalTargetBaseUrl: options?.legacyLocalTargetBaseUrl ?? null,
       controlSessionSecret: "relay-control-secret",
+      controlRequestTimeoutMs: options?.controlRequestTimeoutMs,
       fetchFn: options?.fetchFn
     },
     taskManager,
@@ -429,7 +544,7 @@ function seedBoundConfig(
     activated: true,
     enabled: false,
     provider: "codingns_relay",
-    relayBaseUrl: "wss://relay.codingns.example",
+    relayBaseUrl: "wss://control.codingns.example/relay",
     controlBaseUrl: "https://control.codingns.example",
     controlAccessTokenCiphertext: null,
     controlAccountEmail: null,
