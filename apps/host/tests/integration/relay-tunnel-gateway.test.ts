@@ -25,6 +25,16 @@ describe("RelayTunnelGatewayService", () => {
     const packets: RelayTunnelGatewayPacket[] = [];
     const gateway = new RelayTunnelGatewayService({
       localTargetBaseUrl: upstream.baseUrl,
+      sessionId: "relay-session-1",
+      clientContext: {
+        sourceIp: "198.51.100.10",
+        forwardedFor: "198.51.100.10, 10.0.0.1",
+        userAgent: "CodingNSBrowser/1.0",
+        runtimePlatform: "web",
+        systemPlatform: "MacIntel",
+        language: "zh-CN",
+        timezone: "Asia/Shanghai"
+      },
       onPacket: (packet) => {
         packets.push(packet);
       }
@@ -50,7 +60,11 @@ describe("RelayTunnelGatewayService", () => {
       headers: expect.objectContaining({
         "content-type": "application/json",
         "x-echo-method": "POST",
-        "x-echo-auth": "Bearer relay-demo"
+        "x-echo-auth": "Bearer relay-demo",
+        "x-echo-relay-ip": "198.51.100.10",
+        "x-echo-relay-runtime": "web",
+        "x-relay-feedback": "host-ok",
+        "x-codingns-relay-session-id": "relay-session-1"
       }),
       bodyBase64Url: expect.any(String)
     });
@@ -65,6 +79,8 @@ describe("RelayTunnelGatewayService", () => {
       method: "POST",
       path: "/echo?mode=tunnel",
       authorization: "Bearer relay-demo",
+      relayClientIp: "198.51.100.10",
+      relayRuntime: "web",
       bodyText: JSON.stringify({ hello: "world" })
     });
 
@@ -76,6 +92,16 @@ describe("RelayTunnelGatewayService", () => {
     const packets: RelayTunnelGatewayPacket[] = [];
     const gateway = new RelayTunnelGatewayService({
       localTargetBaseUrl: upstream.baseUrl,
+      sessionId: "relay-session-ws",
+      clientContext: {
+        sourceIp: "198.51.100.10",
+        forwardedFor: null,
+        userAgent: "CodingNSBrowser/1.0",
+        runtimePlatform: "web",
+        systemPlatform: "MacIntel",
+        language: "zh-CN",
+        timezone: "Asia/Shanghai"
+      },
       onPacket: (packet) => {
         packets.push(packet);
       }
@@ -111,7 +137,7 @@ describe("RelayTunnelGatewayService", () => {
         ),
       "等待 ws.message 超时"
     );
-    expect(Buffer.from(messagePacket.dataBase64Url, "base64url").toString("utf8")).toBe("pong:ping");
+    expect(Buffer.from(messagePacket.dataBase64Url, "base64url").toString("utf8")).toBe("pong:ping:198.51.100.10");
     const openedPacket = packets.find(
       (packet): packet is Extract<RelayTunnelGatewayPacket, { type: "ws.opened" }> =>
         packet.type === "ws.opened" && packet.streamId === "stream-ws-1"
@@ -155,13 +181,18 @@ async function createLocalEchoServer(): Promise<{
       response.writeHead(200, {
         "content-type": "application/json",
         "x-echo-method": request.method ?? "GET",
-        "x-echo-auth": request.headers.authorization ?? ""
+        "x-echo-auth": request.headers.authorization ?? "",
+        "x-echo-relay-ip": request.headers["x-codingns-relay-client-ip"] ?? "",
+        "x-echo-relay-runtime": request.headers["x-codingns-relay-client-runtime"] ?? "",
+        "x-relay-feedback": "host-ok"
       });
       response.end(
         JSON.stringify({
           method: request.method ?? "GET",
           path: request.url ?? "/",
           authorization: request.headers.authorization ?? null,
+          relayClientIp: request.headers["x-codingns-relay-client-ip"] ?? null,
+          relayRuntime: request.headers["x-codingns-relay-client-runtime"] ?? null,
           bodyText
         })
       );
@@ -189,7 +220,7 @@ async function createLocalEchoServer(): Promise<{
 
     wss.handleUpgrade(request, socket, head, (client) => {
       client.on("message", (payload) => {
-        client.send(`pong:${payload.toString()}`);
+        client.send(`pong:${payload.toString()}:${request.headers["x-codingns-relay-client-ip"] ?? ""}`);
       });
       client.on("close", () => {
         client.close();

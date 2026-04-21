@@ -1,4 +1,5 @@
 import WebSocket from "ws";
+import type { RelaySessionClientContext } from "@codingns-proxy/shared-contracts";
 
 import { decryptSecret } from "../../shared/utils/secret-box.js";
 import type { InstanceRelayTunnelIdentityRepository } from "../../storage/repositories/instance-relay-tunnel-identity-repository.js";
@@ -60,6 +61,7 @@ interface RelayTunnelErrorEnvelope {
 interface RelayEdgeSessionOpenEnvelope {
   type: "session.open";
   sessionId: string;
+  clientContext?: RelaySessionClientContext | null;
 }
 
 interface RelayEdgeSessionFrameEnvelope {
@@ -88,6 +90,7 @@ type RelayEdgeHostEnvelope =
 
 interface ActiveRelaySession {
   relaySessionId: string;
+  clientContext: RelaySessionClientContext | null;
   gateway: RelayTunnelGatewayService | null;
   cryptoSession: RelayTunnelSession | null;
   closed: boolean;
@@ -416,7 +419,7 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
     }
 
     if (envelope.type === "session.open") {
-      this.ensureRelaySession(envelope.sessionId);
+      this.ensureRelaySession(envelope.sessionId, envelope.clientContext ?? null);
       return;
     }
 
@@ -440,15 +443,20 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
     );
   }
 
-  private ensureRelaySession(sessionId: string): ActiveRelaySession {
+  private ensureRelaySession(
+    sessionId: string,
+    clientContext: RelaySessionClientContext | null = null
+  ): ActiveRelaySession {
     const existing = this.activeSessions.get(sessionId);
 
     if (existing) {
+      existing.clientContext = clientContext;
       return existing;
     }
 
     const created: ActiveRelaySession = {
       relaySessionId: sessionId,
+      clientContext,
       gateway: null,
       cryptoSession: null,
       closed: false
@@ -487,6 +495,8 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
         activeSession.cryptoSession = accepted.session;
         activeSession.gateway = new RelayTunnelGatewayService({
           localTargetBaseUrl: config.localTargetBaseUrl,
+          sessionId: activeSession.relaySessionId,
+          clientContext: activeSession.clientContext,
           onPacket: async (packet) => {
             if (!activeSession.cryptoSession || activeSession.closed) {
               return;

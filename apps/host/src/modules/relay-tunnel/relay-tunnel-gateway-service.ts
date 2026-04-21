@@ -1,4 +1,5 @@
 import WebSocket from "ws";
+import type { RelaySessionClientContext } from "@codingns-proxy/shared-contracts";
 
 import type {
   RelayTunnelErrorPacket,
@@ -29,14 +30,20 @@ export class RelayTunnelGatewayService {
   private readonly localHttpBaseUrl: URL;
   private readonly localWsBaseUrl: URL;
   private readonly wsSockets = new Map<string, WebSocket>();
+  private readonly sessionId: string | null;
+  private readonly clientContext: RelaySessionClientContext | null;
 
   constructor(options: {
     localTargetBaseUrl: string;
+    sessionId?: string | null;
+    clientContext?: RelaySessionClientContext | null;
     onPacket: (packet: RelayTunnelGatewayPacket) => void | Promise<void>;
   }) {
     this.localHttpBaseUrl = new URL(options.localTargetBaseUrl);
     this.localWsBaseUrl = new URL(options.localTargetBaseUrl);
     this.localWsBaseUrl.protocol = this.localWsBaseUrl.protocol === "https:" ? "wss:" : "ws:";
+    this.sessionId = normalizeNullableText(options.sessionId ?? null);
+    this.clientContext = normalizeRelaySessionClientContext(options.clientContext);
     this.onPacket = options.onPacket;
   }
 
@@ -86,6 +93,8 @@ export class RelayTunnelGatewayService {
       headers.set(headerName, headerValue);
     }
 
+    applyRelaySessionHeaders(headers, this.sessionId, this.clientContext);
+
     try {
       const response = await fetch(requestUrl, {
         method: packet.method,
@@ -97,7 +106,7 @@ export class RelayTunnelGatewayService {
         type: "http.response",
         streamId: packet.streamId,
         status: response.status,
-        headers: flattenResponseHeaders(response.headers),
+        headers: flattenResponseHeaders(response.headers, this.sessionId),
         bodyBase64Url: responseBody.byteLength > 0 ? responseBody.toString("base64url") : null
       };
 
@@ -127,10 +136,10 @@ export class RelayTunnelGatewayService {
     const requestedProtocols = resolveRequestedProtocols(packet);
     const socket = requestedProtocols.length > 0
       ? new WebSocket(socketUrl, requestedProtocols, {
-        headers: filterRequestHeaders(packet.headers)
+        headers: buildWebSocketRequestHeaders(packet.headers, this.sessionId, this.clientContext)
       })
       : new WebSocket(socketUrl, {
-        headers: filterRequestHeaders(packet.headers)
+        headers: buildWebSocketRequestHeaders(packet.headers, this.sessionId, this.clientContext)
       });
 
     this.wsSockets.set(packet.streamId, socket);
@@ -209,7 +218,7 @@ export class RelayTunnelGatewayService {
   }
 }
 
-function flattenResponseHeaders(headers: Headers): Record<string, string> {
+function flattenResponseHeaders(headers: Headers, sessionId: string | null): Record<string, string> {
   const flattened: Record<string, string> = {};
 
   for (const [headerName, headerValue] of headers.entries()) {
@@ -220,10 +229,18 @@ function flattenResponseHeaders(headers: Headers): Record<string, string> {
     flattened[headerName] = headerValue;
   }
 
+  if (sessionId) {
+    flattened["x-codingns-relay-session-id"] = sessionId;
+  }
+
   return flattened;
 }
 
-function filterRequestHeaders(headers: Record<string, string>): Record<string, string> {
+function buildWebSocketRequestHeaders(
+  headers: Record<string, string>,
+  sessionId: string | null,
+  clientContext: RelaySessionClientContext | null
+): Record<string, string> {
   const filtered: Record<string, string> = {};
 
   for (const [headerName, headerValue] of Object.entries(headers)) {
@@ -239,6 +256,8 @@ function filterRequestHeaders(headers: Record<string, string>): Record<string, s
 
     filtered[headerName] = headerValue;
   }
+
+  applyRelaySessionHeaders(filtered, sessionId, clientContext);
 
   return filtered;
 }
@@ -257,6 +276,78 @@ function resolveRequestedProtocols(packet: RelayTunnelWsOpenPacket): string[] {
   }
 
   return sanitizeProtocols(headerEntry[1].split(","));
+}
+
+function applyRelaySessionHeaders(
+  target: Headers | Record<string, string>,
+  sessionId: string | null,
+  clientContext: RelaySessionClientContext | null
+): void {
+  const entries = new Map<string, string>();
+
+  if (sessionId) {
+    entries.set("x-codingns-relay-session-id", sessionId);
+  }
+
+  if (clientContext?.sourceIp) {
+    entries.set("x-codingns-relay-client-ip", clientContext.sourceIp);
+  }
+
+  if (clientContext?.forwardedFor) {
+    entries.set("x-codingns-relay-client-forwarded-for", clientContext.forwardedFor);
+  }
+
+  if (clientContext?.userAgent) {
+    entries.set("x-codingns-relay-client-user-agent", clientContext.userAgent);
+  }
+
+  if (clientContext?.runtimePlatform) {
+    entries.set("x-codingns-relay-client-runtime", clientContext.runtimePlatform);
+  }
+
+  if (clientContext?.systemPlatform) {
+    entries.set("x-codingns-relay-client-system", clientContext.systemPlatform);
+  }
+
+  if (clientContext?.language) {
+    entries.set("x-codingns-relay-client-language", clientContext.language);
+  }
+
+  if (clientContext?.timezone) {
+    entries.set("x-codingns-relay-client-timezone", clientContext.timezone);
+  }
+
+  for (const [headerName, headerValue] of entries) {
+    if (target instanceof Headers) {
+      target.set(headerName, headerValue);
+      continue;
+    }
+
+    target[headerName] = headerValue;
+  }
+}
+
+function normalizeRelaySessionClientContext(
+  value: RelaySessionClientContext | null | undefined
+): RelaySessionClientContext | null {
+  if (!value) {
+    return null;
+  }
+
+  return {
+    sourceIp: normalizeNullableText(value.sourceIp),
+    forwardedFor: normalizeNullableText(value.forwardedFor),
+    userAgent: normalizeNullableText(value.userAgent),
+    runtimePlatform: normalizeNullableText(value.runtimePlatform),
+    systemPlatform: normalizeNullableText(value.systemPlatform),
+    language: normalizeNullableText(value.language),
+    timezone: normalizeNullableText(value.timezone)
+  };
+}
+
+function normalizeNullableText(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
 }
 
 function sanitizeProtocols(protocols: string[]): string[] {
