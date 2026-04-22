@@ -1149,7 +1149,6 @@ describe("FileContextPanel", () => {
   it("移动端文件工具栏会收起成操作菜单，并支持菜单操作", async () => {
     platformMock.isMobile = true;
     platformMock.viewportClass = "compact";
-    const promptMock = vi.spyOn(window, "prompt").mockReturnValue("notes/todo.md");
 
     renderPanel("session-1", "workspace-1", {
       hideHeading: true
@@ -1168,6 +1167,7 @@ describe("FileContextPanel", () => {
     expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelRefresh") })).toBeInTheDocument();
     expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelUpload") })).toBeInTheDocument();
     expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelDownload") })).toBeInTheDocument();
+    expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelRenameMove") })).toBeInTheDocument();
     expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelDelete") })).toBeInTheDocument();
     expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelNewFile") })).toBeInTheDocument();
     expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelNewDirectory") })).toBeInTheDocument();
@@ -1189,6 +1189,16 @@ describe("FileContextPanel", () => {
 
     await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelActionsMenu") }));
     await userEvent.click(screen.getByRole("menuitem", { name: t("conversation.filePanelNewFile") }));
+    const createDialog = await screen.findByRole("dialog", {
+      name: t("conversation.filePanelNewFile")
+    });
+    await userEvent.type(
+      within(createDialog).getByRole("textbox", { name: t("conversation.filePanelPathFieldLabel") }),
+      "notes/todo.md"
+    );
+    await userEvent.click(
+      within(createDialog).getByRole("button", { name: t("conversation.filePanelCreateFileSubmit") })
+    );
 
     await waitFor(() => {
       expect(fileApiMock.operateFile).toHaveBeenCalledWith({
@@ -1198,8 +1208,6 @@ describe("FileContextPanel", () => {
         content: ""
       });
     });
-
-    promptMock.mockRestore();
   });
 
   it("移动端操作菜单支持删除当前选中的文件夹", async () => {
@@ -1994,6 +2002,69 @@ describe("FileContextPanel", () => {
     });
   });
 
+  it("支持重命名当前选中的文件", async () => {
+    let renamed = false;
+    fileApiMock.getFileTree.mockImplementation(async () => ({
+      items: renamed
+        ? [
+            {
+              ...rootItemsMock[0],
+              path: "config-next.json",
+              name: "config-next.json"
+            },
+            rootItemsMock[1]
+          ]
+        : [rootItemsMock[0], rootItemsMock[1]]
+    }));
+    fileApiMock.operateFile.mockImplementation(async (payload: {
+      opType: string;
+    }) => {
+      if (payload.opType === "rename") {
+        renamed = true;
+      }
+
+      return {
+        success: true,
+        opType: payload.opType
+      };
+    });
+
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole("button", { name: "config.json" }));
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelRenameMove") }));
+
+    const dialog = await screen.findByRole("dialog", {
+      name: t("conversation.filePanelRenameMove")
+    });
+    const input = within(dialog).getByRole("textbox", {
+      name: t("conversation.filePanelPathFieldLabel")
+    });
+    await userEvent.clear(input);
+    await userEvent.type(input, "config-next.json");
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: t("conversation.filePanelRenameSubmit") })
+    );
+
+    await waitFor(() => {
+      expect(fileApiMock.operateFile).toHaveBeenCalledWith({
+        workspaceId: "workspace-1",
+        opType: "rename",
+        srcPath: "config.json",
+        dstPath: "config-next.json"
+      });
+    });
+
+    expect(
+      await screen.findByText(
+        t("conversation.filePanelRenameSuccess", {
+          name: "config-next.json"
+        })
+      )
+    ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "config-next.json" })).toBeInTheDocument();
+  });
+
   it("桌面端右键会弹出文件操作菜单", async () => {
     platformMock.platform = "desktop";
     platformMock.isDesktop = true;
@@ -2017,6 +2088,7 @@ describe("FileContextPanel", () => {
         t("conversation.filePanelDownload"),
         t("conversation.filePanelNewFile"),
         t("conversation.filePanelNewDirectory"),
+        t("conversation.filePanelRenameMove"),
         t("conversation.filePanelCopy"),
         t("conversation.filePanelCut"),
         t("conversation.filePanelPaste"),
@@ -2042,6 +2114,7 @@ describe("FileContextPanel", () => {
     expect(within(menu).getByRole("menuitem", { name: t("conversation.filePanelDownload") })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: t("conversation.filePanelNewFile") })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: t("conversation.filePanelNewDirectory") })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: t("conversation.filePanelRenameMove") })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: t("conversation.filePanelCopy") })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: t("conversation.filePanelCut") })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: t("conversation.filePanelDelete") })).toBeInTheDocument();

@@ -10,13 +10,13 @@ The moment your Host is not physically next to you, remote access becomes part o
 
 Best when you already use Tailscale or prefer a private device network.
 
-### Tunnel service
+### CodingNS Connect
 
 Best when you want a more direct outside entry without maintaining the network path yourself.
 
 ## How to choose
 
-Pick Tailscale if you mainly connect between your own devices and already use that ecosystem. Pick the tunnel service if you want a simpler external address path first.
+Pick Tailscale if you mainly connect between your own devices and already use that ecosystem. Pick CodingNS Connect if you want a simpler external address path first.
 
 ## Recommendation
 

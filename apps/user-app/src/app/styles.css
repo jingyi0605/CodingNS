@@ -4578,6 +4578,22 @@ a {
   cursor: not-allowed;
 }
 
+.file-panel-clipboard-status {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 76%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.file-panel-clipboard-status[data-mode="cut"] {
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+  color: var(--text-primary);
+}
+
 .file-toolbar-search {
   display: grid;
   grid-template-columns: 1fr auto;

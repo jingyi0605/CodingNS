@@ -10,7 +10,7 @@
 
 更适合你已经在使用 Tailscale，或者希望通过自己的私有网络在多设备之间互联。
 
-### 隧道服务
+### CodingNS Connect
 
 更适合你想更直接地获得一个外部可访问入口，不想自己处理太多网络细节。
 
@@ -22,7 +22,7 @@
 - 你更偏向私有网络访问。
 - 你主要在自己的设备之间切换。
 
-### 优先选隧道服务的情况
+### 优先选 CodingNS Connect 的情况
 
 - 你希望更快拿到外部访问地址。
 - 你不想额外维护 Tailnet。
@@ -37,5 +37,5 @@
 ## 继续阅读
 
 - 看 Tailscale： [Tailscale 接入](/remote-access/tailscale-access)
-- 看隧道服务： [隧道服务](/remote-access/tunnel-service)
+- 看 CodingNS Connect： [CodingNS Connect](/remote-access/tunnel-service)
 - 看使用建议： [安全与稳定建议](/remote-access/safe-access-tips)

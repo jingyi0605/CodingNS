@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useLocalUiPreferenceSelector } from "../../../preferences/local-ui-preference-store";
@@ -7,6 +7,7 @@ import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { useToast } from "../../../shared/toast";
+import { ModalActions, ModalField } from "../../../components/ModalAtoms";
 import type {
   FileTreeRealtimeSnapshotDto,
   GitRealtimeSnapshotDto
@@ -95,6 +96,15 @@ type FileClipboardState = {
   mode: FileClipboardMode;
   items: FileSelectionTarget[];
 };
+type PathOperationModalState =
+  | {
+      mode: "create_file" | "create_directory";
+      baseDirectory: string;
+    }
+  | {
+      mode: "rename";
+      target: FileSelectionTarget;
+    };
 type WebContextMenuState = {
   positionX: number;
   positionY: number;
@@ -179,9 +189,12 @@ export function FileContextPanel({
   const [webContextMenuLayout, setWebContextMenuLayout] = useState<WebContextMenuLayout | null>(null);
   const [deleteConfirmTargets, setDeleteConfirmTargets] = useState<FileSelectionTarget[] | null>(null);
   const [fileClipboard, setFileClipboard] = useState<FileClipboardState | null>(null);
+  const [pathOperationModal, setPathOperationModal] = useState<PathOperationModalState | null>(null);
+  const [pathOperationValue, setPathOperationValue] = useState("");
   const [gitChanges, setGitChanges] = useState<GitChangeItemDto[]>([]);
   const [showChangesOnly, setShowChangesOnly] = useState(false);
   const [viewerDiffContent, setViewerDiffContent] = useState<string | null>(null);
+  const pathOperationInputId = useId();
   const treeCacheRef = useRef<FileTreeCache>({});
   const treeRevisionByPathRef = useRef<Record<string, string | null>>({});
   const expandedDirectoriesRef = useRef<string[]>([]);
@@ -270,6 +283,8 @@ export function FileContextPanel({
       setWebContextMenu(null);
       setWebContextMenuLayout(null);
       setDeleteConfirmTargets(null);
+      setPathOperationModal(null);
+      setPathOperationValue("");
       return;
     }
 
@@ -416,6 +431,8 @@ export function FileContextPanel({
     setWebContextMenu(null);
     setWebContextMenuLayout(null);
     setDeleteConfirmTargets(null);
+    setPathOperationModal(null);
+    setPathOperationValue("");
     recentFileActivationRef.current = null;
     viewerDiffRequestIdRef.current += 1;
   }, [sessionId]);
@@ -794,10 +811,24 @@ export function FileContextPanel({
   const canDeleteSelectedTarget = actionableSelectedTargets.length > 0;
   const canCopyOrCutSelection = actionableSelectedTargets.length > 0;
   const canPasteSelection = Boolean(fileClipboard?.items.length && workspaceId);
+  const canRenameSelectedTarget =
+    Boolean(workspaceId) && selectedTargets.length === 1 && primarySelectedTarget !== null;
   const canCollapseCurrent = Boolean(
     (primarySelectedFilePath ? getParentDirectory(primarySelectedFilePath) : activeDirectoryPath) &&
       expandedDirectories.length
   );
+  const clipboardStatusText = fileClipboard
+    ? fileClipboard.mode === "copy"
+      ? t("conversation.filePanelClipboardCopyReady", {
+          count: fileClipboard.items.length
+        })
+      : t("conversation.filePanelClipboardCutReady", {
+          count: fileClipboard.items.length
+        })
+    : null;
+  const pathOperationDialogCopy = pathOperationModal
+    ? resolvePathOperationDialogCopy(pathOperationModal)
+    : null;
 
   async function loadDirectory(directoryPath: string, force = false) {
     if (!workspaceId) {
@@ -1375,7 +1406,20 @@ export function FileContextPanel({
     collapseBranch(targetDirectory);
   }
 
-  async function handleCreate(
+  function resetPathOperationModal() {
+    setPathOperationModal(null);
+    setPathOperationValue("");
+  }
+
+  function closePathOperationModal() {
+    if (mutating) {
+      return;
+    }
+
+    resetPathOperationModal();
+  }
+
+  function handleCreate(
     opType: "create_file" | "create_directory",
     explicitBaseDirectory = getCreateBaseDirectory(activeDirectoryPath, primarySelectedTarget)
   ) {
@@ -1385,38 +1429,134 @@ export function FileContextPanel({
 
     const baseDirectory = explicitBaseDirectory;
     const defaultPath = baseDirectory ? `${baseDirectory}/` : "";
-    const nextPath = window.prompt(
-      opType === "create_file"
-        ? t("conversation.filePanelCreateFilePrompt")
-        : t("conversation.filePanelCreateDirectoryPrompt"),
-      defaultPath
-    );
+    setCopyPathMenuOpen(false);
+    setMobileActionMenuOpen(false);
+    setWebContextMenu(null);
+    setPathOperationModal({
+      mode: opType,
+      baseDirectory
+    });
+    setPathOperationValue(defaultPath);
+  }
 
-    if (!nextPath?.trim()) {
+  function handleRenameRequest(explicitTarget = primarySelectedTarget) {
+    if (!workspaceId || !explicitTarget) {
       return;
     }
 
-    const safeNextPath = nextPath.trim();
+    setCopyPathMenuOpen(false);
+    setMobileActionMenuOpen(false);
+    setWebContextMenu(null);
+    setPathOperationModal({
+      mode: "rename",
+      target: explicitTarget
+    });
+    setPathOperationValue(explicitTarget.path);
+  }
+
+  async function handlePathOperationSubmit(event?: React.FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+
+    if (!workspaceId || !pathOperationModal) {
+      return;
+    }
+
+    const nextPath = (pathOperationValue ?? "").trim();
+
+    if (!nextPath) {
+      return;
+    }
+
+    if (
+      pathOperationModal.mode === "rename" &&
+      normalizeRelativeClipboardPath(pathOperationModal.target.path)
+        === normalizeRelativeClipboardPath(nextPath)
+    ) {
+      closePathOperationModal();
+      return;
+    }
 
     setMutating(true);
 
     try {
+      if (pathOperationModal.mode === "rename") {
+        const sourcePath = pathOperationModal.target.path;
+        const nextTarget = createSelectionTarget(nextPath, pathOperationModal.target.kind);
+        const nextViewerPath = viewerFilePath
+          ? replacePathPrefix(viewerFilePath, sourcePath, nextPath)
+          : null;
+
+        await operateFile({
+          workspaceId,
+          opType: "rename",
+          srcPath: sourcePath,
+          dstPath: nextPath
+        });
+
+        if (fileClipboard) {
+          setFileClipboard({
+            ...fileClipboard,
+            items: replaceSelectionTargetPaths(fileClipboard.items, sourcePath, nextPath)
+          });
+        }
+
+        resetPathOperationModal();
+        resetRecentFileActivation();
+        await refreshTreeCache();
+
+        if (pathOperationModal.target.kind === "directory") {
+          await revealPathInTree(nextPath, true);
+          setSingleSelection(nextTarget);
+          setActiveDirectoryPath(nextPath);
+        } else {
+          await selectFile(nextPath);
+        }
+
+        if (nextViewerPath !== viewerFilePath) {
+          viewerDiffRequestIdRef.current += 1;
+          setViewerFilePath(nextViewerPath);
+          setViewerDiffContent(null);
+        }
+
+        if (searchMode && searchKeyword.trim()) {
+          const response = await searchFiles(workspaceId, searchKeyword.trim());
+          setSearchResult(response.items);
+        }
+
+        setSessionRefreshVersion((current) => current + 1);
+        showToast({
+          title: t("conversation.filePanelRenameSuccess", {
+            name: getPathLeafName(nextPath) || nextPath
+          }),
+          tone: "success"
+        });
+        return;
+      }
+
       await operateFile({
         workspaceId,
-        opType,
-        dstPath: safeNextPath,
-        content: opType === "create_file" ? "" : undefined
+        opType: pathOperationModal.mode,
+        dstPath: nextPath,
+        content: pathOperationModal.mode === "create_file" ? "" : undefined
       });
 
+      resetPathOperationModal();
       await refreshTreeCache();
 
-      if (opType === "create_directory") {
-        await revealPathInTree(safeNextPath, true);
-        setSingleSelection(createSelectionTarget(safeNextPath, "directory"));
-        setActiveDirectoryPath(safeNextPath);
+      if (pathOperationModal.mode === "create_directory") {
+        await revealPathInTree(nextPath, true);
+        setSingleSelection(createSelectionTarget(nextPath, "directory"));
+        setActiveDirectoryPath(nextPath);
       } else {
-        await selectFile(safeNextPath);
+        await selectFile(nextPath);
       }
+
+      if (searchMode && searchKeyword.trim()) {
+        const response = await searchFiles(workspaceId, searchKeyword.trim());
+        setSearchResult(response.items);
+      }
+
+      setSessionRefreshVersion((current) => current + 1);
     } catch (error) {
       showToast({
         title: readError(error, t("conversation.filePanelMutateFailed")),
@@ -1714,6 +1854,12 @@ export function FileContextPanel({
         onSelect: () => {
           void handleCreate("create_directory", baseDirectory);
         }
+      },
+      {
+        id: `rename-${target.path}`,
+        label: t("conversation.filePanelRenameMove"),
+        disabled: effectiveSelection.length !== 1 || mutating || transferring,
+        onSelect: () => handleRenameRequest(target)
       },
       {
         id: `copy-${target.path}`,
@@ -2183,6 +2329,15 @@ export function FileContextPanel({
                           {t("conversation.filePanelDownload")}
                         </button>
                         <button
+                          className="file-mobile-action-menu-item"
+                          type="button"
+                          role="menuitem"
+                          onClick={() => handleMobileToolbarAction(handleRenameRequest)}
+                          disabled={!canRenameSelectedTarget || mutating || transferring}
+                        >
+                          {t("conversation.filePanelRenameMove")}
+                        </button>
+                        <button
                           className="file-mobile-action-menu-item danger"
                           type="button"
                           role="menuitem"
@@ -2367,6 +2522,16 @@ export function FileContextPanel({
                     <DownloadIcon />
                   </button>
                   <button
+                    className="file-toolbar-button"
+                    type="button"
+                    title={t("conversation.filePanelRenameMove")}
+                    aria-label={t("conversation.filePanelRenameMove")}
+                    onClick={() => handleRenameRequest()}
+                    disabled={!canRenameSelectedTarget || mutating || transferring}
+                  >
+                    <RenameIcon />
+                  </button>
+                  <button
                     className="file-toolbar-button danger"
                     type="button"
                     title={t("conversation.filePanelDelete")}
@@ -2437,6 +2602,12 @@ export function FileContextPanel({
                   )
                 : null}
 
+              {clipboardStatusText ? (
+                <p className="file-panel-clipboard-status" data-mode={fileClipboard?.mode}>
+                  {clipboardStatusText}
+                </p>
+              ) : null}
+
               {searchVisible ? (
                 <form className="file-toolbar-search" onSubmit={(event) => void handleSearchSubmit(event)}>
                   <input
@@ -2488,6 +2659,52 @@ export function FileContextPanel({
                   <p className="file-tree-status status-text">{t("conversation.filePanelEmptyDirectory")}</p>
                 )}
               </div>
+              <WorkbenchModal
+                open={pathOperationModal !== null}
+                title={pathOperationDialogCopy?.title ?? ""}
+                description={pathOperationDialogCopy?.description}
+                onClose={closePathOperationModal}
+              >
+                <form className="workbench-rename-form" onSubmit={(event) => void handlePathOperationSubmit(event)}>
+                  <ModalField
+                    label={t("conversation.filePanelPathFieldLabel")}
+                    htmlFor={pathOperationInputId}
+                    description={
+                      pathOperationModal?.mode === "rename"
+                        ? pathOperationModal.target.path
+                        : pathOperationModal?.baseDirectory || undefined
+                    }
+                  >
+                    <input
+                      id={pathOperationInputId}
+                      type="text"
+                      value={pathOperationValue ?? ""}
+                      placeholder={t("conversation.filePanelPathFieldPlaceholder")}
+                      autoFocus
+                      onChange={(event) => setPathOperationValue(event.target.value)}
+                    />
+                  </ModalField>
+                  <ModalActions>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={mutating}
+                      onClick={closePathOperationModal}
+                    >
+                      {t("common.cancel")}
+                    </button>
+                    <button
+                      type="submit"
+                      className="primary-button"
+                      disabled={mutating || !(pathOperationValue ?? "").trim()}
+                    >
+                      {mutating
+                        ? (pathOperationDialogCopy?.pendingLabel ?? t("common.loading"))
+                        : (pathOperationDialogCopy?.submitLabel ?? t("common.save"))}
+                    </button>
+                  </ModalActions>
+                </form>
+              </WorkbenchModal>
               <WorkbenchModal
                 open={deleteConfirmTargets !== null}
                 title={t("conversation.filePanelDeleteConfirmTitle")}
@@ -2918,6 +3135,61 @@ function isSameOrDescendantPath(targetPath: string, candidatePath: string): bool
   return candidatePath === targetPath || candidatePath.startsWith(`${targetPath}/`);
 }
 
+function replacePathPrefix(targetPath: string, sourcePath: string, nextPath: string): string {
+  if (targetPath === sourcePath) {
+    return nextPath;
+  }
+
+  if (targetPath.startsWith(`${sourcePath}/`)) {
+    return `${nextPath}${targetPath.slice(sourcePath.length)}`;
+  }
+
+  return targetPath;
+}
+
+function replaceSelectionTargetPaths(
+  items: FileSelectionTarget[],
+  sourcePath: string,
+  nextPath: string
+): FileSelectionTarget[] {
+  return items.map((item) => ({
+    ...item,
+    path: replacePathPrefix(item.path, sourcePath, nextPath)
+  }));
+}
+
+function resolvePathOperationDialogCopy(state: PathOperationModalState): {
+  title: string;
+  description: string;
+  submitLabel: string;
+  pendingLabel: string;
+} {
+  if (state.mode === "create_file") {
+    return {
+      title: t("conversation.filePanelNewFile"),
+      description: t("conversation.filePanelCreateFileDescription"),
+      submitLabel: t("conversation.filePanelCreateFileSubmit"),
+      pendingLabel: t("conversation.filePanelCreatingFile")
+    };
+  }
+
+  if (state.mode === "create_directory") {
+    return {
+      title: t("conversation.filePanelNewDirectory"),
+      description: t("conversation.filePanelCreateDirectoryDescription"),
+      submitLabel: t("conversation.filePanelCreateDirectorySubmit"),
+      pendingLabel: t("conversation.filePanelCreatingDirectory")
+    };
+  }
+
+  return {
+    title: t("conversation.filePanelRenameMove"),
+    description: t("conversation.filePanelRenameDescription"),
+    submitLabel: t("conversation.filePanelRenameSubmit"),
+    pendingLabel: t("conversation.filePanelRenaming")
+  };
+}
+
 async function readFileAsBase64(file: File): Promise<string> {
   const buffer = await file.arrayBuffer();
   const bytes = new Uint8Array(buffer);
@@ -3291,6 +3563,21 @@ function FolderPlusIcon() {
         strokeWidth="1.2"
       />
       <path d="M8.5 7.2v4M6.5 9.2h4" fill="none" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
+  );
+}
+
+function RenameIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M3.2 11.9h2.2l5.9-5.9-2.2-2.2-5.9 5.9zM8.3 3.8l2.2 2.2M2.8 13.2h10.4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }

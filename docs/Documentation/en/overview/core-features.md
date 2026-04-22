@@ -33,7 +33,7 @@ If you use more than one Host, CodingNS can keep them separate and let you switc
 
 ## Remote access
 
-You can keep a Host reachable outside your local network through Tailscale or a tunnel service, depending on the way you prefer to connect.
+You can keep a Host reachable outside your local network through Tailscale or CodingNS Connect, depending on the way you prefer to connect.
 
 ## Settings and updates
 
