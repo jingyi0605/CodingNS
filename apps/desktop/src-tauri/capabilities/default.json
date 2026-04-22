@@ -1,7 +1,14 @@
 {
   "identifier": "default",
   "description": "CodingNS desktop default capability",
-  "windows": ["main"],
+  "windows": [
+    "main",
+    "files-*",
+    "git-*",
+    "processes-*",
+    "terminals-*",
+    "detach-preview"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-minimize",
