@@ -6,6 +6,8 @@ import {
   DesktopModal,
   type DesktopModalSizePreset
 } from "../../../components/DesktopModal";
+import { getHostBaseUrl, getHostRequestUrl } from "../../../config/env";
+import { resolveHostTransportTarget } from "../../../network/host-transport-registry";
 import { usePlatform } from "../../../platform/platform-provider";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
@@ -274,6 +276,10 @@ export function FileViewerModal({
     () => resolvePreviewAccessUrl(preview, platform.isDesktop),
     [platform.isDesktop, preview]
   );
+  const externalPreviewUrl = useMemo(
+    () => resolveExternalPreviewUrl(preview, platform.isDesktop),
+    [platform.isDesktop, preview]
+  );
   const imagePreviewUrl = useMemo(
     () => buildResourcePreviewUrl(previewUrl, resourceRefreshVersion),
     [previewUrl, resourceRefreshVersion]
@@ -445,11 +451,11 @@ export function FileViewerModal({
   }
 
   async function handleOpenExternal() {
-    if (!previewUrl) {
+    if (!externalPreviewUrl) {
       return;
     }
 
-    const result = await platform.bridge.openExternal(previewUrl);
+    const result = await platform.bridge.openExternal(externalPreviewUrl);
 
     if (!result.ok) {
       showToast({
@@ -466,6 +472,7 @@ export function FileViewerModal({
   });
   const formatActions = buildFormatActions({
     preview,
+    canOpenExternal: Boolean(externalPreviewUrl),
     isDirty,
     handleRefreshPreview,
     handleOpenExternal,
@@ -725,6 +732,7 @@ function buildViewerTabs(input: {
 
 function buildFormatActions(input: {
   preview: FilePreviewDto | null;
+  canOpenExternal: boolean;
   isDirty: boolean;
   handleRefreshPreview: () => Promise<void>;
   handleOpenExternal: () => Promise<void>;
@@ -850,7 +858,7 @@ function buildFormatActions(input: {
     });
   }
 
-  if (input.preview.previewUrl) {
+  if (input.canOpenExternal) {
     actions.push({
       id: "open-external",
       label: t("conversation.fileViewerOpenExternal"),
@@ -903,6 +911,40 @@ function resolvePreviewAccessUrl(
   }
 
   return preview.previewUrl ?? null;
+}
+
+function resolveExternalPreviewUrl(
+  preview: Pick<FilePreviewDto, "previewPath" | "previewUrl"> | null,
+  isDesktop: boolean
+): string | null {
+  if (!preview) {
+    return null;
+  }
+
+  if (preview.previewPath) {
+    if (!isDesktop && typeof window !== "undefined" && window.location?.origin) {
+      return new URL(preview.previewPath, window.location.origin).toString();
+    }
+
+    if (isDesktop) {
+      const desktopPreviewUrl = buildDesktopPreviewUrl(preview.previewPath);
+
+      if (desktopPreviewUrl) {
+        return desktopPreviewUrl;
+      }
+    }
+  }
+
+  return preview.previewUrl ?? null;
+}
+
+function buildDesktopPreviewUrl(previewPath: string): string | null {
+  try {
+    const resolvedBaseUrl = resolveHostTransportTarget(getHostBaseUrl()).baseUrl;
+    return getHostRequestUrl(previewPath, resolvedBaseUrl);
+  } catch {
+    return null;
+  }
 }
 
 function buildPdfPreviewUrl(

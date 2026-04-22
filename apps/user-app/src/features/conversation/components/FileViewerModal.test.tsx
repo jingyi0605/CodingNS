@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import "../../../app/styles.css";
+import { clientConfigStore } from "../../../config/client-config-store";
 import { t } from "../../../shared/i18n";
 import { ToastProvider } from "../../../shared/toast";
 import type { FilePreviewDto } from "../api/file-context-api";
@@ -34,6 +35,7 @@ vi.mock("../../../platform/platform-provider", () => ({
 describe("FileViewerModal", () => {
   beforeEach(() => {
     platformMock.isDesktop = true;
+    clientConfigStore.hydrate(createRuntimeConfigSnapshot("http://127.0.0.1:3002"));
     fileApiMock.getFilePreview.mockResolvedValue(createPreviewResponse());
     fileApiMock.saveFileContent.mockReset();
     platformMock.openExternal.mockReset();
@@ -197,6 +199,41 @@ describe("FileViewerModal", () => {
 
     expect(platformMock.openExternal).toHaveBeenCalledWith(
       "http://127.0.0.1:3002/preview/files/preview-token/site/index.html"
+    );
+  });
+
+  it("桌面端外部打开使用当前 Host 连接地址，而不是后端返回的 127 预览地址", async () => {
+    const user = userEvent.setup();
+    clientConfigStore.hydrate(createRuntimeConfigSnapshot("http://10.10.1.8:4100"));
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "site/index.html",
+        kind: "html",
+        content: "<!doctype html><html><body>preview</body></html>",
+        version: "html-v1",
+        previewPath: "/preview/files/preview-token/site/index.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/site/index.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="site/index.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await screen.findByTestId("file-viewer-html-preview");
+    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerOpenExternal") }));
+
+    expect(platformMock.openExternal).toHaveBeenCalledWith(
+      "http://10.10.1.8:4100/preview/files/preview-token/site/index.html"
     );
   });
 
@@ -429,6 +466,40 @@ describe("FileViewerModal", () => {
       "allow-forms allow-modals allow-scripts"
     );
   });
+
+  it("HTML 预览容器默认使用拉伸布局，避免桌面端把 iframe 挤成中间一条", async () => {
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "site/index.html",
+        kind: "html",
+        content: "<!doctype html><html><body>preview</body></html>",
+        version: "html-v1",
+        previewPath: "/preview/files/preview-token/site/index.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/site/index.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="site/index.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    const previewFrame = await screen.findByTestId("file-viewer-html-preview");
+    const previewShell = previewFrame.closest(".file-viewer-html-frame-shell");
+
+    expect(previewShell).not.toBeNull();
+    expect(getComputedStyle(previewShell as Element).alignItems).toBe("stretch");
+    expect(getComputedStyle(previewShell as Element).justifyContent).toBe("stretch");
+    expect(getComputedStyle(previewFrame).display).toBe("block");
+    expect(getComputedStyle(previewFrame).flexGrow).toBe("1");
+  });
 });
 
 function createPreviewResponse(overrides: Partial<FilePreviewDto> = {}): FilePreviewDto {
@@ -452,5 +523,39 @@ function createPreviewResponse(overrides: Partial<FilePreviewDto> = {}): FilePre
       canPaginate: false
     },
     ...overrides
+  };
+}
+
+function createRuntimeConfigSnapshot(baseUrl: string) {
+  return {
+    platform: "desktop" as const,
+    activeHostId: "host-1",
+    hosts: [
+      {
+        id: "host-1",
+        name: "Host 1",
+        baseUrl,
+        kind: "lan" as const,
+        createdAt: "2026-03-31T00:00:00.000Z",
+        updatedAt: "2026-03-31T00:00:00.000Z",
+        lastConnectedAt: null,
+        lastUserId: null,
+        lastUsername: null
+      }
+    ],
+    discoveredHosts: [],
+    activeDiscoveredHostId: null,
+    localHostDiscovery: {
+      status: "idle" as const,
+      lastScannedAt: null,
+      cooldownUntil: null,
+      errorCode: null,
+      errorDetail: null
+    },
+    releaseChannel: "stable" as const,
+    autoReconnect: true,
+    autoCheckUpdate: true,
+    language: "zh-CN" as const,
+    defaultPermissionMode: "default" as const
   };
 }
