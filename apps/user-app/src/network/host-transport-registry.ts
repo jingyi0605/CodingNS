@@ -12,7 +12,7 @@ const defaultHostTransportResolver: HostTransportResolver = ({ baseUrl }) => {
   const relayTunnel = host?.relayTunnel;
 
   if (!host || !relayTunnel?.enabled || !shouldUseRelayTransport(baseUrl, host.baseUrl, relayTunnel)) {
-    if (host && !relayTunnel?.enabled) {
+    if (host) {
       const cached = relayTransportCache.get(host.id);
 
       if (cached) {
@@ -135,10 +135,6 @@ function shouldUseRelayTransport(
   hostBaseUrl: string,
   relayTunnel: NonNullable<ReturnType<typeof getRuntimeHostByBaseUrl>>["relayTunnel"]
 ): boolean {
-  if (baseUrl === hostBaseUrl) {
-    return true;
-  }
-
   const candidateEndpoint = relayTunnel?.candidateEndpoints?.find((endpoint) => endpoint.url === baseUrl);
 
   if (candidateEndpoint) {
@@ -152,7 +148,11 @@ function shouldUseRelayTransport(
   try {
     return new URL(baseUrl).hostname.toLowerCase() === relayTunnel.tunnelDomain.trim().toLowerCase();
   } catch {
-    return false;
+    try {
+      return new URL(hostBaseUrl).hostname.toLowerCase() === relayTunnel.tunnelDomain.trim().toLowerCase();
+    } catch {
+      return false;
+    }
   }
 }
 

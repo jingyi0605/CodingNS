@@ -364,6 +364,32 @@ describe("host-transport-registry", () => {
       }
     })).rejects.toThrow();
   });
+
+  it("本地调试入口即使绑定了 relay，也不能把 4174 这种直连地址误判成 relay transport", () => {
+    clientConfigStore.hydrate(createRuntimeConfig({
+      platform: "web",
+      activeHostId: "relay-dev-host",
+      hosts: [
+        createHost({
+          id: "relay-dev-host",
+          name: "dev-host",
+          baseUrl: "http://10.255.0.83:4174",
+          kind: "remote",
+          relayTunnel: {
+            provider: "codingns_relay",
+            enabled: true,
+            tunnelDomain: "jingyi0605-02.channel.codingns.com",
+            controlBaseUrl: "https://channel.codingns.com:1443"
+          }
+        })
+      ]
+    }));
+
+    const target = resolveHostTransportTarget("http://10.255.0.83:4174");
+
+    expect(target.baseUrl).toBe("http://10.255.0.83:4174");
+    expect(target.transport).toBe(directHostTransport);
+  });
 });
 
 function createRuntimeConfig(overrides?: {
