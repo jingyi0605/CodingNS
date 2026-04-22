@@ -144,6 +144,78 @@ describe("FileViewerModal", () => {
     expect(codeLines[3]).toHaveClass("diff-line-add");
   });
 
+  it("配置文件在编辑态保持单栏，并跟随输入实时更新渲染", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: ".env.local",
+        content: 'NODE_ENV="development"\nPORT=3000\n',
+        version: "env-v1"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath=".env.local"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await screen.findByText("NODE_ENV");
+    await user.click(screen.getByRole("tab", { name: t("conversation.fileViewerEdit") }));
+
+    const editor = await screen.findByTestId("file-viewer-editor");
+    const liveRender = await screen.findByTestId("file-viewer-inline-render");
+    expect(screen.queryByTestId("file-viewer-live-render")).not.toBeInTheDocument();
+    expect(liveRender).toHaveTextContent("NODE_ENV");
+    expect(liveRender).toHaveTextContent("3000");
+
+    await user.clear(editor);
+    await user.type(editor, 'NODE_ENV="production"\nPORT=3100\n');
+
+    await waitFor(() => {
+      expect(liveRender).toHaveTextContent("production");
+      expect(liveRender).toHaveTextContent("3100");
+    });
+  });
+
+  it("Markdown 在编辑态保持原来的纯文本输入，不启用实时渲染层", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "docs/readme.md",
+        kind: "markdown",
+        content: "# 标题\n\n内容\n",
+        version: "md-v1"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="docs/readme.md"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await screen.findByRole("heading", { name: "标题" });
+    await user.click(screen.getByRole("tab", { name: t("conversation.fileViewerEdit") }));
+
+    expect(await screen.findByTestId("file-viewer-editor")).toHaveValue("# 标题\n\n内容\n");
+    expect(screen.queryByTestId("file-viewer-inline-render")).not.toBeInTheDocument();
+  });
+
   it("HTML 文件支持刷新预览、尺寸切换，并支持外部打开", async () => {
     const user = userEvent.setup();
 
