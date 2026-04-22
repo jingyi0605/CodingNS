@@ -8333,7 +8333,7 @@ export function WorkbenchLayout({
         navigate("/login", { replace: true });
       }
     });
-    client.setWorkbenchKnownRevision(initialWorkbenchSnapshotRef.current?.revision ?? null);
+    client.primeWorkbenchSnapshot(initialWorkbenchSnapshotRef.current);
 
     workbenchRealtimeClientRef.current = client;
     const fileTreeSubscription = fileTreeSubscriptionRef.current;

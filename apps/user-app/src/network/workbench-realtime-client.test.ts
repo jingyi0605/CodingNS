@@ -129,6 +129,119 @@ describe("WorkbenchRealtimeClient", () => {
     client.close();
   });
 
+  it("收到 workbench.delta 时会在本地合并快照", () => {
+    const onSnapshot = vi.fn();
+    const client = new WorkbenchRealtimeClient({
+      onConnectionChange: () => undefined,
+      onSnapshot,
+      onUnauthorized: () => undefined
+    });
+
+    client.start();
+
+    const socket = MockWebSocket.instances[0];
+
+    socket?.open();
+    socket?.dispatchEvent(
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "workbench.snapshot",
+          revision: "rev-1",
+          unchanged: false,
+          snapshot: {
+            items: [
+              {
+                workspace: {
+                  id: "workspace-1",
+                  name: "Workspace 1",
+                  path: "/tmp/workspace-1",
+                  createdAt: "2026-04-22T00:00:00.000Z",
+                  updatedAt: "2026-04-22T00:00:00.000Z"
+                },
+                sessions: [],
+                collapsed: false
+              },
+              {
+                workspace: {
+                  id: "workspace-2",
+                  name: "Workspace 2",
+                  path: "/tmp/workspace-2",
+                  createdAt: "2026-04-22T00:00:00.000Z",
+                  updatedAt: "2026-04-22T00:00:00.000Z"
+                },
+                sessions: [],
+                collapsed: false
+              }
+            ]
+          }
+        })
+      })
+    );
+    socket?.dispatchEvent(
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "workbench.delta",
+          baseRevision: "rev-1",
+          revision: "rev-2",
+          orderedWorkspaceIds: ["workspace-2", "workspace-1"],
+          removedWorkspaceIds: [],
+          changedItems: [
+            {
+              workspace: {
+                id: "workspace-2",
+                name: "Workspace 2 Updated",
+                path: "/tmp/workspace-2",
+                createdAt: "2026-04-22T00:00:00.000Z",
+                updatedAt: "2026-04-22T00:00:01.000Z"
+              },
+              sessions: [
+                {
+                  sessionId: "session-2",
+                  workspaceId: "workspace-2",
+                  provider: "codex",
+                  title: "Updated Session",
+                  status: "active",
+                  updatedAt: "2026-04-22T00:00:01.000Z",
+                  createdAt: "2026-04-22T00:00:00.000Z",
+                  lastMessageAt: "2026-04-22T00:00:01.000Z",
+                  archivedAt: null,
+                  pinned: false
+                }
+              ],
+              collapsed: true
+            }
+          ]
+        })
+      })
+    );
+
+    expect(onSnapshot).toHaveBeenCalledTimes(2);
+    expect(onSnapshot.mock.calls[1]?.[0]).toMatchObject({
+      revision: "rev-2",
+      items: [
+        {
+          workspace: {
+            id: "workspace-2",
+            name: "Workspace 2 Updated"
+          },
+          sessions: [
+            {
+              sessionId: "session-2"
+            }
+          ],
+          collapsed: true
+        },
+        {
+          workspace: {
+            id: "workspace-1"
+          }
+        }
+      ]
+    });
+
+    client.close();
+  });
+
   it("收到未授权事件时会先尝试恢复登录态，而不是立刻回登录页", async () => {
     const onUnauthorized = vi.fn();
     const refreshSpy = vi.spyOn(authStore, "refresh").mockResolvedValue({

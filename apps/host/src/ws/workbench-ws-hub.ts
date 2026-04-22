@@ -5,7 +5,11 @@ import { logPerformance } from "../shared/utils/perf-log.js";
 import { logTerminalDebug, terminalDebugNowMs } from "../shared/utils/terminal-debug-log.js";
 import type { AuthContext } from "../modules/auth/auth-service.js";
 import type { TerminalService } from "../modules/terminal/terminal-service.js";
-import type { WorkbenchService, WorkbenchSnapshot } from "../modules/workbench/workbench-service.js";
+import type {
+  WorkbenchService,
+  WorkbenchSnapshot,
+  WorkbenchSnapshotItem
+} from "../modules/workbench/workbench-service.js";
 import type {
   FileTreeSnapshot,
   GitPanelSnapshot,
@@ -102,6 +106,7 @@ interface UserChannelState {
   clients: Set<WebSocket>;
   lastWorkbenchPayload: string | null;
   lastWorkbenchRevision: string | null;
+  lastWorkbenchSnapshot: WorkbenchSnapshot | null;
   workbenchTimer: NodeJS.Timeout | null;
   workspaceManagementTimer: NodeJS.Timeout | null;
   realtimeBroadcastTimer: NodeJS.Timeout | null;
@@ -155,6 +160,15 @@ interface PayloadBroadcastMetric {
   payloadBytes: number;
   sendMs: number;
   maxBufferedAmount: number;
+}
+
+interface WorkbenchDeltaPayload {
+  type: "workbench.delta";
+  baseRevision: string;
+  revision: string;
+  orderedWorkspaceIds: string[];
+  removedWorkspaceIds: string[];
+  changedItems: WorkbenchSnapshotItem[];
 }
 
 export class WorkbenchWsHub {
@@ -390,15 +404,16 @@ export class WorkbenchWsHub {
         const snapshot = this.workbenchService.getSnapshot(userId);
         const snapshotMs = Date.now() - snapshotStartedAt;
         const serializeStartedAt = Date.now();
-        const payload = buildWorkbenchPayload(snapshot);
+        const payload = buildWorkbenchBroadcastPayload(channel.lastWorkbenchSnapshot, snapshot);
         const serializeMs = Date.now() - serializeStartedAt;
 
-        if (payload === channel.lastWorkbenchPayload) {
+        if (snapshot.revision === channel.lastWorkbenchRevision) {
           return;
         }
 
         channel.lastWorkbenchPayload = payload;
         channel.lastWorkbenchRevision = snapshot.revision;
+        channel.lastWorkbenchSnapshot = snapshot;
         const sessionCount = snapshot.items.reduce(
           (total, item) => total + countWorkbenchSessions(item),
           0
@@ -510,6 +525,7 @@ export class WorkbenchWsHub {
       clients: new Set<WebSocket>(),
       lastWorkbenchPayload: null,
       lastWorkbenchRevision: null,
+      lastWorkbenchSnapshot: null,
       workbenchTimer: null,
       workspaceManagementTimer: null,
       realtimeBroadcastTimer: null,
@@ -565,6 +581,7 @@ export class WorkbenchWsHub {
 
       channel.lastWorkbenchPayload = fullPayload;
       channel.lastWorkbenchRevision = snapshot.revision;
+      channel.lastWorkbenchSnapshot = snapshot;
       const sendMetric = sendSerializedPayload(client, clientPayload);
       logPerformance(
         "ws.workbench.subscribe",
@@ -616,15 +633,16 @@ export class WorkbenchWsHub {
         const snapshot = await this.workbenchService.refreshSnapshot(userId);
         const snapshotMs = Date.now() - snapshotStartedAt;
         const serializeStartedAt = Date.now();
-        const payload = buildWorkbenchPayload(snapshot);
+        const payload = buildWorkbenchBroadcastPayload(channel.lastWorkbenchSnapshot, snapshot);
         const serializeMs = Date.now() - serializeStartedAt;
 
-        if (payload === channel.lastWorkbenchPayload) {
+        if (snapshot.revision === channel.lastWorkbenchRevision) {
           return;
         }
 
         channel.lastWorkbenchPayload = payload;
         channel.lastWorkbenchRevision = snapshot.revision;
+        channel.lastWorkbenchSnapshot = snapshot;
         const sessionCount = snapshot.items.reduce(
           (total, item) => total + countWorkbenchSessions(item),
           0
@@ -1331,6 +1349,54 @@ function buildWorkbenchPayload(snapshot: WorkbenchSnapshot, knownRevision?: stri
     unchanged: false,
     snapshot
   });
+}
+
+function buildWorkbenchBroadcastPayload(
+  previousSnapshot: WorkbenchSnapshot | null,
+  nextSnapshot: WorkbenchSnapshot
+): string {
+  if (!previousSnapshot || previousSnapshot.revision === nextSnapshot.revision) {
+    return buildWorkbenchPayload(nextSnapshot);
+  }
+
+  const fullPayload = buildWorkbenchPayload(nextSnapshot);
+  const deltaPayload = JSON.stringify(buildWorkbenchDeltaPayload(previousSnapshot, nextSnapshot));
+
+  return Buffer.byteLength(deltaPayload, "utf8") < Buffer.byteLength(fullPayload, "utf8")
+    ? deltaPayload
+    : fullPayload;
+}
+
+function buildWorkbenchDeltaPayload(
+  previousSnapshot: WorkbenchSnapshot,
+  nextSnapshot: WorkbenchSnapshot
+): WorkbenchDeltaPayload {
+  const previousByWorkspaceId = new Map(
+    previousSnapshot.items.map((item) => [item.workspace.id, item] as const)
+  );
+  const nextByWorkspaceId = new Map(
+    nextSnapshot.items.map((item) => [item.workspace.id, item] as const)
+  );
+  const changedItems: WorkbenchSnapshotItem[] = [];
+
+  for (const item of nextSnapshot.items) {
+    const previous = previousByWorkspaceId.get(item.workspace.id);
+
+    if (!previous || JSON.stringify(previous) !== JSON.stringify(item)) {
+      changedItems.push(item);
+    }
+  }
+
+  return {
+    type: "workbench.delta",
+    baseRevision: previousSnapshot.revision,
+    revision: nextSnapshot.revision,
+    orderedWorkspaceIds: nextSnapshot.items.map((item) => item.workspace.id),
+    removedWorkspaceIds: previousSnapshot.items
+      .map((item) => item.workspace.id)
+      .filter((workspaceId) => !nextByWorkspaceId.has(workspaceId)),
+    changedItems
+  };
 }
 
 function buildFileTreePayload(snapshot: FileTreeSnapshot, knownRevision?: string | null): string {

@@ -6,6 +6,7 @@ import type { HostTransportSocket } from "./host-transport";
 import { resolveHostTransportTarget } from "./host-transport-registry";
 
 import type {
+  WorkbenchSnapshotItemDto,
   WorkbenchSnapshotDto,
   WorkspaceManagementSummaryDto
 } from "../features/conversation/api/conversation-api";
@@ -33,6 +34,15 @@ interface WorkbenchSnapshotEvent {
   revision: string;
   unchanged: boolean;
   snapshot: WorkbenchSnapshotDto | null;
+}
+
+interface WorkbenchDeltaEvent {
+  type: "workbench.delta";
+  baseRevision: string;
+  revision: string;
+  orderedWorkspaceIds: string[];
+  removedWorkspaceIds: string[];
+  changedItems: WorkbenchSnapshotItemDto[];
 }
 
 export interface FileTreeRealtimeSnapshotDto {
@@ -99,6 +109,7 @@ interface SessionErrorEvent {
 
 type IncomingEvent =
   | WorkbenchSnapshotEvent
+  | WorkbenchDeltaEvent
   | FileTreeSnapshotEvent
   | GitSnapshotEvent
   | TerminalManagerSnapshotEvent
@@ -122,6 +133,7 @@ export class WorkbenchRealtimeClient {
   private authRecoveryInFlight = false;
   private pendingRefresh = false;
   private workbenchKnownRevision: string | null;
+  private lastWorkbenchSnapshot: WorkbenchSnapshotDto | null = null;
   private fileTreeSubscription: {
     workspaceId: string;
     paths: string[];
@@ -191,6 +203,17 @@ export class WorkbenchRealtimeClient {
 
   setWorkbenchKnownRevision(revision: string | null | undefined): void {
     this.workbenchKnownRevision = normalizeKnownRevision(revision);
+  }
+
+  primeWorkbenchSnapshot(snapshot: WorkbenchSnapshotDto | null | undefined): void {
+    if (!snapshot || !Array.isArray(snapshot.items)) {
+      this.lastWorkbenchSnapshot = null;
+      this.workbenchKnownRevision = null;
+      return;
+    }
+
+    this.lastWorkbenchSnapshot = snapshot;
+    this.workbenchKnownRevision = normalizeKnownRevision(snapshot.revision) ?? null;
   }
 
   subscribeFileTree(
@@ -557,6 +580,36 @@ export class WorkbenchRealtimeClient {
         this.workbenchRefreshStartedAtMs = null;
       }
 
+      if (payload.type === "workbench.delta") {
+        logPerfDebug("workbench.delta.received", {
+          baseRevision: payload.baseRevision,
+          revision: payload.revision,
+          changedWorkspaceCount: payload.changedItems.length,
+          removedWorkspaceCount: payload.removedWorkspaceIds.length,
+          subscribeDurationMs: measureElapsedMs(this.workbenchSubscribeStartedAtMs),
+          refreshDurationMs: measureElapsedMs(this.workbenchRefreshStartedAtMs)
+        });
+        this.workbenchRefreshStartedAtMs = null;
+        const mergedSnapshot = applyWorkbenchDelta(this.lastWorkbenchSnapshot, payload);
+
+        if (!mergedSnapshot) {
+          logPerfDebug("workbench.delta.mismatch", {
+            currentRevision: this.lastWorkbenchSnapshot?.revision ?? null,
+            baseRevision: payload.baseRevision,
+            revision: payload.revision
+          });
+          this.workbenchKnownRevision = null;
+          this.lastWorkbenchSnapshot = null;
+          this.connectionManager.reconnectNow();
+          return;
+        }
+
+        this.lastWorkbenchSnapshot = mergedSnapshot;
+        this.workbenchKnownRevision = payload.revision;
+        this.options.onSnapshot(mergedSnapshot);
+        return;
+      }
+
       if (payload.type === "fileTree.snapshot") {
         const snapshot = payload.snapshot;
 
@@ -649,10 +702,17 @@ export class WorkbenchRealtimeClient {
 
       if (payload.type === "workbench.snapshot" && payload.snapshot && isWorkbenchSnapshot(payload.snapshot)) {
         payload.snapshot.revision = payload.revision;
+        this.lastWorkbenchSnapshot = payload.snapshot;
         this.workbenchKnownRevision = payload.revision;
         this.options.onSnapshot(payload.snapshot);
       } else if (payload.type === "workbench.snapshot" && payload.unchanged) {
         this.workbenchKnownRevision = payload.revision;
+        if (this.lastWorkbenchSnapshot) {
+          this.lastWorkbenchSnapshot = {
+            ...this.lastWorkbenchSnapshot,
+            revision: payload.revision
+          };
+        }
       }
     });
 
@@ -740,6 +800,44 @@ function normalizePaths(paths: string[] | undefined): string[] {
 
 function normalizeKnownRevision(value: string | null | undefined): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function applyWorkbenchDelta(
+  currentSnapshot: WorkbenchSnapshotDto | null,
+  payload: WorkbenchDeltaEvent
+): WorkbenchSnapshotDto | null {
+  if (!currentSnapshot || currentSnapshot.revision !== payload.baseRevision) {
+    return null;
+  }
+
+  const itemByWorkspaceId = new Map(
+    currentSnapshot.items.map((item) => [item.workspace.id, item] as const)
+  );
+
+  for (const workspaceId of payload.removedWorkspaceIds) {
+    itemByWorkspaceId.delete(workspaceId);
+  }
+
+  for (const item of payload.changedItems) {
+    itemByWorkspaceId.set(item.workspace.id, item);
+  }
+
+  const nextItems: WorkbenchSnapshotItemDto[] = [];
+
+  for (const workspaceId of payload.orderedWorkspaceIds) {
+    const item = itemByWorkspaceId.get(workspaceId);
+
+    if (!item) {
+      return null;
+    }
+
+    nextItems.push(item);
+  }
+
+  return {
+    revision: payload.revision,
+    items: nextItems
+  };
 }
 
 function normalizeKnownRevisionRecord(
