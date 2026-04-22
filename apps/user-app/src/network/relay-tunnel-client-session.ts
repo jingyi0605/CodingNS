@@ -59,6 +59,7 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
   private readonly textEncoder = new TextEncoder();
   private readonly textDecoder = new TextDecoder();
   private incomingPayloadChain: Promise<void> = Promise.resolve();
+  private outgoingPacketChain: Promise<void> = Promise.resolve();
   private pendingPackets: RelayTunnelGatewayPacket[] = [];
   private handshakeState:
     | {
@@ -132,7 +133,7 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
 
   send(packet: RelayTunnelGatewayPacket): void {
     if (this.handshakeState.status === "ready") {
-      void this.sendEncryptedPacket(packet, this.handshakeState.session).catch(() => undefined);
+      this.enqueueOutgoingPacket(packet, this.handshakeState.session);
       return;
     }
 
@@ -285,6 +286,20 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
     for (const packet of packets) {
       await this.sendEncryptedPacket(packet, session);
     }
+  }
+
+  private enqueueOutgoingPacket(
+    packet: RelayTunnelGatewayPacket,
+    session: RelayTunnelSession
+  ): void {
+    this.outgoingPacketChain = this.outgoingPacketChain
+      .catch(() => undefined)
+      .then(async () => {
+        await this.sendEncryptedPacket(packet, session);
+      })
+      .catch((error) => {
+        this.failSession(toError(error));
+      });
   }
 
   private async sendEncryptedPacket(
