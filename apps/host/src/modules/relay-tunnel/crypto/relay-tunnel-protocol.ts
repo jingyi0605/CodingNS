@@ -54,9 +54,9 @@ export interface RelayTunnelEncryptedFrame {
   sessionId: string;
   direction: RelayTunnelFrameDirection;
   sequence: number;
-  iv: Buffer | Uint8Array;
-  authTag: Buffer | Uint8Array;
-  ciphertext: Buffer | Uint8Array;
+  iv: string;
+  authTag: string;
+  ciphertext: string;
 }
 
 export interface RelayTunnelPendingClientHandshake {
@@ -290,9 +290,9 @@ export function encryptRelayTunnelFrame(
     sessionId: session.sessionId,
     direction,
     sequence: nextSequence,
-    iv,
-    authTag,
-    ciphertext
+    iv: iv.toString("base64url"),
+    authTag: authTag.toString("base64url"),
+    ciphertext: ciphertext.toString("base64url")
   };
 }
 
@@ -337,7 +337,7 @@ export function decryptRelayTunnelFrame(
   const decipher = createDecipheriv(
     RELAY_TUNNEL_FRAME_ALGORITHM,
     session.receiveKey,
-    toBuffer(frame.iv)
+    Buffer.from(frame.iv, "base64url")
   );
   const aad = buildFrameAad({
     sessionId: frame.sessionId,
@@ -346,11 +346,11 @@ export function decryptRelayTunnelFrame(
   });
 
   decipher.setAAD(aad);
-  decipher.setAuthTag(toBuffer(frame.authTag));
+  decipher.setAuthTag(Buffer.from(frame.authTag, "base64url"));
 
   try {
     const plaintext = Buffer.concat([
-      decipher.update(toBuffer(frame.ciphertext)),
+      decipher.update(Buffer.from(frame.ciphertext, "base64url")),
       decipher.final()
     ]);
     session.receiveSequence = frame.sequence;
@@ -400,9 +400,9 @@ function buildFrameFingerprint(frame: RelayTunnelEncryptedFrame): string {
     frame.sessionId,
     frame.direction,
     String(frame.sequence),
-    toBuffer(frame.iv).toString("base64url"),
-    toBuffer(frame.authTag).toString("base64url"),
-    toBuffer(frame.ciphertext).toString("base64url")
+    frame.iv,
+    frame.authTag,
+    frame.ciphertext
   ].join(":");
 }
 
@@ -440,29 +440,6 @@ function validateFrameEnvelope(frame: RelayTunnelEncryptedFrame): void {
       "加密帧协议版本或套件不受支持"
     );
   }
-
-  if (
-    !isByteView(frame.iv)
-    || !isByteView(frame.authTag)
-    || !isByteView(frame.ciphertext)
-    || frame.iv.byteLength !== RELAY_TUNNEL_FRAME_IV_LENGTH
-    || frame.authTag.byteLength !== 16
-  ) {
-    throw new RelayTunnelProtocolError(
-      "RELAY_TUNNEL_PROTOCOL_UNSUPPORTED",
-      "加密帧字段格式不合法"
-    );
-  }
-}
-
-function isByteView(value: unknown): value is Buffer | Uint8Array {
-  return Buffer.isBuffer(value) || value instanceof Uint8Array || ArrayBuffer.isView(value);
-}
-
-function toBuffer(value: Buffer | Uint8Array): Buffer {
-  return Buffer.isBuffer(value)
-    ? value
-    : Buffer.from(value.buffer, value.byteOffset, value.byteLength);
 }
 
 function deriveHandshakeInputKeyMaterial(input: {

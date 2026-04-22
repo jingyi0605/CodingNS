@@ -1,6 +1,5 @@
 import {
   RelayTunnelClientSession,
-  type RelayTunnelRawPayload,
   type RelayTunnelRawChannel
 } from "./relay-tunnel-client-session";
 import { clientConfigStore } from "../config/client-config-store";
@@ -46,8 +45,7 @@ export interface RelayTunnelConnectInitResponse {
 
 interface RelayTunnelEdgeSocket {
   readonly readyState: number;
-  binaryType?: BinaryType;
-  send(data: string | ArrayBuffer | Blob | ArrayBufferView): void;
+  send(data: string): void;
   close(code?: number, reason?: string): void;
   addEventListener(
     type: string,
@@ -104,166 +102,6 @@ export async function connectRelayTunnelRawChannel(
   reservation: RelayTunnelSessionReservation;
   channel: RelayTunnelRawChannel;
 }> {
-  const prepared = await prepareRelayTunnelEdgeConnection(input, dependencies);
-  const channel = new RelayTunnelEdgeRawChannel(prepared.socket);
-  await waitForSocketOpen(prepared.socket);
-
-  return {
-    binding: prepared.binding,
-    reservation: prepared.reservation,
-    channel
-  };
-}
-
-export async function connectRelayTunnelClientSessionViaEdge(
-  input: {
-    controlBaseUrl: string;
-    tunnelDomain: string;
-    onWireBytes?: (direction: "upstream" | "downstream", bytes: number) => void;
-  },
-  dependencies: RelayTunnelEdgeClientDependencies = {}
-): Promise<{
-  binding: RelayTunnelBindingView;
-  reservation: RelayTunnelSessionReservation;
-  channel: RelayTunnelRawChannel;
-  clientSession: RelayTunnelClientSession;
-}> {
-  const prepared = await prepareRelayTunnelEdgeConnection(input, dependencies);
-  const channel = new RelayTunnelEdgeRawChannel(prepared.socket);
-  const clientSession = new RelayTunnelClientSession(channel, {
-    expectedHostPublicKey: prepared.binding.hostPublicKey,
-    expectedHostFingerprint: prepared.binding.hostFingerprint,
-    onWireBytes: input.onWireBytes
-  });
-  const connectPromise = clientSession.connect();
-  await waitForSocketOpen(prepared.socket);
-  await connectPromise;
-
-  return {
-    binding: prepared.binding,
-    reservation: prepared.reservation,
-    channel,
-    clientSession
-  };
-}
-
-class RelayTunnelEdgeRawChannel implements RelayTunnelRawChannel {
-  private readonly openPromise: Promise<void>;
-  private closed = false;
-  private terminalError: Error | null = null;
-
-  constructor(private readonly socket: RelayTunnelEdgeSocket) {
-    this.openPromise = new Promise<void>((resolve, reject) => {
-      const handleOpen = () => {
-        cleanup();
-        resolve();
-      };
-      const handleClose = (event: Event) => {
-        cleanup();
-        const closeEvent = event as CloseEvent;
-        const error = new Error(
-          `relay-edge 原始链路关闭：${closeEvent.code}${closeEvent.reason ? ` ${closeEvent.reason}` : ""}`
-        );
-        this.closed = true;
-        this.terminalError = error;
-        reject(error);
-      };
-      const handleError = () => {
-        cleanup();
-        const error = new Error("relay-edge 原始链路建立失败");
-        this.closed = true;
-        this.terminalError = error;
-        reject(error);
-      };
-      const cleanup = () => {
-        this.socket.removeEventListener("open", handleOpen);
-        this.socket.removeEventListener("close", handleClose);
-        this.socket.removeEventListener("error", handleError);
-      };
-
-      this.socket.addEventListener("open", handleOpen);
-      this.socket.addEventListener("close", handleClose);
-      this.socket.addEventListener("error", handleError);
-
-      if (this.socket.readyState === 1) {
-        cleanup();
-        resolve();
-      }
-    });
-  }
-
-  send(payload: RelayTunnelRawPayload): void | Promise<void> {
-    if (this.socket.readyState === 1) {
-      this.socket.send(payload);
-      return;
-    }
-
-    if (this.socket.readyState === 0 && !this.closed) {
-      return this.openPromise.then(() => {
-        if (this.socket.readyState !== 1) {
-          throw this.terminalError ?? new Error("当前 relay-edge 原始链路尚未建立完成");
-        }
-
-        this.socket.send(payload);
-      });
-    }
-
-    throw this.terminalError ?? new Error("当前 relay-edge 原始链路尚未建立完成");
-  }
-
-  subscribe(listener: (payload: RelayTunnelRawPayload) => void): () => void {
-    const handler = (event: Event) => {
-      const messageEvent = event as MessageEvent<unknown>;
-
-      if (typeof messageEvent.data === "string") {
-        listener(messageEvent.data);
-        return;
-      }
-
-      if (messageEvent.data instanceof ArrayBuffer) {
-        listener(messageEvent.data);
-      }
-    };
-
-    this.socket.addEventListener("message", handler);
-
-    return () => {
-      this.socket.removeEventListener("message", handler);
-    };
-  }
-
-  close(code?: number, reason?: string): void {
-    this.closed = true;
-    this.socket.close(code, reason);
-  }
-}
-
-function buildRelayEdgeWebSocketUrl(
-  relayBaseUrl: string,
-  sessionId: string,
-  connectTicket: string
-): string {
-  const url = resolveRelayBaseUrl(relayBaseUrl, "ws");
-
-  url.searchParams.set("sessionId", sessionId);
-  url.searchParams.set("role", "downstream");
-  url.searchParams.set("connectTicket", connectTicket);
-  url.protocol = url.protocol === "https:" || url.protocol === "wss:" ? "wss:" : "ws:";
-
-  return url.toString();
-}
-
-async function prepareRelayTunnelEdgeConnection(
-  input: {
-    controlBaseUrl: string;
-    tunnelDomain: string;
-  },
-  dependencies: RelayTunnelEdgeClientDependencies
-): Promise<{
-  binding: RelayTunnelBindingView;
-  reservation: RelayTunnelSessionReservation;
-  socket: RelayTunnelEdgeSocket;
-}> {
   const connectInit = await connectInitRelayTunnel({
     controlBaseUrl: input.controlBaseUrl,
     tunnelDomain: input.tunnelDomain,
@@ -292,13 +130,89 @@ async function prepareRelayTunnelEdgeConnection(
   const socket = socketFactory(
     buildRelayEdgeWebSocketUrl(binding.relayBaseUrl, reservation.sessionId, connectInit.connectTicket)
   );
-  socket.binaryType = "arraybuffer";
+  await waitForSocketOpen(socket);
 
   return {
     binding,
     reservation,
-    socket
+    channel: new RelayTunnelEdgeRawChannel(socket)
   };
+}
+
+export async function connectRelayTunnelClientSessionViaEdge(
+  input: {
+    controlBaseUrl: string;
+    tunnelDomain: string;
+    onWireBytes?: (direction: "upstream" | "downstream", bytes: number) => void;
+  },
+  dependencies: RelayTunnelEdgeClientDependencies = {}
+): Promise<{
+  binding: RelayTunnelBindingView;
+  reservation: RelayTunnelSessionReservation;
+  channel: RelayTunnelRawChannel;
+  clientSession: RelayTunnelClientSession;
+}> {
+  const { binding, reservation, channel } = await connectRelayTunnelRawChannel(input, dependencies);
+  const clientSession = new RelayTunnelClientSession(channel, {
+    expectedHostPublicKey: binding.hostPublicKey,
+    expectedHostFingerprint: binding.hostFingerprint,
+    onWireBytes: input.onWireBytes
+  });
+  await clientSession.connect();
+
+  return {
+    binding,
+    reservation,
+    channel,
+    clientSession
+  };
+}
+
+class RelayTunnelEdgeRawChannel implements RelayTunnelRawChannel {
+  constructor(private readonly socket: RelayTunnelEdgeSocket) {}
+
+  send(payload: string): void {
+    if (this.socket.readyState !== 1) {
+      throw new Error("当前 relay-edge 原始链路尚未建立完成");
+    }
+
+    this.socket.send(payload);
+  }
+
+  subscribe(listener: (payload: string) => void): () => void {
+    const handler = (event: Event) => {
+      const messageEvent = event as MessageEvent<unknown>;
+
+      if (typeof messageEvent.data === "string") {
+        listener(messageEvent.data);
+      }
+    };
+
+    this.socket.addEventListener("message", handler);
+
+    return () => {
+      this.socket.removeEventListener("message", handler);
+    };
+  }
+
+  close(code?: number, reason?: string): void {
+    this.socket.close(code, reason);
+  }
+}
+
+function buildRelayEdgeWebSocketUrl(
+  relayBaseUrl: string,
+  sessionId: string,
+  connectTicket: string
+): string {
+  const url = resolveRelayBaseUrl(relayBaseUrl, "ws");
+
+  url.searchParams.set("sessionId", sessionId);
+  url.searchParams.set("role", "downstream");
+  url.searchParams.set("connectTicket", connectTicket);
+  url.protocol = url.protocol === "https:" || url.protocol === "wss:" ? "wss:" : "ws:";
+
+  return url.toString();
 }
 
 async function waitForSocketOpen(socket: RelayTunnelEdgeSocket): Promise<void> {

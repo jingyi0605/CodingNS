@@ -136,7 +136,7 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 4174,
-    allowedHosts: ["cns.jacksonz.cn"],
+    allowedHosts: ["cns.jacksonz.cn","cns-app.jacksonz.cn"],
     // 桌面壳直连 Vite 代理时，POST JSON 会先走 OPTIONS 预检。
     // 不显式放行 tauri://localhost，登录请求会在浏览器层被拦掉。
     cors: {

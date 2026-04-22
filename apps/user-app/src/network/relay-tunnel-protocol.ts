@@ -34,9 +34,9 @@ export interface RelayTunnelEncryptedFrame {
   sessionId: string;
   direction: RelayTunnelFrameDirection;
   sequence: number;
-  iv: Uint8Array;
-  authTag: Uint8Array;
-  ciphertext: Uint8Array;
+  iv: string;
+  authTag: string;
+  ciphertext: string;
 }
 
 export interface RelayTunnelPendingClientHandshake {
@@ -236,9 +236,9 @@ export async function encryptRelayTunnelFrame(
     sessionId: session.sessionId,
     direction,
     sequence: nextSequence,
-    iv,
-    authTag: encrypted.slice(-RELAY_TUNNEL_FRAME_AUTH_TAG_LENGTH),
-    ciphertext: encrypted.slice(0, -RELAY_TUNNEL_FRAME_AUTH_TAG_LENGTH)
+    iv: encodeBase64Url(iv),
+    authTag: encodeBase64Url(encrypted.slice(-RELAY_TUNNEL_FRAME_AUTH_TAG_LENGTH)),
+    ciphertext: encodeBase64Url(encrypted.slice(0, -RELAY_TUNNEL_FRAME_AUTH_TAG_LENGTH))
   };
 }
 
@@ -284,14 +284,16 @@ export async function decryptRelayTunnelFrame(
     direction: frame.direction,
     sequence: frame.sequence
   });
-  const payload = concatBytes([frame.ciphertext, frame.authTag]);
+  const ciphertext = decodeBase64Url(frame.ciphertext);
+  const authTag = decodeBase64Url(frame.authTag);
+  const payload = concatBytes([ciphertext, authTag]);
 
   try {
     const plaintext = new Uint8Array(
       await subtle.decrypt(
         {
           name: "AES-GCM",
-          iv: asBufferSource(frame.iv),
+          iv: asBufferSource(decodeBase64Url(frame.iv)),
           additionalData: asBufferSource(aad),
           tagLength: RELAY_TUNNEL_FRAME_AUTH_TAG_LENGTH * 8
         },
@@ -345,9 +347,9 @@ function buildFrameFingerprint(frame: RelayTunnelEncryptedFrame): string {
     frame.sessionId,
     frame.direction,
     String(frame.sequence),
-    encodeBase64Url(asUint8Array(frame.iv)),
-    encodeBase64Url(asUint8Array(frame.authTag)),
-    encodeBase64Url(asUint8Array(frame.ciphertext))
+    frame.iv,
+    frame.authTag,
+    frame.ciphertext
   ].join(":");
 }
 
@@ -385,31 +387,6 @@ function validateFrameEnvelope(frame: RelayTunnelEncryptedFrame): void {
       "加密帧协议版本或套件不受支持"
     );
   }
-
-  if (
-    !isByteView(frame.iv)
-    || !isByteView(frame.authTag)
-    || !isByteView(frame.ciphertext)
-    || frame.iv.byteLength !== RELAY_TUNNEL_FRAME_IV_LENGTH
-    || frame.authTag.byteLength !== RELAY_TUNNEL_FRAME_AUTH_TAG_LENGTH
-  ) {
-    throw new RelayTunnelProtocolError(
-      "RELAY_TUNNEL_PROTOCOL_UNSUPPORTED",
-      "加密帧字段格式不合法"
-    );
-  }
-}
-
-function isByteView(value: unknown): value is Uint8Array {
-  return value instanceof Uint8Array || ArrayBuffer.isView(value);
-}
-
-function asUint8Array(
-  value: Uint8Array | { buffer: ArrayBufferLike; byteOffset: number; byteLength: number }
-): Uint8Array {
-  return value instanceof Uint8Array
-    ? value
-    : new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
 }
 
 async function buildHandshakeTranscriptHash(

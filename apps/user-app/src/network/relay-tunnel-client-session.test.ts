@@ -4,12 +4,7 @@ import {
   acceptRelayTunnelClientHandshake
 } from "../../../host/src/modules/relay-tunnel/crypto/relay-tunnel-protocol";
 import { generateRelayTunnelIdentity } from "../../../host/src/modules/relay-tunnel/crypto/relay-tunnel-identity-service";
-import { decodeRelayTunnelEncryptedFramePayload } from "./relay-tunnel-wire";
-import {
-  RelayTunnelClientSession,
-  type RelayTunnelRawChannel,
-  type RelayTunnelRawPayload
-} from "./relay-tunnel-client-session";
+import { RelayTunnelClientSession, type RelayTunnelRawChannel } from "./relay-tunnel-client-session";
 
 interface ClientHelloEnvelope {
   type: "client_hello";
@@ -21,15 +16,22 @@ interface ServerHelloEnvelope {
   hello: ReturnType<typeof acceptRelayTunnelClientHandshake>["serverHello"];
 }
 
-class FakeRelayTunnelRawChannel implements RelayTunnelRawChannel {
-  readonly sentPayloads: RelayTunnelRawPayload[] = [];
-  private listener: ((payload: RelayTunnelRawPayload) => void) | null = null;
+interface EncryptedFrameEnvelope {
+  type: "encrypted_frame";
+  frame: {
+    sequence: number;
+  };
+}
 
-  send(payload: RelayTunnelRawPayload): void {
+class FakeRelayTunnelRawChannel implements RelayTunnelRawChannel {
+  readonly sentPayloads: string[] = [];
+  private listener: ((payload: string) => void) | null = null;
+
+  send(payload: string): void {
     this.sentPayloads.push(payload);
   }
 
-  subscribe(listener: (payload: RelayTunnelRawPayload) => void): () => void {
+  subscribe(listener: (payload: string) => void): () => void {
     this.listener = listener;
     return () => {
       if (this.listener === listener) {
@@ -40,7 +42,7 @@ class FakeRelayTunnelRawChannel implements RelayTunnelRawChannel {
 
   close(): void {}
 
-  emit(payload: RelayTunnelRawPayload): void {
+  emit(payload: string): void {
     this.listener?.(payload);
   }
 }
@@ -89,9 +91,9 @@ describe("relay-tunnel-client-session", () => {
 
     const encryptedFrames = channel.sentPayloads
       .slice(1)
-      .map((payload) => decodeRelayTunnelEncryptedFramePayload(payload as Uint8Array));
+      .map((payload) => JSON.parse(payload) as EncryptedFrameEnvelope);
 
-    expect(encryptedFrames.map((item) => item.sequence)).toEqual([1, 2]);
+    expect(encryptedFrames.map((item) => item.frame.sequence)).toEqual([1, 2]);
   });
 });
 

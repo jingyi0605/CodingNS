@@ -7,14 +7,13 @@ import { connectRelayTunnelClientSessionViaEdge, connectRelayTunnelRawChannel } 
 
 class MockRelayEdgeSocket extends EventTarget {
   readyState = 0;
-  binaryType: BinaryType = "blob";
-  sentPayloads: Array<string | ArrayBuffer | Blob | ArrayBufferView> = [];
+  sentPayloads: string[] = [];
 
   constructor(public readonly url: string) {
     super();
   }
 
-  send(data: string | ArrayBuffer | Blob | ArrayBufferView): void {
+  send(data: string): void {
     this.sentPayloads.push(data);
   }
 
@@ -153,7 +152,7 @@ describe("relay-tunnel-edge-client", () => {
       expect(socket.sentPayloads).toHaveLength(1);
     });
 
-    const clientHelloEnvelope = JSON.parse(socket.sentPayloads[0] as string) as {
+    const clientHelloEnvelope = JSON.parse(socket.sentPayloads[0]) as {
       type: "client_hello";
       hello: RelayTunnelClientHello;
     };
