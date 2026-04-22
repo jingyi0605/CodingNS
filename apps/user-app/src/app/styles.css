@@ -16993,11 +16993,6 @@ textarea:focus-visible {
   -webkit-text-size-adjust: 100%;
 }
 
-.file-viewer-modal[data-size="xwide"] {
-  max-height: min(92vh, 980px);
-  min-height: min(82vh, 820px);
-}
-
 .file-viewer-modal[data-size="full"] {
   height: 100vh;
   max-height: 100vh;
@@ -17329,7 +17324,6 @@ textarea:focus-visible {
 
 @media (max-width: 720px) {
   .file-viewer-modal,
-  .file-viewer-modal[data-size="xwide"],
   .file-viewer-modal[data-size="full"] {
     min-height: 100dvh;
     max-height: 100dvh;

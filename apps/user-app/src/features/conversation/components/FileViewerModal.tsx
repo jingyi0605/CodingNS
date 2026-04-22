@@ -28,7 +28,7 @@ interface FileViewerModalProps {
 }
 
 type ViewerMode = "preview" | "code" | "edit";
-type ViewerModalSizePreset = Extract<DesktopModalSizePreset, "regular" | "xwide" | "full">;
+type ViewerModalSizePreset = Extract<DesktopModalSizePreset, "regular" | "full">;
 type ImageScaleMode = "fit" | "custom" | "actual";
 type TokenKind =
   | "plain"
@@ -551,14 +551,6 @@ export function FileViewerModal({
               onClick={() => setModalSizePreset("regular")}
             >
               {t("conversation.fileViewerSizeDefault")}
-            </button>
-            <button
-              type="button"
-              className="secondary-button file-viewer-action-button"
-              data-active={modalSizePreset === "xwide"}
-              onClick={() => setModalSizePreset("xwide")}
-            >
-              {t("conversation.fileViewerSizeWide")}
             </button>
             <button
               type="button"
