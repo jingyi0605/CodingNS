@@ -23103,6 +23103,51 @@ textarea:focus-visible {
   padding-left: 1rem;
 }
 
+.mobile-workspace-home-sheet-row .modal-list-item-copy {
+  gap: 0.18rem;
+  padding-left: calc(var(--mobile-workspace-tree-depth) * 0.9rem);
+}
+
+.mobile-workspace-home-sheet-label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.98rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-workspace-home-sheet-label-text {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-workspace-home-sheet-description {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-host-workspace-switcher-host-label {
+  padding-top: 0.08rem;
+  padding-bottom: 0.08rem;
+}
+
 .mobile-workspace-home-sheet-row[data-host-entry-kind="host"] {
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--bg-surface-secondary) 94%, transparent), transparent),

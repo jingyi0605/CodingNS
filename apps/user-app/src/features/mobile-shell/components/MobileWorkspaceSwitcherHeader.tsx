@@ -212,15 +212,14 @@ export function MobileWorkspaceSwitcherHeader({
                     onClick={() => {
                       void handleItemSelect(item);
                     }}
-                  >
-                    <div
-                      className={
-                        item.kind === "host"
-                          ? "mobile-workspace-home-session-main mobile-host-workspace-switcher-host-main"
-                          : "mobile-workspace-home-session-main"
-                      }
-                    >
-                      <span className="mobile-workspace-home-session-title">
+                    label={
+                      <span
+                        className={
+                          item.kind === "host"
+                            ? "mobile-workspace-home-sheet-label mobile-host-workspace-switcher-host-label"
+                            : "mobile-workspace-home-sheet-label"
+                        }
+                      >
                         {item.kind === "host" ? (
                           <ModalTag className="mobile-host-workspace-switcher-host-badge">
                             {t("shell.hostSwitcherNodeBadge")}
@@ -231,15 +230,19 @@ export function MobileWorkspaceSwitcherHeader({
                             {t("shell.mobileWorktreeBadge")}
                           </ModalTag>
                         ) : null}
-                        {item.kind === "host" ? item.host.name : item.option.label}
+                        <span className="mobile-workspace-home-sheet-label-text">
+                          {item.kind === "host" ? item.host.name : item.option.label}
+                        </span>
                       </span>
-                      <span className="mobile-workspace-home-session-meta">
+                    }
+                    description={
+                      <span className="mobile-workspace-home-sheet-description">
                         {item.kind === "host"
                           ? formatHostSummary(item.host, item.workspaceCount)
                           : item.option.subtitle}
                       </span>
-                    </div>
-                  </ModalListItem>
+                    }
+                  />
                 ))}
               </ModalList>
               {sheetContent ? sheetContent(() => setSwitcherOpen(false)) : null}
