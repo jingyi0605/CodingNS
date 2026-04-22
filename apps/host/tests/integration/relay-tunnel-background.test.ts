@@ -535,6 +535,27 @@ describe("RelayTunnelService 后台任务", () => {
     context.close();
   });
 
+  it("读取状态时会把历史旧官方控制站地址迁移到新端口", async () => {
+    const context = createRelayTunnelTestContext({
+      initialized: true
+    });
+
+    seedBoundConfig(context.repository, {
+      controlBaseUrl: "https://channel.codingns.com:10247",
+      relayBaseUrl: "wss://channel.codingns.com:10247/relay"
+    });
+
+    const status = await context.service.getStatus();
+    const persisted = context.repository.findConfig();
+
+    expect(status.controlBaseUrl).toBe("https://channel.codingns.com:1443");
+    expect(persisted?.controlBaseUrl).toBe("https://channel.codingns.com:1443");
+    expect(status.relayBaseUrl).toBe("wss://channel.codingns.com:1443/relay");
+    expect(persisted?.relayBaseUrl).toBe("wss://channel.codingns.com:1443/relay");
+
+    context.close();
+  });
+
   it("读取状态时会把旧的独立 relay 地址收敛到控制站同源 relay 路径", async () => {
     const context = createRelayTunnelTestContext({
       initialized: true

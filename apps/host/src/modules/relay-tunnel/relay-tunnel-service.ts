@@ -27,6 +27,10 @@ const DEFAULT_RELAY_TUNNEL_CONTROL_BASE_URL = normalizeHttpBaseUrl(
   "https://channel.codingns.com:1443",
   "defaultRelayTunnelControlBaseUrl"
 )!;
+const LEGACY_RELAY_TUNNEL_CONTROL_BASE_URL = normalizeHttpBaseUrl(
+  "https://channel.codingns.com:10247",
+  "legacyRelayTunnelControlBaseUrl"
+)!;
 const DEFAULT_RELAY_TUNNEL_CONTROL_REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_RELAY_TUNNEL_CONTROL_TLS_ECDH_CURVE = "X25519";
 // 线上 channel:1443 的 TLS 握手对 Node 默认参数比较挑，控制站请求统一收敛到单个 X25519，
@@ -651,6 +655,17 @@ export class RelayTunnelService {
     if (!normalizeOptionalText(nextConfig.controlBaseUrl)) {
       // 正式包已经把官方控制站当成固定入口，Host 侧不能继续允许空值漂着，
       // 否则前端显示的是固定地址，真正发请求时却因为配置为空直接失败。
+      nextConfig = {
+        ...nextConfig,
+        controlBaseUrl: DEFAULT_RELAY_TUNNEL_CONTROL_BASE_URL,
+        updatedAt: nowIso()
+      };
+      changed = true;
+    }
+
+    if (nextConfig.controlBaseUrl === LEGACY_RELAY_TUNNEL_CONTROL_BASE_URL) {
+      // 历史正式版把官方控制站写成了旧端口。正式包又不允许用户手改控制站地址，
+      // 所以这里必须在读取配置时自动迁移，否则老用户会永远卡在登录阶段。
       nextConfig = {
         ...nextConfig,
         controlBaseUrl: DEFAULT_RELAY_TUNNEL_CONTROL_BASE_URL,
