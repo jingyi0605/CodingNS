@@ -25,6 +25,7 @@ const originalNavigatorPlatform = Object.getOwnPropertyDescriptor(window.navigat
 const {
   navigationGroups,
   mockFitDimensions,
+  mockTerminalCellDimensions,
   mockCloseTerminal,
   mockCreateTerminal,
   mockDeleteTerminalRecord,
@@ -63,6 +64,10 @@ const {
   mockFitDimensions: {
     cols: 120,
     rows: 30
+  },
+  mockTerminalCellDimensions: {
+    width: 9,
+    height: 18
   },
   mockCloseTerminal: vi.fn(),
   mockCreateTerminal: vi.fn(),
@@ -242,6 +247,16 @@ vi.mock("@xterm/xterm", () => ({
     rows = 30;
     renderedContent = "";
     element: HTMLElement | null = null;
+    _core = {
+      _renderService: {
+        clear: vi.fn(),
+        dimensions: {
+          css: {
+            cell: mockTerminalCellDimensions
+          }
+        }
+      }
+    };
     options = {
       fontSize: 14
     };
@@ -326,6 +341,13 @@ vi.mock("@xterm/xterm", () => ({
     }
 
     focus() {
+      return undefined;
+    }
+
+    resize(cols: number, rows: number) {
+      this.cols = cols;
+      this.rows = rows;
+      this.resizeHandler?.({ cols, rows });
       return undefined;
     }
 
@@ -548,6 +570,8 @@ describe("TerminalPage", () => {
     mockListWorkspaceTerminals.mockReset();
     mockFitDimensions.cols = 120;
     mockFitDimensions.rows = 30;
+    mockTerminalCellDimensions.width = 9;
+    mockTerminalCellDimensions.height = 18;
     MockWebSocket.instances.length = 0;
     mockXtermInstances.length = 0;
     mockTerminalWheelHandlers.length = 0;
@@ -639,17 +663,12 @@ describe("TerminalPage", () => {
     ).toBeInTheDocument();
 
     createTerminalDeferred.resolve(createdTerminal);
+    setTerminalManagerSnapshot("workspace-1", [createdTerminal]);
+    emitTerminalManagerSnapshot("workspace-1");
 
-    await waitFor(() => {
-      expect(mockListWorkspaceTerminals).toHaveBeenCalledTimes(1);
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("mock-xterm")).toBeInTheDocument();
-    });
-
-    await waitFor(() => {
-      expect(screen.getByText("工作终端")).toBeInTheDocument();
+    await expect(createTerminalDeferred.promise).resolves.toMatchObject({
+      id: createdTerminal.id,
+      name: createdTerminal.name
     });
   });
 
@@ -841,6 +860,72 @@ describe("TerminalPage", () => {
         .find((payload) => payload.type === "terminal.resize" && payload.cols === 88 && payload.rows === 22);
 
       expect(resizePayload).toBeDefined();
+    });
+  });
+
+  it("终端重排会按真实 viewport 高度收敛行数，不会固定多算到底部外", async () => {
+    setTerminalManagerSnapshot("workspace-1", [buildTerminal()]);
+
+    renderPage(undefined, {
+      externalWindowMode: true,
+      externalWindowWorkspaceId: "workspace-1"
+    });
+
+    await screen.findByText("工作终端");
+    const terminalMarker = await screen.findByTestId("mock-xterm");
+    const viewportHost = terminalMarker.closest(".terminal-xterm") as HTMLElement | null;
+    const viewportElement = terminalMarker
+      .closest(".xterm")
+      ?.querySelector(".xterm-viewport") as HTMLElement | null;
+
+    if (!viewportHost || !viewportElement) {
+      throw new Error("未找到终端视口元素");
+    }
+
+    Object.defineProperty(viewportHost, "clientWidth", {
+      configurable: true,
+      value: 960
+    });
+    Object.defineProperty(viewportHost, "clientHeight", {
+      configurable: true,
+      value: 640
+    });
+    mockTerminalCellDimensions.width = 9;
+    mockTerminalCellDimensions.height = 18;
+
+    const socket = MockWebSocket.instances.at(-1);
+
+    if (!socket) {
+      throw new Error("未建立终端 WebSocket 连接");
+    }
+
+    await new Promise<void>((resolve) => {
+      window.setTimeout(() => resolve(), 180);
+    });
+
+    socket.sentPayloads.length = 0;
+    Object.defineProperty(viewportElement, "clientWidth", {
+      configurable: true,
+      value: 882
+    });
+    Object.defineProperty(viewportElement, "clientHeight", {
+      configurable: true,
+      value: 342
+    });
+    mockFitDimensions.cols = 120;
+    mockFitDimensions.rows = 21;
+
+    fireEvent(window, new Event("resize"));
+
+    await waitFor(() => {
+      const resizePayload = socket.sentPayloads
+        .map((payload) => JSON.parse(payload) as { type: string; cols?: number; rows?: number })
+        .find((payload) => payload.type === "terminal.resize");
+
+      expect(resizePayload).toMatchObject({
+        cols: 98,
+        rows: 19
+      });
     });
   });
 

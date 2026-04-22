@@ -4411,7 +4411,7 @@ function createTerminalViewportRuntime(input: {
       return;
     }
 
-    const dimensions = fitAddon.proposeDimensions();
+    const dimensions = resolveTerminalViewportDimensions(input.container, terminal, fitAddon);
 
     if (
       !dimensions ||
@@ -4424,7 +4424,13 @@ function createTerminalViewportRuntime(input: {
       return;
     }
 
-    fitAddon.fit();
+    const terminalCore = readTerminalCore(terminal);
+
+    if (terminal.cols !== dimensions.cols || terminal.rows !== dimensions.rows) {
+      terminalCore?._renderService?.clear?.();
+      terminal.resize(dimensions.cols, dimensions.rows);
+    }
+
     hasCommittedFit = true;
     lastFittedCols = terminal.cols;
     lastFittedRows = terminal.rows;
@@ -4767,6 +4773,100 @@ function hasUsableContainerSize(container: HTMLDivElement): boolean {
     container.clientWidth >= MIN_TERMINAL_PIXEL_WIDTH &&
     container.clientHeight >= MIN_TERMINAL_PIXEL_HEIGHT
   );
+}
+
+function resolveTerminalViewportDimensions(
+  container: HTMLDivElement,
+  terminal: Terminal,
+  fitAddon: FitAddon
+): { cols: number; rows: number } | null {
+  const fallbackDimensions = fitAddon.proposeDimensions();
+  const viewportElement = container.querySelector(".xterm-viewport");
+  const cellDimensions = readTerminalCssCellDimensions(terminal);
+
+  if (!(viewportElement instanceof HTMLElement) || !cellDimensions) {
+    return fallbackDimensions ?? null;
+  }
+
+  const viewportWidth = viewportElement.clientWidth;
+  const viewportHeight = viewportElement.clientHeight;
+
+  if (
+    !Number.isFinite(viewportWidth) ||
+    !Number.isFinite(viewportHeight) ||
+    viewportWidth <= 0 ||
+    viewportHeight <= 0 ||
+    cellDimensions.width <= 0 ||
+    cellDimensions.height <= 0
+  ) {
+    return fallbackDimensions ?? null;
+  }
+
+  const cols = Math.floor(viewportWidth / cellDimensions.width);
+  const rows = Math.floor(viewportHeight / cellDimensions.height);
+
+  if (!Number.isFinite(cols) || !Number.isFinite(rows)) {
+    return fallbackDimensions ?? null;
+  }
+
+  return {
+    cols: Math.max(MIN_TERMINAL_COLS, cols),
+    rows: Math.max(MIN_TERMINAL_ROWS, rows)
+  };
+}
+
+function readTerminalCssCellDimensions(
+  terminal: Terminal
+): { width: number; height: number } | null {
+  const dimensions = readTerminalCore(terminal)?._renderService?.dimensions?.css;
+  const width = dimensions?.cell?.width ?? 0;
+  const height = dimensions?.cell?.height ?? 0;
+
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    return null;
+  }
+
+  return {
+    width,
+    height
+  };
+}
+
+function readTerminalCore(terminal: Terminal): {
+  _renderService?: {
+    clear?: () => void;
+    dimensions?: {
+      css?: {
+        cell?: {
+          width?: number;
+          height?: number;
+        };
+      };
+    };
+  };
+} | null {
+  const terminalWithPrivateCore = terminal as Terminal & {
+    _core?: {
+      _renderService?: {
+        clear?: () => void;
+        dimensions?: {
+          css?: {
+            cell?: {
+              width?: number;
+              height?: number;
+            };
+          };
+        };
+      };
+    };
+  };
+
+  return terminalWithPrivateCore._core ?? null;
 }
 
 function syncTerminalContainerThemeVariables(

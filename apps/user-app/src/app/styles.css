@@ -5827,11 +5827,6 @@ a {
 }
 
 .terminal-xterm .xterm-screen {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  bottom: var(--terminal-bottom-inset);
-  left: 5px;
   overflow: hidden;
   background: var(--terminal-theme-background);
 }

@@ -5424,10 +5424,6 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 }
 
 .workbench-shell[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .terminal-xterm .xterm-screen {
-  top: 5px;
-  right: 5px;
-  bottom: max(var(--terminal-bottom-gap), env(safe-area-inset-bottom, 0px));
-  left: 5px;
 }
 
 .workbench-shell {
