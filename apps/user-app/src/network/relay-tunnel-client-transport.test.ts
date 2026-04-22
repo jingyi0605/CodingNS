@@ -81,6 +81,57 @@ describe("RelayTunnelClientTransport", () => {
     });
   });
 
+  it("会把分片 HTTP 响应还原成可流式读取的 Response", async () => {
+    const session = new MockRelayTunnelSession();
+    const transport = new RelayTunnelClientTransport(session);
+    const responsePromise = transport.fetch({
+      path: "/api/stream",
+      baseUrl: "https://app.codingns.cn",
+      url: "https://app.codingns.cn/api/stream",
+      init: {
+        method: "GET"
+      }
+    });
+
+    await vi.waitFor(() => {
+      expect(session.sentPackets).toHaveLength(1);
+    });
+
+    const requestPacket = session.sentPackets[0];
+
+    if (!requestPacket || requestPacket.type !== "http.request") {
+      throw new Error("没有发出 http.request 包");
+    }
+
+    session.emit({
+      type: "http.response.start",
+      streamId: requestPacket.streamId,
+      status: 200,
+      headers: {
+        "content-type": "text/plain; charset=utf-8"
+      }
+    });
+
+    const response = await responsePromise;
+
+    session.emit({
+      type: "http.response.chunk",
+      streamId: requestPacket.streamId,
+      bodyChunkBase64Url: encodeBase64Url("hello ")
+    });
+    session.emit({
+      type: "http.response.chunk",
+      streamId: requestPacket.streamId,
+      bodyChunkBase64Url: encodeBase64Url("world")
+    });
+    session.emit({
+      type: "http.response.end",
+      streamId: requestPacket.streamId
+    });
+
+    await expect(response.text()).resolves.toBe("hello world");
+  });
+
   it("会把 WebSocket 打开、收发消息和关闭都映射成隧道包", async () => {
     const session = new MockRelayTunnelSession();
     const transport = new RelayTunnelClientTransport(session);

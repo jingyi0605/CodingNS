@@ -1,6 +1,9 @@
 export type RelayTunnelGatewayPacket =
   | RelayTunnelHttpRequestPacket
   | RelayTunnelHttpResponsePacket
+  | RelayTunnelHttpResponseStartPacket
+  | RelayTunnelHttpResponseChunkPacket
+  | RelayTunnelHttpResponseEndPacket
   | RelayTunnelWsOpenPacket
   | RelayTunnelWsOpenedPacket
   | RelayTunnelWsMessagePacket
@@ -22,6 +25,24 @@ export interface RelayTunnelHttpResponsePacket {
   status: number;
   headers: Record<string, string>;
   bodyBase64Url: string | null;
+}
+
+export interface RelayTunnelHttpResponseStartPacket {
+  type: "http.response.start";
+  streamId: string;
+  status: number;
+  headers: Record<string, string>;
+}
+
+export interface RelayTunnelHttpResponseChunkPacket {
+  type: "http.response.chunk";
+  streamId: string;
+  bodyChunkBase64Url: string;
+}
+
+export interface RelayTunnelHttpResponseEndPacket {
+  type: "http.response.end";
+  streamId: string;
 }
 
 export interface RelayTunnelWsOpenPacket {

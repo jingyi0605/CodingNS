@@ -7,6 +7,9 @@ import type {
 import type {
   RelayTunnelErrorPacket,
   RelayTunnelGatewayPacket,
+  RelayTunnelHttpResponseChunkPacket,
+  RelayTunnelHttpResponseEndPacket,
+  RelayTunnelHttpResponseStartPacket,
   RelayTunnelHttpRequestPacket,
   RelayTunnelHttpResponsePacket,
   RelayTunnelWsClosedPacket,
@@ -23,6 +26,8 @@ interface RelayTunnelPacketSession {
 interface PendingHttpRequest {
   resolve: (response: Response) => void;
   reject: (error: Error) => void;
+  streamController: ReadableStreamDefaultController<Uint8Array> | null;
+  responseStarted: boolean;
 }
 
 export class RelayTunnelClientTransport implements HostTransport {
@@ -49,7 +54,12 @@ export class RelayTunnelClientTransport implements HostTransport {
     };
 
     return await new Promise<Response>((resolve, reject) => {
-      this.pendingHttpRequests.set(streamId, { resolve, reject });
+      this.pendingHttpRequests.set(streamId, {
+        resolve,
+        reject,
+        streamController: null,
+        responseStarted: false
+      });
       this.session.send(packet);
     });
   }
@@ -73,7 +83,14 @@ export class RelayTunnelClientTransport implements HostTransport {
     this.unsubscribe();
 
     for (const pending of this.pendingHttpRequests.values()) {
-      pending.reject(new Error("隧道会话已经关闭"));
+      const error = new Error("隧道会话已经关闭");
+
+      if (pending.responseStarted) {
+        pending.streamController?.error(error);
+        continue;
+      }
+
+      pending.reject(error);
     }
 
     this.pendingHttpRequests.clear();
@@ -89,6 +106,15 @@ export class RelayTunnelClientTransport implements HostTransport {
     switch (packet.type) {
       case "http.response":
         this.handleHttpResponse(packet);
+        return;
+      case "http.response.start":
+        this.handleHttpResponseStart(packet);
+        return;
+      case "http.response.chunk":
+        this.handleHttpResponseChunk(packet);
+        return;
+      case "http.response.end":
+        this.handleHttpResponseEnd(packet);
         return;
       case "ws.opened":
         this.sockets.get(packet.streamId)?.handleOpened(packet);
@@ -123,12 +149,65 @@ export class RelayTunnelClientTransport implements HostTransport {
     );
   }
 
+  private handleHttpResponseStart(packet: RelayTunnelHttpResponseStartPacket): void {
+    const pending = this.pendingHttpRequests.get(packet.streamId);
+
+    if (!pending || pending.responseStarted) {
+      return;
+    }
+
+    pending.responseStarted = true;
+    const stream = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        pending.streamController = controller;
+      },
+      cancel: () => {
+        pending.streamController = null;
+      }
+    });
+
+    pending.resolve(
+      new Response(stream, {
+        status: packet.status,
+        headers: packet.headers
+      })
+    );
+  }
+
+  private handleHttpResponseChunk(packet: RelayTunnelHttpResponseChunkPacket): void {
+    const pending = this.pendingHttpRequests.get(packet.streamId);
+
+    if (!pending?.responseStarted) {
+      return;
+    }
+
+    const bytes = decodeBase64UrlBytes(packet.bodyChunkBase64Url);
+    pending.streamController?.enqueue(bytes);
+  }
+
+  private handleHttpResponseEnd(packet: RelayTunnelHttpResponseEndPacket): void {
+    const pending = this.pendingHttpRequests.get(packet.streamId);
+
+    if (!pending) {
+      return;
+    }
+
+    pending.streamController?.close();
+    pending.streamController = null;
+    this.pendingHttpRequests.delete(packet.streamId);
+  }
+
   private handleError(packet: RelayTunnelErrorPacket): void {
     if (packet.streamId && this.pendingHttpRequests.has(packet.streamId)) {
       const pending = this.pendingHttpRequests.get(packet.streamId);
+      const error = new Error(`${packet.errorCode}: ${packet.detail}`);
 
       this.pendingHttpRequests.delete(packet.streamId);
-      pending?.reject(new Error(`${packet.errorCode}: ${packet.detail}`));
+      if (pending?.responseStarted) {
+        pending.streamController?.error(error);
+      } else {
+        pending?.reject(error);
+      }
       return;
     }
 

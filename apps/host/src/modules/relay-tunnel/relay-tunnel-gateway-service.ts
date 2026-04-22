@@ -4,8 +4,10 @@ import type { RelaySessionClientContext } from "@codingns-proxy/shared-contracts
 import type {
   RelayTunnelErrorPacket,
   RelayTunnelGatewayPacket,
+  RelayTunnelHttpResponseChunkPacket,
+  RelayTunnelHttpResponseEndPacket,
+  RelayTunnelHttpResponseStartPacket,
   RelayTunnelHttpRequestPacket,
-  RelayTunnelHttpResponsePacket,
   RelayTunnelWsClosedPacket,
   RelayTunnelWsMessagePacket,
   RelayTunnelWsOpenPacket,
@@ -25,6 +27,7 @@ const HOP_BY_HOP_HEADERS = new Set([
   "content-length"
 ]);
 const WS_PROTOCOL_HEADER = "sec-websocket-protocol";
+const HTTP_RESPONSE_CHUNK_BYTES = 24 * 1024;
 
 export class RelayTunnelGatewayService {
   private readonly localHttpBaseUrl: URL;
@@ -101,16 +104,50 @@ export class RelayTunnelGatewayService {
         headers,
         body: packet.bodyBase64Url ? Buffer.from(packet.bodyBase64Url, "base64url") : undefined
       });
-      const responseBody = Buffer.from(await response.arrayBuffer());
-      const responsePacket: RelayTunnelHttpResponsePacket = {
-        type: "http.response",
+
+      const responseStartPacket: RelayTunnelHttpResponseStartPacket = {
+        type: "http.response.start",
         streamId: packet.streamId,
         status: response.status,
-        headers: flattenResponseHeaders(response.headers, this.sessionId),
-        bodyBase64Url: responseBody.byteLength > 0 ? responseBody.toString("base64url") : null
+        headers: flattenResponseHeaders(response.headers, this.sessionId)
       };
 
-      await this.onPacket(responsePacket);
+      await this.onPacket(responseStartPacket);
+
+      if (!response.body) {
+        const endPacket: RelayTunnelHttpResponseEndPacket = {
+          type: "http.response.end",
+          streamId: packet.streamId
+        };
+        await this.onPacket(endPacket);
+        return;
+      }
+
+      const reader = response.body.getReader();
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+
+          if (done) {
+            break;
+          }
+
+          if (!value || value.byteLength === 0) {
+            continue;
+          }
+
+          await this.emitHttpResponseChunks(packet.streamId, value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+
+      const endPacket: RelayTunnelHttpResponseEndPacket = {
+        type: "http.response.end",
+        streamId: packet.streamId
+      };
+      await this.onPacket(endPacket);
     } catch (error) {
       await this.emitError({
         type: "error",
@@ -215,6 +252,18 @@ export class RelayTunnelGatewayService {
 
   private async emitError(packet: RelayTunnelErrorPacket): Promise<void> {
     await this.onPacket(packet);
+  }
+
+  private async emitHttpResponseChunks(streamId: string, bytes: Uint8Array): Promise<void> {
+    for (let offset = 0; offset < bytes.byteLength; offset += HTTP_RESPONSE_CHUNK_BYTES) {
+      const chunk = bytes.subarray(offset, offset + HTTP_RESPONSE_CHUNK_BYTES);
+      const packet: RelayTunnelHttpResponseChunkPacket = {
+        type: "http.response.chunk",
+        streamId,
+        bodyChunkBase64Url: Buffer.from(chunk).toString("base64url")
+      };
+      await this.onPacket(packet);
+    }
   }
 }
 
