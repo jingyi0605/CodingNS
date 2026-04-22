@@ -191,6 +191,11 @@ interface ProviderCapabilityCacheEntry {
   value: ProviderCapabilities;
 }
 
+interface CodexDirtyBindingRepairState {
+  promise: Promise<SessionBinding> | null;
+  lastAttemptedAt: number;
+}
+
 interface DeliveredHistoryMessageState {
   readonly signaturesByMessageId: Map<string, string>;
   lastMutableTailRefreshAtMs: number;
@@ -245,6 +250,7 @@ const SESSION_TRANSACTION_HOTSPOT_THRESHOLD_MS = 150;
 const WORKSPACE_STATE_REFRESH_COOLDOWN_MS = 1_500;
 const SQLITE_BUSY_RETRY_LIMIT = 3;
 const SQLITE_BUSY_RETRY_DELAY_MS = 100;
+const CODEX_DIRTY_BINDING_REPAIR_COOLDOWN_MS = 5_000;
 
 export class SessionHistoryService {
   private readonly providerRegistry: ProviderRegistry;
@@ -264,6 +270,7 @@ export class SessionHistoryService {
   private readonly workspaceDiscoveryStatuses = new Map<string, WorkspaceDiscoveryStatus>();
   private readonly workspaceStateRefreshStatuses = new Map<string, WorkspaceStateRefreshStatus>();
   private readonly providerCapabilityCache = new Map<string, ProviderCapabilityCacheEntry>();
+  private readonly codexDirtyBindingRepairStates = new Map<string, CodexDirtyBindingRepairState>();
   private readonly liveActivityObservationResolvers = new Set<LiveActivityObservationResolver>();
   private readonly sessionDeletedObservers = new Set<SessionDeletedObserver>();
   private readonly workspaceSessionRelations = new Map<
@@ -567,26 +574,38 @@ export class SessionHistoryService {
     userId?: string
   ): Promise<HistoryPage> {
     const startedAt = Date.now();
+    const resolveStartedAt = Date.now();
     const resolvedSessionId = this.resolveCanonicalSessionId(sessionId, userId);
+    const resolveSessionIdMs = Date.now() - resolveStartedAt;
+    const bindingLookupStartedAt = Date.now();
     let binding = this.getBindingOrThrow(resolvedSessionId);
+    const bindingLookupMs = Date.now() - bindingLookupStartedAt;
+    let repairBindingMs = 0;
 
     if (userId) {
+      const repairStartedAt = Date.now();
       binding = await this.repairCodexDirtyBindingBeforeHistoryRead(
         resolvedSessionId,
         userId,
         binding
       );
+      repairBindingMs = Date.now() - repairStartedAt;
     }
 
     const current = this.sessionStatusSnapshotRepository.findBySessionId(resolvedSessionId);
     const safeLimit = clampLimit(limit);
+    const knownTotalLookupStartedAt = Date.now();
     const knownTotalMessageCount =
       direction === "backward" && cursor === null
         ? this.sessionIndexRepository.findIndexRecordBySessionId(resolvedSessionId)?.messageCount ?? null
         : null;
+    const knownTotalLookupMs = Date.now() - knownTotalLookupStartedAt;
     let readDurationMs = 0;
     let refreshStateDurationMs = 0;
+    let snapshotSyncingMs = 0;
+    let snapshotIdleMs = 0;
 
+    const snapshotSyncingStartedAt = Date.now();
     this.upsertSnapshot(resolvedSessionId, {
       syncStatus: "syncing",
       syncCursor: current?.syncCursor ?? cursor,
@@ -595,6 +614,7 @@ export class SessionHistoryService {
       lastErrorDetail: current?.lastErrorDetail ?? null,
       resumedAt: current?.resumedAt ?? null
     });
+    snapshotSyncingMs = Date.now() - snapshotSyncingStartedAt;
 
     try {
       const readStartedAt = Date.now();
@@ -610,6 +630,7 @@ export class SessionHistoryService {
       );
       readDurationMs = Date.now() - readStartedAt;
 
+      const snapshotIdleStartedAt = Date.now();
       this.upsertSnapshot(resolvedSessionId, {
         syncStatus: "idle",
         syncCursor:
@@ -621,6 +642,7 @@ export class SessionHistoryService {
         lastErrorDetail: current?.lastErrorDetail ?? null,
         resumedAt: current?.resumedAt ?? null
       });
+      snapshotIdleMs = Date.now() - snapshotIdleStartedAt;
 
       logPerformance(
         "session.read_history",
@@ -634,11 +656,18 @@ export class SessionHistoryService {
           hasCursor: cursor !== null,
           messageCount: page.messages.length,
           total: page.total,
+          resolveSessionIdMs,
+          bindingLookupMs,
+          repairBindingMs,
+          knownTotalLookupMs,
+          snapshotSyncingMs,
+          snapshotIdleMs,
           readMs: readDurationMs,
           refreshStateMs: refreshStateDurationMs
         },
         {
-          thresholdMs: 300
+          thresholdMs: 0,
+          force: true
         }
       );
 
@@ -654,6 +683,12 @@ export class SessionHistoryService {
           direction,
           limit: safeLimit,
           hasCursor: cursor !== null,
+          resolveSessionIdMs,
+          bindingLookupMs,
+          repairBindingMs,
+          knownTotalLookupMs,
+          snapshotSyncingMs,
+          snapshotIdleMs,
           readMs: readDurationMs,
           refreshStateMs: refreshStateDurationMs,
           error: error instanceof Error ? error.message : "unknown"
@@ -4018,17 +4053,52 @@ export class SessionHistoryService {
     binding: SessionBinding
   ): Promise<SessionBinding> {
     if (!shouldRepairCodexDirtyBinding(binding)) {
+      this.codexDirtyBindingRepairStates.delete(sessionId);
       return binding;
     }
 
-    await this.discoverWorkspaceSessions(binding.workspaceId, userId, {
-      force: true,
-      refreshStateMode: "deferred"
-    }).catch(() => {
-      return [];
+    const existingState = this.codexDirtyBindingRepairStates.get(sessionId);
+
+    if (existingState?.promise) {
+      return existingState.promise;
+    }
+
+    const now = Date.now();
+
+    if (
+      existingState &&
+      now - existingState.lastAttemptedAt < CODEX_DIRTY_BINDING_REPAIR_COOLDOWN_MS
+    ) {
+      return this.getBindingOrThrow(sessionId);
+    }
+
+    const repairPromise = (async (): Promise<SessionBinding> => {
+      await this.discoverWorkspaceSessions(binding.workspaceId, userId, {
+        force: true,
+        refreshStateMode: "deferred"
+      }).catch(() => {
+        return [];
+      });
+
+      return this.getBindingOrThrow(sessionId);
+    })();
+
+    this.codexDirtyBindingRepairStates.set(sessionId, {
+      promise: repairPromise,
+      lastAttemptedAt: now
     });
 
-    return this.getBindingOrThrow(sessionId);
+    return repairPromise.finally(() => {
+      const currentState = this.codexDirtyBindingRepairStates.get(sessionId);
+
+      if (!currentState || currentState.promise !== repairPromise) {
+        return;
+      }
+
+      currentState.promise = null;
+      currentState.lastAttemptedAt = Date.now();
+      this.codexDirtyBindingRepairStates.set(sessionId, currentState);
+    });
   }
 
   private resolveLiveActivityObservation(sessionId: string): SessionActivityObservation | null {
