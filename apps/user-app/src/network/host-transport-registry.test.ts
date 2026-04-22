@@ -42,6 +42,16 @@ describe("host-transport-registry", () => {
     expect(relayTransport).toBeInstanceOf(ManagedRelayTunnelHostTransport);
   });
 
+  it("手填但尚未持久化 relay 配置的公网入口时，也会按地址推断出 relay transport", () => {
+    clientConfigStore.hydrate(createRuntimeConfig({
+      activeHostId: "local-host"
+    }));
+
+    const transport = resolveHostTransport("https://test004.channel.jacksonz.cn:14443");
+
+    expect(transport).toBeInstanceOf(ManagedRelayTunnelHostTransport);
+  });
+
   it("同一个公共隧道 Host 重复解析时会复用同一个 transport", () => {
     const firstTransport = resolveHostTransport("https://demo.channel.codingns.com");
     const secondTransport = resolveHostTransport("https://demo.channel.codingns.com");

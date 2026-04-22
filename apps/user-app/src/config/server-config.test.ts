@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { clientConfigStore } from "./client-config-store";
-import { getActiveHostBaseUrl } from "./client-config-types";
+import { getActiveHost, getActiveHostBaseUrl } from "./client-config-types";
 import { serverConfigStore } from "./server-config";
 import { normalizeServerBaseUrl } from "./server-config";
 
@@ -126,5 +126,63 @@ describe("normalizeServerBaseUrl", () => {
         })
       ])
     );
+  });
+
+  it("手填公共隧道地址时，会给当前 Host 自动补上 relay 配置", async () => {
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: "host-1",
+      hosts: [
+        {
+          id: "host-1",
+          name: "127.0.0.1:3002",
+          baseUrl: "http://127.0.0.1:3002",
+          kind: "local",
+          createdAt: "2026-04-16T00:00:00.000Z",
+          updatedAt: "2026-04-16T00:00:00.000Z",
+          lastConnectedAt: null,
+          lastUserId: null,
+          lastUsername: null,
+          relayTunnel: null
+        }
+      ],
+      discoveredHosts: [],
+      activeDiscoveredHostId: null,
+      localHostDiscovery: {
+        status: "idle",
+        lastScannedAt: null,
+        cooldownUntil: null,
+        errorCode: null,
+        errorDetail: null
+      },
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+
+    expect(serverConfigStore.setBaseUrl("https://test004.channel.jacksonz.cn:14443")).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const activeHost = getActiveHost(clientConfigStore.getState());
+
+    expect(activeHost).toMatchObject({
+      baseUrl: "https://test004.channel.jacksonz.cn:14443",
+      relayTunnel: {
+        provider: "codingns_relay",
+        enabled: true,
+        tunnelDomain: "test004.channel.jacksonz.cn",
+        controlBaseUrl: "https://channel.jacksonz.cn:14443",
+        bindingId: null,
+        hostFingerprint: null,
+        candidateEndpoints: [
+          {
+            kind: "relay",
+            url: "https://test004.channel.jacksonz.cn:14443"
+          }
+        ]
+      }
+    });
   });
 });

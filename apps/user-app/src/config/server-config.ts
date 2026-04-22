@@ -1,7 +1,13 @@
 import { useSyncExternalStore } from "react";
 
 import { clientConfigStore } from "./client-config-store";
-import { getActiveHost, isDiscoveredHostProfile } from "./client-config-types";
+import {
+  getActiveHost,
+  isDiscoveredHostProfile,
+  type HostProfile,
+  type HostRelayTunnelProfile
+} from "./client-config-types";
+import { inferRelayAccessConfig } from "./relay-control-site-config";
 import { getVisibleDiscoveredHosts } from "./local-host-discovery-store";
 import { normalizeServerBaseUrl } from "./server-config-shared";
 
@@ -204,6 +210,7 @@ class ServerConfigStoreCompat {
 
     const nextBaseUrl = normalizeServerBaseUrl(input);
     const changed = nextBaseUrl !== activeHost.baseUrl;
+    const nextRelayTunnel = buildRelayTunnelProfileFromBaseUrl(nextBaseUrl, activeHost);
 
     if (isDiscoveredHostProfile(activeHost)) {
       clientConfigStore.updateRuntime({
@@ -213,6 +220,7 @@ class ServerConfigStoreCompat {
                 ...host,
                 baseUrl: nextBaseUrl,
                 name: new URL(nextBaseUrl).host,
+                relayTunnel: nextRelayTunnel,
                 updatedAt: new Date().toISOString()
               }
             : host
@@ -229,6 +237,7 @@ class ServerConfigStoreCompat {
             ...host,
             baseUrl: nextBaseUrl,
             name: new URL(nextBaseUrl).host,
+            relayTunnel: nextRelayTunnel,
             updatedAt: new Date().toISOString()
           }
         : host
@@ -287,3 +296,42 @@ export function getCustomServerOptionValue(): string {
 }
 
 export { normalizeServerBaseUrl } from "./server-config-shared";
+
+function buildRelayTunnelProfileFromBaseUrl(
+  baseUrl: string,
+  activeHost: Pick<HostProfile, "relayTunnel"> | null
+): HostRelayTunnelProfile | null {
+  const inferredRelayConfig = inferRelayAccessConfig(baseUrl);
+
+  if (!inferredRelayConfig) {
+    return null;
+  }
+
+  const currentRelayTunnel = activeHost?.relayTunnel;
+  const shouldPreserveIdentity =
+    currentRelayTunnel?.provider === "codingns_relay"
+    && currentRelayTunnel.tunnelDomain === inferredRelayConfig.tunnelDomain
+    && currentRelayTunnel.controlBaseUrl === inferredRelayConfig.controlBaseUrl;
+  const preservedNonRelayEndpoints = (currentRelayTunnel?.candidateEndpoints ?? [])
+    .filter((endpoint) => endpoint.kind !== "relay");
+
+  return {
+    provider: "codingns_relay",
+    enabled: true,
+    tunnelDomain: inferredRelayConfig.tunnelDomain,
+    controlBaseUrl: inferredRelayConfig.controlBaseUrl,
+    bindingId: shouldPreserveIdentity ? (currentRelayTunnel?.bindingId ?? null) : null,
+    hostFingerprint: shouldPreserveIdentity ? (currentRelayTunnel?.hostFingerprint ?? null) : null,
+    candidateEndpoints: [
+      {
+        endpointId: `relay-entry:${inferredRelayConfig.relayBaseUrl}`,
+        kind: "relay",
+        url: inferredRelayConfig.relayBaseUrl,
+        priority: 0,
+        expiresAt: null,
+        source: "user_saved"
+      },
+      ...preservedNonRelayEndpoints
+    ]
+  };
+}

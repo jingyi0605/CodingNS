@@ -1,60 +1,89 @@
 import { clientConfigStore } from "../config/client-config-store";
 import { getActiveHost, getRuntimeHostByBaseUrl } from "../config/client-config-types";
 import { hostRuntimeStore } from "../config/host-runtime-store";
+import { inferRelayAccessConfig } from "../config/relay-control-site-config";
 import { directHostTransport } from "./direct-host-transport";
 import type { HostTransport, HostTransportResolver } from "./host-transport";
 import { ManagedRelayTunnelHostTransport } from "./relay-tunnel-managed-transport";
 
 const relayTransportCache = new Map<string, { signature: string; transport: ManagedRelayTunnelHostTransport }>();
+const inferredRelayTransportCache = new Map<string, ManagedRelayTunnelHostTransport>();
 
 const defaultHostTransportResolver: HostTransportResolver = ({ baseUrl }) => {
   const host = getRuntimeHostByBaseUrl(clientConfigStore.getState(), baseUrl);
   const relayTunnel = host?.relayTunnel;
 
-  if (!host || !relayTunnel?.enabled || !shouldUseRelayTransport(baseUrl, host.baseUrl, relayTunnel)) {
-    if (host) {
-      const cached = relayTransportCache.get(host.id);
+  if (host && relayTunnel?.enabled && shouldUseRelayTransport(baseUrl, host.baseUrl, relayTunnel)) {
+    const signature = JSON.stringify({
+      baseUrl: host.baseUrl,
+      relayTunnel
+    });
+    const cached = relayTransportCache.get(host.id);
 
-      if (cached) {
-        cached.transport.close();
-        relayTransportCache.delete(host.id);
-      }
+    if (cached && cached.signature === signature) {
+      return cached.transport;
     }
 
-    return directHostTransport;
+    cached?.transport.close();
+
+    const transport = new ManagedRelayTunnelHostTransport({
+      hostId: host.id,
+      controlBaseUrl: relayTunnel.controlBaseUrl,
+      tunnelDomain: relayTunnel.tunnelDomain
+    }, {
+      fallbackTransport: shouldAllowRelayDirectFallback(
+        clientConfigStore.getState().platform,
+        host.baseUrl,
+        relayTunnel.tunnelDomain
+      )
+        ? directHostTransport
+        : undefined
+    });
+
+    relayTransportCache.set(host.id, {
+      signature,
+      transport
+    });
+    return transport;
   }
 
-  const signature = JSON.stringify({
-    baseUrl: host.baseUrl,
-    relayTunnel
-  });
-  const cached = relayTransportCache.get(host.id);
+  if (host) {
+    const cached = relayTransportCache.get(host.id);
 
-  if (cached && cached.signature === signature) {
-    return cached.transport;
+    if (cached) {
+      cached.transport.close();
+      relayTransportCache.delete(host.id);
+    }
+
+    if (relayTunnel?.provider === "codingns_relay" && !relayTunnel.enabled) {
+      return directHostTransport;
+    }
   }
 
-  cached?.transport.close();
+  const inferredRelay = inferRelayAccessConfig(baseUrl);
 
-  const transport = new ManagedRelayTunnelHostTransport({
-    hostId: host.id,
-    controlBaseUrl: relayTunnel.controlBaseUrl,
-    tunnelDomain: relayTunnel.tunnelDomain
-  }, {
-    fallbackTransport: shouldAllowRelayDirectFallback(
-      clientConfigStore.getState().platform,
-      host.baseUrl,
-      relayTunnel.tunnelDomain
-    )
-      ? directHostTransport
-      : undefined
-  });
+  if (inferredRelay) {
+    const cacheKey = JSON.stringify({
+      tunnelDomain: inferredRelay.tunnelDomain,
+      controlBaseUrl: inferredRelay.controlBaseUrl
+    });
+    const cachedTransport = inferredRelayTransportCache.get(cacheKey);
 
-  relayTransportCache.set(host.id, {
-    signature,
-    transport
-  });
-  return transport;
+    if (cachedTransport) {
+      return cachedTransport;
+    }
+
+    const transport = new ManagedRelayTunnelHostTransport({
+      hostId: `inferred:${inferredRelay.tunnelDomain}`,
+      controlBaseUrl: inferredRelay.controlBaseUrl,
+      tunnelDomain: inferredRelay.tunnelDomain
+    });
+
+    inferredRelayTransportCache.set(cacheKey, transport);
+    return transport;
+  }
+
+  return directHostTransport;
 };
 
 let hostTransportResolver: HostTransportResolver = defaultHostTransportResolver;
@@ -80,21 +109,27 @@ export function resolveHostTransport(baseUrl: string): HostTransport {
 export function setHostTransportResolverForTesting(
   resolver: HostTransportResolver | null | undefined
 ): void {
-  for (const cached of relayTransportCache.values()) {
-    cached.transport.close();
-  }
-
-  relayTransportCache.clear();
+  closeCachedRelayTransports();
   hostTransportResolver = resolver ?? (() => directHostTransport);
 }
 
 export function resetHostTransportRegistryForTesting(): void {
+  closeCachedRelayTransports();
+  hostTransportResolver = defaultHostTransportResolver;
+}
+
+function closeCachedRelayTransports(): void {
   for (const cached of relayTransportCache.values()) {
     cached.transport.close();
   }
 
   relayTransportCache.clear();
-  hostTransportResolver = defaultHostTransportResolver;
+
+  for (const cached of inferredRelayTransportCache.values()) {
+    cached.close();
+  }
+
+  inferredRelayTransportCache.clear();
 }
 
 function resolveActiveHostBaseUrl(baseUrl: string): string {
