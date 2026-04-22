@@ -75,6 +75,44 @@ describe("cors origins", () => {
     expect(browserResponse.headers["access-control-allow-origin"]).toBe("http://127.0.0.1:4174");
   });
 
+  it("放行可信 Web 前端来源", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const hosted = createTestApp(fixture, {
+      allowedCorsOrigins: [
+        "https://app.codingns.com",
+        "https://preview.codingns.app"
+      ]
+    });
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const bootstrapResponse = await hosted.app.inject({
+      method: "GET",
+      url: "/api/public/bootstrap-status",
+      headers: {
+        origin: "https://app.codingns.com"
+      }
+    });
+
+    expect(bootstrapResponse.statusCode).toBe(200);
+    expect(bootstrapResponse.headers["access-control-allow-origin"]).toBe("https://app.codingns.com");
+
+    const preflightResponse = await hosted.app.inject({
+      method: "OPTIONS",
+      url: "/api/auth/login",
+      headers: {
+        origin: "https://preview.codingns.app",
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "Content-Type"
+      }
+    });
+
+    expect(preflightResponse.statusCode).toBe(204);
+    expect(preflightResponse.headers["access-control-allow-origin"]).toBe("https://preview.codingns.app");
+  });
+
   it("允许 Tauri 登录请求通过预检", async () => {
     const fixture = createEmptyFixture();
     activeFixtures.push(fixture);

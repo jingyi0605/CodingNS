@@ -10,6 +10,7 @@ import { OpenCodeBaseUrlResolver } from "./opencode-base-url-resolver.js";
 export interface HostConfig {
   host: string;
   port: number;
+  allowedCorsOrigins: string[];
   webUiDir: string | null;
   webUiPort: number;
   databasePath: string;
@@ -108,6 +109,10 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
   return {
     host: overrides.host ?? process.env.CODINGNS_HOST ?? "0.0.0.0",
     port: hostPort,
+    allowedCorsOrigins: resolveAllowedCorsOrigins(
+      overrides.allowedCorsOrigins,
+      process.env.CODINGNS_ALLOWED_CORS_ORIGINS
+    ),
     webUiDir,
     webUiPort: resolveWebUiPort({
       configuredPort: overrides.webUiPort ?? readOptionalNumber(process.env.CODINGNS_WEB_UI_PORT),
@@ -188,6 +193,28 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
   };
 }
 
+function resolveAllowedCorsOrigins(
+  overrideOrigins: string[] | undefined,
+  configuredOrigins: string | undefined
+): string[] {
+  const override = normalizeOriginList(overrideOrigins);
+
+  if (override.length > 0) {
+    return override;
+  }
+
+  const configured = normalizeOriginList(configuredOrigins?.split(","));
+
+  if (configured.length > 0) {
+    return uniqueStrings([
+      "https://app.codingns.com",
+      ...configured
+    ]);
+  }
+
+  return ["https://app.codingns.com"];
+}
+
 function resolveWebUiPort(input: {
   configuredPort: number | null;
   hostPort: number;
@@ -204,6 +231,26 @@ function resolveWebUiPort(input: {
 
   // 开发态 Host 不直接托管页面时，默认回到 user-app 的 Vite 入口端口。
   return 4174;
+}
+
+function normalizeOriginList(values: readonly string[] | null | undefined): string[] {
+  if (!values) {
+    return [];
+  }
+
+  const normalized = values
+    .map((value) => normalizeOptionalText(value) ?? null)
+    .filter((value): value is string => Boolean(value))
+    .map((value) => {
+      try {
+        return new URL(value).origin;
+      } catch {
+        return null;
+      }
+    })
+    .filter((value): value is string => Boolean(value));
+
+  return uniqueStrings(normalized);
 }
 
 function resolveAppRootDir(): string {
@@ -573,6 +620,10 @@ function resolveExistingDir(candidate: string | null): string | null {
 
 function uniquePaths(values: string[]): string[] {
   return [...new Set(values.map((value) => path.resolve(value)))];
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 function resolveModuleSpecifier(specifier: string): string | null {

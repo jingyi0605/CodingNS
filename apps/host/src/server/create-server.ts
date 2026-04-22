@@ -1055,7 +1055,7 @@ export function createServer(config: HostConfig) {
   });
 
   app.addHook("onRequest", async (request, reply) => {
-    applyCorsHeaders(request.headers.origin, reply, config.demoMode);
+    applyCorsHeaders(request.headers.origin, reply, config.demoMode, config.allowedCorsOrigins);
 
     if (request.method === "OPTIONS") {
       reply.code(204).send();
@@ -1229,8 +1229,8 @@ export function createServer(config: HostConfig) {
 
 function applyCorsHeaders(origin: string | undefined, reply: {
   header: (name: string, value: string) => unknown;
-}, demoMode: boolean): void {
-  const allowedOrigin = resolveAllowedCorsOrigin(origin, demoMode);
+}, demoMode: boolean, extraAllowedOrigins: readonly string[]): void {
+  const allowedOrigin = resolveAllowedCorsOrigin(origin, demoMode, extraAllowedOrigins);
 
   if (!allowedOrigin) {
     return;
@@ -1252,7 +1252,11 @@ const CORS_ALLOWED_HEADERS = [
   "x-codingns-hook-token"
 ].join(", ");
 
-function resolveAllowedCorsOrigin(origin: string | undefined, demoMode: boolean): string | null {
+function resolveAllowedCorsOrigin(
+  origin: string | undefined,
+  demoMode: boolean,
+  extraAllowedOrigins: readonly string[]
+): string | null {
   if (!origin) {
     return null;
   }
@@ -1282,6 +1286,10 @@ function resolveAllowedCorsOrigin(origin: string | undefined, demoMode: boolean)
         hostname === "tauri.localhost")
     ) {
       return origin;
+    }
+
+    if (extraAllowedOrigins.includes(parsed.origin)) {
+      return parsed.origin;
     }
 
     return null;
