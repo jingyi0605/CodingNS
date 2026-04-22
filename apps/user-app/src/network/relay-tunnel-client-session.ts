@@ -119,12 +119,16 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
         resolve,
         reject
       };
-      void this.sendControlPayload(
-        JSON.stringify({
-          type: "client_hello",
-          hello: clientHello
-        } satisfies RelayTunnelClientHelloEnvelope)
-      );
+      Promise.resolve(
+        this.sendControlPayload(
+          JSON.stringify({
+            type: "client_hello",
+            hello: clientHello
+          } satisfies RelayTunnelClientHelloEnvelope)
+        )
+      ).catch((error) => {
+        this.failSession(toError(error));
+      });
     });
 
     return await this.connectPromise;

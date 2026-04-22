@@ -148,35 +148,67 @@ export async function connectRelayTunnelClientSessionViaEdge(
 }
 
 class RelayTunnelEdgeRawChannel implements RelayTunnelRawChannel {
-  private readonly pendingPayloads: RelayTunnelRawPayload[] = [];
+  private readonly openPromise: Promise<void>;
   private closed = false;
+  private terminalError: Error | null = null;
 
   constructor(private readonly socket: RelayTunnelEdgeSocket) {
-    this.socket.addEventListener("open", () => {
-      this.flushPendingPayloads();
-    });
-    this.socket.addEventListener("close", () => {
-      this.closed = true;
-      this.pendingPayloads.length = 0;
-    });
-    this.socket.addEventListener("error", () => {
-      this.closed = true;
-      this.pendingPayloads.length = 0;
+    this.openPromise = new Promise<void>((resolve, reject) => {
+      const handleOpen = () => {
+        cleanup();
+        resolve();
+      };
+      const handleClose = (event: Event) => {
+        cleanup();
+        const closeEvent = event as CloseEvent;
+        const error = new Error(
+          `relay-edge 原始链路关闭：${closeEvent.code}${closeEvent.reason ? ` ${closeEvent.reason}` : ""}`
+        );
+        this.closed = true;
+        this.terminalError = error;
+        reject(error);
+      };
+      const handleError = () => {
+        cleanup();
+        const error = new Error("relay-edge 原始链路建立失败");
+        this.closed = true;
+        this.terminalError = error;
+        reject(error);
+      };
+      const cleanup = () => {
+        this.socket.removeEventListener("open", handleOpen);
+        this.socket.removeEventListener("close", handleClose);
+        this.socket.removeEventListener("error", handleError);
+      };
+
+      this.socket.addEventListener("open", handleOpen);
+      this.socket.addEventListener("close", handleClose);
+      this.socket.addEventListener("error", handleError);
+
+      if (this.socket.readyState === 1) {
+        cleanup();
+        resolve();
+      }
     });
   }
 
-  send(payload: RelayTunnelRawPayload): void {
+  send(payload: RelayTunnelRawPayload): void | Promise<void> {
     if (this.socket.readyState === 1) {
       this.socket.send(payload);
       return;
     }
 
     if (this.socket.readyState === 0 && !this.closed) {
-      this.pendingPayloads.push(payload);
-      return;
+      return this.openPromise.then(() => {
+        if (this.socket.readyState !== 1) {
+          throw this.terminalError ?? new Error("当前 relay-edge 原始链路尚未建立完成");
+        }
+
+        this.socket.send(payload);
+      });
     }
 
-    throw new Error("当前 relay-edge 原始链路尚未建立完成");
+    throw this.terminalError ?? new Error("当前 relay-edge 原始链路尚未建立完成");
   }
 
   subscribe(listener: (payload: RelayTunnelRawPayload) => void): () => void {
@@ -202,20 +234,7 @@ class RelayTunnelEdgeRawChannel implements RelayTunnelRawChannel {
 
   close(code?: number, reason?: string): void {
     this.closed = true;
-    this.pendingPayloads.length = 0;
     this.socket.close(code, reason);
-  }
-
-  private flushPendingPayloads(): void {
-    if (this.socket.readyState !== 1 || this.pendingPayloads.length === 0) {
-      return;
-    }
-
-    const payloads = this.pendingPayloads.splice(0, this.pendingPayloads.length);
-
-    for (const payload of payloads) {
-      this.socket.send(payload);
-    }
   }
 }
 
