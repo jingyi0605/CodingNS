@@ -1,5 +1,4 @@
 import WebSocket from "ws";
-import type { RelaySessionClientContext } from "@codingns-proxy/shared-contracts";
 
 import { decryptSecret } from "../../shared/utils/secret-box.js";
 import type { InstanceRelayTunnelIdentityRepository } from "../../storage/repositories/instance-relay-tunnel-identity-repository.js";
@@ -24,6 +23,7 @@ import {
   deserializeRelayTunnelPacket,
   serializeRelayTunnelPacket
 } from "./crypto/relay-tunnel-packets.js";
+import type { RelaySessionClientContext } from "./relay-tunnel-client-context.js";
 import { createRelayTunnelHostClaimProof } from "./relay-tunnel-edge-proof.js";
 import { RelayTunnelGatewayService } from "./relay-tunnel-gateway-service.js";
 import type { RelayTunnelRuntimeAdapter } from "./relay-tunnel-service.js";

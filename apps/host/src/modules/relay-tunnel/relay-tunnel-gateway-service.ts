@@ -1,5 +1,4 @@
 import WebSocket from "ws";
-import type { RelaySessionClientContext } from "@codingns-proxy/shared-contracts";
 
 import type {
   RelayTunnelErrorPacket,
@@ -13,6 +12,7 @@ import type {
   RelayTunnelWsOpenPacket,
   RelayTunnelWsOpenedPacket
 } from "./crypto/relay-tunnel-packets.js";
+import type { RelaySessionClientContext } from "./relay-tunnel-client-context.js";
 
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
