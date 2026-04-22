@@ -5,6 +5,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import { CodexAdapter } from "../dist/index.js";
 import { CodexRuntimeAdapter } from "../dist/runtime/codex-runtime.js";
 
 function createStableMessageId(providerSessionId, stableIdentity) {
@@ -684,6 +685,176 @@ rl.on("line", (line) => {
     );
     assert.equal(assistantMessages[0]?.message.messageId, assistantMessages[1]?.message.messageId);
     assert.equal(assistantMessages[0]?.message.rawRef, assistantMessages[1]?.message.rawRef);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexRuntimeAdapter 不会把 turn/completed 回放的同一批 items 再写进 synthetic history", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-replay-dedupe-"));
+  const threadId = `thread-replay-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  const emitted = [];
+  let notificationHandler = null;
+  let closed = false;
+
+  try {
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      transportFactory: () => ({
+        async initialize() {},
+        async startThread() {
+          return {
+            providerSessionId: threadId,
+            rawStoreRef: null
+          };
+        },
+        async resumeThread() {
+          return {
+            providerSessionId: threadId,
+            rawStoreRef: null
+          };
+        },
+        async resumeThreadFromHistory() {
+          return {
+            providerSessionId: threadId,
+            rawStoreRef: null
+          };
+        },
+        async startTurn() {
+          queueMicrotask(() => {
+            void notificationHandler?.({
+              method: "item/started",
+              params: {
+                threadId,
+                turnId: "turn-replay",
+                item: {
+                  type: "commandExecution",
+                  id: "command-replay-1",
+                  command: ["/bin/zsh", "-lc", "pwd"],
+                  status: "inProgress"
+                }
+              }
+            });
+            void notificationHandler?.({
+              method: "item/completed",
+              params: {
+                threadId,
+                turnId: "turn-replay",
+                item: {
+                  type: "commandExecution",
+                  id: "command-replay-1",
+                  command: ["/bin/zsh", "-lc", "pwd"],
+                  status: "completed",
+                  aggregatedOutput: "/workspace",
+                  exitCode: 0
+                }
+              }
+            });
+            void notificationHandler?.({
+              method: "item/completed",
+              params: {
+                threadId,
+                turnId: "turn-replay",
+                item: {
+                  type: "agentMessage",
+                  id: "assistant-replay-1",
+                  text: "整理完成"
+                }
+              }
+            });
+            void notificationHandler?.({
+              method: "turn/completed",
+              params: {
+                threadId,
+                turn: {
+                  id: "turn-replay",
+                  status: "completed",
+                  items: [
+                    {
+                      type: "commandExecution",
+                      id: "command-replay-1",
+                      command: ["/bin/zsh", "-lc", "pwd"],
+                      status: "completed",
+                      aggregatedOutput: "/workspace",
+                      exitCode: 0
+                    },
+                    {
+                      type: "agentMessage",
+                      id: "assistant-replay-1",
+                      text: "整理完成"
+                    }
+                  ]
+                }
+              }
+            });
+          });
+        },
+        async steerTurn() {},
+        async interruptTurn() {},
+        setNotificationHandler(handler) {
+          notificationHandler = handler;
+        },
+        setServerRequestHandler() {},
+        setOnClose() {},
+        isClosed() {
+          return closed;
+        },
+        close() {
+          closed = true;
+        }
+      })
+    });
+
+    const launch = await adapter.startSession(createRunRequest({
+      sessionId: "session-replay",
+      workspacePath: tempDir,
+      sequenceBase: 0
+    }), {
+      async emit(event) {
+        emitted.push(event);
+      },
+      updateSessionBinding() {}
+    });
+
+    await launch.completed;
+
+    const historyAdapter = new CodexAdapter({ homeDir: tempDir });
+    const page = await historyAdapter.readSessionHistory(
+      threadId,
+      launch.rawStoreRef,
+      null,
+      50
+    );
+
+    assert.deepEqual(
+      page.messages.map((message) => ({
+        role: message.role,
+        kind: message.kind,
+        content: message.content
+      })),
+      [
+        {
+          role: "user",
+          kind: "text",
+          content: "请运行检查命令"
+        },
+        {
+          role: "tool",
+          kind: "tool_call",
+          content: "/bin/zsh\n-lc\npwd"
+        },
+        {
+          role: "tool",
+          kind: "tool_result",
+          content: "/workspace"
+        },
+        {
+          role: "assistant",
+          kind: "text",
+          content: "整理完成"
+        }
+      ]
+    );
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

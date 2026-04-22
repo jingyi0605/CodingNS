@@ -211,6 +211,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     });
     const abortController = new AbortController();
     const eventQueue = createAsyncEventQueue();
+    const forwardTranslatedNotification = createCodexTranslatedNotificationForwarder(eventQueue);
     const resumedSyntheticSession = await this.resumeSyntheticThreadFromHistory(transport, request);
     const startedSession =
       resumedSyntheticSession ??
@@ -258,18 +259,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         });
       }
       const translated = translateCodexAppServerNotification(notification);
-
-      if (translated.turnId) {
-        eventQueue.setTurnId(translated.turnId);
-      }
-
-      for (const event of translated.events) {
-        eventQueue.push(event);
-      }
-
-      if (translated.terminal) {
-        eventQueue.close();
-      }
+      forwardTranslatedNotification(translated);
     });
     transport.setServerRequestHandler(async (serverRequest) => {
       if (!this.options.handleServerRequest) {
@@ -298,18 +288,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
 
     if (startTurnNotification) {
       const translated = translateCodexAppServerNotification(startTurnNotification);
-
-      if (translated.turnId) {
-        eventQueue.setTurnId(translated.turnId);
-      }
-
-      for (const event of translated.events) {
-        eventQueue.push(event);
-      }
-
-      if (translated.terminal) {
-        eventQueue.close();
-      }
+      forwardTranslatedNotification(translated);
     }
     logCodexRuntimeStep("start_session.turn_start", startTurnStartedAtMs, {
       sessionId: request.sessionId,
@@ -452,6 +431,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         : pickedRawStoreRef;
     const abortController = new AbortController();
     const eventQueue = createAsyncEventQueue();
+    const forwardTranslatedNotification = createCodexTranslatedNotificationForwarder(eventQueue);
     logCodexRuntimeStep("continue_session.raw_store_ref_ready", runtimeStartedAtMs, {
       sessionId: request.sessionId,
       providerSessionId: resolvedSessionId,
@@ -477,18 +457,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         });
       }
       const translated = translateCodexAppServerNotification(notification);
-
-      if (translated.turnId) {
-        eventQueue.setTurnId(translated.turnId);
-      }
-
-      for (const event of translated.events) {
-        eventQueue.push(event);
-      }
-
-      if (translated.terminal) {
-        eventQueue.close();
-      }
+      forwardTranslatedNotification(translated);
     });
     transport.setServerRequestHandler(async (serverRequest) => {
       if (!this.options.handleServerRequest) {
@@ -517,18 +486,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
 
     if (startTurnNotification) {
       const translated = translateCodexAppServerNotification(startTurnNotification);
-
-      if (translated.turnId) {
-        eventQueue.setTurnId(translated.turnId);
-      }
-
-      for (const event of translated.events) {
-        eventQueue.push(event);
-      }
-
-      if (translated.terminal) {
-        eventQueue.close();
-      }
+      forwardTranslatedNotification(translated);
     }
     logCodexRuntimeStep("continue_session.turn_start", startTurnStartedAtMs, {
       sessionId: request.sessionId,
@@ -1731,6 +1689,105 @@ function createAsyncEventQueue(): {
       return turnId;
     }
   };
+}
+
+function createCodexTranslatedNotificationForwarder(eventQueue: {
+  push(value: unknown): void;
+  close(): void;
+  setTurnId(turnId: string): void;
+}): (translated: {
+  events: Record<string, unknown>[];
+  terminal: boolean;
+  turnId: string | null;
+}) => void {
+  const seenReplayKeys = new Set<string>();
+
+  return (translated) => {
+    if (translated.turnId) {
+      eventQueue.setTurnId(translated.turnId);
+    }
+
+    for (const event of translated.events) {
+      const replayKey = buildCodexTranslatedReplayKey(event);
+
+      if (replayKey) {
+        if (seenReplayKeys.has(replayKey)) {
+          continue;
+        }
+
+        seenReplayKeys.add(replayKey);
+
+        while (seenReplayKeys.size > 1024) {
+          const oldest = seenReplayKeys.keys().next().value;
+
+          if (typeof oldest !== "string") {
+            break;
+          }
+
+          seenReplayKeys.delete(oldest);
+        }
+      }
+
+      eventQueue.push(event);
+    }
+
+    if (translated.terminal) {
+      eventQueue.close();
+    }
+  };
+}
+
+function buildCodexTranslatedReplayKey(event: Record<string, unknown>): string | null {
+  const eventType = ensureText(event.type).trim();
+
+  if (!eventType) {
+    return null;
+  }
+
+  if (eventType === "turn.completed" || eventType === "turn.failed" || eventType === "turn.interrupted") {
+    return `${eventType}:${ensureText(readProp(event, "turnId")).trim() || ""}`;
+  }
+
+  if (!eventType.startsWith("item.")) {
+    return null;
+  }
+
+  const item = toRecord(readProp(event, "item"));
+
+  if (!item) {
+    return null;
+  }
+
+  return JSON.stringify({
+    eventType,
+    itemType: ensureText(item.type).trim(),
+    id: ensureText(item.id).trim(),
+    status: ensureText(item.status).trim(),
+    text: ensureText(item.text).trim(),
+    summary: normalizeReplayKeyText(readProp(item, "summary")),
+    content: normalizeReplayKeyText(readProp(item, "content")),
+    command: normalizeReplayKeyText(readProp(item, "command")),
+    result: normalizeReplayKeyText(readProp(item, "result")),
+    output: normalizeReplayKeyText(readProp(item, "output")),
+    aggregatedOutput: normalizeReplayKeyText(readProp(item, "aggregated_output")),
+    error: normalizeReplayKeyText(readProp(item, "error"))
+  });
+}
+
+function normalizeReplayKeyText(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeReplayKeyText(entry)).join("\n");
+  }
+
+  if (value && typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+
+  return ensureText(value).trim();
 }
 
 function translateCodexAppServerNotification(notification: Record<string, unknown>): {
