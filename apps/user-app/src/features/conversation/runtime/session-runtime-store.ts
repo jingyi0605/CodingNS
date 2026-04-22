@@ -17,6 +17,7 @@ import {
   getSessionMessages,
   getSessionPermissionRequests,
   getSessionQueue,
+  type HistoryPageDto,
   type SessionInterruptSource,
   getSessionRuntime,
   interruptSession,
@@ -62,7 +63,9 @@ import {
 type RuntimeListener = () => void;
 type RuntimeRefreshMode = "tail" | "poll";
 const INITIAL_HISTORY_LIMIT = 30;
-const REALTIME_LIMIT = 40;
+// 首屏和历史分页都要比以前厚，否则长消息场景下一屏就会把当前页吃完。
+const OLDER_HISTORY_PAGE_LIMIT = 80;
+const REALTIME_LIMIT = 60;
 const SNAPSHOT_HISTORY_LIMIT = 600;
 const SESSION_RUNTIME_SNAPSHOT_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 const SESSION_MARK_SEEN_DELAY_MS = 600;
@@ -106,6 +109,12 @@ export class SessionRuntimeStore {
   private runtimeRefreshTimer: number | null = null;
   private runtimeRefreshMode: RuntimeRefreshMode | null = null;
   private replaceSnapshotSeedOnBackfill = false;
+  private olderHistoryPrefetchCursor: string | null = null;
+  private olderHistoryPrefetchPromise: Promise<HistoryPageDto | null> | null = null;
+  private prefetchedOlderHistoryPage: {
+    requestedCursor: string;
+    page: HistoryPageDto;
+  } | null = null;
   private readonly pendingReplyDebugTraces: PendingReplyDebugTrace[] = [];
   private readonly hasAuthoritativeBootstrapMessages: boolean;
 
@@ -164,6 +173,7 @@ export class SessionRuntimeStore {
   async initialize(): Promise<void> {
     this.historyBootstrapEnvelopeReceived = false;
     this.clearHistoryBootstrapFallbackTimer();
+    this.clearOlderHistoryPrefetch();
     const bootstrapMessages = this.options.bootstrapMessages ?? [];
     const mergedMessages = mergeAuthoritativeMessages(this.state.messages, this.sessionId, bootstrapMessages);
     const hasBootstrappedMessages = this.hasAuthoritativeBootstrapMessages;
@@ -213,6 +223,7 @@ export class SessionRuntimeStore {
   async reload(): Promise<void> {
     this.clearHistoryBootstrapFallbackTimer();
     this.historyBootstrapEnvelopeReceived = false;
+    this.clearOlderHistoryPrefetch();
     this.realtimeClient?.close();
     this.realtimeClient = null;
     const cachedSnapshot = readViewSnapshot<SessionRuntimeSnapshot>(
@@ -476,9 +487,17 @@ export class SessionRuntimeStore {
     });
 
     try {
+      const requestedCursor = this.state.olderCursor;
+      const prefetchedPage = await this.takePrefetchedOlderHistoryPage(requestedCursor);
+
+      if (prefetchedPage && this.state.olderCursor === requestedCursor) {
+        this.applyOlderHistoryPage(prefetchedPage, "prefetch_cache");
+        return;
+      }
+
       const requested = this.realtimeClient?.requestOlderMessages(
-        this.state.olderCursor,
-        INITIAL_HISTORY_LIMIT
+        requestedCursor,
+        OLDER_HISTORY_PAGE_LIMIT
       );
 
       if (!requested) {
@@ -496,6 +515,7 @@ export class SessionRuntimeStore {
 
   destroy(): void {
     this.clearHistoryBootstrapFallbackTimer();
+    this.clearOlderHistoryPrefetch();
     this.realtimeClient?.close();
     this.realtimeClient = null;
     this.pendingReplyDebugTraces.length = 0;
@@ -618,24 +638,22 @@ export class SessionRuntimeStore {
         });
         this.realtimeClient?.updateCursor(event.cursor);
         this.scheduleMarkSeen();
+        this.scheduleOlderHistoryPrefetch(
+          event.type === "session.backfill" ? "backfill" : "delta"
+        );
 
         if (this.state.queuedMessages.length > 0) {
           void this.refreshQueue();
         }
       },
       onOlderHistory: (event) => {
-        const { messages: merged } = this.mergeHistoryMessages(event.messages, false);
-
-        this.patch({
-          messages: merged,
-          historyState: "ready",
-          loadingOlderMessages: false,
-          olderCursor: event.olderCursor,
-          hasOlderMessages: Boolean(event.olderCursor),
-          pagesLoaded: this.state.pagesLoaded + 1,
-          errorCode: null,
-          errorDetail: null
-        });
+        this.applyOlderHistoryPage(
+          {
+            messages: event.messages,
+            nextCursor: event.olderCursor
+          },
+          "realtime"
+        );
       },
       onRuntimeMessage: (event) => {
         this.handleRuntimeMessage(event);
@@ -890,9 +908,171 @@ export class SessionRuntimeStore {
         errorDetail: null
       });
       this.scheduleMarkSeen();
+      this.scheduleOlderHistoryPrefetch("bootstrap_fallback");
     } catch {
       // 兜底失败不打断主链路，继续沿用当前状态。
     }
+  }
+
+  private applyOlderHistoryPage(
+    page: Pick<HistoryPageDto, "messages" | "nextCursor">,
+    source: "realtime" | "prefetch_cache"
+  ): void {
+    const { messages: merged } = this.mergeHistoryMessages(page.messages, false);
+
+    this.patch({
+      messages: merged,
+      historyState: "ready",
+      loadingOlderMessages: false,
+      olderCursor: page.nextCursor,
+      hasOlderMessages: Boolean(page.nextCursor),
+      pagesLoaded: this.state.pagesLoaded + 1,
+      errorCode: null,
+      errorDetail: null
+    });
+    logPerfDebug("session.history_older.applied", {
+      sessionId: this.sessionId,
+      source,
+      messageCount: page.messages.length,
+      nextCursor: page.nextCursor
+    });
+    this.scheduleOlderHistoryPrefetch(source);
+  }
+
+  private scheduleOlderHistoryPrefetch(reason: string): void {
+    const requestedCursor = this.state.olderCursor;
+
+    if (
+      this.state.historyState !== "ready" ||
+      this.state.loadingOlderMessages ||
+      !requestedCursor
+    ) {
+      return;
+    }
+
+    if (this.prefetchedOlderHistoryPage?.requestedCursor === requestedCursor) {
+      return;
+    }
+
+    if (
+      this.olderHistoryPrefetchPromise &&
+      this.olderHistoryPrefetchCursor === requestedCursor
+    ) {
+      return;
+    }
+
+    void this.prefetchOlderHistoryPage(requestedCursor, reason);
+  }
+
+  private async prefetchOlderHistoryPage(
+    requestedCursor: string,
+    reason: string
+  ): Promise<HistoryPageDto | null> {
+    if (this.prefetchedOlderHistoryPage?.requestedCursor === requestedCursor) {
+      return this.prefetchedOlderHistoryPage.page;
+    }
+
+    if (
+      this.olderHistoryPrefetchPromise &&
+      this.olderHistoryPrefetchCursor === requestedCursor
+    ) {
+      return this.olderHistoryPrefetchPromise;
+    }
+
+    this.olderHistoryPrefetchCursor = requestedCursor;
+    logPerfDebug("session.history_older.prefetch.start", {
+      sessionId: this.sessionId,
+      requestedCursor,
+      reason,
+      limit: OLDER_HISTORY_PAGE_LIMIT
+    });
+
+    const promise = getSessionMessages(
+      this.sessionId,
+      requestedCursor,
+      OLDER_HISTORY_PAGE_LIMIT,
+      "backward"
+    )
+      .then((page) => {
+        if (this.state.olderCursor === requestedCursor) {
+          this.prefetchedOlderHistoryPage = {
+            requestedCursor,
+            page
+          };
+        }
+
+        logPerfDebug("session.history_older.prefetch.end", {
+          sessionId: this.sessionId,
+          requestedCursor,
+          messageCount: page.messages.length,
+          nextCursor: page.nextCursor
+        });
+        return page;
+      })
+      .catch((error) => {
+        logPerfDebug("session.history_older.prefetch.error", {
+          sessionId: this.sessionId,
+          requestedCursor,
+          message: error instanceof Error ? error.message : "unknown"
+        });
+        return null;
+      })
+      .finally(() => {
+        if (this.olderHistoryPrefetchPromise === promise) {
+          this.olderHistoryPrefetchPromise = null;
+        }
+
+        if (this.olderHistoryPrefetchCursor === requestedCursor) {
+          this.olderHistoryPrefetchCursor = null;
+        }
+      });
+
+    this.olderHistoryPrefetchPromise = promise;
+    return promise;
+  }
+
+  private async takePrefetchedOlderHistoryPage(
+    requestedCursor: string
+  ): Promise<HistoryPageDto | null> {
+    if (this.prefetchedOlderHistoryPage?.requestedCursor === requestedCursor) {
+      const page = this.prefetchedOlderHistoryPage.page;
+      this.prefetchedOlderHistoryPage = null;
+      logPerfDebug("session.history_older.prefetch.hit", {
+        sessionId: this.sessionId,
+        requestedCursor,
+        messageCount: page.messages.length,
+        nextCursor: page.nextCursor
+      });
+      return page;
+    }
+
+    if (
+      this.olderHistoryPrefetchPromise &&
+      this.olderHistoryPrefetchCursor === requestedCursor
+    ) {
+      const page = await this.olderHistoryPrefetchPromise;
+
+      if (!page || this.state.olderCursor !== requestedCursor) {
+        return null;
+      }
+
+      this.prefetchedOlderHistoryPage = null;
+      logPerfDebug("session.history_older.prefetch.await_hit", {
+        sessionId: this.sessionId,
+        requestedCursor,
+        messageCount: page.messages.length,
+        nextCursor: page.nextCursor
+      });
+      return page;
+    }
+
+    return null;
+  }
+
+  private clearOlderHistoryPrefetch(): void {
+    this.olderHistoryPrefetchCursor = null;
+    this.olderHistoryPrefetchPromise = null;
+    this.prefetchedOlderHistoryPage = null;
   }
 
   private scheduleRuntimeRefresh(mode: RuntimeRefreshMode, reason: string): void {
