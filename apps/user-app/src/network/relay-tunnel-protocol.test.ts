@@ -56,7 +56,7 @@ describe("relay-tunnel-protocol", () => {
         pendingHandshake,
         serverHello: {
           ...serverHello,
-          proof: mutateBase64Url(serverHello.proof)
+          proof: mutateProof(serverHello.proof)
         } satisfies RelayTunnelServerHello
       })
     ).rejects.toMatchObject({
@@ -84,7 +84,7 @@ describe("relay-tunnel-protocol", () => {
     await expect(
       decryptRelayTunnelFrame(clientSession, {
         ...hostFrame,
-        ciphertext: mutateBase64Url(hostFrame.ciphertext)
+        ciphertext: mutateBytes(hostFrame.ciphertext)
       })
     ).rejects.toMatchObject({
       name: "RelayTunnelProtocolError",
@@ -129,7 +129,13 @@ function decodeUtf8(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes);
 }
 
-function mutateBase64Url(value: string): string {
+function mutateBytes(value: Uint8Array): Uint8Array {
+  const next = Uint8Array.from(value);
+  next[next.length - 1] = next[next.length - 1] === 0 ? 1 : 0;
+  return next;
+}
+
+function mutateProof(value: string): string {
   const lastChar = value.slice(-1);
   const nextChar = lastChar === "A" ? "B" : "A";
   return `${value.slice(0, -1)}${nextChar}`;

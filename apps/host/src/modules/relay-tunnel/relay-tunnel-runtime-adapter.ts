@@ -1,4 +1,4 @@
-import WebSocket from "ws";
+import WebSocket, { type RawData } from "ws";
 import type { RelaySessionClientContext } from "@codingns-proxy/shared-contracts";
 
 import { decryptSecret } from "../../shared/utils/secret-box.js";
@@ -16,14 +16,22 @@ import {
   decryptRelayTunnelFrame,
   encryptRelayTunnelFrame,
   type RelayTunnelClientHello,
-  type RelayTunnelEncryptedFrame,
   type RelayTunnelServerHello,
   type RelayTunnelSession
 } from "./crypto/relay-tunnel-protocol.js";
 import {
+  decodeRelayTunnelEncryptedFramePayload,
+  encodeRelayTunnelEncryptedFramePayload,
+  isRelayTunnelEncryptedFramePayload
+} from "./crypto/relay-tunnel-wire.js";
+import {
   deserializeRelayTunnelPacket,
   serializeRelayTunnelPacket
 } from "./crypto/relay-tunnel-packets.js";
+import {
+  decodeHostChannelSessionFrame,
+  encodeHostChannelSessionFrame
+} from "./host-channel-frame.js";
 import { createRelayTunnelHostClaimProof } from "./relay-tunnel-edge-proof.js";
 import { RelayTunnelGatewayService } from "./relay-tunnel-gateway-service.js";
 import type { RelayTunnelRuntimeAdapter } from "./relay-tunnel-service.js";
@@ -47,11 +55,6 @@ interface RelayTunnelServerHelloEnvelope {
   hello: RelayTunnelServerHello;
 }
 
-interface RelayTunnelEncryptedFrameEnvelope {
-  type: "encrypted_frame";
-  frame: RelayTunnelEncryptedFrame;
-}
-
 interface RelayTunnelErrorEnvelope {
   type: "error";
   errorCode: string;
@@ -67,7 +70,7 @@ interface RelayEdgeSessionOpenEnvelope {
 interface RelayEdgeSessionFrameEnvelope {
   type: "session.frame";
   sessionId: string;
-  payloadBase64Url: string;
+  payloadBase64Url?: string;
 }
 
 interface RelayEdgeSessionCloseEnvelope {
@@ -80,7 +83,6 @@ interface RelayEdgeSessionCloseEnvelope {
 type RelayTunnelControlEnvelope =
   | RelayTunnelClientHelloEnvelope
   | RelayTunnelServerHelloEnvelope
-  | RelayTunnelEncryptedFrameEnvelope
   | RelayTunnelErrorEnvelope;
 
 type RelayEdgeHostEnvelope =
@@ -231,7 +233,7 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
 
     socket.on("message", (payload, isBinary) => {
       if (isBinary) {
-        socket.close(1008, "HOST_CHANNEL_BINARY_NOT_SUPPORTED");
+        void this.handleHostChannelBinaryPayload(config, identity, payload);
         return;
       }
 
@@ -429,10 +431,42 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
       return;
     }
 
-    const activeSession = this.activeSessions.get(envelope.sessionId) ?? null;
+    if (!envelope.payloadBase64Url) {
+      this.hostChannelSocket?.close(1008, "HOST_CHANNEL_INVALID_ENVELOPE");
+      return;
+    }
+
+    await this.enqueueSessionPayload(
+      envelope.sessionId,
+      config,
+      identity,
+      Buffer.from(envelope.payloadBase64Url, "base64url")
+    );
+  }
+
+  private async handleHostChannelBinaryPayload(
+    config: InstanceRelayTunnelConfig,
+    identity: InstanceRelayTunnelIdentity,
+    rawPayload: RawData
+  ): Promise<void> {
+    try {
+      const frame = decodeHostChannelSessionFrame(rawPayload);
+      await this.enqueueSessionPayload(frame.sessionId, config, identity, frame.payload);
+    } catch {
+      this.hostChannelSocket?.close(1008, "HOST_CHANNEL_INVALID_BINARY_FRAME");
+    }
+  }
+
+  private async enqueueSessionPayload(
+    sessionId: string,
+    config: InstanceRelayTunnelConfig,
+    identity: InstanceRelayTunnelIdentity,
+    payload: Buffer
+  ): Promise<void> {
+    const activeSession = this.activeSessions.get(sessionId) ?? null;
 
     if (!activeSession) {
-      this.sendSessionClose(envelope.sessionId, 1008, "SESSION_NOT_FOUND");
+      this.sendSessionClose(sessionId, 1008, "SESSION_NOT_FOUND");
       return;
     }
 
@@ -447,7 +481,7 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
           activeSession,
           config,
           identity,
-          Buffer.from(envelope.payloadBase64Url, "base64url").toString("utf8")
+          payload
         );
       });
   }
@@ -479,12 +513,40 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
     activeSession: ActiveRelaySession,
     config: InstanceRelayTunnelConfig,
     identity: InstanceRelayTunnelIdentity,
-    rawPayload: string
+    rawPayload: Buffer
   ): Promise<void> {
+    if (isRelayTunnelEncryptedFramePayload(rawPayload)) {
+      if (!activeSession.cryptoSession || !activeSession.gateway) {
+        await this.emitRelayError(activeSession, "HANDSHAKE_REQUIRED", "当前会话还没有完成握手");
+        return;
+      }
+
+      try {
+        const plaintext = decryptRelayTunnelFrame(
+          activeSession.cryptoSession,
+          decodeRelayTunnelEncryptedFramePayload(rawPayload)
+        );
+
+        if (!plaintext) {
+          return;
+        }
+
+        await activeSession.gateway.handlePacket(deserializeRelayTunnelPacket(plaintext));
+      } catch (error) {
+        await this.emitRelayError(
+          activeSession,
+          "DECRYPT_FRAME_FAILED",
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+
+      return;
+    }
+
     let envelope: RelayTunnelControlEnvelope;
 
     try {
-      envelope = JSON.parse(rawPayload) as RelayTunnelControlEnvelope;
+      envelope = JSON.parse(rawPayload.toString("utf8")) as RelayTunnelControlEnvelope;
     } catch {
       await this.emitRelayError(activeSession, "INVALID_CONTROL_ENVELOPE", "公共隧道控制包不是合法 JSON");
       return;
@@ -517,10 +579,10 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
               serializeRelayTunnelPacket(packet)
             );
 
-            await this.sendControlEnvelope(activeSession.relaySessionId, {
-              type: "encrypted_frame",
-              frame
-            } satisfies RelayTunnelEncryptedFrameEnvelope);
+            await this.sendControlEnvelope(
+              activeSession.relaySessionId,
+              encodeRelayTunnelEncryptedFramePayload(frame)
+            );
           }
         });
         await this.sendControlEnvelope(activeSession.relaySessionId, {
@@ -531,31 +593,6 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
         await this.emitRelayError(
           activeSession,
           "HANDSHAKE_FAILED",
-          error instanceof Error ? error.message : String(error)
-        );
-      }
-
-      return;
-    }
-
-    if (envelope.type === "encrypted_frame") {
-      if (!activeSession.cryptoSession || !activeSession.gateway) {
-        await this.emitRelayError(activeSession, "HANDSHAKE_REQUIRED", "当前会话还没有完成握手");
-        return;
-      }
-
-      try {
-        const plaintext = decryptRelayTunnelFrame(activeSession.cryptoSession, envelope.frame);
-
-        if (!plaintext) {
-          return;
-        }
-
-        await activeSession.gateway.handlePacket(deserializeRelayTunnelPacket(plaintext));
-      } catch (error) {
-        await this.emitRelayError(
-          activeSession,
-          "DECRYPT_FRAME_FAILED",
           error instanceof Error ? error.message : String(error)
         );
       }
@@ -574,17 +611,18 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
 
   private async sendControlEnvelope(
     sessionId: string,
-    envelope: RelayTunnelControlEnvelope
+    envelope: RelayTunnelControlEnvelope | Buffer
   ): Promise<void> {
     if (!this.hostChannelSocket || this.hostChannelSocket.readyState !== WebSocket.OPEN) {
       return;
     }
 
-    this.hostChannelSocket.send(JSON.stringify({
-      type: "session.frame",
-      sessionId,
-      payloadBase64Url: Buffer.from(JSON.stringify(envelope), "utf8").toString("base64url")
-    } satisfies RelayEdgeSessionFrameEnvelope));
+    this.hostChannelSocket.send(
+      encodeHostChannelSessionFrame(
+        sessionId,
+        Buffer.isBuffer(envelope) ? envelope : Buffer.from(JSON.stringify(envelope), "utf8")
+      )
+    );
   }
 
   private sendSessionClose(sessionId: string, code: number, reason: string | null): void {

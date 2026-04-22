@@ -4,19 +4,24 @@ import {
   encryptRelayTunnelFrame,
   finalizeRelayTunnelClientHandshake,
   type RelayTunnelClientHello,
-  type RelayTunnelEncryptedFrame,
   type RelayTunnelServerHello,
   type RelayTunnelSession
 } from "./relay-tunnel-protocol";
+import {
+  decodeRelayTunnelEncryptedFramePayload,
+  encodeRelayTunnelEncryptedFramePayload
+} from "./relay-tunnel-wire";
 import {
   deserializeRelayTunnelPacket,
   serializeRelayTunnelPacket,
   type RelayTunnelGatewayPacket
 } from "./relay-tunnel-packets";
 
+export type RelayTunnelRawPayload = string | Uint8Array | ArrayBuffer;
+
 export interface RelayTunnelRawChannel {
-  send(payload: string): void | Promise<void>;
-  subscribe(listener: (payload: string) => void): () => void;
+  send(payload: RelayTunnelRawPayload): void | Promise<void>;
+  subscribe(listener: (payload: RelayTunnelRawPayload) => void): () => void;
   close(code?: number, reason?: string): void;
 }
 
@@ -35,11 +40,6 @@ interface RelayTunnelServerHelloEnvelope {
   hello: RelayTunnelServerHello;
 }
 
-interface RelayTunnelEncryptedFrameEnvelope {
-  type: "encrypted_frame";
-  frame: RelayTunnelEncryptedFrame;
-}
-
 interface RelayTunnelErrorEnvelope {
   type: "error";
   errorCode: string;
@@ -49,7 +49,6 @@ interface RelayTunnelErrorEnvelope {
 type RelayTunnelControlEnvelope =
   | RelayTunnelClientHelloEnvelope
   | RelayTunnelServerHelloEnvelope
-  | RelayTunnelEncryptedFrameEnvelope
   | RelayTunnelErrorEnvelope;
 
 export class RelayTunnelClientSession implements RelayTunnelPacketSession {
@@ -161,17 +160,18 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
     this.channel.close(code, reason);
   }
 
-  private async handleIncomingPayload(payload: string): Promise<void> {
+  private async handleIncomingPayload(payload: RelayTunnelRawPayload): Promise<void> {
     this.recordWireBytes("downstream", payload);
+
+    if (payload instanceof Uint8Array || payload instanceof ArrayBuffer) {
+      await this.handleEncryptedFramePayload(payload);
+      return;
+    }
+
     const envelope = JSON.parse(payload) as RelayTunnelControlEnvelope;
 
     if (envelope.type === "server_hello") {
       await this.handleServerHello(envelope);
-      return;
-    }
-
-    if (envelope.type === "encrypted_frame") {
-      await this.handleEncryptedFrame(envelope);
       return;
     }
 
@@ -204,11 +204,14 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
     }
   }
 
-  private async handleEncryptedFrame(envelope: RelayTunnelEncryptedFrameEnvelope): Promise<void> {
+  private async handleEncryptedFramePayload(payload: Uint8Array | ArrayBuffer): Promise<void> {
     const state = this.requireReadySession();
 
     try {
-      const plaintext = await decryptRelayTunnelFrame(state.session, envelope.frame);
+      const plaintext = await decryptRelayTunnelFrame(
+        state.session,
+        decodeRelayTunnelEncryptedFramePayload(payload)
+      );
 
       if (!plaintext) {
         return;
@@ -258,12 +261,12 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
     this.connectPromise = null;
   }
 
-  private sendControlPayload(payload: string): void | Promise<void> {
+  private sendControlPayload(payload: RelayTunnelRawPayload): void | Promise<void> {
     this.recordWireBytes("upstream", payload);
     return this.channel.send(payload);
   }
 
-  private enqueueIncomingPayload(payload: string): void {
+  private enqueueIncomingPayload(payload: RelayTunnelRawPayload): void {
     this.incomingPayloadChain = this.incomingPayloadChain
       .catch(() => undefined)
       .then(async () => {
@@ -308,12 +311,7 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
   ): Promise<void> {
     try {
       const frame = await encryptRelayTunnelFrame(session, serializeRelayTunnelPacket(packet));
-      await this.sendControlPayload(
-        JSON.stringify({
-          type: "encrypted_frame",
-          frame
-        } satisfies RelayTunnelEncryptedFrameEnvelope)
-      );
+      await this.sendControlPayload(encodeRelayTunnelEncryptedFramePayload(frame));
     } catch (error) {
       const normalizedError = toError(error);
 
@@ -322,8 +320,14 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
     }
   }
 
-  private recordWireBytes(direction: "upstream" | "downstream", payload: string): void {
-    this.options.onWireBytes?.(direction, this.textEncoder.encode(payload).byteLength);
+  private recordWireBytes(direction: "upstream" | "downstream", payload: RelayTunnelRawPayload): void {
+    if (typeof payload === "string") {
+      this.options.onWireBytes?.(direction, this.textEncoder.encode(payload).byteLength);
+      return;
+    }
+
+    const bytes = payload instanceof Uint8Array ? payload.byteLength : payload.byteLength;
+    this.options.onWireBytes?.(direction, bytes);
   }
 }
 

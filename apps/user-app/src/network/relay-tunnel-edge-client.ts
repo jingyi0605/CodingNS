@@ -1,5 +1,6 @@
 import {
   RelayTunnelClientSession,
+  type RelayTunnelRawPayload,
   type RelayTunnelRawChannel
 } from "./relay-tunnel-client-session";
 import { clientConfigStore } from "../config/client-config-store";
@@ -45,7 +46,8 @@ export interface RelayTunnelConnectInitResponse {
 
 interface RelayTunnelEdgeSocket {
   readonly readyState: number;
-  send(data: string): void;
+  binaryType?: BinaryType;
+  send(data: string | ArrayBuffer | Blob | ArrayBufferView): void;
   close(code?: number, reason?: string): void;
   addEventListener(
     type: string,
@@ -130,6 +132,7 @@ export async function connectRelayTunnelRawChannel(
   const socket = socketFactory(
     buildRelayEdgeWebSocketUrl(binding.relayBaseUrl, reservation.sessionId, connectInit.connectTicket)
   );
+  socket.binaryType = "arraybuffer";
   await waitForSocketOpen(socket);
 
   return {
@@ -171,7 +174,7 @@ export async function connectRelayTunnelClientSessionViaEdge(
 class RelayTunnelEdgeRawChannel implements RelayTunnelRawChannel {
   constructor(private readonly socket: RelayTunnelEdgeSocket) {}
 
-  send(payload: string): void {
+  send(payload: RelayTunnelRawPayload): void {
     if (this.socket.readyState !== 1) {
       throw new Error("当前 relay-edge 原始链路尚未建立完成");
     }
@@ -179,11 +182,16 @@ class RelayTunnelEdgeRawChannel implements RelayTunnelRawChannel {
     this.socket.send(payload);
   }
 
-  subscribe(listener: (payload: string) => void): () => void {
+  subscribe(listener: (payload: RelayTunnelRawPayload) => void): () => void {
     const handler = (event: Event) => {
       const messageEvent = event as MessageEvent<unknown>;
 
       if (typeof messageEvent.data === "string") {
+        listener(messageEvent.data);
+        return;
+      }
+
+      if (messageEvent.data instanceof ArrayBuffer) {
         listener(messageEvent.data);
       }
     };
