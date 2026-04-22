@@ -209,7 +209,7 @@ class DeferredRelayTunnelSocket extends EventTarget implements HostTransportSock
 
   send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
     if (!this.innerSocket) {
-      throw new Error("当前公共隧道 WebSocket 尚未建立完成");
+      throw new Error("当前 CodingNS Connect WebSocket 尚未建立完成");
     }
 
     this.innerSocket.send(data);

@@ -1091,7 +1091,7 @@ export function createServer(config: HostConfig) {
         return;
       }
 
-      console.error("[startup-recovery] 公共隧道启动恢复失败", {
+      console.error("[startup-recovery] CodingNS Connect 启动恢复失败", {
         error: error instanceof Error ? error.message : String(error)
       });
     });

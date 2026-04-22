@@ -128,7 +128,7 @@ describe("normalizeServerBaseUrl", () => {
     );
   });
 
-  it("手填公共隧道地址时，会给当前 Host 自动补上 relay 配置", async () => {
+  it("手填 CodingNS Connect 地址时，会给当前 Host 自动补上 relay 配置", async () => {
     clientConfigStore.hydrate({
       platform: "desktop",
       activeHostId: "host-1",

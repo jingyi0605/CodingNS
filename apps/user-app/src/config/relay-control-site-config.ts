@@ -43,7 +43,7 @@ export function inferRelayAccessConfig(baseUrl: string): InferredRelayAccessConf
     const hostname = relayUrl.hostname.trim().toLowerCase();
     const hostnameParts = hostname.split(".");
 
-    // 公共隧道入口统一是 <host-label>.channel.<domain> 这种结构，
+    // CodingNS Connect 入口统一是 <host-label>.channel.<domain> 这种结构，
     // 控制站就是去掉最左侧 host-label 后剩下的 hostname，并保留协议和端口。
     if (hostnameParts.length < 4 || hostnameParts[1] !== "channel") {
       return null;

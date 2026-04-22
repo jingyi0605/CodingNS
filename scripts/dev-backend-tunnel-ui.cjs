@@ -47,7 +47,7 @@ function run() {
 }
 
 function startBuildWatch() {
-  console.log("[tunnel-ui] 启动 user-app 构建监听（供公共隧道访问）");
+  console.log("[tunnel-ui] 启动 user-app 构建监听（供 CodingNS Connect 访问）");
 
   children.watch = spawnCommand(
     "watch",
@@ -70,7 +70,7 @@ function startBuildWatch() {
 }
 
 function startBackend() {
-  console.log("[tunnel-ui] 启动 Host（公共隧道将回源到 Host 托管的 dist）");
+  console.log("[tunnel-ui] 启动 Host（CodingNS Connect 将回源到 Host 托管的 dist）");
 
   children.backend = spawnCommand(
     "backend",

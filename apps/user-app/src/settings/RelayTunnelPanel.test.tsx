@@ -126,7 +126,7 @@ describe("RelayTunnelPanel", () => {
         phase: "quota_exhausted",
         tunnelDomain: "demo.channel.codingns.com",
         trafficRemainingBytes: "0",
-        lastError: "该账号的公共隧道流量已经耗尽"
+        lastError: "该账号的 CodingNS Connect 流量已经耗尽"
       })
     );
 
@@ -134,7 +134,7 @@ describe("RelayTunnelPanel", () => {
 
     expect(await screen.findByText("远程访问已开启")).toBeInTheDocument();
     expect(screen.getAllByText("0 B")).toHaveLength(2);
-    expect(screen.getByText("最近错误：该账号的公共隧道流量已经耗尽")).toBeInTheDocument();
+    expect(screen.getByText("最近错误：该账号的 CodingNS Connect 流量已经耗尽")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重新连接" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "管理账号" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "注销设备" })).toBeInTheDocument();
@@ -251,7 +251,7 @@ describe("RelayTunnelPanel", () => {
     await userEvent.type(passwordInput, "password123");
     await userEvent.click(screen.getByRole("button", { name: "登录" }));
 
-    expect(await screen.findByText("登录账号失败")).toBeInTheDocument();
+    expect(await screen.findByText("登录 CodingNS Connect 账号失败")).toBeInTheDocument();
     expect(
       screen.getByText("登录请求没有发出去，因为当前连不上这台 Host（http://127.0.0.1:3002）。请先确认服务器地址和网络连接，再重新尝试。")
     ).toBeInTheDocument();
@@ -279,7 +279,7 @@ describe("RelayTunnelPanel", () => {
     await userEvent.type(screen.getByLabelText("密码"), "password123");
     await userEvent.click(screen.getByRole("button", { name: "登录" }));
 
-    expect(await screen.findByText("登录账号失败")).toBeInTheDocument();
+    expect(await screen.findByText("登录 CodingNS Connect 账号失败")).toBeInTheDocument();
     expect(
       screen.getByText(
         "控制站登录失败：控制站 https://channel.jacksonz.cn:14441 拒绝了这次请求（HTTP 403）。 请确认这是正确的控制站地址，并检查账号、密码或访问权限。 详情：invalid email or password"
@@ -343,7 +343,7 @@ describe("RelayTunnelPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("调试环境启动隧道时会继续使用调试服务里配置的地址", async () => {
+  it("调试环境启动 CodingNS Connect 时会继续使用调试服务里配置的地址", async () => {
     apiMocks.fetchRelayTunnelStatus.mockResolvedValue(createStatus());
     apiMocks.updateRelayTunnelConfig.mockResolvedValue(
       createStatus({
@@ -415,7 +415,7 @@ describe("RelayTunnelPanel", () => {
       await screen.findByText("名称可用，公开访问地址将会是 https://macmini.channel.codingns.com:4443")
     ).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "启动隧道" }));
+    await userEvent.click(screen.getByRole("button", { name: "启动 CodingNS Connect" }));
 
     await waitFor(() => {
       expect(apiMocks.bindRelayTunnelControlHost).toHaveBeenCalledWith({
@@ -617,7 +617,7 @@ describe("RelayTunnelPanel", () => {
     renderPanel();
 
     await screen.findByText("远程访问向导");
-    await userEvent.click(screen.getByRole("button", { name: "了解隧道服务" }));
+    await userEvent.click(screen.getByRole("button", { name: "了解 CodingNS Connect" }));
 
     await waitFor(() => {
       expect(platform.bridge.openExternal).toHaveBeenCalledWith(

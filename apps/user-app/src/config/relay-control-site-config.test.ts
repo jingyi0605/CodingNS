@@ -15,7 +15,7 @@ describe("relay-control-site-config", () => {
     expect(inferRelayAccessConfig("https://channel.jacksonz.cn:14443")).toBeNull();
   });
 
-  it("普通远端 Host 地址不应误判成公共隧道入口", () => {
+  it("普通远端 Host 地址不应误判成 CodingNS Connect 入口", () => {
     expect(inferRelayAccessConfig("https://api.example.com:3002")).toBeNull();
   });
 });

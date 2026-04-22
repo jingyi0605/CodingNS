@@ -69,7 +69,7 @@ describe("host-runtime-store", () => {
     expect(Number(nextEpochRaw)).toBe(initialEpoch + 1);
   });
 
-  it("当前 Host 的公共隧道 profile 变化时也会生成新的运行时边界 key", () => {
+  it("当前 Host 的 CodingNS Connect profile 变化时也会生成新的运行时边界 key", () => {
     clientConfigStore.hydrate({
       platform: "desktop",
       activeHostId: "host-1",

@@ -227,7 +227,7 @@ describe("公共隧道系统接口", () => {
     expect(enableBeforeBindResponse.statusCode).toBe(409);
     expect(enableBeforeBindResponse.json()).toMatchObject({
       error_code: "RELAY_TUNNEL_NOT_BOUND",
-      detail: "当前实例还没有绑定公共隧道"
+      detail: "当前实例还没有绑定 CodingNS Connect"
     });
 
     const ensureIdentityResponse = await hosted.app.inject({

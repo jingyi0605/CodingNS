@@ -142,7 +142,7 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
     const identity = this.identityRepository.findIdentity();
 
     if (!identity) {
-      throw new Error("当前 Host 还没有可用的公共隧道身份密钥");
+      throw new Error("当前 Host 还没有可用的 CodingNS Connect 身份密钥");
     }
 
     const configKey = serializeConfigKey(config);
@@ -486,7 +486,7 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
     try {
       envelope = JSON.parse(rawPayload) as RelayTunnelControlEnvelope;
     } catch {
-      await this.emitRelayError(activeSession, "INVALID_CONTROL_ENVELOPE", "公共隧道控制包不是合法 JSON");
+      await this.emitRelayError(activeSession, "INVALID_CONTROL_ENVELOPE", "CodingNS Connect 控制包不是合法 JSON");
       return;
     }
 

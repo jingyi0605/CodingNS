@@ -146,7 +146,7 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
       return;
     }
 
-    throw new Error("当前公共隧道会话尚未建立完成");
+    throw new Error("当前 CodingNS Connect 会话尚未建立完成");
   }
 
   subscribe(listener: (packet: RelayTunnelGatewayPacket) => void): () => void {
@@ -230,7 +230,7 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
     }
 
     if (this.handshakeState.status !== "ready") {
-      throw new Error("当前公共隧道会话尚未建立完成");
+      throw new Error("当前 CodingNS Connect 会话尚未建立完成");
     }
 
     return this.handshakeState;

@@ -338,8 +338,7 @@ describe("WorkbenchHostSwitcher", () => {
 
     const detailPopover = await screen.findByRole("dialog", { name: "连接详情" });
 
-    expect(within(detailPopover).getByText("中继")).toBeInTheDocument();
-    expect(within(detailPopover).getByText("公共隧道")).toBeInTheDocument();
+    expect(within(detailPopover).getAllByText("CodingNS Connect")).toHaveLength(2);
     expect(within(detailPopover).getByText("https://demo.channel.codingns.com")).toBeInTheDocument();
     expect(within(detailPopover).getByText("2.0 KB")).toBeInTheDocument();
 

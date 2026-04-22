@@ -520,7 +520,7 @@ export class RelayTunnelService {
       throw new AppError({
         statusCode: 409,
         errorCode: "RELAY_TUNNEL_NOT_BOUND",
-        detail: "当前实例还没有绑定公共隧道"
+        detail: "当前实例还没有绑定 CodingNS Connect"
       });
     }
 
