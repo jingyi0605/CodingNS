@@ -73,4 +73,33 @@ describe("ModalAtoms", () => {
     expect(actions).toHaveAttribute("data-align", "between");
     expect(actions).toHaveAttribute("data-stack", "true");
   });
+
+  it("允许列表项承载块级内容和块级 trailing", () => {
+    render(
+      <ModalList>
+        <ModalListItem
+          as="button"
+          trailing={(
+            <div data-testid="modal-item-trailing-content">
+              <span>已选中</span>
+            </div>
+          )}
+        >
+          <div data-testid="modal-item-copy-content">
+            <strong>项目一</strong>
+            <span>/repo/project-one</span>
+          </div>
+        </ModalListItem>
+      </ModalList>
+    );
+
+    const listItem = screen.getByRole("button", { name: /项目一/ });
+    const copyWrapper = screen.getByTestId("modal-item-copy-content").parentElement;
+    const trailingWrapper = screen.getByTestId("modal-item-trailing-content").parentElement;
+
+    expect(listItem).toHaveTextContent("项目一");
+    expect(listItem).toHaveTextContent("/repo/project-one");
+    expect(copyWrapper?.tagName).toBe("DIV");
+    expect(trailingWrapper?.tagName).toBe("DIV");
+  });
 });

@@ -171,15 +171,15 @@ export function ModalListItem(props: ModalListItemProps) {
 
   const content = (
     <>
-      <span className="modal-list-item-main">
-        {leading ? <span className="modal-list-item-leading">{leading}</span> : null}
-        <span className="modal-list-item-copy">
+      <div className="modal-list-item-main">
+        {leading ? <div className="modal-list-item-leading">{leading}</div> : null}
+        <div className="modal-list-item-copy">
           {label ? <span className="modal-list-item-label">{label}</span> : null}
           {description ? <span className="modal-list-item-description">{description}</span> : null}
           {children}
-        </span>
-      </span>
-      {trailing ? <span className="modal-list-item-trailing">{trailing}</span> : null}
+        </div>
+      </div>
+      {trailing ? <div className="modal-list-item-trailing">{trailing}</div> : null}
     </>
   );
 
