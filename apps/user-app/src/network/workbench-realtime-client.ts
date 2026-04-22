@@ -1,5 +1,6 @@
 import { getHostBaseUrl, getHostWebSocketUrl } from "../config/env";
 import { authStore } from "../features/auth/store/auth-store";
+import { logPerfDebug } from "../shared/debug/perf-debug";
 import { ConnectionManager } from "./connection-manager";
 import type { HostTransportSocket } from "./host-transport";
 import { resolveHostTransportTarget } from "./host-transport-registry";
@@ -149,6 +150,8 @@ export class WorkbenchRealtimeClient {
   private readonly workspaceManagementListeners = new Set<
     (snapshot: WorkspaceManagementRealtimeSnapshotDto) => void
   >();
+  private workbenchSubscribeStartedAtMs: number | null = null;
+  private workbenchRefreshStartedAtMs: number | null = null;
   private readonly connectionManager: ConnectionManager;
 
   constructor(private readonly options: WorkbenchRealtimeClientOptions) {
@@ -173,12 +176,16 @@ export class WorkbenchRealtimeClient {
       return;
     }
 
+    this.workbenchRefreshStartedAtMs = performance.now();
     socket.send(
       JSON.stringify({
         type: "workbench.refresh",
         knownRevision: this.workbenchKnownRevision ?? undefined
       })
     );
+    logPerfDebug("workbench.refresh.sent", {
+      knownRevision: this.workbenchKnownRevision
+    });
     this.pendingRefresh = false;
   }
 
@@ -423,10 +430,15 @@ export class WorkbenchRealtimeClient {
     this.socket = socket;
 
     socket.addEventListener("open", () => {
+      this.workbenchSubscribeStartedAtMs = performance.now();
       socket.send(JSON.stringify({
         type: "workbench.subscribe",
         knownRevision: this.workbenchKnownRevision ?? undefined
       }));
+      logPerfDebug("workbench.subscribe.sent", {
+        knownRevision: this.workbenchKnownRevision,
+        baseUrl
+      });
 
       if (this.pendingRefresh) {
         this.requestRefresh();
@@ -531,6 +543,18 @@ export class WorkbenchRealtimeClient {
         }
 
         return;
+      }
+
+      if (payload.type === "workbench.snapshot") {
+        logPerfDebug("workbench.snapshot.received", {
+          unchanged: payload.unchanged,
+          revision: payload.revision,
+          workspaceCount: payload.snapshot?.items.length ?? 0,
+          sessionCount: payload.snapshot ? countWorkbenchSnapshotSessions(payload.snapshot) : 0,
+          subscribeDurationMs: measureElapsedMs(this.workbenchSubscribeStartedAtMs),
+          refreshDurationMs: measureElapsedMs(this.workbenchRefreshStartedAtMs)
+        });
+        this.workbenchRefreshStartedAtMs = null;
       }
 
       if (payload.type === "fileTree.snapshot") {
@@ -759,4 +783,38 @@ function resolveFileTreeKnownRevisions(
 
 function buildFileTreeRevisionKey(workspaceId: string, path: string): string {
   return `${workspaceId}::${path}`;
+}
+
+function countWorkbenchSnapshotSessions(snapshot: WorkbenchSnapshotDto): number {
+  return snapshot.items.reduce<number>((total, item) => {
+    return total + item.sessions.length + countWorkbenchChildSessions(item.childWorktrees ?? []);
+  }, 0);
+}
+
+function countWorkbenchChildSessions(childWorktrees: unknown[]): number {
+  return childWorktrees.reduce<number>((total, node) => {
+    if (typeof node !== "object" || node === null) {
+      return total;
+    }
+
+    const candidate = node as {
+      sessions?: unknown[];
+      children?: unknown[];
+    };
+
+    const currentSessions = Array.isArray(candidate.sessions) ? candidate.sessions.length : 0;
+    const nestedSessions = Array.isArray(candidate.children)
+      ? countWorkbenchChildSessions(candidate.children)
+      : 0;
+
+    return total + currentSessions + nestedSessions;
+  }, 0);
+}
+
+function measureElapsedMs(startedAtMs: number | null): number | null {
+  if (startedAtMs === null || typeof performance === "undefined") {
+    return null;
+  }
+
+  return Math.round(performance.now() - startedAtMs);
 }

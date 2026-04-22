@@ -4,6 +4,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 
 import { AppError } from "../shared/errors/app-error.js";
 import { hashContent } from "../shared/utils/hash.js";
+import { logPerformance } from "../shared/utils/perf-log.js";
 import type { AuthContext } from "../modules/auth/auth-service.js";
 import type {
   SessionHistoryEnvelope,
@@ -135,6 +136,7 @@ export function createWsServer(
         }
 
         try {
+          const startedAt = Date.now();
           const page = await sessionHistoryService.readSessionHistory(
             payload.sessionId,
             payload.cursor ?? null,
@@ -150,6 +152,20 @@ export function createWsServer(
             olderCursor: page.nextCursor,
             messages: page.messages
           });
+          logPerformance(
+            "ws.session.load_older",
+            Date.now() - startedAt,
+            {
+              sessionId: payload.sessionId,
+              limit: typeof payload.limit === "number" ? payload.limit : 50,
+              hasCursor: payload.cursor !== null && payload.cursor !== undefined,
+              messageCount: page.messages.length,
+              olderCursor: page.nextCursor
+            },
+            {
+              thresholdMs: 150
+            }
+          );
         } catch (error) {
           const appError =
             error instanceof AppError
@@ -206,6 +222,7 @@ export function createWsServer(
       );
 
       try {
+        const startedAt = Date.now();
         let currentCursor = payload.cursor ?? null;
         const safeLimit = typeof payload.limit === "number" ? payload.limit : 50;
 
@@ -251,6 +268,20 @@ export function createWsServer(
             sessionId: payload.sessionId
           })
         );
+        logPerformance(
+          "ws.session.subscribe",
+          Date.now() - startedAt,
+          {
+            sessionId: payload.sessionId,
+            limit: safeLimit,
+            hasCursor: payload.cursor !== null && payload.cursor !== undefined,
+            currentCursor,
+            subscribed: true
+          },
+          {
+            thresholdMs: 150
+          }
+        );
       } catch (error) {
         runtimeSubscription.close();
 
@@ -260,8 +291,23 @@ export function createWsServer(
             : new AppError({
                 statusCode: 500,
                 errorCode: "INTERNAL_ERROR",
-                detail: "订阅会话失败"
-              });
+              detail: "订阅会话失败"
+            });
+
+        logPerformance(
+          "ws.session.subscribe.failed",
+          0,
+          {
+            sessionId: payload.sessionId,
+            limit: typeof payload.limit === "number" ? payload.limit : 50,
+            hasCursor: payload.cursor !== null && payload.cursor !== undefined,
+            error: error instanceof Error ? error.message : "unknown"
+          },
+          {
+            thresholdMs: 0,
+            force: true
+          }
+        );
 
         sendWsError(client, payload.sessionId, appError.errorCode, appError.message);
       }

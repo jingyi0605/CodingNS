@@ -1,6 +1,7 @@
 import type { WebSocket } from "ws";
 
 import { AppError } from "../shared/errors/app-error.js";
+import { logPerformance } from "../shared/utils/perf-log.js";
 import { logTerminalDebug, terminalDebugNowMs } from "../shared/utils/terminal-debug-log.js";
 import type { AuthContext } from "../modules/auth/auth-service.js";
 import type { TerminalService } from "../modules/terminal/terminal-service.js";
@@ -504,11 +505,28 @@ export class WorkbenchWsHub {
     channel: UserChannelState,
     knownRevision?: string
   ): Promise<void> {
+    const startedAt = Date.now();
     try {
       const snapshot = this.workbenchService.getSnapshot(userId);
       channel.lastWorkbenchPayload = buildWorkbenchPayload(snapshot);
       channel.lastWorkbenchRevision = snapshot.revision;
       client.send(buildWorkbenchPayload(snapshot, knownRevision));
+      logPerformance(
+        "ws.workbench.subscribe",
+        Date.now() - startedAt,
+        {
+          userId,
+          workspaceCount: snapshot.items.length,
+          sessionCount: snapshot.items.reduce(
+            (total, item) => total + countWorkbenchSessions(item),
+            0
+          ),
+          unchanged: Boolean(knownRevision && knownRevision === snapshot.revision)
+        },
+        {
+          thresholdMs: 150
+        }
+      );
     } catch (error) {
       this.reportAsyncError("sendWorkbenchSnapshotToClient", error, { userId });
     }
@@ -544,6 +562,23 @@ export class WorkbenchWsHub {
         for (const client of channel.clients) {
           client.send(payload);
         }
+        logPerformance(
+          "ws.workbench.refresh",
+          Date.now() - startedAtMs,
+          {
+            userId,
+            force,
+            clientCount: channel.clients.size,
+            workspaceCount: snapshot.items.length,
+            sessionCount: snapshot.items.reduce(
+              (total, item) => total + countWorkbenchSessions(item),
+              0
+            )
+          },
+          {
+            thresholdMs: 150
+          }
+        );
         logTerminalDebug("workbench.refresh.completed", {
           userId,
           force,
@@ -1311,4 +1346,36 @@ function buildKnownRevisionByPathMap(
   }
 
   return map;
+}
+
+function countWorkbenchSessions(
+  item: {
+    sessions: unknown[];
+    childWorktrees?: unknown[];
+    children?: unknown[];
+  }
+): number {
+  const childNodes = Array.isArray(item.childWorktrees)
+    ? item.childWorktrees
+    : Array.isArray(item.children)
+      ? item.children
+      : [];
+
+  return item.sessions.length + childNodes.reduce<number>((total, child) => {
+    if (typeof child !== "object" || child === null) {
+      return total;
+    }
+
+    const candidate = child as {
+      sessions?: unknown[];
+      childWorktrees?: unknown[];
+      children?: unknown[];
+    };
+
+    return total + countWorkbenchSessions({
+      sessions: Array.isArray(candidate.sessions) ? candidate.sessions : [],
+      childWorktrees: candidate.childWorktrees,
+      children: candidate.children
+    });
+  }, 0);
 }

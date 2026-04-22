@@ -7,6 +7,7 @@ import type {
   SessionInterruptSource,
   SessionPermissionRequestDto
 } from "../features/conversation/api/conversation-api";
+import { logPerfDebug } from "../shared/debug/perf-debug";
 import { ConnectionManager } from "./connection-manager";
 import type { HostTransportSocket } from "./host-transport";
 import { resolveHostTransportTarget } from "./host-transport-registry";
@@ -171,6 +172,9 @@ export class RealtimeClient {
   private subscribed = false;
   private pendingOlderRequest: { cursor: string | null; limit: number } | null = null;
   private inFlightOlderRequest: { cursor: string | null; limit: number } | null = null;
+  private subscribeStartedAtMs: number | null = null;
+  private firstBackfillLogged = false;
+  private olderRequestStartedAtMs: number | null = null;
   private readonly connectionManager: ConnectionManager;
 
   constructor(private readonly options: RealtimeClientOptions) {
@@ -247,9 +251,11 @@ export class RealtimeClient {
     });
 
     this.subscribed = false;
+    this.firstBackfillLogged = false;
     this.socket = socket;
 
     socket.addEventListener("open", () => {
+      this.subscribeStartedAtMs = performance.now();
       socket.send(
         JSON.stringify({
           type: "session.subscribe",
@@ -258,6 +264,12 @@ export class RealtimeClient {
           limit: this.options.limit
         })
       );
+      logPerfDebug("session.subscribe.sent", {
+        sessionId: this.options.sessionId,
+        hasCursor: this.latestCursor !== null,
+        limit: this.options.limit,
+        baseUrl
+      });
     });
 
     socket.addEventListener("message", (raw) => {
@@ -274,6 +286,10 @@ export class RealtimeClient {
 
       if (payload.type === "session.subscribed") {
         this.subscribed = true;
+        logPerfDebug("session.subscribe.ack", {
+          sessionId: payload.sessionId,
+          durationMs: measureElapsedMs(this.subscribeStartedAtMs)
+        });
         this.options.onSubscribed();
         this.flushPendingOlderRequest();
         return;
@@ -302,6 +318,13 @@ export class RealtimeClient {
       }
 
       if (payload.type === "session.history_older") {
+        logPerfDebug("session.history_older.received", {
+          sessionId: payload.sessionId,
+          messageCount: payload.messages.length,
+          olderCursor: payload.olderCursor,
+          durationMs: measureElapsedMs(this.olderRequestStartedAtMs)
+        });
+        this.olderRequestStartedAtMs = null;
         this.clearOlderMessagesRequest();
         this.options.onOlderHistory(payload);
         return;
@@ -333,6 +356,18 @@ export class RealtimeClient {
       }
 
       this.latestCursor = payload.cursor;
+
+      if (!this.firstBackfillLogged) {
+        this.firstBackfillLogged = true;
+        logPerfDebug("session.initial_messages.received", {
+          sessionId: payload.sessionId,
+          eventType: payload.type,
+          messageCount: payload.messages.length,
+          olderCursor: payload.olderCursor ?? null,
+          durationMs: measureElapsedMs(this.subscribeStartedAtMs)
+        });
+      }
+
       this.options.onEnvelope(payload);
     });
 
@@ -390,6 +425,7 @@ export class RealtimeClient {
 
   private sendOlderMessagesRequest(cursor: string | null, limit: number): void {
     this.inFlightOlderRequest = { cursor, limit };
+    this.olderRequestStartedAtMs = performance.now();
     this.socket?.send(
       JSON.stringify({
         type: "session.load_older",
@@ -398,6 +434,11 @@ export class RealtimeClient {
         limit
       })
     );
+    logPerfDebug("session.load_older.sent", {
+      sessionId: this.options.sessionId,
+      hasCursor: cursor !== null,
+      limit
+    });
   }
 
   private flushPendingOlderRequest(): void {
@@ -422,7 +463,16 @@ export class RealtimeClient {
 
     this.pendingOlderRequest = this.inFlightOlderRequest;
     this.inFlightOlderRequest = null;
+    this.olderRequestStartedAtMs = null;
   }
+}
+
+function measureElapsedMs(startedAtMs: number | null): number | null {
+  if (startedAtMs === null || typeof performance === "undefined") {
+    return null;
+  }
+
+  return Math.round(performance.now() - startedAtMs);
 }
 
 function isSocketOpen(socket: HostTransportSocket | null): socket is HostTransportSocket {
