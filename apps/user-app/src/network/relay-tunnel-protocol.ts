@@ -53,6 +53,7 @@ export interface RelayTunnelSession {
   readonly peerHostFingerprint: string;
   sendSequence: number;
   receiveSequence: number;
+  lastReceivedFrameFingerprint: string | null;
   readonly sendKey: CryptoKey;
   readonly receiveKey: CryptoKey;
 }
@@ -244,7 +245,7 @@ export async function encryptRelayTunnelFrame(
 export async function decryptRelayTunnelFrame(
   session: RelayTunnelSession,
   frame: RelayTunnelEncryptedFrame
-): Promise<Uint8Array> {
+): Promise<Uint8Array | null> {
   validateFrameEnvelope(frame);
 
   if (frame.sessionId !== session.sessionId) {
@@ -262,6 +263,13 @@ export async function decryptRelayTunnelFrame(
   }
 
   const expectedSequence = session.receiveSequence + 1;
+  const frameFingerprint = buildFrameFingerprint(frame);
+
+  if (frame.sequence === session.receiveSequence) {
+    if (session.lastReceivedFrameFingerprint === frameFingerprint) {
+      return null;
+    }
+  }
 
   if (frame.sequence !== expectedSequence) {
     throw new RelayTunnelProtocolError(
@@ -294,6 +302,7 @@ export async function decryptRelayTunnelFrame(
       )
     );
     session.receiveSequence = frame.sequence;
+    session.lastReceivedFrameFingerprint = frameFingerprint;
     return plaintext;
   } catch {
     throw new RelayTunnelProtocolError(
@@ -327,9 +336,21 @@ async function createRelayTunnelSession(input: {
     peerHostFingerprint: input.peerHostFingerprint,
     sendSequence: 0,
     receiveSequence: 0,
+    lastReceivedFrameFingerprint: null,
     sendKey: await importAesKey(clientToHostKeyBytes, "encrypt"),
     receiveKey: await importAesKey(hostToClientKeyBytes, "decrypt")
   };
+}
+
+function buildFrameFingerprint(frame: RelayTunnelEncryptedFrame): string {
+  return [
+    frame.sessionId,
+    frame.direction,
+    String(frame.sequence),
+    frame.iv,
+    frame.authTag,
+    frame.ciphertext
+  ].join(":");
 }
 
 function validateHandshakeEnvelope(hello: RelayTunnelClientHello): void {

@@ -208,6 +208,11 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
 
     try {
       const plaintext = await decryptRelayTunnelFrame(state.session, envelope.frame);
+
+      if (!plaintext) {
+        return;
+      }
+
       const packet = deserializeRelayTunnelPacket(this.textDecoder.decode(plaintext));
 
       for (const listener of this.listeners) {

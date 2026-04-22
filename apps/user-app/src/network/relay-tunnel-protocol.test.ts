@@ -91,6 +91,38 @@ describe("relay-tunnel-protocol", () => {
       code: "RELAY_TUNNEL_FRAME_AUTH_INVALID"
     } satisfies Partial<RelayTunnelProtocolError>);
   });
+
+  it("完全相同的 Host 重放帧会被忽略，但乱序帧仍然会被拒绝", async () => {
+    const hostIdentity = generateRelayTunnelIdentity("2026-04-19T00:00:00.000Z");
+    const { pendingHandshake, clientHello } = await createRelayTunnelClientHandshake({
+      expectedHostPublicKey: hostIdentity.publicKeyPem,
+      expectedHostFingerprint: hostIdentity.keyFingerprint
+    });
+    const { serverHello, session: hostSession } = acceptRelayTunnelClientHandshake({
+      hostIdentity,
+      clientHello
+    });
+    const clientSession = await finalizeRelayTunnelClientHandshake({
+      pendingHandshake,
+      serverHello
+    });
+    const firstFrame = encryptRelayTunnelFrameOnHost(hostSession, "first");
+
+    expect(decodeUtf8((await decryptRelayTunnelFrame(clientSession, firstFrame))!)).toBe("first");
+    await expect(decryptRelayTunnelFrame(clientSession, firstFrame)).resolves.toBeNull();
+
+    const secondFrame = encryptRelayTunnelFrameOnHost(hostSession, "second");
+
+    await expect(
+      decryptRelayTunnelFrame(clientSession, {
+        ...secondFrame,
+        sequence: 1
+      })
+    ).rejects.toMatchObject({
+      name: "RelayTunnelProtocolError",
+      code: "RELAY_TUNNEL_FRAME_SEQUENCE_MISMATCH"
+    } satisfies Partial<RelayTunnelProtocolError>);
+  });
 });
 
 function decodeUtf8(bytes: Uint8Array): string {
