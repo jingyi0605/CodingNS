@@ -296,7 +296,9 @@ describe("GitSidebar", () => {
       }
     });
     workbenchShellMock.subscribeGitSnapshot.mockImplementation(() => undefined);
-    workbenchShellMock.requestGitRefresh.mockImplementation(() => undefined);
+    workbenchShellMock.requestGitRefresh.mockImplementation(() => {
+      gitSnapshotListener?.(createGitSnapshot());
+    });
     workbenchShellMock.addGitSnapshotListener.mockImplementation((listener: (snapshot: ReturnType<typeof createGitSnapshot>) => void) => {
       gitSnapshotListener = listener;
       listener(createGitSnapshot());
@@ -347,7 +349,7 @@ describe("GitSidebar", () => {
     });
   });
 
-  it("命中新鲜缓存时挂载阶段只订阅不主动刷新", async () => {
+  it("命中新鲜缓存时挂载阶段会先展示缓存并主动刷新", async () => {
     seedGitSidebarSnapshot();
 
     renderSidebar();
@@ -356,7 +358,9 @@ describe("GitSidebar", () => {
     expect(workbenchShellMock.subscribeGitSnapshot).toHaveBeenCalledWith("workspace-1", {
       knownRevision: "git-rev-1"
     });
-    expect(workbenchShellMock.requestGitRefresh).not.toHaveBeenCalled();
+    expect(workbenchShellMock.requestGitRefresh).toHaveBeenCalledWith("workspace-1", {
+      knownRevision: null
+    });
   });
 
   it("面板从隐藏切回可见时会再次主动刷新", async () => {
@@ -489,6 +493,7 @@ describe("GitSidebar", () => {
     renderSidebar();
 
     expect(await screen.findByText("App.tsx")).toBeInTheDocument();
+    workbenchShellMock.requestGitRefresh.mockImplementation(() => undefined);
 
     const refreshButton = await screen.findByRole("button", { name: "刷新" });
 

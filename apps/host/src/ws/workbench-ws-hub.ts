@@ -834,9 +834,11 @@ export class WorkbenchWsHub {
           return;
         }
 
-        const payload = buildGitPayload(snapshot, subscription.knownRevision);
+        const payload = buildGitPayload(snapshot, subscription.knownRevision, {
+          includeSnapshotWhenUnchanged: force || options?.deliverIfUnchanged === true
+        });
 
-        if (payload === subscription.lastPayload && !options?.deliverIfUnchanged) {
+        if (payload === subscription.lastPayload && !options?.deliverIfUnchanged && !force) {
           return;
         }
 
@@ -1417,8 +1419,16 @@ function buildFileTreePayload(snapshot: FileTreeSnapshot, knownRevision?: string
   });
 }
 
-function buildGitPayload(snapshot: GitPanelSnapshot, knownRevision?: string | null): string {
-  if (knownRevision && knownRevision === snapshot.revision) {
+function buildGitPayload(
+  snapshot: GitPanelSnapshot,
+  knownRevision?: string | null,
+  options?: { includeSnapshotWhenUnchanged?: boolean }
+): string {
+  if (
+    knownRevision
+    && knownRevision === snapshot.revision
+    && options?.includeSnapshotWhenUnchanged !== true
+  ) {
     return JSON.stringify({
       type: "git.snapshot",
       revision: snapshot.revision,

@@ -275,6 +275,105 @@ describe("WorkbenchWsHub", () => {
     hub.cleanupClient(client);
   });
 
+  it("Git 手动刷新在快照未变化时也会返回当前快照，避免前端卡死在 loading", async () => {
+    const snapshot = {
+      revision: "git-rev-1",
+      workspaceId: "workspace-1",
+      status: {
+        snapshot: {
+          workspaceId: "workspace-1",
+          repoRoot: "/repo",
+          branch: "main",
+          ahead: 0,
+          behind: 0,
+          hasRemote: true,
+          isDirty: false,
+          lastFetchedAt: null
+        },
+        changes: []
+      },
+      history: [],
+      historyTotalCount: 0,
+      historyNextCursor: null,
+      branches: {
+        currentBranch: "main",
+        local: [],
+        remote: []
+      }
+    };
+    const client = {
+      send: vi.fn()
+    } as unknown as WebSocket;
+    const authContext: AuthContext = {
+      accessToken: "token",
+      callerKind: "interactive_user",
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    };
+    const workbenchService = {
+      getSnapshot: vi.fn(() => ({ items: [] })),
+      shouldRefreshSnapshot: vi.fn(() => false),
+      refreshSnapshot: vi.fn(async () => ({ items: [] })),
+      syncSessionTitles: vi.fn(async () => ({ items: [] }))
+    } satisfies Pick<
+      WorkbenchService,
+      "getSnapshot" | "shouldRefreshSnapshot" | "refreshSnapshot" | "syncSessionTitles"
+    >;
+    const workspacePanelSnapshotService = {
+      invalidateGit: vi.fn(),
+      getGitPanelSnapshot: vi.fn(async () => snapshot)
+    } satisfies Pick<WorkspacePanelSnapshotService, "getGitPanelSnapshot" | "invalidateGit">;
+
+    const hub = new WorkbenchWsHub(
+      workbenchService as unknown as WorkbenchService,
+      workspacePanelSnapshotService as unknown as WorkspacePanelSnapshotService,
+      createMockFileWatcher() as unknown as WorkspaceFileWatcher
+    );
+
+    expect(
+      hub.handleMessage(
+        client,
+        {
+          type: "git.subscribe",
+          workspaceId: "workspace-1",
+          knownRevision: "git-rev-1"
+        },
+        authContext
+      )
+    ).toBe(true);
+
+    await flushAsyncTasks();
+    vi.mocked(client.send).mockClear();
+
+    expect(
+      hub.handleMessage(
+        client,
+        {
+          type: "git.refresh",
+          workspaceId: "workspace-1",
+          knownRevision: "git-rev-1"
+        },
+        authContext
+      )
+    ).toBe(true);
+
+    await flushAsyncTasks();
+
+    expect(workspacePanelSnapshotService.invalidateGit).toHaveBeenCalledWith("workspace-1");
+    expect(client.send).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(vi.mocked(client.send).mock.calls[0]?.[0] as string)).toEqual({
+      type: "git.snapshot",
+      revision: "git-rev-1",
+      unchanged: false,
+      snapshot
+    });
+
+    hub.cleanupClient(client);
+  });
+
   it("Git watcher 事件会经过 quiet window 合并，并在最小间隔后补跑一次", async () => {
     vi.useFakeTimers();
 

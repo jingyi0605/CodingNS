@@ -17,7 +17,11 @@ import {
 } from "../../../platform/desktop/desktop-context-menu";
 import { usePlatform } from "../../../platform/platform-provider";
 import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
-import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
+import {
+  clearViewSnapshot,
+  readViewSnapshot,
+  writeViewSnapshot
+} from "../../../shared/cache/view-snapshot-cache";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
@@ -242,6 +246,8 @@ export function GitSidebar({
   const commitDetailCacheRef = useRef(new Map<string, GitCommitDetailDto>());
   const commitDetailRequestIdRef = useRef(0);
   const wasPanelActiveRef = useRef(panelActive);
+  const panelActiveRef = useRef(panelActive);
+  const snapshotWorkspaceIdRef = useRef<string | null>(null);
   const { showToast } = useToast();
   const useNativeDesktopHistoryMenu = platform.isDesktop && !isMobileViewport;
   useEffect(() => {
@@ -250,6 +256,10 @@ export function GitSidebar({
       externalWindowMode
     });
   }, [externalWindowMode, workspaceId]);
+
+  useEffect(() => {
+    panelActiveRef.current = panelActive;
+  }, [panelActive]);
 
   useEffect(() => {
     setCollapsedTreePaths([]);
@@ -338,6 +348,7 @@ export function GitSidebar({
 
   useEffect(() => {
     if (!workspaceId?.trim()) {
+      snapshotWorkspaceIdRef.current = null;
       setStatus(null);
       setRevision(null);
       setHistory([]);
@@ -353,20 +364,23 @@ export function GitSidebar({
       buildGitSidebarSnapshotKey(currentWorkspaceId),
       GIT_SNAPSHOT_CACHE_MAX_AGE_MS
     );
+    const hasCachedSnapshot = hasGitSidebarSnapshotData(cachedSnapshot);
 
     logPerfDebug("git_sidebar.snapshot", {
       workspaceId: currentWorkspaceId,
-      cached: Boolean(cachedSnapshot),
+      cached: hasCachedSnapshot,
       cachedHistoryCount: cachedSnapshot?.history?.length ?? 0,
       cachedChangedCount: cachedSnapshot?.status?.changes.length ?? 0
     });
 
-    if (cachedSnapshot) {
-      applyGitSnapshot(cachedSnapshot);
+    if (hasCachedSnapshot && cachedSnapshot) {
+      applyGitSnapshot(cachedSnapshot, currentWorkspaceId);
       setLoading(false);
       return;
     }
 
+    snapshotWorkspaceIdRef.current = null;
+    clearViewSnapshot(buildGitSidebarSnapshotKey(currentWorkspaceId));
     setStatus(null);
     setRevision(null);
     setHistory([]);
@@ -392,7 +406,7 @@ export function GitSidebar({
         historyCount: snapshot.history.length,
         branchCount: (snapshot.branches?.local.length ?? 0) + (snapshot.branches?.remote.length ?? 0)
       });
-      applyGitSnapshot(snapshot);
+      applyGitSnapshot(snapshot, snapshot.workspaceId);
       setLoading(false);
     });
   }, [addGitSnapshotListener, workspaceId]);
@@ -407,12 +421,15 @@ export function GitSidebar({
       buildGitSidebarSnapshotKey(currentWorkspaceId),
       GIT_SNAPSHOT_CACHE_MAX_AGE_MS
     );
+    const knownRevision = hasGitSidebarSnapshotData(cachedSnapshot)
+      ? cachedSnapshot?.revision ?? null
+      : null;
 
     subscribeGitSnapshot(currentWorkspaceId, {
-      knownRevision: cachedSnapshot?.revision ?? null
+      knownRevision
     });
 
-    if (!cachedSnapshot) {
+    if (panelActiveRef.current) {
       requestGitSnapshotRefresh();
     }
   }, [requestGitRefresh, subscribeGitSnapshot, workspaceId]);
@@ -434,18 +451,31 @@ export function GitSidebar({
   }, [panelActive, requestGitRefresh, revision, workspaceId]);
 
   useEffect(() => {
-    if (!workspaceId) {
+    const currentWorkspaceId = workspaceId?.trim();
+
+    if (!currentWorkspaceId) {
       return;
     }
 
-    writeViewSnapshot<GitSidebarSnapshot>(buildGitSidebarSnapshotKey(workspaceId), {
+    if (snapshotWorkspaceIdRef.current !== currentWorkspaceId) {
+      return;
+    }
+
+    const snapshotToCache: GitSidebarSnapshot = {
       revision,
       status,
       history,
       historyTotalCount,
       historyNextCursor,
       branches
-    });
+    };
+
+    if (!hasGitSidebarSnapshotData(snapshotToCache)) {
+      clearViewSnapshot(buildGitSidebarSnapshotKey(currentWorkspaceId));
+      return;
+    }
+
+    writeViewSnapshot<GitSidebarSnapshot>(buildGitSidebarSnapshotKey(currentWorkspaceId), snapshotToCache);
   }, [branches, history, historyNextCursor, historyTotalCount, revision, status, workspaceId]);
 
   useEffect(() => {
@@ -500,7 +530,8 @@ export function GitSidebar({
     });
   }
 
-  function applyGitSnapshot(snapshot: GitSidebarSnapshot) {
+  function applyGitSnapshot(snapshot: GitSidebarSnapshot, snapshotWorkspaceId?: string | null) {
+    snapshotWorkspaceIdRef.current = snapshotWorkspaceId?.trim() ?? workspaceId?.trim() ?? null;
     setRevision(typeof snapshot.revision === "string" ? snapshot.revision : null);
     setStatus(snapshot.status);
     setHistory(Array.isArray(snapshot.history) ? snapshot.history : []);
@@ -3717,6 +3748,21 @@ function readError(error: unknown, fallback: string): string {
 
 function buildGitSidebarSnapshotKey(workspaceId: string) {
   return `git-sidebar.snapshot.${workspaceId}`;
+}
+
+function hasGitSidebarSnapshotData(snapshot: GitSidebarSnapshot | null | undefined): boolean {
+  if (!snapshot) {
+    return false;
+  }
+
+  return Boolean(
+    snapshot.status
+    || snapshot.branches
+    || snapshot.history.length > 0
+    || snapshot.historyTotalCount > 0
+    || snapshot.historyNextCursor
+    || snapshot.revision
+  );
 }
 
 function mapGitError(error: ApiError): string | null {
