@@ -4,6 +4,13 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clientConfigStore } from "../../../config/client-config-store";
+import {
+  createWindowDescriptor
+} from "../../../platform/desktop/window-descriptor";
+import {
+  buildTerminalsExternalWindowId
+} from "../../../platform/desktop/window-openers";
+import { getSharedWindowRegistryStore } from "../../../platform/desktop/window-registry";
 import { authStore } from "../../auth/store/auth-store";
 import { writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { ToastProvider } from "../../../shared/toast";
@@ -17,6 +24,7 @@ const originalNavigatorPlatform = Object.getOwnPropertyDescriptor(window.navigat
 
 const {
   navigationGroups,
+  mockFitDimensions,
   mockCloseTerminal,
   mockCreateTerminal,
   mockDeleteTerminalRecord,
@@ -52,6 +60,10 @@ const {
       childWorktrees: []
     }
   ] as WorkspaceSessionGroup[],
+  mockFitDimensions: {
+    cols: 120,
+    rows: 30
+  },
   mockCloseTerminal: vi.fn(),
   mockCreateTerminal: vi.fn(),
   mockDeleteTerminalRecord: vi.fn(),
@@ -177,14 +189,40 @@ vi.mock("../api/terminal-api", async () => {
 
 vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class {
+    private terminal:
+      | {
+          cols: number;
+          rows: number;
+          triggerResize?: (dimensions: { cols: number; rows: number }) => void;
+        }
+      | null = null;
+
+    bindTerminal(
+      terminal: {
+        cols: number;
+        rows: number;
+        triggerResize?: (dimensions: { cols: number; rows: number }) => void;
+      }
+    ) {
+      this.terminal = terminal;
+    }
+
     proposeDimensions() {
       return {
-        cols: 120,
-        rows: 30
+        cols: mockFitDimensions.cols,
+        rows: mockFitDimensions.rows
       };
     }
 
     fit() {
+      if (this.terminal) {
+        this.terminal.cols = mockFitDimensions.cols;
+        this.terminal.rows = mockFitDimensions.rows;
+        this.terminal.triggerResize?.({
+          cols: mockFitDimensions.cols,
+          rows: mockFitDimensions.rows
+        });
+      }
       return undefined;
     }
   }
@@ -207,6 +245,7 @@ vi.mock("@xterm/xterm", () => ({
     options = {
       fontSize: 14
     };
+    private resizeHandler: ((dimensions: { cols: number; rows: number }) => void) | null = null;
     private scrollHandler: ((viewportY: number) => void) | null = null;
     private wheelHandler: ((viewportY: WheelEvent) => boolean) | null = null;
     buffer = {
@@ -223,7 +262,8 @@ vi.mock("@xterm/xterm", () => ({
       mockTerminalWheelHandlers.push(null);
     }
 
-    loadAddon() {
+    loadAddon(addon?: { bindTerminal?: (terminal: MockTerminal) => void }) {
+      addon?.bindTerminal?.(this);
       return undefined;
     }
 
@@ -235,10 +275,13 @@ vi.mock("@xterm/xterm", () => ({
       };
     }
 
-    onResize() {
+    onResize(handler: (dimensions: { cols: number; rows: number }) => void) {
+      this.resizeHandler = handler;
       return {
-        dispose() {
-          return undefined;
+        dispose: () => {
+          if (this.resizeHandler === handler) {
+            this.resizeHandler = null;
+          }
         }
       };
     }
@@ -318,6 +361,10 @@ vi.mock("@xterm/xterm", () => ({
       this.scrollHandler?.(viewportY);
     }
 
+    triggerResize(dimensions: { cols: number; rows: number }) {
+      this.resizeHandler?.(dimensions);
+    }
+
     triggerWheel(deltaY: number, deltaMode = 0) {
       return this.wheelHandler?.({
         deltaY,
@@ -333,6 +380,7 @@ vi.mock("@xterm/xterm", () => ({
 
 class MockWebSocket extends EventTarget {
   static instances: MockWebSocket[] = [];
+  static OPEN = 1;
 
   readyState = 1;
   sentPayloads: string[] = [];
@@ -428,13 +476,19 @@ function buildTerminal(overrides: Partial<TerminalDto> = {}): TerminalDto {
   };
 }
 
-function renderPage(initialEntry = "/workspaces/workspace-1/terminals") {
+function renderPage(
+  initialEntry = "/workspaces/workspace-1/terminals",
+  props?: {
+    externalWindowMode?: boolean;
+    externalWindowWorkspaceId?: string | null;
+  }
+) {
   return render(
     <ToastProvider>
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
-          <Route path="/terminals" element={<TerminalPage />} />
-          <Route path="/workspaces/:workspaceId/terminals" element={<TerminalPage />} />
+          <Route path="/terminals" element={<TerminalPage {...props} />} />
+          <Route path="/workspaces/:workspaceId/terminals" element={<TerminalPage {...props} />} />
         </Routes>
       </MemoryRouter>
     </ToastProvider>
@@ -461,11 +515,13 @@ function enableDesktopRuntime(
 describe("TerminalPage", () => {
   const originalWebSocket = global.WebSocket;
   const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
+  const windowRegistry = getSharedWindowRegistryStore();
 
   beforeEach(() => {
     window.localStorage.clear();
     window.sessionStorage.clear();
     MockWebSocket.instances = [];
+    windowRegistry.clear();
     clientConfigStore.hydrate({
       platform: "web",
       hostBaseUrl: "http://127.0.0.1:3002",
@@ -490,6 +546,9 @@ describe("TerminalPage", () => {
     mockDeleteTerminalRecord.mockReset();
     mockListTerminalShellOptions.mockReset();
     mockListWorkspaceTerminals.mockReset();
+    mockFitDimensions.cols = 120;
+    mockFitDimensions.rows = 30;
+    MockWebSocket.instances.length = 0;
     mockXtermInstances.length = 0;
     mockTerminalWheelHandlers.length = 0;
     mockReadTerminalHistory.mockReset();
@@ -529,6 +588,7 @@ describe("TerminalPage", () => {
   });
 
   afterEach(() => {
+    windowRegistry.clear();
     authStore.clear();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -672,19 +732,19 @@ describe("TerminalPage", () => {
 
     await screen.findByText("前端");
 
-    await userEvent.click(
+    fireEvent.click(
       screen.getByRole("button", {
         name: "展开终端工具菜单"
       })
     );
-    await userEvent.click(
+    fireEvent.click(
       screen.getByRole("button", {
         name: "左右分栏"
       })
     );
 
     const actionButtons = screen.getAllByRole("button", { name: "终端操作" });
-    await userEvent.click(actionButtons[0]);
+    fireEvent.click(actionButtons[0]);
 
     expect(screen.getByRole("menuitem", { name: "绑定到主分栏" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "绑定到副分栏" })).toBeInTheDocument();
@@ -732,6 +792,117 @@ describe("TerminalPage", () => {
         })
       );
     });
+  });
+
+  it("独立终端窗口在窗口尺寸变化后会重新上报终端大小，不会沿用主窗口旧高度", async () => {
+    setTerminalManagerSnapshot("workspace-1", [buildTerminal()]);
+
+    renderPage(undefined, {
+      externalWindowMode: true,
+      externalWindowWorkspaceId: "workspace-1"
+    });
+
+    await screen.findByText("工作终端");
+    const terminalMarker = await screen.findByTestId("mock-xterm");
+    const viewportHost = terminalMarker.closest(".terminal-xterm") as HTMLElement | null;
+
+    if (!viewportHost) {
+      throw new Error("未找到终端视口容器");
+    }
+
+    Object.defineProperty(viewportHost, "clientWidth", {
+      configurable: true,
+      value: 900
+    });
+    Object.defineProperty(viewportHost, "clientHeight", {
+      configurable: true,
+      value: 600
+    });
+
+    const socket = MockWebSocket.instances.at(-1);
+
+    if (!socket) {
+      throw new Error("未建立终端 WebSocket 连接");
+    }
+
+    await new Promise<void>((resolve) => {
+      window.setTimeout(() => resolve(), 180);
+    });
+
+    socket.sentPayloads.length = 0;
+    mockFitDimensions.cols = 88;
+    mockFitDimensions.rows = 22;
+
+    fireEvent(window, new Event("resize"));
+
+    await waitFor(() => {
+      const resizePayload = socket.sentPayloads
+        .map((payload) => JSON.parse(payload) as { type: string; cols?: number; rows?: number })
+        .find((payload) => payload.type === "terminal.resize" && payload.cols === 88 && payload.rows === 22);
+
+      expect(resizePayload).toBeDefined();
+    });
+  });
+
+  it("独立终端窗口打开后，主窗口不会再用自己的尺寸覆盖同一工作区终端", async () => {
+    const detachedWindowId = buildTerminalsExternalWindowId("workspace-1");
+    windowRegistry.registerDescriptor(
+      createWindowDescriptor({
+        windowId: detachedWindowId,
+        kind: "terminals",
+        workspaceId: "workspace-1",
+        workspaceName: "Demo Workspace",
+        mode: "external",
+        focusOwner: "terminal-page"
+      })
+    );
+    windowRegistry.markWindowOpen(detachedWindowId);
+    setTerminalManagerSnapshot("workspace-1", [buildTerminal()]);
+
+    renderPage();
+
+    await screen.findByText("工作终端");
+    const terminalMarker = await screen.findByTestId("mock-xterm");
+    const viewportHost = terminalMarker.closest(".terminal-xterm") as HTMLElement | null;
+
+    if (!viewportHost) {
+      throw new Error("未找到终端视口容器");
+    }
+
+    Object.defineProperty(viewportHost, "clientWidth", {
+      configurable: true,
+      value: 640
+    });
+    Object.defineProperty(viewportHost, "clientHeight", {
+      configurable: true,
+      value: 420
+    });
+
+    const socket = MockWebSocket.instances.at(-1);
+
+    if (!socket) {
+      throw new Error("未建立终端 WebSocket 连接");
+    }
+
+    await new Promise<void>((resolve) => {
+      window.setTimeout(() => resolve(), 180);
+    });
+
+    socket.sentPayloads.length = 0;
+    mockFitDimensions.cols = 66;
+    mockFitDimensions.rows = 18;
+
+    fireEvent(window, new Event("resize"));
+
+    await new Promise<void>((resolve) => {
+      window.setTimeout(() => resolve(), 80);
+    });
+
+    const resizePayload = socket.sentPayloads
+      .map((payload) => JSON.parse(payload) as { type: string; cols?: number; rows?: number })
+      .find((payload) => payload.type === "terminal.resize");
+
+    expect(resizePayload).toBeUndefined();
   });
 
   it("终端标签顺序按创建时间稳定显示，不会因为最近活跃时间变化自动重排", async () => {
@@ -1088,7 +1259,7 @@ describe("TerminalPage", () => {
       expect(screen.getByTestId("mock-xterm")).toBeInTheDocument();
     });
 
-    const socket = MockWebSocket.instances[0];
+    const socket = MockWebSocket.instances.at(-1);
 
     if (!socket) {
       throw new Error("未建立终端 WebSocket 连接");
@@ -1196,7 +1367,7 @@ describe("TerminalPage", () => {
     terminal.buffer.active.baseY = 10;
     terminal.buffer.active.viewportY = 10;
 
-    const socket = MockWebSocket.instances[0];
+    const socket = MockWebSocket.instances.at(-1);
 
     if (!socket) {
       throw new Error("未建立终端 WebSocket 连接");
@@ -1235,7 +1406,7 @@ describe("TerminalPage", () => {
       expect(screen.getByTestId("mock-xterm")).toBeInTheDocument();
     });
 
-    const socket = MockWebSocket.instances[0];
+    const socket = MockWebSocket.instances.at(-1);
 
     if (!socket) {
       throw new Error("未建立终端 WebSocket 连接");

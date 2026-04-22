@@ -19,7 +19,11 @@ import "@xterm/xterm/css/xterm.css";
 
 import { MobileSheet } from "../../../components/MobileSheet";
 import { resolveMacOsNativeTitlebarDragRegion } from "../../../platform/desktop/window-drag";
-import { openTerminalsExternalWindow } from "../../../platform/desktop/window-openers";
+import {
+  buildTerminalsExternalWindowId,
+  openTerminalsExternalWindow
+} from "../../../platform/desktop/window-openers";
+import { useWindowRegistrySelector } from "../../../platform/desktop/window-registry";
 import { usePlatform } from "../../../platform/platform-provider";
 import {
   readViewSnapshot,
@@ -76,6 +80,7 @@ import { TerminalRuntimeFallbackModal } from "../components/TerminalRuntimeFallb
 type PaneId = "primary" | "secondary";
 type SplitDirection = "single" | "vertical" | "horizontal";
 const TMUX_ATTACH_INPUT_RELEASE_DELAY_MS = 120;
+const TERMINAL_POST_ATTACH_REFLOW_DELAY_MS = 120;
 
 interface TerminalViewportRuntime {
   terminal: Terminal;
@@ -147,6 +152,7 @@ interface TerminalWorkspacePaneProps {
   pendingCreation: boolean;
   zoomScale: number;
   active: boolean;
+  ownsTerminalSize: boolean;
   isMobileLayout?: boolean;
   canCreateTerminal?: boolean;
   onActivate: (paneId: PaneId) => void;
@@ -461,6 +467,14 @@ export function TerminalPage({
   const isMobileTerminalPage = !platform.isDesktop && platform.isMobile;
   const canDetachTerminalWindow =
     platform.isDesktop && platform.bridge.supported && !externalWindowMode && Boolean(resolvedWorkspaceId);
+  const detachedTerminalWindowId = useMemo(
+    () => (resolvedWorkspaceId ? buildTerminalsExternalWindowId(resolvedWorkspaceId) : null),
+    [resolvedWorkspaceId]
+  );
+  const isDetachedTerminalWindowOpen = useWindowRegistrySelector((state) =>
+    detachedTerminalWindowId ? state.openWindowIds.includes(detachedTerminalWindowId) : false
+  );
+  const ownsTerminalSize = externalWindowMode || !isDetachedTerminalWindowOpen;
   const effectiveSplitDirection: SplitDirection = isMobileTerminalPage ? "single" : splitDirection;
   const effectiveActivePaneId: PaneId = isMobileTerminalPage ? "primary" : activePaneId;
   const effectivePaneBindings = useMemo<TerminalPaneBindings>(() => {
@@ -1858,6 +1872,7 @@ export function TerminalPage({
                   pendingCreation={!activeTerminal && pendingTerminalCreationPaneId === "primary"}
                   zoomScale={zoomScale}
                   active
+                  ownsTerminalSize={ownsTerminalSize}
                   isMobileLayout
                   onActivate={activatePane}
                   onSwipeGesture={handleMobileStageSwipe}
@@ -2304,6 +2319,7 @@ export function TerminalPage({
                       pendingCreation={!terminal && pendingTerminalCreationPaneId === paneId}
                       zoomScale={zoomScale}
                       active={effectiveActivePaneId === paneId}
+                      ownsTerminalSize={ownsTerminalSize}
                       onActivate={activatePane}
                       onConnectionChange={handlePaneConnectionChange}
                       onTerminalStatus={handleTerminalStatus}
@@ -3231,6 +3247,7 @@ function TerminalWorkspacePane({
   pendingCreation,
   zoomScale,
   active,
+  ownsTerminalSize,
   isMobileLayout = false,
   canCreateTerminal = true,
   onActivate,
@@ -3389,6 +3406,20 @@ function TerminalWorkspacePane({
   }, [zoomScale]);
 
   useEffect(() => {
+    const runtime = viewportRuntimeRef.current;
+
+    if (!runtime) {
+      return;
+    }
+
+    runtime.reflow();
+
+    if (ownsTerminalSize) {
+      realtimeClientRef.current?.sendCurrentDimensions(runtime.terminal.cols, runtime.terminal.rows);
+    }
+  }, [ownsTerminalSize, terminal?.id]);
+
+  useEffect(() => {
     if (typeof document === "undefined") {
       return;
     }
@@ -3435,9 +3466,13 @@ function TerminalWorkspacePane({
         beforeSeq: nextHistoryBeforeSeqRef.current,
         hasOlder: hasOlderHistoryRef.current
       }),
-      canResize: () => activeTerminalStatusRef.current === "running",
+      canResize: () => activeTerminalStatusRef.current === "running" && ownsTerminalSize,
       onInput: forwardTerminalInput,
       onResize: ({ cols, rows }) => {
+        if (!ownsTerminalSize) {
+          return;
+        }
+
         realtimeClientRef.current?.resize(cols, rows);
       },
       onViewportTop: () => {
@@ -3475,7 +3510,7 @@ function TerminalWorkspacePane({
       }
       registerApi(paneId, null);
     };
-  }, [forwardTerminalInput, loadOlderHistory, paneId, registerApi, terminal?.id, zoomScale]);
+  }, [forwardTerminalInput, loadOlderHistory, ownsTerminalSize, paneId, registerApi, terminal?.id, zoomScale]);
 
   useEffect(() => {
     realtimeClientRef.current?.close();
@@ -3524,7 +3559,9 @@ function TerminalWorkspacePane({
         if (runtime) {
           runtime.suspendInputForwarding();
           runtime.reflow();
-          client.sendCurrentDimensions(runtime.terminal.cols, runtime.terminal.rows);
+          if (ownsTerminalSize) {
+            client.sendCurrentDimensions(runtime.terminal.cols, runtime.terminal.rows);
+          }
           runtime.resumeInputForwarding(
             terminal.runtimeType === "tmux" ? TMUX_ATTACH_INPUT_RELEASE_DELAY_MS : 0
           );
@@ -3697,6 +3734,7 @@ function TerminalWorkspacePane({
     paneId,
     terminal?.id,
     terminal?.runtimeType,
+    ownsTerminalSize,
     updateOldestLoadedSeq
   ]);
 
@@ -3901,6 +3939,8 @@ function createTerminalViewportRuntime(input: {
   let hasCommittedFit = false;
   let lastFittedCols = terminal.cols;
   let lastFittedRows = terminal.rows;
+  let deferredReflowTimer: number | null = null;
+  const scheduledReflowFrameIds = new Set<number>();
   let touchPoint: { x: number; y: number } | null = null;
   let pendingTouchLines = 0;
   let touchVelocityLinesPerMs = 0;
@@ -4189,12 +4229,12 @@ function createTerminalViewportRuntime(input: {
       }
 
       void waitForStableContainer().then(() => {
-        fitToContainer();
+        schedulePostAttachReflow();
       });
     });
   } else {
     void waitForStableContainer().then(() => {
-      fitToContainer();
+      schedulePostAttachReflow();
     });
   }
 
@@ -4211,10 +4251,21 @@ function createTerminalViewportRuntime(input: {
 
   if (typeof document !== "undefined" && "fonts" in document) {
     void document.fonts.ready.then(() => {
-      window.requestAnimationFrame(() => {
-        fitToContainer();
-      });
+      schedulePostAttachReflow();
     });
+  }
+
+  const handleWindowResize = () => {
+    scheduleFitToContainer();
+  };
+  const handlePageShow = () => {
+    schedulePostAttachReflow();
+  };
+
+  if (typeof window !== "undefined") {
+    window.addEventListener("resize", handleWindowResize);
+    window.addEventListener("pageshow", handlePageShow);
+    window.visualViewport?.addEventListener("resize", handleWindowResize);
   }
 
   const handlePageHide = () => {
@@ -4383,6 +4434,39 @@ function createTerminalViewportRuntime(input: {
     }
   }
 
+  function scheduleFitToContainer(): void {
+    if (disposed) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      scheduledReflowFrameIds.delete(frameId);
+      fitToContainer();
+    });
+
+    scheduledReflowFrameIds.add(frameId);
+  }
+
+  function schedulePostAttachReflow(): void {
+    scheduleFitToContainer();
+
+    const followupFrameId = window.requestAnimationFrame(() => {
+      scheduledReflowFrameIds.delete(followupFrameId);
+      scheduleFitToContainer();
+    });
+
+    scheduledReflowFrameIds.add(followupFrameId);
+
+    if (deferredReflowTimer !== null) {
+      window.clearTimeout(deferredReflowTimer);
+    }
+
+    deferredReflowTimer = window.setTimeout(() => {
+      deferredReflowTimer = null;
+      scheduleFitToContainer();
+    }, TERMINAL_POST_ATTACH_REFLOW_DELAY_MS);
+  }
+
   function syncViewportBottomGap(): void {
     const bottomGapPx = resolveTerminalViewportBottomGapPx(input.container.clientHeight);
     input.container.style.setProperty("--terminal-bottom-gap", `${bottomGapPx}px`);
@@ -4472,6 +4556,14 @@ function createTerminalViewportRuntime(input: {
     },
     dispose: () => {
       disposed = true;
+      if (deferredReflowTimer !== null) {
+        window.clearTimeout(deferredReflowTimer);
+        deferredReflowTimer = null;
+      }
+      scheduledReflowFrameIds.forEach((frameId) => {
+        window.cancelAnimationFrame(frameId);
+      });
+      scheduledReflowFrameIds.clear();
       inputGate.dispose();
       if (persistTimer !== null) {
         window.clearTimeout(persistTimer);
@@ -4490,6 +4582,9 @@ function createTerminalViewportRuntime(input: {
       resizeObserver?.disconnect();
       if (typeof window !== "undefined") {
         window.removeEventListener("pagehide", handlePageHide);
+        window.removeEventListener("resize", handleWindowResize);
+        window.removeEventListener("pageshow", handlePageShow);
+        window.visualViewport?.removeEventListener("resize", handleWindowResize);
       }
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", handleVisibilityChange);
