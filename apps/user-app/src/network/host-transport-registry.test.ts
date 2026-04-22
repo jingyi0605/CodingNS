@@ -346,6 +346,24 @@ describe("host-transport-registry", () => {
     expect(target.baseUrl).toBe("https://demo.channel.codingns.com");
     expect(target.transport).toBeInstanceOf(ManagedRelayTunnelHostTransport);
   });
+
+  it("Web 可信前端里的 relay 主入口不允许再回退成直连 transport", async () => {
+    clientConfigStore.hydrate(createRuntimeConfig({
+      platform: "web",
+      activeHostId: "relay-host-a"
+    }));
+
+    const target = resolveHostTransportTarget("https://demo.channel.codingns.com");
+
+    await expect(target.transport.fetch({
+      path: "/api/client/runtime-config",
+      baseUrl: "https://demo.channel.codingns.com",
+      url: "https://demo.channel.codingns.com/api/client/runtime-config",
+      init: {
+        method: "GET"
+      }
+    })).rejects.toThrow();
+  });
 });
 
 function createRuntimeConfig(overrides?: {

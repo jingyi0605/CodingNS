@@ -41,7 +41,13 @@ const defaultHostTransportResolver: HostTransportResolver = ({ baseUrl }) => {
     controlBaseUrl: relayTunnel.controlBaseUrl,
     tunnelDomain: relayTunnel.tunnelDomain
   }, {
-    fallbackTransport: directHostTransport
+    fallbackTransport: shouldAllowRelayDirectFallback(
+      clientConfigStore.getState().platform,
+      host.baseUrl,
+      relayTunnel.tunnelDomain
+    )
+      ? directHostTransport
+      : undefined
   });
 
   relayTransportCache.set(host.id, {
@@ -147,5 +153,21 @@ function shouldUseRelayTransport(
     return new URL(baseUrl).hostname.toLowerCase() === relayTunnel.tunnelDomain.trim().toLowerCase();
   } catch {
     return false;
+  }
+}
+
+function shouldAllowRelayDirectFallback(
+  platform: "desktop" | "web" | "ios" | "android",
+  hostBaseUrl: string,
+  tunnelDomain: string
+): boolean {
+  if (platform === "web") {
+    return false;
+  }
+
+  try {
+    return new URL(hostBaseUrl).hostname.toLowerCase() !== tunnelDomain.trim().toLowerCase();
+  } catch {
+    return true;
   }
 }
