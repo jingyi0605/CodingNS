@@ -172,14 +172,35 @@ export async function connectRelayTunnelClientSessionViaEdge(
 }
 
 class RelayTunnelEdgeRawChannel implements RelayTunnelRawChannel {
-  constructor(private readonly socket: RelayTunnelEdgeSocket) {}
+  private readonly pendingPayloads: RelayTunnelRawPayload[] = [];
+  private closed = false;
+
+  constructor(private readonly socket: RelayTunnelEdgeSocket) {
+    this.socket.addEventListener("open", () => {
+      this.flushPendingPayloads();
+    });
+    this.socket.addEventListener("close", () => {
+      this.closed = true;
+      this.pendingPayloads.length = 0;
+    });
+    this.socket.addEventListener("error", () => {
+      this.closed = true;
+      this.pendingPayloads.length = 0;
+    });
+  }
 
   send(payload: RelayTunnelRawPayload): void {
-    if (this.socket.readyState !== 1) {
-      throw new Error("当前 relay-edge 原始链路尚未建立完成");
+    if (this.socket.readyState === 1) {
+      this.socket.send(payload);
+      return;
     }
 
-    this.socket.send(payload);
+    if (this.socket.readyState === 0 && !this.closed) {
+      this.pendingPayloads.push(payload);
+      return;
+    }
+
+    throw new Error("当前 relay-edge 原始链路尚未建立完成");
   }
 
   subscribe(listener: (payload: RelayTunnelRawPayload) => void): () => void {
@@ -204,7 +225,21 @@ class RelayTunnelEdgeRawChannel implements RelayTunnelRawChannel {
   }
 
   close(code?: number, reason?: string): void {
+    this.closed = true;
+    this.pendingPayloads.length = 0;
     this.socket.close(code, reason);
+  }
+
+  private flushPendingPayloads(): void {
+    if (this.socket.readyState !== 1 || this.pendingPayloads.length === 0) {
+      return;
+    }
+
+    const payloads = this.pendingPayloads.splice(0, this.pendingPayloads.length);
+
+    for (const payload of payloads) {
+      this.socket.send(payload);
+    }
   }
 }
 
