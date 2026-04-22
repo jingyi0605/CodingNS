@@ -157,6 +157,18 @@ export class RelayTunnelClientTransport implements HostTransport {
     }
 
     pending.responseStarted = true;
+
+    if (hasNullBodyStatus(packet.status)) {
+      this.pendingHttpRequests.delete(packet.streamId);
+      pending.resolve(
+        new Response(null, {
+          status: packet.status,
+          headers: packet.headers
+        })
+      );
+      return;
+    }
+
     const stream = new ReadableStream<Uint8Array>({
       start: (controller) => {
         pending.streamController = controller;
@@ -456,6 +468,10 @@ function createResponseBody(value: string | null): BodyInit | null {
   const body = new Uint8Array(bytes.byteLength);
   body.set(bytes);
   return body.buffer;
+}
+
+function hasNullBodyStatus(status: number): boolean {
+  return status === 101 || status === 103 || status === 204 || status === 205 || status === 304;
 }
 
 function decodeBase64UrlToText(value: string | null): string {

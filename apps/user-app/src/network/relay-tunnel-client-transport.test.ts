@@ -132,6 +132,45 @@ describe("RelayTunnelClientTransport", () => {
     await expect(response.text()).resolves.toBe("hello world");
   });
 
+  it("204 分片响应不会错误构造带 body 的 Response", async () => {
+    const session = new MockRelayTunnelSession();
+    const transport = new RelayTunnelClientTransport(session);
+    const responsePromise = transport.fetch({
+      path: "/api/empty",
+      baseUrl: "https://app.codingns.cn",
+      url: "https://app.codingns.cn/api/empty",
+      init: {
+        method: "POST"
+      }
+    });
+
+    await vi.waitFor(() => {
+      expect(session.sentPackets).toHaveLength(1);
+    });
+
+    const requestPacket = session.sentPackets[0];
+
+    if (!requestPacket || requestPacket.type !== "http.request") {
+      throw new Error("没有发出 http.request 包");
+    }
+
+    session.emit({
+      type: "http.response.start",
+      streamId: requestPacket.streamId,
+      status: 204,
+      headers: {}
+    });
+    session.emit({
+      type: "http.response.end",
+      streamId: requestPacket.streamId
+    });
+
+    const response = await responsePromise;
+
+    expect(response.status).toBe(204);
+    await expect(response.text()).resolves.toBe("");
+  });
+
   it("会把 WebSocket 打开、收发消息和关闭都映射成隧道包", async () => {
     const session = new MockRelayTunnelSession();
     const transport = new RelayTunnelClientTransport(session);
