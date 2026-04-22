@@ -54,6 +54,7 @@ type PendingAction =
   | "reconnect"
   | "disconnect-device"
   | "learn-service"
+  | "manage-account"
   | null;
 
 type HostLabelCheckState =
@@ -195,7 +196,12 @@ export function RelayTunnelPanel() {
     setControlBaseUrlDraft(savedControlBaseUrl);
   }, [canConfigureControlBaseUrl, savedControlBaseUrl]);
 
-  async function loadStatus(silent: boolean): Promise<void> {
+  async function loadStatus(
+    silent: boolean,
+    options?: {
+      syncProfile?: boolean;
+    }
+  ): Promise<void> {
     if (!silent) {
       setLoading(true);
     }
@@ -207,7 +213,7 @@ export function RelayTunnelPanel() {
         return;
       }
 
-      applyLoadedStatus(nextStatus);
+      applyLoadedStatus(nextStatus, options);
       setStatusError(null);
     } catch (error) {
       if (activeRef.current) {
@@ -220,7 +226,12 @@ export function RelayTunnelPanel() {
     }
   }
 
-  function applyLoadedStatus(nextStatus: RelayTunnelStatusView): void {
+  function applyLoadedStatus(
+    nextStatus: RelayTunnelStatusView,
+    options?: {
+      syncProfile?: boolean;
+    }
+  ): void {
     setStatus(nextStatus);
     setPanelError(null);
 
@@ -232,7 +243,9 @@ export function RelayTunnelPanel() {
       setHostLabelDraft(nextStatusHostLabel(nextStatus.tunnelDomain));
     }
 
-    syncRelayTunnelProfile(nextStatus);
+    if (options?.syncProfile ?? true) {
+      syncRelayTunnelProfile(nextStatus);
+    }
   }
 
   async function loadBillingData(): Promise<void> {
@@ -367,6 +380,19 @@ export function RelayTunnelPanel() {
     }
   }
 
+  async function handleManageAccount(): Promise<void> {
+    setPendingAction("manage-account");
+    setPanelError(null);
+
+    try {
+      await openExternalUrl(platform.bridge.openExternal, getFixedRelayControlBaseUrl());
+    } catch (error) {
+      setPanelError(resolvePanelError(error));
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
   async function handleCopyAccessUrl(): Promise<void> {
     if (!boundAccessUrl) {
       return;
@@ -450,18 +476,19 @@ export function RelayTunnelPanel() {
 
     try {
       if (status?.enabled) {
-        const disabledStatus = await disableRelayTunnel();
-        applyLoadedStatus(disabledStatus);
+        await disableRelayTunnel();
       }
 
       const enabledStatus = await enableRelayTunnel();
       applyLoadedStatus(enabledStatus);
 
-      if (status?.controlAccountEmail) {
+      if (enabledStatus.controlAccountEmail) {
         await loadBillingData();
       }
     } catch (error) {
-      setPanelError(resolvePanelError(error));
+      const panelMessage = resolvePanelError(error);
+      await loadStatus(true, { syncProfile: false });
+      setPanelError(panelMessage);
     } finally {
       setPendingAction(null);
     }
@@ -933,6 +960,16 @@ export function RelayTunnelPanel() {
               {pendingAction === "reconnect"
                 ? t("common.loading")
                 : t("settings.relayTunnelReconnectAction")}
+            </button>
+            <button
+              className="secondary-button"
+              disabled={pendingAction !== null}
+              type="button"
+              onClick={() => void handleManageAccount()}
+            >
+              {pendingAction === "manage-account"
+                ? t("common.loading")
+                : t("settings.relayTunnelManageAccountAction")}
             </button>
             <button
               className="settings-button settings-button-danger"

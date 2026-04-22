@@ -279,6 +279,7 @@ export const zhCN = {
     relayTunnelClientRouteHintTailscale: "当前客户端已经切到 Tailscale 地址，不经过公共隧道。",
     relayTunnelClientRouteHintDirect: "当前客户端直接请求这个 Host 地址，不经过公共隧道。",
     relayTunnelReconnectAction: "重新连接",
+    relayTunnelManageAccountAction: "管理账号",
     relayTunnelDisconnectDeviceAction: "注销设备",
     relayTunnelEnableToggleLabel: "启用隧道服务",
     relayTunnelConfigTitle: "隧道站点配置",

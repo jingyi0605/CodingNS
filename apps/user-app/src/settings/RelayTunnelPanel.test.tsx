@@ -136,6 +136,7 @@ describe("RelayTunnelPanel", () => {
     expect(screen.getAllByText("0 B")).toHaveLength(2);
     expect(screen.getByText("最近错误：该账号的公共隧道流量已经耗尽")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重新连接" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "管理账号" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "注销设备" })).toBeInTheDocument();
   });
 
@@ -504,6 +505,104 @@ describe("RelayTunnelPanel", () => {
     await waitFor(() => {
       expect(platform.bridge.openExternal).toHaveBeenCalledWith(accessUrl);
     });
+  });
+
+  it("远程访问已开启后可以打开账号管理页面", async () => {
+    const platform = createPlatform();
+    platformMock.usePlatform.mockReturnValue(platform);
+    apiMocks.fetchRelayTunnelStatus.mockResolvedValue(
+      createStatus({
+        activated: true,
+        enabled: true,
+        accountId: "acct_demo",
+        controlAccountEmail: "demo@example.com",
+        controlSessionExpiresAt: "2026-04-21T00:00:00.000Z",
+        bindingId: "binding_demo",
+        tunnelDomain: "demo.channel.codingns.com"
+      })
+    );
+    apiMocks.fetchRelayTunnelTrafficWallet.mockResolvedValue({
+      wallet: {
+        accountId: "acct_demo",
+        grantedBytes: "524288000",
+        usedBytes: "1024",
+        remainingBytes: "524286976",
+        exhausted: false,
+        updatedAt: "2026-04-20T00:00:00.000Z"
+      }
+    });
+
+    renderPanel();
+
+    await screen.findByText("远程访问已开启");
+    await userEvent.click(screen.getByRole("button", { name: "管理账号" }));
+
+    await waitFor(() => {
+      expect(platform.bridge.openExternal).toHaveBeenCalledWith(
+        "https://channel.codingns.com:1443"
+      );
+    });
+  });
+
+  it("重新连接时不会把中间断开态写回当前 Host 配置", async () => {
+    const updateSpy = vi.spyOn(clientConfigStore, "update");
+    apiMocks.fetchRelayTunnelStatus.mockResolvedValue(
+      createStatus({
+        activated: true,
+        enabled: true,
+        accountId: "acct_demo",
+        controlAccountEmail: "demo@example.com",
+        controlSessionExpiresAt: "2026-04-21T00:00:00.000Z",
+        bindingId: "binding_demo",
+        tunnelDomain: "demo.channel.codingns.com"
+      })
+    );
+    apiMocks.disableRelayTunnel.mockResolvedValue(
+      createStatus({
+        activated: true,
+        enabled: false,
+        accountId: "acct_demo",
+        controlAccountEmail: "demo@example.com",
+        controlSessionExpiresAt: "2026-04-21T00:00:00.000Z",
+        bindingId: "binding_demo",
+        tunnelDomain: "demo.channel.codingns.com",
+        phase: "connecting"
+      })
+    );
+    apiMocks.enableRelayTunnel.mockResolvedValue(
+      createStatus({
+        activated: true,
+        enabled: true,
+        accountId: "acct_demo",
+        controlAccountEmail: "demo@example.com",
+        controlSessionExpiresAt: "2026-04-21T00:00:00.000Z",
+        bindingId: "binding_demo",
+        tunnelDomain: "demo.channel.codingns.com"
+      })
+    );
+    apiMocks.fetchRelayTunnelTrafficWallet.mockResolvedValue({
+      wallet: {
+        accountId: "acct_demo",
+        grantedBytes: "524288000",
+        usedBytes: "2048",
+        remainingBytes: "524285952",
+        exhausted: false,
+        updatedAt: "2026-04-20T00:00:00.000Z"
+      }
+    });
+
+    renderPanel();
+
+    await screen.findByText("远程访问已开启");
+    const initialUpdateCallCount = updateSpy.mock.calls.length;
+
+    await userEvent.click(screen.getByRole("button", { name: "重新连接" }));
+
+    await waitFor(() => {
+      expect(apiMocks.disableRelayTunnel).toHaveBeenCalledTimes(1);
+      expect(apiMocks.enableRelayTunnel).toHaveBeenCalledTimes(1);
+    });
+    expect(updateSpy).toHaveBeenCalledTimes(initialUpdateCallCount);
   });
 
   it("连接设置右侧的了解按钮会打开隧道站点", async () => {

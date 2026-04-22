@@ -318,6 +318,7 @@ export const enUS = {
     relayTunnelClientRouteHintDirect:
       "The client is requesting this Host address directly, without going through the public tunnel.",
     relayTunnelReconnectAction: "Reconnect",
+    relayTunnelManageAccountAction: "Manage Account",
     relayTunnelDisconnectDeviceAction: "Sign Out Device",
     relayTunnelEnableToggleLabel: "Enable tunnel service",
     relayTunnelConfigTitle: "Tunnel Site Configuration",
