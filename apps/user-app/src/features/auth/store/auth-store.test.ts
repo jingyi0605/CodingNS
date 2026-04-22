@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { waitFor } from "@testing-library/react";
 
 const STORAGE_KEY = "codingns.auth.session";
 
@@ -243,6 +244,38 @@ describe("authStore", () => {
     });
 
     expect(authStore.getState().status).toBe("authenticated");
-    expect(syncRuntimeConfigMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(syncRuntimeConfigMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("运行时配置同步卡住时也不会挡住当前 HOST 登录", async () => {
+    await setupClientConfig();
+    const syncRuntimeConfigMock = vi.fn(() => new Promise<void>(() => undefined));
+
+    vi.doMock("../api/auth-api", () => ({
+      loginRequest: vi.fn(async () => storedSession)
+    }));
+    vi.doMock("../../../platform/server/client-runtime-manager", () => ({
+      syncActiveHostAuthenticatedRuntimeConfig: syncRuntimeConfigMock
+    }));
+
+    const { authStore } = await import("./auth-store");
+
+    const loginResult = await Promise.race([
+      authStore.login({
+        username: "admin",
+        password: "admin1234"
+      }).then(() => "resolved"),
+      new Promise<"timeout">((resolve) => {
+        window.setTimeout(() => resolve("timeout"), 50);
+      })
+    ]);
+
+    expect(loginResult).toBe("resolved");
+    expect(authStore.getState().status).toBe("authenticated");
+    await waitFor(() => {
+      expect(syncRuntimeConfigMock).toHaveBeenCalledTimes(1);
+    });
   });
 });

@@ -54,6 +54,7 @@ export type AuthRefreshResult =
 type AuthListener = () => void;
 
 const STORAGE_KEY = "codingns.auth.session";
+const RUNTIME_CONFIG_SYNC_TIMEOUT_MS = 3_000;
 
 interface LegacyStoredAuthSession {
   serverBaseUrl?: string;
@@ -117,7 +118,7 @@ class AuthStore {
         status: "authenticated",
         session
       });
-      await this.ensureRuntimeConfigSynced(host, session);
+      this.scheduleRuntimeConfigSync(host, session);
     }
 
     return session;
@@ -160,7 +161,7 @@ class AuthStore {
     try {
       const nextSession = await refreshRequest({ refreshToken }, currentHost?.baseUrl);
       this.setSession(nextSession, currentHost);
-      await this.ensureRuntimeConfigSynced(currentHost, nextSession);
+      this.scheduleRuntimeConfigSync(currentHost, nextSession);
       return {
         status: "refreshed",
         session: nextSession
@@ -312,7 +313,7 @@ class AuthStore {
       return;
     }
 
-    void this.ensureRuntimeConfigSynced(currentHost, nextSession);
+    this.scheduleRuntimeConfigSync(currentHost, nextSession);
   }
 
   private getCurrentHost(): RuntimeHostProfile | null {
@@ -415,10 +416,25 @@ class AuthStore {
       const { syncActiveHostAuthenticatedRuntimeConfig } = await import(
         "../../../platform/server/client-runtime-manager"
       );
-      await syncActiveHostAuthenticatedRuntimeConfig();
+      await withTimeout(
+        syncActiveHostAuthenticatedRuntimeConfig(),
+        RUNTIME_CONFIG_SYNC_TIMEOUT_MS,
+        "runtime_config_sync_timeout"
+      );
     } catch {
-      // 运行时配置同步失败不该挡住登录链路，后续仍然允许手动进入设置页刷新。
+      if (this.lastRuntimeConfigSyncKey === syncKey) {
+        this.lastRuntimeConfigSyncKey = null;
+      }
+
+      // 运行时配置同步失败不该挡住登录链路，后续仍然允许后台自动重试或手动进入设置页刷新。
     }
+  }
+
+  private scheduleRuntimeConfigSync(
+    host: RuntimeHostProfile | null,
+    session: AuthSession | null
+  ): void {
+    void this.ensureRuntimeConfigSynced(host, session);
   }
 
   private emit(): void {
@@ -446,6 +462,25 @@ function isHostSessionEnvelope(value: unknown): value is HostSessionEnvelope {
     typeof candidate.savedAt === "number" &&
     isAuthSession(candidate.session)
   );
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
 }
 
 function isHostSessionMap(value: unknown): value is HostSessionMap {
