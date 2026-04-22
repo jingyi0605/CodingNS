@@ -104,41 +104,14 @@ export async function connectRelayTunnelRawChannel(
   reservation: RelayTunnelSessionReservation;
   channel: RelayTunnelRawChannel;
 }> {
-  const connectInit = await connectInitRelayTunnel({
-    controlBaseUrl: input.controlBaseUrl,
-    tunnelDomain: input.tunnelDomain,
-    fetchFn: dependencies.fetchFn
-  });
-  const binding: RelayTunnelBindingView = {
-    bindingId: connectInit.bindingId,
-    tunnelDomain: connectInit.tunnelDomain,
-    hostPublicKey: connectInit.hostPublicKey,
-    hostFingerprint: connectInit.hostFingerprint,
-    relayBaseUrl: connectInit.relayBaseUrl,
-    controlBaseUrl: connectInit.controlBaseUrl,
-    status: connectInit.status
-  };
-  const reservation: RelayTunnelSessionReservation = {
-    sessionId: connectInit.sessionId,
-    bindingId: connectInit.bindingId,
-    tunnelDomain: connectInit.tunnelDomain,
-    remainingBytes: connectInit.remainingBytes,
-    sessionRateLimitBytesPerSecond: connectInit.sessionRateLimitBytesPerSecond,
-    upstreamConnected: connectInit.upstreamConnected,
-    downstreamConnected: connectInit.downstreamConnected,
-    expiresAt: connectInit.expiresAt
-  };
-  const socketFactory = dependencies.createWebSocket ?? defaultCreateWebSocket;
-  const socket = socketFactory(
-    buildRelayEdgeWebSocketUrl(binding.relayBaseUrl, reservation.sessionId, connectInit.connectTicket)
-  );
-  socket.binaryType = "arraybuffer";
-  await waitForSocketOpen(socket);
+  const prepared = await prepareRelayTunnelEdgeConnection(input, dependencies);
+  const channel = new RelayTunnelEdgeRawChannel(prepared.socket);
+  await waitForSocketOpen(prepared.socket);
 
   return {
-    binding,
-    reservation,
-    channel: new RelayTunnelEdgeRawChannel(socket)
+    binding: prepared.binding,
+    reservation: prepared.reservation,
+    channel
   };
 }
 
@@ -155,17 +128,20 @@ export async function connectRelayTunnelClientSessionViaEdge(
   channel: RelayTunnelRawChannel;
   clientSession: RelayTunnelClientSession;
 }> {
-  const { binding, reservation, channel } = await connectRelayTunnelRawChannel(input, dependencies);
+  const prepared = await prepareRelayTunnelEdgeConnection(input, dependencies);
+  const channel = new RelayTunnelEdgeRawChannel(prepared.socket);
   const clientSession = new RelayTunnelClientSession(channel, {
-    expectedHostPublicKey: binding.hostPublicKey,
-    expectedHostFingerprint: binding.hostFingerprint,
+    expectedHostPublicKey: prepared.binding.hostPublicKey,
+    expectedHostFingerprint: prepared.binding.hostFingerprint,
     onWireBytes: input.onWireBytes
   });
-  await clientSession.connect();
+  const connectPromise = clientSession.connect();
+  await waitForSocketOpen(prepared.socket);
+  await connectPromise;
 
   return {
-    binding,
-    reservation,
+    binding: prepared.binding,
+    reservation: prepared.reservation,
     channel,
     clientSession
   };
@@ -256,6 +232,54 @@ function buildRelayEdgeWebSocketUrl(
   url.protocol = url.protocol === "https:" || url.protocol === "wss:" ? "wss:" : "ws:";
 
   return url.toString();
+}
+
+async function prepareRelayTunnelEdgeConnection(
+  input: {
+    controlBaseUrl: string;
+    tunnelDomain: string;
+  },
+  dependencies: RelayTunnelEdgeClientDependencies
+): Promise<{
+  binding: RelayTunnelBindingView;
+  reservation: RelayTunnelSessionReservation;
+  socket: RelayTunnelEdgeSocket;
+}> {
+  const connectInit = await connectInitRelayTunnel({
+    controlBaseUrl: input.controlBaseUrl,
+    tunnelDomain: input.tunnelDomain,
+    fetchFn: dependencies.fetchFn
+  });
+  const binding: RelayTunnelBindingView = {
+    bindingId: connectInit.bindingId,
+    tunnelDomain: connectInit.tunnelDomain,
+    hostPublicKey: connectInit.hostPublicKey,
+    hostFingerprint: connectInit.hostFingerprint,
+    relayBaseUrl: connectInit.relayBaseUrl,
+    controlBaseUrl: connectInit.controlBaseUrl,
+    status: connectInit.status
+  };
+  const reservation: RelayTunnelSessionReservation = {
+    sessionId: connectInit.sessionId,
+    bindingId: connectInit.bindingId,
+    tunnelDomain: connectInit.tunnelDomain,
+    remainingBytes: connectInit.remainingBytes,
+    sessionRateLimitBytesPerSecond: connectInit.sessionRateLimitBytesPerSecond,
+    upstreamConnected: connectInit.upstreamConnected,
+    downstreamConnected: connectInit.downstreamConnected,
+    expiresAt: connectInit.expiresAt
+  };
+  const socketFactory = dependencies.createWebSocket ?? defaultCreateWebSocket;
+  const socket = socketFactory(
+    buildRelayEdgeWebSocketUrl(binding.relayBaseUrl, reservation.sessionId, connectInit.connectTicket)
+  );
+  socket.binaryType = "arraybuffer";
+
+  return {
+    binding,
+    reservation,
+    socket
+  };
 }
 
 async function waitForSocketOpen(socket: RelayTunnelEdgeSocket): Promise<void> {
