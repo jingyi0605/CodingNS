@@ -35,7 +35,9 @@ interface SessionLoadOlderMessage {
 
 interface CombinedSubscription {
   sessionId: string;
-  forwardEnvelope: (envelope: SessionHistoryEnvelope | SessionRuntimeEnvelope) => Promise<void>;
+  forwardEnvelopeWithMetric: (
+    envelope: SessionHistoryEnvelope | SessionRuntimeEnvelope
+  ) => Promise<ForwardEnvelopeMetric | null>;
   close(): void;
 }
 
@@ -46,6 +48,18 @@ interface SeenMessageEntry {
   contentLength: number;
   contentPreview: string;
   toolCallStatus: "running" | "completed" | "failed" | null;
+}
+
+interface ForwardEnvelopeMetric {
+  messageType: SessionHistoryEnvelope["type"] | SessionRuntimeEnvelope["type"];
+  messageCount: number;
+  payloadBytes: number;
+  dedupeMs: number;
+  stringifyMs: number;
+  sendMs: number;
+  bufferedAmount: number;
+  workbenchBroadcastMs: number;
+  totalMs: number;
 }
 
 const MAX_TRACKED_MESSAGES_PER_SUBSCRIPTION = 2_048;
@@ -137,6 +151,7 @@ export function createWsServer(
 
         try {
           const startedAt = Date.now();
+          const readStartedAt = Date.now();
           const page = await sessionHistoryService.readSessionHistory(
             payload.sessionId,
             payload.cursor ?? null,
@@ -144,8 +159,9 @@ export function createWsServer(
             "backward",
             authContext.user.userId
           );
+          const readMs = Date.now() - readStartedAt;
 
-          await subscription.forwardEnvelope({
+          const forwardMetric = await subscription.forwardEnvelopeWithMetric({
             type: "session.history_older",
             sessionId: payload.sessionId,
             cursor: null,
@@ -159,11 +175,18 @@ export function createWsServer(
               sessionId: payload.sessionId,
               limit: typeof payload.limit === "number" ? payload.limit : 50,
               hasCursor: payload.cursor !== null && payload.cursor !== undefined,
+              readMs,
+              forwardMs: forwardMetric?.totalMs ?? 0,
               messageCount: page.messages.length,
-              olderCursor: page.nextCursor
+              olderCursor: page.nextCursor,
+              payloadBytes: forwardMetric?.payloadBytes ?? 0,
+              stringifyMs: forwardMetric?.stringifyMs ?? 0,
+              sendMs: forwardMetric?.sendMs ?? 0,
+              bufferedAmount: forwardMetric?.bufferedAmount ?? 0
             },
             {
-              thresholdMs: 150
+              thresholdMs: 0,
+              force: true
             }
           );
         } catch (error) {
@@ -194,14 +217,23 @@ export function createWsServer(
       );
 
       const seenMessages = new Map<string, SeenMessageEntry>();
-      const forwardEnvelope = async (envelope: SessionHistoryEnvelope | SessionRuntimeEnvelope) => {
+      const forwardEnvelopeWithMetric = async (
+        envelope: SessionHistoryEnvelope | SessionRuntimeEnvelope
+      ): Promise<ForwardEnvelopeMetric | null> => {
+        const forwardStartedAt = Date.now();
+        const dedupeStartedAt = Date.now();
         const deduped = dedupeEnvelopeMessages(envelope, seenMessages);
+        const dedupeMs = Date.now() - dedupeStartedAt;
 
         if (!deduped) {
-          return;
+          return null;
         }
 
-        client.send(JSON.stringify(deduped));
+        const serializeStartedAt = Date.now();
+        const payload = JSON.stringify(deduped);
+        const stringifyMs = Date.now() - serializeStartedAt;
+        const sendMetric = sendSerializedPayload(client, payload);
+        let workbenchBroadcastMs = 0;
 
         if (
           deduped.type === "session.backfill" ||
@@ -212,8 +244,54 @@ export function createWsServer(
           deduped.type === "session.runtime_error" ||
           deduped.type === "session.interrupted"
         ) {
+          const workbenchBroadcastStartedAt = Date.now();
           await workbenchWsHub.broadcastSnapshot(authContext.user.userId);
+          workbenchBroadcastMs = Date.now() - workbenchBroadcastStartedAt;
         }
+
+        const metric: ForwardEnvelopeMetric = {
+          messageType: deduped.type,
+          messageCount: getEnvelopeMessageCount(deduped),
+          payloadBytes: sendMetric.payloadBytes,
+          dedupeMs,
+          stringifyMs,
+          sendMs: sendMetric.sendMs,
+          bufferedAmount: sendMetric.bufferedAmount,
+          workbenchBroadcastMs,
+          totalMs: Date.now() - forwardStartedAt
+        };
+
+        if (
+          deduped.type === "session.backfill" ||
+          deduped.type === "session.history_older"
+        ) {
+          logPerformance(
+            "ws.session.forward_envelope",
+            metric.totalMs,
+            {
+              sessionId: deduped.sessionId,
+              messageType: deduped.type,
+              messageCount: metric.messageCount,
+              payloadBytes: metric.payloadBytes,
+              dedupeMs: metric.dedupeMs,
+              stringifyMs: metric.stringifyMs,
+              sendMs: metric.sendMs,
+              bufferedAmount: metric.bufferedAmount,
+              workbenchBroadcastMs: metric.workbenchBroadcastMs
+            },
+            {
+              thresholdMs: 0,
+              force: true
+            }
+          );
+        }
+
+        return metric;
+      };
+      const forwardEnvelope = async (
+        envelope: SessionHistoryEnvelope | SessionRuntimeEnvelope
+      ): Promise<void> => {
+        await forwardEnvelopeWithMetric(envelope);
       };
 
       const runtimeSubscription = sessionLiveRuntimeService.subscribeRuntime(
@@ -225,8 +303,14 @@ export function createWsServer(
         const startedAt = Date.now();
         let currentCursor = payload.cursor ?? null;
         const safeLimit = typeof payload.limit === "number" ? payload.limit : 50;
+        let backfillReadMs = 0;
+        let backfillForwardMs = 0;
+        let backfillPayloadBytes = 0;
+        let backfillSendMs = 0;
+        let backfillBufferedAmount = 0;
 
         if (currentCursor === null) {
+          const readStartedAt = Date.now();
           const page = await sessionHistoryService.readSessionHistory(
             payload.sessionId,
             null,
@@ -234,40 +318,45 @@ export function createWsServer(
             "backward",
             authContext.user.userId
           );
+          backfillReadMs = Date.now() - readStartedAt;
 
           currentCursor = page.cursor;
 
-          await forwardEnvelope({
+          const backfillMetric = await forwardEnvelopeWithMetric({
             type: "session.backfill",
             sessionId: payload.sessionId,
             cursor: page.cursor,
             olderCursor: page.nextCursor,
             messages: page.messages
           });
+          backfillForwardMs = backfillMetric?.totalMs ?? 0;
+          backfillPayloadBytes = backfillMetric?.payloadBytes ?? 0;
+          backfillSendMs = backfillMetric?.sendMs ?? 0;
+          backfillBufferedAmount = backfillMetric?.bufferedAmount ?? 0;
         }
 
+        const subscribeAttachStartedAt = Date.now();
         const historySubscription = await sessionHistoryService.subscribeSession(
           payload.sessionId,
           currentCursor,
           safeLimit,
           forwardEnvelope
         );
+        const subscribeAttachMs = Date.now() - subscribeAttachStartedAt;
 
         subscriptions.set(payload.sessionId, {
           sessionId: payload.sessionId,
-          forwardEnvelope,
+          forwardEnvelopeWithMetric,
           close() {
             historySubscription.close();
             runtimeSubscription.close();
           }
         });
 
-        client.send(
-          JSON.stringify({
-            type: "session.subscribed",
-            sessionId: payload.sessionId
-          })
-        );
+        const subscribedMetric = sendJsonPayload(client, {
+          type: "session.subscribed",
+          sessionId: payload.sessionId
+        });
         logPerformance(
           "ws.session.subscribe",
           Date.now() - startedAt,
@@ -276,10 +365,21 @@ export function createWsServer(
             limit: safeLimit,
             hasCursor: payload.cursor !== null && payload.cursor !== undefined,
             currentCursor,
+            backfillReadMs,
+            backfillForwardMs,
+            backfillPayloadBytes,
+            backfillSendMs,
+            backfillBufferedAmount,
+            subscribeAttachMs,
+            ackPayloadBytes: subscribedMetric.payloadBytes,
+            ackStringifyMs: subscribedMetric.stringifyMs,
+            ackSendMs: subscribedMetric.sendMs,
+            ackBufferedAmount: subscribedMetric.bufferedAmount,
             subscribed: true
           },
           {
-            thresholdMs: 150
+            thresholdMs: 0,
+            force: true
           }
         );
       } catch (error) {
@@ -536,6 +636,60 @@ function sendWsError(
       timestamp: new Date().toISOString()
     })
   );
+}
+
+function getEnvelopeMessageCount(
+  envelope: SessionHistoryEnvelope | SessionRuntimeEnvelope
+): number {
+  if (
+    envelope.type === "session.backfill" ||
+    envelope.type === "session.delta" ||
+    envelope.type === "session.history_older"
+  ) {
+    return envelope.messages.length;
+  }
+
+  return envelope.type === "session.runtime_message" ? 1 : 0;
+}
+
+function sendJsonPayload(
+  client: WebSocket,
+  payload: Record<string, unknown>
+): {
+  payloadBytes: number;
+  stringifyMs: number;
+  sendMs: number;
+  bufferedAmount: number;
+} {
+  const stringifyStartedAt = Date.now();
+  const serialized = JSON.stringify(payload);
+  const stringifyMs = Date.now() - stringifyStartedAt;
+  const sendMetric = sendSerializedPayload(client, serialized);
+
+  return {
+    payloadBytes: sendMetric.payloadBytes,
+    stringifyMs,
+    sendMs: sendMetric.sendMs,
+    bufferedAmount: sendMetric.bufferedAmount
+  };
+}
+
+function sendSerializedPayload(
+  client: WebSocket,
+  payload: string
+): {
+  payloadBytes: number;
+  sendMs: number;
+  bufferedAmount: number;
+} {
+  const sendStartedAt = Date.now();
+  client.send(payload);
+
+  return {
+    payloadBytes: Buffer.byteLength(payload),
+    sendMs: Date.now() - sendStartedAt,
+    bufferedAmount: client.bufferedAmount
+  };
 }
 
 export const __internal__ = {

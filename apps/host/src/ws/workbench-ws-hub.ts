@@ -145,6 +145,18 @@ interface WorkspaceManagementClientSubscription {
   knownRevision: string | null;
 }
 
+interface PayloadSendMetric {
+  payloadBytes: number;
+  sendMs: number;
+  bufferedAmount: number;
+}
+
+interface PayloadBroadcastMetric {
+  payloadBytes: number;
+  sendMs: number;
+  maxBufferedAmount: number;
+}
+
 export class WorkbenchWsHub {
   private readonly clientUsers = new WeakMap<WebSocket, string>();
   private readonly userChannels = new Map<string, UserChannelState>();
@@ -370,11 +382,16 @@ export class WorkbenchWsHub {
 
     channel.realtimeBroadcastQueued = false;
     channel.realtimeBroadcastTask = (async () => {
+      const startedAt = Date.now();
       const startedAtMs = terminalDebugNowMs();
 
       try {
+        const snapshotStartedAt = Date.now();
         const snapshot = this.workbenchService.getSnapshot(userId);
+        const snapshotMs = Date.now() - snapshotStartedAt;
+        const serializeStartedAt = Date.now();
         const payload = buildWorkbenchPayload(snapshot);
+        const serializeMs = Date.now() - serializeStartedAt;
 
         if (payload === channel.lastWorkbenchPayload) {
           return;
@@ -382,14 +399,37 @@ export class WorkbenchWsHub {
 
         channel.lastWorkbenchPayload = payload;
         channel.lastWorkbenchRevision = snapshot.revision;
+        const sessionCount = snapshot.items.reduce(
+          (total, item) => total + countWorkbenchSessions(item),
+          0
+        );
+        const broadcastMetric = broadcastSerializedPayload(channel.clients, payload);
 
-        for (const client of channel.clients) {
-          client.send(payload);
-        }
+        logPerformance(
+          "ws.workbench.realtime_broadcast",
+          Date.now() - startedAt,
+          {
+            userId,
+            clientCount: channel.clients.size,
+            workspaceCount: snapshot.items.length,
+            sessionCount,
+            snapshotMs,
+            serializeMs,
+            payloadBytes: broadcastMetric.payloadBytes,
+            sendMs: broadcastMetric.sendMs,
+            maxBufferedAmount: broadcastMetric.maxBufferedAmount
+          },
+          {
+            thresholdMs: 0,
+            force: true
+          }
+        );
 
         logTerminalDebug("workbench.realtime_broadcast.completed", {
           userId,
           clientCount: channel.clients.size,
+          payloadBytes: broadcastMetric.payloadBytes,
+          maxBufferedAmount: broadcastMetric.maxBufferedAmount,
           durationMs: terminalDebugNowMs() - startedAtMs
         });
       } catch (error) {
@@ -507,24 +547,46 @@ export class WorkbenchWsHub {
   ): Promise<void> {
     const startedAt = Date.now();
     try {
+      const snapshotStartedAt = Date.now();
       const snapshot = this.workbenchService.getSnapshot(userId);
-      channel.lastWorkbenchPayload = buildWorkbenchPayload(snapshot);
+      const snapshotMs = Date.now() - snapshotStartedAt;
+      const fullPayloadStartedAt = Date.now();
+      const fullPayload = buildWorkbenchPayload(snapshot);
+      const fullPayloadBuildMs = Date.now() - fullPayloadStartedAt;
+      const unchanged = Boolean(knownRevision && knownRevision === snapshot.revision);
+      let clientPayload = fullPayload;
+      let clientPayloadBuildMs = 0;
+
+      if (unchanged) {
+        const clientPayloadStartedAt = Date.now();
+        clientPayload = buildWorkbenchPayload(snapshot, knownRevision);
+        clientPayloadBuildMs = Date.now() - clientPayloadStartedAt;
+      }
+
+      channel.lastWorkbenchPayload = fullPayload;
       channel.lastWorkbenchRevision = snapshot.revision;
-      client.send(buildWorkbenchPayload(snapshot, knownRevision));
+      const sendMetric = sendSerializedPayload(client, clientPayload);
       logPerformance(
         "ws.workbench.subscribe",
         Date.now() - startedAt,
         {
           userId,
+          snapshotMs,
+          fullPayloadBuildMs,
+          clientPayloadBuildMs,
+          payloadBytes: sendMetric.payloadBytes,
+          sendMs: sendMetric.sendMs,
+          bufferedAmount: sendMetric.bufferedAmount,
           workspaceCount: snapshot.items.length,
           sessionCount: snapshot.items.reduce(
             (total, item) => total + countWorkbenchSessions(item),
             0
           ),
-          unchanged: Boolean(knownRevision && knownRevision === snapshot.revision)
+          unchanged
         },
         {
-          thresholdMs: 150
+          thresholdMs: 0,
+          force: true
         }
       );
     } catch (error) {
@@ -547,10 +609,15 @@ export class WorkbenchWsHub {
     }
 
     channel.refreshTask = (async () => {
+      const startedAt = Date.now();
       const startedAtMs = terminalDebugNowMs();
       try {
+        const snapshotStartedAt = Date.now();
         const snapshot = await this.workbenchService.refreshSnapshot(userId);
+        const snapshotMs = Date.now() - snapshotStartedAt;
+        const serializeStartedAt = Date.now();
         const payload = buildWorkbenchPayload(snapshot);
+        const serializeMs = Date.now() - serializeStartedAt;
 
         if (payload === channel.lastWorkbenchPayload) {
           return;
@@ -558,25 +625,30 @@ export class WorkbenchWsHub {
 
         channel.lastWorkbenchPayload = payload;
         channel.lastWorkbenchRevision = snapshot.revision;
+        const sessionCount = snapshot.items.reduce(
+          (total, item) => total + countWorkbenchSessions(item),
+          0
+        );
+        const broadcastMetric = broadcastSerializedPayload(channel.clients, payload);
 
-        for (const client of channel.clients) {
-          client.send(payload);
-        }
         logPerformance(
           "ws.workbench.refresh",
-          Date.now() - startedAtMs,
+          Date.now() - startedAt,
           {
             userId,
             force,
             clientCount: channel.clients.size,
+            snapshotMs,
+            serializeMs,
+            payloadBytes: broadcastMetric.payloadBytes,
+            sendMs: broadcastMetric.sendMs,
+            maxBufferedAmount: broadcastMetric.maxBufferedAmount,
             workspaceCount: snapshot.items.length,
-            sessionCount: snapshot.items.reduce(
-              (total, item) => total + countWorkbenchSessions(item),
-              0
-            )
+            sessionCount
           },
           {
-            thresholdMs: 150
+            thresholdMs: 0,
+            force: true
           }
         );
         logTerminalDebug("workbench.refresh.completed", {
@@ -584,6 +656,8 @@ export class WorkbenchWsHub {
           force,
           clientCount: channel.clients.size,
           workspaceCount: snapshot.items.length,
+          payloadBytes: broadcastMetric.payloadBytes,
+          maxBufferedAmount: broadcastMetric.maxBufferedAmount,
           durationMs: terminalDebugNowMs() - startedAtMs
         });
       } catch (error) {
@@ -1209,6 +1283,36 @@ function areStringArraysEqual(left: string[], right: string[]): boolean {
   }
 
   return left.every((value, index) => value === right[index]);
+}
+
+function sendSerializedPayload(client: WebSocket, payload: string): PayloadSendMetric {
+  const sendStartedAt = Date.now();
+  client.send(payload);
+
+  return {
+    payloadBytes: Buffer.byteLength(payload),
+    sendMs: Date.now() - sendStartedAt,
+    bufferedAmount: client.bufferedAmount
+  };
+}
+
+function broadcastSerializedPayload(
+  clients: Iterable<WebSocket>,
+  payload: string
+): PayloadBroadcastMetric {
+  const sendStartedAt = Date.now();
+  let maxBufferedAmount = 0;
+
+  for (const client of clients) {
+    client.send(payload);
+    maxBufferedAmount = Math.max(maxBufferedAmount, client.bufferedAmount);
+  }
+
+  return {
+    payloadBytes: Buffer.byteLength(payload),
+    sendMs: Date.now() - sendStartedAt,
+    maxBufferedAmount
+  };
 }
 
 function buildWorkbenchPayload(snapshot: WorkbenchSnapshot, knownRevision?: string | null): string {

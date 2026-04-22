@@ -18,13 +18,13 @@ const SESSION_TITLE_SYNC_CONCURRENCY = 4;
 export interface WorkbenchWorktreeNode {
   workspace: Workspace;
   meta: WorkspaceWorktreeRecord;
-  sessions: SessionListItem[];
+  sessions: WorkbenchSessionSummary[];
   children: WorkbenchWorktreeNode[];
 }
 
 export interface WorkbenchSnapshotItem {
   workspace: Workspace;
-  sessions: SessionListItem[];
+  sessions: WorkbenchSessionSummary[];
   childWorktrees?: WorkbenchWorktreeNode[];
   collapsed: boolean;
 }
@@ -71,9 +71,9 @@ export class WorkbenchService {
     return withSnapshotRevision({
       items: workspaces.map((workspace) => ({
         workspace: applyWorkspaceNavigationState(workspace, navigationStateByWorkspaceId.get(workspace.id)),
-        sessions: this.filterButlerControlSessions(
+        sessions: projectWorkbenchSessions(this.filterButlerControlSessions(
           this.sessionHistoryService.listWorkspaceSessions(workspace.id, userId)
-        ),
+        )),
         childWorktrees: this.buildChildWorktrees(
           workspace.id,
           workspaceById,
@@ -255,9 +255,9 @@ export class WorkbenchService {
           navigationStateByWorkspaceId.get(record.workspaceId) ?? null
         ),
         meta: record,
-        sessions: this.filterButlerControlSessions(
+        sessions: projectWorkbenchSessions(this.filterButlerControlSessions(
           this.sessionHistoryService.listWorkspaceSessions(workspace.id, userId)
-        ),
+        )),
         children: []
       });
     }
@@ -314,4 +314,70 @@ function countWorkbenchSessions(item: WorkbenchSnapshotItem): number {
 
 function countWorktreeNodeSessions(node: WorkbenchWorktreeNode): number {
   return node.sessions.length + node.children.reduce((total, child) => total + countWorktreeNodeSessions(child), 0);
+}
+
+interface WorkbenchSessionSummary {
+  sessionId: string;
+  workspaceId: string;
+  provider: SessionListItem["provider"];
+  parentSessionId?: string | null;
+  sessionKind?: SessionListItem["sessionKind"];
+  forkMethod?: SessionListItem["forkMethod"];
+  forkSourceType?: SessionListItem["forkSourceType"];
+  inheritedPrefixMessageCount?: number | null;
+  isSubagent?: boolean;
+  subagentLabel?: string | null;
+  isArchived: boolean;
+  isFavorite: boolean;
+  title: string;
+  messageCount: number;
+  lastMessageAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  syncStatus: SessionListItem["syncStatus"];
+  lastErrorCode: string | null;
+  lastErrorDetail: string | null;
+  runningState: SessionListItem["runningState"];
+  activitySource: SessionListItem["activitySource"];
+  activityResolutionSource?: SessionListItem["activityResolutionSource"];
+  lastEventAt: string | null;
+  completedAt: string | null;
+  lastSeenAt: string | null;
+  activityState: SessionListItem["activityState"];
+}
+
+function projectWorkbenchSessions(sessions: SessionListItem[]): WorkbenchSessionSummary[] {
+  return sessions.map(projectWorkbenchSession);
+}
+
+function projectWorkbenchSession(session: SessionListItem): WorkbenchSessionSummary {
+  return {
+    sessionId: session.sessionId,
+    workspaceId: session.workspaceId,
+    provider: session.provider,
+    parentSessionId: session.parentSessionId ?? null,
+    sessionKind: session.sessionKind,
+    forkMethod: session.forkMethod ?? null,
+    forkSourceType: session.forkSourceType ?? null,
+    inheritedPrefixMessageCount: session.inheritedPrefixMessageCount ?? null,
+    isSubagent: session.isSubagent ?? false,
+    subagentLabel: session.subagentLabel ?? null,
+    isArchived: session.isArchived,
+    isFavorite: session.isFavorite,
+    title: session.title,
+    messageCount: session.messageCount,
+    lastMessageAt: session.lastMessageAt,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    syncStatus: session.syncStatus,
+    lastErrorCode: session.lastErrorCode,
+    lastErrorDetail: session.lastErrorDetail,
+    runningState: session.runningState,
+    activitySource: session.activitySource,
+    activityResolutionSource: session.activityResolutionSource,
+    lastEventAt: session.lastEventAt,
+    completedAt: session.completedAt,
+    lastSeenAt: session.lastSeenAt,
+    activityState: session.activityState
+  };
 }
