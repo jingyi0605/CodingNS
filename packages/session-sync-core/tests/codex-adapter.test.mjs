@@ -208,6 +208,81 @@ test("CodexAdapter 会为 app-server 落盘的 assistant 与 tool 消息复用�
   }
 });
 
+test("CodexAdapter 合并等价 assistant 记录时会保留 event_msg 提供的稳定 messageId", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-adapter-merged-stable-id-"));
+  const sessionFile = join(tempDir, "session.jsonl");
+
+  try {
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-04-17T10:00:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            id: "assistant-merge-1",
+            message: "整理完成"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-17T10:00:00.400Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "整理完成" }]
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-17T10:00:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_reasoning",
+            id: "reasoning-merge-1",
+            text: "先确认影响范围"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-17T10:00:01.400Z",
+          type: "response_item",
+          payload: {
+            type: "reasoning",
+            summary: [{ type: "summary_text", text: "先确认影响范围" }]
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const page = await adapter.readSessionHistory("thread-merge-1", sessionFile, null, 50);
+
+    assert.equal(page.messages.length, 2);
+    assert.deepEqual(
+      page.messages.map((message) => ({
+        messageId: message.messageId,
+        role: message.role,
+        kind: message.kind
+      })),
+      [
+        {
+          messageId: createStableMessageId("thread-merge-1", "assistant:text:assistant-merge-1"),
+          role: "assistant",
+          kind: "text"
+        },
+        {
+          messageId: createStableMessageId("thread-merge-1", "assistant:thinking:reasoning-merge-1"),
+          role: "assistant",
+          kind: "thinking"
+        }
+      ]
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexAdapter 读取历史时会应用 thread_rolled_back，隐藏已回滚的旧 turn", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-rollback-history-"));
   const sessionFile = join(tempDir, "session.jsonl");

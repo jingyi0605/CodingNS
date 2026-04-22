@@ -2024,14 +2024,25 @@ export class CodexAdapter implements ProviderAdapter {
           continue;
         }
 
-        // 同一条逻辑消息如果被 event_msg 和 response_item 同时记录，
-        // 优先保留结构更稳定的 response_item，避免时间线重复。
-        if (codexMessageSourcePriority(source) > codexMessageSourcePriority(existing.source)) {
+        const mergedEquivalent = mergeEquivalentCodexMessages(
+          existing.message,
+          existing.source,
+          message,
+          source
+        );
+
+        if (
+          mergedEquivalent.source !== existing.source
+          || mergedEquivalent.message.messageId !== existing.message.messageId
+          || mergedEquivalent.message.rawRef !== existing.message.rawRef
+          || mergedEquivalent.message.timestamp !== existing.message.timestamp
+          || JSON.stringify(mergedEquivalent.message.toolCall) !== JSON.stringify(existing.message.toolCall)
+        ) {
           messages[existingIndex] = {
-            source,
-            dedupeKey,
+            source: mergedEquivalent.source,
+            dedupeKey: buildCodexMessageDedupeKey(mergedEquivalent.message),
             message: {
-              ...message,
+              ...mergedEquivalent.message,
               sequence: existing.message.sequence
             }
           };
@@ -2432,6 +2443,49 @@ function buildCodexMessageDedupeKey(message: Omit<NormalizedMessage, "sequence">
         }
       : null
   });
+}
+
+function mergeEquivalentCodexMessages(
+  current: Pick<NormalizedMessage, "messageId" | "rawRef" | "timestamp" | "toolCall">
+    & Omit<NormalizedMessage, "sequence">,
+  currentSource: CodexMessageSource,
+  incoming: Omit<NormalizedMessage, "sequence">,
+  incomingSource: CodexMessageSource
+): {
+  source: CodexMessageSource;
+  message: Omit<NormalizedMessage, "sequence">;
+} {
+  const preferredBySource =
+    codexMessageSourcePriority(incomingSource) > codexMessageSourcePriority(currentSource)
+      ? incoming
+      : current;
+  const preferredSource =
+    codexMessageSourcePriority(incomingSource) > codexMessageSourcePriority(currentSource)
+      ? incomingSource
+      : currentSource;
+  const preferredStableMessageId = pickPreferredCodexEquivalentMessageId(current, incoming);
+
+  return {
+    source: preferredSource,
+    message: {
+      ...preferredBySource,
+      messageId: preferredStableMessageId
+    }
+  };
+}
+
+function pickPreferredCodexEquivalentMessageId(
+  current: Pick<NormalizedMessage, "messageId" | "rawRef">,
+  incoming: Pick<NormalizedMessage, "messageId" | "rawRef">
+): string {
+  const currentUsesStableIdentity = current.messageId !== messageIdFromRawRef(current.rawRef);
+  const incomingUsesStableIdentity = incoming.messageId !== messageIdFromRawRef(incoming.rawRef);
+
+  if (currentUsesStableIdentity !== incomingUsesStableIdentity) {
+    return currentUsesStableIdentity ? current.messageId : incoming.messageId;
+  }
+
+  return incoming.messageId;
 }
 
 function resolveCodexFallbackTitle(messages: NormalizedMessage[]): string | null {
