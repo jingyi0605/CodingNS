@@ -546,6 +546,11 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
 
       try {
         const plaintext = decryptRelayTunnelFrame(activeSession.cryptoSession, envelope.frame);
+
+        if (!plaintext) {
+          return;
+        }
+
         await activeSession.gateway.handlePacket(deserializeRelayTunnelPacket(plaintext));
       } catch (error) {
         await this.emitRelayError(

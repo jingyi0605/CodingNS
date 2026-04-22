@@ -73,6 +73,7 @@ export interface RelayTunnelSession {
   readonly peerHostFingerprint: string;
   sendSequence: number;
   receiveSequence: number;
+  lastReceivedFrameFingerprint: string | null;
   readonly sendKey: Buffer;
   readonly receiveKey: Buffer;
 }
@@ -298,7 +299,7 @@ export function encryptRelayTunnelFrame(
 export function decryptRelayTunnelFrame(
   session: RelayTunnelSession,
   frame: RelayTunnelEncryptedFrame
-): Buffer {
+): Buffer | null {
   validateFrameEnvelope(frame);
 
   if (frame.sessionId !== session.sessionId) {
@@ -318,6 +319,13 @@ export function decryptRelayTunnelFrame(
   }
 
   const expectedSequence = session.receiveSequence + 1;
+  const frameFingerprint = buildFrameFingerprint(frame);
+
+  if (frame.sequence === session.receiveSequence) {
+    if (session.lastReceivedFrameFingerprint === frameFingerprint) {
+      return null;
+    }
+  }
 
   if (frame.sequence !== expectedSequence) {
     throw new RelayTunnelProtocolError(
@@ -346,6 +354,7 @@ export function decryptRelayTunnelFrame(
       decipher.final()
     ]);
     session.receiveSequence = frame.sequence;
+    session.lastReceivedFrameFingerprint = frameFingerprint;
     return plaintext;
   } catch {
     throw new RelayTunnelProtocolError(
@@ -380,9 +389,21 @@ function createRelayTunnelSession(input: {
     peerHostFingerprint: input.peerHostFingerprint,
     sendSequence: 0,
     receiveSequence: 0,
+    lastReceivedFrameFingerprint: null,
     sendKey: input.role === "client" ? clientToHostKey : hostToClientKey,
     receiveKey: input.role === "client" ? hostToClientKey : clientToHostKey
   };
+}
+
+function buildFrameFingerprint(frame: RelayTunnelEncryptedFrame): string {
+  return [
+    frame.sessionId,
+    frame.direction,
+    String(frame.sequence),
+    frame.iv,
+    frame.authTag,
+    frame.ciphertext
+  ].join(":");
 }
 
 function validateHandshakeEnvelope(hello: RelayTunnelClientHello): void {

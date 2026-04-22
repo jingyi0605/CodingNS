@@ -124,7 +124,7 @@ describe("RelayTunnelProtocol", () => {
     );
   });
 
-  it("重复帧或乱序帧会被按序号拒绝", () => {
+  it("完全相同的重放帧会被忽略，但乱序帧仍然会被拒绝", () => {
     const hostIdentity = createHostIdentity();
     const { pendingHandshake, clientHello } = createRelayTunnelClientHandshake({
       expectedHostPublicKey: hostIdentity.publicKeyPem,
@@ -141,8 +141,15 @@ describe("RelayTunnelProtocol", () => {
     const encrypted = encryptRelayTunnelFrame(clientSession, "first");
 
     expect(decryptRelayTunnelFrame(hostSession, encrypted).toString("utf8")).toBe("first");
+    expect(decryptRelayTunnelFrame(hostSession, encrypted)).toBeNull();
+
+    const second = encryptRelayTunnelFrame(clientSession, "second");
+
     expectProtocolError(
-      () => decryptRelayTunnelFrame(hostSession, encrypted),
+      () => decryptRelayTunnelFrame(hostSession, {
+        ...second,
+        sequence: 1
+      }),
       "RELAY_TUNNEL_FRAME_SEQUENCE_MISMATCH"
     );
   });
