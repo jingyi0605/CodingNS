@@ -8,6 +8,7 @@ import type { GitCommandRunner } from "../git/git-command-runner.js";
 import type { GitReadService } from "../git/git-read-service.js";
 import type { WorkspaceService } from "../workspace/workspace-service.js";
 import type { WorkspaceWorktreeRepository } from "../../storage/repositories/workspace-worktree-repository.js";
+import { resolveWorktreeBaseRef } from "./worktree-base-ref-resolver.js";
 
 const WORKTREE_CREATE_TIMEOUT_MS = 30_000;
 
@@ -81,13 +82,19 @@ export class WorktreeManager {
       signal
     );
 
-    const baseRef = (input.baseRef?.trim() || sourceStatus.snapshot.branch || "HEAD").trim();
-    const baseCommit = await this.resolveBaseCommit(
-      sourceStatus.snapshot.repoRoot,
-      sourceWorkspaceId,
-      baseRef,
+    const baseResolution = await resolveWorktreeBaseRef({
+      gitCommandRunner: this.gitCommandRunner,
+      repoRoot: sourceStatus.snapshot.repoRoot,
+      workspaceId: sourceWorkspaceId,
+      currentBranch: sourceStatus.snapshot.branch,
+      preferredBaseRef: input.baseRef,
+      resolveBaseRefOperation: "worktree.create.resolveBaseRef",
+      inspectCommitCountOperation: "worktree.create.inspectCommitCount",
+      bootstrapInitialCommitOperation: "worktree.create.bootstrapInitialCommit",
+      notFoundDetail: "指定的 baseRef 不存在，不能创建工作树",
       signal
-    );
+    });
+    const { baseRef, baseCommit } = baseResolution;
     const targetPath = buildTargetPath(rootWorkspace.path, branchName);
 
     ensureTargetPathSafe(rootWorkspace.path, targetPath);
@@ -276,36 +283,6 @@ export class WorktreeManager {
       statusCode: 409,
       errorCode: "WORKTREE_BRANCH_EXISTS",
       detail: "目标分支已经存在，不能重复创建工作树"
-    });
-  }
-
-  private async resolveBaseCommit(
-    repoRoot: string,
-    workspaceId: string,
-    baseRef: string,
-    signal?: AbortSignal
-  ): Promise<string> {
-    const result = await this.gitCommandRunner.run(
-      repoRoot,
-      ["rev-parse", "--verify", baseRef],
-      {
-        allowNonZeroExit: true,
-        workspaceId,
-        operation: "worktree.create.resolveBaseRef",
-        signal
-      }
-    );
-    const baseCommit = result.stdout.trim();
-
-    if (result.exitCode === 0 && baseCommit) {
-      return baseCommit;
-    }
-
-    throw new AppError({
-      statusCode: 404,
-      errorCode: "WORKTREE_BASE_REF_NOT_FOUND",
-      detail: "指定的 baseRef 不存在，不能创建工作树",
-      field: "baseRef"
     });
   }
 

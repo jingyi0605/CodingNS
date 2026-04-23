@@ -162,6 +162,92 @@ describe("GitReadService", () => {
     expect(gitCommandRunner.run).toHaveBeenCalledTimes(2);
   });
 
+  it("空仓库状态头会解析出真实分支名，而不是整句提示文本", async () => {
+    const gitCommandRunner = {
+      run: vi.fn(async (_repoRoot: string, args: string[]) => {
+        if (args[0] === "status") {
+          return createResult("## No commits yet on main\n");
+        }
+
+        if (args[0] === "remote") {
+          return createResult("");
+        }
+
+        throw new Error(`未预期的 Git 命令: ${args.join(" ")}`);
+      })
+    } satisfies Pick<GitCommandRunner, "run">;
+
+    const workspaceRepoGuard = {
+      resolve: vi.fn(async () => ({
+        workspace: {
+          id: "workspace-1",
+          name: "Git 工作区",
+          path: "C:/repo",
+          repoRoot: "C:/repo",
+          favorite: false,
+          createdAt: "2026-03-23T00:00:00.000Z",
+          updatedAt: "2026-03-23T00:00:00.000Z"
+        },
+        repoRoot: "C:/repo"
+      }))
+    } satisfies Pick<WorkspaceRepoGuard, "resolve">;
+
+    const service = new GitReadService(
+      gitCommandRunner as unknown as GitCommandRunner,
+      workspaceRepoGuard as unknown as WorkspaceRepoGuard
+    );
+
+    await expect(service.getStatus("workspace-1")).resolves.toMatchObject({
+      snapshot: {
+        branch: "main",
+        isDirty: false
+      }
+    });
+  });
+
+  it("detached HEAD 状态会统一回报为 HEAD，避免把描述文本当成分支名", async () => {
+    const gitCommandRunner = {
+      run: vi.fn(async (_repoRoot: string, args: string[]) => {
+        if (args[0] === "status") {
+          return createResult("## HEAD (detached at abc1234)\n");
+        }
+
+        if (args[0] === "remote") {
+          return createResult("origin\n");
+        }
+
+        throw new Error(`未预期的 Git 命令: ${args.join(" ")}`);
+      })
+    } satisfies Pick<GitCommandRunner, "run">;
+
+    const workspaceRepoGuard = {
+      resolve: vi.fn(async () => ({
+        workspace: {
+          id: "workspace-1",
+          name: "Git 工作区",
+          path: "C:/repo",
+          repoRoot: "C:/repo",
+          favorite: false,
+          createdAt: "2026-03-23T00:00:00.000Z",
+          updatedAt: "2026-03-23T00:00:00.000Z"
+        },
+        repoRoot: "C:/repo"
+      }))
+    } satisfies Pick<WorkspaceRepoGuard, "resolve">;
+
+    const service = new GitReadService(
+      gitCommandRunner as unknown as GitCommandRunner,
+      workspaceRepoGuard as unknown as WorkspaceRepoGuard
+    );
+
+    await expect(service.getStatus("workspace-1")).resolves.toMatchObject({
+      snapshot: {
+        branch: "HEAD",
+        hasRemote: true
+      }
+    });
+  });
+
   it("会为历史提交补充本地远程归属与远程标签", async () => {
     const gitCommandRunner = {
       run: vi.fn(async (_repoRoot: string, args: string[]) => {

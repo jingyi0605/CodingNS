@@ -454,6 +454,24 @@ export class GitReadService {
 
 function parseBranchHeader(headerLine: string): { branch: string; ahead: number; behind: number } {
   const header = headerLine.replace(/^##\s*/, "");
+  const unbornBranch = parseUnbornBranch(header);
+
+  if (unbornBranch) {
+    return {
+      branch: unbornBranch,
+      ahead: 0,
+      behind: 0
+    };
+  }
+
+  if (header.startsWith("HEAD ")) {
+    return {
+      branch: "HEAD",
+      ahead: 0,
+      behind: 0
+    };
+  }
+
   const [branchPart, trackingPart = ""] = header.split(" [", 2);
   const branch = branchPart.split("...")[0] || "HEAD";
   const aheadMatch = trackingPart.match(/ahead (\d+)/);
@@ -464,6 +482,16 @@ function parseBranchHeader(headerLine: string): { branch: string; ahead: number;
     ahead: aheadMatch ? Number(aheadMatch[1]) : 0,
     behind: behindMatch ? Number(behindMatch[1]) : 0
   };
+}
+
+function parseUnbornBranch(header: string): string | null {
+  const match = header.match(/^(?:No commits yet on|Initial commit on) (.+)$/);
+
+  if (!match) {
+    return null;
+  }
+
+  return match[1]?.trim() || null;
 }
 
 function parseStatusLine(line: string): GitChangeItem {

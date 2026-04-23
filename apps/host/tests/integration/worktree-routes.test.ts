@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { nowIso } from "../../src/shared/utils/time.js";
 import {
+  createEmptyFixture,
   createGitWorkspaceFixture,
   createTestApp,
   destroyFixture,
@@ -236,6 +237,53 @@ describe("worktree routes", () => {
     expect(
       hosted.services.repositories.workspaceWorktreeRepository.listByRootWorkspaceId(fixture.workspaceId)
     ).toEqual([]);
+  });
+
+  it("空仓库会先自动补一个空提交，再创建子工作树", async () => {
+    const emptyFixture = createEmptyFixture();
+    activeFixtures.push(emptyFixture);
+    const fixture: GitWorkspaceFixture = {
+      ...emptyFixture,
+      workspaceId: "workspace-empty",
+      repoDir: emptyFixture.workspaceDir
+    };
+
+    runGitCommand(fixture.repoDir, ["init", "--initial-branch=main"]);
+    runGitCommand(fixture.repoDir, ["config", "user.name", "CodingNS Test"]);
+    runGitCommand(fixture.repoDir, ["config", "user.email", "codingns@example.com"]);
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    await bootstrapWorkspace(hosted, fixture);
+    const accessToken = await loginAsAdmin(hosted);
+
+    const response = await hosted.app.inject({
+      method: "POST",
+      url: "/api/worktrees",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        sourceWorkspaceId: fixture.workspaceId,
+        branchName: "feat/empty-root"
+      }
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().meta).toMatchObject({
+      baseRef: "main",
+      branchName: "feat/empty-root"
+    });
+    expect(runGitCommand(fixture.repoDir, ["rev-list", "--count", "HEAD"])).toBe("1");
+    expect(runGitCommand(fixture.repoDir, ["ls-tree", "--name-only", "-r", "HEAD"])).toBe("");
+    expect(
+      runGitCommand(path.join(fixture.rootDir, "workspace.worktrees", "feat-empty-root"), [
+        "branch",
+        "--show-current"
+      ])
+    ).toBe("feat/empty-root");
   });
 
   it("支持从子工作树继续 fork，并按真实父子关系返回工作树", async () => {
