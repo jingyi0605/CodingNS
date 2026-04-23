@@ -42,6 +42,22 @@
   line-height: 1.5;
 }
 
+.settings-update-note {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--bg-primary) 78%, transparent);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-update-note[data-tone="warning"] {
+  border-color: color-mix(in srgb, #ff9f0a 34%, var(--border-subtle));
+  color: color-mix(in srgb, #8f5a00 86%, var(--text-primary));
+}
+
 .settings-update-status[data-tone="success"] {
   border-color: color-mix(in srgb, #30d158 30%, var(--border-subtle));
   color: color-mix(in srgb, #1f7a3a 88%, var(--text-primary));
@@ -61,6 +77,30 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.settings-update-confirm-body {
+  gap: 0;
+}
+
+.settings-update-confirm-section {
+  gap: 12px;
+}
+
+.settings-update-confirm-warning {
+  margin: 0;
+  color: color-mix(in srgb, #8f5a00 86%, var(--text-primary));
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.settings-update-confirm-meta {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-primary);
 }
 
 @media (max-width: 720px) {

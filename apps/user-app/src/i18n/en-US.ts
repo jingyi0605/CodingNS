@@ -530,6 +530,13 @@ export const enUS = {
     serverUpdateReady: "New version found",
     serverUpToDate: "Up to date",
     serverCheckFailed: "Check failed",
+    serverInstallWarning:
+      "Installing the update will restart the CodingNS service through PM2 and briefly interrupt the connection.",
+    serverInstallConfirmTitle: "Install Server Update",
+    serverInstallConfirmDescription:
+      "Continuing will install the new version first, then let PM2 restart the current CodingNS service automatically.",
+    serverInstallConfirmAction: "Install And Restart",
+    serverRestarting: "Update installed. Restarting the CodingNS service",
     serverOpenPageFailed: "Failed to open page",
     releaseCurrentVersion: "Current Version",
     releaseTargetVersion: "Target Version",

@@ -148,6 +148,8 @@ export interface ServiceUpdateTaskInfo {
   finishedAt: string | null;
   errorMessage: string | null;
   restartRequired: boolean;
+  restartScheduled: boolean;
+  restartDelayMs: number | null;
 }
 
 export interface ManagedServicePackageInfo {

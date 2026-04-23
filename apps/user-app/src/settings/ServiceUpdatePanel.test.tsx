@@ -37,7 +37,7 @@ describe("ServiceUpdatePanel", () => {
     });
   });
 
-  it("展示服务端版本并支持触发安装任务", async () => {
+  it("展示服务端版本并在确认后触发安装任务", async () => {
     checkForServiceUpdate
       .mockResolvedValueOnce({
         channel: "stable",
@@ -86,7 +86,9 @@ describe("ServiceUpdatePanel", () => {
       startedAt: null,
       finishedAt: null,
       errorMessage: null,
-      restartRequired: false
+      restartRequired: false,
+      restartScheduled: false,
+      restartDelayMs: null
     });
     const user = userEvent.setup();
 
@@ -103,8 +105,16 @@ describe("ServiceUpdatePanel", () => {
     expect(await screen.findByText("0.1.0")).toBeInTheDocument();
     expect(screen.getByText("0.2.0")).toBeInTheDocument();
     expect(screen.getByText(t("settings.serverUpdateReady"))).toBeInTheDocument();
+    expect(screen.getByText(t("settings.serverInstallWarning"))).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: t("settings.serverInstallNow") }));
+
+    expect(screen.getByRole("dialog", {
+      name: t("settings.serverInstallConfirmTitle")
+    })).toBeInTheDocument();
+    expect(installServiceUpdate).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: t("settings.serverInstallConfirmAction") }));
 
     expect(installServiceUpdate).toHaveBeenCalledWith("placeholder-server-package");
     expect(screen.getByText(t("settings.serverInstallQueued"))).toBeInTheDocument();
