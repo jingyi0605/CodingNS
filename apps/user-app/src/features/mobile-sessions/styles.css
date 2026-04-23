@@ -1685,3 +1685,41 @@
   max-width: 100%;
   overflow-x: auto;
 }
+.session-list-item[data-parallel-group="true"] {
+  border-color: color-mix(in srgb, var(--parallel-group-accent, var(--accent)) 22%, var(--border-primary));
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--parallel-group-surface, transparent) 84%, transparent), transparent 52%),
+    var(--bg-surface);
+}
+
+.session-list-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.session-list-parallel-badge,
+.session-list-parallel-role-badge,
+.session-list-isolated-workspace-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.session-list-parallel-badge,
+.session-list-parallel-role-badge {
+  border: 1px solid color-mix(in srgb, var(--parallel-group-accent, var(--accent)) 24%, var(--border-primary));
+  background: color-mix(in srgb, var(--parallel-group-surface, var(--bg-hover)) 86%, transparent);
+  color: color-mix(in srgb, var(--parallel-group-accent, var(--accent)) 74%, var(--text-primary));
+}
+
+.session-list-isolated-workspace-badge {
+  border: 1px solid color-mix(in srgb, var(--warning, #d97706) 24%, var(--border-primary));
+  background: color-mix(in srgb, var(--warning, #d97706) 12%, var(--bg-surface));
+  color: color-mix(in srgb, var(--warning, #d97706) 72%, var(--text-primary));
+}
