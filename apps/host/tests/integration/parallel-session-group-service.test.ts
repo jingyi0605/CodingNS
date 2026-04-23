@@ -184,6 +184,155 @@ describe("ParallelSessionGroupService", () => {
     expect(harness.createIsolatedWorkspaceForMemberMock).toHaveBeenCalledTimes(1);
     expect(harness.memberRepository.findBySessionId("session-1")?.temporaryWorkspaceId).toBe("isolated-1");
   });
+
+  it("可以给已有并行组追加成员，并沿用原始来源继续创建", async () => {
+    const harness = createHarness();
+    harness.forkSessionMock.mockImplementationOnce(async ({ targetProvider, sourceMessageId }) => {
+      expect(sourceMessageId).toBe("msg-1");
+      const session = buildSession({
+        sessionId: "fork-3",
+        workspaceId: "workspace-1",
+        provider: targetProvider ?? "opencode",
+        parentSessionId: "source-session"
+      });
+      harness.sessions.set(session.sessionId, session);
+      return session;
+    });
+
+    harness.groupRepository.create({
+      id: "group-append",
+      workspaceId: "workspace-1",
+      sourceType: "fork",
+      sourceSessionId: "source-session",
+      sourceMessageId: "msg-1",
+      sharedPrompt: "继续从同一个用户问题出发",
+      requestedCount: 2,
+      anchorSessionId: "fork-1",
+      status: "active",
+      createdByUserId: "user-1",
+      createdAt: "2026-04-23T10:00:00.000Z",
+      updatedAt: "2026-04-23T10:00:00.000Z",
+      deletedAt: null
+    });
+    harness.sessions.set(
+      "fork-1",
+      buildSession({
+        sessionId: "fork-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        parentSessionId: "source-session"
+      })
+    );
+    harness.sessions.set(
+      "fork-2",
+      buildSession({
+        sessionId: "fork-2",
+        workspaceId: "workspace-1",
+        provider: "claude-code",
+        parentSessionId: "source-session"
+      })
+    );
+    harness.memberRepository.create({
+      groupId: "group-append",
+      sessionId: "fork-1",
+      ordinal: 0,
+      role: "anchor",
+      provider: "codex",
+      model: null,
+      memberPrompt: "先看结构",
+      workspaceIsolationMode: "none",
+      temporaryWorkspaceId: null,
+      createdAt: "2026-04-23T10:00:01.000Z",
+      updatedAt: "2026-04-23T10:00:01.000Z",
+      deletedAt: null
+    });
+    harness.memberRepository.create({
+      groupId: "group-append",
+      sessionId: "fork-2",
+      ordinal: 1,
+      role: "member",
+      provider: "claude-code",
+      model: null,
+      memberPrompt: "再看样式",
+      workspaceIsolationMode: "none",
+      temporaryWorkspaceId: null,
+      createdAt: "2026-04-23T10:00:02.000Z",
+      updatedAt: "2026-04-23T10:00:02.000Z",
+      deletedAt: null
+    });
+
+    const result = await harness.service.appendMembers({
+      groupId: "group-append",
+      members: [
+        { provider: "opencode", model: "open-1", memberPrompt: "补一个偏工程化方案" }
+      ],
+      userId: "user-1"
+    });
+
+    expect(result.group.requestedCount).toBe(3);
+    expect(result.group.anchorSessionId).toBe("fork-1");
+    expect(result.members).toHaveLength(3);
+    expect(result.members.map((item) => item.member.role)).toEqual(["anchor", "member", "member"]);
+    expect(result.members[2]?.member.ordinal).toBe(2);
+    expect(result.members[2]?.session.sessionId).toBe("fork-3");
+    expect(harness.sendLiveMessageMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("追加成员时不能超过并行上限", async () => {
+    const harness = createHarness();
+    harness.groupRepository.create({
+      id: "group-full",
+      workspaceId: "workspace-1",
+      sourceType: "new",
+      sourceSessionId: null,
+      sourceMessageId: null,
+      sharedPrompt: "保持同题并行",
+      requestedCount: 4,
+      anchorSessionId: "session-full-1",
+      status: "active",
+      createdByUserId: "user-1",
+      createdAt: "2026-04-23T10:00:00.000Z",
+      updatedAt: "2026-04-23T10:00:00.000Z",
+      deletedAt: null
+    });
+
+    for (const [index, provider] of ["codex", "claude-code", "opencode", "codex"].entries()) {
+      const sessionId = `session-full-${index + 1}`;
+      harness.sessions.set(
+        sessionId,
+        buildSession({
+          sessionId,
+          workspaceId: "workspace-1",
+          provider: provider as SessionListItem["provider"],
+          parentSessionId: null
+        })
+      );
+      harness.memberRepository.create({
+        groupId: "group-full",
+        sessionId,
+        ordinal: index,
+        role: index === 0 ? "anchor" : "member",
+        provider: provider as SessionListItem["provider"],
+        model: null,
+        memberPrompt: null,
+        workspaceIsolationMode: "none",
+        temporaryWorkspaceId: null,
+        createdAt: "2026-04-23T10:00:01.000Z",
+        updatedAt: "2026-04-23T10:00:01.000Z",
+        deletedAt: null
+      });
+    }
+
+    await expect(
+      harness.service.appendMembers({
+        groupId: "group-full",
+        members: [{ provider: "codex" }],
+        userId: "user-1"
+      })
+    ).rejects.toMatchObject({
+      errorCode: "INVALID_INPUT"
+    });
+  });
 });
 
 function createHarness() {

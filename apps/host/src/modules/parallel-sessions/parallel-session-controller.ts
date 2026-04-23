@@ -85,6 +85,19 @@ export class ParallelSessionController {
     reply.status(result.members.length > 0 ? 201 : 409).send(result);
   };
 
+  readonly appendMembers = async (
+    request: FastifyRequest<{ Params: GroupParams; Body: CreateParallelGroupBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const result = await this.parallelSessionGroupService.appendMembers({
+      groupId: request.params.groupId,
+      members: normalizeMembers(request.body.members),
+      userId: requireUserId(request)
+    });
+
+    reply.status(201).send(result);
+  };
+
   readonly getDetail = async (
     request: FastifyRequest<{ Params: GroupParams }>,
     reply: FastifyReply

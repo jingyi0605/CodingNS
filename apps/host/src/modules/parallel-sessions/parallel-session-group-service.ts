@@ -41,6 +41,12 @@ export interface CreateParallelGroupFromWorkspaceInput {
   userId: string;
 }
 
+export interface AppendParallelGroupMembersInput {
+  groupId: string;
+  members: ParallelSessionMemberInput[];
+  userId: string;
+}
+
 export interface ParallelSessionMemberFailure {
   ordinal: number;
   provider: string;
@@ -96,7 +102,11 @@ export class ParallelSessionGroupService {
 
   async createFromSession(input: CreateParallelGroupFromSessionInput): Promise<ParallelSessionGroupDetail> {
     const sharedPrompt = normalizeRequiredText(input.sharedPrompt, "sharedPrompt");
-    const members = normalizeMembers(input.members);
+    const members = normalizeMembers(input.members, {
+      minCount: 2,
+      maxCount: 4,
+      detail: "并行成员数量必须在 2 到 4 之间"
+    });
     const sourceSession = this.sessionHistoryService.getSession(input.sourceSessionId, input.userId);
     const timestamp = nowIso();
     const group = this.parallelSessionGroupRepository.create({
@@ -119,6 +129,9 @@ export class ParallelSessionGroupService {
       group,
       members,
       userId: input.userId,
+      startingOrdinal: 0,
+      initialAnchorSessionId: null,
+      deleteGroupWhenNoAnchor: true,
       createMember: async (member) => {
         if (member.workspaceIsolationMode === "temporary_worktree") {
           const created = await this.sessionIsolatedWorkspaceService.createForMember({
@@ -163,7 +176,11 @@ export class ParallelSessionGroupService {
 
   async createFromWorkspace(input: CreateParallelGroupFromWorkspaceInput): Promise<ParallelSessionGroupDetail> {
     const sharedPrompt = normalizeRequiredText(input.sharedPrompt, "sharedPrompt");
-    const members = normalizeMembers(input.members);
+    const members = normalizeMembers(input.members, {
+      minCount: 2,
+      maxCount: 4,
+      detail: "并行成员数量必须在 2 到 4 之间"
+    });
     const timestamp = nowIso();
     const group = this.parallelSessionGroupRepository.create({
       id: createId(),
@@ -185,7 +202,141 @@ export class ParallelSessionGroupService {
       group,
       members,
       userId: input.userId,
+      startingOrdinal: 0,
+      initialAnchorSessionId: null,
+      deleteGroupWhenNoAnchor: true,
       createMember: async (member) => {
+        if (member.workspaceIsolationMode === "temporary_worktree") {
+          const created = await this.sessionIsolatedWorkspaceService.createForMember({
+            groupId: group.id,
+            sourceWorkspaceId: group.workspaceId,
+            createSession: async (workspaceId) => {
+              return await this.createRootSessionMember({
+                workspaceId,
+                provider: member.provider,
+                model: member.model ?? null,
+                sharedPrompt,
+                memberPrompt: member.memberPrompt ?? null,
+                userId: input.userId
+              });
+            }
+          });
+
+          return {
+            session: created.session,
+            sessionIsolatedWorkspace: created.record
+          };
+        }
+
+        return {
+          session: await this.createRootSessionMember({
+            workspaceId: group.workspaceId,
+            provider: member.provider,
+            model: member.model ?? null,
+            sharedPrompt,
+            memberPrompt: member.memberPrompt ?? null,
+            userId: input.userId
+          }),
+          sessionIsolatedWorkspace: null
+        };
+      }
+    });
+  }
+
+  async appendMembers(input: AppendParallelGroupMembersInput): Promise<ParallelSessionGroupDetail> {
+    const group = this.getGroupOrThrow(input.groupId);
+
+    if (group.status !== "active") {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "PARALLEL_GROUP_NOT_ACTIVE",
+        detail: "当前并行会话组不可追加成员",
+        field: "groupId"
+      });
+    }
+
+    const sharedPrompt = normalizeRequiredText(group.sharedPrompt ?? "", "sharedPrompt");
+    const allMembers = this.parallelSessionMemberRepository.listByGroupId(group.id);
+    const activeMembers = allMembers.filter((member) => member.deletedAt === null);
+
+    if (activeMembers.length === 0 || !group.anchorSessionId) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "PARALLEL_GROUP_INVALID_STATE",
+        detail: "当前并行会话组状态异常，无法继续追加成员",
+        field: "groupId"
+      });
+    }
+
+    const availableSlots = 4 - activeMembers.length;
+    const members = normalizeMembers(input.members, {
+      minCount: 1,
+      maxCount: availableSlots,
+      detail:
+        availableSlots > 0
+          ? `本组最多还能追加 ${availableSlots} 个并行成员`
+          : "当前并行会话组已满，不能继续追加成员"
+    });
+    const startingOrdinal = allMembers.reduce(
+      (maxOrdinal, member) => Math.max(maxOrdinal, member.ordinal),
+      -1
+    ) + 1;
+    const updatedGroup = this.parallelSessionGroupRepository.update({
+      ...group,
+      requestedCount: group.requestedCount + members.length,
+      updatedAt: nowIso()
+    }) ?? group;
+
+    return await this.createMembers({
+      group: updatedGroup,
+      members,
+      userId: input.userId,
+      startingOrdinal,
+      initialAnchorSessionId: updatedGroup.anchorSessionId,
+      deleteGroupWhenNoAnchor: false,
+      createMember: async (member) => {
+        if (group.sourceType === "fork") {
+          const sourceSessionId = normalizeRequiredText(group.sourceSessionId ?? "", "sourceSessionId");
+
+          if (member.workspaceIsolationMode === "temporary_worktree") {
+            const created = await this.sessionIsolatedWorkspaceService.createForMember({
+              groupId: group.id,
+              sourceWorkspaceId: group.workspaceId,
+              createSession: async (workspaceId) => {
+                return await this.createForkedSessionMember({
+                  sourceSessionId,
+                  sourceMessageId: group.sourceMessageId,
+                  provider: member.provider,
+                  model: member.model ?? null,
+                  sharedPrompt,
+                  memberPrompt: member.memberPrompt ?? null,
+                  targetWorkspaceId: workspaceId,
+                  userId: input.userId
+                });
+              }
+            });
+
+            return {
+              session: created.session,
+              sessionIsolatedWorkspace: created.record
+            };
+          }
+
+          return {
+            session: await this.createForkedSessionMember({
+              sourceSessionId,
+              sourceMessageId: group.sourceMessageId,
+              provider: member.provider,
+              model: member.model ?? null,
+              sharedPrompt,
+              memberPrompt: member.memberPrompt ?? null,
+              targetWorkspaceId: null,
+              userId: input.userId
+            }),
+            sessionIsolatedWorkspace: null
+          };
+        }
+
         if (member.workspaceIsolationMode === "temporary_worktree") {
           const created = await this.sessionIsolatedWorkspaceService.createForMember({
             groupId: group.id,
@@ -333,6 +484,9 @@ export class ParallelSessionGroupService {
     group: ParallelSessionGroupRecord;
     members: ParallelSessionMemberInput[];
     userId: string;
+    startingOrdinal: number;
+    initialAnchorSessionId: string | null;
+    deleteGroupWhenNoAnchor: boolean;
     createMember: (
       member: ParallelSessionMemberInput,
       ordinal: number
@@ -340,18 +494,19 @@ export class ParallelSessionGroupService {
   }): Promise<ParallelSessionGroupDetail> {
     const memberFailures: ParallelSessionMemberFailure[] = [];
     let currentGroup = input.group;
-    let anchorSessionId: string | null = null;
+    let anchorSessionId: string | null = input.initialAnchorSessionId;
 
     for (const [ordinal, member] of input.members.entries()) {
       try {
         const createdMember = await input.createMember(member, ordinal);
         const session = createdMember.session;
         const role = anchorSessionId ? "member" : "anchor";
+        const memberOrdinal = input.startingOrdinal + ordinal;
 
         this.parallelSessionMemberRepository.create({
           groupId: currentGroup.id,
           sessionId: session.sessionId,
-          ordinal,
+          ordinal: memberOrdinal,
           role,
           provider: session.provider,
           model: member.model ?? null,
@@ -386,7 +541,7 @@ export class ParallelSessionGroupService {
       }
     }
 
-    if (!anchorSessionId) {
+    if (!anchorSessionId && input.deleteGroupWhenNoAnchor) {
       currentGroup = this.parallelSessionGroupRepository.update({
         ...currentGroup,
         status: "deleted",
@@ -559,12 +714,19 @@ export class ParallelSessionGroupService {
   }
 }
 
-function normalizeMembers(members: readonly ParallelSessionMemberInput[]): ParallelSessionMemberInput[] {
-  if (!Array.isArray(members) || members.length < 2 || members.length > 4) {
+function normalizeMembers(
+  members: readonly ParallelSessionMemberInput[],
+  limits: {
+    minCount: number;
+    maxCount: number;
+    detail: string;
+  }
+): ParallelSessionMemberInput[] {
+  if (!Array.isArray(members) || members.length < limits.minCount || members.length > limits.maxCount) {
     throw new AppError({
       statusCode: 400,
       errorCode: "INVALID_INPUT",
-      detail: "并行成员数量必须在 2 到 4 之间",
+      detail: limits.detail,
       field: "members"
     });
   }

@@ -14,6 +14,10 @@ export async function registerParallelGroupRoutes(
     "/api/workspaces/:workspaceId/parallel-groups",
     parallelSessionController.createFromWorkspace
   );
+  app.post(
+    "/api/parallel-groups/:groupId/members",
+    parallelSessionController.appendMembers
+  );
   app.get("/api/parallel-groups/:groupId", parallelSessionController.getDetail);
   app.delete("/api/parallel-groups/:groupId", parallelSessionController.deleteGroup);
   app.post(
