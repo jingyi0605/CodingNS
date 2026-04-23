@@ -8,6 +8,7 @@ import { ParallelSessionCreateModal } from "./ParallelSessionCreateModal";
 
 const mockCreateParallelGroupFromWorkspace = vi.fn();
 const mockCreateParallelGroupFromSession = vi.fn();
+const mockAppendParallelGroupMembers = vi.fn();
 const mockListProviderCapabilities = vi.fn();
 
 vi.mock("../api/conversation-api", async () => {
@@ -17,6 +18,8 @@ vi.mock("../api/conversation-api", async () => {
 
   return {
     ...actual,
+    appendParallelGroupMembers: (...args: unknown[]) =>
+      mockAppendParallelGroupMembers(...args),
     createParallelGroupFromWorkspace: (...args: unknown[]) =>
       mockCreateParallelGroupFromWorkspace(...args),
     createParallelGroupFromSession: (...args: unknown[]) =>
@@ -148,6 +151,33 @@ describe("ParallelSessionCreateModal", () => {
     await user.selectOptions(providerSelect, "opencode");
 
     expect(await within(modelSelect).findByRole("option", { name: "OpenCode Pro" })).toBeInTheDocument();
+  });
+
+  it("给已有并行组追加成员时，会锁定顶部消息并把数量限制在剩余槽位内", () => {
+    render(
+      <ParallelSessionCreateModal
+        open
+        source={{
+          kind: "group",
+          groupId: "parallel-group-1",
+          workspaceId: "workspace-1",
+          workspaceName: "项目一",
+          sharedPrompt: "请围绕同一个需求继续并行推进",
+          currentMemberCount: 3,
+          defaultProvider: "codex"
+        }}
+        onClose={vi.fn()}
+        onCreated={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole("dialog", { name: t("shell.parallelAppendModalTitle") })).toBeInTheDocument();
+    const promptField = screen.getByLabelText(t("shell.parallelAppendSharedPromptLabel"));
+    expect(promptField).toHaveValue("请围绕同一个需求继续并行推进");
+    expect(promptField).toHaveAttribute("readonly");
+    expect(screen.getByRole("group", { name: t("shell.parallelAppendCountLabel") })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "1" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "2" })).not.toBeInTheDocument();
   });
 });
 

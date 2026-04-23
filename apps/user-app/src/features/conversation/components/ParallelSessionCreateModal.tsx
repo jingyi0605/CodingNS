@@ -4,6 +4,7 @@ import { DesktopModal } from "../../../components/DesktopModal";
 import { ModalActions, ModalField, ModalSection } from "../../../components/ModalAtoms";
 import { t } from "../../../shared/i18n";
 import {
+  appendParallelGroupMembers,
   createParallelGroupFromSession,
   createParallelGroupFromWorkspace,
   listProviderCapabilities,
@@ -40,6 +41,15 @@ export type ParallelSessionCreateSource =
       workspaceName: string;
       sessionTitle: string;
       defaultProvider?: ProviderId | null;
+    }
+  | {
+      kind: "group";
+      groupId: string;
+      workspaceId: string;
+      workspaceName: string;
+      sharedPrompt: string;
+      currentMemberCount: number;
+      defaultProvider?: ProviderId | null;
     };
 
 interface ParallelSessionCreateModalProps {
@@ -58,6 +68,10 @@ function createMemberDraft(defaultProvider: ProviderId): ParallelSessionCreateMe
   };
 }
 
+function createMemberDrafts(defaultProvider: ProviderId, count: number) {
+  return Array.from({ length: count }, () => createMemberDraft(defaultProvider));
+}
+
 function resolveModelOptions(
   capabilities: ProviderCapabilitiesDto | null | undefined,
   provider: ProviderId
@@ -69,6 +83,10 @@ function resolveModelOptions(
   return createDraftCapabilities(provider).modelOptions ?? [];
 }
 
+function countCreatedMembers(requestedCount: number, memberFailures: readonly ParallelSessionMemberFailureDto[]) {
+  return Math.max(0, requestedCount - memberFailures.length);
+}
+
 export function ParallelSessionCreateModal({
   open,
   source,
@@ -77,12 +95,22 @@ export function ParallelSessionCreateModal({
 }: ParallelSessionCreateModalProps) {
   const modalFieldIdPrefix = useId();
   const defaultProvider = source?.defaultProvider ?? "codex";
-  const [sharedPrompt, setSharedPrompt] = useState("");
-  const [memberCount, setMemberCount] = useState(2);
-  const [members, setMembers] = useState<ParallelSessionCreateMemberDraft[]>(() => [
-    createMemberDraft(defaultProvider),
-    createMemberDraft(defaultProvider)
-  ]);
+  const promptLocked = source?.kind === "group";
+  const maxSelectableMemberCount = source?.kind === "group" ? Math.max(0, 4 - source.currentMemberCount) : 4;
+  const countOptions = useMemo(
+    () =>
+      source?.kind === "group"
+        ? Array.from({ length: maxSelectableMemberCount }, (_, index) => index + 1)
+        : [2, 3, 4],
+    [maxSelectableMemberCount, source?.kind]
+  );
+  const initialMemberCount = source?.kind === "group" ? 1 : 2;
+  const initialSharedPrompt = source?.kind === "group" ? source.sharedPrompt : "";
+  const [sharedPrompt, setSharedPrompt] = useState(initialSharedPrompt);
+  const [memberCount, setMemberCount] = useState(initialMemberCount);
+  const [members, setMembers] = useState<ParallelSessionCreateMemberDraft[]>(() =>
+    createMemberDrafts(defaultProvider, initialMemberCount)
+  );
   const [providerCapabilitiesByProvider, setProviderCapabilitiesByProvider] = useState<
     Partial<Record<ProviderId, ProviderCapabilitiesDto>>
   >({});
@@ -100,12 +128,10 @@ export function ParallelSessionCreateModal({
     }
 
     const nextDefaultProvider = source?.defaultProvider ?? "codex";
-    setSharedPrompt("");
-    setMemberCount(2);
-    setMembers([
-      createMemberDraft(nextDefaultProvider),
-      createMemberDraft(nextDefaultProvider)
-    ]);
+    const nextMemberCount = source?.kind === "group" ? 1 : 2;
+    setSharedPrompt(source?.kind === "group" ? source.sharedPrompt : "");
+    setMemberCount(nextMemberCount);
+    setMembers(createMemberDrafts(nextDefaultProvider, nextMemberCount));
     setProviderCapabilitiesByProvider({});
     setLoadingProviderCapabilities(false);
     setSubmitting(false);
@@ -117,7 +143,9 @@ export function ParallelSessionCreateModal({
     source?.defaultProvider,
     source?.kind,
     source?.workspaceId,
-    source?.kind === "session" ? source.sessionId : null
+    source?.kind === "session" ? source.sessionId : null,
+    source?.kind === "group" ? source.groupId : null,
+    source?.kind === "group" ? source.sharedPrompt : null
   ]);
 
   useEffect(() => {
@@ -140,6 +168,14 @@ export function ParallelSessionCreateModal({
       return nextMembers;
     });
   }, [defaultProvider, memberCount]);
+
+  useEffect(() => {
+    if (countOptions.length === 0) {
+      return;
+    }
+
+    setMemberCount((current) => (countOptions.includes(current) ? current : countOptions[0] ?? current));
+  }, [countOptions]);
 
   useEffect(() => {
     if (!open || !source) {
@@ -230,19 +266,54 @@ export function ParallelSessionCreateModal({
     return null;
   }
 
-  const successfulOrdinals = new Set(
-    (partialDetail?.members ?? []).map((item) => item.member.ordinal)
-  );
-  const description =
-    source.kind === "session"
-      ? `${source.workspaceName} · ${source.sessionTitle}`
-      : `${source.workspaceName} · ${t("shell.parallelCreateModalDescription")}`;
   const activeSource = source;
+  const createdMemberCount = partialDetail
+    ? countCreatedMembers(members.length, partialDetail.memberFailures)
+    : 0;
+  const successfulOrdinals = new Set(
+    partialDetail
+      ? members
+        .map((_, index) => index)
+        .filter((index) => !(index in memberErrorsByOrdinal))
+      : []
+  );
+  const title = activeSource.kind === "group"
+    ? t("shell.parallelAppendModalTitle")
+    : t("shell.parallelCreateModalTitle");
+  const description =
+    activeSource.kind === "session"
+      ? `${activeSource.workspaceName} · ${activeSource.sessionTitle}`
+      : activeSource.kind === "group"
+        ? `${activeSource.workspaceName} · ${t("shell.parallelAppendModalDescription")}`
+        : `${activeSource.workspaceName} · ${t("shell.parallelCreateModalDescription")}`;
+  const sharedPromptLabel = activeSource.kind === "group"
+    ? t("shell.parallelAppendSharedPromptLabel")
+    : t("shell.parallelCreateSharedPromptLabel");
+  const sharedPromptDescription = activeSource.kind === "group"
+    ? t("shell.parallelAppendSharedPromptDescription")
+    : t("shell.parallelCreateSharedPromptPlaceholder");
+  const countLabel = activeSource.kind === "group"
+    ? t("shell.parallelAppendCountLabel")
+    : t("shell.parallelCreateCountLabel");
+  const submitLabel = activeSource.kind === "group"
+    ? t("shell.parallelAppendSubmit")
+    : t("shell.parallelCreateSubmit");
+  const submittingLabel = activeSource.kind === "group"
+    ? t("shell.parallelAppendSubmitting")
+    : t("shell.parallelCreateSubmitting");
   const footerStatusMessage =
     submitError
+    ?? (
+      activeSource.kind === "group" && maxSelectableMemberCount === 0
+        ? t("shell.parallelAppendNoRemainingSlots")
+        : null
+    )
     ?? (!loadingProviderCapabilities && availableProviderIds.length === 0
       ? t("shell.parallelCreateNoAvailableProviders")
       : null);
+  const memberGridStyle = {
+    "--parallel-member-columns": String(Math.max(1, Math.min(memberCount, 4)))
+  } as CSSProperties;
 
   function clearFeedbackForMember(ordinal: number) {
     setSubmitError(null);
@@ -267,8 +338,13 @@ export function ParallelSessionCreateModal({
   async function handleSubmit() {
     const normalizedSharedPrompt = sharedPrompt.trim();
 
-    if (!normalizedSharedPrompt) {
+    if (!promptLocked && !normalizedSharedPrompt) {
       setSubmitError(t("shell.parallelCreatePromptRequired"));
+      return;
+    }
+
+    if (activeSource.kind === "group" && maxSelectableMemberCount === 0) {
+      setSubmitError(t("shell.parallelAppendNoRemainingSlots"));
       return;
     }
 
@@ -283,29 +359,37 @@ export function ParallelSessionCreateModal({
     setMemberErrorsByOrdinal({});
 
     try {
-      const payload = {
-        sharedPrompt: normalizedSharedPrompt,
-        members: members.map((member) => ({
-          provider: member.provider,
-          model: member.model.trim() || null,
-          memberPrompt: member.memberPrompt.trim() || null,
-          workspaceIsolationMode: member.workspaceIsolationMode
-        }))
-      };
+      const memberPayload = members.map((member) => ({
+        provider: member.provider,
+        model: member.model.trim() || null,
+        memberPrompt: member.memberPrompt.trim() || null,
+        workspaceIsolationMode: member.workspaceIsolationMode
+      }));
       const detail =
-        activeSource.kind === "session"
-          ? await createParallelGroupFromSession(activeSource.sessionId, payload)
-          : await createParallelGroupFromWorkspace(activeSource.workspaceId, payload);
+        activeSource.kind === "group"
+          ? await appendParallelGroupMembers(activeSource.groupId, {
+              members: memberPayload
+            })
+          : activeSource.kind === "session"
+            ? await createParallelGroupFromSession(activeSource.sessionId, {
+                sharedPrompt: normalizedSharedPrompt,
+                members: memberPayload
+              })
+            : await createParallelGroupFromWorkspace(activeSource.workspaceId, {
+                sharedPrompt: normalizedSharedPrompt,
+                members: memberPayload
+              });
 
       if (detail.memberFailures.length > 0) {
+        const nextCreatedMemberCount = countCreatedMembers(members.length, detail.memberFailures);
         setPartialDetail(detail);
         setMemberErrorsByOrdinal(
           Object.fromEntries(detail.memberFailures.map((item) => [item.ordinal, item]))
         );
         setSubmitError(
-          detail.members.length > 0
+          nextCreatedMemberCount > 0
             ? t("shell.parallelCreatePartialFailure", {
-                successCount: detail.members.length,
+                successCount: nextCreatedMemberCount,
                 failureCount: detail.memberFailures.length
               })
             : t("shell.parallelCreateAllFailed", {
@@ -323,14 +407,10 @@ export function ParallelSessionCreateModal({
     }
   }
 
-  const memberGridStyle = {
-    "--parallel-member-columns": String(Math.max(2, Math.min(memberCount, 4)))
-  } as CSSProperties;
-
   return (
     <DesktopModal
       open={open}
-      title={t("shell.parallelCreateModalTitle")}
+      title={title}
       description={description}
       size="xwide"
       layout="form"
@@ -346,7 +426,7 @@ export function ParallelSessionCreateModal({
             ) : null}
           </div>
           <div className="parallel-create-modal-footer-actions">
-            {partialDetail?.members.length ? (
+            {partialDetail && createdMemberCount > 0 ? (
               <button
                 type="button"
                 className="secondary-button"
@@ -369,27 +449,29 @@ export function ParallelSessionCreateModal({
             <button
               type="button"
               className="primary-button"
-              disabled={submitting || loadingProviderCapabilities || availableProviderIds.length === 0}
+              disabled={
+                submitting
+                || loadingProviderCapabilities
+                || availableProviderIds.length === 0
+                || (activeSource.kind === "group" && maxSelectableMemberCount === 0)
+              }
               onClick={() => {
                 void handleSubmit();
               }}
             >
-              {submitting ? t("shell.parallelCreateSubmitting") : t("shell.parallelCreateSubmit")}
+              {submitting ? submittingLabel : submitLabel}
             </button>
           </div>
         </ModalActions>
       )}
     >
       <div className="parallel-create-layout">
-        <ModalSection
-          className="parallel-create-shared-section"
-          tone="accent"
-        >
+        <ModalSection className="parallel-create-shared-section" tone="accent">
           <div className="parallel-create-target-row">
             <ModalField
               className="parallel-create-target-field"
-              label={t("shell.parallelCreateSharedPromptLabel")}
-              description={t("shell.parallelCreateSharedPromptPlaceholder")}
+              label={sharedPromptLabel}
+              description={sharedPromptDescription}
               htmlFor={`${modalFieldIdPrefix}-shared-prompt`}
             >
               <textarea
@@ -397,17 +479,24 @@ export function ParallelSessionCreateModal({
                 className="parallel-create-textarea parallel-create-textarea-target"
                 rows={3}
                 value={sharedPrompt}
-                placeholder={t("shell.parallelCreateSharedPromptPlaceholder")}
+                placeholder={!promptLocked ? t("shell.parallelCreateSharedPromptPlaceholder") : undefined}
+                readOnly={promptLocked}
+                aria-readonly={promptLocked}
+                data-readonly={promptLocked ? "true" : undefined}
                 onChange={(event) => {
+                  if (promptLocked) {
+                    return;
+                  }
+
                   clearAllFeedback();
                   setSharedPrompt(event.target.value);
                 }}
               />
             </ModalField>
 
-            <ModalField className="parallel-create-count-field" label={t("shell.parallelCreateCountLabel")}>
-              <div className="parallel-create-count-group" role="group" aria-label={t("shell.parallelCreateCountLabel")}>
-                {[2, 3, 4].map((count) => (
+            <ModalField className="parallel-create-count-field" label={countLabel}>
+              <div className="parallel-create-count-group" role="group" aria-label={countLabel}>
+                {countOptions.map((count) => (
                   <button
                     key={count}
                     type="button"
@@ -431,10 +520,7 @@ export function ParallelSessionCreateModal({
           heading={t("shell.parallelCreateMembersTitle")}
           description={t("shell.parallelCreateMembersDescription")}
         >
-          <div
-            className="parallel-create-member-list"
-            style={memberGridStyle}
-          >
+          <div className="parallel-create-member-list" style={memberGridStyle}>
             {memberConfigs.map(({ draft, index, modelOptions }) => {
               const memberProviderOptions = availableProviderIds;
               const providerSelectValue = memberProviderOptions.includes(draft.provider as BuiltinProviderId)

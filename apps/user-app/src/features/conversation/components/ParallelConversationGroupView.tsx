@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerE
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 
+import { ModalActions, ModalSection } from "../../../components/ModalAtoms";
 import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import {
   openFilesExternalWindow,
@@ -19,12 +20,14 @@ import {
   createWorkspaceToneStyle
 } from "../../workbench/utils/worktree-visual-context";
 import {
+  buildWorkspaceSessionIndexPath,
   buildWorkspaceSessionPath,
   buildWorkspaceTerminalsPath,
   flattenNavigationSessions
 } from "../../workbench/utils/workbench-navigation";
 import {
   type AttachmentPayload,
+  deleteSession,
   type ForkSourceMessageSnapshotDto,
   forkSession,
   getParallelGroupDetail,
@@ -37,6 +40,7 @@ import {
   type SessionSummaryDto
 } from "../api/conversation-api";
 import { getProviderDisplayName, shouldSupportRunSteering } from "../capability/provider-ui";
+import { ParallelSessionCreateModal } from "./ParallelSessionCreateModal";
 import { ComposerPanel } from "./ComposerPanel";
 import { ConnectionBanner } from "./ConnectionBanner";
 import { FileContextPanel } from "./FileContextPanel";
@@ -68,12 +72,21 @@ const PARALLEL_TOOLS_PANEL_DEFAULT_HEIGHT = 760;
 const PARALLEL_TOOLS_PANEL_MIN_WIDTH = 360;
 const PARALLEL_TOOLS_PANEL_MIN_HEIGHT = 320;
 const PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN = 16;
+const PARALLEL_INFO_POPOVER_MAX_WIDTH = 428;
+const PARALLEL_INFO_POPOVER_MIN_WIDTH = 404;
+const PARALLEL_INFO_POPOVER_VIEWPORT_MARGIN = 12;
 
 interface ParallelToolsPanelFrame {
   readonly x: number;
   readonly y: number;
   readonly width: number;
   readonly height: number;
+}
+
+interface ParallelInfoPopoverFrame {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
 }
 
 interface ClampParallelToolsPanelFrameOptions {
@@ -101,6 +114,8 @@ interface ParallelConversationMemberPaneProps {
   readonly onToggleInfo: () => void;
   readonly onPromoteWorkspace: (workspaceId: string) => void | Promise<void>;
   readonly promotingWorkspaceId: string | null;
+  readonly onRemoveSession: (sessionId: string) => void | Promise<void>;
+  readonly removingSessionId: string | null;
 }
 
 interface ForkComposerDraft {
@@ -201,10 +216,44 @@ function createParallelToolsPanelFrameFromPane(paneRect: DOMRect | null): Parall
   );
 }
 
+function createParallelInfoPopoverFrame(triggerRect: DOMRect | null): ParallelInfoPopoverFrame {
+  if (typeof window === "undefined") {
+    return {
+      x: PARALLEL_INFO_POPOVER_VIEWPORT_MARGIN,
+      y: PARALLEL_INFO_POPOVER_VIEWPORT_MARGIN,
+      width: PARALLEL_INFO_POPOVER_MAX_WIDTH
+    };
+  }
+
+  const width = Math.min(
+    PARALLEL_INFO_POPOVER_MAX_WIDTH,
+    Math.max(PARALLEL_INFO_POPOVER_MIN_WIDTH, window.innerWidth - PARALLEL_INFO_POPOVER_VIEWPORT_MARGIN * 2)
+  );
+
+  return {
+    x: Math.min(
+      Math.max(
+        (triggerRect?.right ?? window.innerWidth - PARALLEL_INFO_POPOVER_VIEWPORT_MARGIN) - width,
+        PARALLEL_INFO_POPOVER_VIEWPORT_MARGIN
+      ),
+      Math.max(
+        PARALLEL_INFO_POPOVER_VIEWPORT_MARGIN,
+        window.innerWidth - width - PARALLEL_INFO_POPOVER_VIEWPORT_MARGIN
+      )
+    ),
+    y: Math.max(
+      PARALLEL_INFO_POPOVER_VIEWPORT_MARGIN,
+      (triggerRect?.bottom ?? PARALLEL_INFO_POPOVER_VIEWPORT_MARGIN) + 8
+    ),
+    width
+  };
+}
+
 export function ParallelConversationGroupView({
   groupId,
   currentSessionId
 }: ParallelConversationGroupViewProps) {
+  const navigate = useNavigate();
   const platform = usePlatform();
   const { showToast } = useToast();
   const {
@@ -228,8 +277,11 @@ export function ParallelConversationGroupView({
   const [error, setError] = useState<string | null>(null);
   const [openInfoSessionId, setOpenInfoSessionId] = useState<string | null>(null);
   const [promotingWorkspaceId, setPromotingWorkspaceId] = useState<string | null>(null);
+  const [removingSessionId, setRemovingSessionId] = useState<string | null>(null);
   const [entering, setEntering] = useState(false);
+  const [appendModalOpen, setAppendModalOpen] = useState(false);
   const resizedSignatureRef = useRef<string | null>(null);
+  const enteringTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -271,15 +323,16 @@ export function ParallelConversationGroupView({
       return;
     }
 
-    setEntering(true);
-    const timer = window.setTimeout(() => {
-      setEntering(false);
-    }, PARALLEL_GROUP_TRANSITION_DURATION_MS);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
+    triggerEnteringAnimation();
   }, [groupId]);
+
+  useEffect(() => {
+    return () => {
+      if (enteringTimerRef.current !== null) {
+        window.clearTimeout(enteringTimerRef.current);
+      }
+    };
+  }, []);
 
   const memberEntries = useMemo(() => {
     if (!detail) {
@@ -424,6 +477,73 @@ export function ParallelConversationGroupView({
     }
   }
 
+  async function handleRemoveSession(sessionId: string) {
+    if (removingSessionId) {
+      return;
+    }
+
+    const normalizedSessionId = sessionId.trim();
+
+    if (!normalizedSessionId) {
+      return;
+    }
+
+    const nextSession = memberEntries.find((item) => item.session.sessionId !== normalizedSessionId) ?? null;
+    const fallbackWorkspaceId = detail?.group.workspaceId ?? nextSession?.workspaceId ?? null;
+
+    setRemovingSessionId(normalizedSessionId);
+
+    try {
+      await deleteSession(normalizedSessionId);
+      writeParallelPaneColorOverride(normalizedSessionId, null);
+      setOpenInfoSessionId((current) => (current === normalizedSessionId ? null : current));
+      setDetail((current) => {
+        if (!current) {
+          return current;
+        }
+
+        return {
+          ...current,
+          members: current.members.filter((item) => item.session.sessionId !== normalizedSessionId)
+        };
+      });
+      await requestNavigationRefresh();
+
+      if (currentSessionId === normalizedSessionId) {
+        if (nextSession) {
+          navigate(buildWorkspaceSessionPath(nextSession.workspaceId, nextSession.session.sessionId));
+        } else if (fallbackWorkspaceId) {
+          navigate(buildWorkspaceSessionIndexPath(fallbackWorkspaceId));
+        }
+      }
+
+      showToast({
+        title: t("shell.deleteSessionSuccess"),
+        tone: "success"
+      });
+    } catch (removeError) {
+      showToast({
+        title: removeError instanceof Error ? removeError.message : t("shell.deleteSessionFailed"),
+        tone: "error"
+      });
+    } finally {
+      setRemovingSessionId(null);
+    }
+  }
+
+  function triggerEnteringAnimation() {
+    setEntering(true);
+
+    if (enteringTimerRef.current !== null) {
+      window.clearTimeout(enteringTimerRef.current);
+    }
+
+    enteringTimerRef.current = window.setTimeout(() => {
+      setEntering(false);
+      enteringTimerRef.current = null;
+    }, PARALLEL_GROUP_TRANSITION_DURATION_MS);
+  }
+
   if (loading && !detail) {
     return (
       <main className="workbench-page conversation-page-shell parallel-conversation-page">
@@ -455,6 +575,16 @@ export function ParallelConversationGroupView({
     );
   }
 
+  const workspaceName =
+    workspaceVisualContextMap[detail?.group.workspaceId ?? ""]?.displayName
+    ?? detail?.group.workspaceId
+    ?? t("common.unknown");
+  const anchorMember =
+    memberEntries.find((item) => item.session.sessionId === detail?.group.anchorSessionId)
+    ?? memberEntries[0]
+    ?? null;
+  const canAppendMembers = memberEntries.length < 4;
+
   return (
     <main
       className="workbench-page conversation-page-shell parallel-conversation-page"
@@ -463,8 +593,26 @@ export function ParallelConversationGroupView({
     >
       <header className="parallel-conversation-group-header">
         <div className="parallel-conversation-group-titlebar">
-          <span className="session-parallel-badge">{t("shell.parallelGroupBadge")}</span>
-          <strong>{detail?.group.sharedPrompt?.trim() || t("common.unknown")}</strong>
+          <div className="parallel-conversation-group-titlemain">
+            <span className="session-parallel-badge">{t("shell.parallelGroupBadge")}</span>
+            <strong>{detail?.group.sharedPrompt?.trim() || t("common.unknown")}</strong>
+          </div>
+          <button
+            type="button"
+            className="secondary-button parallel-conversation-group-add-button"
+            aria-label={t("shell.parallelAppendAction")}
+            title={t("shell.parallelAppendAction")}
+            disabled={!canAppendMembers}
+            onClick={() => {
+              if (!canAppendMembers) {
+                return;
+              }
+
+              setAppendModalOpen(true);
+            }}
+          >
+            <span aria-hidden="true">+</span>
+          </button>
         </div>
       </header>
       <div className="parallel-conversation-grid">
@@ -495,10 +643,39 @@ export function ParallelConversationGroupView({
                 );
               }}
               onPromoteWorkspace={handlePromoteWorkspace}
+              onRemoveSession={handleRemoveSession}
+              removingSessionId={removingSessionId}
             />
           );
         })}
       </div>
+      <ParallelSessionCreateModal
+        open={appendModalOpen}
+        source={
+          detail
+            ? {
+                kind: "group",
+                groupId: detail.group.id,
+                workspaceId: detail.group.workspaceId,
+                workspaceName,
+                sharedPrompt: detail.group.sharedPrompt?.trim() || "",
+                currentMemberCount: memberEntries.length,
+                defaultProvider: anchorMember?.session.provider ?? "codex"
+              }
+            : null
+        }
+        onClose={() => setAppendModalOpen(false)}
+        onCreated={async (nextDetail) => {
+          setDetail(nextDetail);
+          setAppendModalOpen(false);
+          triggerEnteringAnimation();
+          await requestNavigationRefresh();
+          showToast({
+            title: t("shell.parallelAppendSucceeded"),
+            tone: "success"
+          });
+        }}
+      />
     </main>
   );
 }
@@ -511,7 +688,9 @@ function ParallelConversationMemberPane({
   onCloseInfo,
   onToggleInfo,
   onPromoteWorkspace,
-  promotingWorkspaceId
+  promotingWorkspaceId,
+  onRemoveSession,
+  removingSessionId
 }: ParallelConversationMemberPaneProps) {
   const navigate = useNavigate();
   const platform = usePlatform();
@@ -535,9 +714,11 @@ function ParallelConversationMemberPane({
   const [activeToolPanel, setActiveToolPanel] = useState<"files" | "git" | "processes" | "terminals">("files");
   const [toolsPinned, setToolsPinned] = useState(false);
   const [toolsFrame, setToolsFrame] = useState<ParallelToolsPanelFrame | null>(null);
-  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [infoPopoverFrame, setInfoPopoverFrame] = useState<ParallelInfoPopoverFrame | null>(null);
   const paneRef = useRef<HTMLElement | null>(null);
   const headerLayerRef = useRef<HTMLElement | null>(null);
+  const infoTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const infoPopoverRef = useRef<HTMLDivElement | null>(null);
   const toolsPanelRef = useRef<HTMLDivElement | null>(null);
   const toolsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [paneColorOverride, setPaneColorOverride] = useState<string | null>(() =>
@@ -610,6 +791,18 @@ function ParallelConversationMemberPane({
     toolWorkspaceId === navigationWorkspaceId
       ? workspaceContext?.displayName ?? navigationWorkspaceId
       : isolatedWorkspaceBranchName ?? panePromptLabel;
+  const isRemovingCurrentSession = removingSessionId === sessionId;
+  const infoPopoverStyle: CSSProperties | undefined =
+    infoOpen && infoPopoverFrame
+      ? {
+          ...(createWorkspaceToneStyle(workspaceContext) ?? {}),
+          ...(parallelGroupStyle ?? {}),
+          ...parallelPaneStyle,
+          left: `${infoPopoverFrame.x}px`,
+          top: `${infoPopoverFrame.y}px`,
+          width: `${infoPopoverFrame.width}px`
+        }
+      : undefined;
   const toolsPanelStyle: CSSProperties | undefined =
     toolsOpen && toolsFrame
       ? {
@@ -641,12 +834,12 @@ function ParallelConversationMemberPane({
     setToolsOpen(false);
     setToolsPinned(false);
     setToolsFrame(null);
+    setInfoPopoverFrame(null);
     setActiveToolPanel("files");
-    setOptionsOpen(false);
   }, [sessionId]);
 
   useEffect(() => {
-    if (!optionsOpen && !infoOpen) {
+    if (!infoOpen) {
       return;
     }
 
@@ -659,12 +852,12 @@ function ParallelConversationMemberPane({
 
       if (
         headerLayerRef.current?.contains(target)
+        || infoPopoverRef.current?.contains(target)
         || toolsPanelRef.current?.contains(target)
       ) {
         return;
       }
 
-      setOptionsOpen(false);
       onCloseInfo();
     };
 
@@ -672,7 +865,29 @@ function ParallelConversationMemberPane({
     return () => {
       window.removeEventListener("pointerdown", handlePointerDown);
     };
-  }, [infoOpen, onCloseInfo, optionsOpen]);
+  }, [infoOpen, onCloseInfo]);
+
+  useEffect(() => {
+    if (!infoOpen) {
+      setInfoPopoverFrame(null);
+      return;
+    }
+
+    const updateFrame = () => {
+      setInfoPopoverFrame(
+        createParallelInfoPopoverFrame(infoTriggerRef.current?.getBoundingClientRect() ?? null)
+      );
+    };
+
+    updateFrame();
+    window.addEventListener("resize", updateFrame);
+    window.addEventListener("scroll", updateFrame, true);
+
+    return () => {
+      window.removeEventListener("resize", updateFrame);
+      window.removeEventListener("scroll", updateFrame, true);
+    };
+  }, [infoOpen]);
 
   useEffect(() => {
     if (!toolsOpen) {
@@ -1039,6 +1254,129 @@ function ParallelConversationMemberPane({
         )
       : null;
 
+  const infoPopoverOverlay =
+    infoOpen && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            ref={infoPopoverRef}
+            className="parallel-pane-info-popover"
+            data-parallel-pane-layer={sessionId}
+            data-workspace-tone={workspaceContext?.tone ?? "root"}
+            style={infoPopoverStyle}
+          >
+            <strong className="parallel-pane-info-title">{t("shell.parallelPaneInfoTitle")}</strong>
+            <ModalSection>
+              <dl className="parallel-pane-info-list">
+                <div>
+                  <dt>{t("shell.createSessionProviderLabel")}</dt>
+                  <dd>{getProviderDisplayName((session ?? entry.session).provider, "full")}</dd>
+                </div>
+                <div>
+                  <dt>{t("shell.parallelPaneModelFallback")}</dt>
+                  <dd>{modelLabel}</dd>
+                </div>
+                <div>
+                  <dt>{t("shell.parallelPaneIsolatedWorkspaceTitle")}</dt>
+                  <dd>{isolatedWorkspaceBranchName ?? t("common.unknown")}</dd>
+                </div>
+              </dl>
+            </ModalSection>
+
+            <ModalSection
+              heading={t("shell.parallelPaneColorPaletteLabel")}
+              description={t("shell.parallelPaneColorPaletteDescription")}
+              actions={(
+                <button
+                  type="button"
+                  className="ghost-button parallel-pane-color-reset"
+                  disabled={!paneColorOverride || isRemovingCurrentSession}
+                  onClick={() => {
+                    writeParallelPaneColorOverride(sessionId, null);
+                    setPaneColorOverride(null);
+                  }}
+                >
+                  {t("shell.parallelPaneColorPaletteReset")}
+                </button>
+              )}
+            >
+              <div
+                className="workbench-manage-color-palette parallel-pane-color-palette"
+                aria-label={t("shell.parallelPaneColorPaletteLabel")}
+              >
+                {PARALLEL_PANE_COLOR_PRESETS.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    className="workbench-manage-color-swatch"
+                    aria-label={t("shell.manageWorkspaceColorSelectSwatch", {
+                      color
+                    })}
+                    aria-pressed={paneColorOverride === color}
+                    data-selected={paneColorOverride === color}
+                    disabled={isRemovingCurrentSession}
+                    style={{ backgroundColor: color }}
+                    onClick={() => {
+                      const nextColor = writeParallelPaneColorOverride(sessionId, color);
+                      setPaneColorOverride(nextColor);
+                    }}
+                  />
+                ))}
+              </div>
+            </ModalSection>
+
+            <ModalSection
+              heading={t("shell.parallelPaneIsolatedWorkspaceTitle")}
+              description={
+                paneSessionIsolatedWorkspace?.lifecycleStatus === "active"
+                  ? t("shell.parallelPanePromoteDescription")
+                  : paneSessionIsolatedWorkspace?.lifecycleStatus === "promoted"
+                    ? t("shell.parallelPaneRemovePromotedDescription")
+                    : t("shell.parallelPaneRemoveDescription")
+              }
+            >
+              <ModalActions align="start" className="parallel-pane-action-row">
+                {paneSessionIsolatedWorkspace?.lifecycleStatus === "active" ? (
+                  <button
+                    type="button"
+                    className="secondary-button parallel-pane-promote-action"
+                    disabled={
+                      promotingWorkspaceId === paneSessionIsolatedWorkspace.id
+                      || isRemovingCurrentSession
+                    }
+                    onClick={() => {
+                      const isolatedWorkspaceId = paneSessionIsolatedWorkspace?.id;
+
+                      if (!isolatedWorkspaceId) {
+                        return;
+                      }
+
+                      void onPromoteWorkspace(isolatedWorkspaceId);
+                    }}
+                  >
+                    {promotingWorkspaceId === paneSessionIsolatedWorkspace.id
+                      ? t("shell.parallelPanePromoting")
+                      : t("shell.parallelPanePromoteAction")}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="secondary-button workbench-danger-button"
+                  disabled={isRemovingCurrentSession}
+                  onClick={() => {
+                    void onRemoveSession(sessionId);
+                  }}
+                >
+                  {isRemovingCurrentSession
+                    ? t("shell.parallelPaneRemoving")
+                    : t("shell.parallelPaneRemoveAction")}
+                </button>
+              </ModalActions>
+            </ModalSection>
+          </div>,
+          document.body
+        )
+      : null;
+
   return (
     <>
       <article
@@ -1081,7 +1419,6 @@ function ParallelConversationMemberPane({
               aria-expanded={toolsOpen}
               onClick={() => {
                 onCloseInfo();
-                setOptionsOpen(false);
                 openToolsPanel();
               }}
             >
@@ -1090,22 +1427,7 @@ function ParallelConversationMemberPane({
               </span>
             </button>
             <button
-              type="button"
-              className={`conversation-header-ai-button${optionsOpen ? " active" : ""}`}
-              aria-label={t("shell.parallelPaneMoreAction")}
-              title={t("shell.parallelPaneMoreAction")}
-              aria-expanded={optionsOpen}
-              onClick={() => {
-                onCloseInfo();
-                setToolsOpen(false);
-                setOptionsOpen((current) => !current);
-              }}
-            >
-              <span className="conversation-header-ai-button-label" aria-hidden="true">
-                <PaneMoreIcon />
-              </span>
-            </button>
-            <button
+              ref={infoTriggerRef}
               type="button"
               className="conversation-header-ai-button"
               aria-label={t("shell.parallelPaneInfoAction")}
@@ -1113,7 +1435,6 @@ function ParallelConversationMemberPane({
               aria-expanded={infoOpen}
               onClick={() => {
                 setToolsOpen(false);
-                setOptionsOpen(false);
                 onToggleInfo();
               }}
             >
@@ -1122,92 +1443,6 @@ function ParallelConversationMemberPane({
               </span>
             </button>
           </div>
-
-          {optionsOpen ? (
-            <div
-              className="parallel-pane-options-popover"
-              data-parallel-pane-layer={sessionId}
-            >
-              <strong>{t("shell.parallelPaneColorPaletteLabel")}</strong>
-              <div
-                className="workbench-manage-color-palette parallel-pane-color-palette"
-                aria-label={t("shell.parallelPaneColorPaletteLabel")}
-              >
-                {PARALLEL_PANE_COLOR_PRESETS.map((color) => (
-                  <button
-                    key={color}
-                    type="button"
-                    className="workbench-manage-color-swatch"
-                    aria-label={t("shell.manageWorkspaceColorSelectSwatch", {
-                      color
-                    })}
-                    aria-pressed={paneColorOverride === color}
-                    data-selected={paneColorOverride === color}
-                    style={{ backgroundColor: color }}
-                    onClick={() => {
-                      const nextColor = writeParallelPaneColorOverride(sessionId, color);
-                      setPaneColorOverride(nextColor);
-                    }}
-                  />
-                ))}
-              </div>
-              <button
-                type="button"
-                className="ghost-button parallel-pane-color-reset"
-                disabled={!paneColorOverride}
-                onClick={() => {
-                  writeParallelPaneColorOverride(sessionId, null);
-                  setPaneColorOverride(null);
-                }}
-              >
-                {t("shell.parallelPaneColorPaletteReset")}
-              </button>
-            </div>
-          ) : null}
-
-          {infoOpen ? (
-            <div
-              className="parallel-pane-info-popover"
-              data-parallel-pane-layer={sessionId}
-            >
-              <strong>{t("shell.parallelPaneInfoTitle")}</strong>
-              <dl className="parallel-pane-info-list">
-                <div>
-                  <dt>{t("shell.createSessionProviderLabel")}</dt>
-                  <dd>{getProviderDisplayName((session ?? entry.session).provider, "full")}</dd>
-                </div>
-                <div>
-                  <dt>{t("shell.parallelPaneModelFallback")}</dt>
-                  <dd>{modelLabel}</dd>
-                </div>
-                <div>
-                  <dt>{t("shell.parallelPaneIsolatedWorkspaceTitle")}</dt>
-                  <dd>{isolatedWorkspaceBranchName ?? t("common.unknown")}</dd>
-                </div>
-              </dl>
-
-              {paneSessionIsolatedWorkspace?.lifecycleStatus === "active" ? (
-                <button
-                  type="button"
-                  className="secondary-button parallel-pane-promote-action"
-                  disabled={promotingWorkspaceId === paneSessionIsolatedWorkspace.id}
-                  onClick={() => {
-                    const isolatedWorkspaceId = paneSessionIsolatedWorkspace?.id;
-
-                    if (!isolatedWorkspaceId) {
-                      return;
-                    }
-
-                    void onPromoteWorkspace(isolatedWorkspaceId);
-                  }}
-                >
-                  {promotingWorkspaceId === paneSessionIsolatedWorkspace.id
-                    ? t("shell.parallelPanePromoting")
-                    : t("shell.parallelPanePromoteAction")}
-                </button>
-              ) : null}
-            </div>
-          ) : null}
         </header>
 
       <div className="parallel-conversation-pane-body">
@@ -1346,6 +1581,7 @@ function ParallelConversationMemberPane({
         />
       </div>
       </article>
+      {infoPopoverOverlay}
       {toolsPanelOverlay}
     </>
   );
@@ -1454,16 +1690,6 @@ function PaneResizeIcon() {
         strokeLinejoin="round"
         strokeWidth="1.1"
       />
-    </svg>
-  );
-}
-
-function PaneMoreIcon() {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      <circle cx="3.25" cy="8" r="1.2" fill="currentColor" />
-      <circle cx="8" cy="8" r="1.2" fill="currentColor" />
-      <circle cx="12.75" cy="8" r="1.2" fill="currentColor" />
     </svg>
   );
 }

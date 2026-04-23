@@ -7,6 +7,9 @@ import { t } from "../../../shared/i18n";
 import { ParallelConversationGroupView } from "./ParallelConversationGroupView";
 
 const mockGetParallelGroupDetail = vi.fn();
+const mockDeleteSession = vi.fn();
+const mockListProviderCapabilities = vi.fn();
+const mockNavigate = vi.fn();
 const mockRequestNavigationRefresh = vi.fn();
 const mockSelectWorkspace = vi.fn();
 const mockShowToast = vi.fn();
@@ -22,6 +25,15 @@ let mockNavigationGroups: Array<{
   sessions: Array<Record<string, unknown>>;
   childWorktrees: never[];
 }> = [];
+
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
+
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate
+  };
+});
 
 vi.mock("../../../platform/platform-provider", () => ({
   usePlatform: () => ({
@@ -55,7 +67,9 @@ vi.mock("../api/conversation-api", async () => {
 
   return {
     ...actual,
+    deleteSession: (...args: unknown[]) => mockDeleteSession(...args),
     getParallelGroupDetail: (...args: unknown[]) => mockGetParallelGroupDetail(...args),
+    listProviderCapabilities: (...args: unknown[]) => mockListProviderCapabilities(...args),
     promoteSessionIsolatedWorkspace: vi.fn(),
     forkSession: vi.fn(),
     sendLiveMessage: vi.fn()
@@ -197,6 +211,25 @@ vi.mock("../runtime/session-runtime-store", () => {
 describe("ParallelConversationGroupView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockDeleteSession.mockResolvedValue(undefined);
+    mockListProviderCapabilities.mockResolvedValue({
+      codex: {
+        provider: "codex",
+        canStartSession: true,
+        canResumeSession: true,
+        canSendMessage: true,
+        inRunInputMode: "none",
+        supportsSubagents: false,
+        supportsInterrupt: true,
+        supportsStructuredToolCalls: true,
+        supportsTokenUsage: true,
+        supportsAttachments: true,
+        supportsPermissionPrompt: true,
+        supportsCheckpoint: false,
+        modelOptions: [{ id: "provider-default", name: "跟随 CLI 默认模型", usesProviderDefault: true }],
+        limitations: []
+      }
+    });
     const detail = createDetail();
     mockNavigationGroups = [
       {
@@ -220,7 +253,7 @@ describe("ParallelConversationGroupView", () => {
     mockGetParallelGroupDetail.mockResolvedValue(detail);
   });
 
-  it("会在 pane 头部显示工具按钮，并且能打开工具栏、信息与色板弹层", async () => {
+  it("会在 pane 头部显示工具按钮，并且在信息悬浮框里展示色板与移除入口", async () => {
     const user = userEvent.setup();
 
     render(
@@ -276,13 +309,42 @@ describe("ParallelConversationGroupView", () => {
     expect(closeButton.querySelector("svg")).not.toBeNull();
     expect(screen.getByRole("button", { name: t("shell.parallelPaneResizeAction") })).toBeInTheDocument();
 
-    await user.click(paneScope.getByRole("button", { name: t("shell.parallelPaneMoreAction") }));
-    expect(await paneScope.findByText(t("shell.parallelPaneColorPaletteLabel"))).toBeInTheDocument();
+    await user.click(paneScope.getByRole("button", { name: t("shell.parallelPaneInfoAction") }));
+    expect(paneScope.queryByRole("button", { name: t("shell.parallelPaneMoreAction") })).not.toBeInTheDocument();
+    expect(await screen.findByText(t("shell.parallelPaneInfoTitle"))).toBeInTheDocument();
+    expect(screen.getByText("parallel/original")).toBeInTheDocument();
+    expect(screen.getByText(t("shell.parallelPaneColorPaletteLabel"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.parallelPaneRemoveAction") })).toBeInTheDocument();
+  });
+
+  it("在信息悬浮框点击移除并行会话后，会删除会话并刷新当前视图", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter>
+        <ParallelConversationGroupView
+          groupId="parallel-group-1"
+          currentSessionId="session-1"
+        />
+      </MemoryRouter>
+    );
+
+    const panePrompt = await screen.findByText("原版风格");
+    const pane = panePrompt.closest(".parallel-conversation-pane");
+
+    if (!(pane instanceof HTMLElement)) {
+      throw new Error("未找到并行 pane");
+    }
+
+    const paneScope = within(pane);
 
     await user.click(paneScope.getByRole("button", { name: t("shell.parallelPaneInfoAction") }));
-    expect(await paneScope.findByText(t("shell.parallelPaneInfoTitle"))).toBeInTheDocument();
-    expect(paneScope.getByText("parallel/original")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: t("shell.parallelPaneRemoveAction") }));
 
+    expect(mockDeleteSession).toHaveBeenCalledWith("session-1");
+    expect(mockRequestNavigationRefresh).toHaveBeenCalled();
+    expect(mockNavigate).toHaveBeenCalledWith("/workspaces/workspace-1/sessions");
+    expect(await screen.findByText(t("shell.parallelGroupEmpty"))).toBeInTheDocument();
   });
 
   it("工具窗口默认贴住当前 pane，外部点击和再次点工具按钮都不会直接关掉", async () => {
@@ -344,6 +406,69 @@ describe("ParallelConversationGroupView", () => {
 
     await user.click(within(popover).getByRole("button", { name: t("common.close") }));
     expect(document.querySelector(".parallel-pane-tools-popover")).toBeNull();
+  });
+
+  it("会在标题栏显示追加按钮，并在点击后打开追加弹窗", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter>
+        <ParallelConversationGroupView
+          groupId="parallel-group-1"
+          currentSessionId="session-1"
+        />
+      </MemoryRouter>
+    );
+
+    const addButton = await screen.findByRole("button", { name: t("shell.parallelAppendAction") });
+    expect(addButton).toBeEnabled();
+
+    await user.click(addButton);
+
+    expect(await screen.findByRole("dialog", { name: t("shell.parallelAppendModalTitle") })).toBeInTheDocument();
+    const promptField = screen.getByLabelText(t("shell.parallelAppendSharedPromptLabel"));
+    expect(promptField).toHaveValue("复制 B 站首页");
+    expect(promptField).toHaveAttribute("readonly");
+  });
+
+  it("并行成员已满 4 个时会禁用追加按钮", async () => {
+    const fullDetail = createDetail();
+    fullDetail.group.requestedCount = 4;
+    fullDetail.members = [
+      fullDetail.members[0],
+      createMember("session-2", 1, "成员二"),
+      createMember("session-3", 2, "成员三"),
+      createMember("session-4", 3, "成员四")
+    ];
+    mockNavigationGroups = [
+      {
+        workspace: {
+          id: "workspace-1",
+          name: "TEST",
+          path: "/Users/jackson/Code/TEST",
+          backgroundColor: null,
+          createdAt: "2026-04-23T12:00:00.000Z",
+          updatedAt: "2026-04-23T12:00:00.000Z"
+        },
+        sessions: fullDetail.members.map((item) => ({
+          ...item.session,
+          sessionIsolatedWorkspace: item.sessionIsolatedWorkspace ?? null
+        })),
+        childWorktrees: []
+      }
+    ];
+    mockGetParallelGroupDetail.mockResolvedValueOnce(fullDetail);
+
+    render(
+      <MemoryRouter>
+        <ParallelConversationGroupView
+          groupId="parallel-group-1"
+          currentSessionId="session-1"
+        />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole("button", { name: t("shell.parallelAppendAction") })).toBeDisabled();
   });
 });
 
@@ -427,5 +552,51 @@ function createDetail() {
         }
       }
     ]
+  };
+}
+
+function createMember(sessionId: string, ordinal: number, title: string) {
+  return {
+    member: {
+      groupId: "parallel-group-1",
+      sessionId,
+      ordinal,
+      role: ordinal === 0 ? "anchor" : "member",
+      memberPrompt: title,
+      provider: "codex",
+      model: null,
+      createdAt: "2026-04-23T12:00:00.000Z",
+      updatedAt: "2026-04-23T12:00:00.000Z",
+      deletedAt: null
+    },
+    session: {
+      sessionId,
+      workspaceId: "workspace-1",
+      parentSessionId: null,
+      provider: "codex",
+      title,
+      summary: null,
+      createdAt: "2026-04-23T12:00:00.000Z",
+      updatedAt: "2026-04-23T12:00:00.000Z",
+      lastMessageAt: "2026-04-23T12:00:00.000Z",
+      activityState: "idle",
+      unreadCount: 0,
+      hasActiveRun: false,
+      hasPendingPermissionRequest: false,
+      forkDepth: 0,
+      forkOriginSessionId: null,
+      forkOriginMessageId: null,
+      forkDraftSourceSessionId: null,
+      forkDraftSourceMessageId: null,
+      parallelGroup: {
+        groupId: "parallel-group-1",
+        role: ordinal === 0 ? "anchor" : "member",
+        ordinal,
+        anchorSessionId: "session-1",
+        displayParentSessionId: ordinal === 0 ? null : "session-1"
+      },
+      sessionIsolatedWorkspace: null
+    },
+    sessionIsolatedWorkspace: null
   };
 }

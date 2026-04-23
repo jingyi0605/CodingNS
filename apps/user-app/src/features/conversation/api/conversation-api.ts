@@ -434,6 +434,10 @@ export interface CreateParallelSessionGroupPayload {
   members: ParallelSessionMemberConfigDto[];
 }
 
+export interface AppendParallelGroupMembersPayload {
+  members: ParallelSessionMemberConfigDto[];
+}
+
 export interface ReorderWorkspacesPayload {
   workspaceIds: string[];
 }
@@ -1196,6 +1200,19 @@ export function createParallelGroupFromWorkspace(
 export function getParallelGroupDetail(groupId: string) {
   return httpClient.request<ParallelSessionGroupDetailDto>(
     `/api/parallel-groups/${encodeURIComponent(groupId)}`
+  );
+}
+
+export function appendParallelGroupMembers(
+  groupId: string,
+  payload: AppendParallelGroupMembersPayload
+) {
+  return httpClient.request<ParallelSessionGroupDetailDto>(
+    `/api/parallel-groups/${encodeURIComponent(groupId)}/members`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }
   );
 }
 
