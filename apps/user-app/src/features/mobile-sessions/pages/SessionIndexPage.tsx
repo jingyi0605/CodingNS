@@ -5,7 +5,6 @@ import { useNavigate } from "react-router-dom";
 import { t } from "../../../shared/i18n";
 import type { ProviderId, SessionSummaryDto } from "../../conversation/api/conversation-api";
 import { getProviderDisplayName } from "../../conversation/capability/provider-ui";
-import { resolveSessionDisplayParentSessionId } from "../../conversation/parallel-session-display";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import { isRealSubagentSession } from "../../conversation/session-fork-display";
 import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
@@ -14,6 +13,7 @@ import {
   buildWorkspaceSessionIndexPath,
   buildWorkspaceSessionPath,
   buildNavigationSessionTree,
+  resolveNavigationSessionParentId,
   type WorkbenchNavigationEntry,
   type WorkbenchNavigationTreeNode
 } from "../../workbench/utils/workbench-navigation";
@@ -79,7 +79,9 @@ export function SessionIndexPage() {
                 return false;
               }
 
-              const parentSessionId = resolveSessionDisplayParentSessionId(session);
+              const parentSessionId = resolveNavigationSessionParentId(session, {
+                mode: "mobile"
+              });
 
               if (!parentSessionId) {
                 return true;
@@ -103,11 +105,11 @@ export function SessionIndexPage() {
     [currentWorkspaceEntries, favoriteSet]
   );
   const visibleTree = useMemo(
-    () => buildNavigationSessionTree(currentWorkspaceEntries),
+    () => buildNavigationSessionTree(currentWorkspaceEntries, { mode: "mobile" }),
     [currentWorkspaceEntries]
   );
   const favoriteTree = useMemo(
-    () => buildNavigationSessionTree(favoriteEntries),
+    () => buildNavigationSessionTree(favoriteEntries, { mode: "mobile" }),
     [favoriteEntries]
   );
   const archivedSessions = useMemo(

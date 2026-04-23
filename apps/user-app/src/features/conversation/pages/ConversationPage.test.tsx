@@ -331,6 +331,139 @@ describe("ConversationPage", () => {
     expect(screen.queryByTestId("session-header")).not.toBeInTheDocument();
   });
 
+  it("移动端并行会话仍按普通单会话视图展示，也不会挂载并行创建弹窗", () => {
+    mockLiveRuntimeState.session = {
+      ...mockLiveRuntimeState.session,
+      sessionId: "session-live-1",
+      workspaceId: "workspace-1",
+      parallelGroup: {
+        groupId: "parallel-group-1",
+        role: "anchor",
+        memberCount: 3,
+        sourceType: "new",
+        sourceSessionId: null,
+        anchorSessionId: "session-live-1",
+        colorToken: "parallel-group-1"
+      }
+    };
+
+    renderLiveConversationPage();
+
+    expect(screen.queryByTestId("parallel-conversation-group-view")).not.toBeInTheDocument();
+    expect(screen.getByTestId("timeline")).toBeInTheDocument();
+    expect(mockParallelConversationGroupView).not.toHaveBeenCalled();
+    expect(mockParallelSessionCreateModal).not.toHaveBeenCalled();
+  });
+
+  it("移动端并行成员挂隔离工作区时，右滑会显示父工作区会话列表而不是空白", async () => {
+    mockLiveRuntimeState.session = {
+      ...mockLiveRuntimeState.session,
+      sessionId: "session-live-1",
+      workspaceId: "workspace-isolated-1",
+      title: "复制B站首页 YouTube风格",
+      parallelGroup: {
+        groupId: "parallel-group-1",
+        role: "member",
+        memberCount: 2,
+        sourceType: "new",
+        sourceSessionId: null,
+        anchorSessionId: "session-anchor-1",
+        colorToken: "parallel-group-1"
+      },
+      sessionIsolatedWorkspace: {
+        id: "isolated-record-1",
+        workspaceId: "workspace-isolated-1",
+        sourceWorkspaceId: "workspace-1",
+        branchName: "parallel/member-1",
+        lifecycleStatus: "active",
+        promotedAt: null,
+        createdAt: "2026-04-24T08:00:00.000Z",
+        updatedAt: "2026-04-24T08:00:00.000Z"
+      }
+    };
+    mockUseWorkbenchShell.mockReturnValue(
+      createMobileWorkbenchShellValue({
+        navigationGroups: [
+          {
+            workspace: {
+              id: "workspace-1",
+              name: "工作区一",
+              path: "/Users/jackson/workspace-1"
+            },
+            sessions: [
+              {
+                ...mockLiveRuntimeState.session,
+                workspaceId: "workspace-1",
+                sessionIsolatedWorkspace: {
+                  id: "isolated-record-1",
+                  workspaceId: "workspace-isolated-1",
+                  sourceWorkspaceId: "workspace-1",
+                  branchName: "parallel/member-1",
+                  lifecycleStatus: "active",
+                  promotedAt: null,
+                  createdAt: "2026-04-24T08:00:00.000Z",
+                  updatedAt: "2026-04-24T08:00:00.000Z"
+                }
+              },
+              {
+                sessionId: "session-1",
+                workspaceId: "workspace-1",
+                provider: "codex",
+                providerSessionId: "provider-session-1",
+                rawStoreRef: "store://session-1",
+                parentSessionId: null,
+                forkMethod: null,
+                forkSourceType: null,
+                forkSourceSessionId: null,
+                forkSourceMessageId: null,
+                isSubagent: false,
+                subagentLabel: null,
+                isArchived: false,
+                isFavorite: false,
+                title: "历史会话 Alpha",
+                messageCount: 4,
+                lastMessageAt: "2026-03-28T08:00:00.000Z",
+                createdAt: "2026-03-28T07:50:00.000Z",
+                updatedAt: "2026-03-28T08:00:00.000Z",
+                syncStatus: "idle",
+                syncCursor: null,
+                lastSyncAt: null,
+                lastErrorCode: null,
+                lastErrorDetail: null,
+                resumedAt: null,
+                runningState: "idle",
+                activitySource: "none",
+                lastEventAt: "2026-03-28T08:00:00.000Z",
+                completedAt: null,
+                lastSeenAt: null,
+                activityState: "idle"
+              }
+            ]
+          }
+        ]
+      })
+    );
+
+    const view = renderLiveConversationPage();
+    const stage = view.container.querySelector(".mobile-conversation-stage") as HTMLElement;
+
+    fireEvent.touchStart(stage, {
+      touches: [{ clientX: 24, clientY: 180 }]
+    });
+    fireEvent.touchMove(stage, {
+      touches: [{ clientX: 140, clientY: 184 }]
+    });
+    fireEvent.touchEnd(stage, {
+      changedTouches: [{ clientX: 140, clientY: 184 }]
+    });
+
+    expect(await screen.findByText("历史会话 Alpha")).toBeInTheDocument();
+    expect(view.container.querySelector(".mobile-conversation-preview-item-title")).toHaveTextContent(
+      "复制B站首页 YouTube风格"
+    );
+    expect(screen.queryByText(t("shell.emptyWorkspaceSessions"))).not.toBeInTheDocument();
+  });
+
   it("当前会话发送请求未完成时，也会先把 Composer 切到可停止态", async () => {
     const deferred = createDeferred();
     mockRuntimeStoreSendMessage.mockReturnValue(deferred.promise);

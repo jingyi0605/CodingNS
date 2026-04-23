@@ -279,7 +279,7 @@ describe("SessionIndexPage", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("会按 displayParentSessionId 构建并行树投影，并显示并行标签", () => {
+  it("移动端会把并行会话当普通工作区会话平铺展示", () => {
     contextValue.navigationGroups = [
       {
         workspace: createWorkspace("workspace-parallel", "并行项目"),
@@ -337,17 +337,19 @@ describe("SessionIndexPage", () => {
       initialEntry: "/workspaces/workspace-parallel/sessions"
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /^(展开子代理列表|Expand Sub-agent List)$/ }));
+    expect(
+      screen.queryByRole("button", { name: /^(展开子代理列表|Expand Sub-agent List)$/ })
+    ).not.toBeInTheDocument();
+
     const memberCard = screen.getByText("并行成员").closest(".session-list-item");
 
     if (!memberCard) {
       throw new Error("未找到并行成员卡片");
     }
 
-    expect(memberCard).toHaveAttribute("data-depth", "1");
-    expect(within(memberCard).getByText(/^(并行|Parallel)$/)).toBeInTheDocument();
-    expect(within(memberCard).getByText(/^(成员|Member)$/)).toBeInTheDocument();
-    expect(within(memberCard).queryByText(/^(隔离工作区|Isolated Workspace)$/)).not.toBeInTheDocument();
+    expect(memberCard).toHaveAttribute("data-depth", "0");
+    expect(within(memberCard).queryByText(t("shell.parallelGroupBadge", { count: 2 }))).not.toBeInTheDocument();
+    expect(within(memberCard).queryByText(t("shell.parallelGroupMemberBadge"))).not.toBeInTheDocument();
   });
 
   it("当前工作区切到子工作树后，只显示子工作树自己的会话", () => {

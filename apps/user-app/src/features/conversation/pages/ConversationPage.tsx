@@ -56,6 +56,7 @@ import { useWorkbenchShell } from "../components/WorkbenchLayout";
 import { isRealSubagentSession } from "../session-fork-display";
 import {
   resolveSessionNavigationWorkspaceId,
+  resolveSessionToolWorkspaceId,
   writeParallelGroupTransitionSignal
 } from "../parallel-session-display";
 import { SessionRuntimeStore, useSessionRuntimeStore } from "../runtime/session-runtime-store";
@@ -87,6 +88,7 @@ import {
   buildWorkspaceSessionIndexPath,
   buildWorkspaceSessionPath,
   flattenNavigationSessions,
+  resolveNavigationSessionParentId,
   type WorkbenchNavigationEntry,
   type WorkbenchNavigationTreeNode
 } from "../../workbench/utils/workbench-navigation";
@@ -287,12 +289,22 @@ function LiveConversationPage({
     : null;
   const showInlineHeader = shellMode !== "mobile";
   const mobilePreview = useMobileConversationPreviewController(!showInlineHeader);
-  const mobileWorkspaceId = session?.workspaceId ?? navigationSession?.workspaceId ?? null;
+  const currentSessionSummary = session ?? navigationSession ?? null;
+  const currentSessionIsolatedWorkspace =
+    session?.sessionIsolatedWorkspace
+    ?? navigationSession?.sessionIsolatedWorkspace
+    ?? null;
+  const mobileNavigationWorkspaceId = currentSessionSummary
+    ? resolveSessionNavigationWorkspaceId(currentSessionSummary, currentSessionIsolatedWorkspace)
+    : null;
+  const mobileToolWorkspaceId = currentSessionSummary
+    ? resolveSessionToolWorkspaceId(currentSessionSummary, currentSessionIsolatedWorkspace)
+    : null;
   const mobileToolPanel = useMobileConversationToolPanelController({
     enabled: !showInlineHeader,
     initialPanel: initialToolPanel,
     sessionId,
-    workspaceId: mobileWorkspaceId,
+    workspaceId: mobileToolWorkspaceId,
     suspendMainGesture: !showInlineHeader && mobilePreview.isVisible
   });
   const mobileFavoriteSessionIdSet = useMemo(
@@ -319,10 +331,10 @@ function LiveConversationPage({
     () =>
       buildMobilePreviewItems(
         navigationGroups,
-        session?.workspaceId ?? navigationSession?.workspaceId ?? null,
+        mobileNavigationWorkspaceId,
         mobileFavoriteSessionIdSet
       ),
-    [mobileFavoriteSessionIdSet, navigationGroups, navigationSession?.workspaceId, session?.workspaceId]
+    [mobileFavoriteSessionIdSet, mobileNavigationWorkspaceId, navigationGroups]
   );
   const mobileFavoritePreviewItems = useMemo(
     () => buildMobileFavoritePreviewItems(favoriteSessions, navigationGroups),
@@ -335,20 +347,20 @@ function LiveConversationPage({
   );
   const currentWorkspaceEntity = useMemo(
     () =>
-      mobileWorkspaceId
-        ? mobileWorkspaces.find((workspace) => workspace.id === mobileWorkspaceId) ?? null
+      mobileNavigationWorkspaceId
+        ? mobileWorkspaces.find((workspace) => workspace.id === mobileNavigationWorkspaceId) ?? null
         : null,
-    [mobileWorkspaceId, mobileWorkspaces]
+    [mobileNavigationWorkspaceId, mobileWorkspaces]
   );
   const currentWorkspaceContext =
-    (mobileWorkspaceId ? workspaceVisualContextMap[mobileWorkspaceId] ?? null : null)
+    (mobileNavigationWorkspaceId ? workspaceVisualContextMap[mobileNavigationWorkspaceId] ?? null : null)
     ?? (currentWorkspaceEntity ? createFallbackWorkspaceVisualContext(currentWorkspaceEntity) : null);
   const mobileWorkspaceTarget = useMemo(
-    () => findNavigationWorkspaceTarget(navigationGroups, mobileWorkspaceId),
-    [mobileWorkspaceId, navigationGroups]
+    () => findNavigationWorkspaceTarget(navigationGroups, mobileNavigationWorkspaceId),
+    [mobileNavigationWorkspaceId, navigationGroups]
   );
   const mobileWorkspaceSummary =
-    mobileWorkspaceOptions.find((item) => item.workspace.id === mobileWorkspaceId)
+    mobileWorkspaceOptions.find((item) => item.workspace.id === mobileNavigationWorkspaceId)
     ?? (mobileWorkspaceTarget
       ? {
           workspace: mobileWorkspaceTarget.workspace,
@@ -360,16 +372,17 @@ function LiveConversationPage({
         }
       : null);
   const nextMobileSessionEntry = useMemo(
-    () => resolveNextMobileSessionEntry(navigationGroups, mobileWorkspaceId, sessionId),
-    [mobileWorkspaceId, navigationGroups, sessionId]
+    () => resolveNextMobileSessionEntry(navigationGroups, mobileNavigationWorkspaceId, sessionId),
+    [mobileNavigationWorkspaceId, navigationGroups, sessionId]
   );
   const mobileDraftProvider = session?.provider ?? navigationSession?.provider ?? null;
   const mobileSessionTitlePresentation = useMemo(
     () => buildSessionTitlePresentation((session ?? navigationSession)?.title ?? null, t("conversation.titleFallback")),
     [navigationSession, session]
   );
-  const currentSessionSummary = session ?? navigationSession ?? null;
-  const activeParallelGroupId = currentSessionSummary?.parallelGroup?.groupId ?? null;
+  const supportsParallelSessionFeatures = showInlineHeader;
+  const activeParallelGroupId =
+    supportsParallelSessionFeatures ? currentSessionSummary?.parallelGroup?.groupId ?? null : null;
   const mobileMainGestureHandlers = !showInlineHeader
     ? mergeMobileGestureHandlers(mobilePreview.mainGestureHandlers, mobileToolPanel.mainGestureHandlers)
     : null;
@@ -840,15 +853,17 @@ function LiveConversationPage({
             isDragging={mobilePreview.isDragging}
             gestureHandlers={mobilePreview.railGestureHandlers}
             activeSessionId={sessionId}
-            createSessionActionLabel={mobileWorkspaceId && mobileDraftProvider ? t("shell.createSession") : undefined}
+            createSessionActionLabel={
+              mobileNavigationWorkspaceId && mobileDraftProvider ? t("shell.createSession") : undefined
+            }
             favoriteItems={mobileFavoritePreviewItems}
             items={mobilePreviewItems}
             expandedRootIds={expandedMobilePreviewRootIds}
             workspaceSectionLabel={mobileWorkspaceSummary?.label ?? t("shell.mobileConversationCurrentWorkspaceSection")}
             onCreateSession={
-              mobileWorkspaceId && mobileDraftProvider
+              mobileNavigationWorkspaceId && mobileDraftProvider
                 ? () => {
-                    startDraftSession(mobileWorkspaceId, mobileDraftProvider);
+                    startDraftSession(mobileNavigationWorkspaceId, mobileDraftProvider);
                   }
                 : undefined
             }
@@ -1030,12 +1045,12 @@ function LiveConversationPage({
             ) : null}
           </div>
         </div>
-        {!showInlineHeader && mobileWorkspaceId ? (
+        {!showInlineHeader && mobileToolWorkspaceId ? (
           <MobileConversationToolPanelOverlay
             activePanel={mobileToolPanel.activePanel}
             open={mobileToolPanel.isOpen}
             sessionId={sessionId}
-            workspaceId={mobileWorkspaceId}
+            workspaceId={mobileToolWorkspaceId}
             navigationGroups={navigationGroups}
             onClose={() => {
               mobileToolPanel.closePanel();
@@ -1092,8 +1107,8 @@ function LiveConversationPage({
               tone: "success"
             });
 
-            if (mobileWorkspaceId) {
-              selectWorkspace(mobileWorkspaceId);
+            if (mobileNavigationWorkspaceId) {
+              selectWorkspace(mobileNavigationWorkspaceId);
               writeMobileConversationPreviewMode("preview");
               if (nextMobileSessionEntry) {
                 navigate(
@@ -1105,7 +1120,7 @@ function LiveConversationPage({
                 return;
               }
 
-              navigate(buildWorkspaceSessionIndexPath(mobileWorkspaceId));
+              navigate(buildWorkspaceSessionIndexPath(mobileNavigationWorkspaceId));
               return;
             }
 
@@ -1151,49 +1166,51 @@ function LiveConversationPage({
           }
         }}
       />
-      <ParallelSessionCreateModal
-        open={parallelCreateOpen}
-        source={
-          currentSessionSummary
-            ? {
-                kind: "session",
-                sessionId,
-                workspaceId: currentSessionSummary.workspaceId,
-                workspaceName: currentWorkspaceContext?.displayName ?? currentSessionSummary.workspaceId,
-                sessionTitle: currentSessionSummary.title,
-                defaultProvider: currentSessionSummary.provider
-              }
-            : null
-        }
-        onClose={() => setParallelCreateOpen(false)}
-        onCreated={async (detail) => {
-          detail.members.forEach((item) => {
-            upsertNavigationSession(item.session);
-          });
-          writeParallelGroupTransitionSignal(detail.group.id);
-          await requestNavigationRefresh();
-
-          const anchorMember =
-            detail.members.find((item) => item.session.sessionId === detail.group.anchorSessionId)
-            ?? detail.members[0]
-            ?? null;
-
-          if (anchorMember) {
-            const navigationWorkspaceId = resolveSessionNavigationWorkspaceId(
-              anchorMember.session,
-              anchorMember.sessionIsolatedWorkspace
-            );
-            selectWorkspace(navigationWorkspaceId);
-            navigate(buildWorkspaceSessionPath(navigationWorkspaceId, anchorMember.session.sessionId));
+      {supportsParallelSessionFeatures ? (
+        <ParallelSessionCreateModal
+          open={parallelCreateOpen}
+          source={
+            currentSessionSummary
+              ? {
+                  kind: "session",
+                  sessionId,
+                  workspaceId: currentSessionSummary.workspaceId,
+                  workspaceName: currentWorkspaceContext?.displayName ?? currentSessionSummary.workspaceId,
+                  sessionTitle: currentSessionSummary.title,
+                  defaultProvider: currentSessionSummary.provider
+                }
+              : null
           }
+          onClose={() => setParallelCreateOpen(false)}
+          onCreated={async (detail) => {
+            detail.members.forEach((item) => {
+              upsertNavigationSession(item.session);
+            });
+            writeParallelGroupTransitionSignal(detail.group.id);
+            await requestNavigationRefresh();
 
-          setParallelCreateOpen(false);
-          showToast({
-            title: t("shell.parallelCreateSucceeded"),
-            tone: "success"
-          });
-        }}
-      />
+            const anchorMember =
+              detail.members.find((item) => item.session.sessionId === detail.group.anchorSessionId)
+              ?? detail.members[0]
+              ?? null;
+
+            if (anchorMember) {
+              const navigationWorkspaceId = resolveSessionNavigationWorkspaceId(
+                anchorMember.session,
+                anchorMember.sessionIsolatedWorkspace
+              );
+              selectWorkspace(navigationWorkspaceId);
+              navigate(buildWorkspaceSessionPath(navigationWorkspaceId, anchorMember.session.sessionId));
+            }
+
+            setParallelCreateOpen(false);
+            showToast({
+              title: t("shell.parallelCreateSucceeded"),
+              tone: "success"
+            });
+          }}
+        />
+      ) : null}
     </>
   );
 }
@@ -1724,10 +1741,6 @@ function createDraftSessionSummary(draft: DraftConversationContext): SessionSumm
   };
 }
 
-function resolveNavigationParentSessionId(session: SessionSummaryDto) {
-  return session.parentSessionId?.trim() || null;
-}
-
 function filterVisibleNavigationSessions(sessions: readonly SessionSummaryDto[]) {
   const sessionById = new Map(sessions.map((session) => [session.sessionId, session] as const));
   const visibilityCache = new Map<string, boolean>();
@@ -1743,7 +1756,9 @@ function filterVisibleNavigationSessions(sessions: readonly SessionSummaryDto[])
       return false;
     }
 
-    const parentSessionId = resolveNavigationParentSessionId(session);
+    const parentSessionId = resolveNavigationSessionParentId(session, {
+      mode: "mobile"
+    });
 
     if (!parentSessionId) {
       visibilityCache.set(session.sessionId, true);
@@ -1785,7 +1800,7 @@ function buildMobilePreviewItems(
       session,
       workspace: workspaceTarget.workspace
     }));
-  const visibleTree = buildNavigationSessionTree(visibleEntries);
+  const visibleTree = buildNavigationSessionTree(visibleEntries, { mode: "mobile" });
 
   return visibleTree.filter(
     (node) =>
@@ -1811,7 +1826,8 @@ function buildMobileFavoritePreviewItems(
         filterVisibleNavigationSessions(workspaceTarget.sessions).map((session) => ({
           session,
           workspace: workspaceTarget.workspace
-        }))
+        })),
+        { mode: "mobile" }
       );
       const node = findNavigationTreeNodeBySessionId(workspaceTree, entry.session.sessionId);
 

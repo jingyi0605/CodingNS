@@ -117,9 +117,10 @@ export function SessionListItem({
     activityBadgeLabel
       ? resolveSessionActivityBadgeClassName("session-list-activity-badge", session)
       : null;
-  const parallelGroupLabel = resolveParallelGroupLabel(session.parallelGroup);
-  const parallelRoleLabel = resolveParallelRoleLabel(session.parallelGroup);
-  const parallelGroupStyle = createParallelGroupStyle(session.parallelGroup);
+  const showParallelPresentation = variant !== "mobile";
+  const parallelGroupLabel = showParallelPresentation ? resolveParallelGroupLabel(session.parallelGroup) : null;
+  const parallelRoleLabel = showParallelPresentation ? resolveParallelRoleLabel(session.parallelGroup) : null;
+  const parallelGroupStyle = showParallelPresentation ? createParallelGroupStyle(session.parallelGroup) : undefined;
 
   useEffect(() => {
     return () => {
@@ -319,8 +320,8 @@ export function SessionListItem({
       data-workspace-tone={workspaceTone}
       data-has-subsessions={hasSubsessions}
       data-variant={variant}
-      data-parallel-group={session.parallelGroup ? "true" : undefined}
-      data-parallel-role={session.parallelGroup?.role ?? undefined}
+      data-parallel-group={showParallelPresentation && session.parallelGroup ? "true" : undefined}
+      data-parallel-role={showParallelPresentation ? session.parallelGroup?.role ?? undefined : undefined}
       style={parallelGroupStyle}
       onContextMenu={(event) => {
         if (!showActions) {

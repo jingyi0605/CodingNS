@@ -19,6 +19,7 @@ export interface WorkbenchNavigationEntry {
 }
 
 export type WorkbenchNavigationTreeNode = SessionTreeNode<WorkbenchNavigationEntry>;
+export type NavigationSessionTreeMode = "default" | "mobile";
 
 export function buildWorkspaceHomePath(): string {
   return "/workspaces";
@@ -104,13 +105,29 @@ export function flattenNavigationSessions(
 }
 
 export function buildNavigationSessionTree(
-  entries: readonly WorkbenchNavigationEntry[]
+  entries: readonly WorkbenchNavigationEntry[],
+  options?: {
+    mode?: NavigationSessionTreeMode;
+  }
 ): WorkbenchNavigationTreeNode[] {
   return buildSessionTree(entries, {
     getId: (entry) => entry.session.sessionId,
-    getParentId: (entry) => resolveSessionDisplayParentSessionId(entry.session),
+    getParentId: (entry) => resolveNavigationSessionParentId(entry.session, options),
     compare: sortNavigationEntries
   });
+}
+
+export function resolveNavigationSessionParentId(
+  session: Pick<SessionSummaryDto, "displayParentSessionId" | "parentSessionId">,
+  options?: {
+    mode?: NavigationSessionTreeMode;
+  }
+) {
+  if (options?.mode === "mobile") {
+    return session.parentSessionId?.trim() || null;
+  }
+
+  return resolveSessionDisplayParentSessionId(session);
 }
 
 export function buildDraftSessionPath(workspaceId: string, provider: ProviderId): string {
