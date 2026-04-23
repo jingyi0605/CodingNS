@@ -40,7 +40,7 @@
 
 ### Out of Scope
 
-- 多 provider 并行尝试
+- 并行会话组上层编排
 - 一键从父会话批量拉起多个子工作树
 - 自动冲突解决
 - 自动验证并给出结果评分
@@ -132,7 +132,7 @@
 
 ### 非功能需求 1：可维护性
 
-1. WHEN 后续 `spec012` 接入多 provider 并行编排 THEN System SHALL 直接复用本 Spec 的工作树元数据和生命周期能力。
+1. WHEN 后续 `spec012` 接入并行会话组与会话级临时隔离工作区 THEN System SHALL 直接复用本 Spec 的正式 worktree 元数据和生命周期能力。
 2. WHEN 排查问题 THEN System SHALL 能快速定位 `rootWorkspaceId`、`parentWorkspaceId`、`workspaceId`、`branchName` 和 `path` 的关系。
 
 ### 非功能需求 2：安全性
@@ -151,4 +151,4 @@
 - 工作台顶层结构基本不变，只是在展开区新增“子工作树”分组
 - 用户能一眼看出当前会话属于哪个工作树
 - 第一阶段只支持合并回直接父节点，规则清楚、不绕
-- 这套 worktree 能力可以直接成为 `spec012` 的基础，而不是日后返工重写
+- 这套 worktree 能力可以直接成为 `spec012` 里“临时升级为正式子工作区”那条链路的基础，而不是日后返工重写
