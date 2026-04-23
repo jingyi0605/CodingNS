@@ -208,9 +208,8 @@ function LiveConversationPage({
   const [parallelCreateOpen, setParallelCreateOpen] = useState(false);
   const navigationSession = useMemo(
     () =>
-      navigationGroups
-        .flatMap((group) => group.sessions)
-        .find((item) => item.sessionId === sessionId) ?? null,
+      flattenNavigationSessions(navigationGroups)
+        .find((entry) => entry.session.sessionId === sessionId)?.session ?? null,
     [navigationGroups, sessionId]
   );
 

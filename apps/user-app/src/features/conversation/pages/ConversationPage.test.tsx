@@ -917,6 +917,82 @@ describe("ConversationPage", () => {
       expect(screen.getByTestId("route-probe")).toHaveTextContent("/workspaces/workspace-2/sessions");
     });
   });
+
+  it("子工作树里的并行会话也会把导航摘要同步给 runtime store", async () => {
+    mockUseWorkbenchShell.mockReturnValue(
+      createMobileWorkbenchShellValue({
+        navigationGroups: [
+          {
+            workspace: {
+              id: "workspace-1",
+              name: "工作区一",
+              path: "/Users/jackson/workspace-1"
+            },
+            sessions: [],
+            childWorktrees: [
+              {
+                workspace: {
+                  id: "workspace-isolated-1",
+                  name: "并行工作树一",
+                  path: "/Users/jackson/workspace-1/.worktrees/parallel-1"
+                },
+                meta: {
+                  id: "worktree-meta-1",
+                  rootWorkspaceId: "workspace-1",
+                  parentWorkspaceId: "workspace-1",
+                  branchName: "parallel/member-1",
+                  linkedSessionId: "session-live-1",
+                  lifecycleStatus: "active",
+                  createdAt: "2026-04-24T08:00:00.000Z",
+                  updatedAt: "2026-04-24T08:00:00.000Z"
+                },
+                sessions: [
+                  {
+                    ...mockLiveRuntimeState.session,
+                    sessionId: "session-live-1",
+                    workspaceId: "workspace-isolated-1",
+                    parallelGroup: {
+                      groupId: "parallel-group-1",
+                      role: "member",
+                      memberCount: 2,
+                      sourceType: "new",
+                      sourceSessionId: null,
+                      anchorSessionId: "session-anchor-1",
+                      colorToken: "parallel-group-1"
+                    },
+                    sessionIsolatedWorkspace: {
+                      id: "isolated-record-1",
+                      workspaceId: "workspace-isolated-1",
+                      sourceWorkspaceId: "workspace-1",
+                      branchName: "parallel/member-1",
+                      lifecycleStatus: "active",
+                      promotedAt: null,
+                      createdAt: "2026-04-24T08:00:00.000Z",
+                      updatedAt: "2026-04-24T08:00:00.000Z"
+                    }
+                  }
+                ],
+                children: []
+              }
+            ]
+          }
+        ]
+      })
+    );
+
+    renderLiveConversationPage({
+      initialEntry: "/workspaces/workspace-isolated-1/sessions/session-live-1"
+    });
+
+    await waitFor(() => {
+      expect(mockRuntimeStoreApplyNavigationSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: "session-live-1",
+          workspaceId: "workspace-isolated-1"
+        })
+      );
+    });
+  });
 });
 
 function renderDraftConversationPage(options?: {
