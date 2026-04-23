@@ -75,6 +75,7 @@ describe("CodexRuntimeAdapter", () => {
       }
     };
     const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
       transportFactory: () => transport
     });
     const events: Array<Parameters<ProviderRuntimeEventSink["emit"]>[0]> = [];
@@ -186,6 +187,7 @@ describe("CodexRuntimeAdapter", () => {
       }
     };
     const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
       transportFactory: () => transport
     });
     const sink: ProviderRuntimeEventSink = {
@@ -240,6 +242,135 @@ describe("CodexRuntimeAdapter", () => {
       }),
       "thread-2"
     );
+  });
+
+  it("继续已有 Codex 会话时，thread/resume 超时会退回本地 transcript 重建", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-codex-runtime-resume-timeout-"));
+    tempDirs.push(tempDir);
+    const rawStoreRef = path.join(tempDir, "session.jsonl");
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          timestamp: "2026-04-23T10:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "rollout-2026-04-23T10-00-00-000z-timeout",
+            cwd: tempDir
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-23T10:00:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "保留这段历史"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-23T10:00:02.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "这段历史要被续接"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    const resumeThreadFromHistory = vi.fn(async () => ({
+      providerSessionId: "rebuilt-thread",
+      rawStoreRef
+    }));
+    let closed = false;
+    let closeHandler: ((error: Error | null) => void) | null = null;
+
+    const transport: CodexAppServerTransport = {
+      initialize: vi.fn(async () => undefined),
+      startThread: vi.fn(async () => {
+        throw new Error("UNEXPECTED_START_THREAD");
+      }),
+      resumeThread: vi.fn(async () => {
+        throw new Error("SERVER_TIMEOUT");
+      }),
+      resumeThreadFromHistory,
+      startTurn: vi.fn(async () => {
+        queueMicrotask(() => {
+          closeHandler?.(null);
+        });
+
+        return {
+          notification: {
+            method: "turn/completed",
+            params: {
+              threadId: "rebuilt-thread",
+              turn: { id: "turn-timeout-1", items: [], status: "completed" }
+            }
+          }
+        };
+      }),
+      steerTurn: vi.fn(async () => undefined),
+      interruptTurn: vi.fn(async () => undefined),
+      setNotificationHandler: () => undefined,
+      setServerRequestHandler: () => undefined,
+      setOnClose: (handler) => {
+        closeHandler = handler;
+      },
+      isClosed: () => closed,
+      close: () => {
+        closed = true;
+      }
+    };
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      transportFactory: () => transport
+    });
+    const sink: ProviderRuntimeEventSink = {
+      emit: vi.fn(async () => undefined),
+      updateSessionBinding: vi.fn()
+    };
+
+    const launched = await adapter.continueSession(
+      {
+        sessionId: "session-timeout-1",
+        workspaceId: "workspace-1",
+        workspacePath: tempDir,
+        provider: "codex",
+        providerSessionId: "019da3bc-6401-74e1-90f6-52fcb30d225f",
+        rawStoreRef,
+        options: {
+          content: "继续往下做",
+          clientRequestId: null,
+          model: null,
+          reasoningLevel: null,
+          permissionMode: null,
+          providerPrompt: null,
+          attachments: []
+        }
+      },
+      sink
+    );
+
+    expect(resumeThreadFromHistory).toHaveBeenCalledTimes(1);
+    expect(resumeThreadFromHistory).toHaveBeenCalledWith({
+      providerSessionId: null,
+      workspacePath: tempDir,
+      history: [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "保留这段历史" }]
+        },
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "这段历史要被续接" }]
+        }
+      ],
+      model: null
+    });
+    expect(launched.providerSessionId).toBe("rebuilt-thread");
+    await launched.interrupt();
   });
 
   it("会从 turn/start 返回的完成态 turn 中恢复最终 assistant 消息", async () => {
@@ -383,6 +514,7 @@ describe("CodexRuntimeAdapter", () => {
       }
     };
     const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
       transportFactory: () => transport
     });
     const sink: ProviderRuntimeEventSink = {

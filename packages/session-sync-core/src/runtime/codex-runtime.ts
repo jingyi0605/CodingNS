@@ -109,6 +109,7 @@ interface CodexRuntimeOptions {
 const CODEX_RUNTIME_DEBUG_ENABLED = /^(1|true|yes)$/i.test(
   process.env.CODINGNS_PERF_DEBUG?.trim() ?? ""
 );
+const CODEX_APP_SERVER_REQUEST_TIMEOUT_MS = 20_000;
 
 function logCodexRuntimeStep(
   scope: string,
@@ -203,131 +204,136 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     const transport = this.options.transportFactory
       ? this.options.transportFactory()
       : createCodexAppServerTransport(this.options);
-    const initializeStartedAtMs = performance.now();
-    await transport.initialize();
-    logCodexRuntimeStep("start_session.initialize", initializeStartedAtMs, {
-      sessionId: request.sessionId,
-      workspacePath: request.workspacePath
-    });
-    const abortController = new AbortController();
-    const eventQueue = createAsyncEventQueue();
-    const forwardTranslatedNotification = createCodexTranslatedNotificationForwarder(eventQueue);
-    const resumedSyntheticSession = await this.resumeSyntheticThreadFromHistory(transport, request);
-    const startedSession =
-      resumedSyntheticSession ??
-      await (async () => {
-        const startThreadStartedAtMs = performance.now();
-        const started = await transport.startThread(request);
-        logCodexRuntimeStep("start_session.thread_start", startThreadStartedAtMs, {
-          sessionId: request.sessionId,
-          providerSessionId: started.providerSessionId
-        });
-        return started;
-      })();
-    const providerSessionId = startedSession.providerSessionId;
-    const syntheticRawStoreRef = buildRuntimeRawStoreRef(
-      resolveRuntimeStoreKey(providerSessionId, request.sessionId)
-    );
-    const rawStoreRef = pickAvailableCodexRawStoreRef(
-      providerSessionId,
-      resumedSyntheticSession
-        ? [resumedSyntheticSession.rawStoreRef]
-        : [startedSession.rawStoreRef, request.rawStoreRef],
-      syntheticRawStoreRef
-    );
-    logCodexRuntimeStep("start_session.raw_store_ref_ready", launchPerfStartedAtMs, {
-      sessionId: request.sessionId,
-      providerSessionId,
-      synthetic: isSyntheticRawStoreRef(rawStoreRef),
-      hasProviderRawStoreRef: Boolean(startedSession.rawStoreRef),
-      providerRawStoreRefExists: Boolean(startedSession.rawStoreRef && existsSync(startedSession.rawStoreRef))
-    });
-
-    sink.updateSessionBinding({
-      providerSessionId,
-      rawStoreRef
-    });
-
-    let firstNotificationLogged = false;
-    transport.setNotificationHandler(async (notification) => {
-      if (!firstNotificationLogged) {
-        firstNotificationLogged = true;
-        logCodexRuntimeStep("start_session.first_notification", launchPerfStartedAtMs, {
-          sessionId: request.sessionId,
-          providerSessionId,
-          method: ensureText(notification.method).trim() || null
-        });
-      }
-      const translated = translateCodexAppServerNotification(notification);
-      forwardTranslatedNotification(translated);
-    });
-    transport.setServerRequestHandler(async (serverRequest) => {
-      if (!this.options.handleServerRequest) {
-        throw new Error("CODEX_APP_SERVER_REQUEST_NOT_SUPPORTED");
-      }
-
-      return this.options.handleServerRequest({
+    try {
+      const initializeStartedAtMs = performance.now();
+      await transport.initialize();
+      logCodexRuntimeStep("start_session.initialize", initializeStartedAtMs, {
+        sessionId: request.sessionId,
+        workspacePath: request.workspacePath
+      });
+      const abortController = new AbortController();
+      const eventQueue = createAsyncEventQueue();
+      const forwardTranslatedNotification = createCodexTranslatedNotificationForwarder(eventQueue);
+      const resumedSyntheticSession = await this.resumeSyntheticThreadFromHistory(transport, request);
+      const startedSession =
+        resumedSyntheticSession ??
+        await (async () => {
+          const startThreadStartedAtMs = performance.now();
+          const started = await transport.startThread(request);
+          logCodexRuntimeStep("start_session.thread_start", startThreadStartedAtMs, {
+            sessionId: request.sessionId,
+            providerSessionId: started.providerSessionId
+          });
+          return started;
+        })();
+      const providerSessionId = startedSession.providerSessionId;
+      const syntheticRawStoreRef = buildRuntimeRawStoreRef(
+        resolveRuntimeStoreKey(providerSessionId, request.sessionId)
+      );
+      const rawStoreRef = pickAvailableCodexRawStoreRef(
+        providerSessionId,
+        resumedSyntheticSession
+          ? [resumedSyntheticSession.rawStoreRef]
+          : [startedSession.rawStoreRef, request.rawStoreRef],
+        syntheticRawStoreRef
+      );
+      logCodexRuntimeStep("start_session.raw_store_ref_ready", launchPerfStartedAtMs, {
         sessionId: request.sessionId,
         providerSessionId,
-        request: serverRequest
+        synthetic: isSyntheticRawStoreRef(rawStoreRef),
+        hasProviderRawStoreRef: Boolean(startedSession.rawStoreRef),
+        providerRawStoreRefExists: Boolean(startedSession.rawStoreRef && existsSync(startedSession.rawStoreRef))
       });
-    });
-    transport.setOnClose((error) => {
-      if (error) {
-        eventQueue.push({
-          type: "turn.failed",
-          timestamp: nextTimestamp(),
-          error: error.message
+
+      sink.updateSessionBinding({
+        providerSessionId,
+        rawStoreRef
+      });
+
+      let firstNotificationLogged = false;
+      transport.setNotificationHandler(async (notification) => {
+        if (!firstNotificationLogged) {
+          firstNotificationLogged = true;
+          logCodexRuntimeStep("start_session.first_notification", launchPerfStartedAtMs, {
+            sessionId: request.sessionId,
+            providerSessionId,
+            method: ensureText(notification.method).trim() || null
+          });
+        }
+        const translated = translateCodexAppServerNotification(notification);
+        forwardTranslatedNotification(translated);
+      });
+      transport.setServerRequestHandler(async (serverRequest) => {
+        if (!this.options.handleServerRequest) {
+          throw new Error("CODEX_APP_SERVER_REQUEST_NOT_SUPPORTED");
+        }
+
+        return this.options.handleServerRequest({
+          sessionId: request.sessionId,
+          providerSessionId,
+          request: serverRequest
         });
+      });
+      transport.setOnClose((error) => {
+        if (error) {
+          eventQueue.push({
+            type: "turn.failed",
+            timestamp: nextTimestamp(),
+            error: error.message
+          });
+        }
+        eventQueue.close();
+      });
+      const startTurnStartedAtMs = performance.now();
+      const startTurnResult = await transport.startTurn(request, providerSessionId);
+      const startTurnNotification = startTurnResult?.notification ?? null;
+
+      if (startTurnNotification) {
+        const translated = translateCodexAppServerNotification(startTurnNotification);
+        forwardTranslatedNotification(translated);
       }
-      eventQueue.close();
-    });
-    const startTurnStartedAtMs = performance.now();
-    const startTurnResult = await transport.startTurn(request, providerSessionId);
-    const startTurnNotification = startTurnResult?.notification ?? null;
+      logCodexRuntimeStep("start_session.turn_start", startTurnStartedAtMs, {
+        sessionId: request.sessionId,
+        providerSessionId
+      });
+      logCodexRuntimeStep("start_session.ready", launchPerfStartedAtMs, {
+        sessionId: request.sessionId,
+        providerSessionId
+      });
 
-    if (startTurnNotification) {
-      const translated = translateCodexAppServerNotification(startTurnNotification);
-      forwardTranslatedNotification(translated);
-    }
-    logCodexRuntimeStep("start_session.turn_start", startTurnStartedAtMs, {
-      sessionId: request.sessionId,
-      providerSessionId
-    });
-    logCodexRuntimeStep("start_session.ready", launchPerfStartedAtMs, {
-      sessionId: request.sessionId,
-      providerSessionId
-    });
-
-    return {
-      providerSessionId,
-      rawStoreRef,
-      submitDuringRun: async (options) => {
-        await transport.steerTurn(options);
-      },
-      interrupt: async () => {
-        abortController.abort();
-        await transport.interruptTurn().catch(() => {
-          return;
-        });
-        transport.close();
-      },
-      isAlive: () => transport.isClosed() === false,
-      completed: this.runTurn(
-        null,
-        request,
-        sink,
+      return {
         providerSessionId,
         rawStoreRef,
-        abortController,
-        eventQueue.iterator,
-        [],
-        launchedAtMs,
-        launchPerfStartedAtMs
-      ).finally(() => {
-        transport.close();
-      })
-    };
+        submitDuringRun: async (options) => {
+          await transport.steerTurn(options);
+        },
+        interrupt: async () => {
+          abortController.abort();
+          await transport.interruptTurn().catch(() => {
+            return;
+          });
+          transport.close();
+        },
+        isAlive: () => transport.isClosed() === false,
+        completed: this.runTurn(
+          null,
+          request,
+          sink,
+          providerSessionId,
+          rawStoreRef,
+          abortController,
+          eventQueue.iterator,
+          [],
+          launchedAtMs,
+          launchPerfStartedAtMs
+        ).finally(() => {
+          transport.close();
+        })
+      };
+    } catch (error) {
+      transport.close();
+      throw error;
+    }
   }
 
   private async resumeSyntheticThreadFromHistory(
@@ -371,160 +377,165 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     const transport = this.options.transportFactory
       ? this.options.transportFactory()
       : createCodexAppServerTransport(this.options);
-    const runtimeStartedAtMs = performance.now();
-    const initializeStartedAtMs = performance.now();
-    await transport.initialize();
-    logCodexRuntimeStep("continue_session.initialize", initializeStartedAtMs, {
-      sessionId: request.sessionId,
-      providerSessionId
-    });
-    const syntheticRawStoreRef = buildRuntimeRawStoreRef(providerSessionId);
-    let resolvedSessionId = providerSessionId;
-    let resolvedFallbackHistoryRawStoreRef: string | null = null;
-    const resumeThreadStartedAtMs = performance.now();
-    let resumed: { providerSessionId: string; rawStoreRef: string | null };
-
     try {
-      resumed = await transport.resumeThread(request, resolvedSessionId);
-      logCodexRuntimeStep("continue_session.thread_resume", resumeThreadStartedAtMs, {
+      const runtimeStartedAtMs = performance.now();
+      const initializeStartedAtMs = performance.now();
+      await transport.initialize();
+      logCodexRuntimeStep("continue_session.initialize", initializeStartedAtMs, {
         sessionId: request.sessionId,
-        providerSessionId: resolvedSessionId,
-        fallback: false
+        providerSessionId
       });
-    } catch (error) {
-      const fallbackHistorySource = await this.resolveContinueFallbackHistorySource({
-        providerSessionId,
-        rawStoreRef: request.rawStoreRef,
-        workspacePath: request.workspacePath
-      });
-      const resumeHistory = fallbackHistorySource?.history ?? [];
+      const syntheticRawStoreRef = buildRuntimeRawStoreRef(providerSessionId);
+      let resolvedSessionId = providerSessionId;
+      let resolvedFallbackHistoryRawStoreRef: string | null = null;
+      const resumeThreadStartedAtMs = performance.now();
+      let resumed: { providerSessionId: string; rawStoreRef: string | null };
 
-      if (!shouldFallbackCodexContinueFromHistory(error, resumeHistory)) {
-        throw error;
-      }
-
-      resolvedFallbackHistoryRawStoreRef = fallbackHistorySource?.rawStoreRef ?? null;
-      const resumeFallbackStartedAtMs = performance.now();
-      resumed = await transport.resumeThreadFromHistory({
-        providerSessionId: null,
-        workspacePath: request.workspacePath,
-        history: resumeHistory,
-        model: request.options.model
-      });
-      resolvedSessionId = resumed.providerSessionId;
-      logCodexRuntimeStep("continue_session.thread_resume_from_history_fallback", resumeFallbackStartedAtMs, {
-        sessionId: request.sessionId,
-        requestedProviderSessionId: providerSessionId,
-        providerSessionId: resolvedSessionId,
-        historyLength: resumeHistory.length
-      });
-    }
-
-    const pickedRawStoreRef = pickAvailableCodexRawStoreRef(
-      resolvedSessionId,
-      [resolvedFallbackHistoryRawStoreRef, request.rawStoreRef, resumed.rawStoreRef],
-      syntheticRawStoreRef
-    );
-    const rawStoreRef =
-      !resumed.rawStoreRef?.trim() && resolvedFallbackHistoryRawStoreRef
-        ? resolvedFallbackHistoryRawStoreRef
-        : pickedRawStoreRef;
-    const abortController = new AbortController();
-    const eventQueue = createAsyncEventQueue();
-    const forwardTranslatedNotification = createCodexTranslatedNotificationForwarder(eventQueue);
-    logCodexRuntimeStep("continue_session.raw_store_ref_ready", runtimeStartedAtMs, {
-      sessionId: request.sessionId,
-      providerSessionId: resolvedSessionId,
-      synthetic: isSyntheticRawStoreRef(rawStoreRef),
-      hasResumedRawStoreRef: Boolean(resumed.rawStoreRef),
-      hasRequestRawStoreRef: Boolean(request.rawStoreRef),
-      resumedRawStoreRefExists: Boolean(resumed.rawStoreRef && existsSync(resumed.rawStoreRef))
-    });
-
-    sink.updateSessionBinding({
-      providerSessionId: resolvedSessionId,
-      rawStoreRef
-    });
-
-    let firstNotificationLogged = false;
-    transport.setNotificationHandler(async (notification) => {
-      if (!firstNotificationLogged) {
-        firstNotificationLogged = true;
-        logCodexRuntimeStep("continue_session.first_notification", runtimeStartedAtMs, {
+      try {
+        resumed = await transport.resumeThread(request, resolvedSessionId);
+        logCodexRuntimeStep("continue_session.thread_resume", resumeThreadStartedAtMs, {
           sessionId: request.sessionId,
           providerSessionId: resolvedSessionId,
-          method: ensureText(notification.method).trim() || null
+          fallback: false
+        });
+      } catch (error) {
+        const fallbackHistorySource = await this.resolveContinueFallbackHistorySource({
+          providerSessionId,
+          rawStoreRef: request.rawStoreRef,
+          workspacePath: request.workspacePath
+        });
+        const resumeHistory = fallbackHistorySource?.history ?? [];
+
+        if (!shouldFallbackCodexContinueFromHistory(error, resumeHistory)) {
+          throw error;
+        }
+
+        resolvedFallbackHistoryRawStoreRef = fallbackHistorySource?.rawStoreRef ?? null;
+        const resumeFallbackStartedAtMs = performance.now();
+        resumed = await transport.resumeThreadFromHistory({
+          providerSessionId: null,
+          workspacePath: request.workspacePath,
+          history: resumeHistory,
+          model: request.options.model
+        });
+        resolvedSessionId = resumed.providerSessionId;
+        logCodexRuntimeStep("continue_session.thread_resume_from_history_fallback", resumeFallbackStartedAtMs, {
+          sessionId: request.sessionId,
+          requestedProviderSessionId: providerSessionId,
+          providerSessionId: resolvedSessionId,
+          historyLength: resumeHistory.length
         });
       }
-      const translated = translateCodexAppServerNotification(notification);
-      forwardTranslatedNotification(translated);
-    });
-    transport.setServerRequestHandler(async (serverRequest) => {
-      if (!this.options.handleServerRequest) {
-        throw new Error("CODEX_APP_SERVER_REQUEST_NOT_SUPPORTED");
-      }
 
-      return this.options.handleServerRequest({
+      const pickedRawStoreRef = pickAvailableCodexRawStoreRef(
+        resolvedSessionId,
+        [resolvedFallbackHistoryRawStoreRef, request.rawStoreRef, resumed.rawStoreRef],
+        syntheticRawStoreRef
+      );
+      const rawStoreRef =
+        !resumed.rawStoreRef?.trim() && resolvedFallbackHistoryRawStoreRef
+          ? resolvedFallbackHistoryRawStoreRef
+          : pickedRawStoreRef;
+      const abortController = new AbortController();
+      const eventQueue = createAsyncEventQueue();
+      const forwardTranslatedNotification = createCodexTranslatedNotificationForwarder(eventQueue);
+      logCodexRuntimeStep("continue_session.raw_store_ref_ready", runtimeStartedAtMs, {
         sessionId: request.sessionId,
         providerSessionId: resolvedSessionId,
-        request: serverRequest
+        synthetic: isSyntheticRawStoreRef(rawStoreRef),
+        hasResumedRawStoreRef: Boolean(resumed.rawStoreRef),
+        hasRequestRawStoreRef: Boolean(request.rawStoreRef),
+        resumedRawStoreRefExists: Boolean(resumed.rawStoreRef && existsSync(resumed.rawStoreRef))
       });
-    });
-    transport.setOnClose((error) => {
-      if (error) {
-        eventQueue.push({
-          type: "turn.failed",
-          timestamp: nextTimestamp(),
-          error: error.message
+
+      sink.updateSessionBinding({
+        providerSessionId: resolvedSessionId,
+        rawStoreRef
+      });
+
+      let firstNotificationLogged = false;
+      transport.setNotificationHandler(async (notification) => {
+        if (!firstNotificationLogged) {
+          firstNotificationLogged = true;
+          logCodexRuntimeStep("continue_session.first_notification", runtimeStartedAtMs, {
+            sessionId: request.sessionId,
+            providerSessionId: resolvedSessionId,
+            method: ensureText(notification.method).trim() || null
+          });
+        }
+        const translated = translateCodexAppServerNotification(notification);
+        forwardTranslatedNotification(translated);
+      });
+      transport.setServerRequestHandler(async (serverRequest) => {
+        if (!this.options.handleServerRequest) {
+          throw new Error("CODEX_APP_SERVER_REQUEST_NOT_SUPPORTED");
+        }
+
+        return this.options.handleServerRequest({
+          sessionId: request.sessionId,
+          providerSessionId: resolvedSessionId,
+          request: serverRequest
         });
+      });
+      transport.setOnClose((error) => {
+        if (error) {
+          eventQueue.push({
+            type: "turn.failed",
+            timestamp: nextTimestamp(),
+            error: error.message
+          });
+        }
+        eventQueue.close();
+      });
+      const startTurnStartedAtMs = performance.now();
+      const startTurnResult = await transport.startTurn(request, resolvedSessionId);
+      const startTurnNotification = startTurnResult?.notification ?? null;
+
+      if (startTurnNotification) {
+        const translated = translateCodexAppServerNotification(startTurnNotification);
+        forwardTranslatedNotification(translated);
       }
-      eventQueue.close();
-    });
-    const startTurnStartedAtMs = performance.now();
-    const startTurnResult = await transport.startTurn(request, resolvedSessionId);
-    const startTurnNotification = startTurnResult?.notification ?? null;
+      logCodexRuntimeStep("continue_session.turn_start", startTurnStartedAtMs, {
+        sessionId: request.sessionId,
+        providerSessionId: resolvedSessionId
+      });
+      logCodexRuntimeStep("continue_session.ready", runtimeStartedAtMs, {
+        sessionId: request.sessionId,
+        providerSessionId: resolvedSessionId
+      });
 
-    if (startTurnNotification) {
-      const translated = translateCodexAppServerNotification(startTurnNotification);
-      forwardTranslatedNotification(translated);
-    }
-    logCodexRuntimeStep("continue_session.turn_start", startTurnStartedAtMs, {
-      sessionId: request.sessionId,
-      providerSessionId: resolvedSessionId
-    });
-    logCodexRuntimeStep("continue_session.ready", runtimeStartedAtMs, {
-      sessionId: request.sessionId,
-      providerSessionId: resolvedSessionId
-    });
-
-    return {
-      providerSessionId: resolvedSessionId,
-      rawStoreRef,
-      submitDuringRun: async (options) => {
-        await transport.steerTurn(options);
-      },
-      interrupt: async () => {
-        abortController.abort();
-        await transport.interruptTurn().catch(() => {
-          return;
-        });
-        transport.close();
-      },
-      isAlive: () => transport.isClosed() === false,
-      completed: this.runTurn(
-        null,
-        request,
-        sink,
-        resolvedSessionId,
+      return {
+        providerSessionId: resolvedSessionId,
         rawStoreRef,
-        abortController,
-        eventQueue.iterator,
-        [],
-        Date.now()
-      ).finally(() => {
-        transport.close();
-      })
-    };
+        submitDuringRun: async (options) => {
+          await transport.steerTurn(options);
+        },
+        interrupt: async () => {
+          abortController.abort();
+          await transport.interruptTurn().catch(() => {
+            return;
+          });
+          transport.close();
+        },
+        isAlive: () => transport.isClosed() === false,
+        completed: this.runTurn(
+          null,
+          request,
+          sink,
+          resolvedSessionId,
+          rawStoreRef,
+          abortController,
+          eventQueue.iterator,
+          [],
+          Date.now()
+        ).finally(() => {
+          transport.close();
+        })
+      };
+    } catch (error) {
+      transport.close();
+      throw error;
+    }
   }
 
   private async resolveContinueFallbackHistorySource(input: {
@@ -2563,7 +2574,21 @@ function sendJsonRpcRequest(
   const id = createRequestId();
 
   return new Promise<Record<string, unknown>>((resolve, reject) => {
-    pendingResponses.set(id, { resolve, reject });
+    const timeout = setTimeout(() => {
+      pendingResponses.delete(id);
+      reject(new Error("SERVER_TIMEOUT"));
+    }, CODEX_APP_SERVER_REQUEST_TIMEOUT_MS);
+
+    pendingResponses.set(id, {
+      resolve: (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      reject: (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      }
+    });
 
     try {
       writeJsonRpcMessage(child, {
@@ -2573,6 +2598,7 @@ function sendJsonRpcRequest(
         params: input.params
       });
     } catch (error) {
+      clearTimeout(timeout);
       pendingResponses.delete(id);
       reject(error instanceof Error ? error : new Error("CODEX_APP_SERVER_REQUEST_WRITE_FAILED"));
     }
@@ -2630,7 +2656,7 @@ function shouldFallbackCodexContinueFromHistory(
     return false;
   }
 
-  return isCodexThreadLoadError(error);
+  return isCodexThreadLoadError(error) || isCodexRequestTimeoutError(error);
 }
 
 function isCodexThreadLoadError(error: unknown): boolean {
@@ -2641,6 +2667,10 @@ function isCodexThreadLoadError(error: unknown): boolean {
     normalized.includes("thread not loaded") ||
     normalized.includes("no rollout found for thread id")
   );
+}
+
+function isCodexRequestTimeoutError(error: unknown): boolean {
+  return error instanceof Error && error.message === "SERVER_TIMEOUT";
 }
 
 function readProp(value: unknown, key: string): unknown {
