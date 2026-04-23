@@ -5,16 +5,16 @@ titleTemplate: CodingNS Docs
 hero:
   name: CodingNS Docs
   text: "Bring your AI coding workspace to every device"
-  tagline: "This is a docs hub organized around real goals such as getting started today, continuing from another device, or finding support, instead of forcing every reader through one rigid sequence."
+  tagline: "CodingNS keeps the same Host, workspace, and ongoing session available across desktop, mobile, and browser access so work can continue on any device."
   actions:
     - theme: brand
-      text: Get Started Today
+      text: Quick Start
       link: /en/quick-install/installation-paths
     - theme: alt
-      text: Learn the Product
+      text: Product Overview
       link: /en/overview/docs-overview
     - theme: alt
-      text: I Already Started
+      text: User Guide
       link: /en/user-guide/workspaces-and-sessions
     - theme: alt
       text: Remote Access
@@ -43,7 +43,7 @@ features:
     link: /en/community/community-overview
 ---
 
-## Start from your current goal
+## Quick Links
 
 - Want to judge whether CodingNS fits your workflow: open [Docs Map](/en/overview/docs-overview) and [Product Overview](/en/overview/product-overview)
 - Want to get it running today: start with [Choose an Install Path](/en/quick-install/installation-paths)
@@ -55,7 +55,7 @@ features:
 
 CodingNS is a remote AI coding workbench built around a persistent Host, real project workspaces, ongoing AI conversations, and integrated tools such as files, Git, and terminal access.
 
-## If you only want the shortest route
+## Quick Start
 
 1. choose an install path
 2. install the Host

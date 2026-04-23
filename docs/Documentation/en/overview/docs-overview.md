@@ -1,16 +1,14 @@
-# Docs Map
+# Documentation Overview
 
-These docs work best when you use them like a map instead of reading them front to back. Find the question you have right now, then jump straight to that page.
+## Common Entry Points
 
-## What you are probably looking for right now
+- Product introduction: read [Product Overview](/en/overview/product-overview) and [Platforms & Scenarios](/en/overview/platforms-and-scenarios)
+- Install and connect: read [Choose an Install Path](/en/quick-install/installation-paths), [Install the Host Service](/en/quick-install/host-installation), and [Connect a Client](/en/quick-install/client-connection)
+- Daily use: read [Workspaces & Sessions](/en/user-guide/workspaces-and-sessions) and [Files, Git & Terminal](/en/user-guide/files-git-and-terminal)
+- Remote access: read [Remote Access Overview](/en/remote-access/remote-access-overview)
+- Community and support: read [Community Entry](/en/community/community-overview)
 
-- Want to decide whether CodingNS fits you: start with [Product Overview](/en/overview/product-overview) and [Platforms & Scenarios](/en/overview/platforms-and-scenarios)
-- Want to get a Host and client running quickly: open [Choose an Install Path](/en/quick-install/installation-paths), [Install the Host Service](/en/quick-install/host-installation), and [Connect a Client](/en/quick-install/client-connection)
-- Want to understand how workspaces, conversations, files, Git, and terminal access fit together: open [Workspaces & Sessions](/en/user-guide/workspaces-and-sessions) and [Files, Git & Terminal](/en/user-guide/files-git-and-terminal)
-- Want to continue from outside the local network: open [Remote Access Overview](/en/remote-access/remote-access-overview)
-- Want links, community channels, or support: open [Community Entry](/en/community/community-overview)
-
-## Go straight to the page you need
+## Find Pages by Task
 
 | If you are stuck on this | Go here |
 | --- | --- |
@@ -22,15 +20,9 @@ These docs work best when you use them like a map instead of reading them front 
 | You want access from outside your current network | [Remote Access Overview](/en/remote-access/remote-access-overview) |
 | You need official links or support paths | [Community Entry](/en/community/community-overview) |
 
-## If you do want the full path once
+## Recommended Reading Order
 
-1. confirm the product fits your workflow
-2. get the Host running
-3. connect a client and finish first login
-4. come back for day-to-day usage and remote access pages as needed
-
-## How these docs are written
-
-- They explain what users see, do, and open next.
-- They stay on currently available product behavior.
-- They avoid forcing behind-the-scenes implementation detail into normal product pages.
+1. Start with [Product Overview](/en/overview/product-overview) to understand the product and its main capabilities.
+2. Continue with [Choose an Install Path](/en/quick-install/installation-paths), [Install the Host Service](/en/quick-install/host-installation), and [Connect a Client](/en/quick-install/client-connection).
+3. After the first connection, read [First Login](/en/quick-install/first-login).
+4. For day-to-day use, continue with [Workspaces & Sessions](/en/user-guide/workspaces-and-sessions), [Conversation Workbench](/en/user-guide/conversation-workbench), [Files, Git & Terminal](/en/user-guide/files-git-and-terminal), and [Remote Access Overview](/en/remote-access/remote-access-overview).
