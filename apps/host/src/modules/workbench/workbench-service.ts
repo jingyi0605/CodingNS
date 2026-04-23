@@ -6,6 +6,7 @@ import type { SessionHistoryService } from "../sessions/session-history-service.
 import type { WorkspaceNavigationStateRepository } from "../../storage/repositories/workspace-navigation-state-repository.js";
 import type { WorkspaceRepository } from "../../storage/repositories/workspace-repository.js";
 import type { WorkspaceWorktreeRepository } from "../../storage/repositories/workspace-worktree-repository.js";
+import type { SessionIsolatedWorkspaceRepository } from "../../storage/repositories/session-isolated-workspace-repository.js";
 import type { ButlerProfileService } from "../butler/butler-profile-service.js";
 import type { ButlerControlSessionRepository } from "../../storage/repositories/butler-control-session-repository.js";
 import { createTaskManager, type TaskManager } from "../tasks/task-manager.js";
@@ -47,7 +48,11 @@ export class WorkbenchService {
       WorkspaceWorktreeRepository,
       "listWorkspaceIds" | "listByRootWorkspaceId"
     >,
-    taskManager: TaskManager = createTaskManager()
+    taskManager: TaskManager = createTaskManager(),
+    private readonly sessionIsolatedWorkspaceRepository?: Pick<
+      SessionIsolatedWorkspaceRepository,
+      "listByLifecycleStatuses"
+    >
   ) {
     this.taskManager = taskManager;
     this.registerBackgroundTasks();
@@ -192,8 +197,16 @@ export class WorkbenchService {
 
   private listVisibleWorkspaces(workspaces: Workspace[]): Workspace[] {
     const childWorkspaceIdSet = new Set(this.workspaceWorktreeRepository?.listWorkspaceIds() ?? []);
+    const hiddenTemporaryWorkspaceIdSet = new Set(
+      this.sessionIsolatedWorkspaceRepository
+        ?.listByLifecycleStatuses(["active", "removing"])
+        .map((record) => record.workspaceId)
+        ?? []
+    );
 
-    return workspaces.filter((workspace) => !childWorkspaceIdSet.has(workspace.id));
+    return workspaces
+      .filter((workspace) => !childWorkspaceIdSet.has(workspace.id))
+      .filter((workspace) => !hiddenTemporaryWorkspaceIdSet.has(workspace.id));
   }
 
   private scheduleWorkspaceRefreshes(
@@ -344,6 +357,9 @@ interface WorkbenchSessionSummary {
   completedAt: string | null;
   lastSeenAt: string | null;
   activityState: SessionListItem["activityState"];
+  parallelGroup?: SessionListItem["parallelGroup"];
+  displayParentSessionId?: string | null;
+  sessionIsolatedWorkspace?: SessionListItem["sessionIsolatedWorkspace"];
 }
 
 function projectWorkbenchSessions(sessions: SessionListItem[]): WorkbenchSessionSummary[] {
@@ -378,6 +394,9 @@ function projectWorkbenchSession(session: SessionListItem): WorkbenchSessionSumm
     lastEventAt: session.lastEventAt,
     completedAt: session.completedAt,
     lastSeenAt: session.lastSeenAt,
-    activityState: session.activityState
+    activityState: session.activityState,
+    parallelGroup: session.parallelGroup ?? null,
+    displayParentSessionId: session.displayParentSessionId ?? null,
+    sessionIsolatedWorkspace: session.sessionIsolatedWorkspace ?? null
   };
 }

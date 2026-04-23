@@ -53,6 +53,9 @@ import type { SessionIndexRepository } from "../../storage/repositories/session-
 import type { SessionStateRepository } from "../../storage/repositories/session-state-repository.js";
 import type { SessionStatusSnapshotRepository } from "../../storage/repositories/session-status-snapshot-repository.js";
 import type { WorkspaceRepository } from "../../storage/repositories/workspace-repository.js";
+import type { ParallelSessionGroupRepository } from "../../storage/repositories/parallel-session-group-repository.js";
+import type { ParallelSessionMemberRepository } from "../../storage/repositories/parallel-session-member-repository.js";
+import type { SessionIsolatedWorkspaceRepository } from "../../storage/repositories/session-isolated-workspace-repository.js";
 import { inspectSessionActivity } from "./session-activity-inspector.js";
 import {
   SessionActivityAuthorityService,
@@ -64,6 +67,10 @@ import { SessionMessageAttachmentService } from "./session-message-attachment-se
 import { mapSessionProviderError } from "./session-provider-error-mapper.js";
 import type { SessionMessageOriginRepository } from "../../storage/repositories/session-message-origin-repository.js";
 import { SessionForkRepository } from "../../storage/repositories/session-fork-repository.js";
+import {
+  buildParallelGroupColorToken,
+  resolveParallelDisplayParentSessionId
+} from "../parallel-sessions/parallel-session-group-service.js";
 import { enrichClaudeCapabilities } from "../provider/claude-model-options.js";
 import {
   CodexModelOptionsService,
@@ -117,6 +124,7 @@ interface ForkSessionInput {
   sourceMessageSnapshot?: ForkSourceMessageSnapshot | null;
   strategy?: ForkStrategy;
   targetProvider?: string | null;
+  targetWorkspaceId?: string | null;
   sessionKind?: "default" | "annotation";
   annotationSourceMessageId?: string | null;
   annotationSourceText?: string | null;
@@ -264,6 +272,15 @@ export class SessionHistoryService {
   private readonly openCodeModelOptionsService: OpenCodeModelOptionsService;
   private readonly providerCliCommandPaths: Readonly<Partial<Record<string, string>>>;
   private readonly providerCliAvailability: Readonly<Partial<Record<string, boolean>>>;
+  private readonly parallelSessionGroupRepository: Pick<ParallelSessionGroupRepository, "listByIds"> | null;
+  private readonly parallelSessionMemberRepository: Pick<
+    ParallelSessionMemberRepository,
+    "findBySessionId" | "listBySessionIds" | "listByGroupIds"
+  > | null;
+  private readonly sessionIsolatedWorkspaceRepository: Pick<
+    SessionIsolatedWorkspaceRepository,
+    "findByOwnerSessionId" | "listByOwnerSessionIds" | "listBySourceWorkspaceId"
+  > | null;
   private readonly providerDiscoveryHelperClient = getSharedProviderDiscoveryHelperClient();
   private readonly providerSessionDiscoveryConfig: ProviderSessionDiscoveryHelperConfig;
   private readonly taskManager: TaskManager;
@@ -296,13 +313,25 @@ export class SessionHistoryService {
     > | null = null,
     sessionForkRepository: Pick<SessionForkRepository, "upsert" | "findBySessionId"> | null = null,
     adapterOverrides: SessionHistoryAdapterOverrides = {},
-    taskManager: TaskManager = createTaskManager()
+    taskManager: TaskManager = createTaskManager(),
+    parallelSessionGroupRepository: Pick<ParallelSessionGroupRepository, "listByIds"> | null = null,
+    parallelSessionMemberRepository: Pick<
+      ParallelSessionMemberRepository,
+      "findBySessionId" | "listBySessionIds" | "listByGroupIds"
+    > | null = null,
+    sessionIsolatedWorkspaceRepository: Pick<
+      SessionIsolatedWorkspaceRepository,
+      "findByOwnerSessionId" | "listByOwnerSessionIds" | "listBySourceWorkspaceId"
+    > | null = null
   ) {
     this.sessionActivityAuthorityService = sessionActivityAuthorityService;
     this.sessionForkRepository = sessionForkRepository ?? new SessionForkRepository(db);
     this.providerSessionDeleteCli =
       adapterOverrides.providerSessionDeleteCli ?? new CodingnsProviderSessionDeleteCli(config);
     this.taskManager = taskManager;
+    this.parallelSessionGroupRepository = parallelSessionGroupRepository;
+    this.parallelSessionMemberRepository = parallelSessionMemberRepository;
+    this.sessionIsolatedWorkspaceRepository = sessionIsolatedWorkspaceRepository;
     this.claudeCodeHomeDir = config.claudeCodeHomeDir;
     this.providerCliCommandPaths = {
       "claude-code": process.platform === "win32" ? "claude.cmd" : "claude",
@@ -830,11 +859,16 @@ export class SessionHistoryService {
   }
 
   listWorkspaceSessions(workspaceId: string, userId: string): SessionListItem[] {
+    const directItems = this.sessionIndexRepository
+      .listByWorkspace(workspaceId, userId)
+      .filter((item) => !this.isPendingSessionAlias(item));
+    const projectedItems = this.listProjectedIsolatedWorkspaceSessions(workspaceId, userId);
+
     return this.enrichSessionItems(
       workspaceId,
-      this.sessionIndexRepository
-        .listByWorkspace(workspaceId, userId)
-        .filter((item) => !this.isPendingSessionAlias(item))
+      sortSessionListItemsByRecentActivity(
+        mergeSessionListItemsBySessionId([...directItems, ...projectedItems])
+      )
     );
   }
 
@@ -1163,7 +1197,8 @@ export class SessionHistoryService {
 
   async forkSession(input: ForkSessionInput): Promise<SessionListItem> {
     const binding = this.getBindingOrThrow(input.sessionId);
-    const workspace = this.getWorkspaceOrThrow(binding.workspaceId);
+    const targetWorkspaceId = input.targetWorkspaceId?.trim() || binding.workspaceId;
+    const workspace = this.getWorkspaceOrThrow(targetWorkspaceId);
     const targetProvider = input.targetProvider?.trim() || binding.provider;
     this.assertProviderCapabilityEnabled(
       targetProvider,
@@ -1326,7 +1361,7 @@ export class SessionHistoryService {
       messages: reconstructedMessages
     });
     const startedSession = await this.startSessionDirect({
-      workspaceId: sourceBinding.workspaceId,
+      workspaceId: input.targetWorkspaceId?.trim() || sourceBinding.workspaceId,
       userId: input.userId,
       provider: input.targetProvider,
       initialPrompt: inheritedPrompt,
@@ -1371,7 +1406,7 @@ export class SessionHistoryService {
     })();
 
     const relationMap =
-      this.workspaceSessionRelations.get(sourceBinding.workspaceId)
+      this.workspaceSessionRelations.get(input.targetWorkspaceId?.trim() || sourceBinding.workspaceId)
       ?? new Map<string, SessionRelationDescriptor>();
 
     relationMap.set(startedSession.sessionId, {
@@ -1384,7 +1419,10 @@ export class SessionHistoryService {
       isSubagent: startedSession.isSubagent ?? false,
       subagentLabel: startedSession.subagentLabel ?? null
     });
-    this.workspaceSessionRelations.set(sourceBinding.workspaceId, relationMap);
+    this.workspaceSessionRelations.set(
+      input.targetWorkspaceId?.trim() || sourceBinding.workspaceId,
+      relationMap
+    );
 
     return this.getSessionListItemOrThrow(startedSession.sessionId, input.userId);
   }
@@ -2672,16 +2710,17 @@ export class SessionHistoryService {
 
   private enrichSessionItems(workspaceId: string, items: SessionListItem[]): SessionListItem[] {
     const relationMap = this.workspaceSessionRelations.get(workspaceId);
+    const projectionBySessionId = this.buildParallelProjectionBySessionId(items);
 
     if (!relationMap) {
-      return items.map((item) => this.enrichSessionItem(item));
+      return items.map((item) => this.enrichSessionItem(item, projectionBySessionId.get(item.sessionId)));
     }
 
     return items.map((item) => {
       const relation = relationMap.get(item.sessionId);
 
       if (!relation) {
-        return this.enrichSessionItem(item);
+        return this.enrichSessionItem(item, projectionBySessionId.get(item.sessionId));
       }
 
       return this.enrichSessionItem({
@@ -2692,11 +2731,21 @@ export class SessionHistoryService {
         annotationSourceText: relation.annotationSourceText,
         isSubagent: relation.isSubagent,
         subagentLabel: relation.subagentLabel
-      });
+      }, projectionBySessionId.get(item.sessionId));
     });
   }
 
-  private enrichSessionItem(item: SessionListItem): SessionListItem {
+  private enrichSessionItem(
+    item: SessionListItem,
+    projection?: {
+      parallelGroup: NonNullable<SessionListItem["parallelGroup"]>;
+      displayParentSessionId: string | null;
+      sessionIsolatedWorkspace: SessionListItem["sessionIsolatedWorkspace"];
+    }
+  ): SessionListItem {
+    const resolvedProjection =
+      projection
+      ?? this.buildParallelProjectionBySessionId([item]).get(item.sessionId);
     const relation = this.workspaceSessionRelations.get(item.workspaceId)?.get(item.sessionId);
     const nextItem = relation
       ? {
@@ -2719,7 +2768,130 @@ export class SessionHistoryService {
         };
     const resolution = this.sessionActivityAuthorityService.resolvePersistedSession(nextItem);
 
-    return applySessionActivityResolution(nextItem, resolution);
+    return applySessionActivityResolution({
+      ...nextItem,
+      parallelGroup: resolvedProjection?.parallelGroup ?? null,
+      displayParentSessionId: resolvedProjection?.displayParentSessionId ?? null,
+      sessionIsolatedWorkspace: resolvedProjection?.sessionIsolatedWorkspace ?? null
+    }, resolution);
+  }
+
+  private buildParallelProjectionBySessionId(items: readonly SessionListItem[]): Map<
+    string,
+    {
+      parallelGroup: NonNullable<SessionListItem["parallelGroup"]>;
+      displayParentSessionId: string | null;
+      sessionIsolatedWorkspace: SessionListItem["sessionIsolatedWorkspace"];
+    }
+  > {
+    const projectionBySessionId = new Map<
+      string,
+      {
+        parallelGroup: NonNullable<SessionListItem["parallelGroup"]>;
+        displayParentSessionId: string | null;
+        sessionIsolatedWorkspace: SessionListItem["sessionIsolatedWorkspace"];
+      }
+    >();
+
+    if (
+      !this.parallelSessionGroupRepository
+      || !this.parallelSessionMemberRepository
+      || !this.sessionIsolatedWorkspaceRepository
+      || items.length === 0
+    ) {
+      return projectionBySessionId;
+    }
+
+    const sessionIds = items.map((item) => item.sessionId);
+    const members = this.parallelSessionMemberRepository
+      .listBySessionIds(sessionIds)
+      .filter((member) => member.deletedAt === null);
+
+    if (members.length === 0) {
+      return projectionBySessionId;
+    }
+
+    const groupIds = [...new Set(members.map((member) => member.groupId))];
+    const groups = this.parallelSessionGroupRepository
+      .listByIds(groupIds)
+      .filter((group) => group.status !== "deleted");
+    const groupById = new Map(groups.map((group) => [group.id, group] as const));
+    const activeMembersByGroupId = new Map<string, typeof members>();
+
+    for (const member of this.parallelSessionMemberRepository.listByGroupIds(groupIds)) {
+      if (member.deletedAt !== null) {
+        continue;
+      }
+
+      const groupMembers = activeMembersByGroupId.get(member.groupId) ?? [];
+      groupMembers.push(member);
+      activeMembersByGroupId.set(member.groupId, groupMembers);
+    }
+
+    const isolatedWorkspaceBySessionId = new Map(
+      this.sessionIsolatedWorkspaceRepository
+        .listByOwnerSessionIds(sessionIds)
+        .map((record) => [record.ownerSessionId, record] as const)
+    );
+
+    for (const member of members) {
+      const group = groupById.get(member.groupId);
+
+      if (!group) {
+        continue;
+      }
+
+      const activeMembers = activeMembersByGroupId.get(member.groupId) ?? [member];
+      const isolatedWorkspace = isolatedWorkspaceBySessionId.get(member.sessionId) ?? null;
+
+      projectionBySessionId.set(member.sessionId, {
+        parallelGroup: {
+          groupId: group.id,
+          role: member.sessionId === group.anchorSessionId ? "anchor" : "member",
+          memberCount: activeMembers.length,
+          sourceType: group.sourceType,
+          sourceSessionId: group.sourceSessionId,
+          anchorSessionId: group.anchorSessionId,
+          colorToken: buildParallelGroupColorToken(group.id)
+        },
+        displayParentSessionId: resolveParallelDisplayParentSessionId(group, member),
+        sessionIsolatedWorkspace:
+          isolatedWorkspace
+            ? {
+                id: isolatedWorkspace.id,
+                workspaceId: isolatedWorkspace.workspaceId,
+                sourceWorkspaceId: isolatedWorkspace.sourceWorkspaceId,
+                branchName: isolatedWorkspace.branchName,
+                lifecycleStatus: isolatedWorkspace.lifecycleStatus,
+                promotedAt: isolatedWorkspace.promotedAt,
+                createdAt: isolatedWorkspace.createdAt,
+                updatedAt: isolatedWorkspace.updatedAt
+              }
+            : null
+      });
+    }
+
+    return projectionBySessionId;
+  }
+
+  private listProjectedIsolatedWorkspaceSessions(
+    workspaceId: string,
+    userId: string
+  ): SessionListItem[] {
+    if (!this.sessionIsolatedWorkspaceRepository) {
+      return [];
+    }
+
+    return this.sessionIsolatedWorkspaceRepository
+      .listBySourceWorkspaceId(workspaceId)
+      .filter(
+        (record) =>
+          record.lifecycleStatus === "active"
+          || record.lifecycleStatus === "removing"
+      )
+      .map((record) => this.sessionIndexRepository.findBySessionId(record.ownerSessionId, userId))
+      .filter((item): item is SessionListItem => Boolean(item))
+      .filter((item) => !this.isPendingSessionAlias(item));
   }
 
   private async pullSessionHistory(
@@ -5733,6 +5905,29 @@ async function runBatchedTransactions<TItem>(
     batchCount,
     maxBatchMs
   };
+}
+
+function mergeSessionListItemsBySessionId(items: readonly SessionListItem[]): SessionListItem[] {
+  const itemBySessionId = new Map<string, SessionListItem>();
+
+  for (const item of items) {
+    itemBySessionId.set(item.sessionId, item);
+  }
+
+  return [...itemBySessionId.values()];
+}
+
+function sortSessionListItemsByRecentActivity(items: readonly SessionListItem[]): SessionListItem[] {
+  return [...items].sort((left, right) => {
+    const leftPrimary = left.lastMessageAt ?? left.updatedAt;
+    const rightPrimary = right.lastMessageAt ?? right.updatedAt;
+
+    if (leftPrimary !== rightPrimary) {
+      return rightPrimary.localeCompare(leftPrimary);
+    }
+
+    return right.updatedAt.localeCompare(left.updatedAt);
+  });
 }
 
 function applyImmediateModelOptionFallbacks(

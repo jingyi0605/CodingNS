@@ -8,6 +8,7 @@ import { nowIso } from "../../shared/utils/time.js";
 import type { WorkspaceNavigationStateRepository } from "../../storage/repositories/workspace-navigation-state-repository.js";
 import type { WorkspaceRepository } from "../../storage/repositories/workspace-repository.js";
 import type { WorkspaceWorktreeRepository } from "../../storage/repositories/workspace-worktree-repository.js";
+import type { SessionIsolatedWorkspaceRepository } from "../../storage/repositories/session-isolated-workspace-repository.js";
 import type { Workspace, WorkspaceNavigationStateRecord } from "../../types/domain.js";
 import type { ButlerProfileService } from "../butler/butler-profile-service.js";
 import { createGitAuthContext, type GitAuthInput } from "../git/git-auth.js";
@@ -93,7 +94,11 @@ export class WorkspaceService {
     private readonly workspaceNavigationStateRepository: WorkspaceNavigationStateRepository,
     private readonly butlerProfileService?: Pick<ButlerProfileService, "getProfile">,
     private readonly workspaceWorktreeRepository?: Pick<WorkspaceWorktreeRepository, "listWorkspaceIds">,
-    taskManager: TaskManager = createTaskManager()
+    taskManager: TaskManager = createTaskManager(),
+    private readonly sessionIsolatedWorkspaceRepository?: Pick<
+      SessionIsolatedWorkspaceRepository,
+      "listByLifecycleStatuses"
+    >
   ) {
     this.taskManager = taskManager;
     this.registerBackgroundTasks();
@@ -332,17 +337,25 @@ export class WorkspaceService {
 
   private listVisibleWorkspaces(): Workspace[] {
     const childWorkspaceIdSet = new Set(this.workspaceWorktreeRepository?.listWorkspaceIds() ?? []);
+    const hiddenTemporaryWorkspaceIdSet = new Set(
+      this.sessionIsolatedWorkspaceRepository
+        ?.listByLifecycleStatuses(["active", "removing"])
+        .map((record) => record.workspaceId)
+        ?? []
+    );
     const butlerWorkspacePath = this.butlerProfileService?.getProfile()?.workspacePath ?? null;
 
     if (!butlerWorkspacePath) {
       return this.workspaceRepository
         .list()
-        .filter((workspace) => !childWorkspaceIdSet.has(workspace.id));
+        .filter((workspace) => !childWorkspaceIdSet.has(workspace.id))
+        .filter((workspace) => !hiddenTemporaryWorkspaceIdSet.has(workspace.id));
     }
 
     return this.workspaceRepository
       .list()
       .filter((workspace) => !childWorkspaceIdSet.has(workspace.id))
+      .filter((workspace) => !hiddenTemporaryWorkspaceIdSet.has(workspace.id))
       .filter((workspace) => !isPathInsideButlerWorkspace(workspace.path, butlerWorkspacePath));
   }
 

@@ -121,6 +121,16 @@ export type WorkspaceWorktreeLifecycleStatus =
   | "removing"
   | "removed";
 
+export type ParallelSessionGroupSourceType = "fork" | "new";
+export type ParallelSessionGroupStatus = "active" | "deleting" | "deleted";
+export type ParallelSessionMemberRole = "anchor" | "member";
+export type ParallelSessionWorkspaceIsolationMode = "none" | "temporary_worktree";
+export type SessionIsolatedWorkspaceLifecycleStatus =
+  | "active"
+  | "promoted"
+  | "removing"
+  | "removed";
+
 export interface WorkspaceWorktreeRecord {
   workspaceId: string;
   rootWorkspaceId: string;
@@ -136,6 +146,75 @@ export interface WorkspaceWorktreeRecord {
   lifecycleStatus: WorkspaceWorktreeLifecycleStatus;
   mergedAt: string | null;
   removedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ParallelSessionGroupRecord {
+  id: string;
+  workspaceId: string;
+  sourceType: ParallelSessionGroupSourceType;
+  sourceSessionId: string | null;
+  sourceMessageId: string | null;
+  sharedPrompt: string | null;
+  requestedCount: number;
+  anchorSessionId: string | null;
+  status: ParallelSessionGroupStatus;
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+}
+
+export interface ParallelSessionMemberRecord {
+  groupId: string;
+  sessionId: string;
+  ordinal: number;
+  role: ParallelSessionMemberRole;
+  provider: ProviderId;
+  model: string | null;
+  memberPrompt: string | null;
+  workspaceIsolationMode: ParallelSessionWorkspaceIsolationMode;
+  temporaryWorkspaceId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+}
+
+export interface SessionIsolatedWorkspaceRecord {
+  id: string;
+  groupId: string;
+  ownerSessionId: string;
+  workspaceId: string;
+  sourceWorkspaceId: string;
+  branchName: string;
+  baseRef: string;
+  baseCommit: string;
+  headCommit: string | null;
+  lifecycleStatus: SessionIsolatedWorkspaceLifecycleStatus;
+  promotedAt: string | null;
+  removedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ParallelSessionGroupSummary {
+  groupId: string;
+  role: ParallelSessionMemberRole;
+  memberCount: number;
+  sourceType: ParallelSessionGroupSourceType;
+  sourceSessionId: string | null;
+  anchorSessionId: string | null;
+  colorToken: string;
+}
+
+export interface SessionIsolatedWorkspaceSummary {
+  id: string;
+  workspaceId: string;
+  sourceWorkspaceId: string;
+  branchName: string;
+  lifecycleStatus: SessionIsolatedWorkspaceLifecycleStatus;
+  promotedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -313,6 +392,9 @@ export interface SessionListItem {
   lastSeenAt: string | null;
   watchdogTriggeredAt?: string | null;
   activityState: SessionActivityState;
+  parallelGroup?: ParallelSessionGroupSummary | null;
+  displayParentSessionId?: string | null;
+  sessionIsolatedWorkspace?: SessionIsolatedWorkspaceSummary | null;
 }
 
 export interface FileNode {

@@ -83,6 +83,9 @@ import { RelayTunnelService } from "../modules/relay-tunnel/relay-tunnel-service
 import { CcSwitchAdapter } from "../modules/model-switch/cc-switch-adapter.js";
 import { ModelSwitchController } from "../modules/model-switch/model-switch-controller.js";
 import { ModelSwitchService } from "../modules/model-switch/model-switch-service.js";
+import { ParallelSessionController } from "../modules/parallel-sessions/parallel-session-controller.js";
+import { ParallelSessionGroupService } from "../modules/parallel-sessions/parallel-session-group-service.js";
+import { SessionIsolatedWorkspaceService } from "../modules/parallel-sessions/session-isolated-workspace-service.js";
 import { ProviderController } from "../modules/provider/provider-controller.js";
 import { disposeSharedProviderDiscoveryHelperClient } from "../modules/provider/provider-discovery-helper-client.js";
 import { SkillController } from "../modules/skills/skill-controller.js";
@@ -133,6 +136,7 @@ import { registerDebugTargetRoutes } from "../routes/debug-targets.js";
 import { registerFileRoutes } from "../routes/files.js";
 import { registerGitRoutes } from "../routes/git.js";
 import { registerObservabilityRoutes } from "../routes/observability.js";
+import { registerParallelGroupRoutes } from "../routes/parallel-groups.js";
 import { registerPreferenceRoutes } from "../routes/preferences.js";
 import { registerProviderRoutes } from "../routes/providers.js";
 import { registerPublicRoutes } from "../routes/public.js";
@@ -182,6 +186,8 @@ import { FrameworkAnalysisResultRepository } from "../storage/repositories/frame
 import { GitRemoteCredentialRepository } from "../storage/repositories/git-remote-credential-repository.js";
 import { ManagedSkillRepository } from "../storage/repositories/managed-skill-repository.js";
 import { PortLeaseRepository } from "../storage/repositories/port-lease-repository.js";
+import { ParallelSessionGroupRepository } from "../storage/repositories/parallel-session-group-repository.js";
+import { ParallelSessionMemberRepository } from "../storage/repositories/parallel-session-member-repository.js";
 import { RecentFileRepository } from "../storage/repositories/recent-file-repository.js";
 import { RuntimeBindingRepository } from "../storage/repositories/runtime-binding-repository.js";
 import { SessionBindingRepository } from "../storage/repositories/session-binding-repository.js";
@@ -194,6 +200,7 @@ import { SessionMessageOriginRepository } from "../storage/repositories/session-
 import { SessionSendQueueRepository } from "../storage/repositories/session-send-queue-repository.js";
 import { SessionStateRepository } from "../storage/repositories/session-state-repository.js";
 import { SessionStatusSnapshotRepository } from "../storage/repositories/session-status-snapshot-repository.js";
+import { SessionIsolatedWorkspaceRepository } from "../storage/repositories/session-isolated-workspace-repository.js";
 import { InstanceTailscaleRepository } from "../storage/repositories/instance-tailscale-repository.js";
 import { InstanceRelayTunnelIdentityRepository } from "../storage/repositories/instance-relay-tunnel-identity-repository.js";
 import { InstanceRelayTunnelRepository } from "../storage/repositories/instance-relay-tunnel-repository.js";
@@ -243,6 +250,9 @@ export function createServer(config: HostConfig) {
     workspaceRepository: new WorkspaceRepository(database.db),
     workspaceWorktreeRepository: new WorkspaceWorktreeRepository(database.db),
     workspaceNavigationStateRepository: new WorkspaceNavigationStateRepository(database.db),
+    parallelSessionGroupRepository: new ParallelSessionGroupRepository(database.db),
+    parallelSessionMemberRepository: new ParallelSessionMemberRepository(database.db),
+    sessionIsolatedWorkspaceRepository: new SessionIsolatedWorkspaceRepository(database.db),
     debugTargetRepository: new DebugTargetRepository(database.db),
     debugServiceRepository: new DebugServiceRepository(database.db),
     frameworkAnalysisResultRepository: new FrameworkAnalysisResultRepository(database.db),
@@ -344,7 +354,8 @@ export function createServer(config: HostConfig) {
     repositories.workspaceNavigationStateRepository,
     butlerProfileService,
     repositories.workspaceWorktreeRepository,
-    taskManager
+    taskManager,
+    repositories.sessionIsolatedWorkspaceRepository
   );
   const fileAccessGuard = new FileAccessGuard(workspaceService, app.log);
   const recentFileService = new RecentFileService(repositories.recentFileRepository);
@@ -503,7 +514,10 @@ export function createServer(config: HostConfig) {
     repositories.sessionMessageOriginRepository,
     repositories.sessionForkRepository,
     {},
-    taskManager
+    taskManager,
+    repositories.parallelSessionGroupRepository,
+    repositories.parallelSessionMemberRepository,
+    repositories.sessionIsolatedWorkspaceRepository
   );
   runtimeObservabilityService = new RuntimeObservabilityService(
     () => sessionHistoryService.observeBackgroundTaskMetrics(),
@@ -606,6 +620,7 @@ export function createServer(config: HostConfig) {
   const sessionProviderUsageLimitGuardService = new SessionProviderUsageLimitGuardService(
     sessionHistoryService
   );
+  let parallelSessionGroupService!: ParallelSessionGroupService;
   const workbenchService = new WorkbenchService(
     repositories.workspaceRepository,
     repositories.workspaceNavigationStateRepository,
@@ -613,7 +628,8 @@ export function createServer(config: HostConfig) {
     butlerProfileService,
     repositories.butlerControlSessionRepository,
     repositories.workspaceWorktreeRepository,
-    taskManager
+    taskManager,
+    repositories.sessionIsolatedWorkspaceRepository
   );
   const butlerProjectService = new ButlerProjectService(
     repositories.butlerProjectRepository,
@@ -940,6 +956,22 @@ export function createServer(config: HostConfig) {
     gitCommandRunner,
     worktreeSyncService
   );
+  const sessionIsolatedWorkspaceService = new SessionIsolatedWorkspaceService(
+    repositories.sessionIsolatedWorkspaceRepository,
+    repositories.workspaceWorktreeRepository,
+    workspaceService,
+    gitReadService,
+    gitCommandRunner,
+    commandTemplateService
+  );
+  parallelSessionGroupService = new ParallelSessionGroupService(
+    repositories.parallelSessionGroupRepository,
+    repositories.parallelSessionMemberRepository,
+    repositories.sessionIsolatedWorkspaceRepository,
+    sessionHistoryService,
+    sessionLiveRuntimeService,
+    sessionIsolatedWorkspaceService
+  );
   const templateReverseProxyService = new TemplateReverseProxyService(commandTemplateService);
   const workspacePanelSnapshotService = new WorkspacePanelSnapshotService(
     fileTreeService,
@@ -992,6 +1024,10 @@ export function createServer(config: HostConfig) {
     sessionHistoryService,
     routedSessionLiveRuntimeService,
     repositories.butlerControlSessionRepository
+  );
+  const parallelSessionController = new ParallelSessionController(
+    parallelSessionGroupService,
+    sessionIsolatedWorkspaceService
   );
   const assistantCapabilityController = new AssistantCapabilityController(
     new AssistantCapabilityService(
@@ -1117,6 +1153,7 @@ export function createServer(config: HostConfig) {
   void registerWorkbenchRoutes(app, workbenchController);
   void registerButlerRoutes(app, butlerController);
   void registerSessionRoutes(app, sessionController);
+  void registerParallelGroupRoutes(app, parallelSessionController);
   void registerPreferenceRoutes(app, quickPhraseController, profileController);
   void registerSkillRoutes(app, skillController);
   void registerSystemRoutes(app, tailscaleController, relayTunnelController, modelSwitchController);
@@ -1219,6 +1256,7 @@ export function createServer(config: HostConfig) {
         sessionChangedFileService,
         sessionMessageAttachmentService,
         sessionLiveRuntimeService,
+        parallelSessionGroupService,
         terminalService,
         commandTemplateService
       }

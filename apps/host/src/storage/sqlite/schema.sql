@@ -236,6 +236,79 @@ CREATE INDEX IF NOT EXISTS idx_session_forks_parent_session_id
 CREATE INDEX IF NOT EXISTS idx_session_forks_source_message_id
   ON session_forks(fork_source_message_id);
 
+CREATE TABLE IF NOT EXISTS parallel_session_groups (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  source_type TEXT NOT NULL CHECK (source_type IN ('fork', 'new')),
+  source_session_id TEXT,
+  source_message_id TEXT,
+  shared_prompt TEXT,
+  requested_count INTEGER NOT NULL CHECK (requested_count BETWEEN 2 AND 4),
+  anchor_session_id TEXT,
+  status TEXT NOT NULL CHECK (status IN ('active', 'deleting', 'deleted')),
+  created_by_user_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+  FOREIGN KEY (created_by_user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_parallel_session_groups_workspace_id
+  ON parallel_session_groups(workspace_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_parallel_session_groups_anchor_session_id
+  ON parallel_session_groups(anchor_session_id);
+
+CREATE TABLE IF NOT EXISTS parallel_session_members (
+  group_id TEXT NOT NULL,
+  session_id TEXT NOT NULL PRIMARY KEY,
+  ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+  role TEXT NOT NULL CHECK (role IN ('anchor', 'member')),
+  provider TEXT NOT NULL,
+  model TEXT,
+  member_prompt TEXT,
+  workspace_isolation_mode TEXT NOT NULL CHECK (
+    workspace_isolation_mode IN ('none', 'temporary_worktree')
+  ),
+  temporary_workspace_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  FOREIGN KEY (group_id) REFERENCES parallel_session_groups(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_parallel_session_members_group_ordinal
+  ON parallel_session_members(group_id, ordinal);
+CREATE INDEX IF NOT EXISTS idx_parallel_session_members_group_id
+  ON parallel_session_members(group_id, deleted_at, ordinal ASC);
+
+CREATE TABLE IF NOT EXISTS session_isolated_workspaces (
+  id TEXT PRIMARY KEY,
+  group_id TEXT NOT NULL,
+  owner_session_id TEXT NOT NULL UNIQUE,
+  workspace_id TEXT NOT NULL,
+  source_workspace_id TEXT NOT NULL,
+  branch_name TEXT NOT NULL,
+  base_ref TEXT NOT NULL,
+  base_commit TEXT NOT NULL,
+  head_commit TEXT,
+  lifecycle_status TEXT NOT NULL CHECK (
+    lifecycle_status IN ('active', 'promoted', 'removing', 'removed')
+  ),
+  promoted_at TEXT,
+  removed_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (group_id) REFERENCES parallel_session_groups(id) ON DELETE CASCADE,
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+  FOREIGN KEY (source_workspace_id) REFERENCES workspaces(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_isolated_workspaces_group_id
+  ON session_isolated_workspaces(group_id, lifecycle_status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_session_isolated_workspaces_workspace_id
+  ON session_isolated_workspaces(workspace_id, lifecycle_status, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS session_changed_files (
   session_id TEXT NOT NULL,
   workspace_id TEXT NOT NULL,
