@@ -114,6 +114,25 @@ describe("client-runtime-manager", () => {
     });
   });
 
+  it("iOS 客户端会按 desktop 口径拉 runtime-config", async () => {
+    clientConfigStore.hydrate({
+      ...clientConfigStore.getState(),
+      platform: "ios"
+    });
+    requestMock.mockResolvedValue({
+      platform: "desktop",
+      hostBaseUrl: "http://127.0.0.1:3002",
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      relayTunnel: null
+    });
+
+    await syncActiveHostAuthenticatedRuntimeConfig();
+
+    expect(requestMock).toHaveBeenCalledWith("/api/client/runtime-config?platform=desktop");
+  });
+
   it("绑定信息缺失时会清掉本地残留的 relay profile", async () => {
     clientConfigStore.hydrate({
       ...clientConfigStore.getState(),

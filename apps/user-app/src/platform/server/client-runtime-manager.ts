@@ -28,7 +28,7 @@ export interface ClientRuntimeConfigView {
 
 export async function fetchAuthenticatedClientRuntimeConfig(): Promise<ClientRuntimeConfigView> {
   const runtimePlatform = clientConfigStore.getState().platform;
-  const platform = runtimePlatform === "desktop" ? "desktop" : "web";
+  const platform = runtimePlatform === "web" ? "web" : "desktop";
 
   return await httpClient.request<ClientRuntimeConfigView>(
     `/api/client/runtime-config?platform=${encodeURIComponent(platform)}`

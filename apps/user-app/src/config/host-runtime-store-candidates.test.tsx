@@ -137,10 +137,42 @@ describe("host-runtime-store 候选入口探测", () => {
     expect(hostRuntimeStore.getState().preferredCandidateEndpointId).toBeNull();
     expect(hostRuntimeStore.getState().preferredDirectCandidateEndpointId).toBeNull();
   });
+
+  it("Android 客户端会按 desktop 口径探测候选入口", async () => {
+    probeAuthenticatedHostCandidateEndpointMock.mockResolvedValueOnce({
+      status: "verified",
+      checkedAt: "2026-04-21T00:00:00.000Z",
+      errorCode: null,
+      errorDetail: null,
+      responseHostBaseUrl: "http://192.168.50.8:3002",
+      responseBindingId: "binding_demo",
+      responseHostFingerprint: "SHA256:demo"
+    }).mockResolvedValueOnce({
+      status: "verified",
+      checkedAt: "2026-04-21T00:00:01.000Z",
+      errorCode: null,
+      errorDetail: null,
+      responseHostBaseUrl: "https://demo.channel.codingns.com",
+      responseBindingId: "binding_demo",
+      responseHostFingerprint: "SHA256:demo"
+    });
+    clientConfigStore.hydrate(createRuntimeConfig({
+      platform: "android"
+    }));
+    authStore.hydrate(storedSession);
+
+    await waitFor(() => {
+      expect(hostRuntimeStore.getState().candidateProbePhase).toBe("ready");
+    });
+
+    expect(probeAuthenticatedHostCandidateEndpointMock).toHaveBeenCalledWith(expect.objectContaining({
+      platform: "desktop"
+    }));
+  });
 });
 
 function createRuntimeConfig(overrides?: {
-  platform?: "desktop" | "web";
+  platform?: "desktop" | "web" | "ios" | "android";
 }) {
   return {
     platform: overrides?.platform ?? ("desktop" as const),

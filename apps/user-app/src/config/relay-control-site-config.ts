@@ -29,10 +29,6 @@ export function safelyNormalizeRelayControlBaseUrl(value: string | null | undefi
 }
 
 export function resolveRelayControlBaseUrl(value: string | null | undefined): string {
-  if (!canConfigureRelayControlBaseUrl()) {
-    return FIXED_RELAY_CONTROL_BASE_URL;
-  }
-
   return safelyNormalizeRelayControlBaseUrl(value) ?? FIXED_RELAY_CONTROL_BASE_URL;
 }
 

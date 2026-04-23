@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clientConfigStore } from "../../../config/client-config-store";
+import * as relayEntryModule from "../../../config/relay-entry";
 import { authStore } from "../../auth/store/auth-store";
 import { httpClient } from "../../../network/http-client";
 import {
@@ -171,6 +172,48 @@ describe("WorkbenchHostSwitcher", () => {
         password: "Secret123!"
       });
     });
+  });
+
+  it("新增四级域名 HOST 时会复用 relay 入口解析逻辑", async () => {
+    const user = userEvent.setup();
+    const resolveRelayEntrySpy = vi.spyOn(relayEntryModule, "resolveRelayEntryConfigInputFromBaseUrl")
+      .mockResolvedValue({
+        tunnelDomain: "demo.channel.codingns.com",
+        controlBaseUrl: "https://channel.codingns.com:1443",
+        bindingId: "binding-demo",
+        hostFingerprint: "SHA256:demo"
+      });
+
+    render(
+      <ToastProvider>
+        <WorkbenchHostSwitcher />
+      </ToastProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "切换 HOST" }));
+    await user.click(screen.getByRole("button", { name: /新增 HOST/ }));
+    await user.type(screen.getByLabelText("HOST 名称"), "远程机房");
+    await user.type(screen.getByLabelText("HOST 地址"), "https://demo.channel.codingns.com:1443");
+    await user.click(screen.getByRole("button", { name: "保存 HOST" }));
+
+    await waitFor(() => {
+      const nextState = clientConfigStore.getState();
+      const nextHost = nextState.hosts.find((host) => host.name === "远程机房");
+
+      expect(nextState.activeHostId).toBe("host-1");
+      expect(nextHost).toMatchObject({
+        baseUrl: "https://demo.channel.codingns.com:1443",
+        relayTunnel: {
+          provider: "codingns_relay",
+          tunnelDomain: "demo.channel.codingns.com",
+          controlBaseUrl: "https://channel.codingns.com:1443",
+          bindingId: "binding-demo",
+          hostFingerprint: "SHA256:demo"
+        }
+      });
+    });
+
+    expect(resolveRelayEntrySpy).toHaveBeenCalledWith("https://demo.channel.codingns.com:1443");
   });
 
   it("支持删除非当前 HOST，并清理已保存的认证信息", async () => {

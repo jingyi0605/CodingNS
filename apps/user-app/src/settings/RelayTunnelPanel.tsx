@@ -69,6 +69,7 @@ export function RelayTunnelPanel() {
   const [status, setStatus] = useState<RelayTunnelStatusView | null>(null);
   const [hostLabelDraft, setHostLabelDraft] = useState("");
   const [controlBaseUrlDraft, setControlBaseUrlDraft] = useState(() => getFixedRelayControlBaseUrl());
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(() => canConfigureRelayControlBaseUrl());
   const [accountEmailDraft, setAccountEmailDraft] = useState("");
   const [accountPasswordDraft, setAccountPasswordDraft] = useState("");
   const [wallet, setWallet] = useState<RelayTrafficWalletSummary | null>(null);
@@ -82,21 +83,15 @@ export function RelayTunnelPanel() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [panelError, setPanelError] = useState<string | null>(null);
   const activeRef = useRef(true);
-  const canConfigureControlBaseUrl = canConfigureRelayControlBaseUrl();
   const savedControlBaseUrl = resolveRelayControlBaseUrl(status?.controlBaseUrl);
   const normalizedControlBaseUrlDraft = safelyNormalizeRelayControlBaseUrl(controlBaseUrlDraft);
-  const effectiveControlBaseUrl = canConfigureControlBaseUrl
-    ? normalizedControlBaseUrlDraft ?? savedControlBaseUrl
-    : getFixedRelayControlBaseUrl();
+  const effectiveControlBaseUrl = normalizedControlBaseUrlDraft ?? savedControlBaseUrl;
   const runtimeControlBaseUrl = resolveRelayControlBaseUrl(
-    canConfigureControlBaseUrl
-      ? (normalizedControlBaseUrlDraft ?? status?.controlBaseUrl)
-      : undefined
+    normalizedControlBaseUrlDraft ?? status?.controlBaseUrl
   );
   const normalizedHostLabelDraft = hostLabelDraft.trim();
   const canSaveControlBaseUrl =
-    canConfigureControlBaseUrl
-    && normalizedControlBaseUrlDraft !== null
+    normalizedControlBaseUrlDraft !== null
     && normalizedControlBaseUrlDraft !== savedControlBaseUrl;
   const activated = status?.activated ?? false;
   const canLoginControl =
@@ -188,13 +183,8 @@ export function RelayTunnelPanel() {
   }, [hostLabelCheckState, normalizedHostLabelDraft, status?.bindingId]);
 
   useEffect(() => {
-    if (!canConfigureControlBaseUrl) {
-      setControlBaseUrlDraft(getFixedRelayControlBaseUrl());
-      return;
-    }
-
     setControlBaseUrlDraft(savedControlBaseUrl);
-  }, [canConfigureControlBaseUrl, savedControlBaseUrl]);
+  }, [savedControlBaseUrl]);
 
   async function loadStatus(
     silent: boolean,
@@ -372,7 +362,7 @@ export function RelayTunnelPanel() {
     setPanelError(null);
 
     try {
-      await openExternalUrl(platform.bridge.openExternal, getFixedRelayControlBaseUrl());
+      await openExternalUrl(platform.bridge.openExternal, runtimeControlBaseUrl);
     } catch (error) {
       setPanelError(resolvePanelError(error));
     } finally {
@@ -385,7 +375,7 @@ export function RelayTunnelPanel() {
     setPanelError(null);
 
     try {
-      await openExternalUrl(platform.bridge.openExternal, getFixedRelayControlBaseUrl());
+      await openExternalUrl(platform.bridge.openExternal, runtimeControlBaseUrl);
     } catch (error) {
       setPanelError(resolvePanelError(error));
     } finally {
@@ -526,10 +516,6 @@ export function RelayTunnelPanel() {
   }
 
   async function handleSaveControlBaseUrl(): Promise<void> {
-    if (!canConfigureControlBaseUrl) {
-      return;
-    }
-
     if (!normalizedControlBaseUrlDraft) {
       setConfigError(t("settings.serverInvalid"));
       return;
@@ -553,49 +539,6 @@ export function RelayTunnelPanel() {
 
   return (
     <div className="settings-relay-tunnel-panel">
-      {canConfigureControlBaseUrl && !isTunnelReady ? (
-        <ModalSection
-          heading={t("settings.serverAddress")}
-          description={t("settings.relayTunnelServerAddressDescription")}
-        >
-          <div className="settings-relay-tunnel-form">
-            <ModalField
-              label={t("settings.serverAddress")}
-              description={t("settings.relayTunnelServerAddressHint")}
-            >
-              <input
-                aria-label={t("settings.serverAddress")}
-                className="settings-text-input"
-                type="url"
-                value={controlBaseUrlDraft}
-                onChange={(event) => {
-                  setControlBaseUrlDraft(event.target.value);
-                  setConfigError(null);
-                }}
-                placeholder={getFixedRelayControlBaseUrl()}
-              />
-            </ModalField>
-            {configError ? (
-              <RelayTunnelFeedbackBanner
-                title={t("settings.relayTunnelConfigErrorTitle")}
-                message={configError}
-              />
-            ) : null}
-          </div>
-
-          <ModalActions align="start" className="settings-relay-tunnel-actions">
-            <button
-              className="settings-button"
-              disabled={loading || pendingAction !== null || !canSaveControlBaseUrl}
-              type="button"
-              onClick={() => void handleSaveControlBaseUrl()}
-            >
-              {pendingAction === "save-config" ? t("common.loading") : t("common.save")}
-            </button>
-          </ModalActions>
-        </ModalSection>
-      ) : null}
-
       {loading && !status ? (
         <ModalSection
           heading={t("settings.relayTunnelWizardTitle")}
@@ -721,19 +664,71 @@ export function RelayTunnelPanel() {
                           message={loginError}
                         />
                       ) : null}
+                      <ModalActions align="start">
+                        <button
+                          className="settings-button"
+                          disabled={pendingAction !== null || !canLoginControl}
+                          type="button"
+                          onClick={() => void handleLoginControl()}
+                        >
+                          {pendingAction === "login-control"
+                            ? t("common.loading")
+                            : t("settings.relayTunnelLoginAccount")}
+                        </button>
+                        <button
+                          className="secondary-button"
+                          disabled={pendingAction !== null}
+                          type="button"
+                          onClick={() => {
+                            setShowAdvancedSettings((value) => !value);
+                            setConfigError(null);
+                          }}
+                        >
+                          {showAdvancedSettings
+                            ? t("settings.relayTunnelAdvancedSettingsHide")
+                            : t("settings.relayTunnelAdvancedSettings")}
+                        </button>
+                      </ModalActions>
+                      {showAdvancedSettings ? (
+                        <div className="settings-relay-tunnel-inline-stack">
+                          <ModalField
+                            label={t("settings.relayTunnelControlBaseUrl")}
+                            description={t("settings.relayTunnelServerAddressHint")}
+                          >
+                            <input
+                              aria-label={t("settings.relayTunnelControlBaseUrl")}
+                              className="settings-text-input"
+                              type="url"
+                              value={controlBaseUrlDraft}
+                              onChange={(event) => {
+                                setControlBaseUrlDraft(event.target.value);
+                                setConfigError(null);
+                              }}
+                              placeholder={getFixedRelayControlBaseUrl()}
+                            />
+                          </ModalField>
+                          <p className="settings-relay-tunnel-inline-note">
+                            {t("settings.relayTunnelAdvancedSettingsDescription")}
+                          </p>
+                          {configError ? (
+                            <RelayTunnelFeedbackBanner
+                              title={t("settings.relayTunnelConfigErrorTitle")}
+                              message={configError}
+                            />
+                          ) : null}
+                          <ModalActions align="start">
+                            <button
+                              className="settings-button"
+                              disabled={loading || pendingAction !== null || !canSaveControlBaseUrl}
+                              type="button"
+                              onClick={() => void handleSaveControlBaseUrl()}
+                            >
+                              {pendingAction === "save-config" ? t("common.loading") : t("common.save")}
+                            </button>
+                          </ModalActions>
+                        </div>
+                      ) : null}
                     </div>
-                    <ModalActions align="start">
-                      <button
-                        className="settings-button"
-                        disabled={pendingAction !== null || !canLoginControl}
-                        type="button"
-                        onClick={() => void handleLoginControl()}
-                      >
-                        {pendingAction === "login-control"
-                          ? t("common.loading")
-                          : t("settings.relayTunnelLoginAccount")}
-                      </button>
-                    </ModalActions>
                   </>
                 )}
               </div>

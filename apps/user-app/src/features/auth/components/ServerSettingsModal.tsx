@@ -1,4 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
+import { clientConfigStore } from "../../../config/client-config-store";
+import {
+  buildRelayEntryConfigPatch,
+  resolveRelayEntryConfigInputFromBaseUrl
+} from "../../../config/relay-entry";
 import {
   getCustomServerOptionValue,
   getServerSelectValue,
@@ -26,6 +31,7 @@ export function ServerSettingsModal({ isOpen, onClose, onSave, theme = "dark" }:
 
   const [serverBaseUrlInput, setServerBaseUrlInput] = useState(persistedServerBaseUrl);
   const [statusText, setStatusText] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const normalizedServerBaseUrl = useMemo(() => {
     try {
@@ -48,20 +54,40 @@ export function ServerSettingsModal({ isOpen, onClose, onSave, theme = "dark" }:
     if (isOpen) {
       setServerBaseUrlInput(persistedServerBaseUrl);
       setStatusText(null);
+      setSaving(false);
     }
   }, [isOpen, persistedServerBaseUrl]);
 
   if (!isOpen) return null;
 
-  function handleSave(): void {
+  async function handleSave(): Promise<void> {
     if (!normalizedServerBaseUrl) {
       setStatusText(t("auth.serverInvalid"));
       return;
     }
 
-    serverConfigStore.setBaseUrl(normalizedServerBaseUrl);
-    onSave?.(normalizedServerBaseUrl);
-    onClose();
+    setSaving(true);
+
+    try {
+      const relayEntryInput = await resolveRelayEntryConfigInputFromBaseUrl(normalizedServerBaseUrl);
+
+      if (relayEntryInput) {
+        await clientConfigStore.update(
+          buildRelayEntryConfigPatch(clientConfigStore.getState(), relayEntryInput)
+        );
+      } else {
+        serverConfigStore.setBaseUrl(normalizedServerBaseUrl);
+      }
+
+      onSave?.(normalizedServerBaseUrl);
+      onClose();
+    } catch (error) {
+      setStatusText(error instanceof Error && error.message.trim()
+        ? error.message
+        : t("auth.serverInvalid"));
+    } finally {
+      setSaving(false);
+    }
   }
 
   function handleServerBlur(): void {
@@ -83,7 +109,7 @@ export function ServerSettingsModal({ isOpen, onClose, onSave, theme = "dark" }:
         className="server-settings-modal-form"
         onSubmit={(event) => {
           event.preventDefault();
-          handleSave();
+          void handleSave();
         }}
       >
         <label className="workbench-modal-field" htmlFor={presetSelectId}>
@@ -127,6 +153,7 @@ export function ServerSettingsModal({ isOpen, onClose, onSave, theme = "dark" }:
             aria-label={t("auth.serverAddress")}
             value={serverBaseUrlInput}
             placeholder={t("auth.serverPlaceholder")}
+            disabled={saving}
             onBlur={handleServerBlur}
             onChange={(event) => {
               setServerBaseUrlInput(event.target.value);
@@ -147,8 +174,8 @@ export function ServerSettingsModal({ isOpen, onClose, onSave, theme = "dark" }:
           <button type="button" className="secondary-button" onClick={onClose}>
             {t("common.cancel")}
           </button>
-          <button type="submit" className="primary-button">
-            {t("auth.saveServerSettings")}
+          <button type="submit" className="primary-button" disabled={saving}>
+            {saving ? t("common.loading") : t("auth.saveServerSettings")}
           </button>
         </div>
       </form>

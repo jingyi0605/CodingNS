@@ -140,7 +140,7 @@ describe("RelayTunnelPanel", () => {
     expect(screen.getByRole("button", { name: "注销设备" })).toBeInTheDocument();
   });
 
-  it("调试环境会显示服务地址，并允许保存", async () => {
+  it("调试环境会默认展开高级设置，并允许保存控制站地址", async () => {
     apiMocks.fetchRelayTunnelStatus.mockResolvedValue(createStatus());
     apiMocks.updateRelayTunnelConfig.mockResolvedValue(
       createStatus({
@@ -150,7 +150,7 @@ describe("RelayTunnelPanel", () => {
 
     renderPanel();
 
-    const addressInput = await screen.findByRole("textbox", { name: "服务地址" });
+    const addressInput = await screen.findByRole("textbox", { name: "控制站点地址" });
     expect(addressInput).toHaveValue("https://channel.codingns.com:1443");
 
     await userEvent.clear(addressInput);
@@ -164,15 +164,18 @@ describe("RelayTunnelPanel", () => {
     });
   });
 
-  it("正式包会隐藏服务地址输入，并通过服务端接口登录控制站", async () => {
+  it("正式包默认收起高级设置，展开后允许覆盖控制站地址，并通过服务端接口登录控制站", async () => {
     relayControlSiteConfigMocks.canConfigureRelayControlBaseUrl.mockReturnValue(false);
-    relayControlSiteConfigMocks.resolveRelayControlBaseUrl.mockReturnValue(
-      "https://channel.codingns.com:1443"
-    );
     apiMocks.fetchRelayTunnelStatus.mockResolvedValue(createStatus());
+    apiMocks.updateRelayTunnelConfig.mockResolvedValue(
+      createStatus({
+        controlBaseUrl: "https://channel.codingns.com:2443"
+      })
+    );
     apiMocks.loginRelayTunnelControl.mockResolvedValue(
       createStatus({
         activated: true,
+        controlBaseUrl: "https://channel.codingns.com:2443",
         controlAccountEmail: "demo@example.com",
         controlSessionExpiresAt: "2026-04-21T00:00:00.000Z"
       })
@@ -191,7 +194,20 @@ describe("RelayTunnelPanel", () => {
     renderPanel();
 
     expect(await screen.findByRole("textbox", { name: "邮箱" })).toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: "服务地址" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "控制站点地址" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "高级设置" }));
+    const controlBaseUrlInput = await screen.findByRole("textbox", { name: "控制站点地址" });
+    expect(controlBaseUrlInput).toHaveValue("https://channel.codingns.com:1443");
+    await userEvent.clear(controlBaseUrlInput);
+    await userEvent.type(controlBaseUrlInput, "https://channel.codingns.com:2443");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(apiMocks.updateRelayTunnelConfig).toHaveBeenCalledWith({
+        controlBaseUrl: "https://channel.codingns.com:2443"
+      });
+    });
 
     await userEvent.type(screen.getByRole("textbox", { name: "邮箱" }), "demo@example.com");
     await userEvent.type(screen.getByLabelText("密码"), "password123");
@@ -400,7 +416,7 @@ describe("RelayTunnelPanel", () => {
 
     renderPanel();
 
-    const addressInput = await screen.findByRole("textbox", { name: "服务地址" });
+    const addressInput = await screen.findByRole("textbox", { name: "控制站点地址" });
     await userEvent.clear(addressInput);
     await userEvent.type(addressInput, "https://channel.codingns.com:4443");
     await userEvent.click(screen.getByRole("button", { name: "保存" }));
@@ -507,7 +523,7 @@ describe("RelayTunnelPanel", () => {
     });
   });
 
-  it("远程访问已开启后可以打开账号管理页面", async () => {
+  it("远程访问已开启后会按当前控制站地址打开账号管理页面", async () => {
     const platform = createPlatform();
     platformMock.usePlatform.mockReturnValue(platform);
     apiMocks.fetchRelayTunnelStatus.mockResolvedValue(
@@ -518,7 +534,8 @@ describe("RelayTunnelPanel", () => {
         controlAccountEmail: "demo@example.com",
         controlSessionExpiresAt: "2026-04-21T00:00:00.000Z",
         bindingId: "binding_demo",
-        tunnelDomain: "demo.channel.codingns.com"
+        tunnelDomain: "demo.channel.codingns.com",
+        controlBaseUrl: "https://channel.jacksonz.cn:1443"
       })
     );
     apiMocks.fetchRelayTunnelTrafficWallet.mockResolvedValue({
@@ -539,7 +556,7 @@ describe("RelayTunnelPanel", () => {
 
     await waitFor(() => {
       expect(platform.bridge.openExternal).toHaveBeenCalledWith(
-        "https://channel.codingns.com:1443"
+        "https://channel.jacksonz.cn:1443"
       );
     });
   });
@@ -605,12 +622,13 @@ describe("RelayTunnelPanel", () => {
     expect(updateSpy).toHaveBeenCalledTimes(initialUpdateCallCount);
   });
 
-  it("连接设置右侧的了解按钮会打开隧道站点", async () => {
+  it("连接设置右侧的了解按钮会按当前控制站地址打开站点", async () => {
     const platform = createPlatform();
     platformMock.usePlatform.mockReturnValue(platform);
     apiMocks.fetchRelayTunnelStatus.mockResolvedValue(
       createStatus({
-        activated: true
+        activated: true,
+        controlBaseUrl: "https://channel.jacksonz.cn:1443"
       })
     );
 
@@ -621,7 +639,7 @@ describe("RelayTunnelPanel", () => {
 
     await waitFor(() => {
       expect(platform.bridge.openExternal).toHaveBeenCalledWith(
-        "https://channel.codingns.com:1443"
+        "https://channel.jacksonz.cn:1443"
       );
     });
   });

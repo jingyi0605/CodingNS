@@ -242,7 +242,7 @@ function buildCandidateProbeInput(
     return null;
   }
 
-  const platform = config.platform === "desktop" ? "desktop" : "web";
+  const platform = config.platform === "web" ? "web" : "desktop";
 
   // H5 可信前端固定走 relay E2EE，不再做任何候选直连探测。
   // 这些探测只会把浏览器带去碰内网 HTTP 地址，制造 Mixed Content 和错误切换。

@@ -3,6 +3,10 @@ import { createPortal } from "react-dom";
 
 import { clientConfigStore, useClientConfigSelector } from "../../../config/client-config-store";
 import {
+  buildRelayEntryConfigPatch,
+  resolveRelayEntryConfigInputFromBaseUrl
+} from "../../../config/relay-entry";
+import {
   getActiveHost,
   getEffectiveActiveHostId,
   isDiscoveredHostProfile,
@@ -61,6 +65,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
   const [pendingDeleteHostId, setPendingDeleteHostId] = useState<string | null>(null);
   const [confirmDeleteHostId, setConfirmDeleteHostId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [addingHost, setAddingHost] = useState(false);
   const [relayLatency, setRelayLatency] = useState<RelayLatencyState>(INITIAL_RELAY_LATENCY_STATE);
   const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null);
   const anchorRef = useRef<HTMLDivElement | null>(null);
@@ -270,6 +275,11 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
   }
 
   async function handleAddHost(): Promise<void> {
+    if (addingHost) {
+      return;
+    }
+
+    const trimmedName = nameDraft.trim();
     const trimmedUsername = usernameDraft.trim();
     const hasCredentialInput = trimmedUsername.length > 0 || passwordDraft.length > 0;
 
@@ -293,42 +303,82 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
       return;
     }
 
-    if (runtimeConfig.hosts.some((host) => host.baseUrl === normalizedBaseUrl)) {
-      showToast({
-        title: t("shell.hostAddDuplicate"),
-        tone: "error"
-      });
-      return;
-    }
-
-    const now = new Date().toISOString();
-    const nextHost: HostProfile = {
-      id: createHostId(),
-      name: nameDraft.trim() || buildHostDisplayName(normalizedBaseUrl),
-      baseUrl: normalizedBaseUrl,
-      kind: classifyHostKind(normalizedBaseUrl),
-      createdAt: now,
-      updatedAt: now,
-      lastConnectedAt: null,
-      lastUserId: null,
-      lastUsername: null
-    };
+    setAddingHost(true);
 
     try {
+      const relayEntryInput = await resolveRelayEntryConfigInputFromBaseUrl(normalizedBaseUrl);
+      const latestConfig = clientConfigStore.getState();
+      const latestActiveHost = getActiveHost(latestConfig);
+      const duplicateHost = relayEntryInput
+        ? latestConfig.hosts.find((host) =>
+          host.baseUrl === normalizedBaseUrl
+          || (
+            Boolean(relayEntryInput.bindingId)
+            && host.relayTunnel?.bindingId === relayEntryInput.bindingId
+          )
+        )
+        : latestConfig.hosts.find((host) => host.baseUrl === normalizedBaseUrl);
+
+      if (duplicateHost) {
+        showToast({
+          title: t("shell.hostAddDuplicate"),
+          tone: "error"
+        });
+        return;
+      }
+
       const shouldPromoteActiveDiscoveredHost =
-        isDiscoveredHostProfile(activeHost) && activeHost.baseUrl === normalizedBaseUrl;
+        isDiscoveredHostProfile(latestActiveHost) && latestActiveHost.baseUrl === normalizedBaseUrl;
 
       if (shouldPromoteActiveDiscoveredHost) {
         localHostDiscoveryStore.setActiveDiscoveredHost(null);
       }
 
-      await clientConfigStore.update({
-        hosts: [...runtimeConfig.hosts, nextHost],
-        activeHostId: shouldPromoteActiveDiscoveredHost ? nextHost.id : runtimeConfig.activeHostId
-      });
+      let savedHostId: string;
+      let savedHostName: string;
+
+      if (relayEntryInput) {
+        const nextState = await clientConfigStore.update(
+          buildRelayEntryConfigPatch(latestConfig, relayEntryInput, {
+            activate: shouldPromoteActiveDiscoveredHost,
+            displayName: trimmedName
+          })
+        );
+        const savedHost = nextState.hosts.find((host) =>
+          matchesRelayEntryHost(host, normalizedBaseUrl, relayEntryInput.bindingId ?? null)
+        );
+
+        if (!savedHost) {
+          throw new Error("relay entry host missing after save");
+        }
+
+        savedHostId = savedHost.id;
+        savedHostName = savedHost.name;
+      } else {
+        const now = new Date().toISOString();
+        const nextHost: HostProfile = {
+          id: createHostId(),
+          name: trimmedName || buildHostDisplayName(normalizedBaseUrl),
+          baseUrl: normalizedBaseUrl,
+          kind: classifyHostKind(normalizedBaseUrl),
+          createdAt: now,
+          updatedAt: now,
+          lastConnectedAt: null,
+          lastUserId: null,
+          lastUsername: null
+        };
+
+        await clientConfigStore.update({
+          hosts: [...latestConfig.hosts, nextHost],
+          activeHostId: shouldPromoteActiveDiscoveredHost ? nextHost.id : latestConfig.activeHostId
+        });
+        savedHostId = nextHost.id;
+        savedHostName = nextHost.name;
+      }
+
       if (trimmedUsername && passwordDraft) {
         persistRememberedLoginCredentials({
-          hostId: nextHost.id,
+          hostId: savedHostId,
           username: trimmedUsername,
           password: passwordDraft
         });
@@ -337,13 +387,15 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
       setFormOpen(false);
       setConfirmDeleteHostId(null);
       showToast({
-        title: t("shell.hostAddSuccess", { name: nextHost.name })
+        title: t("shell.hostAddSuccess", { name: savedHostName })
       });
     } catch {
       showToast({
         title: t("shell.hostAddFailed"),
         tone: "error"
       });
+    } finally {
+      setAddingHost(false);
     }
   }
 
@@ -580,6 +632,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                     <span>{t("shell.hostSwitcherNameLabel")}</span>
                     <input
                       value={nameDraft}
+                      disabled={addingHost}
                       onChange={(event) => setNameDraft(event.target.value)}
                       placeholder={t("shell.hostSwitcherNamePlaceholder")}
                     />
@@ -588,6 +641,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                     <span>{t("shell.hostSwitcherUrlLabel")}</span>
                     <input
                       value={baseUrlDraft}
+                      disabled={addingHost}
                       onChange={(event) => setBaseUrlDraft(event.target.value)}
                       placeholder={t("shell.hostSwitcherUrlPlaceholder")}
                     />
@@ -596,6 +650,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                     <span>{t("auth.username")}</span>
                     <input
                       value={usernameDraft}
+                      disabled={addingHost}
                       onChange={(event) => setUsernameDraft(event.target.value)}
                       autoComplete="username"
                     />
@@ -605,6 +660,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                     <input
                       type="password"
                       value={passwordDraft}
+                      disabled={addingHost}
                       onChange={(event) => setPasswordDraft(event.target.value)}
                       autoComplete="current-password"
                     />
@@ -613,6 +669,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                     <button
                       type="button"
                       className="secondary-button"
+                      disabled={addingHost}
                       onClick={() => {
                         setFormOpen(false);
                         resetFormDrafts();
@@ -623,11 +680,12 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                     <button
                       type="button"
                       className="primary-button"
+                      disabled={addingHost}
                       onClick={() => {
                         void handleAddHost();
                       }}
                     >
-                      {t("shell.hostSwitcherSaveAction")}
+                      {addingHost ? t("common.loading") : t("shell.hostSwitcherSaveAction")}
                     </button>
                   </div>
                 </div>
@@ -761,6 +819,22 @@ function classifyHostKind(baseUrl: string): HostProfile["kind"] {
   } catch {
     return "custom";
   }
+}
+
+function matchesRelayEntryHost(
+  host: Pick<HostProfile, "baseUrl" | "relayTunnel">,
+  relayBaseUrl: string,
+  bindingId: string | null
+): boolean {
+  if (host.baseUrl === relayBaseUrl) {
+    return true;
+  }
+
+  if (bindingId && host.relayTunnel?.bindingId === bindingId) {
+    return true;
+  }
+
+  return false;
 }
 
 function createHostId(): string {

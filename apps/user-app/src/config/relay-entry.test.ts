@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { buildRelayEntryConfigPatch } from "./relay-entry";
+import {
+  buildRelayEntryConfigPatch,
+  resolveRelayEntryConfigInputFromBaseUrl
+} from "./relay-entry";
 import type { ClientRuntimeConfig } from "./client-config-types";
 
 describe("relay-entry", () => {
@@ -125,6 +128,132 @@ describe("relay-entry", () => {
         ]
       }
     });
+  });
+
+  it("支持自定义显示名称且可以只新增不切换当前活动 Host", () => {
+    const patch = buildRelayEntryConfigPatch(createConfig({
+      activeHostId: "saved-local",
+      activeDiscoveredHostId: "discovered-1"
+    }), {
+      tunnelDomain: "demo.channel.codingns.com",
+      controlBaseUrl: "https://channel.codingns.com:1443",
+      bindingId: "binding_demo",
+      hostFingerprint: "SHA256:demo"
+    }, {
+      activate: false,
+      displayName: "机房入口"
+    });
+
+    expect(patch.activeHostId).toBe("saved-local");
+    expect(patch.activeDiscoveredHostId).toBe("discovered-1");
+    expect(patch.hosts?.[0]).toMatchObject({
+      name: "机房入口",
+      baseUrl: "https://demo.channel.codingns.com:1443"
+    });
+  });
+
+  it("可以从四级域名解析出 relay 入口绑定信息", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({
+        binding: {
+          bindingId: "binding_demo",
+          tunnelDomain: "demo.channel.codingns.com",
+          controlBaseUrl: "https://channel.codingns.com:1443",
+          hostFingerprint: "SHA256:demo",
+          runtime: {
+            candidateEndpoints: [
+              {
+                endpointId: "host_reported:http://10.0.0.8:3002",
+                kind: "lan",
+                url: "http://10.0.0.8:3002",
+                priority: 200,
+                expiresAt: null,
+                source: "host_reported"
+              }
+            ]
+          }
+        }
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json"
+        }
+      })
+    );
+
+    await expect(
+      resolveRelayEntryConfigInputFromBaseUrl("https://demo.channel.codingns.com:1443", fetchMock)
+    ).resolves.toEqual({
+      tunnelDomain: "demo.channel.codingns.com",
+      controlBaseUrl: "https://channel.codingns.com:1443",
+      bindingId: "binding_demo",
+      hostFingerprint: "SHA256:demo",
+      candidateEndpoints: [
+        {
+          endpointId: "host_reported:http://10.0.0.8:3002",
+          kind: "lan",
+          url: "http://10.0.0.8:3002",
+          priority: 200,
+          expiresAt: null,
+          source: "host_reported"
+        }
+      ]
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://channel.codingns.com:1443/api/v1/tunnels/demo.channel.codingns.com",
+      {
+        method: "GET"
+      }
+    );
+  });
+
+  it("隧道解析失败时会退回到本地推断出的 relay 入口配置", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(new Error("network failed"));
+
+    await expect(
+      resolveRelayEntryConfigInputFromBaseUrl("https://demo.channel.codingns.com:1443", fetchMock)
+    ).resolves.toEqual({
+      tunnelDomain: "demo.channel.codingns.com",
+      controlBaseUrl: "https://channel.codingns.com:1443"
+    });
+  });
+
+  it("会把 control-api 返回的 candidateEndpoints 合并进 relay Host 配置", () => {
+    const patch = buildRelayEntryConfigPatch(createConfig(), {
+      tunnelDomain: "demo.channel.codingns.com",
+      controlBaseUrl: "https://channel.codingns.com:1443",
+      bindingId: "binding_demo",
+      hostFingerprint: "SHA256:demo",
+      candidateEndpoints: [
+        {
+          endpointId: "host_reported:http://10.0.0.8:3002",
+          kind: "lan",
+          url: "http://10.0.0.8:3002",
+          priority: 200,
+          expiresAt: null,
+          source: "host_reported"
+        }
+      ]
+    });
+
+    expect(patch.hosts?.[0]?.relayTunnel?.candidateEndpoints).toEqual([
+      {
+        endpointId: "relay-entry:https://demo.channel.codingns.com:1443",
+        kind: "relay",
+        url: "https://demo.channel.codingns.com:1443",
+        priority: 0,
+        expiresAt: null,
+        source: "user_saved"
+      },
+      {
+        endpointId: "host_reported:http://10.0.0.8:3002",
+        kind: "lan",
+        url: "http://10.0.0.8:3002",
+        priority: 200,
+        expiresAt: null,
+        source: "host_reported"
+      }
+    ]);
   });
 });
 
