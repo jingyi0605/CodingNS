@@ -23,6 +23,7 @@ import {
   deserializeRelayTunnelPacket,
   serializeRelayTunnelPacket
 } from "./crypto/relay-tunnel-packets.js";
+import { buildHostCandidateEndpoints } from "./relay-tunnel-candidate-endpoints.js";
 import type { RelaySessionClientContext } from "./relay-tunnel-client-context.js";
 import { createRelayTunnelHostClaimProof } from "./relay-tunnel-edge-proof.js";
 import { RelayTunnelGatewayService } from "./relay-tunnel-gateway-service.js";
@@ -229,16 +230,6 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
 
     const closed = createSocketCloseSignal(socket);
 
-    socket.on("message", (payload, isBinary) => {
-      if (isBinary) {
-        socket.close(1008, "HOST_CHANNEL_BINARY_NOT_SUPPORTED");
-        return;
-      }
-
-      const rawPayload = typeof payload === "string" ? payload : payload.toString("utf8");
-      void this.handleHostChannelPayload(config, identity, rawPayload);
-    });
-
     while (!signal.aborted) {
       const result = await Promise.race([
         closed.promise,
@@ -358,6 +349,16 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
       )
     );
 
+    socket.on("message", (payload, isBinary) => {
+      if (isBinary) {
+        socket.close(1008, "HOST_CHANNEL_BINARY_NOT_SUPPORTED");
+        return;
+      }
+
+      const rawPayload = typeof payload === "string" ? payload : payload.toString("utf8");
+      void this.handleHostChannelPayload(config, identity, rawPayload);
+    });
+
     await waitForSocketOpen(socket, signal);
     return socket;
   }
@@ -397,7 +398,9 @@ export class RelayTunnelRuntimeEdgeAdapter implements RelayTunnelRuntimeAdapter 
         },
         body: JSON.stringify({
           tunnelDomain,
-          hostFingerprint: identity.keyFingerprint
+          hostFingerprint: identity.keyFingerprint,
+          localTargetBaseUrl: config.localTargetBaseUrl,
+          candidateEndpoints: buildHostCandidateEndpoints(config)
         })
       };
     } catch {

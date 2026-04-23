@@ -23,6 +23,7 @@ import {
   __internal__ as relayTunnelRuntimeAdapterInternal,
   RelayTunnelRuntimeEdgeAdapter
 } from "../../src/modules/relay-tunnel/relay-tunnel-runtime-adapter.js";
+import { buildHostCandidateEndpoints } from "../../src/modules/relay-tunnel/relay-tunnel-candidate-endpoints.js";
 import { generateRelayTunnelIdentity } from "../../src/modules/relay-tunnel/crypto/relay-tunnel-identity-service.js";
 import { encryptSecret } from "../../src/shared/utils/secret-box.js";
 import {
@@ -264,7 +265,9 @@ describe("RelayTunnelRuntimeEdgeAdapter", () => {
       authorization: "Bearer token_demo",
       bindingId: "binding_demo",
       tunnelDomain: "demo.codingns.example",
-      hostFingerprint: identity.keyFingerprint
+      hostFingerprint: identity.keyFingerprint,
+      localTargetBaseUrl: targetServer.baseUrl,
+      candidateEndpoints: buildHostCandidateEndpoints(config)
     });
 
     await adapter.disconnect("test_done");
@@ -661,6 +664,15 @@ async function startFakeControlApiServer(input: {
     bindingId: string;
     tunnelDomain: string;
     hostFingerprint: string;
+    localTargetBaseUrl: string | null;
+    candidateEndpoints: Array<{
+      endpointId: string;
+      kind: string;
+      url: string;
+      priority: number;
+      expiresAt: string | null;
+      source: string;
+    }>;
   }>;
   close: () => Promise<void>;
 }> {
@@ -669,12 +681,30 @@ async function startFakeControlApiServer(input: {
     bindingId: string;
     tunnelDomain: string;
     hostFingerprint: string;
+    localTargetBaseUrl: string | null;
+    candidateEndpoints: Array<{
+      endpointId: string;
+      kind: string;
+      url: string;
+      priority: number;
+      expiresAt: string | null;
+      source: string;
+    }>;
   }) => void) | null = null;
   const heartbeatPromise = new Promise<{
     authorization: string | undefined;
     bindingId: string;
     tunnelDomain: string;
     hostFingerprint: string;
+    localTargetBaseUrl: string | null;
+    candidateEndpoints: Array<{
+      endpointId: string;
+      kind: string;
+      url: string;
+      priority: number;
+      expiresAt: string | null;
+      source: string;
+    }>;
   }>((resolve) => {
     resolveHeartbeat = resolve;
   });
@@ -686,6 +716,15 @@ async function startFakeControlApiServer(input: {
       const body = await readJsonBody(request) as {
         tunnelDomain?: string;
         hostFingerprint?: string;
+        localTargetBaseUrl?: string;
+        candidateEndpoints?: Array<{
+          endpointId: string;
+          kind: string;
+          url: string;
+          priority: number;
+          expiresAt: string | null;
+          source: string;
+        }>;
       };
       const authorization = request.headers.authorization;
 
@@ -693,6 +732,8 @@ async function startFakeControlApiServer(input: {
         authorization !== `Bearer ${input.accessToken}`
         || body.tunnelDomain !== input.tunnelDomain
         || body.hostFingerprint !== input.hostFingerprint
+        || typeof body.localTargetBaseUrl !== "string"
+        || !Array.isArray(body.candidateEndpoints)
       ) {
         writeJson(response, 401, {
           errorCode: "AUTH_INVALID",
@@ -705,7 +746,9 @@ async function startFakeControlApiServer(input: {
         authorization,
         bindingId: input.bindingId,
         tunnelDomain: body.tunnelDomain,
-        hostFingerprint: body.hostFingerprint
+        hostFingerprint: body.hostFingerprint,
+        localTargetBaseUrl: body.localTargetBaseUrl,
+        candidateEndpoints: body.candidateEndpoints
       });
       resolveHeartbeat = null;
       response.writeHead(204);
