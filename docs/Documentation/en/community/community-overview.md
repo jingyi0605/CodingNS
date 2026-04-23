@@ -1,8 +1,8 @@
 # Community Entry
 
-Most people only come here for three things: official links, community channels, or a place to report friction.
+This section contains official links, community channels, and support entry points.
 
-## Go straight to the page that matches your goal
+## Common Entry Points
 
 - want the main project links: open [Official Links](/en/community/official-links)
 - want a communication channel: open [Official Links](/en/community/official-links)
