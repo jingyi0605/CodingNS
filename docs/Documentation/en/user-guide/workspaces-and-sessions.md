@@ -1,6 +1,6 @@
 # Workspaces & Sessions
 
-In CodingNS, a workspace is not a side list item. It is the base unit for project browsing, conversations, files, Git, and terminal access.
+In CodingNS, a workspace is the base unit for project browsing, conversations, files, Git, and terminal access.
 
 ## Most workspaces start in one of these ways
 
@@ -16,7 +16,7 @@ If the project is not on that machine yet, clone it and turn it into a workspace
 
 If you maintain several projects, store them as separate workspaces and switch by project.
 
-## A session is not just a chat log
+## Sessions and Context
 
 A session is the ongoing AI coding context tied to the workspace. The main idea is to continue useful context instead of restarting it.
 

@@ -1,8 +1,8 @@
 # Install the Host Service
 
-This page does one thing: get a CodingNS Host running on a machine you plan to keep around. Desktop, mobile, and browser access will all connect back to that Host.
+Install CodingNS Host on a machine you plan to keep online. Desktop, mobile, and browser clients will all connect back to that Host.
 
-## If you just want the shortest route
+## Quick Install
 
 If you install CodingNS manually on Linux, prepare the native build tools first. `@jingyi0605/codingns` includes native modules such as `better-sqlite3`, and npm may fall back to local compilation when a prebuilt package is unavailable.
 

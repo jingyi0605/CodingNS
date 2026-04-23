@@ -1,16 +1,16 @@
 # 安装 Host 服务
 
-这页只做一件事：把 CodingNS Host 装到一台你准备长期使用的机器上。  
-装好以后，桌面端、手机和浏览器接入的都是这台 Host。
+请先在一台准备长期使用的设备上安装 CodingNS Host。  
+桌面端、手机和浏览器后续都会连接到这台 Host。
 
-## 先决定你想怎么装
+## 安装方式
 
 如果你只是想尽快装好、少记命令，直接用 `curl` 快速安装。  
 如果你更喜欢自己一步步确认，也可以手动用 `npm + PM2` 安装。
 
-### 大多数人这样选就够了
+### 选择建议
 
-- 想省事，选 `curl` 快速安装。
+- 希望快速完成安装，选 `curl` 快速安装。
 - 想自己掌控每一步，选手动 `npm + PM2` 安装。
 
 ## 开始前只要确认两件事
@@ -28,11 +28,11 @@ apt-get update
 apt-get install -y build-essential python3
 ```
 
-如果这台机器以后准备长期开着，建议顺手把它当成你的常驻 Host 来用。这样后面换电脑、换手机时，不用重新折腾。
+如果这台机器以后准备长期运行，建议将它作为常驻 Host 使用，方便后续在其他设备上继续访问。
 
-## 想快一点，就直接用 CURL 装
+## 使用 CURL 安装
 
-这是最省事的方式。你只需要执行一条命令，后面跟着提示走就行。
+这是最直接的安装方式。执行一条命令后，按提示完成配置即可。
 
 ```bash
 curl -fsSL https://codingns.com/install | bash
@@ -47,7 +47,7 @@ curl -fsSL https://codingns.com/install | bash
 - 是否启用开机自动启动
   默认会帮你打开
 
-脚本还会顺手帮你做这些事：
+脚本还会自动完成这些步骤：
 
 - 先检查 Node.js、npm 和必需的编译工具
 - 在支持的系统上，缺什么就先询问你是否自动安装
@@ -58,7 +58,7 @@ curl -fsSL https://codingns.com/install | bash
 - 用 `pm2` 把 Host 托管起来
 - 在支持的系统上配置开机自动启动
 
-### 跑完脚本后，你会立刻看到这些结果
+### 安装完成后
 
 正常完成后，你会看到：
 
@@ -68,7 +68,7 @@ curl -fsSL https://codingns.com/install | bash
 
 这时候通常就已经可以继续下一步去连接客户端了。
 
-## 想自己掌控每一步，就手动装
+## 手动安装
 
 如果你想把每一步都自己确认一遍，可以按下面的顺序来。
 
@@ -89,7 +89,7 @@ npm install -g @jingyi0605/codingns
 
 ### 第二步：先手工启动一次
 
-先启动一遍，确认服务能正常跑起来：
+先启动一次，确认服务可以正常运行：
 
 ```bash
 codingns start --host 0.0.0.0 --port 3002 --data-dir ~/.codingns
@@ -139,7 +139,7 @@ pm2 save
 
 这样以后机器重启后，Host 也会跟着自动起来。
 
-## 端口和数据目录，不合适就改这里
+## 端口与数据目录
 
 ### 端口
 
@@ -170,7 +170,7 @@ pm2 start "$(which codingns)" --name codingns -- start --host 0.0.0.0 --port 330
 codingns start --data-dir /var/lib/codingns
 ```
 
-## 装好以后，去把客户端连上
+## 下一步
 
 接下来直接看 [连接客户端](/quick-install/client-connection)。  
 连上之后，你会进入初始化或登录流程，再接着去 [首次登录与开始使用](/quick-install/first-login)。
