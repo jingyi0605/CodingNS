@@ -23,6 +23,13 @@ export interface NpmGlobalPackageInstallInput {
   signal: AbortSignal;
 }
 
+export interface NpmGlobalPackageInstallResult {
+  restartScheduled: boolean;
+  restartDelayMs: number | null;
+}
+
+const PM2_RESTART_DELAY_MS = 3_000;
+
 export class NpmGlobalPackageService {
   constructor(private readonly config: HostConfig) {}
 
@@ -98,63 +105,25 @@ export class NpmGlobalPackageService {
     };
   }
 
-  async installGlobalPackage(input: NpmGlobalPackageInstallInput): Promise<void> {
+  async installGlobalPackage(
+    input: NpmGlobalPackageInstallInput
+  ): Promise<NpmGlobalPackageInstallResult> {
     this.assertManagedPackage(input.packageName);
 
-    const command = process.platform === "win32" ? "npm.cmd" : "npm";
-    const args = ["install", "-g", `${input.packageName}@${input.distTag}`];
-
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn(command, args, {
-        cwd: os.homedir(),
-        env: process.env,
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-        signal: input.signal
-      });
-      const output = createBoundedOutputCollector();
-      let settled = false;
-
-      const finish = (callback: () => void) => {
-        if (settled) {
-          return;
-        }
-
-        settled = true;
-        callback();
-      };
-
-      child.stdout.on("data", (chunk) => {
-        output.push(String(chunk));
-      });
-      child.stderr.on("data", (chunk) => {
-        output.push(String(chunk));
-      });
-      child.on("error", (error) => {
-        finish(() => {
-          reject(error);
-        });
-      });
-      child.on("close", (code, signal) => {
-        if (code === 0) {
-          finish(resolve);
-          return;
-        }
-
-        const detail = output.read().trim();
-        const suffix = signal ? `signal=${signal}` : `exitCode=${code ?? "null"}`;
-
-        finish(() => {
-          reject(
-            new Error(
-              detail.length > 0
-                ? `${detail}\n${suffix}`
-                : `npm install -g 执行失败，${suffix}`
-            )
-          );
-        });
-      });
+    await runCommand({
+      command: resolveNpmCommand(),
+      args: ["install", "-g", `${input.packageName}@${input.distTag}`],
+      cwd: os.homedir(),
+      signal: input.signal,
+      failureLabel: "npm install -g 执行失败"
     });
+    await this.ensurePm2ProcessReady(input.signal);
+    await this.schedulePm2Restart();
+
+    return {
+      restartScheduled: true,
+      restartDelayMs: PM2_RESTART_DELAY_MS
+    };
   }
 
   private assertManagedPackage(packageName: string): void {
@@ -167,6 +136,43 @@ export class NpmGlobalPackageService {
       errorCode: "SERVICE_UPDATE_PACKAGE_UNSUPPORTED",
       detail: `当前不支持升级包 ${packageName}`
     });
+  }
+
+  private async ensurePm2ProcessReady(signal: AbortSignal): Promise<void> {
+    try {
+      await runCommand({
+        command: resolvePm2Command(),
+        args: ["describe", this.config.pm2ProcessName],
+        cwd: os.homedir(),
+        signal,
+        failureLabel: `未找到 PM2 进程 ${this.config.pm2ProcessName}`
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "未知错误";
+
+      throw new Error(
+        `npm 包已更新，但无法确认 PM2 进程 ${this.config.pm2ProcessName} 可被自动重启。请检查 pm2 是否可用，并手工执行 pm2 restart ${this.config.pm2ProcessName}。${detail ? ` ${detail}` : ""}`
+      );
+    }
+  }
+
+  private async schedulePm2Restart(): Promise<void> {
+    try {
+      await spawnDetachedNodeProcess({
+        script: PM2_RESTART_HELPER_SOURCE,
+        args: [
+          String(PM2_RESTART_DELAY_MS),
+          resolvePm2Command(),
+          this.config.pm2ProcessName
+        ]
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "未知错误";
+
+      throw new Error(
+        `npm 包已更新，但自动调度 PM2 重启失败。请手工执行 pm2 restart ${this.config.pm2ProcessName}。${detail ? ` ${detail}` : ""}`
+      );
+    }
   }
 
   private async checkManagedPackage(
@@ -295,3 +301,134 @@ function createBoundedOutputCollector(limit = 8_192): {
     }
   };
 }
+
+function resolveNpmCommand(): string {
+  return process.platform === "win32" ? "npm.cmd" : "npm";
+}
+
+function resolvePm2Command(): string {
+  return process.platform === "win32" ? "pm2.cmd" : "pm2";
+}
+
+async function runCommand(input: {
+  command: string;
+  args: string[];
+  cwd: string;
+  signal?: AbortSignal;
+  failureLabel: string;
+}): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(input.command, input.args, {
+      cwd: input.cwd,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+      signal: input.signal
+    });
+    const output = createBoundedOutputCollector();
+    let settled = false;
+
+    const finish = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      callback();
+    };
+
+    child.stdout.on("data", (chunk) => {
+      output.push(String(chunk));
+    });
+    child.stderr.on("data", (chunk) => {
+      output.push(String(chunk));
+    });
+    child.on("error", (error) => {
+      finish(() => {
+        reject(error);
+      });
+    });
+    child.on("close", (code, signal) => {
+      if (code === 0) {
+        finish(resolve);
+        return;
+      }
+
+      const detail = output.read().trim();
+      const suffix = signal ? `signal=${signal}` : `exitCode=${code ?? "null"}`;
+
+      finish(() => {
+        reject(
+          new Error(
+            detail.length > 0
+              ? `${input.failureLabel}: ${detail}\n${suffix}`
+              : `${input.failureLabel}，${suffix}`
+          )
+        );
+      });
+    });
+  });
+}
+
+async function spawnDetachedNodeProcess(input: {
+  script: string;
+  args: string[];
+}): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(process.execPath, ["-e", input.script, ...input.args], {
+      cwd: os.homedir(),
+      env: process.env,
+      stdio: "ignore",
+      windowsHide: true,
+      detached: true
+    });
+    let settled = false;
+
+    const finish = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      callback();
+    };
+
+    child.once("spawn", () => {
+      child.unref();
+      finish(resolve);
+    });
+    child.once("error", (error) => {
+      finish(() => {
+        reject(error);
+      });
+    });
+  });
+}
+
+const PM2_RESTART_HELPER_SOURCE = String.raw`
+const { spawn } = require("node:child_process");
+
+const delayMs = Number(process.argv[1] || "0");
+const command = process.argv[2];
+const processName = process.argv[3];
+
+function exit(code) {
+  process.exit(typeof code === "number" ? code : 0);
+}
+
+setTimeout(() => {
+  const child = spawn(command, ["restart", processName], {
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: "ignore",
+    windowsHide: true
+  });
+
+  child.on("error", () => {
+    exit(1);
+  });
+  child.on("close", (code) => {
+    exit(code ?? 1);
+  });
+}, Math.max(0, delayMs));
+`;

@@ -2,7 +2,10 @@ import type { TaskManager } from "../tasks/task-manager.js";
 import { HOST_TASK_TYPES, type TaskSnapshot } from "../tasks/task-types.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { readHostPackageVersion } from "./client-service.js";
-import type { NpmGlobalPackageService } from "./npm-global-package-service.js";
+import type {
+  NpmGlobalPackageInstallResult,
+  NpmGlobalPackageService
+} from "./npm-global-package-service.js";
 import type { ServiceUpdateTaskDto } from "./service-update-types.js";
 
 interface ServiceUpdateInstallTaskInput {
@@ -49,7 +52,10 @@ export class ServiceUpdateTaskService {
       readHostPackageVersion(),
       packageName
     );
-    const handle = this.taskManager.enqueue<ServiceUpdateInstallTaskInput, void>(
+    const handle = this.taskManager.enqueue<
+      ServiceUpdateInstallTaskInput,
+      ServiceUpdateInstallTaskResult
+    >(
       HOST_TASK_TYPES.serviceNpmGlobalUpdateInstall,
       {
         key: packageName,
@@ -86,7 +92,7 @@ export class ServiceUpdateTaskService {
       });
     }
 
-    const snapshot = this.taskManager.peek(
+    const snapshot = this.taskManager.peek<ServiceUpdateInstallTaskResult>(
       HOST_TASK_TYPES.serviceNpmGlobalUpdateInstall,
       record.key
     );
@@ -121,13 +127,13 @@ export class ServiceUpdateTaskService {
       return;
     }
 
-    this.taskManager.register<ServiceUpdateInstallTaskInput, void>({
+    this.taskManager.register<ServiceUpdateInstallTaskInput, ServiceUpdateInstallTaskResult>({
       taskType: HOST_TASK_TYPES.serviceNpmGlobalUpdateInstall,
       executionLane: "external_process",
       timeoutMs: 300_000,
       concurrency: 1,
       run: async (input, context) => {
-        await this.npmGlobalPackageService.installGlobalPackage({
+        return await this.npmGlobalPackageService.installGlobalPackage({
           packageName: input.packageName,
           distTag: input.distTag,
           signal: context.signal
@@ -138,8 +144,10 @@ export class ServiceUpdateTaskService {
 
   private toTaskDto(
     record: ServiceUpdateTaskRecord,
-    snapshot: TaskSnapshot
+    snapshot: TaskSnapshot<ServiceUpdateInstallTaskResult>
   ): ServiceUpdateTaskDto {
+    const installResult = snapshot.result ?? null;
+
     return {
       taskId: snapshot.taskId,
       packageName: record.packageName,
@@ -151,10 +159,15 @@ export class ServiceUpdateTaskService {
       errorMessage: snapshot.errorMessage ?? null,
       restartRequired:
         snapshot.status === "succeeded"
-        && compareSemver(record.targetVersion, readHostPackageVersion()) > 0
+        && !installResult?.restartScheduled
+        && compareSemver(record.targetVersion, readHostPackageVersion()) > 0,
+      restartScheduled: Boolean(installResult?.restartScheduled),
+      restartDelayMs: installResult?.restartDelayMs ?? null
     };
   }
 }
+
+type ServiceUpdateInstallTaskResult = NpmGlobalPackageInstallResult;
 
 function toIsoTime(timestamp: number | null): string | null {
   if (timestamp === null) {

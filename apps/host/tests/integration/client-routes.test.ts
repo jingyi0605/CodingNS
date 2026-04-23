@@ -23,7 +23,18 @@ vi.mock("node:child_process", async () => {
   return {
     ...actual,
     spawn: ((command: string, ...args: unknown[]) => {
-      if (command === "npm" || command === "npm.cmd") {
+      const commandArgs = Array.isArray(args[0]) ? args[0] : [];
+      const isPm2RestartHelper =
+        command === process.execPath
+        && commandArgs[0] === "-e";
+
+      if (
+        command === "npm" ||
+        command === "npm.cmd" ||
+        command === "pm2" ||
+        command === "pm2.cmd" ||
+        isPm2RestartHelper
+      ) {
         return spawnMock(command, ...args);
       }
 
@@ -329,7 +340,7 @@ describe("client routes", () => {
     });
   });
 
-  it("支持触发服务端全局 npm 安装任务，并返回重启状态", async () => {
+  it("支持触发服务端全局 npm 安装任务，并调度 PM2 自动重启", async () => {
     const fixture = createEmptyFixture();
     activeFixtures.push(fixture);
 
@@ -396,7 +407,9 @@ describe("client routes", () => {
       packageName: "placeholder-server-package",
       targetVersion: "0.6.0",
       status: "succeeded",
-      restartRequired: true
+      restartRequired: false,
+      restartScheduled: true,
+      restartDelayMs: 3000
     });
 
     const listResponse = await hosted.app.inject({
@@ -414,11 +427,13 @@ describe("client routes", () => {
           packageName: "placeholder-server-package",
           latestVersion: "0.6.0",
           hasUpdate: true,
-          restartRequired: true,
+          restartRequired: false,
           installTask: expect.objectContaining({
             taskId: task.taskId,
             status: "succeeded",
-            restartRequired: true
+            restartRequired: false,
+            restartScheduled: true,
+            restartDelayMs: 3000
           })
         })
       ]
@@ -429,6 +444,29 @@ describe("client routes", () => {
       expect.objectContaining({
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true
+      })
+    );
+    expect(spawnMock).toHaveBeenCalledWith(
+      process.platform === "win32" ? "pm2.cmd" : "pm2",
+      ["describe", "codingns"],
+      expect.objectContaining({
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true
+      })
+    );
+    expect(spawnMock).toHaveBeenCalledWith(
+      process.execPath,
+      expect.arrayContaining([
+        "-e",
+        expect.any(String),
+        "3000",
+        process.platform === "win32" ? "pm2.cmd" : "pm2",
+        "codingns"
+      ]),
+      expect.objectContaining({
+        stdio: "ignore",
+        windowsHide: true,
+        detached: true
       })
     );
   });
@@ -491,10 +529,12 @@ function createSuccessfulChildProcess(output: string): ChildProcessWithoutNullSt
   const child = Object.assign(emitter, {
     stdout,
     stderr,
-    stdin
+    stdin,
+    unref: vi.fn()
   }) as unknown as ChildProcessWithoutNullStreams;
 
   queueMicrotask(() => {
+    emitter.emit("spawn");
     stdout.write(output);
     stdout.end();
     stderr.end();
