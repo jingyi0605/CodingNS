@@ -28824,17 +28824,18 @@ textarea:focus-visible {
   position: relative;
   z-index: 1;
   display: flex;
-  justify-content: center;
   padding: 10px 16px 2px;
 }
 
 .parallel-conversation-group-titlebar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  width: 100%;
   min-width: 0;
-  width: min(920px, 100%);
   padding: 0 4px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  column-gap: 8px;
 }
 
 .parallel-conversation-group-titlemain {
@@ -28842,7 +28843,10 @@ textarea:focus-visible {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  flex: 1 1 auto;
+  grid-column: 2;
+  justify-self: center;
+  width: min(920px, 100%);
+  max-width: 100%;
 }
 
 .parallel-conversation-group-titlebar strong {
@@ -28867,7 +28871,8 @@ textarea:focus-visible {
   border-radius: 999px;
   font-size: 18px;
   line-height: 1;
-  flex: 0 0 auto;
+  grid-column: 3;
+  justify-self: end;
 }
 
 .parallel-conversation-group-add-button span {
