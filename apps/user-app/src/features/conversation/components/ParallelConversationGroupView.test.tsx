@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -283,6 +283,67 @@ describe("ParallelConversationGroupView", () => {
     expect(await paneScope.findByText(t("shell.parallelPaneInfoTitle"))).toBeInTheDocument();
     expect(paneScope.getByText("parallel/original")).toBeInTheDocument();
 
+  });
+
+  it("工具窗口默认贴住当前 pane，外部点击和再次点工具按钮都不会直接关掉", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter>
+        <ParallelConversationGroupView
+          groupId="parallel-group-1"
+          currentSessionId="session-1"
+        />
+      </MemoryRouter>
+    );
+
+    const panePrompt = await screen.findByText("原版风格");
+    const pane = panePrompt.closest(".parallel-conversation-pane");
+
+    if (!(pane instanceof HTMLElement)) {
+      throw new Error("未找到并行 pane");
+    }
+
+    Object.defineProperty(pane, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        x: 80,
+        y: 104,
+        left: 80,
+        top: 104,
+        right: 620,
+        bottom: 624,
+        width: 540,
+        height: 520,
+        toJSON: () => undefined
+      })
+    });
+
+    const paneScope = within(pane);
+    const toolsTrigger = paneScope.getByRole("button", { name: t("shell.parallelPaneToolsAction") });
+
+    await user.click(toolsTrigger);
+    expect(await screen.findByTestId("parallel-tools-files")).toBeInTheDocument();
+
+    const popover = document.querySelector(".parallel-pane-tools-popover");
+
+    if (!(popover instanceof HTMLElement)) {
+      throw new Error("未找到工具窗口");
+    }
+
+    expect(popover.style.left).toBe("80px");
+    expect(popover.style.top).toBe("104px");
+    expect(popover.style.width).toBe("540px");
+    expect(popover.style.height).toBe("520px");
+
+    fireEvent.pointerDown(document.body);
+    expect(document.querySelector(".parallel-pane-tools-popover")).toBe(popover);
+
+    await user.click(toolsTrigger);
+    expect(document.querySelector(".parallel-pane-tools-popover")).toBe(popover);
+
+    await user.click(within(popover).getByRole("button", { name: t("common.close") }));
+    expect(document.querySelector(".parallel-pane-tools-popover")).toBeNull();
   });
 });
 

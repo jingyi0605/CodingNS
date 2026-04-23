@@ -65,16 +65,20 @@ const PARALLEL_GROUP_TRANSITION_DURATION_MS = 560;
 const PARALLEL_DESKTOP_RESIZE_DURATION_MS = 240;
 const PARALLEL_TOOLS_PANEL_DEFAULT_WIDTH = 920;
 const PARALLEL_TOOLS_PANEL_DEFAULT_HEIGHT = 760;
-const PARALLEL_TOOLS_PANEL_MIN_WIDTH = 680;
-const PARALLEL_TOOLS_PANEL_MIN_HEIGHT = 520;
+const PARALLEL_TOOLS_PANEL_MIN_WIDTH = 360;
+const PARALLEL_TOOLS_PANEL_MIN_HEIGHT = 320;
 const PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN = 16;
-const PARALLEL_TOOLS_PANEL_TOP_SAFE_INSET = 72;
 
 interface ParallelToolsPanelFrame {
   readonly x: number;
   readonly y: number;
   readonly width: number;
   readonly height: number;
+}
+
+interface ClampParallelToolsPanelFrameOptions {
+  readonly minWidth?: number;
+  readonly minHeight?: number;
 }
 
 interface ParallelConversationGroupViewProps {
@@ -109,29 +113,35 @@ interface ForkComposerDraft {
   targetModel: string | null;
 }
 
-function clampParallelToolsPanelFrame(frame: ParallelToolsPanelFrame): ParallelToolsPanelFrame {
+function clampParallelToolsPanelFrame(
+  frame: ParallelToolsPanelFrame,
+  options?: ClampParallelToolsPanelFrameOptions
+): ParallelToolsPanelFrame {
   if (typeof window === "undefined") {
     return frame;
   }
 
+  const viewportMaxWidth = Math.max(0, window.innerWidth - PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN * 2);
+  const viewportMaxHeight = Math.max(0, window.innerHeight - PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN * 2);
+  const minWidth = Math.min(options?.minWidth ?? PARALLEL_TOOLS_PANEL_MIN_WIDTH, viewportMaxWidth);
+  const minHeight = Math.min(options?.minHeight ?? PARALLEL_TOOLS_PANEL_MIN_HEIGHT, viewportMaxHeight);
   const maxWidth = Math.max(
-    PARALLEL_TOOLS_PANEL_MIN_WIDTH,
-    window.innerWidth - PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN * 2
+    minWidth,
+    viewportMaxWidth
   );
-  const safeTop = Math.max(PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN, PARALLEL_TOOLS_PANEL_TOP_SAFE_INSET);
   const maxHeight = Math.max(
-    PARALLEL_TOOLS_PANEL_MIN_HEIGHT,
-    window.innerHeight - safeTop - PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN
+    minHeight,
+    viewportMaxHeight
   );
-  const width = Math.min(Math.max(frame.width, PARALLEL_TOOLS_PANEL_MIN_WIDTH), maxWidth);
-  const height = Math.min(Math.max(frame.height, PARALLEL_TOOLS_PANEL_MIN_HEIGHT), maxHeight);
+  const width = Math.min(Math.max(frame.width, minWidth), maxWidth);
+  const height = Math.min(Math.max(frame.height, minHeight), maxHeight);
   const x = Math.min(
     Math.max(frame.x, PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN),
     Math.max(PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN, window.innerWidth - width - PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN)
   );
   const y = Math.min(
-    Math.max(frame.y, safeTop),
-    Math.max(safeTop, window.innerHeight - height - PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN)
+    Math.max(frame.y, PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN),
+    Math.max(PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN, window.innerHeight - height - PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN)
   );
 
   return {
@@ -146,20 +156,19 @@ function createDefaultParallelToolsPanelFrame(triggerRect: DOMRect | null): Para
   if (typeof window === "undefined") {
     return {
       x: PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN,
-      y: PARALLEL_TOOLS_PANEL_TOP_SAFE_INSET,
+      y: PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN,
       width: PARALLEL_TOOLS_PANEL_DEFAULT_WIDTH,
       height: PARALLEL_TOOLS_PANEL_DEFAULT_HEIGHT
     };
   }
 
-  const safeTop = Math.max(PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN, PARALLEL_TOOLS_PANEL_TOP_SAFE_INSET);
   const width = Math.min(
     PARALLEL_TOOLS_PANEL_DEFAULT_WIDTH,
     Math.max(PARALLEL_TOOLS_PANEL_MIN_WIDTH, window.innerWidth - PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN * 2)
   );
   const height = Math.min(
     PARALLEL_TOOLS_PANEL_DEFAULT_HEIGHT,
-    Math.max(PARALLEL_TOOLS_PANEL_MIN_HEIGHT, window.innerHeight - safeTop - PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN)
+    Math.max(PARALLEL_TOOLS_PANEL_MIN_HEIGHT, window.innerHeight - PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN * 2)
   );
 
   return clampParallelToolsPanelFrame({
@@ -167,10 +176,29 @@ function createDefaultParallelToolsPanelFrame(triggerRect: DOMRect | null): Para
       (triggerRect?.right ?? window.innerWidth - PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN)
       - width
       + 28,
-    y: Math.max((triggerRect?.bottom ?? 48) + 8, safeTop),
+    y: Math.max((triggerRect?.bottom ?? 48) + 8, PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN),
     width,
     height
   });
+}
+
+function createParallelToolsPanelFrameFromPane(paneRect: DOMRect | null): ParallelToolsPanelFrame | null {
+  if (!paneRect || paneRect.width <= 0 || paneRect.height <= 0) {
+    return null;
+  }
+
+  return clampParallelToolsPanelFrame(
+    {
+      x: paneRect.left,
+      y: paneRect.top,
+      width: paneRect.width,
+      height: paneRect.height
+    },
+    {
+      minWidth: Math.min(PARALLEL_TOOLS_PANEL_MIN_WIDTH, paneRect.width),
+      minHeight: Math.min(PARALLEL_TOOLS_PANEL_MIN_HEIGHT, paneRect.height)
+    }
+  );
 }
 
 export function ParallelConversationGroupView({
@@ -508,6 +536,7 @@ function ParallelConversationMemberPane({
   const [toolsPinned, setToolsPinned] = useState(false);
   const [toolsFrame, setToolsFrame] = useState<ParallelToolsPanelFrame | null>(null);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const paneRef = useRef<HTMLElement | null>(null);
   const headerLayerRef = useRef<HTMLElement | null>(null);
   const toolsPanelRef = useRef<HTMLDivElement | null>(null);
   const toolsTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -617,7 +646,7 @@ function ParallelConversationMemberPane({
   }, [sessionId]);
 
   useEffect(() => {
-    if (!toolsOpen && !optionsOpen && !infoOpen) {
+    if (!optionsOpen && !infoOpen) {
       return;
     }
 
@@ -635,9 +664,6 @@ function ParallelConversationMemberPane({
         return;
       }
 
-      if (!toolsPinned) {
-        setToolsOpen(false);
-      }
       setOptionsOpen(false);
       onCloseInfo();
     };
@@ -646,7 +672,7 @@ function ParallelConversationMemberPane({
     return () => {
       window.removeEventListener("pointerdown", handlePointerDown);
     };
-  }, [infoOpen, onCloseInfo, optionsOpen, toolsOpen, toolsPinned]);
+  }, [infoOpen, onCloseInfo, optionsOpen]);
 
   useEffect(() => {
     if (!toolsOpen) {
@@ -746,9 +772,12 @@ function ParallelConversationMemberPane({
 
   function openToolsPanel() {
     setToolsOpen(true);
-    setToolsFrame((current) => current ?? createDefaultParallelToolsPanelFrame(
-      toolsTriggerRef.current?.getBoundingClientRect() ?? null
-    ));
+    setToolsFrame(
+      createParallelToolsPanelFrameFromPane(paneRef.current?.getBoundingClientRect() ?? null)
+      ?? createDefaultParallelToolsPanelFrame(
+        toolsTriggerRef.current?.getBoundingClientRect() ?? null
+      )
+    );
   }
 
   function handleToolsDragPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
@@ -1013,6 +1042,7 @@ function ParallelConversationMemberPane({
   return (
     <>
       <article
+        ref={paneRef}
         className="parallel-conversation-pane"
         data-current={isCurrent ? "true" : undefined}
         data-workspace-tone={workspaceContext?.tone ?? "root"}
@@ -1052,11 +1082,6 @@ function ParallelConversationMemberPane({
               onClick={() => {
                 onCloseInfo();
                 setOptionsOpen(false);
-                if (toolsOpen) {
-                  setToolsOpen(false);
-                  return;
-                }
-
                 openToolsPanel();
               }}
             >
