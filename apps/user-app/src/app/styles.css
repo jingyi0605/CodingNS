@@ -29054,9 +29054,11 @@ textarea:focus-visible {
 
 .parallel-pane-tools-popover {
   position: fixed;
-  z-index: 2405;
+  z-index: 1700;
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  min-height: 0;
   padding: 0;
   border-radius: 16px;
   border: 1px solid var(--panel-border);
@@ -29534,8 +29536,8 @@ textarea:focus-visible {
   }
 
   .parallel-pane-tools-popover {
-    min-width: min(100vw - 20px, 680px);
-    min-height: min(100vh - 32px, 520px);
+    min-width: 0;
+    min-height: 0;
   }
 
   .parallel-pane-options-popover {
@@ -29615,8 +29617,8 @@ textarea:focus-visible {
   }
 
   .parallel-pane-tools-popover {
-    min-width: min(100vw - 20px, 640px);
-    min-height: min(100vh - 24px, 500px);
+    min-width: 0;
+    min-height: 0;
   }
 
   .parallel-pane-tools-tabs {
