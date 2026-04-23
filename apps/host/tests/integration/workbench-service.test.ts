@@ -289,6 +289,46 @@ describe("WorkbenchService", () => {
       refreshStateMode: "deferred"
     });
   });
+
+  it("显式要求等待 discovery 时，会先跑完工作区刷新再返回快照", async () => {
+    const requestWorkspaceDiscovery = vi.fn();
+    const discoverWorkspaceSessions = vi.fn(async () => []);
+    const service = new WorkbenchService(
+      {
+        list: vi.fn(() => [
+          {
+            id: "workspace-1",
+            path: "/repo/workspace-1"
+          }
+        ])
+      } as never,
+      {
+        listByUserId: vi.fn(() => [])
+      } as never,
+      {
+        listWorkspaceSessions: vi.fn(() => []),
+        requestWorkspaceDiscovery,
+        discoverWorkspaceSessions
+      } as never,
+      {
+        getProfile: vi.fn(() => null)
+      } as never,
+      {
+        listSessionIds: vi.fn(() => [])
+      } as never
+    );
+
+    await service.refreshSnapshot("user-1", {
+      force: true,
+      awaitDiscovery: true
+    });
+
+    expect(discoverWorkspaceSessions).toHaveBeenCalledWith("workspace-1", "user-1", {
+      force: true,
+      refreshStateMode: "deferred"
+    });
+    expect(requestWorkspaceDiscovery).not.toHaveBeenCalled();
+  });
 });
 
 async function flushMicrotasks(): Promise<void> {

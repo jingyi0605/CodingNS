@@ -17,6 +17,7 @@ import type {
   WorkspaceManagementSnapshot,
   WorkspacePanelSnapshotService
 } from "../modules/workbench/workspace-panel-snapshot-service.js";
+import type { CodexArchiveWatcher } from "../modules/workbench/codex-archive-watcher.js";
 import type { WorkspaceFileWatcher, WorkspaceWatcherEvent } from "../modules/workbench/workspace-file-watcher.js";
 
 const WORKBENCH_REFRESH_INTERVAL_MS = 60_000;
@@ -189,10 +190,14 @@ export class WorkbenchWsHub {
     private readonly workbenchService: WorkbenchService,
     private readonly workspacePanelSnapshotService: WorkspacePanelSnapshotService,
     private readonly fileWatcher: WorkspaceFileWatcher,
-    terminalService?: Pick<TerminalService, "on">
+    terminalService?: Pick<TerminalService, "on">,
+    codexArchiveWatcher?: Pick<CodexArchiveWatcher, "setOnChange">
   ) {
     this.fileWatcher.setOnChange((event) => {
       this.handleWorkspaceWatcherChange(event);
+    });
+    codexArchiveWatcher?.setOnChange(() => {
+      this.handleCodexArchiveChange();
     });
 
     terminalService?.on("status", (terminal) => {
@@ -224,7 +229,9 @@ export class WorkbenchWsHub {
           }
           return true;
         case "workbench.refresh":
-          void this.refreshAndBroadcast(userId, true);
+          void this.refreshAndBroadcast(userId, true, {
+            awaitDiscovery: true
+          });
           return true;
         case "fileTree.subscribe":
           this.replaceFileTreeSubscription(
@@ -496,6 +503,16 @@ export class WorkbenchWsHub {
     }
   }
 
+  private handleCodexArchiveChange(): void {
+    for (const userId of this.userChannels.keys()) {
+      void this.refreshAndBroadcast(userId, true, {
+        awaitDiscovery: true
+      }).catch((error) => {
+        this.reportAsyncError("handleCodexArchiveChange", error, { userId });
+      });
+    }
+  }
+
   private handleTerminalManagerChange(workspaceId: string): void {
     this.workspacePanelSnapshotService.invalidateTerminalManager(workspaceId);
 
@@ -613,7 +630,10 @@ export class WorkbenchWsHub {
 
   private async refreshAndBroadcast(
     userId: string,
-    force = false
+    force = false,
+    options?: {
+      awaitDiscovery?: boolean;
+    }
   ): Promise<void> {
     const channel = this.getOrCreateChannel(userId);
 
@@ -630,7 +650,10 @@ export class WorkbenchWsHub {
       const startedAtMs = terminalDebugNowMs();
       try {
         const snapshotStartedAt = Date.now();
-        const snapshot = await this.workbenchService.refreshSnapshot(userId);
+        const snapshot = await this.workbenchService.refreshSnapshot(userId, {
+          force,
+          awaitDiscovery: options?.awaitDiscovery ?? false
+        });
         const snapshotMs = Date.now() - snapshotStartedAt;
         const serializeStartedAt = Date.now();
         const payload = buildWorkbenchBroadcastPayload(channel.lastWorkbenchSnapshot, snapshot);
@@ -655,6 +678,7 @@ export class WorkbenchWsHub {
           {
             userId,
             force,
+            awaitDiscovery: options?.awaitDiscovery ?? false,
             clientCount: channel.clients.size,
             snapshotMs,
             serializeMs,
@@ -672,6 +696,7 @@ export class WorkbenchWsHub {
         logTerminalDebug("workbench.refresh.completed", {
           userId,
           force,
+          awaitDiscovery: options?.awaitDiscovery ?? false,
           clientCount: channel.clients.size,
           workspaceCount: snapshot.items.length,
           payloadBytes: broadcastMetric.payloadBytes,

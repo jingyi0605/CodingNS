@@ -3,6 +3,7 @@ import type { WebSocket } from "ws";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppError } from "../../src/shared/errors/app-error.js";
+import type { CodexArchiveWatcher } from "../../src/modules/workbench/codex-archive-watcher.js";
 import { WorkbenchWsHub } from "../../src/ws/workbench-ws-hub.js";
 import type { AuthContext } from "../../src/modules/auth/auth-service.js";
 import type { TerminalService } from "../../src/modules/terminal/terminal-service.js";
@@ -22,6 +23,12 @@ function createMockFileWatcher() {
     WorkspaceFileWatcher,
     "setOnChange" | "subscribeFileTree" | "unsubscribeFileTree" | "subscribeGit" | "unsubscribeGit" | "dispose"
   >;
+}
+
+function createMockCodexArchiveWatcher() {
+  return {
+    setOnChange: vi.fn()
+  } satisfies Pick<CodexArchiveWatcher, "setOnChange">;
 }
 
 function createMockTerminalService() {
@@ -660,6 +667,7 @@ describe("WorkbenchWsHub", () => {
       getSnapshot: vi
         .fn()
         .mockReturnValueOnce({
+          revision: "rev-1",
           items: [
             {
               workspace: {
@@ -676,6 +684,7 @@ describe("WorkbenchWsHub", () => {
           ]
         })
         .mockReturnValue({
+          revision: "rev-2",
           items: [
             {
               workspace: {
@@ -973,8 +982,150 @@ describe("WorkbenchWsHub", () => {
 
     await flushAsyncTasks();
 
-    expect(refreshSnapshot).toHaveBeenCalledWith("user-1");
+    expect(refreshSnapshot).toHaveBeenCalledWith("user-1", {
+      force: true,
+      awaitDiscovery: true
+    });
     expect(workbenchService.syncSessionTitles).not.toHaveBeenCalled();
+  });
+
+  it("Codex 归档目录发生变化后，会主动等待 discovery 完成再广播新快照", async () => {
+    const client = {
+      send: vi.fn()
+    } as unknown as WebSocket;
+    const authContext: AuthContext = {
+      accessToken: "token",
+      callerKind: "interactive_user",
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    };
+    const refreshSnapshot = vi.fn(async () => ({
+      revision: "rev-2",
+      items: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "项目一",
+            path: "/repo/workspace-1"
+          },
+          sessions: [
+            {
+              sessionId: "session-1",
+              workspaceId: "workspace-1",
+              provider: "codex",
+              isArchived: true,
+              isFavorite: false,
+              title: "已归档会话",
+              messageCount: 3,
+              lastMessageAt: "2026-04-23T12:00:00.000Z",
+              createdAt: "2026-04-23T11:59:00.000Z",
+              updatedAt: "2026-04-23T12:01:00.000Z",
+              syncStatus: "idle",
+              lastErrorCode: null,
+              lastErrorDetail: null,
+              runningState: "idle",
+              activitySource: "inferred",
+              activityResolutionSource: "history_refresh",
+              lastEventAt: "2026-04-23T12:01:00.000Z",
+              completedAt: null,
+              lastSeenAt: null,
+              activityState: "idle"
+            }
+          ],
+          collapsed: false
+        }
+      ]
+    }));
+    const workbenchService = {
+      getSnapshot: vi.fn(() => ({
+        revision: "rev-1",
+        items: [
+          {
+            workspace: {
+              id: "workspace-1",
+              name: "项目一",
+              path: "/repo/workspace-1"
+            },
+            sessions: [
+              {
+                sessionId: "session-1",
+                workspaceId: "workspace-1",
+                provider: "codex",
+                isArchived: false,
+                isFavorite: false,
+                title: "活跃会话",
+                messageCount: 3,
+                lastMessageAt: "2026-04-23T12:00:00.000Z",
+                createdAt: "2026-04-23T11:59:00.000Z",
+                updatedAt: "2026-04-23T12:00:00.000Z",
+                syncStatus: "idle",
+                lastErrorCode: null,
+                lastErrorDetail: null,
+                runningState: "idle",
+                activitySource: "inferred",
+                activityResolutionSource: "history_refresh",
+                lastEventAt: "2026-04-23T12:00:00.000Z",
+                completedAt: null,
+                lastSeenAt: null,
+                activityState: "idle"
+              }
+            ],
+            collapsed: false
+          }
+        ]
+      })),
+      shouldRefreshSnapshot: vi.fn(() => false),
+      refreshSnapshot,
+      syncSessionTitles: vi.fn(async () => ({ items: [] }))
+    } satisfies Pick<
+      WorkbenchService,
+      "getSnapshot" | "shouldRefreshSnapshot" | "refreshSnapshot" | "syncSessionTitles"
+    >;
+    const codexArchiveWatcher = createMockCodexArchiveWatcher();
+
+    const hub = new WorkbenchWsHub(
+      workbenchService as unknown as WorkbenchService,
+      {} as WorkspacePanelSnapshotService,
+      createMockFileWatcher() as unknown as WorkspaceFileWatcher,
+      undefined,
+      codexArchiveWatcher as unknown as CodexArchiveWatcher
+    );
+
+    expect(
+      hub.handleMessage(
+        client,
+        {
+          type: "workbench.subscribe"
+        },
+        authContext
+      )
+    ).toBe(true);
+
+    const onChange = (codexArchiveWatcher.setOnChange as unknown as ReturnType<typeof vi.fn>)
+      .mock.calls[0]?.[0] as (() => void) | undefined;
+
+    expect(onChange).toBeTypeOf("function");
+    onChange?.();
+    await flushAsyncTasks();
+
+    expect(refreshSnapshot).toHaveBeenCalledWith("user-1", {
+      force: true,
+      awaitDiscovery: true
+    });
+
+    const sentPayloads = (client.send as unknown as ReturnType<typeof vi.fn>).mock.calls
+      .map((call) => JSON.parse(call[0] as string));
+
+    expect(sentPayloads.at(-1)).toEqual(
+      expect.objectContaining({
+        type: "workbench.snapshot",
+        revision: "rev-2"
+      })
+    );
+    expect(sentPayloads.at(-1)?.snapshot?.items?.[0]?.sessions?.[0]?.isArchived).toBe(true);
   });
 
   it("Terminal 面板刷新改成事件驱动，状态抖动会经过 quiet window 合并", async () => {

@@ -100,11 +100,27 @@ export class WorkbenchService {
       );
   }
 
-  async refreshSnapshot(userId: string): Promise<WorkbenchSnapshot> {
+  async refreshSnapshot(
+    userId: string,
+    options?: {
+      force?: boolean;
+      awaitDiscovery?: boolean;
+    }
+  ): Promise<WorkbenchSnapshot> {
     const startedAt = Date.now();
-    this.scheduleSnapshotRefresh(userId, {
-      force: true
-    });
+    const force = options?.force ?? true;
+    const awaitDiscovery = options?.awaitDiscovery ?? false;
+
+    if (awaitDiscovery) {
+      await this.refreshWorkspaceSessions(userId, {
+        force,
+        refreshStateMode: "deferred"
+      });
+    } else {
+      this.scheduleSnapshotRefresh(userId, {
+        force
+      });
+    }
 
     const snapshot = this.getSnapshot(userId);
 
@@ -116,7 +132,8 @@ export class WorkbenchService {
         sessionCount: snapshot.items.reduce(
           (total, item) => total + countWorkbenchSessions(item),
           0
-        )
+        ),
+        awaitDiscovery
       },
       {
         thresholdMs: 300
@@ -227,6 +244,25 @@ export class WorkbenchService {
         refreshStateMode: "deferred"
       });
     }
+  }
+
+  private async refreshWorkspaceSessions(
+    userId: string,
+    options?: {
+      force?: boolean;
+      refreshStateMode?: "inline" | "deferred";
+    }
+  ): Promise<void> {
+    const workspaces = this.listWorkbenchWorkspaces();
+
+    await Promise.allSettled(
+      workspaces.map((workspace) =>
+        this.sessionHistoryService.discoverWorkspaceSessions(workspace.id, userId, {
+          force: options?.force ?? true,
+          refreshStateMode: options?.refreshStateMode ?? "deferred"
+        })
+      )
+    );
   }
 
   private filterButlerControlSessions(sessions: SessionListItem[]): SessionListItem[] {

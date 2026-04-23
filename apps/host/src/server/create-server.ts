@@ -117,6 +117,7 @@ import { CommandTemplateService } from "../modules/terminal/command-template-ser
 import { TerminalController } from "../modules/terminal/terminal-controller.js";
 import { TemplateReverseProxyService } from "../modules/terminal/template-reverse-proxy-service.js";
 import { TerminalService } from "../modules/terminal/terminal-service.js";
+import { CodexArchiveWatcher } from "../modules/workbench/codex-archive-watcher.js";
 import { WorkbenchController } from "../modules/workbench/workbench-controller.js";
 import { WorkbenchService } from "../modules/workbench/workbench-service.js";
 import { WorkspacePanelSnapshotService } from "../modules/workbench/workspace-panel-snapshot-service.js";
@@ -221,6 +222,7 @@ import { WorkbenchWsHub } from "../ws/workbench-ws-hub.js";
 import { createWsServer } from "../ws/ws-server.js";
 import { WsAuthGuard } from "../ws/ws-auth-guard.js";
 import { registerStaticWebRoutes } from "./static-web.js";
+import { registerWorkbenchRuntimeTerminalSync } from "./workbench-runtime-terminal-sync.js";
 import type { TerminalInstance } from "../types/domain.js";
 
 export function createServer(config: HostConfig) {
@@ -982,6 +984,7 @@ export function createServer(config: HostConfig) {
     taskManager
   );
   const fileWatcher = new WorkspaceFileWatcher(workspaceService);
+  const codexArchiveWatcher = new CodexArchiveWatcher(config.codexHomeDir);
 
   const bootstrapController = new BootstrapController(bootstrapService);
   const clientController = new ClientController(clientService);
@@ -1076,15 +1079,33 @@ export function createServer(config: HostConfig) {
   const gitController = new GitController(gitReadService, gitWriteService, commitOrchestrator);
   const terminalController = new TerminalController(terminalService, commandTemplateService);
   const observabilityController = new ObservabilityController(runtimeObservabilityService);
+  const workbenchWsHub = new WorkbenchWsHub(
+    workbenchService,
+    workspacePanelSnapshotService,
+    fileWatcher,
+    terminalService,
+    codexArchiveWatcher
+  );
   const wsHandle = createWsServer(
     app.server,
     new WsAuthGuard(authService),
     sessionHistoryService,
     routedSessionLiveRuntimeService,
     new TerminalWsHub(terminalService),
-    new WorkbenchWsHub(workbenchService, workspacePanelSnapshotService, fileWatcher, terminalService),
+    workbenchWsHub,
     butlerActionContextService
   );
+  const workbenchRuntimeTerminalSync = registerWorkbenchRuntimeTerminalSync({
+    authUserRepository: repositories.authUserRepository,
+    sessionHistoryService,
+    workbenchWsHub,
+    runtimeServices: [
+      sessionLiveRuntimeService,
+      butlerSessionLiveRuntimeService,
+      butlerSummarySessionLiveRuntimeService,
+      butlerFollowUpSessionLiveRuntimeService
+    ]
+  });
 
   app.server.on("upgrade", (request, socket, head) => {
     templateReverseProxyService.handleWebSocketUpgrade(request, socket, head);
@@ -1190,7 +1211,10 @@ export function createServer(config: HostConfig) {
     await butlerSummarySessionLiveRuntimeService.dispose();
     await butlerSessionLiveRuntimeService.dispose();
     await sessionLiveRuntimeService.dispose();
+    workbenchRuntimeTerminalSync.close();
     await wsHandle.close();
+    codexArchiveWatcher.dispose();
+    fileWatcher.dispose();
     config.opencodeBaseUrlResolver?.dispose?.();
     gitCommandRunner.dispose();
     tailscaleHelperClient.dispose();
