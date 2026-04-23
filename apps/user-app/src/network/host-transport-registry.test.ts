@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clientConfigStore } from "../config/client-config-store";
+import { hostLoginRouteHintStore } from "../config/host-login-route-hint-store";
 import { hostRuntimeStore } from "../config/host-runtime-store";
 import { directHostTransport } from "./direct-host-transport";
 import {
@@ -13,6 +14,7 @@ import { ManagedRelayTunnelHostTransport } from "./relay-tunnel-managed-transpor
 describe("host-transport-registry", () => {
   beforeEach(() => {
     resetHostTransportRegistryForTesting();
+    hostLoginRouteHintStore.clear();
     clientConfigStore.hydrate(createRuntimeConfig());
     vi.spyOn(hostRuntimeStore, "getState").mockReturnValue({
       epoch: 0,
@@ -29,6 +31,7 @@ describe("host-transport-registry", () => {
   });
 
   afterEach(() => {
+    hostLoginRouteHintStore.clear();
     vi.restoreAllMocks();
   });
 
@@ -241,6 +244,30 @@ describe("host-transport-registry", () => {
       preferredCandidateEndpointId: "host_reported:http://192.168.50.8:3002",
       preferredDirectCandidateEndpointId: "host_reported:http://192.168.50.8:3002"
     });
+
+    const target = resolveHostTransportTarget("https://demo.channel.codingns.com");
+
+    expect(target.baseUrl).toBe("http://192.168.50.8:3002");
+    expect(target.transport).toBe(directHostTransport);
+  });
+
+  it("登录后正式 probe 还没完成时，会先沿用命中的直连 hint", () => {
+    clientConfigStore.hydrate(createRuntimeConfig({
+      activeHostId: "relay-host-a"
+    }));
+    vi.mocked(hostRuntimeStore.getState).mockReturnValue({
+      epoch: 1,
+      activeHostId: "relay-host-a",
+      connectionSignature: "relay",
+      candidateProbeSignature: "probing",
+      candidateProbePhase: "probing",
+      candidateProbeStartedAt: "2026-04-21T00:00:00.000Z",
+      candidateProbeFinishedAt: null,
+      candidateEndpoints: [],
+      preferredCandidateEndpointId: null,
+      preferredDirectCandidateEndpointId: null
+    });
+    hostLoginRouteHintStore.remember("relay-host-a", "http://192.168.50.8:3002");
 
     const target = resolveHostTransportTarget("https://demo.channel.codingns.com");
 

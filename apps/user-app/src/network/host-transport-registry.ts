@@ -1,5 +1,6 @@
 import { clientConfigStore } from "../config/client-config-store";
 import { getActiveHost, getRuntimeHostByBaseUrl } from "../config/client-config-types";
+import { hostLoginRouteHintStore } from "../config/host-login-route-hint-store";
 import { hostRuntimeStore } from "../config/host-runtime-store";
 import { inferRelayAccessConfig } from "../config/relay-control-site-config";
 import { directHostTransport } from "./direct-host-transport";
@@ -31,13 +32,11 @@ const defaultHostTransportResolver: HostTransportResolver = ({ baseUrl }) => {
       controlBaseUrl: relayTunnel.controlBaseUrl,
       tunnelDomain: relayTunnel.tunnelDomain
     }, {
-      fallbackTransport: shouldAllowRelayDirectFallback(
+      fallbackTransport: resolveRelayDirectFallbackTransport(
         clientConfigStore.getState().platform,
         host.baseUrl,
         relayTunnel.tunnelDomain
       )
-        ? directHostTransport
-        : undefined
     });
 
     relayTransportCache.set(host.id, {
@@ -77,6 +76,13 @@ const defaultHostTransportResolver: HostTransportResolver = ({ baseUrl }) => {
       hostId: `inferred:${inferredRelay.tunnelDomain}`,
       controlBaseUrl: inferredRelay.controlBaseUrl,
       tunnelDomain: inferredRelay.tunnelDomain
+    }, {
+      // 手填四级域名时，native 客户端需要在 relay 建连失败后继续尝试同地址直连。
+      fallbackTransport: resolveRelayDirectFallbackTransport(
+        clientConfigStore.getState().platform,
+        baseUrl,
+        inferredRelay.tunnelDomain
+      )
     });
 
     inferredRelayTransportCache.set(cacheKey, transport);
@@ -147,7 +153,8 @@ function resolveActiveHostBaseUrl(baseUrl: string): string {
   const runtimeState = hostRuntimeStore.getState();
 
   if (runtimeState.activeHostId !== activeHost.id || runtimeState.candidateProbePhase !== "ready") {
-    return baseUrl;
+    const loginRouteHint = hostLoginRouteHintStore.get(activeHost.id);
+    return loginRouteHint?.baseUrl ?? baseUrl;
   }
 
   const preferredEndpointId =
@@ -155,7 +162,8 @@ function resolveActiveHostBaseUrl(baseUrl: string): string {
     ?? runtimeState.preferredCandidateEndpointId;
 
   if (!preferredEndpointId) {
-    return baseUrl;
+    const loginRouteHint = hostLoginRouteHintStore.get(activeHost.id);
+    return loginRouteHint?.baseUrl ?? baseUrl;
   }
 
   const preferredEndpoint = runtimeState.candidateEndpoints.find(
@@ -191,18 +199,16 @@ function shouldUseRelayTransport(
   }
 }
 
-function shouldAllowRelayDirectFallback(
+function resolveRelayDirectFallbackTransport(
   platform: "desktop" | "web" | "ios" | "android",
-  hostBaseUrl: string,
-  tunnelDomain: string
-): boolean {
+  _hostBaseUrl: string,
+  _tunnelDomain: string
+): HostTransport | undefined {
   if (platform === "web") {
-    return false;
+    return undefined;
   }
 
-  try {
-    return new URL(hostBaseUrl).hostname.toLowerCase() !== tunnelDomain.trim().toLowerCase();
-  } catch {
-    return true;
-  }
+  // native 端允许把四级域名继续当普通 Host API 入口尝试一次，
+  // 避免 relay 尚未接起时直接把可用的反向代理入口误判成不可达。
+  return directHostTransport;
 }

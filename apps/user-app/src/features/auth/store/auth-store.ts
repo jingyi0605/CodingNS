@@ -7,6 +7,7 @@ import {
   type HostProfile,
   type RuntimeHostProfile
 } from "../../../config/client-config-types";
+import { hostLoginRouteHintStore } from "../../../config/host-login-route-hint-store";
 import { ApiError } from "../../../shared/network/api-error";
 import type { LoginPayload } from "../api/auth-api";
 
@@ -88,10 +89,10 @@ class AuthStore {
   getState = () => this.state;
 
   async login(payload: LoginPayload, baseUrl?: string): Promise<AuthSession> {
-    const { loginRequest } = await import("../api/auth-api");
     const currentHost = this.getCurrentHost();
 
     if (!currentHost) {
+      const { loginRequest } = await import("../api/auth-api");
       const session = await loginRequest(payload, baseUrl);
       this.updateState({
         status: "authenticated",
@@ -110,7 +111,21 @@ class AuthStore {
 
   async loginForHost(host: RuntimeHostProfile, payload: LoginPayload, baseUrl?: string): Promise<AuthSession> {
     const { loginRequest } = await import("../api/auth-api");
-    const session = await loginRequest(payload, baseUrl ?? host.baseUrl);
+    const { resolveLoginBaseUrlWithDirectCandidates } = await import("./login-direct-candidate-resolver");
+    const requestedBaseUrl = baseUrl ?? host.baseUrl;
+    const loginBaseUrl = await resolveLoginBaseUrlWithDirectCandidates({
+      host,
+      requestedBaseUrl,
+      platform: clientConfigStore.getState().platform
+    });
+    const session = await loginRequest(payload, loginBaseUrl);
+
+    if (loginBaseUrl !== host.baseUrl) {
+      hostLoginRouteHintStore.remember(host.id, loginBaseUrl);
+    } else {
+      hostLoginRouteHintStore.forget(host.id);
+    }
+
     this.persistSession(host, session);
 
     if (this.getCurrentHost()?.id === host.id) {
@@ -194,6 +209,7 @@ class AuthStore {
     this.lastRuntimeConfigSyncKey = null;
 
     if (!currentHost) {
+      hostLoginRouteHintStore.clear();
       this.sessionMap = {};
       this.persistSessionMap();
       this.updateState({
@@ -202,6 +218,8 @@ class AuthStore {
       });
       return;
     }
+
+    hostLoginRouteHintStore.forget(currentHost.id);
 
     if (this.sessionMap[currentHost.id]) {
       const nextSessionMap = { ...this.sessionMap };
@@ -217,7 +235,13 @@ class AuthStore {
   }
 
   clearHostSession(hostId: string): void {
-    if (!hostId || !this.sessionMap[hostId]) {
+    if (!hostId) {
+      return;
+    }
+
+    hostLoginRouteHintStore.forget(hostId);
+
+    if (!this.sessionMap[hostId]) {
       return;
     }
 

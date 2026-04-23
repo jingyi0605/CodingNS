@@ -62,6 +62,7 @@ describe("authStore", () => {
 
   afterEach(() => {
     window.localStorage.clear();
+    vi.unstubAllGlobals();
     vi.resetModules();
   });
 
@@ -244,6 +245,102 @@ describe("authStore", () => {
     });
 
     expect(authStore.getState().status).toBe("authenticated");
+    await waitFor(() => {
+      expect(syncRuntimeConfigMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("relay Host 登录前会先尝试 candidateEndpoints 里的直连地址，并把后续请求临时切到命中的直连入口", async () => {
+    const clientConfigStore = await setupClientConfig();
+    const syncRuntimeConfigMock = vi.fn(async () => undefined);
+    const loginRequestMock = vi.fn(async () => storedSession);
+
+    clientConfigStore.hydrate({
+      ...clientConfigStore.getState(),
+      platform: "android",
+      activeHostId: "relay-host",
+      hosts: [
+        {
+          id: "relay-host",
+          name: "demo.channel.codingns.com",
+          baseUrl: "https://demo.channel.codingns.com:1443",
+          kind: "remote",
+          createdAt: "2026-04-23T00:00:00.000Z",
+          updatedAt: "2026-04-23T00:00:00.000Z",
+          lastConnectedAt: null,
+          lastUserId: null,
+          lastUsername: null,
+          relayTunnel: {
+            provider: "codingns_relay",
+            enabled: true,
+            tunnelDomain: "demo.channel.codingns.com",
+            controlBaseUrl: "https://channel.codingns.com:1443",
+            bindingId: "binding_demo",
+            hostFingerprint: "SHA256:demo",
+            candidateEndpoints: [
+              {
+                endpointId: "host_reported:http://192.168.50.8:3002",
+                kind: "lan",
+                url: "http://192.168.50.8:3002",
+                priority: 100,
+                expiresAt: null,
+                source: "host_reported"
+              },
+              {
+                endpointId: "relay-entry:https://demo.channel.codingns.com:1443",
+                kind: "relay",
+                url: "https://demo.channel.codingns.com:1443",
+                priority: 400,
+                expiresAt: null,
+                source: "user_saved"
+              }
+            ]
+          }
+        }
+      ]
+    });
+
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+
+      if (url === "http://192.168.50.8:3002/api/public/bootstrap-status") {
+        return new Response(JSON.stringify({ initialized: true }), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }));
+
+    vi.doMock("../api/auth-api", () => ({
+      loginRequest: loginRequestMock
+    }));
+    vi.doMock("../../../platform/server/client-runtime-manager", () => ({
+      syncActiveHostAuthenticatedRuntimeConfig: syncRuntimeConfigMock
+    }));
+
+    const { authStore } = await import("./auth-store");
+    const { resolveHostTransportTarget } = await import("../../../network/host-transport-registry");
+
+    await authStore.login({
+      username: "admin",
+      password: "admin1234"
+    });
+
+    expect(loginRequestMock).toHaveBeenCalledWith(
+      {
+        username: "admin",
+        password: "admin1234"
+      },
+      "http://192.168.50.8:3002"
+    );
+
+    expect(resolveHostTransportTarget("https://demo.channel.codingns.com:1443").baseUrl).toBe(
+      "http://192.168.50.8:3002"
+    );
     await waitFor(() => {
       expect(syncRuntimeConfigMock).toHaveBeenCalledTimes(1);
     });
