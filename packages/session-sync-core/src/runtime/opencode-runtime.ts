@@ -448,13 +448,19 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
     const partId = ensureText(partPayload.id).trim();
     const messageId =
       ensureText(partPayload.messageID).trim() || state.messageIdByPartId.get(partId) || "";
-    const messagePayload = state.messageInfoById.get(messageId);
+    const existingMessagePayload = state.messageInfoById.get(messageId);
+    const messagePayload =
+      existingMessagePayload ?? createSyntheticMessagePayload(partPayload, messageId, state.providerSessionId);
 
     if (!messageId || !partId || !messagePayload) {
       return;
     }
 
     state.messageIdByPartId.set(partId, messageId);
+
+    if (!existingMessagePayload) {
+      state.messageInfoById.set(messageId, messagePayload);
+    }
 
     const normalized = normalizeOpenCodePartMessage({
       sessionId: state.providerSessionId,
@@ -777,14 +783,12 @@ function shouldEmitPart(partPayload: Record<string, unknown>): boolean {
 
   if (partType === "text") {
     const text = ensureText(partPayload.text).trim();
-    const time = toJsonRecord(partPayload.time);
-    return text.length > 0 && (!time || typeof time.end === "number");
+    return text.length > 0;
   }
 
   if (partType === "reasoning") {
     const text = ensureText(partPayload.text).trim();
-    const time = toJsonRecord(partPayload.time);
-    return text.length > 0 && Boolean(time && typeof time.end === "number");
+    return text.length > 0;
   }
 
   if (partType === "tool") {
@@ -797,6 +801,37 @@ function shouldEmitPart(partPayload: Record<string, unknown>): boolean {
   }
 
   return true;
+}
+
+function createSyntheticMessagePayload(
+  partPayload: Record<string, unknown>,
+  messageId: string,
+  providerSessionId: string
+): Record<string, unknown> | null {
+  const normalizedMessageId = messageId.trim();
+
+  if (!normalizedMessageId) {
+    return null;
+  }
+
+  const partTime = toJsonRecord(partPayload.time);
+  const createdAt =
+    typeof partTime?.start === "number"
+      ? partTime.start
+      : typeof partTime?.created === "number"
+        ? partTime.created
+        : typeof partTime?.end === "number"
+          ? partTime.end
+          : null;
+
+  return {
+    id: normalizedMessageId,
+    sessionID: providerSessionId,
+    // OpenCode 的正文增量经常先于 message.updated 到达。
+    // 这里先用 assistant 占位，保证前端能实时看到同一条消息的连续增长。
+    role: "assistant",
+    time: createdAt === null ? {} : { created: createdAt }
+  };
 }
 
 function mergeRecords(
