@@ -452,10 +452,11 @@ describe("ComposerPanel", () => {
     expect(screen.queryByLabelText(t("conversation.runtimeRunning"))).not.toBeInTheDocument();
   });
 
-  it("页面误把 canInterrupt 传成 false 时，只要当前已处于活动态仍允许停止", () => {
+  it("页面只剩陈旧 running 标记但没有 active run 时，不应继续显示停止按钮", () => {
     render(
       <ComposerPanel
         capabilities={createCapabilities({ provider: "claude-code", supportsInterrupt: true })}
+        hasActiveRun={false}
         canInterrupt={false}
         isSubmitting={false}
         isRunning
@@ -464,8 +465,8 @@ describe("ComposerPanel", () => {
       />
     );
 
-    expect(screen.getByLabelText(t("conversation.capabilityInterrupt"))).toBeInTheDocument();
-    expect(screen.queryByLabelText(t("conversation.runtimeRunning"))).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(t("conversation.capabilityInterrupt"))).not.toBeInTheDocument();
+    expect(screen.getByLabelText(t("conversation.runtimeRunning"))).toBeInTheDocument();
   });
 
   it("发送请求还没落回空闲时，只要运行已经开始也优先显示停止按钮", async () => {

@@ -622,6 +622,133 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
+  it("缓存里残留 running 态时，initialize 会主动刷新 runtime 快照纠正终态", async () => {
+    vi.useFakeTimers();
+    writeViewSnapshot(SESSION_RUNTIME_SNAPSHOT_KEY, {
+      session: {
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        rawStoreRef: "codex://raw-1",
+        title: "会话 1",
+        messageCount: 60,
+        lastMessageAt: "2026-03-24T10:00:00.000Z",
+        createdAt: "2026-03-24T09:00:00.000Z",
+        updatedAt: "2026-03-24T10:00:00.000Z",
+        syncStatus: "idle",
+        syncCursor: "cursor-sync",
+        lastSyncAt: "2026-03-24T10:00:00.000Z",
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "running",
+        activitySource: "runtime",
+        activityResolutionSource: "authoritative_runtime",
+        activityConfidence: "authoritative",
+        runId: "runtime:session-1:2026-03-24T09:59:00.000Z",
+        lastEventAt: "2026-03-24T10:00:00.000Z",
+        completedAt: null,
+        lastSeenAt: null,
+        activityState: "running",
+        watchdogTriggeredAt: null
+      },
+      capabilities: {
+        provider: "codex",
+        canStartSession: true,
+        canResumeSession: true,
+        canSendMessage: true,
+        inRunInputMode: "none",
+        supportsSubagents: false,
+        supportsInterrupt: true,
+        supportsStructuredToolCalls: true,
+        supportsTokenUsage: false,
+        supportsAttachments: false,
+        supportsPermissionPrompt: true,
+        supportsCheckpoint: false,
+        modelOptions: [
+          {
+            id: "provider-default",
+            name: "跟随 CLI 默认模型",
+            usesProviderDefault: true
+          },
+          {
+            id: "gpt-5.4",
+            name: "gpt-5.4"
+          }
+        ],
+        limitations: []
+      },
+      runtimeHasActiveRun: true,
+      runtimeCanInterrupt: true,
+      contextUsage: {
+        provider: "codex",
+        promptTokens: 64000,
+        uncachedInputTokens: 40000,
+        cachedInputTokens: 24000,
+        contextWindow: 200000,
+        usageRatio: 0.32,
+        source: "provider-log",
+        contextWindowSource: "provider-log",
+        modelId: "gpt-5.3-codex",
+        capturedAt: "2026-03-24T10:00:00.000Z",
+        isEstimated: false
+      },
+      messages: [],
+      permissionRequests: [],
+      queuedMessages: [],
+      olderCursor: null,
+      hasOlderMessages: false,
+      lastCursor: null,
+      pagesLoaded: 0,
+      interruptSource: null
+    });
+    mocked.getSessionRuntime.mockResolvedValueOnce({
+      sessionId: "session-1",
+      runningState: "completed",
+      hasActiveRun: false,
+      canAttach: false,
+      canInterrupt: false,
+      inRunInputMode: "none",
+      provider: "codex",
+      providerSessionId: "raw-1",
+      activityResolutionSource: "authoritative_runtime",
+      activityConfidence: "strong",
+      runId: "runtime:session-1:2026-03-24T09:59:00.000Z",
+      detail: "run completed",
+      interruptSource: null,
+      errorCode: null,
+      errorDetail: null,
+      updatedAt: "2026-03-24T10:01:00.000Z",
+      watchdogTriggeredAt: null,
+      contextUsage: {
+        provider: "codex",
+        promptTokens: 65000,
+        uncachedInputTokens: 41000,
+        cachedInputTokens: 24000,
+        contextWindow: 200000,
+        usageRatio: 0.325,
+        source: "provider-runtime",
+        contextWindowSource: "provider-runtime",
+        modelId: "gpt-5.4",
+        capturedAt: "2026-03-24T10:01:00.000Z",
+        isEstimated: false
+      }
+    });
+
+    const store = new SessionRuntimeStore("session-1");
+
+    await store.initialize();
+
+    expect(mocked.getSessionRuntime).toHaveBeenCalledTimes(1);
+    expect(store.getState().session?.runningState).toBe("completed");
+    expect(store.getState().session?.activityState).toBe("completed_unread");
+    expect(store.getState().runtimeHasActiveRun).toBe(false);
+    expect(store.getState().runtimeCanInterrupt).toBe(false);
+
+    store.destroy();
+  });
+
   it("首屏 backfill 会替换掉旧快照里的过期消息，而不是和旧半截混在一起", async () => {
     vi.useFakeTimers();
     writeViewSnapshot(SESSION_RUNTIME_SNAPSHOT_KEY, {
@@ -1284,6 +1411,58 @@ describe("SessionRuntimeStore", () => {
 
     expect(store.getState().messages).toHaveLength(1);
     expect(store.getState().messages[0]?.content).toBe("第一段\n第二段");
+
+    store.destroy();
+  });
+
+  it("Codex 运行时消息和后续 backfill 使用不同 messageId 时，前端只保留一条权威消息", async () => {
+    const store = new SessionRuntimeStore("session-1");
+    await store.initialize();
+    emitRealtimeSubscribed();
+
+    emitRealtimeRuntimeMessage({
+      type: "session.runtime_message",
+      sessionId: "session-1",
+      source: "runtime",
+      message: {
+        messageId: "assistant-runtime-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        kind: "text",
+        content: "代码已经改完了，继续补回归。",
+        timestamp: "2026-04-13T10:00:00.000Z",
+        sequence: 70,
+        rawRef: "codex://raw#line=18",
+        toolCall: null
+      }
+    });
+
+    emitRealtimeEnvelope({
+      type: "session.backfill",
+      sessionId: "session-1",
+      cursor: "cursor-after",
+      messages: [
+        {
+          messageId: "assistant-history-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          kind: "text",
+          content: "代码已经改完了，继续补回归。",
+          timestamp: "2026-04-13T10:00:35.000Z",
+          sequence: 72,
+          rawRef: "codex://raw#line=32",
+          toolCall: null
+        }
+      ]
+    });
+
+    expect(store.getState().messages).toHaveLength(1);
+    expect(store.getState().messages[0]).toMatchObject({
+      id: "assistant-history-1",
+      content: "代码已经改完了，继续补回归。"
+    });
 
     store.destroy();
   });
@@ -2512,6 +2691,65 @@ describe("SessionRuntimeStore", () => {
 
     expect(store.getState().session?.runningState).toBe("running");
     expect(store.getState().session?.activityState).toBe("running");
+
+    store.destroy();
+  });
+
+  it("applyNavigationSession 不会用缺少新终态证据的 running 摘要冲掉本地 completed 态", () => {
+    const store = new SessionRuntimeStore("session-1", {
+      initialSession: {
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "claude-code",
+        providerSessionId: "claude-session-1",
+        rawStoreRef: "claude://raw-1",
+        title: "session-1",
+        messageCount: 1,
+        lastMessageAt: "2026-03-24T10:00:10.000Z",
+        createdAt: "2026-03-24T09:00:00.000Z",
+        updatedAt: "2026-03-24T10:00:10.000Z",
+        syncStatus: "idle",
+        syncCursor: "cursor-sync",
+        lastSyncAt: "2026-03-24T10:00:10.000Z",
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "completed",
+        activitySource: "runtime",
+        lastEventAt: "2026-03-24T10:00:10.000Z",
+        completedAt: "2026-03-24T10:00:10.000Z",
+        lastSeenAt: null,
+        activityState: "completed_unread"
+      }
+    });
+
+    store.applyNavigationSession({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "claude://raw-1",
+      title: "session-1",
+      messageCount: 1,
+      lastMessageAt: "2026-03-24T10:00:10.000Z",
+      createdAt: "2026-03-24T09:00:00.000Z",
+      updatedAt: "2026-03-24T10:10:00.000Z",
+      syncStatus: "idle",
+      syncCursor: "cursor-sync",
+      lastSyncAt: "2026-03-24T10:10:00.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      runningState: "running",
+      activitySource: "runtime",
+      lastEventAt: "2026-03-24T10:00:00.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      activityState: "running"
+    });
+
+    expect(store.getState().session?.runningState).toBe("completed");
+    expect(store.getState().session?.activityState).toBe("completed_unread");
 
     store.destroy();
   });

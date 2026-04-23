@@ -578,6 +578,141 @@ describe("session runtime machine", () => {
     expect(merged[0].id).toBe("codex-response-item");
   });
 
+  it("会用后续权威 codex assistant 消息替换运行时阶段的漂移 messageId", () => {
+    const merged = mergeAuthoritativeMessages(
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "codex-runtime-message",
+            provider: "codex",
+            providerSessionId: "raw-1",
+            role: "assistant",
+            content: "代码已经改完了，接下来补回归测试。",
+            timestamp: "2026-04-13T10:00:00.000Z",
+            sequence: 8,
+            rawRef: "codex://demo#line=18"
+          })
+        )
+      ],
+      "session-1",
+      [
+        createHistoryMessage({
+          messageId: "codex-history-message",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          content: "代码已经改完了，接下来补回归测试。",
+          timestamp: "2026-04-13T10:00:35.000Z",
+          sequence: 10,
+          rawRef: "codex://demo#line=32"
+        })
+      ]
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({
+      id: "codex-history-message",
+      content: "代码已经改完了，接下来补回归测试。"
+    });
+  });
+
+  it("会用后续权威 codex tool_result 消息替换运行时阶段的漂移 messageId", () => {
+    const merged = mergeAuthoritativeMessages(
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "codex-runtime-tool-result",
+            provider: "codex",
+            providerSessionId: "raw-1",
+            role: "tool",
+            kind: "tool_result",
+            content: "Exit code: 0",
+            timestamp: "2026-04-13T10:00:01.000Z",
+            sequence: 9,
+            rawRef: "codex://demo#line=19",
+            toolCall: {
+              callId: "tool-call-1",
+              name: "shell_command",
+              input: "{\"command\":\"pnpm --filter user-app exec vitest run\"}",
+              output: "Exit code: 0",
+              error: null,
+              status: "completed"
+            }
+          })
+        )
+      ],
+      "session-1",
+      [
+        createHistoryMessage({
+          messageId: "codex-history-tool-result",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "tool",
+          kind: "tool_result",
+          content: "Exit code: 0",
+          timestamp: "2026-04-13T10:00:38.000Z",
+          sequence: 11,
+          rawRef: "codex://demo#line=33",
+          toolCall: {
+            callId: "tool-call-1",
+            name: "shell_command",
+            input: "{\"command\":\"pnpm --filter user-app exec vitest run\"}",
+            output: "Exit code: 0",
+            error: null,
+            status: "completed"
+          }
+        })
+      ]
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({
+      id: "codex-history-tool-result",
+      kind: "tool_result"
+    });
+    expect(merged[0].toolCall?.callId).toBe("tool-call-1");
+  });
+
+  it("不会把相隔太久的相同 codex assistant 文案误替换成同一条消息", () => {
+    const merged = mergeAuthoritativeMessages(
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "codex-runtime-message",
+            provider: "codex",
+            providerSessionId: "raw-1",
+            role: "assistant",
+            content: "处理完成",
+            timestamp: "2026-04-13T10:00:00.000Z",
+            sequence: 8,
+            rawRef: "codex://demo#line=18"
+          })
+        )
+      ],
+      "session-1",
+      [
+        createHistoryMessage({
+          messageId: "codex-history-message",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          content: "处理完成",
+          timestamp: "2026-04-13T10:05:00.000Z",
+          sequence: 30,
+          rawRef: "codex://demo#line=80"
+        })
+      ]
+    );
+
+    expect(merged.map((item) => item.id)).toEqual([
+      "codex-runtime-message",
+      "codex-history-message"
+    ]);
+  });
+
   it("发送成功后会用正式消息替换本地 pending 消息", () => {
     const pending = createPendingMessage("session-1", "先发出去", "client-1");
     const reconciled = reconcileMessage(

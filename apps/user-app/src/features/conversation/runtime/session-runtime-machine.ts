@@ -12,6 +12,7 @@ import type {
   ToolCallDto
 } from "../api/conversation-api";
 import { parseMessageRichContent } from "../message-rich-content";
+import { logSessionMessageDedupDebug } from "../../../shared/debug/perf-debug";
 
 export type RuntimeConnectionState = "connected" | "reconnecting" | "reconnect_failed" | "closed";
 export type RuntimeHistoryState = "idle" | "loading" | "ready" | "error";
@@ -57,6 +58,8 @@ export interface SessionRuntimeState {
 
 const RUNTIME_THINKING_PLACEHOLDER_RAW_REF_PREFIX = "runtime-placeholder://thinking/";
 const CODEX_EQUIVALENT_TEXT_WINDOW_MS = 3 * 1000;
+const CODEX_EQUIVALENT_AUTHORITATIVE_WINDOW_MS = 2 * 60 * 1000;
+const CODEX_EQUIVALENT_AUTHORITATIVE_SEQUENCE_WINDOW = 8;
 
 export function createInitialRuntimeState(
   seed?: Partial<
@@ -202,9 +205,11 @@ export function mergeAuthoritativeMessages(
   incoming: HistoryMessageDto[]
 ): SessionMessageViewModel[] {
   const nextById = new Map<string, SessionMessageViewModel>();
+  const currentMessageIds = new Set<string>();
 
   for (const item of current) {
     nextById.set(item.id, item);
+    currentMessageIds.add(item.id);
   }
 
   for (const message of incoming) {
@@ -219,6 +224,32 @@ export function mergeAuthoritativeMessages(
 
     if (optimisticMessageId && optimisticMessageId !== nextMessage.id) {
       nextById.delete(optimisticMessageId);
+    }
+
+    const equivalentCodexMessageId = findMatchingEquivalentCodexMessageId(
+      nextById,
+      currentMessageIds,
+      nextMessage
+    );
+
+    if (equivalentCodexMessageId && equivalentCodexMessageId !== nextMessage.id) {
+      const equivalentCodexMessage = nextById.get(equivalentCodexMessageId) ?? null;
+
+      if (equivalentCodexMessage) {
+        const mergedEquivalentMessage = mergeAuthoritativeVersion(
+          equivalentCodexMessage,
+          nextMessage
+        );
+        logSessionMessageDedupDebug("session.messages.codex_equivalent_replace", {
+          sessionId,
+          previous: summarizeMessageForDebug(equivalentCodexMessage),
+          incoming: summarizeMessageForDebug(nextMessage),
+          merged: summarizeMessageForDebug(mergedEquivalentMessage)
+        });
+        nextById.delete(equivalentCodexMessageId);
+        nextById.set(message.messageId, mergedEquivalentMessage);
+        continue;
+      }
     }
 
     const currentMessage = nextById.get(message.messageId) ?? null;
@@ -553,6 +584,18 @@ function isEquivalentCodexTextMessage(
   left: SessionMessageViewModel,
   right: SessionMessageViewModel
 ): boolean {
+  return isEquivalentCodexTextMessageWithinWindow(
+    left,
+    right,
+    CODEX_EQUIVALENT_TEXT_WINDOW_MS
+  );
+}
+
+function isEquivalentCodexTextMessageWithinWindow(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel,
+  windowMs: number
+): boolean {
   if (
     left.deliveryState !== "sent" ||
     right.deliveryState !== "sent" ||
@@ -574,7 +617,7 @@ function isEquivalentCodexTextMessage(
   const rightContent = parseMessageRichContent(right.content);
 
   return (
-    areTimestampsNearWithinWindow(left.timestamp, right.timestamp, CODEX_EQUIVALENT_TEXT_WINDOW_MS) &&
+    areTimestampsNearWithinWindow(left.timestamp, right.timestamp, windowMs) &&
     normalizeComparableCodexText(leftContent.text) === normalizeComparableCodexText(rightContent.text) &&
     areEquivalentInlineImages(leftContent.inlineImages, rightContent.inlineImages)
   );
@@ -967,6 +1010,42 @@ function findMatchingAuthoritativeMessageId(
   return findClosestMatchingUserMessageId(messagesById, incoming, "authoritative");
 }
 
+function findMatchingEquivalentCodexMessageId(
+  messagesById: Map<string, SessionMessageViewModel>,
+  candidateMessageIds: Set<string>,
+  incoming: SessionMessageViewModel
+): string | null {
+  if (!isCodexAuthoritativeMessage(incoming)) {
+    return null;
+  }
+
+  const incomingTimestampMs = toTimestampMs(incoming.timestamp);
+  let matchedId: string | null = null;
+  let matchedScore = Number.POSITIVE_INFINITY;
+
+  for (const [messageId, current] of messagesById.entries()) {
+    if (
+      messageId === incoming.id
+      || !candidateMessageIds.has(messageId)
+      || !isEquivalentCodexAuthoritativeMessage(current, incoming)
+    ) {
+      continue;
+    }
+
+    const currentTimestampMs = toTimestampMs(current.timestamp);
+    const timestampDistance = Math.abs(currentTimestampMs - incomingTimestampMs);
+    const sequenceDistance = Math.abs(current.sequence - incoming.sequence);
+    const score = sequenceDistance * CODEX_EQUIVALENT_AUTHORITATIVE_WINDOW_MS + timestampDistance;
+
+    if (score < matchedScore) {
+      matchedId = messageId;
+      matchedScore = score;
+    }
+  }
+
+  return matchedId;
+}
+
 function findClosestMatchingUserMessageId(
   messagesById: Map<string, SessionMessageViewModel>,
   incoming: SessionMessageViewModel,
@@ -1007,6 +1086,73 @@ function findClosestMatchingUserMessageId(
   return matchedId;
 }
 
+function isCodexAuthoritativeMessage(message: SessionMessageViewModel): boolean {
+  return (
+    message.deliveryState === "sent"
+    && message.rawRef.startsWith("codex://")
+    && (message.role === "assistant" || message.role === "tool")
+  );
+}
+
+function isEquivalentCodexAuthoritativeMessage(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): boolean {
+  if (!isCodexAuthoritativeMessage(current) || !isCodexAuthoritativeMessage(incoming)) {
+    return false;
+  }
+
+  if (current.role !== incoming.role || current.kind !== incoming.kind) {
+    return false;
+  }
+
+  if (
+    Math.abs(current.sequence - incoming.sequence) > CODEX_EQUIVALENT_AUTHORITATIVE_SEQUENCE_WINDOW
+    || !areTimestampsNearWithinWindow(
+      current.timestamp,
+      incoming.timestamp,
+      CODEX_EQUIVALENT_AUTHORITATIVE_WINDOW_MS
+    )
+  ) {
+    return false;
+  }
+
+  if (incoming.kind === "text" || incoming.kind === "thinking") {
+    return isEquivalentCodexTextMessageWithinWindow(
+      current,
+      incoming,
+      CODEX_EQUIVALENT_AUTHORITATIVE_WINDOW_MS
+    );
+  }
+
+  if (incoming.kind === "tool_call" || incoming.kind === "tool_result") {
+    return isEquivalentCodexToolMessage(current, incoming);
+  }
+
+  return false;
+}
+
+function isEquivalentCodexToolMessage(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel
+): boolean {
+  if (
+    left.deliveryState !== "sent" ||
+    right.deliveryState !== "sent" ||
+    !left.rawRef.startsWith("codex://") ||
+    !right.rawRef.startsWith("codex://") ||
+    left.role !== "tool" ||
+    right.role !== "tool" ||
+    left.kind !== right.kind ||
+    left.toolCall === null ||
+    right.toolCall === null
+  ) {
+    return false;
+  }
+
+  return left.toolCall.callId === right.toolCall.callId;
+}
+
 function isOptimisticUserMessage(message: SessionMessageViewModel): boolean {
   if (message.role !== "user" || message.kind !== "text" || message.deliveryState === "failed") {
     return false;
@@ -1030,6 +1176,22 @@ function isAuthoritativeUserTextMessage(message: SessionMessageViewModel): boole
 function toTimestampMs(timestamp: string): number {
   const value = Date.parse(timestamp);
   return Number.isFinite(value) ? value : 0;
+}
+
+function summarizeMessageForDebug(message: SessionMessageViewModel): Record<string, unknown> {
+  return {
+    id: message.id,
+    rawRef: message.rawRef,
+    role: message.role,
+    kind: message.kind,
+    sequence: message.sequence,
+    timestamp: message.timestamp,
+    callId: message.toolCall?.callId ?? null,
+    contentPreview:
+      message.kind === "text" || message.kind === "thinking"
+        ? normalizeComparableCodexText(parseMessageRichContent(message.content).text).slice(0, 160)
+        : normalizeComparableCodexText(message.content).slice(0, 160)
+  };
 }
 
 export function getNextOptimisticUserSequence(messages: SessionMessageViewModel[]): number {

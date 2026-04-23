@@ -4,9 +4,13 @@ import { authStore } from "../../auth/store/auth-store";
 import { RealtimeClient } from "../../../network/realtime-client";
 import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
-import { logPerfDebug } from "../../../shared/debug/perf-debug";
+import {
+  logPerfDebug,
+  logSessionMessageDedupDebug
+} from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
+import { parseMessageRichContent } from "../message-rich-content";
 import {
   type AttachmentPayload,
   type ContextUsageDto,
@@ -599,7 +603,8 @@ export class SessionRuntimeStore {
           event.type === "session.backfill" && this.replaceSnapshotSeedOnBackfill;
         const { messages: merged, replacedSnapshotSeed } = this.mergeHistoryMessages(
           event.messages,
-          shouldAttemptReplaceSnapshotSeed
+          shouldAttemptReplaceSnapshotSeed,
+          event.type === "session.backfill" ? "realtime_backfill" : "realtime_delta"
         );
         this.patch({
           messages: merged,
@@ -722,7 +727,8 @@ export class SessionRuntimeStore {
 
   private mergeHistoryMessages(
     incoming: HistoryMessageDto[],
-    replaceSnapshotSeed: boolean
+    replaceSnapshotSeed: boolean,
+    source: string
   ): { messages: SessionMessageViewModel[]; replacedSnapshotSeed: boolean } {
     // 首屏 backfill 可能比本地快照更旧，例如 provider 日志尚未落盘。
     // 这种情况下只能合并，不能把已经看到的最新尾消息删掉。
@@ -735,6 +741,18 @@ export class SessionRuntimeStore {
         ? this.state.messages.filter((message) => message.deliveryState !== "sent")
         : this.state.messages;
     const merged = mergeAuthoritativeMessages(baseMessages, this.sessionId, incoming);
+
+    this.logCodexMergeDebug(
+      source,
+      this.state.messages,
+      incoming,
+      merged,
+      {
+        replacedSnapshotSeedAttempted: replaceSnapshotSeed,
+        replacedSnapshotSeed,
+        baseMessageCount: baseMessages.length
+      }
+    );
 
     if (replacedSnapshotSeed) {
       this.replaceSnapshotSeedOnBackfill = false;
@@ -875,7 +893,8 @@ export class SessionRuntimeStore {
       this.historyBootstrapEnvelopeReceived = true;
       const { messages: merged, replacedSnapshotSeed } = this.mergeHistoryMessages(
         page.messages,
-        this.replaceSnapshotSeedOnBackfill
+        this.replaceSnapshotSeedOnBackfill,
+        "http_bootstrap_fallback"
       );
 
       this.patch({
@@ -918,7 +937,11 @@ export class SessionRuntimeStore {
     page: Pick<HistoryPageDto, "messages" | "nextCursor">,
     source: "realtime" | "prefetch_cache"
   ): void {
-    const { messages: merged } = this.mergeHistoryMessages(page.messages, false);
+    const { messages: merged } = this.mergeHistoryMessages(
+      page.messages,
+      false,
+      source === "realtime" ? "older_history_realtime" : "older_history_prefetch_cache"
+    );
 
     this.patch({
       messages: merged,
@@ -1232,7 +1255,12 @@ export class SessionRuntimeStore {
   }
 
   private shouldRefreshRuntimeSnapshot(): boolean {
-    return this.state.contextUsage === null;
+    return this.state.contextUsage === null
+      || shouldRefreshRuntimeActivity(
+        this.state.session,
+        this.state.runtimeHasActiveRun,
+        this.state.runtimeCanInterrupt
+      );
   }
 
   private async refreshRuntimeSnapshot(reason: string): Promise<void> {
@@ -1399,6 +1427,16 @@ export class SessionRuntimeStore {
       this.completePendingReplyDebugTrace(event);
     }
     const merged = mergeAuthoritativeMessages(this.state.messages, this.sessionId, [event.message]);
+
+    this.logCodexMergeDebug(
+      "runtime_message",
+      this.state.messages,
+      [event.message],
+      merged,
+      {
+        runtimeSource: event.source
+      }
+    );
 
     this.patch({
       messages: merged,
@@ -1657,6 +1695,36 @@ export class SessionRuntimeStore {
     }
 
     this.pendingReplyDebugTraces.splice(index, 1);
+  }
+
+  private logCodexMergeDebug(
+    source: string,
+    before: SessionMessageViewModel[],
+    incoming: HistoryMessageDto[],
+    after: SessionMessageViewModel[],
+    extra: Record<string, unknown> = {}
+  ): void {
+    const codexIncoming = incoming.filter(isCodexAssistantOrToolHistoryMessage);
+
+    if (codexIncoming.length === 0) {
+      return;
+    }
+
+    const beforeDuplicates = collectCodexDuplicateDebugGroups(before);
+    const afterDuplicates = collectCodexDuplicateDebugGroups(after);
+
+    logSessionMessageDedupDebug("session.messages.merge", {
+      sessionId: this.sessionId,
+      source,
+      beforeCount: before.length,
+      incomingCount: incoming.length,
+      afterCount: after.length,
+      incoming: codexIncoming.slice(0, 5).map(summarizeHistoryMessageForDebug),
+      beforeDuplicateGroupCount: beforeDuplicates.length,
+      afterDuplicateGroupCount: afterDuplicates.length,
+      afterDuplicateGroups: afterDuplicates.slice(0, 3),
+      ...extra
+    });
   }
 }
 
@@ -2089,6 +2157,161 @@ function mapResolutionSourceToActivitySource(
   return "none";
 }
 
+function isCodexAssistantOrToolHistoryMessage(message: HistoryMessageDto): boolean {
+  return (
+    message.provider === "codex"
+    && (message.role === "assistant" || message.role === "tool")
+  );
+}
+
+function isCodexAssistantOrToolViewMessage(message: SessionMessageViewModel): boolean {
+  return (
+    message.rawRef.startsWith("codex://")
+    && message.deliveryState === "sent"
+    && (message.role === "assistant" || message.role === "tool")
+  );
+}
+
+function summarizeHistoryMessageForDebug(message: HistoryMessageDto): Record<string, unknown> {
+  return {
+    id: message.messageId,
+    rawRef: message.rawRef,
+    role: message.role,
+    kind: message.kind ?? (message.role === "tool" ? "tool_result" : "text"),
+    sequence: message.sequence,
+    timestamp: message.timestamp,
+    callId: message.toolCall?.callId ?? null,
+    contentPreview: buildDebugContentPreview(message.content, message.kind ?? "text")
+  };
+}
+
+function summarizeViewMessageForDebug(message: SessionMessageViewModel): Record<string, unknown> {
+  return {
+    id: message.id,
+    rawRef: message.rawRef,
+    role: message.role,
+    kind: message.kind,
+    sequence: message.sequence,
+    timestamp: message.timestamp,
+    callId: message.toolCall?.callId ?? null,
+    contentPreview: buildDebugContentPreview(message.content, message.kind)
+  };
+}
+
+function collectCodexDuplicateDebugGroups(
+  messages: SessionMessageViewModel[]
+): Array<Record<string, unknown>> {
+  const grouped = new Map<string, SessionMessageViewModel[]>();
+
+  for (const message of messages) {
+    if (!isCodexAssistantOrToolViewMessage(message)) {
+      continue;
+    }
+
+    const signature = buildCodexDebugSignature(message);
+    const bucket = grouped.get(signature);
+
+    if (bucket) {
+      bucket.push(message);
+      continue;
+    }
+
+    grouped.set(signature, [message]);
+  }
+
+  const duplicates: Array<Record<string, unknown>> = [];
+
+  for (const [signature, bucket] of grouped.entries()) {
+    const sortedBucket = [...bucket].sort((left, right) => {
+      if (left.sequence !== right.sequence) {
+        return left.sequence - right.sequence;
+      }
+
+      return left.timestamp.localeCompare(right.timestamp);
+    });
+
+    let cluster: SessionMessageViewModel[] = [];
+
+    for (const message of sortedBucket) {
+      const previous = cluster.at(-1) ?? null;
+
+      if (!previous || areCodexDebugMessagesNear(previous, message)) {
+        cluster.push(message);
+        continue;
+      }
+
+      if (cluster.length > 1) {
+        duplicates.push({
+          signature,
+          messages: cluster.map(summarizeViewMessageForDebug)
+        });
+      }
+
+      cluster = [message];
+    }
+
+    if (cluster.length > 1) {
+      duplicates.push({
+        signature,
+        messages: cluster.map(summarizeViewMessageForDebug)
+      });
+    }
+  }
+
+  return duplicates;
+}
+
+function buildCodexDebugSignature(message: SessionMessageViewModel): string {
+  if (message.kind === "tool_call" || message.kind === "tool_result") {
+    return [
+      message.role,
+      message.kind,
+      message.toolCall?.callId ?? "",
+      message.toolCall?.name ?? ""
+    ].join(":");
+  }
+
+  const richContent = parseMessageRichContent(message.content);
+  const normalizedText = normalizeDebugText(richContent.text);
+  const inlineImageUrls = richContent.inlineImages.map((item) => item.url).join("|");
+
+  return [
+    message.role,
+    message.kind,
+    normalizedText,
+    inlineImageUrls
+  ].join(":");
+}
+
+function areCodexDebugMessagesNear(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel
+): boolean {
+  const leftMs = toDebugTimestampMs(left.timestamp);
+  const rightMs = toDebugTimestampMs(right.timestamp);
+  return Math.abs(leftMs - rightMs) <= 2 * 60 * 1000 && Math.abs(left.sequence - right.sequence) <= 8;
+}
+
+function buildDebugContentPreview(
+  content: string,
+  kind: SessionMessageViewModel["kind"]
+): string {
+  if (kind === "text" || kind === "thinking") {
+    return normalizeDebugText(parseMessageRichContent(content).text).slice(0, 160);
+  }
+
+  return normalizeDebugText(content).slice(0, 160);
+}
+
+function normalizeDebugText(content: string): string {
+  return content.replace(/\r\n/g, "\n").trimEnd();
+}
+
+function toDebugTimestampMs(timestamp: string): number {
+  const value = Date.parse(timestamp);
+  return Number.isFinite(value) ? value : 0;
+}
+
 function maxIsoTimestamp(left: string | null | undefined, right: string | null | undefined): string | null {
   if (!left) {
     return right ?? null;
@@ -2182,6 +2405,29 @@ function shouldOptimisticallyEnableInterrupt(
   return session.provider === "claude-code" && session.activitySource !== "inferred";
 }
 
+function shouldRefreshRuntimeActivity(
+  session: SessionSummaryDto | null,
+  runtimeHasActiveRun: boolean | null,
+  runtimeCanInterrupt: boolean | null
+): boolean {
+  if (runtimeHasActiveRun === true || runtimeCanInterrupt === true) {
+    return true;
+  }
+
+  if (!session) {
+    return false;
+  }
+
+  return (
+    session.activityState === "running"
+    || session.runningState === "starting"
+    || session.runningState === "running"
+    || session.runningState === "reconnecting"
+    || session.runningState === "stale"
+    || session.runningState === "unknown"
+  );
+}
+
 function resolveNextRuntimeHasActiveRun(
   currentHasActiveRun: boolean | null,
   incomingRunningState: SessionRunningState,
@@ -2263,7 +2509,15 @@ function pickFreshestSessionSummary(
     return left;
   }
 
+  if (shouldPreferTerminalSessionSummary(left, right)) {
+    return left;
+  }
+
   if (shouldPreferActiveSessionSummary(right, left)) {
+    return right;
+  }
+
+  if (shouldPreferTerminalSessionSummary(right, left)) {
     return right;
   }
 
@@ -2290,6 +2544,30 @@ function shouldPreferActiveSessionSummary(
   );
 }
 
+function shouldPreferTerminalSessionSummary(
+  candidate: SessionSummaryDto,
+  incoming: SessionSummaryDto
+): boolean {
+  if (!isTerminalSessionSummary(candidate) || isTerminalSessionSummary(incoming)) {
+    return false;
+  }
+
+  const candidateTerminalAt = candidate.completedAt ?? candidate.lastEventAt ?? null;
+
+  if (!candidateTerminalAt) {
+    return false;
+  }
+
+  return (
+    (!incoming.lastEventAt || incoming.lastEventAt <= candidateTerminalAt)
+    && (!incoming.completedAt || incoming.completedAt <= candidateTerminalAt)
+  );
+}
+
 function isSessionSummaryActive(session: SessionSummaryDto): boolean {
   return session.activityState === "running" || isRuntimeActiveState(session.runningState);
+}
+
+function isTerminalSessionSummary(session: SessionSummaryDto): boolean {
+  return isTerminalRuntimeState(session.runningState);
 }

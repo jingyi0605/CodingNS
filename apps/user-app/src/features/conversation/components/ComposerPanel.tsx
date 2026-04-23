@@ -708,7 +708,7 @@ export function ComposerPanel({
   const forkSendBlocked = hasForkDraft && Boolean(forkStartDisabledReason);
   const hasDraft = content.trim().length > 0 || attachments.length > 0;
   const interruptAvailable =
-    canInterrupt === false && effectiveIsRunning
+    canInterrupt === false && runHasActiveFlag === true
       ? interruptDecision.allowed
       : canInterrupt ?? interruptDecision.allowed;
   const canInterruptNow =
