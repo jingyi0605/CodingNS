@@ -732,6 +732,91 @@ describe("TerminalPage", () => {
     });
   });
 
+  it("显式传入不在导航列表里的工作区时，仍然使用该工作区加载终端", async () => {
+    renderPage("/terminals", {
+      externalWindowWorkspaceId: "workspace-isolated-1"
+    });
+
+    await screen.findByRole("button", { name: "新建终端" });
+
+    await waitFor(() => {
+      expect(mockSubscribeTerminalManagerSnapshot).toHaveBeenCalledWith(
+        "workspace-isolated-1",
+        expect.any(Object)
+      );
+    });
+  });
+
+  it("嵌入到父会话路由时，会优先使用显式传入的工作区，而不是父路由 workspaceId", async () => {
+    render(
+      <ToastProvider>
+        <MemoryRouter initialEntries={["/workspaces/workspace-1/sessions/session-1"]}>
+          <Routes>
+            <Route
+              path="/workspaces/:workspaceId/sessions/:sessionId"
+              element={
+                <TerminalPage
+                  embeddedMode
+                  externalWindowWorkspaceId="workspace-isolated-1"
+                />
+              }
+            />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>
+    );
+
+    await screen.findByRole("button", { name: "新建终端" });
+
+    await waitFor(() => {
+      expect(mockSubscribeTerminalManagerSnapshot).toHaveBeenCalledWith(
+        "workspace-isolated-1",
+        expect.any(Object)
+      );
+    });
+  });
+
+  it("嵌入到父会话路由时，新建终端会落到显式传入的隔离工作区", async () => {
+    const createdTerminal = buildTerminal({
+      id: "terminal-isolated-1",
+      workspaceId: "workspace-isolated-1",
+      cwd: "/Users/jackson/Code/TEST.worktrees/parallel-member-a"
+    });
+
+    mockCreateTerminal.mockResolvedValueOnce(createdTerminal);
+    mockListWorkspaceTerminals.mockResolvedValueOnce({
+      items: [createdTerminal]
+    });
+
+    render(
+      <ToastProvider>
+        <MemoryRouter initialEntries={["/workspaces/workspace-1/sessions/session-1"]}>
+          <Routes>
+            <Route
+              path="/workspaces/:workspaceId/sessions/:sessionId"
+              element={
+                <TerminalPage
+                  embeddedMode
+                  externalWindowWorkspaceId="workspace-isolated-1"
+                />
+              }
+            />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: "新建终端" }));
+
+    await waitFor(() => {
+      expect(mockCreateTerminal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "workspace-isolated-1"
+        })
+      );
+    });
+  });
+
   it("分栏模式下的标签菜单会明确显示主副分栏绑定动作", async () => {
     setTerminalManagerSnapshot("workspace-1", [
       buildTerminal({
@@ -762,7 +847,7 @@ describe("TerminalPage", () => {
       })
     );
 
-    const actionButtons = screen.getAllByRole("button", { name: "终端操作" });
+    const actionButtons = await screen.findAllByRole("button", { name: "终端操作" });
     fireEvent.click(actionButtons[0]);
 
     expect(screen.getByRole("menuitem", { name: "绑定到主分栏" })).toBeInTheDocument();

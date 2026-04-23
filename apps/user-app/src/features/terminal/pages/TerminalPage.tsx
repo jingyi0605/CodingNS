@@ -257,12 +257,45 @@ export interface TerminalPageWorkbenchShellOverrides {
 interface TerminalPageProps {
   externalWindowMode?: boolean;
   externalWindowWorkspaceId?: string | null;
+  embeddedMode?: boolean;
   workbenchShellOverrides?: TerminalPageWorkbenchShellOverrides;
+}
+
+function resolveTerminalSelectedWorkspaceId(input: {
+  routeWorkspaceId: string | null;
+  shellCurrentWorkspaceId: string | null | undefined;
+  workspaces: Array<{ id: string }>;
+  persistedWorkspaceId?: string | null;
+}): string {
+  const routeSelectedWorkspaceId = input.routeWorkspaceId ?? null;
+
+  if (routeSelectedWorkspaceId) {
+    return routeSelectedWorkspaceId;
+  }
+
+  const shellSelectedWorkspaceId =
+    input.shellCurrentWorkspaceId &&
+    input.workspaces.some((workspace) => workspace.id === input.shellCurrentWorkspaceId)
+      ? input.shellCurrentWorkspaceId
+      : null;
+
+  if (shellSelectedWorkspaceId) {
+    return shellSelectedWorkspaceId;
+  }
+
+  const persistedWorkspaceId = input.persistedWorkspaceId?.trim() ?? "";
+  const restoredWorkspaceId =
+    input.workspaces.find((workspace) => workspace.id === persistedWorkspaceId)?.id
+    ?? input.workspaces[0]?.id
+    ?? "";
+
+  return restoredWorkspaceId;
 }
 
 export function TerminalPage({
   externalWindowMode = false,
   externalWindowWorkspaceId = null,
+  embeddedMode = false,
   workbenchShellOverrides
 }: TerminalPageProps = {}) {
   const platform = usePlatform();
@@ -312,9 +345,19 @@ export function TerminalPage({
     () => navigationGroups.map((group) => group.workspace),
     [navigationGroups]
   );
-  const routeWorkspaceId = routeWorkspaceIdParam?.trim() || externalWindowWorkspaceId?.trim() || null;
+  const routeWorkspaceId = embeddedMode
+    ? externalWindowWorkspaceId?.trim() || routeWorkspaceIdParam?.trim() || null
+    : routeWorkspaceIdParam?.trim() || externalWindowWorkspaceId?.trim() || null;
+  const persistedSelectedWorkspaceId = readPersistedTerminalPageState().selectedWorkspaceId;
 
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState(() =>
+    resolveTerminalSelectedWorkspaceId({
+      routeWorkspaceId,
+      shellCurrentWorkspaceId,
+      workspaces,
+      persistedWorkspaceId: persistedSelectedWorkspaceId
+    })
+  );
   const [selectedRuntimeType, setSelectedRuntimeType] =
     useState<SelectableTerminalRuntimeType>("");
   const [shellOptions, setShellOptions] = useState<TerminalShellOptionDto[]>([]);
@@ -351,17 +394,24 @@ export function TerminalPage({
     () => workspaces.find((workspace) => workspace.id === shellCurrentWorkspaceId) ?? null,
     [shellCurrentWorkspaceId, workspaces]
   );
+  const selectedWorkspace = useMemo(
+    () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,
+    [selectedWorkspaceId, workspaces]
+  );
   const currentWorkspace = useMemo(
-    () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? shellCurrentWorkspace ?? null,
-    [selectedWorkspaceId, shellCurrentWorkspace, workspaces]
+    () =>
+      selectedWorkspace
+      ?? (selectedWorkspaceId || routeWorkspaceId ? null : shellCurrentWorkspace)
+      ?? null,
+    [routeWorkspaceId, selectedWorkspace, selectedWorkspaceId, shellCurrentWorkspace]
   );
   const resolvedWorkspaceId = useMemo(
     () => {
       return (
         currentWorkspace?.id
-        ?? shellCurrentWorkspace?.id
         ?? routeWorkspaceId
         ?? selectedWorkspaceId
+        ?? shellCurrentWorkspace?.id
         ?? workspaces[0]?.id
         ?? ""
       );
@@ -719,32 +769,24 @@ export function TerminalPage({
 
   useEffect(() => {
     const persistedWorkspaceId = readPersistedTerminalPageState().selectedWorkspaceId;
-    const routeSelectedWorkspaceId =
-      routeWorkspaceId && (workspaces.length === 0 || workspaces.some((workspace) => workspace.id === routeWorkspaceId))
-        ? routeWorkspaceId
-        : null;
-    const shellSelectedWorkspaceId =
-      shellCurrentWorkspaceId && workspaces.some((workspace) => workspace.id === shellCurrentWorkspaceId)
-        ? shellCurrentWorkspaceId
-        : null;
-    const restoredWorkspaceId =
-      routeSelectedWorkspaceId ??
-      shellSelectedWorkspaceId ??
-      (routeWorkspaceId ?? null) ??
-      workspaces.find((workspace) => workspace.id === persistedWorkspaceId)?.id ??
-      workspaces[0]?.id ??
-      "";
 
     setSelectedWorkspaceId((current) => {
-      if (routeSelectedWorkspaceId) {
-        return routeSelectedWorkspaceId;
+      const normalizedCurrent = current.trim();
+
+      if (routeWorkspaceId) {
+        return routeWorkspaceId;
       }
 
-      if (current && workspaces.some((workspace) => workspace.id === current)) {
-        return current;
+      if (normalizedCurrent && workspaces.some((workspace) => workspace.id === normalizedCurrent)) {
+        return normalizedCurrent;
       }
 
-      return restoredWorkspaceId;
+      return resolveTerminalSelectedWorkspaceId({
+        routeWorkspaceId,
+        shellCurrentWorkspaceId,
+        workspaces,
+        persistedWorkspaceId
+      });
     });
   }, [routeWorkspaceId, shellCurrentWorkspaceId, workspaces]);
 
@@ -1769,7 +1811,10 @@ export function TerminalPage({
   }, [platform, showToast]);
 
   return (
-    <main className="terminal-layout mobile-page-fixed-root">
+    <main
+      className={`terminal-layout${embeddedMode ? " terminal-layout-embedded" : " mobile-page-fixed-root"}`}
+      data-embedded={embeddedMode ? "true" : undefined}
+    >
       <TerminalRuntimeFallbackModal
         open={runtimeFallbackRequest !== null}
         busy={applyingRuntimeFallback}
