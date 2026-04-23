@@ -1388,6 +1388,28 @@ export class CodexAdapter implements ProviderAdapter {
       archivedFiles.add(metadata.rolloutPath);
     }
 
+    for (const metadata of threadMetadataIndex.values()) {
+      if (
+        metadata.isArchived === true
+        || !metadata.rolloutPath
+      ) {
+        continue;
+      }
+
+      if (
+        targetPath.length > 0
+        && normalizeWorkspacePath(metadata.cwd ?? "") !== targetPath
+      ) {
+        continue;
+      }
+
+      const archivedCandidate = this.resolveArchivedSessionCandidate(metadata.rolloutPath);
+
+      if (archivedCandidate) {
+        archivedFiles.add(archivedCandidate);
+      }
+    }
+
     for (const session of knownSessions) {
       if (
         session.isArchived !== true
@@ -1400,6 +1422,21 @@ export class CodexAdapter implements ProviderAdapter {
       archivedFiles.add(session.rawStoreRef);
     }
 
+    for (const session of knownSessions) {
+      if (
+        session.isArchived === true
+        || normalizeWorkspacePath(session.workspacePath) !== targetPath
+      ) {
+        continue;
+      }
+
+      const archivedCandidate = this.resolveArchivedSessionCandidate(session.rawStoreRef);
+
+      if (archivedCandidate) {
+        archivedFiles.add(archivedCandidate);
+      }
+    }
+
     if (archivedFiles.size > 0) {
       return [...archivedFiles].filter((filePath) => existsSync(filePath));
     }
@@ -1409,6 +1446,20 @@ export class CodexAdapter implements ProviderAdapter {
     }
 
     return [];
+  }
+
+  private resolveArchivedSessionCandidate(filePath: string): string | null {
+    if (!filePath || existsSync(filePath)) {
+      return null;
+    }
+
+    const archivedCandidate = join(this.options.homeDir, "archived_sessions", basename(filePath));
+
+    if (!existsSync(archivedCandidate)) {
+      return null;
+    }
+
+    return archivedCandidate;
   }
 
   private resolveSessionFilePath(rawStoreRef: string, providerSessionId: string): string {

@@ -930,6 +930,93 @@ test("CodexAdapter 会根据线程索引只纳入当前工作区的 archived 会
   }
 });
 
+test("CodexAdapter 在线程索引仍未标记 archived 时，也能补捞已被移入 archived_sessions 的会话", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-archived-fallback-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const archivedDir = join(tempDir, "archived_sessions");
+  const archivedFile = join(archivedDir, "fallback-thread.jsonl");
+  const staleActiveFile = join(tempDir, "sessions", "2026", "03", "26", "fallback-thread.jsonl");
+  const threadId = "12345678-1234-4234-9234-1234567890b8";
+  const archivedTitle = "索引没跟上时也不能把归档会话扫没";
+
+  try {
+    mkdirSync(archivedDir, { recursive: true });
+    writeFileSync(
+      archivedFile,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: threadId,
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-26T00:00:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: archivedTitle
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const db = new DatabaseSync(join(tempDir, "state_1.sqlite"));
+    db.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        cwd TEXT,
+        created_at INTEGER,
+        archived INTEGER,
+        archived_at INTEGER,
+        first_user_message TEXT,
+        agent_nickname TEXT,
+        agent_role TEXT,
+        rollout_path TEXT
+      );
+    `);
+    db.prepare(
+      `INSERT INTO threads (
+         id,
+         title,
+         cwd,
+         created_at,
+         archived,
+         archived_at,
+         first_user_message,
+         agent_nickname,
+         agent_role,
+         rollout_path
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      threadId,
+      archivedTitle,
+      workspacePath,
+      Math.floor(Date.parse("2026-03-26T00:00:00.000Z") / 1000),
+      0,
+      null,
+      archivedTitle,
+      null,
+      null,
+      staleActiveFile
+    );
+    db.close();
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const sessions = await adapter.detectSessions(workspacePath);
+
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0]?.providerSessionId, threadId);
+    assert.equal(sessions[0]?.isArchived, true);
+    assert.equal(sessions[0]?.rawStoreRef, archivedFile);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexAdapter 取消归档后即使线程索引 mtime 没变，也不会把活动会话重新判回 archived", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-unarchive-cache-"));
   const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
