@@ -939,6 +939,12 @@ export const zhCN = {
     loading: "正在读取当前工作区的 Git 上下文。",
     refresh: "刷新",
     panelLoadFailed: "Git 上下文暂时没有加载出来。",
+    uninitializedTitle: "当前目录还没有启用 Git",
+    uninitializedDescription: "先初始化这个目录的 Git 工作区，后面才能查看改动、写提交和追踪历史。",
+    initRepository: "初始化 Git 工作区",
+    initInProgress: "正在初始化…",
+    initSuccess: "Git 工作区已初始化。",
+    initFailed: "初始化 Git 工作区失败。",
     ahead: "领先",
     behind: "落后",
     dirty: "有改动",
@@ -1066,6 +1072,7 @@ export const zhCN = {
       pushFailed: "推送失败，请先检查远程状态和本地提交。",
       pullFailed: "拉取失败，请先确认远程分支状态。",
       remoteFailed: "远程同步失败，请检查 Git 输出和网络状态。",
+      initFailed: "Git 工作区初始化失败，请确认当前目录可写且 Git 可用。",
       commitValidationFailed: "提交草稿还没通过规则校验，先把校验问题修掉。",
       commandTimeout: "Git 操作超时了，先确认仓库状态和网络环境。"
     }

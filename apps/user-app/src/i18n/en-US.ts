@@ -1052,6 +1052,13 @@ export const enUS = {
     loading: "Loading Git context for the current workspace...",
     refresh: "Refresh",
     panelLoadFailed: "Git context is not available right now.",
+    uninitializedTitle: "Git is not enabled in this folder yet",
+    uninitializedDescription:
+      "Initialize a Git workspace here first, then you can review changes, commit, and browse history.",
+    initRepository: "Initialize Git Workspace",
+    initInProgress: "Initializing...",
+    initSuccess: "The Git workspace has been initialized.",
+    initFailed: "Failed to initialize the Git workspace.",
     ahead: "Ahead",
     behind: "Behind",
     dirty: "Dirty",
@@ -1187,6 +1194,8 @@ export const enUS = {
       pushFailed: "Push failed. Check remote state and local commits first.",
       pullFailed: "Pull failed. Check the remote branch state first.",
       remoteFailed: "Remote sync failed. Check Git output and network state.",
+      initFailed:
+        "Failed to initialize the Git workspace. Make sure the directory is writable and Git is available.",
       commitValidationFailed: "The commit draft has not passed validation yet. Fix validation issues first.",
       commandTimeout: "The Git operation timed out. Check repository state and network conditions."
     }

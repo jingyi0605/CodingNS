@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { GitReadService } from "../../src/modules/git/git-read-service.js";
 import type { GitCommandRunner, GitCommandResult } from "../../src/modules/git/git-command-runner.js";
 import type { WorkspaceRepoGuard } from "../../src/modules/git/workspace-repo-guard.js";
+import { AppError } from "../../src/shared/errors/app-error.js";
 
 describe("GitReadService", () => {
   it("未跟踪文件只应出现在工作区变更中，不能被误算进暂存区", async () => {
@@ -44,6 +45,7 @@ describe("GitReadService", () => {
       snapshot: {
         workspaceId: "workspace-1",
         repoRoot: "C:/repo",
+        enabled: true,
         branch: "main",
         ahead: 0,
         behind: 0,
@@ -63,6 +65,59 @@ describe("GitReadService", () => {
         }
       ]
     });
+  });
+
+  it("当前目录还不是 Git 仓库时，会返回未启用状态而不是直接抛错", async () => {
+    const gitCommandRunner = {
+      run: vi.fn()
+    } satisfies Pick<GitCommandRunner, "run">;
+
+    const workspaceRepoGuard = {
+      resolve: vi.fn(async () => {
+        throw new Error("不该走到这里");
+      }),
+      resolveConfiguredRoot: vi.fn(() => ({
+        workspace: {
+          id: "workspace-1",
+          name: "普通目录",
+          path: "C:/repo",
+          repoRoot: null,
+          favorite: false,
+          createdAt: "2026-03-23T00:00:00.000Z",
+          updatedAt: "2026-03-23T00:00:00.000Z"
+        },
+        repoRoot: "C:/repo"
+      }))
+    } satisfies Pick<WorkspaceRepoGuard, "resolve" | "resolveConfiguredRoot">;
+
+    vi.mocked(workspaceRepoGuard.resolve).mockRejectedValueOnce(
+      new AppError({
+        statusCode: 404,
+        errorCode: "NOT_GIT_REPOSITORY",
+        detail: "当前工作区不是 Git 仓库"
+      })
+    );
+
+    const service = new GitReadService(
+      gitCommandRunner as unknown as GitCommandRunner,
+      workspaceRepoGuard as unknown as WorkspaceRepoGuard
+    );
+
+    await expect(service.getStatus("workspace-1")).resolves.toEqual({
+      snapshot: {
+        workspaceId: "workspace-1",
+        repoRoot: "C:/repo",
+        enabled: false,
+        branch: "",
+        ahead: 0,
+        behind: 0,
+        hasRemote: false,
+        isDirty: false,
+        lastFetchedAt: null
+      },
+      changes: []
+    });
+    expect(gitCommandRunner.run).not.toHaveBeenCalled();
   });
 
   it("getStatus 会把 AbortSignal 透传给 gitCommandRunner", async () => {

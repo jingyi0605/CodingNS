@@ -91,6 +91,15 @@ export class GitController {
     );
   };
 
+  readonly initializeRepository = async (
+    request: FastifyRequest<{ Body: WorkspaceQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      await this.gitWriteService.initializeRepository(requireWorkspaceId(request.body.workspaceId))
+    );
+  };
+
   readonly getDiff = async (
     request: FastifyRequest<{ Querystring: DiffQuery }>,
     reply: FastifyReply

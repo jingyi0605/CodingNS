@@ -29,18 +29,8 @@ export class WorkspaceRepoGuard {
   ) {}
 
   async resolve(workspaceId: string): Promise<ResolvedWorkspaceRepo> {
-    const workspace = this.workspaceService.getWorkspaceOrThrow(workspaceId);
-    const configuredRepoRoot = path.resolve(workspace.repoRoot ?? workspace.path);
+    const { workspace, configuredRepoRoot } = this.resolveConfiguredWorkspaceRoot(workspaceId);
     const cached = this.resolvedRepoCache.get(workspaceId);
-
-    if (!fs.existsSync(configuredRepoRoot) || !fs.statSync(configuredRepoRoot).isDirectory()) {
-      this.resolvedRepoCache.delete(workspaceId);
-      throw new AppError({
-        statusCode: 400,
-        errorCode: "INVALID_WORKSPACE",
-        detail: "工作区仓库根目录无效"
-      });
-    }
 
     if (
       cached
@@ -65,6 +55,15 @@ export class WorkspaceRepoGuard {
 
     this.inflightResolutions.set(workspaceId, task);
     return await task;
+  }
+
+  resolveConfiguredRoot(workspaceId: string): ResolvedWorkspaceRepo {
+    const { workspace, configuredRepoRoot } = this.resolveConfiguredWorkspaceRoot(workspaceId);
+
+    return {
+      workspace,
+      repoRoot: configuredRepoRoot
+    };
   }
 
   ensureRelativePath(repoRoot: string, targetPath: string): string {
@@ -149,6 +148,28 @@ export class WorkspaceRepoGuard {
     });
 
     return resolved;
+  }
+
+  private resolveConfiguredWorkspaceRoot(workspaceId: string): {
+    workspace: Workspace;
+    configuredRepoRoot: string;
+  } {
+    const workspace = this.workspaceService.getWorkspaceOrThrow(workspaceId);
+    const configuredRepoRoot = path.resolve(workspace.repoRoot ?? workspace.path);
+
+    if (!fs.existsSync(configuredRepoRoot) || !fs.statSync(configuredRepoRoot).isDirectory()) {
+      this.resolvedRepoCache.delete(workspaceId);
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_WORKSPACE",
+        detail: "工作区仓库根目录无效"
+      });
+    }
+
+    return {
+      workspace,
+      configuredRepoRoot
+    };
   }
 }
 

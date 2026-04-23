@@ -246,6 +246,61 @@ describe("WorkspacePanelSnapshotService", () => {
       }
     });
   });
+
+  it("未初始化 Git 时会返回空历史和空分支，而不是继续读仓库信息", async () => {
+    const workspaceId = "workspace-1";
+    const gitReadService = {
+      getStatus: vi.fn(async () => ({
+        snapshot: {
+          workspaceId,
+          repoRoot: "/workspace",
+          enabled: false,
+          branch: "",
+          ahead: 0,
+          behind: 0,
+          hasRemote: false,
+          isDirty: false,
+          lastFetchedAt: null
+        },
+        changes: []
+      })),
+      getHistory: vi.fn(),
+      getBranches: vi.fn()
+    } satisfies Pick<GitReadService, "getStatus" | "getHistory" | "getBranches">;
+
+    const service = new WorkspacePanelSnapshotService(
+      {
+        list: vi.fn()
+      } as unknown as FileTreeService,
+      gitReadService as unknown as GitReadService,
+      {
+        listTerminalSnapshotItems: vi.fn()
+      } as unknown as TerminalService,
+      {
+        listTemplates: vi.fn(),
+        listTemplateRuntimeStatuses: vi.fn()
+      } as unknown as CommandTemplateService,
+      {
+        getManagementSummary: vi.fn()
+      } as unknown as WorkspaceService
+    );
+
+    await expect(service.getGitPanelSnapshot(workspaceId)).resolves.toMatchObject({
+      workspaceId,
+      status: {
+        snapshot: {
+          enabled: false
+        },
+        changes: []
+      },
+      history: [],
+      historyTotalCount: 0,
+      historyNextCursor: null,
+      branches: null
+    });
+    expect(gitReadService.getHistory).not.toHaveBeenCalled();
+    expect(gitReadService.getBranches).not.toHaveBeenCalled();
+  });
 });
 
 function createGitStatus(workspaceId: string, staged: boolean) {
@@ -253,6 +308,7 @@ function createGitStatus(workspaceId: string, staged: boolean) {
     snapshot: {
       workspaceId,
       repoRoot: "/repo",
+      enabled: true,
       branch: "main",
       ahead: 0,
       behind: 0,

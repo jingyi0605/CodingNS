@@ -3,6 +3,7 @@ export type CommitRuleLanguage = "zh" | "en" | "any";
 export interface GitRepoSnapshot {
   workspaceId: string;
   repoRoot: string;
+  enabled?: boolean;
   branch: string;
   ahead: number;
   behind: number;

@@ -2322,15 +2322,20 @@ function mergeWorkspaceManagementDetailWithGitSnapshot(
   detail: WorkspaceManagementSummaryDto,
   snapshot: GitRealtimeSnapshotDto
 ): WorkspaceManagementSummaryDto {
-  const repoRoot = snapshot.status?.snapshot.repoRoot ?? detail.git.repoRoot;
+  const repositoryEnabled = snapshot.status?.snapshot.enabled !== false;
+  const repoRoot = repositoryEnabled
+    ? snapshot.status?.snapshot.repoRoot ?? detail.git.repoRoot
+    : detail.git.repoRoot;
   const currentBranch =
-    snapshot.status?.snapshot.branch ?? snapshot.branches?.currentBranch ?? detail.git.currentBranch ?? null;
+    repositoryEnabled
+      ? snapshot.status?.snapshot.branch ?? snapshot.branches?.currentBranch ?? detail.git.currentBranch ?? null
+      : detail.git.currentBranch ?? null;
 
   return {
     ...detail,
     git: {
       ...detail.git,
-      isRepository: detail.git.isRepository || Boolean(repoRoot),
+      isRepository: repositoryEnabled && (detail.git.isRepository || Boolean(repoRoot)),
       repoRoot,
       currentBranch,
       error: null

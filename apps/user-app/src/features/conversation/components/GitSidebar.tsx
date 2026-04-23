@@ -38,6 +38,7 @@ import {
   getGitRemotes,
   getGitStatus,
   getGitHistory,
+  initializeGitRepository,
   stageGitTargets,
   switchGitBranch,
   syncGitRemote,
@@ -752,6 +753,37 @@ export function GitSidebar({
     }
   }
 
+  async function handleInitializeRepository() {
+    if (!workspaceId?.trim()) {
+      return;
+    }
+
+    setActioning(true);
+    setLoading(true);
+
+    try {
+      const nextStatus = await initializeGitRepository(workspaceId.trim());
+      setStatus(nextStatus);
+      setHistory([]);
+      setHistoryTotalCount(0);
+      setHistoryNextCursor(null);
+      setBranches(null);
+      showToast({
+        title: t("git.initSuccess"),
+        tone: "success"
+      });
+      requestGitSnapshotRefresh();
+    } catch (error) {
+      showToast({
+        title: readError(error, t("git.initFailed")),
+        tone: "error"
+      });
+    } finally {
+      setActioning(false);
+      setLoading(false);
+    }
+  }
+
   function openRemoteAuthModal(preferredRemoteName?: string) {
     setRemoteAuthForm(toRemoteAuthFormState(remoteAuth));
     setRemoteAuthModalOpen(true);
@@ -1272,6 +1304,7 @@ export function GitSidebar({
   const splitRows = historyExpanded
     ? `minmax(120px, ${safeTreePanelRatio}fr) ${PANEL_RESIZER_HEIGHT}px minmax(140px, ${100 - safeTreePanelRatio}fr)`
     : `minmax(120px, 1fr) ${PANEL_RESIZER_HEIGHT}px auto`;
+  const gitRepositoryEnabled = isGitRepositoryEnabled(status);
 
   useEffect(() => {
     if (mobileActionMenuVariant === "staged" && mobileSelectedStagedTargets.length === 0) {
@@ -1648,6 +1681,32 @@ export function GitSidebar({
         />
       </div>,
       document.body
+    );
+  }
+
+  if (status && !gitRepositoryEnabled) {
+    return (
+      <section
+        className={["conversation-panel", "surface-card", "git-sidebar", className].filter(Boolean).join(" ")}
+        data-testid="git-sidebar"
+      >
+        <section className="git-card git-scaffold-section git-disabled-state">
+          <div className="git-disabled-copy">
+            <h3>{t("git.uninitializedTitle")}</h3>
+            <p>{t("git.uninitializedDescription")}</p>
+          </div>
+          <div className="git-primary-actions">
+            <button
+              className="primary-button git-primary-submit"
+              type="button"
+              onClick={() => void handleInitializeRepository()}
+              disabled={actioning || loading || !workspaceId}
+            >
+              {actioning ? t("git.initInProgress") : t("git.initRepository")}
+            </button>
+          </div>
+        </section>
+      </section>
     );
   }
 
@@ -3765,6 +3824,14 @@ function hasGitSidebarSnapshotData(snapshot: GitSidebarSnapshot | null | undefin
   );
 }
 
+function isGitRepositoryEnabled(status: GitStatusDto | null | undefined): boolean {
+  if (!status) {
+    return true;
+  }
+
+  return status.snapshot.enabled !== false;
+}
+
 function mapGitError(error: ApiError): string | null {
   switch (error.errorCode) {
     case "UNAUTHORIZED":
@@ -3801,6 +3868,8 @@ function mapGitError(error: ApiError): string | null {
       return t("git.errors.remoteFailed");
     case "GIT_COMMAND_TIMEOUT":
       return t("git.errors.commandTimeout");
+    case "GIT_INIT_FAILED":
+      return t("git.errors.initFailed");
     case "GIT_DISCARD_FAILED":
       return t("git.discardFailed");
     case "GIT_UNDO_FAILED":

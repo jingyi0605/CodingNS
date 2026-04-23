@@ -46,7 +46,7 @@ export interface GitPanelSnapshot {
   history: GitHistoryItem[];
   historyTotalCount: number;
   historyNextCursor: string | null;
-  branches: GitBranchSnapshot;
+  branches: GitBranchSnapshot | null;
 }
 
 export interface TerminalManagerSnapshot {
@@ -196,6 +196,25 @@ export class WorkspacePanelSnapshotService {
           });
           refreshState.lastCompletedDirtyVersion = startedDirtyVersion;
           return cached.snapshot;
+        }
+
+        if (status.snapshot.enabled === false) {
+          const snapshot = withSnapshotRevision({
+            workspaceId,
+            status,
+            history: [],
+            historyTotalCount: 0,
+            historyNextCursor: null,
+            branches: null
+          });
+
+          this.gitSnapshotCache.set(workspaceId, {
+            snapshot,
+            cachedAt: Date.now()
+          });
+          refreshState.lastCompletedDirtyVersion = startedDirtyVersion;
+
+          return snapshot;
         }
 
         // 状态有变化，执行完整刷新（复用已获取的 status）
@@ -557,9 +576,12 @@ function isGitStatusChanged(
   current: { snapshot: GitRepoSnapshot; changes: GitChangeItem[] }
 ): boolean {
   if (
+    (cached.snapshot.enabled ?? true) !== (current.snapshot.enabled ?? true) ||
+    cached.snapshot.repoRoot !== current.snapshot.repoRoot ||
     cached.snapshot.branch !== current.snapshot.branch ||
     cached.snapshot.ahead !== current.snapshot.ahead ||
     cached.snapshot.behind !== current.snapshot.behind ||
+    cached.snapshot.hasRemote !== current.snapshot.hasRemote ||
     cached.snapshot.isDirty !== current.snapshot.isDirty
   ) {
     return true;

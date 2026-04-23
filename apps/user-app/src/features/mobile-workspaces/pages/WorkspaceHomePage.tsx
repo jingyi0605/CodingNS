@@ -65,6 +65,7 @@ interface WorkspaceHomeGitSnapshotCache {
   readonly revision?: string | null;
   readonly status: {
     readonly snapshot: {
+      readonly enabled?: boolean;
       readonly branch: string | null;
     };
     readonly changes: Array<{ path: string }>;
@@ -223,7 +224,10 @@ export function WorkspaceHomePage() {
     setDashboardState((current) => ({
       ...current,
       gitLoading: cachedSnapshot === null,
-      branch: cachedSnapshot?.status?.snapshot.branch ?? null,
+      branch:
+        cachedSnapshot?.status?.snapshot.enabled === false
+          ? null
+          : cachedSnapshot?.status?.snapshot.branch ?? null,
       changedFileCount: cachedSnapshot?.status?.changes.length ?? null
     }));
   }, [currentWorkspace?.id]);
@@ -244,7 +248,10 @@ export function WorkspaceHomePage() {
       setDashboardState((current) => ({
         ...current,
         gitLoading: false,
-        branch: snapshot.status?.snapshot.branch ?? snapshot.branches?.currentBranch ?? null,
+        branch:
+          snapshot.status?.snapshot.enabled === false
+            ? null
+            : snapshot.status?.snapshot.branch ?? snapshot.branches?.currentBranch ?? null,
         changedFileCount: snapshot.status?.changes.length ?? null
       }));
     });

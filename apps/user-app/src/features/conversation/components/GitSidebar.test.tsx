@@ -9,6 +9,7 @@ import { GitSidebar, resolveGitOperationsMenuPosition } from "./GitSidebar";
 
 const gitApiMock = vi.hoisted(() => ({
   getGitStatus: vi.fn(),
+  initializeGitRepository: vi.fn(),
   getGitHistory: vi.fn(),
   getGitCommitDetail: vi.fn(),
   getGitBranches: vi.fn(),
@@ -92,6 +93,7 @@ function createPreferenceState(language: "zh-CN" | "en-US") {
 
 vi.mock("../api/git-api", () => ({
   getGitStatus: gitApiMock.getGitStatus,
+  initializeGitRepository: gitApiMock.initializeGitRepository,
   getGitHistory: gitApiMock.getGitHistory,
   getGitCommitDetail: gitApiMock.getGitCommitDetail,
   getGitBranches: gitApiMock.getGitBranches,
@@ -156,6 +158,7 @@ describe("GitSidebar", () => {
     });
 
     gitApiMock.getGitStatus.mockResolvedValue(createStatus());
+    gitApiMock.initializeGitRepository.mockResolvedValue(createStatus([], []));
     gitApiMock.getGitHistory.mockResolvedValue({
       items: [],
       cursor: null,
@@ -415,6 +418,39 @@ describe("GitSidebar", () => {
     await userEvent.type(editor, "feat: first line{enter}second line");
 
     expect(editor).toHaveValue("feat: first linesecond line");
+  });
+
+  it("未启用 Git 时只显示初始化入口，并支持初始化当前目录", async () => {
+    const disabledStatus = createStatus([], []);
+    disabledStatus.snapshot.enabled = false;
+    disabledStatus.snapshot.branch = "";
+    disabledStatus.snapshot.hasRemote = false;
+
+    workbenchShellMock.requestGitRefresh.mockImplementation(() => {
+      gitSnapshotListener?.(createGitSnapshot(disabledStatus));
+    });
+    workbenchShellMock.addGitSnapshotListener.mockImplementation((listener: (snapshot: ReturnType<typeof createGitSnapshot>) => void) => {
+      gitSnapshotListener = listener;
+      listener(createGitSnapshot(disabledStatus));
+      return () => {
+        if (gitSnapshotListener === listener) {
+          gitSnapshotListener = null;
+        }
+      };
+    });
+
+    renderSidebar();
+
+    expect(await screen.findByText("当前目录还没有启用 Git")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "立即刷新" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "初始化 Git 工作区" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "初始化 Git 工作区" }));
+
+    await waitFor(() => {
+      expect(gitApiMock.initializeGitRepository).toHaveBeenCalledWith("workspace-1");
+    });
   });
 
   it("最近版本列表会渲染本地远程状态和远程标签", async () => {
@@ -1022,6 +1058,7 @@ function createStatus(unstagedPaths = [
     snapshot: {
       workspaceId: "workspace-1",
       repoRoot: "C:/Code/CodingNS",
+      enabled: true,
       branch: "main",
       ahead: 0,
       behind: 0,

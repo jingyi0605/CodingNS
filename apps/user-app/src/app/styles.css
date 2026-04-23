@@ -10105,6 +10105,27 @@ textarea:focus-visible {
   gap: 6px;
 }
 
+.git-disabled-state {
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.git-disabled-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.git-disabled-copy h3,
+.git-disabled-copy p {
+  margin: 0;
+}
+
+.git-disabled-copy p {
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
 .git-editor-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

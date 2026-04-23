@@ -3,6 +3,7 @@ import { httpClient } from "../../../network/http-client";
 export interface GitRepoSnapshotDto {
   workspaceId: string;
   repoRoot: string;
+  enabled?: boolean;
   branch: string;
   ahead: number;
   behind: number;
@@ -182,6 +183,15 @@ export function getGitStatus(workspaceId: string) {
   return httpClient.request<GitStatusDto>(
     `/api/git/status?workspaceId=${encodeURIComponent(workspaceId)}`
   );
+}
+
+export function initializeGitRepository(workspaceId: string) {
+  return httpClient.request<GitStatusDto>("/api/git/init", {
+    method: "POST",
+    body: JSON.stringify({
+      workspaceId
+    })
+  });
 }
 
 export function getGitDiff(workspaceId: string, filePath: string, staged: boolean) {

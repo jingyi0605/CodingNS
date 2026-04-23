@@ -40,7 +40,33 @@ export class GitReadService {
     workspaceId: string,
     signal?: AbortSignal
   ): Promise<{ snapshot: GitRepoSnapshot; changes: GitChangeItem[] }> {
-    const repo = await this.workspaceRepoGuard.resolve(workspaceId);
+    let repo;
+
+    try {
+      repo = await this.workspaceRepoGuard.resolve(workspaceId);
+    } catch (error) {
+      if (error instanceof AppError && error.errorCode === "NOT_GIT_REPOSITORY") {
+        const workspace = this.workspaceRepoGuard.resolveConfiguredRoot(workspaceId);
+
+        return {
+          snapshot: {
+            workspaceId,
+            repoRoot: workspace.repoRoot,
+            enabled: false,
+            branch: "",
+            ahead: 0,
+            behind: 0,
+            hasRemote: false,
+            isDirty: false,
+            lastFetchedAt: null
+          },
+          changes: []
+        };
+      }
+
+      throw error;
+    }
+
     const statusResult = await this.gitCommandRunner.run(repo.repoRoot, [
       "status",
       "--porcelain=1",
@@ -73,6 +99,7 @@ export class GitReadService {
       snapshot: {
         workspaceId,
         repoRoot: repo.repoRoot,
+        enabled: true,
         branch: branchMeta.branch,
         ahead: branchMeta.ahead,
         behind: branchMeta.behind,

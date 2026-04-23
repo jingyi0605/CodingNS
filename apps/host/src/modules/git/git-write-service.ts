@@ -27,6 +27,34 @@ export class GitWriteService {
     private readonly gitRemoteCredentialService: GitRemoteCredentialService
   ) {}
 
+  async initializeRepository(workspaceId: string) {
+    const currentStatus = await this.gitReadService.getStatus(workspaceId);
+
+    if (currentStatus.snapshot.enabled !== false) {
+      return currentStatus;
+    }
+
+    const workspace = this.workspaceRepoGuard.resolveConfiguredRoot(workspaceId);
+    try {
+      await this.gitCommandRunner.run(workspace.repoRoot, ["init"], {
+        workspaceId,
+        operation: "gitWrite.initializeRepository"
+      });
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw new AppError({
+          statusCode: 500,
+          errorCode: "GIT_INIT_FAILED",
+          detail: error.message
+        });
+      }
+
+      throw error;
+    }
+
+    return await this.gitReadService.getStatus(workspaceId);
+  }
+
   async stage(workspaceId: string, targets: string[]) {
     const repo = await this.workspaceRepoGuard.resolve(workspaceId);
     const relativeTargets = ensureTargets(repo.repoRoot, targets, this.workspaceRepoGuard);

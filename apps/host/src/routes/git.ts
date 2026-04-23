@@ -7,6 +7,7 @@ export async function registerGitRoutes(
   gitController: GitController
 ): Promise<void> {
   app.get("/api/git/status", gitController.getStatus);
+  app.post("/api/git/init", gitController.initializeRepository);
   app.get("/api/git/diff", gitController.getDiff);
   app.get("/api/git/commit-detail", gitController.getCommitDetail);
   app.post("/api/git/stage", gitController.stage);
