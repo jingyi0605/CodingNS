@@ -690,6 +690,553 @@ rl.on("line", (line) => {
   }
 });
 
+test("CodexRuntimeAdapter 会把 app-server 的 item/agentMessage/delta 转成同一条流式消息", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-delta-stream-"));
+  const scriptPath = join(tempDir, "fake-codex-app-server.cjs");
+  const launcherPath = join(
+    tempDir,
+    process.platform === "win32" ? "fake-codex.cmd" : "fake-codex.sh"
+  );
+  const threadPath = join(tempDir, "thread-delta.jsonl").replace(/\\/g, "/");
+  const emitted = [];
+
+  writeFakeCodexAppServer(
+    scriptPath,
+    `
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+function write(payload) {
+  process.stdout.write(JSON.stringify(payload) + "\\n");
+}
+rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === "initialize") {
+    write({ jsonrpc: "2.0", id: msg.id, result: {} });
+    return;
+  }
+  if (msg.method === "thread/start") {
+    write({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        thread: {
+          id: "thread-delta",
+          preview: "",
+          ephemeral: false,
+          modelProvider: "openai",
+          createdAt: 0,
+          updatedAt: 0,
+          status: { type: "idle" },
+          path: ${JSON.stringify(threadPath)},
+          cwd: "C:/workspace-1",
+          cliVersion: "0.0.0",
+          source: "appServer",
+          agentNickname: null,
+          agentRole: null,
+          gitInfo: null,
+          name: null,
+          turns: []
+        }
+      }
+    });
+    return;
+  }
+  if (msg.method === "turn/start") {
+    write({
+      method: "turn/started",
+      params: {
+        threadId: "thread-delta",
+        turn: { id: "turn-delta", items: [], status: "inProgress" }
+      }
+    });
+    write({
+      method: "item/started",
+      params: {
+        threadId: "thread-delta",
+        turnId: "turn-delta",
+        item: {
+          type: "agentMessage",
+          id: "assistant-delta-1",
+          text: "",
+          phase: "final_answer"
+        }
+      }
+    });
+    write({
+      method: "item/agentMessage/delta",
+      params: {
+        threadId: "thread-delta",
+        turnId: "turn-delta",
+        itemId: "assistant-delta-1",
+        delta: "正在"
+      }
+    });
+    write({
+      method: "item/agentMessage/delta",
+      params: {
+        threadId: "thread-delta",
+        turnId: "turn-delta",
+        itemId: "assistant-delta-1",
+        delta: "检查"
+      }
+    });
+    write({
+      method: "item/completed",
+      params: {
+        threadId: "thread-delta",
+        turnId: "turn-delta",
+        item: {
+          type: "agentMessage",
+          id: "assistant-delta-1",
+          text: "正在检查",
+          phase: "final_answer"
+        }
+      }
+    });
+    write({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-delta",
+        turn: { id: "turn-delta", items: [], status: "completed" }
+      }
+    });
+    write({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        turn: { id: "turn-delta", items: [], status: "completed" }
+      }
+    });
+    setTimeout(() => process.exit(0), 10);
+  }
+});
+`
+  );
+  writeFileSync(
+    launcherPath,
+    process.platform === "win32"
+      ? `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`
+      : `#!/usr/bin/env sh\n"${process.execPath}" "${scriptPath}" "$@"\n`,
+    "utf8"
+  );
+
+  if (process.platform !== "win32") {
+    chmodSync(launcherPath, 0o755);
+  }
+
+  try {
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      commandPath: launcherPath
+    });
+
+    const launch = await adapter.startSession(
+      createRunRequest({
+        sessionId: "session-delta",
+        options: {
+          content: "请真正按 delta 流式输出",
+          clientRequestId: "client-delta",
+          model: null,
+          reasoningLevel: null,
+          permissionMode: null,
+          providerPrompt: null,
+          attachments: []
+        }
+      }),
+      {
+        async emit(event) {
+          emitted.push(event);
+        },
+        updateSessionBinding() {}
+      }
+    );
+
+    await launch.completed;
+
+    const assistantMessages = emitted.filter((event) =>
+      event.type === "message" && event.message.role === "assistant" && event.message.kind === "text"
+    );
+
+    assert.deepEqual(
+      assistantMessages.map((event) => event.message.content),
+      ["正在", "正在检查"]
+    );
+    assert.equal(assistantMessages[0]?.message.messageId, assistantMessages[1]?.message.messageId);
+    assert.equal(assistantMessages[0]?.message.rawRef, assistantMessages[1]?.message.rawRef);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexRuntimeAdapter 会把 app-server 的 item/reasoning/textDelta 转成同一条 thinking 流式消息", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-reasoning-text-"));
+  const scriptPath = join(tempDir, "fake-codex-app-server.cjs");
+  const launcherPath = join(
+    tempDir,
+    process.platform === "win32" ? "fake-codex.cmd" : "fake-codex.sh"
+  );
+  const threadPath = join(tempDir, "thread-reasoning-text.jsonl").replace(/\\/g, "/");
+  const emitted = [];
+
+  writeFakeCodexAppServer(
+    scriptPath,
+    `
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+function write(payload) {
+  process.stdout.write(JSON.stringify(payload) + "\\n");
+}
+rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === "initialize") {
+    write({ jsonrpc: "2.0", id: msg.id, result: {} });
+    return;
+  }
+  if (msg.method === "thread/start") {
+    write({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        thread: {
+          id: "thread-reasoning-text",
+          preview: "",
+          ephemeral: false,
+          modelProvider: "openai",
+          createdAt: 0,
+          updatedAt: 0,
+          status: { type: "idle" },
+          path: ${JSON.stringify(threadPath)},
+          cwd: "C:/workspace-1",
+          cliVersion: "0.0.0",
+          source: "appServer",
+          agentNickname: null,
+          agentRole: null,
+          gitInfo: null,
+          name: null,
+          turns: []
+        }
+      }
+    });
+    return;
+  }
+  if (msg.method === "turn/start") {
+    write({
+      method: "turn/started",
+      params: {
+        threadId: "thread-reasoning-text",
+        turn: { id: "turn-reasoning-text", items: [], status: "inProgress" }
+      }
+    });
+    write({
+      method: "item/started",
+      params: {
+        threadId: "thread-reasoning-text",
+        turnId: "turn-reasoning-text",
+        item: {
+          type: "reasoning",
+          id: "reasoning-text-1",
+          summary: [],
+          content: []
+        }
+      }
+    });
+    write({
+      method: "item/reasoning/textDelta",
+      params: {
+        threadId: "thread-reasoning-text",
+        turnId: "turn-reasoning-text",
+        itemId: "reasoning-text-1",
+        contentIndex: 0,
+        delta: "先看"
+      }
+    });
+    write({
+      method: "item/reasoning/textDelta",
+      params: {
+        threadId: "thread-reasoning-text",
+        turnId: "turn-reasoning-text",
+        itemId: "reasoning-text-1",
+        contentIndex: 0,
+        delta: "日志"
+      }
+    });
+    write({
+      method: "item/completed",
+      params: {
+        threadId: "thread-reasoning-text",
+        turnId: "turn-reasoning-text",
+        item: {
+          type: "reasoning",
+          id: "reasoning-text-1",
+          summary: [],
+          content: ["先看日志"]
+        }
+      }
+    });
+    write({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-reasoning-text",
+        turn: { id: "turn-reasoning-text", items: [], status: "completed" }
+      }
+    });
+    write({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        turn: { id: "turn-reasoning-text", items: [], status: "completed" }
+      }
+    });
+    setTimeout(() => process.exit(0), 10);
+  }
+});
+`
+  );
+  writeFileSync(
+    launcherPath,
+    process.platform === "win32"
+      ? `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`
+      : `#!/usr/bin/env sh\n"${process.execPath}" "${scriptPath}" "$@"\n`,
+    "utf8"
+  );
+
+  if (process.platform !== "win32") {
+    chmodSync(launcherPath, 0o755);
+  }
+
+  try {
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      commandPath: launcherPath
+    });
+
+    const launch = await adapter.startSession(
+      createRunRequest({
+        sessionId: "session-reasoning-text",
+        options: {
+          content: "请输出推理增量",
+          clientRequestId: "client-reasoning-text",
+          model: null,
+          reasoningLevel: null,
+          permissionMode: null,
+          providerPrompt: null,
+          attachments: []
+        }
+      }),
+      {
+        async emit(event) {
+          emitted.push(event);
+        },
+        updateSessionBinding() {}
+      }
+    );
+
+    await launch.completed;
+
+    const thinkingMessages = emitted.filter((event) =>
+      event.type === "message" && event.message.role === "assistant" && event.message.kind === "thinking"
+    );
+
+    assert.deepEqual(
+      thinkingMessages.map((event) => event.message.content),
+      ["先看", "先看日志"]
+    );
+    assert.equal(thinkingMessages[0]?.message.messageId, thinkingMessages[1]?.message.messageId);
+    assert.equal(thinkingMessages[0]?.message.rawRef, thinkingMessages[1]?.message.rawRef);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexRuntimeAdapter 会把 app-server 的 reasoning summary delta 转成同一条 thinking 流式消息", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-reasoning-summary-"));
+  const scriptPath = join(tempDir, "fake-codex-app-server.cjs");
+  const launcherPath = join(
+    tempDir,
+    process.platform === "win32" ? "fake-codex.cmd" : "fake-codex.sh"
+  );
+  const threadPath = join(tempDir, "thread-reasoning-summary.jsonl").replace(/\\/g, "/");
+  const emitted = [];
+
+  writeFakeCodexAppServer(
+    scriptPath,
+    `
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+function write(payload) {
+  process.stdout.write(JSON.stringify(payload) + "\\n");
+}
+rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === "initialize") {
+    write({ jsonrpc: "2.0", id: msg.id, result: {} });
+    return;
+  }
+  if (msg.method === "thread/start") {
+    write({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        thread: {
+          id: "thread-reasoning-summary",
+          preview: "",
+          ephemeral: false,
+          modelProvider: "openai",
+          createdAt: 0,
+          updatedAt: 0,
+          status: { type: "idle" },
+          path: ${JSON.stringify(threadPath)},
+          cwd: "C:/workspace-1",
+          cliVersion: "0.0.0",
+          source: "appServer",
+          agentNickname: null,
+          agentRole: null,
+          gitInfo: null,
+          name: null,
+          turns: []
+        }
+      }
+    });
+    return;
+  }
+  if (msg.method === "turn/start") {
+    write({
+      method: "turn/started",
+      params: {
+        threadId: "thread-reasoning-summary",
+        turn: { id: "turn-reasoning-summary", items: [], status: "inProgress" }
+      }
+    });
+    write({
+      method: "item/started",
+      params: {
+        threadId: "thread-reasoning-summary",
+        turnId: "turn-reasoning-summary",
+        item: {
+          type: "reasoning",
+          id: "reasoning-summary-1",
+          summary: [],
+          content: []
+        }
+      }
+    });
+    write({
+      method: "item/reasoning/summaryPartAdded",
+      params: {
+        threadId: "thread-reasoning-summary",
+        turnId: "turn-reasoning-summary",
+        itemId: "reasoning-summary-1",
+        summaryIndex: 0
+      }
+    });
+    write({
+      method: "item/reasoning/summaryTextDelta",
+      params: {
+        threadId: "thread-reasoning-summary",
+        turnId: "turn-reasoning-summary",
+        itemId: "reasoning-summary-1",
+        summaryIndex: 0,
+        delta: "先确认"
+      }
+    });
+    write({
+      method: "item/reasoning/summaryTextDelta",
+      params: {
+        threadId: "thread-reasoning-summary",
+        turnId: "turn-reasoning-summary",
+        itemId: "reasoning-summary-1",
+        summaryIndex: 0,
+        delta: "范围"
+      }
+    });
+    write({
+      method: "item/completed",
+      params: {
+        threadId: "thread-reasoning-summary",
+        turnId: "turn-reasoning-summary",
+        item: {
+          type: "reasoning",
+          id: "reasoning-summary-1",
+          summary: ["先确认范围"],
+          content: []
+        }
+      }
+    });
+    write({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-reasoning-summary",
+        turn: { id: "turn-reasoning-summary", items: [], status: "completed" }
+      }
+    });
+    write({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        turn: { id: "turn-reasoning-summary", items: [], status: "completed" }
+      }
+    });
+    setTimeout(() => process.exit(0), 10);
+  }
+});
+`
+  );
+  writeFileSync(
+    launcherPath,
+    process.platform === "win32"
+      ? `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`
+      : `#!/usr/bin/env sh\n"${process.execPath}" "${scriptPath}" "$@"\n`,
+    "utf8"
+  );
+
+  if (process.platform !== "win32") {
+    chmodSync(launcherPath, 0o755);
+  }
+
+  try {
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      commandPath: launcherPath
+    });
+
+    const launch = await adapter.startSession(
+      createRunRequest({
+        sessionId: "session-reasoning-summary",
+        options: {
+          content: "请输出推理摘要增量",
+          clientRequestId: "client-reasoning-summary",
+          model: null,
+          reasoningLevel: null,
+          permissionMode: null,
+          providerPrompt: null,
+          attachments: []
+        }
+      }),
+      {
+        async emit(event) {
+          emitted.push(event);
+        },
+        updateSessionBinding() {}
+      }
+    );
+
+    await launch.completed;
+
+    const thinkingMessages = emitted.filter((event) =>
+      event.type === "message" && event.message.role === "assistant" && event.message.kind === "thinking"
+    );
+
+    assert.deepEqual(
+      thinkingMessages.map((event) => event.message.content),
+      ["先确认", "先确认范围"]
+    );
+    assert.equal(thinkingMessages[0]?.message.messageId, thinkingMessages[1]?.message.messageId);
+    assert.equal(thinkingMessages[0]?.message.rawRef, thinkingMessages[1]?.message.rawRef);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexRuntimeAdapter 不会把 turn/completed 回放的同一批 items 再写进 synthetic history", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-replay-dedupe-"));
   const threadId = `thread-replay-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;

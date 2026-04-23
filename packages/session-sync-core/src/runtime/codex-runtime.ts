@@ -213,6 +213,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       });
       const abortController = new AbortController();
       const eventQueue = createAsyncEventQueue();
+      const translateNotification = createCodexAppServerNotificationTranslator();
       const forwardTranslatedNotification = createCodexTranslatedNotificationForwarder(eventQueue);
       const resumedSyntheticSession = await this.resumeSyntheticThreadFromHistory(transport, request);
       const startedSession =
@@ -260,8 +261,8 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
             method: ensureText(notification.method).trim() || null
           });
         }
-        const translated = translateCodexAppServerNotification(notification);
-        forwardTranslatedNotification(translated);
+          const translated = translateNotification(notification);
+          forwardTranslatedNotification(translated);
       });
       transport.setServerRequestHandler(async (serverRequest) => {
         if (!this.options.handleServerRequest) {
@@ -289,7 +290,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       const startTurnNotification = startTurnResult?.notification ?? null;
 
       if (startTurnNotification) {
-        const translated = translateCodexAppServerNotification(startTurnNotification);
+        const translated = translateNotification(startTurnNotification);
         forwardTranslatedNotification(translated);
       }
       logCodexRuntimeStep("start_session.turn_start", startTurnStartedAtMs, {
@@ -438,6 +439,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
           : pickedRawStoreRef;
       const abortController = new AbortController();
       const eventQueue = createAsyncEventQueue();
+      const translateNotification = createCodexAppServerNotificationTranslator();
       const forwardTranslatedNotification = createCodexTranslatedNotificationForwarder(eventQueue);
       logCodexRuntimeStep("continue_session.raw_store_ref_ready", runtimeStartedAtMs, {
         sessionId: request.sessionId,
@@ -463,7 +465,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
             method: ensureText(notification.method).trim() || null
           });
         }
-        const translated = translateCodexAppServerNotification(notification);
+        const translated = translateNotification(notification);
         forwardTranslatedNotification(translated);
       });
       transport.setServerRequestHandler(async (serverRequest) => {
@@ -492,7 +494,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       const startTurnNotification = startTurnResult?.notification ?? null;
 
       if (startTurnNotification) {
-        const translated = translateCodexAppServerNotification(startTurnNotification);
+        const translated = translateNotification(startTurnNotification);
         forwardTranslatedNotification(translated);
       }
       logCodexRuntimeStep("continue_session.turn_start", startTurnStartedAtMs, {
@@ -1801,48 +1803,228 @@ function normalizeReplayKeyText(value: unknown): string {
   return ensureText(value).trim();
 }
 
-function translateCodexAppServerNotification(notification: Record<string, unknown>): {
+function createCodexAppServerNotificationTranslator(): (
+  notification: Record<string, unknown>
+) => {
   events: Record<string, unknown>[];
   terminal: boolean;
   turnId: string | null;
 } {
-  const method = ensureText(notification.method).trim();
-  const params = toRecord(notification.params) ?? {};
+  const agentMessageTextById = new Map<string, string>();
+  const reasoningSummaryPartsById = new Map<string, string[]>();
+  const reasoningContentPartsById = new Map<string, string[]>();
 
-  if (method === "turn/started") {
+  const resetStreamState = (): void => {
+    agentMessageTextById.clear();
+    reasoningSummaryPartsById.clear();
+    reasoningContentPartsById.clear();
+  };
+
+  const ensureIndexedTextPart = (
+    store: Map<string, string[]>,
+    itemId: string,
+    index: number
+  ): string[] | null => {
+    if (!itemId || !Number.isInteger(index) || index < 0) {
+      return null;
+    }
+
+    const existing = store.get(itemId) ?? [];
+
+    while (existing.length <= index) {
+      existing.push("");
+    }
+
+    store.set(itemId, existing);
+    return existing;
+  };
+
+  const buildReasoningSyntheticItem = (itemId: string): Record<string, unknown> => {
+    // 这里必须复制一份快照，不能把可变数组引用直接塞进事件队列。
+    // 否则后续 delta 继续追加时，前一帧事件里的 summary/content 也会被同步改掉，
+    // 最终所有帧都会看起来像“最后一帧”，下游稳定消息去重就会把中间增量吃掉。
+    const summary = [...(reasoningSummaryPartsById.get(itemId) ?? [])];
+    const content = [...(reasoningContentPartsById.get(itemId) ?? [])];
+
     return {
-      events: [],
-      terminal: false,
-      turnId: ensureText(readProp(readProp(params, "turn"), "id")).trim() || null
+      type: "reasoning",
+      id: itemId,
+      summary,
+      content
     };
-  }
+  };
 
-  if (method === "turn/completed") {
-    const turn = toRecord(params.turn);
-    const status = ensureText(turn?.status).trim();
-    const itemEvents = translateCodexAppServerTurnItems(turn, "item.completed");
+  const translateAgentMessageDelta = (params: Record<string, unknown>): {
+    events: Record<string, unknown>[];
+    terminal: boolean;
+    turnId: string | null;
+  } => {
+    const itemId = ensureText(params.itemId).trim();
+    const delta = ensureText(params.delta);
 
-    if (status === "failed") {
+    if (!itemId || delta.length === 0) {
       return {
-        events: [
-          ...itemEvents,
-          {
-            type: "turn.failed",
-            timestamp: nextTimestamp(),
-            error: ensureText(readProp(turn?.error, "message")).trim() || "codex turn failed"
-          }
-        ],
-        terminal: true,
-        turnId: ensureText(turn?.id).trim() || null
+        events: [],
+        terminal: false,
+        turnId: ensureText(params.turnId).trim() || null
       };
     }
 
-    if (status === "interrupted") {
+    const nextText = `${agentMessageTextById.get(itemId) ?? ""}${delta}`;
+    agentMessageTextById.set(itemId, nextText);
+
+    return {
+      events: [
+        {
+          type: "item.updated",
+          item: {
+            type: "agent_message",
+            id: itemId,
+            text: nextText
+          },
+          timestamp: nextTimestamp()
+        }
+      ],
+      terminal: false,
+      turnId: ensureText(params.turnId).trim() || null
+    };
+  };
+
+  const translateReasoningSummaryPartAdded = (params: Record<string, unknown>): {
+    events: Record<string, unknown>[];
+    terminal: boolean;
+    turnId: string | null;
+  } => {
+    const itemId = ensureText(params.itemId).trim();
+    const summaryIndex = Math.trunc(Number(params.summaryIndex));
+    ensureIndexedTextPart(reasoningSummaryPartsById, itemId, summaryIndex);
+
+    return {
+      events: [],
+      terminal: false,
+      turnId: ensureText(params.turnId).trim() || null
+    };
+  };
+
+  const translateReasoningSummaryTextDelta = (params: Record<string, unknown>): {
+    events: Record<string, unknown>[];
+    terminal: boolean;
+    turnId: string | null;
+  } => {
+    const itemId = ensureText(params.itemId).trim();
+    const summaryIndex = Math.trunc(Number(params.summaryIndex));
+    const delta = ensureText(params.delta);
+    const parts = ensureIndexedTextPart(reasoningSummaryPartsById, itemId, summaryIndex);
+
+    if (!parts || delta.length === 0) {
+      return {
+        events: [],
+        terminal: false,
+        turnId: ensureText(params.turnId).trim() || null
+      };
+    }
+
+    parts[summaryIndex] = `${parts[summaryIndex] ?? ""}${delta}`;
+
+    return {
+      events: [
+        {
+          type: "item.updated",
+          item: buildReasoningSyntheticItem(itemId),
+          timestamp: nextTimestamp()
+        }
+      ],
+      terminal: false,
+      turnId: ensureText(params.turnId).trim() || null
+    };
+  };
+
+  const translateReasoningTextDelta = (params: Record<string, unknown>): {
+    events: Record<string, unknown>[];
+    terminal: boolean;
+    turnId: string | null;
+  } => {
+    const itemId = ensureText(params.itemId).trim();
+    const contentIndex = Math.trunc(Number(params.contentIndex));
+    const delta = ensureText(params.delta);
+    const parts = ensureIndexedTextPart(reasoningContentPartsById, itemId, contentIndex);
+
+    if (!parts || delta.length === 0) {
+      return {
+        events: [],
+        terminal: false,
+        turnId: ensureText(params.turnId).trim() || null
+      };
+    }
+
+    parts[contentIndex] = `${parts[contentIndex] ?? ""}${delta}`;
+
+    return {
+      events: [
+        {
+          type: "item.updated",
+          item: buildReasoningSyntheticItem(itemId),
+          timestamp: nextTimestamp()
+        }
+      ],
+      terminal: false,
+      turnId: ensureText(params.turnId).trim() || null
+    };
+  };
+
+  return (notification) => {
+    const method = ensureText(notification.method).trim();
+    const params = toRecord(notification.params) ?? {};
+
+    if (method === "turn/started") {
+      return {
+        events: [],
+        terminal: false,
+        turnId: ensureText(readProp(readProp(params, "turn"), "id")).trim() || null
+      };
+    }
+
+    if (method === "turn/completed") {
+      const turn = toRecord(params.turn);
+      const status = ensureText(turn?.status).trim();
+      const itemEvents = translateCodexAppServerTurnItems(turn, "item.completed");
+
+      resetStreamState();
+
+      if (status === "failed") {
+        return {
+          events: [
+            ...itemEvents,
+            {
+              type: "turn.failed",
+              timestamp: nextTimestamp(),
+              error: ensureText(readProp(turn?.error, "message")).trim() || "codex turn failed"
+            }
+          ],
+          terminal: true,
+          turnId: ensureText(turn?.id).trim() || null
+        };
+      }
+
+      if (status === "interrupted") {
+        return {
+          events: [
+            ...itemEvents,
+            {
+              type: "turn.interrupted",
+              timestamp: nextTimestamp()
+            }
+          ],
+          terminal: true,
+          turnId: ensureText(turn?.id).trim() || null
+        };
+      }
+
       return {
         events: [
           ...itemEvents,
           {
-            type: "turn.interrupted",
+            type: "turn.completed",
             timestamp: nextTimestamp()
           }
         ],
@@ -1851,77 +2033,127 @@ function translateCodexAppServerNotification(notification: Record<string, unknow
       };
     }
 
-    return {
-      events: [
-        ...itemEvents,
-        {
-          type: "turn.completed",
-          timestamp: nextTimestamp()
-        }
-      ],
-      terminal: true,
-      turnId: ensureText(turn?.id).trim() || null
-    };
-  }
+    if (method === "error") {
+      const error = toRecord(params.error);
+      const detail = buildCodexAppServerErrorDetail(error);
 
-  if (method === "error") {
-    const error = toRecord(params.error);
-    const detail = buildCodexAppServerErrorDetail(error);
+      if (params.willRetry === true) {
+        return {
+          events: [],
+          terminal: false,
+          turnId: ensureText(params.turnId).trim() || null
+        };
+      }
 
-    if (params.willRetry === true) {
+      resetStreamState();
+
       return {
-        events: [],
-        terminal: false,
+        events: [
+          {
+            type: "turn.failed",
+            timestamp: nextTimestamp(),
+            error: detail
+          }
+        ],
+        terminal: true,
         turnId: ensureText(params.turnId).trim() || null
       };
     }
 
-    return {
-      events: [
-        {
-          type: "turn.failed",
-          timestamp: nextTimestamp(),
-          error: detail
+    if (method === "item/agentMessage/delta") {
+      return translateAgentMessageDelta(params);
+    }
+
+    if (method === "item/reasoning/summaryPartAdded") {
+      return translateReasoningSummaryPartAdded(params);
+    }
+
+    if (method === "item/reasoning/summaryTextDelta") {
+      return translateReasoningSummaryTextDelta(params);
+    }
+
+    if (method === "item/reasoning/textDelta") {
+      return translateReasoningTextDelta(params);
+    }
+
+    if (method === "item/started" || method === "item/updated" || method === "item/completed") {
+      const item = translateCodexAppServerItem(toRecord(params.item));
+
+      if (!item) {
+        return {
+          events: [],
+          terminal: false,
+          turnId: null
+        };
+      }
+
+      if (ensureText(item.type).trim() === "agent_message") {
+        const itemId = ensureText(item.id).trim();
+        const itemText = ensureText(item.text);
+
+        if (itemId) {
+          if (itemText.length > 0) {
+            agentMessageTextById.set(itemId, itemText);
+          } else if (method === "item/completed") {
+            agentMessageTextById.delete(itemId);
+          }
         }
-      ],
-      terminal: true,
-      turnId: ensureText(params.turnId).trim() || null
-    };
-  }
+      }
 
-  if (method === "item/started" || method === "item/updated" || method === "item/completed") {
-    const item = translateCodexAppServerItem(toRecord(params.item));
+      if (ensureText(item.type).trim() === "reasoning") {
+        const itemId = ensureText(item.id).trim();
 
-    if (!item) {
+        if (itemId) {
+          const summary =
+            Array.isArray(item.summary)
+              ? item.summary.map((entry) => ensureText(entry))
+              : ensureText(item.summary).trim()
+                ? [ensureText(item.summary)]
+                : [];
+          const content =
+            Array.isArray(item.content)
+              ? item.content.map((entry) => ensureText(entry))
+              : ensureText(item.text).trim()
+                ? [ensureText(item.text)]
+                : [];
+
+          if (summary.length > 0) {
+            reasoningSummaryPartsById.set(itemId, summary);
+          } else if (method === "item/completed") {
+            reasoningSummaryPartsById.delete(itemId);
+          }
+
+          if (content.length > 0) {
+            reasoningContentPartsById.set(itemId, content);
+          } else if (method === "item/completed") {
+            reasoningContentPartsById.delete(itemId);
+          }
+        }
+      }
+
       return {
-        events: [],
+        events: [
+          {
+            type:
+              method === "item/started"
+                ? "item.started"
+                : method === "item/updated"
+                  ? "item.updated"
+                  : "item.completed",
+            item,
+            timestamp: nextTimestamp()
+          }
+        ],
         terminal: false,
         turnId: null
       };
     }
 
     return {
-      events: [
-        {
-          type:
-            method === "item/started"
-              ? "item.started"
-              : method === "item/updated"
-                ? "item.updated"
-                : "item.completed",
-          item,
-          timestamp: nextTimestamp()
-        }
-      ],
+      events: [],
       terminal: false,
       turnId: null
     };
-  }
-
-  return {
-    events: [],
-    terminal: false,
-    turnId: null
   };
 }
 
