@@ -35,4 +35,4 @@ After the first setup, read what you need:
 
 - They stay on the normal user path.
 - They only describe currently visible and usable product behavior.
-- They avoid internal debugging instructions and repository-only detail.
+- They focus on screens, actions, and next steps instead of behind-the-scenes implementation detail.

@@ -31,5 +31,3 @@ Files, Git, terminal, and related tools stay tied to the current workspace so th
 - Developers who already rely on AI coding tools as part of daily work
 - People who move between devices
 - People who want the same project context available outside the original machine
-
-<!-- TODO: Add a multi-device workflow image here -->

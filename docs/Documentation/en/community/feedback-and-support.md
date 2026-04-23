@@ -21,8 +21,6 @@ For example: “This only happens on mobile” or “another Host works normally
 
 ### attach a screenshot when the UI explains it faster
 
-<!-- TODO: Add a feedback example image or support flow image here -->
-
 ## Good feedback topics
 
 - the install or login flow is unclear;

@@ -1,10 +1,10 @@
 # Official Links
 
-## Public project entry points
+## Official entry points
 
-This page can act as the fixed official entry page for end users. Replace placeholder items as soon as the final public addresses are ready.
+Use this page as the first stop when you need public CodingNS links, package names, or community information.
 
-## Information already safe to publish here
+## Currently available information
 
 | Type | Address or note |
 | --- | --- |
@@ -12,13 +12,15 @@ This page can act as the fixed official entry page for end users. Replace placeh
 | NPM package | `@jingyi0605/codingns` |
 | QQ group | `1092985965` |
 
-## Suggested entries to fill next
+## More official entries will appear here
 
-- official website: pending
-- public repository: pending
-- Discord invite: pending
-- WeChat group QR image: pending
-- unified download page: pending
+- official website
+- public repository
+- Discord invite
+- WeChat group QR image
+- unified download page
 
-<!-- TODO: Add the official website, public repository, and Discord invite here -->
-<!-- TODO: Add QQ / WeChat group QR images here -->
+## Usage note
+
+- When you need the latest public entry points, check this page first.
+- If an address no longer works, report it through [Feedback & Support](/en/community/feedback-and-support).

@@ -26,12 +26,10 @@ features:
   - title: "Written for real user flows"
     details: "The docs follow the order most people actually use: understand the product, install it, log in, start working, and then enable remote access."
   - title: "Current product state only"
-    details: "These pages describe what users can actually see and do today. Internal experiments and debugging notes are intentionally excluded."
+    details: "These pages focus on the screens and actions users can actually use today, without drifting into behind-the-scenes detail."
   - title: "Same English path structure"
-    details: "Chinese and English pages share the same English path structure to keep the site predictable and easier to maintain."
+    details: "Chinese and English pages share the same path structure, so switching languages stays predictable."
 ---
-
-<!-- TODO: Add the hero screenshot here -->
 
 ## Where to start
 

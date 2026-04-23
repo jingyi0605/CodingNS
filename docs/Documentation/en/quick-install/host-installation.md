@@ -28,7 +28,7 @@ npx @jingyi0605/codingns start --port 3002
 
 ## After startup
 
-Normal users do not need to dive into debugging steps here. The next move is simple:
+After startup, the next move is simple:
 
 1. connect a client to the Host address;
 2. finish the first login or bootstrap flow.

@@ -15,8 +15,6 @@ Open the remote access section in settings and switch to the Tailscale panel.
 3. bind the Host to your Tailscale account;
 4. use the shown reachable address on another device.
 
-<!-- TODO: Add a Tailscale settings screenshot here -->
-
 ## What “done” looks like
 
 - the status shows that Tailscale is running;

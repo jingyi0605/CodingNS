@@ -20,10 +20,8 @@ Mobile works best with a Host that is already stable. For the smoothest first ru
 
 If you already prepared a reachable public or private entry for the Host, open that address in the browser and continue from there.
 
-<!-- TODO: Add a client connection screenshot here -->
-
 ## Practical advice
 
 - Test the basic connection on the same machine or inside the same LAN first.
-- Make sure you are entering the Host address, not a frontend development address.
+- Make sure you are entering the Host service address you actually plan to use.
 - If cross-device access matters to you, prepare remote access early instead of waiting until the first time you really need it.

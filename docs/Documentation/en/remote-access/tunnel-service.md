@@ -16,8 +16,6 @@ Open the remote access area in settings and switch to the CodingNS Connect panel
 4. use the generated access address from other devices;
 5. manage traffic or quota there if your plan uses it.
 
-<!-- TODO: Add a CodingNS Connect status screenshot here -->
-
 ## Practical advice
 
 - give the Host a clear device label;
