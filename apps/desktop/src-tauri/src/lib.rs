@@ -1087,6 +1087,12 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                // 预览窗是临时态，记住它只会把下一次拖拽预览搞乱。
+                .with_denylist(&[DETACH_PREVIEW_WINDOW_LABEL])
+                .build(),
+        )
         .manage(WindowManagerState::default())
         .manage(MacosNativeSidebarState::default());
 
