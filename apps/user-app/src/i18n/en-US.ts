@@ -248,9 +248,9 @@ export const enUS = {
     serverRelayTunnelControlBaseUrl: "Control Site URL",
     serverRelayTunnelControlBaseUrlPlaceholder: "For example: https://control.codingns.example",
     relayTunnelServerAddressDescription:
-      "In debug builds you can change the CodingNS Connect service address here. Packaged clients always use the official fixed address.",
+      "The official CodingNS Connect address is used by default. If you know the current control site address, you can override it in advanced settings.",
     relayTunnelServerAddressHint:
-      "This only changes the CodingNS Connect control site used for remote access debugging. It does not change the current Host's local API address.",
+      "This only changes the CodingNS Connect control site used for login, binding, and traffic queries. It does not change the current Host's local API address.",
     relayTunnelStatus: "CodingNS Connect Status",
     relayTunnelDescription:
       "Use CodingNS Connect to let external devices reach this Host securely.",
@@ -292,6 +292,10 @@ export const enUS = {
     relayTunnelStepStartReady: "The host label is confirmed. You can start CodingNS Connect now.",
     relayTunnelStartAction: "Start CodingNS Connect",
     relayTunnelLoginErrorTitle: "Failed to log in to CodingNS Connect",
+    relayTunnelAdvancedSettings: "Advanced Settings",
+    relayTunnelAdvancedSettingsHide: "Hide Advanced Settings",
+    relayTunnelAdvancedSettingsDescription:
+      "The official CodingNS Connect address is used by default. Only override it when you know the exact control site address.",
     relayTunnelLoginNetworkError:
       "The login request never reached this Host because it is unavailable right now ({address}). Check the server address and network connection, then try again.",
     relayTunnelReadyTitle: "Remote Access Is Ready",
