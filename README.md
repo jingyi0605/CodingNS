@@ -164,6 +164,13 @@ CodingNS/
 
 #### Install From npm
 
+On Linux, install the native build tools first. `@jingyi0605/codingns` includes native dependencies such as `better-sqlite3`, so a plain machine may still need a compiler toolchain.
+
+```bash
+apt-get update
+apt-get install -y build-essential python3
+```
+
 ```bash
 # Install globally
 npm install -g @jingyi0605/codingns
@@ -184,6 +191,26 @@ Common options:
 - `--port`: listen port, default `3002`
 - `--data-dir`: data directory, default `~/.codingns`
 - `--demo`: start in demo mode with an auto-created demo account and controlled demo sessions
+
+#### One-click Install Script
+
+If you want an interactive installer that handles dependency checks, npm install, service setup, and registry fallback automatically, run:
+
+```bash
+bash install.sh
+```
+
+The script will:
+
+- Check Node.js, npm, and the required build tools first
+- On supported macOS/Linux environments, offer to install missing prerequisites automatically
+- Ask for the service port, default `3002`
+- Ask for the data directory, default `~/.codingns`
+- Detect supported CLI tools and print a short summary
+- Recommend `OpenCode` if no supported CLI is installed
+- Automatically switch to `https://registry.npmmirror.com` when the official npm registry is unreachable
+- Install or update `@jingyi0605/codingns`
+- If you choose service mode, automatically install `pm2`, register the `codingns` service, and configure start on boot
 
 #### Start On Boot With PM2
 
@@ -501,6 +528,13 @@ CodingNS/
 
 #### 通过 NPM 包快速安装
 
+如果你在 Linux 上手工安装，先把编译工具准备好。`@jingyi0605/codingns` 依赖 `better-sqlite3` 这类原生模块，拿不到预编译包时会自动回退到本机编译。
+
+```bash
+apt-get update
+apt-get install -y build-essential python3
+```
+
 ```bash
 # 全局安装
 npm install -g @jingyi0605/codingns
@@ -522,7 +556,34 @@ npx @jingyi0605/codingns start --port 3002
 - `--data-dir`：数据目录，默认 `~/.codingns`
 - `--demo`：以演示模式启动，自动创建 demo 账号，并启用受控演示会话
 
+#### 一键安装脚本
+
+如果你想直接跑一个交互式安装脚本，把依赖检查、`npm` 安装、服务托管和 `npm` 源回退一次做完，可以执行：
+
+```bash
+bash install.sh
+```
+
+脚本会自动完成这些步骤：
+
+- 先检查 Node.js、npm 和必需的编译工具
+- 在支持的 macOS / Linux 环境下，缺什么就先询问是否自动安装
+- 询问服务端口，默认 `3002`
+- 询问数据目录，默认 `~/.codingns`
+- 检测当前机器上已安装的受支持 CLI，并输出简报
+- 如果没有检测到任何受支持 CLI，推荐优先安装 `OpenCode`
+- 官方 `npm` 源不可用时，自动切换到 `https://registry.npmmirror.com`
+- 自动安装或更新 `@jingyi0605/codingns`
+- 如果你选择“安装为服务并开机自动启动”，脚本会自动安装 `pm2`、托管 `codingns`，并配置开机自启
+
 #### 通过 PM2 开机启动和自定义端口
+
+如果你在 Linux 上手工走这条路，也建议先装好编译工具，再执行下面的 `npm install -g`：
+
+```bash
+apt-get update
+apt-get install -y build-essential python3
+```
 
 先安装 PM2：
 

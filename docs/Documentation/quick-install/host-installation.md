@@ -1,30 +1,36 @@
 # 安装 Host 服务
 
-## 这一步会得到什么
+这页只做一件事：把 CodingNS Host 装到一台你准备长期使用的机器上。  
+装好以后，桌面端、手机和浏览器接入的都是这台 Host。
 
-做完这一步后，你会得到一台已经跑起来的 CodingNS Host。  
-后面无论你是用桌面端、手机还是浏览器进入，连接的都是它。
-
-## 先选一种安装方式
+## 先决定你想怎么装
 
 如果你只是想尽快装好、少记命令，直接用 `curl` 快速安装。  
 如果你更喜欢自己一步步确认，也可以手动用 `npm + PM2` 安装。
 
-### 推荐大多数人这样选
+### 大多数人这样选就够了
 
 - 想省事，选 `curl` 快速安装。
 - 想自己掌控每一步，选手动 `npm + PM2` 安装。
 
-## 安装前先确认
+## 开始前只要确认两件事
 
 开始前，先确认这台机器已经装好：
 
 - Node.js `22` 或更高版本
 - npm `10` 或更高版本
 
+如果你准备在 Linux 上手动用 `npm install -g` 安装，建议先把编译工具一起装好。  
+CodingNS 依赖 `better-sqlite3` 这类原生模块，遇到拿不到预编译包时，会自动退回本机编译。
+
+```bash
+apt-get update
+apt-get install -y build-essential python3
+```
+
 如果这台机器以后准备长期开着，建议顺手把它当成你的常驻 Host 来用。这样后面换电脑、换手机时，不用重新折腾。
 
-## 方式一：用 CURL 快速安装
+## 想快一点，就直接用 CURL 装
 
 这是最省事的方式。你只需要执行一条命令，后面跟着提示走就行。
 
@@ -43,6 +49,8 @@ curl -fsSL https://codingns.com/install | bash
 
 脚本还会顺手帮你做这些事：
 
+- 先检查 Node.js、npm 和必需的编译工具
+- 在支持的系统上，缺什么就先询问你是否自动安装
 - 检查当前机器上已经装了哪些受支持的 CLI
 - 如果官方 npm 源暂时不可用，自动切到国内镜像继续安装
 - 安装 `@jingyi0605/codingns`
@@ -50,7 +58,7 @@ curl -fsSL https://codingns.com/install | bash
 - 用 `pm2` 把 Host 托管起来
 - 在支持的系统上配置开机自动启动
 
-### 装完后你会看到什么
+### 跑完脚本后，你会立刻看到这些结果
 
 正常完成后，你会看到：
 
@@ -60,11 +68,20 @@ curl -fsSL https://codingns.com/install | bash
 
 这时候通常就已经可以继续下一步去连接客户端了。
 
-## 方式二：手动用 NPM + PM2 安装
+## 想自己掌控每一步，就手动装
 
 如果你想把每一步都自己确认一遍，可以按下面的顺序来。
 
 ### 第一步：安装 CodingNS
+
+如果你在 Linux 上手动安装，先执行：
+
+```bash
+apt-get update
+apt-get install -y build-essential python3
+```
+
+然后再执行：
 
 ```bash
 npm install -g @jingyi0605/codingns
@@ -122,7 +139,7 @@ pm2 save
 
 这样以后机器重启后，Host 也会跟着自动起来。
 
-## 你可能会改的两个地方
+## 端口和数据目录，不合适就改这里
 
 ### 端口
 
@@ -153,13 +170,7 @@ pm2 start "$(which codingns)" --name codingns -- start --host 0.0.0.0 --port 330
 codingns start --data-dir /var/lib/codingns
 ```
 
-## 装完后下一步做什么
+## 装好以后，去把客户端连上
 
-装好 Host 以后，下一步只需要继续两件事：
-
-1. 在客户端里填写这台 Host 的地址
-2. 完成第一次登录或初始化
-
-## 下一步
-
-继续看 [连接客户端](/quick-install/client-connection)。
+接下来直接看 [连接客户端](/quick-install/client-connection)。  
+连上之后，你会进入初始化或登录流程，再接着去 [首次登录与开始使用](/quick-install/first-login)。
