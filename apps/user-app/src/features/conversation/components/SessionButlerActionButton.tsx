@@ -172,10 +172,6 @@ export function SessionButlerActionButton({
     };
   }, [contextRequestSeq, session?.sessionId]);
 
-  if (!session?.sessionId) {
-    return null;
-  }
-
   function requestContextReload() {
     if (contextLoading) {
       return;
@@ -198,6 +194,10 @@ export function SessionButlerActionButton({
     setModalOpen(true);
     ensureActionContext();
   }, [contextLoading, openRequestKey, showTrigger, actionContext]);
+
+  if (!session?.sessionId) {
+    return null;
+  }
 
   async function handleFollowUp() {
     if (!target) {

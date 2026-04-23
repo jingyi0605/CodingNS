@@ -568,4 +568,26 @@ describe("SessionButlerActionButton", () => {
       expect(screen.getByText("项目甲")).toBeInTheDocument();
     });
   });
+
+  it("会话从空态切到有效会话时不会打坏 Hook 顺序", async () => {
+    const { rerender } = render(
+      <SessionButlerActionButton
+        session={null}
+      />
+    );
+
+    expect(screen.queryByRole("button", { name: t("conversation.butlerActionButton") })).not.toBeInTheDocument();
+
+    rerender(
+      <SessionButlerActionButton
+        session={createSessionSummary()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: t("conversation.butlerActionButton") })).toBeInTheDocument();
+    });
+
+    expect(mockedGetButlerSessionActionContext).toHaveBeenCalledWith("session-1");
+  });
 });
