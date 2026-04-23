@@ -17,6 +17,11 @@ import {
 } from "../../conversation/session-activity-display";
 import type { SessionSummaryDto } from "../../conversation/api/conversation-api";
 import { getProviderDisplayName } from "../../conversation/capability/provider-ui";
+import {
+  createParallelGroupStyle,
+  resolveParallelGroupLabel,
+  resolveParallelRoleLabel
+} from "../../conversation/parallel-session-display";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import {
@@ -44,6 +49,8 @@ interface WorkbenchNavigationEntry {
     | "lastErrorCode"
     | "lastErrorDetail"
     | "isArchived"
+    | "parallelGroup"
+    | "sessionIsolatedWorkspace"
   >;
   readonly workspace: {
     readonly id: string;
@@ -110,6 +117,9 @@ export function SessionListItem({
     activityBadgeLabel
       ? resolveSessionActivityBadgeClassName("session-list-activity-badge", session)
       : null;
+  const parallelGroupLabel = resolveParallelGroupLabel(session.parallelGroup);
+  const parallelRoleLabel = resolveParallelRoleLabel(session.parallelGroup);
+  const parallelGroupStyle = createParallelGroupStyle(session.parallelGroup);
 
   useEffect(() => {
     return () => {
@@ -309,6 +319,9 @@ export function SessionListItem({
       data-workspace-tone={workspaceTone}
       data-has-subsessions={hasSubsessions}
       data-variant={variant}
+      data-parallel-group={session.parallelGroup ? "true" : undefined}
+      data-parallel-role={session.parallelGroup?.role ?? undefined}
+      style={parallelGroupStyle}
       onContextMenu={(event) => {
         if (!showActions) {
           return;
@@ -363,10 +376,16 @@ export function SessionListItem({
         onKeyDown={handleKeyboardContextMenu}
       >
         <div className="session-list-copy">
-          <div className="session-list-title">{title || t("shell.searchEntry")}</div>
+          <div className="session-list-title-row">
+            <div className="session-list-title">{title || t("shell.searchEntry")}</div>
+            {parallelGroupLabel ? <span className="session-list-parallel-badge">{parallelGroupLabel}</span> : null}
+            {parallelRoleLabel ? <span className="session-list-parallel-role-badge">{parallelRoleLabel}</span> : null}
+          </div>
           <div className="session-list-meta">
             {variant === "mobile" ? (
-              <span>{mobileMeta}</span>
+              <>
+                <span>{mobileMeta}</span>
+              </>
             ) : (
               <>
                 <span>{workspace.name}</span>

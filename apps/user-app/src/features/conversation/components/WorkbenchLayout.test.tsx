@@ -921,7 +921,77 @@ describe("WorkbenchLayout", () => {
 
     expect(await screen.findByText("未检测到 Gemini CLI")).toBeInTheDocument();
     expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-1/sessions");
-    expect(screen.getByTestId("current-search").textContent).toBe("");
+   expect(screen.getByTestId("current-search").textContent).toBe("");
+  });
+
+  it("并行锚点展开后会在子会话列表里再次显示锚点，并且不再显示锚点成员标签", async () => {
+    const parallelGroup = {
+      groupId: "parallel-group-1",
+      memberCount: 2,
+      sourceType: "fork" as const,
+      sourceSessionId: "session-anchor",
+      anchorSessionId: "session-anchor",
+      colorToken: "parallel-group-1"
+    };
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-anchor",
+            title: "Codex 锚点",
+            workspaceId: "workspace-1",
+            provider: "codex",
+            parallelGroup: {
+              ...parallelGroup,
+              role: "anchor"
+            }
+          }),
+          createSessionSummary({
+            sessionId: "session-member",
+            title: "Claude 成员",
+            workspaceId: "workspace-1",
+            provider: "claude-code",
+            parallelGroup: {
+              ...parallelGroup,
+              role: "member"
+            },
+            displayParentSessionId: "session-anchor"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.includes("/api/providers/")) {
+        return createJsonResponse(createAvailableCapabilities("codex"));
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-anchor");
+
+    const anchorCard = await findSessionCardByTitle("Codex 锚点");
+    await userEvent.click(within(anchorCard).getByRole("button", { name: t("shell.subagentExpand") }));
+
+    const rootTreeNode = anchorCard.closest(".workbench-session-tree-node");
+
+    if (!(rootTreeNode instanceof HTMLElement)) {
+      throw new Error("未找到锚点树节点");
+    }
+
+    expect(within(rootTreeNode).getAllByText("Codex 锚点")).toHaveLength(2);
+    expect(within(rootTreeNode).getByText("Claude 成员")).toBeInTheDocument();
+    expect(screen.queryByText(t("shell.parallelGroupAnchorBadge"))).not.toBeInTheDocument();
+    expect(screen.queryByText(t("shell.parallelGroupMemberBadge"))).not.toBeInTheDocument();
   });
 
   it("新建会话弹窗支持先创建子工作区，再选择供应商", async () => {
@@ -1090,6 +1160,59 @@ describe("WorkbenchLayout", () => {
     await waitFor(() => {
       expect(screen.getByText(`${t("shell.createSessionTarget")} · feat/login-codex`)).toBeInTheDocument();
     });
+  });
+
+  it("会把并行会话入口放进加号弹窗头部，并排在新增子工作区左侧", async () => {
+    const snapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = snapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(snapshot);
+      }
+
+      if (url.includes("/api/providers/")) {
+        return createJsonResponse(createAvailableCapabilities("codex"));
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    await renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+
+    const workspaceGroup = await findWorkspaceGroupByName("项目一");
+    await userEvent.click(within(workspaceGroup).getByRole("button", { name: t("shell.createSession") }));
+
+    const dialog = await screen.findByRole("dialog", { name: t("shell.createSessionModalTitle") });
+    const headerActions = dialog.querySelector(".workbench-modal-header-actions");
+
+    if (!(headerActions instanceof HTMLElement)) {
+      throw new Error("未找到新建会话弹窗头部操作区");
+    }
+
+    const actionButtons = within(headerActions).getAllByRole("button");
+    expect(actionButtons[0]).toHaveTextContent(t("shell.parallelCreateAction"));
+    expect(actionButtons[1]).toHaveTextContent(t("shell.createWorktreeAction"));
+
+    await userEvent.click(within(headerActions).getByRole("button", { name: t("shell.parallelCreateAction") }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: t("shell.createSessionModalTitle") })).not.toBeInTheDocument();
+    });
+    expect(await screen.findByRole("dialog", { name: t("shell.parallelCreateModalTitle") })).toBeInTheDocument();
   });
 
   it("新增子工作区时会拦截不符合推荐格式的分支名", async () => {
@@ -6913,6 +7036,16 @@ function createSessionSummary(input: {
   syncStatus?: "idle" | "syncing" | "error";
   lastErrorCode?: string | null;
   lastErrorDetail?: string | null;
+  parallelGroup?: {
+    groupId: string;
+    role: "anchor" | "member";
+    memberCount: number;
+    sourceType: "fork" | "new";
+    sourceSessionId: string | null;
+    anchorSessionId: string | null;
+    colorToken: string;
+  } | null;
+  displayParentSessionId?: string | null;
 }) {
   const provider = input.provider ?? "codex";
 
@@ -6948,7 +7081,9 @@ function createSessionSummary(input: {
     lastEventAt: "2026-03-24T10:00:00.000Z",
     completedAt: null,
     lastSeenAt: null,
-    activityState: input.activityState ?? "idle"
+    activityState: input.activityState ?? "idle",
+    parallelGroup: input.parallelGroup ?? null,
+    displayParentSessionId: input.displayParentSessionId ?? null
   };
 }
 

@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { t } from "../../../shared/i18n";
 import type { ProviderId, SessionSummaryDto } from "../../conversation/api/conversation-api";
 import { getProviderDisplayName } from "../../conversation/capability/provider-ui";
+import { resolveSessionDisplayParentSessionId } from "../../conversation/parallel-session-display";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import { isRealSubagentSession } from "../../conversation/session-fork-display";
 import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
@@ -78,7 +79,7 @@ export function SessionIndexPage() {
                 return false;
               }
 
-              const parentSessionId = session.parentSessionId?.trim() || null;
+              const parentSessionId = resolveSessionDisplayParentSessionId(session);
 
               if (!parentSessionId) {
                 return true;

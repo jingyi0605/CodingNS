@@ -111,6 +111,13 @@ import {
   resolveSessionIndicatorClassName
 } from "../session-activity-display";
 import {
+  writeParallelGroupTransitionSignal,
+  createParallelGroupStyle,
+  resolveParallelGroupLabel,
+  resolveSessionNavigationWorkspaceId,
+  resolveSessionDisplayParentSessionId
+} from "../parallel-session-display";
+import {
   isRealSubagentSession,
   resolveSessionForkBadgeLabel,
   resolveSessionForkBadgeTone
@@ -188,6 +195,7 @@ import { WorkspaceCloneModal } from "./WorkspaceCloneModal";
 import { WorkspaceInboxPanel } from "./WorkspaceInboxModal";
 import { WorkspaceImportBrowserModal } from "./WorkspaceImportBrowserModal";
 import { WorkbenchUpdateBadge } from "./WorkbenchUpdateBadge";
+import { ParallelSessionCreateModal, type ParallelSessionCreateSource } from "./ParallelSessionCreateModal";
 
 const LEFT_PANEL_WIDTH_KEY = "workbench.left.width";
 const RIGHT_PANEL_WIDTH_KEY = "workbench.right.width";
@@ -1097,7 +1105,7 @@ function isArchivedSession(session: SessionSummaryDto) {
 }
 
 function resolveParentSessionId(session: SessionSummaryDto) {
-  return session.parentSessionId?.trim() || null;
+  return resolveSessionDisplayParentSessionId(session);
 }
 
 function buildSessionTree(
@@ -3126,6 +3134,8 @@ function SessionCard({
       : null;
   const sessionForkBadgeTone = resolveSessionForkBadgeTone(session);
   const sessionForkBadgeLabel = resolveSessionForkBadgeLabel(session);
+  const parallelGroupLabel = resolveParallelGroupLabel(session.parallelGroup);
+  const parallelGroupStyle = createParallelGroupStyle(session.parallelGroup);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [menuPositionStyle, setMenuPositionStyle] = useState<CSSProperties | null>(null);
 
@@ -3281,7 +3291,13 @@ function SessionCard({
       data-has-subagents={hasSubagents}
       data-selecting={selectionMode}
       data-selected={selected}
-      style={createWorkspaceToneStyle(workspaceContext)}
+      data-parallel-group={session.parallelGroup ? "true" : undefined}
+      data-parallel-role={session.parallelGroup?.role ?? undefined}
+      data-parallel-color-token={session.parallelGroup?.colorToken ?? undefined}
+      style={{
+        ...(createWorkspaceToneStyle(workspaceContext) ?? {}),
+        ...(parallelGroupStyle ?? {})
+      }}
       onContextMenu={(event) => {
         if (selectionMode || !showActions || !onOpenContextMenu) {
           return;
@@ -3382,7 +3398,8 @@ function SessionCard({
                 {titlePresentation.displayTitle}
               </span>
               {subagentBadgeLabel ? <span className="session-subagent-badge">{subagentBadgeLabel}</span> : null}
-              {sessionForkBadgeLabel && sessionForkBadgeTone ? (
+              {parallelGroupLabel ? <span className="session-parallel-badge">{parallelGroupLabel}</span> : null}
+              {!parallelGroupLabel && sessionForkBadgeLabel && sessionForkBadgeTone ? (
                 <span className={`session-fork-badge ${sessionForkBadgeTone}`}>
                   {sessionForkBadgeLabel}
                 </span>
@@ -3521,6 +3538,7 @@ function SidebarContent({
   const [actionWorkspaceId, setActionWorkspaceId] = useState<string | null>(null);
   const [actionProvider, setActionProvider] = useState<ProviderId | null>(null);
   const [createSessionWorkspaceId, setCreateSessionWorkspaceId] = useState<string | null>(null);
+  const [parallelCreateSource, setParallelCreateSource] = useState<ParallelSessionCreateSource | null>(null);
   const [createSessionWorkspaceDraft, setCreateSessionWorkspaceDraft] = useState<WorkspaceDto | null>(null);
   const [createWorktreeFormOpen, setCreateWorktreeFormOpen] = useState(false);
   const [creatingWorktree, setCreatingWorktree] = useState(false);
@@ -4260,6 +4278,16 @@ function SidebarContent({
     setCloneBrowserOpen(true);
   }
 
+  function handleOpenParallelCreateFromWorkspace(workspace: WorkspaceDto) {
+    resetCreateWorktreeForm();
+    setCreateSessionWorkspaceId(null);
+    setParallelCreateSource({
+      kind: "workspace",
+      workspaceId: workspace.id,
+      workspaceName: workspace.name
+    });
+  }
+
   function resetCreateWorktreeForm() {
     setCreateWorktreeFormOpen(false);
     setCreateWorktreeBranchName("");
@@ -4841,6 +4869,12 @@ function SidebarContent({
     const hasMoreSubagents = shouldPaginateSubagentTree && visibleDescendantCount < totalDescendantCount;
     const nextAncestorHasNextSiblings =
       node.depth > 0 ? [...ancestorHasNextSiblings, hasNextSibling] : [...ancestorHasNextSiblings];
+    const shouldRenderParallelAnchorReplica =
+      subagentListExpanded
+      && session.parallelGroup?.role === "anchor"
+      && childNodes.some(
+        (childNode) => getTreeNodeSession(childNode)?.parallelGroup?.groupId === session.parallelGroup?.groupId
+      );
 
     return (
       <div key={session.sessionId} className="workbench-session-tree-node">
@@ -4929,6 +4963,90 @@ function SidebarContent({
         </div>
         {childNodes.length > 0 && subagentListExpanded ? (
           <div className="workbench-subsession-list">
+            {shouldRenderParallelAnchorReplica ? (
+              <div key={`parallel-anchor-replica:${session.sessionId}`} className="workbench-session-tree-node">
+                <div
+                  className="workbench-session-tree-row"
+                  style={
+                    {
+                      "--workbench-session-tree-depth": node.depth + 1
+                    } as CSSProperties
+                  }
+                >
+                  <div className="workbench-session-tree-guides" aria-hidden="true">
+                    {nextAncestorHasNextSiblings.map((continues, index) =>
+                      continues ? (
+                        <span
+                          key={`parallel-anchor-replica:${session.sessionId}:ancestor:${index}`}
+                          className="workbench-session-tree-guide-column"
+                          style={
+                            {
+                              "--workbench-session-tree-level": index + 1
+                            } as CSSProperties
+                          }
+                        />
+                      ) : null
+                    )}
+                    <span
+                      className="workbench-session-tree-guide-branch"
+                      data-continue={visibleChildren.length > 0}
+                      data-first="true"
+                      style={
+                        {
+                          "--workbench-session-tree-level": node.depth + 1
+                        } as CSSProperties
+                      }
+                    >
+                      <span className="workbench-session-tree-guide-branch-horizontal" />
+                    </span>
+                  </div>
+                  <SessionCard
+                    menuKey={`${menuKeyPrefix}:parallel-anchor-replica:${session.sessionId}`}
+                    session={session}
+                    workspace={workspace}
+                    workspaceContext={workspaceContext}
+                    isActive={false}
+                    isFavorite={favoriteEnabled && favoriteSessionIds.has(session.sessionId)}
+                    menuOpen={openSessionMenuKey === `${menuKeyPrefix}:parallel-anchor-replica:${session.sessionId}`}
+                    showWorkspaceName={showWorkspaceName}
+                    depth={node.depth + 1}
+                    showActions={favoriteEnabled}
+                    hasSubagents={false}
+                    subagentListExpanded={false}
+                    selectionMode={selectionMode}
+                    selected={selectedSessionIdSet.has(session.sessionId)}
+                    onToggleSelect={() => handleToggleSessionSelection(session.sessionId)}
+                    onOpen={() => {
+                      navigate(buildWorkspaceSessionPath(workspace.id, session.sessionId));
+                      onClose?.();
+                    }}
+                    onRename={() => handleOpenRenameSession(session, workspace)}
+                    menuAnchorPoint={
+                      openSessionMenuKey === `${menuKeyPrefix}:parallel-anchor-replica:${session.sessionId}`
+                        ? openSessionMenuAnchorPoint
+                        : null
+                    }
+                    onOpenContextMenu={(anchorPoint) =>
+                      openSessionMenu(`${menuKeyPrefix}:parallel-anchor-replica:${session.sessionId}`, anchorPoint)
+                    }
+                    onToggleFavorite={() => handleToggleFavorite(session.sessionId)}
+                    onArchive={() => handleArchive(session.sessionId)}
+                    onDelete={
+                      createDraftCapabilities(session.provider).supportsSessionDelete === true
+                        ? () => {
+                            closeSessionMenu();
+                            setSessionDeletionTarget({
+                              session,
+                              workspace
+                            });
+                          }
+                        : undefined
+                    }
+                    onCloseMenu={closeSessionMenu}
+                  />
+                </div>
+              </div>
+            ) : null}
             {visibleChildren.map((childNode, index) =>
               renderSessionTreeBranch({
                 node: childNode,
@@ -4942,7 +5060,7 @@ function SidebarContent({
                 allowToggle: false,
                 ancestorHasNextSiblings: nextAncestorHasNextSiblings,
                 hasNextSibling: index < visibleChildren.length - 1,
-                isFirstSibling: index === 0
+                isFirstSibling: !shouldRenderParallelAnchorReplica && index === 0
               })
             )}
             {hasMoreSubagents ? (
@@ -5968,6 +6086,42 @@ function SidebarContent({
         onImported={handleWorkspaceImported}
       />
 
+      <ParallelSessionCreateModal
+        open={parallelCreateSource !== null}
+        source={parallelCreateSource}
+        onClose={() => setParallelCreateSource(null)}
+        onCreated={async (detail) => {
+          detail.members.forEach((item) => {
+            onSessionUpdated(item.session);
+          });
+          writeParallelGroupTransitionSignal(detail.group.id);
+          await onRefreshNavigation();
+
+          const anchorMember =
+            detail.members.find((item) => item.session.sessionId === detail.group.anchorSessionId)
+            ?? detail.members[0]
+            ?? null;
+
+          if (anchorMember) {
+            navigate(
+              buildWorkspaceSessionPath(
+                resolveSessionNavigationWorkspaceId(
+                  anchorMember.session,
+                  anchorMember.sessionIsolatedWorkspace
+                ),
+                anchorMember.session.sessionId
+              )
+            );
+          }
+
+          setParallelCreateSource(null);
+          showToast({
+            title: t("shell.parallelCreateSucceeded"),
+            tone: "success"
+          });
+        }}
+      />
+
       <SidebarModal
         open={createSessionWorkspace !== null}
         title={t("shell.createSessionModalTitle")}
@@ -5978,14 +6132,30 @@ function SidebarContent({
             : t("shell.createSessionModalDescription")
         }
         headerActions={
-          <button
-            type="button"
-            className="secondary-button create-session-worktree-trigger"
-            disabled={creatingWorktree || Boolean(actionWorkspaceId)}
-            onClick={() => setCreateWorktreeFormOpen(true)}
-          >
-            {t("shell.createWorktreeAction")}
-          </button>
+          <>
+            <button
+              type="button"
+              className="primary-button create-session-parallel-trigger"
+              disabled={creatingWorktree || Boolean(actionWorkspaceId) || !createSessionWorkspace}
+              onClick={() => {
+                if (!createSessionWorkspace) {
+                  return;
+                }
+
+                handleOpenParallelCreateFromWorkspace(createSessionWorkspace);
+              }}
+            >
+              {t("shell.parallelCreateAction")}
+            </button>
+            <button
+              type="button"
+              className="primary-button create-session-worktree-trigger"
+              disabled={creatingWorktree || Boolean(actionWorkspaceId)}
+              onClick={() => setCreateWorktreeFormOpen(true)}
+            >
+              {t("shell.createWorktreeAction")}
+            </button>
+          </>
         }
         onClose={() => setCreateSessionWorkspaceId(null)}
       >
@@ -9121,6 +9291,9 @@ export function WorkbenchLayout({
     ?? (currentWorkspaceEntity ? createFallbackWorkspaceVisualContext(currentWorkspaceEntity) : null);
   const currentWorktreeMergeState =
     (currentWorktreeMeta ? worktreeMergeStateById[currentWorktreeMeta.workspaceId] ?? null : null);
+  const isParallelConversationActive =
+    activeCenterTab === "conversation"
+    && Boolean(currentSessionContext?.session.parallelGroup);
 
   const favoriteSessions = useMemo(
     () =>
@@ -9801,7 +9974,7 @@ export function WorkbenchLayout({
         onCleanupWorktree={applyWorktreeCleanup}
       />
     );
-  const shouldShowAuxiliaryPanel = auxiliaryPanelContent !== null;
+  const shouldShowAuxiliaryPanel = auxiliaryPanelContent !== null && !isParallelConversationActive;
   const shouldUseMacOsOverlayTitlebarAlignment =
     platform.isDesktop && platform.ui.osFamily === "macos" && platform.ui.prefersOverlayTitlebar;
 

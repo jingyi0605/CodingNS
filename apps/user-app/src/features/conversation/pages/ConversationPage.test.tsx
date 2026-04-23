@@ -13,6 +13,8 @@ const mockRuntimeStoreApplyNavigationSession = vi.fn();
 const mockRuntimeStoreSendMessage = vi.fn();
 const mockQueuedMessageList = vi.fn((_props: unknown) => null);
 const mockComposerPanel = vi.fn((_props: unknown) => null);
+const mockParallelConversationGroupView = vi.fn((_props: unknown) => null);
+const mockParallelSessionCreateModal = vi.fn((_props: unknown) => null);
 const mockLiveRuntimeState: any = {
   session: {
     sessionId: "session-live-1",
@@ -110,6 +112,26 @@ vi.mock("../components/ComposerPanel", () => ({
   }
 }));
 
+vi.mock("../components/ParallelConversationGroupView", () => ({
+  ParallelConversationGroupView: (props: unknown) => {
+    mockParallelConversationGroupView(props);
+    const viewProps = props as { groupId: string; currentSessionId: string };
+
+    return (
+      <div data-testid="parallel-conversation-group-view">
+        parallel:{viewProps.groupId}:{viewProps.currentSessionId}
+      </div>
+    );
+  }
+}));
+
+vi.mock("../components/ParallelSessionCreateModal", () => ({
+  ParallelSessionCreateModal: (props: unknown) => {
+    mockParallelSessionCreateModal(props);
+    return null;
+  }
+}));
+
 vi.mock("../components/SessionHeader", () => ({
   SessionHeader: () => <div data-testid="session-header">header</div>
 }));
@@ -194,6 +216,8 @@ describe("ConversationPage", () => {
     vi.clearAllMocks();
     mockQueuedMessageList.mockClear();
     mockComposerPanel.mockClear();
+    mockParallelConversationGroupView.mockClear();
+    mockParallelSessionCreateModal.mockClear();
     mockRuntimeStoreSendMessage.mockReset();
     mockRuntimeStoreSendMessage.mockResolvedValue(undefined);
     mockLiveRuntimeState.session = {
@@ -276,6 +300,35 @@ describe("ConversationPage", () => {
       const props = lastCall?.[0] as { canSteer?: boolean } | undefined;
       expect(props?.canSteer).toBe(true);
     });
+  });
+
+  it("桌面端并行会话会切到并行分屏视图", () => {
+    mockLiveRuntimeState.session = {
+      ...mockLiveRuntimeState.session,
+      sessionId: "session-live-1",
+      workspaceId: "workspace-1",
+      parallelGroup: {
+        groupId: "parallel-group-1",
+        role: "anchor",
+        memberCount: 3,
+        sourceType: "new",
+        sourceSessionId: null,
+        anchorSessionId: "session-live-1",
+        colorToken: "parallel-group-1"
+      }
+    };
+    mockUseWorkbenchShell.mockReturnValue(
+      createMobileWorkbenchShellValue({
+        shellMode: "desktop"
+      })
+    );
+
+    renderLiveConversationPage();
+
+    expect(screen.getByTestId("parallel-conversation-group-view")).toHaveTextContent(
+      "parallel:parallel-group-1:session-live-1"
+    );
+    expect(screen.queryByTestId("session-header")).not.toBeInTheDocument();
   });
 
   it("当前会话发送请求未完成时，也会先把 Composer 切到可停止态", async () => {

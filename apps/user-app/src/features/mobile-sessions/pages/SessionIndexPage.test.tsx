@@ -135,6 +135,13 @@ function createSessionSummary(
     completedAt: overrides.completedAt ?? null,
     lastSeenAt: overrides.lastSeenAt ?? null,
     activityState: overrides.activityState ?? "idle",
+    ...(overrides.parallelGroup !== undefined ? { parallelGroup: overrides.parallelGroup } : {}),
+    ...(overrides.displayParentSessionId !== undefined
+      ? { displayParentSessionId: overrides.displayParentSessionId }
+      : {}),
+    ...(overrides.sessionIsolatedWorkspace !== undefined
+      ? { sessionIsolatedWorkspace: overrides.sessionIsolatedWorkspace }
+      : {}),
     ...(overrides.activityResolutionSource
       ? { activityResolutionSource: overrides.activityResolutionSource }
       : {}),
@@ -270,6 +277,77 @@ describe("SessionIndexPage", () => {
     expect(
       screen.queryByRole("heading", { level: 2, name: /^(收藏会话|Pinned Sessions)$/ })
     ).not.toBeInTheDocument();
+  });
+
+  it("会按 displayParentSessionId 构建并行树投影，并显示并行标签", () => {
+    contextValue.navigationGroups = [
+      {
+        workspace: createWorkspace("workspace-parallel", "并行项目"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "parallel-anchor",
+            title: "并行锚点",
+            provider: "codex",
+            workspaceId: "workspace-parallel",
+            parallelGroup: {
+              groupId: "group-1",
+              role: "anchor",
+              memberCount: 2,
+              sourceType: "new",
+              sourceSessionId: null,
+              anchorSessionId: "parallel-anchor",
+              colorToken: "parallel-group-1"
+            }
+          }),
+          createSessionSummary({
+            sessionId: "parallel-member",
+            title: "并行成员",
+            provider: "gemini",
+            workspaceId: "workspace-parallel",
+            parentSessionId: null,
+            displayParentSessionId: "parallel-anchor",
+            parallelGroup: {
+              groupId: "group-1",
+              role: "member",
+              memberCount: 2,
+              sourceType: "new",
+              sourceSessionId: null,
+              anchorSessionId: "parallel-anchor",
+              colorToken: "parallel-group-1"
+            },
+            sessionIsolatedWorkspace: {
+              id: "isolated-1",
+              workspaceId: "workspace-parallel-member",
+              sourceWorkspaceId: "workspace-parallel",
+              branchName: "parallel/member",
+              lifecycleStatus: "active",
+              promotedAt: null,
+              createdAt: "2026-04-23T08:00:00Z",
+              updatedAt: "2026-04-23T08:00:00Z"
+            }
+          })
+        ]
+      }
+    ];
+    contextValue.currentWorkspaceId = "workspace-parallel";
+    contextValue.currentSessionId = "parallel-anchor";
+    contextValue.favoriteSessionIds = [];
+
+    renderPage({
+      initialEntry: "/workspaces/workspace-parallel/sessions"
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /^(展开子代理列表|Expand Sub-agent List)$/ }));
+    const memberCard = screen.getByText("并行成员").closest(".session-list-item");
+
+    if (!memberCard) {
+      throw new Error("未找到并行成员卡片");
+    }
+
+    expect(memberCard).toHaveAttribute("data-depth", "1");
+    expect(within(memberCard).getByText(/^(并行|Parallel)$/)).toBeInTheDocument();
+    expect(within(memberCard).getByText(/^(成员|Member)$/)).toBeInTheDocument();
+    expect(within(memberCard).queryByText(/^(隔离工作区|Isolated Workspace)$/)).not.toBeInTheDocument();
   });
 
   it("当前工作区切到子工作树后，只显示子工作树自己的会话", () => {

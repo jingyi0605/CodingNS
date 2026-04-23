@@ -1,0 +1,1460 @@
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { createPortal } from "react-dom";
+import { useNavigate } from "react-router-dom";
+
+import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
+import {
+  openFilesExternalWindow,
+  openGitExternalWindow,
+  openProcessesExternalWindow,
+  openTerminalsExternalWindow
+} from "../../../platform/desktop/window-openers";
+import { usePlatform } from "../../../platform/platform-provider";
+import { t } from "../../../shared/i18n";
+import { useToast } from "../../../shared/toast";
+import type { WorkspaceVisualContext } from "../../workbench/utils/worktree-visual-context";
+import {
+  buildWorkspaceVisualContextMap,
+  createFallbackWorkspaceVisualContext,
+  createWorkspaceToneStyle
+} from "../../workbench/utils/worktree-visual-context";
+import {
+  buildWorkspaceSessionPath,
+  buildWorkspaceTerminalsPath,
+  flattenNavigationSessions
+} from "../../workbench/utils/workbench-navigation";
+import {
+  type AttachmentPayload,
+  type ForkSourceMessageSnapshotDto,
+  forkSession,
+  getParallelGroupDetail,
+  promoteSessionIsolatedWorkspace,
+  sendLiveMessage,
+  type HistoryMessageDto,
+  type ParallelSessionGroupDetailDto,
+  type ProviderId,
+  type SessionIsolatedWorkspaceSummaryDto,
+  type SessionSummaryDto
+} from "../api/conversation-api";
+import { getProviderDisplayName, shouldSupportRunSteering } from "../capability/provider-ui";
+import { ComposerPanel } from "./ComposerPanel";
+import { ConnectionBanner } from "./ConnectionBanner";
+import { FileContextPanel } from "./FileContextPanel";
+import { GitSidebar } from "./GitSidebar";
+import { MessageTimeline } from "./MessageTimeline";
+import { PermissionRequestList } from "./PermissionRequestList";
+import { QueuedMessageList } from "./QueuedMessageList";
+import { useWorkbenchShell } from "./WorkbenchLayout";
+import { SessionRuntimeStore, useSessionRuntimeStore } from "../runtime/session-runtime-store";
+import { TerminalManagerPanel } from "../../workbench/components/TerminalManagerPanel";
+import { TerminalPage } from "../../terminal/pages/TerminalPage";
+import {
+  consumeParallelGroupTransitionSignal,
+  createParallelPaneStyle,
+  createParallelGroupStyle,
+  PARALLEL_PANE_COLOR_PRESETS,
+  readParallelPaneColorOverride,
+  resolveParallelGroupLabel,
+  resolveSessionNavigationWorkspaceId,
+  resolveSessionToolWorkspaceId,
+  resolveSessionIsolatedWorkspaceBranchName,
+  writeParallelPaneColorOverride
+} from "../parallel-session-display";
+import { resolveParallelDesktopResizeTarget } from "../parallel-conversation-layout";
+const PARALLEL_GROUP_TRANSITION_DURATION_MS = 560;
+const PARALLEL_DESKTOP_RESIZE_DURATION_MS = 240;
+const PARALLEL_TOOLS_PANEL_DEFAULT_WIDTH = 920;
+const PARALLEL_TOOLS_PANEL_DEFAULT_HEIGHT = 760;
+const PARALLEL_TOOLS_PANEL_MIN_WIDTH = 680;
+const PARALLEL_TOOLS_PANEL_MIN_HEIGHT = 520;
+const PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN = 16;
+const PARALLEL_TOOLS_PANEL_TOP_SAFE_INSET = 72;
+
+interface ParallelToolsPanelFrame {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+interface ParallelConversationGroupViewProps {
+  readonly groupId: string;
+  readonly currentSessionId: string;
+}
+
+interface ParallelConversationMemberPaneProps {
+  readonly entry: {
+    session: SessionSummaryDto;
+    workspaceId: string;
+    ordinal: number;
+    memberPrompt: string | null;
+    sessionIsolatedWorkspace: SessionIsolatedWorkspaceSummaryDto | null;
+  };
+  readonly isCurrent: boolean;
+  readonly workspaceContext: WorkspaceVisualContext | null;
+  readonly infoOpen: boolean;
+  readonly onCloseInfo: () => void;
+  readonly onToggleInfo: () => void;
+  readonly onPromoteWorkspace: (workspaceId: string) => void | Promise<void>;
+  readonly promotingWorkspaceId: string | null;
+}
+
+interface ForkComposerDraft {
+  sourceMessageId: string;
+  sourceMessageSnapshot: ForkSourceMessageSnapshotDto;
+  content: string;
+  sourceProvider: ProviderId;
+  workspaceId: string;
+  targetProvider: ProviderId;
+  targetModel: string | null;
+}
+
+function clampParallelToolsPanelFrame(frame: ParallelToolsPanelFrame): ParallelToolsPanelFrame {
+  if (typeof window === "undefined") {
+    return frame;
+  }
+
+  const maxWidth = Math.max(
+    PARALLEL_TOOLS_PANEL_MIN_WIDTH,
+    window.innerWidth - PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN * 2
+  );
+  const safeTop = Math.max(PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN, PARALLEL_TOOLS_PANEL_TOP_SAFE_INSET);
+  const maxHeight = Math.max(
+    PARALLEL_TOOLS_PANEL_MIN_HEIGHT,
+    window.innerHeight - safeTop - PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN
+  );
+  const width = Math.min(Math.max(frame.width, PARALLEL_TOOLS_PANEL_MIN_WIDTH), maxWidth);
+  const height = Math.min(Math.max(frame.height, PARALLEL_TOOLS_PANEL_MIN_HEIGHT), maxHeight);
+  const x = Math.min(
+    Math.max(frame.x, PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN),
+    Math.max(PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN, window.innerWidth - width - PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN)
+  );
+  const y = Math.min(
+    Math.max(frame.y, safeTop),
+    Math.max(safeTop, window.innerHeight - height - PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN)
+  );
+
+  return {
+    x,
+    y,
+    width,
+    height
+  };
+}
+
+function createDefaultParallelToolsPanelFrame(triggerRect: DOMRect | null): ParallelToolsPanelFrame {
+  if (typeof window === "undefined") {
+    return {
+      x: PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN,
+      y: PARALLEL_TOOLS_PANEL_TOP_SAFE_INSET,
+      width: PARALLEL_TOOLS_PANEL_DEFAULT_WIDTH,
+      height: PARALLEL_TOOLS_PANEL_DEFAULT_HEIGHT
+    };
+  }
+
+  const safeTop = Math.max(PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN, PARALLEL_TOOLS_PANEL_TOP_SAFE_INSET);
+  const width = Math.min(
+    PARALLEL_TOOLS_PANEL_DEFAULT_WIDTH,
+    Math.max(PARALLEL_TOOLS_PANEL_MIN_WIDTH, window.innerWidth - PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN * 2)
+  );
+  const height = Math.min(
+    PARALLEL_TOOLS_PANEL_DEFAULT_HEIGHT,
+    Math.max(PARALLEL_TOOLS_PANEL_MIN_HEIGHT, window.innerHeight - safeTop - PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN)
+  );
+
+  return clampParallelToolsPanelFrame({
+    x:
+      (triggerRect?.right ?? window.innerWidth - PARALLEL_TOOLS_PANEL_VIEWPORT_MARGIN)
+      - width
+      + 28,
+    y: Math.max((triggerRect?.bottom ?? 48) + 8, safeTop),
+    width,
+    height
+  });
+}
+
+export function ParallelConversationGroupView({
+  groupId,
+  currentSessionId
+}: ParallelConversationGroupViewProps) {
+  const platform = usePlatform();
+  const { showToast } = useToast();
+  const {
+    navigationGroups,
+    requestNavigationRefresh
+  } = useWorkbenchShell();
+  const flattenedEntries = useMemo(
+    () => flattenNavigationSessions(navigationGroups),
+    [navigationGroups]
+  );
+  const navigationEntryBySessionId = useMemo(
+    () => new Map(flattenedEntries.map((entry) => [entry.session.sessionId, entry] as const)),
+    [flattenedEntries]
+  );
+  const workspaceVisualContextMap = useMemo(
+    () => buildWorkspaceVisualContextMap(navigationGroups),
+    [navigationGroups]
+  );
+  const [detail, setDetail] = useState<ParallelSessionGroupDetailDto | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [openInfoSessionId, setOpenInfoSessionId] = useState<string | null>(null);
+  const [promotingWorkspaceId, setPromotingWorkspaceId] = useState<string | null>(null);
+  const [entering, setEntering] = useState(false);
+  const resizedSignatureRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDetail() {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const nextDetail = await getParallelGroupDetail(groupId);
+
+        if (cancelled) {
+          return;
+        }
+
+        setDetail(nextDetail);
+      } catch (loadError) {
+        if (cancelled) {
+          return;
+        }
+
+        setError(loadError instanceof Error ? loadError.message : t("shell.parallelGroupLoadFailed"));
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void loadDetail();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [groupId]);
+
+  useEffect(() => {
+    if (!consumeParallelGroupTransitionSignal(groupId)) {
+      return;
+    }
+
+    setEntering(true);
+    const timer = window.setTimeout(() => {
+      setEntering(false);
+    }, PARALLEL_GROUP_TRANSITION_DURATION_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [groupId]);
+
+  const memberEntries = useMemo(() => {
+    if (!detail) {
+      return [];
+    }
+
+    return detail.members
+      .slice()
+      .sort((left, right) => left.member.ordinal - right.member.ordinal)
+      .map((item) => {
+        const latestEntry = navigationEntryBySessionId.get(item.session.sessionId);
+        const latestSession = latestEntry?.session ?? item.session;
+
+        return {
+          session: latestSession,
+          workspaceId:
+            latestEntry?.workspace.id
+            ?? resolveSessionNavigationWorkspaceId(
+              latestSession,
+              item.sessionIsolatedWorkspace
+            ),
+          ordinal: item.member.ordinal,
+          memberPrompt: item.member.memberPrompt,
+          sessionIsolatedWorkspace: item.sessionIsolatedWorkspace
+        };
+      });
+  }, [detail, navigationEntryBySessionId]);
+
+  useEffect(() => {
+    if (
+      !platform.isDesktop
+      || (platform.ui.osFamily !== "macos" && platform.ui.osFamily !== "windows")
+      || memberEntries.length < 2
+    ) {
+      return;
+    }
+
+    const resizeSignature = `${groupId}:${memberEntries.length}`;
+
+    if (resizedSignatureRef.current === resizeSignature) {
+      return;
+    }
+
+    resizedSignatureRef.current = resizeSignature;
+
+    let cancelled = false;
+
+    async function widenDesktopWindow() {
+      try {
+        const windowModule = await import("@tauri-apps/api/window");
+        const dpiModule = await import("@tauri-apps/api/dpi");
+        const appWindow = windowModule.getCurrentWindow();
+        const currentSize = await appWindow.innerSize();
+        const scaleFactor = await appWindow.scaleFactor();
+        const monitor = await windowModule.currentMonitor();
+
+        if (cancelled || scaleFactor <= 0) {
+          return;
+        }
+
+        const currentWidth = currentSize.width / scaleFactor;
+        const currentHeight = currentSize.height / scaleFactor;
+        const monitorWidth = monitor ? monitor.workArea.size.width / monitor.scaleFactor : currentWidth * 1.5;
+        const targetWidth = resolveParallelDesktopResizeTarget({
+          memberCount: memberEntries.length,
+          currentWidth,
+          monitorWidth
+        });
+
+        if (targetWidth <= currentWidth + 24) {
+          return;
+        }
+
+        const frameCount = 10;
+        await new Promise((resolve) => window.setTimeout(resolve, 56));
+
+        for (let index = 1; index <= frameCount; index += 1) {
+          if (cancelled) {
+            return;
+          }
+
+          const progress = index / frameCount;
+          const easedProgress = 1 - Math.pow(1 - progress, 3);
+          const nextWidth = currentWidth + (targetWidth - currentWidth) * easedProgress;
+
+          await appWindow.setSize(new dpiModule.LogicalSize(nextWidth, currentHeight));
+          await new Promise((resolve) =>
+            window.setTimeout(resolve, PARALLEL_DESKTOP_RESIZE_DURATION_MS / frameCount)
+          );
+        }
+      } catch {
+        return;
+      }
+    }
+
+    void widenDesktopWindow();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [groupId, memberEntries.length, platform.isDesktop, platform.ui.osFamily]);
+
+  async function handlePromoteWorkspace(id: string) {
+    setPromotingWorkspaceId(id);
+
+    try {
+      const response = await promoteSessionIsolatedWorkspace(id);
+      await requestNavigationRefresh();
+      setDetail((current) => {
+        if (!current) {
+          return current;
+        }
+
+        return {
+          ...current,
+          members: current.members.map((item) =>
+            item.sessionIsolatedWorkspace?.id === id
+              ? {
+                  ...item,
+                  sessionIsolatedWorkspace: {
+                    ...item.sessionIsolatedWorkspace,
+                    workspaceId: response.workspace.id,
+                    lifecycleStatus: "promoted",
+                    promotedAt: response.record.promotedAt
+                  }
+                }
+              : item
+          )
+        };
+      });
+      showToast({
+        title: t("shell.parallelWorkspacePromotedBadge"),
+        tone: "success"
+      });
+    } catch (promoteError) {
+      showToast({
+        title: promoteError instanceof Error ? promoteError.message : t("shell.parallelGroupLoadFailed"),
+        tone: "error"
+      });
+    } finally {
+      setPromotingWorkspaceId(null);
+    }
+  }
+
+  if (loading && !detail) {
+    return (
+      <main className="workbench-page conversation-page-shell parallel-conversation-page">
+        <section className="parallel-conversation-empty-state">
+          <strong>{t("shell.parallelCreateSubmitting")}</strong>
+        </section>
+      </main>
+    );
+  }
+
+  if (error && !detail) {
+    return (
+      <main className="workbench-page conversation-page-shell parallel-conversation-page">
+        <section className="parallel-conversation-empty-state error">
+          <strong>{t("shell.parallelGroupLoadFailed")}</strong>
+          <p>{error}</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (memberEntries.length === 0) {
+    return (
+      <main className="workbench-page conversation-page-shell parallel-conversation-page">
+        <section className="parallel-conversation-empty-state">
+          <strong>{t("shell.parallelGroupEmpty")}</strong>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main
+      className="workbench-page conversation-page-shell parallel-conversation-page"
+      data-parallel-count={memberEntries.length}
+      data-parallel-entering={entering ? "true" : undefined}
+    >
+      <header className="parallel-conversation-group-header">
+        <div className="parallel-conversation-group-titlebar">
+          <span className="session-parallel-badge">{t("shell.parallelGroupBadge")}</span>
+          <strong>{detail?.group.sharedPrompt?.trim() || t("common.unknown")}</strong>
+        </div>
+      </header>
+      <div className="parallel-conversation-grid">
+        {memberEntries.map((item) => {
+          const workspaceContext =
+            workspaceVisualContextMap[item.workspaceId]
+            ?? createFallbackWorkspaceVisualContext({
+              id: item.workspaceId,
+              name: item.session.workspaceId,
+              path: item.session.workspaceId,
+              repoRoot: item.session.workspaceId
+            });
+
+          return (
+            <ParallelConversationMemberPane
+              key={item.session.sessionId}
+              entry={item}
+              isCurrent={item.session.sessionId === currentSessionId}
+              workspaceContext={workspaceContext}
+              infoOpen={openInfoSessionId === item.session.sessionId}
+              promotingWorkspaceId={promotingWorkspaceId}
+              onCloseInfo={() => {
+                setOpenInfoSessionId(null);
+              }}
+              onToggleInfo={() => {
+                setOpenInfoSessionId((current) =>
+                  current === item.session.sessionId ? null : item.session.sessionId
+                );
+              }}
+              onPromoteWorkspace={handlePromoteWorkspace}
+            />
+          );
+        })}
+      </div>
+    </main>
+  );
+}
+
+function ParallelConversationMemberPane({
+  entry,
+  isCurrent,
+  workspaceContext,
+  infoOpen,
+  onCloseInfo,
+  onToggleInfo,
+  onPromoteWorkspace,
+  promotingWorkspaceId
+}: ParallelConversationMemberPaneProps) {
+  const navigate = useNavigate();
+  const platform = usePlatform();
+  const { showToast } = useToast();
+  const {
+    navigationGroups,
+    requestNavigationRefresh,
+    selectWorkspace,
+    upsertNavigationSession,
+    markNavigationSessionSeen
+  } = useWorkbenchShell();
+  const sessionId = entry.session.sessionId;
+  const storeRef = useRef<SessionRuntimeStore | null>(null);
+  const currentSessionIdRef = useRef<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [replyingPermissionRequestId, setReplyingPermissionRequestId] = useState<string | null>(null);
+  const [deletingQueueItemId, setDeletingQueueItemId] = useState<string | null>(null);
+  const [steeringQueueItemId, setSteeringQueueItemId] = useState<string | null>(null);
+  const [forkDraft, setForkDraft] = useState<ForkComposerDraft | null>(null);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [activeToolPanel, setActiveToolPanel] = useState<"files" | "git" | "processes" | "terminals">("files");
+  const [toolsPinned, setToolsPinned] = useState(false);
+  const [toolsFrame, setToolsFrame] = useState<ParallelToolsPanelFrame | null>(null);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const headerLayerRef = useRef<HTMLElement | null>(null);
+  const toolsPanelRef = useRef<HTMLDivElement | null>(null);
+  const toolsTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const [paneColorOverride, setPaneColorOverride] = useState<string | null>(() =>
+    readParallelPaneColorOverride(sessionId)
+  );
+
+  if (!storeRef.current || currentSessionIdRef.current !== sessionId) {
+    storeRef.current?.destroy();
+    storeRef.current = new SessionRuntimeStore(sessionId, {
+      initialSession: entry.session,
+      bootstrapMessages: [] as HistoryMessageDto[],
+      onSeen: (seenSessionId, seenAt) => {
+        markNavigationSessionSeen(seenSessionId, seenAt);
+      }
+    });
+    currentSessionIdRef.current = sessionId;
+  }
+
+  const store = storeRef.current;
+  const session = useSessionRuntimeStore(store, (state) => state.session);
+  const capabilities = useSessionRuntimeStore(store, (state) => state.capabilities);
+  const runtimeHasActiveRun = useSessionRuntimeStore(store, (state) => state.runtimeHasActiveRun);
+  const runtimeCanInterrupt = useSessionRuntimeStore(store, (state) => state.runtimeCanInterrupt);
+  const messages = useSessionRuntimeStore(store, (state) => state.messages);
+  const permissionRequests = useSessionRuntimeStore(store, (state) => state.permissionRequests);
+  const queuedMessages = useSessionRuntimeStore(store, (state) => state.queuedMessages);
+  const contextUsage = useSessionRuntimeStore(store, (state) => state.contextUsage);
+  const historyState = useSessionRuntimeStore(store, (state) => state.historyState);
+  const runtimeInterruptSource = useSessionRuntimeStore(store, (state) => state.interruptSource);
+  const loadingOlderMessages = useSessionRuntimeStore(store, (state) => state.loadingOlderMessages);
+  const hasOlderMessages = useSessionRuntimeStore(store, (state) => state.hasOlderMessages);
+  const connectionState = useSessionRuntimeStore(store, (state) => state.connectionState);
+  const canSteerQueuedMessage =
+    shouldSupportRunSteering(capabilities) &&
+    session?.provider === capabilities?.provider;
+  const hasPendingQueuedMessages = queuedMessages.some(
+    (item) => item.status === "queued" || item.status === "dispatching"
+  );
+  const optimisticInterruptibleSendInFlight = sending && !forkDraft;
+  const composerHasActiveRun =
+    runtimeHasActiveRun === true || optimisticInterruptibleSendInFlight
+      ? true
+      : runtimeHasActiveRun;
+  const composerCanInterrupt =
+    runtimeCanInterrupt === true || optimisticInterruptibleSendInFlight
+      ? true
+      : runtimeCanInterrupt;
+  const composerIsRunning =
+    session?.activityState === "running" || optimisticInterruptibleSendInFlight;
+  const parallelGroupStyle = createParallelGroupStyle(session?.parallelGroup ?? entry.session.parallelGroup);
+  const parallelPaneStyle = createParallelPaneStyle({
+    groupId: (session?.parallelGroup ?? entry.session.parallelGroup)?.groupId ?? "parallel-group",
+    sessionId,
+    ordinal: entry.ordinal,
+    overrideColor: paneColorOverride
+  });
+  const parallelGroupLabel = resolveParallelGroupLabel(session?.parallelGroup ?? entry.session.parallelGroup);
+  const paneSessionIsolatedWorkspace = session?.sessionIsolatedWorkspace ?? entry.sessionIsolatedWorkspace;
+  const isolatedWorkspaceBranchName = resolveSessionIsolatedWorkspaceBranchName(
+    paneSessionIsolatedWorkspace
+  );
+  const modelLabel = contextUsage?.modelId?.trim() || t("shell.parallelPaneModelFallback");
+  const panePromptLabel = entry.memberPrompt?.trim() || t("shell.parallelPanePromptFallback");
+  const navigationWorkspaceId = entry.workspaceId;
+  const toolWorkspaceId = resolveSessionToolWorkspaceId(
+    session ?? entry.session,
+    paneSessionIsolatedWorkspace
+  );
+  const toolWorkspaceName =
+    toolWorkspaceId === navigationWorkspaceId
+      ? workspaceContext?.displayName ?? navigationWorkspaceId
+      : isolatedWorkspaceBranchName ?? panePromptLabel;
+  const toolsPanelStyle: CSSProperties | undefined =
+    toolsOpen && toolsFrame
+      ? {
+          ...(createWorkspaceToneStyle(workspaceContext) ?? {}),
+          ...(parallelGroupStyle ?? {}),
+          ...parallelPaneStyle,
+          left: `${toolsFrame.x}px`,
+          top: `${toolsFrame.y}px`,
+          width: `${toolsFrame.width}px`,
+          height: `${toolsFrame.height}px`
+        }
+      : undefined;
+
+  useEffect(() => {
+    store.applyNavigationSession(entry.session);
+  }, [entry.session, store]);
+
+  useEffect(() => {
+    void store.initialize();
+
+    return () => {
+      storeRef.current?.destroy();
+      storeRef.current = null;
+    };
+  }, [store]);
+
+  useEffect(() => {
+    setPaneColorOverride(readParallelPaneColorOverride(sessionId));
+    setToolsOpen(false);
+    setToolsPinned(false);
+    setToolsFrame(null);
+    setActiveToolPanel("files");
+    setOptionsOpen(false);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!toolsOpen && !optionsOpen && !infoOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+
+      if (
+        headerLayerRef.current?.contains(target)
+        || toolsPanelRef.current?.contains(target)
+      ) {
+        return;
+      }
+
+      if (!toolsPinned) {
+        setToolsOpen(false);
+      }
+      setOptionsOpen(false);
+      onCloseInfo();
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [infoOpen, onCloseInfo, optionsOpen, toolsOpen, toolsPinned]);
+
+  useEffect(() => {
+    if (!toolsOpen) {
+      return;
+    }
+
+    const handleResize = () => {
+      setToolsFrame((current) => (current ? clampParallelToolsPanelFrame(current) : current));
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [toolsOpen]);
+
+  async function openWorkspaceTerminal() {
+    if (toolWorkspaceId === navigationWorkspaceId) {
+      selectWorkspace(navigationWorkspaceId);
+    }
+
+    if (platform.isDesktop && platform.bridge.supported) {
+      const result = await openTerminalsExternalWindow(platform, {
+        workspaceId: toolWorkspaceId,
+        workspaceName: toolWorkspaceName,
+        focusOwner: "terminal-page"
+      });
+
+      if (!result.ok) {
+        showToast({
+          title: result.detail ?? t("terminalManager.openExternalFailed"),
+          tone: "error"
+        });
+      }
+      return;
+    }
+
+    navigate(buildWorkspaceTerminalsPath(toolWorkspaceId));
+  }
+
+  async function openActiveToolInExternalWindow() {
+    if (!platform.isDesktop || !platform.bridge.supported) {
+      return;
+    }
+
+    if (activeToolPanel === "files") {
+      const result = await openFilesExternalWindow(platform, {
+        workspaceId: toolWorkspaceId,
+        workspaceName: toolWorkspaceName,
+        sessionId,
+        focusOwner: "file-context-panel"
+      });
+
+      if (!result.ok) {
+        showToast({
+          title: result.detail ?? t("conversation.filePanelOpenExternalFailed"),
+          tone: "error"
+        });
+      }
+      return;
+    }
+
+    if (activeToolPanel === "git") {
+      const result = await openGitExternalWindow(platform, {
+        workspaceId: toolWorkspaceId,
+        workspaceName: toolWorkspaceName,
+        focusOwner: "git-sidebar"
+      });
+
+      if (!result.ok) {
+        showToast({
+          title: result.detail ?? t("git.openExternalFailed"),
+          tone: "error"
+        });
+      }
+      return;
+    }
+
+    if (activeToolPanel === "processes") {
+      const result = await openProcessesExternalWindow(platform, {
+        workspaceId: toolWorkspaceId,
+        workspaceName: toolWorkspaceName,
+        focusOwner: "terminal-manager-panel"
+      });
+
+      if (!result.ok) {
+        showToast({
+          title: result.detail ?? t("terminalManager.openExternalFailed"),
+          tone: "error"
+        });
+      }
+      return;
+    }
+
+    await openWorkspaceTerminal();
+  }
+
+  function openToolsPanel() {
+    setToolsOpen(true);
+    setToolsFrame((current) => current ?? createDefaultParallelToolsPanelFrame(
+      toolsTriggerRef.current?.getBoundingClientRect() ?? null
+    ));
+  }
+
+  function handleToolsDragPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0 || !toolsFrame) {
+      return;
+    }
+
+    event.preventDefault();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startFrame = toolsFrame;
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      setToolsFrame(
+        clampParallelToolsPanelFrame({
+          ...startFrame,
+          x: startFrame.x + (moveEvent.clientX - startX),
+          y: startFrame.y + (moveEvent.clientY - startY)
+        })
+      );
+    };
+
+    const handlePointerUp = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+  }
+
+  function handleToolsResizePointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (event.button !== 0 || !toolsFrame) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startFrame = toolsFrame;
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      setToolsFrame(
+        clampParallelToolsPanelFrame({
+          ...startFrame,
+          width: startFrame.width + (moveEvent.clientX - startX),
+          height: startFrame.height + (moveEvent.clientY - startY)
+        })
+      );
+    };
+
+    const handlePointerUp = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+  }
+
+  async function sendForkDraftMessage(
+    content: string,
+    options?: {
+      model?: string;
+      reasoningLevel?: string;
+      attachments?: AttachmentPayload[];
+    }
+  ) {
+    const activeForkDraft = forkDraft;
+
+    if (!activeForkDraft) {
+      await store.sendMessage(content, {
+        model: options?.model,
+        reasoningLevel: options?.reasoningLevel,
+        attachments: options?.attachments
+      });
+      requestNavigationRefresh();
+      return;
+    }
+
+    let forkedSession: SessionSummaryDto | null = null;
+
+    try {
+      forkedSession = await forkSession(sessionId, {
+        sourceType: "message",
+        sourceMessageId: activeForkDraft.sourceMessageId,
+        sourceMessageSnapshot: activeForkDraft.sourceMessageSnapshot,
+        strategy: "auto",
+        targetProvider: activeForkDraft.targetProvider
+      });
+      upsertNavigationSession(forkedSession);
+
+      await sendLiveMessage(forkedSession.sessionId, {
+        content,
+        clientRequestId:
+          globalThis.crypto?.randomUUID?.() ?? `fork-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        model: activeForkDraft.targetModel,
+        reasoningLevel: options?.reasoningLevel ?? null,
+        permissionMode: getDefaultSessionPermissionMode(),
+        attachments: options?.attachments ?? []
+      });
+
+      setForkDraft(null);
+      requestNavigationRefresh();
+      selectWorkspace(forkedSession.workspaceId);
+      navigate(buildWorkspaceSessionPath(forkedSession.workspaceId, forkedSession.sessionId));
+    } catch (error) {
+      if (forkedSession) {
+        upsertNavigationSession(forkedSession);
+        requestNavigationRefresh();
+      }
+
+      throw error;
+    }
+  }
+
+  const toolsPanelOverlay =
+    toolsOpen && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            ref={toolsPanelRef}
+            className="parallel-pane-tools-popover"
+            data-parallel-pane-layer={sessionId}
+            data-pinned={toolsPinned ? "true" : undefined}
+            data-workspace-tone={workspaceContext?.tone ?? "root"}
+            style={toolsPanelStyle}
+          >
+            <div className="parallel-pane-tools-toolbar">
+              <div
+                className="parallel-pane-tools-drag-handle"
+                onPointerDown={handleToolsDragPointerDown}
+              >
+                <span className="parallel-pane-tools-drag-dots" aria-hidden="true">
+                  <PaneDragIcon />
+                </span>
+                <span>{t("shell.parallelPaneToolsAction")}</span>
+              </div>
+              <div
+                className="parallel-pane-tools-tabs"
+                role="tablist"
+                aria-label={t("shell.parallelPaneToolsAction")}
+              >
+                {(["files", "git", "processes", "terminals"] as const).map((panelId) => (
+                  <button
+                    key={panelId}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeToolPanel === panelId}
+                    className="parallel-pane-tools-tab"
+                    onClick={() => {
+                      setActiveToolPanel(panelId);
+                    }}
+                  >
+                    {panelId === "files"
+                      ? t("shell.filesEntry")
+                      : panelId === "git"
+                        ? t("shell.gitEntry")
+                        : panelId === "processes"
+                          ? t("shell.parallelPaneProcessesEntry")
+                          : t("shell.terminalsEntry")}
+                  </button>
+                ))}
+              </div>
+              <div className="parallel-pane-tools-actions">
+                <button
+                  type="button"
+                  className={`conversation-header-ai-button${toolsPinned ? " active" : ""}`}
+                  aria-label={t("shell.parallelPanePinAction")}
+                  title={t("shell.parallelPanePinAction")}
+                  aria-pressed={toolsPinned}
+                  onClick={() => {
+                    setToolsPinned((current) => !current);
+                  }}
+                >
+                  <span className="conversation-header-ai-button-label" aria-hidden="true">
+                    <PanePinIcon />
+                  </span>
+                </button>
+                {platform.isDesktop && platform.bridge.supported ? (
+                  <button
+                    type="button"
+                    className="conversation-header-ai-button"
+                    aria-label={t("shell.parallelPaneDetachAction")}
+                    title={t("shell.parallelPaneDetachAction")}
+                    onClick={() => {
+                      void openActiveToolInExternalWindow();
+                    }}
+                  >
+                    <span className="conversation-header-ai-button-label" aria-hidden="true">
+                      <PaneDetachIcon />
+                    </span>
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="conversation-header-ai-button"
+                  aria-label={t("common.close")}
+                  title={t("common.close")}
+                  onClick={() => {
+                    setToolsOpen(false);
+                  }}
+                >
+                  <span className="conversation-header-ai-button-label" aria-hidden="true">
+                    <PaneCloseIcon />
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            <div
+              className="parallel-pane-tools-body"
+              data-panel={activeToolPanel}
+            >
+              {activeToolPanel === "files" ? (
+                <FileContextPanel
+                  className="parallel-pane-tools-surface"
+                  hideHeading
+                  sessionId={sessionId}
+                  workspaceId={toolWorkspaceId}
+                />
+              ) : activeToolPanel === "git" ? (
+                <GitSidebar
+                  className="parallel-pane-tools-surface"
+                  panelActive
+                  workspaceId={toolWorkspaceId}
+                />
+              ) : activeToolPanel === "processes" ? (
+                <TerminalManagerPanel
+                  className="parallel-pane-tools-surface parallel-pane-tools-process-panel"
+                  currentWorkspaceId={toolWorkspaceId}
+                  navigationGroups={navigationGroups}
+                />
+              ) : (
+                <TerminalPage
+                  embeddedMode
+                  externalWindowWorkspaceId={toolWorkspaceId}
+                  workbenchShellOverrides={{
+                    navigationGroups,
+                    currentWorkspaceId: toolWorkspaceId,
+                    selectWorkspace
+                  }}
+                />
+              )}
+            </div>
+            <button
+              type="button"
+              className="parallel-pane-tools-resize-handle"
+              aria-label={t("shell.parallelPaneResizeAction")}
+              title={t("shell.parallelPaneResizeAction")}
+              onPointerDown={handleToolsResizePointerDown}
+            >
+              <span aria-hidden="true">
+                <PaneResizeIcon />
+              </span>
+            </button>
+          </div>,
+          document.body
+        )
+      : null;
+
+  return (
+    <>
+      <article
+        className="parallel-conversation-pane"
+        data-current={isCurrent ? "true" : undefined}
+        data-workspace-tone={workspaceContext?.tone ?? "root"}
+        data-parallel-role={(session?.parallelGroup ?? entry.session.parallelGroup)?.role ?? undefined}
+        style={{
+          ...(createWorkspaceToneStyle(workspaceContext) ?? {}),
+          ...(parallelGroupStyle ?? {}),
+          ...parallelPaneStyle
+        }}
+      >
+        <header
+          ref={headerLayerRef}
+          className="parallel-conversation-pane-header"
+        >
+          <span className="parallel-conversation-pane-connector" aria-hidden="true" />
+          <div className="parallel-conversation-pane-heading">
+            {parallelGroupLabel ? <span className="session-parallel-badge">{parallelGroupLabel}</span> : null}
+            <p className="parallel-conversation-pane-subtitle" title={panePromptLabel}>
+              {panePromptLabel}
+            </p>
+            <div className="parallel-conversation-pane-meta">
+              <span className={`session-provider-badge ${(session ?? entry.session).provider}`}>
+                {getProviderDisplayName((session ?? entry.session).provider)}
+              </span>
+              <span className="parallel-conversation-pane-model">{modelLabel}</span>
+            </div>
+          </div>
+
+          <div className="parallel-conversation-pane-actions">
+            <button
+              ref={toolsTriggerRef}
+              type="button"
+              className={`conversation-header-ai-button${toolsOpen ? " active" : ""}`}
+              aria-label={t("shell.parallelPaneToolsAction")}
+              title={t("shell.parallelPaneToolsAction")}
+              aria-expanded={toolsOpen}
+              onClick={() => {
+                onCloseInfo();
+                setOptionsOpen(false);
+                if (toolsOpen) {
+                  setToolsOpen(false);
+                  return;
+                }
+
+                openToolsPanel();
+              }}
+            >
+              <span className="conversation-header-ai-button-label" aria-hidden="true">
+                <PaneToolsIcon />
+              </span>
+            </button>
+            <button
+              type="button"
+              className={`conversation-header-ai-button${optionsOpen ? " active" : ""}`}
+              aria-label={t("shell.parallelPaneMoreAction")}
+              title={t("shell.parallelPaneMoreAction")}
+              aria-expanded={optionsOpen}
+              onClick={() => {
+                onCloseInfo();
+                setToolsOpen(false);
+                setOptionsOpen((current) => !current);
+              }}
+            >
+              <span className="conversation-header-ai-button-label" aria-hidden="true">
+                <PaneMoreIcon />
+              </span>
+            </button>
+            <button
+              type="button"
+              className="conversation-header-ai-button"
+              aria-label={t("shell.parallelPaneInfoAction")}
+              title={t("shell.parallelPaneInfoAction")}
+              aria-expanded={infoOpen}
+              onClick={() => {
+                setToolsOpen(false);
+                setOptionsOpen(false);
+                onToggleInfo();
+              }}
+            >
+              <span className="conversation-header-ai-button-label" aria-hidden="true">
+                <PaneInfoIcon />
+              </span>
+            </button>
+          </div>
+
+          {optionsOpen ? (
+            <div
+              className="parallel-pane-options-popover"
+              data-parallel-pane-layer={sessionId}
+            >
+              <strong>{t("shell.parallelPaneColorPaletteLabel")}</strong>
+              <div
+                className="workbench-manage-color-palette parallel-pane-color-palette"
+                aria-label={t("shell.parallelPaneColorPaletteLabel")}
+              >
+                {PARALLEL_PANE_COLOR_PRESETS.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    className="workbench-manage-color-swatch"
+                    aria-label={t("shell.manageWorkspaceColorSelectSwatch", {
+                      color
+                    })}
+                    aria-pressed={paneColorOverride === color}
+                    data-selected={paneColorOverride === color}
+                    style={{ backgroundColor: color }}
+                    onClick={() => {
+                      const nextColor = writeParallelPaneColorOverride(sessionId, color);
+                      setPaneColorOverride(nextColor);
+                    }}
+                  />
+                ))}
+              </div>
+              <button
+                type="button"
+                className="ghost-button parallel-pane-color-reset"
+                disabled={!paneColorOverride}
+                onClick={() => {
+                  writeParallelPaneColorOverride(sessionId, null);
+                  setPaneColorOverride(null);
+                }}
+              >
+                {t("shell.parallelPaneColorPaletteReset")}
+              </button>
+            </div>
+          ) : null}
+
+          {infoOpen ? (
+            <div
+              className="parallel-pane-info-popover"
+              data-parallel-pane-layer={sessionId}
+            >
+              <strong>{t("shell.parallelPaneInfoTitle")}</strong>
+              <dl className="parallel-pane-info-list">
+                <div>
+                  <dt>{t("shell.createSessionProviderLabel")}</dt>
+                  <dd>{getProviderDisplayName((session ?? entry.session).provider, "full")}</dd>
+                </div>
+                <div>
+                  <dt>{t("shell.parallelPaneModelFallback")}</dt>
+                  <dd>{modelLabel}</dd>
+                </div>
+                <div>
+                  <dt>{t("shell.parallelPaneIsolatedWorkspaceTitle")}</dt>
+                  <dd>{isolatedWorkspaceBranchName ?? t("common.unknown")}</dd>
+                </div>
+              </dl>
+
+              {paneSessionIsolatedWorkspace?.lifecycleStatus === "active" ? (
+                <button
+                  type="button"
+                  className="secondary-button parallel-pane-promote-action"
+                  disabled={promotingWorkspaceId === paneSessionIsolatedWorkspace.id}
+                  onClick={() => {
+                    const isolatedWorkspaceId = paneSessionIsolatedWorkspace?.id;
+
+                    if (!isolatedWorkspaceId) {
+                      return;
+                    }
+
+                    void onPromoteWorkspace(isolatedWorkspaceId);
+                  }}
+                >
+                  {promotingWorkspaceId === paneSessionIsolatedWorkspace.id
+                    ? t("shell.parallelPanePromoting")
+                    : t("shell.parallelPanePromoteAction")}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </header>
+
+      <div className="parallel-conversation-pane-body">
+        <ConnectionBanner connectionState={connectionState} onReconnect={() => store.reconnect()} />
+        <PermissionRequestList
+          requests={permissionRequests}
+          replyingRequestId={replyingPermissionRequestId}
+          onReply={async (requestId, payload) => {
+            setReplyingPermissionRequestId(requestId);
+
+            try {
+              await store.replyPermissionRequest(requestId, payload);
+            } catch (error) {
+              showToast({
+                title: t("conversation.permissionRequestReplyFailed"),
+                description: error instanceof Error ? error.message : undefined,
+                tone: "error"
+              });
+            } finally {
+              setReplyingPermissionRequestId(null);
+            }
+          }}
+        />
+        <div className="parallel-conversation-pane-timeline">
+          <MessageTimeline
+            sessionId={sessionId}
+            messages={messages}
+            historyState={historyState}
+            loadingOlderMessages={loadingOlderMessages}
+            hasOlderMessages={hasOlderMessages}
+            provider={session?.provider ?? entry.session.provider}
+            interruptedSource={runtimeInterruptSource}
+            runtimeThinkingPlaceholder={null}
+            onLoadOlderMessages={() => {
+              void store.loadOlderMessages();
+            }}
+            onRetryMessage={(clientRequestId) => {
+              void store.retryMessage(clientRequestId);
+            }}
+            onForkMessage={(message) => {
+              const currentSession = session ?? entry.session;
+
+              setForkDraft({
+                sourceMessageId: message.id,
+                sourceMessageSnapshot: {
+                  role: message.role,
+                  kind: message.kind ?? (message.role === "tool" ? "tool_result" : "text"),
+                  content: message.content
+                },
+                content: message.content,
+                sourceProvider: currentSession.provider,
+                workspaceId: currentSession.workspaceId,
+                targetProvider: currentSession.provider,
+                targetModel: null
+              });
+            }}
+          />
+        </div>
+        <QueuedMessageList
+          items={queuedMessages}
+          deletingQueueItemId={deletingQueueItemId}
+          steeringQueueItemId={steeringQueueItemId}
+          canSteer={canSteerQueuedMessage}
+          onDelete={async (queueItemId) => {
+            setDeletingQueueItemId(queueItemId);
+
+            try {
+              await store.deleteQueuedMessage(queueItemId);
+            } finally {
+              setDeletingQueueItemId(null);
+            }
+          }}
+          onSteer={async (queueItemId) => {
+            setSteeringQueueItemId(queueItemId);
+
+            try {
+              await store.steerQueuedMessage(queueItemId);
+              requestNavigationRefresh();
+            } finally {
+              setSteeringQueueItemId(null);
+            }
+          }}
+        />
+        <ComposerPanel
+          capabilities={capabilities}
+          draftStorageId={sessionId}
+          forkDraft={forkDraft}
+          onClearForkDraft={() => setForkDraft(null)}
+          onForkDraftChange={(nextDraft) => setForkDraft(nextDraft)}
+          hasActiveRun={composerHasActiveRun}
+          contextUsage={contextUsage}
+          taskProvider={(session ?? entry.session).provider}
+          taskMessages={messages}
+          hasPendingQueuedMessages={hasPendingQueuedMessages}
+          canInterrupt={composerCanInterrupt}
+          isSubmitting={sending}
+          isRunning={composerIsRunning}
+          onInterrupt={async () => {
+            await store.interrupt();
+            requestNavigationRefresh();
+          }}
+          onSend={async (content, options) => {
+            setSending(true);
+
+            try {
+              await sendForkDraftMessage(content, {
+                model: options?.model,
+                reasoningLevel: options?.reasoningLevel,
+                attachments: options?.attachments
+              });
+            } finally {
+              setSending(false);
+            }
+          }}
+          onQueueSend={async (content, options) => {
+            setSending(true);
+
+            try {
+              if (forkDraft) {
+                await sendForkDraftMessage(content, {
+                  model: options?.model,
+                  reasoningLevel: options?.reasoningLevel,
+                  attachments: options?.attachments
+                });
+              } else {
+                await store.enqueueMessage(content, {
+                  model: options?.model,
+                  reasoningLevel: options?.reasoningLevel,
+                  attachments: options?.attachments
+                });
+              }
+            } finally {
+              setSending(false);
+            }
+          }}
+        />
+      </div>
+      </article>
+      {toolsPanelOverlay}
+    </>
+  );
+}
+
+function PaneInfoIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <path
+        d="M8 6.1H8.01M7.35 7.6H8V10.3H8.65"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.4"
+      />
+    </svg>
+  );
+}
+
+function PaneToolsIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <rect x="2.5" y="2.5" width="4.2" height="4.2" rx="1.2" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      <rect x="9.3" y="2.5" width="4.2" height="4.2" rx="1.2" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      <rect x="2.5" y="9.3" width="4.2" height="4.2" rx="1.2" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      <rect x="9.3" y="9.3" width="4.2" height="4.2" rx="1.2" fill="none" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
+  );
+}
+
+function PaneDragIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="5" cy="4.5" r="0.9" fill="currentColor" />
+      <circle cx="11" cy="4.5" r="0.9" fill="currentColor" />
+      <circle cx="5" cy="8" r="0.9" fill="currentColor" />
+      <circle cx="11" cy="8" r="0.9" fill="currentColor" />
+      <circle cx="5" cy="11.5" r="0.9" fill="currentColor" />
+      <circle cx="11" cy="11.5" r="0.9" fill="currentColor" />
+    </svg>
+  );
+}
+
+function PanePinIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M10.9 3.1 12.9 5.1 10.9 6.1v2.1l-2.1 2.1v2.6l-.8-.8-.8.8v-2.6L5 8.2V6.1L3.1 5.1l2-2h5.8Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.1"
+      />
+    </svg>
+  );
+}
+
+function PaneDetachIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M5 3.1H3.8A1.3 1.3 0 0 0 2.5 4.4v7.8a1.3 1.3 0 0 0 1.3 1.3h7.8a1.3 1.3 0 0 0 1.3-1.3V11"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.2"
+      />
+      <path
+        d="M8.1 3.1h4.4v4.4M12.3 3.3 7 8.6"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.2"
+      />
+    </svg>
+  );
+}
+
+function PaneCloseIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.3"
+      />
+    </svg>
+  );
+}
+
+function PaneResizeIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M6.5 12.2 12.2 6.5M9 12.4 12.4 9M11.4 12.4 12.4 11.4"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.1"
+      />
+    </svg>
+  );
+}
+
+function PaneMoreIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="3.25" cy="8" r="1.2" fill="currentColor" />
+      <circle cx="8" cy="8" r="1.2" fill="currentColor" />
+      <circle cx="12.75" cy="8" r="1.2" fill="currentColor" />
+    </svg>
+  );
+}
+
+function PaneTerminalIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <rect x="2.5" y="3" width="11" height="10" rx="1.6" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      <path
+        d="M5.2 6.1l1.7 1.5l-1.7 1.5M8.8 10h2.1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.2"
+      />
+    </svg>
+  );
+}

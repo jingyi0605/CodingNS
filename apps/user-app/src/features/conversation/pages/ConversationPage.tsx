@@ -42,6 +42,8 @@ import { FileContextPanel } from "../components/FileContextPanel";
 import { GitSidebar } from "../components/GitSidebar";
 import { MessageTimeline } from "../components/MessageTimeline";
 import { MobileConversationSessionActions } from "../components/MobileConversationSessionActions";
+import { ParallelConversationGroupView } from "../components/ParallelConversationGroupView";
+import { ParallelSessionCreateModal } from "../components/ParallelSessionCreateModal";
 import { PermissionRequestList } from "../components/PermissionRequestList";
 import { QueuedMessageList } from "../components/QueuedMessageList";
 import { SessionBranchTreePanel } from "../components/SessionBranchTreePanel";
@@ -52,6 +54,10 @@ import {
 } from "../components/ConversationActionIcons";
 import { useWorkbenchShell } from "../components/WorkbenchLayout";
 import { isRealSubagentSession } from "../session-fork-display";
+import {
+  resolveSessionNavigationWorkspaceId,
+  writeParallelGroupTransitionSignal
+} from "../parallel-session-display";
 import { SessionRuntimeStore, useSessionRuntimeStore } from "../runtime/session-runtime-store";
 import {
   resolveSessionActivityBadgeLabel,
@@ -197,6 +203,7 @@ function LiveConversationPage({
   const [archiveSubmitting, setArchiveSubmitting] = useState(false);
   const [branchTreeOpen, setBranchTreeOpen] = useState(false);
   const [forkDraft, setForkDraft] = useState<ForkComposerDraft | null>(null);
+  const [parallelCreateOpen, setParallelCreateOpen] = useState(false);
   const navigationSession = useMemo(
     () =>
       navigationGroups
@@ -362,6 +369,7 @@ function LiveConversationPage({
     [navigationSession, session]
   );
   const currentSessionSummary = session ?? navigationSession ?? null;
+  const activeParallelGroupId = currentSessionSummary?.parallelGroup?.groupId ?? null;
   const mobileMainGestureHandlers = !showInlineHeader
     ? mergeMobileGestureHandlers(mobilePreview.mainGestureHandlers, mobileToolPanel.mainGestureHandlers)
     : null;
@@ -697,6 +705,60 @@ function LiveConversationPage({
     navigate(buildWorkspaceSessionIndexPath(nextWorkspaceId));
   }
 
+  if (showInlineHeader && activeParallelGroupId) {
+    return (
+      <>
+        <ParallelConversationGroupView
+          groupId={activeParallelGroupId}
+          currentSessionId={sessionId}
+        />
+        <ParallelSessionCreateModal
+          open={parallelCreateOpen}
+          source={
+            currentSessionSummary
+              ? {
+                  kind: "session",
+                  sessionId,
+                  workspaceId: currentSessionSummary.workspaceId,
+                  workspaceName: currentWorkspaceContext?.displayName ?? currentSessionSummary.workspaceId,
+                  sessionTitle: currentSessionSummary.title,
+                  defaultProvider: currentSessionSummary.provider
+                }
+              : null
+          }
+          onClose={() => setParallelCreateOpen(false)}
+          onCreated={async (detail) => {
+            detail.members.forEach((item) => {
+              upsertNavigationSession(item.session);
+            });
+            writeParallelGroupTransitionSignal(detail.group.id);
+            await requestNavigationRefresh();
+
+            const anchorMember =
+              detail.members.find((item) => item.session.sessionId === detail.group.anchorSessionId)
+              ?? detail.members[0]
+              ?? null;
+
+            if (anchorMember) {
+              const navigationWorkspaceId = resolveSessionNavigationWorkspaceId(
+                anchorMember.session,
+                anchorMember.sessionIsolatedWorkspace
+              );
+              selectWorkspace(navigationWorkspaceId);
+              navigate(buildWorkspaceSessionPath(navigationWorkspaceId, anchorMember.session.sessionId));
+            }
+
+            setParallelCreateOpen(false);
+            showToast({
+              title: t("shell.parallelCreateSucceeded"),
+              tone: "success"
+            });
+          }}
+        />
+      </>
+    );
+  }
+
   return (
     <>
       <main
@@ -721,6 +783,19 @@ function LiveConversationPage({
               <>
                 {canOpenBranchTree ? (
                   <ConversationBranchTreeButton onOpenBranchTree={openBranchTree} />
+                ) : null}
+                {currentSessionSummary ? (
+                  <button
+                    type="button"
+                    className="conversation-header-ai-button"
+                    aria-label={t("shell.parallelCreateAction")}
+                    title={t("shell.parallelCreateAction")}
+                    onClick={() => setParallelCreateOpen(true)}
+                  >
+                    <span className="conversation-header-ai-button-label" aria-hidden="true">
+                      <ParallelForkIcon />
+                    </span>
+                  </button>
                 ) : null}
                 <SessionButlerActionButton session={session ?? navigationSession} />
               </>
@@ -1074,6 +1149,49 @@ function LiveConversationPage({
           } finally {
             setArchiveRestoreSessionId(null);
           }
+        }}
+      />
+      <ParallelSessionCreateModal
+        open={parallelCreateOpen}
+        source={
+          currentSessionSummary
+            ? {
+                kind: "session",
+                sessionId,
+                workspaceId: currentSessionSummary.workspaceId,
+                workspaceName: currentWorkspaceContext?.displayName ?? currentSessionSummary.workspaceId,
+                sessionTitle: currentSessionSummary.title,
+                defaultProvider: currentSessionSummary.provider
+              }
+            : null
+        }
+        onClose={() => setParallelCreateOpen(false)}
+        onCreated={async (detail) => {
+          detail.members.forEach((item) => {
+            upsertNavigationSession(item.session);
+          });
+          writeParallelGroupTransitionSignal(detail.group.id);
+          await requestNavigationRefresh();
+
+          const anchorMember =
+            detail.members.find((item) => item.session.sessionId === detail.group.anchorSessionId)
+            ?? detail.members[0]
+            ?? null;
+
+          if (anchorMember) {
+            const navigationWorkspaceId = resolveSessionNavigationWorkspaceId(
+              anchorMember.session,
+              anchorMember.sessionIsolatedWorkspace
+            );
+            selectWorkspace(navigationWorkspaceId);
+            navigate(buildWorkspaceSessionPath(navigationWorkspaceId, anchorMember.session.sessionId));
+          }
+
+          setParallelCreateOpen(false);
+          showToast({
+            title: t("shell.parallelCreateSucceeded"),
+            tone: "success"
+          });
         }}
       />
     </>
@@ -2977,6 +3095,27 @@ function ConversationBranchTreeButton(input: {
         <BranchTreeActionIcon />
       </span>
     </button>
+  );
+}
+
+function ParallelForkIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M4 3.25a1.75 1.75 0 1 1 0 3.5a1.75 1.75 0 0 1 0-3.5Zm0 6a1.75 1.75 0 1 1 0 3.5a1.75 1.75 0 0 1 0-3.5Zm8-3a1.75 1.75 0 1 1 0 3.5a1.75 1.75 0 0 1 0-3.5Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+      />
+      <path
+        d="M5.75 5h2.15c1.35 0 2.45 1.1 2.45 2.45v.1M5.75 11h2.15c1.35 0 2.45-1.1 2.45-2.45V8.4"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.4"
+      />
+    </svg>
   );
 }
 

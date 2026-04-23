@@ -428,6 +428,12 @@ export interface WorkspaceCreatedDirectoryDto {
   name: string;
 }
 
+export interface CreateParallelSessionGroupPayload {
+  sourceMessageId?: string | null;
+  sharedPrompt: string;
+  members: ParallelSessionMemberConfigDto[];
+}
+
 export interface ReorderWorkspacesPayload {
   workspaceIds: string[];
 }
@@ -437,6 +443,27 @@ export interface WorkspaceNavigationStateDto {
   userId: string;
   collapsed: boolean;
   backgroundColor: string | null;
+  updatedAt: string;
+}
+
+export interface ParallelGroupSummaryDto {
+  groupId: string;
+  role: "anchor" | "member";
+  memberCount: number;
+  sourceType: "fork" | "new";
+  sourceSessionId: string | null;
+  anchorSessionId: string | null;
+  colorToken: string;
+}
+
+export interface SessionIsolatedWorkspaceSummaryDto {
+  id: string;
+  workspaceId: string;
+  sourceWorkspaceId: string;
+  branchName: string;
+  lifecycleStatus: "active" | "promoted" | "removing" | "removed";
+  promotedAt: string | null;
+  createdAt: string;
   updatedAt: string;
 }
 
@@ -480,6 +507,87 @@ export interface SessionSummaryDto {
   lastSeenAt: string | null;
   watchdogTriggeredAt?: string | null;
   activityState: SessionActivityState;
+  parallelGroup?: ParallelGroupSummaryDto | null;
+  displayParentSessionId?: string | null;
+  sessionIsolatedWorkspace?: SessionIsolatedWorkspaceSummaryDto | null;
+}
+
+export interface ParallelSessionMemberConfigDto {
+  provider: ProviderId;
+  model?: string | null;
+  memberPrompt?: string | null;
+  workspaceIsolationMode?: "none" | "temporary_worktree";
+}
+
+export interface ParallelSessionMemberFailureDto {
+  ordinal: number;
+  provider: ProviderId;
+  model: string | null;
+  workspaceIsolationMode: "none" | "temporary_worktree";
+  errorCode: string;
+  detail: string;
+}
+
+export interface ParallelSessionGroupDto {
+  id: string;
+  workspaceId: string;
+  sourceType: "fork" | "new";
+  sourceSessionId: string | null;
+  sourceMessageId: string | null;
+  sharedPrompt: string | null;
+  requestedCount: number;
+  anchorSessionId: string | null;
+  status: "active" | "deleting" | "deleted";
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+}
+
+export interface ParallelSessionMemberViewDto {
+  member: {
+    groupId: string;
+    sessionId: string;
+    ordinal: number;
+    role: "anchor" | "member";
+    provider: ProviderId;
+    model: string | null;
+    memberPrompt: string | null;
+    workspaceIsolationMode: "none" | "temporary_worktree";
+    temporaryWorkspaceId: string | null;
+    createdAt: string;
+    updatedAt: string;
+    deletedAt: string | null;
+  };
+  session: SessionSummaryDto;
+  sessionIsolatedWorkspace: SessionIsolatedWorkspaceSummaryDto | null;
+}
+
+export interface ParallelSessionGroupDetailDto {
+  group: ParallelSessionGroupDto;
+  members: ParallelSessionMemberViewDto[];
+  memberFailures: ParallelSessionMemberFailureDto[];
+}
+
+export interface SessionIsolatedWorkspacePromoteDto {
+  record: {
+    id: string;
+    groupId: string;
+    ownerSessionId: string;
+    workspaceId: string;
+    sourceWorkspaceId: string;
+    branchName: string;
+    baseRef: string;
+    baseCommit: string;
+    headCommit: string | null;
+    lifecycleStatus: "active" | "promoted" | "removing" | "removed";
+    promotedAt: string | null;
+    removedAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+  };
+  workspace: WorkspaceDto;
+  worktree: WorktreeMetaDto;
 }
 
 export type SessionPermissionRequestKind =
@@ -1057,6 +1165,71 @@ export function deleteSession(sessionId: string) {
   return httpClient.request<void>(`/api/sessions/${encodeURIComponent(sessionId)}`, {
     method: "DELETE"
   });
+}
+
+export function createParallelGroupFromSession(
+  sessionId: string,
+  payload: CreateParallelSessionGroupPayload
+) {
+  return httpClient.request<ParallelSessionGroupDetailDto>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/parallel-groups`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
+export function createParallelGroupFromWorkspace(
+  workspaceId: string,
+  payload: CreateParallelSessionGroupPayload
+) {
+  return httpClient.request<ParallelSessionGroupDetailDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/parallel-groups`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
+export function getParallelGroupDetail(groupId: string) {
+  return httpClient.request<ParallelSessionGroupDetailDto>(
+    `/api/parallel-groups/${encodeURIComponent(groupId)}`
+  );
+}
+
+export function deleteParallelGroup(groupId: string) {
+  return httpClient.request<{
+    group: ParallelSessionGroupDto;
+    deletedSessionIds: string[];
+    failedSessionIds: Array<{ sessionId: string; detail: string }>;
+    isolatedWorkspaceCleanupResults: Array<{
+      record: SessionIsolatedWorkspaceSummaryDto & {
+        groupId?: string;
+        ownerSessionId?: string;
+        baseRef?: string;
+        baseCommit?: string;
+        headCommit?: string | null;
+        removedAt?: string | null;
+      };
+      removed: boolean;
+      branchDeleted: boolean;
+      deletedBranchName: string | null;
+      detail: string | null;
+    }>;
+  }>(`/api/parallel-groups/${encodeURIComponent(groupId)}`, {
+    method: "DELETE"
+  });
+}
+
+export function promoteSessionIsolatedWorkspace(id: string) {
+  return httpClient.request<SessionIsolatedWorkspacePromoteDto>(
+    `/api/session-isolated-workspaces/${encodeURIComponent(id)}/promote`,
+    {
+      method: "POST"
+    }
+  );
 }
 
 export function createWorktree(payload: CreateWorktreePayload) {

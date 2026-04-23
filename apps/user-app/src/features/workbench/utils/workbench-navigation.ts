@@ -4,6 +4,7 @@ import type {
   WorkbenchWorktreeNodeDto,
   WorkspaceDto
 } from "../../conversation/api/conversation-api";
+import { resolveSessionDisplayParentSessionId } from "../../conversation/parallel-session-display";
 import { buildSessionTree, type SessionTreeNode } from "./session-tree";
 
 export interface WorkbenchNavigationGroup {
@@ -107,7 +108,7 @@ export function buildNavigationSessionTree(
 ): WorkbenchNavigationTreeNode[] {
   return buildSessionTree(entries, {
     getId: (entry) => entry.session.sessionId,
-    getParentId: (entry) => entry.session.parentSessionId?.trim() || null,
+    getParentId: (entry) => resolveSessionDisplayParentSessionId(entry.session),
     compare: sortNavigationEntries
   });
 }
