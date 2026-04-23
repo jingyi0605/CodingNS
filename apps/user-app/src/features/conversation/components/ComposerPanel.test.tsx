@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { t } from "../../../shared/i18n";
 import type { ProviderCapabilitiesDto } from "../api/conversation-api";
 import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
-import { ComposerPanel } from "./ComposerPanel";
+import { ComposerPanel, resolveComposerMacSelectPopoverWidth } from "./ComposerPanel";
 
 const platformMock = vi.hoisted(() => ({
   platform: "web",
@@ -323,6 +323,18 @@ describe("ComposerPanel", () => {
     localStorage.clear();
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it("模型下拉弹层会按最长选项文本自动扩宽", () => {
+    expect(
+      resolveComposerMacSelectPopoverWidth({
+        labels: ["默认", "x".repeat(30)],
+        triggerWidth: 72,
+        maxWidth: 480,
+        preferredWidth: 220,
+        measureText: (text) => text.length * 8
+      })
+    ).toBe(324);
   });
 
   it("连续提交两次时只会发送一次", async () => {

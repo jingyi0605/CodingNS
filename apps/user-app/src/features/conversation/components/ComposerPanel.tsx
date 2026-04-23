@@ -129,6 +129,10 @@ interface ComposerSelectOption {
 
 const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
 const PROVIDER_DEFAULT_MODEL_ID = "provider-default";
+const MAC_SELECT_MIN_WIDTH = 160;
+const MAC_SELECT_DEFAULT_WIDTH = 220;
+const MAC_SELECT_COMPACT_WIDTH = 140;
+const MAC_SELECT_OPTION_EXTRA_WIDTH = 84;
 const FORK_PROVIDER_IDS: ProviderId[] = [
   "codex",
   "claude-code",
@@ -157,6 +161,53 @@ const HIDDEN_FILE_INPUT_STYLE: CSSProperties = {
   whiteSpace: "nowrap",
   border: 0
 };
+
+let composerMacSelectMeasureCanvas: HTMLCanvasElement | null = null;
+
+function measureComposerMacSelectTextWidth(referenceElement: HTMLElement, text: string): number {
+  if (typeof document === "undefined") {
+    return text.length * 8;
+  }
+
+  composerMacSelectMeasureCanvas ??= document.createElement("canvas");
+  const context = composerMacSelectMeasureCanvas.getContext("2d");
+
+  if (!context) {
+    return text.length * 8;
+  }
+
+  const computedStyle = window.getComputedStyle(referenceElement);
+  const fontStyle = computedStyle.fontStyle || "normal";
+  const fontWeight = computedStyle.fontWeight || "600";
+  const fontSize = computedStyle.fontSize || "13px";
+  const fontFamily = computedStyle.fontFamily || "system-ui";
+  context.font = `${fontStyle} ${fontWeight} ${fontSize} ${fontFamily}`;
+
+  return context.measureText(text).width;
+}
+
+export function resolveComposerMacSelectPopoverWidth({
+  labels,
+  triggerWidth,
+  maxWidth,
+  preferredWidth,
+  measureText
+}: {
+  labels: string[];
+  triggerWidth: number;
+  maxWidth: number;
+  preferredWidth: number;
+  measureText: (text: string) => number;
+}): number {
+  const contentWidth = labels.reduce((widest, label) => {
+    return Math.max(widest, Math.ceil(measureText(label) + MAC_SELECT_OPTION_EXTRA_WIDTH));
+  }, 0);
+
+  return Math.min(
+    maxWidth,
+    Math.max(triggerWidth, MAC_SELECT_MIN_WIDTH, preferredWidth, contentWidth)
+  );
+}
 
 function createFallbackModelOptions(provider: ProviderId): ModelOption[] {
   return [
@@ -2121,6 +2172,7 @@ function MacSelect({
   const [popoverStyle, setPopoverStyle] = useState<CSSProperties | null>(null);
   const listboxId = useId();
   const selectedOption = options.find((option) => option.value === value) ?? options[0] ?? null;
+  const optionLabels = useMemo(() => options.map((option) => option.label), [options]);
 
   const updatePopoverStyle = useCallback(() => {
     const trigger = triggerRef.current;
@@ -2134,9 +2186,15 @@ function MacSelect({
     const viewportHeight = window.innerHeight;
     const edgePadding = 12;
     const gap = 10;
-    const maxWidth = Math.max(160, viewportWidth - edgePadding * 2);
-    const preferredWidth = compact ? 140 : 220;
-    const width = Math.min(maxWidth, Math.max(rect.width, preferredWidth));
+    const maxWidth = Math.max(MAC_SELECT_MIN_WIDTH, viewportWidth - edgePadding * 2);
+    const preferredWidth = compact ? MAC_SELECT_COMPACT_WIDTH : MAC_SELECT_DEFAULT_WIDTH;
+    const width = resolveComposerMacSelectPopoverWidth({
+      labels: optionLabels,
+      triggerWidth: rect.width,
+      maxWidth,
+      preferredWidth,
+      measureText: (text) => measureComposerMacSelectTextWidth(trigger, text)
+    });
     const left = Math.min(
       Math.max(edgePadding, rect.left),
       Math.max(edgePadding, viewportWidth - width - edgePadding)
@@ -2153,7 +2211,7 @@ function MacSelect({
       top: shouldPlaceAbove ? undefined : rect.bottom + gap,
       bottom: shouldPlaceAbove ? viewportHeight - rect.top + gap : undefined
     });
-  }, [compact]);
+  }, [compact, optionLabels]);
 
   useEffect(() => {
     if (!open) {
