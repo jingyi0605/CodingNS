@@ -67,6 +67,7 @@ interface TransportRecord {
   activeThreadId: string | null;
   activeTurnId: string | null;
 }
+const CODEX_APP_SERVER_REQUEST_TIMEOUT_MS = 20_000;
 
 const helperArgs = process.argv.slice(2);
 const rawCommandPath = readFlag(helperArgs, "--command-path");
@@ -550,9 +551,29 @@ function sendJsonRpcRequest(
   const id = `${message.method}:${++transport.requestSequence}`;
 
   return new Promise<Record<string, unknown>>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      transport.pendingResponses.delete(id);
+      const timeoutError = new Error("SERVER_TIMEOUT");
+      const transportId = findTransportId(transport);
+
+      if (transportId) {
+        closeTransport(transportId, transport, timeoutError);
+      } else {
+        closeTransportForRecord(transport, timeoutError);
+      }
+
+      reject(timeoutError);
+    }, CODEX_APP_SERVER_REQUEST_TIMEOUT_MS);
+
     transport.pendingResponses.set(id, {
-      resolve,
-      reject
+      resolve: (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      reject: (reason) => {
+        clearTimeout(timeout);
+        reject(reason);
+      }
     });
     writeJsonRpcMessage(transport.child, {
       jsonrpc: "2.0",

@@ -101,12 +101,14 @@ interface LogicalTransportState {
 
 interface CodexAppServerHelperClientOptions {
   homeDir?: string;
+  requestTimeoutMs?: number;
 }
 
 export class CodexAppServerHelperClient {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly stdoutReader: readline.Interface;
   private readonly transports = new Map<string, LogicalTransportState>();
+  private readonly requestTimeoutMs: number;
   private nextTransportId = 1;
   private nextRequestId = 1;
   private disposed = false;
@@ -122,6 +124,7 @@ export class CodexAppServerHelperClient {
       helperEnv.CODINGNS_CODEX_HOME = configuredHomeDir;
       helperEnv.CODEX_HOME = configuredHomeDir;
     }
+    this.requestTimeoutMs = Math.max(1, Math.floor(options.requestTimeoutMs ?? 20_000));
 
     this.child = spawn(launch.command, launch.args, {
       cwd: process.cwd(),
@@ -189,9 +192,19 @@ export class CodexAppServerHelperClient {
       const requestId = String(this.nextRequestId++);
 
       return await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          this.closeLogicalTransport(transportId, state, new Error("SERVER_TIMEOUT"));
+        }, this.requestTimeoutMs);
+
         state.pendingResponses.set(requestId, {
-          resolve,
-          reject
+          resolve: (value) => {
+            clearTimeout(timeout);
+            resolve(value);
+          },
+          reject: (error) => {
+            clearTimeout(timeout);
+            reject(error);
+          }
         });
 
         this.sendMessage({
@@ -201,6 +214,7 @@ export class CodexAppServerHelperClient {
           method,
           ...input
         }).catch((error) => {
+          clearTimeout(timeout);
           state.pendingResponses.delete(requestId);
           reject(error);
         });
@@ -272,20 +286,7 @@ export class CodexAppServerHelperClient {
         return state.closed;
       },
       close: () => {
-        if (state.closed) {
-          return;
-        }
-
-        state.closed = true;
-        void this.sendMessage({
-          type: "transport_request",
-          transportId,
-          requestId: String(this.nextRequestId++),
-          method: "close"
-        });
-        this.rejectTransportPending(state, new Error("CODEX_APP_SERVER_CLOSED"));
-        this.notifyTransportClosed(state, null);
-        this.transports.delete(transportId);
+        this.closeLogicalTransport(transportId, state, null);
       }
     };
   }
@@ -321,9 +322,19 @@ export class CodexAppServerHelperClient {
       const requestId = String(this.nextRequestId++);
 
       return await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          this.closeLogicalTransport(transportId, state, new Error("SERVER_TIMEOUT"));
+        }, this.requestTimeoutMs);
+
         state.pendingResponses.set(requestId, {
-          resolve,
-          reject
+          resolve: (value) => {
+            clearTimeout(timeout);
+            resolve(value);
+          },
+          reject: (error) => {
+            clearTimeout(timeout);
+            reject(error);
+          }
         });
 
         this.sendMessage({
@@ -333,6 +344,7 @@ export class CodexAppServerHelperClient {
           method,
           ...input
         }).catch((error) => {
+          clearTimeout(timeout);
           state.pendingResponses.delete(requestId);
           reject(error);
         });
@@ -380,20 +392,7 @@ export class CodexAppServerHelperClient {
         };
       },
       close: () => {
-        if (state.closed) {
-          return;
-        }
-
-        state.closed = true;
-        void this.sendMessage({
-          type: "transport_request",
-          transportId,
-          requestId: String(this.nextRequestId++),
-          method: "close"
-        });
-        this.rejectTransportPending(state, new Error("CODEX_APP_SERVER_CLOSED"));
-        this.notifyTransportClosed(state, null);
-        this.transports.delete(transportId);
+        this.closeLogicalTransport(transportId, state, null);
       }
     };
   }
@@ -425,9 +424,19 @@ export class CodexAppServerHelperClient {
       const requestId = String(this.nextRequestId++);
 
       return await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          this.closeLogicalTransport(transportId, state, new Error("SERVER_TIMEOUT"));
+        }, this.requestTimeoutMs);
+
         state.pendingResponses.set(requestId, {
-          resolve,
-          reject
+          resolve: (value) => {
+            clearTimeout(timeout);
+            resolve(value);
+          },
+          reject: (error) => {
+            clearTimeout(timeout);
+            reject(error);
+          }
         });
 
         this.sendMessage({
@@ -437,6 +446,7 @@ export class CodexAppServerHelperClient {
           method,
           ...input
         }).catch((error) => {
+          clearTimeout(timeout);
           state.pendingResponses.delete(requestId);
           reject(error);
         });
@@ -463,20 +473,7 @@ export class CodexAppServerHelperClient {
         });
       },
       close: () => {
-        if (state.closed) {
-          return;
-        }
-
-        state.closed = true;
-        void this.sendMessage({
-          type: "transport_request",
-          transportId,
-          requestId: String(this.nextRequestId++),
-          method: "close"
-        });
-        this.rejectTransportPending(state, new Error("CODEX_APP_SERVER_CLOSED"));
-        this.notifyTransportClosed(state, null);
-        this.transports.delete(transportId);
+        this.closeLogicalTransport(transportId, state, null);
       }
     };
   }
@@ -585,6 +582,27 @@ export class CodexAppServerHelperClient {
       pending.reject(error);
     }
     state.pendingResponses.clear();
+  }
+
+  private closeLogicalTransport(
+    transportId: string,
+    state: LogicalTransportState,
+    error: Error | null
+  ): void {
+    if (state.closed) {
+      return;
+    }
+
+    state.closed = true;
+    void this.sendMessage({
+      type: "transport_request",
+      transportId,
+      requestId: String(this.nextRequestId++),
+      method: "close"
+    });
+    this.rejectTransportPending(state, error ?? new Error("CODEX_APP_SERVER_CLOSED"));
+    this.notifyTransportClosed(state, error);
+    this.transports.delete(transportId);
   }
 
   private notifyTransportClosed(state: LogicalTransportState, error: Error | null): void {

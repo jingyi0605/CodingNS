@@ -85,4 +85,23 @@ describe("CodexAppServerHelperClient", () => {
     expect(closeHandler.mock.calls[0]?.[0]).toBeInstanceOf(Error);
     expect(closeHandler.mock.calls[0]?.[0]?.message).toBe("codex app-server exited with code 1");
   });
+
+  it("helper 请求超时后会关闭 transport 并返回 SERVER_TIMEOUT", async () => {
+    const child = new MockChildProcess();
+    spawnMock.mockReturnValue(child);
+
+    const client = new CodexAppServerHelperClient("/mock/codex", {
+      requestTimeoutMs: 10
+    });
+    const transport = client.createTransport();
+    const closeHandler = vi.fn();
+
+    transport.setOnClose(closeHandler);
+
+    await expect(transport.initialize()).rejects.toThrow("SERVER_TIMEOUT");
+    expect(transport.isClosed()).toBe(true);
+    expect(closeHandler).toHaveBeenCalledTimes(1);
+    expect(closeHandler.mock.calls[0]?.[0]).toBeInstanceOf(Error);
+    expect(closeHandler.mock.calls[0]?.[0]?.message).toBe("SERVER_TIMEOUT");
+  });
 });
