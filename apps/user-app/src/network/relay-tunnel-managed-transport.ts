@@ -5,7 +5,12 @@ import type {
   HostTransportWebSocketRequest
 } from "./host-transport";
 import { RelayTunnelClientTransport } from "./relay-tunnel-client-transport";
-import { connectRelayTunnelClientSessionViaEdge } from "./relay-tunnel-edge-client";
+import {
+  connectRelayTunnelClientSessionViaEdge,
+  connectRelayTunnelClientSessionViaReservation,
+  type RelayTunnelBindingView,
+  type RelayTunnelSessionReservation
+} from "./relay-tunnel-edge-client";
 import type { RelayTunnelPacketSession } from "./relay-tunnel-client-session";
 import { recordRelaySessionWireBytes } from "./relay-session-traffic-store";
 
@@ -17,10 +22,12 @@ interface RelayTunnelClientTransportLike {
 
 interface RelayTunnelClientSessionLike extends RelayTunnelPacketSession {
   close(code?: number, reason?: string): void;
+  subscribeClose?(listener: (error: Error) => void): () => void;
 }
 
 interface RelayTunnelManagedTransportDependencies {
   connectSession?: typeof connectRelayTunnelClientSessionViaEdge;
+  resumeSession?: typeof connectRelayTunnelClientSessionViaReservation;
   createTransport?: (session: RelayTunnelClientSessionLike) => RelayTunnelClientTransportLike;
   fallbackTransport?: HostTransport;
 }
@@ -33,6 +40,10 @@ interface ActiveHostTransport {
 export class ManagedRelayTunnelHostTransport implements HostTransport {
   private connectPromise: Promise<ActiveHostTransport> | null = null;
   private fallbackTransport: HostTransport | null = null;
+  private resumeState: {
+    binding: RelayTunnelBindingView;
+    reservation: RelayTunnelSessionReservation;
+  } | null = null;
 
   constructor(
     private readonly options: {
@@ -59,6 +70,7 @@ export class ManagedRelayTunnelHostTransport implements HostTransport {
     const connectPromise = this.connectPromise;
     this.connectPromise = null;
     this.fallbackTransport = null;
+    this.resumeState = null;
 
     if (!connectPromise) {
       return;
@@ -88,22 +100,40 @@ export class ManagedRelayTunnelHostTransport implements HostTransport {
 
   private async createActiveTransport(): Promise<ActiveHostTransport> {
     const connectSession = this.dependencies.connectSession ?? connectRelayTunnelClientSessionViaEdge;
+    const resumeSession = this.dependencies.resumeSession ?? connectRelayTunnelClientSessionViaReservation;
     const createTransport = this.dependencies.createTransport
       ?? ((clientSession: RelayTunnelClientSessionLike) => new RelayTunnelClientTransport(clientSession));
 
     try {
-      const connected = await connectSession({
-        controlBaseUrl: this.options.controlBaseUrl,
-        tunnelDomain: this.options.tunnelDomain,
-        onWireBytes: (direction, bytes) => {
-          recordRelaySessionWireBytes(this.options.hostId, direction, bytes);
-        }
-      });
+      const connected = await this.connectWithResume(connectSession, resumeSession);
       const relayTransport = createTransport(connected.clientSession);
+      this.resumeState = {
+        binding: connected.binding,
+        reservation: connected.reservation
+      };
+      let released = false;
+      const releaseCloseSubscription = connected.clientSession.subscribeClose?.((error) => {
+        if (released) {
+          return;
+        }
+
+        released = true;
+        relayTransport.close?.();
+
+        if (this.connectPromise) {
+          this.connectPromise = null;
+        }
+
+        if (shouldDiscardResumableSession(error)) {
+          this.resumeState = null;
+        }
+      }) ?? (() => undefined);
 
       return {
         transport: relayTransport,
         close: () => {
+          released = true;
+          releaseCloseSubscription();
           relayTransport.close?.();
           connected.clientSession.close(1000, "host_transport_closed");
         }
@@ -125,6 +155,46 @@ export class ManagedRelayTunnelHostTransport implements HostTransport {
       };
     }
   }
+
+  private async connectWithResume(
+    connectSession: typeof connectRelayTunnelClientSessionViaEdge,
+    resumeSession: typeof connectRelayTunnelClientSessionViaReservation
+  ): Promise<Awaited<ReturnType<typeof connectRelayTunnelClientSessionViaEdge>>> {
+    if (this.resumeState) {
+      try {
+        return await resumeSession({
+          binding: this.resumeState.binding,
+          reservation: this.resumeState.reservation,
+          onWireBytes: (direction, bytes) => {
+            recordRelaySessionWireBytes(this.options.hostId, direction, bytes);
+          }
+        });
+      } catch (error) {
+        if (shouldDiscardResumableSession(error)) {
+          this.resumeState = null;
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    return await connectSession({
+      controlBaseUrl: this.options.controlBaseUrl,
+      tunnelDomain: this.options.tunnelDomain,
+      onWireBytes: (direction, bytes) => {
+        recordRelaySessionWireBytes(this.options.hostId, direction, bytes);
+      }
+    });
+  }
+}
+
+function shouldDiscardResumableSession(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+
+  return message.includes("SESSION_NOT_FOUND")
+    || message.includes("CONNECT_TICKET_INVALID")
+    || message.includes("SESSION_INSTANCE_MISMATCH")
+    || message.includes("缺少 connectTicket");
 }
 
 class DeferredRelayTunnelSocket extends EventTarget implements HostTransportSocket {

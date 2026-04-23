@@ -27,9 +27,49 @@ class MockRelayEdgeSocket extends EventTarget {
     this.dispatchEvent(new Event("open"));
   }
 
+  openThenClose(code = 1012, reason = "HOST_UPSTREAM_DISCONNECTED"): void {
+    this.readyState = 1;
+    this.dispatchEvent(new Event("open"));
+    this.close(code, reason);
+  }
+
   emitMessage(data: string): void {
     this.dispatchEvent(new MessageEvent("message", { data }));
   }
+}
+
+function createConnectInitResponse(input: {
+  hostPublicKey: string;
+  hostFingerprint: string;
+  relayBaseUrl?: string;
+  controlBaseUrl?: string;
+  sessionId?: string;
+  connectTicket?: string;
+}): Response {
+  return new Response(
+    JSON.stringify({
+      bindingId: "binding_1",
+      tunnelDomain: "demo.codingns.example",
+      relayBaseUrl: input.relayBaseUrl ?? "https://relay.example.com",
+      controlBaseUrl: input.controlBaseUrl ?? "https://control.example.com",
+      hostPublicKey: input.hostPublicKey,
+      hostFingerprint: input.hostFingerprint,
+      status: "active",
+      sessionId: input.sessionId ?? "session_demo",
+      connectTicket: input.connectTicket ?? "ticket_demo",
+      remainingBytes: "1024",
+      sessionRateLimitBytesPerSecond: "204800",
+      upstreamConnected: false,
+      downstreamConnected: false,
+      expiresAt: "2026-04-21T10:01:00.000Z"
+    }),
+    {
+      status: 201,
+      headers: {
+        "Content-Type": "application/json"
+      }
+    }
+  );
 }
 
 describe("relay-tunnel-edge-client", () => {
@@ -108,30 +148,10 @@ describe("relay-tunnel-edge-client", () => {
     const hostIdentity = generateRelayTunnelIdentity("2026-04-19T00:00:00.000Z");
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            bindingId: "binding_1",
-            tunnelDomain: "demo.codingns.example",
-            relayBaseUrl: "https://relay.example.com",
-            controlBaseUrl: "https://control.example.com",
-            hostPublicKey: hostIdentity.publicKeyPem,
-            hostFingerprint: hostIdentity.keyFingerprint,
-            status: "active",
-            sessionId: "session_demo",
-            connectTicket: "ticket_demo",
-            remainingBytes: "1024",
-            sessionRateLimitBytesPerSecond: "204800",
-            upstreamConnected: false,
-            downstreamConnected: false,
-            expiresAt: "2026-04-21T10:01:00.000Z"
-          }),
-          {
-            status: 201,
-            headers: {
-              "Content-Type": "application/json"
-            }
-          }
-        )
+        createConnectInitResponse({
+          hostPublicKey: hostIdentity.publicKeyPem,
+          hostFingerprint: hostIdentity.keyFingerprint
+        })
       );
     const socket = new MockRelayEdgeSocket(
       "wss://relay.example.com/ws?sessionId=session_demo&role=downstream&connectTicket=ticket_demo"
@@ -170,6 +190,80 @@ describe("relay-tunnel-edge-client", () => {
 
     expect(connected.binding.hostFingerprint).toBe(hostIdentity.keyFingerprint);
     expect(connected.clientSession).toBeDefined();
+  });
+
+  it("原始链路在建立后立刻断开时会自动重试并恢复握手", async () => {
+    const hostIdentity = generateRelayTunnelIdentity("2026-04-19T00:00:00.000Z");
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        createConnectInitResponse({
+          hostPublicKey: hostIdentity.publicKeyPem,
+          hostFingerprint: hostIdentity.keyFingerprint,
+          sessionId: "session_retry_1",
+          connectTicket: "ticket_retry_1"
+        })
+      )
+      .mockResolvedValueOnce(
+        createConnectInitResponse({
+          hostPublicKey: hostIdentity.publicKeyPem,
+          hostFingerprint: hostIdentity.keyFingerprint,
+          sessionId: "session_retry_2",
+          connectTicket: "ticket_retry_2"
+        })
+      );
+    const firstSocket = new MockRelayEdgeSocket(
+      "wss://relay.example.com/ws?sessionId=session_retry_1&role=downstream&connectTicket=ticket_retry_1"
+    );
+    const secondSocket = new MockRelayEdgeSocket(
+      "wss://relay.example.com/ws?sessionId=session_retry_2&role=downstream&connectTicket=ticket_retry_2"
+    );
+    const createWebSocket = vi.fn()
+      .mockReturnValueOnce(firstSocket)
+      .mockReturnValueOnce(secondSocket);
+    const connectPromise = connectRelayTunnelClientSessionViaEdge(
+      {
+        controlBaseUrl: "https://control.example.com",
+        tunnelDomain: "demo.codingns.example"
+      },
+      {
+        fetchFn: fetchMock,
+        createWebSocket
+      }
+    );
+
+    await vi.waitFor(() => {
+      expect(createWebSocket).toHaveBeenCalledTimes(1);
+    });
+
+    firstSocket.openThenClose();
+
+    await vi.waitFor(() => {
+      expect(createWebSocket).toHaveBeenCalledTimes(2);
+    });
+
+    secondSocket.open();
+    await vi.waitFor(() => {
+      expect(secondSocket.sentPayloads).toHaveLength(1);
+    });
+
+    const clientHelloEnvelope = JSON.parse(secondSocket.sentPayloads[0]) as {
+      type: "client_hello";
+      hello: RelayTunnelClientHello;
+    };
+    const { serverHello } = acceptRelayTunnelClientHandshake({
+      hostIdentity,
+      clientHello: clientHelloEnvelope.hello
+    });
+
+    secondSocket.emitMessage(JSON.stringify({
+      type: "server_hello",
+      hello: serverHello
+    }));
+
+    const connected = await connectPromise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(connected.reservation.sessionId).toBe("session_retry_2");
   });
 
   it("会保留 relayBaseUrl 里的路径前缀来 connect-init 并连接 ws", async () => {

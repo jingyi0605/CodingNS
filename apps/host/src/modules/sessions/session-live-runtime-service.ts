@@ -951,12 +951,21 @@ export class SessionLiveRuntimeService {
   }
 
   async interruptSession(sessionId: string, userId: string): Promise<InterruptSessionResult> {
-    this.sessionHistoryService.getSession(sessionId, userId);
+    const session = this.sessionHistoryService.getSession(sessionId, userId);
     const runtimeSessionId = this.resolveRuntimeSessionId(sessionId);
     const runtime = this.getLiveRuntimeSnapshot(runtimeSessionId);
     const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(runtimeSessionId) ?? null;
 
     if (!runtime || (runtime.runningState !== "running" && runtime.runningState !== "starting")) {
+      if (runtime && !isActiveRuntimeState(runtime.runningState)) {
+        await this.reconcileTerminalRuntimeSnapshot(sessionId, runtime);
+        return {
+          sessionId,
+          interrupted: true,
+          detail: runtime.detail ?? "当前会话已结束，已自动同步状态"
+        };
+      }
+
       if (externalRuntimeSnapshot && isActiveRuntimeState(externalRuntimeSnapshot.runningState)) {
         throw new AppError({
           statusCode: 409,
@@ -966,12 +975,27 @@ export class SessionLiveRuntimeService {
         });
       }
 
-      throw new AppError({
-        statusCode: 409,
-        errorCode: "SESSION_NOT_RUNNING",
-        detail: "当前会话不在运行中，无法中断",
-        field: "sessionId"
-      });
+      const refreshedSession =
+        isPendingSessionRunningState(session.runningState)
+          ? await Promise.resolve(
+              this.sessionHistoryService.refreshRuntimeFallbackSession(sessionId, userId)
+            ).catch(() => null)
+          : session;
+
+      if (refreshedSession && !isPendingSessionRunningState(refreshedSession.runningState)) {
+        return {
+          sessionId,
+          interrupted: true,
+          detail: "当前会话已停止，已自动同步状态"
+        };
+      }
+
+      await this.forceInterruptInactiveSession(sessionId);
+      return {
+        sessionId,
+        interrupted: true,
+        detail: "当前会话已停止，已自动修正残留运行状态"
+      };
     }
 
     const interrupted = await this.providerRuntimeService.interrupt(runtimeSessionId).catch((error) => {
@@ -2278,6 +2302,128 @@ export class SessionLiveRuntimeService {
     for (const listener of this.terminalStateListeners) {
       await listener(event);
     }
+  }
+
+  private async reconcileTerminalRuntimeSnapshot(
+    sessionId: string,
+    runtime: ActiveRunSnapshot
+  ): Promise<void> {
+    const timestamp = runtime.lastEventAt ?? runtime.completedAt ?? runtime.startedAt;
+    const runningState = toStoredRunningState(runtime.runningState);
+    const currentSnapshot = this.sessionStatusSnapshotRepository.findBySessionId(sessionId);
+
+    for (const userId of this.authUserRepository.listIds()) {
+      const current = this.sessionStateRepository.findBySessionAndUser(sessionId, userId);
+
+      if (
+        current?.lastEventAt
+        && current.lastEventAt.localeCompare(timestamp) > 0
+        && isTerminalSessionRunningState(current.runningState)
+      ) {
+        continue;
+      }
+
+      this.sessionStateRepository.upsert({
+        sessionId,
+        userId,
+        runningState,
+        activitySource: "runtime",
+        favorite: current?.favorite ?? false,
+        lastEventAt: timestamp,
+        completedAt: isTerminalSessionRunningState(runningState)
+          ? (runtime.completedAt ?? timestamp)
+          : current?.completedAt ?? null,
+        lastSeenAt: current?.lastSeenAt ?? null,
+        updatedAt: nowIso()
+      });
+    }
+
+    this.upsertSnapshot(sessionId, {
+      syncStatus: runningState === "failed" ? "error" : "idle",
+      syncCursor: currentSnapshot?.syncCursor ?? null,
+      lastSyncAt: timestamp,
+      lastErrorCode: runningState === "failed" ? runtime.errorCode ?? null : null,
+      lastErrorDetail: runningState === "failed" ? runtime.detail ?? null : null,
+      resumedAt: currentSnapshot?.resumedAt ?? null
+    });
+    this.sessionActivityAuthorityService.observe(createRuntimeActivityObservation(sessionId, runtime));
+    await this.emitExternalRuntimeEnvelope({
+      type: "session.runtime_status",
+      sessionId,
+      status: runtime.runningState,
+      detail: runtime.detail,
+      interruptSource: runtime.interruptSource,
+      timestamp
+    });
+
+    if (isTerminalSessionRunningState(runningState)) {
+      await this.emitTerminalStateEvent({
+        sessionId,
+        status: runningState,
+        timestamp,
+        detail: runtime.detail,
+        source: "runtime"
+      });
+      void this.dispatchNextQueuedMessage(sessionId);
+    }
+  }
+
+  private async forceInterruptInactiveSession(sessionId: string): Promise<void> {
+    const timestamp = nowIso();
+    const currentSnapshot = this.sessionStatusSnapshotRepository.findBySessionId(sessionId);
+
+    for (const userId of this.authUserRepository.listIds()) {
+      const current = this.sessionStateRepository.findBySessionAndUser(sessionId, userId);
+
+      if (!current || !isPendingSessionRunningState(current.runningState)) {
+        continue;
+      }
+
+      this.sessionStateRepository.upsert({
+        ...current,
+        runningState: "interrupted",
+        activitySource: "runtime",
+        completedAt: timestamp,
+        updatedAt: timestamp
+      });
+    }
+
+    this.clearExternalRuntimeSnapshot(sessionId);
+    this.upsertSnapshot(sessionId, {
+      syncStatus: "idle",
+      syncCursor: currentSnapshot?.syncCursor ?? null,
+      lastSyncAt: timestamp,
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: currentSnapshot?.resumedAt ?? null
+    });
+    this.sessionActivityAuthorityService.observe({
+      sessionId,
+      runId: null,
+      runningState: "interrupted",
+      source: "authoritative_runtime",
+      confidence: "strong",
+      detail: "检测到会话实际已停止，已自动修正残留运行状态",
+      interruptSource: "runtime",
+      errorCode: null,
+      observedAt: timestamp
+    });
+    await this.emitExternalRuntimeEnvelope({
+      type: "session.runtime_status",
+      sessionId,
+      status: "interrupted",
+      detail: "检测到会话实际已停止，已自动修正残留运行状态",
+      interruptSource: "runtime",
+      timestamp
+    });
+    await this.emitTerminalStateEvent({
+      sessionId,
+      status: "interrupted",
+      timestamp,
+      detail: "检测到会话实际已停止，已自动修正残留运行状态",
+      source: "runtime"
+    });
+    void this.dispatchNextQueuedMessage(sessionId);
   }
 
   private beginPendingSendDebugTrace(input: {

@@ -17,6 +17,7 @@ import {
 export interface RelayTunnelRawChannel {
   send(payload: string): void | Promise<void>;
   subscribe(listener: (payload: string) => void): () => void;
+  subscribeClose?(listener: (error: Error) => void): () => void;
   close(code?: number, reason?: string): void;
 }
 
@@ -55,12 +56,16 @@ type RelayTunnelControlEnvelope =
 export class RelayTunnelClientSession implements RelayTunnelPacketSession {
   private readonly listeners = new Set<(packet: RelayTunnelGatewayPacket) => void>();
   private readonly unsubscribeFromChannel: () => void;
+  private readonly closeListeners = new Set<(error: Error) => void>();
+  private readonly unsubscribeFromChannelClose: (() => void) | null;
   private connectPromise: Promise<void> | null = null;
   private readonly textEncoder = new TextEncoder();
   private readonly textDecoder = new TextDecoder();
   private incomingPayloadChain: Promise<void> = Promise.resolve();
   private outgoingPacketChain: Promise<void> = Promise.resolve();
   private pendingPackets: RelayTunnelGatewayPacket[] = [];
+  private closedByClient = false;
+  private terminationNotified = false;
   private handshakeState:
     | {
         status: "idle";
@@ -93,6 +98,11 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
     this.unsubscribeFromChannel = channel.subscribe((payload) => {
       this.enqueueIncomingPayload(payload);
     });
+    this.unsubscribeFromChannelClose = channel.subscribeClose
+      ? channel.subscribeClose((error) => {
+          this.handleChannelClosed(error);
+        })
+      : null;
   }
 
   async connect(): Promise<void> {
@@ -156,8 +166,17 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
     };
   }
 
+  subscribeClose(listener: (error: Error) => void): () => void {
+    this.closeListeners.add(listener);
+    return () => {
+      this.closeListeners.delete(listener);
+    };
+  }
+
   close(code?: number, reason?: string): void {
+    this.closedByClient = true;
     this.unsubscribeFromChannel();
+    this.unsubscribeFromChannelClose?.();
     this.channel.close(code, reason);
   }
 
@@ -247,6 +266,7 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
         error
       };
       this.connectPromise = null;
+      this.notifyTermination(error);
       reject(error);
       return;
     }
@@ -256,6 +276,15 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
       error
     };
     this.connectPromise = null;
+    this.notifyTermination(error);
+  }
+
+  private handleChannelClosed(error: Error): void {
+    if (this.closedByClient) {
+      return;
+    }
+
+    this.failSession(error);
   }
 
   private sendControlPayload(payload: string): void | Promise<void> {
@@ -324,6 +353,18 @@ export class RelayTunnelClientSession implements RelayTunnelPacketSession {
 
   private recordWireBytes(direction: "upstream" | "downstream", payload: string): void {
     this.options.onWireBytes?.(direction, this.textEncoder.encode(payload).byteLength);
+  }
+
+  private notifyTermination(error: Error): void {
+    if (this.terminationNotified) {
+      return;
+    }
+
+    this.terminationNotified = true;
+
+    for (const listener of this.closeListeners) {
+      listener(error);
+    }
   }
 }
 

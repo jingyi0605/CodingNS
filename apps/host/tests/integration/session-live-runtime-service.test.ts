@@ -1814,6 +1814,116 @@ describe("SessionLiveRuntimeService", () => {
     });
   });
 
+  it("stale running 会话点击中断时会先回刷状态并直接成功返回", async () => {
+    const { service, sessionHistoryService } = createService();
+    const providerRuntimeService = {
+      getSnapshot: vi.fn(() => null)
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-1.jsonl",
+      messageCount: 3,
+      runningState: "running"
+    });
+    sessionHistoryService.refreshRuntimeFallbackSession.mockResolvedValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-1.jsonl",
+      messageCount: 3,
+      runningState: "completed"
+    });
+
+    await expect(service.interruptSession("session-1", "user-1")).resolves.toMatchObject({
+      sessionId: "session-1",
+      interrupted: true,
+      detail: "当前会话已停止，已自动同步状态"
+    });
+    expect(sessionHistoryService.refreshRuntimeFallbackSession).toHaveBeenCalledWith(
+      "session-1",
+      "user-1"
+    );
+  });
+
+  it("stale running 会话回刷后仍未收口时，会直接把数据库状态修正为 interrupted", async () => {
+    const {
+      service,
+      sessionHistoryService,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository
+    } = createService();
+    const providerRuntimeService = {
+      getSnapshot: vi.fn(() => null)
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+      messageCount: 3,
+      runningState: "running"
+    });
+    sessionHistoryService.refreshRuntimeFallbackSession.mockResolvedValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+      messageCount: 3,
+      runningState: "running"
+    });
+    sessionStateRepository.findBySessionAndUser.mockReturnValue({
+      sessionId: "session-1",
+      userId: "user-1",
+      runningState: "running",
+      activitySource: "runtime",
+      favorite: false,
+      lastEventAt: "2026-03-26T10:00:01.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-03-26T10:00:01.000Z"
+    });
+    sessionStatusSnapshotRepository.findBySessionId.mockReturnValue({
+      sessionId: "session-1",
+      syncStatus: "idle",
+      syncCursor: "cursor-1",
+      lastSyncAt: "2026-03-26T10:00:01.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      updatedAt: "2026-03-26T10:00:01.000Z"
+    });
+
+    await expect(service.interruptSession("session-1", "user-1")).resolves.toMatchObject({
+      sessionId: "session-1",
+      interrupted: true,
+      detail: "当前会话已停止，已自动修正残留运行状态"
+    });
+    expect(sessionStateRepository.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "session-1",
+        userId: "user-1",
+        runningState: "interrupted",
+        activitySource: "runtime"
+      })
+    );
+  });
+
   it("dispatchNextQueuedMessage 遇到 ACTIVE_RUN_EXISTS 时会回到等待并安排重试", async () => {
     vi.useFakeTimers();
     const { service, sessionHistoryService, sessionSendQueueRepository } = createService();

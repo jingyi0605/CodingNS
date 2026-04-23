@@ -18,6 +18,7 @@ export interface RelayTunnelSessionReservation {
   sessionId: string;
   bindingId: string;
   tunnelDomain: string;
+  connectTicket?: string;
   remainingBytes: string;
   accountId?: string;
   sessionRateLimitBytesPerSecond?: string | null;
@@ -63,6 +64,9 @@ interface RelayTunnelEdgeClientDependencies {
   fetchFn?: typeof fetch;
   createWebSocket?: (url: string) => RelayTunnelEdgeSocket;
 }
+
+const RELAY_TUNNEL_CONNECT_MAX_ATTEMPTS = 3;
+const RELAY_TUNNEL_CONNECT_RETRY_DELAY_MS = 250;
 
 export async function connectInitRelayTunnel(input: {
   controlBaseUrl: string;
@@ -120,6 +124,7 @@ export async function connectRelayTunnelRawChannel(
     sessionId: connectInit.sessionId,
     bindingId: connectInit.bindingId,
     tunnelDomain: connectInit.tunnelDomain,
+    connectTicket: connectInit.connectTicket,
     remainingBytes: connectInit.remainingBytes,
     sessionRateLimitBytesPerSecond: connectInit.sessionRateLimitBytesPerSecond,
     upstreamConnected: connectInit.upstreamConnected,
@@ -128,13 +133,45 @@ export async function connectRelayTunnelRawChannel(
   };
   const socketFactory = dependencies.createWebSocket ?? defaultCreateWebSocket;
   const socket = socketFactory(
-    buildRelayEdgeWebSocketUrl(binding.relayBaseUrl, reservation.sessionId, connectInit.connectTicket)
+    buildRelayEdgeWebSocketUrl(
+      binding.relayBaseUrl,
+      reservation.sessionId,
+      requireConnectTicket(reservation)
+    )
   );
   await waitForSocketOpen(socket);
 
   return {
     binding,
     reservation,
+    channel: new RelayTunnelEdgeRawChannel(socket)
+  };
+}
+
+export async function connectRelayTunnelRawChannelViaReservation(
+  input: {
+    binding: RelayTunnelBindingView;
+    reservation: RelayTunnelSessionReservation;
+  },
+  dependencies: RelayTunnelEdgeClientDependencies = {}
+): Promise<{
+  binding: RelayTunnelBindingView;
+  reservation: RelayTunnelSessionReservation;
+  channel: RelayTunnelRawChannel;
+}> {
+  const socketFactory = dependencies.createWebSocket ?? defaultCreateWebSocket;
+  const socket = socketFactory(
+    buildRelayEdgeWebSocketUrl(
+      input.binding.relayBaseUrl,
+      input.reservation.sessionId,
+      requireConnectTicket(input.reservation)
+    )
+  );
+  await waitForSocketOpen(socket);
+
+  return {
+    binding: input.binding,
+    reservation: input.reservation,
     channel: new RelayTunnelEdgeRawChannel(socket)
   };
 }
@@ -152,28 +189,105 @@ export async function connectRelayTunnelClientSessionViaEdge(
   channel: RelayTunnelRawChannel;
   clientSession: RelayTunnelClientSession;
 }> {
-  const { binding, reservation, channel } = await connectRelayTunnelRawChannel(input, dependencies);
-  const clientSession = new RelayTunnelClientSession(channel, {
-    expectedHostPublicKey: binding.hostPublicKey,
-    expectedHostFingerprint: binding.hostFingerprint,
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= RELAY_TUNNEL_CONNECT_MAX_ATTEMPTS; attempt += 1) {
+    let connected:
+      | {
+          binding: RelayTunnelBindingView;
+          reservation: RelayTunnelSessionReservation;
+          channel: RelayTunnelRawChannel;
+        }
+      | null = null;
+
+    try {
+      connected = await connectRelayTunnelRawChannel(input, dependencies);
+      const clientSession = new RelayTunnelClientSession(connected.channel, {
+        expectedHostPublicKey: connected.binding.hostPublicKey,
+        expectedHostFingerprint: connected.binding.hostFingerprint,
+        onWireBytes: input.onWireBytes
+      });
+      await clientSession.connect();
+
+      return {
+        ...connected,
+        clientSession
+      };
+    } catch (error) {
+      const normalizedError = toError(error);
+
+      lastError = normalizedError;
+      connected?.channel.close(1011, "relay_client_session_connect_failed");
+
+      if (!shouldRetryRelayTunnelConnect(normalizedError, attempt)) {
+        throw normalizedError;
+      }
+
+      await waitForDelay(RELAY_TUNNEL_CONNECT_RETRY_DELAY_MS * attempt);
+    }
+  }
+
+  throw lastError ?? new Error("当前 CodingNS Connect 会话建立失败");
+}
+
+export async function connectRelayTunnelClientSessionViaReservation(
+  input: {
+    binding: RelayTunnelBindingView;
+    reservation: RelayTunnelSessionReservation;
+    onWireBytes?: (direction: "upstream" | "downstream", bytes: number) => void;
+  },
+  dependencies: RelayTunnelEdgeClientDependencies = {}
+): Promise<{
+  binding: RelayTunnelBindingView;
+  reservation: RelayTunnelSessionReservation;
+  channel: RelayTunnelRawChannel;
+  clientSession: RelayTunnelClientSession;
+}> {
+  const connected = await connectRelayTunnelRawChannelViaReservation({
+    binding: input.binding,
+    reservation: input.reservation
+  }, dependencies);
+  const clientSession = new RelayTunnelClientSession(connected.channel, {
+    expectedHostPublicKey: connected.binding.hostPublicKey,
+    expectedHostFingerprint: connected.binding.hostFingerprint,
     onWireBytes: input.onWireBytes
   });
   await clientSession.connect();
 
   return {
-    binding,
-    reservation,
-    channel,
+    ...connected,
     clientSession
   };
 }
 
 class RelayTunnelEdgeRawChannel implements RelayTunnelRawChannel {
-  constructor(private readonly socket: RelayTunnelEdgeSocket) {}
+  private terminalError: Error | null = null;
+  private closeNotified = false;
+  private readonly closeListeners = new Set<(error: Error) => void>();
+  private readonly handleClose = (event: Event) => {
+    const closeEvent = event as CloseEvent;
+
+    this.terminalError = new Error(
+      `relay-edge 原始链路关闭：${closeEvent.code}${closeEvent.reason ? ` ${closeEvent.reason}` : ""}`
+    );
+    this.notifyClose(this.terminalError);
+  };
+  private readonly handleError = () => {
+    if (!this.terminalError) {
+      this.terminalError = new Error("relay-edge 原始链路建立失败");
+    }
+
+    this.notifyClose(this.terminalError);
+  };
+
+  constructor(private readonly socket: RelayTunnelEdgeSocket) {
+    this.socket.addEventListener("close", this.handleClose);
+    this.socket.addEventListener("error", this.handleError);
+  }
 
   send(payload: string): void {
     if (this.socket.readyState !== 1) {
-      throw new Error("当前 relay-edge 原始链路尚未建立完成");
+      throw this.terminalError ?? new Error("当前 relay-edge 原始链路尚未建立完成");
     }
 
     this.socket.send(payload);
@@ -195,8 +309,30 @@ class RelayTunnelEdgeRawChannel implements RelayTunnelRawChannel {
     };
   }
 
+  subscribeClose(listener: (error: Error) => void): () => void {
+    this.closeListeners.add(listener);
+
+    return () => {
+      this.closeListeners.delete(listener);
+    };
+  }
+
   close(code?: number, reason?: string): void {
+    this.socket.removeEventListener("close", this.handleClose);
+    this.socket.removeEventListener("error", this.handleError);
     this.socket.close(code, reason);
+  }
+
+  private notifyClose(error: Error): void {
+    if (this.closeNotified) {
+      return;
+    }
+
+    this.closeNotified = true;
+
+    for (const listener of this.closeListeners) {
+      listener(error);
+    }
   }
 }
 
@@ -326,7 +462,39 @@ function defaultCreateWebSocket(url: string): RelayTunnelEdgeSocket {
   return new WebSocket(url);
 }
 
+function requireConnectTicket(reservation: RelayTunnelSessionReservation): string {
+  const connectTicket = reservation.connectTicket?.trim();
+
+  if (!connectTicket) {
+    throw new Error("当前 CodingNS Connect 会话缺少 connectTicket，不能继续续接");
+  }
+
+  return connectTicket;
+}
+
+function shouldRetryRelayTunnelConnect(error: Error, attempt: number): boolean {
+  if (attempt >= RELAY_TUNNEL_CONNECT_MAX_ATTEMPTS) {
+    return false;
+  }
+
+  const message = error.message;
+
+  return message.includes("relay-edge 原始链路")
+    || message.includes("HOST_NOT_CONNECTED")
+    || message.includes("HOST_UPSTREAM_DISCONNECTED");
+}
+
+async function waitForDelay(delayMs: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
+}
+
 function normalizeNullableText(value: string | null | undefined): string | null {
   const normalized = value?.trim();
   return normalized ? normalized : null;
+}
+
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }

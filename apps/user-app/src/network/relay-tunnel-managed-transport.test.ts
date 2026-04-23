@@ -42,6 +42,22 @@ class MockPacketSession implements RelayTunnelPacketSession {
   send = vi.fn<(packet: never) => void>();
   subscribe = vi.fn(() => () => undefined);
   close = vi.fn<(code?: number, reason?: string) => void>();
+  private closeListeners = new Set<(error: Error) => void>();
+
+  subscribeClose(listener: (error: Error) => void): () => void {
+    this.closeListeners.add(listener);
+    return () => {
+      this.closeListeners.delete(listener);
+    };
+  }
+
+  emitUnexpectedClose(message = "HOST_UPSTREAM_DISCONNECTED"): void {
+    const error = new Error(message);
+
+    for (const listener of this.closeListeners) {
+      listener(error);
+    }
+  }
 }
 
 type ManagedTransportDependencies = NonNullable<
@@ -65,6 +81,7 @@ describe("ManagedRelayTunnelHostTransport", () => {
       },
       reservation: {
         sessionId: "session-1",
+        connectTicket: "ticket-1",
         accountId: "account-1",
         bindingId: "binding-1",
         tunnelDomain: "demo.codingns.example",
@@ -280,6 +297,7 @@ describe("ManagedRelayTunnelHostTransport", () => {
       },
       reservation: {
         sessionId: "session-1",
+        connectTicket: "ticket-1",
         accountId: "account-1",
         bindingId: "binding-1",
         tunnelDomain: "demo.codingns.example",
@@ -298,5 +316,121 @@ describe("ManagedRelayTunnelHostTransport", () => {
     await vi.waitFor(() => {
       expect(createWebSocket).not.toHaveBeenCalled();
     });
+  });
+
+  it("已有隧道意外断开后，会优先用原 session 做续接", async () => {
+    const firstSession = new MockPacketSession();
+    const resumedSession = new MockPacketSession();
+    const firstFetch = vi.fn<(request: HostTransportFetchRequest) => Promise<Response>>()
+      .mockResolvedValue(new Response("first"));
+    const resumedFetch = vi.fn<(request: HostTransportFetchRequest) => Promise<Response>>()
+      .mockResolvedValue(new Response("resumed"));
+    const connectSession = vi.fn()
+      .mockResolvedValueOnce({
+        binding: {
+          bindingId: "binding-1",
+          tunnelDomain: "demo.codingns.example",
+          hostPublicKey: "host-public-key",
+          hostFingerprint: "host-fingerprint",
+          relayBaseUrl: "wss://relay.codingns.example",
+          controlBaseUrl: "https://control.codingns.example",
+          status: "active"
+        },
+        reservation: {
+          sessionId: "session-1",
+          connectTicket: "ticket-1",
+          accountId: "account-1",
+          bindingId: "binding-1",
+          tunnelDomain: "demo.codingns.example",
+          remainingBytes: "1024",
+          upstreamConnected: true,
+          downstreamConnected: true
+        },
+        channel: {
+          send: () => undefined,
+          subscribe: () => () => undefined,
+          close: () => undefined
+        },
+        clientSession: firstSession
+      });
+    const resumeSession = vi.fn()
+      .mockResolvedValueOnce({
+        binding: {
+          bindingId: "binding-1",
+          tunnelDomain: "demo.codingns.example",
+          hostPublicKey: "host-public-key",
+          hostFingerprint: "host-fingerprint",
+          relayBaseUrl: "wss://relay.codingns.example",
+          controlBaseUrl: "https://control.codingns.example",
+          status: "active"
+        },
+        reservation: {
+          sessionId: "session-1",
+          connectTicket: "ticket-1",
+          accountId: "account-1",
+          bindingId: "binding-1",
+          tunnelDomain: "demo.codingns.example",
+          remainingBytes: "1024",
+          upstreamConnected: true,
+          downstreamConnected: true
+        },
+        channel: {
+          send: () => undefined,
+          subscribe: () => () => undefined,
+          close: () => undefined
+        },
+        clientSession: resumedSession
+      });
+    const createTransport = vi.fn()
+      .mockReturnValueOnce({
+        fetch: firstFetch,
+        createWebSocket: vi.fn<(request: HostTransportWebSocketRequest) => HostTransportSocket>(),
+        close: vi.fn()
+      })
+      .mockReturnValueOnce({
+        fetch: resumedFetch,
+        createWebSocket: vi.fn<(request: HostTransportWebSocketRequest) => HostTransportSocket>(),
+        close: vi.fn()
+      });
+    const transport = new ManagedRelayTunnelHostTransport(
+      {
+        hostId: "host-1",
+        controlBaseUrl: "https://control.codingns.example",
+        tunnelDomain: "demo.codingns.example"
+      },
+      {
+        connectSession: connectSession as unknown as ManagedTransportDependencies["connectSession"],
+        resumeSession: resumeSession as unknown as ManagedTransportDependencies["resumeSession"],
+        createTransport
+      }
+    );
+
+    const firstResponse = await transport.fetch({
+      path: "/api/demo",
+      baseUrl: "https://demo.codingns.example",
+      url: "https://demo.codingns.example/api/demo",
+      init: {
+        method: "GET"
+      }
+    });
+
+    expect(await firstResponse.text()).toBe("first");
+    expect(connectSession).toHaveBeenCalledTimes(1);
+    expect(resumeSession).not.toHaveBeenCalled();
+
+    firstSession.emitUnexpectedClose();
+
+    const resumedResponse = await transport.fetch({
+      path: "/api/demo",
+      baseUrl: "https://demo.codingns.example",
+      url: "https://demo.codingns.example/api/demo",
+      init: {
+        method: "GET"
+      }
+    });
+
+    expect(await resumedResponse.text()).toBe("resumed");
+    expect(connectSession).toHaveBeenCalledTimes(1);
+    expect(resumeSession).toHaveBeenCalledTimes(1);
   });
 });
