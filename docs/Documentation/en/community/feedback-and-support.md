@@ -1,6 +1,6 @@
 # Feedback & Support
 
-## What to prepare before asking for help
+## Bring these details with you so others can help faster
 
 Bring at least these details:
 
@@ -9,19 +9,19 @@ Bring at least these details:
 - which page or step the issue happens on;
 - what you expected to finish.
 
-## What makes feedback useful
+## This is the kind of description people can act on
 
-### describe the path
+### explain the path first
 
 For example: “I opened terminal inside a workspace and then tried to continue the same session.”
 
-### describe the impact
+### then explain the impact
 
 For example: “This only happens on mobile” or “another Host works normally.”
 
-### attach a screenshot when the UI explains it faster
+### add a screenshot when the UI says it faster than text
 
-## Good feedback topics
+## These topics are especially worth reporting
 
 - the install or login flow is unclear;
 - the client connection path is confusing;

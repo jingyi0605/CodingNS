@@ -1,10 +1,10 @@
 # First Login
 
-## What happens on a brand-new Host
+## The first screen is usually just bootstrap
 
 A brand-new Host usually starts with a bootstrap page so you can create the first administrator account. After that, you sign in on the login page with the same account.
 
-## What to do right after login
+## The first useful things to confirm are these
 
 ### 1. set your language and theme
 
@@ -18,7 +18,7 @@ Bring in an existing project directory or clone a repository into the Host.
 
 Once the workspace exists, open a session and confirm that the main workflow is available.
 
-## Best first-run path
+## Keep the first pass simple
 
 Keep the first trial simple:
 

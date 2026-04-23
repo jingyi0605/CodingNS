@@ -1,14 +1,12 @@
 # CodingNS Connect
 
-## Who this is for
+CodingNS Connect fits better when you want an outside-access address quickly and do not want to build the networking path yourself.
 
-CodingNS Connect is a good fit when you want an outside-access path with less network setup work on your side.
-
-## Where to manage it
+## You manage it from settings
 
 Open the remote access area in settings and switch to the CodingNS Connect panel.
 
-## Basic flow
+## The setup flow is straightforward
 
 1. enable CodingNS Connect;
 2. sign in to your CodingNS Connect account if needed;
@@ -16,7 +14,7 @@ Open the remote access area in settings and switch to the CodingNS Connect panel
 4. use the generated access address from other devices;
 5. manage traffic or quota there if your plan uses it.
 
-## Practical advice
+## A few habits make it smoother
 
 - give the Host a clear device label;
 - monitor the current state and remaining quota if this is your main outside-access path;

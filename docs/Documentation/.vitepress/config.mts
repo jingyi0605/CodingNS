@@ -66,123 +66,111 @@ function createThemeConfig(options: {
   };
 }
 
+const zhSidebar = [
+  {
+    text: "认识 CodingNS",
+    items: [
+      { text: "文档地图", link: "/overview/docs-overview" },
+      { text: "产品概览", link: "/overview/product-overview" },
+      { text: "核心能力", link: "/overview/core-features" },
+      { text: "平台与场景", link: "/overview/platforms-and-scenarios" }
+    ]
+  },
+  {
+    text: "安装与接入",
+    items: [
+      { text: "安装路径选择", link: "/quick-install/installation-paths" },
+      { text: "安装 Host 服务", link: "/quick-install/host-installation" },
+      { text: "连接客户端", link: "/quick-install/client-connection" },
+      { text: "首次登录与开始使用", link: "/quick-install/first-login" }
+    ]
+  },
+  {
+    text: "日常使用",
+    items: [
+      { text: "工作区与会话", link: "/user-guide/workspaces-and-sessions" },
+      { text: "对话工作台", link: "/user-guide/conversation-workbench" },
+      { text: "文件、Git 与终端", link: "/user-guide/files-git-and-terminal" },
+      { text: "设置与更新", link: "/user-guide/settings-and-updates" }
+    ]
+  },
+  {
+    text: "远程访问",
+    items: [
+      { text: "远程访问概览", link: "/remote-access/remote-access-overview" },
+      { text: "Tailscale 接入", link: "/remote-access/tailscale-access" },
+      { text: "隧道服务", link: "/remote-access/tunnel-service" },
+      { text: "安全与稳定建议", link: "/remote-access/safe-access-tips" }
+    ]
+  },
+  {
+    text: "支持与社区",
+    items: [
+      { text: "社区入口", link: "/community/community-overview" },
+      { text: "官方链接", link: "/community/official-links" },
+      { text: "反馈与支持", link: "/community/feedback-and-support" }
+    ]
+  }
+];
+
+const enSidebar = [
+  {
+    text: "Explore CodingNS",
+    items: [
+      { text: "Docs Map", link: "/en/overview/docs-overview" },
+      { text: "Product Overview", link: "/en/overview/product-overview" },
+      { text: "Core Features", link: "/en/overview/core-features" },
+      { text: "Platforms & Scenarios", link: "/en/overview/platforms-and-scenarios" }
+    ]
+  },
+  {
+    text: "Install & Connect",
+    items: [
+      { text: "Choose an Install Path", link: "/en/quick-install/installation-paths" },
+      { text: "Install the Host Service", link: "/en/quick-install/host-installation" },
+      { text: "Connect a Client", link: "/en/quick-install/client-connection" },
+      { text: "First Login", link: "/en/quick-install/first-login" }
+    ]
+  },
+  {
+    text: "Daily Use",
+    items: [
+      { text: "Workspaces & Sessions", link: "/en/user-guide/workspaces-and-sessions" },
+      { text: "Conversation Workbench", link: "/en/user-guide/conversation-workbench" },
+      { text: "Files, Git & Terminal", link: "/en/user-guide/files-git-and-terminal" },
+      { text: "Settings & Updates", link: "/en/user-guide/settings-and-updates" }
+    ]
+  },
+  {
+    text: "Remote Access",
+    items: [
+      { text: "Overview", link: "/en/remote-access/remote-access-overview" },
+      { text: "Tailscale Access", link: "/en/remote-access/tailscale-access" },
+      { text: "Tunnel Service", link: "/en/remote-access/tunnel-service" },
+      { text: "Safety & Stability Tips", link: "/en/remote-access/safe-access-tips" }
+    ]
+  },
+  {
+    text: "Support & Community",
+    items: [
+      { text: "Community Entry", link: "/en/community/community-overview" },
+      { text: "Official Links", link: "/en/community/official-links" },
+      { text: "Feedback & Support", link: "/en/community/feedback-and-support" }
+    ]
+  }
+];
+
 const zhThemeConfig = createThemeConfig({
   nav: [
-    { text: "项目概述", link: "/overview/docs-overview" },
-    { text: "快速安装", link: "/quick-install/installation-paths" },
-    { text: "使用手册", link: "/user-guide/workspaces-and-sessions" },
-    { text: "远程访问", link: "/remote-access/remote-access-overview" },
-    { text: "社区交流", link: "/community/community-overview" }
+    { text: "文档首页", link: "/" },
+    { text: "开始使用", link: "/quick-install/installation-paths" },
+    { text: "功能使用", link: "/user-guide/workspaces-and-sessions" },
+    { text: "连接与访问", link: "/remote-access/remote-access-overview" },
+    { text: "支持与反馈", link: "/community/feedback-and-support" }
   ],
   sidebar: {
-    "/overview/": [
-      {
-        text: "项目概述",
-        items: [
-          { text: "文档导览", link: "/overview/docs-overview" },
-          { text: "产品概览", link: "/overview/product-overview" },
-          { text: "核心能力", link: "/overview/core-features" },
-          { text: "平台与场景", link: "/overview/platforms-and-scenarios" }
-        ]
-      }
-    ],
-    "/quick-install/": [
-      {
-        text: "快速安装",
-        items: [
-          { text: "安装路径选择", link: "/quick-install/installation-paths" },
-          { text: "安装 Host 服务", link: "/quick-install/host-installation" },
-          { text: "连接客户端", link: "/quick-install/client-connection" },
-          { text: "首次登录与开始使用", link: "/quick-install/first-login" }
-        ]
-      }
-    ],
-    "/user-guide/": [
-      {
-        text: "使用手册",
-        items: [
-          { text: "工作区与会话", link: "/user-guide/workspaces-and-sessions" },
-          { text: "对话工作台", link: "/user-guide/conversation-workbench" },
-          { text: "文件、Git 与终端", link: "/user-guide/files-git-and-terminal" },
-          { text: "设置与更新", link: "/user-guide/settings-and-updates" }
-        ]
-      }
-    ],
-    "/remote-access/": [
-      {
-        text: "远程访问",
-        items: [
-          { text: "远程访问概览", link: "/remote-access/remote-access-overview" },
-          { text: "Tailscale 接入", link: "/remote-access/tailscale-access" },
-          { text: "隧道服务", link: "/remote-access/tunnel-service" },
-          { text: "安全与稳定建议", link: "/remote-access/safe-access-tips" }
-        ]
-      }
-    ],
-    "/community/": [
-      {
-        text: "社区交流",
-        items: [
-          { text: "社区入口", link: "/community/community-overview" },
-          { text: "官方链接", link: "/community/official-links" },
-          { text: "反馈与支持", link: "/community/feedback-and-support" }
-        ]
-      }
-    ],
-    "/en/overview/": [
-      {
-        text: "Project Overview",
-        items: [
-          { text: "Docs Overview", link: "/en/overview/docs-overview" },
-          { text: "Product Overview", link: "/en/overview/product-overview" },
-          { text: "Core Features", link: "/en/overview/core-features" },
-          { text: "Platforms & Scenarios", link: "/en/overview/platforms-and-scenarios" }
-        ]
-      }
-    ],
-    "/en/quick-install/": [
-      {
-        text: "Quick Install",
-        items: [
-          { text: "Choose an Install Path", link: "/en/quick-install/installation-paths" },
-          { text: "Install the Host Service", link: "/en/quick-install/host-installation" },
-          { text: "Connect a Client", link: "/en/quick-install/client-connection" },
-          { text: "First Login", link: "/en/quick-install/first-login" }
-        ]
-      }
-    ],
-    "/en/user-guide/": [
-      {
-        text: "User Guide",
-        items: [
-          { text: "Workspaces & Sessions", link: "/en/user-guide/workspaces-and-sessions" },
-          { text: "Conversation Workbench", link: "/en/user-guide/conversation-workbench" },
-          { text: "Files, Git & Terminal", link: "/en/user-guide/files-git-and-terminal" },
-          { text: "Settings & Updates", link: "/en/user-guide/settings-and-updates" }
-        ]
-      }
-    ],
-    "/en/remote-access/": [
-      {
-        text: "Remote Access",
-        items: [
-          { text: "Overview", link: "/en/remote-access/remote-access-overview" },
-          { text: "Tailscale Access", link: "/en/remote-access/tailscale-access" },
-          { text: "Tunnel Service", link: "/en/remote-access/tunnel-service" },
-          { text: "Safety & Stability Tips", link: "/en/remote-access/safe-access-tips" }
-        ]
-      }
-    ],
-    "/en/community/": [
-      {
-        text: "Community",
-        items: [
-          { text: "Community Entry", link: "/en/community/community-overview" },
-          { text: "Official Links", link: "/en/community/official-links" },
-          { text: "Feedback & Support", link: "/en/community/feedback-and-support" }
-        ]
-      }
-    ]
+    "/": zhSidebar,
+    "/en/": enSidebar
   },
   outlineLabel: "本页目录",
   prevLabel: "上一页",
@@ -199,67 +187,14 @@ const zhThemeConfig = createThemeConfig({
 
 const enThemeConfig = createThemeConfig({
   nav: [
-    { text: "Overview", link: "/en/overview/docs-overview" },
-    { text: "Quick Install", link: "/en/quick-install/installation-paths" },
-    { text: "User Guide", link: "/en/user-guide/workspaces-and-sessions" },
-    { text: "Remote Access", link: "/en/remote-access/remote-access-overview" },
-    { text: "Community", link: "/en/community/community-overview" }
+    { text: "Home", link: "/en/" },
+    { text: "Get Started", link: "/en/quick-install/installation-paths" },
+    { text: "Use the Product", link: "/en/user-guide/workspaces-and-sessions" },
+    { text: "Access & Connect", link: "/en/remote-access/remote-access-overview" },
+    { text: "Support", link: "/en/community/feedback-and-support" }
   ],
   sidebar: {
-    "/en/overview/": [
-      {
-        text: "Project Overview",
-        items: [
-          { text: "Docs Overview", link: "/en/overview/docs-overview" },
-          { text: "Product Overview", link: "/en/overview/product-overview" },
-          { text: "Core Features", link: "/en/overview/core-features" },
-          { text: "Platforms & Scenarios", link: "/en/overview/platforms-and-scenarios" }
-        ]
-      }
-    ],
-    "/en/quick-install/": [
-      {
-        text: "Quick Install",
-        items: [
-          { text: "Choose an Install Path", link: "/en/quick-install/installation-paths" },
-          { text: "Install the Host Service", link: "/en/quick-install/host-installation" },
-          { text: "Connect a Client", link: "/en/quick-install/client-connection" },
-          { text: "First Login", link: "/en/quick-install/first-login" }
-        ]
-      }
-    ],
-    "/en/user-guide/": [
-      {
-        text: "User Guide",
-        items: [
-          { text: "Workspaces & Sessions", link: "/en/user-guide/workspaces-and-sessions" },
-          { text: "Conversation Workbench", link: "/en/user-guide/conversation-workbench" },
-          { text: "Files, Git & Terminal", link: "/en/user-guide/files-git-and-terminal" },
-          { text: "Settings & Updates", link: "/en/user-guide/settings-and-updates" }
-        ]
-      }
-    ],
-    "/en/remote-access/": [
-      {
-        text: "Remote Access",
-        items: [
-          { text: "Overview", link: "/en/remote-access/remote-access-overview" },
-          { text: "Tailscale Access", link: "/en/remote-access/tailscale-access" },
-          { text: "Tunnel Service", link: "/en/remote-access/tunnel-service" },
-          { text: "Safety & Stability Tips", link: "/en/remote-access/safe-access-tips" }
-        ]
-      }
-    ],
-    "/en/community/": [
-      {
-        text: "Community",
-        items: [
-          { text: "Community Entry", link: "/en/community/community-overview" },
-          { text: "Official Links", link: "/en/community/official-links" },
-          { text: "Feedback & Support", link: "/en/community/feedback-and-support" }
-        ]
-      }
-    ]
+    "/en/": enSidebar
   },
   outlineLabel: "On This Page",
   prevLabel: "Previous page",

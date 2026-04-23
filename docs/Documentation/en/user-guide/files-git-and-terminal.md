@@ -1,10 +1,8 @@
 # Files, Git & Terminal
 
-## Why these tools belong together
-
 Real development is rarely just chat. You read files, inspect Git changes, run commands, and then return to the conversation. CodingNS keeps those actions inside the same workspace flow.
 
-## Files
+## Files are for quick reading, searching, and small edits
 
 Use the file panel to:
 
@@ -13,7 +11,7 @@ Use the file panel to:
 - preview common file content;
 - make small direct edits when appropriate.
 
-## Git
+## Git keeps the change boundary visible
 
 Use the Git area to:
 
@@ -21,7 +19,7 @@ Use the Git area to:
 - understand branch state;
 - prepare commits and remote sync actions.
 
-## Terminal
+## Terminal is still where a lot of work happens
 
 The terminal page uses real terminal sessions, not a fake output view. It is useful for:
 
@@ -29,7 +27,7 @@ The terminal page uses real terminal sessions, not a fake output view. It is use
 - checking immediate output;
 - keeping multiple terminal instances under one workspace.
 
-## A practical rhythm
+## Most people end up with a rhythm like this
 
 Many users will naturally follow this loop:
 

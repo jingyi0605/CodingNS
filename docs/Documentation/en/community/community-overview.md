@@ -1,14 +1,8 @@
 # Community Entry
 
-## What this section is for
+Most people only come here for three things: official links, community channels, or a place to report friction.
 
-This section keeps three things together:
-
-- official links;
-- community channels;
-- feedback and support guidance.
-
-## When to come here
+## Go straight to the page that matches your goal
 
 - want the main project links: open [Official Links](/en/community/official-links)
 - want a communication channel: open [Official Links](/en/community/official-links)

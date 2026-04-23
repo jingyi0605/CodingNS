@@ -1,56 +1,36 @@
-# 文档导览
+# 文档地图
 
-## 这套文档适合谁
+这套文档不是要求你从第一页读到最后的教程。更好的用法是：先看清自己现在要解决什么，再直接进对应页面。
 
-这套文档主要写给三类人：
+## 你现在最可能要找的是哪一类内容
 
-- 第一次接触 CodingNS，想先知道这是什么产品的人。
-- 已经准备安装，想尽快把 Host 和客户端跑起来的人。
-- 已经开始使用，想把工作区、会话、文件、Git、终端和远程访问串起来的人。
+- 想先判断 CodingNS 适不适合你：先看 [产品概览](/overview/product-overview) 和 [平台与场景](/overview/platforms-and-scenarios)。
+- 想先把 Host 和客户端跑起来：直接看 [安装路径选择](/quick-install/installation-paths)、[安装 Host 服务](/quick-install/host-installation)、[连接客户端](/quick-install/client-connection)。
+- 想知道工作区、会话、文件、Git 和终端怎么配合：去 [工作区与会话](/user-guide/workspaces-and-sessions) 和 [文件、Git 与终端](/user-guide/files-git-and-terminal)。
+- 想从外部网络、手机或别的电脑继续访问：去 [远程访问概览](/remote-access/remote-access-overview)。
+- 想找官方入口、社群或反馈方式：去 [社区入口](/community/community-overview)。
 
-## 推荐阅读顺序
+## 按问题直接找页面
 
-### 第一步：先看产品是不是适合你
+| 你现在卡在哪 | 直接去这里 |
+| --- | --- |
+| 不知道这产品到底是干什么的 | [产品概览](/overview/product-overview) |
+| 不知道自己该装在哪台机器上 | [安装路径选择](/quick-install/installation-paths) |
+| Host 已经装了，但客户端还没连上 | [连接客户端](/quick-install/client-connection) |
+| 第一次进去，不知道会看到什么 | [首次登录与开始使用](/quick-install/first-login) |
+| 已经连上了，但不知道页面之间怎么配合 | [工作区与会话](/user-guide/workspaces-and-sessions) |
+| 想从外部网络或手机继续访问 | [远程访问概览](/remote-access/remote-access-overview) |
+| 想找链接、下载、群或反馈入口 | [社区入口](/community/community-overview) |
 
-先读 [产品概览](/overview/product-overview) 和 [平台与场景](/overview/platforms-and-scenarios)，确认 CodingNS 是否符合你的工作方式。
+## 如果你准备完整走一遍
 
-### 第二步：按最短路径安装
+1. 先用 [产品概览](/overview/product-overview) 判断它是不是你要的工作方式。
+2. 再按 [安装路径选择](/quick-install/installation-paths) 和 [安装 Host 服务](/quick-install/host-installation) 把环境跑起来。
+3. 接着去 [连接客户端](/quick-install/client-connection) 和 [首次登录与开始使用](/quick-install/first-login) 完成第一次进入。
+4. 真正开始用以后，再按需要补 [对话工作台](/user-guide/conversation-workbench)、[文件、Git 与终端](/user-guide/files-git-and-terminal) 和 [远程访问概览](/remote-access/remote-access-overview)。
 
-如果你已经决定试用，继续看 [安装路径选择](/quick-install/installation-paths) 和 [安装 Host 服务](/quick-install/host-installation)。
+## 这套文档坚持什么写法
 
-### 第三步：连接客户端并登录
-
-服务启动后，继续看 [连接客户端](/quick-install/client-connection) 和 [首次登录与开始使用](/quick-install/first-login)。
-
-### 第四步：按功能补充使用细节
-
-进入日常使用后，可以按需要阅读：
-
-- [工作区与会话](/user-guide/workspaces-and-sessions)
-- [对话工作台](/user-guide/conversation-workbench)
-- [文件、Git 与终端](/user-guide/files-git-and-terminal)
-- [设置与更新](/user-guide/settings-and-updates)
-
-## 文档怎么写
-
-- 默认站在普通用户视角解释“下一步该做什么”。
-- 只写当前产品里已经能看到、能操作的能力。
-- 优先讲清页面、操作顺序和结果，不把幕后实现细节塞进日常使用说明。
-
-## 遇到问题时怎么找页面
-
-### 不知道先装什么
-
-去 [快速安装](/quick-install/installation-paths)。
-
-### 不知道界面里的工作区、会话、终端各是什么
-
-去 [核心能力](/overview/core-features) 和 [工作区与会话](/user-guide/workspaces-and-sessions)。
-
-### 想从外部设备继续访问
-
-去 [远程访问概览](/remote-access/remote-access-overview)。
-
-### 想找群、找链接、提建议
-
-去 [社区入口](/community/community-overview)。
+- 先讲你会看到什么、能做什么，再讲下一步去哪。
+- 只写当前产品里真的已经公开可用的能力。
+- 尽量让你不用理解内部实现，也能把事情做完。
