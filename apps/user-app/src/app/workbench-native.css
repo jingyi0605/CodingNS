@@ -5416,16 +5416,6 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
   padding: 5px 5px max(var(--terminal-bottom-gap), env(safe-area-inset-bottom, 0px));
 }
 
-.workbench-shell[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .terminal-xterm .xterm-viewport {
-  top: 5px;
-  right: 5px;
-  bottom: max(var(--terminal-bottom-gap), env(safe-area-inset-bottom, 0px));
-  left: 5px;
-}
-
-.workbench-shell[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .terminal-xterm .xterm-screen {
-}
-
 .workbench-shell {
   --workbench-header-min-height: 44px;
   --workbench-header-padding-top: 7px;

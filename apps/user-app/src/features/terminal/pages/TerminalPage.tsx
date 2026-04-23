@@ -219,8 +219,7 @@ const TERMINAL_TOUCH_MOMENTUM_MAX_LINES_PER_MS = 0.9;
 const TERMINAL_TOUCH_MOMENTUM_FRICTION = 0.97;
 const TERMINAL_TOUCH_MOMENTUM_MAX_DURATION_MS = 3600;
 const TERMINAL_TOUCH_MOMENTUM_MAX_IDLE_FRAMES = 3;
-const TERMINAL_VIEWPORT_BOTTOM_GAP_RATIO = 0.05;
-const TERMINAL_VIEWPORT_BOTTOM_GAP_MIN_PX = 28;
+const TERMINAL_VIEWPORT_BOTTOM_GAP_PX = 5;
 const INITIAL_PANE_BINDINGS: TerminalPaneBindings = {
   primary: null,
   secondary: null
@@ -3623,17 +3622,25 @@ function TerminalWorkspacePane({
 
         if (runtime) {
           if (event.cursorReset) {
-            replaceTerminalChunks(runtime.terminal, orderedChunks);
+            replaceTerminalChunks(runtime.terminal, orderedChunks, () => {
+              if (shouldRevealLatest) {
+                runtime.revealLatest();
+              }
+            });
             oldestLoadedSeqRef.current = null;
           } else if (runtime.restoredFromSnapshot) {
-            appendTerminalChunks(runtime.terminal, orderedChunks);
+            appendTerminalChunks(runtime.terminal, orderedChunks, () => {
+              if (shouldRevealLatest) {
+                runtime.revealLatest();
+              }
+            });
           } else {
-            replaceTerminalChunks(runtime.terminal, orderedChunks);
+            replaceTerminalChunks(runtime.terminal, orderedChunks, () => {
+              if (shouldRevealLatest) {
+                runtime.revealLatest();
+              }
+            });
             oldestLoadedSeqRef.current = null;
-          }
-
-          if (shouldRevealLatest) {
-            runtime.revealLatest();
           }
 
         }
@@ -3701,13 +3708,17 @@ function TerminalWorkspacePane({
               charCount: event.chunk.content.length,
               renderMs: terminalDebugNowMs() - renderStartedAtMs
             });
+
+            if (shouldRevealLatest) {
+              runtime.revealLatest();
+            }
           });
         } else {
-          runtime?.terminal.write(event.chunk.content);
-        }
-
-        if (shouldRevealLatest) {
-          runtime?.revealLatest();
+          runtime?.terminal.write(event.chunk.content, () => {
+            if (shouldRevealLatest) {
+              runtime?.revealLatest();
+            }
+          });
         }
         activeCursorRef.current = event.chunk.cursor;
         updateOldestLoadedSeq(event.chunk.cursor);
@@ -3985,6 +3996,7 @@ function createTerminalViewportRuntime(input: {
   let lastFittedCols = terminal.cols;
   let lastFittedRows = terminal.rows;
   let deferredReflowTimer: number | null = null;
+  let viewportBottomAlignFrameId: number | null = null;
   const scheduledReflowFrameIds = new Set<number>();
   let touchPoint: { x: number; y: number } | null = null;
   let pendingTouchLines = 0;
@@ -4524,23 +4536,48 @@ function createTerminalViewportRuntime(input: {
   }
 
   function revealLatest(): void {
-    scrollTerminalToBottom(
-      terminal,
-      resolveTerminalViewportReservedLines(input.container, terminal)
-    );
+    scrollTerminalViewportToBottom(input.container, terminal);
+    scheduleViewportBottomAlignment();
   }
 
   function shouldAutoRevealLatest(): boolean {
-    return isTerminalViewportNearBottom(
-      terminal,
-      resolveTerminalViewportReservedLines(input.container, terminal) + 1
-    );
+    return isTerminalViewportNearBottomPx(input.container, terminal);
   }
 
   function applyTheme(): void {
     const nextTheme = readTerminalVisualTheme();
     terminal.options.theme = nextTheme;
     syncTerminalContainerThemeVariables(input.container, nextTheme);
+  }
+
+  function scheduleViewportBottomAlignment(): void {
+    if (disposed || typeof window === "undefined") {
+      return;
+    }
+
+    if (viewportBottomAlignFrameId !== null) {
+      window.cancelAnimationFrame(viewportBottomAlignFrameId);
+    }
+
+    const alignOnNextFrame = (remainingFrames: number) => {
+      viewportBottomAlignFrameId = window.requestAnimationFrame(() => {
+        if (disposed) {
+          viewportBottomAlignFrameId = null;
+          return;
+        }
+
+        scrollTerminalViewportToBottom(input.container, terminal);
+
+        if (remainingFrames <= 1) {
+          viewportBottomAlignFrameId = null;
+          return;
+        }
+
+        alignOnNextFrame(remainingFrames - 1);
+      });
+    };
+
+    alignOnNextFrame(2);
   }
 
   return {
@@ -4611,6 +4648,10 @@ function createTerminalViewportRuntime(input: {
         window.clearTimeout(deferredReflowTimer);
         deferredReflowTimer = null;
       }
+      if (viewportBottomAlignFrameId !== null) {
+        window.cancelAnimationFrame(viewportBottomAlignFrameId);
+        viewportBottomAlignFrameId = null;
+      }
       scheduledReflowFrameIds.forEach((frameId) => {
         window.cancelAnimationFrame(frameId);
       });
@@ -4678,26 +4719,40 @@ function buildPersistedTerminalViewState(
   };
 }
 
-function appendTerminalChunks(terminal: Terminal, chunks: TerminalOutputChunkDto[]): void {
+function appendTerminalChunks(
+  terminal: Terminal,
+  chunks: TerminalOutputChunkDto[],
+  onRendered?: () => void
+): void {
   const orderedChunks = sortTerminalChunksByCursor(chunks);
 
   if (orderedChunks.length === 0) {
+    onRendered?.();
     return;
   }
 
-  terminal.write(orderedChunks.map((chunk) => chunk.content).join(""));
+  terminal.write(orderedChunks.map((chunk) => chunk.content).join(""), () => {
+    onRendered?.();
+  });
 }
 
-function replaceTerminalChunks(terminal: Terminal, chunks: TerminalOutputChunkDto[]): void {
+function replaceTerminalChunks(
+  terminal: Terminal,
+  chunks: TerminalOutputChunkDto[],
+  onRendered?: () => void
+): void {
   terminal.reset();
 
   const orderedChunks = sortTerminalChunksByCursor(chunks);
 
   if (orderedChunks.length === 0) {
+    onRendered?.();
     return;
   }
 
-  terminal.write(orderedChunks.map((chunk) => chunk.content).join(""));
+  terminal.write(orderedChunks.map((chunk) => chunk.content).join(""), () => {
+    onRendered?.();
+  });
 }
 
 function sortTerminalChunksByCursor(chunks: TerminalOutputChunkDto[]): TerminalOutputChunkDto[] {
@@ -4753,64 +4808,21 @@ function isTerminalViewportNearBottom(terminal: Terminal, slackLines = 1): boole
 }
 
 function resolveTerminalViewportBottomGapPx(containerHeight: number): number {
-  if (!Number.isFinite(containerHeight) || containerHeight <= 0) {
-    return TERMINAL_VIEWPORT_BOTTOM_GAP_MIN_PX;
-  }
-
-  return Math.max(
-    TERMINAL_VIEWPORT_BOTTOM_GAP_MIN_PX,
-    Math.ceil(containerHeight * TERMINAL_VIEWPORT_BOTTOM_GAP_RATIO)
-  );
+  void containerHeight;
+  return TERMINAL_VIEWPORT_BOTTOM_GAP_PX;
 }
 
-function resolveTerminalViewportReservedLines(
+function isTerminalViewportNearBottomPx(
   container: HTMLDivElement,
   terminal: Terminal
-): number {
-  if (!Number.isFinite(terminal.rows) || terminal.rows <= 0) {
-    return 1;
-  }
-
-  const bottomGapPx = resolveTerminalViewportBottomGapPx(container.clientHeight);
-  const screenElement = container.querySelector(".xterm-screen");
-  const visibleViewportHeight =
-    screenElement instanceof HTMLElement && screenElement.clientHeight > 0
-      ? screenElement.clientHeight
-      : Math.max(terminal.rows, container.clientHeight - bottomGapPx);
-  const estimatedLineHeight = visibleViewportHeight / terminal.rows;
-
-  if (!Number.isFinite(estimatedLineHeight) || estimatedLineHeight <= 0) {
-    return 1;
-  }
-
-  return Math.max(1, Math.round(bottomGapPx / estimatedLineHeight));
+): boolean {
+  void container;
+  return isTerminalViewportNearBottom(terminal, 1);
 }
 
-function scrollTerminalToBottom(terminal: Terminal, reservedLines = 0): void {
-  const normalizedReservedLines =
-    Number.isFinite(reservedLines) && reservedLines > 0 ? Math.round(reservedLines) : 0;
-  const terminalWithOptionalScrollMethods = terminal as Terminal & {
-    scrollToBottom?: () => void;
-    scrollLines?: (lines: number) => void;
-  };
-
-  if (typeof terminalWithOptionalScrollMethods.scrollToBottom === "function") {
-    terminalWithOptionalScrollMethods.scrollToBottom();
-
-    if (
-      normalizedReservedLines > 0 &&
-      typeof terminalWithOptionalScrollMethods.scrollLines === "function"
-    ) {
-      terminalWithOptionalScrollMethods.scrollLines(-normalizedReservedLines);
-      return;
-    }
-
-    if (normalizedReservedLines <= 0) {
-      return;
-    }
-  }
-
-  terminal.scrollToLine(Math.max(0, terminal.buffer.active.baseY - normalizedReservedLines));
+function scrollTerminalViewportToBottom(container: HTMLDivElement, terminal: Terminal): void {
+  void container;
+  terminal.scrollToBottom();
 }
 
 function hasUsableContainerSize(container: HTMLDivElement): boolean {
@@ -4826,15 +4838,15 @@ function resolveTerminalViewportDimensions(
   fitAddon: FitAddon
 ): { cols: number; rows: number } | null {
   const fallbackDimensions = fitAddon.proposeDimensions();
-  const viewportElement = container.querySelector(".xterm-viewport");
   const cellDimensions = readTerminalCssCellDimensions(terminal);
+  const viewportBox = readTerminalViewportBox(container);
 
-  if (!(viewportElement instanceof HTMLElement) || !cellDimensions) {
+  if (!viewportBox || !cellDimensions) {
     return fallbackDimensions ?? null;
   }
 
-  const viewportWidth = viewportElement.clientWidth;
-  const viewportHeight = viewportElement.clientHeight;
+  const viewportWidth = viewportBox.width;
+  const viewportHeight = viewportBox.height;
 
   if (
     !Number.isFinite(viewportWidth) ||
@@ -4858,6 +4870,47 @@ function resolveTerminalViewportDimensions(
     cols: Math.max(MIN_TERMINAL_COLS, cols),
     rows: Math.max(MIN_TERMINAL_ROWS, rows)
   };
+}
+
+function readTerminalViewportBox(
+  container: HTMLDivElement
+): { width: number; height: number } | null {
+  const xtermRoot = container.querySelector(".xterm");
+
+  if (!(xtermRoot instanceof HTMLElement)) {
+    return null;
+  }
+
+  const computedStyle = xtermRoot.ownerDocument.defaultView?.getComputedStyle(xtermRoot);
+  const paddingLeft = parseTerminalCssPixelValue(computedStyle?.paddingLeft);
+  const paddingRight = parseTerminalCssPixelValue(computedStyle?.paddingRight);
+  const paddingTop = parseTerminalCssPixelValue(computedStyle?.paddingTop);
+  const paddingBottom = parseTerminalCssPixelValue(computedStyle?.paddingBottom);
+  const width = xtermRoot.clientWidth - paddingLeft - paddingRight;
+  const height = xtermRoot.clientHeight - paddingTop - paddingBottom;
+
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    return null;
+  }
+
+  return {
+    width,
+    height
+  };
+}
+
+function parseTerminalCssPixelValue(value: string | undefined): number {
+  if (!value) {
+    return 0;
+  }
+
+  const numericValue = Number.parseFloat(value);
+  return Number.isFinite(numericValue) ? numericValue : 0;
 }
 
 function readTerminalCssCellDimensions(

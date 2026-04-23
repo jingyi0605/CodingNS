@@ -320,16 +320,20 @@ vi.mock("@xterm/xterm", () => ({
     open(container: HTMLElement) {
       const xtermRoot = document.createElement("div");
       xtermRoot.className = "xterm";
+      xtermRoot.style.padding = "5px";
       const viewport = document.createElement("div");
       viewport.className = "xterm-viewport";
       const screen = document.createElement("div");
       screen.className = "xterm-screen";
+      const scrollableElement = document.createElement("div");
+      scrollableElement.className = "xterm-scrollable-element";
       const scrollArea = document.createElement("div");
       scrollArea.className = "xterm-scroll-area";
       const marker = document.createElement("div");
       marker.setAttribute("data-testid", "mock-xterm");
       screen.append(marker);
-      xtermRoot.append(viewport, screen, scrollArea);
+      scrollableElement.append(screen);
+      xtermRoot.append(viewport, scrollableElement, scrollArea);
       container.append(xtermRoot);
       this.element = xtermRoot;
     }
@@ -544,6 +548,11 @@ describe("TerminalPage", () => {
     window.sessionStorage.clear();
     MockWebSocket.instances = [];
     windowRegistry.clear();
+    vi.spyOn(authStore, "refresh").mockResolvedValue({
+      status: "deferred",
+      session: null,
+      error: new Error("mocked refresh")
+    });
     clientConfigStore.hydrate({
       platform: "web",
       hostBaseUrl: "http://127.0.0.1:3002",
@@ -959,11 +968,9 @@ describe("TerminalPage", () => {
     await screen.findByText("工作终端");
     const terminalMarker = await screen.findByTestId("mock-xterm");
     const viewportHost = terminalMarker.closest(".terminal-xterm") as HTMLElement | null;
-    const viewportElement = terminalMarker
-      .closest(".xterm")
-      ?.querySelector(".xterm-viewport") as HTMLElement | null;
+    const xtermRoot = terminalMarker.closest(".xterm") as HTMLElement | null;
 
-    if (!viewportHost || !viewportElement) {
+    if (!viewportHost || !xtermRoot) {
       throw new Error("未找到终端视口元素");
     }
 
@@ -989,13 +996,13 @@ describe("TerminalPage", () => {
     });
 
     socket.sentPayloads.length = 0;
-    Object.defineProperty(viewportElement, "clientWidth", {
+    Object.defineProperty(xtermRoot, "clientWidth", {
       configurable: true,
-      value: 882
+      value: 892
     });
-    Object.defineProperty(viewportElement, "clientHeight", {
+    Object.defineProperty(xtermRoot, "clientHeight", {
       configurable: true,
-      value: 342
+      value: 352
     });
     mockFitDimensions.cols = 120;
     mockFitDimensions.rows = 21;
@@ -1485,7 +1492,7 @@ describe("TerminalPage", () => {
       const terminalMarker = screen.getByTestId("mock-xterm");
       const viewportHost = terminalMarker.closest(".terminal-xterm") as HTMLElement | null;
       expect(viewportHost).not.toBeNull();
-      expect(viewportHost?.style.getPropertyValue("--terminal-bottom-gap")).toBe("28px");
+      expect(viewportHost?.style.getPropertyValue("--terminal-bottom-gap")).toBe("5px");
     });
   });
 
@@ -1510,22 +1517,7 @@ describe("TerminalPage", () => {
     renderPage();
 
     await screen.findByText("工作终端");
-    const terminalMarker = await screen.findByTestId("mock-xterm");
-    const viewportHost = terminalMarker.closest(".terminal-xterm") as HTMLElement | null;
-    const viewportElement = terminalMarker.closest(".xterm")?.querySelector(".xterm-viewport") as HTMLElement | null;
-
-    if (!viewportHost || !viewportElement) {
-      throw new Error("未找到终端视口元素");
-    }
-
-    Object.defineProperty(viewportHost, "clientHeight", {
-      configurable: true,
-      value: 400
-    });
-    Object.defineProperty(viewportElement, "clientHeight", {
-      configurable: true,
-      value: 320
-    });
+    await screen.findByTestId("mock-xterm");
 
     const terminal = mockXtermInstances.at(-1);
 
@@ -1562,7 +1554,71 @@ describe("TerminalPage", () => {
 
     await waitFor(() => {
       expect(terminal.buffer.active.baseY).toBe(11);
-      expect(terminal.buffer.active.viewportY).toBe(9);
+      expect(terminal.buffer.active.viewportY).toBe(11);
+    });
+  });
+
+  it("终端输出会在 write 完成后再贴底，避免输入时光标先掉到视口外", async () => {
+    setTerminalManagerSnapshot("workspace-1", [buildTerminal()]);
+
+    renderPage();
+
+    await screen.findByText("工作终端");
+    const terminal = mockXtermInstances.at(-1);
+    const socket = MockWebSocket.instances.at(-1);
+
+    if (!terminal || !socket) {
+      throw new Error("未建立终端运行时");
+    }
+
+    terminal.rows = 20;
+
+    const originalWrite = terminal.write.bind(terminal);
+    terminal.write = (content: string, callback?: () => void) => {
+      queueMicrotask(() => {
+        originalWrite(content, callback);
+      });
+    };
+
+    socket.dispatchMessage({
+      type: "terminal.backfill",
+      terminalId: "terminal-1",
+      truncated: false,
+      cursorReset: false,
+      latestCursor: "10",
+      chunks: [
+        {
+          terminalId: "terminal-1",
+          cursor: "10",
+          stream: "stdout",
+          content: Array.from({ length: 11 }, (_, index) => `seed ${index + 1}`).join("\r\n") + "\r\n",
+          timestamp: "2026-03-26T08:00:01.000Z"
+        }
+      ]
+    });
+
+    await waitFor(() => {
+      expect(terminal.buffer.active.baseY).toBe(10);
+      expect(terminal.buffer.active.viewportY).toBe(10);
+    });
+
+    socket.dispatchMessage({
+      type: "terminal.output",
+      terminalId: "terminal-1",
+      chunk: {
+        terminalId: "terminal-1",
+        cursor: "11",
+        stream: "stdout",
+        content: "next line\r\n",
+        timestamp: "2026-03-26T08:00:02.000Z"
+      }
+    });
+
+    expect(terminal.buffer.active.viewportY).toBe(10);
+
+    await waitFor(() => {
+      expect(terminal.buffer.active.baseY).toBe(11);
+      expect(terminal.buffer.active.viewportY).toBe(11);
     });
   });
 
