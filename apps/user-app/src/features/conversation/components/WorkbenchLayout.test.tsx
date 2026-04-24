@@ -6210,6 +6210,67 @@ describe("WorkbenchLayout", () => {
     });
   });
 
+  it("并行会话升级成子工作区后，右侧 Git 面板使用子工作区并显示工作树组件", async () => {
+    const parallelGroup = {
+      groupId: "parallel-group-1",
+      role: "member" as const,
+      memberCount: 2,
+      sourceType: "new" as const,
+      sourceSessionId: null,
+      anchorSessionId: "session-anchor",
+      colorToken: "parallel-group-1"
+    };
+    const promotedWorkspace = {
+      id: "isolated-1",
+      workspaceId: "workspace-1-child",
+      sourceWorkspaceId: "workspace-1",
+      branchName: "parallel/member-1",
+      lifecycleStatus: "promoted" as const,
+      promotedAt: "2026-04-24T08:30:00.000Z",
+      createdAt: "2026-04-24T08:00:00.000Z",
+      updatedAt: "2026-04-24T08:30:00.000Z"
+    };
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-parallel",
+            title: "并行成员",
+            workspaceId: "workspace-1",
+            parallelGroup,
+            sessionIsolatedWorkspace: promotedWorkspace
+          })
+        ],
+        childWorktrees: [
+          createWorkbenchWorktreeNode({
+            workspace: createWorkspace("workspace-1-child", "并行成员工作区"),
+            displayName: "parallel/member-1",
+            branchName: "parallel/member-1",
+            sessions: []
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    await renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-parallel");
+    await userEvent.click(screen.getByRole("tab", { name: t("shell.gitEntry") }));
+
+    expect(await screen.findByText(t("shell.worktreeMergePanelLabel"))).toBeInTheDocument();
+    expect(document.querySelector(".workbench-auxiliary")).toHaveAttribute("data-workspace-tone", "worktree");
+  });
+
   it("不会仅凭工作树生命周期状态就误判已经合回父工作区", async () => {
     const currentSnapshot = createWorkbenchSnapshot([
       {
@@ -7087,6 +7148,16 @@ function createSessionSummary(input: {
     anchorSessionId: string | null;
     colorToken: string;
   } | null;
+  sessionIsolatedWorkspace?: {
+    id: string;
+    workspaceId: string;
+    sourceWorkspaceId: string;
+    branchName: string;
+    lifecycleStatus: "active" | "promoted" | "removing" | "removed";
+    promotedAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+  } | null;
   displayParentSessionId?: string | null;
 }) {
   const provider = input.provider ?? "codex";
@@ -7125,6 +7196,7 @@ function createSessionSummary(input: {
     lastSeenAt: null,
     activityState: input.activityState ?? "idle",
     parallelGroup: input.parallelGroup ?? null,
+    sessionIsolatedWorkspace: input.sessionIsolatedWorkspace ?? null,
     displayParentSessionId: input.displayParentSessionId ?? null
   };
 }

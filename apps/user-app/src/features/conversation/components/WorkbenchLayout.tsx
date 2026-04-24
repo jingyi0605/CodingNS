@@ -115,6 +115,7 @@ import {
   createParallelGroupStyle,
   resolveParallelGroupLabel,
   resolveSessionNavigationWorkspaceId,
+  resolveSessionToolWorkspaceId,
   resolveSessionDisplayParentSessionId
 } from "../parallel-session-display";
 import {
@@ -1011,10 +1012,6 @@ interface WorkbenchShellContextValue {
     listener: (snapshot: WorkspaceManagementRealtimeSnapshotDto) => void
   ) => () => void;
   workspaceManagementStateById: Record<string, WorkspaceManagementViewState>;
-  worktreeMergeStateById: Record<string, WorktreeMergeViewState>;
-  refreshWorktreeMergePreview: (workspaceId: string, force?: boolean) => void;
-  applyWorktreeMerge: (workspaceId: string) => void;
-  requestWorktreeCleanup: (meta: WorktreeMetaDto) => void;
   subscribeTerminalManagerSnapshot: (
     workspaceId: string,
     options?: { knownRevision?: string | null | undefined }
@@ -1068,7 +1065,7 @@ interface WorkspaceManagementViewState {
   error: string | null;
 }
 
-export interface WorktreeMergeViewState {
+interface WorktreeMergeViewState {
   preview: WorktreeMergePreviewDto | null;
   loading: boolean;
   applying: boolean;
@@ -1461,6 +1458,22 @@ function findNavigationWorktreeNodeByWorkspaceId(
   }
 
   return null;
+}
+
+function collectWorkbenchWorktreeWorkspaceIds(nodes: readonly WorkbenchWorktreeNodeDto[]): string[] {
+  return nodes.flatMap((node) => [
+    node.workspace.id,
+    ...collectWorkbenchWorktreeWorkspaceIds(node.children)
+  ]);
+}
+
+function collectKnownWorkspaceIds(groups: readonly WorkspaceSessionGroup[]): Set<string> {
+  return new Set(
+    groups.flatMap((group) => [
+      group.workspace.id,
+      ...collectWorkbenchWorktreeWorkspaceIds(group.childWorktrees)
+    ])
+  );
 }
 
 function extractCollapsedWorkspaceIds(snapshot: WorkbenchSnapshotDto | null | undefined): string[] {
@@ -7066,7 +7079,7 @@ function WorkbenchInfoPanel({
   );
 }
 
-export function WorktreeMergePanel({
+function WorktreeMergePanel({
   meta,
   state,
   onRefresh,
@@ -8646,7 +8659,7 @@ export function WorkbenchLayout({
     [navigationGroups]
   );
   const knownWorkspaceIds = useMemo(
-    () => new Set(navigationGroups.map((group) => group.workspace.id)),
+    () => collectKnownWorkspaceIds(navigationGroups),
     [navigationGroups]
   );
   const collapsedWorkspaceIdSet = useMemo(() => new Set(collapsedWorkspaceIds), [collapsedWorkspaceIds]);
@@ -9007,12 +9020,10 @@ export function WorkbenchLayout({
       return;
     }
 
-    const knownWorkspaceIds = new Set(navigationGroups.map((group) => group.workspace.id));
-
     // 工作区选择必须跟随当前快照收敛，否则会指向已经不存在的工作区。
     setCollapsedWorkspaceIds((current) => retainKnownIds(current, knownWorkspaceIds));
     setSelectedWorkspaceId((current) => (current && knownWorkspaceIds.has(current) ? current : null));
-  }, [navigationGroups, navigationLoading]);
+  }, [knownWorkspaceIds, navigationLoading]);
 
   const currentSessionContext =
     flattenedSessions.find((item) => item.session.sessionId === currentSessionId) ?? null;
@@ -9278,6 +9289,18 @@ export function WorkbenchLayout({
     () => findNavigationWorktreeNodeByWorkspaceId(navigationGroups, currentWorkspaceId),
     [currentWorkspaceId, navigationGroups]
   );
+  const currentToolWorkspaceId =
+    currentSessionContext
+      ? resolveSessionToolWorkspaceId(
+        currentSessionContext.session,
+        currentSessionContext.session.sessionIsolatedWorkspace
+      )
+      : currentWorkspaceId;
+  const currentAuxiliaryWorkspaceId = currentToolWorkspaceId ?? currentWorkspaceId;
+  const currentAuxiliaryWorktreeNode = useMemo(
+    () => findNavigationWorktreeNodeByWorkspaceId(navigationGroups, currentAuxiliaryWorkspaceId),
+    [currentAuxiliaryWorkspaceId, navigationGroups]
+  );
   const currentWorkspaceEntity = useMemo(
     () =>
       currentWorkspaceId
@@ -9289,15 +9312,28 @@ export function WorkbenchLayout({
         : null,
     [currentWorkspaceId, currentWorktreeNode, navigationGroups]
   );
-  const currentWorktreeMeta: WorktreeMetaDto | null = currentWorktreeNode?.meta ?? null;
+  const currentAuxiliaryWorkspaceEntity = useMemo(
+    () =>
+      currentAuxiliaryWorkspaceId
+        ? currentAuxiliaryWorktreeNode?.workspace
+          ?? navigationGroups
+            .map((group) => group.workspace)
+            .find((workspace) => workspace.id === currentAuxiliaryWorkspaceId)
+          ?? null
+        : null,
+    [currentAuxiliaryWorkspaceId, currentAuxiliaryWorktreeNode, navigationGroups]
+  );
+  const currentWorktreeMeta: WorktreeMetaDto | null = currentAuxiliaryWorktreeNode?.meta ?? null;
   const currentWorkspaceContext =
     (currentWorkspaceId ? workspaceVisualContextMap[currentWorkspaceId] ?? null : null)
     ?? (currentWorkspaceEntity ? createFallbackWorkspaceVisualContext(currentWorkspaceEntity) : null);
+  const currentAuxiliaryWorkspaceContext =
+    (currentAuxiliaryWorkspaceId ? workspaceVisualContextMap[currentAuxiliaryWorkspaceId] ?? null : null)
+    ?? (currentAuxiliaryWorkspaceEntity
+      ? createFallbackWorkspaceVisualContext(currentAuxiliaryWorkspaceEntity)
+      : currentWorkspaceContext);
   const currentWorktreeMergeState =
     (currentWorktreeMeta ? worktreeMergeStateById[currentWorktreeMeta.workspaceId] ?? null : null);
-  const isParallelConversationActive =
-    activeCenterTab === "conversation"
-    && Boolean(currentSessionContext?.session.parallelGroup);
 
   const favoriteSessions = useMemo(
     () =>
@@ -9902,10 +9938,6 @@ export function WorkbenchLayout({
       requestWorkspaceManagementRefresh,
       addWorkspaceManagementSnapshotListener,
       workspaceManagementStateById,
-      worktreeMergeStateById,
-      refreshWorktreeMergePreview: loadWorktreeMergePreview,
-      applyWorktreeMerge,
-      requestWorktreeCleanup,
       subscribeTerminalManagerSnapshot,
       requestTerminalManagerRefresh,
       addTerminalManagerSnapshotListener,
@@ -9949,10 +9981,6 @@ export function WorkbenchLayout({
       renameNavigationSession,
       showArchivedNotifications,
       workspaceManagementStateById,
-      worktreeMergeStateById,
-      loadWorktreeMergePreview,
-      applyWorktreeMerge,
-      requestWorktreeCleanup,
       shellMode,
       startDraftSession,
       setSessionWorkspace,
@@ -9985,9 +10013,9 @@ export function WorkbenchLayout({
           setActiveInfoTab(tab);
         }}
         currentSessionId={isDraftSession ? null : currentSessionId}
-        activeWorkspaceId={currentWorkspaceId}
+        activeWorkspaceId={currentAuxiliaryWorkspaceId}
         navigationGroups={navigationGroups}
-        workspaceContext={currentWorkspaceContext}
+        workspaceContext={currentAuxiliaryWorkspaceContext}
         worktreeMeta={currentWorktreeMeta}
         worktreeMergeState={currentWorktreeMergeState}
         onRefreshWorktreeMergePreview={loadWorktreeMergePreview}
@@ -9995,7 +10023,7 @@ export function WorkbenchLayout({
         onCleanupWorktree={applyWorktreeCleanup}
       />
     );
-  const shouldShowAuxiliaryPanel = auxiliaryPanelContent !== null && !isParallelConversationActive;
+  const shouldShowAuxiliaryPanel = auxiliaryPanelContent !== null;
   const shouldUseMacOsOverlayTitlebarAlignment =
     platform.isDesktop && platform.ui.osFamily === "macos" && platform.ui.prefersOverlayTitlebar;
 
@@ -10655,11 +10683,11 @@ export function WorkbenchLayout({
                 />
                 <aside
                   className="workbench-auxiliary surface-card"
-                  data-workspace-tone={currentWorkspaceContext?.tone ?? "root"}
-                  data-worktree-depth={currentWorkspaceContext?.depth ?? 0}
+                  data-workspace-tone={currentAuxiliaryWorkspaceContext?.tone ?? "root"}
+                  data-worktree-depth={currentAuxiliaryWorkspaceContext?.depth ?? 0}
                   data-collapsed={rightCollapsed}
                   data-custom-panel={activeCenterTab === "butler"}
-                  style={createWorkspaceToneStyle(currentWorkspaceContext)}
+                  style={createWorkspaceToneStyle(currentAuxiliaryWorkspaceContext)}
                 >
                   {activeCenterTab === "butler" ? (
                     <div className="workbench-auxiliary-custom-panel">
@@ -10676,9 +10704,9 @@ export function WorkbenchLayout({
                       }}
                       onToggleCollapse={() => setRightCollapsed(true)}
                       currentSessionId={isDraftSession ? null : currentSessionId}
-                      activeWorkspaceId={currentWorkspaceId}
+                      activeWorkspaceId={currentAuxiliaryWorkspaceId}
                       navigationGroups={navigationGroups}
-                      workspaceContext={currentWorkspaceContext}
+                      workspaceContext={currentAuxiliaryWorkspaceContext}
                       worktreeMeta={currentWorktreeMeta}
                       worktreeMergeState={currentWorktreeMergeState}
                       onRefreshWorktreeMergePreview={loadWorktreeMergePreview}
@@ -10929,10 +10957,6 @@ export function useWorkbenchShell(): WorkbenchShellContextValue {
       requestWorkspaceManagementRefresh: () => undefined,
       addWorkspaceManagementSnapshotListener: () => () => undefined,
       workspaceManagementStateById: {},
-      worktreeMergeStateById: {},
-      refreshWorktreeMergePreview: () => undefined,
-      applyWorktreeMerge: () => undefined,
-      requestWorktreeCleanup: () => undefined,
       subscribeTerminalManagerSnapshot: () => undefined,
       requestTerminalManagerRefresh: () => undefined,
       addTerminalManagerSnapshotListener: () => () => undefined,
