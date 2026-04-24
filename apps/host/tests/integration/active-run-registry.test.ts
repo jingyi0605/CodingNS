@@ -7,6 +7,46 @@ import {
 } from "@codingns/session-sync-core";
 
 describe("ActiveRunRegistry", () => {
+  it("同一会话的监听器会跨 run 复用并收到后续新 run 的流式消息", async () => {
+    const registry = new ActiveRunRegistry();
+    const received: NormalizedMessage[] = [];
+
+    const subscription = registry.attach("session-keepalive", (event) => {
+      if (event.type === "message") {
+        received.push(event.message);
+      }
+    });
+
+    const firstRun = registry.register({
+      sessionId: "session-keepalive",
+      workspaceId: "workspace-1",
+      workspacePath: "/tmp/workspace-1",
+      provider: "codex",
+      providerSessionId: null,
+      rawStoreRef: null
+    });
+    await firstRun.emit(buildMessageEvent("thread-1", "第一轮第一段", 1, "2026-04-09T09:00:00.000Z"));
+    await flushMicrotasks();
+    await firstRun.dispose();
+
+    const secondRun = registry.register({
+      sessionId: "session-keepalive",
+      workspaceId: "workspace-1",
+      workspacePath: "/tmp/workspace-1",
+      provider: "codex",
+      providerSessionId: null,
+      rawStoreRef: null
+    });
+    await secondRun.emit(buildMessageEvent("thread-2", "第二轮第一段", 2, "2026-04-09T09:01:00.000Z"));
+
+    await flushMicrotasks();
+
+    expect(received.map((item) => item.content)).toEqual(["第一轮第一段", "第二轮第一段"]);
+    expect(secondRun.getSnapshot().attachedClients).toBe(1);
+
+    subscription.close();
+  });
+
   it("晚绑定监听器时会回放已经产生的 runtime 事件", async () => {
     const registry = new ActiveRunRegistry();
     const handle = registry.register({
