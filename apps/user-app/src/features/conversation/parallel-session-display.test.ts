@@ -5,6 +5,7 @@ import {
   consumeParallelGroupTransitionSignal,
   readParallelPaneColorOverride,
   resolveSessionIsolatedWorkspaceBranchName,
+  shouldUseParallelConversationLayout,
   resolveSessionNavigationWorkspaceId,
   resolveSessionDisplayParentSessionId,
   writeParallelGroupTransitionSignal,
@@ -114,5 +115,34 @@ describe("parallel-session-display", () => {
     ).toBe("parallel/member");
 
     expect(resolveSessionIsolatedWorkspaceBranchName(null)).toBeNull();
+  });
+
+  it("只有未升级成子工作区的并行会话才进入并行 pane 布局", () => {
+    expect(
+      shouldUseParallelConversationLayout({
+        parallelGroup: {
+          groupId: "parallel-group-1"
+        },
+        sessionIsolatedWorkspace: null
+      } as Parameters<typeof shouldUseParallelConversationLayout>[0])
+    ).toBe(true);
+
+    expect(
+      shouldUseParallelConversationLayout({
+        parallelGroup: {
+          groupId: "parallel-group-1"
+        },
+        sessionIsolatedWorkspace: {
+          lifecycleStatus: "promoted"
+        }
+      } as Parameters<typeof shouldUseParallelConversationLayout>[0])
+    ).toBe(false);
+
+    expect(
+      shouldUseParallelConversationLayout({
+        parallelGroup: null,
+        sessionIsolatedWorkspace: null
+      } as Parameters<typeof shouldUseParallelConversationLayout>[0])
+    ).toBe(false);
   });
 });

@@ -6210,6 +6210,56 @@ describe("WorkbenchLayout", () => {
     });
   });
 
+  it("并行组页会自动隐藏右侧信息栏，不再挤压主内容区", async () => {
+    const parallelGroup = {
+      groupId: "parallel-group-1",
+      role: "member" as const,
+      memberCount: 2,
+      sourceType: "new" as const,
+      sourceSessionId: null,
+      anchorSessionId: "session-anchor",
+      colorToken: "parallel-group-1"
+    };
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-parallel",
+            title: "并行成员",
+            workspaceId: "workspace-1",
+            parallelGroup
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    const view = renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-parallel");
+
+    await findSessionCardByTitle("并行成员");
+
+    const shell = view.container.querySelector(".workbench-shell");
+    const rightResizer = view.container.querySelector('.workbench-side-resizer[data-side="right"]');
+
+    expect(shell).toHaveAttribute("data-parallel-conversation-active", "true");
+    expect(shell).toHaveAttribute("data-right-collapsed", "true");
+    expect(view.container.querySelector('.workbench-auxiliary[data-collapsed="true"]')).not.toBeNull();
+    expect(rightResizer).toHaveAttribute("data-collapsed", "true");
+    expect(screen.queryByRole("button", { name: t("shell.hideInfoSidebar") })).toBeNull();
+    expect(view.container.querySelector('.workbench-collapsed-controls.right[data-visible="true"]')).toBeNull();
+  });
+
   it("并行会话升级成子工作区后，右侧 Git 面板使用子工作区并显示工作树组件", async () => {
     const parallelGroup = {
       groupId: "parallel-group-1",
