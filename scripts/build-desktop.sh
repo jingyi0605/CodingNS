@@ -161,7 +161,8 @@ prepare_desktop_tauri_build_config() {
     config_path="$temp_dir/tauri-build-config-$$.json"
 
     if validate_desktop_updater_build_env; then
-        log_info "检测到 updater 签名密钥，启用自动更新产物生成。"
+        # 这个函数会被命令替换捕获输出，日志必须走 stderr，stdout 只保留配置文件路径。
+        log_info "检测到 updater 签名密钥，启用自动更新产物生成。" >&2
         "$python_cmd" - "$TAURI_DIR/tauri.conf.json" "$config_path" "${CODINGNS_TAURI_UPDATER_PUBLIC_KEY}" "$(resolve_desktop_updater_manifest_url)" "$TAURI_UPDATER_PUBLIC_KEY_PLACEHOLDER" <<'PY'
 import json
 import sys
@@ -185,7 +186,7 @@ with Path(target_path).open("w", encoding="utf-8") as file:
     file.write("\n")
 PY
     else
-        log_warn "未检测到 updater 签名密钥（CODINGNS_TAURI_UPDATER_PUBLIC_KEY / TAURI_SIGNING_PRIVATE_KEY），跳过自动更新产物生成。"
+        log_warn "未检测到 updater 签名密钥（CODINGNS_TAURI_UPDATER_PUBLIC_KEY / TAURI_SIGNING_PRIVATE_KEY），跳过自动更新产物生成。" >&2
         "$python_cmd" - "$TAURI_DIR/tauri.conf.json" "$config_path" <<'PY'
 import json
 import sys
