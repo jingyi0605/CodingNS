@@ -4,8 +4,14 @@
 <dict>
   <key>NSAppTransportSecurity</key>
   <dict>
+    <key>NSAllowsArbitraryLoads</key>
+    <true/>
     <key>NSAllowsArbitraryLoadsInWebContent</key>
     <true/>
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
   </dict>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>CodingNS 需要连接您局域网内的 Host 服务，用于登录、同步消息和终端连接。</string>
 </dict>
 </plist>
