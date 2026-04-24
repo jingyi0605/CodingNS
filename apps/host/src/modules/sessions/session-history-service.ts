@@ -249,7 +249,13 @@ const SESSION_START_DEFERRED_PROVIDERS = new Set([
   "gemini",
   "kimi"
 ]);
-const MUTABLE_HISTORY_TAIL_PROVIDERS = new Set(["codex", "kimi"]);
+const MUTABLE_HISTORY_TAIL_PROVIDERS = new Set([
+  "claude-code",
+  "codex",
+  "gemini",
+  "kimi",
+  "opencode"
+]);
 const MUTABLE_HISTORY_TAIL_REFRESH_INTERVAL_MS = 1_200;
 const WORKSPACE_DISCOVERY_BACKGROUND_MAX_AGE_MS = 15_000;
 const WORKSPACE_DISCOVERY_SCAN_CONCURRENCY = 2;
