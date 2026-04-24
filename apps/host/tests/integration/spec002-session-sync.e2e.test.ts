@@ -2358,6 +2358,147 @@ describe("spec002 会话同步核心", () => {
     ]);
   });
 
+  it("Codex 订阅空 delta 时会重读尾部，修正运行中回写的消息位置", async () => {
+    const fixture = createEmptyFixture();
+    const config = resolveHostConfig({
+      databasePath: ":memory:",
+      claudeCodeHomeDir: fixture.claudeHomeDir,
+      codexHomeDir: fixture.codexHomeDir
+    });
+    const database = createDatabaseClient(":memory:");
+    const workspaceRepository = new WorkspaceRepository(database.db);
+    const sessionBindingRepository = new SessionBindingRepository(database.db);
+    const sessionIndexRepository = new SessionIndexRepository(database.db);
+    const sessionStateRepository = new SessionStateRepository(database.db);
+    const sessionStatusSnapshotRepository = new SessionStatusSnapshotRepository(database.db);
+    const sessionChangedFileService = new SessionChangedFileService(
+      new SessionChangedFileRepository(database.db)
+    );
+    const sessionMessageAttachmentService = new SessionMessageAttachmentService(
+      new SessionMessageAttachmentRepository(database.db),
+      config
+    );
+    const sessionHistoryService = new SessionHistoryService(
+      database.db,
+      workspaceRepository,
+      sessionBindingRepository,
+      sessionChangedFileService,
+      sessionIndexRepository,
+      sessionMessageAttachmentService,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository,
+      config
+    );
+    const timestamp = "2026-03-29T12:10:00.000Z";
+    const sessionId = "session-codex-tail-refresh";
+    const providerSessionId = "codex-session-tail-refresh";
+    const rawStoreRef = writeCodexSessionFile({
+      codexHomeDir: fixture.codexHomeDir,
+      workspaceDir: fixture.workspaceDir,
+      fileName: providerSessionId,
+      timestamps: [
+        "2026-03-23T10:00:00.000Z",
+        "2026-03-23T10:00:01.000Z",
+        "2026-03-23T10:00:02.000Z"
+      ]
+    });
+
+    activeEmptyFixtures.push(fixture);
+    activeClosers.push(() => database.close());
+
+    database.db
+      .prepare(
+        `INSERT INTO auth_users (id, username, password_hash, role, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run("user-1", "tester", "hash", "admin", timestamp, timestamp);
+
+    workspaceRepository.create({
+      id: "workspace-1",
+      name: "Fixture Workspace",
+      path: fixture.workspaceDir,
+      repoRoot: fixture.workspaceDir,
+      favorite: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      removedAt: null
+    });
+    sessionBindingRepository.upsert({
+      sessionId,
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId,
+      rawStoreRef,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    sessionIndexRepository.upsert({
+      sessionId,
+      workspaceId: "workspace-1",
+      provider: "codex",
+      title: "tail refresh test",
+      messageCount: 2,
+      isArchived: false,
+      lastMessageAt: "2026-03-23T10:00:02.000Z",
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    sessionStateRepository.upsert({
+      sessionId,
+      userId: "user-1",
+      runningState: "running",
+      activitySource: "runtime",
+      favorite: false,
+      lastEventAt: "2026-03-23T10:00:02.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: timestamp
+    });
+
+    const delivered: Array<{ type: string; messages: string[] }> = [];
+    const subscription = await sessionHistoryService.subscribeSession(
+      sessionId,
+      null,
+      2,
+      (envelope) => {
+        delivered.push({
+          type: envelope.type,
+          messages: envelope.messages.map((message) => message.content)
+        });
+      }
+    );
+    activeClosers.push(() => subscription.close());
+
+    expect(delivered).toEqual([
+      {
+        type: "session.backfill",
+        messages: [
+          `${providerSessionId} user message`,
+          `${providerSessionId} assistant message`
+        ]
+      }
+    ]);
+
+    writeFileSync(
+      rawStoreRef,
+      readFileSync(rawStoreRef, "utf8").replace(
+        `${providerSessionId} assistant message`,
+        "Codex 尾部消息已被真实历史修正"
+      ),
+      "utf8"
+    );
+
+    await waitForDeliveredMessage(
+      delivered,
+      "Codex 尾部消息已被真实历史修正"
+    );
+
+    expect(delivered).toContainEqual({
+      type: "session.delta",
+      messages: ["Codex 尾部消息已被真实历史修正"]
+    });
+  });
+
   it("本地已归档的 opencode 会话不会被后续发现结果重新放回普通列表", async () => {
     const fixture = createEmptyFixture();
     const config = resolveHostConfig({
@@ -4993,6 +5134,24 @@ async function waitForSessionDelta(
       };
     }
   }
+}
+
+async function waitForDeliveredMessage(
+  delivered: Array<{ messages: string[] }>,
+  expectedContent: string,
+  timeoutMs = 2500
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (delivered.some((envelope) => envelope.messages.includes(expectedContent))) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  throw new Error(`等待会话消息回流超时: ${expectedContent}`);
 }
 
 async function waitForWorkbenchSessionTitle(
