@@ -146,14 +146,13 @@ prepare_desktop_temp_dir() {
 }
 
 validate_desktop_updater_build_env() {
-    require_env CODINGNS_TAURI_UPDATER_PUBLIC_KEY || return 1
-    require_env TAURI_SIGNING_PRIVATE_KEY || return 1
-    return 0
+    if [[ -n "${CODINGNS_TAURI_UPDATER_PUBLIC_KEY:-}" && -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+        return 0
+    fi
+    return 1
 }
 
 prepare_desktop_tauri_build_config() {
-    validate_desktop_updater_build_env || return 1
-
     local python_cmd
     local temp_dir
     local config_path
@@ -161,7 +160,9 @@ prepare_desktop_tauri_build_config() {
     temp_dir="$(prepare_desktop_temp_dir)" || return 1
     config_path="$temp_dir/tauri-build-config-$$.json"
 
-    "$python_cmd" - "$TAURI_DIR/tauri.conf.json" "$config_path" "${CODINGNS_TAURI_UPDATER_PUBLIC_KEY}" "$(resolve_desktop_updater_manifest_url)" "$TAURI_UPDATER_PUBLIC_KEY_PLACEHOLDER" <<'PY'
+    if validate_desktop_updater_build_env; then
+        log_info "检测到 updater 签名密钥，启用自动更新产物生成。"
+        "$python_cmd" - "$TAURI_DIR/tauri.conf.json" "$config_path" "${CODINGNS_TAURI_UPDATER_PUBLIC_KEY}" "$(resolve_desktop_updater_manifest_url)" "$TAURI_UPDATER_PUBLIC_KEY_PLACEHOLDER" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -183,6 +184,28 @@ with Path(target_path).open("w", encoding="utf-8") as file:
     json.dump(config, file, ensure_ascii=False, indent=2)
     file.write("\n")
 PY
+    else
+        log_warn "未检测到 updater 签名密钥（CODINGNS_TAURI_UPDATER_PUBLIC_KEY / TAURI_SIGNING_PRIVATE_KEY），跳过自动更新产物生成。"
+        "$python_cmd" - "$TAURI_DIR/tauri.conf.json" "$config_path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source_path, target_path = sys.argv[1:]
+
+with Path(source_path).open("r", encoding="utf-8") as file:
+    config = json.load(file)
+
+config.setdefault("bundle", {})["createUpdaterArtifacts"] = False
+plugins = config.setdefault("plugins", {})
+if "updater" in plugins:
+    del plugins["updater"]
+
+with Path(target_path).open("w", encoding="utf-8") as file:
+    json.dump(config, file, ensure_ascii=False, indent=2)
+    file.write("\n")
+PY
+    fi
 
     printf '%s\n' "$config_path"
 }
