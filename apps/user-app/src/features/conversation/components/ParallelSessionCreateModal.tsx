@@ -283,15 +283,10 @@ export function ParallelSessionCreateModal({
   const description =
     activeSource.kind === "session"
       ? `${activeSource.workspaceName} · ${activeSource.sessionTitle}`
-      : activeSource.kind === "group"
-        ? `${activeSource.workspaceName} · ${t("shell.parallelAppendModalDescription")}`
-        : `${activeSource.workspaceName} · ${t("shell.parallelCreateModalDescription")}`;
+      : activeSource.workspaceName;
   const sharedPromptLabel = activeSource.kind === "group"
     ? t("shell.parallelAppendSharedPromptLabel")
     : t("shell.parallelCreateSharedPromptLabel");
-  const sharedPromptDescription = activeSource.kind === "group"
-    ? t("shell.parallelAppendSharedPromptDescription")
-    : t("shell.parallelCreateSharedPromptPlaceholder");
   const countLabel = activeSource.kind === "group"
     ? t("shell.parallelAppendCountLabel")
     : t("shell.parallelCreateCountLabel");
@@ -333,6 +328,21 @@ export function ParallelSessionCreateModal({
     setSubmitError(null);
     setPartialDetail(null);
     setMemberErrorsByOrdinal({});
+  }
+
+  function updateMemberIsolationMode(index: number, enabled: boolean) {
+    clearFeedbackForMember(index);
+    const nextIsolationMode = enabled ? "temporary_worktree" : "none";
+    setMembers((current) =>
+      current.map((item, memberIndex) =>
+        memberIndex === index
+          ? {
+              ...item,
+              workspaceIsolationMode: nextIsolationMode
+            }
+          : item
+      )
+    );
   }
 
   async function handleSubmit() {
@@ -471,15 +481,13 @@ export function ParallelSessionCreateModal({
             <ModalField
               className="parallel-create-target-field"
               label={sharedPromptLabel}
-              description={sharedPromptDescription}
               htmlFor={`${modalFieldIdPrefix}-shared-prompt`}
             >
               <textarea
                 id={`${modalFieldIdPrefix}-shared-prompt`}
                 className="parallel-create-textarea parallel-create-textarea-target"
-                rows={3}
+                rows={2}
                 value={sharedPrompt}
-                placeholder={!promptLocked ? t("shell.parallelCreateSharedPromptPlaceholder") : undefined}
                 readOnly={promptLocked}
                 aria-readonly={promptLocked}
                 data-readonly={promptLocked ? "true" : undefined}
@@ -518,7 +526,6 @@ export function ParallelSessionCreateModal({
         <ModalSection
           className="parallel-create-members-section"
           heading={t("shell.parallelCreateMembersTitle")}
-          description={t("shell.parallelCreateMembersDescription")}
         >
           <div className="parallel-create-member-list" style={memberGridStyle}>
             {memberConfigs.map(({ draft, index, modelOptions }) => {
@@ -536,7 +543,21 @@ export function ParallelSessionCreateModal({
                   <header className="parallel-create-member-header">
                     <div className="parallel-create-member-title-block">
                       <strong>{t("shell.parallelCreateMemberTitle", { index: index + 1 })}</strong>
-                      <span>{getProviderDisplayName(draft.provider, "full")}</span>
+                      <span className="parallel-create-member-provider">
+                        {getProviderDisplayName(draft.provider, "full")}
+                      </span>
+                      <label className="parallel-create-isolation-toggle">
+                        <input
+                          type="checkbox"
+                          checked={draft.workspaceIsolationMode === "temporary_worktree"}
+                          onChange={(event) => {
+                            updateMemberIsolationMode(index, event.target.checked);
+                          }}
+                        />
+                        <span className="parallel-create-isolation-copy">
+                          {t("shell.parallelCreateIsolationLabel")}
+                        </span>
+                      </label>
                     </div>
                     {memberErrorsByOrdinal[index] ? (
                       <span className="parallel-create-member-status error">
@@ -645,9 +666,8 @@ export function ParallelSessionCreateModal({
                     <textarea
                       id={`${modalFieldIdPrefix}-member-${index}-prompt`}
                       className="parallel-create-textarea member"
-                      rows={3}
+                      rows={2}
                       value={draft.memberPrompt}
-                      placeholder={t("shell.parallelCreateMemberPromptPlaceholder")}
                       onChange={(event) => {
                         clearFeedbackForMember(index);
                         const nextPrompt = event.target.value;
@@ -664,30 +684,6 @@ export function ParallelSessionCreateModal({
                       }}
                     />
                   </ModalField>
-
-                  <label className="parallel-create-isolation-toggle">
-                    <input
-                      type="checkbox"
-                      checked={draft.workspaceIsolationMode === "temporary_worktree"}
-                      onChange={(event) => {
-                        clearFeedbackForMember(index);
-                        const nextIsolationMode = event.target.checked ? "temporary_worktree" : "none";
-                        setMembers((current) =>
-                          current.map((item, memberIndex) =>
-                            memberIndex === index
-                              ? {
-                                  ...item,
-                                  workspaceIsolationMode: nextIsolationMode
-                                }
-                              : item
-                          )
-                        );
-                      }}
-                    />
-                    <span className="parallel-create-isolation-copy">
-                      <strong>{t("shell.parallelCreateIsolationLabel")}</strong>
-                    </span>
-                  </label>
 
                   {memberErrorsByOrdinal[index] ? (
                     <div className="parallel-create-member-error" role="alert">

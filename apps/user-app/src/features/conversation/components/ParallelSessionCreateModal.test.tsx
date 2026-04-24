@@ -79,7 +79,7 @@ describe("ParallelSessionCreateModal", () => {
     renderModal({ onCreated });
 
     await user.type(
-      screen.getByPlaceholderText(t("shell.parallelCreateSharedPromptPlaceholder")),
+      screen.getByLabelText(t("shell.parallelCreateSharedPromptLabel")),
       "同一个问题分别给出两种实现方向"
     );
     await user.click(screen.getByRole("button", { name: t("shell.parallelCreateSubmit") }));
