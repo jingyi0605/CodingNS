@@ -47,9 +47,13 @@ const PARALLEL_GROUP_COLOR_MAP: Record<
   }
 };
 
-const PARALLEL_GROUP_TRANSITION_STORAGE_KEY = "workbench.parallel.group.transition";
 const PARALLEL_GROUP_TRANSITION_MAX_AGE_MS = 2_400;
 const PARALLEL_PANE_PALETTE_STORAGE_KEY = "workbench.parallel.pane.palette";
+let parallelGroupTransitionSignal: {
+  groupId: string;
+  createdAt: number;
+} | null = null;
+
 export const PARALLEL_PANE_COLOR_PRESETS = [
   "#34C759",
   "#22C55E",
@@ -244,49 +248,28 @@ export function resolveSessionToolWorkspaceId(
 }
 
 export function writeParallelGroupTransitionSignal(groupId: string) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.sessionStorage.setItem(
-    PARALLEL_GROUP_TRANSITION_STORAGE_KEY,
-    JSON.stringify({
-      groupId,
-      createdAt: Date.now()
-    })
-  );
+  parallelGroupTransitionSignal = {
+    groupId,
+    createdAt: Date.now()
+  };
 }
 
 export function consumeParallelGroupTransitionSignal(groupId: string) {
-  if (typeof window === "undefined") {
+  if (!parallelGroupTransitionSignal) {
     return false;
   }
 
-  const rawSignal = window.sessionStorage.getItem(PARALLEL_GROUP_TRANSITION_STORAGE_KEY);
-
-  if (!rawSignal) {
+  if (parallelGroupTransitionSignal.groupId !== groupId) {
     return false;
   }
 
-  try {
-    const parsed = JSON.parse(rawSignal) as {
-      groupId?: string;
-      createdAt?: number;
-    };
-
-    if (
-      parsed.groupId !== groupId
-      || typeof parsed.createdAt !== "number"
-      || Date.now() - parsed.createdAt > PARALLEL_GROUP_TRANSITION_MAX_AGE_MS
-    ) {
-      return false;
-    }
-
-    window.sessionStorage.removeItem(PARALLEL_GROUP_TRANSITION_STORAGE_KEY);
-    return true;
-  } catch {
+  if (Date.now() - parallelGroupTransitionSignal.createdAt > PARALLEL_GROUP_TRANSITION_MAX_AGE_MS) {
+    parallelGroupTransitionSignal = null;
     return false;
   }
+
+  parallelGroupTransitionSignal = null;
+  return true;
 }
 
 function readParallelPanePaletteOverrides(): Record<string, string> {

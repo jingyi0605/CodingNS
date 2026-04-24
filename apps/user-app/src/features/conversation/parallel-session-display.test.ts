@@ -54,6 +54,32 @@ describe("parallel-session-display", () => {
     expect(consumeParallelGroupTransitionSignal("group-1")).toBe(false);
   });
 
+  it("sessionStorage 超配额时仍然可以正常消费并行动画信号", () => {
+    const originalSessionStorage = window.sessionStorage;
+
+    Object.defineProperty(window, "sessionStorage", {
+      configurable: true,
+      value: {
+        getItem: vi.fn(() => null),
+        setItem: vi.fn(() => {
+          throw new DOMException("Setting the value exceeded the quota.", "QuotaExceededError");
+        }),
+        removeItem: vi.fn(),
+        clear: vi.fn(),
+        key: vi.fn(() => null),
+        length: 0
+      } satisfies Storage
+    });
+
+    expect(() => writeParallelGroupTransitionSignal("group-1")).not.toThrow();
+    expect(consumeParallelGroupTransitionSignal("group-1")).toBe(true);
+
+    Object.defineProperty(window, "sessionStorage", {
+      configurable: true,
+      value: originalSessionStorage
+    });
+  });
+
   it("同一组并行 pane 默认会分配不同颜色", () => {
     const paneOneStyle = createParallelPaneStyle({
       groupId: "group-1",
