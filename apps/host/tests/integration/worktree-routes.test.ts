@@ -930,6 +930,73 @@ describe("worktree routes", () => {
     expect(existsSync(childPath)).toBe(false);
   });
 
+  it("已经合并的 parallel 子工作树即使不显式传 deleteBranch，也会自动删除临时分支", async () => {
+    const fixture = createGitWorkspaceFixture();
+    activeFixtures.push(fixture);
+    runGitCommand(fixture.repoDir, ["restore", "README.md"]);
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    await bootstrapWorkspace(hosted, fixture);
+    const accessToken = await loginAsAdmin(hosted);
+    const createResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/worktrees",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        sourceWorkspaceId: fixture.workspaceId,
+        branchName: "parallel/group123/member123"
+      }
+    });
+
+    expect(createResponse.statusCode).toBe(201);
+
+    const childWorkspaceId = createResponse.json().workspace.id as string;
+    const childPath = createResponse.json().workspace.path as string;
+
+    appendLine(childPath, "README.md", "parallel branch should be deleted automatically");
+    runGitCommand(childPath, ["add", "README.md"]);
+    runGitCommand(childPath, ["commit", "-m", "feat: merge before auto cleanup delete branch"]);
+
+    const mergeResponse = await hosted.app.inject({
+      method: "POST",
+      url: `/api/worktrees/${childWorkspaceId}/merge-into-parent`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    expect(mergeResponse.statusCode).toBe(200);
+
+    const cleanupResponse = await hosted.app.inject({
+      method: "POST",
+      url: `/api/worktrees/${childWorkspaceId}/cleanup`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    expect(cleanupResponse.statusCode).toBe(200);
+    expect(cleanupResponse.json()).toMatchObject({
+      workspaceId: childWorkspaceId,
+      removed: true,
+      branchDeleteRequested: true,
+      branchDeleted: true,
+      deletedBranchName: "parallel/group123/member123",
+      branchDeleteError: null,
+      meta: {
+        workspaceId: childWorkspaceId,
+        lifecycleStatus: "removed"
+      }
+    });
+    expect(runGitCommand(fixture.repoDir, ["branch", "--list", "parallel/group123/member123"])).toBe("");
+    expect(existsSync(childPath)).toBe(false);
+  });
+
   it("未合并的子工作树请求 deleteBranch=true 时会被拒绝", async () => {
     const fixture = createGitWorkspaceFixture();
     activeFixtures.push(fixture);

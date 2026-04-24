@@ -2105,6 +2105,103 @@ describe("SessionRuntimeStore", () => {
     expect(store.getState().runtimeCanInterrupt).toBe(true);
   });
 
+  it("历史尚未加载完成时，新增用户消息也会按已知 messageCount 预占正确序号", async () => {
+    let resolveSend: ((value: {
+      sessionId: string;
+      acceptedAt: string;
+      clientRequestId: string;
+      provider: "claude-code";
+      providerSessionId: string;
+      message: {
+        messageId: string;
+        provider: "claude-code";
+        providerSessionId: string;
+        role: "user";
+        kind: "text";
+        content: string;
+        timestamp: string;
+        sequence: number;
+        rawRef: string;
+        toolCall: null;
+        attachments: [];
+      };
+    }) => void) | null = null;
+    mocked.sendLiveMessage.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSend = resolve;
+        })
+    );
+
+    const store = new SessionRuntimeStore("session-1", {
+      initialSession: {
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "claude-code",
+        providerSessionId: "claude-session-1",
+        rawStoreRef: "claude://raw-1",
+        title: "Claude 会话",
+        messageCount: 60,
+        lastMessageAt: "2026-03-24T10:00:00.000Z",
+        createdAt: "2026-03-24T09:00:00.000Z",
+        updatedAt: "2026-03-24T10:00:00.000Z",
+        syncStatus: "idle",
+        syncCursor: "cursor-sync",
+        lastSyncAt: "2026-03-24T10:00:00.000Z",
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "idle",
+        activitySource: "none",
+        lastEventAt: "2026-03-24T10:00:00.000Z",
+        completedAt: null,
+        lastSeenAt: null,
+        activityState: "idle"
+      }
+    });
+
+    const sendPromise = store.sendMessage("历史还没回完时先发送");
+    expect(store.getState().messages).toMatchObject([
+      {
+        role: "user",
+        content: "历史还没回完时先发送",
+        sequence: 61,
+        deliveryState: "sending"
+      }
+    ]);
+
+    resolveSend?.({
+      sessionId: "session-1",
+      acceptedAt: "2026-03-24T10:00:03.000Z",
+      clientRequestId: "client-pending-sequence",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      message: {
+        messageId: "user-message-pending-sequence",
+        provider: "claude-code",
+        providerSessionId: "claude-session-1",
+        role: "user",
+        kind: "text",
+        content: "历史还没回完时先发送",
+        timestamp: "2026-03-24T10:00:03.000Z",
+        sequence: 61,
+        rawRef: "claude://raw#line=61",
+        toolCall: null,
+        attachments: []
+      }
+    });
+
+    await sendPromise;
+    expect(store.getState().messages).toMatchObject([
+      {
+        role: "user",
+        content: "历史还没回完时先发送",
+        sequence: 61,
+        deliveryState: "sent"
+      }
+    ]);
+  });
+
   it("本地刚发起的新运行即便拿到 running 但不可中断的快照，也会先保住可停止状态", async () => {
     const store = new SessionRuntimeStore("session-1", {
       initialSession: {

@@ -173,6 +173,13 @@ export function createPendingMessage(
   };
 }
 
+export function insertPendingMessage(
+  current: SessionMessageViewModel[],
+  pending: SessionMessageViewModel
+): SessionMessageViewModel[] {
+  return sortMessages([...current, pending]);
+}
+
 export function upsertRuntimeThinkingPlaceholder(
   current: SessionMessageViewModel[],
   sessionId: string,

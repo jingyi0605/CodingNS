@@ -49,7 +49,9 @@ export class WorktreeCleanupService {
     const activeChildren = this.workspaceWorktreeRepository
       .listByParentWorkspaceId(meta.workspaceId)
       .filter((record) => record.lifecycleStatus !== "removed");
-    const deleteBranchRequested = options.deleteBranch === true;
+    const deleteBranchRequestedByUser = options.deleteBranch === true;
+    const shouldAutoDeleteParallelBranch =
+      isParallelTemporaryBranch(meta.branchName) && meta.lifecycleStatus === "merged";
 
     if (activeChildren.length > 0) {
       throw new AppError({
@@ -93,11 +95,14 @@ export class WorktreeCleanupService {
       });
     }
 
-    const branchMergedIntoParent = deleteBranchRequested
+    const branchMergedIntoParent = (deleteBranchRequestedByUser || shouldAutoDeleteParallelBranch)
       ? await this.isBranchMergedIntoParent(workspace, targetWorkspace, signal)
       : false;
+    const deleteBranchRequested =
+      deleteBranchRequestedByUser
+      || (shouldAutoDeleteParallelBranch && branchMergedIntoParent);
 
-    if (deleteBranchRequested && !branchMergedIntoParent) {
+    if (deleteBranchRequestedByUser && !branchMergedIntoParent) {
       throw new AppError({
         statusCode: 409,
         errorCode: "WORKTREE_CLEANUP_BRANCH_NOT_MERGED",
@@ -312,4 +317,8 @@ export class WorktreeCleanupService {
 
     return nextMeta;
   }
+}
+
+function isParallelTemporaryBranch(branchName: string): boolean {
+  return branchName.trim().startsWith("parallel/");
 }

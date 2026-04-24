@@ -56,6 +56,7 @@ import {
   createInitialRuntimeState,
   createPendingMessage,
   getNextOptimisticUserSequence,
+  insertPendingMessage,
   markPendingAsFailed,
   mergeAuthoritativeMessages,
   reconcileMessage,
@@ -302,11 +303,11 @@ export class SessionRuntimeStore {
       clientRequestId,
       options?.attachmentMeta ?? [],
       options?.attachments ?? [],
-      getNextOptimisticUserSequence(this.state.messages)
+      resolveNextOptimisticUserSequence(this.state.messages, this.state.session)
     );
 
     this.patch({
-      messages: [...this.state.messages, pending],
+      messages: insertPendingMessage(this.state.messages, pending),
       session: withRunningState(this.state.session, "running"),
       runtimeHasActiveRun:
         shouldOptimisticallyAssumeActiveRun(this.state.session, this.state.capabilities)
@@ -1777,6 +1778,20 @@ export function connectionTone(state: RuntimeConnectionState) {
 function resolveKnownMessageCount(session: SessionSummaryDto | null): number | null {
   const messageCount = session?.messageCount;
   return typeof messageCount === "number" && Number.isFinite(messageCount) ? messageCount : null;
+}
+
+function resolveNextOptimisticUserSequence(
+  messages: SessionMessageViewModel[],
+  session: SessionSummaryDto | null
+): number {
+  const messageSequence = getNextOptimisticUserSequence(messages);
+  const knownMessageCount = resolveKnownMessageCount(session);
+
+  if (knownMessageCount === null) {
+    return messageSequence;
+  }
+
+  return Math.max(messageSequence, knownMessageCount + 1);
 }
 
 function shouldReplaceSnapshotSeedWithIncoming(
