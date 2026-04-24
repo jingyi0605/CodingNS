@@ -156,6 +156,10 @@ export class WorkspacePanelSnapshotService {
   ): Promise<GitPanelSnapshot> {
     const cached = this.gitSnapshotCache.get(workspaceId);
     const refreshState = this.getOrCreateGitRefreshState(workspaceId);
+    const refreshRequestedBySignal = Boolean(
+      options?.force
+      || refreshState.dirtyVersion !== refreshState.lastCompletedDirtyVersion
+    );
     const needsRefresh = options?.force
       || refreshState.dirtyVersion !== refreshState.lastCompletedDirtyVersion
       || !cached
@@ -187,8 +191,10 @@ export class WorkspacePanelSnapshotService {
         // 先执行轻量级 status 检测（仅 2 条 git 命令）
         const status = await this.gitReadService.getStatus(workspaceId, controller.signal);
 
-        // 如果有缓存，比较 status 是否有变化
-        if (cached && !isGitStatusChanged(cached.snapshot.status, status)) {
+        // 只有在“单纯缓存过期”时才允许复用旧 history/branches。
+        // 如果是手动刷新或 watcher 已经标脏，哪怕 status 看起来没变，也必须重读 refs/history，
+        // 否则会把刚刚合并出来的新提交、分支删除后的 refs 变化又用旧快照盖回去。
+        if (cached && !refreshRequestedBySignal && !isGitStatusChanged(cached.snapshot.status, status)) {
           // 状态未变，延长缓存 TTL，跳过昂贵的 history/branches 查询
           this.gitSnapshotCache.set(workspaceId, {
             snapshot: cached.snapshot,

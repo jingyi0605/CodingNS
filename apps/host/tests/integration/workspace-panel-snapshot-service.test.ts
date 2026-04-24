@@ -85,6 +85,72 @@ describe("WorkspacePanelSnapshotService", () => {
     expect(gitReadService.getBranches).toHaveBeenCalledTimes(2);
   });
 
+  it("Git 已标脏或手动强刷时，即使 status 没变也会重读历史和分支", async () => {
+    const workspaceId = "workspace-1";
+    let historyCallCount = 0;
+
+    const gitReadService = {
+      getStatus: vi.fn(async () => createGitStatus(workspaceId, false)),
+      getHistory: vi.fn(async () => {
+        historyCallCount += 1;
+        return {
+          items: [
+            {
+              commitHash: historyCallCount === 1 ? "11111111" : "22222222",
+              authorName: "Linus",
+              authoredAt: "2026-04-02T00:00:00.000Z",
+              subject: historyCallCount === 1 ? "feat: stale snapshot" : "merge: refreshed snapshot",
+              body: "",
+              commitKind: "shared" as const,
+              refs: []
+            }
+          ],
+          cursor: "0",
+          nextCursor: null,
+          totalCount: 1
+        };
+      }),
+      getBranches: vi.fn(async () => ({
+        currentBranch: "main",
+        local: [{ name: "main", current: true, upstream: "origin/main", remote: false }],
+        remote: []
+      }))
+    } satisfies Pick<GitReadService, "getStatus" | "getHistory" | "getBranches">;
+
+    const service = new WorkspacePanelSnapshotService(
+      {
+        list: vi.fn()
+      } as unknown as FileTreeService,
+      gitReadService as unknown as GitReadService,
+      {
+        listTerminalSnapshotItems: vi.fn()
+      } as unknown as TerminalService,
+      {
+        listTemplates: vi.fn(),
+        listTemplateRuntimeStatuses: vi.fn()
+      } as unknown as CommandTemplateService,
+      {
+        getManagementSummary: vi.fn()
+      } as unknown as WorkspaceService
+    );
+
+    const first = await service.getGitPanelSnapshot(workspaceId);
+
+    expect(first.history[0]?.subject).toBe("feat: stale snapshot");
+    expect(gitReadService.getHistory).toHaveBeenCalledTimes(1);
+    expect(gitReadService.getBranches).toHaveBeenCalledTimes(1);
+
+    service.invalidateGit(workspaceId);
+
+    const second = await service.getGitPanelSnapshot(workspaceId, {
+      force: true
+    });
+
+    expect(second.history[0]?.subject).toBe("merge: refreshed snapshot");
+    expect(gitReadService.getHistory).toHaveBeenCalledTimes(2);
+    expect(gitReadService.getBranches).toHaveBeenCalledTimes(2);
+  });
+
   it("Git 快照请求取消后会中断整条快照链", async () => {
     const workspaceId = "workspace-1";
     let receivedSignal: AbortSignal | null = null;
