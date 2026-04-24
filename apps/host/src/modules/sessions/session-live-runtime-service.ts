@@ -248,6 +248,8 @@ type ExternalRuntimeStatus = Extract<SessionRuntimeStatusEnvelope["status"], "ru
 
 const RUNTIME_START_BINDING_WAIT_TIMEOUT_MS = 10_000;
 const START_BINDING_POLL_INTERVAL_MS = 50;
+const EXTERNAL_RUNTIME_INTERRUPT_SUPPRESSION_MS = 30_000;
+const EXTERNAL_RUNTIME_SNAPSHOT_MAX_AGE_MS = 90_000;
 
 interface ClaudeHookBridgeConfig {
   provider: "claude-code";
@@ -289,6 +291,7 @@ export class SessionLiveRuntimeService {
   private readonly sessionPermissionRequestService: SessionPermissionRequestService;
   private readonly runtimeAdapterDisposables: Array<{ dispose(): void }>;
   private readonly externalRuntimeSnapshots = new Map<string, ExternalRuntimeSnapshot>();
+  private readonly externalRuntimeInterruptSuppressions = new Map<string, number>();
   private readonly runtimeListeners = new Map<
     string,
     Set<(envelope: SessionRuntimeEnvelope | SessionHistoryEnvelope) => Promise<void> | void>
@@ -835,7 +838,7 @@ export class SessionLiveRuntimeService {
   async getSessionRuntime(sessionId: string, userId: string): Promise<SessionRuntimeStatusView> {
     const runtimeSessionId = this.resolveRuntimeSessionId(sessionId);
     const runtimeSnapshot = this.getLiveRuntimeSnapshot(runtimeSessionId);
-    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(runtimeSessionId) ?? null;
+    const externalRuntimeSnapshot = this.getFreshExternalRuntimeSnapshot(runtimeSessionId);
     const runtimeHasActiveRun = runtimeSnapshot ? isActiveRuntimeState(runtimeSnapshot.runningState) : false;
     const externalHasActiveRun = externalRuntimeSnapshot
       ? isActiveRuntimeState(externalRuntimeSnapshot.runningState)
@@ -893,7 +896,7 @@ export class SessionLiveRuntimeService {
         runningState: resolution.runningState,
         hasActiveRun: externalHasActiveRun,
         canAttach: false,
-        canInterrupt: false,
+        canInterrupt: externalHasActiveRun,
         inRunInputMode: capabilities.inRunInputMode,
         activityResolutionSource: resolution.activityResolutionSource,
         activityConfidence: resolution.activityConfidence,
@@ -941,7 +944,7 @@ export class SessionLiveRuntimeService {
       return createRuntimeActivityObservation(runtimeSessionId, runtimeSnapshot);
     }
 
-    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(runtimeSessionId) ?? null;
+    const externalRuntimeSnapshot = this.getFreshExternalRuntimeSnapshot(runtimeSessionId);
 
     if (externalRuntimeSnapshot) {
       return createExternalRuntimeActivityObservation(runtimeSessionId, externalRuntimeSnapshot);
@@ -954,7 +957,7 @@ export class SessionLiveRuntimeService {
     const session = this.sessionHistoryService.getSession(sessionId, userId);
     const runtimeSessionId = this.resolveRuntimeSessionId(sessionId);
     const runtime = this.getLiveRuntimeSnapshot(runtimeSessionId);
-    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(runtimeSessionId) ?? null;
+    const externalRuntimeSnapshot = this.getFreshExternalRuntimeSnapshot(runtimeSessionId);
 
     if (!runtime || (runtime.runningState !== "running" && runtime.runningState !== "starting")) {
       if (runtime && !isActiveRuntimeState(runtime.runningState)) {
@@ -967,12 +970,25 @@ export class SessionLiveRuntimeService {
       }
 
       if (externalRuntimeSnapshot && isActiveRuntimeState(externalRuntimeSnapshot.runningState)) {
-        throw new AppError({
-          statusCode: 409,
-          errorCode: "CAPABILITY_NOT_SUPPORTED",
-          detail: "当前 Claude 外部运行仍在进行，但现有链路不支持中断",
-          field: "sessionId"
-        });
+        const refreshedSession = await Promise.resolve(
+          this.sessionHistoryService.refreshRuntimeFallbackSession(sessionId, userId)
+        ).catch(() => null);
+
+        if (refreshedSession && !isPendingSessionRunningState(refreshedSession.runningState)) {
+          await this.forceInterruptInactiveSession(sessionId);
+          return {
+            sessionId,
+            interrupted: true,
+            detail: "当前会话已停止，已自动同步状态"
+          };
+        }
+
+        await this.forceInterruptExternalSession(sessionId);
+        return {
+          sessionId,
+          interrupted: true,
+          detail: "Claude 外部运行当前无法直接中断，已强制清理本地运行状态"
+        };
       }
 
       const refreshedSession =
@@ -1057,7 +1073,7 @@ export class SessionLiveRuntimeService {
   ): ProviderSubscription {
     const runtimeSessionId = this.resolveRuntimeSessionId(sessionId);
     const runtimeSnapshot = this.getLiveRuntimeSnapshot(runtimeSessionId);
-    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(runtimeSessionId) ?? null;
+    const externalRuntimeSnapshot = this.getFreshExternalRuntimeSnapshot(runtimeSessionId);
     const initialActivityEnvelope = this.buildSessionActivityEnvelope(sessionId, runtimeSessionId);
 
     if (runtimeSnapshot) {
@@ -1291,7 +1307,7 @@ export class SessionLiveRuntimeService {
       };
     }
 
-    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(runtimeSessionId) ?? null;
+    const externalRuntimeSnapshot = this.getFreshExternalRuntimeSnapshot(runtimeSessionId);
 
     if (externalRuntimeSnapshot) {
       const resolution = this.sessionActivityAuthorityService.observe(
@@ -1301,7 +1317,7 @@ export class SessionLiveRuntimeService {
       return {
         ...this.mapResolutionToActivityEnvelope(resolution, {
           hasActiveRun: isActiveRuntimeState(externalRuntimeSnapshot.runningState),
-          canInterrupt: false
+          canInterrupt: isActiveRuntimeState(externalRuntimeSnapshot.runningState)
         }),
         sessionId
       };
@@ -1325,7 +1341,7 @@ export class SessionLiveRuntimeService {
   private resolveRuntimeSessionId(sessionId: string): string {
     if (
       this.providerRuntimeService.getSnapshot(sessionId)
-      || this.externalRuntimeSnapshots.has(sessionId)
+      || this.getFreshExternalRuntimeSnapshot(sessionId)
     ) {
       return sessionId;
     }
@@ -1475,6 +1491,14 @@ export class SessionLiveRuntimeService {
     detail: string | null;
     timestamp: string;
   }): Promise<void> {
+    if (input.runningState === "running" && this.shouldIgnoreInterruptedExternalRuntime(input.sessionId)) {
+      return;
+    }
+
+    if (input.runningState !== "running") {
+      this.clearExternalRuntimeInterruptSuppression(input.sessionId);
+    }
+
     const userIds = this.authUserRepository.listIds();
 
     if (userIds.length === 0) {
@@ -1590,6 +1614,7 @@ export class SessionLiveRuntimeService {
   ): Promise<void> {
     this.runtimeMessageSeenSessions.delete(request.sessionId);
     this.runtimeHistoryFallbackSentSessions.delete(request.sessionId);
+    this.clearExternalRuntimeInterruptSuppression(request.sessionId);
 
     if (request.provider === "claude-code") {
       this.clearExternalRuntimeSnapshot(request.sessionId);
@@ -1685,7 +1710,7 @@ export class SessionLiveRuntimeService {
 
       const runtimeSessionId = this.resolveRuntimeSessionId(input.sessionId);
       const activeRun = this.getLiveRuntimeSnapshot(runtimeSessionId);
-      const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(runtimeSessionId);
+      const externalRuntimeSnapshot = this.getFreshExternalRuntimeSnapshot(runtimeSessionId);
 
       if (
         activeRun &&
@@ -1813,7 +1838,7 @@ export class SessionLiveRuntimeService {
 
     try {
       const runtimeSnapshot = this.getLiveRuntimeSnapshot(sessionId);
-      const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(sessionId);
+      const externalRuntimeSnapshot = this.getFreshExternalRuntimeSnapshot(sessionId);
 
       if (
         (runtimeSnapshot && isActiveRuntimeState(runtimeSnapshot.runningState))
@@ -1909,7 +1934,7 @@ export class SessionLiveRuntimeService {
       return true;
     }
 
-    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(session.sessionId);
+    const externalRuntimeSnapshot = this.getFreshExternalRuntimeSnapshot(session.sessionId);
 
     if (externalRuntimeSnapshot && isActiveRuntimeState(externalRuntimeSnapshot.runningState)) {
       return true;
@@ -1963,7 +1988,7 @@ export class SessionLiveRuntimeService {
     }
 
     const runtimeSnapshot = this.getLiveRuntimeSnapshot(sessionId);
-    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(sessionId);
+    const externalRuntimeSnapshot = this.getFreshExternalRuntimeSnapshot(sessionId);
 
     if (
       (runtimeSnapshot && isActiveRuntimeState(runtimeSnapshot.runningState))
@@ -2868,6 +2893,53 @@ export class SessionLiveRuntimeService {
     this.externalRuntimeSnapshots.delete(sessionId);
   }
 
+  private getFreshExternalRuntimeSnapshot(sessionId: string): ExternalRuntimeSnapshot | null {
+    const snapshot = this.externalRuntimeSnapshots.get(sessionId) ?? null;
+
+    if (!snapshot) {
+      return null;
+    }
+
+    if (!isExternalRuntimeSnapshotExpired(snapshot)) {
+      return snapshot;
+    }
+
+    this.clearExternalRuntimeSnapshot(sessionId);
+    this.sessionActivityAuthorityService.clearSession(sessionId);
+    return null;
+  }
+
+  private suppressInterruptedExternalRuntime(sessionId: string): void {
+    this.externalRuntimeInterruptSuppressions.set(
+      sessionId,
+      Date.now() + EXTERNAL_RUNTIME_INTERRUPT_SUPPRESSION_MS
+    );
+  }
+
+  private clearExternalRuntimeInterruptSuppression(sessionId: string): void {
+    this.externalRuntimeInterruptSuppressions.delete(sessionId);
+  }
+
+  private shouldIgnoreInterruptedExternalRuntime(sessionId: string): boolean {
+    const expiresAt = this.externalRuntimeInterruptSuppressions.get(sessionId);
+
+    if (!expiresAt) {
+      return false;
+    }
+
+    if (Date.now() >= expiresAt) {
+      this.externalRuntimeInterruptSuppressions.delete(sessionId);
+      return false;
+    }
+
+    return true;
+  }
+
+  private async forceInterruptExternalSession(sessionId: string): Promise<void> {
+    this.suppressInterruptedExternalRuntime(sessionId);
+    await this.forceInterruptInactiveSession(sessionId);
+  }
+
   private async resolveActiveClaudePermissionSession(input: {
     providerSessionId: string;
     workspaceId: string;
@@ -2982,6 +3054,16 @@ function createExternalRuntimeActivityObservation(
     errorCode: snapshot.runningState === "failed" ? "CLAUDE_HOOK_STOP_FAILURE" : null,
     observedAt: snapshot.updatedAt
   };
+}
+
+function isExternalRuntimeSnapshotExpired(snapshot: Pick<ExternalRuntimeSnapshot, "updatedAt">): boolean {
+  const updatedAtMs = Date.parse(snapshot.updatedAt);
+
+  if (!Number.isFinite(updatedAtMs)) {
+    return true;
+  }
+
+  return Date.now() - updatedAtMs > EXTERNAL_RUNTIME_SNAPSHOT_MAX_AGE_MS;
 }
 
 function createRuntimeEventObservation(

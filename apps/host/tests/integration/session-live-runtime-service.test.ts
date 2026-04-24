@@ -1242,6 +1242,74 @@ describe("SessionLiveRuntimeService", () => {
     expect(runtime.runId).toBeNull();
   });
 
+  it("getSessionRuntime 遇到过期的 Claude external runtime snapshot 时，会清理快照并回退到 fallback 状态", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-26T10:05:00.000Z"));
+
+    const { service, sessionHistoryService } = createService();
+    const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
+      getSnapshot: vi.fn(() => null)
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.refreshRuntimeFallbackSession.mockResolvedValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "/tmp/.claude/projects/workspace/claude-session-1.jsonl",
+      runningState: "idle",
+      activitySource: "inferred",
+      lastEventAt: "2026-03-26T10:00:12.000Z",
+      completedAt: "2026-03-26T10:00:12.000Z",
+      updatedAt: "2026-03-26T10:00:12.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "claude-code",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "streaming_guidance",
+      supportsSubagents: true,
+      supportsInterrupt: false,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      limitations: []
+    });
+    sessionHistoryService.getSessionContextUsage.mockResolvedValue(null);
+
+    (service as any).externalRuntimeSnapshots.set("session-1", {
+      sessionId: "session-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "claude://raw-1",
+      runningState: "running",
+      detail: "stale external runtime",
+      updatedAt: "2026-03-26T10:00:01.000Z"
+    });
+
+    const runtime = await service.getSessionRuntime("session-1", "user-1");
+
+    expect(sessionHistoryService.refreshRuntimeFallbackSession).toHaveBeenCalledWith(
+      "session-1",
+      "user-1"
+    );
+    expect(runtime.runningState).toBe("idle");
+    expect(runtime.hasActiveRun).toBe(false);
+    expect(runtime.canInterrupt).toBe(false);
+    expect(runtime.activityResolutionSource).toBe("inferred_log");
+    expect((service as any).externalRuntimeSnapshots.has("session-1")).toBe(false);
+  });
+
   it("getSessionRuntime 遇到终态 runtime snapshot 时，不应再标记 hasActiveRun", async () => {
     const { service, sessionHistoryService } = createService();
     const providerRuntimeService = {
@@ -1686,6 +1754,9 @@ describe("SessionLiveRuntimeService", () => {
   });
 
   it("Claude 外部运行态存在时不会提前调度队列", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-26T10:00:30.000Z"));
+
     const { service, sessionSendQueueRepository } = createService();
     const providerRuntimeService = {
       isRunHealthy: vi.fn(() => true),
@@ -1717,6 +1788,9 @@ describe("SessionLiveRuntimeService", () => {
   });
 
   it("Claude 外部运行态存在时会拒绝直发，避免假装送进当前会话", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-26T10:00:30.000Z"));
+
     const { service, sessionHistoryService, workspaceService } = createService();
     const providerRuntimeService = {
       isRunHealthy: vi.fn(() => true),
@@ -1778,8 +1852,16 @@ describe("SessionLiveRuntimeService", () => {
     });
   });
 
-  it("Claude 外部运行态存在时，中断接口会返回能力不支持而不是误报未运行", async () => {
-    const { service, sessionHistoryService } = createService();
+  it("Claude 外部运行态存在时，中断接口会强制清理本地运行态，避免把用户卡死", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-26T10:00:30.000Z"));
+
+    const {
+      service,
+      sessionHistoryService,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository
+    } = createService();
     const providerRuntimeService = {
       getSnapshot: vi.fn(() => null)
     };
@@ -1797,6 +1879,36 @@ describe("SessionLiveRuntimeService", () => {
       messageCount: 3,
       runningState: "running"
     });
+    sessionHistoryService.refreshRuntimeFallbackSession.mockResolvedValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-1.jsonl",
+      messageCount: 3,
+      runningState: "running"
+    });
+    sessionStateRepository.findBySessionAndUser.mockReturnValue({
+      sessionId: "session-1",
+      userId: "user-1",
+      runningState: "running",
+      activitySource: "runtime",
+      favorite: false,
+      lastEventAt: "2026-03-26T10:00:01.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-03-26T10:00:01.000Z"
+    });
+    sessionStatusSnapshotRepository.findBySessionId.mockReturnValue({
+      sessionId: "session-1",
+      syncStatus: "idle",
+      syncCursor: "cursor-1",
+      lastSyncAt: "2026-03-26T10:00:01.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      updatedAt: "2026-03-26T10:00:01.000Z"
+    });
 
     (service as any).externalRuntimeSnapshots.set("session-1", {
       sessionId: "session-1",
@@ -1808,10 +1920,23 @@ describe("SessionLiveRuntimeService", () => {
       updatedAt: "2026-03-26T10:00:01.000Z"
     });
 
-    await expect(service.interruptSession("session-1", "user-1")).rejects.toMatchObject({
-      errorCode: "CAPABILITY_NOT_SUPPORTED",
-      message: "当前 Claude 外部运行仍在进行，但现有链路不支持中断"
+    await expect(service.interruptSession("session-1", "user-1")).resolves.toMatchObject({
+      sessionId: "session-1",
+      interrupted: true,
+      detail: "Claude 外部运行当前无法直接中断，已强制清理本地运行状态"
     });
+    expect(sessionHistoryService.refreshRuntimeFallbackSession).toHaveBeenCalledWith(
+      "session-1",
+      "user-1"
+    );
+    expect(sessionStateRepository.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "session-1",
+        userId: "user-1",
+        runningState: "interrupted",
+        activitySource: "runtime"
+      })
+    );
   });
 
   it("stale running 会话点击中断时会先回刷状态并直接成功返回", async () => {
@@ -2913,7 +3038,7 @@ describe("SessionLiveRuntimeService", () => {
       sessionId: "session-1",
       hasActiveRun: true,
       canAttach: false,
-      canInterrupt: false,
+      canInterrupt: true,
       runningState: "running",
       provider: "claude-code",
       providerSessionId: "claude-session-1"

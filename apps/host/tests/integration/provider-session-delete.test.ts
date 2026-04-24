@@ -168,6 +168,111 @@ describe("provider session delete", () => {
       remainingWorkspaceSessionCount: 0
     });
   });
+
+  it("运行态会话如果回刷后已结束，删除接口不应继续误拦", async () => {
+    const fixture = createEmptyFixture();
+    cleanupTargets.push(fixture.rootDir);
+    const cliDelete = {
+      deleteSession: vi.fn(async () => {})
+    };
+    const context = createServiceContext(fixture, cliDelete);
+    const transcriptPath = path.join(fixture.rootDir, "claude-finished.jsonl");
+
+    writeFileSync(
+      transcriptPath,
+      [
+        JSON.stringify({
+          type: "user",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "复刻首页" }]
+          },
+          timestamp: "2026-04-19T10:00:01.000Z",
+          sessionId: "claude-session-finished"
+        }),
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "已经结束" }],
+            stop_reason: "end_turn"
+          },
+          timestamp: "2026-04-19T10:00:05.000Z",
+          sessionId: "claude-session-finished"
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    seedSession(context, {
+      sessionId: "session-stale-running",
+      provider: "claude-code",
+      providerSessionId: "claude-session-finished",
+      rawStoreRef: transcriptPath,
+      runningState: "running"
+    });
+
+    await expect(
+      context.service.deleteSession("session-stale-running", "user-1")
+    ).resolves.toBeUndefined();
+
+    expect(cliDelete.deleteSession).toHaveBeenCalledWith({
+      provider: "claude-code",
+      providerSessionId: "claude-session-finished",
+      rawStoreRef: transcriptPath
+    });
+    expect(context.sessionBindingRepository.findBySessionId("session-stale-running")).toBeNull();
+  });
+
+  it("运行态会话如果 transcript 已经明确 end_turn，回刷后应从 running 收口", async () => {
+    const fixture = createEmptyFixture();
+    cleanupTargets.push(fixture.rootDir);
+    const cliDelete = {
+      deleteSession: vi.fn(async () => {})
+    };
+    const context = createServiceContext(fixture, cliDelete);
+    const transcriptPath = path.join(fixture.rootDir, "claude-end-turn.jsonl");
+
+    writeFileSync(
+      transcriptPath,
+      [
+        JSON.stringify({
+          type: "user",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "做一个首页" }]
+          },
+          timestamp: "2026-04-19T10:00:01.000Z",
+          sessionId: "claude-session-2"
+        }),
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "处理完成" }],
+            stop_reason: "end_turn"
+          },
+          timestamp: "2026-04-19T10:00:05.000Z",
+          sessionId: "claude-session-2"
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    seedSession(context, {
+      sessionId: "session-ended",
+      provider: "claude-code",
+      providerSessionId: "claude-session-2",
+      rawStoreRef: transcriptPath,
+      runningState: "running"
+    });
+
+    const refreshed = await context.service.refreshRuntimeFallbackSession("session-ended", "user-1");
+
+    expect(refreshed.runningState).toBe("idle");
+    expect(refreshed.activitySource).toBe("inferred");
+    expect(refreshed.completedAt).toBe("2026-04-19T10:00:05.000Z");
+  });
 });
 
 function createTempDir(prefix: string): string {

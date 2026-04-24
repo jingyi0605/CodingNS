@@ -1863,8 +1863,12 @@ export class SessionHistoryService {
   async deleteSession(sessionId: string, userId: string): Promise<void> {
     const binding = this.getBindingOrThrow(sessionId);
     const existing = this.getSessionListItemOrThrow(sessionId, userId);
+    const resolvedExisting =
+      existing.runningState === "starting" || existing.runningState === "running"
+        ? await this.refreshRuntimeFallbackSession(sessionId, userId).catch(() => existing)
+        : existing;
 
-    if (existing.runningState === "starting" || existing.runningState === "running") {
+    if (resolvedExisting.runningState === "starting" || resolvedExisting.runningState === "running") {
       throw new AppError({
         statusCode: 409,
         errorCode: "SESSION_DELETE_RUNNING",
@@ -5564,6 +5568,14 @@ function shouldPreserveRuntimeTerminalState(
   }
 
   if (current.runningState === "starting" || current.runningState === "running") {
+    if (
+      inspection.completedAtCandidate
+      || inspection.errorCode
+      || inspection.runningState === "interrupted"
+    ) {
+      return false;
+    }
+
     return inspection.lastEventAt.localeCompare(current.lastEventAt) <= 0;
   }
 
