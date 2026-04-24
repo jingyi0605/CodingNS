@@ -9470,6 +9470,15 @@ export function WorkbenchLayout({
     setSelectedWorkspaceId(workspaceId);
     ensureInfoPanelReady();
 
+    if (isTerminalsRoute(location.pathname)) {
+      const targetPath = buildWorkspaceTerminalsPath(workspaceId);
+
+      if (location.pathname !== targetPath) {
+        navigate(targetPath);
+      }
+      return;
+    }
+
     // 会话上下文和工作区上下文不能混着用；切到别的工作区时先退回空白工作台。
     if (currentSessionId && sessionWorkspaceId !== workspaceId) {
       navigate(workbenchHomePath);

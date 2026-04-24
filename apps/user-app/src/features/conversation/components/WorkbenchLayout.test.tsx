@@ -4617,6 +4617,48 @@ describe("WorkbenchLayout", () => {
     ).toHaveAttribute("aria-pressed", "false");
   });
 
+  it("在终端管理页点击项目切换按钮时跳到对应项目的终端管理页", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: []
+      },
+      {
+        workspace: createWorkspace("workspace-2", "项目二"),
+        sessions: []
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/terminals");
+
+    const targetWorkspaceGroup = await findWorkspaceGroupByName("项目二");
+    const targetWorkspaceScope = within(targetWorkspaceGroup);
+
+    await userEvent.click(
+      targetWorkspaceScope.getByRole("button", { name: t("shell.switchWorkspace") })
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-2/terminals");
+    });
+
+    expect(window.localStorage.getItem("workbench.workspace.selected.id")).toBe("workspace-2");
+    expect(
+      targetWorkspaceScope.getByRole("button", { name: t("shell.switchWorkspace") })
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("支持工作区会话批量选择，并可部分选择或全选后批量归档", async () => {
     const sessionTitles: Record<string, string> = {
       "session-1": "Session Alpha",
