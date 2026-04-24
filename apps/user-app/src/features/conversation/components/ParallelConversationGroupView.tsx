@@ -37,7 +37,9 @@ import {
   type ParallelSessionGroupDetailDto,
   type ProviderId,
   type SessionIsolatedWorkspaceSummaryDto,
-  type SessionSummaryDto
+  type SessionSummaryDto,
+  type WorkbenchWorktreeNodeDto,
+  type WorktreeMetaDto
 } from "../api/conversation-api";
 import { getProviderDisplayName, shouldSupportRunSteering } from "../capability/provider-ui";
 import { ParallelSessionCreateModal } from "./ParallelSessionCreateModal";
@@ -48,7 +50,7 @@ import { GitSidebar } from "./GitSidebar";
 import { MessageTimeline } from "./MessageTimeline";
 import { PermissionRequestList } from "./PermissionRequestList";
 import { QueuedMessageList } from "./QueuedMessageList";
-import { useWorkbenchShell } from "./WorkbenchLayout";
+import { useWorkbenchShell, WorktreeMergePanel } from "./WorkbenchLayout";
 import { SessionRuntimeStore, useSessionRuntimeStore } from "../runtime/session-runtime-store";
 import { isSessionRunning } from "../session-activity-display";
 import { useSessionSendRecovery } from "../session-send-recovery";
@@ -250,6 +252,46 @@ function createParallelInfoPopoverFrame(triggerRect: DOMRect | null): ParallelIn
     ),
     width
   };
+}
+
+function findWorktreeMetaByWorkspaceId(
+  nodes: readonly WorkbenchWorktreeNodeDto[],
+  workspaceId: string | null | undefined
+): WorktreeMetaDto | null {
+  const normalizedWorkspaceId = workspaceId?.trim();
+
+  if (!normalizedWorkspaceId) {
+    return null;
+  }
+
+  for (const node of nodes) {
+    if (node.workspace.id === normalizedWorkspaceId || node.meta.workspaceId === normalizedWorkspaceId) {
+      return node.meta;
+    }
+
+    const nested = findWorktreeMetaByWorkspaceId(node.children, normalizedWorkspaceId);
+
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
+function findNavigationWorktreeMetaByWorkspaceId(
+  groups: readonly { childWorktrees?: readonly WorkbenchWorktreeNodeDto[] }[],
+  workspaceId: string | null | undefined
+): WorktreeMetaDto | null {
+  for (const group of groups) {
+    const meta = findWorktreeMetaByWorkspaceId(group.childWorktrees ?? [], workspaceId);
+
+    if (meta) {
+      return meta;
+    }
+  }
+
+  return null;
 }
 
 export function ParallelConversationGroupView({
@@ -704,7 +746,11 @@ function ParallelConversationMemberPane({
     requestNavigationRefresh,
     selectWorkspace,
     upsertNavigationSession,
-    markNavigationSessionSeen
+    markNavigationSessionSeen,
+    worktreeMergeStateById,
+    refreshWorktreeMergePreview,
+    applyWorktreeMerge,
+    requestWorktreeCleanup
   } = useWorkbenchShell();
   const sessionId = entry.session.sessionId;
   const storeRef = useRef<SessionRuntimeStore | null>(null);
@@ -801,6 +847,13 @@ function ParallelConversationMemberPane({
     session ?? entry.session,
     paneSessionIsolatedWorkspace
   );
+  const toolWorkspaceWorktreeMeta = useMemo(
+    () => findNavigationWorktreeMetaByWorkspaceId(navigationGroups, toolWorkspaceId),
+    [navigationGroups, toolWorkspaceId]
+  );
+  const toolWorkspaceMergeState = toolWorkspaceWorktreeMeta
+    ? worktreeMergeStateById[toolWorkspaceWorktreeMeta.workspaceId] ?? null
+    : null;
   const toolWorkspaceName =
     toolWorkspaceId === navigationWorkspaceId
       ? workspaceContext?.displayName ?? navigationWorkspaceId
@@ -1229,11 +1282,22 @@ function ParallelConversationMemberPane({
                   workspaceId={toolWorkspaceId}
                 />
               ) : activeToolPanel === "git" ? (
-                <GitSidebar
-                  className="parallel-pane-tools-surface"
-                  panelActive
-                  workspaceId={toolWorkspaceId}
-                />
+                <div className="parallel-pane-tools-surface parallel-pane-git-tools-surface">
+                  {toolWorkspaceWorktreeMeta ? (
+                    <WorktreeMergePanel
+                      meta={toolWorkspaceWorktreeMeta}
+                      state={toolWorkspaceMergeState}
+                      onRefresh={() => refreshWorktreeMergePreview(toolWorkspaceWorktreeMeta.workspaceId, true)}
+                      onApply={() => applyWorktreeMerge(toolWorkspaceWorktreeMeta.workspaceId)}
+                      onCleanup={() => requestWorktreeCleanup(toolWorkspaceWorktreeMeta)}
+                    />
+                  ) : null}
+                  <GitSidebar
+                    className="parallel-pane-git-sidebar"
+                    panelActive
+                    workspaceId={toolWorkspaceId}
+                  />
+                </div>
               ) : activeToolPanel === "processes" ? (
                 <TerminalManagerPanel
                   className="parallel-pane-tools-surface parallel-pane-tools-process-panel"
@@ -1425,22 +1489,6 @@ function ParallelConversationMemberPane({
 
           <div className="parallel-conversation-pane-actions">
             <button
-              ref={toolsTriggerRef}
-              type="button"
-              className={`conversation-header-ai-button${toolsOpen ? " active" : ""}`}
-              aria-label={t("shell.parallelPaneToolsAction")}
-              title={t("shell.parallelPaneToolsAction")}
-              aria-expanded={toolsOpen}
-              onClick={() => {
-                onCloseInfo();
-                openToolsPanel();
-              }}
-            >
-              <span className="conversation-header-ai-button-label" aria-hidden="true">
-                <PaneToolsIcon />
-              </span>
-            </button>
-            <button
               ref={infoTriggerRef}
               type="button"
               className="conversation-header-ai-button"
@@ -1454,6 +1502,22 @@ function ParallelConversationMemberPane({
             >
               <span className="conversation-header-ai-button-label" aria-hidden="true">
                 <PaneInfoIcon />
+              </span>
+            </button>
+            <button
+              ref={toolsTriggerRef}
+              type="button"
+              className={`conversation-header-ai-button${toolsOpen ? " active" : ""}`}
+              aria-label={t("shell.parallelPaneToolsAction")}
+              title={t("shell.parallelPaneToolsAction")}
+              aria-expanded={toolsOpen}
+              onClick={() => {
+                onCloseInfo();
+                openToolsPanel();
+              }}
+            >
+              <span className="conversation-header-ai-button-label" aria-hidden="true">
+                <PaneToolsIcon />
               </span>
             </button>
           </div>

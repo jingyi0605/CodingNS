@@ -1011,6 +1011,10 @@ interface WorkbenchShellContextValue {
     listener: (snapshot: WorkspaceManagementRealtimeSnapshotDto) => void
   ) => () => void;
   workspaceManagementStateById: Record<string, WorkspaceManagementViewState>;
+  worktreeMergeStateById: Record<string, WorktreeMergeViewState>;
+  refreshWorktreeMergePreview: (workspaceId: string, force?: boolean) => void;
+  applyWorktreeMerge: (workspaceId: string) => void;
+  requestWorktreeCleanup: (meta: WorktreeMetaDto) => void;
   subscribeTerminalManagerSnapshot: (
     workspaceId: string,
     options?: { knownRevision?: string | null | undefined }
@@ -1064,7 +1068,7 @@ interface WorkspaceManagementViewState {
   error: string | null;
 }
 
-interface WorktreeMergeViewState {
+export interface WorktreeMergeViewState {
   preview: WorktreeMergePreviewDto | null;
   loading: boolean;
   applying: boolean;
@@ -7062,7 +7066,7 @@ function WorkbenchInfoPanel({
   );
 }
 
-function WorktreeMergePanel({
+export function WorktreeMergePanel({
   meta,
   state,
   onRefresh,
@@ -9889,6 +9893,10 @@ export function WorkbenchLayout({
       requestWorkspaceManagementRefresh,
       addWorkspaceManagementSnapshotListener,
       workspaceManagementStateById,
+      worktreeMergeStateById,
+      refreshWorktreeMergePreview: loadWorktreeMergePreview,
+      applyWorktreeMerge,
+      requestWorktreeCleanup,
       subscribeTerminalManagerSnapshot,
       requestTerminalManagerRefresh,
       addTerminalManagerSnapshotListener,
@@ -9932,6 +9940,10 @@ export function WorkbenchLayout({
       renameNavigationSession,
       showArchivedNotifications,
       workspaceManagementStateById,
+      worktreeMergeStateById,
+      loadWorktreeMergePreview,
+      applyWorktreeMerge,
+      requestWorktreeCleanup,
       shellMode,
       startDraftSession,
       setSessionWorkspace,
@@ -10908,6 +10920,10 @@ export function useWorkbenchShell(): WorkbenchShellContextValue {
       requestWorkspaceManagementRefresh: () => undefined,
       addWorkspaceManagementSnapshotListener: () => () => undefined,
       workspaceManagementStateById: {},
+      worktreeMergeStateById: {},
+      refreshWorktreeMergePreview: () => undefined,
+      applyWorktreeMerge: () => undefined,
+      requestWorktreeCleanup: () => undefined,
       subscribeTerminalManagerSnapshot: () => undefined,
       requestTerminalManagerRefresh: () => undefined,
       addTerminalManagerSnapshotListener: () => () => undefined,
