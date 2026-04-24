@@ -29532,6 +29532,10 @@ textarea:focus-visible {
   animation: parallel-conversation-pane-sheen 620ms cubic-bezier(0.2, 0.88, 0.2, 1) both;
 }
 
+.workbench-shell[data-parallel-conversation-active="true"] .parallel-conversation-page {
+  animation: parallel-conversation-shell-expand 240ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
  .parallel-conversation-page[data-parallel-entering="true"] .parallel-conversation-pane:nth-child(2) {
    animation-delay: 40ms;
  }
@@ -29587,6 +29591,18 @@ textarea:focus-visible {
   to {
     opacity: 0;
     transform: translateX(28%);
+  }
+}
+
+@keyframes parallel-conversation-shell-expand {
+  from {
+    opacity: 0.84;
+    transform: translateX(18px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
   }
 }
 
@@ -29747,6 +29763,7 @@ textarea:focus-visible {
     transition: none;
   }
 
+  .workbench-shell[data-parallel-conversation-active="true"] .parallel-conversation-page,
   .parallel-conversation-page[data-parallel-entering="true"] .parallel-conversation-grid::before,
   .parallel-conversation-page[data-parallel-entering="true"] .parallel-conversation-pane,
   .parallel-conversation-page[data-parallel-entering="true"] .parallel-conversation-pane::after {

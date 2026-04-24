@@ -57,6 +57,7 @@ import { isRealSubagentSession } from "../session-fork-display";
 import {
   resolveSessionNavigationWorkspaceId,
   resolveSessionToolWorkspaceId,
+  shouldUseParallelConversationLayout,
   writeParallelGroupTransitionSignal
 } from "../parallel-session-display";
 import { SessionRuntimeStore, useSessionRuntimeStore } from "../runtime/session-runtime-store";
@@ -389,10 +390,8 @@ function LiveConversationPage({
     [navigationSession, session]
   );
   const supportsParallelSessionFeatures = showInlineHeader;
-  const isPromotedParallelWorkspaceSession =
-    currentSessionIsolatedWorkspace?.lifecycleStatus === "promoted";
   const activeParallelGroupId =
-    supportsParallelSessionFeatures && !isPromotedParallelWorkspaceSession
+    supportsParallelSessionFeatures && shouldUseParallelConversationLayout(currentSessionSummary)
       ? currentSessionSummary?.parallelGroup?.groupId ?? null
       : null;
   const mobileMainGestureHandlers = !showInlineHeader

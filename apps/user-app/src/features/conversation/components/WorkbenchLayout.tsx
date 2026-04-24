@@ -116,6 +116,7 @@ import {
   resolveParallelGroupLabel,
   resolveSessionNavigationWorkspaceId,
   resolveSessionToolWorkspaceId,
+  shouldUseParallelConversationLayout,
   resolveSessionDisplayParentSessionId
 } from "../parallel-session-display";
 import {
@@ -9238,15 +9239,6 @@ export function WorkbenchLayout({
     sessionWorkspaceId
   ]);
 
-  useEffect(() => {
-    logPerfDebug("workbench.info_panel_state", {
-      infoPanelReady,
-      rightCollapsed,
-      currentWorkspaceId,
-      sessionWorkspaceId,
-      currentSessionId
-    });
-  }, [currentSessionId, currentWorkspaceId, infoPanelReady, rightCollapsed, sessionWorkspaceId]);
   const activeCenterTab: CenterTab = isTerminalsRoute(location.pathname)
     ? "terminals"
     : isButlerRoute(location.pathname)
@@ -9334,6 +9326,26 @@ export function WorkbenchLayout({
       : currentWorkspaceContext);
   const currentWorktreeMergeState =
     (currentWorktreeMeta ? worktreeMergeStateById[currentWorktreeMeta.workspaceId] ?? null : null);
+  const isParallelConversationActive =
+    activeCenterTab === "conversation"
+    && shouldUseParallelConversationLayout(currentSessionContext?.session ?? null);
+
+  useEffect(() => {
+    logPerfDebug("workbench.info_panel_state", {
+      infoPanelReady,
+      rightCollapsed: rightCollapsed || isParallelConversationActive,
+      currentWorkspaceId,
+      sessionWorkspaceId,
+      currentSessionId
+    });
+  }, [
+    currentSessionId,
+    currentWorkspaceId,
+    infoPanelReady,
+    isParallelConversationActive,
+    rightCollapsed,
+    sessionWorkspaceId
+  ]);
 
   const favoriteSessions = useMemo(
     () =>
@@ -9468,6 +9480,10 @@ export function WorkbenchLayout({
   }
 
   function openRightPanel() {
+    if (isParallelConversationActive) {
+      return;
+    }
+
     ensureInfoPanelReady();
 
     if (isMobileShell) {
@@ -9488,6 +9504,10 @@ export function WorkbenchLayout({
   }
 
   function toggleRightPanel() {
+    if (isParallelConversationActive) {
+      return;
+    }
+
     ensureInfoPanelReady();
 
     if (isMobileShell) {
@@ -9999,7 +10019,8 @@ export function WorkbenchLayout({
     "--workbench-left-width": `${leftPanelWidth}px`,
     "--workbench-left-current-width": leftCollapsed ? "0px" : `${leftPanelWidth}px`,
     "--workbench-right-width": `${rightPanelWidth}px`,
-    "--workbench-right-current-width": rightCollapsed ? "0px" : `${rightPanelWidth}px`
+    "--workbench-right-current-width":
+      rightCollapsed || isParallelConversationActive ? "0px" : `${rightPanelWidth}px`
   } as CSSProperties;
   const auxiliaryPanelContent = activeCenterTab === "butler"
     ? customAuxiliaryPanel
@@ -10024,6 +10045,7 @@ export function WorkbenchLayout({
       />
     );
   const shouldShowAuxiliaryPanel = auxiliaryPanelContent !== null;
+  const effectiveRightCollapsed = rightCollapsed || isParallelConversationActive;
   const shouldUseMacOsOverlayTitlebarAlignment =
     platform.isDesktop && platform.ui.osFamily === "macos" && platform.ui.prefersOverlayTitlebar;
 
@@ -10080,17 +10102,17 @@ export function WorkbenchLayout({
   const nativeSidebarLayout = useMemo(
     () => ({
       leftWidth: leftCollapsed ? 0 : leftPanelWidth,
-      rightWidth: shouldShowAuxiliaryPanel && !rightCollapsed ? rightPanelWidth : 0,
+      rightWidth: shouldShowAuxiliaryPanel && !effectiveRightCollapsed ? rightPanelWidth : 0,
       leftCollapsed,
-      rightCollapsed: !shouldShowAuxiliaryPanel || rightCollapsed,
+      rightCollapsed: !shouldShowAuxiliaryPanel || effectiveRightCollapsed,
       prefersDarkAppearance: theme !== "light",
       isResizing: activeResizeSide !== null
     }),
     [
       activeResizeSide,
+      effectiveRightCollapsed,
       leftCollapsed,
       leftPanelWidth,
-      rightCollapsed,
       rightPanelWidth,
       shouldShowAuxiliaryPanel,
       theme
@@ -10547,8 +10569,9 @@ export function WorkbenchLayout({
           onDoubleClickCapture={handleUnifiedTitlebarDoubleClickCapture}
           data-nav-loading={navigationLoading}
           data-left-collapsed={leftCollapsed}
-          data-right-collapsed={rightCollapsed}
+          data-right-collapsed={effectiveRightCollapsed}
           data-info-ready={infoPanelReady}
+          data-parallel-conversation-active={isParallelConversationActive ? "true" : undefined}
           data-runtime-platform={platform.platform}
           data-os-family={platform.ui.osFamily}
           data-overlay-titlebar={platform.ui.prefersOverlayTitlebar}
@@ -10648,7 +10671,7 @@ export function WorkbenchLayout({
                   />
                 </div>
 
-                {shouldShowAuxiliaryPanel ? (
+                {shouldShowAuxiliaryPanel && !isParallelConversationActive ? (
                   <div
                     className="workbench-collapsed-controls right"
                     data-visible={rightCollapsed}
@@ -10672,11 +10695,12 @@ export function WorkbenchLayout({
                 <div
                   className="workbench-side-resizer"
                   data-side="right"
-                  data-collapsed={rightCollapsed}
+                  data-collapsed={effectiveRightCollapsed}
+                  data-auto-hidden={isParallelConversationActive ? "true" : undefined}
                   role="separator"
                   aria-label={t("shell.rightResizerLabel")}
                   onMouseDown={
-                    rightCollapsed
+                    effectiveRightCollapsed
                       ? undefined
                       : (event) => beginResize("right", event)
                   }
@@ -10685,11 +10709,13 @@ export function WorkbenchLayout({
                   className="workbench-auxiliary surface-card"
                   data-workspace-tone={currentAuxiliaryWorkspaceContext?.tone ?? "root"}
                   data-worktree-depth={currentAuxiliaryWorkspaceContext?.depth ?? 0}
-                  data-collapsed={rightCollapsed}
+                  data-collapsed={effectiveRightCollapsed}
+                  data-auto-hidden={isParallelConversationActive ? "true" : undefined}
                   data-custom-panel={activeCenterTab === "butler"}
+                  aria-hidden={effectiveRightCollapsed}
                   style={createWorkspaceToneStyle(currentAuxiliaryWorkspaceContext)}
                 >
-                  {activeCenterTab === "butler" ? (
+                  {isParallelConversationActive ? null : activeCenterTab === "butler" ? (
                     <div className="workbench-auxiliary-custom-panel">
                       {customAuxiliaryPanel}
                     </div>

@@ -195,6 +195,18 @@ export function resolveSessionIsolatedWorkspaceBranchName(
   return branchName || null;
 }
 
+export function shouldUseParallelConversationLayout(
+  session?: Pick<SessionSummaryDto, "parallelGroup" | "sessionIsolatedWorkspace"> | null
+) {
+  const parallelGroupId = session?.parallelGroup?.groupId?.trim();
+
+  if (!parallelGroupId) {
+    return false;
+  }
+
+  return session?.sessionIsolatedWorkspace?.lifecycleStatus !== "promoted";
+}
+
 export function resolveSessionNavigationWorkspaceId(
   session: Pick<SessionSummaryDto, "workspaceId">,
   sessionIsolatedWorkspace?: Pick<
