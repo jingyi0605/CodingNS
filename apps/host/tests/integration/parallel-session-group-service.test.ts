@@ -45,6 +45,10 @@ describe("ParallelSessionGroupService", () => {
     expect(result.members.map((item) => item.member.role)).toEqual(["anchor", "member"]);
     expect(result.members.map((item) => item.session.parentSessionId)).toEqual([null, null]);
     expect(harness.startLiveSessionMock).toHaveBeenCalledTimes(2);
+    expect(harness.startLiveSessionMock.mock.calls.map(([input]) => input.runtimeOptions?.model)).toEqual([
+      "gpt-5.1",
+      "sonnet-4"
+    ]);
     expect(
       harness.memberRepository.listByGroupId(result.group.id).map((item) => item.sessionId)
     ).toEqual(["session-1", "session-2"]);
@@ -102,6 +106,10 @@ describe("ParallelSessionGroupService", () => {
       "source-session"
     ]);
     expect(harness.sendLiveMessageMock).toHaveBeenCalledTimes(2);
+    expect(harness.sendLiveMessageMock.mock.calls.map(([input]) => input.runtimeOptions?.model)).toEqual([
+      "gpt-5.1",
+      "open-1"
+    ]);
     expect(
       harness.memberRepository.listByGroupId(result.group.id).map((item) => item.sessionId)
     ).toEqual(["fork-1", "fork-2"]);
@@ -276,6 +284,7 @@ describe("ParallelSessionGroupService", () => {
     expect(result.members[2]?.member.ordinal).toBe(2);
     expect(result.members[2]?.session.sessionId).toBe("fork-3");
     expect(harness.sendLiveMessageMock).toHaveBeenCalledTimes(1);
+    expect(harness.sendLiveMessageMock.mock.calls[0]?.[0].runtimeOptions?.model).toBe("open-1");
   });
 
   it("追加成员时不能超过并行上限", async () => {
@@ -378,7 +387,11 @@ function createHarness() {
     return;
   };
   const forkSessionMock = vi.fn();
-  const startLiveSessionMock = vi.fn(async (input: { workspaceId: string; provider: string }) => {
+  const startLiveSessionMock = vi.fn(async (input: {
+    workspaceId: string;
+    provider: string;
+    runtimeOptions?: { model?: string | null };
+  }) => {
     sessionSequence += 1;
     const session = buildSession({
       sessionId: `session-${sessionSequence}`,

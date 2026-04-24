@@ -12,11 +12,15 @@ const mockListProviderCapabilities = vi.fn();
 const mockNavigate = vi.fn();
 const mockRequestNavigationRefresh = vi.fn();
 const mockSelectWorkspace = vi.fn();
+const mockRefreshWorktreeMergePreview = vi.fn();
+const mockApplyWorktreeMerge = vi.fn();
+const mockRequestWorktreeCleanup = vi.fn();
 const mockShowToast = vi.fn();
 let latestComposerPanelProps: {
   isRunning?: boolean;
   canInterrupt?: boolean | null;
   hasActiveRun?: boolean | null;
+  initialModel?: string | null;
 } | null = null;
 let mockNavigationGroups: Array<{
   workspace: {
@@ -28,8 +32,8 @@ let mockNavigationGroups: Array<{
     updatedAt: string;
   };
   sessions: Array<Record<string, unknown>>;
-  childWorktrees: never[];
-}> = [];
+    childWorktrees: Array<Record<string, unknown>>;
+  }> = [];
 
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
@@ -61,8 +65,17 @@ vi.mock("./WorkbenchLayout", () => ({
     requestNavigationRefresh: mockRequestNavigationRefresh,
     selectWorkspace: mockSelectWorkspace,
     upsertNavigationSession: vi.fn(),
-    markNavigationSessionSeen: vi.fn()
-  })
+    markNavigationSessionSeen: vi.fn(),
+    worktreeMergeStateById: {},
+    refreshWorktreeMergePreview: mockRefreshWorktreeMergePreview,
+    applyWorktreeMerge: mockApplyWorktreeMerge,
+    requestWorktreeCleanup: mockRequestWorktreeCleanup
+  }),
+  WorktreeMergePanel: (props: { meta: { workspaceId: string } }) => (
+    <div data-testid="worktree-merge-panel" data-workspace-id={props.meta.workspaceId}>
+      工作树合并
+    </div>
+  )
 }));
 
 vi.mock("../api/conversation-api", async () => {
@@ -86,6 +99,7 @@ vi.mock("./ComposerPanel", () => ({
     isRunning?: boolean;
     canInterrupt?: boolean | null;
     hasActiveRun?: boolean | null;
+    initialModel?: string | null;
   }) => {
     latestComposerPanelProps = props;
 
@@ -338,6 +352,70 @@ describe("ParallelConversationGroupView", () => {
     expect(screen.getByRole("button", { name: t("shell.parallelPaneRemoveAction") })).toBeInTheDocument();
   });
 
+  it("并行 pane 的 Git 工具会显示已升级子工作区的工作树组件", async () => {
+    const user = userEvent.setup();
+    const detail = createDetail();
+    const worktreeMeta = createWorktreeMeta("workspace-isolated-1");
+
+    detail.members[0].sessionIsolatedWorkspace = {
+      ...detail.members[0].sessionIsolatedWorkspace,
+      lifecycleStatus: "promoted",
+      promotedAt: "2026-04-23T12:30:00.000Z"
+    };
+    detail.members[0].session.sessionIsolatedWorkspace = detail.members[0].sessionIsolatedWorkspace;
+    mockNavigationGroups = [
+      {
+        workspace: {
+          id: "workspace-1",
+          name: "TEST",
+          path: "/Users/jackson/Code/TEST",
+          backgroundColor: null,
+          createdAt: "2026-04-23T12:00:00.000Z",
+          updatedAt: "2026-04-23T12:00:00.000Z"
+        },
+        sessions: [],
+        childWorktrees: [
+          {
+            workspace: {
+              id: "workspace-isolated-1",
+              name: "parallel/original",
+              path: "/Users/jackson/Code/TEST/.worktrees/parallel-original",
+              backgroundColor: null,
+              createdAt: "2026-04-23T12:30:00.000Z",
+              updatedAt: "2026-04-23T12:30:00.000Z"
+            },
+            meta: worktreeMeta,
+            sessions: [detail.members[0].session],
+            children: []
+          }
+        ]
+      }
+    ];
+    mockGetParallelGroupDetail.mockResolvedValueOnce(detail);
+
+    render(
+      <MemoryRouter>
+        <ParallelConversationGroupView
+          groupId="parallel-group-1"
+          currentSessionId="session-1"
+        />
+      </MemoryRouter>
+    );
+
+    const panePrompt = await screen.findByText("原版风格");
+    const pane = panePrompt.closest(".parallel-conversation-pane");
+
+    if (!(pane instanceof HTMLElement)) {
+      throw new Error("未找到并行 pane");
+    }
+
+    await user.click(within(pane).getByRole("button", { name: t("shell.parallelPaneToolsAction") }));
+    await user.click(screen.getByRole("tab", { name: t("shell.gitEntry") }));
+
+    expect(screen.getByTestId("worktree-merge-panel")).toHaveAttribute("data-workspace-id", "workspace-isolated-1");
+    expect(screen.getByTestId("parallel-tools-git")).toHaveAttribute("data-workspace-id", "workspace-isolated-1");
+  });
+
   it("在信息悬浮框点击移除并行会话后，会删除会话并刷新当前视图", async () => {
     const user = userEvent.setup();
 
@@ -409,6 +487,25 @@ describe("ParallelConversationGroupView", () => {
     expect(screen.getByTestId("composer-panel")).toHaveAttribute("data-can-interrupt", "false");
     expect(latestComposerPanelProps?.isRunning).toBe(true);
     expect(latestComposerPanelProps?.hasActiveRun).toBe(true);
+  });
+
+  it("会把并行成员创建时选择的模型传给 pane Composer", async () => {
+    const detail = createDetail();
+    (detail.members[0].member as { model: string | null }).model = "gpt-5.1-codex-mini";
+    mockGetParallelGroupDetail.mockResolvedValueOnce(detail);
+
+    render(
+      <MemoryRouter>
+        <ParallelConversationGroupView
+          groupId="parallel-group-1"
+          currentSessionId="session-1"
+        />
+      </MemoryRouter>
+    );
+
+    await screen.findByText("原版风格");
+
+    expect(latestComposerPanelProps?.initialModel).toBe("gpt-5.1-codex-mini");
   });
 
   it("工具窗口默认贴住当前 pane，外部点击和再次点工具按钮都不会直接关掉", async () => {
@@ -617,6 +714,27 @@ function createDetail() {
         }
       }
     ]
+  };
+}
+
+function createWorktreeMeta(workspaceId: string) {
+  return {
+    workspaceId,
+    rootWorkspaceId: "workspace-1",
+    parentWorkspaceId: "workspace-1",
+    sourceWorkspaceId: "workspace-1",
+    mergeTargetWorkspaceId: "workspace-1",
+    branchName: "parallel/original",
+    baseRef: "main",
+    baseCommit: "base-commit",
+    headCommit: "head-commit",
+    displayName: "parallel/original",
+    depth: 1,
+    lifecycleStatus: "active",
+    mergedAt: null,
+    removedAt: null,
+    createdAt: "2026-04-23T12:30:00.000Z",
+    updatedAt: "2026-04-23T12:30:00.000Z"
   };
 }
 

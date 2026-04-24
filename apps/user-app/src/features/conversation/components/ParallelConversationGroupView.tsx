@@ -107,6 +107,7 @@ interface ParallelConversationMemberPaneProps {
     workspaceId: string;
     ordinal: number;
     memberPrompt: string | null;
+    model: string | null;
     sessionIsolatedWorkspace: SessionIsolatedWorkspaceSummaryDto | null;
   };
   readonly isCurrent: boolean;
@@ -358,6 +359,7 @@ export function ParallelConversationGroupView({
             ),
           ordinal: item.member.ordinal,
           memberPrompt: item.member.memberPrompt,
+          model: item.member.model,
           sessionIsolatedWorkspace: item.sessionIsolatedWorkspace
         };
       });
@@ -789,7 +791,10 @@ function ParallelConversationMemberPane({
   const isolatedWorkspaceBranchName = resolveSessionIsolatedWorkspaceBranchName(
     paneSessionIsolatedWorkspace
   );
-  const modelLabel = contextUsage?.modelId?.trim() || t("shell.parallelPaneModelFallback");
+  const modelLabel =
+    contextUsage?.modelId?.trim()
+    || entry.model?.trim()
+    || t("shell.parallelPaneModelFallback");
   const panePromptLabel = entry.memberPrompt?.trim() || t("shell.parallelPanePromptFallback");
   const navigationWorkspaceId = entry.workspaceId;
   const toolWorkspaceId = resolveSessionToolWorkspaceId(
@@ -1539,6 +1544,7 @@ function ParallelConversationMemberPane({
         <ComposerPanel
           capabilities={capabilities}
           draftStorageId={sessionId}
+          initialModel={entry.model}
           forkDraft={forkDraft}
           onClearForkDraft={() => setForkDraft(null)}
           onForkDraftChange={(nextDraft) => setForkDraft(nextDraft)}

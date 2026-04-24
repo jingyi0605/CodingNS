@@ -1312,6 +1312,82 @@ describe("ComposerPanel", () => {
     });
   });
 
+  it("传入初始模型时会作为当前会话默认模型发送", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        initialModel="gpt-5.1-codex-mini"
+        isSubmitting={false}
+        onSend={onSend}
+      />
+    );
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: {
+        value: "沿用并行创建时选择的模型"
+      }
+    });
+    fireEvent.submit(document.querySelector(".composer-form")!);
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledTimes(1);
+    });
+    expect(onSend).toHaveBeenCalledWith("沿用并行创建时选择的模型", {
+      model: "gpt-5.1-codex-mini",
+      reasoningLevel: "high",
+      attachments: [],
+      attachmentMeta: []
+    });
+  });
+
+  it("初始模型晚于能力列表加载时，仍会在模型可用后自动应用", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = render(
+      <ComposerPanel
+        capabilities={createCapabilities({
+          modelOptions: [
+            {
+              id: "provider-default",
+              name: "跟随 CLI 默认模型",
+              usesProviderDefault: true
+            }
+          ]
+        })}
+        initialModel="gpt-5.1-codex-mini"
+        isSubmitting={false}
+        onSend={onSend}
+      />
+    );
+
+    rerender(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        initialModel="gpt-5.1-codex-mini"
+        isSubmitting={false}
+        onSend={onSend}
+      />
+    );
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: {
+        value: "模型列表加载完成后发送"
+      }
+    });
+    fireEvent.submit(document.querySelector(".composer-form")!);
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledTimes(1);
+    });
+    expect(onSend).toHaveBeenCalledWith("模型列表加载完成后发送", {
+      model: "gpt-5.1-codex-mini",
+      reasoningLevel: "high",
+      attachments: [],
+      attachmentMeta: []
+    });
+  });
+
   it("fork 引用态默认显示源 CLI 和默认模型，发送时不额外透传工具栏模型与推理等级", async () => {
     const onSend = vi.fn().mockResolvedValue(undefined);
 

@@ -55,6 +55,7 @@ interface ComposerPanelProps {
   capabilities: ProviderCapabilitiesDto | null;
   placeholder?: string;
   draftStorageId?: string;
+  initialModel?: string | null;
   forkDraft?: {
     sourceMessageId: string;
     sourceMessageSnapshot: ForkSourceMessageSnapshotDto;
@@ -440,6 +441,7 @@ export function ComposerPanel({
   capabilities,
   placeholder,
   draftStorageId,
+  initialModel = null,
   forkDraft = null,
   onClearForkDraft,
   onForkDraftChange,
@@ -490,6 +492,7 @@ export function ComposerPanel({
   const attachmentRegistryRef = useRef(new Set<string>());
   const attachmentDraftCacheRef = useRef(new Map<string, StoredComposerDraftAttachment>());
   const quickPhraseMutationVersionRef = useRef(0);
+  const appliedInitialModelKeyRef = useRef<string | null>(null);
   const { showToast } = useToast();
   const haptics = useHaptics();
 
@@ -1004,6 +1007,34 @@ export function ComposerPanel({
       return;
     }
 
+    const normalizedInitialModel = initialModel?.trim() || null;
+    const initialModelKey = `${draftStorageId ?? "default"}:${provider}:${normalizedInitialModel ?? ""}`;
+    const initialModelAvailable = Boolean(
+      normalizedInitialModel &&
+      availableModels.some((model) => model.id === normalizedInitialModel)
+    );
+
+    if (initialModelAvailable) {
+      if (appliedInitialModelKeyRef.current !== initialModelKey) {
+        appliedInitialModelKeyRef.current = initialModelKey;
+        if (selectedModel !== normalizedInitialModel) {
+          setSelectedModel(normalizedInitialModel!);
+        }
+        return;
+      }
+
+      if (availableModels.some((model) => model.id === selectedModel)) {
+        return;
+      }
+
+      setSelectedModel(normalizedInitialModel!);
+      return;
+    }
+
+    if (!normalizedInitialModel && appliedInitialModelKeyRef.current !== initialModelKey) {
+      appliedInitialModelKeyRef.current = initialModelKey;
+    }
+
     if (
       accountPreferredModel &&
       availableModels.some((model) => model.id === accountPreferredModel)
@@ -1020,7 +1051,7 @@ export function ComposerPanel({
 
     const fallbackModel = availableModels[0]!.id;
     setSelectedModel(fallbackModel);
-  }, [availableModels, provider, selectedModel, accountPreferredModel]);
+  }, [availableModels, draftStorageId, provider, selectedModel, accountPreferredModel, initialModel]);
 
   useEffect(() => {
     if (!shouldPersistReasoningLevel(provider) || availableReasoningLevels.length === 0) {
