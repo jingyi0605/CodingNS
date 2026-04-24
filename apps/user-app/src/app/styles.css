@@ -29338,29 +29338,13 @@ textarea:focus-visible {
   padding: 10px 12px 12px;
 }
 
-.parallel-pane-tools-surface.git-sidebar,
-.parallel-pane-git-tools-surface {
+.parallel-pane-tools-surface.git-sidebar {
   gap: 0;
   padding: 0;
   background: transparent;
 }
 
-.parallel-pane-git-tools-surface {
-  flex-direction: column;
-}
-
-.parallel-pane-git-tools-surface > .worktree-merge-panel {
-  flex: 0 0 auto;
-  margin: 10px 12px 0;
-}
-
-.parallel-pane-git-sidebar {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.parallel-pane-tools-surface.git-sidebar .git-card,
-.parallel-pane-git-sidebar .git-card {
+.parallel-pane-tools-surface.git-sidebar .git-card {
   box-shadow: none;
   border-radius: 0;
   border-left: none;

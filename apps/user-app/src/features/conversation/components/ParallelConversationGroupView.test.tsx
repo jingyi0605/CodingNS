@@ -352,70 +352,6 @@ describe("ParallelConversationGroupView", () => {
     expect(screen.getByRole("button", { name: t("shell.parallelPaneRemoveAction") })).toBeInTheDocument();
   });
 
-  it("并行 pane 的 Git 工具会显示已升级子工作区的工作树组件", async () => {
-    const user = userEvent.setup();
-    const detail = createDetail();
-    const worktreeMeta = createWorktreeMeta("workspace-isolated-1");
-
-    detail.members[0].sessionIsolatedWorkspace = {
-      ...detail.members[0].sessionIsolatedWorkspace,
-      lifecycleStatus: "promoted",
-      promotedAt: "2026-04-23T12:30:00.000Z"
-    };
-    detail.members[0].session.sessionIsolatedWorkspace = detail.members[0].sessionIsolatedWorkspace;
-    mockNavigationGroups = [
-      {
-        workspace: {
-          id: "workspace-1",
-          name: "TEST",
-          path: "/Users/jackson/Code/TEST",
-          backgroundColor: null,
-          createdAt: "2026-04-23T12:00:00.000Z",
-          updatedAt: "2026-04-23T12:00:00.000Z"
-        },
-        sessions: [],
-        childWorktrees: [
-          {
-            workspace: {
-              id: "workspace-isolated-1",
-              name: "parallel/original",
-              path: "/Users/jackson/Code/TEST/.worktrees/parallel-original",
-              backgroundColor: null,
-              createdAt: "2026-04-23T12:30:00.000Z",
-              updatedAt: "2026-04-23T12:30:00.000Z"
-            },
-            meta: worktreeMeta,
-            sessions: [detail.members[0].session],
-            children: []
-          }
-        ]
-      }
-    ];
-    mockGetParallelGroupDetail.mockResolvedValueOnce(detail);
-
-    render(
-      <MemoryRouter>
-        <ParallelConversationGroupView
-          groupId="parallel-group-1"
-          currentSessionId="session-1"
-        />
-      </MemoryRouter>
-    );
-
-    const panePrompt = await screen.findByText("原版风格");
-    const pane = panePrompt.closest(".parallel-conversation-pane");
-
-    if (!(pane instanceof HTMLElement)) {
-      throw new Error("未找到并行 pane");
-    }
-
-    await user.click(within(pane).getByRole("button", { name: t("shell.parallelPaneToolsAction") }));
-    await user.click(screen.getByRole("tab", { name: t("shell.gitEntry") }));
-
-    expect(screen.getByTestId("worktree-merge-panel")).toHaveAttribute("data-workspace-id", "workspace-isolated-1");
-    expect(screen.getByTestId("parallel-tools-git")).toHaveAttribute("data-workspace-id", "workspace-isolated-1");
-  });
-
   it("在信息悬浮框点击移除并行会话后，会删除会话并刷新当前视图", async () => {
     const user = userEvent.setup();
 
@@ -714,27 +650,6 @@ function createDetail() {
         }
       }
     ]
-  };
-}
-
-function createWorktreeMeta(workspaceId: string) {
-  return {
-    workspaceId,
-    rootWorkspaceId: "workspace-1",
-    parentWorkspaceId: "workspace-1",
-    sourceWorkspaceId: "workspace-1",
-    mergeTargetWorkspaceId: "workspace-1",
-    branchName: "parallel/original",
-    baseRef: "main",
-    baseCommit: "base-commit",
-    headCommit: "head-commit",
-    displayName: "parallel/original",
-    depth: 1,
-    lifecycleStatus: "active",
-    mergedAt: null,
-    removedAt: null,
-    createdAt: "2026-04-23T12:30:00.000Z",
-    updatedAt: "2026-04-23T12:30:00.000Z"
   };
 }
 
