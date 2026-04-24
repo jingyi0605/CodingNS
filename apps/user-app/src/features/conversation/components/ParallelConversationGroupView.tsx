@@ -1485,6 +1485,7 @@ function ParallelConversationMemberPane({
             provider={session?.provider ?? entry.session.provider}
             interruptedSource={runtimeInterruptSource}
             runtimeThinkingPlaceholder={null}
+            followTailUpdates
             onLoadOlderMessages={() => {
               void store.loadOlderMessages();
             }}

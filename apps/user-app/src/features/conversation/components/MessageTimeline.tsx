@@ -67,6 +67,7 @@ interface MessageTimelineProps {
   interruptedSource?: SessionInterruptSource | null;
   runtimeThinkingPlaceholder?: string | null;
   assistantAvatar?: ReactNode;
+  followTailUpdates?: boolean;
 }
 
 interface MessageActionState {
@@ -3645,7 +3646,8 @@ export function MessageTimeline({
   provider,
   interruptedSource = null,
   runtimeThinkingPlaceholder = null,
-  assistantAvatar
+  assistantAvatar,
+  followTailUpdates = false
 }: MessageTimelineProps) {
   const { showToast } = useToast();
   const platform = usePlatform();
@@ -3657,11 +3659,17 @@ export function MessageTimeline({
   const pendingOlderLoadOffsetRef = useRef<number | null>(null);
   const pendingOlderLoadHeadSignatureRef = useRef<string | null>(null);
   const olderLoadLockRef = useRef(false);
-  const pendingRestoreStateRef = useRef(readPersistedConversationScrollState(sessionId));
-  const restoredTailSignatureRef = useRef<string | null>(
-    readPersistedConversationScrollState(sessionId)?.lastMessageSignature ?? null
+  const pendingRestoreStateRef = useRef(
+    followTailUpdates ? null : readPersistedConversationScrollState(sessionId)
   );
-  const currentScrollStateRef = useRef(readPersistedConversationScrollState(sessionId));
+  const restoredTailSignatureRef = useRef<string | null>(
+    followTailUpdates
+      ? null
+      : readPersistedConversationScrollState(sessionId)?.lastMessageSignature ?? null
+  );
+  const currentScrollStateRef = useRef(
+    followTailUpdates ? null : readPersistedConversationScrollState(sessionId)
+  );
   const scrollPersistTimerRef = useRef<number | null>(null);
   const manualRestoreTimerRef = useRef<number | null>(null);
   const manualRestoreTargetRef = useRef<number | null>(null);
@@ -3884,10 +3892,14 @@ export function MessageTimeline({
       previousSessionIdRef.current = sessionId;
       previousMessageCountRef.current = 0;
       previousLastMessageSignatureRef.current = null;
-      pendingRestoreStateRef.current = readPersistedConversationScrollState(sessionId);
+      pendingRestoreStateRef.current = followTailUpdates
+        ? null
+        : readPersistedConversationScrollState(sessionId);
       restoredTailSignatureRef.current = pendingRestoreStateRef.current?.lastMessageSignature ?? null;
       currentScrollStateRef.current = pendingRestoreStateRef.current;
-      stickToBottomRef.current = pendingRestoreStateRef.current?.stickToBottom ?? true;
+      stickToBottomRef.current = followTailUpdates
+        ? true
+        : pendingRestoreStateRef.current?.stickToBottom ?? true;
       pendingOlderLoadOffsetRef.current = null;
       pendingOlderLoadHeadSignatureRef.current = null;
       finishManualRestore();
@@ -3895,7 +3907,7 @@ export function MessageTimeline({
       setHasNewMessagesBelow(false);
       setShowScrollToBottomButton(false);
     }
-  }, [sessionId]);
+  }, [followTailUpdates, sessionId]);
 
   useLayoutEffect(() => {
     return () => {
@@ -3918,6 +3930,10 @@ export function MessageTimeline({
     const previousCount = previousMessageCountRef.current;
     const previousLastSignature = previousLastMessageSignatureRef.current;
     const pendingRestoreState = pendingRestoreStateRef.current;
+    const hasTailUpdate =
+      previousCount === 0 ||
+      messages.length !== previousCount ||
+      currentLastSignature !== previousLastSignature;
 
     // 会话切回来时先恢复阅读位置；是否有新消息是另一件事，用 NEW 提示，不要强行把用户踢到底部。
     if (pendingRestoreState && historyState === "ready") {
@@ -3978,6 +3994,9 @@ export function MessageTimeline({
       && pendingOlderLoadHeadSignature !== null
       && pendingOlderLoadHeadSignature !== currentHeadSignature
       && messages.length >= previousCount;
+    const shouldFollowTailUpdate =
+      hasTailUpdate
+      && (followTailUpdates || stickToBottomRef.current);
 
     if (shouldRestoreOlderLoadOffset) {
       list.scrollTop = Math.max(0, list.scrollHeight - pendingOlderLoadOffset);
@@ -3986,14 +4005,11 @@ export function MessageTimeline({
     } else if (pendingOlderLoadOffsetRef.current !== null && !loadingOlderMessages) {
       pendingOlderLoadOffsetRef.current = null;
       pendingOlderLoadHeadSignatureRef.current = null;
-    } else if (
-      stickToBottomRef.current
-      && (
-        previousCount === 0 ||
-        messages.length !== previousCount ||
-        currentLastSignature !== previousLastSignature
-      )
-    ) {
+      if (shouldFollowTailUpdate) {
+        // 并行 pane 是观察面板，尾部有更新时必须跟上最新输出。
+        jumpToBottom(list);
+      }
+    } else if (shouldFollowTailUpdate) {
       jumpToBottom(list);
     }
 

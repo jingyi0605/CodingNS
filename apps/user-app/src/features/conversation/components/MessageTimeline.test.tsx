@@ -2438,6 +2438,80 @@ ARGUMENTS: capabilities list`)
       screen.queryByRole("button", { name: t("conversation.scrollToBottomAction") })
     ).not.toBeInTheDocument();
   });
+
+  it("启用尾部跟随后，即使当前不在底部，收到新消息也会自动贴底", () => {
+    const oldMessages = [
+      {
+        ...createAssistantTextMessage("第一条消息", "assistant-follow-1"),
+        sessionId: "session-follow"
+      },
+      {
+        ...createAssistantTextMessage("第二条消息", "assistant-follow-2"),
+        sessionId: "session-follow",
+        sequence: 2,
+        rawRef: "codex://raw#line=follow-2"
+      }
+    ];
+    const updatedMessages = [
+      ...oldMessages,
+      {
+        ...createAssistantTextMessage("第三条最新消息", "assistant-follow-3"),
+        sessionId: "session-follow",
+        sequence: 3,
+        rawRef: "codex://raw#line=follow-3"
+      }
+    ];
+    const { rerender } = render(
+      <MessageTimeline
+        sessionId="session-follow"
+        historyState="ready"
+        provider="codex"
+        followTailUpdates
+        onRetryMessage={vi.fn()}
+        messages={oldMessages}
+      />
+    );
+
+    const messageList = document.querySelector(".message-list") as HTMLDivElement | null;
+
+    expect(messageList).not.toBeNull();
+
+    let scrollHeight = 2000;
+    Object.defineProperty(messageList, "scrollHeight", {
+      get: () => scrollHeight,
+      configurable: true
+    });
+    Object.defineProperty(messageList, "clientHeight", {
+      value: 600,
+      configurable: true
+    });
+
+    fireEvent.scroll(messageList!, {
+      target: {
+        scrollTop: 420
+      }
+    });
+
+    expect(messageList!.scrollTop).toBe(420);
+
+    scrollHeight = 2400;
+    rerender(
+      <MessageTimeline
+        sessionId="session-follow"
+        historyState="ready"
+        provider="codex"
+        followTailUpdates
+        onRetryMessage={vi.fn()}
+        messages={updatedMessages}
+      />
+    );
+
+    expect(messageList!.scrollTop).toBe(2400);
+    expect(
+      screen.queryByRole("button", { name: t("conversation.scrollToBottomAction") })
+    ).not.toBeInTheDocument();
+  });
+
   it("renders image thumbnail preview for pending image attachments", async () => {
     render(
       <MessageTimeline
