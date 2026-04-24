@@ -1489,15 +1489,34 @@ export function GitSidebar({
 
   async function copyText(value: string, successMessage: string) {
     try {
-      if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-        throw new Error("clipboard unavailable");
+      if (platform.isDesktop) {
+        const desktopResult = await platform.bridge.writeClipboardText(value);
+
+        if (desktopResult.ok) {
+          showToast({
+            title: successMessage,
+            tone: "success"
+          });
+          return;
+        }
       }
 
-      await navigator.clipboard.writeText(value);
-      showToast({
-        title: successMessage,
-        tone: "success"
-      });
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        showToast({
+          title: successMessage,
+          tone: "success"
+        });
+        return;
+      }
+
+      if (copyTextWithExecCommand(value)) {
+        showToast({
+          title: successMessage,
+          tone: "success"
+        });
+        return;
+      }
     } catch {
       showToast({
         title: t("common.copyContentFailed"),
@@ -3694,6 +3713,31 @@ function buildCommitDraft(subject: string): CommitDraftDto {
 
 function normalizeCommitSubject(subject: string) {
   return subject.replace(/[\r\n]+/g, " ");
+}
+
+function copyTextWithExecCommand(text: string): boolean {
+  if (typeof document === "undefined" || typeof document.execCommand !== "function") {
+    return false;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.top = "-9999px";
+  textarea.style.left = "-9999px";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(textarea);
+  }
 }
 
 function buildCommitMessageText(input: Pick<GitHistoryItemDto, "subject" | "body">): string;

@@ -46,7 +46,8 @@ const platformMock = vi.hoisted(() => ({
   isDesktop: true,
   isMobile: false,
   bridge: {
-    supported: true
+    supported: true,
+    writeClipboardText: vi.fn()
   }
 }));
 const clipboardWriteTextMock = vi.hoisted(() => vi.fn());
@@ -155,6 +156,11 @@ describe("GitSidebar", () => {
       value: {
         writeText: clipboardWriteTextMock
       }
+    });
+    platformMock.bridge.writeClipboardText.mockResolvedValue({
+      ok: false,
+      errorCode: "SHELL_BRIDGE_ERROR",
+      detail: "clipboard unavailable"
     });
 
     gitApiMock.getGitStatus.mockResolvedValue(createStatus());
@@ -640,6 +646,22 @@ describe("GitSidebar", () => {
     await waitFor(() => {
       expect(clipboardWriteTextMock).toHaveBeenCalledWith("33333333");
     });
+  });
+
+  it("桌面端最近版本复制优先走原生剪贴板桥接", async () => {
+    platformMock.bridge.writeClipboardText.mockResolvedValue({
+      ok: true
+    });
+    renderSidebar();
+
+    fireEvent.click(await screen.findByRole("button", { name: /最近版本|Recent Versions/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: /版本操作|History Item Menu|Commit Actions/ })[0]);
+    fireEvent.click(screen.getByRole("button", { name: /复制 Commit Hash|Copy Commit Hash/ }));
+
+    await waitFor(() => {
+      expect(platformMock.bridge.writeClipboardText).toHaveBeenCalledWith("33333333");
+    });
+    expect(clipboardWriteTextMock).not.toHaveBeenCalled();
   });
 
   it("最近版本支持打开提交详情模态框并展示文件与 diff", async () => {
