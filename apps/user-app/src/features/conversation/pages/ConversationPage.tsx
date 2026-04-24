@@ -389,8 +389,12 @@ function LiveConversationPage({
     [navigationSession, session]
   );
   const supportsParallelSessionFeatures = showInlineHeader;
+  const isPromotedParallelWorkspaceSession =
+    currentSessionIsolatedWorkspace?.lifecycleStatus === "promoted";
   const activeParallelGroupId =
-    supportsParallelSessionFeatures ? currentSessionSummary?.parallelGroup?.groupId ?? null : null;
+    supportsParallelSessionFeatures && !isPromotedParallelWorkspaceSession
+      ? currentSessionSummary?.parallelGroup?.groupId ?? null
+      : null;
   const mobileMainGestureHandlers = !showInlineHeader
     ? mergeMobileGestureHandlers(mobilePreview.mainGestureHandlers, mobileToolPanel.mainGestureHandlers)
     : null;

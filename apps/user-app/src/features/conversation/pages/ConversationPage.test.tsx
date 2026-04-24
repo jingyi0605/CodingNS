@@ -15,8 +15,8 @@ const mockQueuedMessageList = vi.fn((_props: unknown) => null);
 const mockComposerPanel = vi.fn((_props: unknown) => null);
 const mockParallelConversationGroupView = vi.fn((_props: unknown) => null);
 const mockParallelSessionCreateModal = vi.fn((_props: unknown) => null);
-const mockLiveRuntimeState: any = {
-  session: {
+function createBaseLiveSession() {
+  return {
     sessionId: "session-live-1",
     workspaceId: "workspace-1",
     provider: "codex",
@@ -48,7 +48,11 @@ const mockLiveRuntimeState: any = {
     completedAt: null,
     lastSeenAt: null,
     activityState: "idle"
-  },
+  };
+}
+
+const mockLiveRuntimeState: any = {
+  session: createBaseLiveSession(),
   capabilities: null,
   runtimeHasActiveRun: false,
   runtimeCanInterrupt: false,
@@ -221,7 +225,7 @@ describe("ConversationPage", () => {
     mockRuntimeStoreSendMessage.mockReset();
     mockRuntimeStoreSendMessage.mockResolvedValue(undefined);
     mockLiveRuntimeState.session = {
-      ...mockLiveRuntimeState.session,
+      ...createBaseLiveSession(),
       provider: "codex",
       runningState: "idle",
       activityState: "idle"
@@ -329,6 +333,47 @@ describe("ConversationPage", () => {
       "parallel:parallel-group-1:session-live-1"
     );
     expect(screen.queryByTestId("session-header")).not.toBeInTheDocument();
+  });
+
+  it("桌面端已升级为子工作区的并行会话按普通会话展示", () => {
+    mockLiveRuntimeState.session = {
+      ...mockLiveRuntimeState.session,
+      sessionId: "session-live-1",
+      workspaceId: "workspace-isolated-1",
+      parallelGroup: {
+        groupId: "parallel-group-1",
+        role: "member",
+        memberCount: 2,
+        sourceType: "new",
+        sourceSessionId: null,
+        anchorSessionId: "session-anchor-1",
+        colorToken: "parallel-group-1"
+      },
+      sessionIsolatedWorkspace: {
+        id: "isolated-record-1",
+        workspaceId: "workspace-isolated-1",
+        sourceWorkspaceId: "workspace-1",
+        branchName: "parallel/member-1",
+        lifecycleStatus: "promoted",
+        promotedAt: "2026-04-24T08:30:00.000Z",
+        createdAt: "2026-04-24T08:00:00.000Z",
+        updatedAt: "2026-04-24T08:30:00.000Z"
+      }
+    };
+    mockUseWorkbenchShell.mockReturnValue(
+      createMobileWorkbenchShellValue({
+        shellMode: "desktop"
+      })
+    );
+
+    renderLiveConversationPage({
+      initialEntry: "/workspaces/workspace-isolated-1/sessions/session-live-1"
+    });
+
+    expect(screen.queryByTestId("parallel-conversation-group-view")).not.toBeInTheDocument();
+    expect(screen.getByTestId("timeline")).toBeInTheDocument();
+    expect(screen.getByTestId("composer")).toBeInTheDocument();
+    expect(mockParallelConversationGroupView).not.toHaveBeenCalled();
   });
 
   it("移动端并行会话仍按普通单会话视图展示，也不会挂载并行创建弹窗", () => {
