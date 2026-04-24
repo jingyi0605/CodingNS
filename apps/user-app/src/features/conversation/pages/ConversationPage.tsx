@@ -61,9 +61,11 @@ import {
 } from "../parallel-session-display";
 import { SessionRuntimeStore, useSessionRuntimeStore } from "../runtime/session-runtime-store";
 import {
+  isSessionRunning,
   resolveSessionActivityBadgeLabel,
   resolveSessionIndicatorClassName
 } from "../session-activity-display";
+import { useSessionSendRecovery } from "../session-send-recovery";
 import { buildSessionTitlePresentation } from "../session-title";
 import {
   createPendingMessage,
@@ -274,6 +276,13 @@ function LiveConversationPage({
       ? true
       : runtimeCanInterrupt;
   const composerIsRunning = isRunning || optimisticInterruptibleSendInFlight;
+  useSessionSendRecovery({
+    sending,
+    setSending,
+    session,
+    runtimeHasActiveRun,
+    runtimeCanInterrupt
+  });
   const runtimeThinkingPlaceholder = useStableRuntimeThinkingPlaceholder({
     sessionId,
     provider: session?.provider ?? null,
@@ -3131,22 +3140,6 @@ function ParallelForkIcon() {
         strokeWidth="1.4"
       />
     </svg>
-  );
-}
-
-function isSessionRunning(session: SessionSummaryDto | null): boolean {
-  if (!session) {
-    return false;
-  }
-
-  if (session.activityState === "running") {
-    return true;
-  }
-
-  return (
-    session.runningState === "starting"
-    || session.runningState === "running"
-    || session.runningState === "reconnecting"
   );
 }
 

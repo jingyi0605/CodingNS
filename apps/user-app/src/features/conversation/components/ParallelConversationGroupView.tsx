@@ -50,6 +50,8 @@ import { PermissionRequestList } from "./PermissionRequestList";
 import { QueuedMessageList } from "./QueuedMessageList";
 import { useWorkbenchShell } from "./WorkbenchLayout";
 import { SessionRuntimeStore, useSessionRuntimeStore } from "../runtime/session-runtime-store";
+import { isSessionRunning } from "../session-activity-display";
+import { useSessionSendRecovery } from "../session-send-recovery";
 import { TerminalManagerPanel } from "../../workbench/components/TerminalManagerPanel";
 import { TerminalPage } from "../../terminal/pages/TerminalPage";
 import {
@@ -758,16 +760,23 @@ function ParallelConversationMemberPane({
     (item) => item.status === "queued" || item.status === "dispatching"
   );
   const optimisticInterruptibleSendInFlight = sending && !forkDraft;
+  const paneRuntimeActive = isSessionRunning(session);
   const composerHasActiveRun =
-    runtimeHasActiveRun === true || optimisticInterruptibleSendInFlight
+    paneRuntimeActive || runtimeHasActiveRun === true || optimisticInterruptibleSendInFlight
       ? true
       : runtimeHasActiveRun;
   const composerCanInterrupt =
     runtimeCanInterrupt === true || optimisticInterruptibleSendInFlight
       ? true
       : runtimeCanInterrupt;
-  const composerIsRunning =
-    session?.activityState === "running" || optimisticInterruptibleSendInFlight;
+  const composerIsRunning = paneRuntimeActive || optimisticInterruptibleSendInFlight;
+  useSessionSendRecovery({
+    sending,
+    setSending,
+    session,
+    runtimeHasActiveRun,
+    runtimeCanInterrupt
+  });
   const parallelGroupStyle = createParallelGroupStyle(session?.parallelGroup ?? entry.session.parallelGroup);
   const parallelPaneStyle = createParallelPaneStyle({
     groupId: (session?.parallelGroup ?? entry.session.parallelGroup)?.groupId ?? "parallel-group",

@@ -117,6 +117,22 @@ export function resolveSessionActivityBadgeClassName(
   return null;
 }
 
+export function isSessionRunning(session: SessionActivityDisplayInput | null | undefined): boolean {
+  if (!session) {
+    return false;
+  }
+
+  if (session.activityState === "running") {
+    return true;
+  }
+
+  return (
+    session.runningState === "starting"
+    || session.runningState === "running"
+    || session.runningState === "reconnecting"
+  );
+}
+
 function resolveSessionIndicatorVariant(
   session: SessionActivityDisplayInput
 ): SessionIndicatorVariant {

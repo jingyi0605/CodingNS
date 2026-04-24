@@ -13,6 +13,11 @@ const mockNavigate = vi.fn();
 const mockRequestNavigationRefresh = vi.fn();
 const mockSelectWorkspace = vi.fn();
 const mockShowToast = vi.fn();
+let latestComposerPanelProps: {
+  isRunning?: boolean;
+  canInterrupt?: boolean | null;
+  hasActiveRun?: boolean | null;
+} | null = null;
 let mockNavigationGroups: Array<{
   workspace: {
     id: string;
@@ -77,7 +82,22 @@ vi.mock("../api/conversation-api", async () => {
 });
 
 vi.mock("./ComposerPanel", () => ({
-  ComposerPanel: () => <div data-testid="composer-panel" />
+  ComposerPanel: (props: {
+    isRunning?: boolean;
+    canInterrupt?: boolean | null;
+    hasActiveRun?: boolean | null;
+  }) => {
+    latestComposerPanelProps = props;
+
+    return (
+      <div
+        data-testid="composer-panel"
+        data-is-running={String(props.isRunning)}
+        data-can-interrupt={String(props.canInterrupt)}
+        data-has-active-run={String(props.hasActiveRun)}
+      />
+    );
+  }
 }));
 
 vi.mock("./ConnectionBanner", () => ({
@@ -211,6 +231,7 @@ vi.mock("../runtime/session-runtime-store", () => {
 describe("ParallelConversationGroupView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    latestComposerPanelProps = null;
     mockDeleteSession.mockResolvedValue(undefined);
     mockListProviderCapabilities.mockResolvedValue({
       codex: {
@@ -345,6 +366,49 @@ describe("ParallelConversationGroupView", () => {
     expect(mockRequestNavigationRefresh).toHaveBeenCalled();
     expect(mockNavigate).toHaveBeenCalledWith("/workspaces/workspace-1/sessions");
     expect(await screen.findByText(t("shell.parallelGroupEmpty"))).toBeInTheDocument();
+  });
+
+  it("并行 pane 仍处在 runningState 活跃态时，继续向 Composer 暴露可停止状态", async () => {
+    const detail = createDetail();
+    detail.members[0].session.runningState = "running";
+    detail.members[0].session.activityState = "idle";
+    mockNavigationGroups = [
+      {
+        workspace: {
+          id: "workspace-1",
+          name: "TEST",
+          path: "/Users/jackson/Code/TEST",
+          backgroundColor: null,
+          createdAt: "2026-04-23T12:00:00.000Z",
+          updatedAt: "2026-04-23T12:00:00.000Z"
+        },
+        sessions: [
+          {
+            ...detail.members[0].session,
+            sessionIsolatedWorkspace: null
+          }
+        ],
+        childWorktrees: []
+      }
+    ];
+    mockGetParallelGroupDetail.mockResolvedValueOnce(detail);
+
+    render(
+      <MemoryRouter>
+        <ParallelConversationGroupView
+          groupId="parallel-group-1"
+          currentSessionId="session-1"
+        />
+      </MemoryRouter>
+    );
+
+    await screen.findByText("原版风格");
+
+    expect(screen.getByTestId("composer-panel")).toHaveAttribute("data-is-running", "true");
+    expect(screen.getByTestId("composer-panel")).toHaveAttribute("data-has-active-run", "true");
+    expect(screen.getByTestId("composer-panel")).toHaveAttribute("data-can-interrupt", "false");
+    expect(latestComposerPanelProps?.isRunning).toBe(true);
+    expect(latestComposerPanelProps?.hasActiveRun).toBe(true);
   });
 
   it("工具窗口默认贴住当前 pane，外部点击和再次点工具按钮都不会直接关掉", async () => {
@@ -514,6 +578,7 @@ function createDetail() {
           updatedAt: "2026-04-23T12:00:00.000Z",
           lastMessageAt: "2026-04-23T12:00:00.000Z",
           activityState: "idle",
+          runningState: "idle",
           unreadCount: 0,
           hasActiveRun: false,
           hasPendingPermissionRequest: false,
@@ -580,6 +645,7 @@ function createMember(sessionId: string, ordinal: number, title: string) {
       updatedAt: "2026-04-23T12:00:00.000Z",
       lastMessageAt: "2026-04-23T12:00:00.000Z",
       activityState: "idle",
+      runningState: "idle",
       unreadCount: 0,
       hasActiveRun: false,
       hasPendingPermissionRequest: false,
