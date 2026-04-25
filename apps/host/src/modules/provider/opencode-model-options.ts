@@ -8,7 +8,7 @@ const DEFAULT_CACHE_TTL_MS = 5_000;
 
 interface OpenCodeModelOptionsServiceOptions {
   baseUrl: string;
-  baseUrlResolver?: (input?: { refresh?: boolean }) => Promise<string> | string;
+  baseUrlResolver?: (input?: { refresh?: boolean; workspacePath?: string | null }) => Promise<string> | string;
   commandPath: string;
   timeoutMs?: number;
   cacheTtlMs?: number;
