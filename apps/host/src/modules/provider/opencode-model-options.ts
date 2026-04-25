@@ -105,6 +105,7 @@ export class OpenCodeModelOptionsService {
     const response = await this.fetchJsonWithRetry(
       "/config/providers",
       {
+        workspacePath,
         query: {
           directory: workspacePath ?? undefined
         }
@@ -123,6 +124,7 @@ export class OpenCodeModelOptionsService {
   private fetchJsonWithRetry(
     pathname: string,
     input: {
+      workspacePath?: string | null;
       query?: Record<string, string | undefined>;
     },
     refresh: boolean
@@ -137,11 +139,12 @@ export class OpenCodeModelOptionsService {
   private async fetchResponseWithRetry(
     pathname: string,
     input: {
+      workspacePath?: string | null;
       query?: Record<string, string | undefined>;
     },
     refresh: boolean
   ): Promise<Response> {
-    const baseUrl = await this.resolveBaseUrl(refresh);
+    const baseUrl = await this.resolveBaseUrl(refresh, input.workspacePath ?? null);
     const url = new URL(pathname, `${baseUrl}/`);
 
     if (input.query) {
@@ -189,9 +192,9 @@ export class OpenCodeModelOptionsService {
     }
   }
 
-  private async resolveBaseUrl(refresh: boolean): Promise<string> {
+  private async resolveBaseUrl(refresh: boolean, workspacePath: string | null): Promise<string> {
     const resolved = this.options.baseUrlResolver
-      ? await this.options.baseUrlResolver({ refresh })
+      ? await this.options.baseUrlResolver({ refresh, workspacePath })
       : this.options.baseUrl;
 
     return resolved.trim().replace(/\/+$/, "");
@@ -239,24 +242,35 @@ export async function enrichOpenCodeCapabilities(
 function buildServerDiscoverySnapshot(
   snapshot: OpenCodeProviderConfigSnapshot
 ): OpenCodeDiscoverySnapshot | null {
-  const provider = snapshot.providers.find((entry) => entry.id === "opencode");
+  const currentDefaultModel = resolveServerDefaultModelId(snapshot);
+  const modelOptions = snapshot.providers.flatMap((provider, providerIndex) => {
+    const multipleProviders = snapshot.providers.length > 1;
 
-  if (!provider || provider.models.length === 0) {
+    return provider.models.map((model) => {
+      const modelId = buildOpenCodeModelId(provider.id, model.id);
+
+      return {
+        id: modelId,
+        name: buildServerModelLabel({
+          provider,
+          model,
+          modelId,
+          multipleProviders,
+          providerIndex
+        })
+      };
+    });
+  });
+  const dedupedModelOptions = dedupeModelOptions(modelOptions);
+
+  if (dedupedModelOptions.length === 0) {
     return null;
   }
-
-  const currentDefaultModel = toOpenCodeModelId(
-    provider.id,
-    snapshot.defaultByProvider[provider.id] ?? null
-  );
 
   return {
     modelOptions: [
       ...createFallbackOpenCodeModelOptions(currentDefaultModel),
-      ...provider.models.map((model) => ({
-        id: buildOpenCodeModelId(provider.id, model.id),
-        name: normalizeText(model.name) ?? buildOpenCodeModelId(provider.id, model.id)
-      }))
+      ...dedupedModelOptions
     ]
   };
 }
@@ -264,10 +278,12 @@ function buildServerDiscoverySnapshot(
 function buildCliModelOptions(models: string[]): ProviderModelOption[] {
   return [
     ...createFallbackOpenCodeModelOptions(null),
-    ...models.map((modelId) => ({
-      id: modelId,
-      name: modelId
-    }))
+    ...dedupeModelOptions(
+      models.map((modelId) => ({
+        id: modelId,
+        name: modelId
+      }))
+    )
   ];
 }
 
@@ -395,6 +411,50 @@ function toOpenCodeModelId(providerId: string, modelId: string | null): string |
 
 function normalizeText(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function resolveServerDefaultModelId(snapshot: OpenCodeProviderConfigSnapshot): string | null {
+  const defaults = snapshot.providers
+    .map((provider) => toOpenCodeModelId(provider.id, snapshot.defaultByProvider[provider.id] ?? null))
+    .filter((modelId): modelId is string => Boolean(modelId));
+
+  return defaults.length === 1 ? defaults[0] : null;
+}
+
+function buildServerModelLabel(input: {
+  provider: OpenCodeProviderEntry;
+  model: OpenCodeModelEntry;
+  modelId: string;
+  multipleProviders: boolean;
+  providerIndex: number;
+}): string {
+  const modelName = normalizeText(input.model.name);
+
+  if (!modelName) {
+    return input.modelId;
+  }
+
+  if (input.multipleProviders) {
+    return input.modelId;
+  }
+
+  if (input.providerIndex > 0 || input.provider.id !== "opencode") {
+    return `${input.provider.id}/${modelName}`;
+  }
+
+  return modelName;
+}
+
+function dedupeModelOptions(modelOptions: ProviderModelOption[]): ProviderModelOption[] {
+  const optionById = new Map<string, ProviderModelOption>();
+
+  for (const option of modelOptions) {
+    if (!optionById.has(option.id)) {
+      optionById.set(option.id, option);
+    }
+  }
+
+  return [...optionById.values()];
 }
 
 function stripAnsi(value: string): string {

@@ -301,6 +301,7 @@ test("OpenCodeAdapter 会复用短 TTL discovery 缓存，避免重复请求 ser
 test("OpenCodeAdapter 新建会话时会把 directory 同时写进 query 和 body", async (context) => {
   const originalFetch = globalThis.fetch;
   const requests = [];
+  const resolverCalls = [];
 
   globalThis.fetch = async (input, init = {}) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -327,6 +328,17 @@ test("OpenCodeAdapter 新建会话时会把 directory 同时写进 query 和 bod
       return jsonResponse([]);
     }
 
+    if (url === "http://127.0.0.1:41827/session/ses_new" && method === "GET") {
+      return jsonResponse({
+        id: "ses_new",
+        directory: "/workspace/demo",
+        title: "Demo Session",
+        timeCreated: Date.now(),
+        timeUpdated: Date.now(),
+        messageCount: 1
+      });
+    }
+
     throw new Error(`unexpected request: ${method} ${url}`);
   };
 
@@ -335,13 +347,30 @@ test("OpenCodeAdapter 新建会话时会把 directory 同时写进 query 和 bod
   });
 
   const adapter = new OpenCodeAdapter({
-    baseUrl: "http://127.0.0.1:41827"
+    baseUrlResolver: (input = {}) => {
+      resolverCalls.push(input);
+      return "http://127.0.0.1:41827";
+    }
   });
   const result = await adapter.startSession("/workspace/demo", {
     initialPrompt: "请帮我记录测试"
   });
 
   assert.equal(result.session.providerSessionId, "ses_new");
+  assert.deepEqual(resolverCalls, [
+    {
+      refresh: false,
+      workspacePath: "/workspace/demo"
+    },
+    {
+      refresh: false,
+      workspacePath: "/workspace/demo"
+    },
+    {
+      refresh: false,
+      workspacePath: "/workspace/demo"
+    }
+  ]);
 
   const sessionCreateRequest = requests.find(
     (request) => request.method === "POST" && request.url === "http://127.0.0.1:41827/session?directory=%2Fworkspace%2Fdemo"

@@ -414,7 +414,7 @@ async function readOpenCodeCliModels(
       return;
     }
 
-    const launch = resolveCommandLaunch(commandPath, ["models", "opencode"]);
+    const launch = resolveCommandLaunch(commandPath, ["models"]);
     const child = spawn(launch.command, launch.args, {
       cwd: workspacePath ?? undefined,
       env: {

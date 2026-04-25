@@ -59,7 +59,7 @@ const MAX_CONSECUTIVE_TIMEOUTS = 5;
 
 interface OpenCodeAdapterOptions {
   baseUrl?: string;
-  baseUrlResolver?: (input?: { refresh?: boolean }) => Promise<string> | string;
+  baseUrlResolver?: (input?: { refresh?: boolean; workspacePath?: string | null }) => Promise<string> | string;
   dataDir?: string;
   dbPath?: string;
   pollIntervalMs?: number;
@@ -372,10 +372,10 @@ export class OpenCodeAdapter implements ProviderAdapter {
     const session = await this.createSessionOnServer(workspacePath);
 
     if (options.initialPrompt?.trim()) {
-      await this.postTextPrompt(session.id, options.initialPrompt.trim());
+      await this.postTextPrompt(session.id, options.initialPrompt.trim(), undefined, workspacePath);
     }
 
-    const summary = await this.readSessionSummaryFromServer(session.id)
+    const summary = await this.readSessionSummaryFromServer(session.id, workspacePath)
       .catch(() => null);
     const sessionSummary = summary ?? this.normalizeServerSessionSummary(session, new Map()) ?? {
       provider: this.providerId,
@@ -642,6 +642,7 @@ export class OpenCodeAdapter implements ProviderAdapter {
   ): Promise<ProviderSessionDiscovery | null> {
     try {
       const response = await this.fetchJson<OpenCodeServerSession[]>("/session", {
+        workspacePath: targetPath,
         query: {
           directory: targetPath || undefined,
           roots: "true"
@@ -747,6 +748,7 @@ export class OpenCodeAdapter implements ProviderAdapter {
 
   private async createSessionOnServer(workspacePath: string): Promise<{ id: string; title?: unknown }> {
     const response = await this.fetchJson<OpenCodeServerSession>("/session", {
+      workspacePath,
       method: "POST",
       headers: {
         "content-type": "application/json"
@@ -773,11 +775,13 @@ export class OpenCodeAdapter implements ProviderAdapter {
   private async postTextPrompt(
     sessionId: string,
     text: string,
-    permissionMode?: string | null
+    permissionMode?: string | null,
+    workspacePath?: string | null
   ): Promise<void> {
     await this.fetchJson(
       `/session/${encodeURIComponent(sessionId)}/message`,
       {
+        workspacePath,
         method: "POST",
         headers: {
           "content-type": "application/json"
@@ -833,10 +837,14 @@ export class OpenCodeAdapter implements ProviderAdapter {
   }
 
   private async readSessionSummaryFromServer(
-    sessionId: string
+    sessionId: string,
+    workspacePath?: string | null
   ): Promise<ProviderSessionSummary | null> {
     const response = await this.fetchJson<OpenCodeServerSession>(
-      `/session/${encodeURIComponent(sessionId)}`
+      `/session/${encodeURIComponent(sessionId)}`,
+      {
+        workspacePath
+      }
     );
     const metadata = this.readSessionMetadata([sessionId]);
 
@@ -876,9 +884,9 @@ export class OpenCodeAdapter implements ProviderAdapter {
     }
   }
 
-  private async resolveBaseUrl(refresh = false): Promise<string> {
+  private async resolveBaseUrl(refresh = false, workspacePath: string | null = null): Promise<string> {
     const resolved = this.options.baseUrlResolver
-      ? await this.options.baseUrlResolver({ refresh })
+      ? await this.options.baseUrlResolver({ refresh, workspacePath })
       : this.options.baseUrl?.trim();
 
     if (!resolved) {
@@ -1229,6 +1237,7 @@ export class OpenCodeAdapter implements ProviderAdapter {
       headers?: Record<string, string>;
       body?: string;
       query?: Record<string, string | undefined>;
+      workspacePath?: string | null;
     } = {}
   ): Promise<SessionPageResponse<T>> {
     return this.fetchJsonWithRetry(pathname, input, false);
@@ -1241,11 +1250,12 @@ export class OpenCodeAdapter implements ProviderAdapter {
       headers?: Record<string, string>;
       body?: string;
       query?: Record<string, string | undefined>;
+      workspacePath?: string | null;
     },
     refresh: boolean,
     timeoutState: TimeoutRetryState = createTimeoutRetryState()
   ): Promise<SessionPageResponse<T>> {
-    const url = new URL(pathname, `${await this.resolveBaseUrl(refresh)}/`);
+    const url = new URL(pathname, `${await this.resolveBaseUrl(refresh, input.workspacePath ?? null)}/`);
 
     if (input.query) {
       for (const [key, value] of Object.entries(input.query)) {

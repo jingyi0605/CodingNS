@@ -900,6 +900,16 @@ export class SessionHistoryService {
         this.capabilityService.getProviderCapabilities(provider)
       );
 
+      if (baseCapabilities.provider === "opencode" && workspacePath) {
+        const refreshed = await this.enrichProviderCapabilities(baseCapabilities, workspacePath);
+        const cacheKey = buildProviderCapabilityCacheKey(baseCapabilities.provider, workspacePath);
+        this.providerCapabilityCache.set(cacheKey, {
+          refreshedAt: Date.now(),
+          value: refreshed
+        });
+        return refreshed;
+      }
+
       this.scheduleProviderCapabilityRefresh(baseCapabilities, workspacePath);
       return this.resolveProviderCapabilitiesImmediate(baseCapabilities, workspacePath);
     } catch (error) {
@@ -916,6 +926,22 @@ export class SessionHistoryService {
       .getSessionCapabilities(binding.provider, binding.providerSessionId)
       .then((capabilities) => {
         const normalizedCapabilities = this.applyProviderCliAvailability(capabilities);
+
+        if (normalizedCapabilities.provider === "opencode") {
+          return this.enrichProviderCapabilities(normalizedCapabilities, workspacePath)
+            .then((refreshed) => {
+              const cacheKey = buildProviderCapabilityCacheKey(
+                normalizedCapabilities.provider,
+                workspacePath
+              );
+              this.providerCapabilityCache.set(cacheKey, {
+                refreshedAt: Date.now(),
+                value: refreshed
+              });
+              return refreshed;
+            });
+        }
+
         this.scheduleProviderCapabilityRefresh(normalizedCapabilities, workspacePath);
         return this.resolveProviderCapabilitiesImmediate(normalizedCapabilities, workspacePath);
       })

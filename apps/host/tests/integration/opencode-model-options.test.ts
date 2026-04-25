@@ -37,7 +37,7 @@ describe("OpenCode model capabilities", () => {
     }
   });
 
-  it("会通过 provider capabilities 路由返回 OpenCode server 的真实模型列表", async () => {
+  it("会通过 provider capabilities 路由返回 OpenCode server 的多供应商模型列表", async () => {
     const fixture = createEmptyFixture();
     activeFixtures.push(fixture);
 
@@ -69,27 +69,37 @@ describe("OpenCode model capabilities", () => {
     expect(response.json().modelOptions).toEqual([
       {
         id: "provider-default",
-        name: "跟随 OpenCode 默认模型（当前：opencode/gpt-5-nano）",
+        name: "跟随 OpenCode 默认模型",
         usesProviderDefault: true
       },
       {
-        id: "opencode/gpt-5-nano",
-        name: "gpt-5-nano"
+        id: "openai/gpt-5",
+        name: "openai/gpt-5"
       },
       {
-        id: "opencode/big-pickle",
-        name: "big-pickle"
+        id: "openai/gpt-5-mini",
+        name: "openai/gpt-5-mini"
+      },
+      {
+        id: "deepseek/deepseek-chat",
+        name: "deepseek/deepseek-chat"
+      },
+      {
+        id: "deepseek/deepseek-reasoner",
+        name: "deepseek/deepseek-reasoner"
       }
     ]);
   });
 
-  it("OpenCode server 不可达时会回退到 CLI 模型列表", async () => {
+  it("OpenCode server 不可达时会回退到 CLI 的多供应商模型列表", async () => {
     const fixture = createEmptyFixture();
     activeFixtures.push(fixture);
 
     const commandPath = createMockOpenCodeCli(fixture.rootDir, [
-      "opencode/gpt-5-nano",
-      "opencode/big-pickle"
+      "openai/gpt-5",
+      "openai/gpt-5-mini",
+      "deepseek/deepseek-chat",
+      "deepseek/deepseek-reasoner"
     ]);
     const hosted = createTestApp(fixture, {
       opencodeBaseUrl: "http://127.0.0.1:1",
@@ -116,12 +126,20 @@ describe("OpenCode model capabilities", () => {
         usesProviderDefault: true
       },
       {
-        id: "opencode/gpt-5-nano",
-        name: "opencode/gpt-5-nano"
+        id: "openai/gpt-5",
+        name: "openai/gpt-5"
       },
       {
-        id: "opencode/big-pickle",
-        name: "opencode/big-pickle"
+        id: "openai/gpt-5-mini",
+        name: "openai/gpt-5-mini"
+      },
+      {
+        id: "deepseek/deepseek-chat",
+        name: "deepseek/deepseek-chat"
+      },
+      {
+        id: "deepseek/deepseek-reasoner",
+        name: "deepseek/deepseek-reasoner"
       }
     ]);
   });
@@ -170,6 +188,7 @@ async function importWorkspace(
   return imported.json().id as string;
 }
 
+
 function handleConfigProvidersRequest(
   request: IncomingMessage,
   response: ServerResponse,
@@ -192,22 +211,37 @@ function handleConfigProvidersRequest(
     JSON.stringify({
       providers: [
         {
-          id: "opencode",
-          name: "OpenCode",
+          id: "openai",
+          name: "OpenAI",
           models: {
-            "gpt-5-nano": {
-              id: "gpt-5-nano",
-              name: "gpt-5-nano"
+            "gpt-5": {
+              id: "gpt-5",
+              name: "gpt-5"
             },
-            "big-pickle": {
-              id: "big-pickle",
-              name: "big-pickle"
+            "gpt-5-mini": {
+              id: "gpt-5-mini",
+              name: "gpt-5-mini"
+            }
+          }
+        },
+        {
+          id: "deepseek",
+          name: "DeepSeek",
+          models: {
+            "deepseek-chat": {
+              id: "deepseek-chat",
+              name: "deepseek-chat"
+            },
+            "deepseek-reasoner": {
+              id: "deepseek-reasoner",
+              name: "deepseek-reasoner"
             }
           }
         }
       ],
       default: {
-        opencode: "gpt-5-nano"
+        openai: "gpt-5",
+        deepseek: "deepseek-chat"
       }
     })
   );
@@ -250,6 +284,10 @@ function createMockOpenCodeCli(rootDir: string, models: string[]): string {
     `#!/usr/bin/env node
 const args = process.argv.slice(2);
 if (args[0] === "models" && args[1] === "opencode") {
+  process.stdout.write(${JSON.stringify(models.join("\n"))} + "\\n");
+  process.exit(0);
+}
+if (args[0] === "models" && args.length === 1) {
   process.stdout.write(${JSON.stringify(models.join("\n"))} + "\\n");
   process.exit(0);
 }
