@@ -6411,12 +6411,12 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] [data-scrollbar-autohide="true"]::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] [data-scrollbar-autohide="true"][data-scrolling="true"] {
-  scrollbar-color: color-mix(in srgb, var(--panel-border-strong) 72%, transparent) transparent;
+  scrollbar-color: color-mix(in srgb, var(--text-primary) 60%, transparent) transparent;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] [data-scrollbar-autohide="true"]::-webkit-scrollbar-track {
@@ -6425,13 +6425,17 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] [data-scrollbar-autohide="true"]::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  border: 1px solid transparent;
+  border: 2px solid transparent;
   background-clip: padding-box;
   background: transparent;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] [data-scrollbar-autohide="true"][data-scrolling="true"]::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--panel-border-strong) 72%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 60%, transparent);
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] [data-scrollbar-autohide="true"][data-scrolling="true"]::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-primary) 74%, transparent);
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-desktop-titlebar,
