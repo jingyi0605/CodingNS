@@ -1,4 +1,4 @@
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -500,6 +500,141 @@ describe("session runtime status", () => {
       activitySource: "none",
       completedAt: null,
       lastEventAt: "2026-03-23T09:00:12.000Z"
+    });
+  });
+
+  it("Gemini 当前 jsonl 历史已完整落盘时，应把残留 runtime running 回刷成 completed", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+
+    const geminiProjectDir = path.join(fixture.geminiHomeDir, "tmp", "codingns");
+    mkdirSync(path.join(geminiProjectDir, "chats"), { recursive: true });
+    writeFileSync(path.join(geminiProjectDir, ".project_root"), fixture.workspaceDir, "utf8");
+    writeFileSync(
+      path.join(geminiProjectDir, "chats", "session-2026-04-25T15-24-7f75c9df.jsonl"),
+      [
+        JSON.stringify({
+          sessionId: "7f75c9df-c657-4197-8cf4-48c97d5fbbcd",
+          projectHash: "hash-alpha",
+          startTime: "2026-04-25T15:24:02.097Z",
+          lastUpdated: "2026-04-25T15:24:02.097Z",
+          kind: "main"
+        }),
+        JSON.stringify({
+          id: "msg-user-1",
+          timestamp: "2026-04-25T15:24:02.104Z",
+          type: "user",
+          content: [{ text: "请只回复 OK，不要调用任何工具。" }]
+        }),
+        JSON.stringify({
+          $set: {
+            lastUpdated: "2026-04-25T15:24:02.104Z"
+          }
+        }),
+        JSON.stringify({
+          id: "msg-assistant-1",
+          timestamp: "2026-04-25T15:24:29.090Z",
+          type: "gemini",
+          content: "OK",
+          thoughts: [],
+          tokens: {
+            input: 9941,
+            output: 1,
+            total: 10078
+          },
+          model: "gemini-3.1-pro"
+        }),
+        JSON.stringify({
+          $set: {
+            lastUpdated: "2026-04-25T15:24:29.090Z"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const setup = await hosted.app.inject({
+      method: "POST",
+      url: "/api/public/setup",
+      payload: {
+        username: "admin",
+        password: "password123"
+      }
+    });
+    expect(setup.statusCode).toBe(201);
+
+    const login = await hosted.app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: {
+        username: "admin",
+        password: "password123"
+      }
+    });
+    expect(login.statusCode).toBe(200);
+    const accessToken = login.json().accessToken as string;
+    const adminUser = hosted.services.repositories.authUserRepository.findByUsername("admin");
+    expect(adminUser).toBeTruthy();
+
+    const imported = await hosted.app.inject({
+      method: "POST",
+      url: "/api/workspaces/import",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        path: fixture.workspaceDir,
+        name: "Fixture Workspace"
+      }
+    });
+    expect(imported.statusCode).toBe(201);
+    const workspaceId = imported.json().id as string;
+
+    const sessionsResponse = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(sessionsResponse.statusCode).toBe(200);
+
+    const geminiSession = sessionsResponse
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "gemini");
+    expect(geminiSession).toBeTruthy();
+
+    hosted.services.repositories.sessionStateRepository.upsert({
+      sessionId: geminiSession.sessionId,
+      userId: adminUser!.id,
+      runningState: "running",
+      activitySource: "runtime",
+      lastEventAt: "2026-04-25T15:24:05.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-04-25T15:24:05.000Z"
+    });
+
+    const refreshedState = await (
+      hosted.services.modules.sessionHistoryService as unknown as {
+        refreshSessionState: (sessionId: string, userId: string) => Promise<{
+          runningState: string;
+          activitySource: string;
+          completedAt: string | null;
+          lastEventAt: string | null;
+        } | null>;
+      }
+    ).refreshSessionState(geminiSession.sessionId, adminUser!.id);
+
+    expect(refreshedState).toMatchObject({
+      runningState: "completed",
+      activitySource: "inferred",
+      completedAt: "2026-04-25T15:24:29.090Z",
+      lastEventAt: "2026-04-25T15:24:29.090Z"
     });
   });
 

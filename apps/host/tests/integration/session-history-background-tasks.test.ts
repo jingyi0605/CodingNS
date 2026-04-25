@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -348,6 +348,139 @@ describe("SessionHistoryService background tasks", () => {
     service.dispose();
   });
 
+  it("Gemini 刚结束且本地 chats 仍未落盘时，读取历史会先返回空页并清掉残留读错", async () => {
+    const service = createSessionHistoryService();
+    seedWorkspace(service.workspaceRepository, service.database.db, service.workspacePath);
+    seedSession(service.database.db, {
+      sessionId: "session-gemini-grace",
+      workspaceId: "workspace-1",
+      provider: "gemini",
+      providerSessionId: "gemini-session-grace",
+      rawStoreRef: "gemini://session/gemini-session-grace",
+      title: "Gemini 宽限会话",
+      messageCount: 0,
+      lastMessageAt: null,
+      createdAt: "2026-04-25T10:20:00.000Z",
+      updatedAt: "2026-04-25T10:20:00.000Z"
+    });
+    service.database.db
+      .prepare(
+        `UPDATE session_status_snapshots
+         SET sync_status = ?, last_error_code = ?, last_error_detail = ?, updated_at = ?
+         WHERE session_id = ?`
+      )
+      .run(
+        "error",
+        "PROVIDER_READ_FAILED",
+        "未找到 Gemini 本地 chats 对应会话，请先确认 session id 和本地目录是否一致",
+        "2026-04-25T10:20:02.000Z",
+        "session-gemini-grace"
+      );
+    service.database.db
+      .prepare(
+        `INSERT INTO session_states (
+           session_id,
+           user_id,
+           running_state,
+           activity_source,
+           favorite,
+           last_event_at,
+           completed_at,
+           last_seen_at,
+           updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "session-gemini-grace",
+        "user-1",
+        "completed",
+        "runtime",
+        0,
+        "2099-04-25T10:20:01.000Z",
+        "2099-04-25T10:20:01.000Z",
+        null,
+        "2099-04-25T10:20:01.000Z"
+      );
+
+    const page = await service.instance.readSessionHistory(
+      "session-gemini-grace",
+      null,
+      20,
+      "backward",
+      "user-1"
+    );
+
+    const snapshot = service.database.db
+      .prepare(
+        `SELECT sync_status, last_error_code, last_error_detail
+         FROM session_status_snapshots
+         WHERE session_id = ?`
+      )
+      .get("session-gemini-grace") as
+      | {
+          sync_status: string;
+          last_error_code: string | null;
+          last_error_detail: string | null;
+        }
+      | undefined;
+
+    expect(page.messages).toEqual([]);
+    expect(snapshot).toMatchObject({
+      sync_status: "idle",
+      last_error_code: null,
+      last_error_detail: null
+    });
+
+    service.dispose();
+  });
+
+  it("Gemini 当前标题是 UUID 时，会用本地 chats 标题覆盖", async () => {
+    const service = createSessionHistoryService();
+    seedWorkspace(service.workspaceRepository, service.database.db, service.workspacePath);
+    mkdirSync(join(service.geminiHomeDir, "tmp", "hash-title", "chats"), { recursive: true });
+    writeFileSync(
+      join(service.geminiHomeDir, "tmp", "hash-title", "chats", "gemini-session-title.json"),
+      JSON.stringify({
+        sessionId: "gemini-session-title",
+        title: "Gemini 标题回填成功",
+        messages: [
+          {
+            role: "user",
+            timestamp: "2026-04-25T10:30:00.000Z",
+            parts: [{ text: "你好" }]
+          }
+        ]
+      }),
+      "utf8"
+    );
+    seedSession(service.database.db, {
+      sessionId: "session-gemini-title",
+      workspaceId: "workspace-1",
+      provider: "gemini",
+      providerSessionId: "gemini-session-title",
+      rawStoreRef: "gemini://session/gemini-session-title",
+      title: "e1458d2f-0877-49c5-beae-acedf0c8bc49",
+      messageCount: 0,
+      lastMessageAt: null,
+      createdAt: "2026-04-25T10:30:00.000Z",
+      updatedAt: "2026-04-25T10:30:00.000Z"
+    });
+
+    await service.instance.syncSessionTitle("session-gemini-title");
+
+    const updated = service.database.db
+      .prepare(
+        `SELECT title
+         FROM session_indices
+         WHERE session_id = ?`
+      )
+      .get("session-gemini-title") as { title: string } | undefined;
+
+    expect(updated?.title).toBe("Gemini 标题回填成功");
+
+    service.dispose();
+  });
+
   it("workspace discovery 任务取消后会把 AbortSignal 传给 provider helper", async () => {
     let receivedSignal: AbortSignal | null = null;
     const taskManager = createTaskManager(null, {
@@ -686,6 +819,7 @@ describe("SessionHistoryService background tasks", () => {
       database,
       workspaceRepository,
       workspacePath,
+      geminiHomeDir,
       dispose() {
         database.close();
       }

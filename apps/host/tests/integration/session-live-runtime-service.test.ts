@@ -1,9 +1,13 @@
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppError } from "../../src/shared/errors/app-error.js";
 import { SessionLiveRuntimeService } from "../../src/modules/sessions/session-live-runtime-service.js";
 
-function createService() {
+function createService(configOverrides: Partial<ConstructorParameters<typeof SessionLiveRuntimeService>[11]> = {}) {
   const sessionHistoryService = {
     getSession: vi.fn(),
     listWorkspaceSessions: vi.fn(() => []),
@@ -154,7 +158,8 @@ function createService() {
       codexCliPath: "codex",
       claudeHookBridgeToken: "hook-token",
       serverUpdatePackageName: "@codingns/test",
-      npmRegistryBaseUrl: "https://registry.npmjs.org"
+      npmRegistryBaseUrl: "https://registry.npmjs.org",
+      ...configOverrides
     }
   );
 
@@ -3933,6 +3938,157 @@ describe("SessionLiveRuntimeService", () => {
 
     expect(received.some((item) => item.type === "session.runtime_message" && item.sessionId === "session-real-1")).toBe(true);
     subscription.close();
+  });
+
+  it("Gemini stream-json 在输出 result 后即使进程尚未退出，Host 也应把会话切到 completed", async () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "codingns-gemini-host-runtime-"));
+    const cliPath = path.join(tempDir, "fake-gemini");
+    writeFileSync(
+      cliPath,
+      `#!/usr/bin/env node
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+(async () => {
+  console.log(JSON.stringify({ type: "init", session_id: "gemini-session-e2e", model: "flash" }));
+  await sleep(40);
+  console.log(JSON.stringify({ type: "message", role: "assistant", content: "第一段", delta: true }));
+  await sleep(40);
+  console.log(JSON.stringify({ type: "result", status: "success" }));
+  await sleep(4000);
+  process.exit(0);
+})().catch((error) => {
+  console.error(error instanceof Error ? error.stack || error.message : String(error));
+  process.exit(1);
+});
+`,
+      "utf8"
+    );
+    chmodSync(cliPath, 0o755);
+
+    const {
+      service,
+      sessionHistoryService,
+      sessionMessageAttachmentService,
+      workspaceService
+    } = createService({
+      geminiCliPath: cliPath,
+      geminiHomeDir: path.join(tempDir, "gemini-home")
+    });
+
+    let currentBinding: {
+      provider: string;
+      providerSessionId: string | null;
+      rawStoreRef: string | null;
+    } | null = null;
+
+    sessionHistoryService.persistSessionBinding.mockImplementation(
+      (_sessionId: string, _workspaceId: string, binding: typeof currentBinding) => {
+        currentBinding = binding;
+      }
+    );
+    sessionHistoryService.getBindingOrThrow.mockImplementation(() => {
+      if (!currentBinding) {
+        throw new Error("BINDING_NOT_FOUND");
+      }
+
+      return currentBinding;
+    });
+    sessionHistoryService.getProviderCapabilitiesSnapshot.mockReturnValue({
+      provider: "gemini",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: false,
+      supportsCheckpoint: false,
+      limitations: []
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "gemini",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: false,
+      supportsCheckpoint: false,
+      limitations: []
+    });
+    sessionHistoryService.getSessionContextUsage.mockResolvedValue(null);
+    sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
+    sessionHistoryService.getSession.mockImplementation((sessionId: string) => ({
+      sessionId,
+      workspaceId: "workspace-1",
+      provider: "gemini",
+      providerSessionId: currentBinding?.providerSessionId ?? "pending://gemini/unknown",
+      rawStoreRef: currentBinding?.rawStoreRef ?? "pending://gemini/unknown",
+      messageCount: 0
+    }));
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+    sessionMessageAttachmentService.bindClientRequestToMessage.mockReturnValue([]);
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: tempDir
+    });
+
+    try {
+      const accepted = await service.startLiveSession({
+        workspaceId: "workspace-1",
+        userId: "user-1",
+        provider: "gemini",
+        content: "请输出一句测试文本后结束",
+        clientRequestId: null
+      });
+      const envelopes: Array<Record<string, unknown>> = [];
+      const subscription = service.subscribeRuntime(accepted.sessionId, async (envelope) => {
+        envelopes.push(envelope as Record<string, unknown>);
+      });
+
+      let runtime = await service.getSessionRuntime(accepted.sessionId, "user-1");
+
+      for (let attempt = 0; attempt < 30 && runtime.runningState !== "completed"; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        runtime = await service.getSessionRuntime(accepted.sessionId, "user-1");
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const activityEnvelopes = envelopes.filter((item) => item.type === "session.activity");
+      const lastActivity = activityEnvelopes.at(-1) ?? null;
+      const runtimeSnapshot = (
+        service as unknown as {
+          providerRuntimeService: { getSnapshot(sessionId: string): Record<string, unknown> | null };
+        }
+      ).providerRuntimeService.getSnapshot(accepted.sessionId);
+
+      expect(runtime.runningState).toBe("completed");
+      expect(runtime.hasActiveRun).toBe(false);
+      expect(runtimeSnapshot).not.toBeNull();
+      expect(
+        envelopes.some(
+          (item) => item.type === "session.runtime_status" && item.status === "completed"
+        )
+      ).toBe(true);
+      expect(lastActivity).toMatchObject({
+        type: "session.activity",
+        runningState: "completed",
+        hasActiveRun: false,
+        canInterrupt: false
+      });
+
+      subscription.close();
+    } finally {
+      await service.dispose();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("startLiveSession 会在 Kimi 首轮等待真实 binding 并优先返回权威 user 消息", async () => {

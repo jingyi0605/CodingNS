@@ -128,6 +128,12 @@ export class GeminiRuntimeAdapter implements ProviderRuntimeAdapter {
       stdio: ["pipe", "pipe", "pipe"]
     });
 
+    // Gemini 单轮 `--prompt` 运行不需要继续从 stdin 读数据。
+    // 不主动关闭的话，CLI 可能会一直等 EOF，导致 Host 误以为这轮还没结束。
+    if (!proc.stdin.destroyed && !proc.stdin.writableEnded) {
+      proc.stdin.end();
+    }
+
     let sequence = Math.max(0, request.sequenceBase ?? 0);
     let lineNumber = 0;
     let settled = false;
@@ -138,6 +144,7 @@ export class GeminiRuntimeAdapter implements ProviderRuntimeAdapter {
     let runtimeFailure: Error | null = null;
     let resultStatus: string | null = null;
     let resultDetail: string | null = null;
+    let semanticCompletionEmitted = false;
     let assistantMessageIndex = 0;
     let userMessageIndex = 0;
     let activeAssistantMessage: ProgressiveMessageState | null = null;
@@ -415,6 +422,19 @@ export class GeminiRuntimeAdapter implements ProviderRuntimeAdapter {
         case "result":
           resultStatus = ensureText(payload.status).trim().toLowerCase() || "success";
           resultDetail = buildGeminiResultDetail(payload);
+
+          // Gemini 的 `result` 已经表示这一轮语义上结束，不能继续傻等子进程 close。
+          // 否则只要 CLI 收尾慢一点，前端就会一直停在“可中断”的运行态。
+          if (resultStatus === "success" && !semanticCompletionEmitted) {
+            semanticCompletionEmitted = true;
+            await emitStructuredEvent({
+              type: "complete",
+              status: "completed",
+              detail: resultDetail ?? "Gemini 本轮输出已结束",
+              rawEventRef,
+              timestamp: safeDate(payload.timestamp, nextTimestamp())
+            });
+          }
           return;
         default:
           return;

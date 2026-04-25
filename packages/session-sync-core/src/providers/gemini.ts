@@ -100,6 +100,10 @@ interface ParsedSessionRef {
   fromRawStoreRef: boolean;
 }
 
+interface GeminiParsedChatSource {
+  record: Record<string, unknown>;
+}
+
 export class GeminiAdapter implements ProviderAdapter {
   readonly providerId: ProviderId = "gemini";
   private readonly parsedChatCache = new Map<string, GeminiParsedChatCacheEntry>();
@@ -744,21 +748,7 @@ export class GeminiAdapter implements ProviderAdapter {
   }
 
   private parseLocalChatFile(filePath: string, stats: { mtimeMs: number; size: number }): GeminiParsedChat {
-    const raw = readFileSync(filePath, "utf8").trim();
-
-    if (!raw) {
-      throw new Error("GEMINI_CHAT_SCHEMA_INVALID");
-    }
-
-    let parsedRaw: unknown;
-
-    try {
-      parsedRaw = JSON.parse(raw) as unknown;
-    } catch (error) {
-      throw wrapGeminiSchemaError(filePath, error);
-    }
-
-    const parsedRecord = toRecord(parsedRaw);
+    const parsedRecord = readGeminiParsedChatSource(filePath).record;
     const providerSessionId = this.resolveLocalProviderSessionId(parsedRecord, filePath);
     const messageNodes = readMessageNodes(parsedRecord);
     const messages = normalizeMessageNodes({
@@ -805,21 +795,7 @@ export class GeminiAdapter implements ProviderAdapter {
     filePath: string,
     stats: { mtimeMs: number; size: number }
   ): GeminiLocalSessionRecord {
-    const raw = readFileSync(filePath, "utf8").trim();
-
-    if (!raw) {
-      throw new Error("GEMINI_CHAT_SCHEMA_INVALID");
-    }
-
-    let parsedRaw: unknown;
-
-    try {
-      parsedRaw = JSON.parse(raw) as unknown;
-    } catch (error) {
-      throw wrapGeminiSchemaError(filePath, error);
-    }
-
-    const parsedRecord = toRecord(parsedRaw);
+    const parsedRecord = readGeminiParsedChatSource(filePath).record;
     const providerSessionId = this.resolveLocalProviderSessionId(parsedRecord, filePath);
     const messageNodes = readMessageNodes(parsedRecord);
     const messageSummary = summarizeGeminiMessageNodes(messageNodes);
@@ -862,7 +838,7 @@ export class GeminiAdapter implements ProviderAdapter {
         "chatId",
         "conversationId",
         "conversation_id"
-      ]) || basename(filePath, ".json");
+      ]) || stripGeminiChatFileExtension(filePath);
 
     if (!sessionId.trim()) {
       throw new Error("GEMINI_CHAT_SCHEMA_INVALID");
@@ -943,7 +919,10 @@ function listGeminiChatFiles(homeDir: string): string[] {
         continue;
       }
 
-      if (!entry.isFile() || !entry.name.endsWith(".json")) {
+      if (
+        !entry.isFile()
+        || (!entry.name.endsWith(".json") && !entry.name.endsWith(".jsonl"))
+      ) {
         continue;
       }
 
@@ -956,6 +935,89 @@ function listGeminiChatFiles(homeDir: string): string[] {
   }
 
   return chatFiles;
+}
+
+function readGeminiParsedChatSource(filePath: string): GeminiParsedChatSource {
+  const raw = readFileSync(filePath, "utf8").trim();
+
+  if (!raw) {
+    throw new Error("GEMINI_CHAT_SCHEMA_INVALID");
+  }
+
+  try {
+    if (filePath.endsWith(".jsonl")) {
+      return {
+        record: parseGeminiJsonlChat(raw)
+      };
+    }
+
+    return {
+      record: toRecord(JSON.parse(raw) as unknown)
+    };
+  } catch (error) {
+    throw wrapGeminiSchemaError(filePath, error);
+  }
+}
+
+function parseGeminiJsonlChat(raw: string): Record<string, unknown> {
+  const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
+
+  if (lines.length === 0) {
+    throw new Error("GEMINI_CHAT_SCHEMA_INVALID");
+  }
+
+  const root: Record<string, unknown> = {};
+  const messages: unknown[] = [];
+
+  for (const line of lines) {
+    const parsedLine = toRecord(JSON.parse(line) as unknown);
+    const patch = maybeRecord(parsedLine.$set);
+
+    if (patch) {
+      Object.assign(root, patch);
+      continue;
+    }
+
+    if (isGeminiJsonlMessageLine(parsedLine)) {
+      messages.push(parsedLine);
+      continue;
+    }
+
+    Object.assign(root, parsedLine);
+  }
+
+  root.messages = messages;
+  return root;
+}
+
+function isGeminiJsonlMessageLine(record: Record<string, unknown>): boolean {
+  const type = ensureText(record.type).trim().toLowerCase();
+
+  if (type === "user" || type === "gemini" || type === "tool" || type === "system") {
+    return true;
+  }
+
+  return Boolean(
+    record.content !== undefined
+    || record.parts !== undefined
+    || record.toolCalls !== undefined
+    || record.tool_calls !== undefined
+    || record.thoughts !== undefined
+  );
+}
+
+function stripGeminiChatFileExtension(filePath: string): string {
+  const name = basename(filePath);
+
+  if (name.endsWith(".jsonl")) {
+    return name.slice(0, -".jsonl".length);
+  }
+
+  if (name.endsWith(".json")) {
+    return name.slice(0, -".json".length);
+  }
+
+  return name;
 }
 
 function isGeminiChatFile(filePath: string): boolean {

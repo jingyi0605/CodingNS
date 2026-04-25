@@ -190,6 +190,111 @@ setTimeout(() => process.exit(0), 20);
   }
 });
 
+test("GeminiRuntimeAdapter 会在单轮 prompt 启动后关闭 stdin，避免 Gemini 卡在未结束状态", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-gemini-runtime-"));
+  const scriptPath = createScript(
+    tempDir,
+    `
+let sawStdinEnd = false;
+process.stdin.resume();
+process.stdin.on("end", () => {
+  sawStdinEnd = true;
+  console.log(JSON.stringify({ type: "init", session_id: "gemini-session-stdin-close", model: "flash" }));
+  console.log(JSON.stringify({ type: "message", role: "assistant", content: "stdin 已关闭", delta: true }));
+  console.log(JSON.stringify({ type: "result", status: "success" }));
+  setTimeout(() => process.exit(0), 20);
+});
+setTimeout(() => {
+  if (!sawStdinEnd) {
+    console.error("stdin not closed");
+    process.exit(2);
+  }
+}, 300);
+`
+  );
+
+  try {
+    const adapter = new GeminiRuntimeAdapter({
+      homeDir: tempDir,
+      commandPath: process.execPath,
+      baseArgs: [scriptPath]
+    });
+    const { sink, events } = createSink();
+
+    const launch = await adapter.startSession(
+      createRunRequest({
+        workspacePath: tempDir
+      }),
+      sink
+    );
+
+    await Promise.race([
+      launch.completed,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("STDIN_NOT_CLOSED")), 2_000))
+    ]);
+
+    assert.equal(
+      events.some(
+        (event) =>
+          event.type === "message"
+          && event.providerSessionId === "gemini-session-stdin-close"
+          && event.message.content === "stdin 已关闭"
+      ),
+      true
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("GeminiRuntimeAdapter 会在收到 result 成功事件后立刻发出 completed，而不是继续等待进程退出", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-gemini-runtime-"));
+  const scriptPath = createScript(
+    tempDir,
+    `
+console.log(JSON.stringify({ type: "init", session_id: "gemini-session-result-complete", model: "flash" }));
+console.log(JSON.stringify({ type: "message", role: "assistant", content: "结果已输出", delta: true }));
+console.log(JSON.stringify({ type: "result", status: "success", detail: "turn done" }));
+setTimeout(() => process.exit(0), 600);
+`
+  );
+
+  try {
+    const adapter = new GeminiRuntimeAdapter({
+      homeDir: tempDir,
+      commandPath: process.execPath,
+      baseArgs: [scriptPath]
+    });
+    const { sink, events } = createSink();
+
+    const launch = await adapter.startSession(
+      createRunRequest({
+        workspacePath: tempDir
+      }),
+      sink
+    );
+
+    await wait(120);
+
+    assert.equal(
+      events.some(
+        (event) =>
+          event.type === "complete"
+          && event.status === "completed"
+          && event.providerSessionId === "gemini-session-result-complete"
+      ),
+      true
+    );
+
+    await Promise.race([
+      launch.completed,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("GEMINI_RESULT_DID_NOT_SETTLE")), 2_000))
+    ]);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("GeminiRuntimeAdapter interrupt 浼氫腑鏂?headless 杩涚▼", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-gemini-runtime-"));
   const scriptPath = createScript(

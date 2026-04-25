@@ -178,6 +178,7 @@ const RECONSTRUCTED_FORK_TARGET_PROVIDERS = new Set(["codex", "claude-code", "op
 const FORK_RECONSTRUCTION_PAGE_SIZE = 200;
 const MAX_FORK_DEPTH = 4;
 const SYNTHETIC_CODEX_SESSION_CLEANUP_GRACE_MS = 120_000;
+const GEMINI_RUNTIME_CHAT_DISCOVERY_GRACE_MS = 30_000;
 
 interface WorkspaceDiscoveryStatus {
   refreshedAt: number;
@@ -686,8 +687,11 @@ export class SessionHistoryService {
             ? current?.syncCursor ?? page.cursor
             : page.cursor,
         lastSyncAt: nowIso(),
-        lastErrorCode: current?.lastErrorCode ?? null,
-        lastErrorDetail: current?.lastErrorDetail ?? null,
+        lastErrorCode: clearSuccessfulProviderReadErrorCode(current?.lastErrorCode ?? null),
+        lastErrorDetail: clearSuccessfulProviderReadErrorDetail(
+          current?.lastErrorCode ?? null,
+          current?.lastErrorDetail ?? null
+        ),
         resumedAt: current?.resumedAt ?? null
       });
       snapshotIdleMs = Date.now() - snapshotIdleStartedAt;
@@ -1830,13 +1834,17 @@ export class SessionHistoryService {
     }
 
     await this.syncSessionTitleFromProvider(sessionId, binding);
+    const snapshot = this.sessionStatusSnapshotRepository.findBySessionId(sessionId);
     this.upsertSnapshot(sessionId, {
       syncStatus: "idle",
       syncCursor: page.cursor,
       lastSyncAt: nowIso(),
-      lastErrorCode: this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.lastErrorCode ?? null,
-      lastErrorDetail: this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.lastErrorDetail ?? null,
-      resumedAt: this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.resumedAt ?? null
+      lastErrorCode: clearSuccessfulProviderReadErrorCode(snapshot?.lastErrorCode ?? null),
+      lastErrorDetail: clearSuccessfulProviderReadErrorDetail(
+        snapshot?.lastErrorCode ?? null,
+        snapshot?.lastErrorDetail ?? null
+      ),
+      resumedAt: snapshot?.resumedAt ?? null
     });
 
     return {
@@ -2676,10 +2684,10 @@ export class SessionHistoryService {
       return false;
     }
 
+    const sessionIndex = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
+
     return this.listSessionStatesBySessionId(sessionId).some(
-      (state) =>
-        state.activitySource === "runtime"
-        && (state.runningState === "starting" || state.runningState === "running")
+      (state) => shouldTreatMissingGeminiRuntimeHistoryStateAsTransient(state, sessionIndex)
     );
   }
 
@@ -3177,8 +3185,11 @@ export class SessionHistoryService {
       syncStatus: "idle",
       syncCursor: page.cursor,
       lastSyncAt: nowIso(),
-      lastErrorCode: snapshot?.lastErrorCode ?? null,
-      lastErrorDetail: snapshot?.lastErrorDetail ?? null,
+      lastErrorCode: clearSuccessfulProviderReadErrorCode(snapshot?.lastErrorCode ?? null),
+      lastErrorDetail: clearSuccessfulProviderReadErrorDetail(
+        snapshot?.lastErrorCode ?? null,
+        snapshot?.lastErrorDetail ?? null
+      ),
       resumedAt: snapshot?.resumedAt ?? null
     });
 
@@ -3215,7 +3226,13 @@ export class SessionHistoryService {
         provider: binding.provider,
         providerSessionId: binding.providerSessionId,
         rawStoreRef: binding.rawStoreRef
-      }, signal)
+      }, signal).catch((error) => {
+        if (this.shouldTreatMissingGeminiRuntimeHistoryAsEmpty(sessionId, binding.provider, error)) {
+          return "";
+        }
+
+        throw error;
+      })
     ).trim();
 
     const resolvedTitle = resolvePersistedSessionTitle(
@@ -4312,7 +4329,9 @@ export class SessionHistoryService {
     const liveObservation = this.resolveLiveActivityObservation(sessionId);
     const inspection = liveObservation
       ? null
-      : inspectSessionActivity(binding.provider, binding.rawStoreRef);
+      : binding.provider === "gemini"
+        ? await this.inspectGeminiHistoryActivity(sessionId, binding)
+        : inspectSessionActivity(binding.provider, binding.rawStoreRef);
 
     if (inspection) {
       const nowMs = Date.parse(timestamp);
@@ -4393,6 +4412,28 @@ export class SessionHistoryService {
     });
 
     return nextRecord;
+  }
+
+  private async inspectGeminiHistoryActivity(
+    sessionId: string,
+    binding: Pick<SessionBinding, "provider" | "providerSessionId" | "rawStoreRef">
+  ): Promise<ReturnType<typeof inspectSessionActivity>> {
+    try {
+      const page = await this.readPage(
+        sessionId,
+        binding.provider,
+        binding.providerSessionId,
+        binding.rawStoreRef,
+        null,
+        GEMINI_ACTIVITY_INFERENCE_HISTORY_LIMIT,
+        "backward",
+        this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.messageCount ?? null
+      );
+
+      return inferGeminiInspectionFromHistory(page.messages);
+    } catch {
+      return inspectSessionActivity(binding.provider, binding.rawStoreRef);
+    }
   }
 
   private async repairCodexDirtyBindingBeforeHistoryRead(
@@ -4597,6 +4638,62 @@ function hasInspectionEvidence(inspection: ReturnType<typeof inspectSessionActiv
   return inspection.runningState !== "idle"
     || !!inspection.lastEventAt
     || !!inspection.completedAtCandidate;
+}
+
+function inferGeminiInspectionFromHistory(
+  messages: HistoryPage["messages"]
+): ReturnType<typeof inspectSessionActivity> {
+  let lastEventAt: string | null = null;
+  let lastUserAt: string | null = null;
+  let latestNonUserMessage: HistoryPage["messages"][number] | null = null;
+  const pendingToolCallIds = new Set<string>();
+
+  for (const message of messages) {
+    lastEventAt = pickLaterIso(lastEventAt, message.timestamp);
+
+    if (message.role === "user") {
+      lastUserAt = pickLaterIso(lastUserAt, message.timestamp);
+      continue;
+    }
+
+    latestNonUserMessage = message;
+
+    if (message.kind === "tool_call" && message.toolCall?.callId) {
+      pendingToolCallIds.add(message.toolCall.callId);
+      continue;
+    }
+
+    if (message.kind === "tool_result" && message.toolCall?.callId) {
+      pendingToolCallIds.delete(message.toolCall.callId);
+    }
+  }
+
+  const latestNonUserAt = latestNonUserMessage?.timestamp ?? null;
+  const hasReplyAfterLatestUser =
+    !!latestNonUserAt && (!lastUserAt || latestNonUserAt.localeCompare(lastUserAt) >= 0);
+  const isTerminalReplyKind =
+    latestNonUserMessage?.kind === "text" || latestNonUserMessage?.kind === "tool_result";
+  const completedAtCandidate =
+    hasReplyAfterLatestUser && isTerminalReplyKind && pendingToolCallIds.size === 0
+      ? latestNonUserAt
+      : null;
+  const hasOpenTurn =
+    !completedAtCandidate
+    && hasReplyAfterLatestUser
+    && (
+      pendingToolCallIds.size > 0
+      || latestNonUserMessage?.kind === "thinking"
+      || latestNonUserMessage?.kind === "tool_call"
+    );
+
+  return {
+    runningState: hasOpenTurn ? "running" : "idle",
+    hasPendingTools: pendingToolCallIds.size > 0,
+    lastEventAt,
+    completedAtCandidate,
+    errorCode: null,
+    errorDetail: null
+  };
 }
 
 function applySessionActivityResolution(
@@ -5432,12 +5529,58 @@ function shouldTreatMissingSyntheticHistoryAsEmpty(
   return detail.includes("ENOENT");
 }
 
+function shouldTreatMissingGeminiRuntimeHistoryStateAsTransient(
+  state: SessionStateRecord,
+  sessionIndex: SessionIndexRecord | null
+): boolean {
+  if (state.activitySource !== "runtime") {
+    return false;
+  }
+
+  if (state.runningState === "starting" || state.runningState === "running") {
+    return true;
+  }
+
+  if ((sessionIndex?.messageCount ?? 0) !== 0) {
+    return false;
+  }
+
+  return isWithinGeminiRuntimeChatDiscoveryGraceWindow(
+    state.lastEventAt ?? state.updatedAt ?? sessionIndex?.updatedAt ?? sessionIndex?.createdAt ?? null
+  );
+}
+
+function isWithinGeminiRuntimeChatDiscoveryGraceWindow(timestamp: string | null): boolean {
+  if (!timestamp) {
+    return false;
+  }
+
+  const timestampMs = Date.parse(timestamp);
+
+  if (!Number.isFinite(timestampMs)) {
+    return false;
+  }
+
+  return Date.now() - timestampMs <= GEMINI_RUNTIME_CHAT_DISCOVERY_GRACE_MS;
+}
+
 function isGeminiChatNotFoundError(error: unknown): boolean {
   if (error instanceof AppError) {
     return error.errorCode === "GEMINI_CHAT_NOT_FOUND";
   }
 
   return error instanceof Error && error.message === "GEMINI_CHAT_NOT_FOUND";
+}
+
+function clearSuccessfulProviderReadErrorCode(errorCode: string | null): string | null {
+  return errorCode === "PROVIDER_READ_FAILED" ? null : errorCode;
+}
+
+function clearSuccessfulProviderReadErrorDetail(
+  errorCode: string | null,
+  errorDetail: string | null
+): string | null {
+  return errorCode === "PROVIDER_READ_FAILED" ? null : errorDetail;
 }
 
 function shouldShortCircuitMissingSyntheticCodexHistory(
@@ -5662,6 +5805,10 @@ function isSyntheticCodexSessionTitle(title: string): boolean {
   );
 }
 
+function isSyntheticGeminiSessionTitle(title: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(title);
+}
+
 function shouldSyncSessionTitleFromProvider(
   provider: string,
   currentTitle: string | null
@@ -5673,6 +5820,10 @@ function shouldSyncSessionTitleFromProvider(
   }
 
   if (provider === "codex" && isSyntheticCodexSessionTitle(normalizedTitle)) {
+    return true;
+  }
+
+  if (provider === "gemini" && isSyntheticGeminiSessionTitle(normalizedTitle)) {
     return true;
   }
 
@@ -5696,6 +5847,7 @@ function shouldRemoveHiddenClaudeDebugSession(session: {
 }
 
 const STALE_RUNTIME_WITHOUT_INSPECTION_GRACE_MS = 120_000;
+const GEMINI_ACTIVITY_INFERENCE_HISTORY_LIMIT = 80;
 
 function shouldClearStaleRuntimeWithoutInspection(
   current: SessionStateRecord | null,

@@ -548,3 +548,96 @@ test("GeminiAdapter 会把当前 Gemini schema 的 thoughts 和 toolCalls 归一
     rmSync(rootDir, { recursive: true, force: true });
   }
 });
+
+test("GeminiAdapter 能读取当前真实 Gemini jsonl chats，并发现标题与历史消息", async () => {
+  const rootDir = mkdtempSync(join(tmpdir(), "codingns-gemini-jsonl-current-"));
+  const homeDir = join(rootDir, "gemini-home");
+  const workspaceDir = join(rootDir, "workspace-alpha");
+  const projectDir = join(homeDir, "tmp", "codingns");
+  const chatFile = join(projectDir, "chats", "session-2026-04-25T15-24-7f75c9df.jsonl");
+
+  try {
+    mkdirSync(workspaceDir, { recursive: true });
+    mkdirSync(join(projectDir, "chats"), { recursive: true });
+    writeFileSync(join(projectDir, ".project_root"), workspaceDir, "utf8");
+    writeFileSync(
+      chatFile,
+      [
+        JSON.stringify({
+          sessionId: "7f75c9df-c657-4197-8cf4-48c97d5fbbcd",
+          projectHash: "hash-alpha",
+          startTime: "2026-04-25T15:24:02.097Z",
+          lastUpdated: "2026-04-25T15:24:02.097Z",
+          kind: "main"
+        }),
+        JSON.stringify({
+          id: "msg-user-1",
+          timestamp: "2026-04-25T15:24:02.104Z",
+          type: "user",
+          content: [{ text: "请只回复 OK，不要调用任何工具。" }]
+        }),
+        JSON.stringify({
+          $set: {
+            lastUpdated: "2026-04-25T15:24:02.104Z"
+          }
+        }),
+        JSON.stringify({
+          id: "msg-assistant-1",
+          timestamp: "2026-04-25T15:24:29.090Z",
+          type: "gemini",
+          content: "OK",
+          thoughts: [
+            {
+              subject: "Assessing the Prompt",
+              description: "先理解要求，再直接回复。",
+              timestamp: "2026-04-25T15:24:28.464Z"
+            }
+          ],
+          tokens: {
+            input: 9941,
+            output: 1,
+            total: 10078
+          },
+          model: "gemini-3.1-pro"
+        }),
+        JSON.stringify({
+          $set: {
+            lastUpdated: "2026-04-25T15:24:29.090Z"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new GeminiAdapter({
+      homeDir,
+      listSessions: async () => []
+    });
+    const discovery = await adapter.detectSessionsDetailed(workspaceDir);
+
+    assert.equal(discovery.sessions.length, 1);
+    assert.equal(discovery.sessions[0]?.providerSessionId, "7f75c9df-c657-4197-8cf4-48c97d5fbbcd");
+    assert.equal(discovery.sessions[0]?.workspacePath, workspaceDir);
+    assert.equal(discovery.sessions[0]?.title, "请只回复 OK，不要调用任何工具。");
+    assert.equal(discovery.sessions[0]?.lastMessageAt, "2026-04-25T15:24:29.090Z");
+    assert.equal(discovery.sessions[0]?.messageCount, 3);
+
+    const page = await adapter.readSessionHistory(
+      "7f75c9df-c657-4197-8cf4-48c97d5fbbcd",
+      "gemini://session/7f75c9df-c657-4197-8cf4-48c97d5fbbcd",
+      null,
+      20
+    );
+
+    assert.deepEqual(
+      page.messages.map((message) => [message.role, message.kind, message.content]),
+      [
+        ["user", "text", "请只回复 OK，不要调用任何工具。"],
+        ["assistant", "thinking", "Assessing the Prompt\n\n先理解要求，再直接回复。"],
+        ["assistant", "text", "OK"]
+      ]
+    );
+  } finally {
+    rmSync(rootDir, { recursive: true, force: true });
+  }
+});
