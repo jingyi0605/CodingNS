@@ -74,6 +74,14 @@
   - `apps/host/src/modules/tailscale/tailscale-helper-client.ts`
   - `apps/host/src/modules/tailscale/tailscale-manager.ts`
 
+## 2026-04-25 子规格补记
+
+- 已启动 `spec001.5.1-OpenCLI接入与适配器裁剪运行时`
+- 已明确 `OpenCLI` 不按普通 Skill 纳管，而是作为独立 provider 处理
+- 已明确主方案是“生成裁剪版 OpenCLI 运行时”，让 CodingNS 管理会话切到新运行时，而不是改用户全局安装目录
+- 已明确适配器控制的最小粒度是 `site/name`，前端按站点分组展示，后端按目录项控制
+- 已明确 `OpenCLI` 读取真实 `~/.opencli` 的方式是“只给 OpenCLI 子进程注入真实 HOME”，不回退整个会话 HOME
+
 ## 这份文档是干什么的
 
 这份任务清单不是为了列一堆抽象词。

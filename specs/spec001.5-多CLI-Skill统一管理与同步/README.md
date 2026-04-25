@@ -55,3 +55,4 @@
 - `design.md`
 - `tasks.md`
 - `docs/`
+- `../spec001.5.1-OpenCLI接入与适配器裁剪运行时/`
