@@ -111,6 +111,61 @@ describe("session runtime machine", () => {
     expect(merged.map((item) => item.id)).toEqual(["m-1", "m-2"]);
   });
 
+  it("Codex 消息在 sequence 和 timestamp 相同时仍按 rawRef 行号稳定排序", () => {
+    const merged = mergeAuthoritativeMessages([], "session-1", [
+      createHistoryMessage({
+        messageId: "m-2",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        content: "第二条",
+        timestamp: "2026-03-23T10:00:02.000Z",
+        sequence: 2,
+        rawRef: "codex://demo#line=7"
+      }),
+      createHistoryMessage({
+        messageId: "m-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "user",
+        content: "第一条",
+        timestamp: "2026-03-23T10:00:02.000Z",
+        sequence: 2,
+        rawRef: "codex://demo#line=6"
+      })
+    ]);
+
+    expect(merged.map((item) => item.id)).toEqual(["m-1", "m-2"]);
+  });
+
+  it("Codex 增量合并时相同 sequence 的用户消息不会被助手消息压到后面", () => {
+    const merged = mergeAuthoritativeMessages([], "session-1", [
+      createHistoryMessage({
+        messageId: "assistant-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        content: "收到",
+        timestamp: "2026-03-23T10:00:06.000Z",
+        sequence: 4,
+        rawRef: "codex://demo#line=9"
+      }),
+      createHistoryMessage({
+        messageId: "user-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "user",
+        content: "继续",
+        timestamp: "2026-03-23T10:00:06.000Z",
+        sequence: 4,
+        rawRef: "codex://demo#line=8"
+      })
+    ]);
+
+    expect(merged.map((item) => item.id)).toEqual(["user-1", "assistant-1"]);
+    expect(merged.map((item) => item.role)).toEqual(["user", "assistant"]);
+  });
+
   it("同一 messageId 内容增长时会保留更新后的版本", () => {
     const merged = mergeAuthoritativeMessages(
       [

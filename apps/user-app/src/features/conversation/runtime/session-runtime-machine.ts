@@ -454,11 +454,7 @@ function collapseEquivalentKimiTextMessages(
 
 function sortMessages(messages: SessionMessageViewModel[]): SessionMessageViewModel[] {
   const sorted = [...messages].sort((left, right) => {
-    if (left.sequence !== right.sequence) {
-      return left.sequence - right.sequence;
-    }
-
-    return left.timestamp.localeCompare(right.timestamp);
+    return compareViewMessageOrder(left, right);
   });
 
   return collapseEquivalentKimiTextMessages(
@@ -470,6 +466,92 @@ function sortMessages(messages: SessionMessageViewModel[]): SessionMessageViewMo
       )
     )
   );
+}
+
+function compareViewMessageOrder(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel
+): number {
+  if (left.sequence !== right.sequence) {
+    return left.sequence - right.sequence;
+  }
+
+  const timestampOrder = left.timestamp.localeCompare(right.timestamp);
+
+  if (timestampOrder !== 0) {
+    return timestampOrder;
+  }
+
+  const rawRefLineOrder = compareRawRefLineOrder(left.rawRef, right.rawRef);
+
+  if (rawRefLineOrder !== 0) {
+    return rawRefLineOrder;
+  }
+
+  const roleOrder = compareMessageRoleOrder(left.role, right.role);
+
+  if (roleOrder !== 0) {
+    return roleOrder;
+  }
+
+  const rawRefOrder = left.rawRef.localeCompare(right.rawRef);
+
+  if (rawRefOrder !== 0) {
+    return rawRefOrder;
+  }
+
+  return left.id.localeCompare(right.id);
+}
+
+function compareRawRefLineOrder(leftRawRef: string, rightRawRef: string): number {
+  const leftLine = extractRawRefLine(leftRawRef);
+  const rightLine = extractRawRefLine(rightRawRef);
+
+  if (leftLine === null && rightLine === null) {
+    return 0;
+  }
+
+  if (leftLine === null) {
+    return 1;
+  }
+
+  if (rightLine === null) {
+    return -1;
+  }
+
+  return leftLine - rightLine;
+}
+
+function extractRawRefLine(rawRef: string): number | null {
+  const match = rawRef.match(/(?:^|[?#&])line=(\d+)(?:$|[&#])/);
+
+  if (!match) {
+    return null;
+  }
+
+  const value = Number.parseInt(match[1] ?? "", 10);
+  return Number.isFinite(value) ? value : null;
+}
+
+function compareMessageRoleOrder(
+  leftRole: SessionMessageViewModel["role"],
+  rightRole: SessionMessageViewModel["role"]
+): number {
+  return resolveMessageRoleOrder(leftRole) - resolveMessageRoleOrder(rightRole);
+}
+
+function resolveMessageRoleOrder(role: SessionMessageViewModel["role"]): number {
+  switch (role) {
+    case "user":
+      return 0;
+    case "assistant":
+      return 1;
+    case "tool":
+      return 2;
+    case "system":
+    default:
+      return 3;
+  }
 }
 
 function createRuntimeThinkingPlaceholder(
