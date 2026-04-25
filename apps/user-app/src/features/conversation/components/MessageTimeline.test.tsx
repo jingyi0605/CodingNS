@@ -2512,6 +2512,119 @@ ARGUMENTS: capabilities list`)
     ).not.toBeInTheDocument();
   });
 
+  it("尾部跟随模式不会覆盖普通会话为同一 sessionId 记录的阅读位置", () => {
+    const sessionMessages = [
+      {
+        ...createAssistantTextMessage("第一条消息", "assistant-shared-scroll-1"),
+        sessionId: "session-shared-scroll"
+      },
+      {
+        ...createAssistantTextMessage("第二条消息", "assistant-shared-scroll-2"),
+        sessionId: "session-shared-scroll",
+        sequence: 2,
+        rawRef: "codex://raw#line=shared-scroll-2"
+      }
+    ];
+    const updatedMessages = [
+      ...sessionMessages,
+      {
+        ...createAssistantTextMessage("第三条最新消息", "assistant-shared-scroll-3"),
+        sessionId: "session-shared-scroll",
+        sequence: 3,
+        rawRef: "codex://raw#line=shared-scroll-3"
+      }
+    ];
+    const { rerender } = render(
+      <MessageTimeline
+        sessionId="session-shared-scroll"
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={sessionMessages}
+      />
+    );
+
+    const initialMessageList = document.querySelector(".message-list") as HTMLDivElement | null;
+
+    expect(initialMessageList).not.toBeNull();
+
+    let scrollHeight = 2000;
+    Object.defineProperty(initialMessageList, "scrollHeight", {
+      get: () => scrollHeight,
+      configurable: true
+    });
+    Object.defineProperty(initialMessageList, "clientHeight", {
+      value: 600,
+      configurable: true
+    });
+
+    fireEvent.scroll(initialMessageList!, {
+      target: {
+        scrollTop: 420
+      }
+    });
+
+    expect(initialMessageList!.scrollTop).toBe(420);
+
+    rerender(
+      <MessageTimeline
+        sessionId="session-other-scroll"
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          {
+            ...createAssistantTextMessage("其他会话消息", "assistant-other-scroll"),
+            sessionId: "session-other-scroll"
+          }
+        ]}
+      />
+    );
+
+    scrollHeight = 2400;
+    rerender(
+      <MessageTimeline
+        sessionId="session-shared-scroll"
+        historyState="ready"
+        provider="codex"
+        followTailUpdates
+        onRetryMessage={vi.fn()}
+        messages={updatedMessages}
+      />
+    );
+
+    rerender(
+      <MessageTimeline
+        sessionId="session-follow-tail-other"
+        historyState="ready"
+        provider="codex"
+        followTailUpdates
+        onRetryMessage={vi.fn()}
+        messages={[
+          {
+            ...createAssistantTextMessage("观察模式其他会话", "assistant-follow-tail-other"),
+            sessionId: "session-follow-tail-other"
+          }
+        ]}
+      />
+    );
+
+    rerender(
+      <MessageTimeline
+        sessionId="session-shared-scroll"
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={updatedMessages}
+      />
+    );
+
+    const restoredMessageList = document.querySelector(".message-list") as HTMLDivElement | null;
+
+    expect(restoredMessageList).not.toBeNull();
+    expect(restoredMessageList!.scrollTop).toBe(420);
+  });
+
   it("renders image thumbnail preview for pending image attachments", async () => {
     render(
       <MessageTimeline
