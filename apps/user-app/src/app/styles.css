@@ -9245,57 +9245,62 @@ textarea:focus-visible {
   color: color-mix(in srgb, var(--accent) 84%, var(--text-primary));
 }
 
-.conversation-selection-action-dialog {
-  position: fixed;
-  z-index: 2602;
+.workbench-modal-card.conversation-selection-action-dialog {
+  width: min(var(--desktop-modal-width-standard), calc(100vw - 32px));
+}
+
+.conversation-selection-action-dialog-body {
   display: flex;
   flex-direction: column;
-  overflow: auto;
+  gap: 0;
+  padding-top: 2px;
 }
 
-.conversation-selection-action-dialog.is-centered {
-  width: min(420px, calc(100vw - 24px));
+.conversation-selection-action-dialog-body > .modal-section {
+  padding-block: 14px;
 }
 
-.conversation-selection-dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 2601;
-  background: transparent;
+.conversation-selection-preview-section,
+.conversation-selection-request-section,
+.conversation-selection-target-section {
+  gap: 12px;
 }
 
-.conversation-selection-dialog-backdrop.is-mobile {
-  background: rgba(15, 23, 42, 0.28);
-  backdrop-filter: blur(6px);
+.conversation-selection-preview-section .modal-section-heading,
+.conversation-selection-target-section .modal-section-heading {
+  font-size: 13px;
 }
 
-.conversation-selection-action-dialog-header {
-  gap: 10px;
-}
-
-.conversation-selection-action-dialog-close {
-  font-size: 14px;
+.conversation-selection-request-section .modal-field-copy {
+  gap: 6px;
 }
 
 .conversation-selection-action-dialog-quote {
   margin: 0;
-  padding: 10px 12px;
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--bg-secondary) 74%, transparent);
+  max-height: min(24vh, 176px);
+  overflow: auto;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 76%, transparent);
+  background: color-mix(in srgb, var(--bg-secondary) 82%, transparent);
   color: var(--text-secondary);
   font-size: 12px;
-  line-height: 1.6;
+  line-height: 1.72;
   white-space: pre-wrap;
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  word-break: break-word;
+}
+
+.conversation-selection-context-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 2px;
 }
 
 .conversation-selection-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 
 .conversation-selection-field {
@@ -9323,34 +9328,28 @@ textarea:focus-visible {
 }
 
 .conversation-selection-hint {
-  margin: -4px 0 0;
+  margin: 0;
   color: var(--text-tertiary);
   font-size: 12px;
   line-height: 1.5;
 }
 
-.conversation-selection-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
 @media (max-width: 720px) {
-  .conversation-selection-action-dialog {
-    padding: 16px;
-    border-radius: 18px;
+.conversation-selection-action-dialog-body {
+    padding-top: 0;
+  }
+
+  .conversation-selection-action-dialog-body > .modal-section {
+    padding-block: 12px;
   }
 
   .conversation-selection-grid {
     grid-template-columns: 1fr;
   }
 
-  .conversation-selection-actions {
-    justify-content: stretch;
-  }
-
-  .conversation-selection-actions > button {
-    flex: 1 1 0;
+  .conversation-selection-action-dialog-quote {
+    max-height: min(28vh, 196px);
+    padding: 12px 14px;
   }
 }
 

@@ -1580,6 +1580,8 @@ const extensionZhCN = {
     selectionActionIncludeContext: "包含当前上下文",
     selectionActionContextUnavailable: "当前选区跨了多条消息，没法安全继承上下文，只能按无上下文新建子会话。",
     selectionActionDefaultPrompt: "请处理这段内容。",
+    selectionActionPreviewLabel: "已选内容",
+    selectionActionTargetLabel: "新会话设置",
     selectionActionQuotedLabel: "选中文本",
     selectionActionFailed: "创建操作子会话失败。",
     actionSessionBadge: "操作",
@@ -3696,6 +3698,8 @@ const extensionEnUS = {
     selectionActionContextUnavailable:
       "This selection spans multiple messages, so context inheritance is disabled for safety.",
     selectionActionDefaultPrompt: "Please process this content.",
+    selectionActionPreviewLabel: "Selected content",
+    selectionActionTargetLabel: "New session settings",
     selectionActionQuotedLabel: "Selected text",
     selectionActionFailed: "Failed to create the action child session.",
     actionSessionBadge: "Action",

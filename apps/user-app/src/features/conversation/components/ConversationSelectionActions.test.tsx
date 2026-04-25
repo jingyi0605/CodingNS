@@ -5,6 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { t } from "../../../shared/i18n";
 import { ConversationSelectionActions } from "./ConversationSelectionActions";
 
+const {
+  mockGetProviderCapabilities,
+  mockListProviderCapabilities
+} = vi.hoisted(() => ({
+  mockGetProviderCapabilities: vi.fn(),
+  mockListProviderCapabilities: vi.fn()
+}));
+
 vi.mock("react-router-dom", () => ({
   useNavigate: () => vi.fn()
 }));
@@ -41,8 +49,8 @@ vi.mock("../../../shared/toast", () => ({
 
 vi.mock("../api/conversation-api", () => ({
   forkSession: vi.fn(),
-  getProviderCapabilities: vi.fn(),
-  listProviderCapabilities: vi.fn(),
+  getProviderCapabilities: mockGetProviderCapabilities,
+  listProviderCapabilities: mockListProviderCapabilities,
   getSessionDetail: vi.fn(),
   startLiveSession: vi.fn(),
   sendLiveMessage: vi.fn()
@@ -82,6 +90,18 @@ describe("ConversationSelectionActions", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     currentSelection = null;
+    mockGetProviderCapabilities.mockResolvedValue({
+      canStartSession: true,
+      limitations: [],
+      modelOptions: [{ id: "provider-default", name: "默认模型" }]
+    });
+    mockListProviderCapabilities.mockResolvedValue({
+      codex: {
+        canStartSession: true,
+        limitations: [],
+        modelOptions: [{ id: "provider-default", name: "默认模型" }]
+      }
+    });
     Object.defineProperty(window, "getSelection", {
       configurable: true,
       value: vi.fn(() => currentSelection)
@@ -163,6 +183,84 @@ describe("ConversationSelectionActions", () => {
 
     expect(
       screen.getByRole("button", { name: t("conversation.copyAction") })
+    ).toBeInTheDocument();
+  });
+
+  it("点击操作会打开对话框，不会因为选区被清掉而失效", async () => {
+    render(<TestHarness />);
+
+    const messageText = screen.getByTestId("message-text");
+    const textNode = messageText.firstChild;
+
+    expect(textNode).not.toBeNull();
+
+    currentSelection = createSelection(textNode!, "保留这段文字", {
+      left: 160,
+      top: 220,
+      width: 112,
+      height: 22
+    });
+
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => {
+      vi.advanceTimersByTime(60);
+    });
+
+    const actionButton = screen.getByRole("button", {
+      name: t("conversation.selectionActionButton")
+    });
+
+    fireEvent.mouseDown(actionButton);
+    fireEvent.click(actionButton);
+    currentSelection = null;
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => {
+      vi.advanceTimersByTime(60);
+    });
+
+    expect(
+      screen.getByRole("dialog", { name: t("conversation.selectionActionButton") })
+    ).toBeInTheDocument();
+  });
+
+  it("没有 click 事件时，pointerup 仍然会打开对话框", () => {
+    render(<TestHarness />);
+
+    const messageText = screen.getByTestId("message-text");
+    const textNode = messageText.firstChild;
+
+    expect(textNode).not.toBeNull();
+
+    currentSelection = createSelection(textNode!, "WebView 里也得能打开", {
+      left: 150,
+      top: 210,
+      width: 132,
+      height: 22
+    });
+
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => {
+      vi.advanceTimersByTime(60);
+    });
+
+    const actionButton = screen.getByRole("button", {
+      name: t("conversation.selectionActionButton")
+    });
+
+    fireEvent.pointerDown(actionButton);
+    fireEvent.pointerUp(actionButton);
+    currentSelection = null;
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => {
+      vi.advanceTimersByTime(60);
+    });
+
+    expect(
+      screen.getByRole("dialog", { name: t("conversation.selectionActionButton") })
     ).toBeInTheDocument();
   });
 });

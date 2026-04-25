@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type RefObjec
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 
+import { DesktopModal } from "../../../components/DesktopModal";
+import { MobileSheet } from "../../../components/MobileSheet";
+import { ModalActions, ModalField, ModalSection } from "../../../components/ModalAtoms";
 import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import { usePreferencesSelector } from "../../../preferences/preferences-store";
 import { usePlatform } from "../../../platform/platform-provider";
@@ -47,9 +50,6 @@ interface SelectionSnapshot {
 }
 
 const PROVIDER_DEFAULT_MODEL_ID = "provider-default";
-const DESKTOP_SELECTION_DIALOG_ESTIMATED_HEIGHT = 420;
-const DESKTOP_SELECTION_DIALOG_MAX_HEIGHT = 520;
-const MOBILE_SELECTION_DIALOG_MAX_HEIGHT_OFFSET = 32;
 const SELECTION_COMMIT_DELAY_MS = 48;
 
 function copyTextWithExecCommand(text: string): boolean {
@@ -209,6 +209,7 @@ export function ConversationSelectionActions({
   } = useWorkbenchShell();
   const providerPreferences = usePreferencesSelector((state) => state.profile.providers);
   const [selection, setSelection] = useState<SelectionSnapshot | null>(null);
+  const [dialogSelection, setDialogSelection] = useState<SelectionSnapshot | null>(null);
   const [actionDialogOpen, setActionDialogOpen] = useState(false);
   const [actionPrompt, setActionPrompt] = useState("");
   const [includeContext, setIncludeContext] = useState(false);
@@ -230,6 +231,7 @@ export function ConversationSelectionActions({
     height: typeof window === "undefined" ? 0 : window.innerHeight
   }));
   const actionDialogLockedRef = useRef(false);
+  const skipNextActionButtonClickRef = useRef(false);
   const pointerSelectionActiveRef = useRef(false);
   const pendingSelectionRef = useRef<SelectionSnapshot | null>(null);
   const selectionCommitTimerRef = useRef<number | null>(null);
@@ -286,51 +288,6 @@ export function ConversationSelectionActions({
       top: clamp(selection.rect.top - 48, minTop, maxTop)
     };
   }, [containerRef, selection, viewportSize.height, viewportSize.width]);
-  const actionDialogStyle = useMemo<CSSProperties | null>(() => {
-    if (!selection || typeof window === "undefined") {
-      return null;
-    }
-
-    const containerRect = containerRef.current?.getBoundingClientRect();
-    const safeContainerLeft = containerRect?.left ?? 0;
-    const safeContainerRight = containerRect?.right ?? viewportSize.width;
-    const safeContainerTop = containerRect?.top ?? 0;
-    const safeContainerBottom = containerRect?.bottom ?? viewportSize.height;
-
-    if (isMobileSelectionDialog) {
-      return {
-        left: viewportSize.width / 2,
-        top: viewportSize.height / 2,
-        width: Math.min(420, Math.max(280, viewportSize.width - 24)),
-        maxHeight: Math.max(260, viewportSize.height - MOBILE_SELECTION_DIALOG_MAX_HEIGHT_OFFSET),
-        transform: "translate(-50%, -50%)"
-      };
-    }
-
-    const availableWidth = Math.max(
-      280,
-      Math.min(viewportSize.width - 24, safeContainerRight - safeContainerLeft - 24)
-    );
-    const width = Math.min(420, availableWidth);
-    const centerX = selection.rect.left + selection.rect.width / 2;
-    const minLeft = Math.max(12, safeContainerLeft + 12);
-    const maxLeft = Math.max(minLeft, Math.min(viewportSize.width - width - 12, safeContainerRight - width - 12));
-    const maxHeight = Math.min(
-      DESKTOP_SELECTION_DIALOG_MAX_HEIGHT,
-      Math.max(280, safeContainerBottom - safeContainerTop - 24),
-      Math.max(280, viewportSize.height - 24)
-    );
-    const minTop = Math.max(12, safeContainerTop + 12);
-    const maxTop = Math.max(minTop, Math.min(viewportSize.height - maxHeight - 12, safeContainerBottom - maxHeight - 12));
-    const preferredTop = selection.rect.top - DESKTOP_SELECTION_DIALOG_ESTIMATED_HEIGHT - 18;
-
-    return {
-      left: clamp(centerX - width / 2, minLeft, maxLeft),
-      top: clamp(preferredTop, minTop, maxTop),
-      width,
-      maxHeight
-    };
-  }, [containerRef, isMobileSelectionDialog, selection, viewportSize.height, viewportSize.width]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -361,6 +318,7 @@ export function ConversationSelectionActions({
       pendingSelectionRef.current = null;
       pointerSelectionActiveRef.current = false;
       setSelection(null);
+      setDialogSelection(null);
       setActionDialogOpen(false);
       return;
     }
@@ -380,6 +338,7 @@ export function ConversationSelectionActions({
       pendingSelectionRef.current = null;
       pointerSelectionActiveRef.current = false;
       setSelection(null);
+      setDialogSelection(null);
       return;
     }
 
@@ -488,10 +447,10 @@ export function ConversationSelectionActions({
   }, [containerRef, session]);
 
   useEffect(() => {
-    if (!actionDialogOpen || !selection?.sourceMessageId) {
+    if (!actionDialogOpen || !dialogSelection?.sourceMessageId) {
       setIncludeContext(false);
     }
-  }, [actionDialogOpen, selection?.sourceMessageId]);
+  }, [actionDialogOpen, dialogSelection?.sourceMessageId]);
 
   useEffect(() => {
     if (!actionDialogOpen || !session) {
@@ -609,6 +568,7 @@ export function ConversationSelectionActions({
       }
 
       setActionDialogOpen(false);
+      setDialogSelection(null);
       setSelection(null);
       actionDialogLockedRef.current = false;
     };
@@ -650,6 +610,7 @@ export function ConversationSelectionActions({
     setTodoCreationRequestId((current) => current + 1);
     setTodoModalOpen(true);
     setActionDialogOpen(false);
+    setDialogSelection(null);
     setSelection(null);
     actionDialogLockedRef.current = false;
   }
@@ -664,11 +625,33 @@ export function ConversationSelectionActions({
     setSelectedModel(preferredModelForProvider(nextProvider));
     setActionPrompt("");
     setIncludeContext(false);
+    setDialogSelection(selection);
     setActionDialogOpen(true);
   }
 
+  function handleActionButtonPressStart(event: {
+    preventDefault: () => void;
+  }) {
+    event.preventDefault();
+    actionDialogLockedRef.current = true;
+  }
+
+  function handleActionButtonPressEnd() {
+    skipNextActionButtonClickRef.current = true;
+    handleOpenActionDialog();
+  }
+
+  function handleActionButtonClick() {
+    if (skipNextActionButtonClickRef.current) {
+      skipNextActionButtonClickRef.current = false;
+      return;
+    }
+
+    handleOpenActionDialog();
+  }
+
   async function handleSubmitAction() {
-    if (!selection || !session) {
+    if (!dialogSelection || !session) {
       return;
     }
 
@@ -683,19 +666,19 @@ export function ConversationSelectionActions({
     setSubmittingAction(true);
 
     try {
-      const content = buildSelectionPrompt(selection.text, actionPrompt);
+      const content = buildSelectionPrompt(dialogSelection.text, actionPrompt);
       const model = currentModelOption?.id === PROVIDER_DEFAULT_MODEL_ID ? null : currentModelOption?.id ?? null;
       let nextSession: SessionSummaryDto | null = null;
 
-      if (includeContext && selection.sourceMessageId) {
+      if (includeContext && dialogSelection.sourceMessageId) {
         nextSession = await forkSession(session.sessionId, {
           sourceType: "message",
-          sourceMessageId: selection.sourceMessageId,
+          sourceMessageId: dialogSelection.sourceMessageId,
           strategy: "auto",
           targetProvider: selectedProvider,
           sessionKind: "annotation",
-          annotationSourceMessageId: selection.sourceMessageId,
-          annotationSourceText: selection.text
+          annotationSourceMessageId: dialogSelection.sourceMessageId,
+          annotationSourceText: dialogSelection.text
         });
         upsertNavigationSession(nextSession);
 
@@ -717,8 +700,8 @@ export function ConversationSelectionActions({
           permissionMode: getDefaultSessionPermissionMode(),
           parentSessionId: session.sessionId,
           sessionKind: "annotation",
-          annotationSourceMessageId: selection.sourceMessageId ?? null,
-          annotationSourceText: selection.text
+          annotationSourceMessageId: dialogSelection.sourceMessageId ?? null,
+          annotationSourceText: dialogSelection.text
         });
 
         nextSession = response.session ?? await getSessionDetail(response.sessionId);
@@ -729,6 +712,7 @@ export function ConversationSelectionActions({
       selectWorkspace(nextSession.workspaceId);
       navigate(buildWorkspaceSessionPath(nextSession.workspaceId, nextSession.sessionId));
       setActionDialogOpen(false);
+      setDialogSelection(null);
       setSelection(null);
       actionDialogLockedRef.current = false;
     } catch (error) {
@@ -743,6 +727,7 @@ export function ConversationSelectionActions({
 
   function closeActionDialog(clearSelection = false) {
     setActionDialogOpen(false);
+    setDialogSelection(null);
     actionDialogLockedRef.current = false;
 
     if (clearSelection) {
@@ -750,7 +735,117 @@ export function ConversationSelectionActions({
     }
   }
 
-  if (!session || !selection || !toolbarStyle || typeof document === "undefined") {
+  const showToolbar = Boolean(selection && toolbarStyle);
+  const showActionDialog = Boolean(actionDialogOpen && dialogSelection);
+  const actionDialogFooter = (
+    <ModalActions>
+      <button
+        type="button"
+        className="secondary-button"
+        onClick={() => closeActionDialog(false)}
+      >
+        {t("common.cancel")}
+      </button>
+      <button
+        type="button"
+        className="primary-button"
+        disabled={submittingAction || Boolean(selectedProviderDisabledReason)}
+        onClick={() => void handleSubmitAction()}
+      >
+        {submittingAction ? t("conversation.sendingState") : t("conversation.selectionActionSubmit")}
+      </button>
+    </ModalActions>
+  );
+  const actionDialogBody = dialogSelection ? (
+    <>
+      <ModalSection
+        className="conversation-selection-preview-section"
+        heading={t("conversation.selectionActionPreviewLabel")}
+      >
+        <div className="conversation-selection-action-dialog-quote">{dialogSelection.text}</div>
+      </ModalSection>
+      <ModalSection className="conversation-selection-request-section">
+        <ModalField
+          className="conversation-selection-field conversation-selection-prompt-field"
+          label={t("conversation.selectionActionPromptLabel")}
+        >
+          <textarea
+            value={actionPrompt}
+            rows={4}
+            placeholder={t("conversation.selectionActionPromptPlaceholder")}
+            onChange={(event) => setActionPrompt(event.target.value)}
+          />
+        </ModalField>
+        <div className="conversation-selection-context-block">
+          <label className="conversation-selection-checkbox">
+            <input
+              type="checkbox"
+              checked={includeContext}
+              disabled={!dialogSelection.sourceMessageId}
+              onChange={(event) => setIncludeContext(event.target.checked)}
+            />
+            <span>{t("conversation.selectionActionIncludeContext")}</span>
+          </label>
+          {!dialogSelection.sourceMessageId ? (
+            <p className="conversation-selection-hint">
+              {t("conversation.selectionActionContextUnavailable")}
+            </p>
+          ) : null}
+          {selectedProviderDisabledReason ? (
+            <p className="conversation-selection-hint">{selectedProviderDisabledReason}</p>
+          ) : null}
+        </div>
+      </ModalSection>
+      <ModalSection
+        className="conversation-selection-target-section"
+        heading={t("conversation.selectionActionTargetLabel")}
+      >
+        <div className="conversation-selection-grid">
+          <ModalField
+            className="conversation-selection-field"
+            label={t("conversation.forkTargetProviderLabel")}
+          >
+            <select
+              value={selectedProvider}
+              onChange={(event) => {
+                const nextProvider = event.target.value as BuiltinProviderId;
+                setSelectedProvider(nextProvider);
+                setSelectedModel(preferredModelForProvider(nextProvider));
+              }}
+            >
+              {SESSION_PROVIDER_PICKER_IDS.map((providerId) => (
+                <option
+                  key={providerId}
+                  value={providerId}
+                  disabled={providerCapabilitiesMap[providerId]?.canStartSession === false}
+                >
+                  {getProviderDisplayName(providerId, "full")}
+                </option>
+              ))}
+            </select>
+          </ModalField>
+          <ModalField
+            className="conversation-selection-field"
+            label={t("conversation.forkTargetModelLabel")}
+          >
+            <select
+              value={selectedModel}
+              disabled={loadingCapabilities || Boolean(selectedProviderDisabledReason)}
+              onChange={(event) => setSelectedModel(event.target.value)}
+            >
+              {modelOptions.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </ModalField>
+        </div>
+      </ModalSection>
+    </>
+  ) : null;
+
+  if (!session || (!showToolbar && !showActionDialog) || typeof document === "undefined") {
     return (
       <WorkspaceInboxModal
         open={todoModalOpen}
@@ -766,10 +861,10 @@ export function ConversationSelectionActions({
   return (
     <>
       {createPortal(
-        <>
+        showToolbar ? (
           <div
             className="conversation-selection-toolbar"
-            style={toolbarStyle}
+            style={toolbarStyle ?? undefined}
             onMouseDown={(event) => event.preventDefault()}
           >
             <button type="button" className="conversation-selection-action" onClick={() => void handleCopy()}>
@@ -778,123 +873,48 @@ export function ConversationSelectionActions({
             <button type="button" className="conversation-selection-action" onClick={handleCreateTodo}>
               {t("conversation.selectionTodoAction")}
             </button>
-            <button type="button" className="conversation-selection-action is-primary" onClick={handleOpenActionDialog}>
+            <button
+              type="button"
+              className="conversation-selection-action is-primary"
+              onPointerDown={handleActionButtonPressStart}
+              onMouseDown={handleActionButtonPressStart}
+              onPointerUp={handleActionButtonPressEnd}
+              onClick={handleActionButtonClick}
+            >
               {t("conversation.selectionActionButton")}
             </button>
           </div>
-          {actionDialogOpen && actionDialogStyle ? (
-            <>
-              <div
-                className={`conversation-selection-dialog-backdrop${isMobileSelectionDialog ? " is-mobile" : ""}`}
-                onMouseDown={() => closeActionDialog(false)}
-              />
-              <div
-                className={`conversation-selection-action-dialog workbench-modal-card surface-card${isMobileSelectionDialog ? " is-centered" : ""}`}
-                style={actionDialogStyle}
-                role="dialog"
-                aria-modal="true"
-                aria-label={t("conversation.selectionActionButton")}
-                onMouseDown={(event) => event.stopPropagation()}
-              >
-                <div className="conversation-selection-action-dialog-header workbench-modal-header">
-                  <div className="workbench-modal-title-wrap">
-                    <h2>{t("conversation.selectionActionButton")}</h2>
-                  </div>
-                  <button
-                    type="button"
-                    className="conversation-selection-action-dialog-close workbench-modal-close"
-                    aria-label={t("common.close")}
-                    onClick={() => closeActionDialog(false)}
-                  >
-                    ×
-                  </button>
-                </div>
-                <p className="conversation-selection-action-dialog-quote">{selection.text}</p>
-                <label className="conversation-selection-field workbench-modal-field">
-                  <span>{t("conversation.selectionActionPromptLabel")}</span>
-                  <textarea
-                    value={actionPrompt}
-                    rows={4}
-                    placeholder={t("conversation.selectionActionPromptPlaceholder")}
-                    onChange={(event) => setActionPrompt(event.target.value)}
-                  />
-                </label>
-                <label className="conversation-selection-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={includeContext}
-                    disabled={!selection.sourceMessageId}
-                    onChange={(event) => setIncludeContext(event.target.checked)}
-                  />
-                  <span>{t("conversation.selectionActionIncludeContext")}</span>
-                </label>
-                {!selection.sourceMessageId ? (
-                  <p className="conversation-selection-hint">
-                    {t("conversation.selectionActionContextUnavailable")}
-                  </p>
-                ) : null}
-                {selectedProviderDisabledReason ? (
-                  <p className="conversation-selection-hint">{selectedProviderDisabledReason}</p>
-                ) : null}
-                <div className="conversation-selection-grid">
-                  <label className="conversation-selection-field workbench-modal-field">
-                    <span>{t("conversation.forkTargetProviderLabel")}</span>
-                    <select
-                      value={selectedProvider}
-                      onChange={(event) => {
-                        const nextProvider = event.target.value as BuiltinProviderId;
-                        setSelectedProvider(nextProvider);
-                        setSelectedModel(preferredModelForProvider(nextProvider));
-                      }}
-                    >
-                      {SESSION_PROVIDER_PICKER_IDS.map((providerId) => (
-                        <option
-                          key={providerId}
-                          value={providerId}
-                          disabled={providerCapabilitiesMap[providerId]?.canStartSession === false}
-                        >
-                          {getProviderDisplayName(providerId, "full")}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="conversation-selection-field workbench-modal-field">
-                    <span>{t("conversation.forkTargetModelLabel")}</span>
-                    <select
-                      value={selectedModel}
-                      disabled={loadingCapabilities || Boolean(selectedProviderDisabledReason)}
-                      onChange={(event) => setSelectedModel(event.target.value)}
-                    >
-                      {modelOptions.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <div className="conversation-selection-actions">
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => closeActionDialog(false)}
-                  >
-                    {t("common.cancel")}
-                  </button>
-                  <button
-                    type="button"
-                    className="primary-button"
-                    disabled={submittingAction || Boolean(selectedProviderDisabledReason)}
-                    onClick={() => void handleSubmitAction()}
-                  >
-                    {submittingAction ? t("conversation.sendingState") : t("conversation.selectionActionSubmit")}
-                  </button>
-                </div>
-              </div>
-            </>
-          ) : null}
-        </>,
+        ) : null,
         document.body
+      )}
+      {isMobileSelectionDialog ? (
+        <MobileSheet
+          open={showActionDialog}
+          title={t("conversation.selectionActionButton")}
+          height="auto"
+          kind="form"
+          showHandle
+          showCancelButton={false}
+          cardClassName="conversation-selection-action-dialog"
+          bodyClassName="conversation-selection-action-dialog-body"
+          footer={actionDialogFooter}
+          onClose={() => closeActionDialog(false)}
+        >
+          {actionDialogBody}
+        </MobileSheet>
+      ) : (
+        <DesktopModal
+          open={showActionDialog}
+          title={t("conversation.selectionActionButton")}
+          size="compact"
+          layout="form"
+          className="conversation-selection-action-dialog"
+          bodyClassName="conversation-selection-action-dialog-body"
+          footer={actionDialogFooter}
+          onClose={() => closeActionDialog(false)}
+        >
+          {actionDialogBody}
+        </DesktopModal>
       )}
       <WorkspaceInboxModal
         open={todoModalOpen}
