@@ -892,16 +892,34 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     records: Array<Record<string, unknown>>,
     providerSessionId = basename(filePath, ".jsonl")
   ): NormalizedMessage[] {
-    const messageIdsInOrder: string[] = [];
-    const messagesById = new Map<string, NormalizedMessage>();
+    const messageEntries: Array<{
+      message: NormalizedMessage;
+      groupOrder: number;
+      partIndex: number;
+    }> = [];
+    const entryIndexByMessageId = new Map<string, number>();
     const toolNameById = new Map<string, string>();
     const stableMessageRefByIdentity = new Map<string, ClaudeStableMessageRef>();
     const progressiveMessagesByTrackKey = new Map<string, NormalizedMessage>();
     let sequence = 0;
+    let nextGroupOrder = 0;
+    const groupOrderByKey = new Map<string, number>();
 
-    records.forEach((record) => {
-      this.collectMessageEnvelopes(record).forEach((envelope) => {
+    records.forEach((record, recordIndex) => {
+      this.collectMessageEnvelopes(record).forEach((envelope, envelopeIndex) => {
         const parts = normalizeClaudeMessageParts(envelope.message.content);
+        const groupKey = buildClaudeEnvelopeGroupKey(envelope, record, recordIndex, envelopeIndex);
+        const groupOrder = (() => {
+          const existing = groupOrderByKey.get(groupKey);
+
+          if (existing !== undefined) {
+            return existing;
+          }
+
+          nextGroupOrder += 1;
+          groupOrderByKey.set(groupKey, nextGroupOrder);
+          return nextGroupOrder;
+        })();
 
         parts.forEach((part, partIndex) => {
           const normalized = normalizeClaudeMessagePart({
@@ -955,24 +973,65 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
           }
 
           const signature = buildClaudeMessageSignature(nextMessage);
-          const current = messagesById.get(nextMessage.messageId) ?? null;
+          const currentEntryIndex = entryIndexByMessageId.get(nextMessage.messageId);
+          const current =
+            currentEntryIndex === undefined
+              ? null
+              : (messageEntries[currentEntryIndex]?.message ?? null);
 
           if (current && buildClaudeMessageSignature(current) === signature) {
             return;
           }
 
-          if (!messagesById.has(nextMessage.messageId)) {
-            messageIdsInOrder.push(nextMessage.messageId);
+          if (currentEntryIndex === undefined) {
+            entryIndexByMessageId.set(nextMessage.messageId, messageEntries.length);
+            messageEntries.push({
+              message: nextMessage,
+              groupOrder,
+              partIndex
+            });
+            return;
           }
 
-          messagesById.set(nextMessage.messageId, nextMessage);
+          messageEntries[currentEntryIndex] = {
+            message: nextMessage,
+            groupOrder,
+            partIndex
+          };
         });
       });
     });
 
-    return messageIdsInOrder
-      .map((messageId) => messagesById.get(messageId) ?? null)
-      .filter((message): message is NormalizedMessage => message !== null);
+    return messageEntries
+      .sort((left, right) => {
+        if (left.groupOrder !== right.groupOrder) {
+          return left.groupOrder - right.groupOrder;
+        }
+
+        const kindOrder =
+          resolveClaudeHistoryKindOrder(left.message.kind)
+          - resolveClaudeHistoryKindOrder(right.message.kind);
+
+        if (kindOrder !== 0) {
+          return kindOrder;
+        }
+
+        if (left.partIndex !== right.partIndex) {
+          return left.partIndex - right.partIndex;
+        }
+
+        const timestampOrder = left.message.timestamp.localeCompare(right.message.timestamp);
+
+        if (timestampOrder !== 0) {
+          return timestampOrder;
+        }
+
+        return left.message.rawRef.localeCompare(right.message.rawRef);
+      })
+      .map((entry, index) => ({
+        ...entry.message,
+        sequence: index + 1
+      }));
   }
 
   private collectMessageEnvelopes(record: Record<string, unknown>): ClaudeMessageEnvelope[] {
@@ -1019,6 +1078,40 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
       timestamp: nested.timestamp ?? record.timestamp,
       message: nestedMessage as ClaudeMessageEnvelope["message"]
     };
+  }
+}
+
+function buildClaudeEnvelopeGroupKey(
+  envelope: ClaudeMessageEnvelope,
+  record: Record<string, unknown>,
+  recordIndex: number,
+  envelopeIndex: number
+): string {
+  if (envelope.messageId) {
+    return `${envelope.type}:message:${envelope.messageId}`;
+  }
+
+  const sessionId =
+    ensureText(record.sessionId).trim()
+    || ensureText(record.session_id).trim()
+    || "unknown";
+  const timestamp = ensureText(record.timestamp).trim() || `record-${recordIndex}`;
+
+  return `${envelope.type}:${envelope.source}:${sessionId}:${timestamp}:${recordIndex}:${envelopeIndex}`;
+}
+
+function resolveClaudeHistoryKindOrder(kind: NormalizedMessage["kind"]): number {
+  switch (kind) {
+    case "thinking":
+      return 0;
+    case "text":
+      return 1;
+    case "tool_call":
+      return 2;
+    case "tool_result":
+      return 3;
+    default:
+      return 4;
   }
 }
 

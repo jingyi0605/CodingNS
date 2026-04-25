@@ -215,4 +215,177 @@ describe("SessionProviderConfigService", () => {
     expect(generatedSettings.permissions?.allow).toEqual(["Read"]);
     expect(generatedSettings.env?.ANTHROPIC_MODEL).toBe("claude-sonnet-4-5");
   });
+
+  it("Claude 会话从全局默认切到 preset 时，会同步 resume 依赖的根级运行状态", () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "codingns-session-provider-config-"));
+    tempDirs.push(rootDir);
+
+    const claudeHomeDir = path.join(rootDir, ".claude");
+    const workspaceSlug = "tmp-workspace";
+    const providerSessionId = "claude-session-2";
+    const sourceTranscriptPath = path.join(
+      claudeHomeDir,
+      "projects",
+      workspaceSlug,
+      `${providerSessionId}.jsonl`
+    );
+    const sourceSessionEnvPath = path.join(claudeHomeDir, "session-env", providerSessionId, "env.json");
+    const sourceTodosPath = path.join(claudeHomeDir, "todos", `${providerSessionId}.json`);
+
+    mkdirSync(path.dirname(sourceTranscriptPath), { recursive: true });
+    mkdirSync(path.dirname(sourceSessionEnvPath), { recursive: true });
+    mkdirSync(path.dirname(sourceTodosPath), { recursive: true });
+    writeFileSync(path.join(claudeHomeDir, ".claude.json"), "{\n  \"installMethod\": \"native\"\n}\n", "utf8");
+    writeFileSync(path.join(claudeHomeDir, "history.jsonl"), "{\"type\":\"history\"}\n", "utf8");
+    writeFileSync(sourceTranscriptPath, "{\"type\":\"assistant\",\"message\":\"done\"}\n", "utf8");
+    writeFileSync(sourceSessionEnvPath, "{\"cwd\":\"/tmp/workspace\"}\n", "utf8");
+    writeFileSync(sourceTodosPath, "{\"items\":[\"resume\"]}\n", "utf8");
+    writeFileSync(
+      path.join(claudeHomeDir, "settings.json"),
+      JSON.stringify({
+        permissions: {
+          allow: ["Read"]
+        }
+      }, null, 2),
+      "utf8"
+    );
+
+    const config = resolveHostConfig({
+      databasePath: path.join(rootDir, "host.sqlite"),
+      claudeCodeHomeDir: claudeHomeDir
+    });
+    const preset: ModelPresetRuntimeConfigDto = {
+      id: "preset-claude",
+      name: "Claude 新配置",
+      app: "claude-code",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_MODEL: "claude-sonnet-4-5"
+        }
+      }
+    };
+    const ccSwitchAdapter = {
+      readPresetRuntimeConfig: () => preset
+    };
+    const service = new SessionProviderConfigService(
+      config,
+      ccSwitchAdapter as never
+    );
+
+    const binding = service.resolveSessionBinding({
+      sessionId: "session-2",
+      provider: "claude-code",
+      existingBinding: {
+        providerConfigMode: "global-default",
+        providerPresetId: null,
+        runtimeHomeDir: null,
+        providerSessionId,
+        rawStoreRef: sourceTranscriptPath
+      },
+      providerConfigMode: "cc-switch-preset",
+      providerPresetId: "preset-claude"
+    });
+
+    expect(binding.runtimeHomeDir).toBeTruthy();
+    expect(readFileSync(path.join(binding.runtimeHomeDir!, ".claude.json"), "utf8")).toContain("\"installMethod\": \"native\"");
+    expect(readFileSync(path.join(binding.runtimeHomeDir!, "history.jsonl"), "utf8")).toBe("{\"type\":\"history\"}\n");
+    expect(
+      readFileSync(path.join(binding.runtimeHomeDir!, "session-env", providerSessionId, "env.json"), "utf8")
+    ).toBe("{\"cwd\":\"/tmp/workspace\"}\n");
+    expect(
+      readFileSync(path.join(binding.runtimeHomeDir!, "todos", `${providerSessionId}.json`), "utf8")
+    ).toBe("{\"items\":[\"resume\"]}\n");
+  });
+
+  it("Claude 会话在已有 runtime home 上切换到新 preset 时，不会删掉原来的 transcript 和运行状态", () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "codingns-session-provider-config-"));
+    tempDirs.push(rootDir);
+
+    const claudeHomeDir = path.join(rootDir, ".claude");
+    const workspaceSlug = "tmp-workspace";
+    const providerSessionId = "claude-session-3";
+    const config = resolveHostConfig({
+      databasePath: path.join(rootDir, "host.sqlite"),
+      claudeCodeHomeDir: claudeHomeDir
+    });
+    const existingRuntimeHomeDir = path.join(
+      rootDir,
+      "session-provider-runtime",
+      "claude-code",
+      "session-3"
+    );
+    const sourceTranscriptPath = path.join(
+      existingRuntimeHomeDir,
+      "projects",
+      workspaceSlug,
+      `${providerSessionId}.jsonl`
+    );
+
+    mkdirSync(path.dirname(sourceTranscriptPath), { recursive: true });
+    mkdirSync(path.join(existingRuntimeHomeDir, "session-env", providerSessionId), { recursive: true });
+    mkdirSync(claudeHomeDir, { recursive: true });
+    writeFileSync(sourceTranscriptPath, "{\"type\":\"assistant\",\"message\":\"keep\"}\n", "utf8");
+    writeFileSync(path.join(existingRuntimeHomeDir, ".claude.json"), "{\n  \"installMethod\": \"runtime-home\"\n}\n", "utf8");
+    writeFileSync(
+      path.join(existingRuntimeHomeDir, "session-env", providerSessionId, "env.json"),
+      "{\"cwd\":\"/tmp/runtime-home\"}\n",
+      "utf8"
+    );
+    writeFileSync(
+      path.join(claudeHomeDir, "settings.json"),
+      JSON.stringify({
+        permissions: {
+          allow: ["Read"]
+        }
+      }, null, 2),
+      "utf8"
+    );
+
+    const preset: ModelPresetRuntimeConfigDto = {
+      id: "preset-claude-next",
+      name: "Claude 新配置",
+      app: "claude-code",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_MODEL: "claude-opus-4-1"
+        }
+      }
+    };
+    const ccSwitchAdapter = {
+      readPresetRuntimeConfig: () => preset
+    };
+    const service = new SessionProviderConfigService(
+      config,
+      ccSwitchAdapter as never
+    );
+
+    const binding = service.resolveSessionBinding({
+      sessionId: "session-3",
+      provider: "claude-code",
+      existingBinding: {
+        providerConfigMode: "cc-switch-preset",
+        providerPresetId: "preset-claude-old",
+        runtimeHomeDir: existingRuntimeHomeDir,
+        providerSessionId,
+        rawStoreRef: sourceTranscriptPath
+      },
+      providerConfigMode: "cc-switch-preset",
+      providerPresetId: "preset-claude-next"
+    });
+
+    expect(binding.runtimeHomeDir).toBe(existingRuntimeHomeDir);
+    expect(readFileSync(sourceTranscriptPath, "utf8")).toBe("{\"type\":\"assistant\",\"message\":\"keep\"}\n");
+    expect(readFileSync(path.join(existingRuntimeHomeDir, ".claude.json"), "utf8")).toContain("\"runtime-home\"");
+    expect(
+      readFileSync(path.join(existingRuntimeHomeDir, "session-env", providerSessionId, "env.json"), "utf8")
+    ).toBe("{\"cwd\":\"/tmp/runtime-home\"}\n");
+
+    const generatedSettings = JSON.parse(
+      readFileSync(path.join(existingRuntimeHomeDir, "settings.json"), "utf8")
+    ) as {
+      env?: Record<string, string>;
+    };
+
+    expect(generatedSettings.env?.ANTHROPIC_MODEL).toBe("claude-opus-4-1");
+  });
 });

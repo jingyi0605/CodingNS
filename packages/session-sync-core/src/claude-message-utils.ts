@@ -18,6 +18,7 @@ export interface ClaudeMessageEnvelope {
   type: ClaudeEnvelopeRole;
   source: ClaudeEnvelopeSource;
   messageId: string | null;
+  envelopeKey?: string | null;
   timestamp: unknown;
   message: {
     content?: unknown;
@@ -196,6 +197,20 @@ export function buildClaudeStableRawRef(identity: string): string {
   return `claude-code://message/${encodeURIComponent(identity)}`;
 }
 
+export function readClaudeStableRawRefIdentity(rawRef: string): string | null {
+  const prefix = "claude-code://message/";
+
+  if (!rawRef.startsWith(prefix)) {
+    return null;
+  }
+
+  try {
+    return decodeURIComponent(rawRef.slice(prefix.length));
+  } catch {
+    return null;
+  }
+}
+
 export function buildClaudePartIdentity(input: {
   part: Record<string, unknown>;
   partType: string;
@@ -230,6 +245,17 @@ export function buildClaudePartIdentity(input: {
     }
 
     return `message:${envelope.type}:${envelope.messageId}:part:${partIndex}:type:${normalizedType}`;
+  }
+
+  if (envelope.envelopeKey) {
+    if (
+      envelope.type === "assistant" &&
+      (normalizedType === "text" || normalizedType === "thinking")
+    ) {
+      return `stream:${envelope.type}:${envelope.envelopeKey}:type:${normalizedType}`;
+    }
+
+    return `stream:${envelope.type}:${envelope.envelopeKey}:part:${partIndex}:type:${normalizedType}`;
   }
 
   const contentSeed = resolveClaudePartContentSeed(part, normalizedType);

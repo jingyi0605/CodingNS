@@ -11,11 +11,13 @@ import {
   normalizeClaudeMessagePart,
   normalizeClaudeMessageParts,
   readClaudeMessageId,
+  readClaudeStableRawRefIdentity,
   shouldReuseClaudeProgressiveIdentity,
   toClaudeRecord,
   type ClaudeMessageEnvelope,
   type ClaudeStableMessageRef
 } from "../claude-message-utils.js";
+import { ClaudeCodeAdapter } from "../providers/claude-code.js";
 import {
   ensureDirectory,
   ensureText,
@@ -71,6 +73,12 @@ interface ClaudeStreamingUserInput {
   };
 }
 
+interface ClaudeRuntimeSeed {
+  maxSequence: number;
+  stableMessageRefByIdentity: Map<string, ClaudeStableMessageRef>;
+  emittedSignatureByMessageId: Map<string, string>;
+}
+
 /**
  * Claude 真实运行时：通过 claude.cmd 流式读取事件，而不是伪造写文件。
  */
@@ -99,12 +107,19 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
       rawStoreRef
     });
 
+    const runtimeSeed = await buildClaudeRuntimeSeed({
+      homeDir,
+      providerSessionId,
+      rawStoreRef
+    });
+
     return this.launchClaude(
       request,
       sink,
       providerSessionId,
       rawStoreRef,
-      []
+      [],
+      runtimeSeed
     );
   }
 
@@ -127,12 +142,19 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
       rawStoreRef
     });
 
+    const runtimeSeed = await buildClaudeRuntimeSeed({
+      homeDir,
+      providerSessionId,
+      rawStoreRef
+    });
+
     return this.launchClaude(
       request,
       sink,
       providerSessionId,
       rawStoreRef,
-      ["--resume", providerSessionId]
+      ["--resume", providerSessionId],
+      runtimeSeed
     );
   }
 
@@ -141,7 +163,8 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     sink: ProviderRuntimeEventSink,
     providerSessionId: string,
     rawStoreRef: string,
-    sessionArgs: string[]
+    sessionArgs: string[],
+    runtimeSeed: ClaudeRuntimeSeed
   ): ProviderRuntimeLaunchResult {
     const homeDir = request.runtimeHomeDir?.trim() || this.options.homeDir;
     const instructionFilePath = normalizeOptionalInstructionFilePath(
@@ -190,11 +213,15 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
       hookSettingsJson: hookSettings?.json ?? null
     });
 
-    let sequence = Math.max(0, request.sequenceBase ?? 0);
+    let sequence = Math.max(0, request.sequenceBase ?? 0, runtimeSeed.maxSequence);
     const toolNameById = new Map<string, string>();
-    const stableMessageRefByIdentity = new Map<string, ClaudeStableMessageRef>();
+    const stableMessageRefByIdentity = new Map<string, ClaudeStableMessageRef>(
+      runtimeSeed.stableMessageRefByIdentity
+    );
     const progressiveMessagesByTrackKey = new Map<string, NormalizedMessage>();
-    const emittedSignatureByMessageId = new Map<string, string>();
+    const emittedSignatureByMessageId = new Map<string, string>(
+      runtimeSeed.emittedSignatureByMessageId
+    );
     const streamEventState: ClaudeStreamEventState = {
       currentMessageKey: null,
       messages: new Map()
@@ -749,6 +776,68 @@ function shouldSpawnClaudeViaShell(commandPath: string): boolean {
   return process.platform === "win32" && /\.(cmd|bat)$/i.test(commandPath);
 }
 
+async function buildClaudeRuntimeSeed(input: {
+  homeDir: string;
+  providerSessionId: string;
+  rawStoreRef: string;
+}): Promise<ClaudeRuntimeSeed> {
+  const seed: ClaudeRuntimeSeed = {
+    maxSequence: 0,
+    stableMessageRefByIdentity: new Map(),
+    emittedSignatureByMessageId: new Map()
+  };
+
+  if (
+    !input.providerSessionId.trim()
+    || isPendingClaudeSessionId(input.providerSessionId)
+    || !existsSync(input.rawStoreRef)
+  ) {
+    return seed;
+  }
+
+  try {
+    const historyAdapter = new ClaudeCodeAdapter({ homeDir: input.homeDir });
+    let cursor = null;
+
+    while (true) {
+      const page = await historyAdapter.readSessionHistory(
+        input.providerSessionId,
+        input.rawStoreRef,
+        cursor,
+        100,
+        "forward"
+      );
+
+      for (const message of page.messages) {
+        const identity = readClaudeStableRawRefIdentity(message.rawRef);
+
+        if (identity) {
+          seed.stableMessageRefByIdentity.set(identity, {
+            rawRef: message.rawRef,
+            sequence: message.sequence
+          });
+        }
+
+        seed.emittedSignatureByMessageId.set(
+          message.messageId,
+          buildClaudeMessageSignature(message)
+        );
+        seed.maxSequence = Math.max(seed.maxSequence, message.sequence);
+      }
+
+      if (!page.nextCursor) {
+        break;
+      }
+
+      cursor = page.nextCursor;
+    }
+  } catch {
+    return seed;
+  }
+
+  return seed;
+}
+
 const CLAUDE_RUNTIME_DEBUG_ENABLED = /^(1|true|yes)$/i.test(
   process.env.CODINGNS_PERMISSION_DEBUG?.trim() ?? ""
 );
@@ -1110,7 +1199,7 @@ function collectStreamEventEnvelopes(
     }
 
     messageState.partsByIndex.set(partIndex, partState);
-    return [buildClaudeStreamEnvelope(messageState, partIndex)];
+    return [buildClaudeStreamEnvelope(messageState, partIndex, messageKey)];
   }
 
   if (eventType === "content_block_delta") {
@@ -1127,7 +1216,7 @@ function collectStreamEventEnvelopes(
     }
 
     applyClaudeContentBlockDelta(partState, toClaudeRecord(event.delta));
-    return [buildClaudeStreamEnvelope(messageState, partIndex)];
+    return [buildClaudeStreamEnvelope(messageState, partIndex, messageKey)];
   }
 
   if (eventType === "content_block_stop") {
@@ -1137,7 +1226,7 @@ function collectStreamEventEnvelopes(
       return [];
     }
 
-    return [buildClaudeStreamEnvelope(messageState, partIndex)];
+    return [buildClaudeStreamEnvelope(messageState, partIndex, messageKey)];
   }
 
   if (eventType === "message_delta") {
@@ -1196,7 +1285,8 @@ function readClaudeContentBlockIndex(event: Record<string, unknown>): number {
 
 function buildClaudeStreamEnvelope(
   messageState: ClaudeStreamMessageState,
-  partIndex: number
+  partIndex: number,
+  messageKey?: string | null
 ): ClaudeMessageEnvelope {
   const content: unknown[] = Array.from({ length: partIndex + 1 }, (_, index) =>
     index === partIndex ? { ...(messageState.partsByIndex.get(partIndex)?.part ?? {}) } : ""
@@ -1206,6 +1296,7 @@ function buildClaudeStreamEnvelope(
     type: messageState.type,
     source: "stream_event",
     messageId: messageState.messageId,
+    envelopeKey: messageKey ?? null,
     timestamp: messageState.timestamp,
     message: {
       content

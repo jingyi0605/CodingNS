@@ -712,6 +712,105 @@ describe("SessionLiveRuntimeService", () => {
     expect(result.message?.sequence).toBe(12);
   });
 
+  it("sendLiveMessage 在 Claude 会话里会优先使用最近历史 sequence，而不是被污染的 messageCount", async () => {
+    const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
+      createService();
+    const continueSession = vi.fn(async () => ({
+      getSnapshot: vi.fn(() => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "claude-code",
+        providerSessionId: "claude-thread-1",
+        rawStoreRef: "/tmp/.claude/thread-1.jsonl",
+        runningState: "running",
+        attachedClients: 1,
+        startedAt: "2026-04-25T13:48:12.000Z",
+        lastEventAt: "2026-04-25T13:48:12.000Z",
+        completedAt: null,
+        detail: null,
+        errorCode: null,
+        supportsInterrupt: true
+      })),
+      attach: vi.fn()
+    }));
+    const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
+      getSnapshot: vi.fn(() => null),
+      continueSession
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-thread-1",
+      rawStoreRef: "/tmp/.claude/thread-1.jsonl",
+      messageCount: 1386
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "claude-code",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: false,
+      supportsTokenUsage: false,
+      supportsAttachments: false,
+      supportsPermissionPrompt: false,
+      supportsCheckpoint: false,
+      limitations: []
+    });
+    sessionHistoryService.readRecentHistoryEnvelope.mockResolvedValue({
+      type: "session.delta",
+      sessionId: "session-1",
+      cursor: "cursor-1",
+      messages: [
+        {
+          messageId: "assistant-18",
+          provider: "claude-code",
+          providerSessionId: "claude-thread-1",
+          role: "assistant",
+          kind: "text",
+          content: "678",
+          toolCall: null,
+          timestamp: "2026-04-25T13:48:03.636Z",
+          sequence: 18,
+          rawRef: "claude-code://message/message%3Aassistant%3A1%3Atype%3Atext"
+        }
+      ]
+    });
+    sessionHistoryService.getBindingOrThrow.mockReturnValue({
+      providerSessionId: "claude-thread-1"
+    });
+    sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+    sessionMessageAttachmentService.bindClientRequestToMessage.mockReturnValue([]);
+
+    const result = await service.sendLiveMessage({
+      sessionId: "session-1",
+      userId: "user-1",
+      content: "回复789",
+      clientRequestId: "client-789"
+    });
+
+    expect(continueSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sequenceBase: 19
+      })
+    );
+    expect(result.message?.sequence).toBe(19);
+  });
+
   it("重建型 Codex rollout 会话的首条真实消息会重新 start，并把 synthetic rawStoreRef 交给 runtime 重建上下文", async () => {
     const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
       createService();

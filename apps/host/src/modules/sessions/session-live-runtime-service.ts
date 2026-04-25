@@ -2945,7 +2945,7 @@ export class SessionLiveRuntimeService {
     sessionId: string,
     messageCount: number
   ): Promise<number> {
-    let maxSequence = Math.max(messageCount, 0);
+    let maxSequence = 0;
     const envelope = await Promise.resolve(
       this.sessionHistoryService.readRecentHistoryEnvelope(sessionId, 10)
     ).catch(() => {
@@ -2956,6 +2956,10 @@ export class SessionLiveRuntimeService {
       if (Number.isFinite(message.sequence) && message.sequence > maxSequence) {
         maxSequence = message.sequence;
       }
+    }
+
+    if (maxSequence <= 0) {
+      maxSequence = Math.max(messageCount, 0);
     }
 
     return Math.max(maxSequence + 1, 1);

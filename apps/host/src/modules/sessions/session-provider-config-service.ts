@@ -62,6 +62,18 @@ const CLAUDE_STANDARD_MODEL_IDS = new Set([
   "opus",
   "haiku"
 ]);
+const CLAUDE_RUNTIME_STATE_FILES = [
+  ".claude.json",
+  "history.jsonl",
+  "stats-cache.json"
+] as const;
+const CLAUDE_RUNTIME_STATE_DIRECTORIES = [
+  "plans",
+  "session-env",
+  "sessions",
+  "shell-snapshots",
+  "todos"
+] as const;
 const CLAUDE_STANDARD_MODEL_PREFIX = "claude-";
 const CLAUDE_MODEL_ALIASES = [
   {
@@ -388,7 +400,6 @@ export class SessionProviderConfigService {
     runtimeHomeDir: string,
     preset: ModelPresetRuntimeConfigDto
   ): void {
-    fs.rmSync(runtimeHomeDir, { recursive: true, force: true });
     fs.mkdirSync(runtimeHomeDir, { recursive: true });
 
     const runtimeEnv = normalizeRuntimeEnv(preset.settingsConfig);
@@ -490,6 +501,11 @@ export class SessionProviderConfigService {
     targetRuntimeHomeDir: string
   ): void {
     const sourceSessionFilePath = this.resolveClaudeSessionFilePath(existingBinding);
+    const sourceRuntimeHomeDir = this.resolveClaudeSourceHomeDir(existingBinding, sourceSessionFilePath);
+
+    if (sourceRuntimeHomeDir) {
+      this.syncClaudeRuntimeStateEntries(sourceRuntimeHomeDir, targetRuntimeHomeDir);
+    }
 
     if (!sourceSessionFilePath) {
       return;
@@ -500,6 +516,10 @@ export class SessionProviderConfigService {
       sourceSessionDirectory,
       targetRuntimeHomeDir
     );
+
+    if (path.resolve(sourceSessionDirectory) === path.resolve(targetSessionDirectory)) {
+      return;
+    }
 
     syncOptionalDirectory(sourceSessionDirectory, targetSessionDirectory);
   }
@@ -519,10 +539,7 @@ export class SessionProviderConfigService {
       return null;
     }
 
-    const candidateHomes = [
-      binding.runtimeHomeDir?.trim() ?? "",
-      path.resolve(this.config.claudeCodeHomeDir)
-    ].filter((value, index, values) => value.length > 0 && values.indexOf(value) === index);
+    const candidateHomes = this.listClaudeCandidateHomes(binding);
 
     for (const homeDir of candidateHomes) {
       const matched = findClaudeSessionFileInHome(homeDir, providerSessionId);
@@ -533,6 +550,69 @@ export class SessionProviderConfigService {
     }
 
     return null;
+  }
+
+  private resolveClaudeSourceHomeDir(
+    binding: Pick<SessionBinding, "providerSessionId" | "rawStoreRef" | "runtimeHomeDir">,
+    sourceSessionFilePath: string | null
+  ): string | null {
+    const candidateHomes = this.listClaudeCandidateHomes(binding);
+    const normalizedSessionFilePath = sourceSessionFilePath ? path.resolve(sourceSessionFilePath) : null;
+
+    if (normalizedSessionFilePath) {
+      for (const homeDir of candidateHomes) {
+        const projectsRoot = path.join(homeDir, "projects");
+        const normalizedProjectsRoot = path.resolve(projectsRoot);
+
+        if (
+          normalizedSessionFilePath === normalizedProjectsRoot
+          || normalizedSessionFilePath.startsWith(`${normalizedProjectsRoot}${path.sep}`)
+        ) {
+          return homeDir;
+        }
+      }
+    }
+
+    const existingRuntimeHomeDir = binding.runtimeHomeDir?.trim() ?? "";
+
+    if (
+      existingRuntimeHomeDir.length > 0
+      && fs.existsSync(existingRuntimeHomeDir)
+      && fs.statSync(existingRuntimeHomeDir).isDirectory()
+    ) {
+      return path.resolve(existingRuntimeHomeDir);
+    }
+
+    return candidateHomes[0] ?? null;
+  }
+
+  private listClaudeCandidateHomes(
+    binding: Pick<SessionBinding, "runtimeHomeDir">
+  ): string[] {
+    return [
+      binding.runtimeHomeDir?.trim() ?? "",
+      path.resolve(this.config.claudeCodeHomeDir)
+    ].filter((value, index, values) => value.length > 0 && values.indexOf(value) === index);
+  }
+
+  private syncClaudeRuntimeStateEntries(sourceHomeDir: string, targetRuntimeHomeDir: string): void {
+    if (path.resolve(sourceHomeDir) === path.resolve(targetRuntimeHomeDir)) {
+      return;
+    }
+
+    CLAUDE_RUNTIME_STATE_FILES.forEach((entry) => {
+      syncOptionalFile(
+        path.join(sourceHomeDir, entry),
+        path.join(targetRuntimeHomeDir, entry)
+      );
+    });
+
+    CLAUDE_RUNTIME_STATE_DIRECTORIES.forEach((entry) => {
+      syncOptionalDirectory(
+        path.join(sourceHomeDir, entry),
+        path.join(targetRuntimeHomeDir, entry)
+      );
+    });
   }
 
   private writeRuntimeMetadata(runtimeHomeDir: string, metadata: StoredRuntimeMetadata): void {
@@ -844,6 +924,10 @@ function syncOptionalFile(sourcePath: string, targetPath: string): void {
 
 function syncOptionalDirectory(sourcePath: string, targetPath: string): void {
   if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isDirectory()) {
+    return;
+  }
+
+  if (path.resolve(sourcePath) === path.resolve(targetPath)) {
     return;
   }
 

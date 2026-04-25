@@ -600,6 +600,91 @@ test("ClaudeCodeAdapter 会把同一条 Claude thinking 的 progress 与最终�
   }
 });
 
+test("ClaudeCodeAdapter 不会把同一条 assistant 的最终 text 拆到下一条 user 后面", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-grouped-assistant-order-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const projectDir = join(tempDir, "projects", "-Users-jackson-Documents-Code-CodingNS");
+  const sessionId = "34343434-3434-4434-8434-343434343436";
+  const rawStoreRef = join(projectDir, `${sessionId}.jsonl`);
+
+  try {
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          type: "user",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-03-28T01:00:00.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "回复123" }]
+          }
+        }),
+        JSON.stringify({
+          type: "progress",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-03-28T01:00:01.000Z",
+          data: {
+            message: {
+              type: "assistant",
+              timestamp: "2026-03-28T01:00:01.000Z",
+              message: {
+                id: "msg-assistant-1",
+                role: "assistant",
+                content: [{ type: "thinking", thinking: "先分析 123" }]
+              }
+            }
+          }
+        }),
+        JSON.stringify({
+          type: "user",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-03-28T01:00:02.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "回复234" }]
+          }
+        }),
+        JSON.stringify({
+          type: "assistant",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-03-28T01:00:03.000Z",
+          message: {
+            id: "msg-assistant-1",
+            role: "assistant",
+            content: [{ type: "text", text: "234 之前先把 123 回复完" }]
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new ClaudeCodeAdapter({ homeDir: tempDir });
+    const page = await adapter.readSessionHistory(sessionId, rawStoreRef, null, 20, "forward");
+
+    assert.deepEqual(
+      page.messages.map((message) => [message.role, message.kind, message.content]),
+      [
+        ["user", "text", "回复123"],
+        ["assistant", "thinking", "先分析 123"],
+        ["assistant", "text", "234 之前先把 123 回复完"],
+        ["user", "text", "回复234"]
+      ]
+    );
+    assert.deepEqual(
+      page.messages.map((message) => message.sequence),
+      [1, 2, 3, 4]
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("ClaudeCodeAdapter 不会把连续两条同前缀 assistant 文本误并成一条消息", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-consecutive-prefix-"));
   const workspacePath = "/Users/jackson/Documents/Code/CodingNS";

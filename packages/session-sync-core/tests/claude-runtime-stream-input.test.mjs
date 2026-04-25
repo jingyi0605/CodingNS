@@ -423,6 +423,129 @@ rl.on("line", () => {
   }
 });
 
+test("ClaudeRuntimeAdapter 不会把两轮无 messageId 的 stream_event thinking 串到上一条消息里", async () => {
+  const rootDir = mkdtempSync(join(tmpdir(), "codingns-claude-runtime-thinking-turn-split-"));
+  const scriptPath = join(rootDir, "fake-claude-thinking-turn-split.mjs");
+  const homeDir = join(rootDir, ".claude");
+  const emitted = [];
+
+  writeFileSync(
+    scriptPath,
+    `#!/usr/bin/env node
+import readline from "node:readline";
+
+const rl = readline.createInterface({ input: process.stdin });
+let handled = false;
+
+function emitThinkingTurn(text) {
+  process.stdout.write(JSON.stringify({
+    type: "stream_event",
+    session_id: "claude-session-thinking-turn-split",
+    timestamp: "2026-03-29T12:00:00.000Z",
+    event: {
+      type: "message_start",
+      message: {
+        role: "assistant",
+        content: []
+      }
+    }
+  }) + "\\n");
+  process.stdout.write(JSON.stringify({
+    type: "stream_event",
+    session_id: "claude-session-thinking-turn-split",
+    timestamp: "2026-03-29T12:00:00.000Z",
+    event: {
+      type: "content_block_start",
+      index: 0,
+      content_block: {
+        type: "thinking",
+        thinking: ""
+      }
+    }
+  }) + "\\n");
+  process.stdout.write(JSON.stringify({
+    type: "stream_event",
+    session_id: "claude-session-thinking-turn-split",
+    timestamp: "2026-03-29T12:00:00.000Z",
+    event: {
+      type: "content_block_delta",
+      index: 0,
+      delta: {
+        type: "thinking_delta",
+        thinking: text
+      }
+    }
+  }) + "\\n");
+  process.stdout.write(JSON.stringify({
+    type: "stream_event",
+    session_id: "claude-session-thinking-turn-split",
+    timestamp: "2026-03-29T12:00:00.000Z",
+    event: {
+      type: "message_stop"
+    }
+  }) + "\\n");
+}
+
+rl.on("line", () => {
+  if (handled) {
+    return;
+  }
+
+  handled = true;
+  emitThinkingTurn("The user asks what model I am.");
+  emitThinkingTurn("The user asks me again after clearing history.");
+  process.stdout.write(JSON.stringify({
+    type: "result",
+    subtype: "success",
+    session_id: "claude-session-thinking-turn-split"
+  }) + "\\n");
+  setTimeout(() => {
+    process.exit(0);
+  }, 5);
+});
+`,
+    "utf8"
+  );
+  chmodSync(scriptPath, 0o755);
+
+  const adapter = new ClaudeRuntimeAdapter({
+    homeDir,
+    commandPath: createCommandPath(rootDir, scriptPath)
+  });
+
+  try {
+    const launch = await adapter.startSession(
+      createRuntimeRequest(rootDir),
+      {
+        emit: async (event) => {
+          emitted.push(event);
+        },
+        updateSessionBinding: () => {}
+      }
+    );
+
+    await launch.completed;
+
+    const thinkingEvents = emitted
+      .filter((event) => event.type === "message")
+      .map((event) => event.message)
+      .filter((message) => message.kind === "thinking");
+
+    assert.equal(thinkingEvents.length, 2);
+    assert.deepEqual(
+      thinkingEvents.map((message) => message.content),
+      [
+        "The user asks what model I am.",
+        "The user asks me again after clearing history."
+      ]
+    );
+    assert.notEqual(thinkingEvents[0]?.messageId, thinkingEvents[1]?.messageId);
+    assert.notEqual(thinkingEvents[0]?.rawRef, thinkingEvents[1]?.rawRef);
+  } finally {
+    rmSync(rootDir, { recursive: true, force: true });
+  }
+});
+
 test("ClaudeRuntimeAdapter 不会把空 text 占位块序列化成正式 assistant 消息", async () => {
   const rootDir = mkdtempSync(join(tmpdir(), "codingns-claude-runtime-empty-text-"));
   const scriptPath = join(rootDir, "fake-claude-empty-text.mjs");
@@ -1060,6 +1183,237 @@ rl.on("line", () => {
     assert.equal(runtimeThinking.rawRef, historyThinking.rawRef);
     assert.equal(runtimeText.messageId, historyText.messageId);
     assert.equal(runtimeText.rawRef, historyText.rawRef);
+  } finally {
+    rmSync(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeRuntimeAdapter 在 resume 时不会把 transcript 中已有的旧轮次 assistant 重新编号后插到末尾", async () => {
+  const rootDir = mkdtempSync(join(tmpdir(), "codingns-claude-runtime-resume-replay-seed-"));
+  const scriptPath = join(rootDir, "fake-claude-resume-replay-seed.mjs");
+  const homeDir = join(rootDir, ".claude");
+  const providerSessionId = "claude-session-resume-replay-seed";
+  const emitted = [];
+
+  writeFileSync(
+    scriptPath,
+    `#!/usr/bin/env node
+import readline from "node:readline";
+
+const rl = readline.createInterface({ input: process.stdin });
+let handled = false;
+
+rl.on("line", () => {
+  if (handled) {
+    return;
+  }
+
+  handled = true;
+
+  process.stdout.write(JSON.stringify({
+    type: "assistant",
+    session_id: "${providerSessionId}",
+    timestamp: "2026-04-25T13:28:22.301Z",
+    message: {
+      id: "msg-reply-234",
+      role: "assistant",
+      content: [{ type: "thinking", thinking: "The user is saying \\"回复234\\" which means \\"reply 234\\" in Chinese." }]
+    }
+  }) + "\\n");
+  process.stdout.write(JSON.stringify({
+    type: "assistant",
+    session_id: "${providerSessionId}",
+    timestamp: "2026-04-25T13:28:24.364Z",
+    message: {
+      id: "msg-reply-234",
+      role: "assistant",
+      content: [{ type: "text", text: "234" }]
+    }
+  }) + "\\n");
+  process.stdout.write(JSON.stringify({
+    type: "assistant",
+    session_id: "${providerSessionId}",
+    timestamp: "2026-04-25T13:28:40.578Z",
+    message: {
+      id: "msg-reply-456",
+      role: "assistant",
+      content: [{ type: "thinking", thinking: "The user is asking me to reply with \\"456\\"." }]
+    }
+  }) + "\\n");
+  process.stdout.write(JSON.stringify({
+    type: "assistant",
+    session_id: "${providerSessionId}",
+    timestamp: "2026-04-25T13:28:41.913Z",
+    message: {
+      id: "msg-reply-456",
+      role: "assistant",
+      content: [{ type: "text", text: "456" }]
+    }
+  }) + "\\n");
+  process.stdout.write(JSON.stringify({
+    type: "result",
+    subtype: "success",
+    session_id: "${providerSessionId}"
+  }) + "\\n");
+  setTimeout(() => {
+    process.exit(0);
+  }, 5);
+});
+`,
+    "utf8"
+  );
+  chmodSync(scriptPath, 0o755);
+
+  const projectDir = join(homeDir, "projects", workspaceSlug(rootDir));
+  const rawStoreRef = join(projectDir, `${providerSessionId}.jsonl`);
+  mkdirSync(projectDir, { recursive: true });
+  writeFileSync(
+    rawStoreRef,
+    [
+      JSON.stringify({
+        type: "user",
+        sessionId: providerSessionId,
+        cwd: rootDir,
+        timestamp: "2026-04-25T13:28:12.086Z",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "回复123" }]
+        }
+      }),
+      JSON.stringify({
+        type: "assistant",
+        sessionId: providerSessionId,
+        cwd: rootDir,
+        timestamp: "2026-04-25T13:28:13.342Z",
+        message: {
+          id: "msg-reply-123",
+          role: "assistant",
+          content: [{ type: "thinking", thinking: "The user is asking me to reply with \"123\"." }]
+        }
+      }),
+      JSON.stringify({
+        type: "assistant",
+        sessionId: providerSessionId,
+        cwd: rootDir,
+        timestamp: "2026-04-25T13:28:14.301Z",
+        message: {
+          id: "msg-reply-123",
+          role: "assistant",
+          content: [{ type: "text", text: "123" }]
+        }
+      }),
+      JSON.stringify({
+        type: "user",
+        sessionId: providerSessionId,
+        cwd: rootDir,
+        timestamp: "2026-04-25T13:28:21.235Z",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "回复234" }]
+        }
+      }),
+      JSON.stringify({
+        type: "assistant",
+        sessionId: providerSessionId,
+        cwd: rootDir,
+        timestamp: "2026-04-25T13:28:22.301Z",
+        message: {
+          id: "msg-reply-234",
+          role: "assistant",
+          content: [{ type: "thinking", thinking: "The user is saying \"回复234\" which means \"reply 234\" in Chinese." }]
+        }
+      }),
+      JSON.stringify({
+        type: "assistant",
+        sessionId: providerSessionId,
+        cwd: rootDir,
+        timestamp: "2026-04-25T13:28:24.364Z",
+        message: {
+          id: "msg-reply-234",
+          role: "assistant",
+          content: [{ type: "text", text: "234" }]
+        }
+      }),
+      JSON.stringify({
+        type: "user",
+        sessionId: providerSessionId,
+        cwd: rootDir,
+        timestamp: "2026-04-25T13:28:30.017Z",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "回复345" }]
+        }
+      }),
+      JSON.stringify({
+        type: "assistant",
+        sessionId: providerSessionId,
+        cwd: rootDir,
+        timestamp: "2026-04-25T13:28:32.188Z",
+        message: {
+          id: "msg-reply-345",
+          role: "assistant",
+          content: [{ type: "thinking", thinking: "The user is asking me to reply with \"345\"." }]
+        }
+      }),
+      JSON.stringify({
+        type: "assistant",
+        sessionId: providerSessionId,
+        cwd: rootDir,
+        timestamp: "2026-04-25T13:28:32.239Z",
+        message: {
+          id: "msg-reply-345",
+          role: "assistant",
+          content: [{ type: "text", text: "345" }]
+        }
+      })
+    ].join("\n"),
+    "utf8"
+  );
+
+  const runtimeAdapter = new ClaudeRuntimeAdapter({
+    homeDir,
+    commandPath: createCommandPath(rootDir, scriptPath)
+  });
+
+  try {
+    const launch = await runtimeAdapter.continueSession(
+      createRuntimeRequest(rootDir, {
+        providerSessionId,
+        rawStoreRef,
+        sequenceBase: 10,
+        options: {
+          content: "回复456",
+          clientRequestId: "client-2",
+          model: null,
+          reasoningLevel: null,
+          permissionMode: null,
+          providerPrompt: "回复456",
+          attachments: []
+        }
+      }),
+      {
+        emit: async (event) => {
+          emitted.push(event);
+        },
+        updateSessionBinding: () => {}
+      }
+    );
+
+    await launch.completed;
+
+    const messageEvents = emitted.filter((event) => event.type === "message").map((event) => event.message);
+
+    assert.deepEqual(
+      messageEvents.map((message) => message.content),
+      [
+        "The user is asking me to reply with \"456\".",
+        "456"
+      ]
+    );
+    assert.deepEqual(
+      messageEvents.map((message) => message.sequence),
+      [11, 12]
+    );
   } finally {
     rmSync(rootDir, { recursive: true, force: true });
   }
