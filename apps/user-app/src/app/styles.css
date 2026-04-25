@@ -25340,12 +25340,6 @@ textarea:focus-visible {
   padding-top: 8px;
 }
 
-.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .message-list > :first-child,
-.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .message-list > :first-child,
-.android-workbench-shell[data-mobile-presentation="conversation-focus"] .message-list > :first-child {
-  margin-top: auto;
-}
-
 /* message-list 本身已有基础 gap，这里只给“正文 <-> 工具”补足到和段落一致的节奏。 */
 .mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .message-item.user-message,
 .ios-workbench-shell[data-mobile-presentation="conversation-focus"] .message-item.user-message,
