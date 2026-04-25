@@ -7528,6 +7528,46 @@ textarea:focus-visible {
   scroll-padding-top: 20px;
 }
 
+[data-scrollbar-autohide="true"] {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+[data-scrollbar-autohide="true"]::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+[data-scrollbar-autohide="true"]::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+[data-scrollbar-autohide="true"]::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+
+[data-scrollbar-autohide="true"][data-scrolling="true"] {
+  scrollbar-color: color-mix(in srgb, var(--border-primary) 88%, transparent) transparent;
+}
+
+[data-scrollbar-autohide="true"][data-scrolling="true"]::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--border-primary) 88%, transparent);
+}
+
+[data-scrollbar-autohide="true"][data-scrolling="true"]::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-tertiary) 88%, transparent);
+}
+
+.workbench-nav-body[data-scrollbar-autohide="true"],
+.workbench-auxiliary-body[data-scrollbar-autohide="true"],
+.message-list[data-scrollbar-autohide="true"],
+.file-tree[data-scrollbar-autohide="true"],
+.git-tree-shell[data-scrollbar-autohide="true"],
+.git-history-list[data-scrollbar-autohide="true"] {
+  overflow-y: overlay;
+}
+
 .workbench-import-card.minimal,
 .workbench-workspace-group,
 .tool-call-item,
