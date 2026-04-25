@@ -271,6 +271,9 @@ function TestHarness() {
   return (
     <div ref={containerRef}>
       <article data-message-id="message-1">
+    expect(
+      screen.queryByRole("button", { name: t("conversation.copyAction") })
+    ).not.toBeInTheDocument();
         <p data-testid="message-text">这是一段用于拖拽选中的聊天消息。</p>
       </article>
       <ConversationSelectionActions
@@ -316,3 +319,31 @@ function createSelection(
     })
   } as unknown as Selection;
 }
+
+  it("点击复制后会收起选区工具条", async () => {
+    render(<TestHarness />);
+
+    const messageText = screen.getByTestId("message-text");
+    const textNode = messageText.firstChild;
+
+    expect(textNode).not.toBeNull();
+
+    currentSelection = createSelection(textNode!, "复制后要收起", {
+      left: 160,
+      top: 220,
+      width: 112,
+      height: 22
+    });
+
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => {
+      vi.advanceTimersByTime(60);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: t("conversation.copyAction") }));
+
+    expect(
+      screen.queryByRole("button", { name: t("conversation.copyAction") })
+    ).not.toBeInTheDocument();
+  });

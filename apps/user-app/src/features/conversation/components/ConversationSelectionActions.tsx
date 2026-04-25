@@ -585,7 +585,7 @@ export function ConversationSelectionActions({
     }
 
     try {
-      await writeTextToClipboard(selection.text, platform);
+      await writeTextToClipboard(selectedText, platform);
       showToast({
         title: t("conversation.copyContentSuccess"),
         tone: "success"
@@ -621,11 +621,11 @@ export function ConversationSelectionActions({
     }
 
     const nextProvider = resolveBuiltinProvider(session.provider);
-    setSelectedProvider(nextProvider);
-    setSelectedModel(preferredModelForProvider(nextProvider));
+    applySelectedProvider(nextProvider);
     setActionPrompt("");
     setIncludeContext(false);
-    setDialogSelection(selection);
+    setDialogSelection(nextDialogSelection);
+    setSelection(null);
     setActionDialogOpen(true);
   }
 
@@ -735,7 +735,7 @@ export function ConversationSelectionActions({
     }
   }
 
-  const showToolbar = Boolean(selection && toolbarStyle);
+  const showToolbar = Boolean(!actionDialogOpen && selection && toolbarStyle);
   const showActionDialog = Boolean(actionDialogOpen && dialogSelection);
   const actionDialogFooter = (
     <ModalActions>
@@ -797,6 +797,13 @@ export function ConversationSelectionActions({
         </div>
       </ModalSection>
       <ModalSection
+    const selectedText = selection.text;
+    setSelection(null);
+
+    if (typeof window !== "undefined") {
+      window.getSelection()?.removeAllRanges?.();
+    }
+
         className="conversation-selection-target-section"
         heading={t("conversation.selectionActionTargetLabel")}
       >
@@ -833,6 +840,7 @@ export function ConversationSelectionActions({
               disabled={loadingCapabilities || Boolean(selectedProviderDisabledReason)}
               onChange={(event) => setSelectedModel(event.target.value)}
             >
+    const nextDialogSelection = selection;
               {modelOptions.map((item) => (
                 <option key={item.id} value={item.id}>
                   {item.name}
@@ -840,6 +848,10 @@ export function ConversationSelectionActions({
               ))}
             </select>
           </ModalField>
+
+    if (typeof window !== "undefined") {
+      window.getSelection()?.removeAllRanges?.();
+    }
         </div>
       </ModalSection>
     </>
