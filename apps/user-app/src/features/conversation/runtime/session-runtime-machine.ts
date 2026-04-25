@@ -60,6 +60,10 @@ const RUNTIME_THINKING_PLACEHOLDER_RAW_REF_PREFIX = "runtime-placeholder://think
 const CODEX_EQUIVALENT_TEXT_WINDOW_MS = 3 * 1000;
 const CODEX_EQUIVALENT_AUTHORITATIVE_WINDOW_MS = 2 * 60 * 1000;
 const CODEX_EQUIVALENT_AUTHORITATIVE_SEQUENCE_WINDOW = 8;
+const INTERNAL_ATTACHMENT_DEBUG_BLOCK_PATTERN =
+  /\[\[CODINGNS_IMAGE_ATTACHMENTS\]\][\s\S]*?\[\[\/CODINGNS_IMAGE_ATTACHMENTS\]\]/g;
+const INTERNAL_ATTACHMENT_DEBUG_BLOCK_TEST_PATTERN =
+  /\[\[CODINGNS_IMAGE_ATTACHMENTS\]\][\s\S]*?\[\[\/CODINGNS_IMAGE_ATTACHMENTS\]\]/;
 
 export function createInitialRuntimeState(
   seed?: Partial<
@@ -132,7 +136,7 @@ export function toViewMessage(
     sessionId,
     role: message.role,
     kind,
-    content: message.content,
+    content: normalizeViewMessageContent(message.provider, message.role, kind, message.content),
     toolCall,
     attachments: message.attachments ?? [],
     attachmentPayloads: null,
@@ -830,6 +834,13 @@ function pickPreferredCodexTextMessage(
     return leftHasTrailingWhitespace ? right : left;
   }
 
+  const leftHasDebugBlock = hasInternalAttachmentDebugBlock(left.content);
+  const rightHasDebugBlock = hasInternalAttachmentDebugBlock(right.content);
+
+  if (leftHasDebugBlock !== rightHasDebugBlock) {
+    return leftHasDebugBlock ? right : left;
+  }
+
   return right;
 }
 
@@ -993,6 +1004,12 @@ function pickPreferredContent(
   const normalizedIncoming = normalizeComparableCodexText(incoming);
 
   if (normalizedCurrent === normalizedIncoming) {
+    const cleanerContent = pickContentWithoutInternalAttachmentDebugBlock(current, incoming);
+
+    if (cleanerContent !== null) {
+      return cleanerContent;
+    }
+
     return current.length >= incoming.length ? current : incoming;
   }
 
@@ -1059,7 +1076,60 @@ function pickNewerAuthoritativeMessage(
 }
 
 function normalizeComparableCodexText(content: string): string {
-  return content.replace(/\r\n/g, "\n").trimEnd();
+  return stripInternalAttachmentDebugContent(content).replace(/\r\n/g, "\n").trimEnd();
+}
+
+function normalizeViewMessageContent(
+  provider: string,
+  role: SessionMessageViewModel["role"],
+  kind: SessionMessageViewModel["kind"],
+  content: string
+): string {
+  if (
+    (provider !== "claude-code" && provider !== "codex")
+    || (role !== "user" && role !== "assistant")
+    || (kind !== "text" && kind !== "thinking")
+  ) {
+    return content;
+  }
+
+  return removeInternalAttachmentDebugBlock(content);
+}
+
+function stripInternalAttachmentDebugContent(content: string): string {
+  return removeInternalAttachmentDebugBlock(content)
+    .replace(/\r\n/g, "\n")
+    .trimEnd();
+}
+
+function hasInternalAttachmentDebugBlock(content: string): boolean {
+  return INTERNAL_ATTACHMENT_DEBUG_BLOCK_TEST_PATTERN.test(content);
+}
+
+function removeInternalAttachmentDebugBlock(content: string): string {
+  if (!hasInternalAttachmentDebugBlock(content)) {
+    return content;
+  }
+
+  return content
+    .replace(INTERNAL_ATTACHMENT_DEBUG_BLOCK_PATTERN, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trimEnd();
+}
+
+function pickContentWithoutInternalAttachmentDebugBlock(
+  current: string,
+  incoming: string
+): string | null {
+  const currentHasDebugBlock = hasInternalAttachmentDebugBlock(current);
+  const incomingHasDebugBlock = hasInternalAttachmentDebugBlock(incoming);
+
+  if (currentHasDebugBlock === incomingHasDebugBlock) {
+    return null;
+  }
+
+  return currentHasDebugBlock ? incoming : current;
 }
 
 function areEquivalentInlineImages(

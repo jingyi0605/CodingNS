@@ -16,6 +16,18 @@ import type { ToolCallDto } from "../api/conversation-api";
 const SAMPLE_IMAGE_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF9sAAAAASUVORK5CYII=";
 
+function buildInternalAttachmentDebugBlock(path = "/tmp/demo/image.png"): string {
+  return [
+    "[[CODINGNS_IMAGE_ATTACHMENTS]]",
+    "",
+    "下面这些图片是用户随消息附带的本地附件。请先读取并理解它们，再继续处理这条请求。",
+    "",
+    `1. ${path}`,
+    "",
+    "[[/CODINGNS_IMAGE_ATTACHMENTS]]"
+  ].join("\n");
+}
+
 function createHistoryMessage(overrides: {
   messageId: string;
   provider: ProviderId;
@@ -633,6 +645,43 @@ describe("session runtime machine", () => {
     expect(merged[0].id).toBe("codex-response-item");
   });
 
+  it("会折叠只差内部附件调试块的 codex 重复用户消息", () => {
+    const merged = mergeAuthoritativeMessages(
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "codex-event-msg",
+            provider: "codex",
+            providerSessionId: "raw-1",
+            role: "user",
+            content: "same message",
+            timestamp: "2026-03-24T01:05:29.100Z",
+            sequence: 2,
+            rawRef: "codex://demo#line=6"
+          })
+        )
+      ],
+      "session-1",
+      [
+        createHistoryMessage({
+          messageId: "codex-response-item",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "user",
+          content: `same message\n\n${buildInternalAttachmentDebugBlock()}`,
+          timestamp: "2026-03-24T01:05:29.900Z",
+          sequence: 2,
+          rawRef: "codex://demo#line=7"
+        })
+      ]
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].id).toBe("codex-response-item");
+    expect(merged[0].content).toBe("same message");
+  });
+
   it("会用后续权威 codex assistant 消息替换运行时阶段的漂移 messageId", () => {
     const merged = mergeAuthoritativeMessages(
       [
@@ -868,6 +917,29 @@ describe("session runtime machine", () => {
     expect(merged).toHaveLength(1);
     expect(merged[0].id).toBe("server-user-1");
     expect(merged[0].rawRef).toBe("codex://demo#line=1");
+  });
+
+  it("会把带内部附件调试块的 codex 首条权威 user 消息与 synthetic 首条消息合并", () => {
+    const merged = mergeAuthoritativeMessages(
+      [createSyntheticUserMessage()],
+      "session-1",
+      [
+        createHistoryMessage({
+          messageId: "server-user-1",
+          provider: "codex",
+          providerSessionId: "thread-1",
+          role: "user",
+          content: `你好\n\n${buildInternalAttachmentDebugBlock()}`,
+          timestamp: "2026-03-24T10:00:00.400Z",
+          sequence: 3,
+          rawRef: "codex://demo#line=1"
+        })
+      ]
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].id).toBe("server-user-1");
+    expect(merged[0].content).toBe("你好");
   });
 
   it("缓存里已有正式 user 消息时，不会再注入重复的 bootstrap synthetic 消息", () => {
