@@ -18,6 +18,7 @@ import {
   resolveFileTreeIconLabel
 } from "./file-tree-icon";
 import { filterVisibleEntriesByName } from "./file-entry-visibility";
+import { useTransientScrollbarVisibility } from "./useTransientScrollbarVisibility";
 
 interface SessionChangedFilesPanelProps {
   sessionId: string;
@@ -57,6 +58,7 @@ export function SessionChangedFilesPanel({
   const [staging, setStaging] = useState(false);
   const [collapsedPaths, setCollapsedPaths] = useState<string[]>([]);
   const recentFileActivationRef = useRef<RecentFileActivation | null>(null);
+  const fileTreeRef = useTransientScrollbarVisibility<HTMLDivElement>();
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -257,7 +259,7 @@ export function SessionChangedFilesPanel({
         <span>{`${t("conversation.filePanelSessionUnstagedSummary")} ${unstagedChanges.length}`}</span>
       </div>
 
-      <div className="file-tree">
+      <div ref={fileTreeRef} className="file-tree" data-scrollbar-autohide="true">
         {loading ? (
           <p className="file-tree-status status-text">{t("conversation.filePanelSessionLoading")}</p>
         ) : visibleChanges.length === 0 ? (

@@ -44,6 +44,7 @@ import {
   persistConversationScrollState,
   readPersistedConversationScrollState
 } from "./conversation-scroll-persistence";
+import { useTransientScrollbarVisibility } from "./useTransientScrollbarVisibility";
 
 import type {
   AttachmentPayload,
@@ -3651,8 +3652,9 @@ export function MessageTimeline({
 }: MessageTimelineProps) {
   const { showToast } = useToast();
   const platform = usePlatform();
-  const listRef = useRef<HTMLDivElement | null>(null);
   const persistScrollState = !followTailUpdates;
+  const listRef = useRef<HTMLDivElement | null>(null);
+  useTransientScrollbarVisibility(listRef);
   const previousSessionIdRef = useRef(sessionId);
   const previousMessageCountRef = useRef(0);
   const previousLastMessageSignatureRef = useRef<string | null>(null);
@@ -3734,12 +3736,12 @@ export function MessageTimeline({
   }
 
   function persistCurrentScrollState(list: HTMLDivElement | null = listRef.current) {
-    if (list) {
-      rememberCurrentScrollState(list);
     if (!persistScrollState) {
       return;
     }
 
+    if (list) {
+      rememberCurrentScrollState(list);
     }
 
     if (!currentScrollStateRef.current) {
@@ -3750,12 +3752,12 @@ export function MessageTimeline({
   }
 
   function persistCachedScrollState(targetSessionId: string) {
-    if (!currentScrollStateRef.current) {
-      return;
     if (!persistScrollState) {
       return;
     }
 
+    if (!currentScrollStateRef.current) {
+      return;
     }
 
     persistConversationScrollState(targetSessionId, currentScrollStateRef.current);
@@ -3771,12 +3773,12 @@ export function MessageTimeline({
   }
 
   function schedulePersistCurrentScrollState() {
-    clearPersistScrollTimer();
-    scrollPersistTimerRef.current = window.setTimeout(() => {
     if (!persistScrollState) {
       return;
     }
 
+    clearPersistScrollTimer();
+    scrollPersistTimerRef.current = window.setTimeout(() => {
       scrollPersistTimerRef.current = null;
       persistCurrentScrollState();
     }, SCROLL_STATE_PERSIST_DELAY_MS);
@@ -4134,6 +4136,7 @@ export function MessageTimeline({
       <div
         ref={listRef}
         className="message-list"
+        data-scrollbar-autohide="true"
         onScroll={handleScroll}
         onPointerDown={interruptManualRestore}
         onWheel={handleWheel}

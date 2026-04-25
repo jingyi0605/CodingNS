@@ -43,6 +43,7 @@ import {
   getPathLeafName
 } from "./file-entry-visibility";
 import { SessionChangedFilesPanel } from "./SessionChangedFilesPanel";
+import { useTransientScrollbarVisibility } from "./useTransientScrollbarVisibility";
 
 interface FileContextPanelProps {
   className?: string;
@@ -201,6 +202,7 @@ export function FileContextPanel({
   const activeDirectoryPathRef = useRef(ROOT_DIRECTORY);
   const restoringWorkspaceSnapshotRef = useRef(false);
   const recentFileActivationRef = useRef<RecentFileActivation | null>(null);
+  const fileTreeRef = useTransientScrollbarVisibility<HTMLDivElement>();
   const copyPathMenuRef = useRef<HTMLDivElement | null>(null);
   const mobileActionMenuRef = useRef<HTMLDivElement | null>(null);
   const webContextMenuRef = useRef<HTMLDivElement | null>(null);
@@ -2638,7 +2640,12 @@ export function FileContextPanel({
                 </form>
               ) : null}
 
-              <div className="file-tree" data-search-mode={searchMode}>
+              <div
+                ref={fileTreeRef}
+                className="file-tree"
+                data-search-mode={searchMode}
+                data-scrollbar-autohide="true"
+              >
                 {loadingTree && rootItems.length === 0 ? (
                   <p className="file-tree-status status-text">{t("common.loading")}</p>
                 ) : searchMode ? (

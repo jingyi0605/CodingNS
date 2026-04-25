@@ -59,6 +59,7 @@ import {
   startLiveSession,
   type ProviderId
 } from "../api/conversation-api";
+import { useTransientScrollbarVisibility } from "./useTransientScrollbarVisibility";
 import {
   resolveFileTreeIconKind,
   resolveFileTreeIconLabel
@@ -2506,6 +2507,7 @@ function GitChangeGroup({
   onToggleMobileActionMenu: () => void;
   onClearSelectedTargets: () => void;
 }) {
+  const treeShellRef = useTransientScrollbarVisibility<HTMLDivElement>();
   const groupTargets = collectTreeTargets(nodes);
   const stageActionLabel = variant === "staged" ? t("git.unstageAll") : t("git.stageAll");
 
@@ -2597,7 +2599,13 @@ function GitChangeGroup({
         ) : null}
       </div>
 
-      <div className="git-tree-shell" role="tree" aria-label={title}>
+      <div
+        ref={treeShellRef}
+        className="git-tree-shell"
+        role="tree"
+        aria-label={title}
+        data-scrollbar-autohide="true"
+      >
         {nodes.length ? (
           renderTreeNodes({
             nodes,
@@ -3199,12 +3207,19 @@ function GitDesktopHistoryList({
   onUndoLastCommit: () => void;
   onLoadMore: () => void;
 }) {
+  const historyListRef = useTransientScrollbarVisibility<HTMLDivElement>();
+
   if (!history.length) {
     return <p className="status-text">{t("git.noHistory")}</p>;
   }
 
   return (
-    <div className={["git-history-list", className].filter(Boolean).join(" ")} onScroll={onScroll}>
+    <div
+      ref={historyListRef}
+      className={["git-history-list", className].filter(Boolean).join(" ")}
+      onScroll={onScroll}
+      data-scrollbar-autohide="true"
+    >
       {history.map((item) => {
         const menuOpen = openCommitHash === item.commitHash;
 

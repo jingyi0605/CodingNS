@@ -198,6 +198,7 @@ import { WorkspaceInboxPanel } from "./WorkspaceInboxModal";
 import { WorkspaceImportBrowserModal } from "./WorkspaceImportBrowserModal";
 import { WorkbenchUpdateBadge } from "./WorkbenchUpdateBadge";
 import { ParallelSessionCreateModal, type ParallelSessionCreateSource } from "./ParallelSessionCreateModal";
+import { useTransientScrollbarVisibility } from "./useTransientScrollbarVisibility";
 
 const LEFT_PANEL_WIDTH_KEY = "workbench.left.width";
 const RIGHT_PANEL_WIDTH_KEY = "workbench.right.width";
@@ -3542,6 +3543,7 @@ function SidebarContent({
   const platform = usePlatform();
   const macOsNativeTitlebarDragRegion = resolveMacOsNativeTitlebarDragRegion(platform);
   const { showToast } = useToast();
+  const navigationBodyRef = useTransientScrollbarVisibility<HTMLDivElement>();
   const runtimeConfig = useClientConfigSelector((state) => state);
   const activeHostName = getActiveHost(runtimeConfig)?.name ?? "";
   const showHostNameBadge =
@@ -5681,7 +5683,11 @@ function SidebarContent({
         </div>
       </div>
 
-      <div className="workbench-nav-body">
+      <div
+        ref={navigationBodyRef}
+        className="workbench-nav-body"
+        data-scrollbar-autohide="true"
+      >
         <div className="workbench-nav-segment">
           <div className="workbench-nav-segment-tabs" role="tablist" aria-label={t("shell.centerTabsLabel")}>
             <div className="workbench-nav-segment-pair">
@@ -6645,6 +6651,7 @@ function WorkbenchInfoPanel({
   const platform = usePlatform();
   const macOsNativeTitlebarDragRegion = resolveMacOsNativeTitlebarDragRegion(platform);
   const { showToast } = useToast();
+  const auxiliaryBodyRef = useTransientScrollbarVisibility<HTMLDivElement>();
   const detachGestureRef = useRef<{
     tab: InfoTab;
     startX: number;
@@ -7026,7 +7033,11 @@ function WorkbenchInfoPanel({
         </div>
       </div>
 
-      <div className="workbench-auxiliary-body">
+      <div
+        ref={auxiliaryBodyRef}
+        className="workbench-auxiliary-body"
+        data-scrollbar-autohide="true"
+      >
         {!panelReady ? <InfoPanelSkeleton /> : null}
 
         {panelReady && activeTab === "git" && worktreeMeta ? (
