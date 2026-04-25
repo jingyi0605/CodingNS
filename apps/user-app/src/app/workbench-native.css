@@ -745,6 +745,18 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
   border-color: color-mix(in srgb, var(--accent) 26%, var(--panel-border));
 }
 
+.workbench-workspace-batch-action.danger {
+  background: color-mix(in srgb, var(--status-danger) 10%, var(--panel-bg));
+  color: var(--status-danger);
+  border-color: color-mix(in srgb, var(--status-danger) 28%, var(--panel-border));
+}
+
+.workbench-workspace-batch-action.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-danger) 14%, var(--panel-bg));
+  color: var(--status-danger);
+  border-color: color-mix(in srgb, var(--status-danger) 40%, var(--panel-border));
+}
+
 .workbench-workspace-batch-action:disabled {
   opacity: 0.45;
   cursor: not-allowed;

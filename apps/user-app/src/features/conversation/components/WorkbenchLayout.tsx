@@ -908,6 +908,11 @@ interface NavigationSessionEntry {
   workspace: WorkspaceDto;
 }
 
+interface BatchSessionDeletionTarget {
+  workspace: WorkspaceDto;
+  sessions: SessionSummaryDto[];
+}
+
 interface WorkspaceSidebarGroup {
   workspace: WorkspaceDto;
   visibleSessions: SessionSummaryDto[];
@@ -3586,6 +3591,8 @@ function SidebarContent({
   const [archiveWorkspaceId, setArchiveWorkspaceId] = useState<string | null>(null);
   const [sessionDeletionTarget, setSessionDeletionTarget] = useState<NavigationSessionEntry | null>(null);
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
+  const [batchSessionDeletionTarget, setBatchSessionDeletionTarget] = useState<BatchSessionDeletionTarget | null>(null);
+  const [batchDeleting, setBatchDeleting] = useState(false);
   const [openSessionMenuKey, setOpenSessionMenuKey] = useState<string | null>(null);
   const [openSessionMenuAnchorPoint, setOpenSessionMenuAnchorPoint] = useState<ContextMenuAnchorPoint | null>(null);
   const [visibleFavoriteCount, setVisibleFavoriteCount] = useState(FAVORITE_SESSION_PAGE_SIZE);
@@ -3886,18 +3893,23 @@ function SidebarContent({
       if (selectedSessionIds.length > 0) {
         setSelectedSessionIds([]);
       }
+      if (batchSessionDeletionTarget) {
+        setBatchSessionDeletionTarget(null);
+      }
       return;
     }
 
     if (!activeBatchWorkspaceTarget) {
       setBatchWorkspaceId(null);
       setSelectedSessionIds([]);
+      setBatchSessionDeletionTarget(null);
       return;
     }
 
     setSelectedSessionIds((current) => retainKnownIds(current, batchSelectableSessionIdSet));
   }, [
     activeBatchWorkspaceTarget,
+    batchSessionDeletionTarget,
     batchSelectableSessionIdSet,
     batchWorkspaceId,
     selectedSessionIds.length
@@ -3907,6 +3919,7 @@ function SidebarContent({
     if (batchWorkspaceId && batchSelectableSessionIds.length === 0) {
       setBatchWorkspaceId(null);
       setSelectedSessionIds([]);
+      setBatchSessionDeletionTarget(null);
     }
   }, [batchSelectableSessionIds.length, batchWorkspaceId]);
 
@@ -4700,12 +4713,20 @@ function SidebarContent({
         <button
           type="button"
           className="workbench-workspace-batch-action primary"
-          disabled={selectedSessionIds.length === 0 || batchArchiving}
+          disabled={selectedSessionIds.length === 0 || batchArchiving || batchDeleting}
           onClick={() => {
             void handleArchiveSelectedSessions();
           }}
         >
           {batchArchiving ? t("shell.batchArchiving") : t("shell.batchArchiveAction")}
+        </button>
+        <button
+          type="button"
+          className="workbench-workspace-batch-action danger"
+          disabled={selectedSessionIds.length === 0 || batchArchiving || batchDeleting}
+          onClick={handleRequestBatchDeletion}
+        >
+          {batchDeleting ? t("shell.batchDeleting") : t("shell.batchDeleteAction")}
         </button>
         <button
           type="button"
@@ -5104,11 +5125,13 @@ function SidebarContent({
     closeSessionMenu();
     setBatchWorkspaceId(workspaceId);
     setSelectedSessionIds([]);
+    setBatchSessionDeletionTarget(null);
   }
 
   function handleStopBatchSelection() {
     setBatchWorkspaceId(null);
     setSelectedSessionIds([]);
+    setBatchSessionDeletionTarget(null);
   }
 
   function handleToggleSessionSelection(sessionId: string) {
@@ -5119,6 +5142,28 @@ function SidebarContent({
     setSelectedSessionIds((current) =>
       current.length === batchSelectableSessionIds.length ? [] : batchSelectableSessionIds
     );
+  }
+
+  function handleRequestBatchDeletion() {
+    if (!activeBatchWorkspaceTarget || selectedSessionIds.length === 0 || batchArchiving || batchDeleting) {
+      return;
+    }
+
+    const sessionById = new Map(batchSelectableSessions.map((session) => [session.sessionId, session] as const));
+    const targetSessions = selectedSessionIds.flatMap((sessionId) => {
+      const session = sessionById.get(sessionId);
+      return session ? [session] : [];
+    });
+
+    if (targetSessions.length === 0) {
+      return;
+    }
+
+    closeSessionMenu();
+    setBatchSessionDeletionTarget({
+      workspace: activeBatchWorkspaceTarget.workspace,
+      sessions: targetSessions
+    });
   }
 
   async function handleStartSession(workspaceId: string, provider: ProviderId) {
@@ -5271,7 +5316,7 @@ function SidebarContent({
   }
 
   async function handleArchiveSelectedSessions() {
-    if (selectedSessionIds.length === 0 || batchArchiving) {
+    if (selectedSessionIds.length === 0 || batchArchiving || batchDeleting) {
       return;
     }
 
@@ -5328,6 +5373,97 @@ function SidebarContent({
       });
     } finally {
       setBatchArchiving(false);
+    }
+  }
+
+  async function handleConfirmBatchDeletion() {
+    if (!batchSessionDeletionTarget || batchDeleting) {
+      return;
+    }
+
+    const { workspace, sessions } = batchSessionDeletionTarget;
+    const targetSessionIds = sessions.map((session) => session.sessionId);
+
+    if (targetSessionIds.length === 0) {
+      setBatchSessionDeletionTarget(null);
+      return;
+    }
+
+    setBatchDeleting(true);
+    closeSessionMenu();
+
+    try {
+      const results = await Promise.allSettled(
+        targetSessionIds.map(async (sessionId) => {
+          await deleteSession(sessionId);
+          return sessionId;
+        })
+      );
+
+      const succeededSessionIds: string[] = [];
+      let failedCount = 0;
+
+      for (const result of results) {
+        if (result.status === "fulfilled") {
+          succeededSessionIds.push(result.value);
+          continue;
+        }
+
+        failedCount += 1;
+      }
+
+      if (succeededSessionIds.length > 0) {
+        if (activeSessionId && succeededSessionIds.includes(activeSessionId)) {
+          navigate(
+            workspace.id
+              ? buildWorkspaceSessionIndexPath(workspace.id)
+              : buildWorkspaceHomePath()
+          );
+        }
+
+        setSelectedSessionIds((current) => current.filter((sessionId) => !succeededSessionIds.includes(sessionId)));
+        await onRefreshNavigation();
+      }
+
+      if (failedCount > 0) {
+        setBatchSessionDeletionTarget((current) => {
+          if (!current) {
+            return current;
+          }
+
+          const remainingSessions = current.sessions.filter(
+            (session) => !succeededSessionIds.includes(session.sessionId)
+          );
+
+          return remainingSessions.length > 0
+            ? {
+                ...current,
+                sessions: remainingSessions
+              }
+            : null;
+        });
+        showToast({
+          title:
+            succeededSessionIds.length > 0
+              ? t("shell.batchDeletePartialFailed")
+              : t("shell.batchDeleteFailed"),
+          tone: "error"
+        });
+        return;
+      }
+
+      setBatchSessionDeletionTarget(null);
+      showToast({
+        title: t("shell.batchDeleteSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("shell.batchDeleteFailed"),
+        tone: "error"
+      });
+    } finally {
+      setBatchDeleting(false);
     }
   }
 
@@ -6053,6 +6189,49 @@ function SidebarContent({
             }}
           >
             {deletingSessionId ? t("common.loading") : t("shell.deleteSessionAction")}
+          </button>
+        </div>
+      </SidebarModal>
+
+      <SidebarModal
+        open={batchSessionDeletionTarget !== null}
+        title={t("shell.batchDeleteConfirmTitle")}
+        description={t("shell.batchDeleteConfirmDescription", {
+          count: `${batchSessionDeletionTarget?.sessions.length ?? 0}`
+        })}
+        onClose={() => {
+          if (batchDeleting) {
+            return;
+          }
+
+          setBatchSessionDeletionTarget(null);
+        }}
+      >
+        <p className="workbench-section-empty">
+          {batchSessionDeletionTarget
+            ? t("shell.batchDeleteSelectionSummary", {
+                count: `${batchSessionDeletionTarget.sessions.length}`
+              })
+            : ""}
+        </p>
+        <div className="workbench-modal-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={batchDeleting}
+            onClick={() => setBatchSessionDeletionTarget(null)}
+          >
+            {t("common.cancel")}
+          </button>
+          <button
+            type="button"
+            className="secondary-button workbench-danger-button"
+            disabled={batchDeleting}
+            onClick={() => {
+              void handleConfirmBatchDeletion();
+            }}
+          >
+            {batchDeleting ? t("shell.batchDeleting") : t("shell.batchDeleteAction")}
           </button>
         </div>
       </SidebarModal>

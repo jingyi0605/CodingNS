@@ -12172,6 +12172,18 @@ textarea:focus-visible {
   border-color: color-mix(in srgb, var(--accent) 26%, transparent);
 }
 
+.workbench-workspace-batch-action.danger {
+  background: color-mix(in srgb, var(--status-danger) 10%, var(--bg-surface));
+  color: var(--status-danger);
+  border-color: color-mix(in srgb, var(--status-danger) 28%, transparent);
+}
+
+.workbench-workspace-batch-action.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-danger) 14%, var(--bg-surface));
+  color: var(--status-danger);
+  border-color: color-mix(in srgb, var(--status-danger) 40%, transparent);
+}
+
 .workbench-workspace-batch-action:disabled {
   opacity: 0.45;
   cursor: not-allowed;

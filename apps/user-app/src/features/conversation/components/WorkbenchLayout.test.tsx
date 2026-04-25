@@ -4776,6 +4776,106 @@ describe("WorkbenchLayout", () => {
     expect(workbenchFetchCount).toBeGreaterThanOrEqual(1);
   });
 
+  it("支持工作区会话批量删除，并在删掉当前会话后回到会话列表", async () => {
+    const sessionTitles: Record<string, string> = {
+      "session-1": "Session Alpha",
+      "session-2": "Session Beta",
+      "session-3": "Session Gamma"
+    };
+    const deletedSessionIds = new Set<string>();
+    let currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "Project One"),
+        sessions: Object.entries(sessionTitles).map(([sessionId, title]) =>
+          createSessionSummary({
+            sessionId,
+            title,
+            workspaceId: "workspace-1"
+          })
+        )
+      }
+    ]);
+
+    function rebuildSnapshot() {
+      currentSnapshot = createWorkbenchSnapshot([
+        {
+          workspace: createWorkspace("workspace-1", "Project One"),
+          sessions: Object.entries(sessionTitles)
+            .filter(([sessionId]) => !deletedSessionIds.has(sessionId))
+            .map(([sessionId, title]) =>
+              createSessionSummary({
+                sessionId,
+                title,
+                workspaceId: "workspace-1"
+              })
+            )
+        }
+      ]);
+      MockWebSocket.workbenchSnapshot = currentSnapshot;
+    }
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.includes("/api/sessions/") && init?.method === "DELETE") {
+        const sessionId = url.split("/api/sessions/")[1];
+
+        if (!sessionId || !(sessionId in sessionTitles)) {
+          throw new Error(`未处理的删除会话: ${url}`);
+        }
+
+        deletedSessionIds.add(sessionId);
+        rebuildSnapshot();
+        return createJsonResponse({});
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+
+    const workspaceGroup = await findWorkspaceGroupByName("Project One");
+    const workspaceScope = within(workspaceGroup);
+
+    await userEvent.click(workspaceScope.getByRole("button", { name: t("shell.batchSelectSessions") }));
+
+    const alphaCard = await findSessionCardByTitle("Session Alpha");
+    const betaCard = await findSessionCardByTitle("Session Beta");
+    await userEvent.click(within(alphaCard).getByText("Session Alpha"));
+    await userEvent.click(within(betaCard).getByText("Session Beta"));
+
+    expect(workspaceScope.getByText("2/3")).toBeInTheDocument();
+
+    await userEvent.click(workspaceScope.getByRole("button", { name: t("shell.batchDeleteAction") }));
+
+    const dialog = await screen.findByRole("dialog", {
+      name: t("shell.batchDeleteConfirmTitle")
+    });
+    expect(
+      within(dialog).getByText(
+        t("shell.batchDeleteSelectionSummary", {
+          count: "2"
+        })
+      )
+    ).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: t("shell.batchDeleteAction") }));
+
+    await waitFor(() => {
+      expect(querySessionCardsByTitle("Session Alpha")).toHaveLength(0);
+      expect(querySessionCardsByTitle("Session Beta")).toHaveLength(0);
+      expect(screen.getByTestId("current-path")).toHaveTextContent("/workspaces/workspace-1/sessions");
+    });
+
+    expect(getSessionCardByTitle("Session Gamma")).toBeInTheDocument();
+    expect(deletedSessionIds).toEqual(new Set(["session-1", "session-2"]));
+  });
+
   it("移动壳不再渲染边缘手柄，会话沉浸态改走底部一级导航", async () => {
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
