@@ -30,7 +30,7 @@ export interface ClaudeStableMessageRef {
 }
 
 export function buildClaudeProgressiveTrackKey(
-  message: Pick<NormalizedMessage, "providerSessionId" | "role" | "kind">,
+  message: Pick<NormalizedMessage, "providerSessionId" | "role" | "kind" | "rawRef" | "timestamp">,
   partIndex: number
 ): string | null {
   if (
@@ -46,11 +46,25 @@ export function buildClaudeProgressiveTrackKey(
     return null;
   }
 
-  if (message.role === "assistant" && (message.kind === "text" || message.kind === "thinking")) {
-    return `${message.providerSessionId}:${message.role}:${message.kind}`;
+  if (isClaudeFallbackRawRef(message.rawRef)) {
+    return `${message.providerSessionId}:${message.role}:${message.kind}:timestamp:${message.timestamp}:part:${partIndex}`;
   }
 
-  return `${message.providerSessionId}:${message.role}:${message.kind}:part:${partIndex}`;
+  return `${message.providerSessionId}:${message.role}:${message.kind}:${message.rawRef}`;
+}
+
+function isClaudeFallbackRawRef(rawRef: string): boolean {
+  const prefix = "claude-code://message/";
+
+  if (!rawRef.startsWith(prefix)) {
+    return false;
+  }
+
+  try {
+    return decodeURIComponent(rawRef.slice(prefix.length)).startsWith("fallback:");
+  } catch {
+    return false;
+  }
 }
 
 export function shouldReuseClaudeProgressiveIdentity(

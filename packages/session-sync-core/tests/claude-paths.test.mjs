@@ -600,6 +600,84 @@ test("ClaudeCodeAdapter 会把同一条 Claude thinking 的 progress 与最终�
   }
 });
 
+test("ClaudeCodeAdapter 不会把连续两条同前缀 assistant 文本误并成一条消息", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-consecutive-prefix-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const projectDir = join(tempDir, "projects", "-Users-jackson-Documents-Code-CodingNS");
+  const sessionId = "34343434-3434-4434-8434-343434343435";
+  const rawStoreRef = join(projectDir, `${sessionId}.jsonl`);
+
+  try {
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          type: "user",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-03-28T01:00:00.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "先回答第一句" }]
+          }
+        }),
+        JSON.stringify({
+          type: "assistant",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-03-28T01:00:01.000Z",
+          message: {
+            id: "msg-prefix-1",
+            role: "assistant",
+            content: [{ type: "text", text: "收到" }]
+          }
+        }),
+        JSON.stringify({
+          type: "assistant",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-03-28T01:00:02.000Z",
+          message: {
+            id: "msg-prefix-2",
+            role: "assistant",
+            content: [{ type: "text", text: "收到，继续处理下一句" }]
+          }
+        }),
+        JSON.stringify({
+          type: "user",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-03-28T01:00:03.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "再问一个问题" }]
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new ClaudeCodeAdapter({ homeDir: tempDir });
+    const page = await adapter.readSessionHistory(sessionId, rawStoreRef, null, 20, "forward");
+
+    assert.equal(page.messages.length, 4);
+    assert.deepEqual(
+      page.messages.map((message) => [message.role, message.kind, message.content]),
+      [
+        ["user", "text", "先回答第一句"],
+        ["assistant", "text", "收到"],
+        ["assistant", "text", "收到，继续处理下一句"],
+        ["user", "text", "再问一个问题"]
+      ]
+    );
+    assert.notEqual(page.messages[1]?.messageId, page.messages[2]?.messageId);
+    assert.notEqual(page.messages[1]?.rawRef, page.messages[2]?.rawRef);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("ClaudeCodeAdapter 会把同一条 assistant 消息里的重复 text block 收敛成一条正式消息", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-duplicate-text-blocks-"));
   const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
