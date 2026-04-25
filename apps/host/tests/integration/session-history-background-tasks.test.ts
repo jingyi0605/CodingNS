@@ -243,6 +243,111 @@ describe("SessionHistoryService background tasks", () => {
     service.dispose();
   });
 
+  it("Gemini 运行中但本地 chats 尚未落盘时，订阅不会直接报错", async () => {
+    const service = createSessionHistoryService();
+    seedWorkspace(service.workspaceRepository, service.database.db, service.workspacePath);
+    seedSession(service.database.db, {
+      sessionId: "session-gemini-runtime",
+      workspaceId: "workspace-1",
+      provider: "gemini",
+      providerSessionId: "gemini-session-runtime",
+      rawStoreRef: "gemini://session/gemini-session-runtime",
+      title: "Gemini 运行中会话",
+      messageCount: 0,
+      lastMessageAt: null,
+      createdAt: "2026-04-25T10:00:00.000Z",
+      updatedAt: "2026-04-25T10:00:00.000Z"
+    });
+    service.database.db
+      .prepare(
+        `INSERT INTO session_states (
+           session_id,
+           user_id,
+           running_state,
+           activity_source,
+           favorite,
+           last_event_at,
+           completed_at,
+           last_seen_at,
+           updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "session-gemini-runtime",
+        "user-1",
+        "running",
+        "runtime",
+        0,
+        "2026-04-25T10:00:01.000Z",
+        null,
+        null,
+        "2026-04-25T10:00:01.000Z"
+      );
+
+    const envelopes: unknown[] = [];
+    const subscription = await service.instance.subscribeSession(
+      "session-gemini-runtime",
+      null,
+      20,
+      async (envelope) => {
+        envelopes.push(envelope);
+      }
+    );
+
+    await waitForDuration(50);
+
+    const snapshot = service.database.db
+      .prepare(
+        `SELECT sync_status, last_error_code, last_error_detail
+         FROM session_status_snapshots
+         WHERE session_id = ?`
+      )
+      .get("session-gemini-runtime") as
+      | {
+          sync_status: string;
+          last_error_code: string | null;
+          last_error_detail: string | null;
+        }
+      | undefined;
+
+    expect(envelopes).toEqual([]);
+    expect(snapshot).toMatchObject({
+      sync_status: "syncing",
+      last_error_code: null,
+      last_error_detail: null
+    });
+
+    subscription.close();
+    service.dispose();
+  });
+
+  it("Gemini 非运行中会话缺少本地 chats 时仍然会报错", async () => {
+    const service = createSessionHistoryService();
+    seedWorkspace(service.workspaceRepository, service.database.db, service.workspacePath);
+    seedSession(service.database.db, {
+      sessionId: "session-gemini-missing",
+      workspaceId: "workspace-1",
+      provider: "gemini",
+      providerSessionId: "gemini-session-missing",
+      rawStoreRef: "gemini://session/gemini-session-missing",
+      title: "Gemini 缺失会话",
+      messageCount: 0,
+      lastMessageAt: null,
+      createdAt: "2026-04-25T10:10:00.000Z",
+      updatedAt: "2026-04-25T10:10:00.000Z"
+    });
+
+    await expect(
+      service.instance.subscribeSession("session-gemini-missing", null, 20, async () => {
+        return;
+      })
+    ).rejects.toMatchObject({
+      errorCode: "GEMINI_CHAT_NOT_FOUND"
+    });
+
+    service.dispose();
+  });
+
   it("workspace discovery 任务取消后会把 AbortSignal 传给 provider helper", async () => {
     let receivedSignal: AbortSignal | null = null;
     const taskManager = createTaskManager(null, {

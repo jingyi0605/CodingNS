@@ -2654,8 +2654,33 @@ export class SessionHistoryService {
           };
         }
 
+        if (this.shouldTreatMissingGeminiRuntimeHistoryAsEmpty(sessionId, provider, error)) {
+          return {
+            messages: [],
+            cursor,
+            nextCursor: null,
+            total: 0
+          };
+        }
+
         throw mapSessionProviderError(error);
       });
+  }
+
+  private shouldTreatMissingGeminiRuntimeHistoryAsEmpty(
+    sessionId: string,
+    provider: string,
+    error: unknown
+  ): boolean {
+    if (provider !== "gemini" || !isGeminiChatNotFoundError(error)) {
+      return false;
+    }
+
+    return this.listSessionStatesBySessionId(sessionId).some(
+      (state) =>
+        state.activitySource === "runtime"
+        && (state.runningState === "starting" || state.runningState === "running")
+    );
   }
 
   private enrichMessagesWithOrigin(
@@ -5405,6 +5430,14 @@ function shouldTreatMissingSyntheticHistoryAsEmpty(
 
   const detail = error instanceof Error ? error.message : String(error);
   return detail.includes("ENOENT");
+}
+
+function isGeminiChatNotFoundError(error: unknown): boolean {
+  if (error instanceof AppError) {
+    return error.errorCode === "GEMINI_CHAT_NOT_FOUND";
+  }
+
+  return error instanceof Error && error.message === "GEMINI_CHAT_NOT_FOUND";
 }
 
 function shouldShortCircuitMissingSyntheticCodexHistory(
