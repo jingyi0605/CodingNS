@@ -3652,6 +3652,7 @@ export function MessageTimeline({
   const { showToast } = useToast();
   const platform = usePlatform();
   const listRef = useRef<HTMLDivElement | null>(null);
+  const persistScrollState = !followTailUpdates;
   const previousSessionIdRef = useRef(sessionId);
   const previousMessageCountRef = useRef(0);
   const previousLastMessageSignatureRef = useRef<string | null>(null);
@@ -3735,6 +3736,10 @@ export function MessageTimeline({
   function persistCurrentScrollState(list: HTMLDivElement | null = listRef.current) {
     if (list) {
       rememberCurrentScrollState(list);
+    if (!persistScrollState) {
+      return;
+    }
+
     }
 
     if (!currentScrollStateRef.current) {
@@ -3747,6 +3752,10 @@ export function MessageTimeline({
   function persistCachedScrollState(targetSessionId: string) {
     if (!currentScrollStateRef.current) {
       return;
+    if (!persistScrollState) {
+      return;
+    }
+
     }
 
     persistConversationScrollState(targetSessionId, currentScrollStateRef.current);
@@ -3764,6 +3773,10 @@ export function MessageTimeline({
   function schedulePersistCurrentScrollState() {
     clearPersistScrollTimer();
     scrollPersistTimerRef.current = window.setTimeout(() => {
+    if (!persistScrollState) {
+      return;
+    }
+
       scrollPersistTimerRef.current = null;
       persistCurrentScrollState();
     }, SCROLL_STATE_PERSIST_DELAY_MS);
@@ -3907,7 +3920,7 @@ export function MessageTimeline({
       setHasNewMessagesBelow(false);
       setShowScrollToBottomButton(false);
     }
-  }, [followTailUpdates, sessionId]);
+  }, [followTailUpdates, persistScrollState, sessionId]);
 
   useLayoutEffect(() => {
     return () => {
@@ -3915,7 +3928,7 @@ export function MessageTimeline({
       finishManualRestore();
       persistCachedScrollState(previousSessionIdRef.current);
     };
-  }, [sessionId]);
+  }, [persistScrollState, sessionId]);
 
   useLayoutEffect(() => {
     const list = listRef.current;
