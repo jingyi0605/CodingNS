@@ -17,12 +17,14 @@ const mockRefreshWorktreeMergePreview = vi.fn();
 const mockApplyWorktreeMerge = vi.fn();
 const mockRequestWorktreeCleanup = vi.fn();
 const mockShowToast = vi.fn();
+const mockShowNotification = vi.fn();
 let latestComposerPanelProps: {
   isRunning?: boolean;
   canInterrupt?: boolean | null;
   hasActiveRun?: boolean | null;
   initialModel?: string | null;
 } | null = null;
+let mockPermissionRequests: Array<Record<string, unknown>> = [];
 let mockNavigationGroups: Array<{
   workspace: {
     id: string;
@@ -48,10 +50,25 @@ vi.mock("react-router-dom", async () => {
 vi.mock("../../../platform/platform-provider", () => ({
   usePlatform: () => ({
     isDesktop: false,
+    bridge: {
+      supported: false,
+      showNotification: mockShowNotification
+    },
     ui: {
       osFamily: "macos"
     }
   })
+}));
+
+vi.mock("../../../preferences/local-ui-preference-store", () => ({
+  useLocalUiPreferenceSelector: (selector: (state: {
+    notificationPreferences: { notifyOnPermissionRequest: boolean };
+  }) => unknown) =>
+    selector({
+      notificationPreferences: {
+        notifyOnPermissionRequest: true
+      }
+    })
 }));
 
 vi.mock("../../../shared/toast", () => ({
@@ -176,7 +193,7 @@ vi.mock("../runtime/session-runtime-store", () => {
         runtimeHasActiveRun: false,
         runtimeCanInterrupt: false,
         messages: [],
-        permissionRequests: [],
+        permissionRequests: mockPermissionRequests,
         queuedMessages: [],
         contextUsage: {
           modelId: "codex-max"
@@ -247,6 +264,7 @@ describe("ParallelConversationGroupView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     latestComposerPanelProps = null;
+    mockPermissionRequests = [];
     mockDeleteSession.mockResolvedValue(undefined);
     mockListProviderCapabilities.mockResolvedValue({
       codex: {
@@ -443,6 +461,40 @@ describe("ParallelConversationGroupView", () => {
     await screen.findByText("原版风格");
 
     expect(latestComposerPanelProps?.initialModel).toBe("gpt-5.1-codex-mini");
+  });
+
+  it("当前 pane 收到新的权限申请时会弹出审批提示", async () => {
+    mockPermissionRequests = [
+      {
+        id: "permission-1",
+        status: "pending",
+        title: "Bash 执行需要授权"
+      }
+    ];
+
+    render(
+      <MemoryRouter>
+        <ParallelConversationGroupView
+          groupId="parallel-group-1"
+          currentSessionId="session-1"
+        />
+      </MemoryRouter>
+    );
+
+    await screen.findByText("原版风格");
+
+    expect(mockShowToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "parallel-permission-request-permission-1",
+        title: t("conversation.permissionRequestToastTitle"),
+        description: "Bash 执行需要授权",
+        tone: "warning"
+      })
+    );
+    expect(mockShowNotification).toHaveBeenCalledWith(
+      t("conversation.permissionRequestToastTitle"),
+      "Bash 执行需要授权"
+    );
   });
 
   it("工具窗口默认贴住当前 pane，外部点击和再次点工具按钮都不会直接关掉", async () => {

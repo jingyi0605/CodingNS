@@ -17,20 +17,14 @@ import {
   ModalListItem
 } from "../../../components/ModalAtoms";
 import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
-import { useLocalUiPreferenceSelector } from "../../../preferences/local-ui-preference-store";
-import { usePlatform } from "../../../platform/platform-provider";
-import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { useHaptics } from "../../../shared/haptics";
+import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import {
-  forkSession,
-  type ForkSourceMessageSnapshotDto,
   getProviderCapabilities,
-  sendLiveMessage,
   startLiveSession,
   type HistoryMessageDto,
-  type MessageAttachmentDto,
   type ProviderCapabilitiesDto,
   type ProviderId,
   type SessionSummaryDto
@@ -60,19 +54,17 @@ import {
   shouldUseParallelConversationLayout,
   writeParallelGroupTransitionSignal
 } from "../parallel-session-display";
-import { SessionRuntimeStore, useSessionRuntimeStore } from "../runtime/session-runtime-store";
-import {
-  isSessionRunning,
-  resolveSessionActivityBadgeLabel,
-  resolveSessionIndicatorClassName
-} from "../session-activity-display";
-import { useSessionSendRecovery } from "../session-send-recovery";
+import { resolveSessionActivityBadgeLabel, resolveSessionIndicatorClassName } from "../session-activity-display";
 import { buildSessionTitlePresentation } from "../session-title";
 import {
   createPendingMessage,
   markPendingAsFailed,
   type SessionMessageViewModel
 } from "../runtime/session-runtime-machine";
+import {
+  focusComposerInput,
+  useLiveSessionController
+} from "../runtime/use-live-session-controller";
 import {
   buildSessionBranchTreeModel,
   hasSessionBranchRelations
@@ -125,7 +117,6 @@ import {
 } from "./mobile-session-archive-navigation";
 import "../../mobile-sessions/styles.css";
 
-const RUNTIME_TIMEOUT_TOAST_DELAY_MS = 15_000;
 const MOBILE_PREVIEW_DEFAULT_RATIO = 0.6;
 const MOBILE_PREVIEW_MAX_RATIO = 0.6;
 const MOBILE_PREVIEW_GESTURE_DIRECTION_LOCK_PX = 8;
@@ -133,18 +124,6 @@ const MOBILE_PREVIEW_OPEN_THRESHOLD_PX = 36;
 const MOBILE_PREVIEW_EXPAND_THRESHOLD_PX = 48;
 const MOBILE_PREVIEW_CLOSE_THRESHOLD_PX = 34;
 const MOBILE_PREVIEW_EDGE_ACTIVATION_PX = 96;
-const RUNTIME_THINKING_PLACEHOLDER_HIDE_DELAY_MS = 320;
-const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
-
-interface ForkComposerDraft {
-  sourceMessageId: string;
-  sourceMessageSnapshot: ForkSourceMessageSnapshotDto;
-  content: string;
-  sourceProvider: ProviderId;
-  workspaceId: string;
-  targetProvider: ProviderId;
-  targetModel: string | null;
-}
 
 export function ConversationPage() {
   const { sessionId = "", workspaceId: routeWorkspaceIdParam } = useParams();
@@ -198,104 +177,102 @@ function LiveConversationPage({
     upsertNavigationSession
   } = useWorkbenchShell();
   const navigate = useNavigate();
-  const storeRef = useRef<SessionRuntimeStore | null>(null);
-  const currentSessionIdRef = useRef<string | null>(null);
-  const [sending, setSending] = useState(false);
-  const [replyingPermissionRequestId, setReplyingPermissionRequestId] = useState<string | null>(null);
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
   const [archiveFolderOpen, setArchiveFolderOpen] = useState(false);
   const [archiveRestoreSessionId, setArchiveRestoreSessionId] = useState<string | null>(null);
   const [archiveSubmitting, setArchiveSubmitting] = useState(false);
   const [branchTreeOpen, setBranchTreeOpen] = useState(false);
-  const [forkDraft, setForkDraft] = useState<ForkComposerDraft | null>(null);
   const [parallelCreateOpen, setParallelCreateOpen] = useState(false);
+  const flattenedNavigationEntries = useMemo(
+    () => flattenNavigationSessions(navigationGroups),
+    [navigationGroups]
+  );
   const navigationSession = useMemo(
     () =>
-      flattenNavigationSessions(navigationGroups)
-        .find((entry) => entry.session.sessionId === sessionId)?.session ?? null,
-    [navigationGroups, sessionId]
+      flattenedNavigationEntries.find((entry) => entry.session.sessionId === sessionId)?.session ?? null,
+    [flattenedNavigationEntries, sessionId]
   );
+  const { showToast } = useToast();
+  const handleResolveMissingSession = () => {
+    const fallbackWorkspaceId =
+      navigationSession?.workspaceId ?? navigationGroups[0]?.workspace.id ?? null;
+    const fallbackSessionEntry =
+      (fallbackWorkspaceId
+        ? flattenedNavigationEntries.find((item) => item.workspace.id === fallbackWorkspaceId) ?? null
+        : null)
+      ?? flattenedNavigationEntries[0]
+      ?? null;
 
-  if (!storeRef.current || currentSessionIdRef.current !== sessionId) {
-    storeRef.current?.destroy();
-    storeRef.current = new SessionRuntimeStore(sessionId, {
-      initialSession: navigationSession,
-      bootstrapMessages,
-      onSeen: (seenSessionId, seenAt) => {
-        markNavigationSessionSeen(seenSessionId, seenAt);
-      }
-    });
-    currentSessionIdRef.current = sessionId;
-  }
-
-  const store = storeRef.current;
-  const { showToast, dismissToast } = useToast();
-  const notifyOnPermissionRequest = useLocalUiPreferenceSelector(
-    (state) => state.notificationPreferences.notifyOnPermissionRequest
-  );
-  const platform = usePlatform();
-  const haptics = useHaptics();
-  const lastRuntimeErrorSignatureRef = useRef<string | null>(null);
-  const pendingRuntimeErrorSignatureRef = useRef<string | null>(null);
-  const delayedRuntimeToastTimerRef = useRef<number | null>(null);
-  const previousRunningStateRef = useRef<string | null>(navigationSession?.runningState ?? null);
-  const notifiedPermissionRequestIdsRef = useRef<Set<string>>(new Set());
-  const session = useSessionRuntimeStore(store, (state) => state.session);
-  const capabilities = useSessionRuntimeStore(store, (state) => state.capabilities);
-  const runtimeHasActiveRun = useSessionRuntimeStore(store, (state) => state.runtimeHasActiveRun);
-  const runtimeCanInterrupt = useSessionRuntimeStore(store, (state) => state.runtimeCanInterrupt);
-  const messages = useSessionRuntimeStore(store, (state) => state.messages);
-  const permissionRequests = useSessionRuntimeStore(store, (state) => state.permissionRequests);
-  const queuedMessages = useSessionRuntimeStore(store, (state) => state.queuedMessages);
-  const contextUsage = useSessionRuntimeStore(store, (state) => state.contextUsage);
-  const historyState = useSessionRuntimeStore(store, (state) => state.historyState);
-  const runtimeErrorCode = useSessionRuntimeStore(store, (state) => state.errorCode);
-  const runtimeErrorDetail = useSessionRuntimeStore(store, (state) => state.errorDetail);
-  const runtimeInterruptSource = useSessionRuntimeStore(store, (state) => state.interruptSource);
-  const loadingOlderMessages = useSessionRuntimeStore(
-    store,
-    (state) => state.loadingOlderMessages
-  );
-  const hasOlderMessages = useSessionRuntimeStore(store, (state) => state.hasOlderMessages);
-  const connectionState = useSessionRuntimeStore(store, (state) => state.connectionState);
-  const [deletingQueueItemId, setDeletingQueueItemId] = useState<string | null>(null);
-  const [steeringQueueItemId, setSteeringQueueItemId] = useState<string | null>(null);
-  const isRunning = isSessionRunning(session);
-  const canSteerQueuedMessage =
-    shouldSupportRunSteering(capabilities) &&
-    session?.provider === capabilities?.provider;
-  const hasPendingQueuedMessages = queuedMessages.some(
-    (item) => item.status === "queued" || item.status === "dispatching"
-  );
-  const optimisticInterruptibleSendInFlight = sending && !forkDraft;
-  const composerHasActiveRun =
-    runtimeHasActiveRun === true || optimisticInterruptibleSendInFlight
-      ? true
-      : runtimeHasActiveRun;
-  const composerCanInterrupt =
-    runtimeCanInterrupt === true || optimisticInterruptibleSendInFlight
-      ? true
-      : runtimeCanInterrupt;
-  const composerIsRunning = isRunning || optimisticInterruptibleSendInFlight;
-  useSessionSendRecovery({
-    sending,
-    setSending,
+    navigate(
+      fallbackSessionEntry
+        ? buildWorkspaceSessionPath(fallbackSessionEntry.workspace.id, fallbackSessionEntry.session.sessionId)
+        : fallbackWorkspaceId
+          ? buildWorkspaceSessionIndexPath(fallbackWorkspaceId)
+          : (shellMode === "mobile" ? buildWorkspaceHomePath() : "/landing"),
+      { replace: true }
+    );
+  };
+  const {
     session,
-    runtimeHasActiveRun,
-    runtimeCanInterrupt
-  });
-  const runtimeThinkingPlaceholder = useStableRuntimeThinkingPlaceholder({
+    capabilities,
+    messages,
+    timelineMessages,
+    permissionRequests,
+    queuedMessages,
+    contextUsage,
+    historyState,
+    runtimeInterruptSource,
+    loadingOlderMessages,
+    hasOlderMessages,
+    connectionState,
+    sending,
+    replyingPermissionRequestId,
+    deletingQueueItemId,
+    steeringQueueItemId,
+    forkDraft,
+    setForkDraft,
+    composerHasActiveRun,
+    composerCanInterrupt,
+    composerIsRunning,
+    canSteerQueuedMessage,
+    hasPendingQueuedMessages,
+    runtimeThinkingPlaceholder,
+    reconnect,
+    loadOlderMessages,
+    retryMessage,
+    send,
+    queue,
+    interrupt,
+    replyPermissionRequest,
+    deleteQueuedMessage,
+    steerQueuedMessage
+  } = useLiveSessionController({
     sessionId,
-    provider: session?.provider ?? null,
-    runningState: session?.runningState ?? null,
-    activityState: session?.activityState ?? null,
-    runtimeHasActiveRun,
-    messages
-  })
-    ? t("conversation.runtimeThinkingPlaceholder", {
-        provider: t("conversation.providerCodex")
-      })
-    : null;
+    externalSession: navigationSession,
+    bootstrapMessages,
+    onSeen: (seenSessionId, seenAt) => {
+      markNavigationSessionSeen(seenSessionId, seenAt);
+    },
+    onRequestNavigationRefresh: requestNavigationRefresh,
+    onUpsertNavigationSession: upsertNavigationSession,
+    onNavigateToSession: (workspaceId, targetSessionId) => {
+      selectWorkspace(workspaceId);
+      navigate(buildWorkspaceSessionPath(workspaceId, targetSessionId));
+    },
+    onBindSessionWorkspace: setSessionWorkspace,
+    onResolveMissingSession: handleResolveMissingSession,
+    onForkSuccess: () => {
+      writeMobileConversationPreviewMode("preview");
+      showToast({
+        title: t("conversation.forkMessageSucceeded"),
+        tone: "success"
+      });
+    },
+    enableRuntimeErrorHandling: true,
+    enableCompletionHaptics: true,
+    enableThinkingPlaceholder: true,
+    enableForkTimelineSanitizer: true
+  });
   const showInlineHeader = shellMode !== "mobile";
   const mobilePreview = useMobileConversationPreviewController(!showInlineHeader);
   const currentSessionSummary = session ?? navigationSession ?? null;
@@ -322,10 +299,6 @@ function LiveConversationPage({
   );
   const mobileWorkspaces = useMemo(
     () => navigationGroups.map((group) => group.workspace),
-    [navigationGroups]
-  );
-  const flattenedNavigationEntries = useMemo(
-    () => flattenNavigationSessions(navigationGroups),
     [navigationGroups]
   );
   const mobileWorkspaceOptions = useMemo(
@@ -423,11 +396,6 @@ function LiveConversationPage({
       return changed ? Array.from(nextIds) : current;
     });
   }, [mobilePreviewTrees, sessionId]);
-  const sanitizedForkTimelineMessages = useMemo(
-    () => sanitizeForkTimelineMessages(currentSessionSummary, messages),
-    [currentSessionSummary, messages]
-  );
-  const timelineMessages = sanitizedForkTimelineMessages;
   const branchTreeWorkspaceId =
     currentSessionSummary?.workspaceId ?? navigationSession?.workspaceId ?? null;
   const branchTreeModel = useMemo(
@@ -452,201 +420,10 @@ function LiveConversationPage({
   const mobileConversationHeaderRef = useRef<HTMLDivElement | null>(null);
   const [mobileComposerPanelElement, setMobileComposerPanelElement] = useState<HTMLElement | null>(null);
   const { composerPortalTarget } = useMobileConversationBottomLayer();
-  useEffect(() => {
-    store.applyNavigationSession(navigationSession);
-  }, [navigationSession, store]);
-
-  useEffect(() => {
-    void store.initialize();
-
-    return () => {
-      store.destroy();
-    };
-  }, [store]);
-
-  useEffect(() => {
-    setSessionWorkspace(sessionId, session?.workspaceId ?? null);
-
-    return () => {
-      setSessionWorkspace(sessionId, null);
-    };
-  }, [session?.workspaceId, sessionId, setSessionWorkspace]);
 
   useEffect(() => {
     setBranchTreeOpen(false);
-    setForkDraft(null);
   }, [sessionId]);
-
-  useEffect(() => {
-    return () => {
-      if (delayedRuntimeToastTimerRef.current !== null) {
-        window.clearTimeout(delayedRuntimeToastTimerRef.current);
-        delayedRuntimeToastTimerRef.current = null;
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    if (runtimeErrorCode !== "SESSION_NOT_FOUND" && runtimeErrorCode !== "WORKSPACE_NOT_FOUND") {
-      return;
-    }
-
-    dismissToast("conversation-runtime-error");
-
-    const fallbackWorkspaceId =
-      session?.workspaceId ?? navigationSession?.workspaceId ?? navigationGroups[0]?.workspace.id ?? null;
-    const fallbackSessionEntry =
-      (fallbackWorkspaceId
-        ? flattenedNavigationEntries.find((item) => item.workspace.id === fallbackWorkspaceId) ?? null
-        : null)
-      ?? flattenedNavigationEntries[0]
-      ?? null;
-
-    navigate(
-      fallbackSessionEntry
-        ? buildWorkspaceSessionPath(fallbackSessionEntry.workspace.id, fallbackSessionEntry.session.sessionId)
-        : fallbackWorkspaceId
-          ? buildWorkspaceSessionIndexPath(fallbackWorkspaceId)
-          : (shellMode === "mobile" ? buildWorkspaceHomePath() : "/landing"),
-      { replace: true }
-    );
-  }, [
-    dismissToast,
-    flattenedNavigationEntries,
-    navigate,
-    navigationGroups,
-    navigationSession?.workspaceId,
-    runtimeErrorCode,
-    session?.workspaceId,
-    shellMode
-  ]);
-
-  useEffect(() => {
-    if (runtimeErrorCode === "SESSION_NOT_FOUND" || runtimeErrorCode === "WORKSPACE_NOT_FOUND") {
-      if (delayedRuntimeToastTimerRef.current !== null) {
-        window.clearTimeout(delayedRuntimeToastTimerRef.current);
-        delayedRuntimeToastTimerRef.current = null;
-      }
-
-      pendingRuntimeErrorSignatureRef.current = null;
-      lastRuntimeErrorSignatureRef.current = null;
-      dismissToast("conversation-runtime-error");
-      return;
-    }
-
-    if (!runtimeErrorCode || !runtimeErrorDetail) {
-      if (delayedRuntimeToastTimerRef.current !== null) {
-        window.clearTimeout(delayedRuntimeToastTimerRef.current);
-        delayedRuntimeToastTimerRef.current = null;
-      }
-
-      pendingRuntimeErrorSignatureRef.current = null;
-      lastRuntimeErrorSignatureRef.current = null;
-      dismissToast("conversation-runtime-error");
-      return;
-    }
-
-    const signature = `${runtimeErrorCode}:${runtimeErrorDetail}`;
-
-    if (
-      lastRuntimeErrorSignatureRef.current === signature
-      || pendingRuntimeErrorSignatureRef.current === signature
-    ) {
-      return;
-    }
-
-    if (delayedRuntimeToastTimerRef.current !== null) {
-      window.clearTimeout(delayedRuntimeToastTimerRef.current);
-      delayedRuntimeToastTimerRef.current = null;
-    }
-
-    if (shouldDelayRuntimeErrorToast(session?.provider ?? null, runtimeErrorCode, runtimeErrorDetail)) {
-      pendingRuntimeErrorSignatureRef.current = signature;
-      delayedRuntimeToastTimerRef.current = window.setTimeout(() => {
-        pendingRuntimeErrorSignatureRef.current = null;
-        delayedRuntimeToastTimerRef.current = null;
-        lastRuntimeErrorSignatureRef.current = signature;
-        showToast({
-          id: "conversation-runtime-error",
-          title: t("conversation.runtimeErrorTitle"),
-          description: runtimeErrorDetail,
-          tone: "error",
-          durationMs: null
-        });
-      }, RUNTIME_TIMEOUT_TOAST_DELAY_MS);
-      return;
-    }
-
-    pendingRuntimeErrorSignatureRef.current = null;
-    lastRuntimeErrorSignatureRef.current = signature;
-    showToast({
-      id: "conversation-runtime-error",
-      title: t("conversation.runtimeErrorTitle"),
-      description: runtimeErrorDetail,
-      tone: "error",
-      durationMs: null
-    });
-  }, [dismissToast, runtimeErrorCode, runtimeErrorDetail, session?.provider, showToast]);
-
-  useEffect(() => {
-    const previousRunningState = previousRunningStateRef.current;
-    const nextRunningState = session?.runningState ?? null;
-    const wasActive =
-      previousRunningState === "starting"
-      || previousRunningState === "running"
-      || previousRunningState === "reconnecting";
-
-    if (wasActive && nextRunningState === "completed") {
-      void haptics.trigger("success");
-    }
-
-    previousRunningStateRef.current = nextRunningState;
-  }, [haptics, session?.runningState]);
-
-  useEffect(() => {
-    const pendingRequests = permissionRequests.filter((request) => request.status === "pending");
-    const sessionWorkspaceId = session?.workspaceId ?? navigationSession?.workspaceId ?? null;
-
-    for (const request of pendingRequests) {
-      if (notifiedPermissionRequestIdsRef.current.has(request.id)) {
-        continue;
-      }
-
-      notifiedPermissionRequestIdsRef.current.add(request.id);
-      if (!notifyOnPermissionRequest) {
-        continue;
-      }
-
-      showToast({
-        id: `permission-request-${request.id}`,
-        title: t("conversation.permissionRequestToastTitle"),
-        description: request.title,
-        tone: "warning",
-        durationMs: 8_000,
-        action: sessionWorkspaceId
-          ? {
-              label: t("shell.contextOpenSession"),
-              onClick: () => {
-                navigate(buildWorkspaceSessionPath(sessionWorkspaceId, sessionId));
-              }
-            }
-          : undefined
-      });
-      void platform.bridge.showNotification(
-        t("conversation.permissionRequestToastTitle"),
-        request.title
-      );
-    }
-  }, [
-    navigationSession?.workspaceId,
-    navigate,
-    notifyOnPermissionRequest,
-    permissionRequests,
-    platform.bridge,
-    session?.workspaceId,
-    sessionId,
-    showToast
-  ]);
 
   useMobileConversationComposerHeightVar(
     mobileConversationPageRef,
@@ -660,69 +437,6 @@ function LiveConversationPage({
     !showInlineHeader,
     sessionId
   );
-
-  async function sendForkDraftMessage(
-    content: string,
-    options?: {
-      model?: string;
-      reasoningLevel?: string;
-      attachments?: NonNullable<Parameters<typeof sendLiveMessage>[1]["attachments"]>;
-      attachmentMeta?: MessageAttachmentDto[];
-    }
-  ): Promise<void> {
-    const activeForkDraft = forkDraft;
-
-    if (!activeForkDraft) {
-      await store.sendMessage(content, {
-        model: options?.model,
-        reasoningLevel: options?.reasoningLevel,
-        attachments: options?.attachments,
-        attachmentMeta: options?.attachmentMeta
-      });
-      requestNavigationRefresh();
-      return;
-    }
-
-    let forkedSession: SessionSummaryDto | null = null;
-
-    try {
-      forkedSession = await forkSession(sessionId, {
-        sourceType: "message",
-        sourceMessageId: activeForkDraft.sourceMessageId,
-        sourceMessageSnapshot: activeForkDraft.sourceMessageSnapshot,
-        strategy: "auto",
-        targetProvider: activeForkDraft.targetProvider
-      });
-      upsertNavigationSession(forkedSession);
-
-      await sendLiveMessage(forkedSession.sessionId, {
-        content,
-        clientRequestId:
-          globalThis.crypto?.randomUUID?.() ?? `fork-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        model: activeForkDraft.targetModel,
-        reasoningLevel: options?.reasoningLevel ?? null,
-        permissionMode: getDefaultSessionPermissionMode(),
-        attachments: options?.attachments ?? []
-      });
-
-      setForkDraft(null);
-      requestNavigationRefresh();
-      selectWorkspace(forkedSession.workspaceId);
-      writeMobileConversationPreviewMode("preview");
-      navigate(buildWorkspaceSessionPath(forkedSession.workspaceId, forkedSession.sessionId));
-      showToast({
-        title: t("conversation.forkMessageSucceeded"),
-        tone: "success"
-      });
-    } catch (error) {
-      if (forkedSession) {
-        upsertNavigationSession(forkedSession);
-        requestNavigationRefresh();
-      }
-
-      throw error;
-    }
-  }
 
   function handleMobileWorkspaceSwitch(nextWorkspaceId: string) {
     selectWorkspace(nextWorkspaceId);
@@ -906,25 +620,11 @@ function LiveConversationPage({
         ) : null}
         <div className="mobile-conversation-stage" {...(mobileMainGestureHandlers ?? {})}>
           <div ref={mobileConversationMainRef} className="mobile-conversation-main">
-            <ConnectionBanner connectionState={connectionState} onReconnect={() => store.reconnect()} />
+            <ConnectionBanner connectionState={connectionState} onReconnect={reconnect} />
             <PermissionRequestList
               requests={permissionRequests}
               replyingRequestId={replyingPermissionRequestId}
-              onReply={async (requestId, payload) => {
-                setReplyingPermissionRequestId(requestId);
-
-                try {
-                  await store.replyPermissionRequest(requestId, payload);
-                } catch (error) {
-                  showToast({
-                    title: t("conversation.permissionRequestReplyFailed"),
-                    description: error instanceof Error ? error.message : undefined,
-                    tone: "error"
-                  });
-                } finally {
-                  setReplyingPermissionRequestId(null);
-                }
-              }}
+              onReply={replyPermissionRequest}
             />
             <div ref={timelineSelectionContainerRef} className="conversation-timeline-shell">
               <MessageTimeline
@@ -936,12 +636,8 @@ function LiveConversationPage({
                 provider={session?.provider ?? null}
                 interruptedSource={runtimeInterruptSource}
                 runtimeThinkingPlaceholder={runtimeThinkingPlaceholder}
-                onLoadOlderMessages={() => {
-                  void store.loadOlderMessages();
-                }}
-                onRetryMessage={(clientRequestId: string) => {
-                  void store.retryMessage(clientRequestId);
-                }}
+                onLoadOlderMessages={loadOlderMessages}
+                onRetryMessage={retryMessage}
                 onForkMessage={(message) => {
                   if (!session) {
                     return;
@@ -974,25 +670,8 @@ function LiveConversationPage({
               deletingQueueItemId={deletingQueueItemId}
               steeringQueueItemId={steeringQueueItemId}
               canSteer={canSteerQueuedMessage}
-              onDelete={async (queueItemId) => {
-                setDeletingQueueItemId(queueItemId);
-
-                try {
-                  await store.deleteQueuedMessage(queueItemId);
-                } finally {
-                  setDeletingQueueItemId(null);
-                }
-              }}
-              onSteer={async (queueItemId) => {
-                setSteeringQueueItemId(queueItemId);
-
-                try {
-                  await store.steerQueuedMessage(queueItemId);
-                  requestNavigationRefresh();
-                } finally {
-                  setSteeringQueueItemId(null);
-                }
-              }}
+              onDelete={deleteQueuedMessage}
+              onSteer={steerQueuedMessage}
             />
             {!mobileToolPanel.isOpen ? (
               <ComposerPanel
@@ -1011,47 +690,9 @@ function LiveConversationPage({
                 canInterrupt={composerCanInterrupt}
                 isSubmitting={sending}
                 isRunning={composerIsRunning}
-                onInterrupt={async () => {
-                  await store.interrupt();
-                  requestNavigationRefresh();
-                }}
-                onSend={async (content, options) => {
-                  setSending(true);
-
-                  try {
-                    await sendForkDraftMessage(content, {
-                      model: options?.model,
-                      reasoningLevel: options?.reasoningLevel,
-                      attachments: options?.attachments,
-                      attachmentMeta: options?.attachmentMeta
-                    });
-                  } finally {
-                    setSending(false);
-                  }
-                }}
-                onQueueSend={async (content, options) => {
-                  setSending(true);
-
-                  try {
-                    if (forkDraft) {
-                      await sendForkDraftMessage(content, {
-                        model: options?.model,
-                        reasoningLevel: options?.reasoningLevel,
-                        attachments: options?.attachments,
-                        attachmentMeta: options?.attachmentMeta
-                      });
-                    } else {
-                      await store.enqueueMessage(content, {
-                        model: options?.model,
-                        reasoningLevel: options?.reasoningLevel,
-                        attachments: options?.attachments,
-                        attachmentMeta: options?.attachmentMeta
-                      });
-                    }
-                  } finally {
-                    setSending(false);
-                  }
-                }}
+                onInterrupt={interrupt}
+                onSend={send}
+                onQueueSend={queue}
               />
             ) : null}
           </div>
@@ -1224,32 +865,6 @@ function LiveConversationPage({
       ) : null}
     </>
   );
-}
-
-function shouldDelayRuntimeErrorToast(
-  provider: ProviderId | null,
-  errorCode: string,
-  errorDetail: string
-): boolean {
-  if (provider !== "opencode") {
-    return false;
-  }
-
-  return (
-    errorCode === "OPENCODE_REQUEST_TIMEOUT"
-    || errorCode === "PROVIDER_RUNTIME_TIMEOUT"
-    || /\bSERVER_TIMEOUT\b/i.test(errorDetail)
-    || /timeout/i.test(errorDetail)
-    || /超时/.test(errorDetail)
-  );
-}
-
-function focusComposerInput(): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT));
 }
 
 function DraftConversationPage({
@@ -1498,7 +1113,10 @@ function DraftConversationPage({
           expandedRootIds={expandedMobilePreviewRootIds}
           workspaceSectionLabel={mobileWorkspaceSummary?.label ?? t("shell.mobileConversationCurrentWorkspaceSection")}
           onCreateSession={() => {
-            startDraftSession(draft.workspaceId, draft.provider);
+            startDraftSession(draft.workspaceId, draft.provider, {
+              providerConfigMode: draft.providerConfigMode ?? "global-default",
+              providerPresetId: draft.providerPresetId ?? null
+            });
           }}
           archiveFolderActionLabel={mobileArchivedSessions.length > 0 ? t("shell.archiveFolderLabel") : undefined}
           onOpenArchiveFolder={
@@ -1580,7 +1198,9 @@ function DraftConversationPage({
                     model: options?.model ?? null,
                     reasoningLevel: options?.reasoningLevel ?? null,
                     permissionMode: getDefaultSessionPermissionMode(),
-                    attachments: options?.attachments ?? []
+                    attachments: options?.attachments ?? [],
+                    providerConfigMode: draft.providerConfigMode ?? "global-default",
+                    providerPresetId: draft.providerPresetId ?? null
                   });
                   logPerfDebug("session_send.start_live.client_response", {
                     draftSessionId: draft.sessionId,
@@ -1693,6 +1313,8 @@ interface DraftConversationContext {
   sessionId: string;
   workspaceId: string;
   provider: ProviderId;
+  providerConfigMode?: "global-default" | "cc-switch-preset";
+  providerPresetId?: string | null;
 }
 
 function parseDraftContext(
@@ -1707,15 +1329,20 @@ function parseDraftContext(
 
   const workspaceId = routeWorkspaceId ?? searchParams.get("workspaceId")?.trim() ?? null;
   const provider = searchParams.get("provider")?.trim() ?? fallbackProvider ?? null;
+  const providerConfigMode = searchParams.get("providerConfigMode")?.trim() ?? "global-default";
+  const providerPresetId = searchParams.get("providerPresetId")?.trim() ?? null;
 
   if (!workspaceId || !isDraftProviderSupported(provider)) {
-  return null;
-}
+    return null;
+  }
 
   return {
     sessionId,
     workspaceId,
-    provider: provider as ProviderId
+    provider: provider as ProviderId,
+    providerConfigMode:
+      providerConfigMode === "cc-switch-preset" ? "cc-switch-preset" : "global-default",
+    providerPresetId
   };
 }
 
@@ -1728,6 +1355,8 @@ function createDraftSessionSummary(draft: DraftConversationContext): SessionSumm
     provider: draft.provider,
     providerSessionId: `draft://${draft.sessionId}`,
     rawStoreRef: `draft://${draft.sessionId}`,
+    providerConfigMode: draft.providerConfigMode ?? "global-default",
+    providerPresetId: draft.providerPresetId ?? null,
     parentSessionId: null,
     isSubagent: false,
     subagentLabel: null,
@@ -3146,142 +2775,6 @@ function ParallelForkIcon() {
   );
 }
 
-function useStableRuntimeThinkingPlaceholder(input: {
-  sessionId: string;
-  provider: ProviderId | null;
-  runningState: string | null;
-  activityState: string | null | undefined;
-  runtimeHasActiveRun: boolean | null;
-  messages: SessionMessageViewModel[];
-}): boolean {
-  const visibility = resolveRuntimeThinkingPlaceholderVisibility(input);
-  const [visible, setVisible] = useState(visibility === "show");
-  const hideTimerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (hideTimerRef.current !== null) {
-      window.clearTimeout(hideTimerRef.current);
-      hideTimerRef.current = null;
-    }
-
-    setVisible(visibility === "show");
-  }, [input.sessionId]);
-
-  useEffect(() => {
-    if (visibility === "show") {
-      if (hideTimerRef.current !== null) {
-        window.clearTimeout(hideTimerRef.current);
-        hideTimerRef.current = null;
-      }
-
-      setVisible(true);
-      return;
-    }
-
-    if (visibility === "hide_immediately") {
-      if (hideTimerRef.current !== null) {
-        window.clearTimeout(hideTimerRef.current);
-        hideTimerRef.current = null;
-      }
-
-      setVisible(false);
-      return;
-    }
-
-    if (!visible || hideTimerRef.current !== null) {
-      return;
-    }
-
-    // 这里专门吃掉 runtime 边界抖动，避免底部占位在一两帧内反复闪现。
-    hideTimerRef.current = window.setTimeout(() => {
-      hideTimerRef.current = null;
-      setVisible(false);
-    }, RUNTIME_THINKING_PLACEHOLDER_HIDE_DELAY_MS);
-  }, [visibility, visible]);
-
-  useEffect(() => {
-    return () => {
-      if (hideTimerRef.current !== null) {
-        window.clearTimeout(hideTimerRef.current);
-      }
-    };
-  }, []);
-
-  return visible;
-}
-
-function resolveRuntimeThinkingPlaceholderVisibility(
-  input: {
-    provider: ProviderId | null;
-    runningState: string | null;
-    activityState: string | null | undefined;
-    runtimeHasActiveRun: boolean | null;
-    messages: SessionMessageViewModel[];
-  }
-): "show" | "hide_immediately" | "hide_deferred" {
-  const { provider, runningState, activityState, runtimeHasActiveRun, messages } = input;
-
-  if (provider !== "codex") {
-    return "hide_immediately";
-  }
-
-  const latestUserIndex = findLatestRuntimePlaceholderUserIndex(messages);
-
-  if (latestUserIndex < 0) {
-    return "hide_immediately";
-  }
-
-  if (hasAssistantReplyAfterUser(messages, latestUserIndex)) {
-    return "hide_immediately";
-  }
-
-  if (hasActiveRuntimeIndicator(runningState, activityState, runtimeHasActiveRun)) {
-    return "show";
-  }
-
-  return "hide_deferred";
-}
-
-function hasActiveRuntimeIndicator(
-  runningState: string | null,
-  activityState: string | null | undefined,
-  runtimeHasActiveRun: boolean | null
-): boolean {
-  return (
-    runtimeHasActiveRun === true
-    || activityState === "running"
-    || runningState === "starting"
-    || runningState === "running"
-    || runningState === "reconnecting"
-  );
-}
-
-function hasAssistantReplyAfterUser(
-  messages: SessionMessageViewModel[],
-  latestUserIndex: number
-): boolean {
-  return messages.slice(latestUserIndex + 1).some((message) => {
-    return message.role === "assistant" && (message.kind === "text" || message.kind === "thinking");
-  });
-}
-
-function findLatestRuntimePlaceholderUserIndex(
-  messages: SessionMessageViewModel[]
-): number {
-  let latestUserIndex = -1;
-
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-
-    if (message.role === "user" && message.kind === "text") {
-      latestUserIndex = index;
-      break;
-    }
-  }
-
-  return latestUserIndex;
-}
-
 function isDraftSessionId(sessionId: string): boolean {
   return sessionId.startsWith("draft-");
 }
@@ -3333,34 +2826,4 @@ function createClientRequestId(): string {
   }
 
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-function sanitizeForkTimelineMessages(
-  session: SessionSummaryDto | null,
-  messages: SessionMessageViewModel[]
-): SessionMessageViewModel[] {
-  if (
-    !session
-    || session.forkSourceType !== "message"
-    || typeof session.inheritedPrefixMessageCount !== "number"
-    || session.inheritedPrefixMessageCount < 0
-  ) {
-    return messages;
-  }
-
-  const childCreatedAt = session.createdAt?.trim() || "";
-
-  if (childCreatedAt.length === 0) {
-    return messages;
-  }
-
-  const inheritedBoundary = Math.max(0, session.inheritedPrefixMessageCount);
-
-  return messages.filter((message) => {
-    if (message.sequence <= inheritedBoundary) {
-      return true;
-    }
-
-    return message.timestamp >= childCreatedAt;
-  });
 }

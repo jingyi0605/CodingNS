@@ -3,7 +3,6 @@ import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 
 import { ModalActions, ModalSection } from "../../../components/ModalAtoms";
-import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import {
   openFilesExternalWindow,
   openGitExternalWindow,
@@ -26,20 +25,14 @@ import {
   flattenNavigationSessions
 } from "../../workbench/utils/workbench-navigation";
 import {
-  type AttachmentPayload,
   deleteSession,
-  type ForkSourceMessageSnapshotDto,
-  forkSession,
   getParallelGroupDetail,
   promoteSessionIsolatedWorkspace,
-  sendLiveMessage,
-  type HistoryMessageDto,
   type ParallelSessionGroupDetailDto,
-  type ProviderId,
   type SessionIsolatedWorkspaceSummaryDto,
   type SessionSummaryDto
 } from "../api/conversation-api";
-import { getProviderDisplayName, shouldSupportRunSteering } from "../capability/provider-ui";
+import { getProviderDisplayName } from "../capability/provider-ui";
 import { ParallelSessionCreateModal } from "./ParallelSessionCreateModal";
 import { ComposerPanel } from "./ComposerPanel";
 import { ConnectionBanner } from "./ConnectionBanner";
@@ -49,9 +42,10 @@ import { MessageTimeline } from "./MessageTimeline";
 import { PermissionRequestList } from "./PermissionRequestList";
 import { QueuedMessageList } from "./QueuedMessageList";
 import { useWorkbenchShell } from "./WorkbenchLayout";
-import { SessionRuntimeStore, useSessionRuntimeStore } from "../runtime/session-runtime-store";
-import { isSessionRunning } from "../session-activity-display";
-import { useSessionSendRecovery } from "../session-send-recovery";
+import {
+  focusComposerInput,
+  useLiveSessionController
+} from "../runtime/use-live-session-controller";
 import { TerminalManagerPanel } from "../../workbench/components/TerminalManagerPanel";
 import { TerminalPage } from "../../terminal/pages/TerminalPage";
 import {
@@ -123,16 +117,6 @@ interface ParallelConversationMemberPaneProps {
   readonly promotingWorkspaceId: string | null;
   readonly onRemoveSession: (sessionId: string) => void | Promise<void>;
   readonly removingSessionId: string | null;
-}
-
-interface ForkComposerDraft {
-  sourceMessageId: string;
-  sourceMessageSnapshot: ForkSourceMessageSnapshotDto;
-  content: string;
-  sourceProvider: ProviderId;
-  workspaceId: string;
-  targetProvider: ProviderId;
-  targetModel: string | null;
 }
 
 function clampParallelToolsPanelFrame(
@@ -723,17 +707,11 @@ function ParallelConversationMemberPane({
     navigationGroups,
     requestNavigationRefresh,
     selectWorkspace,
+    setSessionWorkspace,
     upsertNavigationSession,
     markNavigationSessionSeen
   } = useWorkbenchShell();
   const sessionId = entry.session.sessionId;
-  const storeRef = useRef<SessionRuntimeStore | null>(null);
-  const currentSessionIdRef = useRef<string | null>(null);
-  const [sending, setSending] = useState(false);
-  const [replyingPermissionRequestId, setReplyingPermissionRequestId] = useState<string | null>(null);
-  const [deletingQueueItemId, setDeletingQueueItemId] = useState<string | null>(null);
-  const [steeringQueueItemId, setSteeringQueueItemId] = useState<string | null>(null);
-  const [forkDraft, setForkDraft] = useState<ForkComposerDraft | null>(null);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [activeToolPanel, setActiveToolPanel] = useState<"files" | "git" | "processes" | "terminals">("files");
   const [toolsPinned, setToolsPinned] = useState(false);
@@ -748,56 +726,63 @@ function ParallelConversationMemberPane({
   const [paneColorOverride, setPaneColorOverride] = useState<string | null>(() =>
     readParallelPaneColorOverride(sessionId)
   );
-
-  if (!storeRef.current || currentSessionIdRef.current !== sessionId) {
-    storeRef.current?.destroy();
-    storeRef.current = new SessionRuntimeStore(sessionId, {
-      initialSession: entry.session,
-      bootstrapMessages: [] as HistoryMessageDto[],
-      onSeen: (seenSessionId, seenAt) => {
-        markNavigationSessionSeen(seenSessionId, seenAt);
-      }
-    });
-    currentSessionIdRef.current = sessionId;
-  }
-
-  const store = storeRef.current;
-  const session = useSessionRuntimeStore(store, (state) => state.session);
-  const capabilities = useSessionRuntimeStore(store, (state) => state.capabilities);
-  const runtimeHasActiveRun = useSessionRuntimeStore(store, (state) => state.runtimeHasActiveRun);
-  const runtimeCanInterrupt = useSessionRuntimeStore(store, (state) => state.runtimeCanInterrupt);
-  const messages = useSessionRuntimeStore(store, (state) => state.messages);
-  const permissionRequests = useSessionRuntimeStore(store, (state) => state.permissionRequests);
-  const queuedMessages = useSessionRuntimeStore(store, (state) => state.queuedMessages);
-  const contextUsage = useSessionRuntimeStore(store, (state) => state.contextUsage);
-  const historyState = useSessionRuntimeStore(store, (state) => state.historyState);
-  const runtimeInterruptSource = useSessionRuntimeStore(store, (state) => state.interruptSource);
-  const loadingOlderMessages = useSessionRuntimeStore(store, (state) => state.loadingOlderMessages);
-  const hasOlderMessages = useSessionRuntimeStore(store, (state) => state.hasOlderMessages);
-  const connectionState = useSessionRuntimeStore(store, (state) => state.connectionState);
-  const canSteerQueuedMessage =
-    shouldSupportRunSteering(capabilities) &&
-    session?.provider === capabilities?.provider;
-  const hasPendingQueuedMessages = queuedMessages.some(
-    (item) => item.status === "queued" || item.status === "dispatching"
-  );
-  const optimisticInterruptibleSendInFlight = sending && !forkDraft;
-  const paneRuntimeActive = isSessionRunning(session);
-  const composerHasActiveRun =
-    paneRuntimeActive || runtimeHasActiveRun === true || optimisticInterruptibleSendInFlight
-      ? true
-      : runtimeHasActiveRun;
-  const composerCanInterrupt =
-    runtimeCanInterrupt === true || optimisticInterruptibleSendInFlight
-      ? true
-      : runtimeCanInterrupt;
-  const composerIsRunning = paneRuntimeActive || optimisticInterruptibleSendInFlight;
-  useSessionSendRecovery({
-    sending,
-    setSending,
+  const {
     session,
-    runtimeHasActiveRun,
-    runtimeCanInterrupt
+    capabilities,
+    messages,
+    timelineMessages,
+    permissionRequests,
+    queuedMessages,
+    contextUsage,
+    historyState,
+    runtimeInterruptSource,
+    loadingOlderMessages,
+    hasOlderMessages,
+    connectionState,
+    sending,
+    replyingPermissionRequestId,
+    deletingQueueItemId,
+    steeringQueueItemId,
+    forkDraft,
+    setForkDraft,
+    composerHasActiveRun,
+    composerCanInterrupt,
+    composerIsRunning,
+    canSteerQueuedMessage,
+    hasPendingQueuedMessages,
+    runtimeThinkingPlaceholder,
+    reconnect,
+    loadOlderMessages,
+    retryMessage,
+    send,
+    queue,
+    interrupt,
+    replyPermissionRequest,
+    deleteQueuedMessage,
+    steerQueuedMessage
+  } = useLiveSessionController({
+    sessionId,
+    externalSession: entry.session,
+    onSeen: (seenSessionId, seenAt) => {
+      markNavigationSessionSeen(seenSessionId, seenAt);
+    },
+    onRequestNavigationRefresh: requestNavigationRefresh,
+    onUpsertNavigationSession: upsertNavigationSession,
+    onNavigateToSession: (workspaceId, targetSessionId) => {
+      selectWorkspace(workspaceId);
+      navigate(buildWorkspaceSessionPath(workspaceId, targetSessionId));
+    },
+    onBindSessionWorkspace: setSessionWorkspace,
+    onResolveMissingSession: () => {
+      void requestNavigationRefresh();
+    },
+    permissionRequestNotificationMode: "current_only",
+    permissionToastIdPrefix: "parallel-permission-request",
+    isCurrent,
+    enableRuntimeErrorHandling: true,
+    enableCompletionHaptics: false,
+    enableThinkingPlaceholder: true,
+    enableForkTimelineSanitizer: true
   });
   const parallelGroupStyle = createParallelGroupStyle(session?.parallelGroup ?? entry.session.parallelGroup);
   const parallelPaneStyle = createParallelPaneStyle({
@@ -849,19 +834,6 @@ function ParallelConversationMemberPane({
           height: `${toolsFrame.height}px`
         }
       : undefined;
-
-  useEffect(() => {
-    store.applyNavigationSession(entry.session);
-  }, [entry.session, store]);
-
-  useEffect(() => {
-    void store.initialize();
-
-    return () => {
-      storeRef.current?.destroy();
-      storeRef.current = null;
-    };
-  }, [store]);
 
   useEffect(() => {
     setPaneColorOverride(readParallelPaneColorOverride(sessionId));
@@ -1086,62 +1058,6 @@ function ParallelConversationMemberPane({
 
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerUp);
-  }
-
-  async function sendForkDraftMessage(
-    content: string,
-    options?: {
-      model?: string;
-      reasoningLevel?: string;
-      attachments?: AttachmentPayload[];
-    }
-  ) {
-    const activeForkDraft = forkDraft;
-
-    if (!activeForkDraft) {
-      await store.sendMessage(content, {
-        model: options?.model,
-        reasoningLevel: options?.reasoningLevel,
-        attachments: options?.attachments
-      });
-      requestNavigationRefresh();
-      return;
-    }
-
-    let forkedSession: SessionSummaryDto | null = null;
-
-    try {
-      forkedSession = await forkSession(sessionId, {
-        sourceType: "message",
-        sourceMessageId: activeForkDraft.sourceMessageId,
-        sourceMessageSnapshot: activeForkDraft.sourceMessageSnapshot,
-        strategy: "auto",
-        targetProvider: activeForkDraft.targetProvider
-      });
-      upsertNavigationSession(forkedSession);
-
-      await sendLiveMessage(forkedSession.sessionId, {
-        content,
-        clientRequestId:
-          globalThis.crypto?.randomUUID?.() ?? `fork-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        model: activeForkDraft.targetModel,
-        reasoningLevel: options?.reasoningLevel ?? null,
-        permissionMode: getDefaultSessionPermissionMode(),
-        attachments: options?.attachments ?? []
-      });
-
-      setForkDraft(null);
-      requestNavigationRefresh();
-      selectWorkspace(forkedSession.workspaceId);
-      navigate(buildWorkspaceSessionPath(forkedSession.workspaceId, forkedSession.sessionId));
-    } catch (error) {
-      if (forkedSession) {
-        upsertNavigationSession(forkedSession);
-        requestNavigationRefresh();
-      }
-
-      throw error;
-    }
   }
 
   const toolsPanelOverlay =
@@ -1481,43 +1397,25 @@ function ParallelConversationMemberPane({
         </header>
 
       <div className="parallel-conversation-pane-body">
-        <ConnectionBanner connectionState={connectionState} onReconnect={() => store.reconnect()} />
+        <ConnectionBanner connectionState={connectionState} onReconnect={reconnect} />
         <PermissionRequestList
           requests={permissionRequests}
           replyingRequestId={replyingPermissionRequestId}
-          onReply={async (requestId, payload) => {
-            setReplyingPermissionRequestId(requestId);
-
-            try {
-              await store.replyPermissionRequest(requestId, payload);
-            } catch (error) {
-              showToast({
-                title: t("conversation.permissionRequestReplyFailed"),
-                description: error instanceof Error ? error.message : undefined,
-                tone: "error"
-              });
-            } finally {
-              setReplyingPermissionRequestId(null);
-            }
-          }}
+          onReply={replyPermissionRequest}
         />
         <div className="parallel-conversation-pane-timeline">
           <MessageTimeline
             sessionId={sessionId}
-            messages={messages}
+            messages={timelineMessages}
             historyState={historyState}
             loadingOlderMessages={loadingOlderMessages}
             hasOlderMessages={hasOlderMessages}
             provider={session?.provider ?? entry.session.provider}
             interruptedSource={runtimeInterruptSource}
-            runtimeThinkingPlaceholder={null}
+            runtimeThinkingPlaceholder={runtimeThinkingPlaceholder}
             followTailUpdates
-            onLoadOlderMessages={() => {
-              void store.loadOlderMessages();
-            }}
-            onRetryMessage={(clientRequestId) => {
-              void store.retryMessage(clientRequestId);
-            }}
+            onLoadOlderMessages={loadOlderMessages}
+            onRetryMessage={retryMessage}
             onForkMessage={(message) => {
               const currentSession = session ?? entry.session;
 
@@ -1528,12 +1426,13 @@ function ParallelConversationMemberPane({
                   kind: message.kind ?? (message.role === "tool" ? "tool_result" : "text"),
                   content: message.content
                 },
-                content: message.content,
-                sourceProvider: currentSession.provider,
-                workspaceId: currentSession.workspaceId,
-                targetProvider: currentSession.provider,
-                targetModel: null
-              });
+                  content: message.content,
+                  sourceProvider: currentSession.provider,
+                  workspaceId: currentSession.workspaceId,
+                  targetProvider: currentSession.provider,
+                  targetModel: null
+                });
+              focusComposerInput();
             }}
           />
         </div>
@@ -1542,25 +1441,8 @@ function ParallelConversationMemberPane({
           deletingQueueItemId={deletingQueueItemId}
           steeringQueueItemId={steeringQueueItemId}
           canSteer={canSteerQueuedMessage}
-          onDelete={async (queueItemId) => {
-            setDeletingQueueItemId(queueItemId);
-
-            try {
-              await store.deleteQueuedMessage(queueItemId);
-            } finally {
-              setDeletingQueueItemId(null);
-            }
-          }}
-          onSteer={async (queueItemId) => {
-            setSteeringQueueItemId(queueItemId);
-
-            try {
-              await store.steerQueuedMessage(queueItemId);
-              requestNavigationRefresh();
-            } finally {
-              setSteeringQueueItemId(null);
-            }
-          }}
+          onDelete={deleteQueuedMessage}
+          onSteer={steerQueuedMessage}
         />
         <ComposerPanel
           capabilities={capabilities}
@@ -1577,44 +1459,9 @@ function ParallelConversationMemberPane({
           canInterrupt={composerCanInterrupt}
           isSubmitting={sending}
           isRunning={composerIsRunning}
-          onInterrupt={async () => {
-            await store.interrupt();
-            requestNavigationRefresh();
-          }}
-          onSend={async (content, options) => {
-            setSending(true);
-
-            try {
-              await sendForkDraftMessage(content, {
-                model: options?.model,
-                reasoningLevel: options?.reasoningLevel,
-                attachments: options?.attachments
-              });
-            } finally {
-              setSending(false);
-            }
-          }}
-          onQueueSend={async (content, options) => {
-            setSending(true);
-
-            try {
-              if (forkDraft) {
-                await sendForkDraftMessage(content, {
-                  model: options?.model,
-                  reasoningLevel: options?.reasoningLevel,
-                  attachments: options?.attachments
-                });
-              } else {
-                await store.enqueueMessage(content, {
-                  model: options?.model,
-                  reasoningLevel: options?.reasoningLevel,
-                  attachments: options?.attachments
-                });
-              }
-            } finally {
-              setSending(false);
-            }
-          }}
+          onInterrupt={interrupt}
+          onSend={send}
+          onQueueSend={queue}
         />
       </div>
       </article>
