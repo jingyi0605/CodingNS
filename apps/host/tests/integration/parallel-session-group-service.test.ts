@@ -32,6 +32,7 @@ describe("ParallelSessionGroupService", () => {
     const result = await harness.service.createFromWorkspace({
       workspaceId: "workspace-1",
       sharedPrompt: "同一个问题，分别给三种方向",
+      permissionMode: "bypassPermissions",
       members: [
         { provider: "codex", model: "gpt-5.1" },
         { provider: "claude-code", model: "sonnet-4" }
@@ -49,6 +50,9 @@ describe("ParallelSessionGroupService", () => {
       "gpt-5.1",
       "sonnet-4"
     ]);
+    expect(
+      harness.startLiveSessionMock.mock.calls.map(([input]) => input.runtimeOptions?.permissionMode)
+    ).toEqual(["bypassPermissions", "bypassPermissions"]);
     expect(
       harness.memberRepository.listByGroupId(result.group.id).map((item) => item.sessionId)
     ).toEqual(["session-1", "session-2"]);
@@ -85,6 +89,7 @@ describe("ParallelSessionGroupService", () => {
       sourceSessionId: "source-session",
       sourceMessageId: "msg-1",
       sharedPrompt: "在分叉后继续推进这个问题",
+      permissionMode: "acceptEdits",
       members: [
         { provider: "codex", model: "gpt-5.1" },
         { provider: "claude-code", model: "sonnet-4" },
@@ -110,6 +115,9 @@ describe("ParallelSessionGroupService", () => {
       "gpt-5.1",
       "open-1"
     ]);
+    expect(
+      harness.sendLiveMessageMock.mock.calls.map(([input]) => input.runtimeOptions?.permissionMode)
+    ).toEqual(["acceptEdits", "acceptEdits"]);
     expect(
       harness.memberRepository.listByGroupId(result.group.id).map((item) => item.sessionId)
     ).toEqual(["fork-1", "fork-2"]);
@@ -390,7 +398,7 @@ function createHarness() {
   const startLiveSessionMock = vi.fn(async (input: {
     workspaceId: string;
     provider: string;
-    runtimeOptions?: { model?: string | null };
+    runtimeOptions?: { model?: string | null; permissionMode?: string | null };
   }) => {
     sessionSequence += 1;
     const session = buildSession({

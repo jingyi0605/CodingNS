@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useState, type CSSProperties } from "react";
 
 import { DesktopModal } from "../../../components/DesktopModal";
 import { ModalActions, ModalField, ModalSection } from "../../../components/ModalAtoms";
+import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import { t } from "../../../shared/i18n";
 import {
   appendParallelGroupMembers,
@@ -369,6 +370,7 @@ export function ParallelSessionCreateModal({
     setMemberErrorsByOrdinal({});
 
     try {
+      const permissionMode = getDefaultSessionPermissionMode();
       const memberPayload = members.map((member) => ({
         provider: member.provider,
         model: member.model.trim() || null,
@@ -378,15 +380,18 @@ export function ParallelSessionCreateModal({
       const detail =
         activeSource.kind === "group"
           ? await appendParallelGroupMembers(activeSource.groupId, {
+              permissionMode,
               members: memberPayload
             })
           : activeSource.kind === "session"
             ? await createParallelGroupFromSession(activeSource.sessionId, {
                 sharedPrompt: normalizedSharedPrompt,
+                permissionMode,
                 members: memberPayload
               })
             : await createParallelGroupFromWorkspace(activeSource.workspaceId, {
                 sharedPrompt: normalizedSharedPrompt,
+                permissionMode,
                 members: memberPayload
               });
 

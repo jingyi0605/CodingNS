@@ -33,6 +33,7 @@ export type SessionActivityConfidence = "authoritative" | "strong" | "weak";
 export type SessionInterruptSource = "user" | "runtime";
 export type HistoryDirection = "forward" | "backward";
 export type SessionKind = "default" | "annotation";
+export type SessionProviderConfigMode = "global-default" | "cc-switch-preset";
 export type ForkSourceType = "session" | "message";
 export type ForkMethod =
   | "native_session_fork"
@@ -431,10 +432,12 @@ export interface WorkspaceCreatedDirectoryDto {
 export interface CreateParallelSessionGroupPayload {
   sourceMessageId?: string | null;
   sharedPrompt: string;
+  permissionMode?: string | null;
   members: ParallelSessionMemberConfigDto[];
 }
 
 export interface AppendParallelGroupMembersPayload {
+  permissionMode?: string | null;
   members: ParallelSessionMemberConfigDto[];
 }
 
@@ -477,6 +480,8 @@ export interface SessionSummaryDto {
   provider: ProviderId;
   providerSessionId: string;
   rawStoreRef: string;
+  providerConfigMode?: SessionProviderConfigMode;
+  providerPresetId?: string | null;
   parentSessionId?: string | null;
   sessionKind?: SessionKind;
   annotationSourceMessageId?: string | null;
@@ -864,6 +869,8 @@ export interface StartLivePayload {
   sessionKind?: SessionKind;
   annotationSourceMessageId?: string | null;
   annotationSourceText?: string | null;
+  providerConfigMode?: SessionProviderConfigMode;
+  providerPresetId?: string | null;
 }
 
 export interface SendLiveMessagePayload {

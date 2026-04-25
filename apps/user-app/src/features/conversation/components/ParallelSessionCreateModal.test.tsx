@@ -10,6 +10,11 @@ const mockCreateParallelGroupFromWorkspace = vi.fn();
 const mockCreateParallelGroupFromSession = vi.fn();
 const mockAppendParallelGroupMembers = vi.fn();
 const mockListProviderCapabilities = vi.fn();
+const mockGetDefaultSessionPermissionMode = vi.fn(() => "bypassPermissions");
+
+vi.mock("../../../preferences/default-session-permission-mode", () => ({
+  getDefaultSessionPermissionMode: () => mockGetDefaultSessionPermissionMode()
+}));
 
 vi.mock("../api/conversation-api", async () => {
   const actual = await vi.importActual<typeof import("../api/conversation-api")>(
@@ -68,6 +73,26 @@ describe("ParallelSessionCreateModal", () => {
 
     expect(screen.getByText(t("shell.parallelCreatePromptRequired"))).toBeInTheDocument();
     expect(mockCreateParallelGroupFromWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("提交并行创建时会把全局默认权限模式一起带上", async () => {
+    const user = userEvent.setup();
+    mockCreateParallelGroupFromWorkspace.mockResolvedValue(createSuccessDetail());
+
+    renderModal();
+
+    await user.type(
+      screen.getByLabelText(t("shell.parallelCreateSharedPromptLabel")),
+      "同一个需求走两条实现线"
+    );
+    await user.click(screen.getByRole("button", { name: t("shell.parallelCreateSubmit") }));
+
+    expect(mockCreateParallelGroupFromWorkspace).toHaveBeenCalledWith(
+      "workspace-1",
+      expect.objectContaining({
+        permissionMode: "bypassPermissions"
+      })
+    );
   });
 
   it("成员部分失败时会把错误挂到对应成员卡片，并允许继续查看已创建分屏", async () => {
@@ -304,5 +329,27 @@ function createPartialDetail(): ParallelSessionGroupDetailDto {
         detail: "fork failed"
       }
     ]
+  };
+}
+
+function createSuccessDetail(): ParallelSessionGroupDetailDto {
+  return {
+    group: {
+      id: "parallel-group-1",
+      workspaceId: "workspace-1",
+      sourceType: "new",
+      sourceSessionId: null,
+      sourceMessageId: null,
+      sharedPrompt: "同一个需求走两条实现线",
+      requestedCount: 2,
+      anchorSessionId: "session-1",
+      status: "active",
+      createdByUserId: "user-1",
+      createdAt: "2026-04-23T12:00:00.000Z",
+      updatedAt: "2026-04-23T12:00:00.000Z",
+      deletedAt: null
+    },
+    members: [],
+    memberFailures: []
   };
 }

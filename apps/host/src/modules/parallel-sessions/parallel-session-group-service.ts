@@ -31,6 +31,7 @@ export interface CreateParallelGroupFromSessionInput {
   sourceMessageId?: string | null;
   sharedPrompt: string;
   members: ParallelSessionMemberInput[];
+  permissionMode?: string | null;
   userId: string;
 }
 
@@ -38,12 +39,14 @@ export interface CreateParallelGroupFromWorkspaceInput {
   workspaceId: string;
   sharedPrompt: string;
   members: ParallelSessionMemberInput[];
+  permissionMode?: string | null;
   userId: string;
 }
 
 export interface AppendParallelGroupMembersInput {
   groupId: string;
   members: ParallelSessionMemberInput[];
+  permissionMode?: string | null;
   userId: string;
 }
 
@@ -145,6 +148,7 @@ export class ParallelSessionGroupService {
                 model: member.model ?? null,
                 sharedPrompt,
                 memberPrompt: member.memberPrompt ?? null,
+                permissionMode: input.permissionMode ?? null,
                 targetWorkspaceId: workspaceId,
                 userId: input.userId
               });
@@ -165,6 +169,7 @@ export class ParallelSessionGroupService {
             model: member.model ?? null,
             sharedPrompt,
             memberPrompt: member.memberPrompt ?? null,
+            permissionMode: input.permissionMode ?? null,
             targetWorkspaceId: null,
             userId: input.userId
           }),
@@ -217,6 +222,7 @@ export class ParallelSessionGroupService {
                 model: member.model ?? null,
                 sharedPrompt,
                 memberPrompt: member.memberPrompt ?? null,
+                permissionMode: input.permissionMode ?? null,
                 userId: input.userId
               });
             }
@@ -235,6 +241,7 @@ export class ParallelSessionGroupService {
             model: member.model ?? null,
             sharedPrompt,
             memberPrompt: member.memberPrompt ?? null,
+            permissionMode: input.permissionMode ?? null,
             userId: input.userId
           }),
           sessionIsolatedWorkspace: null
@@ -310,6 +317,7 @@ export class ParallelSessionGroupService {
                   model: member.model ?? null,
                   sharedPrompt,
                   memberPrompt: member.memberPrompt ?? null,
+                  permissionMode: input.permissionMode ?? null,
                   targetWorkspaceId: workspaceId,
                   userId: input.userId
                 });
@@ -330,6 +338,7 @@ export class ParallelSessionGroupService {
               model: member.model ?? null,
               sharedPrompt,
               memberPrompt: member.memberPrompt ?? null,
+              permissionMode: input.permissionMode ?? null,
               targetWorkspaceId: null,
               userId: input.userId
             }),
@@ -348,6 +357,7 @@ export class ParallelSessionGroupService {
                 model: member.model ?? null,
                 sharedPrompt,
                 memberPrompt: member.memberPrompt ?? null,
+                permissionMode: input.permissionMode ?? null,
                 userId: input.userId
               });
             }
@@ -366,6 +376,7 @@ export class ParallelSessionGroupService {
             model: member.model ?? null,
             sharedPrompt,
             memberPrompt: member.memberPrompt ?? null,
+            permissionMode: input.permissionMode ?? null,
             userId: input.userId
           }),
           sessionIsolatedWorkspace: null
@@ -645,6 +656,7 @@ export class ParallelSessionGroupService {
     model: string | null;
     sharedPrompt: string;
     memberPrompt: string | null;
+    permissionMode: string | null;
     targetWorkspaceId: string | null;
     userId: string;
   }): Promise<SessionListItem> {
@@ -668,7 +680,8 @@ export class ParallelSessionGroupService {
         content: buildComposedPrompt(input.sharedPrompt, input.memberPrompt),
         clientRequestId: null,
         runtimeOptions: {
-          model: input.model
+          model: input.model,
+          permissionMode: input.permissionMode
         }
       });
 
@@ -690,6 +703,7 @@ export class ParallelSessionGroupService {
     model: string | null;
     sharedPrompt: string;
     memberPrompt: string | null;
+    permissionMode: string | null;
     userId: string;
   }): Promise<SessionListItem> {
     const startedSession = await this.sessionLiveRuntimeService.startLiveSession({
@@ -703,7 +717,8 @@ export class ParallelSessionGroupService {
       annotationSourceMessageId: null,
       annotationSourceText: null,
       runtimeOptions: {
-        model: input.model
+        model: input.model,
+        permissionMode: input.permissionMode
       }
     });
 

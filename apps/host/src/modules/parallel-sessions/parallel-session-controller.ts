@@ -33,6 +33,7 @@ interface ParallelMemberBody {
 interface CreateParallelGroupBody {
   sourceMessageId?: string | null;
   sharedPrompt?: string;
+  permissionMode?: string | null;
   members?: ParallelMemberBody[];
 }
 
@@ -64,6 +65,7 @@ export class ParallelSessionController {
       sourceSessionId: request.params.sessionId,
       sourceMessageId: request.body.sourceMessageId?.trim() || null,
       sharedPrompt: request.body.sharedPrompt ?? "",
+      permissionMode: request.body.permissionMode?.trim() || null,
       members: normalizeMembers(request.body.members),
       userId: requireUserId(request)
     });
@@ -78,6 +80,7 @@ export class ParallelSessionController {
     const result = await this.parallelSessionGroupService.createFromWorkspace({
       workspaceId: request.params.workspaceId,
       sharedPrompt: request.body.sharedPrompt ?? "",
+      permissionMode: request.body.permissionMode?.trim() || null,
       members: normalizeMembers(request.body.members),
       userId: requireUserId(request)
     });
@@ -91,6 +94,7 @@ export class ParallelSessionController {
   ): Promise<void> => {
     const result = await this.parallelSessionGroupService.appendMembers({
       groupId: request.params.groupId,
+      permissionMode: request.body.permissionMode?.trim() || null,
       members: normalizeMembers(request.body.members),
       userId: requireUserId(request)
     });
