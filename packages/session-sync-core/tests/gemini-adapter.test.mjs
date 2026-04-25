@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { GeminiAdapter } from "../dist/index.js";
+import { messageIdFromRawRef } from "../dist/providers/utils.js";
 
 test("GeminiAdapter 会合并 CLI 与本地 chats 发现结果，并按工作区过滤", async () => {
   const rootDir = mkdtempSync(join(tmpdir(), "codingns-gemini-discovery-"));
@@ -544,6 +545,22 @@ test("GeminiAdapter 会把当前 Gemini schema 的 thoughts 和 toolCalls 归一
     assert.equal(page.messages[3]?.toolCall?.output, "Successfully created tmp/demo.md");
     assert.equal(page.messages[3]?.timestamp, "2026-04-08T12:52:36.316Z");
     assert.equal(page.messages[4]?.content, "文件已经写好了。");
+    assert.equal(
+      page.messages[0]?.messageId,
+      messageIdFromRawRef("gemini://session/session-current-schema/message/user-1")
+    );
+    assert.equal(
+      page.messages[2]?.messageId,
+      messageIdFromRawRef("gemini://session/session-current-schema/tool/write-file-1/call")
+    );
+    assert.equal(
+      page.messages[3]?.messageId,
+      messageIdFromRawRef("gemini://session/session-current-schema/tool/write-file-1/result")
+    );
+    assert.equal(
+      page.messages[4]?.messageId,
+      messageIdFromRawRef("gemini://session/session-current-schema/message/assistant-1")
+    );
   } finally {
     rmSync(rootDir, { recursive: true, force: true });
   }
@@ -636,6 +653,14 @@ test("GeminiAdapter 能读取当前真实 Gemini jsonl chats，并发现标题�
         ["assistant", "thinking", "Assessing the Prompt\n\n先理解要求，再直接回复。"],
         ["assistant", "text", "OK"]
       ]
+    );
+    assert.equal(
+      page.messages[0]?.messageId,
+      messageIdFromRawRef("gemini://session/7f75c9df-c657-4197-8cf4-48c97d5fbbcd/message/user-1")
+    );
+    assert.equal(
+      page.messages[2]?.messageId,
+      messageIdFromRawRef("gemini://session/7f75c9df-c657-4197-8cf4-48c97d5fbbcd/message/assistant-1")
     );
   } finally {
     rmSync(rootDir, { recursive: true, force: true });

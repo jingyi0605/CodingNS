@@ -104,6 +104,11 @@ interface GeminiParsedChatSource {
   record: Record<string, unknown>;
 }
 
+interface GeminiMessageIdentityState {
+  userTextIndex: number;
+  assistantTextIndex: number;
+}
+
 export class GeminiAdapter implements ProviderAdapter {
   readonly providerId: ProviderId = "gemini";
   private readonly parsedChatCache = new Map<string, GeminiParsedChatCacheEntry>();
@@ -1226,6 +1231,10 @@ function normalizeMessageNodes(input: {
 }): NormalizedMessage[] {
   const messages: NormalizedMessage[] = [];
   let sequence = 0;
+  const identityState: GeminiMessageIdentityState = {
+    userTextIndex: 0,
+    assistantTextIndex: 0
+  };
 
   for (let index = 0; index < input.messageNodes.length; index += 1) {
     const node = input.messageNodes[index];
@@ -1247,9 +1256,15 @@ function normalizeMessageNodes(input: {
         index,
         descriptorIndex
       );
+      const messageId = buildGeminiMessageId({
+        sessionId: input.sessionId,
+        descriptor,
+        rawRef,
+        identityState
+      });
 
       messages.push({
-        messageId: messageIdFromRawRef(rawRef),
+        messageId,
         provider: "gemini",
         providerSessionId: input.sessionId,
         role: descriptor.role,
@@ -1840,6 +1855,64 @@ function buildGeminiMessageRawRef(
   return `${GEMINI_RAW_STORE_PREFIX}${encodeURIComponent(sessionId)}#file=${
     encodeURIComponent(filePath.replaceAll("\\", "/"))
   }&index=${messageIndex}&part=${partIndex}`;
+}
+
+function buildGeminiMessageId(input: {
+  sessionId: string;
+  descriptor: GeminiMessageDescriptor;
+  rawRef: string;
+  identityState: GeminiMessageIdentityState;
+}): string {
+  const { descriptor, identityState, rawRef, sessionId } = input;
+
+  if (descriptor.kind === "text" && descriptor.toolCall === null) {
+    if (descriptor.role === "user") {
+      identityState.userTextIndex += 1;
+      return messageIdFromRawRef(
+        buildGeminiRuntimeTextRawRef(sessionId, "user", identityState.userTextIndex)
+      );
+    }
+
+    if (descriptor.role === "assistant") {
+      identityState.assistantTextIndex += 1;
+      return messageIdFromRawRef(
+        buildGeminiRuntimeTextRawRef(sessionId, "assistant", identityState.assistantTextIndex)
+      );
+    }
+  }
+
+  if (
+    (descriptor.kind === "tool_call" || descriptor.kind === "tool_result")
+    && descriptor.toolCall?.callId?.trim()
+  ) {
+    return messageIdFromRawRef(
+      buildGeminiRuntimeToolRawRef(
+        sessionId,
+        descriptor.toolCall.callId.trim(),
+        descriptor.kind === "tool_call" ? "call" : "result"
+      )
+    );
+  }
+
+  return messageIdFromRawRef(rawRef);
+}
+
+function buildGeminiRuntimeTextRawRef(
+  sessionId: string,
+  role: "user" | "assistant",
+  index: number
+): string {
+  return `${GEMINI_RAW_STORE_PREFIX}${encodeURIComponent(sessionId)}/message/${role}-${index}`;
+}
+
+function buildGeminiRuntimeToolRawRef(
+  sessionId: string,
+  toolId: string,
+  kind: "call" | "result"
+): string {
+  return `${GEMINI_RAW_STORE_PREFIX}${encodeURIComponent(sessionId)}/tool/${
+    encodeURIComponent(toolId)
+  }/${kind}`;
 }
 
 function resolveStringField(
