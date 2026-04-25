@@ -1,3 +1,7 @@
+import { appendFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+
 import {
   buildSessionRawStoreRef,
   normalizeOpenCodePartMessage,
@@ -25,6 +29,12 @@ import type {
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 const TIMEOUT_WARNING_THRESHOLD_MS = 15_000;
 const MAX_CONSECUTIVE_TIMEOUTS = 5;
+const OPENCODE_STALE_EVENT_GRACE_MS = 15_000;
+const OPENCODE_REALISTIC_EPOCH_MS_THRESHOLD = Date.UTC(2000, 0, 1);
+const OPENCODE_ORDER_DEBUG_ENABLED = /^(1|true|yes)$/i.test(
+  process.env.CODINGNS_OPENCODE_ORDER_DEBUG?.trim() ?? ""
+);
+const OPENCODE_ORDER_DEBUG_FILE_PATH = resolveOpenCodeOrderDebugFilePath();
 
 interface OpenCodeRuntimeOptions {
   baseUrl?: string;
@@ -43,9 +53,11 @@ interface OpenCodeRuntimeState {
   readonly providerSessionId: string;
   readonly rawStoreRef: string;
   readonly workspacePath: string;
+  readonly runStartedAtMs: number;
   sequence: number;
   terminalStatus: RuntimeRunState | null;
   hasObservedActivity: boolean;
+  currentRunHasAcceptedActivity: boolean;
   readonly abortController: AbortController;
   readonly sink: ProviderRuntimeEventSink;
   readonly messageInfoById: Map<string, Record<string, unknown>>;
@@ -53,7 +65,9 @@ interface OpenCodeRuntimeState {
   readonly messageIdByPartId: Map<string, string>;
   readonly partIdsByMessageId: Map<string, Set<string>>;
   readonly emittedPartSignatures: Map<string, string>;
-  readonly emittedSequenceByPartId: Map<string, number>;
+  readonly emittedSequenceByMessageId: Map<string, number>;
+  readonly emittedPartOrderByPartId: Map<string, number>;
+  readonly nextPartOrdinalByMessageKind: Map<string, number>;
 }
 
 export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
@@ -101,6 +115,7 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
     rawStoreRef: string
   ): ProviderRuntimeLaunchResult {
     const abortController = new AbortController();
+    const runStartedAtMs = Date.now();
 
     return {
       providerSessionId,
@@ -115,9 +130,11 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
           providerSessionId,
           rawStoreRef,
           workspacePath: request.workspacePath,
-          sequence: 0,
+          runStartedAtMs,
+          sequence: Math.max(0, request.sequenceBase ?? 0),
           terminalStatus: null,
           hasObservedActivity: false,
+          currentRunHasAcceptedActivity: false,
           abortController,
           sink,
           messageInfoById: new Map(),
@@ -125,7 +142,9 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
           messageIdByPartId: new Map(),
           partIdsByMessageId: new Map(),
           emittedPartSignatures: new Map(),
-          emittedSequenceByPartId: new Map()
+          emittedSequenceByMessageId: new Map(),
+          emittedPartOrderByPartId: new Map(),
+          nextPartOrdinalByMessageKind: new Map()
         },
         abortController.signal
       )
@@ -247,6 +266,11 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
             continue;
           }
 
+          logOpenCodeOrderDebug("sse.event", {
+            providerSessionId: state.providerSessionId,
+            event
+          });
+
           const terminal = await this.handleEvent(event, state);
 
           if (terminal) {
@@ -308,6 +332,9 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       const status = toJsonRecord(properties.status) ?? {};
       const mapped = mapSessionStatus(status);
       state.hasObservedActivity = true;
+      if (mapped.status === "running") {
+        state.currentRunHasAcceptedActivity = true;
+      }
 
       await state.sink.emit({
         type: "status",
@@ -324,6 +351,10 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       const properties = toJsonRecord(event.properties) ?? {};
 
       if (ensureText(properties.sessionID).trim() !== state.providerSessionId) {
+        return false;
+      }
+
+      if (!state.currentRunHasAcceptedActivity) {
         return false;
       }
 
@@ -349,7 +380,22 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
         return false;
       }
 
+      if (
+        shouldIgnoreStaleOpenCodeRuntimeEvent(
+          extractOpenCodeMessageInfoTimestampMs(info),
+          state.runStartedAtMs
+        )
+      ) {
+        logOpenCodeOrderDebug("sse.event.ignored_stale_message", {
+          providerSessionId: state.providerSessionId,
+          messageId,
+          info
+        });
+        return false;
+      }
+
       state.hasObservedActivity = true;
+      state.currentRunHasAcceptedActivity = true;
       state.messageInfoById.set(messageId, info);
       const partIds = state.partIdsByMessageId.get(messageId);
 
@@ -378,7 +424,23 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
         return false;
       }
 
+      if (
+        shouldIgnoreStaleOpenCodeRuntimeEvent(
+          extractOpenCodePartTimestampMs(part),
+          state.runStartedAtMs
+        )
+      ) {
+        logOpenCodeOrderDebug("sse.event.ignored_stale_part", {
+          providerSessionId: state.providerSessionId,
+          messageId,
+          partId,
+          part
+        });
+        return false;
+      }
+
       state.hasObservedActivity = true;
+      state.currentRunHasAcceptedActivity = true;
       const merged = mergeRecords(state.partById.get(partId), part);
       state.partById.set(partId, merged);
       state.messageIdByPartId.set(partId, messageId);
@@ -401,7 +463,33 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
         return false;
       }
 
+      const existingPart = state.partById.get(partId);
+      const existingMessage =
+        messageId
+          ? state.messageInfoById.get(messageId)
+          : state.messageInfoById.get(state.messageIdByPartId.get(partId) ?? "");
+      const deltaTimestampMs = firstFiniteNumber(
+        extractOpenCodePartTimestampMs(existingPart),
+        extractOpenCodeMessageInfoTimestampMs(existingMessage)
+      );
+
+      if (
+        shouldIgnoreStaleOpenCodeRuntimeEvent(
+          deltaTimestampMs,
+          state.runStartedAtMs
+        )
+      ) {
+        logOpenCodeOrderDebug("sse.event.ignored_stale_delta", {
+          providerSessionId: state.providerSessionId,
+          messageId: messageId || state.messageIdByPartId.get(partId) || null,
+          partId,
+          properties
+        });
+        return false;
+      }
+
       state.hasObservedActivity = true;
+      state.currentRunHasAcceptedActivity = true;
       const existing = state.partById.get(partId) ?? {};
       const field = ensureText(properties.field).trim();
       const delta = ensureText(properties.delta);
@@ -462,6 +550,15 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       state.messageInfoById.set(messageId, messagePayload);
     }
 
+    const currentSequence =
+      state.emittedSequenceByMessageId.get(messageId)
+      ?? (() => {
+        state.sequence += 1;
+        state.emittedSequenceByMessageId.set(messageId, state.sequence);
+        return state.sequence;
+      })();
+    const partOrder = resolveOpenCodeRuntimePartOrder(partPayload, messageId, partId, state);
+
     const normalized = normalizeOpenCodePartMessage({
       sessionId: state.providerSessionId,
       providerSessionId: state.providerSessionId,
@@ -469,7 +566,10 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       messageId,
       partPayload,
       messagePayload,
-      defaultTimestamp: nextTimestamp()
+      defaultTimestamp: nextTimestamp(),
+      rawRefOrder: {
+        part: partOrder
+      }
     });
 
     if (!normalized) {
@@ -481,21 +581,30 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       normalized.content,
       normalized.toolCall?.status ?? "",
       normalized.toolCall?.output ?? "",
-      normalized.toolCall?.error ?? ""
+      normalized.toolCall?.error ?? "",
+      normalized.timestamp,
+      normalized.rawRef
     ].join("|");
 
     if (state.emittedPartSignatures.get(partId) === signature) {
       return;
     }
 
-    const currentSequence =
-      state.emittedSequenceByPartId.get(partId)
-      ?? (() => {
-        state.sequence += 1;
-        state.emittedSequenceByPartId.set(partId, state.sequence);
-        return state.sequence;
-      })();
     state.emittedPartSignatures.set(partId, signature);
+    logOpenCodeOrderDebug("runtime.message.emit", {
+      providerSessionId: state.providerSessionId,
+      messageId,
+      partId,
+      sequence: currentSequence,
+      normalized: {
+        messageId: normalized.messageId,
+        role: normalized.role,
+        kind: normalized.kind,
+        timestamp: normalized.timestamp,
+        rawRef: normalized.rawRef,
+        content: normalized.content
+      }
+    });
 
     await state.sink.emit({
       type: "message",
@@ -832,6 +941,132 @@ function createSyntheticMessagePayload(
     role: "assistant",
     time: createdAt === null ? {} : { created: createdAt }
   };
+}
+
+function resolveOpenCodeRuntimePartOrder(
+  partPayload: Record<string, unknown>,
+  messageId: string,
+  partId: string,
+  state: Pick<
+    OpenCodeRuntimeState,
+    "emittedPartOrderByPartId" | "nextPartOrdinalByMessageKind"
+  >
+): number {
+  const existing = state.emittedPartOrderByPartId.get(partId);
+
+  if (typeof existing === "number" && Number.isFinite(existing) && existing > 0) {
+    return existing;
+  }
+
+  const kindBucket = resolveOpenCodeRuntimePartKindBucket(partPayload);
+  const counterKey = `${messageId}:${kindBucket}`;
+  const nextOrdinal = (state.nextPartOrdinalByMessageKind.get(counterKey) ?? 0) + 1;
+  const partOrder = kindBucket * 1_000 + nextOrdinal;
+
+  state.nextPartOrdinalByMessageKind.set(counterKey, nextOrdinal);
+  state.emittedPartOrderByPartId.set(partId, partOrder);
+  return partOrder;
+}
+
+function resolveOpenCodeRuntimePartKindBucket(
+  partPayload: Record<string, unknown>
+): number {
+  const partType = ensureText(partPayload.type).trim().toLowerCase();
+
+  if (partType === "reasoning" || partType === "thinking") {
+    return 1;
+  }
+
+  if (partType === "text") {
+    return 2;
+  }
+
+  if (partType === "tool" || partType === "patch") {
+    return 3;
+  }
+
+  return 4;
+}
+
+function shouldIgnoreStaleOpenCodeRuntimeEvent(
+  eventTimestampMs: number | null,
+  runStartedAtMs: number
+): boolean {
+  if (
+    eventTimestampMs === null
+    || !Number.isFinite(eventTimestampMs)
+    || eventTimestampMs < OPENCODE_REALISTIC_EPOCH_MS_THRESHOLD
+  ) {
+    return false;
+  }
+
+  return eventTimestampMs + OPENCODE_STALE_EVENT_GRACE_MS < runStartedAtMs;
+}
+
+function extractOpenCodePartTimestampMs(
+  partPayload: Record<string, unknown> | undefined
+): number | null {
+  const partTime = toJsonRecord(partPayload?.time);
+  return firstFiniteNumber(partTime?.start, partTime?.created, partTime?.end);
+}
+
+function extractOpenCodeMessageInfoTimestampMs(
+  messagePayload: Record<string, unknown> | undefined
+): number | null {
+  const messageTime = toJsonRecord(messagePayload?.time);
+  return firstFiniteNumber(messageTime?.created, messageTime?.completed, messageTime?.updated);
+}
+
+function firstFiniteNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function logOpenCodeOrderDebug(
+  scope: string,
+  detail: Record<string, unknown>
+): void {
+  if (!OPENCODE_ORDER_DEBUG_ENABLED) {
+    return;
+  }
+
+  const payload = {
+    timestamp: new Date().toISOString(),
+    scope,
+    ...detail
+  };
+
+  console.info(`[opencode-order-host] ${scope}`, payload);
+
+  if (!OPENCODE_ORDER_DEBUG_FILE_PATH) {
+    return;
+  }
+
+  try {
+    mkdirSync(dirname(OPENCODE_ORDER_DEBUG_FILE_PATH), { recursive: true });
+    appendFileSync(OPENCODE_ORDER_DEBUG_FILE_PATH, `${JSON.stringify(payload)}\n`, "utf8");
+  } catch {
+    // 调试日志写失败不能影响主流程。
+  }
+}
+
+function resolveOpenCodeOrderDebugFilePath(): string | null {
+  if (!OPENCODE_ORDER_DEBUG_ENABLED) {
+    return null;
+  }
+
+  const explicit = process.env.CODINGNS_OPENCODE_ORDER_DEBUG_FILE?.trim();
+
+  if (explicit) {
+    return explicit;
+  }
+
+  return join(homedir(), "WorkFile", "codingns-opencode-order.ndjson");
 }
 
 function mergeRecords(

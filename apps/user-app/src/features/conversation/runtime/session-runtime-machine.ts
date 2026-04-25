@@ -263,6 +263,30 @@ export function mergeAuthoritativeMessages(
       }
     }
 
+    const equivalentOpenCodeMessageId = findMatchingEquivalentOpenCodeMessageId(
+      nextById,
+      nextMessage
+    );
+
+    if (equivalentOpenCodeMessageId && equivalentOpenCodeMessageId !== nextMessage.id) {
+      const equivalentOpenCodeMessage = nextById.get(equivalentOpenCodeMessageId) ?? null;
+
+      if (equivalentOpenCodeMessage) {
+        const mergedEquivalentMessage = mergeEquivalentAuthoritativeVersion(
+          equivalentOpenCodeMessage,
+          nextMessage
+        );
+        logSessionMessageDedupDebug("session.messages.opencode_equivalent_replace", {
+          sessionId,
+          previous: summarizeMessageForDebug(equivalentOpenCodeMessage),
+          incoming: summarizeMessageForDebug(nextMessage),
+          merged: summarizeMessageForDebug(mergedEquivalentMessage)
+        });
+        nextById.set(equivalentOpenCodeMessageId, mergedEquivalentMessage);
+        continue;
+      }
+    }
+
     const currentMessage = nextById.get(message.messageId) ?? null;
     nextById.set(
       message.messageId,
@@ -480,6 +504,12 @@ function compareViewMessageOrder(
     return left.sequence - right.sequence;
   }
 
+  const rawRefStructuralOrder = compareRawRefStructuralOrder(left.rawRef, right.rawRef);
+
+  if (rawRefStructuralOrder !== 0) {
+    return rawRefStructuralOrder;
+  }
+
   const timestampOrder = left.timestamp.localeCompare(right.timestamp);
 
   if (timestampOrder !== 0) {
@@ -505,6 +535,60 @@ function compareViewMessageOrder(
   }
 
   return left.id.localeCompare(right.id);
+}
+
+function compareRawRefStructuralOrder(leftRawRef: string, rightRawRef: string): number {
+  const claudeStableOrder = compareClaudeStableRawRefOrder(leftRawRef, rightRawRef);
+
+  if (claudeStableOrder !== null && claudeStableOrder !== 0) {
+    return claudeStableOrder;
+  }
+
+  const sameMessagePartOrder = compareSameMessageRawRefPartOrder(leftRawRef, rightRawRef);
+
+  if (sameMessagePartOrder !== null && sameMessagePartOrder !== 0) {
+    return sameMessagePartOrder;
+  }
+
+  const leftOrder = extractRawRefStructuralOrder(leftRawRef);
+  const rightOrder = extractRawRefStructuralOrder(rightRawRef);
+
+  if (!leftOrder && !rightOrder) {
+    return 0;
+  }
+
+  if (!leftOrder) {
+    return 0;
+  }
+
+  if (!rightOrder) {
+    return 0;
+  }
+
+  const maxLength = Math.max(leftOrder.length, rightOrder.length);
+
+  for (let index = 0; index < maxLength; index += 1) {
+    const leftValue = leftOrder[index];
+    const rightValue = rightOrder[index];
+
+    if (leftValue === undefined && rightValue === undefined) {
+      return 0;
+    }
+
+    if (leftValue === undefined) {
+      return -1;
+    }
+
+    if (rightValue === undefined) {
+      return 1;
+    }
+
+    if (leftValue !== rightValue) {
+      return leftValue - rightValue;
+    }
+  }
+
+  return 0;
 }
 
 function compareRawRefLineOrder(leftRawRef: string, rightRawRef: string): number {
@@ -535,6 +619,195 @@ function extractRawRefLine(rawRef: string): number | null {
 
   const value = Number.parseInt(match[1] ?? "", 10);
   return Number.isFinite(value) ? value : null;
+}
+
+function compareSameMessageRawRefPartOrder(leftRawRef: string, rightRawRef: string): number | null {
+  const leftMessageBase = extractRawRefMessageBase(leftRawRef);
+  const rightMessageBase = extractRawRefMessageBase(rightRawRef);
+
+  if (!leftMessageBase || !rightMessageBase || leftMessageBase !== rightMessageBase) {
+    return null;
+  }
+
+  const leftPart = extractRawRefUrlNumber(leftRawRef, "part");
+  const rightPart = extractRawRefUrlNumber(rightRawRef, "part");
+
+  if (leftPart === null || rightPart === null) {
+    return null;
+  }
+
+  return leftPart - rightPart;
+}
+
+function extractRawRefMessageBase(rawRef: string): string | null {
+  const match = rawRef.match(/^(.+\/message\/[^/?#]+)\/part\/[^/?#]+(?:[?#].*)?$/i);
+  return match?.[1] ?? null;
+}
+
+function extractRawRefStructuralOrder(rawRef: string): number[] | null {
+  const line = extractRawRefLine(rawRef);
+
+  if (line !== null) {
+    const part = extractRawRefUrlNumber(rawRef, "part");
+    return part === null ? [line] : [line, part];
+  }
+
+  const indexedOrder = extractIndexedRawRefOrder(rawRef);
+
+  if (indexedOrder) {
+    return indexedOrder;
+  }
+
+  const messagePathOrder = extractMessagePathRawRefOrder(rawRef);
+
+  if (messagePathOrder) {
+    return messagePathOrder;
+  }
+
+  return null;
+}
+
+function extractIndexedRawRefOrder(rawRef: string): number[] | null {
+  const index = extractRawRefUrlNumber(rawRef, "index");
+
+  if (index === null) {
+    return null;
+  }
+
+  const part = extractRawRefUrlNumber(rawRef, "part");
+  return part === null ? [index] : [index, part];
+}
+
+function extractRawRefUrlNumber(rawRef: string, name: string): number | null {
+  const match = rawRef.match(new RegExp(`(?:^|[?#&])${name}=(\\d+)(?:$|[&#])`));
+
+  if (!match) {
+    return null;
+  }
+
+  const value = Number.parseInt(match[1] ?? "", 10);
+  return Number.isFinite(value) ? value : null;
+}
+
+function extractMessagePathRawRefOrder(rawRef: string): number[] | null {
+  const match = rawRef.match(/\/message\/(user|assistant|tool)-(\d+)\/part\/([a-z_]+)-(\d+)/i);
+
+  if (!match) {
+    return null;
+  }
+
+  const roleOrder = resolveMessagePathRoleOrder(match[1] ?? "");
+  const messageIndex = Number.parseInt(match[2] ?? "", 10);
+  const partKindOrder = resolveMessagePathPartKindOrder(match[3] ?? "");
+  const partIndex = Number.parseInt(match[4] ?? "", 10);
+
+  if (
+    !Number.isFinite(messageIndex)
+    || !Number.isFinite(partIndex)
+  ) {
+    return null;
+  }
+
+  return [messageIndex, roleOrder, partKindOrder, partIndex];
+}
+
+function resolveMessagePathRoleOrder(value: string): number {
+  switch (value.toLowerCase()) {
+    case "user":
+      return 0;
+    case "assistant":
+      return 1;
+    case "tool":
+      return 2;
+    default:
+      return 3;
+  }
+}
+
+function resolveMessagePathPartKindOrder(value: string): number {
+  switch (value.toLowerCase()) {
+    case "reasoning":
+    case "thinking":
+      return 0;
+    case "text":
+      return 1;
+    case "tool":
+    case "tool_call":
+    case "tool_result":
+      return 2;
+    default:
+      return 3;
+  }
+}
+
+function compareClaudeStableRawRefOrder(leftRawRef: string, rightRawRef: string): number | null {
+  const prefix = "claude-code://message/";
+
+  if (!leftRawRef.startsWith(prefix) || !rightRawRef.startsWith(prefix)) {
+    return null;
+  }
+
+  let leftDecoded = "";
+  let rightDecoded = "";
+
+  try {
+    leftDecoded = decodeURIComponent(leftRawRef.slice(prefix.length));
+    rightDecoded = decodeURIComponent(rightRawRef.slice(prefix.length));
+  } catch {
+    return null;
+  }
+
+  const leftTypedMatch = leftDecoded.match(/^message:(assistant|user):([^:]+):type:(thinking|text)$/i);
+  const rightTypedMatch = rightDecoded.match(/^message:(assistant|user):([^:]+):type:(thinking|text)$/i);
+
+  if (leftTypedMatch && rightTypedMatch) {
+    const leftRole = leftTypedMatch[1] ?? "";
+    const rightRole = rightTypedMatch[1] ?? "";
+    const leftMessageId = leftTypedMatch[2] ?? "";
+    const rightMessageId = rightTypedMatch[2] ?? "";
+
+    if (leftRole !== rightRole || leftMessageId !== rightMessageId) {
+      return 0;
+    }
+
+    return resolveMessagePathPartKindOrder(leftTypedMatch[3] ?? "")
+      - resolveMessagePathPartKindOrder(rightTypedMatch[3] ?? "");
+  }
+
+  const leftPartMatch = leftDecoded.match(/^message:(assistant|user):([^:]+):part:(\d+):type:([a-z_]+)$/i);
+  const rightPartMatch = rightDecoded.match(/^message:(assistant|user):([^:]+):part:(\d+):type:([a-z_]+)$/i);
+
+  if (!leftPartMatch || !rightPartMatch) {
+    return null;
+  }
+
+  const leftRole = leftPartMatch[1] ?? "";
+  const rightRole = rightPartMatch[1] ?? "";
+  const leftMessageId = leftPartMatch[2] ?? "";
+  const rightMessageId = rightPartMatch[2] ?? "";
+
+  if (leftRole !== rightRole || leftMessageId !== rightMessageId) {
+    return 0;
+  }
+
+  const leftPartIndex = Number.parseInt(leftPartMatch[3] ?? "", 10);
+  const rightPartIndex = Number.parseInt(rightPartMatch[3] ?? "", 10);
+
+  if (
+    !Number.isFinite(leftPartIndex)
+    || !Number.isFinite(rightPartIndex)
+  ) {
+    return null;
+  }
+
+  const partIndexOrder = leftPartIndex - rightPartIndex;
+
+  if (partIndexOrder !== 0) {
+    return partIndexOrder;
+  }
+
+  return resolveMessagePathPartKindOrder(leftPartMatch[4] ?? "")
+    - resolveMessagePathPartKindOrder(rightPartMatch[4] ?? "");
 }
 
 function compareMessageRoleOrder(
@@ -653,7 +926,6 @@ function mergeAuthoritativeVersion(
   if (
     current.role !== incoming.role
     || current.kind !== incoming.kind
-    || current.rawRef !== incoming.rawRef
   ) {
     return pickNewerAuthoritativeMessage(current, incoming);
   }
@@ -661,6 +933,7 @@ function mergeAuthoritativeVersion(
   const mergedToolCall = mergeToolCall(current.toolCall, incoming.toolCall);
   const content = pickPreferredContent(current.content, incoming.content, current.timestamp, incoming.timestamp);
   const attachments = pickPreferredAttachments(current.attachments, incoming.attachments);
+  const stableAnchor = pickStableAuthoritativeMessage(current, incoming);
 
   return {
     ...pickNewerAuthoritativeMessage(current, incoming),
@@ -668,8 +941,49 @@ function mergeAuthoritativeVersion(
     toolCall: mergedToolCall,
     attachments,
     attachmentPayloads: current.attachmentPayloads ?? incoming.attachmentPayloads ?? null,
-    timestamp: current.timestamp.localeCompare(incoming.timestamp) >= 0 ? current.timestamp : incoming.timestamp,
-    sequence: Math.max(current.sequence, incoming.sequence)
+    rawRef: stableAnchor.rawRef,
+    // 同一条权威消息的增量更新只能更新内容，不能把时间线锚点越推越靠后。
+    // runtime 与 history 即使 rawRef 不同，也仍然可能是在更新同一条消息；
+    // 这时也必须保留更早的排序锚点，否则 thinking 会卡在旧位置或沉到底部。
+    timestamp: stableAnchor.timestamp,
+    sequence: stableAnchor.sequence
+  };
+}
+
+function mergeEquivalentAuthoritativeVersion(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): SessionMessageViewModel {
+  if (
+    current.role !== incoming.role
+    || current.kind !== incoming.kind
+  ) {
+    const preferred = pickNewerAuthoritativeMessage(current, incoming);
+    return {
+      ...preferred,
+      id: current.id,
+      clientRequestId: current.clientRequestId ?? incoming.clientRequestId
+    };
+  }
+
+  const mergedToolCall = mergeToolCall(current.toolCall, incoming.toolCall);
+  const content = pickPreferredContent(current.content, incoming.content, current.timestamp, incoming.timestamp);
+  const attachments = pickPreferredAttachments(current.attachments, incoming.attachments);
+  const stableAnchor = pickStableAuthoritativeMessage(current, incoming);
+
+  return {
+    ...pickNewerAuthoritativeMessage(current, incoming),
+    id: current.id,
+    content,
+    toolCall: mergedToolCall,
+    attachments,
+    attachmentPayloads: current.attachmentPayloads ?? incoming.attachmentPayloads ?? null,
+    rawRef: stableAnchor.rawRef,
+    // OpenCode 的 runtime 与 history 会给同一个 part 生成不同 messageId，
+    // 这里只能把它们合并成同一条，否则前端会把同一轮 thinking/text 画两遍。
+    timestamp: stableAnchor.timestamp,
+    sequence: stableAnchor.sequence,
+    clientRequestId: current.clientRequestId ?? incoming.clientRequestId
   };
 }
 
@@ -744,11 +1058,18 @@ function isOpenCodeUserTextMessage(message: SessionMessageViewModel): boolean {
   );
 }
 
-function isOpenCodeAssistantTextMessage(message: SessionMessageViewModel): boolean {
+function isOpenCodeAssistantPrimaryMessage(message: SessionMessageViewModel): boolean {
   return (
     message.deliveryState === "sent" &&
     message.rawRef.startsWith("opencode://") &&
     message.role === "assistant" &&
+    (message.kind === "text" || message.kind === "thinking")
+  );
+}
+
+function isOpenCodeAssistantTextMessage(message: SessionMessageViewModel): boolean {
+  return (
+    isOpenCodeAssistantPrimaryMessage(message) &&
     message.kind === "text"
   );
 }
@@ -758,8 +1079,9 @@ function isEquivalentOpenCodeAssistantTextMessage(
   right: SessionMessageViewModel
 ): boolean {
   return (
-    isOpenCodeAssistantTextMessage(left) &&
-    isOpenCodeAssistantTextMessage(right) &&
+    isOpenCodeAssistantPrimaryMessage(left) &&
+    isOpenCodeAssistantPrimaryMessage(right) &&
+    left.kind === right.kind &&
     areTimestampsNearWithinWindow(left.timestamp, right.timestamp, 2 * 60 * 1000) &&
     normalizeComparableCodexText(left.content) === normalizeComparableCodexText(right.content)
   );
@@ -1075,6 +1397,13 @@ function pickNewerAuthoritativeMessage(
   return incoming;
 }
 
+function pickStableAuthoritativeMessage(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): Pick<SessionMessageViewModel, "timestamp" | "sequence" | "rawRef"> {
+  return compareViewMessageOrder(current, incoming) <= 0 ? current : incoming;
+}
+
 function normalizeComparableCodexText(content: string): string {
   return stripInternalAttachmentDebugContent(content).replace(/\r\n/g, "\n").trimEnd();
 }
@@ -1205,6 +1534,54 @@ function findMatchingEquivalentCodexMessageId(
   return matchedId;
 }
 
+function findMatchingEquivalentOpenCodeMessageId(
+  messagesById: Map<string, SessionMessageViewModel>,
+  incoming: SessionMessageViewModel
+): string | null {
+  if (!isOpenCodeAuthoritativeMessage(incoming)) {
+    return null;
+  }
+
+  const incomingIdentity = extractEquivalentOpenCodeRawRefIdentity(incoming.rawRef);
+
+  if (incomingIdentity === null) {
+    return null;
+  }
+
+  const incomingTimestampMs = toTimestampMs(incoming.timestamp);
+  let matchedId: string | null = null;
+  let matchedScore = Number.POSITIVE_INFINITY;
+
+  for (const [messageId, current] of messagesById.entries()) {
+    if (
+      messageId === incoming.id
+      || !isOpenCodeAuthoritativeMessage(current)
+      || current.role !== incoming.role
+      || current.kind !== incoming.kind
+    ) {
+      continue;
+    }
+
+    const currentIdentity = extractEquivalentOpenCodeRawRefIdentity(current.rawRef);
+
+    if (currentIdentity !== incomingIdentity) {
+      continue;
+    }
+
+    const currentTimestampMs = toTimestampMs(current.timestamp);
+    const timestampDistance = Math.abs(currentTimestampMs - incomingTimestampMs);
+    const sequenceDistance = Math.abs(current.sequence - incoming.sequence);
+    const score = sequenceDistance * 60_000 + timestampDistance;
+
+    if (score < matchedScore) {
+      matchedId = messageId;
+      matchedScore = score;
+    }
+  }
+
+  return matchedId;
+}
+
 function findClosestMatchingUserMessageId(
   messagesById: Map<string, SessionMessageViewModel>,
   incoming: SessionMessageViewModel,
@@ -1251,6 +1628,42 @@ function isCodexAuthoritativeMessage(message: SessionMessageViewModel): boolean 
     && message.rawRef.startsWith("codex://")
     && (message.role === "assistant" || message.role === "tool")
   );
+}
+
+function isOpenCodeAuthoritativeMessage(message: SessionMessageViewModel): boolean {
+  return (
+    message.deliveryState === "sent"
+    && message.rawRef.startsWith("opencode://")
+    && !isOptimisticUserMessage(message)
+    && (message.role === "user" || message.role === "assistant" || message.role === "tool")
+  );
+}
+
+function extractEquivalentOpenCodeRawRefIdentity(rawRef: string): string | null {
+  if (!rawRef.startsWith("opencode://")) {
+    return null;
+  }
+
+  const hashIndex = rawRef.indexOf("#");
+  const hashSuffix = hashIndex >= 0 ? rawRef.slice(hashIndex) : "";
+  const withoutHash = hashIndex >= 0 ? rawRef.slice(0, hashIndex) : rawRef;
+  const queryIndex = withoutHash.indexOf("?");
+
+  if (queryIndex < 0) {
+    return rawRef;
+  }
+
+  const base = withoutHash.slice(0, queryIndex);
+  const params = new URLSearchParams(withoutHash.slice(queryIndex + 1));
+
+  if (!params.has("part")) {
+    return rawRef;
+  }
+
+  params.delete("part");
+  const nextQuery = params.toString();
+
+  return `${base}${nextQuery ? `?${nextQuery}` : ""}${hashSuffix}`;
 }
 
 function isEquivalentCodexAuthoritativeMessage(

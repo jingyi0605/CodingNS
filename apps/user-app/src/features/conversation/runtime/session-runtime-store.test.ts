@@ -311,7 +311,12 @@ describe("SessionRuntimeStore", () => {
       }))
     });
 
-    expect(mocked.getSessionMessages).not.toHaveBeenCalled();
+    expect(mocked.getSessionMessages).toHaveBeenCalledWith(
+      "session-1",
+      "cursor-older",
+      80,
+      "backward"
+    );
     expect(store.getState().messages).toHaveLength(30);
     expect(store.getState().messages[0]?.sequence).toBe(31);
     expect(store.getState().messages.at(-1)?.sequence).toBe(60);
@@ -319,7 +324,7 @@ describe("SessionRuntimeStore", () => {
     expect(store.getState().olderCursor).toBe("cursor-older");
     expect(store.getState().lastCursor).toBe("cursor-latest");
     expect(mocked.realtimeInstances[0]?.options.cursor).toBeNull();
-    expect(mocked.realtimeInstances[0]?.options.limit).toBe(40);
+    expect(mocked.realtimeInstances[0]?.options.limit).toBe(60);
 
     store.destroy();
   });
@@ -351,10 +356,18 @@ describe("SessionRuntimeStore", () => {
     emitRealtimeSubscribed();
     await vi.advanceTimersByTimeAsync(500);
 
-    expect(mocked.getSessionMessages).toHaveBeenCalledWith(
+    expect(mocked.getSessionMessages).toHaveBeenNthCalledWith(
+      1,
       "session-1",
       null,
-      40,
+      60,
+      "backward"
+    );
+    expect(mocked.getSessionMessages).toHaveBeenNthCalledWith(
+      2,
+      "session-1",
+      "cursor-older",
+      80,
       "backward"
     );
     expect(store.getState().historyState).toBe("ready");
@@ -887,6 +900,290 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
+  it("快照里被错误拖到底部的旧 assistant 消息会在 backfill 后恢复正确顺序", async () => {
+    writeViewSnapshot(SESSION_RUNTIME_SNAPSHOT_KEY, {
+      session: null,
+      capabilities: null,
+      runtimeHasActiveRun: null,
+      runtimeCanInterrupt: null,
+      contextUsage: null,
+      messages: [
+        {
+          id: "assistant-1",
+          sessionId: "session-1",
+          role: "assistant" as const,
+          kind: "text" as const,
+          content: "第一轮回复\n补全后的正文",
+          toolCall: null,
+          attachments: [],
+          attachmentPayloads: null,
+          timestamp: "2026-03-24T10:09:00.000Z",
+          sequence: 9,
+          rawRef: "claude://raw#line=2",
+          deliveryState: "sent" as const,
+          clientRequestId: null
+        },
+        {
+          id: "user-2",
+          sessionId: "session-1",
+          role: "user" as const,
+          kind: "text" as const,
+          content: "继续",
+          toolCall: null,
+          attachments: [],
+          attachmentPayloads: null,
+          timestamp: "2026-03-24T10:03:00.000Z",
+          sequence: 3,
+          rawRef: "claude://raw#line=3",
+          deliveryState: "sent" as const,
+          clientRequestId: null
+        },
+        {
+          id: "assistant-2",
+          sessionId: "session-1",
+          role: "assistant" as const,
+          kind: "text" as const,
+          content: "第二轮回复",
+          toolCall: null,
+          attachments: [],
+          attachmentPayloads: null,
+          timestamp: "2026-03-24T10:04:00.000Z",
+          sequence: 4,
+          rawRef: "claude://raw#line=4",
+          deliveryState: "sent" as const,
+          clientRequestId: null
+        }
+      ],
+      permissionRequests: [],
+      queuedMessages: [],
+      olderCursor: null,
+      hasOlderMessages: false,
+      lastCursor: "cursor-before",
+      pagesLoaded: 1
+    });
+
+    const store = new SessionRuntimeStore("session-1");
+    await store.initialize();
+    emitRealtimeSubscribed();
+    emitRealtimeEnvelope({
+      type: "session.backfill",
+      sessionId: "session-1",
+      cursor: "cursor-after",
+      olderCursor: null,
+      messages: [
+        {
+          messageId: "assistant-1",
+          provider: "claude-code",
+          providerSessionId: "claude-session-1",
+          role: "assistant",
+          kind: "text",
+          content: "第一轮回复\n补全后的正文",
+          timestamp: "2026-03-24T10:02:00.000Z",
+          sequence: 2,
+          rawRef: "claude://raw#line=2",
+          toolCall: null,
+          attachments: []
+        },
+        {
+          messageId: "user-2",
+          provider: "claude-code",
+          providerSessionId: "claude-session-1",
+          role: "user",
+          kind: "text",
+          content: "继续",
+          timestamp: "2026-03-24T10:03:00.000Z",
+          sequence: 3,
+          rawRef: "claude://raw#line=3",
+          toolCall: null,
+          attachments: []
+        },
+        {
+          messageId: "assistant-2",
+          provider: "claude-code",
+          providerSessionId: "claude-session-1",
+          role: "assistant",
+          kind: "text",
+          content: "第二轮回复",
+          timestamp: "2026-03-24T10:04:00.000Z",
+          sequence: 4,
+          rawRef: "claude://raw#line=4",
+          toolCall: null,
+          attachments: []
+        }
+      ]
+    });
+
+    expect(store.getState().messages.map((message) => message.id)).toEqual([
+      "assistant-1",
+      "user-2",
+      "assistant-2"
+    ]);
+    expect(store.getState().messages[0]).toMatchObject({
+      id: "assistant-1",
+      timestamp: "2026-03-24T10:02:00.000Z",
+      sequence: 2
+    });
+
+    store.destroy();
+  });
+
+  it("快照里同一条 thinking 因 runtime rawRef 漂移而沉底时，会在 backfill 后归位", async () => {
+    writeViewSnapshot(SESSION_RUNTIME_SNAPSHOT_KEY, {
+      session: null,
+      capabilities: null,
+      runtimeHasActiveRun: null,
+      runtimeCanInterrupt: null,
+      contextUsage: null,
+      messages: [
+        {
+          id: "assistant-old-1",
+          sessionId: "session-1",
+          role: "assistant" as const,
+          kind: "text" as const,
+          content: "上一轮回复",
+          toolCall: null,
+          attachments: [],
+          attachmentPayloads: null,
+          timestamp: "2026-03-24T10:02:00.000Z",
+          sequence: 2,
+          rawRef: "codex://thread-1#line=2",
+          deliveryState: "sent" as const,
+          clientRequestId: null
+        },
+        {
+          id: "user-latest-1",
+          sessionId: "session-1",
+          role: "user" as const,
+          kind: "text" as const,
+          content: "忽略聊天记录，再次查看你是什么模型？",
+          toolCall: null,
+          attachments: [],
+          attachmentPayloads: null,
+          timestamp: "2026-03-24T10:03:00.000Z",
+          sequence: 3,
+          rawRef: "codex://thread-1#line=3",
+          deliveryState: "sent" as const,
+          clientRequestId: null
+        },
+        {
+          id: "assistant-latest-1",
+          sessionId: "session-1",
+          role: "assistant" as const,
+          kind: "text" as const,
+          content: "我的实际模型是 deepseek-v4-flash。",
+          toolCall: null,
+          attachments: [],
+          attachmentPayloads: null,
+          timestamp: "2026-03-24T10:05:00.000Z",
+          sequence: 5,
+          rawRef: "codex://thread-1#line=5",
+          deliveryState: "sent" as const,
+          clientRequestId: null
+        },
+        {
+          id: "thinking-latest-1",
+          sessionId: "session-1",
+          role: "assistant" as const,
+          kind: "thinking" as const,
+          content: "The user is asking me to ignore chat history and again state what model I am.",
+          toolCall: null,
+          attachments: [],
+          attachmentPayloads: null,
+          timestamp: "2026-03-24T10:09:00.000Z",
+          sequence: 9,
+          rawRef: "codex://thread-1#line=9",
+          deliveryState: "sent" as const,
+          clientRequestId: null
+        }
+      ],
+      permissionRequests: [],
+      queuedMessages: [],
+      olderCursor: null,
+      hasOlderMessages: false,
+      lastCursor: "cursor-before",
+      pagesLoaded: 1
+    });
+
+    const store = new SessionRuntimeStore("session-1");
+    await store.initialize();
+    emitRealtimeSubscribed();
+    emitRealtimeEnvelope({
+      type: "session.backfill",
+      sessionId: "session-1",
+      cursor: "cursor-after",
+      olderCursor: null,
+      messages: [
+        {
+          messageId: "assistant-old-1",
+          provider: "codex",
+          providerSessionId: "thread-1",
+          role: "assistant",
+          kind: "text",
+          content: "上一轮回复",
+          timestamp: "2026-03-24T10:02:00.000Z",
+          sequence: 2,
+          rawRef: "codex://thread-1#line=2",
+          toolCall: null,
+          attachments: []
+        },
+        {
+          messageId: "user-latest-1",
+          provider: "codex",
+          providerSessionId: "thread-1",
+          role: "user",
+          kind: "text",
+          content: "忽略聊天记录，再次查看你是什么模型？",
+          timestamp: "2026-03-24T10:03:00.000Z",
+          sequence: 3,
+          rawRef: "codex://thread-1#line=3",
+          toolCall: null,
+          attachments: []
+        },
+        {
+          messageId: "thinking-latest-1",
+          provider: "codex",
+          providerSessionId: "thread-1",
+          role: "assistant",
+          kind: "thinking",
+          content: "The user is asking me to ignore chat history and again state what model I am.",
+          timestamp: "2026-03-24T10:04:00.000Z",
+          sequence: 4,
+          rawRef: "codex://thread-1#line=4",
+          toolCall: null,
+          attachments: []
+        },
+        {
+          messageId: "assistant-latest-1",
+          provider: "codex",
+          providerSessionId: "thread-1",
+          role: "assistant",
+          kind: "text",
+          content: "我的实际模型是 deepseek-v4-flash。",
+          timestamp: "2026-03-24T10:05:00.000Z",
+          sequence: 5,
+          rawRef: "codex://thread-1#line=5",
+          toolCall: null,
+          attachments: []
+        }
+      ]
+    });
+
+    expect(store.getState().messages.map((message) => message.id)).toEqual([
+      "assistant-old-1",
+      "user-latest-1",
+      "thinking-latest-1",
+      "assistant-latest-1"
+    ]);
+    expect(store.getState().messages[2]).toMatchObject({
+      id: "thinking-latest-1",
+      timestamp: "2026-03-24T10:04:00.000Z",
+      sequence: 4,
+      rawRef: "codex://thread-1#line=4"
+    });
+
+    store.destroy();
+  });
+
   it("缓存里只有 provider-default 时，会重新刷新 capabilities", async () => {
     vi.useFakeTimers();
     writeViewSnapshot(SESSION_RUNTIME_SNAPSHOT_KEY, {
@@ -1211,6 +1508,7 @@ describe("SessionRuntimeStore", () => {
 
   it("loads older messages through realtime without rewinding the realtime cursor", async () => {
     vi.useFakeTimers();
+    mocked.getSessionMessages.mockRejectedValueOnce(new Error("prefetch-failed"));
     const store = new SessionRuntimeStore("session-1");
 
     await store.initialize();
@@ -1235,9 +1533,11 @@ describe("SessionRuntimeStore", () => {
     });
     await store.loadOlderMessages();
 
-    expect(mocked.realtimeInstances[0]?.requestOlderMessages).toHaveBeenCalledWith(
+    expect(mocked.getSessionMessages).toHaveBeenCalledWith(
+      "session-1",
       "cursor-older-1",
-      30
+      80,
+      "backward"
     );
     emitRealtimeOlderHistory({
       type: "session.history_older",

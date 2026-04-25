@@ -6,7 +6,8 @@ import { getDefaultSessionPermissionMode } from "../../../preferences/default-se
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import {
   logPerfDebug,
-  logSessionMessageDedupDebug
+  logSessionMessageDedupDebug,
+  logOpenCodeOrderDebug
 } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
@@ -146,7 +147,7 @@ export class SessionRuntimeStore {
     this.replaceSnapshotSeedOnBackfill =
       !this.hasAuthoritativeBootstrapMessages
       && (cachedSnapshot?.messages.length ?? 0) > 0
-      && (cachedSnapshot?.messages.length ?? 0) <= REALTIME_LIMIT
+      && (cachedSnapshot?.messages.length ?? 0) < REALTIME_LIMIT
       && (cachedSnapshot?.pagesLoaded ?? 0) <= 1;
 
     this.state = createInitialRuntimeState({
@@ -258,7 +259,7 @@ export class SessionRuntimeStore {
     this.replaceSnapshotSeedOnBackfill =
       !this.hasAuthoritativeBootstrapMessages
       && (cachedSnapshot?.messages.length ?? 0) > 0
-      && (cachedSnapshot?.messages.length ?? 0) <= REALTIME_LIMIT
+      && (cachedSnapshot?.messages.length ?? 0) < REALTIME_LIMIT
       && (cachedSnapshot?.pagesLoaded ?? 0) <= 1;
     this.emit();
     await this.initialize();
@@ -609,11 +610,25 @@ export class SessionRuntimeStore {
         this.clearHistoryBootstrapFallbackTimer();
         const shouldAttemptReplaceSnapshotSeed =
           event.type === "session.backfill" && this.replaceSnapshotSeedOnBackfill;
+        logOpenCodeOrderDebug("envelope.received", {
+          sessionId: this.sessionId,
+          type: event.type,
+          cursor: event.cursor,
+          olderCursor: event.olderCursor ?? null,
+          incomingMessages: summarizeOrderDebugMessages(event.messages),
+          currentMessages: summarizeOrderDebugMessages(this.state.messages)
+        });
         const { messages: merged, replacedSnapshotSeed } = this.mergeHistoryMessages(
           event.messages,
           shouldAttemptReplaceSnapshotSeed,
           event.type === "session.backfill" ? "realtime_backfill" : "realtime_delta"
         );
+        logOpenCodeOrderDebug("envelope.merged", {
+          sessionId: this.sessionId,
+          type: event.type,
+          replacedSnapshotSeed,
+          mergedMessages: summarizeOrderDebugMessages(merged)
+        });
         this.patch({
           messages: merged,
           lastCursor: event.cursor,
@@ -1438,7 +1453,18 @@ export class SessionRuntimeStore {
     if (event.message.role === "assistant") {
       this.completePendingReplyDebugTrace(event);
     }
+    logOpenCodeOrderDebug("runtime_message.received", {
+      sessionId: this.sessionId,
+      source: event.source,
+      message: summarizeOrderDebugMessage(event.message),
+      currentMessages: summarizeOrderDebugMessages(this.state.messages)
+    });
     const merged = mergeAuthoritativeMessages(this.state.messages, this.sessionId, [event.message]);
+    logOpenCodeOrderDebug("runtime_message.merged", {
+      sessionId: this.sessionId,
+      source: event.source,
+      mergedMessages: summarizeOrderDebugMessages(merged)
+    });
 
     this.logCodexMergeDebug(
       "runtime_message",
@@ -1738,6 +1764,43 @@ export class SessionRuntimeStore {
       ...extra
     });
   }
+}
+
+function summarizeOrderDebugMessage(
+  message: Pick<
+    SessionMessageViewModel,
+    "id" | "role" | "kind" | "sequence" | "timestamp" | "rawRef" | "content"
+  >
+  | Pick<HistoryMessageDto, "messageId" | "role" | "kind" | "sequence" | "timestamp" | "rawRef" | "content">
+): Record<string, unknown> {
+  const messageId = "id" in message ? message.id : message.messageId;
+
+  return {
+    messageId,
+    role: message.role,
+    kind: message.kind ?? "text",
+    sequence: message.sequence,
+    timestamp: message.timestamp,
+    rawRef: message.rawRef,
+    contentPreview: normalizeOrderDebugPreview(message.content)
+  };
+}
+
+function summarizeOrderDebugMessages(
+  messages: Array<
+    Pick<
+      SessionMessageViewModel,
+      "id" | "role" | "kind" | "sequence" | "timestamp" | "rawRef" | "content"
+    >
+    | Pick<HistoryMessageDto, "messageId" | "role" | "kind" | "sequence" | "timestamp" | "rawRef" | "content">
+  >
+): Array<Record<string, unknown>> {
+  return messages.map((message) => summarizeOrderDebugMessage(message));
+}
+
+function normalizeOrderDebugPreview(content: string): string {
+  const normalized = content.replace(/\s+/g, " ").trim();
+  return normalized.length > 80 ? `${normalized.slice(0, 80)}...` : normalized;
 }
 
 export function useSessionRuntimeStore<T>(

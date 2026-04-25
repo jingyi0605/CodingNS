@@ -752,6 +752,122 @@ test("OpenCodeAdapter 会保留服务端消息的正序，避免新增消息倒�
   assert.equal(deltaPage.messages.length, 0);
 });
 
+test("OpenCodeAdapter 不会用 assistant part 的较晚结束时间把下一条 user 挤到前面", async (context) => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+    if (url === "http://127.0.0.1:41827/session/ses_part_timestamp_drift/message?limit=100") {
+      return jsonResponse([
+        {
+          info: {
+            id: "msg_user_1",
+            sessionID: "ses_part_timestamp_drift",
+            role: "user",
+            time: {
+              created: 1
+            }
+          },
+          parts: [
+            {
+              id: "prt_user_1",
+              messageID: "msg_user_1",
+              sessionID: "ses_part_timestamp_drift",
+              type: "text",
+              text: "123"
+            }
+          ]
+        },
+        {
+          info: {
+            id: "msg_assistant_1",
+            sessionID: "ses_part_timestamp_drift",
+            role: "assistant",
+            time: {
+              created: 2
+            }
+          },
+          parts: [
+            {
+              id: "prt_reasoning_1",
+              messageID: "msg_assistant_1",
+              sessionID: "ses_part_timestamp_drift",
+              type: "reasoning",
+              text: "先想一下",
+              time: {
+                start: 2
+              }
+            },
+            {
+              id: "prt_text_1",
+              messageID: "msg_assistant_1",
+              sessionID: "ses_part_timestamp_drift",
+              type: "text",
+              text: "回复 123",
+              time: {
+                end: 5
+              }
+            }
+          ]
+        },
+        {
+          info: {
+            id: "msg_user_2",
+            sessionID: "ses_part_timestamp_drift",
+            role: "user",
+            time: {
+              created: 3
+            }
+          },
+          parts: [
+            {
+              id: "prt_user_2",
+              messageID: "msg_user_2",
+              sessionID: "ses_part_timestamp_drift",
+              type: "text",
+              text: "234"
+            }
+          ]
+        }
+      ]);
+    }
+
+    throw new Error(`unexpected request: ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeAdapter({
+    baseUrl: "http://127.0.0.1:41827",
+    dbPath: "/tmp/codingns-opencode.db"
+  });
+
+  const page = await adapter.readSessionHistory(
+    "ses_part_timestamp_drift",
+    "opencode://session/ses_part_timestamp_drift",
+    null,
+    10,
+    "forward"
+  );
+
+  assert.deepEqual(
+    page.messages.map((message) => [message.role, message.kind, message.content]),
+    [
+      ["user", "text", "123"],
+      ["assistant", "thinking", "先想一下"],
+      ["assistant", "text", "回复 123"],
+      ["user", "text", "234"]
+    ]
+  );
+  assert.deepEqual(
+    page.messages.map((message) => message.sequence),
+    [1, 2, 3, 4]
+  );
+});
+
 test("OpenCodeAdapter 遇到倒序返回的 OpenCode 用户消息时，会按时间线重排", async (context) => {
   const originalFetch = globalThis.fetch;
 

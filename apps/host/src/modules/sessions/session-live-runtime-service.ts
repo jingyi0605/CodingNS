@@ -76,6 +76,10 @@ import { ClaudeRuntimeHelperAdapter } from "./claude-runtime-helper-client.js";
 import { CodexAppServerHelperClient } from "./codex-app-server-helper-client.js";
 import { SessionProviderConfigService } from "./session-provider-config-service.js";
 
+const OPENCODE_ORDER_DEBUG_ENABLED = /^(1|true|yes)$/i.test(
+  process.env.CODINGNS_OPENCODE_ORDER_DEBUG?.trim() ?? ""
+);
+
 interface RuntimeSendOptions {
   model?: string | null;
   reasoningLevel?: string | null;
@@ -1139,6 +1143,18 @@ export class SessionLiveRuntimeService {
       if (!envelope) {
         return;
       }
+
+      logOpenCodeOrderEnvelopeDebug("runtime.envelope.forward", {
+        sessionId,
+        runtimeSessionId,
+        provider: event.provider ?? null,
+        eventType: event.type ?? null,
+        envelopeType: envelope.type,
+        message:
+          "message" in envelope && envelope.message
+            ? summarizeOpenCodeOrderMessage(envelope.message)
+            : null
+      });
 
       await onEnvelope(envelope);
     });
@@ -3875,4 +3891,43 @@ function workspaceSlug(workspacePath: string): string {
 function normalizeOptionalBindingValue(value: string | null | undefined): string | null {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : null;
+}
+
+function logOpenCodeOrderEnvelopeDebug(
+  scope: string,
+  detail: Record<string, unknown>
+): void {
+  if (!OPENCODE_ORDER_DEBUG_ENABLED) {
+    return;
+  }
+
+  console.info(`[opencode-order-envelope] ${scope}`, {
+    timestamp: new Date().toISOString(),
+    ...detail
+  });
+}
+
+function summarizeOpenCodeOrderMessage(
+  message: {
+    messageId?: string | null;
+    role?: string | null;
+    kind?: string | null;
+    sequence?: number | null;
+    timestamp?: string | null;
+    rawRef?: string | null;
+    content?: string | null;
+  }
+): Record<string, unknown> {
+  const content = typeof message.content === "string" ? message.content : "";
+  const normalized = content.replace(/\s+/g, " ").trim();
+
+  return {
+    messageId: message.messageId ?? null,
+    role: message.role ?? null,
+    kind: message.kind ?? null,
+    sequence: message.sequence ?? null,
+    timestamp: message.timestamp ?? null,
+    rawRef: message.rawRef ?? null,
+    contentPreview: normalized.length > 80 ? `${normalized.slice(0, 80)}...` : normalized
+  };
 }

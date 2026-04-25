@@ -41,6 +41,10 @@ export interface OpenCodePartNormalizationInput {
   partPayload: Record<string, unknown>;
   messagePayload: Record<string, unknown>;
   defaultTimestamp: string;
+  rawRefOrder?: {
+    index?: number | null;
+    part?: number | null;
+  } | null;
 }
 
 export function buildSessionRawStoreRef(sessionId: string): string {
@@ -51,8 +55,33 @@ export function buildMessageRawRef(sessionId: string, messageId: string): string
   return `opencode://session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(messageId)}`;
 }
 
-export function buildPartRawRef(sessionId: string, messageId: string, partId: string): string {
-  return `${buildMessageRawRef(sessionId, messageId)}/part/${encodeURIComponent(partId)}`;
+export function buildPartRawRef(
+  sessionId: string,
+  messageId: string,
+  partId: string,
+  order?: {
+    index?: number | null;
+    part?: number | null;
+  } | null
+): string {
+  const base = `${buildMessageRawRef(sessionId, messageId)}/part/${encodeURIComponent(partId)}`;
+
+  if (!order) {
+    return base;
+  }
+
+  const params = new URLSearchParams();
+
+  if (typeof order.index === "number" && Number.isFinite(order.index) && order.index > 0) {
+    params.set("index", String(Math.trunc(order.index)));
+  }
+
+  if (typeof order.part === "number" && Number.isFinite(order.part) && order.part > 0) {
+    params.set("part", String(Math.trunc(order.part)));
+  }
+
+  const query = params.toString();
+  return query ? `${base}?${query}` : base;
 }
 
 export function parseSessionIdFromRawStoreRef(rawStoreRef: string): string | null {
@@ -68,6 +97,7 @@ export function normalizeOpenCodeMessageEnvelopes(
 ): NormalizedMessage[] {
   const messages: Array<{
     message: Omit<NormalizedMessage, "sequence">;
+    messageCreatedAt: string;
     envelopeIndex: number;
     partIndex: number;
   }> = [];
@@ -116,6 +146,7 @@ export function normalizeOpenCodeMessageEnvelopes(
 
       messages.push({
         message: normalized,
+        messageCreatedAt: defaultTimestamp,
         envelopeIndex,
         partIndex
       });
@@ -123,8 +154,8 @@ export function normalizeOpenCodeMessageEnvelopes(
   }
 
   messages.sort((left, right) => {
-    if (left.message.timestamp !== right.message.timestamp) {
-      return left.message.timestamp.localeCompare(right.message.timestamp);
+    if (left.messageCreatedAt !== right.messageCreatedAt) {
+      return left.messageCreatedAt.localeCompare(right.messageCreatedAt);
     }
 
     if (left.envelopeIndex !== right.envelopeIndex) {
@@ -149,7 +180,12 @@ export function normalizeOpenCodePartMessage(
 ): Omit<NormalizedMessage, "sequence"> | null {
   const partType = normalizePartType(input.partPayload.type);
   const role = resolveMessageRole(input.messagePayload);
-  const rawRef = buildPartRawRef(input.sessionId, input.messageId, input.partId);
+  const rawRef = buildPartRawRef(
+    input.sessionId,
+    input.messageId,
+    input.partId,
+    input.rawRefOrder ?? null
+  );
   const timestamp = resolvePartTimestamp(
     input.partPayload,
     input.messagePayload,
@@ -497,10 +533,10 @@ function resolvePartTimestamp(
   return (
     toIsoTimestamp(
       firstValidNumber(
-        partTime?.end,
+        messageTime?.created,
         partTime?.start,
         partTime?.created,
-        messageTime?.created,
+        partTime?.end,
         messageTime?.completed
       ),
       null

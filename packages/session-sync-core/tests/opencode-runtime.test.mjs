@@ -488,6 +488,447 @@ test("OpenCodeRuntimeAdapter 会把同一个 part 的 delta 更新映射为同�
   assert.equal(messageEvents[0].message.sequence, messageEvents[1].message.sequence);
 });
 
+test("OpenCodeRuntimeAdapter 会接续 sequenceBase，并把同一条 assistant message 的多个 part 固定在同一顺序锚点", async (context) => {
+  const originalFetch = globalThis.fetch;
+  const events = [];
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init.method ?? "GET";
+
+    if (url.startsWith("http://127.0.0.1:41827/session?") && method === "POST") {
+      return jsonResponse({ id: "ses_runtime_grouped_sequence" });
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_runtime_grouped_sequence" && method === "GET") {
+      return jsonResponse({
+        id: "ses_runtime_grouped_sequence",
+        directory: "/Users/jackson/Code/CodingNS"
+      });
+    }
+
+    if (url === "http://127.0.0.1:41827/event" && method === "GET") {
+      return sseResponse([
+        {
+          payload: {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: "prt_runtime_reasoning",
+                messageID: "msg_runtime_grouped",
+                sessionID: "ses_runtime_grouped_sequence",
+                type: "reasoning",
+                text: "先想一下",
+                time: {
+                  start: 1_000
+                }
+              }
+            }
+          }
+        },
+        {
+          payload: {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: "prt_runtime_text",
+                messageID: "msg_runtime_grouped",
+                sessionID: "ses_runtime_grouped_sequence",
+                type: "text",
+                text: "回复 123",
+                time: {
+                  end: 5_000
+                }
+              }
+            }
+          }
+        },
+        {
+          payload: {
+            type: "message.updated",
+            properties: {
+              info: {
+                id: "msg_runtime_grouped",
+                sessionID: "ses_runtime_grouped_sequence",
+                role: "assistant",
+                time: {
+                  created: 1_000
+                }
+              }
+            }
+          }
+        },
+        {
+          payload: {
+            type: "session.idle",
+            properties: {
+              sessionID: "ses_runtime_grouped_sequence"
+            }
+          }
+        }
+      ]);
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_runtime_grouped_sequence/message" && method === "POST") {
+      return jsonResponse({});
+    }
+
+    throw new Error(`unexpected request: ${method} ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeRuntimeAdapter({
+    baseUrl: "http://127.0.0.1:41827",
+    requestTimeoutMs: 1_000
+  });
+
+  const launch = await adapter.startSession(
+    {
+      sessionId: "local-session-grouped-sequence",
+      workspaceId: "workspace-1",
+      workspacePath: "/Users/jackson/Code/CodingNS",
+      provider: "opencode",
+      providerSessionId: null,
+      rawStoreRef: null,
+      sequenceBase: 5,
+      options: {
+        content: "测试 grouped sequence",
+        clientRequestId: null,
+        model: null,
+        reasoningLevel: null,
+        permissionMode: null,
+        providerPrompt: null,
+        attachments: []
+      }
+    },
+    {
+      updateSessionBinding() {},
+      async emit(event) {
+        events.push(event);
+      }
+    }
+  );
+
+  await launch.completed;
+
+  const messageEvents = events.filter((event) => event.type === "message");
+  assert.equal(messageEvents.length, 2);
+  assert.deepEqual(
+    messageEvents.map((event) => [event.message.kind, event.message.content]),
+    [
+      ["thinking", "先想一下"],
+      ["text", "回复 123"]
+    ]
+  );
+  assert.deepEqual(
+    messageEvents.map((event) => event.message.sequence),
+    [6, 6]
+  );
+  assert.equal(
+    messageEvents[0].message.rawRef,
+    "opencode://session/ses_runtime_grouped_sequence/message/msg_runtime_grouped/part/prt_runtime_reasoning?part=1001"
+  );
+  assert.equal(
+    messageEvents[1].message.rawRef,
+    "opencode://session/ses_runtime_grouped_sequence/message/msg_runtime_grouped/part/prt_runtime_text?part=2001"
+  );
+  assert.equal(messageEvents[0].message.timestamp, "1970-01-01T00:00:01.000Z");
+  assert.equal(messageEvents[1].message.timestamp, "1970-01-01T00:00:01.000Z");
+});
+
+test("OpenCodeRuntimeAdapter 会在 message.updated 晚到时重新发出修正后的时间线锚点", async (context) => {
+  const originalFetch = globalThis.fetch;
+  const events = [];
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init.method ?? "GET";
+
+    if (url.startsWith("http://127.0.0.1:41827/session?") && method === "POST") {
+      return jsonResponse({ id: "ses_runtime_late_anchor" });
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_runtime_late_anchor" && method === "GET") {
+      return jsonResponse({
+        id: "ses_runtime_late_anchor",
+        directory: "/Users/jackson/Code/CodingNS"
+      });
+    }
+
+    if (url === "http://127.0.0.1:41827/event" && method === "GET") {
+      return sseResponse([
+        {
+          payload: {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: "prt_runtime_late_anchor",
+                messageID: "msg_runtime_late_anchor",
+                sessionID: "ses_runtime_late_anchor",
+                type: "text",
+                text: "回复 456",
+                time: {
+                  end: 5_000
+                }
+              }
+            }
+          }
+        },
+        {
+          payload: {
+            type: "message.updated",
+            properties: {
+              info: {
+                id: "msg_runtime_late_anchor",
+                sessionID: "ses_runtime_late_anchor",
+                role: "assistant",
+                time: {
+                  created: 1_000
+                }
+              }
+            }
+          }
+        },
+        {
+          payload: {
+            type: "session.idle",
+            properties: {
+              sessionID: "ses_runtime_late_anchor"
+            }
+          }
+        }
+      ]);
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_runtime_late_anchor/message" && method === "POST") {
+      return jsonResponse({});
+    }
+
+    throw new Error(`unexpected request: ${method} ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeRuntimeAdapter({
+    baseUrl: "http://127.0.0.1:41827",
+    requestTimeoutMs: 1_000
+  });
+
+  const launch = await adapter.startSession(
+    {
+      sessionId: "local-session-late-anchor",
+      workspaceId: "workspace-1",
+      workspacePath: "/Users/jackson/Code/CodingNS",
+      provider: "opencode",
+      providerSessionId: null,
+      rawStoreRef: null,
+      sequenceBase: 9,
+      options: {
+        content: "测试 late anchor",
+        clientRequestId: null,
+        model: null,
+        reasoningLevel: null,
+        permissionMode: null,
+        providerPrompt: null,
+        attachments: []
+      }
+    },
+    {
+      updateSessionBinding() {},
+      async emit(event) {
+        events.push(event);
+      }
+    }
+  );
+
+  await launch.completed;
+
+  const messageEvents = events.filter((event) => event.type === "message");
+  assert.equal(messageEvents.length, 2);
+  assert.deepEqual(
+    messageEvents.map((event) => event.message.sequence),
+    [10, 10]
+  );
+  assert.equal(messageEvents[0].message.timestamp, "1970-01-01T00:00:05.000Z");
+  assert.equal(messageEvents[1].message.timestamp, "1970-01-01T00:00:01.000Z");
+  assert.equal(messageEvents[0].message.rawRef, messageEvents[1].message.rawRef);
+});
+
+test("OpenCodeRuntimeAdapter 会忽略 event 流里回放的旧轮次消息，避免把历史回复重新追加到当前轮次", async (context) => {
+  const originalFetch = globalThis.fetch;
+  const events = [];
+  const now = Date.now();
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init.method ?? "GET";
+
+    if (url.startsWith("http://127.0.0.1:41827/session?") && method === "POST") {
+      return jsonResponse({ id: "ses_runtime_replay_guard" });
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_runtime_replay_guard" && method === "GET") {
+      return jsonResponse({
+        id: "ses_runtime_replay_guard",
+        directory: "/Users/jackson/Code/CodingNS"
+      });
+    }
+
+    if (url === "http://127.0.0.1:41827/event" && method === "GET") {
+      return sseResponse([
+        {
+          payload: {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: "prt_runtime_old_text",
+                messageID: "msg_runtime_old",
+                sessionID: "ses_runtime_replay_guard",
+                type: "text",
+                text: "旧回复 345",
+                time: {
+                  start: now - 60_000,
+                  end: now - 59_000
+                }
+              }
+            }
+          }
+        },
+        {
+          payload: {
+            type: "message.updated",
+            properties: {
+              info: {
+                id: "msg_runtime_old",
+                sessionID: "ses_runtime_replay_guard",
+                role: "assistant",
+                time: {
+                  created: now - 60_000
+                }
+              }
+            }
+          }
+        },
+        {
+          payload: {
+            type: "session.idle",
+            properties: {
+              sessionID: "ses_runtime_replay_guard"
+            }
+          }
+        },
+        {
+          payload: {
+            type: "session.status",
+            properties: {
+              sessionID: "ses_runtime_replay_guard",
+              status: {
+                type: "busy"
+              }
+            }
+          }
+        },
+        {
+          payload: {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: "prt_runtime_new_text",
+                messageID: "msg_runtime_new",
+                sessionID: "ses_runtime_replay_guard",
+                type: "text",
+                text: "新回复 567",
+                time: {
+                  start: now + 10,
+                  end: now + 200
+                }
+              }
+            }
+          }
+        },
+        {
+          payload: {
+            type: "message.updated",
+            properties: {
+              info: {
+                id: "msg_runtime_new",
+                sessionID: "ses_runtime_replay_guard",
+                role: "assistant",
+                time: {
+                  created: now + 10
+                }
+              }
+            }
+          }
+        },
+        {
+          payload: {
+            type: "session.idle",
+            properties: {
+              sessionID: "ses_runtime_replay_guard"
+            }
+          }
+        }
+      ]);
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_runtime_replay_guard/message" && method === "POST") {
+      return jsonResponse({});
+    }
+
+    throw new Error(`unexpected request: ${method} ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeRuntimeAdapter({
+    baseUrl: "http://127.0.0.1:41827",
+    requestTimeoutMs: 1_000
+  });
+
+  const launch = await adapter.startSession(
+    {
+      sessionId: "local-session-replay-guard",
+      workspaceId: "workspace-1",
+      workspacePath: "/Users/jackson/Code/CodingNS",
+      provider: "opencode",
+      providerSessionId: null,
+      rawStoreRef: null,
+      sequenceBase: 11,
+      options: {
+        content: "测试 replay guard",
+        clientRequestId: null,
+        model: null,
+        reasoningLevel: null,
+        permissionMode: null,
+        providerPrompt: null,
+        attachments: []
+      }
+    },
+    {
+      updateSessionBinding() {},
+      async emit(event) {
+        events.push(event);
+      }
+    }
+  );
+
+  await launch.completed;
+
+  const messageEvents = events.filter((event) => event.type === "message");
+  assert.equal(messageEvents.length, 1);
+  assert.equal(messageEvents[0].message.content, "新回复 567");
+  assert.equal(messageEvents[0].message.sequence, 12);
+  assert.equal(events.filter((event) => event.type === "complete").length, 1);
+});
+
 test("OpenCodeRuntimeAdapter 在 message.updated 延迟到达时也会先流式推送 text part", async (context) => {
   const originalFetch = globalThis.fetch;
   const events = [];

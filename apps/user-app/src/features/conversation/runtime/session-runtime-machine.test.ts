@@ -178,6 +178,65 @@ describe("session runtime machine", () => {
     expect(merged.map((item) => item.role)).toEqual(["user", "assistant"]);
   });
 
+  it("OpenCode 相同 sequence 冲突时会优先按 message/part 结构顺序，而不是按较晚 timestamp 排序", () => {
+    const merged = mergeAuthoritativeMessages([], "session-1", [
+      createHistoryMessage({
+        messageId: "assistant-1",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "assistant",
+        content: "第一轮回复",
+        timestamp: "2026-03-23T10:00:06.000Z",
+        sequence: 3,
+        rawRef: "opencode://thread-1/message/assistant-1/part/text-1"
+      }),
+      createHistoryMessage({
+        messageId: "user-2",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "user",
+        content: "继续第二轮",
+        timestamp: "2026-03-23T10:00:05.000Z",
+        sequence: 3,
+        rawRef: "opencode://thread-1/message/user-2/part/text-1"
+      })
+    ]);
+
+    expect(merged.map((item) => item.id)).toEqual(["assistant-1", "user-2"]);
+    expect(merged.map((item) => item.role)).toEqual(["assistant", "user"]);
+  });
+
+  it("Claude stable rawRef 在同一条消息内会把 thinking 排在 text 前面", () => {
+    const merged = mergeAuthoritativeMessages([], "session-1", [
+      createHistoryMessage({
+        messageId: "claude-text-1",
+        provider: "claude-code",
+        providerSessionId: "claude-session-1",
+        role: "assistant",
+        content: "最终回复",
+        timestamp: "2026-03-23T10:00:02.000Z",
+        sequence: 2,
+        rawRef:
+          "claude-code://message/message%3Aassistant%3Amsg-1%3Atype%3Atext"
+      }),
+      createHistoryMessage({
+        messageId: "claude-thinking-1",
+        provider: "claude-code",
+        providerSessionId: "claude-session-1",
+        role: "assistant",
+        kind: "thinking",
+        content: "先思考",
+        timestamp: "2026-03-23T10:00:02.000Z",
+        sequence: 2,
+        rawRef:
+          "claude-code://message/message%3Aassistant%3Amsg-1%3Atype%3Athinking"
+      })
+    ]);
+
+    expect(merged.map((item) => item.kind)).toEqual(["thinking", "text"]);
+    expect(merged.map((item) => item.id)).toEqual(["claude-thinking-1", "claude-text-1"]);
+  });
+
   it("同一 messageId 内容增长时会保留更新后的版本", () => {
     const merged = mergeAuthoritativeMessages(
       [
@@ -213,6 +272,164 @@ describe("session runtime machine", () => {
     expect(merged).toHaveLength(1);
     expect(merged[0].id).toBe("runtime-1");
     expect(merged[0].content).toBe("第一段\n第二段");
+  });
+
+  it("同一条权威 assistant 消息重复回流时不会把排序锚点推到时间线底部", () => {
+    const merged = mergeAuthoritativeMessages(
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "assistant-1",
+            provider: "claude-code",
+            providerSessionId: "thread-1",
+            role: "assistant",
+            content: "第一轮回复",
+            timestamp: "2026-03-28T10:00:02.000Z",
+            sequence: 2,
+            rawRef: "claude://raw#line=2"
+          })
+        ),
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "user-2",
+            provider: "claude-code",
+            providerSessionId: "thread-1",
+            role: "user",
+            content: "继续",
+            timestamp: "2026-03-28T10:00:03.000Z",
+            sequence: 3,
+            rawRef: "claude://raw#line=3"
+          })
+        ),
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "assistant-2",
+            provider: "claude-code",
+            providerSessionId: "thread-1",
+            role: "assistant",
+            content: "第二轮回复",
+            timestamp: "2026-03-28T10:00:04.000Z",
+            sequence: 4,
+            rawRef: "claude://raw#line=4"
+          })
+        )
+      ],
+      "session-1",
+      [
+        createHistoryMessage({
+          messageId: "assistant-1",
+          provider: "claude-code",
+          providerSessionId: "thread-1",
+          role: "assistant",
+          content: "第一轮回复\n补全后的正文",
+          timestamp: "2026-03-28T10:00:09.000Z",
+          sequence: 9,
+          rawRef: "claude://raw#line=2"
+        })
+      ]
+    );
+
+    expect(merged.map((item) => item.id)).toEqual([
+      "assistant-1",
+      "user-2",
+      "assistant-2"
+    ]);
+    expect(merged[0]).toMatchObject({
+      id: "assistant-1",
+      timestamp: "2026-03-28T10:00:02.000Z",
+      sequence: 2,
+      content: "第一轮回复\n补全后的正文"
+    });
+  });
+
+  it("同一条 thinking 在 runtime 与 history 的 rawRef 不同时，仍会回到正确时间线位置", () => {
+    const merged = mergeAuthoritativeMessages(
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "assistant-old-1",
+            provider: "codex",
+            providerSessionId: "thread-1",
+            role: "assistant",
+            content: "上一轮回复",
+            timestamp: "2026-03-28T10:00:02.000Z",
+            sequence: 2,
+            rawRef: "codex://thread-1#line=2"
+          })
+        ),
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "user-latest-1",
+            provider: "codex",
+            providerSessionId: "thread-1",
+            role: "user",
+            content: "忽略聊天记录，再次查看你是什么模型？",
+            timestamp: "2026-03-28T10:00:03.000Z",
+            sequence: 3,
+            rawRef: "codex://thread-1#line=3"
+          })
+        ),
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "assistant-latest-1",
+            provider: "codex",
+            providerSessionId: "thread-1",
+            role: "assistant",
+            content: "我的实际模型是 deepseek-v4-flash。",
+            timestamp: "2026-03-28T10:00:05.000Z",
+            sequence: 5,
+            rawRef: "codex://thread-1#line=5"
+          })
+        ),
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "thinking-latest-1",
+            provider: "codex",
+            providerSessionId: "thread-1",
+            role: "assistant",
+            kind: "thinking",
+            content: "The user is asking me to ignore chat history and again state what model I am.",
+            timestamp: "2026-03-28T10:00:09.000Z",
+            sequence: 9,
+            rawRef: "codex://thread-1#line=9"
+          })
+        )
+      ],
+      "session-1",
+      [
+        createHistoryMessage({
+          messageId: "thinking-latest-1",
+          provider: "codex",
+          providerSessionId: "thread-1",
+          role: "assistant",
+          kind: "thinking",
+          content: "The user is asking me to ignore chat history and again state what model I am.",
+          timestamp: "2026-03-28T10:00:04.000Z",
+          sequence: 4,
+          rawRef: "codex://thread-1#line=4"
+        })
+      ]
+    );
+
+    expect(merged.map((item) => item.id)).toEqual([
+      "assistant-old-1",
+      "user-latest-1",
+      "thinking-latest-1",
+      "assistant-latest-1"
+    ]);
+    expect(merged[2]).toMatchObject({
+      id: "thinking-latest-1",
+      timestamp: "2026-03-28T10:00:04.000Z",
+      sequence: 4,
+      rawRef: "codex://thread-1#line=4"
+    });
   });
 
   it("同一工具消息收到完成结果后会覆盖 running 状态", () => {
@@ -1209,6 +1426,149 @@ describe("session runtime machine", () => {
       "assistant-1",
       "user-2",
       "assistant-2"
+    ]);
+  });
+
+  it("会折叠 OpenCode 连续重复回放的 thinking 消息", () => {
+    const merged = mergeAuthoritativeMessages([], "session-1", [
+      createHistoryMessage({
+        messageId: "thinking-1",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "assistant",
+        kind: "thinking",
+        content: "The user is saying \"回复567\" which means \"reply 567\". I'll just reply with 567.",
+        timestamp: "2026-03-29T01:37:15.000Z",
+        sequence: 2,
+        rawRef: "opencode://thread-1/message/assistant-1/part/reasoning-1"
+      }),
+      createHistoryMessage({
+        messageId: "thinking-2",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "assistant",
+        kind: "thinking",
+        content: "The user is saying \"回复567\" which means \"reply 567\". I'll just reply with 567.",
+        timestamp: "2026-03-29T01:37:16.000Z",
+        sequence: 3,
+        rawRef: "opencode://thread-1/message/assistant-2/part/reasoning-1"
+      }),
+      createHistoryMessage({
+        messageId: "assistant-1",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "assistant",
+        content: "567",
+        timestamp: "2026-03-29T01:37:18.000Z",
+        sequence: 4,
+        rawRef: "opencode://thread-1/message/assistant-2/part/text-1"
+      })
+    ]);
+
+    expect(merged.map((item) => item.id)).toEqual([
+      "thinking-2",
+      "assistant-1"
+    ]);
+    expect(merged[0]?.kind).toBe("thinking");
+    expect(merged[0]?.content).toContain("reply 567");
+  });
+
+  it("会合并 OpenCode runtime 与 history 回流的同一条消息 part", () => {
+    const merged = mergeAuthoritativeMessages(
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "runtime-user-345",
+            provider: "opencode",
+            providerSessionId: "thread-1",
+            role: "user",
+            content: "回复345",
+            timestamp: "2026-04-25T13:09:14.153Z",
+            sequence: 17,
+            rawRef:
+              "opencode://session/thread-1/message/msg-user-345/part/prt-user-345?part=2001"
+          })
+        ),
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "runtime-thinking-345",
+            provider: "opencode",
+            providerSessionId: "thread-1",
+            role: "assistant",
+            kind: "thinking",
+            content: "The user is saying \"回复345\" which means \"reply 345\".",
+            timestamp: "2026-04-25T13:09:14.165Z",
+            sequence: 18,
+            rawRef:
+              "opencode://session/thread-1/message/msg-assistant-345/part/prt-thinking-345?part=1001"
+          })
+        ),
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "runtime-text-345",
+            provider: "opencode",
+            providerSessionId: "thread-1",
+            role: "assistant",
+            content: "345",
+            timestamp: "2026-04-25T13:09:14.165Z",
+            sequence: 18,
+            rawRef:
+              "opencode://session/thread-1/message/msg-assistant-345/part/prt-text-345?part=2001"
+          })
+        )
+      ],
+      "session-1",
+      [
+        createHistoryMessage({
+          messageId: "history-user-345",
+          provider: "opencode",
+          providerSessionId: "thread-1",
+          role: "user",
+          content: "回复345",
+          timestamp: "2026-04-25T13:09:14.153Z",
+          sequence: 10,
+          rawRef:
+            "opencode://session/thread-1/message/msg-user-345/part/prt-user-345"
+        }),
+        createHistoryMessage({
+          messageId: "history-thinking-345",
+          provider: "opencode",
+          providerSessionId: "thread-1",
+          role: "assistant",
+          kind: "thinking",
+          content: "The user is saying \"回复345\" which means \"reply 345\".",
+          timestamp: "2026-04-25T13:09:14.165Z",
+          sequence: 11,
+          rawRef:
+            "opencode://session/thread-1/message/msg-assistant-345/part/prt-thinking-345"
+        }),
+        createHistoryMessage({
+          messageId: "history-text-345",
+          provider: "opencode",
+          providerSessionId: "thread-1",
+          role: "assistant",
+          content: "345",
+          timestamp: "2026-04-25T13:09:14.165Z",
+          sequence: 12,
+          rawRef:
+            "opencode://session/thread-1/message/msg-assistant-345/part/prt-text-345"
+        })
+      ]
+    );
+
+    expect(merged.map((item) => item.id)).toEqual([
+      "runtime-user-345",
+      "runtime-thinking-345",
+      "runtime-text-345"
+    ]);
+    expect(merged.map((item) => item.sequence)).toEqual([10, 11, 12]);
+    expect(merged.map((item) => item.rawRef)).toEqual([
+      "opencode://session/thread-1/message/msg-user-345/part/prt-user-345",
+      "opencode://session/thread-1/message/msg-assistant-345/part/prt-thinking-345",
+      "opencode://session/thread-1/message/msg-assistant-345/part/prt-text-345"
     ]);
   });
 
