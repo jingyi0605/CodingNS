@@ -3,7 +3,7 @@ const PARALLEL_DESKTOP_RESIZE_MIN_DELTA = 24;
 const PARALLEL_DESKTOP_EDGE_MARGIN = 72;
 const PARALLEL_DESKTOP_CHROME_WIDTH = 296;
 const PARALLEL_DESKTOP_GAP_WIDTH = 16;
-const PARALLEL_TARGET_PANE_WIDTH_BY_COUNT: Record<number, number> = {
+const PARALLEL_MIN_PANE_WIDTH_BY_COUNT: Record<number, number> = {
   2: 496,
   3: 408,
   4: 344
@@ -15,8 +15,12 @@ export interface ParallelDesktopResizeInput {
   monitorWidth: number;
 }
 
+export function resolveParallelMinimumPaneWidth(memberCount: number) {
+  return PARALLEL_MIN_PANE_WIDTH_BY_COUNT[memberCount] ?? PARALLEL_MIN_PANE_WIDTH_BY_COUNT[4];
+}
+
 export function resolveParallelTargetPaneWidth(memberCount: number) {
-  return PARALLEL_TARGET_PANE_WIDTH_BY_COUNT[memberCount] ?? PARALLEL_TARGET_PANE_WIDTH_BY_COUNT[4];
+  return resolveParallelMinimumPaneWidth(memberCount);
 }
 
 export function resolveParallelDesktopResizeTarget({
@@ -31,14 +35,14 @@ export function resolveParallelDesktopResizeTarget({
   const chromeWidth = PARALLEL_DESKTOP_CHROME_WIDTH;
   const gapWidth = Math.max(0, memberCount - 1) * PARALLEL_DESKTOP_GAP_WIDTH;
   const availablePaneWidth = Math.max(0, (currentWidth - chromeWidth - gapWidth) / memberCount);
-  const targetPaneWidth = resolveParallelTargetPaneWidth(memberCount);
+  const minimumPaneWidth = resolveParallelMinimumPaneWidth(memberCount);
 
-  // 当前每屏已经够用时，不再做无意义扩窗。
-  if (availablePaneWidth >= targetPaneWidth - 16) {
+  // 当前每个 pane 已经够宽时，不再做无意义扩窗。
+  if (availablePaneWidth >= minimumPaneWidth) {
     return currentWidth;
   }
 
-  const desiredWidth = chromeWidth + gapWidth + memberCount * targetPaneWidth;
+  const desiredWidth = chromeWidth + gapWidth + memberCount * minimumPaneWidth;
   const maxWidth = Math.min(
     currentWidth * PARALLEL_DESKTOP_RESIZE_MAX_RATIO,
     Math.max(currentWidth, monitorWidth - PARALLEL_DESKTOP_EDGE_MARGIN)

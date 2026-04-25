@@ -1,11 +1,18 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  resolveParallelMinimumPaneWidth,
   resolveParallelDesktopResizeTarget,
   resolveParallelTargetPaneWidth
 } from "./parallel-conversation-layout";
 
 describe("parallel-conversation-layout", () => {
+  it("会为每个并行 pane 给出明确的最小宽度", () => {
+    expect(resolveParallelMinimumPaneWidth(2)).toBe(496);
+    expect(resolveParallelMinimumPaneWidth(3)).toBe(408);
+    expect(resolveParallelMinimumPaneWidth(4)).toBe(344);
+  });
+
   it("会根据成员数量收窄目标分屏宽度", () => {
     expect(resolveParallelTargetPaneWidth(2)).toBeGreaterThan(resolveParallelTargetPaneWidth(3));
     expect(resolveParallelTargetPaneWidth(3)).toBeGreaterThan(resolveParallelTargetPaneWidth(4));

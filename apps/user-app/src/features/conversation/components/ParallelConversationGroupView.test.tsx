@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
+import { writeParallelGroupTransitionSignal } from "../parallel-session-display";
 import { ParallelConversationGroupView } from "./ParallelConversationGroupView";
 
 const mockGetParallelGroupDetail = vi.fn();
@@ -566,6 +567,33 @@ describe("ParallelConversationGroupView", () => {
     );
 
     expect(await screen.findByRole("button", { name: t("shell.parallelAppendAction") })).toBeDisabled();
+  });
+
+  it("收到新建并行会话过渡信号后，会把右栏收起和 pane 展示挂到同一段动画参数上", async () => {
+    writeParallelGroupTransitionSignal("parallel-group-1", "create");
+
+    render(
+      <MemoryRouter>
+        <ParallelConversationGroupView
+          groupId="parallel-group-1"
+          currentSessionId="session-1"
+        />
+      </MemoryRouter>
+    );
+
+    await screen.findByText("原版风格");
+
+    const page = document.querySelector(".parallel-conversation-page");
+
+    if (!(page instanceof HTMLElement)) {
+      throw new Error("未找到并行会话页面");
+    }
+
+    expect(page).toHaveAttribute("data-parallel-entering", "true");
+    expect(page.style.getPropertyValue("--parallel-pane-min-width")).toBe("344px");
+    expect(page.style.getPropertyValue("--parallel-pane-enter-delay")).toBe("520ms");
+    expect(page.style.getPropertyValue("--parallel-pane-enter-duration")).toBe("1480ms");
+    expect(page.style.getPropertyValue("--parallel-shell-expand-duration")).toBe("720ms");
   });
 });
 

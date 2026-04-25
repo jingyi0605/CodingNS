@@ -28921,6 +28921,13 @@ textarea:focus-visible {
  }
 
 .parallel-conversation-page {
+  --parallel-pane-min-width: 344px;
+  --parallel-pane-enter-delay: 0ms;
+  --parallel-pane-enter-duration: 720ms;
+  --parallel-grid-reveal-delay: 0ms;
+  --parallel-grid-reveal-duration: 820ms;
+  --parallel-shell-expand-duration: 240ms;
+  --parallel-pane-stagger-delay: 64ms;
   display: flex;
   min-height: 100%;
   height: 100%;
@@ -28995,7 +29002,7 @@ textarea:focus-visible {
   position: relative;
   display: grid;
   flex: 1;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(var(--parallel-pane-min-width), 1fr));
   align-items: stretch;
   align-content: stretch;
   grid-auto-rows: minmax(0, 1fr);
@@ -29021,11 +29028,11 @@ textarea:focus-visible {
 }
 
  .parallel-conversation-page[data-parallel-count="3"] .parallel-conversation-grid {
-   grid-template-columns: repeat(3, minmax(0, 1fr));
+   grid-template-columns: repeat(3, minmax(var(--parallel-pane-min-width), 1fr));
  }
 
  .parallel-conversation-page[data-parallel-count="4"] .parallel-conversation-grid {
-   grid-template-columns: repeat(4, minmax(0, 1fr));
+   grid-template-columns: repeat(4, minmax(var(--parallel-pane-min-width), 1fr));
  }
 
 .parallel-conversation-pane {
@@ -29554,33 +29561,31 @@ textarea:focus-visible {
    color: var(--danger);
  }
 
+.parallel-conversation-page[data-parallel-entering="true"] {
+  animation: parallel-conversation-shell-expand var(--parallel-shell-expand-duration) cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
 .parallel-conversation-page[data-parallel-entering="true"] .parallel-conversation-pane {
-  animation: parallel-conversation-pane-enter 560ms cubic-bezier(0.2, 0.88, 0.2, 1) both;
+  animation: parallel-conversation-pane-enter var(--parallel-pane-enter-duration) cubic-bezier(0.2, 0.88, 0.2, 1) both;
+  animation-delay: calc(
+    var(--parallel-pane-enter-delay)
+    + (var(--parallel-pane-order, 0) * var(--parallel-pane-stagger-delay))
+  );
 }
 
 .parallel-conversation-page[data-parallel-entering="true"] .parallel-conversation-grid::before {
-  animation: parallel-conversation-grid-reveal 620ms cubic-bezier(0.22, 0.9, 0.24, 1) both;
+  animation: parallel-conversation-grid-reveal var(--parallel-grid-reveal-duration) cubic-bezier(0.22, 0.9, 0.24, 1) both;
+  animation-delay: var(--parallel-grid-reveal-delay);
 }
 
 .parallel-conversation-page[data-parallel-entering="true"] .parallel-conversation-pane::after {
-  animation: parallel-conversation-pane-sheen 620ms cubic-bezier(0.2, 0.88, 0.2, 1) both;
+  animation: parallel-conversation-pane-sheen var(--parallel-grid-reveal-duration) cubic-bezier(0.2, 0.88, 0.2, 1) both;
+  animation-delay: calc(
+    var(--parallel-pane-enter-delay)
+    + 160ms
+    + (var(--parallel-pane-order, 0) * var(--parallel-pane-stagger-delay))
+  );
 }
-
-.workbench-shell[data-parallel-conversation-active="true"] .parallel-conversation-page {
-  animation: parallel-conversation-shell-expand 240ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
-}
-
- .parallel-conversation-page[data-parallel-entering="true"] .parallel-conversation-pane:nth-child(2) {
-   animation-delay: 40ms;
- }
-
- .parallel-conversation-page[data-parallel-entering="true"] .parallel-conversation-pane:nth-child(3) {
-   animation-delay: 80ms;
- }
-
- .parallel-conversation-page[data-parallel-entering="true"] .parallel-conversation-pane:nth-child(4) {
-   animation-delay: 120ms;
- }
 
 @keyframes parallel-conversation-pane-enter {
   from {
@@ -29797,7 +29802,7 @@ textarea:focus-visible {
     transition: none;
   }
 
-  .workbench-shell[data-parallel-conversation-active="true"] .parallel-conversation-page,
+  .parallel-conversation-page[data-parallel-entering="true"],
   .parallel-conversation-page[data-parallel-entering="true"] .parallel-conversation-grid::before,
   .parallel-conversation-page[data-parallel-entering="true"] .parallel-conversation-pane,
   .parallel-conversation-page[data-parallel-entering="true"] .parallel-conversation-pane::after {

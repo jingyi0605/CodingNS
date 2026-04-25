@@ -55,19 +55,23 @@ import { useSessionSendRecovery } from "../session-send-recovery";
 import { TerminalManagerPanel } from "../../workbench/components/TerminalManagerPanel";
 import { TerminalPage } from "../../terminal/pages/TerminalPage";
 import {
-  consumeParallelGroupTransitionSignal,
+  createParallelGroupTransitionSpec,
+  type ParallelGroupTransitionSpec,
   createParallelPaneStyle,
   createParallelGroupStyle,
   PARALLEL_PANE_COLOR_PRESETS,
   readParallelPaneColorOverride,
+  readParallelGroupTransitionSignal,
   resolveParallelGroupLabel,
   resolveSessionNavigationWorkspaceId,
   resolveSessionToolWorkspaceId,
   resolveSessionIsolatedWorkspaceBranchName,
   writeParallelPaneColorOverride
 } from "../parallel-session-display";
-import { resolveParallelDesktopResizeTarget } from "../parallel-conversation-layout";
-const PARALLEL_GROUP_TRANSITION_DURATION_MS = 560;
+import {
+  resolveParallelDesktopResizeTarget,
+  resolveParallelMinimumPaneWidth
+} from "../parallel-conversation-layout";
 const PARALLEL_DESKTOP_RESIZE_DURATION_MS = 240;
 const PARALLEL_TOOLS_PANEL_DEFAULT_WIDTH = 920;
 const PARALLEL_TOOLS_PANEL_DEFAULT_HEIGHT = 760;
@@ -281,7 +285,7 @@ export function ParallelConversationGroupView({
   const [openInfoSessionId, setOpenInfoSessionId] = useState<string | null>(null);
   const [promotingWorkspaceId, setPromotingWorkspaceId] = useState<string | null>(null);
   const [removingSessionId, setRemovingSessionId] = useState<string | null>(null);
-  const [entering, setEntering] = useState(false);
+  const [enteringTransition, setEnteringTransition] = useState<ParallelGroupTransitionSpec | null>(null);
   const [appendModalOpen, setAppendModalOpen] = useState(false);
   const resizedSignatureRef = useRef<string | null>(null);
   const enteringTimerRef = useRef<number | null>(null);
@@ -322,11 +326,13 @@ export function ParallelConversationGroupView({
   }, [groupId]);
 
   useEffect(() => {
-    if (!consumeParallelGroupTransitionSignal(groupId)) {
+    const transitionSignal = readParallelGroupTransitionSignal(groupId);
+
+    if (!transitionSignal) {
       return;
     }
 
-    triggerEnteringAnimation();
+    triggerEnteringAnimation(transitionSignal);
   }, [groupId]);
 
   useEffect(() => {
@@ -535,17 +541,17 @@ export function ParallelConversationGroupView({
     }
   }
 
-  function triggerEnteringAnimation() {
-    setEntering(true);
+  function triggerEnteringAnimation(transition: ParallelGroupTransitionSpec) {
+    setEnteringTransition(transition);
 
     if (enteringTimerRef.current !== null) {
       window.clearTimeout(enteringTimerRef.current);
     }
 
     enteringTimerRef.current = window.setTimeout(() => {
-      setEntering(false);
+      setEnteringTransition(null);
       enteringTimerRef.current = null;
-    }, PARALLEL_GROUP_TRANSITION_DURATION_MS);
+    }, transition.totalDurationMs);
   }
 
   if (loading && !detail) {
@@ -588,12 +594,26 @@ export function ParallelConversationGroupView({
     ?? memberEntries[0]
     ?? null;
   const canAppendMembers = memberEntries.length < 4;
+  const parallelPageStyle = {
+    "--parallel-pane-min-width": `${resolveParallelMinimumPaneWidth(memberEntries.length)}px`,
+    ...(enteringTransition
+      ? {
+          "--parallel-pane-enter-delay": `${enteringTransition.paneEnterDelayMs}ms`,
+          "--parallel-pane-enter-duration": `${enteringTransition.paneEnterDurationMs}ms`,
+          "--parallel-grid-reveal-delay": `${enteringTransition.gridRevealDelayMs}ms`,
+          "--parallel-grid-reveal-duration": `${enteringTransition.gridRevealDurationMs}ms`,
+          "--parallel-shell-expand-duration": `${enteringTransition.shellExpandDurationMs}ms`,
+          "--parallel-pane-stagger-delay": `${enteringTransition.paneStaggerMs}ms`
+        }
+      : {})
+  } as CSSProperties;
 
   return (
     <main
       className="workbench-page conversation-page-shell parallel-conversation-page"
       data-parallel-count={memberEntries.length}
-      data-parallel-entering={entering ? "true" : undefined}
+      data-parallel-entering={enteringTransition ? "true" : undefined}
+      style={parallelPageStyle}
     >
       <header className="parallel-conversation-group-header">
         <div className="parallel-conversation-group-titlebar">
@@ -672,7 +692,7 @@ export function ParallelConversationGroupView({
         onCreated={async (nextDetail) => {
           setDetail(nextDetail);
           setAppendModalOpen(false);
-          triggerEnteringAnimation();
+          triggerEnteringAnimation(createParallelGroupTransitionSpec("append"));
           await requestNavigationRefresh();
           showToast({
             title: t("shell.parallelAppendSucceeded"),
@@ -1400,10 +1420,11 @@ function ParallelConversationMemberPane({
         data-workspace-tone={workspaceContext?.tone ?? "root"}
         data-parallel-role={(session?.parallelGroup ?? entry.session.parallelGroup)?.role ?? undefined}
         style={{
+          "--parallel-pane-order": String(entry.ordinal),
           ...(createWorkspaceToneStyle(workspaceContext) ?? {}),
           ...(parallelGroupStyle ?? {}),
           ...parallelPaneStyle
-        }}
+        } as CSSProperties}
       >
         <header
           ref={headerLayerRef}

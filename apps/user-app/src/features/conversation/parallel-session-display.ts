@@ -47,12 +47,26 @@ const PARALLEL_GROUP_COLOR_MAP: Record<
   }
 };
 
-const PARALLEL_GROUP_TRANSITION_MAX_AGE_MS = 2_400;
+const PARALLEL_GROUP_TRANSITION_MAX_AGE_MS = 2_600;
 const PARALLEL_PANE_PALETTE_STORAGE_KEY = "workbench.parallel.pane.palette";
-let parallelGroupTransitionSignal: {
+
+export interface ParallelGroupTransitionSpec {
+  totalDurationMs: number;
+  sidebarCollapseDurationMs: number;
+  paneEnterDelayMs: number;
+  paneEnterDurationMs: number;
+  gridRevealDelayMs: number;
+  gridRevealDurationMs: number;
+  shellExpandDurationMs: number;
+  paneStaggerMs: number;
+}
+
+export interface ParallelGroupTransitionSignal extends ParallelGroupTransitionSpec {
   groupId: string;
   createdAt: number;
-} | null = null;
+}
+
+let parallelGroupTransitionSignal: ParallelGroupTransitionSignal | null = null;
 
 export const PARALLEL_PANE_COLOR_PRESETS = [
   "#34C759",
@@ -74,6 +88,32 @@ export const PARALLEL_PANE_COLOR_PRESETS = [
   "#84CC16",
   "#10B981"
 ] as const;
+
+export function createParallelGroupTransitionSpec(kind: "create" | "append" = "create"): ParallelGroupTransitionSpec {
+  if (kind === "append") {
+    return {
+      totalDurationMs: 1_200,
+      sidebarCollapseDurationMs: 0,
+      paneEnterDelayMs: 0,
+      paneEnterDurationMs: 1_000,
+      gridRevealDelayMs: 0,
+      gridRevealDurationMs: 920,
+      shellExpandDurationMs: 0,
+      paneStaggerMs: 80
+    };
+  }
+
+  return {
+    totalDurationMs: 2_000,
+    sidebarCollapseDurationMs: 720,
+    paneEnterDelayMs: 520,
+    paneEnterDurationMs: 1_480,
+    gridRevealDelayMs: 420,
+    gridRevealDurationMs: 1_360,
+    shellExpandDurationMs: 720,
+    paneStaggerMs: 96
+  };
+}
 
 export function resolveSessionDisplayParentSessionId(
   session: Pick<SessionSummaryDto, "displayParentSessionId" | "parentSessionId">
@@ -247,29 +287,29 @@ export function resolveSessionToolWorkspaceId(
   return session.workspaceId;
 }
 
-export function writeParallelGroupTransitionSignal(groupId: string) {
+export function writeParallelGroupTransitionSignal(groupId: string, kind: "create" | "append" = "create") {
   parallelGroupTransitionSignal = {
     groupId,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    ...createParallelGroupTransitionSpec(kind)
   };
 }
 
-export function consumeParallelGroupTransitionSignal(groupId: string) {
+export function readParallelGroupTransitionSignal(groupId: string): ParallelGroupTransitionSignal | null {
   if (!parallelGroupTransitionSignal) {
-    return false;
+    return null;
   }
 
   if (parallelGroupTransitionSignal.groupId !== groupId) {
-    return false;
+    return null;
   }
 
   if (Date.now() - parallelGroupTransitionSignal.createdAt > PARALLEL_GROUP_TRANSITION_MAX_AGE_MS) {
     parallelGroupTransitionSignal = null;
-    return false;
+    return null;
   }
 
-  parallelGroupTransitionSignal = null;
-  return true;
+  return parallelGroupTransitionSignal;
 }
 
 function readParallelPanePaletteOverrides(): Record<string, string> {

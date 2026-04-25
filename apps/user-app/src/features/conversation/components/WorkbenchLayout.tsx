@@ -111,6 +111,8 @@ import {
   resolveSessionIndicatorClassName
 } from "../session-activity-display";
 import {
+  type ParallelGroupTransitionSignal,
+  readParallelGroupTransitionSignal,
   writeParallelGroupTransitionSignal,
   createParallelGroupStyle,
   resolveParallelGroupLabel,
@@ -7605,6 +7607,8 @@ export function WorkbenchLayout({
   const [rightCollapsed, setRightCollapsed] = useState(() =>
     readStoredBoolean(RIGHT_PANEL_COLLAPSED_KEY, false)
   );
+  const [parallelConversationTransition, setParallelConversationTransition] =
+    useState<ParallelGroupTransitionSignal | null>(null);
   const [activeResizeSide, setActiveResizeSide] = useState<"left" | "right" | null>(null);
   const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState(() =>
     extractCollapsedWorkspaceIds(initialWorkbenchSnapshotRef.current)
@@ -9337,9 +9341,43 @@ export function WorkbenchLayout({
       : currentWorkspaceContext);
   const currentWorktreeMergeState =
     (currentWorktreeMeta ? worktreeMergeStateById[currentWorktreeMeta.workspaceId] ?? null : null);
+  const activeParallelConversationGroupId =
+    currentSessionContext?.session?.parallelGroup?.groupId?.trim() || null;
   const isParallelConversationActive =
     activeCenterTab === "conversation"
     && shouldUseParallelConversationLayout(currentSessionContext?.session ?? null);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !isParallelConversationActive || !activeParallelConversationGroupId) {
+      setParallelConversationTransition(null);
+      return;
+    }
+
+    const transitionSignal = readParallelGroupTransitionSignal(activeParallelConversationGroupId);
+
+    if (!transitionSignal || transitionSignal.sidebarCollapseDurationMs <= 0) {
+      setParallelConversationTransition(null);
+      return;
+    }
+
+    setParallelConversationTransition(transitionSignal);
+
+    const elapsedMs = Date.now() - transitionSignal.createdAt;
+    const remainingMs = transitionSignal.totalDurationMs - elapsedMs;
+
+    if (remainingMs <= 0) {
+      setParallelConversationTransition(null);
+      return;
+    }
+
+    const timerId = window.setTimeout(() => {
+      setParallelConversationTransition(null);
+    }, remainingMs);
+
+    return () => {
+      window.clearTimeout(timerId);
+    };
+  }, [activeParallelConversationGroupId, isParallelConversationActive]);
 
   useEffect(() => {
     logPerfDebug("workbench.info_panel_state", {
@@ -10031,7 +10069,15 @@ export function WorkbenchLayout({
     "--workbench-left-current-width": leftCollapsed ? "0px" : `${leftPanelWidth}px`,
     "--workbench-right-width": `${rightPanelWidth}px`,
     "--workbench-right-current-width":
-      rightCollapsed || isParallelConversationActive ? "0px" : `${rightPanelWidth}px`
+      rightCollapsed || isParallelConversationActive ? "0px" : `${rightPanelWidth}px`,
+    "--workbench-right-sidebar-duration":
+      parallelConversationTransition && !rightCollapsed
+        ? `${parallelConversationTransition.sidebarCollapseDurationMs}ms`
+        : undefined,
+    "--workbench-right-sidebar-content-duration":
+      parallelConversationTransition && !rightCollapsed
+        ? `${Math.max(320, parallelConversationTransition.sidebarCollapseDurationMs - 120)}ms`
+        : undefined
   } as CSSProperties;
   const auxiliaryPanelContent = activeCenterTab === "butler"
     ? customAuxiliaryPanel
@@ -10057,6 +10103,10 @@ export function WorkbenchLayout({
     );
   const shouldShowAuxiliaryPanel = auxiliaryPanelContent !== null;
   const effectiveRightCollapsed = rightCollapsed || isParallelConversationActive;
+  const shouldKeepParallelAuxiliaryMounted =
+    isParallelConversationActive
+    && parallelConversationTransition !== null
+    && !rightCollapsed;
   const shouldUseMacOsOverlayTitlebarAlignment =
     platform.isDesktop && platform.ui.osFamily === "macos" && platform.ui.prefersOverlayTitlebar;
 
@@ -10583,6 +10633,7 @@ export function WorkbenchLayout({
           data-right-collapsed={effectiveRightCollapsed}
           data-info-ready={infoPanelReady}
           data-parallel-conversation-active={isParallelConversationActive ? "true" : undefined}
+          data-parallel-sidebar-transition={shouldKeepParallelAuxiliaryMounted ? "true" : undefined}
           data-runtime-platform={platform.platform}
           data-os-family={platform.ui.osFamily}
           data-overlay-titlebar={platform.ui.prefersOverlayTitlebar}
@@ -10723,10 +10774,11 @@ export function WorkbenchLayout({
                   data-collapsed={effectiveRightCollapsed}
                   data-auto-hidden={isParallelConversationActive ? "true" : undefined}
                   data-custom-panel={activeCenterTab === "butler"}
-                  aria-hidden={effectiveRightCollapsed}
+                  data-parallel-transition={shouldKeepParallelAuxiliaryMounted ? "true" : undefined}
+                  aria-hidden={effectiveRightCollapsed && !shouldKeepParallelAuxiliaryMounted}
                   style={createWorkspaceToneStyle(currentAuxiliaryWorkspaceContext)}
                 >
-                  {isParallelConversationActive ? null : activeCenterTab === "butler" ? (
+                  {isParallelConversationActive && !shouldKeepParallelAuxiliaryMounted ? null : activeCenterTab === "butler" ? (
                     <div className="workbench-auxiliary-custom-panel">
                       {customAuxiliaryPanel}
                     </div>
