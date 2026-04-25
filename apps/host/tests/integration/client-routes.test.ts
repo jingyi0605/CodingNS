@@ -348,8 +348,8 @@ describe("client routes", () => {
       new Response(
         JSON.stringify({
           "dist-tags": {
-            latest: "0.6.0",
-            beta: "0.6.0-beta.1"
+            latest: "0.6.1",
+            beta: "0.6.1-beta.1"
           }
         }),
         {
@@ -405,7 +405,7 @@ describe("client routes", () => {
     expect(taskResponse.json()).toMatchObject({
       taskId: task.taskId,
       packageName: "placeholder-server-package",
-      targetVersion: "0.6.0",
+      targetVersion: "0.6.1",
       status: "succeeded",
       restartRequired: false,
       restartScheduled: true,
@@ -425,7 +425,7 @@ describe("client routes", () => {
       packages: [
         expect.objectContaining({
           packageName: "placeholder-server-package",
-          latestVersion: "0.6.0",
+          latestVersion: "0.6.1",
           hasUpdate: true,
           restartRequired: false,
           installTask: expect.objectContaining({
