@@ -1,4 +1,5 @@
 import { AppError } from "../../shared/errors/app-error.js";
+import type { SessionProviderBindingDebugSummary } from "./session-provider-config-service.js";
 import { normalizeProviderUsageLimit } from "./session-provider-usage-limit.js";
 
 export function mapSessionProviderError(error: unknown): AppError {
@@ -278,4 +279,63 @@ export function mapSessionProviderError(error: unknown): AppError {
     errorCode: "PROVIDER_IO_ERROR",
     detail: error instanceof Error ? error.message : "provider I/O 失败"
   });
+}
+
+export function appendSessionProviderErrorContext(
+  error: AppError,
+  summary: SessionProviderBindingDebugSummary | null
+): AppError {
+  const contextLine = buildSessionProviderContextLine(summary);
+  const currentDetail = error.message;
+
+  if (!contextLine || currentDetail.includes(contextLine)) {
+    return error;
+  }
+
+  return new AppError({
+    statusCode: error.statusCode,
+    errorCode: error.errorCode,
+    detail: `${currentDetail}\n会话部署: ${contextLine}`,
+    field: error.field,
+    data: error.data
+  });
+}
+
+function buildSessionProviderContextLine(
+  summary: SessionProviderBindingDebugSummary | null
+): string | null {
+  if (!summary) {
+    return null;
+  }
+
+  const parts = [
+    `provider=${summary.provider}`,
+    `configMode=${summary.providerConfigMode}`
+  ];
+
+  if (summary.providerPresetId) {
+    parts.push(`presetId=${summary.providerPresetId}`);
+  }
+
+  if (summary.providerPresetName) {
+    parts.push(`presetName=${summary.providerPresetName}`);
+  }
+
+  if (summary.modelProvider) {
+    parts.push(`modelProvider=${summary.modelProvider}`);
+  }
+
+  if (summary.model) {
+    parts.push(`model=${summary.model}`);
+  }
+
+  if (summary.baseUrl) {
+    parts.push(`baseUrl=${summary.baseUrl}`);
+  }
+
+  if (summary.authEnvKeys.length > 0) {
+    parts.push(`authEnv=${summary.authEnvKeys.join(",")}`);
+  }
+
+  return parts.join(", ");
 }

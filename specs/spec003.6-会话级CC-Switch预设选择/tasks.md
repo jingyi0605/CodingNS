@@ -113,7 +113,6 @@
   - 怎么验证：
     - `pnpm --filter host build`
     - `pnpm --dir apps/user-app build`
-
 ---
 
 ## 阶段 2：补会话级运行上下文生成器
@@ -293,6 +292,8 @@
   - 怎么验证：
     - `pnpm --filter host build`
     - `pnpm --dir apps/user-app build`
+  - 补充回写：
+    - 2026-04-25：Host 已补上 Codex 继续会话兜底。旧 rollout 文件不存在时，不再硬复用失效 thread，而是用 Host 已保存的文本历史生成 synthetic transcript，交给 Codex runtime 的 resume-from-history fallback 继续对话，修复“切换 deployment 后继续旧会话报 no rollout found”。
 
 ---
 
@@ -316,6 +317,8 @@
   - 怎么验证：
     - Host 集成测试
     - 前端回归测试
+  - 当前进展：
+    - 2026-04-25：Host 侧已补充集成测试，覆盖 Codex 原始 rollout 丢失时改用文本历史继续会话的场景；相关定向集成测试当前通过，但整项旧会话兼容回归还没全部做完，所以状态暂不改成 DONE。
 
 - [ ] 5.2 三家 provider 的并行 preset 验收
   - 状态：TODO

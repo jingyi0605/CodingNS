@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 
@@ -63,7 +63,10 @@ import {
   type SessionPermissionReplyInput,
   type SessionPermissionRequestView
 } from "./session-permission-request-service.js";
-import { mapSessionProviderError } from "./session-provider-error-mapper.js";
+import {
+  appendSessionProviderErrorContext,
+  mapSessionProviderError
+} from "./session-provider-error-mapper.js";
 import type {
   SessionHistoryEnvelope,
   SessionHistoryMessageWithOrigin,
@@ -422,7 +425,13 @@ export class SessionLiveRuntimeService {
             attachments: persistedAttachments.runtimeAttachments
           }
         },
-        "start"
+        "start",
+        {
+          provider: input.provider as SessionListItem["provider"],
+          providerConfigMode: providerBinding.providerConfigMode,
+          providerPresetId: providerBinding.providerPresetId,
+          runtimeHomeDir: providerBinding.runtimeHomeDir
+        }
       );
       this.logSendDebugStep(debugTrace, "launch_runtime", launchRuntimeStartedAtMs, {
         userId: input.userId
@@ -1632,7 +1641,13 @@ export class SessionLiveRuntimeService {
   private async startRuntimeRun(
     request: ProviderRuntimeRunRequest,
     userId: string,
-    mode: "start" | "continue"
+    mode: "start" | "continue",
+    providerBinding?: {
+      provider: SessionListItem["provider"];
+      providerConfigMode: SessionProviderConfigMode;
+      providerPresetId: string | null;
+      runtimeHomeDir: string | null;
+    }
   ): Promise<void> {
     this.runtimeMessageSeenSessions.delete(request.sessionId);
     this.runtimeHistoryFallbackSentSessions.delete(request.sessionId);
@@ -1642,7 +1657,7 @@ export class SessionLiveRuntimeService {
       this.clearExternalRuntimeSnapshot(request.sessionId);
     }
 
-    const handle = await this.launchRuntimeRun(request, mode);
+    const handle = await this.launchRuntimeRun(request, mode, providerBinding);
     const snapshot = handle.getSnapshot();
     const currentState = this.sessionStateRepository.findBySessionAndUser(request.sessionId, userId);
 
@@ -1681,13 +1696,64 @@ export class SessionLiveRuntimeService {
     try {
       const capabilities = await this.sessionHistoryService.getSessionCapabilities(input.sessionId);
       const workspace = this.workspaceService.getWorkspaceOrThrow(session.workspaceId);
-      const providerBinding = this.resolveEffectiveSessionProviderBinding(session, input);
-      const providerLaunchContext = this.sessionProviderConfigService.resolveLaunchContext(providerBinding);
       const runtimeMode = shouldStartNativeSessionOnFirstMessage(session);
+      const existingBinding = this.getSessionBindingOrThrow(session.sessionId);
+      const resolvedProviderBinding = this.resolveRequestedSessionProviderBinding(
+        session,
+        input,
+        existingBinding
+      );
+
+      const runtimeSessionId = this.resolveRuntimeSessionId(input.sessionId);
+      const activeRun = this.getLiveRuntimeSnapshot(runtimeSessionId);
+      const externalRuntimeSnapshot = this.getFreshExternalRuntimeSnapshot(runtimeSessionId);
+      const hasActiveRun = Boolean(activeRun && isActiveRuntimeState(activeRun.runningState));
+
+      if (hasActiveRun && activeRun?.provider === "claude-code") {
+        this.clearExternalRuntimeSnapshot(runtimeSessionId);
+      }
+
+      if (
+        hasActiveRun
+        || (
+          !activeRun &&
+          session.provider === "claude-code" &&
+          externalRuntimeSnapshot &&
+          isActiveRuntimeState(externalRuntimeSnapshot.runningState)
+        )
+      ) {
+        this.assertProviderBindingStableDuringActiveRun(
+          existingBinding,
+          resolvedProviderBinding
+        );
+      }
+
+      if (
+        !activeRun &&
+        session.provider === "claude-code" &&
+        externalRuntimeSnapshot &&
+        isActiveRuntimeState(externalRuntimeSnapshot.runningState)
+      ) {
+        throw new AppError({
+          statusCode: 409,
+          errorCode: "SESSION_EXTERNAL_RUN_ACTIVE",
+          detail: "当前 Claude 外部会话仍在运行，不能直接追加；请加入队列或等待当前轮结束",
+          field: "sessionId"
+        });
+      }
+
+      const providerBinding = hasActiveRun
+        ? existingBinding
+        : this.persistResolvedSessionProviderBinding(existingBinding, resolvedProviderBinding);
+      const providerLaunchContext = this.sessionProviderConfigService.resolveLaunchContext(providerBinding);
       const syntheticForkRawStoreRef =
         runtimeMode === "start" && shouldResumeCodexSyntheticForkSession(session)
           ? session.rawStoreRef
           : null;
+      const runtimeRawStoreRef =
+        runtimeMode === "start"
+          ? syntheticForkRawStoreRef
+          : await this.resolveCodexRuntimeRequestRawStoreRef(session, providerBinding);
       const nextUserSequence =
         runtimeMode === "start"
           ? 1
@@ -1718,7 +1784,7 @@ export class SessionLiveRuntimeService {
         workspacePath: workspace.path,
         provider: session.provider,
         providerSessionId: runtimeMode === "start" ? null : session.providerSessionId,
-        rawStoreRef: runtimeMode === "start" ? syntheticForkRawStoreRef : session.rawStoreRef,
+        rawStoreRef: runtimeRawStoreRef,
         runtimeHomeDir: providerLaunchContext.runtimeHomeDir,
         runtimeEnv: providerLaunchContext.runtimeEnv,
         sequenceBase: nextUserSequence,
@@ -1734,49 +1800,36 @@ export class SessionLiveRuntimeService {
         }
       } as const;
 
-      const runtimeSessionId = this.resolveRuntimeSessionId(input.sessionId);
-      const activeRun = this.getLiveRuntimeSnapshot(runtimeSessionId);
-      const externalRuntimeSnapshot = this.getFreshExternalRuntimeSnapshot(runtimeSessionId);
-
-      if (
-        activeRun &&
-        activeRun.provider === "claude-code" &&
-        isActiveRuntimeState(activeRun.runningState)
-      ) {
-        this.clearExternalRuntimeSnapshot(runtimeSessionId);
-      }
-
-      if (
-        !activeRun &&
-        session.provider === "claude-code" &&
-        externalRuntimeSnapshot &&
-        isActiveRuntimeState(externalRuntimeSnapshot.runningState)
-      ) {
-        throw new AppError({
-          statusCode: 409,
-          errorCode: "SESSION_EXTERNAL_RUN_ACTIVE",
-          detail: "当前 Claude 外部会话仍在运行，不能直接追加；请加入队列或等待当前轮结束",
-          field: "sessionId"
-        });
-      }
-
-      if (activeRun && isActiveRuntimeState(activeRun.runningState)) {
+      if (hasActiveRun) {
         const submitStartedAtMs = performance.now();
         try {
           await this.providerRuntimeService.submitToActiveRun(runtimeSessionId, runtimeRequest.options);
           this.logSendDebugStep(debugTrace, "submit_to_active_run", submitStartedAtMs, {
             runtimeMode,
-            activeRunState: activeRun.runningState
+            activeRunState: activeRun!.runningState
           });
         } catch (error) {
-          const mapped = mapSessionProviderError(error);
+          const mapped = appendSessionProviderErrorContext(
+            mapSessionProviderError(error),
+            this.sessionProviderConfigService.describeBinding({
+              provider: session.provider as SessionListItem["provider"],
+              providerConfigMode: providerBinding.providerConfigMode,
+              providerPresetId: providerBinding.providerPresetId,
+              runtimeHomeDir: providerBinding.runtimeHomeDir
+            })
+          );
 
           // 运行时句柄还没来得及收尾时，steer 可能会撞上 provider 已终态。
           // 这里直接失败只会把一条正常消息变成偶发 409，属于纯粹的坏味道。
           if (mapped.errorCode === "SESSION_NOT_RUNNING") {
             await this.providerRuntimeService.abandonRun(runtimeSessionId);
             const restartRuntimeStartedAtMs = performance.now();
-            await this.startRuntimeRun(runtimeRequest, input.userId, runtimeMode);
+            await this.startRuntimeRun(runtimeRequest, input.userId, runtimeMode, {
+              provider: session.provider as SessionListItem["provider"],
+              providerConfigMode: providerBinding.providerConfigMode,
+              providerPresetId: providerBinding.providerPresetId,
+              runtimeHomeDir: providerBinding.runtimeHomeDir
+            });
             this.logSendDebugStep(debugTrace, "restart_runtime_after_stale_active_run", restartRuntimeStartedAtMs, {
               runtimeMode
             });
@@ -1786,7 +1839,12 @@ export class SessionLiveRuntimeService {
         }
       } else {
         const startRuntimeStartedAtMs = performance.now();
-        await this.startRuntimeRun(runtimeRequest, input.userId, runtimeMode);
+        await this.startRuntimeRun(runtimeRequest, input.userId, runtimeMode, {
+          provider: session.provider as SessionListItem["provider"],
+          providerConfigMode: providerBinding.providerConfigMode,
+          providerPresetId: providerBinding.providerPresetId,
+          runtimeHomeDir: providerBinding.runtimeHomeDir
+        });
         this.logSendDebugStep(debugTrace, "start_runtime_run", startRuntimeStartedAtMs, {
           runtimeMode
         });
@@ -2030,14 +2088,29 @@ export class SessionLiveRuntimeService {
 
   private async launchRuntimeRun(
     request: ProviderRuntimeRunRequest,
-    mode: "start" | "continue"
+    mode: "start" | "continue",
+    providerBinding?: {
+      provider: SessionListItem["provider"];
+      providerConfigMode: SessionProviderConfigMode;
+      providerPresetId: string | null;
+      runtimeHomeDir: string | null;
+    }
   ): Promise<ActiveRunHandle> {
     try {
       return await (mode === "start"
         ? this.providerRuntimeService.startSession(request)
         : this.providerRuntimeService.continueSession(request));
     } catch (error) {
-      throw mapSessionProviderError(error);
+      const mapped = mapSessionProviderError(error);
+
+      if (!providerBinding) {
+        throw mapped;
+      }
+
+      throw appendSessionProviderErrorContext(
+        mapped,
+        this.sessionProviderConfigService.describeBinding(providerBinding)
+      );
     }
   }
 
@@ -2205,7 +2278,17 @@ export class SessionLiveRuntimeService {
     session: Pick<SessionListItem, "sessionId" | "workspaceId" | "provider">,
     input: Pick<SendLiveMessageInput, "providerConfigMode" | "providerPresetId">
   ) {
-    const existingBinding = this.sessionBindingRepository.findBySessionId(session.sessionId);
+    const existingBinding = this.getSessionBindingOrThrow(session.sessionId);
+    const providerBinding = this.resolveRequestedSessionProviderBinding(
+      session,
+      input,
+      existingBinding
+    );
+    return this.persistResolvedSessionProviderBinding(existingBinding, providerBinding);
+  }
+
+  private getSessionBindingOrThrow(sessionId: string) {
+    const existingBinding = this.sessionBindingRepository.findBySessionId(sessionId);
 
     if (!existingBinding) {
       throw new AppError({
@@ -2215,19 +2298,31 @@ export class SessionLiveRuntimeService {
       });
     }
 
-    const providerBinding = this.sessionProviderConfigService.resolveSessionBinding({
+    return existingBinding;
+  }
+
+  private resolveRequestedSessionProviderBinding(
+    session: Pick<SessionListItem, "sessionId" | "provider">,
+    input: Pick<SendLiveMessageInput, "providerConfigMode" | "providerPresetId">,
+    existingBinding: ReturnType<SessionBindingRepository["findBySessionId"]>
+  ) {
+    return this.sessionProviderConfigService.resolveSessionBinding({
       sessionId: session.sessionId,
       provider: session.provider as SessionListItem["provider"],
       existingBinding,
       providerConfigMode: input.providerConfigMode,
       providerPresetId: input.providerPresetId ?? null
     });
+  }
 
-    if (
-      existingBinding.providerConfigMode === providerBinding.providerConfigMode
-      && existingBinding.providerPresetId === providerBinding.providerPresetId
-      && (existingBinding.runtimeHomeDir ?? null) === (providerBinding.runtimeHomeDir ?? null)
-    ) {
+  private persistResolvedSessionProviderBinding(
+    existingBinding: NonNullable<ReturnType<SessionBindingRepository["findBySessionId"]>>,
+    providerBinding: Pick<
+      NonNullable<ReturnType<SessionBindingRepository["findBySessionId"]>>,
+      "providerConfigMode" | "providerPresetId" | "runtimeHomeDir"
+    >
+  ) {
+    if (!this.hasSessionProviderBindingChanged(existingBinding, providerBinding)) {
       return existingBinding;
     }
 
@@ -2241,6 +2336,96 @@ export class SessionLiveRuntimeService {
 
     this.sessionBindingRepository.upsert(nextBinding);
     return nextBinding;
+  }
+
+  private assertProviderBindingStableDuringActiveRun(
+    existingBinding: Pick<
+      NonNullable<ReturnType<SessionBindingRepository["findBySessionId"]>>,
+      "providerConfigMode" | "providerPresetId" | "runtimeHomeDir"
+    >,
+    requestedBinding: Pick<
+      NonNullable<ReturnType<SessionBindingRepository["findBySessionId"]>>,
+      "providerConfigMode" | "providerPresetId" | "runtimeHomeDir"
+    >
+  ): void {
+    if (!this.hasSessionProviderBindingChanged(existingBinding, requestedBinding)) {
+      return;
+    }
+
+    throw new AppError({
+      statusCode: 409,
+      errorCode: "SESSION_PROVIDER_CONFIG_CHANGE_REQUIRES_NEW_RUN",
+      detail: "当前会话仍在执行，不能中途切换模型配置文件；请等本轮结束后再发起新一轮",
+      field: "sessionId"
+    });
+  }
+
+  private hasSessionProviderBindingChanged(
+    currentBinding: Pick<
+      NonNullable<ReturnType<SessionBindingRepository["findBySessionId"]>>,
+      "providerConfigMode" | "providerPresetId" | "runtimeHomeDir"
+    >,
+    nextBinding: Pick<
+      NonNullable<ReturnType<SessionBindingRepository["findBySessionId"]>>,
+      "providerConfigMode" | "providerPresetId" | "runtimeHomeDir"
+    >
+  ): boolean {
+    return (
+      currentBinding.providerConfigMode !== nextBinding.providerConfigMode
+      || normalizeOptionalBindingValue(currentBinding.providerPresetId)
+        !== normalizeOptionalBindingValue(nextBinding.providerPresetId)
+      || normalizeOptionalBindingValue(currentBinding.runtimeHomeDir)
+        !== normalizeOptionalBindingValue(nextBinding.runtimeHomeDir)
+    );
+  }
+
+  private async resolveCodexRuntimeRequestRawStoreRef(
+    session: Pick<
+      SessionListItem,
+      "sessionId" | "provider" | "rawStoreRef"
+    >,
+    providerBinding: {
+      provider: SessionListItem["provider"];
+      runtimeHomeDir: string | null;
+    }
+  ): Promise<string | null> {
+    if (session.provider !== "codex") {
+      return session.rawStoreRef;
+    }
+
+    const currentRawStoreRef = session.rawStoreRef?.trim() || null;
+
+    if (currentRawStoreRef && existsSync(currentRawStoreRef)) {
+      return currentRawStoreRef;
+    }
+
+    const messages = await Promise.resolve(
+      this.sessionHistoryService.readAllTextHistoryMessages(session.sessionId)
+    ).catch(() => []);
+
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return currentRawStoreRef;
+    }
+
+    const baseDir =
+      providerBinding.runtimeHomeDir?.trim()
+      || path.resolve(path.dirname(this.config.databasePath), "runtime", "codex-resume-history");
+    const syntheticDir = path.join(baseDir, ".codingns-synthetic-resume");
+    const syntheticFilePath = path.join(syntheticDir, `${session.sessionId}.jsonl`);
+    const serialized = messages
+      .map((message) => JSON.stringify({
+        timestamp: message.timestamp,
+        type: "event_msg",
+        payload: {
+          type: message.role === "assistant" ? "agent_message" : "user_message",
+          message: message.content
+        }
+      }))
+      .join("\n");
+
+    mkdirSync(syntheticDir, { recursive: true });
+    writeFileSync(syntheticFilePath, `${serialized}\n`, "utf8");
+    return syntheticFilePath;
   }
 
   private buildBindingSnapshot(
@@ -3559,7 +3744,8 @@ function createProviderRuntimeAdapters(
           ? undefined
           : (request) => {
             const client = new CodexAppServerHelperClient(config.codexCliPath, {
-              homeDir: request.runtimeHomeDir?.trim() || config.codexHomeDir
+              homeDir: request.runtimeHomeDir?.trim() || config.codexHomeDir,
+              runtimeEnv: request.runtimeEnv ?? null
             });
             const transport = client.createTransport();
 
@@ -3680,4 +3866,9 @@ function workspaceSlug(workspacePath: string): string {
     .replaceAll(":", "-")
     .replaceAll("\\", "-")
     .replaceAll("/", "-");
+}
+
+function normalizeOptionalBindingValue(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized && normalized.length > 0 ? normalized : null;
 }

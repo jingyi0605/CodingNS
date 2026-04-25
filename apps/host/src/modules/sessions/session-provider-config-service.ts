@@ -27,6 +27,18 @@ interface SessionProviderLaunchContext {
   runtimeEnv: Record<string, string>;
 }
 
+export interface SessionProviderBindingDebugSummary {
+  provider: SessionBinding["provider"];
+  providerConfigMode: SessionProviderConfigMode;
+  providerPresetId: string | null;
+  providerPresetName: string | null;
+  runtimeHomeDir: string | null;
+  modelProvider: string | null;
+  model: string | null;
+  baseUrl: string | null;
+  authEnvKeys: string[];
+}
+
 interface SessionProviderSelection {
   providerConfigMode: SessionProviderConfigMode;
   providerPresetId: string | null;
@@ -123,7 +135,7 @@ export class SessionProviderConfigService {
     provider: SessionBinding["provider"];
     existingBinding?: Pick<
       SessionBinding,
-      "providerConfigMode" | "providerPresetId" | "runtimeHomeDir"
+      "providerConfigMode" | "providerPresetId" | "runtimeHomeDir" | "providerSessionId" | "rawStoreRef"
     > | null;
     providerConfigMode?: SessionProviderConfigMode | null;
     providerPresetId?: string | null;
@@ -162,12 +174,20 @@ export class SessionProviderConfigService {
       };
     }
 
-    return this.prepareSessionBinding({
+    const preparedBinding = this.prepareSessionBinding({
       sessionId: input.sessionId,
       provider: input.provider,
       providerConfigMode: selection.providerConfigMode,
       providerPresetId: selection.providerPresetId
     });
+
+    this.syncProviderRuntimeStateToPreparedHome(
+      input.provider,
+      input.existingBinding,
+      preparedBinding.runtimeHomeDir
+    );
+
+    return preparedBinding;
   }
 
   resolveCapabilities(input: {
@@ -238,6 +258,69 @@ export class SessionProviderConfigService {
       runtimeHomeDir,
       runtimeEnv: metadata.runtimeEnv
     };
+  }
+
+  describeBinding(binding: Pick<
+    SessionBinding,
+    "provider" | "providerConfigMode" | "providerPresetId" | "runtimeHomeDir"
+  >): SessionProviderBindingDebugSummary {
+    const summary: SessionProviderBindingDebugSummary = {
+      provider: binding.provider,
+      providerConfigMode: binding.providerConfigMode,
+      providerPresetId: binding.providerPresetId,
+      providerPresetName: null,
+      runtimeHomeDir: binding.runtimeHomeDir ?? null,
+      modelProvider: null,
+      model: null,
+      baseUrl: null,
+      authEnvKeys: []
+    };
+
+    if (binding.providerConfigMode !== "cc-switch-preset") {
+      return summary;
+    }
+
+    try {
+      const app = mapProviderToModelSwitchApp(binding.provider);
+      const preset = binding.providerPresetId
+        ? this.ccSwitchAdapter.readPresetRuntimeConfig(app, binding.providerPresetId)
+        : null;
+
+      summary.providerPresetName = preset?.name ?? null;
+    } catch {
+      return summary;
+    }
+
+    const runtimeHomeDir = binding.runtimeHomeDir?.trim() ?? "";
+
+    if (!runtimeHomeDir) {
+      return summary;
+    }
+
+    const configPath = path.join(runtimeHomeDir, "config.toml");
+
+    if (fs.existsSync(configPath) && fs.statSync(configPath).isFile()) {
+      const document = parseSimpleTomlDocument(fs.readFileSync(configPath, "utf8"));
+      const modelProvider = decodeSimpleTomlStringValue(document.rootValues.get("model_provider"));
+      const model = decodeSimpleTomlStringValue(document.rootValues.get("model"));
+
+      summary.modelProvider = modelProvider;
+      summary.model = model;
+
+      if (modelProvider) {
+        const providerTable = document.tables.get(`model_providers.${modelProvider}`);
+        summary.baseUrl = decodeSimpleTomlStringValue(providerTable?.values.get("base_url"));
+      }
+    }
+
+    try {
+      const metadata = this.readRuntimeMetadata(runtimeHomeDir, binding.provider, binding.providerPresetId);
+      summary.authEnvKeys = Object.keys(metadata.runtimeEnv).sort();
+    } catch {
+      return summary;
+    }
+
+    return summary;
   }
 
   private assertProviderSupportsSessionPreset(provider: SessionBinding["provider"]): void {
@@ -376,6 +459,80 @@ export class SessionProviderConfigService {
 
   private materializeGeminiRuntimeHome(runtimeHomeDir: string): void {
     fs.mkdirSync(path.join(runtimeHomeDir, "tmp"), { recursive: true });
+  }
+
+  private syncProviderRuntimeStateToPreparedHome(
+    provider: SessionBinding["provider"],
+    existingBinding: Pick<
+      SessionBinding,
+      "providerSessionId" | "rawStoreRef" | "runtimeHomeDir"
+    > | null | undefined,
+    targetRuntimeHomeDir: string | null
+  ): void {
+    if (!existingBinding || !targetRuntimeHomeDir) {
+      return;
+    }
+
+    switch (provider) {
+      case "claude-code":
+        this.syncClaudeSessionRuntimeState(existingBinding, targetRuntimeHomeDir);
+        return;
+      default:
+        return;
+    }
+  }
+
+  private syncClaudeSessionRuntimeState(
+    existingBinding: Pick<
+      SessionBinding,
+      "providerSessionId" | "rawStoreRef" | "runtimeHomeDir"
+    >,
+    targetRuntimeHomeDir: string
+  ): void {
+    const sourceSessionFilePath = this.resolveClaudeSessionFilePath(existingBinding);
+
+    if (!sourceSessionFilePath) {
+      return;
+    }
+
+    const sourceSessionDirectory = path.dirname(sourceSessionFilePath);
+    const targetSessionDirectory = resolveClaudeSessionTargetDirectory(
+      sourceSessionDirectory,
+      targetRuntimeHomeDir
+    );
+
+    syncOptionalDirectory(sourceSessionDirectory, targetSessionDirectory);
+  }
+
+  private resolveClaudeSessionFilePath(
+    binding: Pick<SessionBinding, "providerSessionId" | "rawStoreRef" | "runtimeHomeDir">
+  ): string | null {
+    const rawStoreRef = binding.rawStoreRef?.trim() ?? "";
+
+    if (rawStoreRef && fs.existsSync(rawStoreRef) && fs.statSync(rawStoreRef).isFile()) {
+      return rawStoreRef;
+    }
+
+    const providerSessionId = binding.providerSessionId?.trim() ?? "";
+
+    if (!providerSessionId) {
+      return null;
+    }
+
+    const candidateHomes = [
+      binding.runtimeHomeDir?.trim() ?? "",
+      path.resolve(this.config.claudeCodeHomeDir)
+    ].filter((value, index, values) => value.length > 0 && values.indexOf(value) === index);
+
+    for (const homeDir of candidateHomes) {
+      const matched = findClaudeSessionFileInHome(homeDir, providerSessionId);
+
+      if (matched) {
+        return matched;
+      }
+    }
+
+    return null;
   }
 
   private writeRuntimeMetadata(runtimeHomeDir: string, metadata: StoredRuntimeMetadata): void {
@@ -593,17 +750,10 @@ function escapeRegExp(value: string): string {
 }
 
 function normalizeRuntimeEnv(settingsConfig: Record<string, unknown>): Record<string, string> {
-  const env = asRecord(settingsConfig.env);
-
-  if (!env) {
-    return {};
-  }
-
-  return Object.fromEntries(
-    Object.entries(env)
-      .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].trim().length > 0)
-      .map(([key, value]) => [key, value.trim()])
-  );
+  return {
+    ...normalizeStringRecord(asRecord(settingsConfig.env)),
+    ...normalizeStringRecord(asRecord(settingsConfig.auth))
+  };
 }
 
 function readJsonObject(filePath: string): Record<string, unknown> {
@@ -646,16 +796,12 @@ function deepMergeRecord(
 }
 
 function composeCodexConfigContent(sourceConfigContent: string, presetConfigContent: string): string {
-  const normalizedSource = sourceConfigContent.trim();
-  const normalizedPreset = presetConfigContent.trim();
+  const merged = mergeCodexTomlDocuments(
+    parseSimpleTomlDocument(sourceConfigContent),
+    parseSimpleTomlDocument(presetConfigContent)
+  );
 
-  return [
-    "# 会话级 Codex 配置（系统自动生成）",
-    normalizedSource,
-    normalizedPreset
-  ]
-    .filter((part) => part.length > 0)
-    .join("\n\n");
+  return serializeSimpleTomlDocument(merged);
 }
 
 function resolveCodexSourceHomeDir(sourceCodexHomeDir: string, targetHomeDir: string): string {
@@ -706,6 +852,37 @@ function syncOptionalDirectory(sourcePath: string, targetPath: string): void {
   fs.cpSync(sourcePath, targetPath, { recursive: true });
 }
 
+function findClaudeSessionFileInHome(homeDir: string, providerSessionId: string): string | null {
+  const projectsDir = path.join(homeDir, "projects");
+
+  if (!fs.existsSync(projectsDir) || !fs.statSync(projectsDir).isDirectory()) {
+    return null;
+  }
+
+  const projectDirectories = fs.readdirSync(projectsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(projectsDir, entry.name, `${providerSessionId}.jsonl`));
+
+  for (const candidatePath of projectDirectories) {
+    if (fs.existsSync(candidatePath) && fs.statSync(candidatePath).isFile()) {
+      return candidatePath;
+    }
+  }
+
+  return null;
+}
+
+function resolveClaudeSessionTargetDirectory(sourceSessionDirectory: string, targetRuntimeHomeDir: string): string {
+  const normalizedSourceDirectory = path.resolve(sourceSessionDirectory);
+  const projectsMarker = `${path.sep}projects${path.sep}`;
+  const markerIndex = normalizedSourceDirectory.lastIndexOf(projectsMarker);
+  const relativeProjectPath = markerIndex >= 0
+    ? normalizedSourceDirectory.slice(markerIndex + projectsMarker.length)
+    : path.basename(normalizedSourceDirectory);
+
+  return path.join(targetRuntimeHomeDir, "projects", relativeProjectPath);
+}
+
 function removeFileIfExists(filePath: string): void {
   if (!fs.existsSync(filePath)) {
     return;
@@ -720,6 +897,217 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function normalizeStringRecord(record: Record<string, unknown> | null): Record<string, string> {
+  if (!record) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(record)
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].trim().length > 0)
+      .map(([key, value]) => [key.trim(), value.trim()])
+      .filter(([key, value]) => key.length > 0 && value.length > 0)
+  );
+}
+
 function normalizeText(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function decodeSimpleTomlStringValue(value: string | undefined): string | null {
+  const normalizedValue = value?.trim();
+
+  if (!normalizedValue) {
+    return null;
+  }
+
+  if (
+    (normalizedValue.startsWith("\"") && normalizedValue.endsWith("\""))
+    || (normalizedValue.startsWith("'") && normalizedValue.endsWith("'"))
+  ) {
+    return normalizedValue.slice(1, -1).trim() || null;
+  }
+
+  return normalizedValue;
+}
+
+interface SimpleTomlTable {
+  order: string[];
+  values: Map<string, string>;
+}
+
+interface SimpleTomlDocument {
+  rootOrder: string[];
+  rootValues: Map<string, string>;
+  tableOrder: string[];
+  tables: Map<string, SimpleTomlTable>;
+}
+
+function parseSimpleTomlDocument(content: string): SimpleTomlDocument {
+  const document: SimpleTomlDocument = {
+    rootOrder: [],
+    rootValues: new Map(),
+    tableOrder: [],
+    tables: new Map()
+  };
+  let currentTableName: string | null = null;
+
+  for (const line of content.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    const tableMatch = /^\[([^\]]+)\]$/u.exec(trimmed);
+
+    if (tableMatch) {
+      currentTableName = tableMatch[1]?.trim() || null;
+
+      if (currentTableName && !document.tables.has(currentTableName)) {
+        document.tableOrder.push(currentTableName);
+        document.tables.set(currentTableName, {
+          order: [],
+          values: new Map()
+        });
+      }
+      continue;
+    }
+
+    const delimiterIndex = trimmed.indexOf("=");
+
+    if (delimiterIndex <= 0) {
+      continue;
+    }
+
+    const key = trimmed.slice(0, delimiterIndex).trim();
+    const value = trimmed.slice(delimiterIndex + 1).trim();
+
+    if (!key || !value) {
+      continue;
+    }
+
+    if (!currentTableName) {
+      if (!document.rootValues.has(key)) {
+        document.rootOrder.push(key);
+      }
+      document.rootValues.set(key, value);
+      continue;
+    }
+
+    const currentTable = document.tables.get(currentTableName);
+
+    if (!currentTable) {
+      continue;
+    }
+
+    if (!currentTable.values.has(key)) {
+      currentTable.order.push(key);
+    }
+    currentTable.values.set(key, value);
+  }
+
+  return document;
+}
+
+function mergeCodexTomlDocuments(
+  source: SimpleTomlDocument,
+  preset: SimpleTomlDocument
+): SimpleTomlDocument {
+  const merged: SimpleTomlDocument = {
+    rootOrder: [...source.rootOrder],
+    rootValues: new Map(source.rootValues),
+    tableOrder: [...source.tableOrder],
+    tables: new Map(
+      Array.from(source.tables.entries()).map(([tableName, table]) => [
+        tableName,
+        {
+          order: [...table.order],
+          values: new Map(table.values)
+        }
+      ])
+    )
+  };
+
+  for (const key of preset.rootOrder) {
+    if (!merged.rootValues.has(key)) {
+      merged.rootOrder.push(key);
+    }
+    const value = preset.rootValues.get(key);
+
+    if (value) {
+      merged.rootValues.set(key, value);
+    }
+  }
+
+  for (const tableName of preset.tableOrder) {
+    const presetTable = preset.tables.get(tableName);
+
+    if (!presetTable) {
+      continue;
+    }
+
+    if (!merged.tables.has(tableName)) {
+      merged.tableOrder.push(tableName);
+      merged.tables.set(tableName, {
+        order: [],
+        values: new Map()
+      });
+    }
+
+    const mergedTable = merged.tables.get(tableName)!;
+
+    for (const key of presetTable.order) {
+      if (!mergedTable.values.has(key)) {
+        mergedTable.order.push(key);
+      }
+      const value = presetTable.values.get(key);
+
+      if (value) {
+        mergedTable.values.set(key, value);
+      }
+    }
+  }
+
+  return merged;
+}
+
+function serializeSimpleTomlDocument(document: SimpleTomlDocument): string {
+  const lines = ["# 会话级 Codex 配置（系统自动生成）"];
+
+  if (document.rootOrder.length > 0) {
+    lines.push("");
+    for (const key of document.rootOrder) {
+      const value = document.rootValues.get(key);
+
+      if (!value) {
+        continue;
+      }
+
+      lines.push(`${key} = ${value}`);
+    }
+  }
+
+  for (const tableName of document.tableOrder) {
+    const table = document.tables.get(tableName);
+
+    if (!table || table.order.length === 0) {
+      continue;
+    }
+
+    lines.push("");
+    lines.push(`[${tableName}]`);
+
+    for (const key of table.order) {
+      const value = table.values.get(key);
+
+      if (!value) {
+        continue;
+      }
+
+      lines.push(`${key} = ${value}`);
+    }
+  }
+
+  return lines.join("\n");
 }

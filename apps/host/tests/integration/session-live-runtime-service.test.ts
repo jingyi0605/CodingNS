@@ -40,9 +40,21 @@ function createService() {
     findWorkspaceByPath: vi.fn()
   };
   const sessionBindingRepository = {
-    findBySessionId: vi.fn(),
+    findBySessionId: vi.fn((sessionId: string) => ({
+      sessionId,
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
+      createdAt: "2026-03-26T10:00:00.000Z",
+      updatedAt: "2026-03-26T10:00:00.000Z"
+    })),
     findByProviderSession: vi.fn(),
-    findByRawStoreRef: vi.fn()
+    findByRawStoreRef: vi.fn(),
+    upsert: vi.fn()
   };
   const authUserRepository = {
     listIds: vi.fn(() => ["user-1"])
@@ -73,6 +85,37 @@ function createService() {
     findBySessionId: vi.fn(),
     upsert: vi.fn()
   };
+  const sessionProviderConfigService = {
+    prepareSessionBinding: vi.fn((input: { providerConfigMode?: string; providerPresetId?: string | null }) => ({
+      providerConfigMode: input.providerConfigMode ?? "global-default",
+      providerPresetId: input.providerPresetId ?? null,
+      runtimeHomeDir: null
+    })),
+    resolveLaunchContext: vi.fn((binding: { runtimeHomeDir?: string | null }) => ({
+      runtimeHomeDir: binding.runtimeHomeDir ?? null,
+      runtimeEnv: {}
+    })),
+    resolveSessionBinding: vi.fn((input: {
+      existingBinding?: {
+        providerConfigMode?: string;
+        providerPresetId?: string | null;
+        runtimeHomeDir?: string | null;
+      } | null;
+      providerConfigMode?: string;
+      providerPresetId?: string | null;
+    }) => ({
+      providerConfigMode:
+        input.providerConfigMode
+        ?? input.existingBinding?.providerConfigMode
+        ?? "global-default",
+      providerPresetId:
+        input.providerPresetId
+        ?? input.existingBinding?.providerPresetId
+        ?? null,
+      runtimeHomeDir: input.existingBinding?.runtimeHomeDir ?? null
+    })),
+    describeBinding: vi.fn(() => null)
+  };
 
   const service = new SessionLiveRuntimeService(
     sessionHistoryService as never,
@@ -85,6 +128,7 @@ function createService() {
     sessionIndexRepository as never,
     sessionStateRepository as never,
     sessionStatusSnapshotRepository as never,
+    sessionProviderConfigService as never,
     {
       host: "127.0.0.1",
       port: 3002,
@@ -125,7 +169,8 @@ function createService() {
     sessionSendQueueRepository,
     sessionIndexRepository,
     sessionStateRepository,
-    sessionStatusSnapshotRepository
+    sessionStatusSnapshotRepository,
+    sessionProviderConfigService
   };
 }
 
@@ -135,7 +180,7 @@ describe("SessionLiveRuntimeService", () => {
   });
 
   it("sendLiveMessage 在 active run 存在时会优先走 submitToActiveRun", async () => {
-    const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
+    const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService, sessionBindingRepository } =
       createService();
     const providerRuntimeService = {
       isRunHealthy: vi.fn(() => true),
@@ -226,6 +271,75 @@ describe("SessionLiveRuntimeService", () => {
     );
     expect(result.providerSessionId).toBe("claude-session-1");
     expect(result.message?.content).toBe("继续补充这轮任务的要求");
+  });
+
+  it("Claude active run 存在时切换 preset 会直接拒绝，且不会污染会话 binding", async () => {
+    const { service, sessionHistoryService, workspaceService, sessionBindingRepository } = createService();
+    const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
+      getSnapshot: vi.fn(() => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "claude-code",
+        providerSessionId: "claude-session-1",
+        rawStoreRef: "/tmp/.claude/projects/workspace/claude-session-1.jsonl",
+        runningState: "running",
+        attachedClients: 1,
+        startedAt: "2026-03-26T10:00:00.000Z",
+        lastEventAt: "2026-03-26T10:00:01.000Z",
+        completedAt: null,
+        detail: null,
+        errorCode: null,
+        supportsInterrupt: true
+      })),
+      submitToActiveRun: vi.fn()
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "/tmp/.claude/projects/workspace/claude-session-1.jsonl",
+      messageCount: 3
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "claude-code",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "streaming_guidance",
+      supportsSubagents: true,
+      supportsInterrupt: false,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      limitations: []
+    });
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+
+    await expect(service.sendLiveMessage({
+      sessionId: "session-1",
+      userId: "user-1",
+      content: "切到新 preset 后继续执行",
+      clientRequestId: null,
+      providerConfigMode: "cc-switch-preset",
+      providerPresetId: "preset-2"
+    })).rejects.toMatchObject({
+      errorCode: "SESSION_PROVIDER_CONFIG_CHANGE_REQUIRES_NEW_RUN"
+    });
+
+    expect(providerRuntimeService.submitToActiveRun).not.toHaveBeenCalled();
+    expect(sessionBindingRepository.upsert).not.toHaveBeenCalled();
   });
 
   it("Codex 运行中时会优先走 steer 提交，而不是回退项目队列", async () => {
@@ -690,6 +804,112 @@ describe("SessionLiveRuntimeService", () => {
     );
   });
 
+  it("Codex 原始 rollout 文件丢失时，会改用 Host 文本历史生成 synthetic transcript 继续会话", async () => {
+    const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService, sessionBindingRepository } =
+      createService();
+    const continueSession = vi.fn(async () => ({
+      getSnapshot: vi.fn(() => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "thread-1",
+        rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+        runningState: "running",
+        attachedClients: 1,
+        startedAt: "2026-04-25T15:10:00.000Z",
+        lastEventAt: "2026-04-25T15:10:00.000Z",
+        completedAt: null,
+        detail: null,
+        errorCode: null,
+        supportsInterrupt: true
+      })),
+      attach: vi.fn()
+    }));
+    const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
+      getSnapshot: vi.fn(() => null),
+      continueSession
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/missing-rollout.jsonl",
+      messageCount: 6
+    });
+    sessionBindingRepository.findBySessionId.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/missing-rollout.jsonl",
+      providerConfigMode: "cc-switch-preset",
+      providerPresetId: "preset-api",
+      runtimeHomeDir: "/tmp/codingns-runtime-home",
+      createdAt: "2026-04-25T15:00:00.000Z",
+      updatedAt: "2026-04-25T15:00:00.000Z"
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: true,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: true,
+      limitations: []
+    });
+    sessionHistoryService.readAllTextHistoryMessages.mockResolvedValue([
+      {
+        role: "user",
+        kind: "text",
+        content: "上一轮用户问题",
+        timestamp: "2026-04-25T15:00:01.000Z"
+      },
+      {
+        role: "assistant",
+        kind: "text",
+        content: "上一轮助手回答",
+        timestamp: "2026-04-25T15:00:03.000Z"
+      }
+    ]);
+    sessionHistoryService.getBindingOrThrow.mockReturnValue({
+      providerSessionId: "thread-1"
+    });
+    sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+    sessionMessageAttachmentService.bindClientRequestToMessage.mockReturnValue([]);
+
+    await service.sendLiveMessage({
+      sessionId: "session-1",
+      userId: "user-1",
+      content: "切换部署后继续这一轮对话",
+      clientRequestId: null
+    });
+
+    expect(continueSession).toHaveBeenCalledTimes(1);
+    expect(continueSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rawStoreRef: "/tmp/codingns-runtime-home/.codingns-synthetic-resume/session-1.jsonl"
+      })
+    );
+  });
+
   it("startLiveSession 会把 provider 启动失败映射成稳定的 AppError", async () => {
     const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
       createService();
@@ -944,8 +1164,13 @@ describe("SessionLiveRuntimeService", () => {
   });
 
   it("startLiveSession 在写入首条图片附件前会先创建 pending session binding", async () => {
-    const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
-      createService();
+    const {
+      service,
+      sessionHistoryService,
+      sessionMessageAttachmentService,
+      workspaceService,
+      sessionBindingRepository
+    } = createService();
     const providerRuntimeService = {
       isRunHealthy: vi.fn(() => true),
       startSession: vi.fn(async () => ({
@@ -1023,10 +1248,10 @@ describe("SessionLiveRuntimeService", () => {
       }
     });
 
-    expect(sessionHistoryService.persistSessionBinding).toHaveBeenCalled();
+    expect(sessionBindingRepository.upsert).toHaveBeenCalled();
     expect(sessionMessageAttachmentService.persistAttachments).toHaveBeenCalledTimes(1);
     expect(
-      sessionHistoryService.persistSessionBinding.mock.invocationCallOrder[0]
+      sessionBindingRepository.upsert.mock.invocationCallOrder[0]
     ).toBeLessThan(
       sessionMessageAttachmentService.persistAttachments.mock.invocationCallOrder[0]
     );

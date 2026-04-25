@@ -101,6 +101,7 @@ interface LogicalTransportState {
 
 interface CodexAppServerHelperClientOptions {
   homeDir?: string;
+  runtimeEnv?: Record<string, string> | null;
   requestTimeoutMs?: number;
 }
 
@@ -119,10 +120,22 @@ export class CodexAppServerHelperClient {
       ...process.env
     };
     const configuredHomeDir = options.homeDir?.trim();
+    const configuredRuntimeEnv = options.runtimeEnv ?? null;
 
     if (configuredHomeDir) {
       helperEnv.CODINGNS_CODEX_HOME = configuredHomeDir;
       helperEnv.CODEX_HOME = configuredHomeDir;
+    }
+    if (configuredRuntimeEnv) {
+      for (const [key, value] of Object.entries(configuredRuntimeEnv)) {
+        const normalizedKey = key.trim();
+
+        if (!normalizedKey) {
+          continue;
+        }
+
+        helperEnv[normalizedKey] = String(value);
+      }
     }
     this.requestTimeoutMs = Math.max(1, Math.floor(options.requestTimeoutMs ?? 20_000));
 

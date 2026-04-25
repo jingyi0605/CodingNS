@@ -104,4 +104,27 @@ describe("CodexAppServerHelperClient", () => {
     expect(closeHandler.mock.calls[0]?.[0]).toBeInstanceOf(Error);
     expect(closeHandler.mock.calls[0]?.[0]?.message).toBe("SERVER_TIMEOUT");
   });
+
+  it("会把会话级 runtimeEnv 透传给 helper 子进程", () => {
+    const child = new MockChildProcess();
+    spawnMock.mockReturnValue(child);
+
+    new CodexAppServerHelperClient("/mock/codex", {
+      homeDir: "/tmp/codex-session-home",
+      runtimeEnv: {
+        OPENAI_BASE_URL: "https://deepseek.example/v1",
+        OPENAI_API_KEY: "deepseek-key"
+      }
+    });
+
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(spawnMock.mock.calls[0]?.[2]).toEqual(expect.objectContaining({
+      env: expect.objectContaining({
+        CODINGNS_CODEX_HOME: "/tmp/codex-session-home",
+        CODEX_HOME: "/tmp/codex-session-home",
+        OPENAI_BASE_URL: "https://deepseek.example/v1",
+        OPENAI_API_KEY: "deepseek-key"
+      })
+    }));
+  });
 });

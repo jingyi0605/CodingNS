@@ -99,6 +99,7 @@ interface CodexThreadRow {
 interface CodexRuntimeOptions {
   homeDir?: string;
   commandPath?: string;
+  runtimeEnv?: Record<string, string> | null;
   transportFactory?: (request: ProviderRuntimeRunRequest) => CodexAppServerTransport;
   handleServerRequest?: (input: {
     sessionId: string;
@@ -202,11 +203,12 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
   ): Promise<ProviderRuntimeLaunchResult> {
     const launchedAtMs = Date.now();
     const launchPerfStartedAtMs = performance.now();
-    const transport = this.options.transportFactory
+      const transport = this.options.transportFactory
       ? this.options.transportFactory(request)
       : createCodexAppServerTransport({
         ...this.options,
-        homeDir: request.runtimeHomeDir?.trim() || this.options.homeDir
+        homeDir: request.runtimeHomeDir?.trim() || this.options.homeDir,
+        runtimeEnv: request.runtimeEnv ?? this.options.runtimeEnv ?? null
       });
     try {
       const initializeStartedAtMs = performance.now();
@@ -383,7 +385,8 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       ? this.options.transportFactory(request)
       : createCodexAppServerTransport({
         ...this.options,
-        homeDir: request.runtimeHomeDir?.trim() || this.options.homeDir
+        homeDir: request.runtimeHomeDir?.trim() || this.options.homeDir,
+        runtimeEnv: request.runtimeEnv ?? this.options.runtimeEnv ?? null
       });
     try {
       const runtimeStartedAtMs = performance.now();
@@ -1319,8 +1322,12 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
 function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppServerTransport {
   const commandPath = resolveCodexCommand(options.commandPath);
   const launch = resolveCodexCommandLaunch(commandPath, ["app-server"]);
+  const runtimeEnv = options.runtimeEnv ?? null;
   const child: ChildProcessWithoutNullStreams = spawn(launch.command, launch.args, {
-    env: process.env,
+    env: {
+      ...process.env,
+      ...(runtimeEnv ?? {})
+    },
     stdio: ["pipe", "pipe", "pipe"],
     shell: launch.shell,
     windowsHide: true
