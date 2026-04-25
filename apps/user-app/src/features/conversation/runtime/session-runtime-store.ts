@@ -2081,6 +2081,11 @@ function shouldRefreshCapabilities(capabilities: ProviderCapabilitiesDto | null)
     return true;
   }
 
+  // OpenCode 的模型列表会跟随当前 server / provider 配置变化，不能把旧快照当成稳定真值。
+  if (capabilities.provider === "opencode") {
+    return true;
+  }
+
   const modelOptions = capabilities.modelOptions ?? [];
 
   if (modelOptions.length === 0) {
