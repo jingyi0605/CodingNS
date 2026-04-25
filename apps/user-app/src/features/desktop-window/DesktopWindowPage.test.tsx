@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -297,6 +297,9 @@ describe("DesktopWindowPage", () => {
         "workspace-1:external:1"
       );
     });
+    const dragHeader = screen.getByRole("banner", { name: "Debug" });
+    expect(within(dragHeader).getByText("CodingNS")).toBeInTheDocument();
+    expect(dragHeader).toHaveAttribute("data-tauri-drag-region", "");
     expect(terminalManagerPanelMock).toHaveBeenCalledWith(
       expect.objectContaining({
         currentWorkspaceId: "workspace-1",

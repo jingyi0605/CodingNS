@@ -26536,17 +26536,52 @@ textarea:focus-visible {
   app-region: drag;
 }
 
+.desktop-window-drag-header-copy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.desktop-window-drag-header-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-soft, rgba(59, 130, 246, 0.12)) 78%, transparent);
+  color: var(--accent-strong, #1d4ed8);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
 .desktop-window-drag-header strong {
   font-size: 0.86rem;
   font-weight: 600;
   color: var(--color-text, #0f172a);
   pointer-events: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .desktop-window-drag-header button,
 .desktop-window-drag-header [data-window-drag="ignore"] {
   -webkit-app-region: no-drag;
   app-region: no-drag;
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .desktop-window-drag-header {
+  min-height: calc(var(--desktop-macos-titlebar-height, 28px) + 11px);
+  padding-top: 4px;
+  padding-right: 16px;
+  padding-bottom: 5px;
+  padding-left: calc(var(--desktop-macos-traffic-light-leading-inset, 78px) + 8px);
 }
 
 .desktop-window-body {

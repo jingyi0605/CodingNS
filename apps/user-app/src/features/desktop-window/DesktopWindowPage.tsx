@@ -26,6 +26,7 @@ import {
 } from "../terminal/pages/TerminalPage";
 import { mapWorkbenchSnapshotToNavigationGroups } from "../workbench/utils/workbench-navigation-snapshot";
 import { WorkbenchRealtimeClient } from "../../network/workbench-realtime-client";
+import { resolveMacOsNativeTitlebarDragRegion } from "../../platform/desktop/window-drag";
 import type { WindowDescriptor } from "../../platform/desktop/window-descriptor";
 import { usePlatform } from "../../platform/platform-provider";
 import { t } from "../../shared/i18n";
@@ -94,17 +95,25 @@ function resolveDesktopWindowTitle(descriptor: WindowDescriptor): string {
   return descriptor.kind;
 }
 
-function resolveDesktopWindowNativeTitle(
+function resolveDesktopWindowWorkspaceName(
   descriptor: WindowDescriptor,
   navigationGroups: WorkspaceSessionGroup[]
-): string {
-  const workspaceName =
+): string | null {
+  return (
     descriptor.workspaceName
     ?? (
       descriptor.workspaceId
         ? navigationGroups.find((group) => group.workspace.id === descriptor.workspaceId)?.workspace.name ?? null
         : null
-    );
+    )
+  );
+}
+
+function resolveDesktopWindowNativeTitle(
+  descriptor: WindowDescriptor,
+  navigationGroups: WorkspaceSessionGroup[]
+): string {
+  const workspaceName = resolveDesktopWindowWorkspaceName(descriptor, navigationGroups);
   const sectionTitle = resolveDesktopWindowTitle(descriptor);
 
   if (!workspaceName) {
@@ -118,6 +127,7 @@ export function DesktopWindowPage() {
   const { windowId } = useParams<{ windowId: string }>();
   const navigate = useNavigate();
   const platform = usePlatform();
+  const macOsNativeTitlebarDragRegion = resolveMacOsNativeTitlebarDragRegion(platform);
   const sessionDisplaySortMode = useLocalUiPreferenceSelector((state) => state.sessionDisplaySortMode);
   const [descriptor, setDescriptor] = useState<WindowDescriptor | null>(null);
   const [descriptorLoading, setDescriptorLoading] = useState(true);
@@ -384,12 +394,41 @@ export function DesktopWindowPage() {
     );
   }
 
+  const desktopWindowTitle = resolveDesktopWindowTitle(descriptor);
+  const desktopWindowWorkspaceName = resolveDesktopWindowWorkspaceName(descriptor, navigationGroups);
+  const shouldRenderDesktopWindowDragHeader =
+    descriptor.mode === "external" && descriptor.kind === "processes";
+
   return (
     <main className="desktop-window-page">
+      {shouldRenderDesktopWindowDragHeader ? (
+        <header
+          className="desktop-window-drag-header"
+          data-window-kind={descriptor.kind}
+          data-window-drag-handle="desktop-window-drag-header"
+          data-tauri-drag-region={macOsNativeTitlebarDragRegion}
+          aria-label={desktopWindowTitle}
+        >
+          <div
+            className="desktop-window-drag-header-copy"
+            data-tauri-drag-region={macOsNativeTitlebarDragRegion}
+          >
+            <span
+              className="desktop-window-drag-header-tag"
+              data-tauri-drag-region={macOsNativeTitlebarDragRegion}
+            >
+              {desktopWindowTitle}
+            </span>
+            <strong data-tauri-drag-region={macOsNativeTitlebarDragRegion}>
+              {desktopWindowWorkspaceName ?? desktopWindowTitle}
+            </strong>
+          </div>
+        </header>
+      ) : null}
       <div
         className="desktop-window-body"
         data-window-kind={descriptor.kind}
-        aria-label={resolveDesktopWindowTitle(descriptor)}
+        aria-label={desktopWindowTitle}
       >
         {content}
       </div>
