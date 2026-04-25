@@ -9,6 +9,7 @@ import {
   openProcessesExternalWindow,
   openTerminalsExternalWindow
 } from "../../../platform/desktop/window-openers";
+import { resolveMacOsNativeTitlebarDragRegion } from "../../../platform/desktop/window-drag";
 import { usePlatform } from "../../../platform/platform-provider";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
@@ -246,6 +247,7 @@ export function ParallelConversationGroupView({
 }: ParallelConversationGroupViewProps) {
   const navigate = useNavigate();
   const platform = usePlatform();
+  const macOsNativeTitlebarDragRegion = resolveMacOsNativeTitlebarDragRegion(platform);
   const { showToast } = useToast();
   const {
     navigationGroups,
@@ -599,17 +601,30 @@ export function ParallelConversationGroupView({
       data-parallel-entering={enteringTransition ? "true" : undefined}
       style={parallelPageStyle}
     >
-      <header className="parallel-conversation-group-header">
-        <div className="parallel-conversation-group-titlebar">
-          <div className="parallel-conversation-group-titlemain">
+      <header
+        className="parallel-conversation-group-header"
+        data-window-drag-handle="parallel-conversation-group-titlebar"
+        data-tauri-drag-region={macOsNativeTitlebarDragRegion}
+      >
+        <div
+          className="parallel-conversation-group-titlebar"
+          data-tauri-drag-region={macOsNativeTitlebarDragRegion}
+        >
+          <div
+            className="parallel-conversation-group-titlemain"
+            data-tauri-drag-region={macOsNativeTitlebarDragRegion}
+          >
             <span className="session-parallel-badge">{t("shell.parallelGroupBadge")}</span>
-            <strong>{detail?.group.sharedPrompt?.trim() || t("common.unknown")}</strong>
+            <strong data-tauri-drag-region={macOsNativeTitlebarDragRegion}>
+              {detail?.group.sharedPrompt?.trim() || t("common.unknown")}
+            </strong>
           </div>
           <button
             type="button"
             className="secondary-button parallel-conversation-group-add-button"
             aria-label={t("shell.parallelAppendAction")}
             title={t("shell.parallelAppendAction")}
+            data-window-drag="ignore"
             disabled={!canAppendMembers}
             onClick={() => {
               if (!canAppendMembers) {
