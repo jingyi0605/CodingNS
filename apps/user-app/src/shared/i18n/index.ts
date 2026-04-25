@@ -1487,7 +1487,6 @@ const extensionZhCN = {
     providerOpenCodeDescription: "创建 OpenCode 会话，适合通过 OpenCode server 延续当前上下文。",
     providerGeminiDescription: "创建 Gemini 会话，适合接入 Gemini CLI 的原生工作流。",
     providerKimiDescription: "创建 Kimi 会话，适合接入 Kimi CLI 的原生工作流。",
-    providerOptionHint: "先选供应商，再决定是否绑定 cc-switch preset。",
     createSessionPresetLabel: "会话配置",
     createSessionPresetHint: "默认沿用当前全局 preset；只对 Codex、Claude Code、Gemini 开放会话级 preset。",
     createSessionPresetDefault: "使用当前默认 preset",
@@ -3616,7 +3615,6 @@ const extensionEnUS = {
     providerOpenCodeDescription: "Create an OpenCode session to continue context via the OpenCode service.",
     providerGeminiDescription: "Create a Gemini session for the native Gemini CLI workflow.",
     providerKimiDescription: "Create a Kimi session for the native Kimi CLI workflow.",
-    providerOptionHint: "Choose the provider first, then decide whether this session should bind to a cc-switch preset.",
     createSessionPresetLabel: "Session Config",
     createSessionPresetHint:
       "The default follows the current global preset. Session-level presets are only available for Codex, Claude Code, and Gemini.",

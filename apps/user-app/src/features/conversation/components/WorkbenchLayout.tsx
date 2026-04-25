@@ -6188,7 +6188,6 @@ function SidebarContent({
         <section className="create-session-modal-section">
           <div className="create-session-modal-section-header">
             <strong>{t("shell.createSessionProviderLabel")}</strong>
-            <span>{t("shell.providerOptionHint")}</span>
           </div>
           <SessionProviderPicker
             disabled={Boolean(actionWorkspaceId) || creatingWorktree}

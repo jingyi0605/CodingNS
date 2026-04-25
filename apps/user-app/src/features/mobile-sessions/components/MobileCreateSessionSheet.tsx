@@ -150,7 +150,6 @@ export function MobileCreateSessionSheet({
       <ModalSection
         className="mobile-create-session-provider-block"
         heading={t("shell.createSessionProviderLabel")}
-        description={t("shell.providerOptionHint")}
       >
         <SessionProviderPicker
           disabled={!selectedWorkspaceId}
