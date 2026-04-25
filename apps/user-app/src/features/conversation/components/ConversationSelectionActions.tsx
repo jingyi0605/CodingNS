@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 
@@ -11,6 +11,11 @@ import { usePlatform } from "../../../platform/platform-provider";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import {
+  fetchModelManagementSnapshot,
+  type ModelManagementAppSnapshotDto,
+  type ModelSwitchAppId
+} from "../../settings/api/model-switch-api";
+import {
   forkSession,
   getProviderCapabilities,
   listProviderCapabilities,
@@ -19,6 +24,7 @@ import {
   sendLiveMessage,
   type BuiltinProviderId,
   type ProviderCapabilitiesDto,
+  type SessionProviderConfigMode,
   type SessionSummaryDto
 } from "../api/conversation-api";
 import {
@@ -26,6 +32,16 @@ import {
   getProviderDisplayName,
   SESSION_PROVIDER_PICKER_IDS
 } from "../capability/provider-ui";
+import {
+  createDeploymentPresetOptions,
+  DeploymentMacSelect,
+  GLOBAL_DEFAULT_PRESET_VALUE,
+  isProviderDefaultModel,
+  mapProviderToModelSwitchApp,
+  normalizeProviderSelection,
+  PROVIDER_DEFAULT_MODEL_ID,
+  shouldShowDeploymentPresetColumn
+} from "./provider-deployment";
 import { useWorkbenchShell } from "./WorkbenchLayout";
 import { WorkspaceInboxModal } from "./WorkspaceInboxModal";
 import { buildWorkspaceSessionPath } from "../../workbench/utils/workbench-navigation";
@@ -49,7 +65,6 @@ interface SelectionSnapshot {
   };
 }
 
-const PROVIDER_DEFAULT_MODEL_ID = "provider-default";
 const SELECTION_COMMIT_DELAY_MS = 48;
 
 function copyTextWithExecCommand(text: string): boolean {
@@ -208,6 +223,10 @@ export function ConversationSelectionActions({
     upsertNavigationSession
   } = useWorkbenchShell();
   const providerPreferences = usePreferencesSelector((state) => state.profile.providers);
+  const sessionProviderSelection = useMemo(
+    () => normalizeProviderSelection(session?.providerConfigMode, session?.providerPresetId),
+    [session?.providerConfigMode, session?.providerPresetId]
+  );
   const [selection, setSelection] = useState<SelectionSnapshot | null>(null);
   const [dialogSelection, setDialogSelection] = useState<SelectionSnapshot | null>(null);
   const [actionDialogOpen, setActionDialogOpen] = useState(false);
@@ -217,6 +236,14 @@ export function ConversationSelectionActions({
     resolveBuiltinProvider(session?.provider)
   );
   const [selectedModel, setSelectedModel] = useState(PROVIDER_DEFAULT_MODEL_ID);
+  const [selectedProviderConfigMode, setSelectedProviderConfigMode] =
+    useState<SessionProviderConfigMode>(sessionProviderSelection.providerConfigMode);
+  const [selectedProviderPresetId, setSelectedProviderPresetId] =
+    useState<string | null>(sessionProviderSelection.providerPresetId);
+  const [deploymentSnapshotsByApp, setDeploymentSnapshotsByApp] = useState<
+    Partial<Record<ModelSwitchAppId, ModelManagementAppSnapshotDto>>
+  >({});
+  const [deploymentSnapshotLoading, setDeploymentSnapshotLoading] = useState(false);
   const [providerCapabilities, setProviderCapabilities] = useState<ProviderCapabilitiesDto | null>(null);
   const [providerCapabilitiesMap, setProviderCapabilitiesMap] = useState<
     Partial<Record<BuiltinProviderId, ProviderCapabilitiesDto>>
@@ -241,34 +268,132 @@ export function ConversationSelectionActions({
     return (provider: BuiltinProviderId): string =>
       providerPreferences[provider]?.defaultModel?.trim() || PROVIDER_DEFAULT_MODEL_ID;
   }, [providerPreferences]);
+  const selectedProviderSelection = useMemo(
+    () => normalizeProviderSelection(selectedProviderConfigMode, selectedProviderPresetId),
+    [selectedProviderConfigMode, selectedProviderPresetId]
+  );
+  const selectedModelSwitchApp = useMemo(
+    () => mapProviderToModelSwitchApp(selectedProvider),
+    [selectedProvider]
+  );
+  const selectedDeploymentSnapshot = useMemo(
+    () => selectedModelSwitchApp ? (deploymentSnapshotsByApp[selectedModelSwitchApp] ?? null) : null,
+    [deploymentSnapshotsByApp, selectedModelSwitchApp]
+  );
+  const showDeploymentPresetColumn = useMemo(
+    () => shouldShowDeploymentPresetColumn(selectedDeploymentSnapshot),
+    [selectedDeploymentSnapshot]
+  );
+  const deploymentPresetOptions = useMemo(
+    () => createDeploymentPresetOptions(selectedDeploymentSnapshot),
+    [selectedDeploymentSnapshot]
+  );
+  const selectedPresetValue = selectedProviderSelection.providerConfigMode === "cc-switch-preset"
+    ? selectedProviderSelection.providerPresetId ?? GLOBAL_DEFAULT_PRESET_VALUE
+    : GLOBAL_DEFAULT_PRESET_VALUE;
+  const selectedPresetOption = useMemo(
+    () =>
+      deploymentPresetOptions.find((option) => option.value === selectedPresetValue)
+      ?? deploymentPresetOptions[0]
+      ?? null,
+    [deploymentPresetOptions, selectedPresetValue]
+  );
   const effectiveCapabilities = useMemo(() => {
-    if (selectedProvider === session?.provider && currentCapabilities) {
+    if (
+      selectedProvider === session?.provider
+      && selectedProviderSelection.providerConfigMode === sessionProviderSelection.providerConfigMode
+      && selectedProviderSelection.providerPresetId === sessionProviderSelection.providerPresetId
+      && currentCapabilities
+    ) {
       return currentCapabilities;
     }
 
     return providerCapabilities ?? createDraftCapabilities(selectedProvider);
-  }, [currentCapabilities, providerCapabilities, selectedProvider, session?.provider]);
+  }, [
+    currentCapabilities,
+    providerCapabilities,
+    selectedProvider,
+    selectedProviderSelection.providerConfigMode,
+    selectedProviderSelection.providerPresetId,
+    session?.provider,
+    sessionProviderSelection.providerConfigMode,
+    sessionProviderSelection.providerPresetId
+  ]);
   const modelOptions = useMemo(() => {
     const fallbackOptions = createDraftCapabilities(selectedProvider).modelOptions ?? [];
     return effectiveCapabilities.modelOptions?.length
       ? effectiveCapabilities.modelOptions
       : fallbackOptions;
   }, [effectiveCapabilities.modelOptions, selectedProvider]);
+  const deploymentModelOptions = useMemo(
+    () =>
+      modelOptions.map((item) => ({
+        value: item.id,
+        label: isProviderDefaultModel(item) ? t("conversation.modelUseCliDefault") : item.name
+      })),
+    [modelOptions]
+  );
   const currentModelOption = useMemo(
     () => modelOptions.find((item) => item.id === selectedModel) ?? modelOptions[0] ?? null,
     [modelOptions, selectedModel]
   );
+  const deploymentTriggerLabel = useMemo(() => {
+    const modelLabel = currentModelOption
+      ? (isProviderDefaultModel(currentModelOption) ? t("conversation.modelUseCliDefault") : currentModelOption.name)
+      : t("conversation.modelUseCliDefault");
+
+    if (!showDeploymentPresetColumn) {
+      return modelLabel;
+    }
+
+    const presetLabel = selectedPresetOption?.label ?? t("conversation.deploymentDefaultPreset");
+    return `${presetLabel} · ${modelLabel}`;
+  }, [currentModelOption, selectedPresetOption, showDeploymentPresetColumn]);
+  const applySelectedProvider = useCallback((nextProvider: BuiltinProviderId) => {
+    setSelectedProvider(nextProvider);
+    setSelectedModel(preferredModelForProvider(nextProvider));
+
+    if (session && nextProvider === session.provider && mapProviderToModelSwitchApp(nextProvider)) {
+      setSelectedProviderConfigMode(sessionProviderSelection.providerConfigMode);
+      setSelectedProviderPresetId(sessionProviderSelection.providerPresetId);
+      return;
+    }
+
+    setSelectedProviderConfigMode("global-default");
+    setSelectedProviderPresetId(null);
+  }, [
+    preferredModelForProvider,
+    session,
+    sessionProviderSelection.providerConfigMode,
+    sessionProviderSelection.providerPresetId
+  ]);
   const selectedProviderDisabledReason = useMemo(() => {
     const selectedCapabilities =
       providerCapabilitiesMap[selectedProvider]
-      ?? (selectedProvider === session?.provider ? currentCapabilities : providerCapabilities);
+      ?? (
+        selectedProvider === session?.provider
+        && selectedProviderSelection.providerConfigMode === sessionProviderSelection.providerConfigMode
+        && selectedProviderSelection.providerPresetId === sessionProviderSelection.providerPresetId
+          ? currentCapabilities
+          : providerCapabilities
+      );
 
     if (!selectedCapabilities || selectedCapabilities.canStartSession !== false) {
       return null;
     }
 
     return selectedCapabilities.limitations[0] ?? t("conversation.capabilityDenied");
-  }, [currentCapabilities, providerCapabilities, providerCapabilitiesMap, selectedProvider, session?.provider]);
+  }, [
+    currentCapabilities,
+    providerCapabilities,
+    providerCapabilitiesMap,
+    selectedProvider,
+    selectedProviderSelection.providerConfigMode,
+    selectedProviderSelection.providerPresetId,
+    session?.provider,
+    sessionProviderSelection.providerConfigMode,
+    sessionProviderSelection.providerPresetId
+  ]);
   const toolbarStyle = useMemo<CSSProperties | null>(() => {
     if (!selection || typeof window === "undefined") {
       return null;
@@ -324,9 +449,74 @@ export function ConversationSelectionActions({
     }
 
     const nextProvider = resolveBuiltinProvider(session.provider);
-    setSelectedProvider(nextProvider);
-    setSelectedModel(preferredModelForProvider(nextProvider));
-  }, [preferredModelForProvider, session]);
+    applySelectedProvider(nextProvider);
+  }, [applySelectedProvider, session]);
+
+  useEffect(() => {
+    if (!actionDialogOpen) {
+      setDeploymentSnapshotLoading(false);
+      return;
+    }
+
+    if (!selectedModelSwitchApp) {
+      setDeploymentSnapshotLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setDeploymentSnapshotLoading(true);
+    void fetchModelManagementSnapshot()
+      .then((snapshot) => {
+        if (cancelled) {
+          return;
+        }
+
+        setDeploymentSnapshotsByApp(
+          Object.fromEntries(snapshot.items.map((item) => [item.app, item])) as Partial<
+            Record<ModelSwitchAppId, ModelManagementAppSnapshotDto>
+          >
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDeploymentSnapshotsByApp({});
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setDeploymentSnapshotLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [actionDialogOpen, selectedModelSwitchApp]);
+
+  useEffect(() => {
+    if (
+      !selectedModelSwitchApp
+      || selectedProviderSelection.providerConfigMode !== "cc-switch-preset"
+      || !selectedProviderSelection.providerPresetId
+      || deploymentSnapshotLoading
+      || !selectedDeploymentSnapshot
+    ) {
+      return;
+    }
+
+    if (selectedDeploymentSnapshot.options.some((option) => option.id === selectedProviderSelection.providerPresetId)) {
+      return;
+    }
+
+    setSelectedProviderConfigMode("global-default");
+    setSelectedProviderPresetId(null);
+  }, [
+    deploymentSnapshotLoading,
+    selectedDeploymentSnapshot,
+    selectedModelSwitchApp,
+    selectedProviderSelection.providerConfigMode,
+    selectedProviderSelection.providerPresetId
+  ]);
 
   useEffect(() => {
     if (!session || !containerRef.current || typeof window === "undefined") {
@@ -459,7 +649,12 @@ export function ConversationSelectionActions({
 
     let cancelled = false;
 
-    if (selectedProvider === session.provider && currentCapabilities) {
+    if (
+      selectedProvider === session.provider
+      && selectedProviderSelection.providerConfigMode === sessionProviderSelection.providerConfigMode
+      && selectedProviderSelection.providerPresetId === sessionProviderSelection.providerPresetId
+      && currentCapabilities
+    ) {
       setLoadingCapabilities(false);
       setProviderCapabilities(currentCapabilities);
       return () => {
@@ -469,7 +664,16 @@ export function ConversationSelectionActions({
 
     setLoadingCapabilities(true);
     setProviderCapabilities(createDraftCapabilities(selectedProvider));
-    void getProviderCapabilities(selectedProvider, session.workspaceId)
+    void getProviderCapabilities(
+      selectedProvider,
+      session.workspaceId,
+      selectedModelSwitchApp
+        ? {
+            providerConfigMode: selectedProviderSelection.providerConfigMode,
+            providerPresetId: selectedProviderSelection.providerPresetId
+          }
+        : undefined
+    )
       .then((result) => {
         if (!cancelled) {
           setProviderCapabilities(result);
@@ -489,7 +693,17 @@ export function ConversationSelectionActions({
     return () => {
       cancelled = true;
     };
-  }, [actionDialogOpen, currentCapabilities, selectedProvider, session]);
+  }, [
+    actionDialogOpen,
+    currentCapabilities,
+    selectedModelSwitchApp,
+    selectedProvider,
+    selectedProviderSelection.providerConfigMode,
+    selectedProviderSelection.providerPresetId,
+    session,
+    sessionProviderSelection.providerConfigMode,
+    sessionProviderSelection.providerPresetId
+  ]);
 
   useEffect(() => {
     if (!actionDialogOpen || !session) {
@@ -529,9 +743,8 @@ export function ConversationSelectionActions({
     }
 
     const nextProvider = selectableProviders[0];
-    setSelectedProvider(nextProvider);
-    setSelectedModel(preferredModelForProvider(nextProvider));
-  }, [actionDialogOpen, preferredModelForProvider, providerCapabilitiesMap, selectedProvider, session]);
+    applySelectedProvider(nextProvider);
+  }, [actionDialogOpen, applySelectedProvider, providerCapabilitiesMap, selectedProvider, session]);
 
   useEffect(() => {
     const preferredModel = preferredModelForProvider(selectedProvider);
@@ -584,6 +797,13 @@ export function ConversationSelectionActions({
       return;
     }
 
+    const selectedText = selection.text;
+    setSelection(null);
+
+    if (typeof window !== "undefined") {
+      window.getSelection()?.removeAllRanges?.();
+    }
+
     try {
       await writeTextToClipboard(selectedText, platform);
       showToast({
@@ -620,6 +840,7 @@ export function ConversationSelectionActions({
       return;
     }
 
+    const nextDialogSelection = selection;
     const nextProvider = resolveBuiltinProvider(session.provider);
     applySelectedProvider(nextProvider);
     setActionPrompt("");
@@ -627,6 +848,10 @@ export function ConversationSelectionActions({
     setDialogSelection(nextDialogSelection);
     setSelection(null);
     setActionDialogOpen(true);
+
+    if (typeof window !== "undefined") {
+      window.getSelection()?.removeAllRanges?.();
+    }
   }
 
   function handleActionButtonPressStart(event: {
@@ -676,6 +901,8 @@ export function ConversationSelectionActions({
           sourceMessageId: dialogSelection.sourceMessageId,
           strategy: "auto",
           targetProvider: selectedProvider,
+          providerConfigMode: selectedProviderSelection.providerConfigMode,
+          providerPresetId: selectedProviderSelection.providerPresetId,
           sessionKind: "annotation",
           annotationSourceMessageId: dialogSelection.sourceMessageId,
           annotationSourceText: dialogSelection.text
@@ -687,7 +914,9 @@ export function ConversationSelectionActions({
           clientRequestId:
             globalThis.crypto?.randomUUID?.() ?? `selection-action-${Date.now()}-${Math.random().toString(16).slice(2)}`,
           model,
-          permissionMode: getDefaultSessionPermissionMode()
+          permissionMode: getDefaultSessionPermissionMode(),
+          providerConfigMode: selectedProviderSelection.providerConfigMode,
+          providerPresetId: selectedProviderSelection.providerPresetId
         });
       } else {
         const response = await startLiveSession({
@@ -698,6 +927,8 @@ export function ConversationSelectionActions({
             globalThis.crypto?.randomUUID?.() ?? `selection-action-${Date.now()}-${Math.random().toString(16).slice(2)}`,
           model,
           permissionMode: getDefaultSessionPermissionMode(),
+          providerConfigMode: selectedProviderSelection.providerConfigMode,
+          providerPresetId: selectedProviderSelection.providerPresetId,
           parentSessionId: session.sessionId,
           sessionKind: "annotation",
           annotationSourceMessageId: dialogSelection.sourceMessageId ?? null,
@@ -797,13 +1028,6 @@ export function ConversationSelectionActions({
         </div>
       </ModalSection>
       <ModalSection
-    const selectedText = selection.text;
-    setSelection(null);
-
-    if (typeof window !== "undefined") {
-      window.getSelection()?.removeAllRanges?.();
-    }
-
         className="conversation-selection-target-section"
         heading={t("conversation.selectionActionTargetLabel")}
       >
@@ -815,9 +1039,7 @@ export function ConversationSelectionActions({
             <select
               value={selectedProvider}
               onChange={(event) => {
-                const nextProvider = event.target.value as BuiltinProviderId;
-                setSelectedProvider(nextProvider);
-                setSelectedModel(preferredModelForProvider(nextProvider));
+                applySelectedProvider(event.target.value as BuiltinProviderId);
               }}
             >
               {SESSION_PROVIDER_PICKER_IDS.map((providerId) => (
@@ -835,23 +1057,48 @@ export function ConversationSelectionActions({
             className="conversation-selection-field"
             label={t("conversation.forkTargetModelLabel")}
           >
-            <select
-              value={selectedModel}
-              disabled={loadingCapabilities || Boolean(selectedProviderDisabledReason)}
-              onChange={(event) => setSelectedModel(event.target.value)}
-            >
-    const nextDialogSelection = selection;
-              {modelOptions.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-          </ModalField>
+            {selectedModelSwitchApp ? (
+              <div className="conversation-selection-deployment-select">
+                <DeploymentMacSelect
+                  ariaLabel={t("conversation.forkTargetModelLabel")}
+                  triggerLabel={deploymentTriggerLabel}
+                  presetOptions={deploymentPresetOptions}
+                  selectedPresetValue={selectedPresetValue}
+                  selectedPresetSummary={selectedPresetOption?.summary ?? null}
+                  onSelectPreset={(value) => {
+                    if (value === GLOBAL_DEFAULT_PRESET_VALUE) {
+                      setSelectedProviderConfigMode("global-default");
+                      setSelectedProviderPresetId(null);
+                      return;
+                    }
 
-    if (typeof window !== "undefined") {
-      window.getSelection()?.removeAllRanges?.();
-    }
+                    setSelectedProviderConfigMode("cc-switch-preset");
+                    setSelectedProviderPresetId(value);
+                  }}
+                  modelOptions={deploymentModelOptions}
+                  selectedModelValue={selectedModel}
+                  onSelectModel={setSelectedModel}
+                  loadingPresets={deploymentSnapshotLoading}
+                  loadingModels={loadingCapabilities}
+                  modelColumnDisabled={loadingCapabilities || Boolean(selectedProviderDisabledReason)}
+                  showPresetColumn={showDeploymentPresetColumn}
+                  modelEmptyText={t("conversation.deploymentModelEmpty")}
+                />
+              </div>
+            ) : (
+              <select
+                value={selectedModel}
+                disabled={loadingCapabilities || Boolean(selectedProviderDisabledReason)}
+                onChange={(event) => setSelectedModel(event.target.value)}
+              >
+                {modelOptions.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </ModalField>
         </div>
       </ModalSection>
     </>

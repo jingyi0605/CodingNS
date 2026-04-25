@@ -10,6 +10,8 @@ const mockCreateParallelGroupFromWorkspace = vi.fn();
 const mockCreateParallelGroupFromSession = vi.fn();
 const mockAppendParallelGroupMembers = vi.fn();
 const mockListProviderCapabilities = vi.fn();
+const mockGetProviderCapabilities = vi.fn();
+const mockFetchModelManagementSnapshot = vi.fn();
 const mockGetDefaultSessionPermissionMode = vi.fn(() => "bypassPermissions");
 
 vi.mock("../../../preferences/default-session-permission-mode", () => ({
@@ -29,14 +31,59 @@ vi.mock("../api/conversation-api", async () => {
       mockCreateParallelGroupFromWorkspace(...args),
     createParallelGroupFromSession: (...args: unknown[]) =>
       mockCreateParallelGroupFromSession(...args),
+    getProviderCapabilities: (...args: unknown[]) =>
+      mockGetProviderCapabilities(...args),
     listProviderCapabilities: (...args: unknown[]) =>
       mockListProviderCapabilities(...args)
+  };
+});
+
+vi.mock("../../settings/api/model-switch-api", async () => {
+  const actual = await vi.importActual<typeof import("../../settings/api/model-switch-api")>(
+    "../../settings/api/model-switch-api"
+  );
+
+  return {
+    ...actual,
+    fetchModelManagementSnapshot: (...args: unknown[]) =>
+      mockFetchModelManagementSnapshot(...args)
   };
 });
 
 describe("ParallelSessionCreateModal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFetchModelManagementSnapshot.mockResolvedValue({
+      scannedAt: "2026-04-25T10:00:00.000Z",
+      items: [
+        {
+          app: "codex",
+          displayName: "Codex",
+          cliAvailable: true,
+          status: "ready",
+          statusText: null,
+          currentPresetId: "preset-default",
+          currentPresetName: "默认",
+          currentModel: "gpt-5.4",
+          options: [
+            {
+              id: "preset-team-a",
+              name: "Team A",
+              model: "gpt-5.4",
+              summary: "Team A summary",
+              isCurrent: false
+            },
+            {
+              id: "preset-team-b",
+              name: "Team B",
+              model: "gpt-5.3-codex",
+              summary: "Team B summary",
+              isCurrent: false
+            }
+          ]
+        }
+      ]
+    });
     mockListProviderCapabilities.mockResolvedValue({
       codex: createCapabilities("codex", [
         { id: "provider-default", name: "跟随 CLI 默认模型", usesProviderDefault: true },
@@ -61,6 +108,19 @@ describe("ParallelSessionCreateModal", () => {
         canStartSession: false,
         limitations: ["未安装 Kimi CLI"]
       }
+    });
+    mockGetProviderCapabilities.mockImplementation(async (provider: ProviderId, _workspaceId?: string, providerConfig?: {
+      providerConfigMode?: "global-default" | "cc-switch-preset";
+      providerPresetId?: string | null;
+    }) => {
+      if (provider === "codex" && providerConfig?.providerConfigMode === "cc-switch-preset") {
+        return createCapabilities("codex", [
+          { id: "provider-default", name: "跟随 CLI 默认模型", usesProviderDefault: true },
+          { id: "gpt-5.4", name: "gpt-5.4" }
+        ]);
+      }
+
+      return createCapabilities(provider);
     });
   });
 
@@ -159,10 +219,6 @@ describe("ParallelSessionCreateModal", () => {
       t("shell.createSessionProviderLabel"),
       { selector: "select" }
     );
-    const [modelSelect] = screen.getAllByLabelText(
-      t("shell.parallelCreateModelLabel"),
-      { selector: "select" }
-    );
 
     expect(within(providerSelect).getByRole("option", { name: "Codex" })).toBeInTheDocument();
     expect(within(providerSelect).getByRole("option", { name: "Claude Code" })).toBeInTheDocument();
@@ -170,10 +226,20 @@ describe("ParallelSessionCreateModal", () => {
     expect(within(providerSelect).queryByRole("option", { name: "Gemini" })).not.toBeInTheDocument();
     expect(within(providerSelect).queryByRole("option", { name: "Kimi" })).not.toBeInTheDocument();
 
-    expect(within(modelSelect).getByRole("option", { name: "Codex Max" })).toBeInTheDocument();
-    expect(within(modelSelect).getByRole("option", { name: "Codex Fast" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: t("shell.parallelCreateModelLabel") })).toHaveLength(2);
 
     await user.selectOptions(providerSelect, "opencode");
+
+    const memberOneCard = screen.getByText(t("shell.parallelCreateMemberTitle", { index: 1 })).closest(".parallel-create-member-card");
+
+    if (!(memberOneCard instanceof HTMLElement)) {
+      throw new Error("未找到成员 1 卡片");
+    }
+
+    const modelSelect = within(memberOneCard).getByLabelText(
+      t("shell.parallelCreateModelLabel"),
+      { selector: "select" }
+    );
 
     expect(await within(modelSelect).findByRole("option", { name: "OpenCode Pro" })).toBeInTheDocument();
   });
@@ -203,6 +269,87 @@ describe("ParallelSessionCreateModal", () => {
     expect(screen.getByRole("group", { name: t("shell.parallelAppendCountLabel") })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "1" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "2" })).not.toBeInTheDocument();
+  });
+
+  it("Codex 成员会显示双列 deployment 选择，并把 preset 选择一起提交", async () => {
+    const user = userEvent.setup();
+    mockCreateParallelGroupFromWorkspace.mockResolvedValue(createSuccessDetail());
+
+    renderModal();
+
+    await user.type(
+      screen.getByLabelText(t("shell.parallelCreateSharedPromptLabel")),
+      "并行验证 preset"
+    );
+
+    const [deploymentTrigger] = await screen.findAllByRole("button", {
+      name: t("shell.parallelCreateModelLabel")
+    });
+    await user.click(deploymentTrigger);
+    await user.click(await screen.findByRole("option", { name: /Team A/ }));
+    await user.click(await screen.findByRole("option", { name: "gpt-5.4" }));
+    await user.click(screen.getByRole("button", { name: t("shell.parallelCreateSubmit") }));
+
+    expect(mockGetProviderCapabilities).toHaveBeenCalledWith(
+      "codex",
+      "workspace-1",
+      {
+        providerConfigMode: "cc-switch-preset",
+        providerPresetId: "preset-team-a"
+      }
+    );
+    expect(mockCreateParallelGroupFromWorkspace).toHaveBeenCalledWith(
+      "workspace-1",
+      expect.objectContaining({
+        members: expect.arrayContaining([
+          expect.objectContaining({
+            provider: "codex",
+            model: "gpt-5.4",
+            providerConfigMode: "cc-switch-preset",
+            providerPresetId: "preset-team-a"
+          })
+        ])
+      })
+    );
+  });
+
+  it("供应商只有一个 preset 时会隐藏配置文件列，只显示模型列表", async () => {
+    const user = userEvent.setup();
+    mockFetchModelManagementSnapshot.mockResolvedValueOnce({
+      scannedAt: "2026-04-25T10:00:00.000Z",
+      items: [
+        {
+          app: "codex",
+          displayName: "Codex",
+          cliAvailable: true,
+          status: "ready",
+          statusText: null,
+          currentPresetId: "preset-default",
+          currentPresetName: "默认",
+          currentModel: "gpt-5.4",
+          options: [
+            {
+              id: "preset-default",
+              name: "默认",
+              model: "gpt-5.4",
+              summary: null,
+              isCurrent: true
+            }
+          ]
+        }
+      ]
+    });
+
+    renderModal();
+
+    const [deploymentTrigger] = await screen.findAllByRole("button", {
+      name: t("shell.parallelCreateModelLabel")
+    });
+    await user.click(deploymentTrigger);
+
+    expect(screen.queryByText(t("conversation.deploymentConfigColumn"))).not.toBeInTheDocument();
+    expect(screen.getAllByText(t("conversation.deploymentModelColumn")).length).toBeGreaterThan(0);
+    expect(screen.getByRole("option", { name: "Codex Max" })).toBeInTheDocument();
   });
 });
 

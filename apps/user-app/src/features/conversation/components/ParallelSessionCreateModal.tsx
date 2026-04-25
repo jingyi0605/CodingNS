@@ -1,29 +1,50 @@
-import { useEffect, useId, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import { DesktopModal } from "../../../components/DesktopModal";
 import { ModalActions, ModalField, ModalSection } from "../../../components/ModalAtoms";
 import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import { t } from "../../../shared/i18n";
 import {
+  fetchModelManagementSnapshot,
+  type ModelManagementAppSnapshotDto,
+  type ModelSwitchAppId
+} from "../../settings/api/model-switch-api";
+import {
   appendParallelGroupMembers,
   createParallelGroupFromSession,
   createParallelGroupFromWorkspace,
+  getProviderCapabilities,
   listProviderCapabilities,
   type ParallelSessionMemberFailureDto,
   type BuiltinProviderId,
   type ParallelSessionGroupDetailDto,
   type ProviderCapabilitiesDto,
-  type ProviderId
+  type ProviderId,
+  type SessionProviderConfigMode
 } from "../api/conversation-api";
 import {
   createDraftCapabilities,
   getProviderDisplayName,
   SESSION_PROVIDER_PICKER_IDS
 } from "../capability/provider-ui";
+import {
+  createDeploymentPresetOptions,
+  DeploymentMacSelect,
+  GLOBAL_DEFAULT_PRESET_VALUE,
+  isProviderDefaultModel,
+  mapProviderToModelSwitchApp,
+  normalizeProviderSelection,
+  PROVIDER_DEFAULT_MODEL_ID,
+  shouldShowDeploymentPresetColumn
+} from "./provider-deployment";
+
+const DEPLOYMENT_SNAPSHOT_APPS: ModelSwitchAppId[] = ["codex", "claude-code", "gemini"];
 
 interface ParallelSessionCreateMemberDraft {
   provider: ProviderId;
   model: string;
+  providerConfigMode: SessionProviderConfigMode;
+  providerPresetId: string | null;
   memberPrompt: string;
   workspaceIsolationMode: "none" | "temporary_worktree";
 }
@@ -64,6 +85,8 @@ function createMemberDraft(defaultProvider: ProviderId): ParallelSessionCreateMe
   return {
     provider: defaultProvider,
     model: "",
+    providerConfigMode: "global-default",
+    providerPresetId: null,
     memberPrompt: "",
     workspaceIsolationMode: "none"
   };
@@ -82,6 +105,18 @@ function resolveModelOptions(
   }
 
   return createDraftCapabilities(provider).modelOptions ?? [];
+}
+
+function buildDeploymentCapabilityCacheKey(
+  provider: ProviderId,
+  providerConfigMode: SessionProviderConfigMode,
+  providerPresetId: string | null
+): string | null {
+  if (providerConfigMode !== "cc-switch-preset" || !providerPresetId) {
+    return null;
+  }
+
+  return `${provider}::${providerPresetId}`;
 }
 
 function countCreatedMembers(requestedCount: number, memberFailures: readonly ParallelSessionMemberFailureDto[]) {
@@ -115,6 +150,18 @@ export function ParallelSessionCreateModal({
   const [providerCapabilitiesByProvider, setProviderCapabilitiesByProvider] = useState<
     Partial<Record<ProviderId, ProviderCapabilitiesDto>>
   >({});
+  const [deploymentSnapshotsByApp, setDeploymentSnapshotsByApp] = useState<
+    Partial<Record<ModelSwitchAppId, ModelManagementAppSnapshotDto | null>>
+  >({});
+  const [loadingDeploymentApps, setLoadingDeploymentApps] = useState<
+    Partial<Record<ModelSwitchAppId, boolean>>
+  >({});
+  const [deploymentCapabilitiesByKey, setDeploymentCapabilitiesByKey] = useState<
+    Record<string, ProviderCapabilitiesDto | null>
+  >({});
+  const [loadingDeploymentCapabilityKeys, setLoadingDeploymentCapabilityKeys] = useState<
+    Record<string, boolean>
+  >({});
   const [loadingProviderCapabilities, setLoadingProviderCapabilities] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -122,6 +169,8 @@ export function ParallelSessionCreateModal({
   const [memberErrorsByOrdinal, setMemberErrorsByOrdinal] = useState<
     Record<number, ParallelSessionMemberFailureDto>
   >({});
+  const deploymentSnapshotRequestedRef = useRef(false);
+  const deploymentCapabilityInFlightRef = useRef<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!open) {
@@ -134,11 +183,19 @@ export function ParallelSessionCreateModal({
     setMemberCount(nextMemberCount);
     setMembers(createMemberDrafts(nextDefaultProvider, nextMemberCount));
     setProviderCapabilitiesByProvider({});
+    setDeploymentSnapshotsByApp({});
+    setLoadingDeploymentApps({});
+    setDeploymentCapabilitiesByKey({});
+    setLoadingDeploymentCapabilityKeys({});
     setLoadingProviderCapabilities(false);
     setSubmitting(false);
     setSubmitError(null);
     setPartialDetail(null);
     setMemberErrorsByOrdinal({});
+    deploymentSnapshotRequestedRef.current = false;
+    Object.keys(deploymentCapabilityInFlightRef.current).forEach((key) => {
+      delete deploymentCapabilityInFlightRef.current[key];
+    });
   }, [
     open,
     source?.defaultProvider,
@@ -207,6 +264,106 @@ export function ParallelSessionCreateModal({
     };
   }, [open, source?.workspaceId]);
 
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    if (deploymentSnapshotRequestedRef.current) {
+      return;
+    }
+    deploymentSnapshotRequestedRef.current = true;
+
+    setLoadingDeploymentApps((current) => ({
+      ...current,
+      ...Object.fromEntries(DEPLOYMENT_SNAPSHOT_APPS.map((app) => [app, true]))
+    }));
+
+    void fetchModelManagementSnapshot()
+      .then((snapshot) => {
+        const fetchedSnapshots = Object.fromEntries(
+          snapshot.items.map((item) => [item.app, item] as const)
+        ) as Partial<Record<ModelSwitchAppId, ModelManagementAppSnapshotDto>>;
+
+        setDeploymentSnapshotsByApp(
+          Object.fromEntries(
+            DEPLOYMENT_SNAPSHOT_APPS.map((app) => [app, fetchedSnapshots[app] ?? null])
+          ) as Partial<Record<ModelSwitchAppId, ModelManagementAppSnapshotDto | null>>
+        );
+      })
+      .catch(() => {
+        setDeploymentSnapshotsByApp(
+          Object.fromEntries(
+            DEPLOYMENT_SNAPSHOT_APPS.map((app) => [app, null])
+          ) as Partial<Record<ModelSwitchAppId, ModelManagementAppSnapshotDto | null>>
+        );
+      })
+      .finally(() => {
+        setLoadingDeploymentApps((current) => ({
+          ...current,
+          ...Object.fromEntries(DEPLOYMENT_SNAPSHOT_APPS.map((app) => [app, false]))
+        }));
+      });
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !source) {
+      return;
+    }
+
+    const pendingKeys = Array.from(new Set(
+      members
+        .map((member) => {
+          const selection = normalizeProviderSelection(member.providerConfigMode, member.providerPresetId);
+          return buildDeploymentCapabilityCacheKey(
+            member.provider,
+            selection.providerConfigMode,
+            selection.providerPresetId
+          );
+        })
+        .filter((key): key is string => key !== null)
+    )).filter((key) => deploymentCapabilitiesByKey[key] === undefined && !deploymentCapabilityInFlightRef.current[key]);
+
+    if (pendingKeys.length === 0) {
+      return;
+    }
+
+    for (const key of pendingKeys) {
+      const [provider, presetId] = key.split("::") as [ProviderId, string];
+      deploymentCapabilityInFlightRef.current[key] = true;
+
+      setLoadingDeploymentCapabilityKeys((current) => ({
+        ...current,
+        [key]: true
+      }));
+
+      void getProviderCapabilities(provider, source.workspaceId, {
+        providerConfigMode: "cc-switch-preset",
+        providerPresetId: presetId
+      })
+        .then((capabilities) => {
+          setDeploymentCapabilitiesByKey((current) => ({
+            ...current,
+            [key]: capabilities
+          }));
+        })
+        .catch(() => {
+          setDeploymentCapabilitiesByKey((current) => ({
+            ...current,
+            [key]: null
+          }));
+        })
+        .finally(() => {
+          delete deploymentCapabilityInFlightRef.current[key];
+
+          setLoadingDeploymentCapabilityKeys((current) => ({
+            ...current,
+            [key]: false
+          }));
+        });
+    }
+  }, [deploymentCapabilitiesByKey, members, open, source]);
+
   const availableProviderIds = useMemo(
     () =>
       SESSION_PROVIDER_PICKER_IDS.filter((providerId) => {
@@ -237,11 +394,15 @@ export function ParallelSessionCreateModal({
         }
 
         changed = true;
-        return {
+        const nextMember: ParallelSessionCreateMemberDraft = {
           ...member,
           provider: defaultAvailableProvider,
+          providerConfigMode: "global-default",
+          providerPresetId: null,
           model: ""
         };
+
+        return nextMember;
       });
 
       return changed ? nextMembers : current;
@@ -251,17 +412,136 @@ export function ParallelSessionCreateModal({
   const memberConfigs = useMemo(
     () =>
       members.map((member, index) => {
-        const capabilities = providerCapabilitiesByProvider[member.provider] ?? null;
-        const modelOptions = resolveModelOptions(capabilities, member.provider);
+        const normalizedSelection = normalizeProviderSelection(
+          member.providerConfigMode,
+          member.providerPresetId
+        );
+        const deploymentApp = mapProviderToModelSwitchApp(member.provider);
+        const deploymentSnapshot = deploymentApp ? (deploymentSnapshotsByApp[deploymentApp] ?? null) : null;
+        const deploymentPresetOptions = createDeploymentPresetOptions(deploymentSnapshot);
+        const selectedPresetValue = normalizedSelection.providerConfigMode === "cc-switch-preset"
+          ? normalizedSelection.providerPresetId ?? GLOBAL_DEFAULT_PRESET_VALUE
+          : GLOBAL_DEFAULT_PRESET_VALUE;
+        const selectedPresetOption = deploymentPresetOptions.find((option) => option.value === selectedPresetValue)
+          ?? deploymentPresetOptions[0]
+          ?? null;
+        const deploymentCapabilityKey = buildDeploymentCapabilityCacheKey(
+          member.provider,
+          normalizedSelection.providerConfigMode,
+          normalizedSelection.providerPresetId
+        );
+        const defaultCapabilities = providerCapabilitiesByProvider[member.provider] ?? null;
+        const deploymentCapabilities = deploymentCapabilityKey
+          ? (deploymentCapabilitiesByKey[deploymentCapabilityKey] ?? null)
+          : null;
+        const rawModelOptions =
+          normalizedSelection.providerConfigMode === "cc-switch-preset"
+            ? deploymentCapabilities
+              ? resolveModelOptions(deploymentCapabilities, member.provider)
+              : [{
+                  id: PROVIDER_DEFAULT_MODEL_ID,
+                  name: t("conversation.modelUseCliDefault"),
+                  usesProviderDefault: true
+                }]
+            : resolveModelOptions(defaultCapabilities, member.provider);
+        const modelOptions = rawModelOptions.map((option) => ({
+          value: option.id,
+          label: isProviderDefaultModel(option) ? t("conversation.modelUseCliDefault") : option.name
+        }));
+        const selectedModelValue = member.model.trim() || PROVIDER_DEFAULT_MODEL_ID;
+        const selectedModelLabel = modelOptions.find((option) => option.value === selectedModelValue)?.label
+          ?? t("conversation.modelUseCliDefault");
+        const showPresetColumn = shouldShowDeploymentPresetColumn(deploymentSnapshot);
+        const supportsDeploymentPicker = deploymentApp !== null;
+        const loadingModels = deploymentCapabilityKey
+          ? loadingDeploymentCapabilityKeys[deploymentCapabilityKey] === true
+          : false;
+        const modelColumnDisabled = Boolean(
+          deploymentCapabilityKey
+          && loadingModels
+          && deploymentCapabilities === null
+        );
 
         return {
           index,
           draft: member,
-          modelOptions
+          supportsDeploymentPicker,
+          showPresetColumn,
+          deploymentPresetOptions,
+          selectedPresetValue,
+          selectedPresetOption,
+          triggerLabel: showPresetColumn
+            ? `${selectedPresetOption?.label ?? t("conversation.deploymentDefaultPreset")} · ${selectedModelLabel}`
+            : selectedModelLabel,
+          selectedModelValue,
+          modelOptions,
+          loadingPresets: deploymentApp ? loadingDeploymentApps[deploymentApp] === true : false,
+          loadingModels,
+          modelColumnDisabled
         };
       }),
-    [members, providerCapabilitiesByProvider]
+    [
+      deploymentCapabilitiesByKey,
+      deploymentSnapshotsByApp,
+      loadingDeploymentApps,
+      loadingDeploymentCapabilityKeys,
+      members,
+      providerCapabilitiesByProvider
+    ]
   );
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    setMembers((current) => {
+      let changed = false;
+      const nextMembers = current.map((member, index) => {
+        const memberConfig = memberConfigs[index];
+
+        if (!memberConfig) {
+          return member;
+        }
+
+        let nextMember = member;
+        const normalizedSelection = normalizeProviderSelection(
+          member.providerConfigMode,
+          member.providerPresetId
+        );
+
+        if (
+          normalizedSelection.providerConfigMode === "cc-switch-preset"
+          && normalizedSelection.providerPresetId
+          && !memberConfig.loadingPresets
+          && !memberConfig.deploymentPresetOptions.some((option) => option.value === normalizedSelection.providerPresetId)
+        ) {
+          nextMember = {
+            ...nextMember,
+            providerConfigMode: "global-default",
+            providerPresetId: null,
+            model: ""
+          };
+          changed = true;
+        }
+
+        const allowedModelValues = new Set(memberConfig.modelOptions.map((option) => option.value));
+        const currentModelValue = nextMember.model.trim() || PROVIDER_DEFAULT_MODEL_ID;
+
+        if (!allowedModelValues.has(currentModelValue)) {
+          nextMember = {
+            ...nextMember,
+            model: ""
+          };
+          changed = true;
+        }
+
+        return nextMember;
+      });
+
+      return changed ? nextMembers : current;
+    });
+  }, [memberConfigs, open]);
 
   if (!open || !source) {
     return null;
@@ -371,12 +651,24 @@ export function ParallelSessionCreateModal({
 
     try {
       const permissionMode = getDefaultSessionPermissionMode();
-      const memberPayload = members.map((member) => ({
-        provider: member.provider,
-        model: member.model.trim() || null,
-        memberPrompt: member.memberPrompt.trim() || null,
-        workspaceIsolationMode: member.workspaceIsolationMode
-      }));
+      const memberPayload = members.map((member) => {
+        const normalizedSelection = normalizeProviderSelection(
+          member.providerConfigMode,
+          member.providerPresetId
+        );
+
+        return {
+          provider: member.provider,
+          model: member.model.trim() || null,
+          providerConfigMode: normalizedSelection.providerConfigMode,
+          providerPresetId:
+            normalizedSelection.providerConfigMode === "cc-switch-preset"
+              ? normalizedSelection.providerPresetId
+              : null,
+          memberPrompt: member.memberPrompt.trim() || null,
+          workspaceIsolationMode: member.workspaceIsolationMode
+        };
+      });
       const detail =
         activeSource.kind === "group"
           ? await appendParallelGroupMembers(activeSource.groupId, {
@@ -533,11 +825,29 @@ export function ParallelSessionCreateModal({
           heading={t("shell.parallelCreateMembersTitle")}
         >
           <div className="parallel-create-member-list" style={memberGridStyle}>
-            {memberConfigs.map(({ draft, index, modelOptions }) => {
+            {memberConfigs.map(({
+              draft,
+              index,
+              supportsDeploymentPicker,
+              showPresetColumn,
+              deploymentPresetOptions,
+              selectedPresetValue,
+              selectedPresetOption,
+              triggerLabel,
+              selectedModelValue,
+              modelOptions,
+              loadingPresets,
+              loadingModels,
+              modelColumnDisabled
+            }) => {
               const memberProviderOptions = availableProviderIds;
               const providerSelectValue = memberProviderOptions.includes(draft.provider as BuiltinProviderId)
                 ? draft.provider
                 : "";
+              const legacyModelOptions = resolveModelOptions(
+                providerCapabilitiesByProvider[draft.provider] ?? null,
+                draft.provider
+              );
 
               return (
                 <article
@@ -594,6 +904,8 @@ export function ParallelSessionCreateModal({
                                 ? {
                                     ...item,
                                     provider: nextProvider,
+                                    providerConfigMode: "global-default",
+                                    providerPresetId: null,
                                     model: ""
                                   }
                                 : item
@@ -619,48 +931,105 @@ export function ParallelSessionCreateModal({
 
                     <ModalField
                       label={t("shell.parallelCreateModelLabel")}
-                      htmlFor={`${modalFieldIdPrefix}-member-${index}-model`}
+                      htmlFor={supportsDeploymentPicker ? undefined : `${modalFieldIdPrefix}-member-${index}-model`}
                     >
-                      <select
-                        id={`${modalFieldIdPrefix}-member-${index}-model`}
-                        className="parallel-create-select"
-                        value={draft.model}
-                        disabled={!memberProviderOptions.length}
-                        onChange={(event) => {
-                          clearFeedbackForMember(index);
-                          const nextModel = event.target.value;
-                          setMembers((current) =>
-                            current.map((item, memberIndex) =>
-                              memberIndex === index
-                                ? {
-                                    ...item,
-                                    model: nextModel
+                      {supportsDeploymentPicker ? (
+                        <div className="parallel-create-deployment-select">
+                          <DeploymentMacSelect
+                            triggerId={`${modalFieldIdPrefix}-member-${index}-model`}
+                            ariaLabel={t("shell.parallelCreateModelLabel")}
+                            triggerLabel={triggerLabel}
+                            presetOptions={deploymentPresetOptions}
+                            selectedPresetValue={selectedPresetValue}
+                            selectedPresetSummary={selectedPresetOption?.summary ?? null}
+                            onSelectPreset={(value) => {
+                              clearFeedbackForMember(index);
+                              setMembers((current) =>
+                                current.map((item, memberIndex) => {
+                                  if (memberIndex !== index) {
+                                    return item;
                                   }
-                                : item
-                            )
-                          );
-                        }}
-                      >
-                        {modelOptions.length > 0 ? (
-                          <>
+
+                                  return value === GLOBAL_DEFAULT_PRESET_VALUE
+                                    ? {
+                                        ...item,
+                                        providerConfigMode: "global-default",
+                                        providerPresetId: null,
+                                        model: ""
+                                      }
+                                    : {
+                                        ...item,
+                                        providerConfigMode: "cc-switch-preset",
+                                        providerPresetId: value,
+                                        model: ""
+                                      };
+                                })
+                              );
+                            }}
+                            modelOptions={modelOptions}
+                            selectedModelValue={selectedModelValue}
+                            onSelectModel={(value) => {
+                              clearFeedbackForMember(index);
+                              setMembers((current) =>
+                                current.map((item, memberIndex) =>
+                                  memberIndex === index
+                                    ? {
+                                        ...item,
+                                        model: value === PROVIDER_DEFAULT_MODEL_ID ? "" : value
+                                      }
+                                    : item
+                                )
+                              );
+                            }}
+                            loadingPresets={loadingPresets}
+                            loadingModels={loadingModels}
+                            modelColumnDisabled={modelColumnDisabled}
+                            showPresetColumn={showPresetColumn}
+                            modelEmptyText={t("conversation.deploymentModelEmpty")}
+                          />
+                        </div>
+                      ) : (
+                        <select
+                          id={`${modalFieldIdPrefix}-member-${index}-model`}
+                          className="parallel-create-select"
+                          value={draft.model}
+                          disabled={!memberProviderOptions.length}
+                          onChange={(event) => {
+                            clearFeedbackForMember(index);
+                            const nextModel = event.target.value;
+                            setMembers((current) =>
+                              current.map((item, memberIndex) =>
+                                memberIndex === index
+                                  ? {
+                                      ...item,
+                                      model: nextModel
+                                    }
+                                  : item
+                              )
+                            );
+                          }}
+                        >
+                          {legacyModelOptions.length > 0 ? (
+                            <>
+                              <option value="">
+                                {legacyModelOptions.find((option) => option.usesProviderDefault === true)?.name
+                                  ?? t("shell.parallelPaneModelFallback")}
+                              </option>
+                              {legacyModelOptions
+                                .filter((option) => option.usesProviderDefault !== true)
+                                .map((option) => (
+                                  <option key={option.id} value={option.id}>
+                                    {option.name}
+                                  </option>
+                                ))}
+                            </>
+                          ) : (
                             <option value="">
-                              {modelOptions.find((option) => option.usesProviderDefault === true)?.name
-                                ?? t("shell.parallelPaneModelFallback")}
+                              {t("shell.parallelCreateNoModelsAvailable")}
                             </option>
-                            {modelOptions
-                              .filter((option) => option.usesProviderDefault !== true)
-                              .map((option) => (
-                                <option key={option.id} value={option.id}>
-                                  {option.name}
-                                </option>
-                              ))}
-                          </>
-                        ) : (
-                          <option value="">
-                            {t("shell.parallelCreateNoModelsAvailable")}
-                          </option>
-                        )}
-                      </select>
+                          )}
+                        </select>
+                      )}
                     </ModalField>
                   </div>
 

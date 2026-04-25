@@ -6848,19 +6848,19 @@ textarea:focus-visible {
   max-width: none;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  min-height: 34px;
-  padding: 0 12px 0 14px;
-  border-radius: 16px;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 10px 0 12px;
+  border-radius: 13px;
   border: 1px solid color-mix(in srgb, var(--border-primary) 86%, rgba(255, 255, 255, 0.4));
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 94%, white 6%), color-mix(in srgb, var(--bg-surface) 88%, transparent)),
-    color-mix(in srgb, var(--bg-surface) 92%, transparent);
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 96%, white 4%), color-mix(in srgb, var(--bg-surface) 90%, transparent)),
+    color-mix(in srgb, var(--bg-surface) 94%, transparent);
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.6) inset,
-    0 10px 28px rgba(15, 23, 42, 0.1);
-  backdrop-filter: blur(22px) saturate(145%);
-  -webkit-backdrop-filter: blur(22px) saturate(145%);
+    0 1px 0 rgba(255, 255, 255, 0.58) inset,
+    0 6px 18px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(18px) saturate(138%);
+  -webkit-backdrop-filter: blur(18px) saturate(138%);
   color: var(--text-primary);
   transition:
     border-color var(--transition-fast),
@@ -6872,15 +6872,15 @@ textarea:focus-visible {
 .composer-mac-select-trigger:hover {
   border-color: color-mix(in srgb, var(--accent) 18%, var(--border-primary));
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.7) inset,
-    0 12px 30px rgba(15, 23, 42, 0.12);
+    0 1px 0 rgba(255, 255, 255, 0.64) inset,
+    0 8px 20px rgba(15, 23, 42, 0.1);
 }
 
 .composer-mac-select[data-open="true"] .composer-mac-select-trigger {
   border-color: color-mix(in srgb, var(--accent) 30%, var(--border-primary));
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.72) inset,
-    0 14px 34px rgba(15, 23, 42, 0.14);
+    0 1px 0 rgba(255, 255, 255, 0.68) inset,
+    0 10px 22px rgba(15, 23, 42, 0.11);
 }
 
 .composer-mac-select-trigger:active {
@@ -6892,8 +6892,8 @@ textarea:focus-visible {
   border-color: color-mix(in srgb, var(--accent) 36%, var(--border-primary));
   box-shadow:
     0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent),
-    0 1px 0 rgba(255, 255, 255, 0.72) inset,
-    0 14px 34px rgba(15, 23, 42, 0.14);
+    0 1px 0 rgba(255, 255, 255, 0.66) inset,
+    0 10px 22px rgba(15, 23, 42, 0.11);
 }
 
 .composer-mac-select-label {
@@ -6902,9 +6902,9 @@ textarea:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.005em;
 }
 
 .composer-mac-select-chevron {
@@ -6923,24 +6923,24 @@ textarea:focus-visible {
   bottom: calc(100% + 10px);
   z-index: 90;
   width: max(100%, min(300px, calc(100vw - 96px)));
-  padding: 8px;
-  border-radius: 20px;
+  padding: 6px;
+  border-radius: 16px;
   border: 1px solid color-mix(in srgb, var(--border-primary) 84%, rgba(255, 255, 255, 0.45));
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 94%, white 6%), color-mix(in srgb, var(--bg-surface) 88%, transparent)),
-    color-mix(in srgb, var(--bg-surface) 90%, transparent);
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 95%, white 5%), color-mix(in srgb, var(--bg-surface) 90%, transparent)),
+    color-mix(in srgb, var(--bg-surface) 92%, transparent);
   box-shadow:
-    0 22px 44px rgba(15, 23, 42, 0.16),
-    0 1px 0 rgba(255, 255, 255, 0.7) inset;
-  backdrop-filter: blur(28px) saturate(155%);
-  -webkit-backdrop-filter: blur(28px) saturate(155%);
+    0 14px 32px rgba(15, 23, 42, 0.14),
+    0 1px 0 rgba(255, 255, 255, 0.66) inset;
+  backdrop-filter: blur(22px) saturate(148%);
+  -webkit-backdrop-filter: blur(22px) saturate(148%);
 }
 
 .composer-mac-select-list {
   display: flex;
-  max-height: 280px;
+  max-height: 240px;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   overflow-y: auto;
 }
 
@@ -6948,10 +6948,10 @@ textarea:focus-visible {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
-  min-height: 38px;
-  padding: 0 12px;
-  border-radius: 12px;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 10px;
   color: var(--text-primary);
   text-align: left;
   transition:
@@ -6987,14 +6987,14 @@ textarea:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.005em;
 }
 
 .composer-mac-select.is-compact .composer-mac-select-trigger {
-  min-height: 32px;
-  padding-inline: 12px;
+  min-height: 30px;
+  padding-inline: 10px;
 }
 
 .composer-mac-select.is-compact {
@@ -7005,7 +7005,160 @@ textarea:focus-visible {
 }
 
 .composer-mac-select.is-compact .composer-mac-select-popover {
-  width: max(100%, 140px);
+  width: max(100%, 128px);
+}
+
+.composer-deployment-select {
+  min-width: 0;
+  max-width: min(300px, 40vw);
+}
+
+.composer-deployment-select-trigger {
+  width: 100%;
+}
+
+.composer-deployment-select-label {
+  width: 100%;
+}
+
+.composer-deployment-select-popover {
+  padding: 6px;
+}
+
+.composer-deployment-select-panel {
+  display: grid;
+  grid-template-columns: minmax(132px, 148px) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.composer-deployment-select-panel.is-model-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.composer-deployment-select-column {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.composer-deployment-select-column[data-disabled="true"] {
+  opacity: 0.68;
+}
+
+.composer-deployment-select-column-header {
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.composer-deployment-select-column-hint {
+  padding: 0 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-deployment-select-list {
+  display: flex;
+  min-height: 0;
+  max-height: 240px;
+  flex-direction: column;
+  gap: 3px;
+  overflow-y: auto;
+}
+
+.composer-deployment-select-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  color: var(--text-primary);
+  text-align: left;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.composer-deployment-select-option:hover {
+  background: color-mix(in srgb, var(--bg-hover) 88%, transparent);
+}
+
+.composer-deployment-select-option:active {
+  transform: scale(0.99);
+}
+
+.composer-deployment-select-option.is-selected {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 78%, white 10%), color-mix(in srgb, var(--accent) 90%, transparent));
+  color: var(--text-inverse);
+}
+
+.composer-deployment-select-option:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.composer-deployment-select-option-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 18px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.composer-deployment-select-option-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+}
+
+.composer-deployment-select-option-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+.composer-deployment-select-option-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: inherit;
+  opacity: 0.78;
+}
+
+.composer-deployment-select-state {
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 720px) {
+  .composer-deployment-select {
+    max-width: min(280px, 48vw);
+  }
+
+  .composer-deployment-select-panel {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Slash Button */
@@ -9315,6 +9468,43 @@ textarea:focus-visible {
   min-height: 92px;
 }
 
+.conversation-selection-deployment-select .composer-deployment-select {
+  width: 100%;
+  max-width: none;
+}
+
+.conversation-selection-deployment-select .composer-deployment-select-trigger {
+  min-height: 42px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid var(--modal-control-border);
+  background: var(--modal-control-surface);
+  box-shadow: var(--modal-control-shadow);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.conversation-selection-deployment-select .composer-deployment-select-trigger:hover,
+.conversation-selection-deployment-select .composer-deployment-select[data-open="true"] .composer-deployment-select-trigger {
+  border-color: var(--modal-control-border-hover);
+  background: var(--modal-control-surface-hover);
+  box-shadow: var(--modal-control-shadow);
+}
+
+.conversation-selection-deployment-select .composer-deployment-select-trigger:focus-visible {
+  border-color: var(--modal-control-border-focus);
+  background: var(--modal-control-surface);
+  box-shadow:
+    var(--modal-control-focus-ring),
+    inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 88%, transparent);
+}
+
+.conversation-selection-deployment-select .composer-deployment-select-label {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: normal;
+}
+
 .conversation-selection-checkbox {
   display: inline-flex;
   align-items: center;
@@ -9335,7 +9525,7 @@ textarea:focus-visible {
 }
 
 @media (max-width: 720px) {
-.conversation-selection-action-dialog-body {
+  .conversation-selection-action-dialog-body {
     padding-top: 0;
   }
 
@@ -28756,8 +28946,45 @@ textarea:focus-visible {
 }
 
 .parallel-create-select {
-  min-height: 34px;
+  min-height: 38px;
   padding: 0 10px;
+}
+
+.parallel-create-deployment-select .composer-deployment-select {
+  width: 100%;
+  max-width: none;
+}
+
+.parallel-create-deployment-select .composer-deployment-select-trigger {
+  min-height: 38px;
+  padding: 0 10px;
+  border-radius: 12px;
+  border: 1px solid var(--modal-control-border);
+  background: var(--modal-control-surface);
+  box-shadow: var(--modal-control-shadow);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.parallel-create-deployment-select .composer-deployment-select-trigger:hover,
+.parallel-create-deployment-select .composer-deployment-select[data-open="true"] .composer-deployment-select-trigger {
+  border-color: var(--modal-control-border-hover);
+  background: var(--modal-control-surface-hover);
+  box-shadow: var(--modal-control-shadow);
+}
+
+.parallel-create-deployment-select .composer-deployment-select-trigger:focus-visible {
+  border-color: var(--modal-control-border-focus);
+  background: var(--modal-control-surface);
+  box-shadow:
+    var(--modal-control-focus-ring),
+    inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 88%, transparent);
+}
+
+.parallel-create-deployment-select .composer-deployment-select-label {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: normal;
 }
 
 .parallel-create-textarea {

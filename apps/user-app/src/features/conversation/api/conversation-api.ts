@@ -524,6 +524,8 @@ export interface SessionSummaryDto {
 export interface ParallelSessionMemberConfigDto {
   provider: ProviderId;
   model?: string | null;
+  providerConfigMode?: SessionProviderConfigMode;
+  providerPresetId?: string | null;
   memberPrompt?: string | null;
   workspaceIsolationMode?: "none" | "temporary_worktree";
 }
@@ -880,6 +882,8 @@ export interface SendLiveMessagePayload {
   reasoningLevel?: string | null;
   permissionMode?: string | null;
   attachments?: AttachmentPayload[];
+  providerConfigMode?: SessionProviderConfigMode;
+  providerPresetId?: string | null;
 }
 
 export interface SendSessionMessagePayload {
@@ -894,6 +898,8 @@ export interface ForkSessionPayload {
   sourceMessageSnapshot?: ForkSourceMessageSnapshotDto | null;
   strategy?: ForkStrategy;
   targetProvider?: ProviderId | null;
+  providerConfigMode?: SessionProviderConfigMode;
+  providerPresetId?: string | null;
   sessionKind?: SessionKind;
   annotationSourceMessageId?: string | null;
   annotationSourceText?: string | null;
@@ -1314,11 +1320,23 @@ export function replaceQuickPhrases(items: Array<{ id?: string; text: string }>)
   });
 }
 
-export function getProviderCapabilities(provider: ProviderId, workspaceId?: string) {
+export function getProviderCapabilities(
+  provider: ProviderId,
+  workspaceId?: string,
+  providerConfig?: {
+    providerConfigMode?: SessionProviderConfigMode;
+    providerPresetId?: string | null;
+  }
+) {
   const search = new URLSearchParams();
 
   if (workspaceId?.trim()) {
     search.set("workspaceId", workspaceId.trim());
+  }
+
+  if (providerConfig?.providerConfigMode === "cc-switch-preset" && providerConfig.providerPresetId?.trim()) {
+    search.set("providerConfigMode", "cc-switch-preset");
+    search.set("providerPresetId", providerConfig.providerPresetId.trim());
   }
 
   return httpClient.request<ProviderCapabilitiesDto>(

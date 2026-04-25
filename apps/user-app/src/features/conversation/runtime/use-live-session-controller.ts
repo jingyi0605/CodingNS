@@ -12,6 +12,7 @@ import {
   type AttachmentPayload,
   type HistoryMessageDto,
   type MessageAttachmentDto,
+  type SessionProviderConfigMode,
   type SessionSummaryDto,
   type ProviderId
 } from "../api/conversation-api";
@@ -42,6 +43,8 @@ interface ForkComposerDraft {
   workspaceId: string;
   targetProvider: ProviderId;
   targetModel: string | null;
+  targetProviderConfigMode?: SessionProviderConfigMode;
+  targetProviderPresetId?: string | null;
 }
 
 interface UseLiveSessionControllerInput {
@@ -383,6 +386,8 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
     options?: {
       model?: string;
       reasoningLevel?: string;
+      providerConfigMode?: SessionProviderConfigMode;
+      providerPresetId?: string | null;
       attachments?: AttachmentPayload[];
       attachmentMeta?: MessageAttachmentDto[];
     }
@@ -393,6 +398,8 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
       await store.sendMessage(content, {
         model: options?.model,
         reasoningLevel: options?.reasoningLevel,
+        providerConfigMode: options?.providerConfigMode,
+        providerPresetId: options?.providerPresetId ?? null,
         attachments: options?.attachments,
         attachmentMeta: options?.attachmentMeta
       });
@@ -408,7 +415,9 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
         sourceMessageId: activeForkDraft.sourceMessageId,
         sourceMessageSnapshot: activeForkDraft.sourceMessageSnapshot,
         strategy: "auto",
-        targetProvider: activeForkDraft.targetProvider
+        targetProvider: activeForkDraft.targetProvider,
+        providerConfigMode: activeForkDraft.targetProviderConfigMode ?? options?.providerConfigMode,
+        providerPresetId: activeForkDraft.targetProviderPresetId ?? options?.providerPresetId ?? null
       });
       input.onUpsertNavigationSession?.(forkedSession);
 
@@ -418,7 +427,9 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
         model: activeForkDraft.targetModel,
         reasoningLevel: options?.reasoningLevel ?? null,
         permissionMode: getDefaultSessionPermissionMode(),
-        attachments: options?.attachments ?? []
+        attachments: options?.attachments ?? [],
+        providerConfigMode: activeForkDraft.targetProviderConfigMode ?? options?.providerConfigMode,
+        providerPresetId: activeForkDraft.targetProviderPresetId ?? options?.providerPresetId ?? null
       });
 
       setForkDraft(null);
@@ -444,6 +455,8 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
     options?: {
       model?: string;
       reasoningLevel?: string;
+      providerConfigMode?: SessionProviderConfigMode;
+      providerPresetId?: string | null;
       attachments?: AttachmentPayload[];
       attachmentMeta?: MessageAttachmentDto[];
     }
@@ -462,6 +475,8 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
     options?: {
       model?: string;
       reasoningLevel?: string;
+      providerConfigMode?: SessionProviderConfigMode;
+      providerPresetId?: string | null;
       attachments?: AttachmentPayload[];
       attachmentMeta?: MessageAttachmentDto[];
     }
@@ -475,6 +490,8 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
         await store.enqueueMessage(content, {
           model: options?.model,
           reasoningLevel: options?.reasoningLevel,
+          providerConfigMode: options?.providerConfigMode,
+          providerPresetId: options?.providerPresetId ?? null,
           attachments: options?.attachments,
           attachmentMeta: options?.attachmentMeta
         });

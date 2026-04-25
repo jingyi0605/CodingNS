@@ -7,10 +7,12 @@ import { ConversationSelectionActions } from "./ConversationSelectionActions";
 
 const {
   mockGetProviderCapabilities,
-  mockListProviderCapabilities
+  mockListProviderCapabilities,
+  mockFetchModelManagementSnapshot
 } = vi.hoisted(() => ({
   mockGetProviderCapabilities: vi.fn(),
-  mockListProviderCapabilities: vi.fn()
+  mockListProviderCapabilities: vi.fn(),
+  mockFetchModelManagementSnapshot: vi.fn()
 }));
 
 vi.mock("react-router-dom", () => ({
@@ -56,6 +58,18 @@ vi.mock("../api/conversation-api", () => ({
   sendLiveMessage: vi.fn()
 }));
 
+vi.mock("../../settings/api/model-switch-api", async () => {
+  const actual = await vi.importActual<typeof import("../../settings/api/model-switch-api")>(
+    "../../settings/api/model-switch-api"
+  );
+
+  return {
+    ...actual,
+    fetchModelManagementSnapshot: (...args: unknown[]) =>
+      mockFetchModelManagementSnapshot(...args)
+  };
+});
+
 vi.mock("../capability/provider-ui", () => ({
   SESSION_PROVIDER_PICKER_IDS: ["codex"],
   createDraftCapabilities: () => ({
@@ -93,7 +107,10 @@ describe("ConversationSelectionActions", () => {
     mockGetProviderCapabilities.mockResolvedValue({
       canStartSession: true,
       limitations: [],
-      modelOptions: [{ id: "provider-default", name: "默认模型" }]
+      modelOptions: [
+        { id: "provider-default", name: "默认模型", usesProviderDefault: true },
+        { id: "gpt-5.4", name: "gpt-5.4" }
+      ]
     });
     mockListProviderCapabilities.mockResolvedValue({
       codex: {
@@ -101,6 +118,37 @@ describe("ConversationSelectionActions", () => {
         limitations: [],
         modelOptions: [{ id: "provider-default", name: "默认模型" }]
       }
+    });
+    mockFetchModelManagementSnapshot.mockResolvedValue({
+      scannedAt: "2026-04-25T10:00:00.000Z",
+      items: [
+        {
+          app: "codex",
+          displayName: "Codex",
+          cliAvailable: true,
+          status: "ready",
+          statusText: null,
+          currentPresetId: "preset-default",
+          currentPresetName: "默认",
+          currentModel: "gpt-5.4",
+          options: [
+            {
+              id: "preset-team-a",
+              name: "Team A",
+              model: "gpt-5.4",
+              summary: "Team A summary",
+              isCurrent: false
+            },
+            {
+              id: "preset-team-b",
+              name: "Team B",
+              model: "gpt-5.3-codex",
+              summary: "Team B summary",
+              isCurrent: false
+            }
+          ]
+        }
+      ]
     });
     Object.defineProperty(window, "getSelection", {
       configurable: true,
@@ -223,6 +271,49 @@ describe("ConversationSelectionActions", () => {
     expect(
       screen.getByRole("dialog", { name: t("conversation.selectionActionButton") })
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: t("conversation.copyAction") })
+    ).not.toBeInTheDocument();
+  });
+
+  it("操作弹框里的目标模型会显示 deployment 多配置文件选择器", async () => {
+    render(<TestHarness />);
+
+    const messageText = screen.getByTestId("message-text");
+    const textNode = messageText.firstChild;
+
+    expect(textNode).not.toBeNull();
+
+    currentSelection = createSelection(textNode!, "带 deployment 选择", {
+      left: 160,
+      top: 220,
+      width: 112,
+      height: 22
+    });
+
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => {
+      vi.advanceTimersByTime(60);
+    });
+
+    const actionButton = screen.getByRole("button", {
+      name: t("conversation.selectionActionButton")
+    });
+    fireEvent.mouseDown(actionButton);
+    fireEvent.click(actionButton);
+
+    expect(
+      screen.getByRole("dialog", { name: t("conversation.selectionActionButton") })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: t("conversation.forkTargetModelLabel") })
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: t("conversation.forkTargetModelLabel") }));
+
+    expect(screen.getByText(t("conversation.deploymentConfigColumn"))).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.deploymentModelColumn"))).toBeInTheDocument();
   });
 
   it("没有 click 事件时，pointerup 仍然会打开对话框", () => {
@@ -263,6 +354,34 @@ describe("ConversationSelectionActions", () => {
       screen.getByRole("dialog", { name: t("conversation.selectionActionButton") })
     ).toBeInTheDocument();
   });
+
+  it("点击复制后会收起选区工具条", async () => {
+    render(<TestHarness />);
+
+    const messageText = screen.getByTestId("message-text");
+    const textNode = messageText.firstChild;
+
+    expect(textNode).not.toBeNull();
+
+    currentSelection = createSelection(textNode!, "复制后要收起", {
+      left: 160,
+      top: 220,
+      width: 112,
+      height: 22
+    });
+
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => {
+      vi.advanceTimersByTime(60);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: t("conversation.copyAction") }));
+
+    expect(
+      screen.queryByRole("button", { name: t("conversation.copyAction") })
+    ).not.toBeInTheDocument();
+  });
 });
 
 function TestHarness() {
@@ -271,9 +390,6 @@ function TestHarness() {
   return (
     <div ref={containerRef}>
       <article data-message-id="message-1">
-    expect(
-      screen.queryByRole("button", { name: t("conversation.copyAction") })
-    ).not.toBeInTheDocument();
         <p data-testid="message-text">这是一段用于拖拽选中的聊天消息。</p>
       </article>
       <ConversationSelectionActions
@@ -319,31 +435,3 @@ function createSelection(
     })
   } as unknown as Selection;
 }
-
-  it("点击复制后会收起选区工具条", async () => {
-    render(<TestHarness />);
-
-    const messageText = screen.getByTestId("message-text");
-    const textNode = messageText.firstChild;
-
-    expect(textNode).not.toBeNull();
-
-    currentSelection = createSelection(textNode!, "复制后要收起", {
-      left: 160,
-      top: 220,
-      width: 112,
-      height: 22
-    });
-
-    document.dispatchEvent(new Event("selectionchange"));
-
-    act(() => {
-      vi.advanceTimersByTime(60);
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: t("conversation.copyAction") }));
-
-    expect(
-      screen.queryByRole("button", { name: t("conversation.copyAction") })
-    ).not.toBeInTheDocument();
-  });

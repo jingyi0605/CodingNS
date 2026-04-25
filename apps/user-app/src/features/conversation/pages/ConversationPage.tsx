@@ -140,6 +140,10 @@ export function ConversationPage() {
     () => parseLiveBootstrapMessages(sessionId, location.state),
     [location.state, sessionId]
   );
+  const liveComposerBootstrap = useMemo(
+    () => parseLiveComposerBootstrap(sessionId, location.state),
+    [location.state, sessionId]
+  );
 
   if (draftContext) {
     return <DraftConversationPage draft={draftContext} navigate={navigate} initialToolPanel={toolPanel} />;
@@ -149,6 +153,9 @@ export function ConversationPage() {
     <LiveConversationPage
       sessionId={sessionId}
       bootstrapMessages={liveBootstrapMessages}
+      initialComposerModel={liveComposerBootstrap.initialModel}
+      initialComposerProviderConfigMode={liveComposerBootstrap.providerConfigMode}
+      initialComposerProviderPresetId={liveComposerBootstrap.providerPresetId}
       initialToolPanel={toolPanel}
     />
   );
@@ -157,10 +164,16 @@ export function ConversationPage() {
 function LiveConversationPage({
   sessionId,
   bootstrapMessages,
+  initialComposerModel,
+  initialComposerProviderConfigMode,
+  initialComposerProviderPresetId,
   initialToolPanel
 }: {
   sessionId: string;
   bootstrapMessages: HistoryMessageDto[];
+  initialComposerModel: string | null;
+  initialComposerProviderConfigMode: "global-default" | "cc-switch-preset";
+  initialComposerProviderPresetId: string | null;
   initialToolPanel: MobileConversationToolPanel | null;
 }) {
   const {
@@ -654,7 +667,9 @@ function LiveConversationPage({
                     sourceProvider: session.provider,
                     workspaceId: session.workspaceId,
                     targetProvider: session.provider,
-                    targetModel: null
+                    targetModel: null,
+                    targetProviderConfigMode: session.providerConfigMode ?? "global-default",
+                    targetProviderPresetId: session.providerPresetId ?? null
                   });
                   focusComposerInput();
                 }}
@@ -677,6 +692,18 @@ function LiveConversationPage({
               <ComposerPanel
                 capabilities={capabilities}
                 draftStorageId={sessionId}
+                initialModel={initialComposerModel}
+                workspaceId={(session ?? navigationSession)?.workspaceId ?? null}
+                initialProviderConfigMode={
+                  initialComposerProviderConfigMode
+                  ?? (session ?? navigationSession)?.providerConfigMode
+                  ?? "global-default"
+                }
+                initialProviderPresetId={
+                  initialComposerProviderPresetId
+                  ?? (session ?? navigationSession)?.providerPresetId
+                  ?? null
+                }
                 forkDraft={forkDraft}
                 onClearForkDraft={() => setForkDraft(null)}
                 onForkDraftChange={(nextDraft) => setForkDraft(nextDraft)}
@@ -1113,10 +1140,7 @@ function DraftConversationPage({
           expandedRootIds={expandedMobilePreviewRootIds}
           workspaceSectionLabel={mobileWorkspaceSummary?.label ?? t("shell.mobileConversationCurrentWorkspaceSection")}
           onCreateSession={() => {
-            startDraftSession(draft.workspaceId, draft.provider, {
-              providerConfigMode: draft.providerConfigMode ?? "global-default",
-              providerPresetId: draft.providerPresetId ?? null
-            });
+            startDraftSession(draft.workspaceId, draft.provider);
           }}
           archiveFolderActionLabel={mobileArchivedSessions.length > 0 ? t("shell.archiveFolderLabel") : undefined}
           onOpenArchiveFolder={
@@ -1160,6 +1184,7 @@ function DraftConversationPage({
             <ComposerPanel
               capabilities={capabilities}
               draftStorageId={draft.sessionId}
+              workspaceId={draft.workspaceId}
               panelRef={!showInlineHeader ? setMobileComposerPanelElement : undefined}
               portalContainer={!showInlineHeader ? composerPortalTarget : null}
               contextUsage={null}
@@ -1199,8 +1224,8 @@ function DraftConversationPage({
                     reasoningLevel: options?.reasoningLevel ?? null,
                     permissionMode: getDefaultSessionPermissionMode(),
                     attachments: options?.attachments ?? [],
-                    providerConfigMode: draft.providerConfigMode ?? "global-default",
-                    providerPresetId: draft.providerPresetId ?? null
+                    providerConfigMode: options?.providerConfigMode ?? "global-default",
+                    providerPresetId: options?.providerPresetId ?? null
                   });
                   logPerfDebug("session_send.start_live.client_response", {
                     draftSessionId: draft.sessionId,
@@ -1222,14 +1247,20 @@ function DraftConversationPage({
                   writeMobileConversationPreviewMode("preview");
                   navigate(buildWorkspaceSessionPath(resolvedWorkspaceId, created.sessionId), {
                     replace: true,
-                    state: created.message
-                      ? {
-                          bootstrap: {
+                    state: {
+                      composer: {
+                        sessionId: created.sessionId,
+                        initialModel: options?.model ?? null,
+                        providerConfigMode: options?.providerConfigMode ?? "global-default",
+                        providerPresetId: options?.providerPresetId ?? null
+                      },
+                      bootstrap: created.message
+                        ? {
                             sessionId: created.sessionId,
                             messages: [created.message]
                           }
-                        }
-                      : null
+                        : undefined
+                    }
                   });
                   requestNavigationRefresh();
                 } catch (error) {
@@ -1313,8 +1344,6 @@ interface DraftConversationContext {
   sessionId: string;
   workspaceId: string;
   provider: ProviderId;
-  providerConfigMode?: "global-default" | "cc-switch-preset";
-  providerPresetId?: string | null;
 }
 
 function parseDraftContext(
@@ -1329,8 +1358,6 @@ function parseDraftContext(
 
   const workspaceId = routeWorkspaceId ?? searchParams.get("workspaceId")?.trim() ?? null;
   const provider = searchParams.get("provider")?.trim() ?? fallbackProvider ?? null;
-  const providerConfigMode = searchParams.get("providerConfigMode")?.trim() ?? "global-default";
-  const providerPresetId = searchParams.get("providerPresetId")?.trim() ?? null;
 
   if (!workspaceId || !isDraftProviderSupported(provider)) {
     return null;
@@ -1339,10 +1366,7 @@ function parseDraftContext(
   return {
     sessionId,
     workspaceId,
-    provider: provider as ProviderId,
-    providerConfigMode:
-      providerConfigMode === "cc-switch-preset" ? "cc-switch-preset" : "global-default",
-    providerPresetId
+    provider: provider as ProviderId
   };
 }
 
@@ -1355,8 +1379,8 @@ function createDraftSessionSummary(draft: DraftConversationContext): SessionSumm
     provider: draft.provider,
     providerSessionId: `draft://${draft.sessionId}`,
     rawStoreRef: `draft://${draft.sessionId}`,
-    providerConfigMode: draft.providerConfigMode ?? "global-default",
-    providerPresetId: draft.providerPresetId ?? null,
+    providerConfigMode: "global-default",
+    providerPresetId: null,
     parentSessionId: null,
     isSubagent: false,
     subagentLabel: null,
@@ -2798,6 +2822,66 @@ function parseLiveBootstrapMessages(sessionId: string, state: unknown): HistoryM
   }
 
   return messages.filter(isHistoryMessageDto);
+}
+
+function parseLiveComposerBootstrap(
+  sessionId: string,
+  state: unknown
+): {
+  initialModel: string | null;
+  providerConfigMode: "global-default" | "cc-switch-preset";
+  providerPresetId: string | null;
+} {
+  if (!state || typeof state !== "object") {
+    return {
+      initialModel: null,
+      providerConfigMode: "global-default",
+      providerPresetId: null
+    };
+  }
+
+  const composer = (state as { composer?: unknown }).composer;
+
+  if (!composer || typeof composer !== "object") {
+    return {
+      initialModel: null,
+      providerConfigMode: "global-default",
+      providerPresetId: null
+    };
+  }
+
+  const composerSessionId = (composer as { sessionId?: unknown }).sessionId;
+  const initialModel = (composer as { initialModel?: unknown }).initialModel;
+  const providerConfigMode = (composer as { providerConfigMode?: unknown }).providerConfigMode;
+  const providerPresetId = (composer as { providerPresetId?: unknown }).providerPresetId;
+
+  if (composerSessionId !== sessionId) {
+    return {
+      initialModel: null,
+      providerConfigMode: "global-default",
+      providerPresetId: null
+    };
+  }
+
+  const normalizedInitialModel =
+    typeof initialModel === "string"
+      ? (initialModel.trim() || null)
+      : null;
+  const normalizedProviderPresetId =
+    typeof providerPresetId === "string"
+      ? (providerPresetId.trim() || null)
+      : null;
+  const normalizedProviderConfigMode =
+    providerConfigMode === "cc-switch-preset" && normalizedProviderPresetId
+      ? "cc-switch-preset"
+      : "global-default";
+
+  return {
+    initialModel: normalizedInitialModel,
+    providerConfigMode: normalizedProviderConfigMode,
+    providerPresetId:
+      normalizedProviderConfigMode === "cc-switch-preset" ? normalizedProviderPresetId : null
+  };
 }
 
 function isHistoryMessageDto(value: unknown): value is HistoryMessageDto {

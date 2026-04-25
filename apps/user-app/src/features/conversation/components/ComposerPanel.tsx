@@ -29,7 +29,8 @@ import type {
   ForkSourceMessageSnapshotDto,
   MessageAttachmentDto,
   ProviderCapabilitiesDto,
-  ProviderId
+  ProviderId,
+  SessionProviderConfigMode
 } from "../api/conversation-api";
 import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
 import type { PreferenceReasoningLevel as ReasoningLevel } from "../../../preferences/types";
@@ -39,8 +40,24 @@ import {
   listQuickPhrases,
   replaceQuickPhrases
 } from "../api/conversation-api";
+import {
+  fetchModelManagementSnapshot,
+  type ModelManagementAppSnapshotDto,
+  type ModelSwitchAppId
+} from "../../settings/api/model-switch-api";
 import { WorkbenchModal } from "./WorkbenchModal";
 import { SessionTaskProgressButton } from "./SessionTaskProgressButton";
+import {
+  createDeploymentPresetOptions,
+  DeploymentMacSelect,
+  GLOBAL_DEFAULT_PRESET_VALUE,
+  isProviderDefaultModel,
+  mapProviderToModelSwitchApp,
+  normalizeProviderSelection,
+  PROVIDER_DEFAULT_MODEL_ID,
+  shouldShowDeploymentPresetColumn,
+  type DeploymentPresetOption
+} from "./provider-deployment";
 import {
   clearComposerDraftRecord,
   createQuickPhraseRecord,
@@ -56,6 +73,9 @@ interface ComposerPanelProps {
   placeholder?: string;
   draftStorageId?: string;
   initialModel?: string | null;
+  workspaceId?: string | null;
+  initialProviderConfigMode?: SessionProviderConfigMode;
+  initialProviderPresetId?: string | null;
   forkDraft?: {
     sourceMessageId: string;
     sourceMessageSnapshot: ForkSourceMessageSnapshotDto;
@@ -64,6 +84,8 @@ interface ComposerPanelProps {
     workspaceId: string;
     targetProvider: ProviderId;
     targetModel: string | null;
+    targetProviderConfigMode?: SessionProviderConfigMode;
+    targetProviderPresetId?: string | null;
   } | null;
   onClearForkDraft?: () => void;
   onForkDraftChange?: (
@@ -75,6 +97,8 @@ interface ComposerPanelProps {
       workspaceId: string;
       targetProvider: ProviderId;
       targetModel: string | null;
+      targetProviderConfigMode?: SessionProviderConfigMode;
+      targetProviderPresetId?: string | null;
     } | null
   ) => void;
   panelRef?: Ref<HTMLElement>;
@@ -93,6 +117,8 @@ interface ComposerPanelProps {
     options?: {
       model?: string;
       reasoningLevel?: string;
+      providerConfigMode?: SessionProviderConfigMode;
+      providerPresetId?: string | null;
       attachments?: AttachmentPayload[];
       attachmentMeta?: MessageAttachmentDto[];
     }
@@ -102,6 +128,8 @@ interface ComposerPanelProps {
     options?: {
       model?: string;
       reasoningLevel?: string;
+      providerConfigMode?: SessionProviderConfigMode;
+      providerPresetId?: string | null;
       attachments?: AttachmentPayload[];
       attachmentMeta?: MessageAttachmentDto[];
     }
@@ -129,11 +157,10 @@ interface ComposerSelectOption {
 }
 
 const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
-const PROVIDER_DEFAULT_MODEL_ID = "provider-default";
-const MAC_SELECT_MIN_WIDTH = 160;
-const MAC_SELECT_DEFAULT_WIDTH = 220;
-const MAC_SELECT_COMPACT_WIDTH = 140;
-const MAC_SELECT_OPTION_EXTRA_WIDTH = 84;
+const MAC_SELECT_MIN_WIDTH = 144;
+const MAC_SELECT_DEFAULT_WIDTH = 196;
+const MAC_SELECT_COMPACT_WIDTH = 124;
+const MAC_SELECT_OPTION_EXTRA_WIDTH = 72;
 const FORK_PROVIDER_IDS: ProviderId[] = [
   "codex",
   "claude-code",
@@ -164,6 +191,7 @@ const HIDDEN_FILE_INPUT_STYLE: CSSProperties = {
 };
 
 let composerMacSelectMeasureCanvas: HTMLCanvasElement | null = null;
+const composerDeploymentSnapshotCache = new Map<ModelSwitchAppId, ModelManagementAppSnapshotDto>();
 
 function measureComposerMacSelectTextWidth(referenceElement: HTMLElement, text: string): number {
   if (typeof document === "undefined") {
@@ -231,10 +259,6 @@ function getModelStorageKey(provider: ProviderId): string {
 
 function getReasoningStorageKey(provider: ProviderId): string {
   return `composer-reasoning-level:${provider}`;
-}
-
-function isProviderDefaultModel(model: Pick<ModelOption, "id" | "usesProviderDefault">): boolean {
-  return model.usesProviderDefault === true || model.id === PROVIDER_DEFAULT_MODEL_ID;
 }
 
 function createAttachmentId(): string {
@@ -442,6 +466,9 @@ export function ComposerPanel({
   placeholder,
   draftStorageId,
   initialModel = null,
+  workspaceId = null,
+  initialProviderConfigMode = "global-default",
+  initialProviderPresetId = null,
   forkDraft = null,
   onClearForkDraft,
   onForkDraftChange,
@@ -476,8 +503,30 @@ export function ComposerPanel({
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
   const [localSubmitting, setLocalSubmitting] = useState(false);
+  const [deploymentSnapshot, setDeploymentSnapshot] = useState<ModelManagementAppSnapshotDto | null>(null);
+  const [deploymentSnapshotLoading, setDeploymentSnapshotLoading] = useState(false);
+  const [deploymentCapabilities, setDeploymentCapabilities] = useState<ProviderCapabilitiesDto | null>(null);
+  const [deploymentCapabilitiesLoading, setDeploymentCapabilitiesLoading] = useState(false);
+  const initialProviderSelection = useMemo(
+    () => normalizeProviderSelection(initialProviderConfigMode, initialProviderPresetId),
+    [initialProviderConfigMode, initialProviderPresetId]
+  );
+  const [selectedProviderConfigMode, setSelectedProviderConfigMode] =
+    useState<SessionProviderConfigMode>(initialProviderSelection.providerConfigMode);
+  const [selectedProviderPresetId, setSelectedProviderPresetId] =
+    useState<string | null>(initialProviderSelection.providerPresetId);
+  const currentProviderSelection = useMemo(
+    () => normalizeProviderSelection(selectedProviderConfigMode, selectedProviderPresetId),
+    [selectedProviderConfigMode, selectedProviderPresetId]
+  );
   const [forkCapabilities, setForkCapabilities] = useState<ProviderCapabilitiesDto | null>(null);
   const [forkCapabilitiesLoading, setForkCapabilitiesLoading] = useState(false);
+  const [forkDeploymentSnapshot, setForkDeploymentSnapshot] =
+    useState<ModelManagementAppSnapshotDto | null>(null);
+  const [forkDeploymentSnapshotLoading, setForkDeploymentSnapshotLoading] = useState(false);
+  const [forkProviderConfigMode, setForkProviderConfigMode] =
+    useState<SessionProviderConfigMode>("global-default");
+  const [forkProviderPresetId, setForkProviderPresetId] = useState<string | null>(null);
   const [forkProviderCapabilities, setForkProviderCapabilities] = useState<
     Partial<Record<ProviderId, ProviderCapabilitiesDto>>
   >({});
@@ -507,13 +556,208 @@ export function ComposerPanel({
 
   useEffect(() => clearCompositionCommitLock, [clearCompositionCommitLock]);
 
-  const provider = getProviderFromCapabilities(capabilities);
+  const provider = capabilities?.provider ?? taskProvider ?? getProviderFromCapabilities(capabilities);
+  const modelSwitchApp = mapProviderToModelSwitchApp(provider);
   const accountProviderPreferences = usePreferencesSelector((state) =>
     isPreferenceProviderId(provider) ? state.profile.providers[provider] : null
   );
   const accountPreferredModel = accountProviderPreferences?.defaultModel ?? null;
   const accountPreferredReasoningLevel =
     accountProviderPreferences?.defaultReasoningLevel ?? null;
+
+  useEffect(() => {
+    const nextSelection = normalizeProviderSelection(initialProviderConfigMode, initialProviderPresetId);
+    setSelectedProviderConfigMode(nextSelection.providerConfigMode);
+    setSelectedProviderPresetId(nextSelection.providerPresetId);
+  }, [draftStorageId, initialProviderConfigMode, initialProviderPresetId, provider]);
+
+  useEffect(() => {
+    if (!forkDraft) {
+      setForkProviderConfigMode("global-default");
+      setForkProviderPresetId(null);
+      return;
+    }
+
+    if (mapProviderToModelSwitchApp(forkDraft.targetProvider)) {
+      const nextSelection = normalizeProviderSelection(
+        forkDraft.targetProviderConfigMode,
+        forkDraft.targetProviderPresetId
+      );
+      setForkProviderConfigMode(nextSelection.providerConfigMode);
+      setForkProviderPresetId(nextSelection.providerPresetId);
+      return;
+    }
+
+    setForkProviderConfigMode("global-default");
+    setForkProviderPresetId(null);
+  }, [forkDraft]);
+
+  useEffect(() => {
+    if (!modelSwitchApp) {
+      setDeploymentSnapshot(null);
+      setDeploymentSnapshotLoading(false);
+      return;
+    }
+
+    const cached = composerDeploymentSnapshotCache.get(modelSwitchApp) ?? null;
+
+    if (cached) {
+      setDeploymentSnapshot(cached);
+    }
+
+    let cancelled = false;
+    setDeploymentSnapshotLoading(!cached);
+
+    void fetchModelManagementSnapshot()
+      .then((response) => {
+        response.items.forEach((item) => {
+          composerDeploymentSnapshotCache.set(item.app, item);
+        });
+
+        if (!cancelled) {
+          setDeploymentSnapshot(composerDeploymentSnapshotCache.get(modelSwitchApp) ?? null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled && !cached) {
+          setDeploymentSnapshot(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setDeploymentSnapshotLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [modelSwitchApp]);
+
+  useEffect(() => {
+    const forkApp = forkDraft ? mapProviderToModelSwitchApp(forkDraft.targetProvider) : null;
+
+    if (!forkApp) {
+      setForkDeploymentSnapshot(null);
+      setForkDeploymentSnapshotLoading(false);
+      return;
+    }
+
+    const cached = composerDeploymentSnapshotCache.get(forkApp) ?? null;
+
+    if (cached) {
+      setForkDeploymentSnapshot(cached);
+    }
+
+    let cancelled = false;
+    setForkDeploymentSnapshotLoading(!cached);
+
+    void fetchModelManagementSnapshot()
+      .then((response) => {
+        response.items.forEach((item) => {
+          composerDeploymentSnapshotCache.set(item.app, item);
+        });
+
+        if (!cancelled) {
+          setForkDeploymentSnapshot(composerDeploymentSnapshotCache.get(forkApp) ?? null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled && !cached) {
+          setForkDeploymentSnapshot(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setForkDeploymentSnapshotLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [forkDraft]);
+
+  useEffect(() => {
+    if (selectedProviderConfigMode !== "cc-switch-preset") {
+      return;
+    }
+
+    if (!selectedProviderPresetId) {
+      setSelectedProviderConfigMode("global-default");
+      return;
+    }
+
+    if (
+      deploymentSnapshot
+      && !deploymentSnapshot.options.some((option) => option.id === selectedProviderPresetId)
+    ) {
+      setSelectedProviderConfigMode("global-default");
+      setSelectedProviderPresetId(null);
+    }
+  }, [deploymentSnapshot, selectedProviderConfigMode, selectedProviderPresetId]);
+
+  useEffect(() => {
+    if (
+      selectedProviderConfigMode !== "cc-switch-preset"
+      || !selectedProviderPresetId
+      || !workspaceId?.trim()
+    ) {
+      setDeploymentCapabilities(null);
+      setDeploymentCapabilitiesLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setDeploymentCapabilitiesLoading(true);
+
+    void getProviderCapabilities(provider, workspaceId, {
+      providerConfigMode: "cc-switch-preset",
+      providerPresetId: selectedProviderPresetId
+    })
+      .then((nextCapabilities) => {
+        if (!cancelled) {
+          setDeploymentCapabilities(nextCapabilities);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDeploymentCapabilities(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setDeploymentCapabilitiesLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [provider, selectedProviderConfigMode, selectedProviderPresetId, workspaceId]);
+
+  useEffect(() => {
+    if (
+      !forkDraft
+      || forkProviderConfigMode !== "cc-switch-preset"
+    ) {
+      return;
+    }
+
+    if (!forkProviderPresetId) {
+      setForkProviderConfigMode("global-default");
+      return;
+    }
+
+    if (
+      forkDeploymentSnapshot
+      && !forkDeploymentSnapshot.options.some((option) => option.id === forkProviderPresetId)
+    ) {
+      setForkProviderConfigMode("global-default");
+      setForkProviderPresetId(null);
+    }
+  }, [forkDeploymentSnapshot, forkDraft, forkProviderConfigMode, forkProviderPresetId]);
+
   const sendDecision = useMemo(
     () => decideCapability(capabilities, "send_message"),
     [capabilities]
@@ -526,8 +770,15 @@ export function ComposerPanel({
     () => decideCapability(capabilities, "attachments"),
     [capabilities]
   );
+  const effectiveCapabilities = useMemo(() => {
+    if (selectedProviderConfigMode !== "cc-switch-preset") {
+      return capabilities;
+    }
+
+    return deploymentCapabilities ?? capabilities;
+  }, [capabilities, deploymentCapabilities, selectedProviderConfigMode]);
   const availableModels = useMemo(() => {
-    const providerModels = capabilities?.modelOptions?.map((model) => ({
+    const providerModels = effectiveCapabilities?.modelOptions?.map((model) => ({
       ...model,
       provider,
       supportedReasoningEfforts: model.supportedReasoningEfforts?.filter(
@@ -541,7 +792,18 @@ export function ComposerPanel({
     }
 
     return getFallbackModelOptions(provider);
-  }, [capabilities?.modelOptions, provider]);
+  }, [effectiveCapabilities?.modelOptions, provider]);
+  const deploymentPresetOptions = useMemo<DeploymentPresetOption[]>(
+    () => createDeploymentPresetOptions(deploymentSnapshot),
+    [deploymentSnapshot]
+  );
+  const selectedPresetValue = selectedProviderConfigMode === "cc-switch-preset"
+    ? selectedProviderPresetId ?? GLOBAL_DEFAULT_PRESET_VALUE
+    : GLOBAL_DEFAULT_PRESET_VALUE;
+  const selectedPresetOption = useMemo(
+    () => deploymentPresetOptions.find((option) => option.value === selectedPresetValue) ?? deploymentPresetOptions[0] ?? null,
+    [deploymentPresetOptions, selectedPresetValue]
+  );
   const selectedModelOption = useMemo(
     () => availableModels.find((model) => model.id === selectedModel) ?? null,
     [availableModels, selectedModel]
@@ -578,6 +840,21 @@ export function ComposerPanel({
       })),
     [availableModels]
   );
+  const showDeploymentPresetColumn = useMemo(
+    () => shouldShowDeploymentPresetColumn(deploymentSnapshot),
+    [deploymentSnapshot]
+  );
+  const deploymentTriggerLabel = useMemo(() => {
+    const modelLabel = selectedModelOption
+      ? (isProviderDefaultModel(selectedModelOption) ? t("conversation.modelUseCliDefault") : selectedModelOption.name)
+      : t("conversation.modelUseCliDefault");
+    if (!showDeploymentPresetColumn) {
+      return modelLabel;
+    }
+    const presetLabel = selectedPresetOption?.label ?? t("conversation.deploymentDefaultPreset");
+
+    return `${presetLabel} · ${modelLabel}`;
+  }, [selectedModelOption, selectedPresetOption, showDeploymentPresetColumn]);
   const reasoningSelectOptions = useMemo<ComposerSelectOption[]>(
     () =>
       availableReasoningLevels.map((level) => ({
@@ -597,8 +874,16 @@ export function ComposerPanel({
   const inRunInputMode = capabilities?.inRunInputMode ?? "none";
   const hasForkDraft = Boolean(forkDraft);
   const activeForkProvider = forkDraft?.targetProvider ?? null;
+  const forkModelSwitchApp = mapProviderToModelSwitchApp(activeForkProvider);
+  const forkProviderSelection = useMemo(
+    () => normalizeProviderSelection(forkProviderConfigMode, forkProviderPresetId),
+    [forkProviderConfigMode, forkProviderPresetId]
+  );
   const shouldReuseSessionCapabilitiesForFork =
-    Boolean(forkDraft) && capabilities?.provider === activeForkProvider;
+    Boolean(forkDraft)
+    && capabilities?.provider === activeForkProvider
+    && currentProviderSelection.providerConfigMode === forkProviderSelection.providerConfigMode
+    && currentProviderSelection.providerPresetId === forkProviderSelection.providerPresetId;
   const effectiveForkCapabilities = useMemo(() => {
     if (!forkDraft) {
       return null;
@@ -647,6 +932,39 @@ export function ComposerPanel({
       ? forkDraft.targetModel
       : PROVIDER_DEFAULT_MODEL_ID;
   }, [forkAvailableModels, forkDraft]);
+  const forkDeploymentPresetOptions = useMemo<DeploymentPresetOption[]>(
+    () => createDeploymentPresetOptions(forkDeploymentSnapshot),
+    [forkDeploymentSnapshot]
+  );
+  const forkSelectedPresetValue = forkProviderSelection.providerConfigMode === "cc-switch-preset"
+    ? forkProviderSelection.providerPresetId ?? GLOBAL_DEFAULT_PRESET_VALUE
+    : GLOBAL_DEFAULT_PRESET_VALUE;
+  const forkSelectedPresetOption = useMemo(
+    () =>
+      forkDeploymentPresetOptions.find((option) => option.value === forkSelectedPresetValue)
+      ?? forkDeploymentPresetOptions[0]
+      ?? null,
+    [forkDeploymentPresetOptions, forkSelectedPresetValue]
+  );
+  const forkSelectedModelOption = useMemo(
+    () => forkAvailableModels.find((model) => model.id === forkSelectedModelId) ?? null,
+    [forkAvailableModels, forkSelectedModelId]
+  );
+  const showForkDeploymentPresetColumn = useMemo(
+    () => shouldShowDeploymentPresetColumn(forkDeploymentSnapshot),
+    [forkDeploymentSnapshot]
+  );
+  const forkDeploymentTriggerLabel = useMemo(() => {
+    const modelLabel = forkSelectedModelOption
+      ? (isProviderDefaultModel(forkSelectedModelOption) ? t("conversation.modelUseCliDefault") : forkSelectedModelOption.name)
+      : t("conversation.modelUseCliDefault");
+    if (!showForkDeploymentPresetColumn) {
+      return modelLabel;
+    }
+    const presetLabel = forkSelectedPresetOption?.label ?? t("conversation.deploymentDefaultPreset");
+
+    return `${presetLabel} · ${modelLabel}`;
+  }, [forkSelectedModelOption, forkSelectedPresetOption, showForkDeploymentPresetColumn]);
   const selectableForkProviders = useMemo(() => {
     if (!forkDraft) {
       return [];
@@ -747,6 +1065,17 @@ export function ComposerPanel({
       }).catch(() => undefined);
     }
   }, [provider]);
+
+  const handleDeploymentPresetChange = useCallback((presetValue: string) => {
+    if (presetValue === "__global_default__") {
+      setSelectedProviderConfigMode("global-default");
+      setSelectedProviderPresetId(null);
+      return;
+    }
+
+    setSelectedProviderConfigMode("cc-switch-preset");
+    setSelectedProviderPresetId(presetValue);
+  }, []);
 
   const handleReasoningLevelChange = useCallback((level: ReasoningLevel) => {
     setReasoningLevel(level);
@@ -1242,6 +1571,8 @@ export function ComposerPanel({
     if (!forkDraft) {
       setForkCapabilities(null);
       setForkCapabilitiesLoading(false);
+      setForkDeploymentSnapshot(null);
+      setForkDeploymentSnapshotLoading(false);
       setForkProviderCapabilities({});
       setPendingCrossProvider(null);
       return;
@@ -1258,7 +1589,13 @@ export function ComposerPanel({
     setForkCapabilities(createDraftCapabilities(forkDraft.targetProvider));
     setForkCapabilitiesLoading(true);
 
-    void getProviderCapabilities(forkDraft.targetProvider, forkDraft.workspaceId)
+    void getProviderCapabilities(forkDraft.targetProvider, forkDraft.workspaceId, {
+      providerConfigMode: forkProviderSelection.providerConfigMode,
+      providerPresetId:
+        forkProviderSelection.providerConfigMode === "cc-switch-preset"
+          ? forkProviderSelection.providerPresetId
+          : null
+    })
       .then((nextCapabilities) => {
         if (cancelled) {
           return;
@@ -1282,7 +1619,12 @@ export function ComposerPanel({
     return () => {
       cancelled = true;
     };
-  }, [forkDraft?.targetProvider, forkDraft?.workspaceId, shouldReuseSessionCapabilitiesForFork]);
+  }, [
+    forkDraft,
+    forkProviderSelection.providerConfigMode,
+    forkProviderSelection.providerPresetId,
+    shouldReuseSessionCapabilitiesForFork
+  ]);
 
   useEffect(() => {
     if (!forkDraft) {
@@ -1319,7 +1661,9 @@ export function ComposerPanel({
     onForkDraftChange({
       ...forkDraft,
       targetProvider: selectableForkProviders[0] ?? forkDraft.targetProvider,
-      targetModel: null
+      targetModel: null,
+      targetProviderConfigMode: "global-default",
+      targetProviderPresetId: null
     });
   }, [forkDraft, onForkDraftChange, selectableForkProviders]);
 
@@ -1351,12 +1695,27 @@ export function ComposerPanel({
       return;
     }
 
+    if (nextProvider === provider && mapProviderToModelSwitchApp(nextProvider)) {
+      setForkProviderConfigMode(currentProviderSelection.providerConfigMode);
+      setForkProviderPresetId(currentProviderSelection.providerPresetId);
+    } else {
+      setForkProviderConfigMode("global-default");
+      setForkProviderPresetId(null);
+    }
     onForkDraftChange({
       ...forkDraft,
       targetProvider: nextProvider,
-      targetModel: null
+      targetModel: null,
+      targetProviderConfigMode:
+        nextProvider === provider && mapProviderToModelSwitchApp(nextProvider)
+          ? currentProviderSelection.providerConfigMode
+          : "global-default",
+      targetProviderPresetId:
+        nextProvider === provider && mapProviderToModelSwitchApp(nextProvider)
+          ? currentProviderSelection.providerPresetId
+          : null
     });
-  }, [forkDraft, onForkDraftChange]);
+  }, [currentProviderSelection, forkDraft, onForkDraftChange, provider]);
 
   const handleForkModelChange = useCallback((modelId: string) => {
     if (!forkDraft || !onForkDraftChange) {
@@ -1369,15 +1728,40 @@ export function ComposerPanel({
     });
   }, [forkDraft, onForkDraftChange]);
 
+  const handleForkDeploymentPresetChange = useCallback((presetValue: string) => {
+    if (!forkDraft || !onForkDraftChange) {
+      return;
+    }
+
+    if (presetValue === GLOBAL_DEFAULT_PRESET_VALUE) {
+      setForkProviderConfigMode("global-default");
+      setForkProviderPresetId(null);
+    } else {
+      setForkProviderConfigMode("cc-switch-preset");
+      setForkProviderPresetId(presetValue);
+    }
+
+    onForkDraftChange({
+      ...forkDraft,
+      targetModel: null,
+      targetProviderConfigMode: presetValue === GLOBAL_DEFAULT_PRESET_VALUE ? "global-default" : "cc-switch-preset",
+      targetProviderPresetId: presetValue === GLOBAL_DEFAULT_PRESET_VALUE ? null : presetValue
+    });
+  }, [forkDraft, onForkDraftChange]);
+
   const handleConfirmCrossProvider = useCallback(() => {
     if (!forkDraft || !pendingCrossProvider || !onForkDraftChange) {
       return;
     }
 
+    setForkProviderConfigMode("global-default");
+    setForkProviderPresetId(null);
     onForkDraftChange({
       ...forkDraft,
       targetProvider: pendingCrossProvider,
-      targetModel: null
+      targetModel: null,
+      targetProviderConfigMode: "global-default",
+      targetProviderPresetId: null
     });
     setPendingCrossProvider(null);
   }, [forkDraft, onForkDraftChange, pendingCrossProvider]);
@@ -1453,6 +1837,20 @@ export function ComposerPanel({
             : reasoningSelectorEnabled && availableReasoningLevels.length > 0
               ? reasoningLevel
               : undefined,
+        providerConfigMode:
+          hasForkDraft
+            ? forkProviderSelection.providerConfigMode
+            : selectedProviderConfigMode,
+        providerPresetId:
+          hasForkDraft
+            ? (
+              forkProviderSelection.providerConfigMode === "cc-switch-preset"
+                ? forkProviderSelection.providerPresetId
+                : null
+            )
+            : selectedProviderConfigMode === "cc-switch-preset"
+              ? selectedProviderPresetId
+              : null,
         attachments: payloads,
         attachmentMeta
       });
@@ -1580,14 +1978,37 @@ export function ComposerPanel({
                       <span className="composer-fork-model-label">
                         {t("conversation.forkTargetModelLabel")}
                       </span>
-                      <MacSelect
-                        ariaLabel={t("conversation.forkTargetModelLabel")}
-                        value={forkSelectedModelId}
-                        options={forkModelSelectOptions}
-                        onChange={handleForkModelChange}
-                        disabled={forkCapabilitiesLoading || forkSendBlocked}
-                        compact
-                      />
+                      {forkModelSwitchApp ? (
+                        <DeploymentMacSelect
+                          ariaLabel={t("conversation.forkTargetModelLabel")}
+                          triggerLabel={forkDeploymentTriggerLabel}
+                          presetOptions={forkDeploymentPresetOptions}
+                          selectedPresetValue={forkSelectedPresetValue}
+                          selectedPresetSummary={forkSelectedPresetOption?.summary ?? null}
+                          onSelectPreset={handleForkDeploymentPresetChange}
+                          modelOptions={forkModelSelectOptions}
+                          selectedModelValue={forkSelectedModelId}
+                          onSelectModel={handleForkModelChange}
+                          loadingPresets={forkDeploymentSnapshotLoading}
+                          loadingModels={forkCapabilitiesLoading}
+                          modelColumnDisabled={
+                            forkProviderSelection.providerConfigMode === "cc-switch-preset"
+                            && forkCapabilitiesLoading
+                            && forkCapabilities === null
+                          }
+                          showPresetColumn={showForkDeploymentPresetColumn}
+                          modelEmptyText={t("conversation.deploymentModelEmpty")}
+                        />
+                      ) : (
+                        <MacSelect
+                          ariaLabel={t("conversation.forkTargetModelLabel")}
+                          value={forkSelectedModelId}
+                          options={forkModelSelectOptions}
+                          onChange={handleForkModelChange}
+                          disabled={forkCapabilitiesLoading || forkSendBlocked}
+                          compact
+                        />
+                      )}
                     </div>
                   </div>
                   {forkStartDisabledReason ? (
@@ -1823,7 +2244,30 @@ export function ComposerPanel({
                   </label>
                 )
               ) : null}
-              {!hasForkDraft ? (
+              {!hasForkDraft && modelSwitchApp ? (
+                <DeploymentMacSelect
+                  ariaLabel={t("conversation.modelSelectorLabel")}
+                  triggerLabel={deploymentTriggerLabel}
+                  presetOptions={deploymentPresetOptions}
+                  selectedPresetValue={selectedPresetValue}
+                  selectedPresetSummary={selectedPresetOption?.summary ?? null}
+                  onSelectPreset={handleDeploymentPresetChange}
+                  modelOptions={modelSelectOptions}
+                  selectedModelValue={selectedModel}
+                  onSelectModel={handleModelChange}
+                  loadingPresets={deploymentSnapshotLoading}
+                  loadingModels={deploymentCapabilitiesLoading}
+                  modelColumnDisabled={
+                    selectedProviderConfigMode === "cc-switch-preset"
+                    && deploymentCapabilitiesLoading
+                    && deploymentCapabilities === null
+                  }
+                  showPresetColumn={showDeploymentPresetColumn}
+                  modelEmptyText={t("conversation.deploymentModelEmpty")}
+                />
+              ) : null}
+
+              {!hasForkDraft && !modelSwitchApp ? (
                 <MacSelect
                   ariaLabel={t("conversation.modelSelectorLabel")}
                   value={selectedModel}

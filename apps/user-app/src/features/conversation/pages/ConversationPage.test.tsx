@@ -6,6 +6,7 @@ import { t } from "../../../shared/i18n";
 import { ConversationPage } from "./ConversationPage";
 
 const mockGetProviderCapabilities = vi.fn();
+const mockStartLiveSession = vi.fn();
 const mockUseWorkbenchShell = vi.fn();
 const mockRuntimeStoreInitialize = vi.fn();
 const mockRuntimeStoreDestroy = vi.fn();
@@ -76,7 +77,8 @@ vi.mock("../api/conversation-api", async () => {
 
   return {
     ...actual,
-    getProviderCapabilities: (...args: unknown[]) => mockGetProviderCapabilities(...args)
+    getProviderCapabilities: (...args: unknown[]) => mockGetProviderCapabilities(...args),
+    startLiveSession: (...args: unknown[]) => mockStartLiveSession(...args)
   };
 });
 
@@ -96,7 +98,14 @@ vi.mock("../components/ComposerPanel", () => ({
   ComposerPanel: (props: unknown) => {
     mockComposerPanel(props);
     const composerProps = props as {
-      onSend?: (content: string) => Promise<void>;
+      onSend?: (
+        content: string,
+        options?: {
+          model?: string | null;
+          providerConfigMode?: "global-default" | "cc-switch-preset";
+          providerPresetId?: string | null;
+        }
+      ) => Promise<void>;
     };
 
     return (
@@ -110,6 +119,32 @@ vi.mock("../components/ComposerPanel", () => ({
           }}
         >
           发送
+        </button>
+        <button
+          type="button"
+          data-testid="composer-send-with-model"
+          onClick={() => {
+            void composerProps.onSend?.("继续处理当前会话", {
+              model: "gpt-5.4",
+              providerConfigMode: "cc-switch-preset",
+              providerPresetId: "preset-x"
+            });
+          }}
+        >
+          发送指定模型
+        </button>
+        <button
+          type="button"
+          data-testid="composer-send-with-preset-default"
+          onClick={() => {
+            void composerProps.onSend?.("继续处理当前会话", {
+              model: null,
+              providerConfigMode: "cc-switch-preset",
+              providerPresetId: "preset-deepseek"
+            });
+          }}
+        >
+          发送指定配置文件默认模型
         </button>
       </div>
     );
@@ -224,6 +259,22 @@ describe("ConversationPage", () => {
     mockParallelSessionCreateModal.mockClear();
     mockRuntimeStoreSendMessage.mockReset();
     mockRuntimeStoreSendMessage.mockResolvedValue(undefined);
+    mockStartLiveSession.mockReset();
+    mockStartLiveSession.mockResolvedValue({
+      sessionId: "session-live-1",
+      provider: "codex",
+      session: createBaseLiveSession(),
+      message: {
+        messageId: "message-live-1",
+        provider: "codex",
+        providerSessionId: "provider-session-live-1",
+        role: "assistant",
+        content: "已创建会话",
+        timestamp: "2026-04-25T10:00:00.000Z",
+        sequence: 1,
+        rawRef: "store://session-live-1#1"
+      }
+    });
     mockLiveRuntimeState.session = {
       ...createBaseLiveSession(),
       provider: "codex",
@@ -534,6 +585,52 @@ describe("ConversationPage", () => {
 
     deferred.resolve();
     await deferred.promise;
+  });
+
+  it("草稿会话创建真实会话后，会把刚才选中的模型继续传给 live Composer", async () => {
+    renderDraftConversationPage();
+
+    fireEvent.click(await screen.findByTestId("composer-send-with-model"));
+
+    await waitFor(() => {
+      expect(mockStartLiveSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: "gpt-5.4",
+          providerConfigMode: "cc-switch-preset",
+          providerPresetId: "preset-x"
+        })
+      );
+    });
+
+    await waitFor(() => {
+      const props = readLatestComposerProps();
+      expect(props?.initialModel).toBe("gpt-5.4");
+      expect(props?.initialProviderConfigMode).toBe("cc-switch-preset");
+      expect(props?.initialProviderPresetId).toBe("preset-x");
+    });
+  });
+
+  it("草稿会话如果只切了配置文件默认模型，真实会话也会继续使用该配置文件", async () => {
+    renderDraftConversationPage();
+
+    fireEvent.click(await screen.findByTestId("composer-send-with-preset-default"));
+
+    await waitFor(() => {
+      expect(mockStartLiveSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: null,
+          providerConfigMode: "cc-switch-preset",
+          providerPresetId: "preset-deepseek"
+        })
+      );
+    });
+
+    await waitFor(() => {
+      const props = readLatestComposerProps();
+      expect(props?.initialModel).toBeNull();
+      expect(props?.initialProviderConfigMode).toBe("cc-switch-preset");
+      expect(props?.initialProviderPresetId).toBe("preset-deepseek");
+    });
   });
 
   it("移动端在草稿对话页左滑会打开文件页", async () => {
@@ -1087,6 +1184,9 @@ function readLatestComposerProps(): {
   canInterrupt?: boolean | null;
   isSubmitting?: boolean;
   isRunning?: boolean;
+  initialModel?: string | null;
+  initialProviderConfigMode?: "global-default" | "cc-switch-preset";
+  initialProviderPresetId?: string | null;
 } | null {
   const latestCall = mockComposerPanel.mock.calls[mockComposerPanel.mock.calls.length - 1];
   return (latestCall?.[0] as {
@@ -1094,6 +1194,9 @@ function readLatestComposerProps(): {
     canInterrupt?: boolean | null;
     isSubmitting?: boolean;
     isRunning?: boolean;
+    initialModel?: string | null;
+    initialProviderConfigMode?: "global-default" | "cc-switch-preset";
+    initialProviderPresetId?: string | null;
   } | undefined) ?? null;
 }
 

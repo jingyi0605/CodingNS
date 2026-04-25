@@ -1430,7 +1430,9 @@ function ParallelConversationMemberPane({
                   sourceProvider: currentSession.provider,
                   workspaceId: currentSession.workspaceId,
                   targetProvider: currentSession.provider,
-                  targetModel: null
+                  targetModel: null,
+                  targetProviderConfigMode: currentSession.providerConfigMode ?? "global-default",
+                  targetProviderPresetId: currentSession.providerPresetId ?? null
                 });
               focusComposerInput();
             }}
@@ -1448,6 +1450,9 @@ function ParallelConversationMemberPane({
           capabilities={capabilities}
           draftStorageId={sessionId}
           initialModel={entry.model}
+          workspaceId={(session ?? entry.session).workspaceId}
+          initialProviderConfigMode={(session ?? entry.session).providerConfigMode ?? "global-default"}
+          initialProviderPresetId={(session ?? entry.session).providerPresetId ?? null}
           forkDraft={forkDraft}
           onClearForkDraft={() => setForkDraft(null)}
           onForkDraftChange={(nextDraft) => setForkDraft(nextDraft)}

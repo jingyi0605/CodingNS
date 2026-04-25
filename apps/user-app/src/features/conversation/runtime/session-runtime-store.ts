@@ -40,7 +40,8 @@ import {
   type SessionActivityResolutionSource,
   type SessionSummaryDto,
   type SessionRuntimeDto,
-  type SessionRunningState
+  type SessionRunningState,
+  type SessionProviderConfigMode
 } from "../api/conversation-api";
 import { isDraftProviderSupported as isRegisteredProvider } from "../capability/provider-ui";
 import type {
@@ -291,6 +292,8 @@ export class SessionRuntimeStore {
     options?: {
       model?: string;
       reasoningLevel?: string;
+      providerConfigMode?: SessionProviderConfigMode;
+      providerPresetId?: string | null;
       attachments?: AttachmentPayload[];
       attachmentMeta?: MessageAttachmentDto[];
     }
@@ -408,6 +411,8 @@ export class SessionRuntimeStore {
     options?: {
       model?: string;
       reasoningLevel?: string;
+      providerConfigMode?: SessionProviderConfigMode;
+      providerPresetId?: string | null;
       attachments?: AttachmentPayload[];
       attachmentMeta?: MessageAttachmentDto[];
     }
@@ -421,7 +426,9 @@ export class SessionRuntimeStore {
         model: options?.model ?? null,
         reasoningLevel: options?.reasoningLevel ?? null,
         permissionMode: getDefaultSessionPermissionMode(),
-        attachments: options?.attachments ?? []
+        attachments: options?.attachments ?? [],
+        providerConfigMode: options?.providerConfigMode,
+        providerPresetId: options?.providerPresetId ?? null
       });
 
       this.patch({
@@ -1324,6 +1331,8 @@ export class SessionRuntimeStore {
     options?: {
       model?: string;
       reasoningLevel?: string;
+      providerConfigMode?: SessionProviderConfigMode;
+      providerPresetId?: string | null;
       attachments?: AttachmentPayload[];
       attachmentMeta?: MessageAttachmentDto[];
     }
@@ -1335,7 +1344,9 @@ export class SessionRuntimeStore {
         model: options?.model ?? null,
         reasoningLevel: options?.reasoningLevel ?? null,
         permissionMode: getDefaultSessionPermissionMode(),
-        attachments: options?.attachments ?? []
+        attachments: options?.attachments ?? [],
+        providerConfigMode: options?.providerConfigMode,
+        providerPresetId: options?.providerPresetId ?? null
       });
     } catch (error) {
       if (!(error instanceof ApiError) || (error.status !== 404 && error.status !== 405)) {
