@@ -44,6 +44,7 @@ import type {
   SessionChangedFileRecord,
   SessionIndexRecord,
   SessionListItem,
+  SessionProviderConfigMode,
   SessionResolvedRunningState,
   SessionStateRecord,
   SessionStatusSnapshot
@@ -98,12 +99,15 @@ import {
   CodingnsProviderSessionDeleteCli,
   type ProviderSessionDeleteCli
 } from "./provider-session-delete-cli.js";
+import type { SessionProviderConfigService } from "./session-provider-config-service.js";
 
 interface StartSessionInput {
   workspaceId: string;
   userId: string;
   provider: string;
   initialPrompt?: string;
+  providerConfigMode?: SessionProviderConfigMode | null;
+  providerPresetId?: string | null;
   parentSessionId?: string | null;
   sessionKind?: "default" | "annotation";
   annotationSourceMessageId?: string | null;
@@ -124,6 +128,8 @@ interface ForkSessionInput {
   sourceMessageSnapshot?: ForkSourceMessageSnapshot | null;
   strategy?: ForkStrategy;
   targetProvider?: string | null;
+  providerConfigMode?: SessionProviderConfigMode | null;
+  providerPresetId?: string | null;
   targetWorkspaceId?: string | null;
   sessionKind?: "default" | "annotation";
   annotationSourceMessageId?: string | null;
@@ -290,6 +296,10 @@ export class SessionHistoryService {
   > | null;
   private readonly providerDiscoveryHelperClient = getSharedProviderDiscoveryHelperClient();
   private readonly providerSessionDiscoveryConfig: ProviderSessionDiscoveryHelperConfig;
+  private readonly sessionProviderConfigService: Pick<
+    SessionProviderConfigService,
+    "prepareSessionBinding"
+  > | null;
   private readonly taskManager: TaskManager;
   private readonly workspaceDiscoveryStatuses = new Map<string, WorkspaceDiscoveryStatus>();
   private readonly workspaceStateRefreshStatuses = new Map<string, WorkspaceStateRefreshStatus>();
@@ -329,7 +339,8 @@ export class SessionHistoryService {
     sessionIsolatedWorkspaceRepository: Pick<
       SessionIsolatedWorkspaceRepository,
       "findByOwnerSessionId" | "listByOwnerSessionIds" | "listBySourceWorkspaceId"
-    > | null = null
+    > | null = null,
+    sessionProviderConfigService: Pick<SessionProviderConfigService, "prepareSessionBinding"> | null = null
   ) {
     this.sessionActivityAuthorityService = sessionActivityAuthorityService;
     this.sessionForkRepository = sessionForkRepository ?? new SessionForkRepository(db);
@@ -339,6 +350,7 @@ export class SessionHistoryService {
     this.parallelSessionGroupRepository = parallelSessionGroupRepository;
     this.parallelSessionMemberRepository = parallelSessionMemberRepository;
     this.sessionIsolatedWorkspaceRepository = sessionIsolatedWorkspaceRepository;
+    this.sessionProviderConfigService = sessionProviderConfigService;
     this.claudeCodeHomeDir = config.claudeCodeHomeDir;
     this.providerCliCommandPaths = {
       "claude-code": process.platform === "win32" ? "claude.cmd" : "claude",
@@ -1163,12 +1175,23 @@ export class SessionHistoryService {
       "canStartSession",
       "当前 provider 不支持创建会话"
     );
+    const sessionId = createId();
+    const providerBinding = this.prepareDirectSessionBinding({
+      sessionId,
+      provider: input.provider,
+      providerConfigMode: input.providerConfigMode ?? null,
+      providerPresetId: input.providerPresetId ?? null
+    });
 
     try {
-      const result = await this.sessionSyncService.startSession(input.provider, workspace.path, {
-        initialPrompt: input.initialPrompt
-      });
-      const sessionId = createId();
+      const result = await this.startProviderSessionWithBinding(
+        input.provider,
+        workspace.path,
+        providerBinding.runtimeHomeDir,
+        {
+          initialPrompt: input.initialPrompt
+        }
+      );
       const timestamp = nowIso();
 
       const persist = this.db.transaction(() => {
@@ -1178,6 +1201,9 @@ export class SessionHistoryService {
           provider: result.session.provider,
           providerSessionId: result.session.providerSessionId,
           rawStoreRef: result.session.rawStoreRef,
+          providerConfigMode: providerBinding.providerConfigMode,
+          providerPresetId: providerBinding.providerPresetId,
+          runtimeHomeDir: providerBinding.runtimeHomeDir,
           createdAt: timestamp,
           updatedAt: timestamp
         });
@@ -1254,10 +1280,21 @@ export class SessionHistoryService {
 
     this.assertForkDepthWithinLimit(input.sessionId);
 
-    if (targetProvider !== binding.provider) {
+    const requestedTargetSelection = resolveRequestedProviderSelection({
+      existingBinding: targetProvider === binding.provider ? binding : null,
+      providerConfigMode: input.providerConfigMode ?? undefined,
+      providerPresetId: input.providerPresetId ?? undefined
+    });
+
+    if (
+      targetProvider !== binding.provider
+      || !areEquivalentProviderBindingSelection(binding, requestedTargetSelection)
+    ) {
       return this.forkSessionAcrossProviders({
         ...input,
-        targetProvider
+        targetProvider,
+        providerConfigMode: requestedTargetSelection.providerConfigMode,
+        providerPresetId: requestedTargetSelection.providerPresetId
       }, binding, sourceMessageId);
     }
 
@@ -1284,6 +1321,9 @@ export class SessionHistoryService {
           provider: result.session.provider,
           providerSessionId: result.session.providerSessionId,
           rawStoreRef: result.session.rawStoreRef,
+          providerConfigMode: binding.providerConfigMode,
+          providerPresetId: binding.providerPresetId,
+          runtimeHomeDir: binding.runtimeHomeDir,
           createdAt: timestamp,
           updatedAt: timestamp
         });
@@ -1398,6 +1438,8 @@ export class SessionHistoryService {
       userId: input.userId,
       provider: input.targetProvider,
       initialPrompt: inheritedPrompt,
+      providerConfigMode: input.providerConfigMode ?? null,
+      providerPresetId: input.providerPresetId ?? null,
       parentSessionId: input.sessionId,
       sessionKind: input.sessionKind ?? "default",
       annotationSourceMessageId: input.annotationSourceMessageId ?? null,
@@ -1458,6 +1500,57 @@ export class SessionHistoryService {
     );
 
     return this.getSessionListItemOrThrow(startedSession.sessionId, input.userId);
+  }
+
+  private prepareDirectSessionBinding(input: {
+    sessionId: string;
+    provider: string;
+    providerConfigMode?: SessionProviderConfigMode | null;
+    providerPresetId?: string | null;
+  }) {
+    if (!this.sessionProviderConfigService) {
+      return {
+        providerConfigMode: "global-default" as const,
+        providerPresetId: null,
+        runtimeHomeDir: null
+      };
+    }
+
+    return this.sessionProviderConfigService.prepareSessionBinding({
+      sessionId: input.sessionId,
+      provider: input.provider as SessionBinding["provider"],
+      providerConfigMode: input.providerConfigMode ?? undefined,
+      providerPresetId: input.providerPresetId ?? null
+    });
+  }
+
+  private startProviderSessionWithBinding(
+    provider: string,
+    workspacePath: string,
+    runtimeHomeDir: string | null,
+    options: {
+      initialPrompt?: string;
+    }
+  ) {
+    const scopedRuntimeHomeDir = runtimeHomeDir?.trim() || null;
+
+    if (!scopedRuntimeHomeDir) {
+      return this.sessionSyncService.startSession(provider, workspacePath, options);
+    }
+
+    switch (provider) {
+      case "claude-code":
+        return new ClaudeCodeAdapter({ homeDir: scopedRuntimeHomeDir }).startSession(workspacePath, options);
+      case "codex":
+        return new CodexAdapter({ homeDir: scopedRuntimeHomeDir }).startSession(workspacePath, options);
+      case "gemini":
+        return new GeminiAdapter({
+          homeDir: scopedRuntimeHomeDir,
+          commandPath: this.providerSessionDiscoveryConfig.geminiCliPath
+        }).startSession(workspacePath, options);
+      default:
+        return this.sessionSyncService.startSession(provider, workspacePath, options);
+    }
   }
 
   private async readForkSourceMessages(
@@ -2034,6 +2127,18 @@ export class SessionHistoryService {
             provider: resolvedSnapshot.provider,
             providerSessionId: resolvedSnapshot.providerSessionId,
             rawStoreRef: resolvedSnapshot.rawStoreRef,
+            providerConfigMode:
+              currentBinding?.providerConfigMode
+              ?? duplicateBinding?.providerConfigMode
+              ?? "global-default",
+            providerPresetId:
+              currentBinding?.providerPresetId
+              ?? duplicateBinding?.providerPresetId
+              ?? null,
+            runtimeHomeDir:
+              currentBinding?.runtimeHomeDir
+              ?? duplicateBinding?.runtimeHomeDir
+              ?? null,
             createdAt:
               pickEarlierIso(currentBinding?.createdAt ?? null, duplicateBinding?.createdAt ?? null)
               ?? timestamp,
@@ -2162,6 +2267,9 @@ export class SessionHistoryService {
             provider: session.provider,
             providerSessionId: session.providerSessionId,
             rawStoreRef: session.rawStoreRef,
+            providerConfigMode: existing?.providerConfigMode ?? "global-default",
+            providerPresetId: existing?.providerPresetId ?? null,
+            runtimeHomeDir: existing?.runtimeHomeDir ?? null,
             createdAt,
             updatedAt: timestamp
           };
@@ -3749,6 +3857,9 @@ export class SessionHistoryService {
         provider: input.provider as SessionBinding["provider"],
         providerSessionId: buildPendingBindingValue(input.provider, input.targetSessionId),
         rawStoreRef: buildPendingBindingValue(input.provider, input.targetSessionId),
+        providerConfigMode: sourceBinding.providerConfigMode,
+        providerPresetId: sourceBinding.providerPresetId,
+        runtimeHomeDir: sourceBinding.runtimeHomeDir,
         createdAt: sourceBinding.createdAt,
         updatedAt: input.timestamp
       });
@@ -3861,6 +3972,9 @@ export class SessionHistoryService {
         input.targetSessionId,
         input.sourceSessionId
       ),
+      providerConfigMode: sourceBinding.providerConfigMode,
+      providerPresetId: sourceBinding.providerPresetId,
+      runtimeHomeDir: sourceBinding.runtimeHomeDir,
       createdAt: sourceBinding.createdAt,
       updatedAt: input.timestamp
     });
@@ -5820,7 +5934,74 @@ function areEquivalentSessionBindings(
     current.provider === next.provider &&
     current.providerSessionId === next.providerSessionId &&
     current.rawStoreRef === next.rawStoreRef &&
+    current.providerConfigMode === next.providerConfigMode &&
+    current.providerPresetId === next.providerPresetId &&
+    current.runtimeHomeDir === next.runtimeHomeDir &&
     current.createdAt === next.createdAt
+  );
+}
+
+function resolveRequestedProviderSelection(input: {
+  existingBinding?: Pick<SessionBinding, "providerConfigMode" | "providerPresetId"> | null;
+  providerConfigMode?: SessionProviderConfigMode;
+  providerPresetId?: string | null;
+}): {
+  providerConfigMode: SessionProviderConfigMode;
+  providerPresetId: string | null;
+} {
+  const existingSelection = input.existingBinding
+    ? {
+        providerConfigMode: input.existingBinding.providerConfigMode,
+        providerPresetId: input.existingBinding.providerPresetId
+      }
+    : null;
+  const normalizedPresetId = input.providerPresetId?.trim() || null;
+
+  if (input.providerConfigMode === undefined && input.providerPresetId === undefined) {
+    return existingSelection ?? {
+      providerConfigMode: "global-default",
+      providerPresetId: null
+    };
+  }
+
+  const providerConfigMode =
+    input.providerConfigMode
+    ?? (normalizedPresetId ? "cc-switch-preset" : "global-default");
+
+  if (providerConfigMode === "global-default") {
+    return {
+      providerConfigMode,
+      providerPresetId: null
+    };
+  }
+
+  const providerPresetId = normalizedPresetId ?? existingSelection?.providerPresetId ?? null;
+
+  if (!providerPresetId) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: "使用 cc-switch preset 时必须提供 providerPresetId",
+      field: "providerPresetId"
+    });
+  }
+
+  return {
+    providerConfigMode,
+    providerPresetId
+  };
+}
+
+function areEquivalentProviderBindingSelection(
+  binding: Pick<SessionBinding, "providerConfigMode" | "providerPresetId">,
+  selection: {
+    providerConfigMode: SessionProviderConfigMode;
+    providerPresetId: string | null;
+  }
+): boolean {
+  return (
+    binding.providerConfigMode === selection.providerConfigMode
+    && binding.providerPresetId === selection.providerPresetId
   );
 }
 

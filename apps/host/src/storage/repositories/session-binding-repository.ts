@@ -8,7 +8,17 @@ export class SessionBindingRepository {
   findBySessionId(sessionId: string): SessionBinding | null {
     const row = this.db
       .prepare(
-        `SELECT session_id, workspace_id, provider, provider_session_id, raw_store_ref, created_at, updated_at
+        `SELECT
+           session_id,
+           workspace_id,
+           provider,
+           provider_session_id,
+           raw_store_ref,
+           provider_config_mode,
+           provider_preset_id,
+           runtime_home_dir,
+           created_at,
+           updated_at
          FROM session_bindings
          WHERE session_id = ?`
       )
@@ -20,7 +30,17 @@ export class SessionBindingRepository {
   findByProviderSession(provider: string, providerSessionId: string): SessionBinding | null {
     const row = this.db
       .prepare(
-        `SELECT session_id, workspace_id, provider, provider_session_id, raw_store_ref, created_at, updated_at
+        `SELECT
+           session_id,
+           workspace_id,
+           provider,
+           provider_session_id,
+           raw_store_ref,
+           provider_config_mode,
+           provider_preset_id,
+           runtime_home_dir,
+           created_at,
+           updated_at
          FROM session_bindings
          WHERE provider = ?
            AND provider_session_id = ?`
@@ -33,7 +53,17 @@ export class SessionBindingRepository {
   findByRawStoreRef(provider: string, rawStoreRef: string): SessionBinding | null {
     const row = this.db
       .prepare(
-        `SELECT session_id, workspace_id, provider, provider_session_id, raw_store_ref, created_at, updated_at
+        `SELECT
+           session_id,
+           workspace_id,
+           provider,
+           provider_session_id,
+           raw_store_ref,
+           provider_config_mode,
+           provider_preset_id,
+           runtime_home_dir,
+           created_at,
+           updated_at
          FROM session_bindings
          WHERE provider = ?
            AND raw_store_ref = ?`
@@ -52,14 +82,20 @@ export class SessionBindingRepository {
            provider,
            provider_session_id,
            raw_store_ref,
+           provider_config_mode,
+           provider_preset_id,
+           runtime_home_dir,
            created_at,
            updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(session_id) DO UPDATE SET
            workspace_id = excluded.workspace_id,
            provider = excluded.provider,
            provider_session_id = excluded.provider_session_id,
            raw_store_ref = excluded.raw_store_ref,
+           provider_config_mode = excluded.provider_config_mode,
+           provider_preset_id = excluded.provider_preset_id,
+           runtime_home_dir = excluded.runtime_home_dir,
            updated_at = excluded.updated_at`
       )
       .run(
@@ -68,6 +104,9 @@ export class SessionBindingRepository {
         record.provider,
         record.providerSessionId,
         record.rawStoreRef,
+        record.providerConfigMode,
+        record.providerPresetId,
+        record.runtimeHomeDir,
         record.createdAt,
         record.updatedAt
       );
@@ -80,6 +119,9 @@ interface SessionBindingRow {
   provider: SessionBinding["provider"];
   provider_session_id: string;
   raw_store_ref: string;
+  provider_config_mode: SessionBinding["providerConfigMode"];
+  provider_preset_id: string | null;
+  runtime_home_dir: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -91,6 +133,9 @@ function mapSessionBindingRow(row: SessionBindingRow): SessionBinding {
     provider: row.provider,
     providerSessionId: row.provider_session_id,
     rawStoreRef: row.raw_store_ref,
+    providerConfigMode: row.provider_config_mode,
+    providerPresetId: row.provider_preset_id,
+    runtimeHomeDir: row.runtime_home_dir,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

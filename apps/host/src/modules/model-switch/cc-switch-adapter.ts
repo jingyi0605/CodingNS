@@ -28,6 +28,13 @@ export interface ModelManagementAppSnapshotDto {
   options: ModelPresetOptionDto[];
 }
 
+export interface ModelPresetRuntimeConfigDto {
+  id: string;
+  name: string;
+  app: ModelSwitchAppId;
+  settingsConfig: Record<string, unknown>;
+}
+
 interface CcSwitchAdapterOptions {
   commandPath: string;
   dbPath: string;
@@ -189,6 +196,28 @@ export class CcSwitchAdapter {
     }
 
     return snapshot;
+  }
+
+  readPresetRuntimeConfig(app: ModelSwitchAppId, presetId: string): ModelPresetRuntimeConfigDto | null {
+    const metadata = APP_METADATA[app];
+    const normalizedPresetId = presetId.trim();
+
+    if (!normalizedPresetId) {
+      return null;
+    }
+
+    const row = this.readProviderRows(metadata.dbTypes).find((item) => item.id === normalizedPresetId);
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      id: row.id,
+      name: normalizeText(row.name) ?? row.id,
+      app,
+      settingsConfig: safeParseJson(row.settings_config) ?? {}
+    };
   }
 
   private resolveCommandPath(): string | null {

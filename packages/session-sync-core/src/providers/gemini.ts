@@ -96,6 +96,7 @@ interface GeminiMessageDescriptor {
 
 interface ParsedSessionRef {
   providerSessionId: string | null;
+  homeDir: string | null;
   fromRawStoreRef: boolean;
 }
 
@@ -238,7 +239,10 @@ export class GeminiAdapter implements ProviderAdapter {
       providerSessionId,
       rawStoreRef
     );
-    const parsedChat = this.readParsedChatBySessionId(resolvedProviderSessionId);
+    const parsedChat = this.readParsedChatBySessionId(
+      resolvedProviderSessionId,
+      resolveGeminiScopedHomeDir(rawStoreRef)
+    );
     return sliceHistory(parsedChat.messages, cursor, limit, direction);
   }
 
@@ -307,13 +311,19 @@ export class GeminiAdapter implements ProviderAdapter {
       providerSessionId,
       rawStoreRef
     );
-    this.readParsedChatBySessionId(resolvedProviderSessionId);
+    this.readParsedChatBySessionId(
+      resolvedProviderSessionId,
+      resolveGeminiScopedHomeDir(rawStoreRef)
+    );
 
     return {
       provider: this.providerId,
       providerSessionId: resolvedProviderSessionId,
       resumedAt: nextTimestamp(),
-      rawStoreRef: buildGeminiRawStoreRef(resolvedProviderSessionId)
+      rawStoreRef: buildGeminiRawStoreRef(
+        resolvedProviderSessionId,
+        resolveGeminiScopedHomeDir(rawStoreRef)
+      )
     };
   }
 
@@ -342,7 +352,10 @@ export class GeminiAdapter implements ProviderAdapter {
       providerSessionId,
       rawStoreRef
     );
-    const parsedChat = this.readParsedChatBySessionId(resolvedProviderSessionId);
+    const parsedChat = this.readParsedChatBySessionId(
+      resolvedProviderSessionId,
+      resolveGeminiScopedHomeDir(rawStoreRef)
+    );
     return parsedChat.title;
   }
 
@@ -370,7 +383,10 @@ export class GeminiAdapter implements ProviderAdapter {
       providerSessionId,
       rawStoreRef
     );
-    const matchedFilePaths = this.findLocalChatFilePathsBySessionId(resolvedProviderSessionId);
+    const matchedFilePaths = this.findLocalChatFilePathsBySessionId(
+      resolvedProviderSessionId,
+      resolveGeminiScopedHomeDir(rawStoreRef)
+    );
     let deletedAny = false;
 
     for (const filePath of matchedFilePaths) {
@@ -426,7 +442,10 @@ export class GeminiAdapter implements ProviderAdapter {
       providerSessionId,
       rawStoreRef
     );
-    const parsedChat = this.readParsedChatBySessionId(resolvedProviderSessionId);
+    const parsedChat = this.readParsedChatBySessionId(
+      resolvedProviderSessionId,
+      resolveGeminiScopedHomeDir(rawStoreRef)
+    );
     return sliceHistory(parsedChat.messages, cursor, limit, direction);
   }
 
@@ -446,12 +465,14 @@ export class GeminiAdapter implements ProviderAdapter {
     if (trimmedProviderSessionId) {
       return {
         providerSessionId: trimmedProviderSessionId,
+        homeDir: resolveGeminiScopedHomeDir(rawStoreRef),
         fromRawStoreRef: false
       };
     }
 
     return {
       providerSessionId: parseGeminiRawStoreRef(rawStoreRef),
+      homeDir: resolveGeminiScopedHomeDir(rawStoreRef),
       fromRawStoreRef: true
     };
   }
@@ -597,14 +618,17 @@ export class GeminiAdapter implements ProviderAdapter {
     };
   }
 
-  private readParsedChatBySessionId(providerSessionId: string): GeminiParsedChat {
+  private readParsedChatBySessionId(
+    providerSessionId: string,
+    scopedHomeDir: string | null = null
+  ): GeminiParsedChat {
     const sessionId = providerSessionId.trim();
 
     if (!sessionId) {
       throw new Error("PROVIDER_SESSION_ID_REQUIRED");
     }
 
-    const chatFiles = listGeminiChatFiles(this.options.homeDir);
+    const chatFiles = listGeminiChatFiles(scopedHomeDir ?? this.options.homeDir);
     let matchedByName: string | null = null;
     let matchedBySessionId: string | null = null;
 
@@ -657,7 +681,10 @@ export class GeminiAdapter implements ProviderAdapter {
     throw new Error("GEMINI_CHAT_NOT_FOUND");
   }
 
-  private findLocalChatFilePathsBySessionId(providerSessionId: string): string[] {
+  private findLocalChatFilePathsBySessionId(
+    providerSessionId: string,
+    scopedHomeDir: string | null = null
+  ): string[] {
     const sessionId = providerSessionId.trim();
 
     if (!sessionId) {
@@ -666,7 +693,7 @@ export class GeminiAdapter implements ProviderAdapter {
 
     const matchedFilePaths = new Set<string>();
 
-    for (const filePath of listGeminiChatFiles(this.options.homeDir)) {
+    for (const filePath of listGeminiChatFiles(scopedHomeDir ?? this.options.homeDir)) {
       if (basename(filePath, ".json") === sessionId) {
         matchedFilePaths.add(filePath);
         continue;
@@ -866,8 +893,27 @@ function parseGeminiRawStoreRef(rawStoreRef: string): string | null {
   return rawSessionId ? decodeURIComponent(rawSessionId) : null;
 }
 
-function buildGeminiRawStoreRef(providerSessionId: string): string {
-  return `${GEMINI_RAW_STORE_PREFIX}${encodeURIComponent(providerSessionId)}`;
+function resolveGeminiScopedHomeDir(rawStoreRef: string): string | null {
+  const trimmed = rawStoreRef.trim();
+
+  if (!trimmed.startsWith(GEMINI_RAW_STORE_PREFIX)) {
+    return null;
+  }
+
+  const query = trimmed.split("?", 2)[1] ?? "";
+  const params = new URLSearchParams(query);
+  const homeDir = params.get("homeDir")?.trim();
+  return homeDir ? homeDir : null;
+}
+
+function buildGeminiRawStoreRef(providerSessionId: string, scopedHomeDir: string | null = null): string {
+  const encodedSessionId = encodeURIComponent(providerSessionId);
+
+  if (!scopedHomeDir?.trim()) {
+    return `${GEMINI_RAW_STORE_PREFIX}${encodedSessionId}`;
+  }
+
+  return `${GEMINI_RAW_STORE_PREFIX}${encodedSessionId}?homeDir=${encodeURIComponent(scopedHomeDir)}`;
 }
 
 function listGeminiChatFiles(homeDir: string): string[] {

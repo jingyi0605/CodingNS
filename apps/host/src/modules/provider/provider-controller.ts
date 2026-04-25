@@ -5,6 +5,8 @@ import { AppError } from "../../shared/errors/app-error.js";
 import { logPermissionDebug } from "../../shared/utils/permission-debug-log.js";
 import type { SessionHistoryService } from "../sessions/session-history-service.js";
 import type { SessionLiveRuntimeService } from "../sessions/session-live-runtime-service.js";
+import type { SessionProviderConfigMode } from "../../types/domain.js";
+import type { SessionProviderConfigService } from "../sessions/session-provider-config-service.js";
 
 interface ProviderParams {
   provider: string;
@@ -12,6 +14,8 @@ interface ProviderParams {
 
 interface ProviderCapabilitiesQuery {
   workspaceId?: string;
+  providerConfigMode?: SessionProviderConfigMode;
+  providerPresetId?: string | null;
 }
 
 interface ClaudeHookEventBody {
@@ -28,6 +32,7 @@ interface ClaudeHookEventBody {
 export class ProviderController {
   constructor(
     private readonly sessionHistoryService: SessionHistoryService,
+    private readonly sessionProviderConfigService: SessionProviderConfigService,
     private readonly sessionLiveRuntimeService: Pick<
       SessionLiveRuntimeService,
       "getClaudeHookBridgeConfig" | "ingestClaudeHookEvent"
@@ -50,11 +55,18 @@ export class ProviderController {
       });
     }
 
+    const baseCapabilities = await this.sessionHistoryService.getProviderCapabilities(
+      provider,
+      request.query.workspaceId?.trim() || null
+    );
+
     reply.send(
-      await this.sessionHistoryService.getProviderCapabilities(
-        provider,
-        request.query.workspaceId?.trim() || null
-      )
+      this.sessionProviderConfigService.resolveCapabilities({
+        provider: baseCapabilities.provider,
+        baseCapabilities,
+        providerConfigMode: normalizeProviderConfigMode(request.query.providerConfigMode),
+        providerPresetId: request.query.providerPresetId?.trim() || null
+      })
     );
   };
 
@@ -114,4 +126,23 @@ export class ProviderController {
     });
     reply.send(result.bridgeResponse ?? {});
   };
+}
+
+function normalizeProviderConfigMode(
+  value: string | undefined
+): SessionProviderConfigMode | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  if (value === "global-default" || value === "cc-switch-preset") {
+    return value;
+  }
+
+  throw new AppError({
+    statusCode: 400,
+    errorCode: "INVALID_INPUT",
+    detail: "providerConfigMode 非法",
+    field: "providerConfigMode"
+  });
 }

@@ -34,7 +34,12 @@ describe("ParallelSessionGroupService", () => {
       sharedPrompt: "同一个问题，分别给三种方向",
       permissionMode: "bypassPermissions",
       members: [
-        { provider: "codex", model: "gpt-5.1" },
+        {
+          provider: "codex",
+          model: "gpt-5.1",
+          providerConfigMode: "cc-switch-preset",
+          providerPresetId: "preset-team-a"
+        },
         { provider: "claude-code", model: "sonnet-4" }
       ],
       userId: "user-1"
@@ -50,6 +55,8 @@ describe("ParallelSessionGroupService", () => {
       "gpt-5.1",
       "sonnet-4"
     ]);
+    expect(harness.startLiveSessionMock.mock.calls[0]?.[0].providerConfigMode).toBe("cc-switch-preset");
+    expect(harness.startLiveSessionMock.mock.calls[0]?.[0].providerPresetId).toBe("preset-team-a");
     expect(
       harness.startLiveSessionMock.mock.calls.map(([input]) => input.runtimeOptions?.permissionMode)
     ).toEqual(["bypassPermissions", "bypassPermissions"]);
@@ -91,7 +98,12 @@ describe("ParallelSessionGroupService", () => {
       sharedPrompt: "在分叉后继续推进这个问题",
       permissionMode: "acceptEdits",
       members: [
-        { provider: "codex", model: "gpt-5.1" },
+        {
+          provider: "codex",
+          model: "gpt-5.1",
+          providerConfigMode: "cc-switch-preset",
+          providerPresetId: "preset-team-a"
+        },
         { provider: "claude-code", model: "sonnet-4" },
         { provider: "opencode", model: "open-1" }
       ],
@@ -115,6 +127,8 @@ describe("ParallelSessionGroupService", () => {
       "gpt-5.1",
       "open-1"
     ]);
+    expect(harness.sendLiveMessageMock.mock.calls[0]?.[0].providerConfigMode).toBe("cc-switch-preset");
+    expect(harness.sendLiveMessageMock.mock.calls[0]?.[0].providerPresetId).toBe("preset-team-a");
     expect(
       harness.sendLiveMessageMock.mock.calls.map(([input]) => input.runtimeOptions?.permissionMode)
     ).toEqual(["acceptEdits", "acceptEdits"]);
@@ -398,6 +412,8 @@ function createHarness() {
   const startLiveSessionMock = vi.fn(async (input: {
     workspaceId: string;
     provider: string;
+    providerConfigMode?: "global-default" | "cc-switch-preset";
+    providerPresetId?: string | null;
     runtimeOptions?: { model?: string | null; permissionMode?: string | null };
   }) => {
     sessionSequence += 1;
@@ -428,7 +444,11 @@ function createHarness() {
       session
     };
   });
-  const sendLiveMessageMock = vi.fn(async () => ({
+  const sendLiveMessageMock = vi.fn(async (_input?: {
+    providerConfigMode?: "global-default" | "cc-switch-preset";
+    providerPresetId?: string | null;
+    runtimeOptions?: { model?: string | null; permissionMode?: string | null };
+  }) => ({
     acceptedAt: "2026-04-23T10:00:00.000Z"
   }));
   const createIsolatedWorkspaceForMemberMock = vi.fn(async (input: {

@@ -70,6 +70,7 @@ type CodexRuntimeInput =
 interface ActiveTurnContext {
   providerSessionId: string;
   rawStoreRef: string;
+  homeDir: string | null;
   sequence: number;
   toolNameByCallId: Map<string, string>;
   stableMessageRefByIdentity: Map<string, CodexStableMessageRef>;
@@ -98,7 +99,7 @@ interface CodexThreadRow {
 interface CodexRuntimeOptions {
   homeDir?: string;
   commandPath?: string;
-  transportFactory?: () => CodexAppServerTransport;
+  transportFactory?: (request: ProviderRuntimeRunRequest) => CodexAppServerTransport;
   handleServerRequest?: (input: {
     sessionId: string;
     providerSessionId: string;
@@ -202,8 +203,11 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     const launchedAtMs = Date.now();
     const launchPerfStartedAtMs = performance.now();
     const transport = this.options.transportFactory
-      ? this.options.transportFactory()
-      : createCodexAppServerTransport(this.options);
+      ? this.options.transportFactory(request)
+      : createCodexAppServerTransport({
+        ...this.options,
+        homeDir: request.runtimeHomeDir?.trim() || this.options.homeDir
+      });
     try {
       const initializeStartedAtMs = performance.now();
       await transport.initialize();
@@ -376,8 +380,11 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     }
 
     const transport = this.options.transportFactory
-      ? this.options.transportFactory()
-      : createCodexAppServerTransport(this.options);
+      ? this.options.transportFactory(request)
+      : createCodexAppServerTransport({
+        ...this.options,
+        homeDir: request.runtimeHomeDir?.trim() || this.options.homeDir
+      });
     try {
       const runtimeStartedAtMs = performance.now();
       const initializeStartedAtMs = performance.now();
@@ -403,7 +410,8 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         const fallbackHistorySource = await this.resolveContinueFallbackHistorySource({
           providerSessionId,
           rawStoreRef: request.rawStoreRef,
-          workspacePath: request.workspacePath
+          workspacePath: request.workspacePath,
+          homeDir: request.runtimeHomeDir?.trim() || this.options.homeDir?.trim() || null
         });
         const resumeHistory = fallbackHistorySource?.history ?? [];
 
@@ -544,6 +552,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     providerSessionId: string;
     rawStoreRef: string | null;
     workspacePath: string;
+    homeDir: string | null;
   }): Promise<{ rawStoreRef: string; history: Array<Record<string, unknown>> } | null> {
     const candidates: string[] = [];
     const seen = new Set<string>();
@@ -563,7 +572,11 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     // 旧会话的 binding 可能只剩 synthetic stream，或者已经指到了父线程 transcript。
     // 继续会话失败时，额外按真实 thread id 扫一次本地 transcript，尽量把历史恢复链路救回来。
     pushCandidate(
-      await this.resolveRealRawStoreRef(input.providerSessionId.trim(), input.workspacePath)
+      await this.resolveRealRawStoreRef(
+        input.providerSessionId.trim(),
+        input.workspacePath,
+        input.homeDir
+      )
     );
 
     let fallbackMatch: { rawStoreRef: string; history: Array<Record<string, unknown>> } | null = null;
@@ -617,6 +630,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       sink,
       workspacePath: request.workspacePath,
       firstUserMessage: request.options.content,
+      homeDir: request.runtimeHomeDir?.trim() || this.options.homeDir?.trim() || null,
       launchedAtMs,
       launchPerfStartedAtMs
     };
@@ -946,12 +960,14 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       await this.resolveLaunchedSessionBinding(
         context.workspacePath,
         context.firstUserMessage,
-        context.launchedAtMs
+        context.launchedAtMs,
+        context.homeDir
       ) ??
       await this.resolveExistingSessionBinding(
         context.providerSessionId,
         context.rawStoreRef,
-        context.workspacePath
+        context.workspacePath,
+        context.homeDir
       );
 
     if (
@@ -973,7 +989,8 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
   private async resolveExistingSessionBinding(
     providerSessionId: string,
     rawStoreRef: string,
-    workspacePath: string
+    workspacePath: string,
+    homeDirOverride: string | null = null
   ): Promise<{ providerSessionId: string; rawStoreRef: string } | null> {
     const normalizedProviderSessionId = providerSessionId.trim();
 
@@ -992,7 +1009,8 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
 
     const resolvedRawStoreRef = await this.resolveRealRawStoreRef(
       normalizedProviderSessionId,
-      workspacePath
+      workspacePath,
+      homeDirOverride
     );
 
     if (!resolvedRawStoreRef) {
@@ -1008,13 +1026,15 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
   private async resolveLaunchedSessionBinding(
     workspacePath: string,
     firstUserMessage: string,
-    launchedAtMs: number
+    launchedAtMs: number,
+    homeDirOverride: string | null = null
   ): Promise<{ providerSessionId: string; rawStoreRef: string } | null> {
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const matched = this.findLaunchedSessionBindingOnce(
         workspacePath,
         firstUserMessage,
-        launchedAtMs
+        launchedAtMs,
+        homeDirOverride
       );
 
       if (matched) {
@@ -1031,10 +1051,11 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
 
   private async resolveRealRawStoreRef(
     providerSessionId: string,
-    workspacePath: string
+    workspacePath: string,
+    homeDirOverride: string | null = null
   ): Promise<string | null> {
     for (let attempt = 0; attempt < 10; attempt += 1) {
-      const matched = this.findRawStoreRefOnce(providerSessionId, workspacePath);
+      const matched = this.findRawStoreRefOnce(providerSessionId, workspacePath, homeDirOverride);
 
       if (matched) {
         return matched;
@@ -1048,8 +1069,16 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     return null;
   }
 
-  private findRawStoreRefOnce(providerSessionId: string, workspacePath: string): string | null {
-    const homeDir = this.options.homeDir?.trim() || process.env.CODINGNS_CODEX_HOME || join(homedir(), ".codex");
+  private findRawStoreRefOnce(
+    providerSessionId: string,
+    workspacePath: string,
+    homeDirOverride: string | null = null
+  ): string | null {
+    const homeDir =
+      homeDirOverride?.trim()
+      || this.options.homeDir?.trim()
+      || process.env.CODINGNS_CODEX_HOME
+      || join(homedir(), ".codex");
     const candidates = this.listSessionFiles(homeDir);
     const normalizedWorkspace = normalizeWorkspacePath(workspacePath);
 
@@ -1104,9 +1133,10 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
   private findLaunchedSessionBindingOnce(
     workspacePath: string,
     firstUserMessage: string,
-    launchedAtMs: number
+    launchedAtMs: number,
+    homeDirOverride: string | null = null
   ): { providerSessionId: string; rawStoreRef: string } | null {
-    const dbPath = findLatestCodexStateDatabase(this.getCodexHomeDir());
+    const dbPath = findLatestCodexStateDatabase(this.getCodexHomeDir(homeDirOverride));
 
     if (!dbPath) {
       return null;
@@ -1151,8 +1181,13 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     return null;
   }
 
-  private getCodexHomeDir(): string {
-    return this.options.homeDir?.trim() || process.env.CODINGNS_CODEX_HOME || join(homedir(), ".codex");
+  private getCodexHomeDir(homeDirOverride: string | null = null): string {
+    return (
+      homeDirOverride?.trim()
+      || this.options.homeDir?.trim()
+      || process.env.CODINGNS_CODEX_HOME
+      || join(homedir(), ".codex")
+    );
   }
 
   private buildMessage(

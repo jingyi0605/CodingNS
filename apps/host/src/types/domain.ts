@@ -25,6 +25,7 @@ export type SessionActivityResolutionSource =
   | "unknown";
 export type SessionActivityConfidence = "authoritative" | "strong" | "weak";
 export type SessionInterruptSource = "user" | "runtime";
+export type SessionProviderConfigMode = "global-default" | "cc-switch-preset";
 
 export interface BootstrapState {
   id: "default";
@@ -233,6 +234,9 @@ export interface SessionBinding {
   provider: ProviderId;
   providerSessionId: string;
   rawStoreRef: string;
+  providerConfigMode: SessionProviderConfigMode;
+  providerPresetId: string | null;
+  runtimeHomeDir: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -358,6 +362,8 @@ export interface SessionListItem {
   provider: ProviderId;
   providerSessionId: string;
   rawStoreRef: string;
+  providerConfigMode?: SessionProviderConfigMode;
+  providerPresetId?: string | null;
   parentSessionId?: string | null;
   sessionKind?: "default" | "annotation";
   annotationSourceMessageId?: string | null;

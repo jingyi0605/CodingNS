@@ -12,6 +12,7 @@ import type {
   RuntimeSendOptions,
   RuntimeSessionBinding
 } from "@codingns/session-sync-core";
+import { ClaudeRuntimeAdapter as NativeClaudeRuntimeAdapter } from "@codingns/session-sync-core";
 
 interface ClaudeRuntimeHelperClientOptions {
   homeDir: string;
@@ -88,6 +89,7 @@ type HelperToParentMessage =
 export class ClaudeRuntimeHelperAdapter implements ProviderRuntimeAdapter {
   readonly providerId = "claude-code" as const;
 
+  private readonly options: ClaudeRuntimeHelperClientOptions;
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly stdoutReader: readline.Interface;
   private readonly pendingLaunches = new Map<string, PendingLaunch>();
@@ -96,6 +98,7 @@ export class ClaudeRuntimeHelperAdapter implements ProviderRuntimeAdapter {
   private disposed = false;
 
   constructor(options: ClaudeRuntimeHelperClientOptions) {
+    this.options = options;
     const launch = resolveHelperLaunch(options.homeDir);
     if (options.commandPath) {
       launch.args.push("--command-path", options.commandPath);
@@ -167,6 +170,20 @@ export class ClaudeRuntimeHelperAdapter implements ProviderRuntimeAdapter {
     request: ProviderRuntimeRunRequest,
     sink: ProviderRuntimeEventSink
   ): Promise<ProviderRuntimeLaunchResult> {
+    const requestHomeDir = request.runtimeHomeDir?.trim();
+
+    if (requestHomeDir && path.resolve(requestHomeDir) !== path.resolve(this.options.homeDir)) {
+      const runtime = new NativeClaudeRuntimeAdapter({
+        homeDir: requestHomeDir,
+        commandPath: this.options.commandPath,
+        hookBridge: this.options.hookBridge ?? null
+      });
+
+      return type === "start"
+        ? runtime.startSession(request, sink)
+        : runtime.continueSession(request, sink);
+    }
+
     if (this.disposed) {
       return Promise.reject(new Error("Claude runtime helper 已关闭"));
     }

@@ -143,6 +143,8 @@ export interface ProviderRuntimeRunRequest {
   provider: ProviderId;
   providerSessionId: string | null;
   rawStoreRef: string | null;
+  runtimeHomeDir?: string | null;
+  runtimeEnv?: Record<string, string> | null;
   sequenceBase?: number | null;
   options: RuntimeSendOptions;
 }

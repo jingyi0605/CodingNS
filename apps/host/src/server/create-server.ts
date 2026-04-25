@@ -103,6 +103,7 @@ import { SessionActivityAuthorityService } from "../modules/sessions/session-act
 import { SessionHistoryService } from "../modules/sessions/session-history-service.js";
 import { SessionLiveRuntimeRouterService } from "../modules/sessions/session-live-runtime-router-service.js";
 import { SessionLiveRuntimeService } from "../modules/sessions/session-live-runtime-service.js";
+import { SessionProviderConfigService } from "../modules/sessions/session-provider-config-service.js";
 import { SessionProviderUsageLimitGuardService } from "../modules/sessions/session-provider-usage-guard-service.js";
 import { SessionMessageAttachmentService } from "../modules/sessions/session-message-attachment-service.js";
 import { EventLoopMonitor } from "../modules/tasks/event-loop-monitor.js";
@@ -446,11 +447,14 @@ export function createServer(config: HostConfig) {
     serviceUpdateTaskService,
     relayTunnelService
   );
-  const modelSwitchService = new ModelSwitchService(
-    new CcSwitchAdapter({
-      commandPath: config.ccSwitchCliPath,
-      dbPath: config.ccSwitchDbPath
-    })
+  const ccSwitchAdapter = new CcSwitchAdapter({
+    commandPath: config.ccSwitchCliPath,
+    dbPath: config.ccSwitchDbPath
+  });
+  const modelSwitchService = new ModelSwitchService(ccSwitchAdapter);
+  const sessionProviderConfigService = new SessionProviderConfigService(
+    config,
+    ccSwitchAdapter
   );
   const skillTargetAdapters = createDefaultSkillTargetAdapters(config);
   const skillManagerService = new SkillManagerService(
@@ -519,7 +523,8 @@ export function createServer(config: HostConfig) {
     taskManager,
     repositories.parallelSessionGroupRepository,
     repositories.parallelSessionMemberRepository,
-    repositories.sessionIsolatedWorkspaceRepository
+    repositories.sessionIsolatedWorkspaceRepository,
+    sessionProviderConfigService
   );
   runtimeObservabilityService = new RuntimeObservabilityService(
     () => sessionHistoryService.observeBackgroundTaskMetrics(),
@@ -538,6 +543,7 @@ export function createServer(config: HostConfig) {
     repositories.sessionIndexRepository,
     repositories.sessionStateRepository,
     repositories.sessionStatusSnapshotRepository,
+    sessionProviderConfigService,
     config,
     sessionActivityAuthorityService
   );
@@ -571,6 +577,7 @@ export function createServer(config: HostConfig) {
     repositories.sessionIndexRepository,
     repositories.sessionStateRepository,
     repositories.sessionStatusSnapshotRepository,
+    sessionProviderConfigService,
     butlerRuntimeConfig,
     sessionActivityAuthorityService
   );
@@ -588,6 +595,7 @@ export function createServer(config: HostConfig) {
     repositories.sessionIndexRepository,
     repositories.sessionStateRepository,
     repositories.sessionStatusSnapshotRepository,
+    sessionProviderConfigService,
     butlerSummaryRuntimeConfig,
     sessionActivityAuthorityService
   );
@@ -605,6 +613,7 @@ export function createServer(config: HostConfig) {
     repositories.sessionIndexRepository,
     repositories.sessionStateRepository,
     repositories.sessionStatusSnapshotRepository,
+    sessionProviderConfigService,
     butlerFollowUpRuntimeConfig,
     sessionActivityAuthorityService
   );
@@ -1055,6 +1064,7 @@ export function createServer(config: HostConfig) {
   );
   const providerController = new ProviderController(
     sessionHistoryService,
+    sessionProviderConfigService,
     routedSessionLiveRuntimeService,
     config
   );

@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { AppError } from "../../shared/errors/app-error.js";
+import type { SessionProviderConfigMode } from "../../types/domain.js";
 import type {
   ParallelSessionGroupService,
   ParallelSessionMemberInput
@@ -26,6 +27,8 @@ interface IsolatedWorkspaceParams {
 interface ParallelMemberBody {
   provider?: string;
   model?: string | null;
+  providerConfigMode?: SessionProviderConfigMode | null;
+  providerPresetId?: string | null;
   memberPrompt?: string | null;
   workspaceIsolationMode?: "none" | "temporary_worktree" | null;
 }
@@ -142,6 +145,11 @@ function normalizeMembers(input: CreateParallelGroupBody["members"]): ParallelSe
   return input.map((member) => ({
     provider: member?.provider?.trim() ?? "",
     model: member?.model?.trim() || null,
+    providerConfigMode:
+      member?.providerConfigMode === "cc-switch-preset"
+        ? "cc-switch-preset"
+        : "global-default",
+    providerPresetId: member?.providerPresetId?.trim() || null,
     memberPrompt: member?.memberPrompt?.trim() || null,
     workspaceIsolationMode:
       member?.workspaceIsolationMode === "temporary_worktree"

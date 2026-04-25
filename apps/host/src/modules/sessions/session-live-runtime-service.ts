@@ -39,6 +39,7 @@ import type {
   SessionInterruptSource,
   SessionActivityResolutionSource,
   SessionListItem,
+  SessionProviderConfigMode,
   SessionResolvedRunningState,
   SessionRunningState,
   SessionSendQueueItemRecord,
@@ -70,6 +71,7 @@ import type {
 } from "./session-history-service.js";
 import { ClaudeRuntimeHelperAdapter } from "./claude-runtime-helper-client.js";
 import { CodexAppServerHelperClient } from "./codex-app-server-helper-client.js";
+import { SessionProviderConfigService } from "./session-provider-config-service.js";
 
 interface RuntimeSendOptions {
   model?: string | null;
@@ -89,6 +91,8 @@ interface StartLiveSessionInput {
   sessionKind?: "default" | "annotation";
   annotationSourceMessageId?: string | null;
   annotationSourceText?: string | null;
+  providerConfigMode?: SessionProviderConfigMode;
+  providerPresetId?: string | null;
   runtimeOptions?: RuntimeSendOptions;
 }
 
@@ -97,6 +101,8 @@ interface SendLiveMessageInput {
   userId: string;
   content: string;
   clientRequestId: string | null;
+  providerConfigMode?: SessionProviderConfigMode;
+  providerPresetId?: string | null;
   runtimeOptions?: RuntimeSendOptions;
 }
 
@@ -317,6 +323,7 @@ export class SessionLiveRuntimeService {
     private readonly sessionIndexRepository: SessionIndexRepository,
     private readonly sessionStateRepository: SessionStateRepository,
     private readonly sessionStatusSnapshotRepository: SessionStatusSnapshotRepository,
+    private readonly sessionProviderConfigService: SessionProviderConfigService,
     private readonly config: HostConfig,
     sessionActivityAuthorityService = new SessionActivityAuthorityService()
   ) {
@@ -360,7 +367,19 @@ export class SessionLiveRuntimeService {
 
     try {
       const capabilities = this.sessionHistoryService.getProviderCapabilitiesSnapshot(input.provider);
-      this.ensurePendingSessionBinding(sessionId, workspace.id, input.provider);
+      const providerBinding = this.sessionProviderConfigService.prepareSessionBinding({
+        sessionId,
+        provider: input.provider as SessionListItem["provider"],
+        providerConfigMode: input.providerConfigMode,
+        providerPresetId: input.providerPresetId ?? null
+      });
+      const providerLaunchContext = this.sessionProviderConfigService.resolveLaunchContext({
+        provider: input.provider as SessionListItem["provider"],
+        providerConfigMode: providerBinding.providerConfigMode,
+        providerPresetId: providerBinding.providerPresetId,
+        runtimeHomeDir: providerBinding.runtimeHomeDir
+      });
+      this.ensurePendingSessionBinding(sessionId, workspace.id, input.provider, providerBinding);
       const persistedAttachments = this.persistMessageAttachments(
         sessionId,
         input.clientRequestId,
@@ -389,6 +408,8 @@ export class SessionLiveRuntimeService {
           provider: input.provider as ProviderRuntimeRunRequest["provider"],
           providerSessionId: null,
           rawStoreRef: null,
+          runtimeHomeDir: providerLaunchContext.runtimeHomeDir,
+          runtimeEnv: providerLaunchContext.runtimeEnv,
           sequenceBase: 1,
           options: {
             content: input.content,
@@ -533,6 +554,7 @@ export class SessionLiveRuntimeService {
 
   async enqueueLiveMessage(input: SendLiveMessageInput): Promise<SessionQueueItemView> {
     const session = await this.resolveQueueDispatchSession(input.sessionId, input.userId);
+    this.resolveEffectiveSessionProviderBinding(session, input);
     this.persistMessageAttachments(
       input.sessionId,
       input.clientRequestId,
@@ -1659,6 +1681,8 @@ export class SessionLiveRuntimeService {
     try {
       const capabilities = await this.sessionHistoryService.getSessionCapabilities(input.sessionId);
       const workspace = this.workspaceService.getWorkspaceOrThrow(session.workspaceId);
+      const providerBinding = this.resolveEffectiveSessionProviderBinding(session, input);
+      const providerLaunchContext = this.sessionProviderConfigService.resolveLaunchContext(providerBinding);
       const runtimeMode = shouldStartNativeSessionOnFirstMessage(session);
       const syntheticForkRawStoreRef =
         runtimeMode === "start" && shouldResumeCodexSyntheticForkSession(session)
@@ -1695,6 +1719,8 @@ export class SessionLiveRuntimeService {
         provider: session.provider,
         providerSessionId: runtimeMode === "start" ? null : session.providerSessionId,
         rawStoreRef: runtimeMode === "start" ? syntheticForkRawStoreRef : session.rawStoreRef,
+        runtimeHomeDir: providerLaunchContext.runtimeHomeDir,
+        runtimeEnv: providerLaunchContext.runtimeEnv,
         sequenceBase: nextUserSequence,
         options: {
           content: input.content,
@@ -2150,13 +2176,71 @@ export class SessionLiveRuntimeService {
   private ensurePendingSessionBinding(
     sessionId: string,
     workspaceId: string,
-    provider: string
+    provider: string,
+    providerBinding?: {
+      providerConfigMode: SessionProviderConfigMode;
+      providerPresetId: string | null;
+      runtimeHomeDir: string | null;
+    }
   ): void {
-    this.sessionHistoryService.persistSessionBinding(
+    const snapshot = this.buildBindingSnapshot(sessionId, provider, null, null);
+    const timestamp = nowIso();
+    const existingBinding = this.sessionBindingRepository.findBySessionId(sessionId);
+
+    this.sessionBindingRepository.upsert({
       sessionId,
       workspaceId,
-      this.buildBindingSnapshot(sessionId, provider, null, null)
-    );
+      provider: snapshot.provider as SessionListItem["provider"],
+      providerSessionId: snapshot.providerSessionId,
+      rawStoreRef: snapshot.rawStoreRef,
+      providerConfigMode: providerBinding?.providerConfigMode ?? existingBinding?.providerConfigMode ?? "global-default",
+      providerPresetId: providerBinding?.providerPresetId ?? existingBinding?.providerPresetId ?? null,
+      runtimeHomeDir: providerBinding?.runtimeHomeDir ?? existingBinding?.runtimeHomeDir ?? null,
+      createdAt: existingBinding?.createdAt ?? timestamp,
+      updatedAt: timestamp
+    });
+  }
+
+  private resolveEffectiveSessionProviderBinding(
+    session: Pick<SessionListItem, "sessionId" | "workspaceId" | "provider">,
+    input: Pick<SendLiveMessageInput, "providerConfigMode" | "providerPresetId">
+  ) {
+    const existingBinding = this.sessionBindingRepository.findBySessionId(session.sessionId);
+
+    if (!existingBinding) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "SESSION_NOT_FOUND",
+        detail: "session 不存在"
+      });
+    }
+
+    const providerBinding = this.sessionProviderConfigService.resolveSessionBinding({
+      sessionId: session.sessionId,
+      provider: session.provider as SessionListItem["provider"],
+      existingBinding,
+      providerConfigMode: input.providerConfigMode,
+      providerPresetId: input.providerPresetId ?? null
+    });
+
+    if (
+      existingBinding.providerConfigMode === providerBinding.providerConfigMode
+      && existingBinding.providerPresetId === providerBinding.providerPresetId
+      && (existingBinding.runtimeHomeDir ?? null) === (providerBinding.runtimeHomeDir ?? null)
+    ) {
+      return existingBinding;
+    }
+
+    const nextBinding = {
+      ...existingBinding,
+      providerConfigMode: providerBinding.providerConfigMode,
+      providerPresetId: providerBinding.providerPresetId,
+      runtimeHomeDir: providerBinding.runtimeHomeDir,
+      updatedAt: nowIso()
+    };
+
+    this.sessionBindingRepository.upsert(nextBinding);
+    return nextBinding;
   }
 
   private buildBindingSnapshot(
@@ -3465,24 +3549,28 @@ function createProviderRuntimeAdapters(
     disposables.push(claudeAdapter);
   }
 
-  const codexTransportHelper =
-    process.env.VITEST
-      ? null
-      : new CodexAppServerHelperClient(config.codexCliPath, {
-        homeDir: config.codexHomeDir
-      });
-
-  if (codexTransportHelper) {
-    disposables.push(codexTransportHelper);
-  }
-
   return {
     adapters: [
       claudeAdapter,
       new CodexRuntimeAdapter({
         homeDir: config.codexHomeDir,
         commandPath: config.codexCliPath,
-        transportFactory: codexTransportHelper?.createTransport.bind(codexTransportHelper),
+        transportFactory: process.env.VITEST
+          ? undefined
+          : (request) => {
+            const client = new CodexAppServerHelperClient(config.codexCliPath, {
+              homeDir: request.runtimeHomeDir?.trim() || config.codexHomeDir
+            });
+            const transport = client.createTransport();
+
+            return {
+              ...transport,
+              close() {
+                transport.close();
+                client.dispose();
+              }
+            };
+          },
         handleServerRequest: options.handleCodexServerRequest
       }),
       new GeminiRuntimeAdapter({

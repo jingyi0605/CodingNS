@@ -5,6 +5,7 @@ import type {
   ParallelSessionGroupRecord,
   ParallelSessionMemberRecord,
   ParallelSessionWorkspaceIsolationMode,
+  SessionProviderConfigMode,
   SessionIsolatedWorkspaceRecord,
   SessionListItem
 } from "../../types/domain.js";
@@ -22,6 +23,8 @@ import type {
 export interface ParallelSessionMemberInput {
   provider: string;
   model?: string | null;
+  providerConfigMode?: SessionProviderConfigMode;
+  providerPresetId?: string | null;
   memberPrompt?: string | null;
   workspaceIsolationMode?: ParallelSessionWorkspaceIsolationMode;
 }
@@ -146,6 +149,8 @@ export class ParallelSessionGroupService {
                 sourceMessageId: group.sourceMessageId,
                 provider: member.provider,
                 model: member.model ?? null,
+                providerConfigMode: member.providerConfigMode ?? "global-default",
+                providerPresetId: member.providerPresetId ?? null,
                 sharedPrompt,
                 memberPrompt: member.memberPrompt ?? null,
                 permissionMode: input.permissionMode ?? null,
@@ -167,6 +172,8 @@ export class ParallelSessionGroupService {
             sourceMessageId: group.sourceMessageId,
             provider: member.provider,
             model: member.model ?? null,
+            providerConfigMode: member.providerConfigMode ?? "global-default",
+            providerPresetId: member.providerPresetId ?? null,
             sharedPrompt,
             memberPrompt: member.memberPrompt ?? null,
             permissionMode: input.permissionMode ?? null,
@@ -220,6 +227,8 @@ export class ParallelSessionGroupService {
                 workspaceId,
                 provider: member.provider,
                 model: member.model ?? null,
+                providerConfigMode: member.providerConfigMode ?? "global-default",
+                providerPresetId: member.providerPresetId ?? null,
                 sharedPrompt,
                 memberPrompt: member.memberPrompt ?? null,
                 permissionMode: input.permissionMode ?? null,
@@ -239,6 +248,8 @@ export class ParallelSessionGroupService {
             workspaceId: group.workspaceId,
             provider: member.provider,
             model: member.model ?? null,
+            providerConfigMode: member.providerConfigMode ?? "global-default",
+            providerPresetId: member.providerPresetId ?? null,
             sharedPrompt,
             memberPrompt: member.memberPrompt ?? null,
             permissionMode: input.permissionMode ?? null,
@@ -315,6 +326,8 @@ export class ParallelSessionGroupService {
                   sourceMessageId: group.sourceMessageId,
                   provider: member.provider,
                   model: member.model ?? null,
+                  providerConfigMode: member.providerConfigMode ?? "global-default",
+                  providerPresetId: member.providerPresetId ?? null,
                   sharedPrompt,
                   memberPrompt: member.memberPrompt ?? null,
                   permissionMode: input.permissionMode ?? null,
@@ -336,6 +349,8 @@ export class ParallelSessionGroupService {
               sourceMessageId: group.sourceMessageId,
               provider: member.provider,
               model: member.model ?? null,
+              providerConfigMode: member.providerConfigMode ?? "global-default",
+              providerPresetId: member.providerPresetId ?? null,
               sharedPrompt,
               memberPrompt: member.memberPrompt ?? null,
               permissionMode: input.permissionMode ?? null,
@@ -355,6 +370,8 @@ export class ParallelSessionGroupService {
                 workspaceId,
                 provider: member.provider,
                 model: member.model ?? null,
+                providerConfigMode: member.providerConfigMode ?? "global-default",
+                providerPresetId: member.providerPresetId ?? null,
                 sharedPrompt,
                 memberPrompt: member.memberPrompt ?? null,
                 permissionMode: input.permissionMode ?? null,
@@ -374,6 +391,8 @@ export class ParallelSessionGroupService {
             workspaceId: group.workspaceId,
             provider: member.provider,
             model: member.model ?? null,
+            providerConfigMode: member.providerConfigMode ?? "global-default",
+            providerPresetId: member.providerPresetId ?? null,
             sharedPrompt,
             memberPrompt: member.memberPrompt ?? null,
             permissionMode: input.permissionMode ?? null,
@@ -654,6 +673,8 @@ export class ParallelSessionGroupService {
     sourceMessageId: string | null;
     provider: string;
     model: string | null;
+    providerConfigMode: SessionProviderConfigMode;
+    providerPresetId: string | null;
     sharedPrompt: string;
     memberPrompt: string | null;
     permissionMode: string | null;
@@ -679,6 +700,8 @@ export class ParallelSessionGroupService {
         userId: input.userId,
         content: buildComposedPrompt(input.sharedPrompt, input.memberPrompt),
         clientRequestId: null,
+        providerConfigMode: input.providerConfigMode,
+        providerPresetId: input.providerPresetId,
         runtimeOptions: {
           model: input.model,
           permissionMode: input.permissionMode
@@ -701,6 +724,8 @@ export class ParallelSessionGroupService {
     workspaceId: string;
     provider: string;
     model: string | null;
+    providerConfigMode: SessionProviderConfigMode;
+    providerPresetId: string | null;
     sharedPrompt: string;
     memberPrompt: string | null;
     permissionMode: string | null;
@@ -716,6 +741,8 @@ export class ParallelSessionGroupService {
       sessionKind: "default",
       annotationSourceMessageId: null,
       annotationSourceText: null,
+      providerConfigMode: input.providerConfigMode,
+      providerPresetId: input.providerPresetId,
       runtimeOptions: {
         model: input.model,
         permissionMode: input.permissionMode
@@ -749,6 +776,11 @@ function normalizeMembers(
   return members.map((member, index) => ({
     provider: normalizeRequiredText(member.provider, `members[${index}].provider`),
     model: normalizeOptionalText(member.model),
+    providerConfigMode:
+      member.providerConfigMode === "cc-switch-preset"
+        ? "cc-switch-preset"
+        : "global-default",
+    providerPresetId: normalizeOptionalText(member.providerPresetId),
     memberPrompt: normalizeOptionalText(member.memberPrompt),
     workspaceIsolationMode:
       member.workspaceIsolationMode === "temporary_worktree"

@@ -58,7 +58,10 @@ export class GeminiRuntimeAdapter implements ProviderRuntimeAdapter {
     sink: ProviderRuntimeEventSink
   ): Promise<ProviderRuntimeLaunchResult> {
     const pendingProviderSessionId = buildPendingGeminiSessionRef(request.sessionId);
-    const pendingRawStoreRef = pendingProviderSessionId;
+    const pendingRawStoreRef = buildGeminiRawStoreRef(
+      pendingProviderSessionId,
+      request.runtimeHomeDir ?? null
+    );
 
     sink.updateSessionBinding({
       providerSessionId: pendingProviderSessionId,
@@ -84,11 +87,12 @@ export class GeminiRuntimeAdapter implements ProviderRuntimeAdapter {
       throw new Error("PROVIDER_SESSION_ID_REQUIRED");
     }
 
-    const rawStoreRef = request.rawStoreRef ?? buildGeminiRawStoreRef(providerSessionId);
+    const resolvedRawStoreRef = request.rawStoreRef
+      ?? buildGeminiRawStoreRef(providerSessionId, request.runtimeHomeDir ?? null);
 
     sink.updateSessionBinding({
       providerSessionId,
-      rawStoreRef
+      rawStoreRef: resolvedRawStoreRef
     });
 
     return this.launchRuntime(
@@ -96,7 +100,7 @@ export class GeminiRuntimeAdapter implements ProviderRuntimeAdapter {
       sink,
       "continue",
       providerSessionId,
-      rawStoreRef
+      resolvedRawStoreRef
     );
   }
 
@@ -115,7 +119,8 @@ export class GeminiRuntimeAdapter implements ProviderRuntimeAdapter {
       cwd: request.workspacePath,
       env: {
         ...process.env,
-        GEMINI_HOME: this.options.homeDir,
+        ...(request.runtimeEnv ?? {}),
+        GEMINI_HOME: request.runtimeHomeDir?.trim() || this.options.homeDir,
         NO_COLOR: "1"
       },
       shell: shouldSpawnViaShell(this.commandPath),
@@ -145,7 +150,10 @@ export class GeminiRuntimeAdapter implements ProviderRuntimeAdapter {
       }
 
       activeProviderSessionId = providerSessionId;
-      activeRawStoreRef = buildGeminiRawStoreRef(providerSessionId);
+      activeRawStoreRef = buildGeminiRawStoreRef(
+        providerSessionId,
+        request.runtimeHomeDir ?? null
+      );
       sink.updateSessionBinding({
         providerSessionId: activeProviderSessionId,
         rawStoreRef: activeRawStoreRef
@@ -669,8 +677,14 @@ function buildPendingGeminiSessionRef(sessionId: string): string {
   return `pending://gemini/${sessionId}`;
 }
 
-function buildGeminiRawStoreRef(sessionId: string): string {
-  return `gemini://session/${encodeURIComponent(sessionId)}`;
+function buildGeminiRawStoreRef(sessionId: string, runtimeHomeDir: string | null = null): string {
+  const encodedSessionId = encodeURIComponent(sessionId);
+
+  if (!runtimeHomeDir?.trim()) {
+    return `gemini://session/${encodedSessionId}`;
+  }
+
+  return `gemini://session/${encodedSessionId}?homeDir=${encodeURIComponent(runtimeHomeDir)}`;
 }
 
 function buildGeminiRawEventRef(sessionId: string, lineNumber: number): string {

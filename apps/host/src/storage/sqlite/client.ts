@@ -26,6 +26,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureWorkspaceSortOrderColumn(db);
   ensureWorkspaceNavigationBackgroundColorColumn(db);
   ensureSessionProviderSchema(db);
+  ensureSessionBindingPresetSchema(db);
   ensureSessionStateSchema(db);
   ensureSessionAttachmentSchema(db);
   ensureSessionIndexArchiveColumn(db);
@@ -1017,6 +1018,31 @@ function ensureSessionProviderSchema(db: Database.Database): void {
 
     PRAGMA foreign_keys = ON;
   `);
+}
+
+function ensureSessionBindingPresetSchema(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(session_bindings)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (columns.length === 0) {
+    return;
+  }
+
+  if (!columnNames.has("provider_config_mode")) {
+    db.exec(
+      "ALTER TABLE session_bindings ADD COLUMN provider_config_mode TEXT NOT NULL DEFAULT 'global-default' CHECK (provider_config_mode IN ('global-default', 'cc-switch-preset'))"
+    );
+  }
+
+  if (!columnNames.has("provider_preset_id")) {
+    db.exec("ALTER TABLE session_bindings ADD COLUMN provider_preset_id TEXT");
+  }
+
+  if (!columnNames.has("runtime_home_dir")) {
+    db.exec("ALTER TABLE session_bindings ADD COLUMN runtime_home_dir TEXT");
+  }
 }
 
 function ensureSessionStateSchema(db: Database.Database): void {

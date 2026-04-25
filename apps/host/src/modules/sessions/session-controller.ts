@@ -2,6 +2,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { AppError } from "../../shared/errors/app-error.js";
 import type { ButlerControlSessionRepository } from "../../storage/repositories/butler-control-session-repository.js";
+import type { SessionProviderConfigMode } from "../../types/domain.js";
 import type { SessionHistoryService } from "./session-history-service.js";
 import type { SessionLiveRuntimeService } from "./session-live-runtime-service.js";
 import type { SessionAttachmentInput } from "./session-message-attachment-service.js";
@@ -36,6 +37,8 @@ interface RuntimeOptionsBody {
   model?: string;
   reasoningLevel?: string;
   permissionMode?: string;
+  providerConfigMode?: SessionProviderConfigMode;
+  providerPresetId?: string | null;
 }
 
 interface SendMessageBody extends RuntimeOptionsBody {
@@ -70,6 +73,8 @@ interface StartLiveSessionBody extends RuntimeOptionsBody {
   sessionKind?: "default" | "annotation";
   annotationSourceMessageId?: string | null;
   annotationSourceText?: string | null;
+  providerConfigMode?: SessionProviderConfigMode;
+  providerPresetId?: string | null;
 }
 
 interface RenameSessionBody {
@@ -94,6 +99,8 @@ interface ForkSessionBody {
   } | null;
   strategy?: "auto" | "native-only" | "reconstruct-only";
   targetProvider?: string | null;
+  providerConfigMode?: SessionProviderConfigMode;
+  providerPresetId?: string | null;
   sessionKind?: "default" | "annotation";
   annotationSourceMessageId?: string | null;
   annotationSourceText?: string | null;
@@ -214,6 +221,25 @@ function normalizeRuntimeOptions(input: RuntimeOptionsBody) {
     reasoningLevel: reasoningLevel ?? null,
     permissionMode: permissionMode ?? null
   };
+}
+
+function normalizeProviderConfigMode(
+  value: string | undefined
+): SessionProviderConfigMode | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  if (value === "global-default" || value === "cc-switch-preset") {
+    return value;
+  }
+
+  throw new AppError({
+    statusCode: 400,
+    errorCode: "INVALID_INPUT",
+    detail: "providerConfigMode 非法",
+    field: "providerConfigMode"
+  });
 }
 
 export class SessionController {
@@ -460,6 +486,8 @@ export class SessionController {
             : null,
         strategy: request.body.strategy ?? "auto",
         targetProvider: request.body.targetProvider?.trim() || null,
+        providerConfigMode: normalizeProviderConfigMode(request.body.providerConfigMode),
+        providerPresetId: request.body.providerPresetId?.trim() || null,
         sessionKind: request.body.sessionKind === "annotation" ? "annotation" : "default",
         annotationSourceMessageId: request.body.annotationSourceMessageId?.trim() || null,
         annotationSourceText: request.body.annotationSourceText?.trim() || null
@@ -534,6 +562,8 @@ export class SessionController {
         sessionKind: request.body.sessionKind === "annotation" ? "annotation" : "default",
         annotationSourceMessageId: request.body.annotationSourceMessageId?.trim() || null,
         annotationSourceText: request.body.annotationSourceText?.trim() || null,
+        providerConfigMode: normalizeProviderConfigMode(request.body.providerConfigMode),
+        providerPresetId: request.body.providerPresetId?.trim() || null,
         runtimeOptions: runtimeOptions
           ? {
               ...runtimeOptions,
@@ -590,6 +620,8 @@ export class SessionController {
         userId: requireUserId(request),
         content,
         clientRequestId,
+        providerConfigMode: normalizeProviderConfigMode(request.body.providerConfigMode),
+        providerPresetId: request.body.providerPresetId?.trim() || null,
         runtimeOptions: runtimeOptions
           ? {
               ...runtimeOptions,
@@ -625,6 +657,8 @@ export class SessionController {
         userId: requireUserId(request),
         content,
         clientRequestId,
+        providerConfigMode: normalizeProviderConfigMode(request.body.providerConfigMode),
+        providerPresetId: request.body.providerPresetId?.trim() || null,
         runtimeOptions: runtimeOptions
           ? {
               ...runtimeOptions,

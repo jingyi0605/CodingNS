@@ -326,6 +326,9 @@ describe("SessionHistoryService forkSession", () => {
       provider: "codex",
       providerSessionId: "child-thread",
       rawStoreRef: childFile,
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
       createdAt: "2026-04-10T08:00:03.500Z",
       updatedAt: "2026-04-10T08:00:03.500Z"
     });
@@ -445,6 +448,9 @@ describe("SessionHistoryService forkSession", () => {
       provider: "codex",
       providerSessionId: "child-thread",
       rawStoreRef: childFile,
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
       createdAt: "2026-04-10T08:00:02.500Z",
       updatedAt: "2026-04-10T08:00:02.500Z"
     });
@@ -629,6 +635,9 @@ describe("SessionHistoryService forkSession", () => {
       provider: "claude-code",
       providerSessionId: "source-thread",
       rawStoreRef: sourceFile,
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
       createdAt: "2026-04-10T08:00:00.000Z",
       updatedAt: "2026-04-10T08:00:00.000Z"
     });
@@ -649,6 +658,9 @@ describe("SessionHistoryService forkSession", () => {
       provider: "claude-code",
       providerSessionId: "child-thread",
       rawStoreRef: childFile,
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
       createdAt: "2026-04-10T08:01:00.000Z",
       updatedAt: "2026-04-10T08:01:00.000Z"
     });
@@ -970,6 +982,9 @@ describe("SessionHistoryService forkSession", () => {
       provider: "codex",
       providerSessionId: "child-thread",
       rawStoreRef: sourceFile,
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
       createdAt: "2026-04-10T08:05:00.000Z",
       updatedAt: "2026-04-10T08:05:00.000Z"
     });
@@ -1129,6 +1144,9 @@ describe("SessionHistoryService forkSession", () => {
       provider: "codex",
       providerSessionId: "child-thread",
       rawStoreRef: sourceFile,
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
       createdAt: "2026-04-10T08:05:00.000Z",
       updatedAt: "2026-04-10T08:05:00.000Z"
     });
@@ -1174,6 +1192,9 @@ describe("SessionHistoryService forkSession", () => {
           provider: "codex",
           providerSessionId: "child-thread",
           rawStoreRef: childActualFile,
+          providerConfigMode: "global-default",
+          providerPresetId: null,
+          runtimeHomeDir: null,
           createdAt: "2026-04-10T08:05:00.000Z",
           updatedAt: "2026-04-10T08:05:02.000Z"
         });
@@ -1378,6 +1399,9 @@ function seedSourceSession(
     provider: "codex",
     providerSessionId: "source-thread",
     rawStoreRef,
+    providerConfigMode: "global-default",
+    providerPresetId: null,
+    runtimeHomeDir: null,
     createdAt: "2026-04-10T08:00:00.000Z",
     updatedAt: "2026-04-10T08:00:00.000Z"
   });

@@ -86,9 +86,10 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     request: ProviderRuntimeRunRequest,
     sink: ProviderRuntimeEventSink
   ): Promise<ProviderRuntimeLaunchResult> {
+    const homeDir = request.runtimeHomeDir?.trim() || this.options.homeDir;
     const providerSessionId = request.providerSessionId ?? buildPendingClaudeSessionId(request.sessionId);
     const rawStoreRef = buildClaudePendingRawStoreRef(
-      this.options.homeDir,
+      homeDir,
       request.workspacePath,
       request.sessionId
     );
@@ -111,14 +112,15 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     request: ProviderRuntimeRunRequest,
     sink: ProviderRuntimeEventSink
   ): Promise<ProviderRuntimeLaunchResult> {
+    const homeDir = request.runtimeHomeDir?.trim() || this.options.homeDir;
     const providerSessionId = ensureNonEmpty(
       request.providerSessionId,
       "CLAUDE_PROVIDER_SESSION_ID_REQUIRED"
     );
     const rawStoreRef =
-      findClaudeSessionFile(this.options.homeDir, providerSessionId) ??
+      findClaudeSessionFile(homeDir, providerSessionId) ??
       request.rawStoreRef ??
-      buildClaudeRawStoreRef(this.options.homeDir, request.workspacePath, providerSessionId);
+      buildClaudeRawStoreRef(homeDir, request.workspacePath, providerSessionId);
 
     sink.updateSessionBinding({
       providerSessionId,
@@ -141,6 +143,7 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     rawStoreRef: string,
     sessionArgs: string[]
   ): ProviderRuntimeLaunchResult {
+    const homeDir = request.runtimeHomeDir?.trim() || this.options.homeDir;
     const instructionFilePath = normalizeOptionalInstructionFilePath(
       request.options.providerInstructionFilePath
     );
@@ -221,8 +224,8 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
 
       if (!isPendingClaudeSessionId(activeProviderSessionId)) {
         const nextRawStoreRef =
-          findClaudeSessionFile(this.options.homeDir, activeProviderSessionId) ??
-          buildClaudeRawStoreRef(this.options.homeDir, request.workspacePath, activeProviderSessionId);
+          findClaudeSessionFile(homeDir, activeProviderSessionId) ??
+          buildClaudeRawStoreRef(homeDir, request.workspacePath, activeProviderSessionId);
 
         if (nextRawStoreRef !== activeRawStoreRef) {
           activeRawStoreRef = nextRawStoreRef;
@@ -245,7 +248,10 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     };
 
     this.ensureRuntimeStoreReady(activeRawStoreRef);
-    const runtimeEnv = buildClaudeRuntimeEnv(this.options.homeDir);
+    const runtimeEnv = {
+      ...buildClaudeRuntimeEnv(homeDir),
+      ...(request.runtimeEnv ?? {})
+    };
 
     const proc = spawn(this.commandPath, args, {
       cwd: request.workspacePath,

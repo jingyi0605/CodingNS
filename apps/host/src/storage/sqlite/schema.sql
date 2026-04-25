@@ -179,6 +179,11 @@ CREATE TABLE IF NOT EXISTS session_bindings (
   provider TEXT NOT NULL,
   provider_session_id TEXT NOT NULL,
   raw_store_ref TEXT NOT NULL,
+  provider_config_mode TEXT NOT NULL DEFAULT 'global-default' CHECK (
+    provider_config_mode IN ('global-default', 'cc-switch-preset')
+  ),
+  provider_preset_id TEXT,
+  runtime_home_dir TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
