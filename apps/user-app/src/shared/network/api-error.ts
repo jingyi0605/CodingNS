@@ -21,3 +21,7 @@ export class ApiError extends Error {
     this.data = payload.data;
   }
 }
+
+export function isProviderDisabledApiError(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.errorCode === "PROVIDER_DISABLED";
+}

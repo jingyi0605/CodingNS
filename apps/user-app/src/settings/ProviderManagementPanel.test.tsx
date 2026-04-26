@@ -61,12 +61,15 @@ describe("ProviderManagementPanel", () => {
 
     const dialog = await screen.findByRole("dialog", { name: t("settings.providerManagementModalTitle") });
 
-    expect(
-      within(dialog).getAllByText(t("settings.providerManagementSummaryEnabled")).length
-    ).toBeGreaterThan(0);
-    expect(within(dialog).getByText("2")).toBeInTheDocument();
-    expect(within(dialog).getByText("1")).toBeInTheDocument();
-    expect(within(dialog).getByText("3")).toBeInTheDocument();
+    const summaryGrid = within(dialog).getByLabelText(t("settings.providerManagementSummaryTitle"));
+    expect(summaryGrid).toBeInTheDocument();
+    expect(within(dialog).queryByText(t("settings.providerManagementModalDescription"))).not.toBeInTheDocument();
+    expect(within(summaryGrid).getByText(t("settings.providerManagementSummaryEnabled"))).toBeInTheDocument();
+    expect(within(summaryGrid).getByText(t("settings.providerManagementSummaryDisabled"))).toBeInTheDocument();
+    expect(within(summaryGrid).getByText(t("settings.providerManagementSummaryTotal"))).toBeInTheDocument();
+    expect(within(summaryGrid).getByText("2")).toBeInTheDocument();
+    expect(within(summaryGrid).getByText("1")).toBeInTheDocument();
+    expect(within(summaryGrid).getByText("3")).toBeInTheDocument();
     expect(within(dialog).getByText("Codex")).toBeInTheDocument();
     expect(within(dialog).getByText("Claude Code")).toBeInTheDocument();
     expect(within(dialog).getByText("OpenCode")).toBeInTheDocument();

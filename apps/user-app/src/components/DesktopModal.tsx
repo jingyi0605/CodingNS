@@ -11,6 +11,7 @@ interface DesktopModalProps {
   readonly open: boolean;
   readonly title: string;
   readonly description?: string;
+  readonly hideHeader?: boolean;
   readonly size?: DesktopModalSizePreset;
   readonly layout?: DesktopModalLayoutPreset;
   readonly dismissible?: boolean;
@@ -29,6 +30,7 @@ export function DesktopModal({
   open,
   title,
   description,
+  hideHeader = false,
   size = "compact",
   layout = "form",
   dismissible = true,
@@ -93,30 +95,33 @@ export function DesktopModal({
         data-layout={layout}
         role="dialog"
         aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={description ? descriptionId : undefined}
+        aria-labelledby={hideHeader ? undefined : titleId}
+        aria-label={hideHeader ? title : undefined}
+        aria-describedby={!hideHeader && description ? descriptionId : undefined}
       >
-        <div className="workbench-modal-header">
-          <div className="workbench-modal-title-wrap">
-            <h2 id={titleId}>{title}</h2>
-            {description ? <p id={descriptionId}>{description}</p> : null}
-          </div>
-          {headerActions || showCloseButton ? (
-            <div className="workbench-modal-header-actions">
-              {headerActions}
-              {showCloseButton ? (
-                <ModalCloseButton
-                  disabled={closeButtonDisabled}
-                  onClick={() => {
-                    if (dismissible) {
-                      onClose();
-                    }
-                  }}
-                />
-              ) : null}
+        {!hideHeader ? (
+          <div className="workbench-modal-header">
+            <div className="workbench-modal-title-wrap">
+              <h2 id={titleId}>{title}</h2>
+              {description ? <p id={descriptionId}>{description}</p> : null}
             </div>
-          ) : null}
-        </div>
+            {headerActions || showCloseButton ? (
+              <div className="workbench-modal-header-actions">
+                {headerActions}
+                {showCloseButton ? (
+                  <ModalCloseButton
+                    disabled={closeButtonDisabled}
+                    onClick={() => {
+                      if (dismissible) {
+                        onClose();
+                      }
+                    }}
+                  />
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <div className={bodyClassName ? `workbench-modal-body ${bodyClassName}` : "workbench-modal-body"}>{children}</div>
         {footer ? <div className="workbench-modal-footer">{footer}</div> : null}
       </section>

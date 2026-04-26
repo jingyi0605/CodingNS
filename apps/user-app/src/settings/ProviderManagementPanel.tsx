@@ -145,26 +145,20 @@ export function ProviderManagementPanel() {
       {statusText ? <p className="settings-provider-status">{statusText}</p> : null}
       {panelError ? <p className="settings-provider-error">{panelError}</p> : null}
 
-      <ModalSection
-        heading={t("settings.providerManagementSummaryTitle")}
-        description={t("settings.providerManagementSummaryDescription")}
-        className="settings-provider-modal-section"
-      >
-        <div className="settings-provider-summary-grid">
-          <SummaryCard
-            label={t("settings.providerManagementSummaryEnabled")}
-            value={String(enabledCount)}
-          />
-          <SummaryCard
-            label={t("settings.providerManagementSummaryDisabled")}
-            value={String(disabledCount)}
-          />
-          <SummaryCard
-            label={t("settings.providerManagementSummaryTotal")}
-            value={String(providerItems.length)}
-          />
-        </div>
-      </ModalSection>
+      <div className="settings-provider-summary-grid" aria-label={t("settings.providerManagementSummaryTitle")}>
+        <SummaryCard
+          label={t("settings.providerManagementSummaryEnabled")}
+          value={String(enabledCount)}
+        />
+        <SummaryCard
+          label={t("settings.providerManagementSummaryDisabled")}
+          value={String(disabledCount)}
+        />
+        <SummaryCard
+          label={t("settings.providerManagementSummaryTotal")}
+          value={String(providerItems.length)}
+        />
+      </div>
 
       <ModalSection
         heading={t("settings.providerManagementMatrixTitle")}
@@ -318,10 +312,10 @@ export function ProviderManagementPanel() {
         <MobileSheet
           open={modalOpen}
           title={t("settings.providerManagementModalTitle")}
-          description={t("settings.providerManagementModalDescription")}
           height="three-quarter"
           kind="form"
           showHandle
+          cardClassName="settings-provider-modal"
           bodyClassName="settings-provider-modal-body"
           onClose={() => setModalOpen(false)}
         >
@@ -331,7 +325,7 @@ export function ProviderManagementPanel() {
         <DesktopModal
           open={modalOpen}
           title={t("settings.providerManagementModalTitle")}
-          description={t("settings.providerManagementModalDescription")}
+          className="settings-provider-modal"
           size="xwide"
           layout="list"
           bodyClassName="settings-provider-modal-body"

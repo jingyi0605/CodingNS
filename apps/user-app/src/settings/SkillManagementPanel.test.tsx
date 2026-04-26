@@ -40,6 +40,14 @@ describe("SkillManagementPanel", () => {
         return createJsonResponse(createSkillOverviewResponse({ imported, uploaded, assistantUploaded: false }));
       }
 
+      if (url.endsWith("/api/providers/catalog") && method === "GET") {
+        return createJsonResponse({ items: createProviderCatalogResponse() });
+      }
+
+      if (url.endsWith("/api/opencli/catalog") && method === "GET") {
+        return createJsonResponse(createOpenCliCatalogResponse());
+      }
+
       if (url.endsWith("/api/skills") && method === "POST") {
         uploaded = true;
         expect(JSON.parse(String(init?.body))).toEqual({
@@ -85,6 +93,11 @@ describe("SkillManagementPanel", () => {
     const dialog = await screen.findByRole("dialog", { name: t("settings.skillConfigModalTitle") });
 
     expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByRole("tab", { name: t("settings.skillConfigTabSkills") })).toHaveAttribute("aria-selected", "true");
+    expect(within(dialog).getByRole("tab", { name: t("settings.skillConfigTabOpenCli") })).toHaveAttribute("aria-selected", "false");
+    expect(
+      within(dialog).queryByRole("heading", { level: 3, name: t("settings.opencliSectionTitle") })
+    ).not.toBeInTheDocument();
     expect(within(dialog).queryByText(t("settings.skillSummaryUnmanagedEntries"))).not.toBeInTheDocument();
     expect(within(dialog).queryByText(t("settings.skillSummaryAssistantRuntimeEntries"))).not.toBeInTheDocument();
     expect(within(dialog).getByText("team-helper")).toBeInTheDocument();
@@ -100,6 +113,18 @@ describe("SkillManagementPanel", () => {
     expect(within(dialog).getByText(t("settings.skillConflictedEmpty"))).toBeInTheDocument();
     expect(within(dialog).getByText(t("settings.skillDiagnosticsEmpty"))).toBeInTheDocument();
     expect(within(dialog).getAllByText(t("settings.skillTagAssistantOnly")).length).toBeGreaterThan(0);
+
+    await userEvent.click(within(dialog).getByRole("tab", { name: t("settings.skillConfigTabOpenCli") }));
+    expect(
+      await within(dialog).findByRole("checkbox", { name: t("settings.opencliProviderToggleLabel") })
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: t("settings.opencliRefreshAction") })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: t("settings.opencliDetailAction") })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: t("settings.opencliSaveAction") })).toBeInTheDocument();
+    expect(within(dialog).queryByText("team-helper")).not.toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("tab", { name: t("settings.skillConfigTabSkills") }));
+    expect(await within(dialog).findByText("team-helper")).toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillCreateAction") }));
 
@@ -175,6 +200,14 @@ describe("SkillManagementPanel", () => {
         );
       }
 
+      if (url.endsWith("/api/providers/catalog") && method === "GET") {
+        return createJsonResponse({ items: createProviderCatalogResponse({ codexEnabled: false }) });
+      }
+
+      if (url.endsWith("/api/opencli/catalog") && method === "GET") {
+        return createJsonResponse(createOpenCliCatalogResponse());
+      }
+
       if (url.endsWith("/api/skills") && method === "POST") {
         assistantUploaded = true;
         expect(JSON.parse(String(init?.body))).toEqual({
@@ -182,7 +215,7 @@ describe("SkillManagementPanel", () => {
           scope: "assistant",
           fileName: "butler-inbox-helper.md",
           directoryName: "butler-inbox-helper",
-          targetCli: ["codex"]
+          targetCli: ["claude-code"]
         });
         return createJsonResponse({});
       }
@@ -220,6 +253,52 @@ describe("SkillManagementPanel", () => {
         `${t("settings.skillAssistantRuntimeUsedBy")}: ${t("settings.skillTargetCodex")}`
       )
     ).toBeInTheDocument();
+  });
+
+  it("禁用的 provider 不会再作为 Skill 新目标或重新同步目标", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (url.endsWith("/api/skills/overview") && method === "GET") {
+        return createJsonResponse(createSkillOverviewResponse({
+          imported: false,
+          uploaded: false,
+          assistantUploaded: false
+        }));
+      }
+
+      if (url.endsWith("/api/providers/catalog") && method === "GET") {
+        return createJsonResponse({ items: createProviderCatalogResponse({ codexEnabled: false }) });
+      }
+
+      if (url.endsWith("/api/opencli/catalog") && method === "GET") {
+        return createJsonResponse(createOpenCliCatalogResponse());
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    global.fetch = fetchMock as typeof fetch;
+
+    renderPanel();
+    await userEvent.click(await screen.findByRole("button", { name: t("settings.skillManageAction") }));
+
+    const dialog = await screen.findByRole("dialog", { name: t("settings.skillConfigModalTitle") });
+    const teamHelperCard = screen.getByText("team-helper").closest(".settings-skill-entry");
+
+    expect(teamHelperCard).not.toBeNull();
+    expect(within(teamHelperCard as HTMLElement).getByText(`${t("settings.skillTargetCodex")} · ${t("settings.skillTargetDisabledTag")}`)).toBeInTheDocument();
+    expect(within(teamHelperCard as HTMLElement).getByRole("button", { name: t("settings.skillSyncAction") })).toBeDisabled();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillCreateAction") }));
+
+    const createDialog = await screen.findByRole("dialog", { name: t("settings.skillCreateModalTitle") });
+    expect(within(createDialog).getByRole("checkbox", { name: `${t("settings.skillTargetCodex")} · ${t("settings.skillTargetDisabledTag")}` })).toBeDisabled();
+    expect(within(createDialog).getByRole("checkbox", { name: t("settings.skillTargetClaudeCode") })).toBeChecked();
+
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/api/skills/sync"))).toBe(false);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/api/skills"))).toBe(false);
   });
 });
 
@@ -375,5 +454,166 @@ function createSkillOverviewResponse(
     conflictedEntries: [],
     diagnostics: [],
     scannedAt: "2026-04-14T10:10:00.000Z"
+  };
+}
+
+function createOpenCliCatalogResponse() {
+  return {
+    provider: {
+      providerId: "opencli",
+      enabled: false,
+      installState: "installed",
+      healthState: "bridge_missing",
+      version: "1.7.7",
+      installPath: "/opt/homebrew/lib/node_modules/@jackwener/opencli",
+      lastCheckedAt: "2026-04-26T10:00:00.000Z",
+      activeRuntimeId: null,
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      catalogRefreshedAt: "2026-04-26T10:00:00.000Z",
+      catalogSource: "manifest"
+    },
+    summary: {
+      catalogCount: 2,
+      enabledCount: 2,
+      browserDependentCount: 1,
+      installState: "installed",
+      healthState: "bridge_missing"
+    },
+    effectiveCatalogSource: "manifest",
+    activeRuntimeProfile: null,
+    entries: [
+      {
+        providerId: "opencli",
+        commandId: "hackernews/top",
+        site: "hackernews",
+        name: "top",
+        description: "读取 Hacker News 热门内容",
+        strategy: "public",
+        browser: false,
+        modulePath: "./clis/hackernews/top.js",
+        sourceFile: "clis/hackernews/top.js",
+        enabled: true,
+        sortOrder: 0
+      },
+      {
+        providerId: "opencli",
+        commandId: "twitter/trending",
+        site: "twitter",
+        name: "trending",
+        description: "读取 Twitter 热门趋势",
+        strategy: "intercept",
+        browser: true,
+        modulePath: "./clis/twitter/trending.js",
+        sourceFile: "clis/twitter/trending.js",
+        enabled: true,
+        sortOrder: 1
+      }
+    ],
+    siteGroups: [
+      {
+        site: "hackernews",
+        totalCount: 1,
+        enabledCount: 1,
+        browserDependentCount: 0,
+        commands: [
+          {
+            providerId: "opencli",
+            commandId: "hackernews/top",
+            site: "hackernews",
+            name: "top",
+            description: "读取 Hacker News 热门内容",
+            strategy: "public",
+            browser: false,
+            modulePath: "./clis/hackernews/top.js",
+            sourceFile: "clis/hackernews/top.js",
+            enabled: true,
+            sortOrder: 0
+          }
+        ]
+      },
+      {
+        site: "twitter",
+        totalCount: 1,
+        enabledCount: 1,
+        browserDependentCount: 1,
+        commands: [
+          {
+            providerId: "opencli",
+            commandId: "twitter/trending",
+            site: "twitter",
+            name: "trending",
+            description: "读取 Twitter 热门趋势",
+            strategy: "intercept",
+            browser: true,
+            modulePath: "./clis/twitter/trending.js",
+            sourceFile: "clis/twitter/trending.js",
+            enabled: true,
+            sortOrder: 1
+          }
+        ]
+      }
+    ]
+  };
+}
+
+function createProviderCatalogResponse(
+  overrides: {
+    codexEnabled?: boolean;
+    claudeEnabled?: boolean;
+    geminiEnabled?: boolean;
+    opencodeEnabled?: boolean;
+  } = {}
+) {
+  return [
+    createProviderCatalogEntry("codex", overrides.codexEnabled ?? true),
+    createProviderCatalogEntry("claude-code", overrides.claudeEnabled ?? true),
+    createProviderCatalogEntry("gemini", overrides.geminiEnabled ?? true),
+    createProviderCatalogEntry("opencode", overrides.opencodeEnabled ?? true)
+  ];
+}
+
+function createProviderCatalogEntry(provider: "codex" | "claude-code" | "gemini" | "opencode", enabled: boolean) {
+  return {
+    provider,
+    displayName:
+      provider === "claude-code"
+        ? "Claude Code"
+        : provider === "opencode"
+          ? "OpenCode"
+          : provider === "gemini"
+            ? "Gemini"
+            : "Codex",
+    enabled,
+    installState: "ready",
+    disableImpact: {
+      hidesSessions: true,
+      blocksSessionStart: true,
+      blocksFork: true,
+      blocksAssistant: provider === "codex" || provider === "claude-code",
+      blocksSkillTargets: true
+    },
+    capabilities: {
+      provider,
+      canStartSession: enabled,
+      canResumeSession: enabled,
+      canSendMessage: enabled,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: false,
+      supportsStructuredToolCalls: false,
+      supportsTokenUsage: false,
+      supportsAttachments: false,
+      supportsPermissionPrompt: false,
+      supportsCheckpoint: false,
+      limitations: []
+    },
+    productCapabilities: {
+      streamingOutput: enabled,
+      toolCalls: false,
+      assistantService: enabled && (provider === "codex" || provider === "claude-code"),
+      sessionFork: true,
+      skillUsage: enabled
+    }
   };
 }

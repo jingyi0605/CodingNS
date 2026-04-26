@@ -10,6 +10,7 @@ interface WorkbenchModalProps {
   readonly open: boolean;
   readonly title: string;
   readonly description?: string;
+  readonly hideHeader?: boolean;
   readonly size?: DesktopModalSizePreset;
   readonly layout?: DesktopModalLayoutPreset;
   readonly className?: string;
@@ -28,6 +29,7 @@ export function WorkbenchModal({
   open,
   title,
   description,
+  hideHeader = false,
   size = "compact",
   layout = "form",
   className,
@@ -46,6 +48,7 @@ export function WorkbenchModal({
       open={open}
       title={title}
       description={description}
+      hideHeader={hideHeader}
       size={size}
       layout={layout}
       dismissible={dismissible}

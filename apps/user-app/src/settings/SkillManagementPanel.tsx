@@ -1,5 +1,8 @@
-import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 
+import { ModalCloseButton } from "../components/ModalCloseButton";
+import type { ProviderCatalogEntryDto } from "../features/conversation/api/conversation-api";
+import { listProviderCatalog } from "../features/conversation/api/conversation-api";
 import type {
   AssistantRuntimeSkillOverviewItemDto,
   ManagedSkillOverviewItemDto,
@@ -20,8 +23,13 @@ import { WorkbenchModal } from "../features/conversation/components/WorkbenchMod
 import { useAuthSelector } from "../features/auth/store/auth-store";
 import { t } from "../shared/i18n";
 import { ApiError } from "../shared/network/api-error";
+import {
+  OpenCliManagementPanel,
+  type OpenCliManagementToolbarState
+} from "./OpenCliManagementPanel";
 
 type PendingActionKey = string | null;
+type SkillManagementTabId = "skills" | "opencli";
 
 interface SkillManagementPanelProps {
   readonly triggerClassName?: string;
@@ -31,6 +39,11 @@ interface SkillManagementPanelProps {
 
 type SkillUploadSourceMode = "file" | "paste";
 
+const SKILL_MANAGEMENT_TABS: ReadonlyArray<{ id: SkillManagementTabId }> = [
+  { id: "skills" },
+  { id: "opencli" }
+];
+
 export function SkillManagementPanel({
   triggerClassName = "secondary-button",
   triggerLabel,
@@ -39,6 +52,7 @@ export function SkillManagementPanel({
   const accessToken = useAuthSelector((state) => state.session?.accessToken ?? null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const [overview, setOverview] = useState<SkillOverviewDto | null>(null);
+  const [providerCatalog, setProviderCatalog] = useState<ProviderCatalogEntryDto[]>([]);
   const [loading, setLoading] = useState(false);
   const [pendingActionKey, setPendingActionKey] = useState<PendingActionKey>(null);
   const [panelError, setPanelError] = useState<string | null>(null);
@@ -52,6 +66,10 @@ export function SkillManagementPanel({
   const [uploadTargets, setUploadTargets] = useState<Record<SkillTargetCli, boolean>>(() =>
     createDefaultUploadTargets("workspace")
   );
+  const [activeTab, setActiveTab] = useState<SkillManagementTabId>("skills");
+  const [openCliToolbarState, setOpenCliToolbarState] = useState<OpenCliManagementToolbarState | null>(null);
+  const tabsBaseId = useId();
+  const providerCatalogByTargetCli = buildSkillTargetCatalogMap(providerCatalog);
 
   useEffect(() => {
     let active = true;
@@ -62,6 +80,7 @@ export function SkillManagementPanel({
 
     if (!accessToken) {
       setOverview(null);
+      setProviderCatalog([]);
       setPanelError(null);
       setStatusText(null);
       setLoading(false);
@@ -72,13 +91,17 @@ export function SkillManagementPanel({
       setLoading(true);
 
       try {
-        const nextOverview = await fetchSkillOverview();
+        const [nextOverview, nextProviderCatalog] = await Promise.all([
+          fetchSkillOverview(),
+          listProviderCatalog()
+        ]);
 
         if (!active) {
           return;
         }
 
         setOverview(nextOverview);
+        setProviderCatalog(nextProviderCatalog);
         setPanelError(null);
       } catch (error) {
         if (!active) {
@@ -100,9 +123,13 @@ export function SkillManagementPanel({
     };
   }, [accessToken, modalOpen]);
 
-  async function reloadOverview(): Promise<void> {
-    const nextOverview = await fetchSkillOverview();
+  async function reloadPanelData(): Promise<void> {
+    const [nextOverview, nextProviderCatalog] = await Promise.all([
+      fetchSkillOverview(),
+      listProviderCatalog()
+    ]);
     setOverview(nextOverview);
+    setProviderCatalog(nextProviderCatalog);
     setPanelError(null);
   }
 
@@ -116,7 +143,7 @@ export function SkillManagementPanel({
     setStatusText(null);
 
     try {
-      await reloadOverview();
+      await reloadPanelData();
       setStatusText(t("settings.skillRefreshSuccess"));
     } catch (error) {
       setPanelError(resolveSkillPanelError(error));
@@ -140,7 +167,7 @@ export function SkillManagementPanel({
         directoryPath: entry.directoryPath,
         expectedContentHash: entry.contentHash
       });
-      await reloadOverview();
+      await reloadPanelData();
       setStatusText(
         t("settings.skillImportSuccess", {
           name: entry.name,
@@ -159,10 +186,13 @@ export function SkillManagementPanel({
       return;
     }
 
-    const targetCli = item.bindings.filter((binding) => binding.enabled).map((binding) => binding.targetCli);
+    const targetCli = item.bindings
+      .filter((binding) => binding.enabled)
+      .map((binding) => binding.targetCli)
+      .filter((target) => isSkillTargetProviderEnabled(target, providerCatalogByTargetCli));
 
     if (targetCli.length === 0) {
-      setPanelError(t("settings.skillSyncTargetMissing"));
+      setPanelError(resolveSkillSyncTargetError(item.bindings, providerCatalogByTargetCli));
       return;
     }
 
@@ -175,7 +205,7 @@ export function SkillManagementPanel({
         skillId: item.skill.id,
         targetCli
       });
-      await reloadOverview();
+      await reloadPanelData();
       setStatusText(
         t("settings.skillSyncSuccess", {
           name: item.skill.name
@@ -204,7 +234,7 @@ export function SkillManagementPanel({
       const draft = prepareSkillUploadDraft(file.name, markdownContent);
 
       setUploadDraft(draft);
-      setUploadTargets(createDefaultUploadTargets(uploadScope));
+      setUploadTargets(createDefaultUploadTargets(uploadScope, providerCatalogByTargetCli));
     } catch (error) {
       setPanelError(resolveSkillPanelError(error));
     }
@@ -239,10 +269,11 @@ export function SkillManagementPanel({
 
     const selectedTargets = getUploadTargetOptions(uploadScope)
       .filter((targetCli) => uploadTargets[targetCli])
+      .filter((targetCli) => isSkillTargetProviderEnabled(targetCli, providerCatalogByTargetCli))
       .map((targetCli) => targetCli);
 
     if (selectedTargets.length === 0) {
-      setPanelError(t("settings.skillUploadTargetRequired"));
+      setPanelError(resolveSkillUploadTargetError(uploadScope, providerCatalogByTargetCli));
       return;
     }
 
@@ -258,7 +289,7 @@ export function SkillManagementPanel({
         directoryName: normalizedDirectoryName,
         targetCli: selectedTargets
       });
-      await reloadOverview();
+      await reloadPanelData();
       setStatusText(
         t("settings.skillUploadSuccess", {
           name: normalizedDirectoryName
@@ -275,18 +306,22 @@ export function SkillManagementPanel({
 
   function handleUploadScopeChange(scope: SkillScope): void {
     setUploadScope(scope);
-    setUploadTargets(createDefaultUploadTargets(scope));
+    setUploadTargets(createDefaultUploadTargets(scope, providerCatalogByTargetCli));
   }
 
   function handleUploadSourceModeChange(mode: SkillUploadSourceMode): void {
     setUploadSourceMode(mode);
     setUploadDraft(null);
     setPastedMarkdown("");
-    setUploadTargets(createDefaultUploadTargets(uploadScope));
+    setUploadTargets(createDefaultUploadTargets(uploadScope, providerCatalogByTargetCli));
     setPanelError(null);
   }
 
   function handleUploadTargetToggle(targetCli: SkillTargetCli): void {
+    if (!isSkillTargetProviderEnabled(targetCli, providerCatalogByTargetCli)) {
+      return;
+    }
+
     setUploadTargets((current) => ({
       ...current,
       [targetCli]: !current[targetCli]
@@ -296,6 +331,7 @@ export function SkillManagementPanel({
   function openCreateModal(): void {
     setCreateModalOpen(true);
     setPanelError(null);
+    resetUploadComposer(uploadScope);
   }
 
   function closeCreateModal(): void {
@@ -308,7 +344,7 @@ export function SkillManagementPanel({
     setUploadDraft(null);
     setPastedMarkdown("");
     setUploadSourceMode("file");
-    setUploadTargets(createDefaultUploadTargets(scope));
+    setUploadTargets(createDefaultUploadTargets(scope, providerCatalogByTargetCli));
   }
 
   const summary = overview?.summary ?? {
@@ -335,6 +371,8 @@ export function SkillManagementPanel({
     pastedMarkdown
   });
   const resolvedTriggerLabel = triggerLabel ?? t("settings.skillManageAction");
+  const skillTabSelected = activeTab === "skills";
+  const openCliTabSelected = activeTab === "opencli";
 
   return (
     <>
@@ -345,6 +383,7 @@ export function SkillManagementPanel({
         aria-haspopup="dialog"
         aria-expanded={modalOpen}
         onClick={() => {
+          setActiveTab("skills");
           setModalOpen(true);
         }}
       >
@@ -355,224 +394,356 @@ export function SkillManagementPanel({
       <WorkbenchModal
         open={modalOpen}
         title={t("settings.skillConfigModalTitle")}
-        description={t("settings.skillConfigModalDescription")}
+        hideHeader
         className="settings-skill-modal"
-        headerActions={(
-          <div className="settings-skill-modal-actions">
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={!accessToken || loading || pendingActionKey !== null}
-              onClick={openCreateModal}
-            >
-              {t("settings.skillCreateAction")}
-            </button>
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={!accessToken || loading || pendingActionKey !== null}
-              onClick={() => {
-                void handleRefresh();
-              }}
-            >
-              {pendingActionKey === "refresh" ? t("common.loading") : t("settings.skillRefresh")}
-            </button>
-          </div>
-        )}
-        onClose={() => setModalOpen(false)}
+        onClose={() => {
+          setActiveTab("skills");
+          setModalOpen(false);
+        }}
       >
-        <section className="settings-skill-summary-block">
-          <div className="settings-skill-summary-grid">
-            <SummaryCard
-              label={t("settings.skillSummaryManagedSkills")}
-              value={String(summary.managedSkillCount)}
-            />
-            <SummaryCard
-              label={t("settings.skillSummaryManagedEntries")}
-              value={String(summary.managedEntryCount)}
-            />
-            <SummaryCard
-              label={t("settings.skillSummaryConflictedEntries")}
-              value={String(visibleConflictedEntries.length)}
-            />
-            <SummaryCard
-              label={t("settings.skillSummaryDiagnostics")}
-              value={String(visibleDiagnostics.length)}
-            />
+        <div className="settings-skill-modal-topbar">
+          <div className="settings-skill-modal-topbar-main">
+            <div
+              className="settings-model-tabs settings-skill-tabs"
+              role="tablist"
+              aria-label={t("settings.skillConfigTabsLabel")}
+            >
+              {SKILL_MANAGEMENT_TABS.map((tab) => {
+                const selected = activeTab === tab.id;
+                const tabId = `${tabsBaseId}-${tab.id}-tab`;
+                const panelId = `${tabsBaseId}-${tab.id}-panel`;
+
+                return (
+                  <button
+                    key={tab.id}
+                    id={tabId}
+                    type="button"
+                    role="tab"
+                    className="settings-model-tab"
+                    aria-selected={selected}
+                    aria-controls={panelId}
+                    data-active={selected ? "true" : "false"}
+                    onClick={() => setActiveTab(tab.id)}
+                  >
+                    {resolveSkillManagementTabLabel(tab.id)}
+                  </button>
+                );
+              })}
+            </div>
+
+            {skillTabSelected ? (
+              <div className="settings-skill-modal-actions settings-skill-page-toolbar">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={!accessToken || loading || pendingActionKey !== null}
+                  onClick={openCreateModal}
+                >
+                  {t("settings.skillCreateAction")}
+                </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={!accessToken || loading || pendingActionKey !== null}
+                  onClick={() => {
+                    void handleRefresh();
+                  }}
+                >
+                  {pendingActionKey === "refresh" ? t("common.loading") : t("settings.skillRefresh")}
+                </button>
+              </div>
+            ) : null}
+
+            {openCliTabSelected && openCliToolbarState ? (
+              <div className="settings-skill-modal-actions settings-skill-page-toolbar settings-opencli-toolbar">
+                <label className="settings-opencli-checkbox settings-opencli-toolbar-toggle">
+                  <input
+                    aria-label={t("settings.opencliProviderToggleLabel")}
+                    type="checkbox"
+                    checked={openCliToolbarState.draftEnabled}
+                    disabled={openCliToolbarState.enableDisabled}
+                    onChange={(event) => openCliToolbarState.onEnabledChange(event.target.checked)}
+                  />
+                  <span>{t("settings.opencliEnableAction")}</span>
+                </label>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={openCliToolbarState.refreshDisabled}
+                  onClick={openCliToolbarState.onRefresh}
+                >
+                  {openCliToolbarState.refreshing
+                    ? t("common.loading")
+                    : t("settings.opencliRefreshAction")}
+                </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={openCliToolbarState.detailDisabled}
+                  onClick={openCliToolbarState.onShowDetails}
+                >
+                  {t("settings.opencliDetailAction")}
+                </button>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={openCliToolbarState.saveDisabled}
+                  onClick={openCliToolbarState.onSave}
+                >
+                  {openCliToolbarState.saving
+                    ? t("common.loading")
+                    : t("settings.opencliSaveAction")}
+                </button>
+              </div>
+            ) : null}
           </div>
 
-          <div className="settings-release-meta">
-            <span>
-              {t("settings.skillScannedAt")}: {loading ? t("common.loading") : formatDateTime(overview?.scannedAt)}
-            </span>
-          </div>
+          <ModalCloseButton
+            onClick={() => {
+              setActiveTab("skills");
+              setModalOpen(false);
+            }}
+          />
+        </div>
 
-          {statusText ? <p className="settings-release-status">{statusText}</p> : null}
-          {panelError ? <p className="settings-release-status">{panelError}</p> : null}
-        </section>
+        {skillTabSelected ? (
+          <div
+            id={`${tabsBaseId}-skills-panel`}
+            role="tabpanel"
+            aria-labelledby={`${tabsBaseId}-skills-tab`}
+            className="settings-skill-panel"
+          >
+            <section className="settings-skill-summary-block">
+              <div className="settings-skill-summary-grid">
+                <SummaryCard
+                  label={t("settings.skillSummaryManagedSkills")}
+                  value={String(summary.managedSkillCount)}
+                />
+                <SummaryCard
+                  label={t("settings.skillSummaryManagedEntries")}
+                  value={String(summary.managedEntryCount)}
+                />
+                <SummaryCard
+                  label={t("settings.skillSummaryConflictedEntries")}
+                  value={String(visibleConflictedEntries.length)}
+                />
+                <SummaryCard
+                  label={t("settings.skillSummaryDiagnostics")}
+                  value={String(visibleDiagnostics.length)}
+                />
+              </div>
 
-        <SkillSection
-          title={t("settings.skillManagedListTitle")}
-          emptyText={t("settings.skillManagedEmpty")}
-          items={overview?.managedSkills ?? []}
-          renderItem={(item) => {
-            const actionKey = buildSyncActionKey(item.skill.id);
+              <div className="settings-release-meta">
+                <span>
+                  {t("settings.skillScannedAt")}: {loading ? t("common.loading") : formatDateTime(overview?.scannedAt)}
+                </span>
+              </div>
 
-            return (
-              <div key={item.skill.id} className="settings-skill-entry">
-                <div className="settings-skill-entry-main">
-                  <strong className="settings-skill-entry-title">{item.skill.name}</strong>
-                  <p className="settings-skill-entry-meta">{resolveManagedSkillDescription(item.bindings)}</p>
-                  <div className="settings-skill-tags">
-                    {item.bindings.map((binding) => (
-                      <span
-                        key={`${item.skill.id}-${binding.targetCli}`}
-                        className="settings-skill-tag"
-                        data-status={binding.syncStatus}
+              {statusText ? <p className="settings-release-status">{statusText}</p> : null}
+              {panelError ? <p className="settings-release-status">{panelError}</p> : null}
+            </section>
+
+            <SkillSection
+              title={t("settings.skillManagedListTitle")}
+              emptyText={t("settings.skillManagedEmpty")}
+              items={overview?.managedSkills ?? []}
+              renderItem={(item) => {
+                const actionKey = buildSyncActionKey(item.skill.id);
+
+                return (
+                  <div key={item.skill.id} className="settings-skill-entry">
+                    <div className="settings-skill-entry-main">
+                      <strong className="settings-skill-entry-title">{item.skill.name}</strong>
+                      <p className="settings-skill-entry-meta">{resolveManagedSkillDescription(item.bindings)}</p>
+                      <div className="settings-skill-tags">
+                        {item.bindings.map((binding) => (
+                          <span
+                            key={`${item.skill.id}-${binding.targetCli}`}
+                            className="settings-skill-tag"
+                            data-status={resolveBindingTagStatus(binding, providerCatalogByTargetCli)}
+                          >
+                            {resolveBindingTagLabel(binding, providerCatalogByTargetCli)}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="settings-skill-entry-actions">
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        disabled={
+                          loading
+                          || pendingActionKey !== null
+                          || !canSyncManagedSkill(item.bindings, providerCatalogByTargetCli)
+                        }
+                        onClick={() => {
+                          void handleSync(item);
+                        }}
                       >
-                        {resolveTargetCliLabel(binding.targetCli)} · {resolveBindingStatusLabel(binding.syncStatus)}
+                        {pendingActionKey === actionKey ? t("common.loading") : t("settings.skillSyncAction")}
+                      </button>
+                    </div>
+                  </div>
+                );
+              }}
+            />
+
+            <SkillSection
+              title={t("settings.skillUnmanagedListTitle")}
+              emptyText={t("settings.skillUnmanagedEmpty")}
+              items={overview?.unmanagedEntries ?? []}
+              renderItem={(entry) => {
+                const actionKey = buildImportActionKey(entry);
+
+                return (
+                  <div key={`${entry.targetCli}:${entry.directoryPath}`} className="settings-skill-entry">
+                    <div className="settings-skill-entry-main">
+                      <strong className="settings-skill-entry-title">{entry.name}</strong>
+                      <p className="settings-skill-entry-meta">
+                        {resolveUnmanagedSkillDescription(entry, providerCatalogByTargetCli)}
+                      </p>
+                      {!isSkillTargetProviderEnabled(entry.targetCli, providerCatalogByTargetCli) ? (
+                        <div className="settings-skill-tags">
+                          <span className="settings-skill-tag" data-status="failed">
+                            {t("settings.skillTargetDisabledTag")}
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="settings-skill-entry-actions">
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        disabled={
+                          loading
+                          || pendingActionKey !== null
+                          || !isSkillTargetProviderEnabled(entry.targetCli, providerCatalogByTargetCli)
+                        }
+                        onClick={() => {
+                          void handleImport(entry);
+                        }}
+                      >
+                        {pendingActionKey === actionKey ? t("common.loading") : t("settings.skillImportAction")}
+                      </button>
+                    </div>
+                  </div>
+                );
+              }}
+            />
+
+            <SkillSection
+              title={t("settings.skillAssistantRuntimeListTitle")}
+              description={t("settings.skillAssistantRuntimeListDescription")}
+              emptyText={t("settings.skillAssistantRuntimeEmpty")}
+              items={assistantRuntimeItems}
+              renderItem={(item) => (
+                <div key={`${item.directoryName}:${item.sourcePath}`} className="settings-skill-entry">
+                  <div className="settings-skill-entry-main">
+                    <strong className="settings-skill-entry-title">{item.name}</strong>
+                    <p className="settings-skill-entry-meta">
+                      {t("settings.skillAssistantRuntimeItemDescription")}
+                    </p>
+                    <p className="settings-skill-entry-meta">
+                      {t("settings.skillAssistantRuntimeUsedBy")}: {formatTargetCliList(item.usedByTargetCli)}
+                    </p>
+                    <div className="settings-skill-tags">
+                      <span className="settings-skill-tag" data-status="assistant-runtime">
+                        {t("settings.skillTagAssistantOnly")}
                       </span>
-                    ))}
+                      {item.usedByTargetCli.map((targetCli) => (
+                        <span
+                          key={`${item.directoryName}:${targetCli}`}
+                          className="settings-skill-tag"
+                          data-status={
+                            isSkillTargetProviderEnabled(targetCli, providerCatalogByTargetCli)
+                              ? "synced"
+                              : "failed"
+                          }
+                        >
+                          {isSkillTargetProviderEnabled(targetCli, providerCatalogByTargetCli)
+                            ? resolveTargetCliLabel(targetCli)
+                            : `${resolveTargetCliLabel(targetCli)} · ${t("settings.skillTargetDisabledTag")}`}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 </div>
-                <div className="settings-skill-entry-actions">
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    disabled={loading || pendingActionKey !== null}
-                    onClick={() => {
-                      void handleSync(item);
-                    }}
-                  >
-                    {pendingActionKey === actionKey ? t("common.loading") : t("settings.skillSyncAction")}
-                  </button>
-                </div>
-              </div>
-            );
-          }}
-        />
+              )}
+            />
 
-        <SkillSection
-          title={t("settings.skillUnmanagedListTitle")}
-          emptyText={t("settings.skillUnmanagedEmpty")}
-          items={overview?.unmanagedEntries ?? []}
-          renderItem={(entry) => {
-            const actionKey = buildImportActionKey(entry);
+            <SkillSection
+              title={t("settings.skillConflictedListTitle")}
+              emptyText={t("settings.skillConflictedEmpty")}
+              items={visibleConflictedEntries}
+              renderItem={(entry) => {
+                const entryTags = resolveScanEntryTags(entry, overview?.diagnostics ?? []);
 
-            return (
-              <div key={`${entry.targetCli}:${entry.directoryPath}`} className="settings-skill-entry">
-                <div className="settings-skill-entry-main">
-                  <strong className="settings-skill-entry-title">{entry.name}</strong>
-                  <p className="settings-skill-entry-meta">{resolveUnmanagedSkillDescription(entry)}</p>
-                </div>
-                <div className="settings-skill-entry-actions">
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    disabled={loading || pendingActionKey !== null}
-                    onClick={() => {
-                      void handleImport(entry);
-                    }}
-                  >
-                    {pendingActionKey === actionKey ? t("common.loading") : t("settings.skillImportAction")}
-                  </button>
-                </div>
-              </div>
-            );
-          }}
-        />
-
-        <SkillSection
-          title={t("settings.skillAssistantRuntimeListTitle")}
-          description={t("settings.skillAssistantRuntimeListDescription")}
-          emptyText={t("settings.skillAssistantRuntimeEmpty")}
-          items={assistantRuntimeItems}
-          renderItem={(item) => (
-            <div key={`${item.directoryName}:${item.sourcePath}`} className="settings-skill-entry">
-              <div className="settings-skill-entry-main">
-                <strong className="settings-skill-entry-title">{item.name}</strong>
-                <p className="settings-skill-entry-meta">
-                  {t("settings.skillAssistantRuntimeItemDescription")}
-                </p>
-                <p className="settings-skill-entry-meta">
-                  {t("settings.skillAssistantRuntimeUsedBy")}: {formatTargetCliList(item.usedByTargetCli)}
-                </p>
-                <div className="settings-skill-tags">
-                  <span className="settings-skill-tag" data-status="assistant-runtime">
-                    {t("settings.skillTagAssistantOnly")}
-                  </span>
-                  {item.usedByTargetCli.map((targetCli) => (
-                    <span
-                      key={`${item.directoryName}:${targetCli}`}
-                      className="settings-skill-tag"
-                      data-status="synced"
-                    >
-                      {resolveTargetCliLabel(targetCli)}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-        />
-
-        <SkillSection
-          title={t("settings.skillConflictedListTitle")}
-          emptyText={t("settings.skillConflictedEmpty")}
-          items={visibleConflictedEntries}
-          renderItem={(entry) => {
-            const entryTags = resolveScanEntryTags(entry, overview?.diagnostics ?? []);
-
-            return (
-              <div key={`${entry.targetCli}:${entry.directoryPath}`} className="settings-skill-entry">
-                <div className="settings-skill-entry-main">
-                  <strong className="settings-skill-entry-title">{entry.name}</strong>
-                  <p className="settings-skill-entry-meta">{resolveConflictedSkillDescription(entry)}</p>
-                  {entryTags.length > 0 ? (
-                    <div className="settings-skill-tags">
-                      {entryTags.map((tag) => (
-                        <span key={tag.key} className="settings-skill-tag" data-status={tag.status}>
-                          {tag.label}
-                        </span>
-                      ))}
+                return (
+                  <div key={`${entry.targetCli}:${entry.directoryPath}`} className="settings-skill-entry">
+                    <div className="settings-skill-entry-main">
+                      <strong className="settings-skill-entry-title">{entry.name}</strong>
+                      <p className="settings-skill-entry-meta">
+                        {resolveConflictedSkillDescription(entry, providerCatalogByTargetCli)}
+                      </p>
+                      {entryTags.length > 0 ? (
+                        <div className="settings-skill-tags">
+                          {entryTags.map((tag) => (
+                            <span key={tag.key} className="settings-skill-tag" data-status={tag.status}>
+                              {tag.label}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
-                  ) : null}
-                </div>
-              </div>
-            );
-          }}
-        />
+                  </div>
+                );
+              }}
+            />
 
-        <SkillSection
-          title={t("settings.skillDiagnosticsTitle")}
-          emptyText={t("settings.skillDiagnosticsEmpty")}
-          items={visibleDiagnostics}
-          renderItem={(diagnostic) => {
-            const diagnosticTags = resolveDiagnosticTags(diagnostic);
-            const diagnosticPresentation = resolveDiagnosticPresentation(diagnostic);
+            <SkillSection
+              title={t("settings.skillDiagnosticsTitle")}
+              emptyText={t("settings.skillDiagnosticsEmpty")}
+              items={visibleDiagnostics}
+              renderItem={(diagnostic) => {
+                const diagnosticTags = resolveDiagnosticTags(diagnostic);
+                const diagnosticPresentation = resolveDiagnosticPresentation(diagnostic);
 
-            return (
-              <div
-                key={`${diagnostic.targetCli}:${diagnostic.code}:${diagnostic.directoryPath ?? diagnostic.rootDir}`}
-                className="settings-skill-entry"
-              >
-                <div className="settings-skill-entry-main">
-                  <strong className="settings-skill-entry-title">{diagnosticPresentation.title}</strong>
-                  <p className="settings-skill-entry-meta">{diagnosticPresentation.detail}</p>
-                  {diagnosticTags.length > 0 ? (
-                    <div className="settings-skill-tags">
-                      {diagnosticTags.map((tag) => (
-                        <span key={tag.key} className="settings-skill-tag" data-status={tag.status}>
-                          {tag.label}
-                        </span>
-                      ))}
+                return (
+                  <div
+                    key={`${diagnostic.targetCli}:${diagnostic.code}:${diagnostic.directoryPath ?? diagnostic.rootDir}`}
+                    className="settings-skill-entry"
+                  >
+                    <div className="settings-skill-entry-main">
+                      <strong className="settings-skill-entry-title">{diagnosticPresentation.title}</strong>
+                      <p className="settings-skill-entry-meta">{diagnosticPresentation.detail}</p>
+                      {diagnosticTags.length > 0 ? (
+                        <div className="settings-skill-tags">
+                          {diagnosticTags.map((tag) => (
+                            <span key={tag.key} className="settings-skill-tag" data-status={tag.status}>
+                              {tag.label}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
-                  ) : null}
-                </div>
-              </div>
-            );
-          }}
-        />
+                  </div>
+                );
+              }}
+            />
+          </div>
+        ) : (
+          <div
+            id={`${tabsBaseId}-opencli-panel`}
+            role="tabpanel"
+            aria-labelledby={`${tabsBaseId}-opencli-tab`}
+            className="settings-skill-panel"
+          >
+            <OpenCliManagementPanel
+              toolbarMode="external"
+              onToolbarStateChange={setOpenCliToolbarState}
+            />
+          </div>
+        )}
       </WorkbenchModal>
 
       <WorkbenchModal
@@ -691,9 +862,14 @@ export function SkillManagementPanel({
                     <input
                       type="checkbox"
                       checked={uploadTargets[targetCli]}
+                      disabled={!isSkillTargetProviderEnabled(targetCli, providerCatalogByTargetCli)}
                       onChange={() => handleUploadTargetToggle(targetCli)}
                     />
-                    <span>{resolveTargetCliLabel(targetCli)}</span>
+                    <span>
+                      {isSkillTargetProviderEnabled(targetCli, providerCatalogByTargetCli)
+                        ? resolveTargetCliLabel(targetCli)
+                        : `${resolveTargetCliLabel(targetCli)} · ${t("settings.skillTargetDisabledTag")}`}
+                    </span>
                   </label>
                 ))}
               </div>
@@ -823,14 +999,20 @@ function resolveSkillUploadSourceModeLabel(mode: SkillUploadSourceMode): string 
     : t("settings.skillCreateSourceFile");
 }
 
-function createDefaultUploadTargets(scope: SkillScope): Record<SkillTargetCli, boolean> {
-  const availableTargets = new Set(getUploadTargetOptions(scope));
+function createDefaultUploadTargets(
+  scope: SkillScope,
+  providerCatalogByTargetCli: Partial<Record<SkillTargetCli, ProviderCatalogEntryDto>> = {}
+): Record<SkillTargetCli, boolean> {
+  const selectableTargets = getUploadTargetOptions(scope).filter((targetCli) =>
+    isSkillTargetProviderEnabled(targetCli, providerCatalogByTargetCli)
+  );
+  const firstSelectableTarget = selectableTargets[0] ?? null;
 
   return {
-    codex: availableTargets.has("codex"),
-    "claude-code": false,
-    gemini: false,
-    opencode: false
+    codex: firstSelectableTarget === "codex",
+    "claude-code": firstSelectableTarget === "claude-code",
+    gemini: firstSelectableTarget === "gemini",
+    opencode: firstSelectableTarget === "opencode"
   };
 }
 
@@ -871,6 +1053,75 @@ function resolveBindingStatusLabel(status: SkillTargetBindingDto["syncStatus"]):
   }
 }
 
+function buildSkillTargetCatalogMap(
+  providerCatalog: readonly ProviderCatalogEntryDto[]
+): Partial<Record<SkillTargetCli, ProviderCatalogEntryDto>> {
+  const result: Partial<Record<SkillTargetCli, ProviderCatalogEntryDto>> = {};
+
+  for (const entry of providerCatalog) {
+    const targetCli = resolveSkillTargetCli(entry.provider);
+
+    if (targetCli) {
+      result[targetCli] = entry;
+    }
+  }
+
+  return result;
+}
+
+function resolveSkillTargetCli(provider: ProviderCatalogEntryDto["provider"]): SkillTargetCli | null {
+  switch (provider) {
+    case "claude-code":
+      return "claude-code";
+    case "codex":
+      return "codex";
+    case "gemini":
+      return "gemini";
+    case "opencode":
+      return "opencode";
+    default:
+      return null;
+  }
+}
+
+function isSkillTargetProviderEnabled(
+  targetCli: SkillTargetCli,
+  providerCatalogByTargetCli: Partial<Record<SkillTargetCli, ProviderCatalogEntryDto>>
+): boolean {
+  return providerCatalogByTargetCli[targetCli]?.enabled !== false;
+}
+
+function canSyncManagedSkill(
+  bindings: readonly SkillTargetBindingDto[],
+  providerCatalogByTargetCli: Partial<Record<SkillTargetCli, ProviderCatalogEntryDto>>
+): boolean {
+  return bindings.some((binding) =>
+    binding.enabled && isSkillTargetProviderEnabled(binding.targetCli, providerCatalogByTargetCli)
+  );
+}
+
+function resolveBindingTagStatus(
+  binding: SkillTargetBindingDto,
+  providerCatalogByTargetCli: Partial<Record<SkillTargetCli, ProviderCatalogEntryDto>>
+): string {
+  if (!isSkillTargetProviderEnabled(binding.targetCli, providerCatalogByTargetCli)) {
+    return "failed";
+  }
+
+  return binding.syncStatus;
+}
+
+function resolveBindingTagLabel(
+  binding: SkillTargetBindingDto,
+  providerCatalogByTargetCli: Partial<Record<SkillTargetCli, ProviderCatalogEntryDto>>
+): string {
+  if (!isSkillTargetProviderEnabled(binding.targetCli, providerCatalogByTargetCli)) {
+    return `${resolveTargetCliLabel(binding.targetCli)} · ${t("settings.skillTargetDisabledTag")}`;
+  }
+
+  return `${resolveTargetCliLabel(binding.targetCli)} · ${resolveBindingStatusLabel(binding.syncStatus)}`;
+}
+
 function formatTargetCliList(targetCli: readonly SkillTargetCli[]): string {
   return targetCli.map(resolveTargetCliLabel).join(" / ");
 }
@@ -887,16 +1138,62 @@ function resolveManagedSkillDescription(bindings: readonly SkillTargetBindingDto
   });
 }
 
-function resolveUnmanagedSkillDescription(entry: SkillScanEntryDto): string {
+function resolveUnmanagedSkillDescription(
+  entry: SkillScanEntryDto,
+  providerCatalogByTargetCli: Partial<Record<SkillTargetCli, ProviderCatalogEntryDto>>
+): string {
+  if (!isSkillTargetProviderEnabled(entry.targetCli, providerCatalogByTargetCli)) {
+    return t("settings.skillUnmanagedItemDisabledDescription", {
+      target: resolveTargetCliLabel(entry.targetCli)
+    });
+  }
+
   return t("settings.skillUnmanagedItemDescription", {
     target: resolveTargetCliLabel(entry.targetCli)
   });
 }
 
-function resolveConflictedSkillDescription(entry: SkillScanEntryDto): string {
+function resolveConflictedSkillDescription(
+  entry: SkillScanEntryDto,
+  providerCatalogByTargetCli: Partial<Record<SkillTargetCli, ProviderCatalogEntryDto>>
+): string {
+  if (!isSkillTargetProviderEnabled(entry.targetCli, providerCatalogByTargetCli)) {
+    return t("settings.skillConflictedItemDisabledDescription", {
+      target: resolveTargetCliLabel(entry.targetCli)
+    });
+  }
+
   return t("settings.skillConflictedItemDescription", {
     target: resolveTargetCliLabel(entry.targetCli)
   });
+}
+
+function resolveSkillSyncTargetError(
+  bindings: readonly SkillTargetBindingDto[],
+  providerCatalogByTargetCli: Partial<Record<SkillTargetCli, ProviderCatalogEntryDto>>
+): string {
+  const hasEnabledBinding = bindings.some((binding) => binding.enabled);
+
+  if (!hasEnabledBinding) {
+    return t("settings.skillSyncTargetMissing");
+  }
+
+  return t("settings.skillSyncTargetDisabled");
+}
+
+function resolveSkillUploadTargetError(
+  scope: SkillScope,
+  providerCatalogByTargetCli: Partial<Record<SkillTargetCli, ProviderCatalogEntryDto>>
+): string {
+  const hasSelectableTarget = getUploadTargetOptions(scope).some((targetCli) =>
+    isSkillTargetProviderEnabled(targetCli, providerCatalogByTargetCli)
+  );
+
+  if (!hasSelectableTarget) {
+    return t("settings.skillUploadTargetDisabled");
+  }
+
+  return t("settings.skillUploadTargetRequired");
 }
 
 function resolveDiagnosticPresentation(diagnostic: SkillScanDiagnosticDto): { title: string; detail: string } {
@@ -1158,4 +1455,13 @@ function formatSkillTitleFromDirectoryName(directoryName: string): string {
     .join(" ");
 
   return title || directoryName;
+}
+
+function resolveSkillManagementTabLabel(tabId: SkillManagementTabId): string {
+  switch (tabId) {
+    case "opencli":
+      return t("settings.skillConfigTabOpenCli");
+    default:
+      return t("settings.skillConfigTabSkills");
+  }
 }

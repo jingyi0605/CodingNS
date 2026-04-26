@@ -20545,6 +20545,11 @@ textarea:focus-visible {
   width: 100%;
 }
 
+.settings-provider-modal .workbench-modal-header {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
 .settings-provider-modal-body {
   display: flex;
   flex-direction: column;
@@ -20554,7 +20559,12 @@ textarea:focus-visible {
 .settings-provider-modal-layout {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
+}
+
+.settings-provider-modal-layout > .modal-section:first-of-type {
+  padding-top: 0;
+  border-top: 0;
 }
 
 .settings-provider-summary-grid {
@@ -20564,29 +20574,31 @@ textarea:focus-visible {
 }
 
 .settings-provider-summary-card {
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-primary);
-}
-
-.settings-provider-summary-card {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  min-height: 50px;
-  padding: 8px 10px;
+  gap: 1px;
+  min-height: 42px;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+  border-radius: 12px;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-surface) 94%, rgba(255, 255, 255, 0.08)),
+      color-mix(in srgb, var(--bg-secondary) 90%, rgba(255, 255, 255, 0.06))
+    );
 }
 
 .settings-provider-summary-card span {
   color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .settings-provider-summary-card strong {
   color: var(--text-primary);
-  font-size: 22px;
-  line-height: 1.1;
+  font-size: 18px;
+  line-height: 1.05;
 }
 
 .settings-provider-matrix-shell {
@@ -21299,18 +21311,133 @@ textarea:focus-visible {
   gap: 6px;
 }
 
+.settings-opencli-site-card-body {
+  justify-content: flex-start;
+}
+
+.settings-opencli-site-card-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.settings-opencli-site-card-description {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .settings-opencli-site-card-summary {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding-top: 2px;
 }
 
-.settings-opencli-site-detail-button {
+.settings-opencli-site-card-tag-rows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.settings-opencli-site-card-tag-row {
+  min-height: 0;
+}
+
+.settings-opencli-site-card-type-row {
+  min-height: 0;
+}
+
+.workbench-modal-layer .workbench-modal-card .settings-opencli-site-card-actions > .settings-opencli-site-detail-button,
+.workbench-modal-layer .workbench-modal-card .settings-opencli-site-card-actions > .settings-opencli-site-toggle,
+.mobile-sheet .settings-opencli-site-card-actions > .settings-opencli-site-detail-button,
+.mobile-sheet .settings-opencli-site-card-actions > .settings-opencli-site-toggle {
+  box-sizing: border-box;
   min-height: 30px;
   padding: 0 10px;
+  border-radius: 999px;
   font-size: 12px;
+  line-height: 1;
+}
+
+.workbench-modal-layer .workbench-modal-card .settings-opencli-site-card-actions > .settings-opencli-site-detail-button,
+.mobile-sheet .settings-opencli-site-card-actions > .settings-opencli-site-detail-button {
+  border: 1px solid var(--border-primary);
+  background: color-mix(in srgb, var(--bg-primary) 94%, rgba(255, 255, 255, 0.84));
+  color: var(--text-primary);
   font-weight: 700;
+}
+
+.workbench-modal-layer .workbench-modal-card .settings-opencli-site-card-actions > .settings-opencli-site-detail-button:hover:not(:disabled),
+.mobile-sheet .settings-opencli-site-card-actions > .settings-opencli-site-detail-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 16%, var(--border-primary));
+  background: color-mix(in srgb, var(--bg-primary) 88%, rgba(255, 255, 255, 0.9));
+}
+
+.settings-opencli-site-toggle {
+  border: 1px solid var(--border-primary);
+  background: color-mix(in srgb, var(--bg-primary) 94%, rgba(255, 255, 255, 0.84));
+  font-size: 12px;
+}
+
+.settings-opencli-site-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+}
+
+.settings-skill-tag.settings-opencli-strategy-tag {
+  min-height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.settings-skill-tag.settings-opencli-strategy-tag[data-strategy="cookie"] {
+  border-color: rgba(59, 130, 246, 0.24);
+  background: rgba(59, 130, 246, 0.1);
+  color: #2563eb;
+}
+
+.settings-skill-tag.settings-opencli-strategy-tag[data-strategy="header"] {
+  border-color: rgba(168, 85, 247, 0.24);
+  background: rgba(168, 85, 247, 0.1);
+  color: #9333ea;
+}
+
+.settings-skill-tag.settings-opencli-strategy-tag[data-strategy="intercept"] {
+  border-color: rgba(249, 115, 22, 0.26);
+  background: rgba(249, 115, 22, 0.12);
+  color: #ea580c;
+}
+
+.settings-skill-tag.settings-opencli-strategy-tag[data-strategy="local"] {
+  border-color: rgba(20, 184, 166, 0.24);
+  background: rgba(20, 184, 166, 0.1);
+  color: #0f766e;
+}
+
+.settings-skill-tag.settings-opencli-strategy-tag[data-strategy="public"] {
+  border-color: rgba(99, 102, 241, 0.24);
+  background: rgba(99, 102, 241, 0.1);
+  color: #4f46e5;
+}
+
+.settings-skill-tag.settings-opencli-strategy-tag[data-strategy="ui"] {
+  border-color: rgba(236, 72, 153, 0.24);
+  background: rgba(236, 72, 153, 0.1);
+  color: #db2777;
+}
+
+.settings-skill-tag.settings-opencli-strategy-tag[data-strategy="unknown"] {
+  border-color: var(--border-primary);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
 }
 
 .settings-opencli-command-grid {
@@ -21356,6 +21483,18 @@ textarea:focus-visible {
   min-height: 32px;
 }
 
+.settings-opencli-site-detail-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-opencli-site-detail-description {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .settings-opencli-command-modal {
   width: min(860px, calc(100% - 24px));
   max-height: min(84vh, 820px);
@@ -21391,12 +21530,12 @@ textarea:focus-visible {
 }
 
 @media (max-width: 720px) {
-  .settings-provider-summary-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .settings-provider-modal-body {
     gap: 12px;
+  }
+
+  .settings-provider-summary-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .settings-provider-matrix-table {
