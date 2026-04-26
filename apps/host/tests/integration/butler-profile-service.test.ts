@@ -134,6 +134,54 @@ describe("ButlerProfileService", () => {
     }).trim()).toBe(fs.realpathSync.native(workspacePath));
   });
 
+  it("初始化或切换到已禁用 provider 时会直接拒绝", () => {
+    const workspacePath = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-profile-"));
+    tempDirs.push(workspacePath);
+
+    const service = new ButlerProfileService(
+      {
+        find: vi.fn(() => null),
+        create: vi.fn()
+      } as unknown as ButlerProfileRepository,
+      {
+        list: vi.fn(() => [])
+      } as unknown as Pick<ButlerProjectRepository, "list">,
+      workspacePath,
+      {
+        get: vi.fn(() => ({
+          providerId: "codex",
+          enabled: false,
+          updatedAt: "2026-04-26T10:00:00.000Z"
+        }))
+      }
+    );
+
+    try {
+      service.initProfile({
+        providerId: "codex",
+        workspacePath,
+        agentsMode: "inline",
+        agentsContent: "# AGENTS.md\n你是代码助手",
+        persona: {
+          tone: "direct",
+          language: "zh-CN",
+          summaryStyle: "brief"
+        },
+        focus: {
+          projectIds: [],
+          riskPreference: "conservative",
+          reportPriority: ["risk", "blocker"]
+        }
+      });
+      throw new Error("should throw");
+    } catch (error) {
+      expect(error).toMatchObject({
+        errorCode: "PROVIDER_DISABLED",
+        field: "providerId"
+      });
+    }
+  });
+
   it("文件模式会生成独立助手规则，不继承普通项目会话规则", () => {
     const dataRootDir = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-data-"));
     tempDirs.push(dataRootDir);

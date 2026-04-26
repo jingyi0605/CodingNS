@@ -200,6 +200,47 @@ describe("WorkbenchService", () => {
     });
   });
 
+  it("快照会直接使用 sessionHistoryService 过滤后的会话列表", () => {
+    const service = new WorkbenchService(
+      {
+        list: vi.fn(() => [
+          {
+            id: "workspace-1",
+            path: "/repo/workspace-1"
+          }
+        ])
+      } as never,
+      {
+        listByUserId: vi.fn(() => [])
+      } as never,
+      {
+        listWorkspaceSessions: vi.fn(() => [
+          {
+            sessionId: "session-claude",
+            provider: "claude-code"
+          }
+        ]),
+        requestWorkspaceDiscovery: vi.fn()
+      } as never,
+      {
+        getProfile: vi.fn(() => null)
+      } as never,
+      {
+        listSessionIds: vi.fn(() => [])
+      } as never
+    );
+
+    const snapshot = service.getSnapshot("user-1");
+
+    expect(snapshot.items).toHaveLength(1);
+    expect(snapshot.items[0]?.sessions).toMatchObject([
+      {
+        sessionId: "session-claude",
+        provider: "claude-code"
+      }
+    ]);
+  });
+
   it("标题同步任务取消后会把 AbortSignal 传给 sessionHistoryService", async () => {
     let receivedSignal: AbortSignal | null = null;
     const service = new WorkbenchService(

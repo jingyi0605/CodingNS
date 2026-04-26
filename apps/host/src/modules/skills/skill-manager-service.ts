@@ -18,6 +18,7 @@ import type {
   SkillTargetSyncStatus
 } from "../../types/domain.js";
 import type { ManagedSkillRepository } from "../../storage/repositories/managed-skill-repository.js";
+import type { ProviderControlRepository } from "../../storage/repositories/provider-control-repository.js";
 import type { SkillTargetBindingRepository } from "../../storage/repositories/skill-target-binding-repository.js";
 import {
   type SkillTargetAdapter,
@@ -33,6 +34,7 @@ import {
   isReservedAssistantSkillDirectoryName
 } from "./skill-name-policy.js";
 import { listAssistantRuntimeSkills } from "./assistant-runtime-skill-catalog.js";
+import { createProviderDisabledError } from "../provider/provider-disabled.js";
 
 export interface ScanSkillsOptions {
   targetCli?: readonly SkillTargetCli[];
@@ -127,12 +129,15 @@ export interface SkillManagerServiceOptions {
   ssotRootDir?: string;
   now?: () => string;
   createId?: () => string;
+  providerControlRepository?: Pick<ProviderControlRepository, "get"> | null;
 }
 
 const ASSISTANT_RUNTIME_TARGETS = ["codex", "claude-code"] as const satisfies readonly SkillTargetCli[];
 const ASSISTANT_RUNTIME_SSOT_DIRNAME = ".assistant-runtime";
 
 export class SkillManagerService {
+  private readonly providerControlRepository: Pick<ProviderControlRepository, "get">;
+
   constructor(
     private readonly managedSkillRepository: ManagedSkillRepository,
     private readonly skillTargetBindingRepository: SkillTargetBindingRepository,
@@ -140,7 +145,15 @@ export class SkillManagerService {
     private readonly options: SkillManagerServiceOptions = {},
     private readonly skillSyncPlanner = new SkillSyncPlanner(),
     private readonly skillReconciler = new SkillReconciler()
-  ) {}
+  ) {
+    this.providerControlRepository = options.providerControlRepository ?? {
+      get: () => ({
+        providerId: "",
+        enabled: true,
+        updatedAt: ""
+      })
+    };
+  }
 
   scanSkills(options: ScanSkillsOptions = {}): SkillScanResult {
     const targetLocations = resolveTargetLocations(this.targetAdapters, options.targetCli);
@@ -225,6 +238,7 @@ export class SkillManagerService {
   }
 
   addManagedSkill(input: AddManagedSkillInput): ManagedSkillMutationResult {
+    this.assertRequestedTargetsEnabled(input.targetCli, "targetCli");
     const sourcePath = resolveSourceDirectoryPath(input.sourcePath);
     const sourceSnapshot = readSkillDirectorySnapshot("codex", sourcePath, sourcePath);
     return this.registerManagedSkillFromSource({
@@ -239,6 +253,7 @@ export class SkillManagerService {
   }
 
   addManagedSkillFromMarkdown(input: AddManagedSkillFromMarkdownInput): ManagedSkillMutationResult {
+    this.assertRequestedTargetsEnabled(input.targetCli, "targetCli");
     const prepared = prepareUploadedSkillMarkdown(input);
     const tempRootDir = fs.mkdtempSync(path.join(os.tmpdir(), "codingns-skill-upload-"));
     const sourcePath = path.join(tempRootDir, prepared.directoryName);
@@ -295,6 +310,7 @@ export class SkillManagerService {
       });
     }
 
+    this.assertRequestedTargetsEnabled(input.targetCli, "targetCli");
     assertSkillDirectoryNameAllowed(skill.scope, skill.directoryName, "skillId");
 
     const existingBindings = this.skillTargetBindingRepository.listBySkillId(skill.id);
@@ -359,6 +375,10 @@ export class SkillManagerService {
   }
 
   importUnmanagedSkill(input: ImportUnmanagedSkillInput): ManagedSkillMutationResult {
+    this.assertRequestedTargetsEnabled(
+      [input.targetCli, ...(input.additionalTargetCli ?? [])],
+      "targetCli"
+    );
     const sourceLocation = resolveSingleTargetLocation(this.targetAdapters, input.targetCli);
     const directoryPath = path.resolve(input.directoryPath);
 
@@ -620,6 +640,23 @@ export class SkillManagerService {
     return this.options.now?.() ?? nowIso();
   }
 
+  private assertRequestedTargetsEnabled(
+    targetCli: readonly SkillTargetCli[],
+    field: string
+  ): void {
+    const disabledTarget = targetCli.find((target) => !this.isTargetCliEnabled(target));
+
+    if (!disabledTarget) {
+      return;
+    }
+
+    throw createProviderDisabledError(resolveProviderIdByTargetCli(disabledTarget), field);
+  }
+
+  private isTargetCliEnabled(targetCli: SkillTargetCli): boolean {
+    return this.providerControlRepository.get(resolveProviderIdByTargetCli(targetCli)).enabled;
+  }
+
   private registerManagedSkillFromSource(input: {
     scope: SkillScope;
     sourceSnapshot: DiscoveredSkillDirectory;
@@ -733,6 +770,10 @@ export class SkillManagerService {
       errorDetail: null
     }));
   }
+}
+
+function resolveProviderIdByTargetCli(targetCli: SkillTargetCli): SkillTargetCli {
+  return targetCli;
 }
 
 function assertSkillDirectoryNameAllowed(scope: SkillScope, directoryName: string, field: string): void {

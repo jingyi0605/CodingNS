@@ -32,6 +32,7 @@ type HelperRequest =
       config: ProviderSessionDiscoveryHelperConfig;
       workspacePath: string;
       knownSessions: ProviderSessionSummary[];
+      enabledProviders: string[];
     }
   | {
       id: string;
@@ -113,6 +114,7 @@ async function handleLine(line: string): Promise<void> {
           payload.config,
           payload.workspacePath,
           payload.knownSessions,
+          payload.enabledProviders,
           controller.signal
         );
         emitResult(payload.id, result);
@@ -562,9 +564,16 @@ async function discoverWorkspaceSessions(
   config: ProviderSessionDiscoveryHelperConfig,
   workspacePath: string,
   knownSessions: ProviderSessionSummary[],
+  enabledProviders: string[],
   signal?: AbortSignal
 ): Promise<import("@codingns/session-sync-core").ProviderSessionDiscovery> {
-  return await discoverWorkspaceSessionsInRuntime(config, workspacePath, knownSessions, signal);
+  return await discoverWorkspaceSessionsInRuntime(
+    config,
+    workspacePath,
+    knownSessions,
+    enabledProviders,
+    signal
+  );
 }
 
 async function readSessionTitle(

@@ -22,6 +22,8 @@ import { syncButlerWorkspaceContext } from "./butler-workspace-context.js";
 import { recordButlerProxyMessageOrigin } from "../sessions/session-message-origin-utils.js";
 import type { AssistantSandboxService } from "./assistant-sandbox-service.js";
 import type { SessionProviderUsageLimitGuardService } from "../sessions/session-provider-usage-guard-service.js";
+import type { ProviderControlRepository } from "../../storage/repositories/provider-control-repository.js";
+import { createProviderDisabledError } from "../provider/provider-disabled.js";
 
 export interface ButlerControlSessionView extends ButlerControlSession {
   session: SessionListItem;
@@ -49,6 +51,8 @@ interface PreparedButlerWorkspace {
 }
 
 export class ButlerControlSessionService {
+  private readonly providerControlRepository: Pick<ProviderControlRepository, "get">;
+
   constructor(
     private readonly butlerProfileService: ButlerProfileService,
     private readonly butlerControlSessionRepository: ButlerControlSessionRepository,
@@ -82,8 +86,17 @@ export class ButlerControlSessionService {
     private readonly providerUsageLimitGuardService: Pick<
       SessionProviderUsageLimitGuardService,
       "resolveBlockingInspection" | "createBlockedAppError"
-    > | null = null
-  ) {}
+    > | null = null,
+    providerControlRepository: Pick<ProviderControlRepository, "get"> | null = null
+  ) {
+    this.providerControlRepository = providerControlRepository ?? {
+      get: (providerId: string) => ({
+        providerId: providerId.trim(),
+        enabled: true,
+        updatedAt: ""
+      })
+    };
+  }
 
   getCurrentSession(userId: string): ButlerControlSessionView | null {
     const profile = this.butlerProfileService.ensureInitialized();
@@ -133,6 +146,7 @@ export class ButlerControlSessionService {
     input: StartButlerControlSessionInput = {}
   ): Promise<ButlerControlSessionView> {
     const profile = this.butlerProfileService.ensureInitialized();
+    this.assertProviderEnabled(profile.providerId);
     const content = normalizeControlContent(input.content, "");
     const model = normalizeNullableText(input.model);
     const reasoningLevel = normalizeNullableText(input.reasoningLevel);
@@ -214,6 +228,14 @@ export class ButlerControlSessionService {
 
       throw error;
     }
+  }
+
+  private assertProviderEnabled(providerId: string): void {
+    if (this.providerControlRepository.get(providerId).enabled) {
+      return;
+    }
+
+    throw createProviderDisabledError(providerId, "providerId");
   }
 
   async resumeCurrentSession(

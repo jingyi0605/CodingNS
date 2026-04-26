@@ -300,6 +300,109 @@ describe("skills routes", () => {
       readFileSync(path.join(assistantSsotRoot, "butler-inbox-helper", "SKILL.md"), "utf8")
     ).toContain("# Butler Inbox Helper");
   });
+
+  it("provider 被禁用后，skills add|import|sync 会统一返回 PROVIDER_DISABLED", async () => {
+    const fixture = createEmptyFixture();
+    const databasePath = path.join(fixture.rootDir, "host.sqlite");
+    const localSkillRoot = path.join(fixture.rootDir, "local-skills");
+    const codexSkillsRoot = path.join(fixture.codexHomeDir, "skills");
+    activeFixtures.push(fixture);
+
+    mkdirSync(localSkillRoot, { recursive: true });
+    mkdirSync(codexSkillsRoot, { recursive: true });
+
+    const sourcePath = createSkillDirectory(localSkillRoot, "provider-disabled-skill", {
+      "SKILL.md": "# Provider Disabled Skill\n\n这个 skill 用来验证禁用目标的硬门禁。"
+    });
+    const legacySkillPath = createSkillDirectory(codexSkillsRoot, "legacy-disabled-skill", {
+      "SKILL.md": "# Legacy Disabled Skill\n\n这是旧 skill。"
+    });
+
+    const hosted = createTestApp(fixture, {
+      databasePath
+    });
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const addEnabledResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/skills",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        sourcePath,
+        targetCli: ["codex"],
+        sourceType: "local-import"
+      }
+    });
+
+    expect(addEnabledResponse.statusCode).toBe(200);
+    const addedSkillId = addEnabledResponse.json().skill.id as string;
+
+    const disableResponse = await hosted.app.inject({
+      method: "PUT",
+      url: "/api/providers/catalog/codex",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        enabled: false
+      }
+    });
+    expect(disableResponse.statusCode).toBe(200);
+
+    const addBlockedResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/skills",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        sourcePath,
+        targetCli: ["codex"],
+        sourceType: "local-import"
+      }
+    });
+    expect(addBlockedResponse.statusCode).toBe(409);
+    expect(addBlockedResponse.json()).toMatchObject({
+      error_code: "PROVIDER_DISABLED"
+    });
+
+    const importBlockedResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/skills/import",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        targetCli: "codex",
+        directoryPath: legacySkillPath,
+        expectedContentHash: computeSkillDirectoryHash(legacySkillPath)
+      }
+    });
+    expect(importBlockedResponse.statusCode).toBe(409);
+    expect(importBlockedResponse.json()).toMatchObject({
+      error_code: "PROVIDER_DISABLED"
+    });
+
+    const syncBlockedResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/skills/sync",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        skillId: addedSkillId,
+        targetCli: ["codex"]
+      }
+    });
+    expect(syncBlockedResponse.statusCode).toBe(409);
+    expect(syncBlockedResponse.json()).toMatchObject({
+      error_code: "PROVIDER_DISABLED"
+    });
+  });
 });
 
 async function bootstrapAndLogin(hosted: ReturnType<typeof createTestApp>): Promise<string> {

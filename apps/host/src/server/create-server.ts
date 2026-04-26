@@ -86,6 +86,7 @@ import { ModelSwitchService } from "../modules/model-switch/model-switch-service
 import { ParallelSessionController } from "../modules/parallel-sessions/parallel-session-controller.js";
 import { ParallelSessionGroupService } from "../modules/parallel-sessions/parallel-session-group-service.js";
 import { SessionIsolatedWorkspaceService } from "../modules/parallel-sessions/session-isolated-workspace-service.js";
+import { ProviderCatalogService } from "../modules/provider/provider-catalog-service.js";
 import { ProviderController } from "../modules/provider/provider-controller.js";
 import { disposeSharedProviderDiscoveryHelperClient } from "../modules/provider/provider-discovery-helper-client.js";
 import { SkillController } from "../modules/skills/skill-controller.js";
@@ -188,6 +189,7 @@ import { FrameworkAnalysisResultRepository } from "../storage/repositories/frame
 import { GitRemoteCredentialRepository } from "../storage/repositories/git-remote-credential-repository.js";
 import { ManagedSkillRepository } from "../storage/repositories/managed-skill-repository.js";
 import { PortLeaseRepository } from "../storage/repositories/port-lease-repository.js";
+import { ProviderControlRepository } from "../storage/repositories/provider-control-repository.js";
 import { ParallelSessionGroupRepository } from "../storage/repositories/parallel-session-group-repository.js";
 import { ParallelSessionMemberRepository } from "../storage/repositories/parallel-session-member-repository.js";
 import { RecentFileRepository } from "../storage/repositories/recent-file-repository.js";
@@ -279,6 +281,7 @@ export function createServer(config: HostConfig) {
     verificationRunRepository: new VerificationRunRepository(database.db),
     commitRuleProfileRepository: new CommitRuleProfileRepository(database.db),
     gitRemoteCredentialRepository: new GitRemoteCredentialRepository(database.db),
+    providerControlRepository: new ProviderControlRepository(database.db),
     managedSkillRepository: new ManagedSkillRepository(database.db),
     recentFileRepository: new RecentFileRepository(database.db),
     fileContextBindingRepository: new FileContextBindingRepository(database.db),
@@ -336,7 +339,8 @@ export function createServer(config: HostConfig) {
   const butlerProfileService = new ButlerProfileService(
     repositories.butlerProfileRepository,
     repositories.butlerProjectRepository,
-    path.dirname(config.databasePath)
+    path.dirname(config.databasePath),
+    repositories.providerControlRepository
   );
   const gitCommandRunner = new GitCommandRunner({
     preferHelperProcess: !process.env.VITEST
@@ -462,7 +466,8 @@ export function createServer(config: HostConfig) {
     repositories.skillTargetBindingRepository,
     skillTargetAdapters,
     {
-      ssotRootDir: path.join(path.dirname(config.databasePath), "skills")
+      ssotRootDir: path.join(path.dirname(config.databasePath), "skills"),
+      providerControlRepository: repositories.providerControlRepository
     }
   );
   for (const result of cleanupLegacyAssistantRuntimeSkillCopies(skillTargetAdapters)) {
@@ -524,7 +529,12 @@ export function createServer(config: HostConfig) {
     repositories.parallelSessionGroupRepository,
     repositories.parallelSessionMemberRepository,
     repositories.sessionIsolatedWorkspaceRepository,
-    sessionProviderConfigService
+    sessionProviderConfigService,
+    repositories.providerControlRepository
+  );
+  const providerCatalogService = new ProviderCatalogService(
+    config,
+    repositories.providerControlRepository
   );
   runtimeObservabilityService = new RuntimeObservabilityService(
     () => sessionHistoryService.observeBackgroundTaskMetrics(),
@@ -851,7 +861,8 @@ export function createServer(config: HostConfig) {
     config.claudeCodeHomeDir,
     repositories.sessionMessageOriginRepository,
     assistantSandboxService,
-    sessionProviderUsageLimitGuardService
+    sessionProviderUsageLimitGuardService,
+    repositories.providerControlRepository
   );
   const assistantAutomationService = new AssistantAutomationService(
     butlerProfileService,
@@ -1059,12 +1070,14 @@ export function createServer(config: HostConfig) {
       worktreeMergeService,
       worktreeCleanupService,
       repositories.sessionMessageOriginRepository,
-      butlerFollowUpService
+      butlerFollowUpService,
+      repositories.providerControlRepository
     )
   );
   const providerController = new ProviderController(
     sessionHistoryService,
     sessionProviderConfigService,
+    providerCatalogService,
     routedSessionLiveRuntimeService,
     config
   );

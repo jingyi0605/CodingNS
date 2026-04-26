@@ -42,10 +42,11 @@ export async function discoverWorkspaceSessionsInRuntime(
   config: ProviderSessionDiscoveryHelperConfig,
   workspacePath: string,
   knownSessions: ProviderSessionSummary[],
+  enabledProviders: string[],
   signal?: AbortSignal
 ): Promise<ProviderSessionDiscovery> {
-  const service = getWorkspaceDiscoveryService(config);
-  const runtimeKey = buildWorkspaceDiscoveryRuntimeKey(config, workspacePath);
+  const service = getWorkspaceDiscoveryService(config, enabledProviders);
+  const runtimeKey = buildWorkspaceDiscoveryRuntimeKey(config, workspacePath, enabledProviders);
   const knownSessionsSignature = buildKnownSessionsSignature(knownSessions);
   const cached = workspaceDiscoveryCache.get(runtimeKey);
 
@@ -133,14 +134,16 @@ export async function readSessionTitleInRuntime(
 }
 
 function getWorkspaceDiscoveryService(
-  config: ProviderSessionDiscoveryHelperConfig
+  config: ProviderSessionDiscoveryHelperConfig,
+  enabledProviders: string[] | null = null
 ): SessionSyncService {
-  const cacheKey = JSON.stringify(config);
+  const cacheKey = buildRuntimeConfigCacheKey(config, enabledProviders);
 
   if (workspaceDiscoveryRuntime?.cacheKey === cacheKey) {
     return workspaceDiscoveryRuntime.service;
   }
 
+  const enabledProviderSet = enabledProviders ? new Set(enabledProviders) : null;
   const registry = new ProviderRegistry([
     new ClaudeCodeAdapter({ homeDir: config.claudeCodeHomeDir }),
     new LegnaCodeAdapter({
@@ -163,7 +166,7 @@ function getWorkspaceDiscoveryService(
       dataDir: config.opencodeDataDir,
       dbPath: config.opencodeDbPath
     })
-  ]);
+  ].filter((adapter) => !enabledProviderSet || enabledProviderSet.has(adapter.providerId)));
   const service = new SessionSyncService(registry);
 
   workspaceDiscoveryRuntime = {
@@ -176,9 +179,10 @@ function getWorkspaceDiscoveryService(
 
 function buildWorkspaceDiscoveryRuntimeKey(
   config: ProviderSessionDiscoveryHelperConfig,
-  workspacePath: string
+  workspacePath: string,
+  enabledProviders: string[]
 ): string {
-  return `${JSON.stringify(config)}::${workspacePath}`;
+  return `${buildRuntimeConfigCacheKey(config, enabledProviders)}::${workspacePath}`;
 }
 
 function buildSessionTitleRuntimeKey(
@@ -188,6 +192,13 @@ function buildSessionTitleRuntimeKey(
   rawStoreRef: string
 ): string {
   return `${JSON.stringify(config)}::${provider}::${providerSessionId}::${rawStoreRef}`;
+}
+
+function buildRuntimeConfigCacheKey(
+  config: ProviderSessionDiscoveryHelperConfig,
+  enabledProviders: string[] | null = null
+): string {
+  return `${JSON.stringify(config)}::${enabledProviders ? [...enabledProviders].sort().join(",") : "*"}`;
 }
 
 function buildKnownSessionsSignature(knownSessions: ProviderSessionSummary[]): string {

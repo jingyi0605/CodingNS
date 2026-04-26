@@ -18,6 +18,7 @@ describe("provider-discovery-runtime", () => {
 
     vi.doMock("@codingns/session-sync-core", () => ({
       ClaudeCodeAdapter: class {},
+      LegnaCodeAdapter: class {},
       CodexAdapter: class {},
       GeminiAdapter: class {},
       KimiAdapter: class {},
@@ -45,25 +46,31 @@ describe("provider-discovery-runtime", () => {
       }
     ];
 
+    const enabledProviders = ["codex"];
     await Promise.all([
-      runtime.discoverWorkspaceSessionsInRuntime(config, "/tmp/workspace", knownSessions),
-      runtime.discoverWorkspaceSessionsInRuntime(config, "/tmp/workspace", [...knownSessions])
+      runtime.discoverWorkspaceSessionsInRuntime(config, "/tmp/workspace", knownSessions, enabledProviders),
+      runtime.discoverWorkspaceSessionsInRuntime(config, "/tmp/workspace", [...knownSessions], enabledProviders)
     ]);
 
     expect(discoverWorkspaceSessions).toHaveBeenCalledTimes(1);
 
-    await runtime.discoverWorkspaceSessionsInRuntime(config, "/tmp/workspace", knownSessions);
+    await runtime.discoverWorkspaceSessionsInRuntime(config, "/tmp/workspace", knownSessions, enabledProviders);
 
     expect(discoverWorkspaceSessions).toHaveBeenCalledTimes(1);
 
-    await runtime.discoverWorkspaceSessionsInRuntime(config, "/tmp/workspace", [
-      {
-        ...knownSessions[0],
-        title: "session updated",
-        lastMessageAt: "2026-04-17T01:00:00.000Z",
-        messageCount: 99
-      }
-    ]);
+    await runtime.discoverWorkspaceSessionsInRuntime(
+      config,
+      "/tmp/workspace",
+      [
+        {
+          ...knownSessions[0],
+          title: "session updated",
+          lastMessageAt: "2026-04-17T01:00:00.000Z",
+          messageCount: 99
+        }
+      ],
+      enabledProviders
+    );
 
     expect(discoverWorkspaceSessions).toHaveBeenCalledTimes(1);
   });
@@ -74,6 +81,7 @@ describe("provider-discovery-runtime", () => {
 
     vi.doMock("@codingns/session-sync-core", () => ({
       ClaudeCodeAdapter: class {},
+      LegnaCodeAdapter: class {},
       CodexAdapter: class {},
       GeminiAdapter: class {},
       KimiAdapter: class {},
@@ -104,6 +112,8 @@ describe("provider-discovery-runtime", () => {
 function createConfig() {
   return {
     claudeCodeHomeDir: "/tmp/claude",
+    legnaCodeHomeDir: "/tmp/legna",
+    legnaCodeCliPath: "/tmp/legna-cli",
     codexCliPath: "/tmp/codex",
     codexHomeDir: "/tmp/codex-home",
     geminiCliPath: "/tmp/gemini",

@@ -10,10 +10,22 @@ import { AssistantCapabilityController } from "../../src/modules/assistant-capab
 import type { AssistantCapabilityService } from "../../src/modules/assistant-capability/assistant-capability-service.js";
 import type { AuthService } from "../../src/modules/auth/auth-service.js";
 import { registerAssistantCapabilityRoutes } from "../../src/routes/assistant.js";
+import { AppError } from "../../src/shared/errors/app-error.js";
 import { setErrorHandler } from "../../src/shared/http/error-handler.js";
 
 describe("assistant capability routes", () => {
   const apps: FastifyInstance[] = [];
+
+  function createProviderDisabledError(providerId = "codex"): AppError {
+    return new AppError({
+      statusCode: 409,
+      errorCode: "PROVIDER_DISABLED",
+      detail: `CLI provider ${providerId} 已被禁用`,
+      data: {
+        providerId
+      }
+    });
+  }
 
   async function createAssistantApp(
     assistantCapabilityService: Partial<AssistantCapabilityService>
@@ -506,6 +518,81 @@ describe("assistant capability routes", () => {
       permissionMode: null
     });
     expect(assistantCapabilityService.createSandbox).not.toHaveBeenCalled();
+  });
+
+  it("provider 被禁用时，助手会话 start|send|fork 和 follow-up create 路由会统一返回 PROVIDER_DISABLED", async () => {
+    const assistantCapabilityService = {
+      startSession: vi.fn(async () => {
+        throw createProviderDisabledError();
+      }),
+      sendSessionMessage: vi.fn(async () => {
+        throw createProviderDisabledError();
+      }),
+      forkSession: vi.fn(async () => {
+        throw createProviderDisabledError();
+      }),
+      createFollowUp: vi.fn(async () => {
+        throw createProviderDisabledError();
+      })
+    };
+    const app = await createAssistantApp(assistantCapabilityService);
+
+    const startResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/sessions/start",
+      payload: {
+        workspaceId: "workspace-1",
+        content: "开始助手会话",
+        providerId: "codex"
+      }
+    });
+    expect(startResponse.statusCode).toBe(409);
+    expect(startResponse.json()).toMatchObject({
+      error_code: "PROVIDER_DISABLED",
+      data: {
+        providerId: "codex"
+      }
+    });
+
+    const sendResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/sessions/session-disabled/messages",
+      payload: {
+        content: "继续"
+      }
+    });
+    expect(sendResponse.statusCode).toBe(409);
+    expect(sendResponse.json()).toMatchObject({
+      error_code: "PROVIDER_DISABLED"
+    });
+
+    const forkResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/sessions/session-disabled/forks",
+      payload: {}
+    });
+    expect(forkResponse.statusCode).toBe(409);
+    expect(forkResponse.json()).toMatchObject({
+      error_code: "PROVIDER_DISABLED"
+    });
+
+    const followUpResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/follow-ups",
+      payload: {
+        projectId: "project-1",
+        butlerSessionId: "butler-session-1",
+        providerId: "codex",
+        objective: "继续推进"
+      }
+    });
+    expect(followUpResponse.statusCode).toBe(409);
+    expect(followUpResponse.json()).toMatchObject({
+      error_code: "PROVIDER_DISABLED",
+      data: {
+        providerId: "codex"
+      }
+    });
   });
 
   it("自动化路由会把查询和创建参数清洗后传给服务", async () => {

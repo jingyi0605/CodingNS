@@ -141,6 +141,8 @@ describe("ProviderDiscoveryHelperClient", () => {
         client.discoverWorkspaceSessions({
           config: {
             claudeCodeHomeDir: "/tmp/claude",
+            legnaCodeHomeDir: "/tmp/legna",
+            legnaCodeCliPath: "/tmp/legna-cli",
             codexCliPath: "/tmp/codex",
             codexHomeDir: "/tmp/codex-home",
             geminiCliPath: "/tmp/gemini",
@@ -152,7 +154,8 @@ describe("ProviderDiscoveryHelperClient", () => {
             opencodeDbPath: "/tmp/opencode/opencode.db"
           },
           workspacePath: "/tmp/workspace",
-          knownSessions: []
+          knownSessions: [],
+          enabledProviders: ["codex"]
         }, signal),
       expectedType: "workspace_session_discovery"
     },
@@ -175,6 +178,8 @@ describe("ProviderDiscoveryHelperClient", () => {
         client.readSessionTitle({
           config: {
             claudeCodeHomeDir: "/tmp/claude",
+            legnaCodeHomeDir: "/tmp/legna",
+            legnaCodeCliPath: "/tmp/legna-cli",
             codexCliPath: "/tmp/codex",
             codexHomeDir: "/tmp/codex-home",
             geminiCliPath: "/tmp/gemini",
@@ -301,6 +306,8 @@ describe("ProviderDiscoveryHelperClient", () => {
     const client = new ProviderDiscoveryHelperClient();
     const config = {
       claudeCodeHomeDir: "/tmp/claude",
+      legnaCodeHomeDir: "/tmp/legna",
+      legnaCodeCliPath: "/tmp/legna-cli",
       codexCliPath: "/tmp/codex",
       codexHomeDir: "/tmp/codex-home",
       geminiCliPath: "/tmp/gemini",
@@ -315,7 +322,8 @@ describe("ProviderDiscoveryHelperClient", () => {
     const firstPromise = client.discoverWorkspaceSessions({
       config,
       workspacePath: "/tmp/workspace-a",
-      knownSessions: []
+      knownSessions: [],
+      enabledProviders: ["codex"]
     });
     childEvents[0]?.exit?.(0, "SIGTERM");
 
@@ -414,6 +422,8 @@ describe("ProviderDiscoveryHelperClient", () => {
     const client = new ProviderDiscoveryHelperClient();
     const config = {
       claudeCodeHomeDir: "/tmp/claude",
+      legnaCodeHomeDir: "/tmp/legna",
+      legnaCodeCliPath: "/tmp/legna-cli",
       codexCliPath: "/tmp/codex",
       codexHomeDir: "/tmp/codex-home",
       geminiCliPath: "/tmp/gemini",
@@ -428,7 +438,8 @@ describe("ProviderDiscoveryHelperClient", () => {
     const promise = client.discoverWorkspaceSessions({
       config,
       workspacePath: "/tmp/workspace-retry",
-      knownSessions: []
+      knownSessions: [],
+      enabledProviders: ["codex"]
     });
 
     await vi.waitFor(() => {

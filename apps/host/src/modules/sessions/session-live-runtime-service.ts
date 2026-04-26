@@ -52,6 +52,7 @@ import {
   type SessionActivityResolution
 } from "./session-activity-authority-service.js";
 import { SessionChangedFileService } from "./session-changed-file-service.js";
+import { createProviderCapabilityBlockedError } from "../provider/provider-disabled.js";
 import type { WorkspaceService } from "../workspace/workspace-service.js";
 import type {
   RuntimeAttachmentDescriptor,
@@ -412,8 +413,8 @@ export class SessionLiveRuntimeService {
         input.runtimeOptions?.providerInstructionFilePath ?? null
       );
 
-      this.ensureCapability(capabilities.canStartSession, "provider", "provider 不支持 start-live");
-      this.ensureCapability(capabilities.canSendMessage, "provider", "provider 不支持实时对话");
+      this.ensureCapability(capabilities, "provider", "canStartSession", "provider 不支持 start-live");
+      this.ensureCapability(capabilities, "provider", "canSendMessage", "provider 不支持实时对话");
 
       const launchRuntimeStartedAtMs = performance.now();
       const handle = await this.launchRuntimeRun(
@@ -1825,7 +1826,7 @@ export class SessionLiveRuntimeService {
         input.runtimeOptions?.providerInstructionFilePath ?? null
       );
 
-      this.ensureCapability(capabilities.canSendMessage, "sessionId", "provider 不支持实时对话");
+      this.ensureCapability(capabilities, "sessionId", "canSendMessage", "provider 不支持实时对话");
 
       const runtimeRequest = {
         sessionId: input.sessionId,
@@ -3177,17 +3178,17 @@ export class SessionLiveRuntimeService {
     await this.emitExternalRuntimeEnvelope(envelope);
   }
 
-  private ensureCapability(enabled: boolean, field: string, detail: string): void {
-    if (enabled) {
+  private ensureCapability(
+    capabilities: { provider: string; canStartSession?: boolean; canSendMessage?: boolean; limitations: string[] },
+    field: string,
+    capability: "canStartSession" | "canSendMessage",
+    detail: string
+  ): void {
+    if (capabilities[capability]) {
       return;
     }
 
-    throw new AppError({
-      statusCode: 400,
-      errorCode: "CAPABILITY_NOT_SUPPORTED",
-      detail,
-      field
-    });
+    throw createProviderCapabilityBlockedError(capabilities as never, field, detail);
   }
 
   private upsertSnapshot(

@@ -490,6 +490,12 @@ export interface UserPreferenceProfileRecord extends UserPreferenceProfile {
   updatedAt: string;
 }
 
+export interface ProviderControlRecord {
+  providerId: ProviderId;
+  enabled: boolean;
+  updatedAt: string;
+}
+
 export interface GitRemoteCredentialRecord {
   userId: string;
   remoteUrl: string;

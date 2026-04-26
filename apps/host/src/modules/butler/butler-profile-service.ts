@@ -13,6 +13,8 @@ import type {
 } from "../../types/domain.js";
 import type { ButlerProfileRepository } from "../../storage/repositories/butler-profile-repository.js";
 import type { ButlerProjectRepository } from "../../storage/repositories/butler-project-repository.js";
+import type { ProviderControlRepository } from "../../storage/repositories/provider-control-repository.js";
+import { createProviderDisabledError } from "../provider/provider-disabled.js";
 
 const BUTLER_PROFILE_ID: ButlerProfile["id"] = "default";
 const DEFAULT_BUTLER_DISPLAY_NAME = "代码助手";
@@ -43,11 +45,22 @@ export interface ButlerProfileInitInput {
 export interface ButlerProfilePatchInput extends ButlerProfileInitInput {}
 
 export class ButlerProfileService {
+  private readonly providerControlRepository: Pick<ProviderControlRepository, "get">;
+
   constructor(
     private readonly butlerProfileRepository: ButlerProfileRepository,
     private readonly butlerProjectRepository: Pick<ButlerProjectRepository, "list">,
-    private readonly dataRootDir: string = path.resolve("data", "host")
-  ) {}
+    private readonly dataRootDir: string = path.resolve("data", "host"),
+    providerControlRepository: Pick<ProviderControlRepository, "get"> | null = null
+  ) {
+    this.providerControlRepository = providerControlRepository ?? {
+      get: (providerId: string) => ({
+        providerId: providerId.trim(),
+        enabled: true,
+        updatedAt: ""
+      })
+    };
+  }
 
   getProfile(): ButlerProfile | null {
     const profile = this.butlerProfileRepository.find();
@@ -69,7 +82,8 @@ export class ButlerProfileService {
       timestamp,
       null,
       this.butlerProjectRepository,
-      this.dataRootDir
+      this.dataRootDir,
+      this.providerControlRepository
     );
 
     return this.butlerProfileRepository.create(profile);
@@ -91,7 +105,8 @@ export class ButlerProfileService {
       current.initializedAt,
       current,
       this.butlerProjectRepository,
-      this.dataRootDir
+      this.dataRootDir,
+      this.providerControlRepository
     );
 
     return this.butlerProfileRepository.update(updated);
@@ -117,7 +132,8 @@ function buildButlerProfileRecord(
   initializedAt: string,
   current: ButlerProfile | null,
   butlerProjectRepository: Pick<ButlerProjectRepository, "list">,
-  dataRootDir: string
+  dataRootDir: string,
+  providerControlRepository: Pick<ProviderControlRepository, "get">
 ): ButlerProfile {
   const displayName =
     input.displayName !== undefined
@@ -131,6 +147,9 @@ function buildButlerProfileRecord(
     input.providerId !== undefined
       ? normalizeProviderId(input.providerId)
       : current?.providerId ?? invalidField("providerId", PROVIDER_ERROR_DETAIL);
+  if (!providerControlRepository.get(providerId).enabled) {
+    throw createProviderDisabledError(providerId, "providerId");
+  }
   const agentsMode =
     input.agentsMode !== undefined
       ? normalizeAgentsMode(input.agentsMode)

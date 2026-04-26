@@ -23,6 +23,7 @@ import type {
 import type { SessionHistoryService } from "../sessions/session-history-service.js";
 import type { SessionLiveRuntimeService } from "../sessions/session-live-runtime-service.js";
 import type { SessionMessageOriginRepository } from "../../storage/repositories/session-message-origin-repository.js";
+import type { ProviderControlRepository } from "../../storage/repositories/provider-control-repository.js";
 import { recordButlerProxyMessageOrigin } from "../sessions/session-message-origin-utils.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
 import type {
@@ -34,6 +35,7 @@ import type { CreateWorktreeInput, WorktreeManager } from "../worktree/worktree-
 import type { WorktreeCleanupOptions, WorktreeCleanupService } from "../worktree/worktree-cleanup-service.js";
 import type { WorktreeMergeService } from "../worktree/worktree-merge-service.js";
 import type { WorktreeSyncService } from "../worktree/worktree-sync-service.js";
+import { createProviderDisabledError } from "../provider/provider-disabled.js";
 
 type AssistantCapabilityMode = "read" | "proxy_execute";
 
@@ -782,7 +784,8 @@ export class AssistantCapabilityService {
       | "markTaskWaitingUser"
       | "completeTask"
       | "failTask"
-    > | null = null
+    > | null = null,
+    private readonly providerControlRepository: Pick<ProviderControlRepository, "get"> | null = null
   ) {}
 
   listCapabilities(): AssistantCapabilityReceipt<{
@@ -1330,6 +1333,8 @@ export class AssistantCapabilityService {
         detail: "当前没有可用的助手控制会话，无法继承默认 provider"
       });
     }
+
+    this.assertProviderEnabled(providerId, "providerId");
 
     const task = await service.createTask({
       projectId: input.projectId,
@@ -2068,6 +2073,8 @@ export class AssistantCapabilityService {
       });
     }
 
+    this.assertProviderEnabled(providerId, "providerId");
+
     return {
       providerId,
       model: normalizeAssistantText(input.model) ?? controlSession?.model ?? null,
@@ -2076,6 +2083,14 @@ export class AssistantCapabilityService {
       permissionMode:
         normalizeAssistantText(input.permissionMode) ?? controlSession?.permissionMode ?? null
     };
+  }
+
+  private assertProviderEnabled(providerId: string, field: string): void {
+    if (this.providerControlRepository?.get(providerId).enabled !== false) {
+      return;
+    }
+
+    throw createProviderDisabledError(providerId, field);
   }
 
   private resolveAssistantSessionTarget(

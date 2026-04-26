@@ -109,6 +109,85 @@ describe("ButlerControlSessionService", () => {
     });
   });
 
+  it("当前 Butler provider 已被禁用时，会在准备工作区前直接拒绝启动控制会话", async () => {
+    const workspacePath = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-control-"));
+    tempDirs.push(workspacePath);
+    const profile: ButlerProfile = {
+      id: "default",
+      providerId: "codex",
+      workspacePath,
+      agentsMode: "inline",
+      agentsFilePath: null,
+      agentsContent: "# AGENTS.md\n你是代码助手",
+      persona: {
+        tone: "direct",
+        language: "zh-CN",
+        summaryStyle: "brief"
+      },
+      focus: {
+        projectIds: [],
+        riskPreference: "conservative",
+        reportPriority: ["risk"]
+      },
+      initializedAt: "2026-04-05T00:00:00.000Z",
+      updatedAt: "2026-04-05T00:00:00.000Z"
+    };
+    const importWorkspace = vi.fn();
+
+    const service = new ButlerControlSessionService(
+      {
+        ensureInitialized: vi.fn(() => profile)
+      } as unknown as ButlerProfileService,
+      {
+        findLatestOpenByProvider: vi.fn(() => null),
+        findLatestByProvider: vi.fn(() => null),
+        create: vi.fn(),
+        update: vi.fn()
+      } as unknown as ButlerControlSessionRepository,
+      {
+        importWorkspace
+      } as unknown as Pick<WorkspaceService, "importWorkspace">,
+      {
+        getSession: vi.fn(),
+        resumeSession: vi.fn()
+      } as unknown as Pick<SessionHistoryService, "getSession" | "resumeSession">,
+      {
+        startLiveSession: vi.fn(),
+        sendLiveMessage: vi.fn()
+      } as unknown as Pick<SessionLiveRuntimeService, "startLiveSession" | "sendLiveMessage">,
+      {
+        resolvePromptContext: vi.fn()
+      } as unknown as Pick<ButlerContextAggregator, "resolvePromptContext">,
+      {
+        ensureWorkspaceCredential: vi.fn(),
+        getCredentialFilePath: vi.fn()
+      } as unknown as Pick<ButlerAuthService, "ensureWorkspaceCredential" | "getCredentialFilePath">,
+      createSkillManagerStub(),
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      {
+        get: vi.fn(() => ({
+          providerId: "codex",
+          enabled: false,
+          updatedAt: "2026-04-26T10:00:00.000Z"
+        }))
+      } as any
+    );
+
+    await expect(service.startSession("user-1", {
+      content: "请继续推进"
+    })).rejects.toMatchObject({
+      errorCode: "PROVIDER_DISABLED",
+      field: "providerId"
+    });
+    expect(importWorkspace).not.toHaveBeenCalled();
+  });
+
   it("启动控制会话时会复用真实 live runtime 并创建独立控制会话记录", async () => {
     const workspacePath = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-control-"));
     tempDirs.push(workspacePath);

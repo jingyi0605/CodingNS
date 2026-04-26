@@ -467,6 +467,15 @@ CREATE TABLE IF NOT EXISTS user_preference_profiles (
   FOREIGN KEY (user_id) REFERENCES auth_users(id)
 );
 
+CREATE TABLE IF NOT EXISTS provider_control_profiles (
+  provider_id TEXT PRIMARY KEY,
+  enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_control_profiles_enabled
+  ON provider_control_profiles(enabled, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS git_remote_credentials (
   user_id TEXT NOT NULL,
   remote_url TEXT NOT NULL,

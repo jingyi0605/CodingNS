@@ -89,6 +89,10 @@ import {
   type ProviderSessionDiscoveryHelperConfig
 } from "../provider/provider-discovery-helper-client.js";
 import { discoverWorkspaceSessionsInRuntime } from "../provider/provider-discovery-runtime.js";
+import {
+  applyProviderDisabledState,
+  createProviderCapabilityBlockedError
+} from "../provider/provider-disabled.js";
 import { createTaskManager, TaskManager } from "../tasks/task-manager.js";
 import {
   HOST_TASK_TYPES,
@@ -101,6 +105,7 @@ import {
   type ProviderSessionDeleteCli
 } from "./provider-session-delete-cli.js";
 import type { SessionProviderConfigService } from "./session-provider-config-service.js";
+import type { ProviderControlRepository } from "../../storage/repositories/provider-control-repository.js";
 
 interface StartSessionInput {
   workspaceId: string;
@@ -304,6 +309,7 @@ export class SessionHistoryService {
     SessionProviderConfigService,
     "prepareSessionBinding"
   > | null;
+  private readonly providerControlRepository: Pick<ProviderControlRepository, "get">;
   private readonly taskManager: TaskManager;
   private readonly workspaceDiscoveryStatuses = new Map<string, WorkspaceDiscoveryStatus>();
   private readonly workspaceStateRefreshStatuses = new Map<string, WorkspaceStateRefreshStatus>();
@@ -344,7 +350,8 @@ export class SessionHistoryService {
       SessionIsolatedWorkspaceRepository,
       "findByOwnerSessionId" | "listByOwnerSessionIds" | "listBySourceWorkspaceId"
     > | null = null,
-    sessionProviderConfigService: Pick<SessionProviderConfigService, "prepareSessionBinding"> | null = null
+    sessionProviderConfigService: Pick<SessionProviderConfigService, "prepareSessionBinding"> | null = null,
+    providerControlRepository: Pick<ProviderControlRepository, "get"> | null = null
   ) {
     this.sessionActivityAuthorityService = sessionActivityAuthorityService;
     this.sessionForkRepository = sessionForkRepository ?? new SessionForkRepository(db);
@@ -355,6 +362,13 @@ export class SessionHistoryService {
     this.parallelSessionMemberRepository = parallelSessionMemberRepository;
     this.sessionIsolatedWorkspaceRepository = sessionIsolatedWorkspaceRepository;
     this.sessionProviderConfigService = sessionProviderConfigService;
+    this.providerControlRepository = providerControlRepository ?? {
+      get: (providerId: string) => ({
+        providerId: providerId.trim(),
+        enabled: true,
+        updatedAt: ""
+      })
+    };
     this.claudeCodeHomeDir = config.claudeCodeHomeDir;
     this.providerCliCommandPaths = {
       "claude-code": process.platform === "win32" ? "claude.cmd" : "claude",
@@ -481,16 +495,18 @@ export class SessionHistoryService {
         config: ProviderSessionDiscoveryHelperConfig;
         workspacePath: string;
         knownSessions: import("@codingns/session-sync-core").ProviderSessionSummary[];
+        enabledProviders: string[];
       }, ProviderSessionDiscovery>({
         taskType: HOST_TASK_TYPES.workspaceDiscoveryScan,
         executionLane: "helper_process",
         concurrency: WORKSPACE_DISCOVERY_SCAN_CONCURRENCY,
         helperProcessHandler: "session.workspace_discovery",
-        run: async ({ config, workspacePath, knownSessions }, context) =>
+        run: async ({ config, workspacePath, knownSessions, enabledProviders }, context) =>
           await discoverWorkspaceSessionsInRuntime(
             config,
             workspacePath,
             knownSessions,
+            enabledProviders,
             context.signal
           )
       });
@@ -897,20 +913,20 @@ export class SessionHistoryService {
       .filter((item) => !this.isPendingSessionAlias(item));
     const projectedItems = this.listProjectedIsolatedWorkspaceSessions(workspaceId, userId);
 
-    return this.enrichSessionItems(
+    return this.filterDisabledProviderSessions(this.enrichSessionItems(
       workspaceId,
       sortSessionListItemsByRecentActivity(
         mergeSessionListItemsBySessionId([...directItems, ...projectedItems])
       )
-    );
+    ));
   }
 
   getProviderCapabilitiesSnapshot(provider: string): ProviderCapabilities {
     try {
-      return this.resolveProviderCapabilitiesImmediate(
+      return this.applyProviderEnabledState(this.resolveProviderCapabilitiesImmediate(
         this.applyProviderCliAvailability(this.capabilityService.getProviderCapabilities(provider)),
         null
-      );
+      ));
     } catch (error) {
       throw mapSessionProviderError(error);
     }
@@ -933,11 +949,13 @@ export class SessionHistoryService {
           refreshedAt: Date.now(),
           value: refreshed
         });
-        return refreshed;
+        return this.applyProviderEnabledState(refreshed);
       }
 
       this.scheduleProviderCapabilityRefresh(baseCapabilities, workspacePath);
-      return this.resolveProviderCapabilitiesImmediate(baseCapabilities, workspacePath);
+      return this.applyProviderEnabledState(
+        this.resolveProviderCapabilitiesImmediate(baseCapabilities, workspacePath)
+      );
     } catch (error) {
       throw mapSessionProviderError(error);
     }
@@ -964,12 +982,14 @@ export class SessionHistoryService {
                 refreshedAt: Date.now(),
                 value: refreshed
               });
-              return refreshed;
+              return this.applyProviderEnabledState(refreshed);
             });
         }
 
         this.scheduleProviderCapabilityRefresh(normalizedCapabilities, workspacePath);
-        return this.resolveProviderCapabilitiesImmediate(normalizedCapabilities, workspacePath);
+        return this.applyProviderEnabledState(
+          this.resolveProviderCapabilitiesImmediate(normalizedCapabilities, workspacePath)
+        );
       })
       .catch((error) => {
         throw mapSessionProviderError(error);
@@ -1024,6 +1044,10 @@ export class SessionHistoryService {
     capabilities: ProviderCapabilities,
     workspacePath: string | null
   ): void {
+    if (!this.isProviderEnabled(capabilities.provider)) {
+      return;
+    }
+
     const cacheKey = buildProviderCapabilityCacheKey(capabilities.provider, workspacePath);
     const cached = this.providerCapabilityCache.get(cacheKey);
 
@@ -1094,6 +1118,22 @@ export class SessionHistoryService {
     };
   }
 
+  private applyProviderEnabledState(capabilities: ProviderCapabilities): ProviderCapabilities {
+    if (this.isProviderEnabled(capabilities.provider)) {
+      return capabilities;
+    }
+
+    return applyProviderDisabledState(capabilities);
+  }
+
+  private isProviderEnabled(provider: string): boolean {
+    return this.providerControlRepository.get(provider.trim()).enabled;
+  }
+
+  private filterDisabledProviderSessions(items: SessionListItem[]): SessionListItem[] {
+    return items.filter((item) => this.isProviderEnabled(item.provider));
+  }
+
   private assertProviderCapabilityEnabled(
     provider: string,
     capability: "canStartSession" | "canResumeSession",
@@ -1105,12 +1145,21 @@ export class SessionHistoryService {
       return;
     }
 
-    throw new AppError({
-      statusCode: 409,
-      errorCode: "PROVIDER_UNAVAILABLE",
-      detail: capabilities.limitations[0] ?? fallbackDetail,
-      field: "provider"
-    });
+    throw createProviderCapabilityBlockedError(capabilities, "provider", fallbackDetail);
+  }
+
+  private assertProviderSendEnabled(
+    provider: string,
+    field: string,
+    fallbackDetail: string
+  ): void {
+    const capabilities = this.getProviderCapabilitiesSnapshot(provider);
+
+    if (capabilities.canSendMessage) {
+      return;
+    }
+
+    throw createProviderCapabilityBlockedError(capabilities, field, fallbackDetail);
   }
 
   async getSessionContextUsage(sessionId: string): Promise<ContextUsageSnapshot | null> {
@@ -1170,6 +1219,12 @@ export class SessionHistoryService {
   }
 
   async startSession(input: StartSessionInput): Promise<SessionListItem> {
+    this.assertProviderCapabilityEnabled(
+      input.provider,
+      "canStartSession",
+      "当前 provider 不支持创建会话"
+    );
+
     if (SESSION_START_DEFERRED_PROVIDERS.has(input.provider)) {
       throw new AppError({
         statusCode: 409,
@@ -1676,6 +1731,11 @@ export class SessionHistoryService {
     permissionMode: string | null = null
   ): Promise<SendMessageResult & { sessionId: string }> {
     const binding = this.getBindingOrThrow(sessionId);
+    this.assertProviderSendEnabled(
+      binding.provider,
+      "sessionId",
+      "当前 provider 不支持继续发送消息"
+    );
     const result = await this.sessionSyncService
       .sendMessage(
         binding.provider,
@@ -2207,21 +2267,27 @@ export class SessionHistoryService {
     try {
       const discoverStartedAt = Date.now();
       const existingWorkspaceSessions = this.sessionIndexRepository.listByWorkspace(workspaceId, userId);
+      const enabledProviders = this.providerRegistry
+        .list()
+        .map((adapter) => adapter.providerId)
+        .filter((providerId) => this.isProviderEnabled(providerId));
       const knownSessions = this.buildKnownSessionSummaries(
-        existingWorkspaceSessions,
+        existingWorkspaceSessions.filter((session) => enabledProviders.includes(session.provider)),
         workspace.path
       );
       const discoveryHandle = this.taskManager.enqueue<{
         config: ProviderSessionDiscoveryHelperConfig;
         workspacePath: string;
         knownSessions: import("@codingns/session-sync-core").ProviderSessionSummary[];
+        enabledProviders: string[];
       }, ProviderSessionDiscovery>(HOST_TASK_TYPES.workspaceDiscoveryScan, {
         key: workspaceId,
         source: "session_history.workspace_discovery.scan",
         input: {
           config: this.providerSessionDiscoveryConfig,
           workspacePath: workspace.path,
-          knownSessions
+          knownSessions,
+          enabledProviders
         }
       });
       const discovery = await awaitTaskHandleWithSignal(discoveryHandle, signal).catch((error) => {

@@ -7,6 +7,7 @@ import type { SessionHistoryService } from "../sessions/session-history-service.
 import type { SessionLiveRuntimeService } from "../sessions/session-live-runtime-service.js";
 import type { SessionProviderConfigMode } from "../../types/domain.js";
 import type { SessionProviderConfigService } from "../sessions/session-provider-config-service.js";
+import type { ProviderCatalogService } from "./provider-catalog-service.js";
 import {
   isClaudeCompatibleProvider,
   type ClaudeCompatibleProviderId
@@ -20,6 +21,10 @@ interface ProviderCapabilitiesQuery {
   workspaceId?: string;
   providerConfigMode?: SessionProviderConfigMode;
   providerPresetId?: string | null;
+}
+
+interface UpdateProviderCatalogBody {
+  enabled?: boolean;
 }
 
 interface ClaudeHookEventBody {
@@ -37,6 +42,7 @@ export class ProviderController {
   constructor(
     private readonly sessionHistoryService: SessionHistoryService,
     private readonly sessionProviderConfigService: SessionProviderConfigService,
+    private readonly providerCatalogService: ProviderCatalogService,
     private readonly sessionLiveRuntimeService: Pick<
       SessionLiveRuntimeService,
       "getClaudeHookBridgeConfig" | "ingestClaudeHookEvent"
@@ -64,14 +70,41 @@ export class ProviderController {
       request.query.workspaceId?.trim() || null
     );
 
-    reply.send(
-      this.sessionProviderConfigService.resolveCapabilities({
+    const resolvedCapabilities = this.sessionProviderConfigService.resolveCapabilities({
         provider: baseCapabilities.provider,
         baseCapabilities,
         providerConfigMode: normalizeProviderConfigMode(request.query.providerConfigMode),
         providerPresetId: request.query.providerPresetId?.trim() || null
-      })
-    );
+      });
+
+    reply.send(this.providerCatalogService.applyProviderEnabledState(resolvedCapabilities));
+  };
+
+  readonly listCatalog = async (_request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    reply.send({
+      items: this.providerCatalogService.listCatalog()
+    });
+  };
+
+  readonly updateCatalogEntry = async (
+    request: FastifyRequest<{ Params: ProviderParams; Body: UpdateProviderCatalogBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    if (typeof request.body?.enabled !== "boolean") {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "enabled 必须是 boolean",
+        field: "enabled"
+      });
+    }
+
+    reply.send({
+      item: this.providerCatalogService.updateProviderEnabled(
+        request.params.provider,
+        request.body.enabled
+      )
+    });
   };
 
   readonly getClaudeHookBridgeConfig = async (

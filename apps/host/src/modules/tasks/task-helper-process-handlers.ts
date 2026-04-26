@@ -23,6 +23,7 @@ interface TaskHelperProcessHandlerMap {
       config: ProviderSessionDiscoveryHelperConfig;
       workspacePath: string;
       knownSessions: ProviderSessionSummary[];
+      enabledProviders: string[];
     },
     signal?: AbortSignal
   ) => ProviderSessionDiscovery | Promise<ProviderSessionDiscovery>;
@@ -33,8 +34,8 @@ const TASK_HELPER_PROCESS_HANDLERS: TaskHelperProcessHandlerMap = {
     readWorkspaceCodeCompositionWithSignal(workspacePath, signal),
   "terminal.template_runtime_status_discovery": ({ items }, signal) =>
     discoverTemplateRuntimeStatuses(items, signal),
-  "session.workspace_discovery": ({ config, workspacePath, knownSessions }, signal) =>
-    discoverWorkspaceSessionsInRuntime(config, workspacePath, knownSessions, signal)
+  "session.workspace_discovery": ({ config, workspacePath, knownSessions, enabledProviders }, signal) =>
+    discoverWorkspaceSessionsInRuntime(config, workspacePath, knownSessions, enabledProviders, signal)
 };
 
 export type TaskHelperProcessHandlerName = keyof TaskHelperProcessHandlerMap;

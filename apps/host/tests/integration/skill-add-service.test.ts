@@ -385,6 +385,48 @@ describe("SkillManagerService.addManagedSkill", () => {
     expect(existsSync(path.join(ssotRootDir, ".assistant-runtime", "inbox-helper", "SKILL.md"))).toBe(true);
     expect(existsSync(path.join(codexRoot, "inbox-helper"))).toBe(false);
   });
+
+  it("目标 provider 被禁用时会直接拒绝新的 Skill 纳管动作", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-skill-add-disabled-provider-"));
+    tempDirs.push(tempDir);
+    const database = createDatabaseClient(":memory:");
+    const ssotRootDir = path.join(tempDir, "skill-ssot");
+    const sourceRoot = path.join(tempDir, "sources");
+    const codexRoot = path.join(tempDir, "codex-skills");
+
+    mkdirSync(sourceRoot, { recursive: true });
+    mkdirSync(codexRoot, { recursive: true });
+
+    const sourcePath = createSkillDirectory(sourceRoot, "blocked-helper", {
+      "SKILL.md": "# Blocked Helper\n\n这个 Skill 不该继续同步到被禁用的目标。"
+    });
+    const service = new SkillManagerService(
+      new ManagedSkillRepository(database.db),
+      new SkillTargetBindingRepository(database.db),
+      [createAdapter("codex", codexRoot)],
+      {
+        ssotRootDir,
+        providerControlRepository: {
+          get: () => ({
+            providerId: "codex",
+            enabled: false,
+            updatedAt: "2026-04-26T11:30:00.000Z"
+          })
+        }
+      }
+    );
+
+    expect(() =>
+      service.addManagedSkill({
+        sourcePath,
+        targetCli: ["codex"],
+        sourceType: "local-import"
+      })
+    ).toThrowError("codex 已被项目禁用");
+    expect(existsSync(path.join(ssotRootDir, "blocked-helper"))).toBe(false);
+
+    database.close();
+  });
 });
 
 function createSkillDirectory(

@@ -139,6 +139,138 @@ describe("AssistantCapabilityService", () => {
     );
   });
 
+  it("控制会话默认 provider 已被禁用时，会拒绝启动新的助手会话", async () => {
+    const service = new AssistantCapabilityService(
+      {
+        list: vi.fn(),
+        getById: vi.fn(),
+        getOverview: vi.fn()
+      } as any,
+      {
+        listByProject: vi.fn(),
+        ensureProjectSessionsSynced: vi.fn(),
+        startSession: vi.fn()
+      } as any,
+      {
+        getCurrentSession: vi.fn(() => ({
+          id: "control-1",
+          providerId: "codex",
+          sessionId: "assistant-session-1",
+          purpose: "chat",
+          title: null,
+          sourceItemId: null,
+          model: "gpt-5.4",
+          reasoningLevel: "high",
+          permissionMode: "acceptEdits",
+          status: "running",
+          lastContextVersion: null,
+          lastSummary: null,
+          createdAt: "2026-04-16T12:00:00.000Z",
+          updatedAt: "2026-04-16T12:00:00.000Z",
+          session: {
+            sessionId: "assistant-session-1"
+          }
+        }))
+      } as any,
+      {
+        listTasks: vi.fn(),
+        getTask: vi.fn(),
+        createTask: vi.fn(),
+        cancelTask: vi.fn(),
+        listRuns: vi.fn()
+      } as any,
+      {
+        listSandboxes: vi.fn(),
+        getSandbox: vi.fn(),
+        createSandbox: vi.fn(),
+        promoteSandbox: vi.fn(),
+        expireSandbox: vi.fn(),
+        removeSandbox: vi.fn(),
+        resolveWorkspaceId: vi.fn(),
+        markSandboxUsedByControlSession: vi.fn()
+      } as any,
+      {
+        listTimers: vi.fn(),
+        getTimer: vi.fn(),
+        createTimer: vi.fn(),
+        cancelTimer: vi.fn()
+      } as any,
+      {
+        getSession: vi.fn(),
+        readSessionHistory: vi.fn(),
+        forkSession: vi.fn(),
+        deleteSession: vi.fn()
+      } as any,
+      {
+        startLiveSession: vi.fn(),
+        getSessionRuntime: vi.fn(),
+        sendLiveMessage: vi.fn()
+      } as any,
+      {
+        listTerminals: vi.fn(),
+        readTerminalHistory: vi.fn(),
+        writeInput: vi.fn(),
+        closeTerminal: vi.fn()
+      } as any,
+      {
+        analyze: vi.fn(),
+        getFrameworkAnalysis: vi.fn(),
+        refreshFrameworkAnalysis: vi.fn(),
+        createLaunchPlan: vi.fn(),
+        run: vi.fn(),
+        getLatestRuntimeDetail: vi.fn(),
+        getRecentRuntimeDetails: vi.fn(),
+        getRuntimeDetail: vi.fn(),
+        getCompatibilityMatrix: vi.fn()
+      } as any,
+      {
+        list: vi.fn(),
+        browseDirectories: vi.fn(),
+        createDirectory: vi.fn(),
+        importWorkspace: vi.fn(),
+        cloneWorkspace: vi.fn(),
+        reorderWorkspaces: vi.fn(),
+        getManagementSummary: vi.fn(),
+        removeWorkspace: vi.fn(),
+        updateNavigationState: vi.fn()
+      } as any,
+      {
+        getTree: vi.fn(),
+        create: vi.fn()
+      } as any,
+      {
+        syncRoot: vi.fn()
+      } as any,
+      {
+        preview: vi.fn(),
+        apply: vi.fn()
+      } as any,
+      {
+        cleanup: vi.fn()
+      } as any,
+      {
+        upsert: vi.fn()
+      } as any,
+      null,
+      {
+        get: vi.fn(() => ({
+          providerId: "codex",
+          enabled: false,
+          updatedAt: "2026-04-26T10:00:00.000Z"
+        }))
+      } as any
+    );
+
+    await expect(service.startProjectSession({
+      projectId: "project-1",
+      userId: "user-1",
+      content: "请在新会话里继续推进"
+    })).rejects.toMatchObject({
+      errorCode: "PROVIDER_DISABLED",
+      field: "providerId"
+    });
+  });
+
   it("向真实会话发送消息时会记录代理发送来源", async () => {
     const originRepository = {
       upsert: vi.fn()

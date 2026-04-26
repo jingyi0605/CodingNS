@@ -69,6 +69,7 @@ describe("SkillManagerService.importUnmanagedSkill", () => {
     expect(result.skill).toEqual({
       id: "skill-legacy-helper",
       name: "Legacy Helper",
+      scope: "workspace",
       directoryName: "legacy-helper",
       sourceType: "managed-copy",
       sourcePath: path.resolve(codexPath),
@@ -173,6 +174,46 @@ describe("SkillManagerService.importUnmanagedSkill", () => {
       })
     ).toThrowError("目录名保留给助手专用运行时资产");
     expect(existsSync(path.join(ssotRootDir, "codingns-assistant"))).toBe(false);
+
+    database.close();
+  });
+
+  it("目标 provider 被禁用时会拒绝导入旧 Skill", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-skill-import-disabled-provider-"));
+    tempDirs.push(tempDir);
+    const database = createDatabaseClient(":memory:");
+    const ssotRootDir = path.join(tempDir, "skill-ssot");
+    const codexRoot = path.join(tempDir, "codex-skills");
+
+    mkdirSync(codexRoot, { recursive: true });
+
+    const codexPath = createSkillDirectory(codexRoot, "disabled-import-helper", {
+      "SKILL.md": "# Disabled Import Helper\n\n这个旧 Skill 不该继续导入到被禁用的目标。"
+    });
+    const service = new SkillManagerService(
+      new ManagedSkillRepository(database.db),
+      new SkillTargetBindingRepository(database.db),
+      [createAdapter("codex", codexRoot)],
+      {
+        ssotRootDir,
+        providerControlRepository: {
+          get: () => ({
+            providerId: "codex",
+            enabled: false,
+            updatedAt: "2026-04-26T11:35:00.000Z"
+          })
+        }
+      }
+    );
+
+    expect(() =>
+      service.importUnmanagedSkill({
+        targetCli: "codex",
+        directoryPath: codexPath,
+        expectedContentHash: computeSkillDirectoryHash(codexPath)
+      })
+    ).toThrowError("codex 已被项目禁用");
+    expect(existsSync(path.join(ssotRootDir, "disabled-import-helper"))).toBe(false);
 
     database.close();
   });

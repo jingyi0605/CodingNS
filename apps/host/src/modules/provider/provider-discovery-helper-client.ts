@@ -86,6 +86,7 @@ export class ProviderDiscoveryHelperClient {
     config: ProviderSessionDiscoveryHelperConfig;
     workspacePath: string;
     knownSessions: ProviderSessionSummary[];
+    enabledProviders: string[];
   }, signal?: AbortSignal): Promise<ProviderSessionDiscovery> {
     const result = await this.sendRequest({
       type: "workspace_session_discovery",
