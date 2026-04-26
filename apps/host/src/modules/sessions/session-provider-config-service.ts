@@ -10,6 +10,7 @@ import {
   type ModelPresetRuntimeConfigDto,
   type ModelSwitchAppId
 } from "../model-switch/cc-switch-adapter.js";
+import type { OpenCliSessionRuntimeResolution } from "../opencli/opencli-runtime-resolver.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import type {
   SessionBinding,
@@ -42,6 +43,17 @@ export interface SessionProviderBindingDebugSummary {
 interface SessionProviderSelection {
   providerConfigMode: SessionProviderConfigMode;
   providerPresetId: string | null;
+}
+
+interface OpenCliRuntimeResolverPort {
+  resolveSessionRuntime(): OpenCliSessionRuntimeResolution;
+}
+
+interface OpenCliBridgeSkillServicePort {
+  supportsProvider(provider: SessionBinding["provider"]): boolean;
+  hasEnabledCommands(): boolean;
+  syncRuntimeSkill(provider: SessionBinding["provider"], runtimeHomeDir: string): void;
+  removeRuntimeSkill(provider: SessionBinding["provider"], runtimeHomeDir: string): void;
 }
 
 interface StoredRuntimeMetadata {
@@ -96,7 +108,9 @@ const CLAUDE_MODEL_ALIASES = [
 export class SessionProviderConfigService {
   constructor(
     private readonly config: HostConfig,
-    private readonly ccSwitchAdapter: CcSwitchAdapter
+    private readonly ccSwitchAdapter: CcSwitchAdapter,
+    private readonly openCliRuntimeResolver?: OpenCliRuntimeResolverPort,
+    private readonly openCliBridgeSkillService?: OpenCliBridgeSkillServicePort
   ) {}
 
   prepareSessionBinding(input: {
@@ -111,10 +125,21 @@ export class SessionProviderConfigService {
     });
 
     if (selection.providerConfigMode === "global-default") {
+      if (!this.shouldUseManagedRuntimeHome(input.provider)) {
+        return {
+          providerConfigMode: selection.providerConfigMode,
+          providerPresetId: null,
+          runtimeHomeDir: null
+        };
+      }
+
+      const runtimeHomeDir = this.resolveRuntimeHomeDir(input.provider, input.sessionId);
+      this.materializeGlobalRuntimeHome(input.provider, runtimeHomeDir);
+
       return {
         providerConfigMode: selection.providerConfigMode,
         providerPresetId: null,
-        runtimeHomeDir: null
+        runtimeHomeDir
       };
     }
 
@@ -164,15 +189,47 @@ export class SessionProviderConfigService {
       fallback: existingSelection
     });
 
-    if (selection.providerConfigMode === "global-default") {
-      return {
-        providerConfigMode: "global-default",
-        providerPresetId: null,
-        runtimeHomeDir: null
-      };
-    }
-
     const existingRuntimeHomeDir = input.existingBinding?.runtimeHomeDir?.trim() ?? "";
+
+    if (selection.providerConfigMode === "global-default") {
+      if (
+        input.existingBinding?.providerConfigMode === "global-default"
+        && existingRuntimeHomeDir.length > 0
+      ) {
+        if (this.shouldUseManagedRuntimeHome(input.provider)) {
+          this.materializeGlobalRuntimeHome(input.provider, existingRuntimeHomeDir);
+        }
+
+        return {
+          providerConfigMode: "global-default",
+          providerPresetId: null,
+          runtimeHomeDir: existingRuntimeHomeDir
+        };
+      }
+
+      if (!this.shouldUseManagedRuntimeHome(input.provider)) {
+        return {
+          providerConfigMode: "global-default",
+          providerPresetId: null,
+          runtimeHomeDir: null
+        };
+      }
+
+      const preparedBinding = this.prepareSessionBinding({
+        sessionId: input.sessionId,
+        provider: input.provider,
+        providerConfigMode: selection.providerConfigMode,
+        providerPresetId: selection.providerPresetId
+      });
+
+      this.syncProviderRuntimeStateToPreparedHome(
+        input.provider,
+        input.existingBinding,
+        preparedBinding.runtimeHomeDir
+      );
+
+      return preparedBinding;
+    }
 
     if (
       input.existingBinding?.providerConfigMode === "cc-switch-preset"
@@ -247,21 +304,32 @@ export class SessionProviderConfigService {
     SessionBinding,
     "provider" | "providerConfigMode" | "providerPresetId" | "runtimeHomeDir"
   >): SessionProviderLaunchContext {
-    if (binding.providerConfigMode !== "cc-switch-preset") {
+    const baseLaunchContext = this.resolveBaseLaunchContext(binding);
+    const openCliResolution = this.openCliRuntimeResolver?.resolveSessionRuntime();
+
+    this.refreshOpenCliBridgeSkill(binding, openCliResolution);
+
+    if (!openCliResolution || openCliResolution.availability !== "ready" || !openCliResolution.runtimeBinPath) {
+      return baseLaunchContext;
+    }
+
+    return {
+      runtimeHomeDir: baseLaunchContext.runtimeHomeDir,
+      runtimeEnv: mergeLaunchRuntimeEnv(baseLaunchContext.runtimeEnv, openCliResolution)
+    };
+  }
+
+  private resolveBaseLaunchContext(binding: Pick<
+    SessionBinding,
+    "provider" | "providerConfigMode" | "providerPresetId" | "runtimeHomeDir"
+  >): SessionProviderLaunchContext {
+    const runtimeHomeDir = binding.runtimeHomeDir?.trim() ?? "";
+
+    if (!runtimeHomeDir) {
       return {
         runtimeHomeDir: null,
         runtimeEnv: {}
       };
-    }
-
-    const runtimeHomeDir = binding.runtimeHomeDir?.trim() ?? "";
-
-    if (!runtimeHomeDir) {
-      throw new AppError({
-        statusCode: 409,
-        errorCode: "SESSION_PROVIDER_RUNTIME_HOME_MISSING",
-        detail: "当前会话绑定了 cc-switch preset，但缺少运行目录"
-      });
     }
 
     const metadata = this.readRuntimeMetadata(runtimeHomeDir, binding.provider, binding.providerPresetId);
@@ -426,6 +494,45 @@ export class SessionProviderConfigService {
           detail: `${provider} 当前不支持会话级 cc-switch preset`
         });
     }
+
+    this.refreshOpenCliBridgeSkill(
+      {
+        provider,
+        runtimeHomeDir
+      },
+      this.openCliRuntimeResolver?.resolveSessionRuntime()
+    );
+  }
+
+  private materializeGlobalRuntimeHome(
+    provider: SessionBinding["provider"],
+    runtimeHomeDir: string
+  ): void {
+    fs.mkdirSync(runtimeHomeDir, { recursive: true });
+    this.writeRuntimeMetadata(runtimeHomeDir, {
+      provider,
+      providerPresetId: "",
+      runtimeEnv: {}
+    });
+
+    switch (provider) {
+      case "claude-code":
+        this.materializeClaudeRuntimeHome(runtimeHomeDir, {});
+        break;
+      case "codex":
+        this.materializeCodexRuntimeHome(runtimeHomeDir, {});
+        break;
+      default:
+        return;
+    }
+
+    this.refreshOpenCliBridgeSkill(
+      {
+        provider,
+        runtimeHomeDir
+      },
+      this.openCliRuntimeResolver?.resolveSessionRuntime()
+    );
   }
 
   private materializeClaudeRuntimeHome(
@@ -663,6 +770,64 @@ export class SessionProviderConfigService {
       });
     }
   }
+
+  private shouldUseManagedRuntimeHome(provider: SessionBinding["provider"]): boolean {
+    if (!this.openCliBridgeSkillService?.supportsProvider(provider)) {
+      return false;
+    }
+
+    if (!this.openCliBridgeSkillService.hasEnabledCommands()) {
+      return false;
+    }
+
+    const runtimeResolution = this.openCliRuntimeResolver?.resolveSessionRuntime();
+    return runtimeResolution?.availability === "ready";
+  }
+
+  private refreshOpenCliBridgeSkill(
+    binding: Pick<SessionBinding, "provider" | "runtimeHomeDir">,
+    openCliResolution: OpenCliSessionRuntimeResolution | undefined
+  ): void {
+    const runtimeHomeDir = binding.runtimeHomeDir?.trim() ?? "";
+
+    if (!runtimeHomeDir || !this.openCliBridgeSkillService?.supportsProvider(binding.provider)) {
+      return;
+    }
+
+    if (openCliResolution?.availability === "ready" && this.openCliBridgeSkillService.hasEnabledCommands()) {
+      this.openCliBridgeSkillService.syncRuntimeSkill(binding.provider, runtimeHomeDir);
+      return;
+    }
+
+    this.openCliBridgeSkillService.removeRuntimeSkill(binding.provider, runtimeHomeDir);
+  }
+}
+
+function mergeLaunchRuntimeEnv(
+  baseRuntimeEnv: Record<string, string>,
+  openCliResolution: OpenCliSessionRuntimeResolution
+): Record<string, string> {
+  const runtimeEnv = {
+    ...baseRuntimeEnv
+  };
+  const basePath = runtimeEnv.PATH?.trim() || process.env.PATH?.trim() || "";
+  const pathEntries = [openCliResolution.runtimeBinPath, basePath].filter(
+    (entry): entry is string => Boolean(entry && entry.trim())
+  );
+
+  runtimeEnv.PATH = pathEntries.join(path.delimiter);
+
+  if (openCliResolution.runtimeRootPath) {
+    runtimeEnv.CODINGNS_OPENCLI_RUNTIME_ROOT = openCliResolution.runtimeRootPath;
+  }
+  if (openCliResolution.realHome) {
+    runtimeEnv.CODINGNS_OPENCLI_REAL_HOME = openCliResolution.realHome;
+  }
+  if (openCliResolution.realUserProfile) {
+    runtimeEnv.CODINGNS_OPENCLI_REAL_USERPROFILE = openCliResolution.realUserProfile;
+  }
+
+  return runtimeEnv;
 }
 
 function mapProviderToModelSwitchApp(provider: SessionBinding["provider"]): ModelSwitchAppId {

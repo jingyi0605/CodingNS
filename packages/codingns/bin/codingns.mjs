@@ -37,6 +37,9 @@ switch (command) {
   case "skills":
     await runSkillsCommand(argv);
     break;
+  case "opencli":
+    await runOpenCliCommand(argv);
+    break;
   default:
     console.error(`[codingns] 不支持的命令：${command}`);
     printHelp(1);
@@ -1011,6 +1014,64 @@ async function runSkillsCommand(argv) {
   }
 }
 
+async function runOpenCliCommand(argv) {
+  const [action, ...rest] = argv;
+
+  if (!action || action === "help" || action === "--help" || action === "-h") {
+    printOpenCliHelpTopic(buildOpenCliHelpTopic(rest[0]), 0);
+  }
+
+  if (rest.length > 0 && isHelpToken(rest[0])) {
+    printOpenCliHelpTopic(buildOpenCliHelpTopic(action), 0);
+  }
+
+  switch (action) {
+    case "overview":
+      await printAssistantResponse(await requestOpenCli({
+        method: "GET",
+        path: "/api/opencli/overview",
+        argv: rest,
+        helpTopic: "opencli.overview"
+      }));
+      return;
+    case "catalog":
+      await printAssistantResponse(await requestOpenCli({
+        method: "GET",
+        path: "/api/opencli/catalog",
+        argv: rest,
+        helpTopic: "opencli.catalog"
+      }));
+      return;
+    case "check":
+      await printAssistantResponse(await requestOpenCli({
+        method: "POST",
+        path: "/api/opencli/check",
+        argv: rest,
+        helpTopic: "opencli.check"
+      }));
+      return;
+    case "config":
+      await printAssistantResponse(await requestOpenCli({
+        method: "POST",
+        path: "/api/opencli/config",
+        argv: rest,
+        supportedOptions: ["enabled", "command-id"],
+        repeatableOptions: ["command-id"],
+        helpTopic: "opencli.config"
+      }, (options) => ({
+        enabled: parseBooleanOption(
+          requireOptionValue(options.values.enabled, "enabled"),
+          "enabled"
+        ),
+        enabledCommandIds: readMultiOptionValues(options.values["command-id"])
+      })));
+      return;
+    default:
+      console.error(`[codingns] 不支持的 opencli 子命令：${action}`);
+      printOpenCliHelpTopic("opencli", 1);
+  }
+}
+
 async function runProviderSessionsCommand(argv) {
   const [action, ...rest] = argv;
 
@@ -1176,6 +1237,7 @@ async function requestAssistant(command, buildPayload) {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         [ASSISTANT_REQUEST_SOURCE_HEADER]: ASSISTANT_CLI_REQUEST_SOURCE,
+        Connection: "close",
         ...(usesJsonBody ? { "Content-Type": "application/json" } : {})
       },
       body: usesJsonBody ? JSON.stringify(payload ?? {}) : undefined
@@ -1250,6 +1312,7 @@ async function requestSkills(command, buildPayload) {
       method: command.method,
       headers: {
         Authorization: `Bearer ${accessToken}`,
+        Connection: "close",
         ...(command.method === "POST" ? { "Content-Type": "application/json" } : {})
       },
       body: command.method === "POST" ? JSON.stringify(payload ?? {}) : undefined
@@ -1259,6 +1322,81 @@ async function requestSkills(command, buildPayload) {
     console.error(JSON.stringify({
       ok: false,
       detail: `Skill 管理请求失败：${message}`,
+      target: url.toString()
+    }, null, 2));
+    process.exit(1);
+  }
+
+  const rawBody = await response.text();
+  const responseBody = tryParseJson(rawBody);
+
+  if (!response.ok) {
+    const detail = typeof responseBody?.detail === "string"
+      ? responseBody.detail
+      : `HTTP ${response.status}`;
+    console.error(JSON.stringify({
+      ok: false,
+      status: response.status,
+      detail,
+      body: responseBody ?? rawBody
+    }, null, 2));
+    process.exit(1);
+  }
+
+  return responseBody ?? rawBody;
+}
+
+async function requestOpenCli(command, buildPayload) {
+  const options = parseArgs(command.argv, {
+    supportedOptions: [
+      "base-url",
+      "token",
+      ...(command.supportedOptions ?? [])
+    ],
+    repeatableOptions: command.repeatableOptions ?? []
+  });
+
+  if (options.help) {
+    printOpenCliHelpTopic(command.helpTopic ?? "opencli", 0);
+  }
+
+  if (options.errors.length > 0) {
+    for (const error of options.errors) {
+      console.error(`[codingns] ${error}`);
+    }
+    printOpenCliHelpTopic(command.helpTopic ?? "opencli", 1);
+  }
+
+  const baseUrl = resolveAssistantBaseUrl(options.values["base-url"]);
+  const accessToken = resolveAssistantAccessToken(options.values.token);
+  const url = new URL(command.path, appendTrailingSlash(baseUrl));
+  const payload = buildPayload ? buildPayload(options) : null;
+
+  if (command.method === "GET" && payload) {
+    for (const [key, value] of Object.entries(payload)) {
+      if (typeof value === "string" && value.length > 0) {
+        url.searchParams.set(key, value);
+      }
+    }
+  }
+
+  let response;
+
+  try {
+    response = await fetch(url, {
+      method: command.method,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Connection: "close",
+        ...(command.method === "POST" ? { "Content-Type": "application/json" } : {})
+      },
+      body: command.method === "POST" ? JSON.stringify(payload ?? {}) : undefined
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "未知网络错误";
+    console.error(JSON.stringify({
+      ok: false,
+      detail: `OpenCLI 管理请求失败：${message}`,
       target: url.toString()
     }, null, 2));
     process.exit(1);
@@ -1662,6 +1800,7 @@ codingns 用法：
   codingns assistant <group> <action> [options]
   codingns provider-sessions <action> [options]
   codingns skills <action> [options]
+  codingns opencli <action> [options]
 
 说明：
 
@@ -1689,6 +1828,12 @@ skills 例子：
   codingns skills overview --token <token>
   codingns skills add --source ./my-skill --target codex --token <token>
   codingns skills sync <skillId> --target gemini --token <token>
+
+opencli 例子：
+
+  codingns opencli overview --token <token>
+  codingns opencli check --token <token>
+  codingns opencli config --enabled true --command-id hackernews/top --token <token>
 
 provider-sessions 例子：
 
@@ -1718,6 +1863,18 @@ function printAssistantHelpTopic(topic, exitCode) {
 
 function printSkillsHelpTopic(topic, exitCode) {
   const output = getSkillsHelpText(topic);
+
+  if (exitCode === 0) {
+    console.log(output);
+  } else {
+    console.error(output);
+  }
+
+  process.exit(exitCode);
+}
+
+function printOpenCliHelpTopic(topic, exitCode) {
+  const output = getOpenCliHelpText(topic);
 
   if (exitCode === 0) {
     console.log(output);
@@ -2572,6 +2729,66 @@ codingns assistant 用法：
   }
 }
 
+function getOpenCliHelpText(topic) {
+  switch (topic) {
+    case "opencli.overview":
+      return `
+codingns opencli overview
+
+用途：
+  查看 OpenCLI provider 的当前状态、目录统计和当前生效运行时。
+
+用法：
+  codingns opencli overview --token <token>
+`.trim();
+    case "opencli.catalog":
+      return `
+codingns opencli catalog
+
+用途：
+  查看完整 OpenCLI 目录，包括站点分组和每条命令的启用状态。
+
+用法：
+  codingns opencli catalog --token <token>
+`.trim();
+    case "opencli.check":
+      return `
+codingns opencli check
+
+用途：
+  重新检查 OpenCLI 安装、健康状态和目录缓存。
+
+用法：
+  codingns opencli check --token <token>
+`.trim();
+    case "opencli.config":
+      return `
+codingns opencli config
+
+用途：
+  保存 OpenCLI 总开关和启用命令列表，并触发裁剪运行时重建。
+
+用法：
+  codingns opencli config --enabled true|false [--command-id <site/name>] [--command-id <site/name>] --token <token>
+`.trim();
+    default:
+      return `
+codingns opencli 用法：
+
+  codingns opencli overview --token <token>
+  codingns opencli catalog --token <token>
+  codingns opencli check --token <token>
+  codingns opencli config --enabled true|false [--command-id <site/name>] [--command-id <site/name>] --token <token>
+
+环境变量：
+
+  CODINGNS_BASE_URL      默认 Host 地址，未传时默认 http://127.0.0.1:3002
+  CODINGNS_ACCESS_TOKEN  默认 Bearer token
+  CODINGNS_AUTH_FILE     可选认证文件，支持读取 apiBaseUrl/accessToken
+`.trim();
+  }
+}
+
 function getProviderSessionsHelpText(topic) {
   switch (topic) {
     case "provider-sessions.delete":
@@ -2823,6 +3040,14 @@ function buildSkillsHelpTopic(action) {
   }
 
   return `skills.${action}`;
+}
+
+function buildOpenCliHelpTopic(action) {
+  if (!action || action === "--help" || action === "-h") {
+    return "opencli";
+  }
+
+  return `opencli.${action}`;
 }
 
 function buildProviderSessionsHelpTopic(action) {

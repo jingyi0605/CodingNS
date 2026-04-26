@@ -25,6 +25,9 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureWorkspaceRemovalColumn(db);
   ensureWorkspaceSortOrderColumn(db);
   ensureWorkspaceNavigationBackgroundColorColumn(db);
+  ensureOpenCliProviderSchema(db);
+  ensureOpenCliCatalogSchema(db);
+  ensureOpenCliRuntimeProfileSchema(db);
   ensureSessionProviderSchema(db);
   ensureSessionBindingPresetSchema(db);
   ensureSessionStateSchema(db);
@@ -459,6 +462,72 @@ function ensureManagedSkillScopeSchema(db: Database.Database): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_managed_skills_state
       ON managed_skills(scope, managed_state, updated_at DESC);
+  `);
+}
+
+function ensureOpenCliProviderSchema(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(opencli_providers)")
+    .all() as Array<{ name: string }>;
+
+  if (columns.length === 0) {
+    return;
+  }
+
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("catalog_refreshed_at")) {
+    db.exec("ALTER TABLE opencli_providers ADD COLUMN catalog_refreshed_at TEXT");
+  }
+
+  if (!columnNames.has("catalog_source")) {
+    db.exec(
+      "ALTER TABLE opencli_providers ADD COLUMN catalog_source TEXT CHECK (catalog_source IS NULL OR catalog_source IN ('manifest', 'cli_list', 'local_manifest', 'cache'))"
+    );
+  }
+}
+
+function ensureOpenCliCatalogSchema(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(opencli_catalog_entries)")
+    .all() as Array<{ name: string }>;
+
+  if (columns.length === 0) {
+    return;
+  }
+
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("module_path")) {
+    db.exec("ALTER TABLE opencli_catalog_entries ADD COLUMN module_path TEXT");
+  }
+
+  if (!columnNames.has("source_file")) {
+    db.exec("ALTER TABLE opencli_catalog_entries ADD COLUMN source_file TEXT");
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_opencli_catalog_entries_site_sort
+      ON opencli_catalog_entries(provider_id, site, sort_order, command_id)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_opencli_catalog_entries_enabled
+      ON opencli_catalog_entries(provider_id, enabled, site)
+  `);
+}
+
+function ensureOpenCliRuntimeProfileSchema(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(opencli_runtime_profiles)")
+    .all() as Array<{ name: string }>;
+
+  if (columns.length === 0) {
+    return;
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_opencli_runtime_profiles_status
+      ON opencli_runtime_profiles(status, updated_at DESC)
   `);
 }
 

@@ -343,6 +343,156 @@ describe("sqlite 启动引导", () => {
     client.close();
   });
 
+  it("可以给旧版 opencli provider 和目录缓存表平滑补列", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-opencli-bootstrap-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+    const { default: Database } = await import("better-sqlite3");
+    const seed = new Database(databasePath);
+
+    seed.exec(`
+      CREATE TABLE opencli_providers (
+        provider_id TEXT PRIMARY KEY CHECK (provider_id = 'opencli'),
+        enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+        install_state TEXT NOT NULL CHECK (install_state IN ('not_installed', 'installed', 'broken')),
+        health_state TEXT NOT NULL CHECK (
+          health_state IN ('unknown', 'binary_ready', 'bridge_missing', 'ready', 'runtime_build_failed')
+        ),
+        version TEXT,
+        install_path TEXT,
+        last_checked_at TEXT,
+        active_runtime_id TEXT,
+        last_error_code TEXT,
+        last_error_detail TEXT
+      );
+
+      CREATE TABLE opencli_catalog_entries (
+        provider_id TEXT NOT NULL CHECK (provider_id = 'opencli'),
+        command_id TEXT NOT NULL,
+        site TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        strategy TEXT NOT NULL,
+        browser INTEGER NOT NULL DEFAULT 0 CHECK (browser IN (0, 1)),
+        enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+        sort_order INTEGER NOT NULL DEFAULT 0 CHECK (sort_order >= 0),
+        PRIMARY KEY (provider_id, command_id)
+      );
+
+      INSERT INTO opencli_providers (
+        provider_id,
+        enabled,
+        install_state,
+        health_state,
+        version,
+        install_path,
+        last_checked_at,
+        active_runtime_id,
+        last_error_code,
+        last_error_detail
+      ) VALUES (
+        'opencli',
+        1,
+        'installed',
+        'binary_ready',
+        '1.7.7',
+        '/opt/homebrew/lib/node_modules/@jackwener/opencli',
+        '2026-04-26T04:00:00.000Z',
+        NULL,
+        NULL,
+        NULL
+      );
+
+      INSERT INTO opencli_catalog_entries (
+        provider_id,
+        command_id,
+        site,
+        name,
+        description,
+        strategy,
+        browser,
+        enabled,
+        sort_order
+      ) VALUES (
+        'opencli',
+        'hackernews/top',
+        'hackernews',
+        'top',
+        '读取热门内容',
+        'public',
+        0,
+        1,
+        0
+      );
+    `);
+    seed.close();
+
+    const client = createDatabaseClient(databasePath);
+    const providerColumns = client.db
+      .prepare("PRAGMA table_info(opencli_providers)")
+      .all() as Array<{ name: string }>;
+    const catalogColumns = client.db
+      .prepare("PRAGMA table_info(opencli_catalog_entries)")
+      .all() as Array<{ name: string }>;
+    const providerRow = client.db
+      .prepare("SELECT catalog_refreshed_at, catalog_source FROM opencli_providers WHERE provider_id = 'opencli'")
+      .get() as { catalog_refreshed_at: string | null; catalog_source: string | null } | undefined;
+    const catalogRow = client.db
+      .prepare("SELECT module_path, source_file FROM opencli_catalog_entries WHERE command_id = 'hackernews/top'")
+      .get() as { module_path: string | null; source_file: string | null } | undefined;
+
+    client.close();
+
+    expect(providerColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining(["catalog_refreshed_at", "catalog_source"])
+    );
+    expect(catalogColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining(["module_path", "source_file"])
+    );
+    expect(providerRow).toEqual({
+      catalog_refreshed_at: null,
+      catalog_source: null
+    });
+    expect(catalogRow).toEqual({
+      module_path: null,
+      source_file: null
+    });
+  });
+
+  it("会给缺失的 opencli 运行时配置档索引补齐", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-opencli-runtime-bootstrap-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+    const { default: Database } = await import("better-sqlite3");
+    const seed = new Database(databasePath);
+
+    seed.exec(`
+      CREATE TABLE opencli_runtime_profiles (
+        id TEXT PRIMARY KEY,
+        version TEXT NOT NULL,
+        source_install_path TEXT NOT NULL,
+        enabled_command_ids_json TEXT NOT NULL,
+        runtime_root_path TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'ready', 'failed', 'stale')),
+        content_hash TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_error_code TEXT,
+        last_error_detail TEXT
+      );
+    `);
+    seed.close();
+
+    const client = createDatabaseClient(databasePath);
+    const indexes = client.db
+      .prepare("PRAGMA index_list(opencli_runtime_profiles)")
+      .all() as Array<{ name: string }>;
+
+    client.close();
+
+    expect(indexes.map((index) => index.name)).toContain("idx_opencli_runtime_profiles_status");
+  });
+
   it("可以给旧 session_indices 平滑补上子 Agent 关系列", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-session-index-bootstrap-"));
     tempDirs.push(tempDir);

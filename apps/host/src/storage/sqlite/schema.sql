@@ -1353,6 +1353,63 @@ CREATE TABLE IF NOT EXISTS skill_target_bindings (
 CREATE INDEX IF NOT EXISTS idx_skill_target_bindings_target_cli
   ON skill_target_bindings(target_cli, sync_status, enabled);
 
+CREATE TABLE IF NOT EXISTS opencli_providers (
+  provider_id TEXT PRIMARY KEY CHECK (provider_id = 'opencli'),
+  enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+  install_state TEXT NOT NULL CHECK (install_state IN ('not_installed', 'installed', 'broken')),
+  health_state TEXT NOT NULL CHECK (
+    health_state IN ('unknown', 'binary_ready', 'bridge_missing', 'ready', 'runtime_build_failed')
+  ),
+  version TEXT,
+  install_path TEXT,
+  last_checked_at TEXT,
+  active_runtime_id TEXT,
+  last_error_code TEXT,
+  last_error_detail TEXT,
+  catalog_refreshed_at TEXT,
+  catalog_source TEXT CHECK (
+    catalog_source IS NULL OR catalog_source IN ('manifest', 'cli_list', 'local_manifest', 'cache')
+  )
+);
+
+CREATE TABLE IF NOT EXISTS opencli_catalog_entries (
+  provider_id TEXT NOT NULL CHECK (provider_id = 'opencli'),
+  command_id TEXT NOT NULL,
+  site TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL,
+  strategy TEXT NOT NULL,
+  browser INTEGER NOT NULL DEFAULT 0 CHECK (browser IN (0, 1)),
+  module_path TEXT,
+  source_file TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+  sort_order INTEGER NOT NULL DEFAULT 0 CHECK (sort_order >= 0),
+  PRIMARY KEY (provider_id, command_id),
+  FOREIGN KEY (provider_id) REFERENCES opencli_providers(provider_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_opencli_catalog_entries_site_sort
+  ON opencli_catalog_entries(provider_id, site, sort_order, command_id);
+CREATE INDEX IF NOT EXISTS idx_opencli_catalog_entries_enabled
+  ON opencli_catalog_entries(provider_id, enabled, site);
+
+CREATE TABLE IF NOT EXISTS opencli_runtime_profiles (
+  id TEXT PRIMARY KEY,
+  version TEXT NOT NULL,
+  source_install_path TEXT NOT NULL,
+  enabled_command_ids_json TEXT NOT NULL,
+  runtime_root_path TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'ready', 'failed', 'stale')),
+  content_hash TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  last_error_code TEXT,
+  last_error_detail TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_opencli_runtime_profiles_status
+  ON opencli_runtime_profiles(status, updated_at DESC);
+
 INSERT INTO bootstrap_state (id, initialized)
 VALUES ('default', 0)
 ON CONFLICT(id) DO NOTHING;

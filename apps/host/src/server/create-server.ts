@@ -86,6 +86,15 @@ import { ModelSwitchService } from "../modules/model-switch/model-switch-service
 import { ParallelSessionController } from "../modules/parallel-sessions/parallel-session-controller.js";
 import { ParallelSessionGroupService } from "../modules/parallel-sessions/parallel-session-group-service.js";
 import { SessionIsolatedWorkspaceService } from "../modules/parallel-sessions/session-isolated-workspace-service.js";
+import { OpenCliCatalogService } from "../modules/opencli/opencli-catalog-service.js";
+import { OpenCliController } from "../modules/opencli/opencli-controller.js";
+import { OpenCliHealthService } from "../modules/opencli/opencli-health-service.js";
+import { OpenCliManagementService } from "../modules/opencli/opencli-management-service.js";
+import { OpenCliBridgeSkillService } from "../modules/opencli/opencli-bridge-skill-service.js";
+import { OpenCliRuntimeBuilder } from "../modules/opencli/opencli-runtime-builder.js";
+import { OpenCliRuntimeProfileService } from "../modules/opencli/opencli-runtime-profile-service.js";
+import { OpenCliRuntimeResolver } from "../modules/opencli/opencli-runtime-resolver.js";
+import { OpenCliSessionPromptService } from "../modules/opencli/opencli-session-prompt-service.js";
 import { ProviderCatalogService } from "../modules/provider/provider-catalog-service.js";
 import { ProviderController } from "../modules/provider/provider-controller.js";
 import { disposeSharedProviderDiscoveryHelperClient } from "../modules/provider/provider-discovery-helper-client.js";
@@ -138,6 +147,7 @@ import { registerClientRoutes } from "../routes/client.js";
 import { registerDebugTargetRoutes } from "../routes/debug-targets.js";
 import { registerFileRoutes } from "../routes/files.js";
 import { registerGitRoutes } from "../routes/git.js";
+import { registerOpenCliRoutes } from "../routes/opencli.js";
 import { registerObservabilityRoutes } from "../routes/observability.js";
 import { registerParallelGroupRoutes } from "../routes/parallel-groups.js";
 import { registerPreferenceRoutes } from "../routes/preferences.js";
@@ -188,10 +198,13 @@ import { FileContextBindingRepository } from "../storage/repositories/file-conte
 import { FrameworkAnalysisResultRepository } from "../storage/repositories/framework-analysis-result-repository.js";
 import { GitRemoteCredentialRepository } from "../storage/repositories/git-remote-credential-repository.js";
 import { ManagedSkillRepository } from "../storage/repositories/managed-skill-repository.js";
+import { OpenCliCatalogEntryRepository } from "../storage/repositories/opencli-catalog-entry-repository.js";
+import { OpenCliProviderRepository } from "../storage/repositories/opencli-provider-repository.js";
+import { OpenCliRuntimeProfileRepository } from "../storage/repositories/opencli-runtime-profile-repository.js";
 import { PortLeaseRepository } from "../storage/repositories/port-lease-repository.js";
-import { ProviderControlRepository } from "../storage/repositories/provider-control-repository.js";
 import { ParallelSessionGroupRepository } from "../storage/repositories/parallel-session-group-repository.js";
 import { ParallelSessionMemberRepository } from "../storage/repositories/parallel-session-member-repository.js";
+import { ProviderControlRepository } from "../storage/repositories/provider-control-repository.js";
 import { RecentFileRepository } from "../storage/repositories/recent-file-repository.js";
 import { RuntimeBindingRepository } from "../storage/repositories/runtime-binding-repository.js";
 import { SessionBindingRepository } from "../storage/repositories/session-binding-repository.js";
@@ -281,8 +294,11 @@ export function createServer(config: HostConfig) {
     verificationRunRepository: new VerificationRunRepository(database.db),
     commitRuleProfileRepository: new CommitRuleProfileRepository(database.db),
     gitRemoteCredentialRepository: new GitRemoteCredentialRepository(database.db),
-    providerControlRepository: new ProviderControlRepository(database.db),
     managedSkillRepository: new ManagedSkillRepository(database.db),
+    openCliProviderRepository: new OpenCliProviderRepository(database.db),
+    openCliCatalogEntryRepository: new OpenCliCatalogEntryRepository(database.db),
+    openCliRuntimeProfileRepository: new OpenCliRuntimeProfileRepository(database.db),
+    providerControlRepository: new ProviderControlRepository(database.db),
     recentFileRepository: new RecentFileRepository(database.db),
     fileContextBindingRepository: new FileContextBindingRepository(database.db),
     sessionBindingRepository: new SessionBindingRepository(database.db),
@@ -456,9 +472,50 @@ export function createServer(config: HostConfig) {
     dbPath: config.ccSwitchDbPath
   });
   const modelSwitchService = new ModelSwitchService(ccSwitchAdapter);
+  const openCliRuntimeProfileService = new OpenCliRuntimeProfileService(
+    repositories.openCliProviderRepository,
+    repositories.openCliCatalogEntryRepository,
+    repositories.openCliRuntimeProfileRepository,
+    {
+      runtimeStorageRootPath: path.dirname(config.databasePath)
+    }
+  );
+  const openCliCatalogService = new OpenCliCatalogService(
+    repositories.openCliProviderRepository,
+    repositories.openCliCatalogEntryRepository
+  );
+  const openCliRuntimeBuilder = new OpenCliRuntimeBuilder(
+    repositories.openCliRuntimeProfileRepository
+  );
+  const openCliHealthService = new OpenCliHealthService();
+  const openCliRuntimeResolver = new OpenCliRuntimeResolver(
+    repositories.openCliProviderRepository,
+    repositories.openCliRuntimeProfileRepository,
+    openCliRuntimeProfileService,
+    openCliRuntimeBuilder
+  );
+  const openCliManagementService = new OpenCliManagementService(
+    repositories.openCliProviderRepository,
+    repositories.openCliCatalogEntryRepository,
+    repositories.openCliRuntimeProfileRepository,
+    openCliCatalogService,
+    openCliHealthService,
+    openCliRuntimeResolver
+  );
+  const openCliSessionPromptService = new OpenCliSessionPromptService(
+    repositories.openCliProviderRepository,
+    repositories.openCliCatalogEntryRepository
+  );
+  const openCliBridgeSkillService = new OpenCliBridgeSkillService(
+    repositories.openCliProviderRepository,
+    repositories.openCliCatalogEntryRepository
+  );
+  const openCliController = new OpenCliController(openCliManagementService);
   const sessionProviderConfigService = new SessionProviderConfigService(
     config,
-    ccSwitchAdapter
+    ccSwitchAdapter,
+    openCliRuntimeResolver,
+    openCliBridgeSkillService
   );
   const skillTargetAdapters = createDefaultSkillTargetAdapters(config);
   const skillManagerService = new SkillManagerService(
@@ -555,7 +612,8 @@ export function createServer(config: HostConfig) {
     repositories.sessionStatusSnapshotRepository,
     sessionProviderConfigService,
     config,
-    sessionActivityAuthorityService
+    sessionActivityAuthorityService,
+    openCliSessionPromptService
   );
   sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
     sessionLiveRuntimeService.resolveLiveActivityObservation(sessionId)
@@ -589,7 +647,8 @@ export function createServer(config: HostConfig) {
     repositories.sessionStatusSnapshotRepository,
     sessionProviderConfigService,
     butlerRuntimeConfig,
-    sessionActivityAuthorityService
+    sessionActivityAuthorityService,
+    openCliSessionPromptService
   );
   sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
     butlerSessionLiveRuntimeService.resolveLiveActivityObservation(sessionId)
@@ -607,7 +666,8 @@ export function createServer(config: HostConfig) {
     repositories.sessionStatusSnapshotRepository,
     sessionProviderConfigService,
     butlerSummaryRuntimeConfig,
-    sessionActivityAuthorityService
+    sessionActivityAuthorityService,
+    openCliSessionPromptService
   );
   sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
     butlerSummarySessionLiveRuntimeService.resolveLiveActivityObservation(sessionId)
@@ -625,7 +685,8 @@ export function createServer(config: HostConfig) {
     repositories.sessionStatusSnapshotRepository,
     sessionProviderConfigService,
     butlerFollowUpRuntimeConfig,
-    sessionActivityAuthorityService
+    sessionActivityAuthorityService,
+    openCliSessionPromptService
   );
   sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
     butlerFollowUpSessionLiveRuntimeService.resolveLiveActivityObservation(sessionId)
@@ -1200,6 +1261,7 @@ export function createServer(config: HostConfig) {
   void registerParallelGroupRoutes(app, parallelSessionController);
   void registerPreferenceRoutes(app, quickPhraseController, profileController);
   void registerSkillRoutes(app, skillController);
+  void registerOpenCliRoutes(app, openCliController);
   void registerSystemRoutes(app, tailscaleController, relayTunnelController, modelSwitchController);
   void registerFileRoutes(app, fileController);
   void registerSessionContextRoutes(app, fileContextController);

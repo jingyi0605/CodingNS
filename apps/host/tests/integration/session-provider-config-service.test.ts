@@ -1,10 +1,14 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { resolveHostConfig } from "../../src/config/env.js";
+import { OpenCliBridgeSkillService } from "../../src/modules/opencli/opencli-bridge-skill-service.js";
+import { OpenCliCatalogEntryRepository } from "../../src/storage/repositories/opencli-catalog-entry-repository.js";
+import { OpenCliProviderRepository } from "../../src/storage/repositories/opencli-provider-repository.js";
+import { createDatabaseClient } from "../../src/storage/sqlite/client.js";
 import type { ModelPresetRuntimeConfigDto } from "../../src/modules/model-switch/cc-switch-adapter.js";
 import { SessionProviderConfigService } from "../../src/modules/sessions/session-provider-config-service.js";
 import {
@@ -130,6 +134,140 @@ describe("SessionProviderConfigService", () => {
     expect(error.message).toContain("model=gpt-5-codex");
     expect(error.message).toContain("baseUrl=https://api.shenfengwl.fun");
     expect(error.message).toContain("authEnv=OPENAI_API_KEY");
+  });
+
+  it("resolveLaunchContext 会把 OpenCLI runtime PATH 注入会话环境，但不改会话 HOME", () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "codingns-session-provider-opencli-"));
+    tempDirs.push(rootDir);
+
+    const config = resolveHostConfig({
+      databasePath: path.join(rootDir, "host.sqlite"),
+      codexHomeDir: path.join(rootDir, ".codex")
+    });
+    const service = new SessionProviderConfigService(
+      config,
+      {
+        readPresetRuntimeConfig: () => null
+      } as never,
+      {
+        resolveSessionRuntime: () => ({
+          availability: "ready",
+          runtimeRootPath: "/tmp/opencli-runtime",
+          runtimeBinPath: "/tmp/opencli-runtime/bin",
+          realHome: "/Users/real-home",
+          realUserProfile: "/Users/real-home",
+          errorCode: null,
+          errorDetail: null
+        })
+      }
+    );
+
+    const launchContext = service.resolveLaunchContext({
+      provider: "codex",
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null
+    });
+
+    expect(launchContext.runtimeHomeDir).toBeNull();
+    expect(launchContext.runtimeEnv.PATH?.split(path.delimiter)[0]).toBe("/tmp/opencli-runtime/bin");
+    expect(launchContext.runtimeEnv.CODINGNS_OPENCLI_RUNTIME_ROOT).toBe("/tmp/opencli-runtime");
+    expect(launchContext.runtimeEnv.CODINGNS_OPENCLI_REAL_HOME).toBe("/Users/real-home");
+    expect(launchContext.runtimeEnv.CODINGNS_OPENCLI_REAL_USERPROFILE).toBe("/Users/real-home");
+    expect(launchContext.runtimeEnv.HOME).toBeUndefined();
+    expect(launchContext.runtimeEnv.USERPROFILE).toBeUndefined();
+  });
+
+  it("OpenCLI ready 时会给全局默认的 Codex 会话分配 runtime home，并写入桥接 Skill", () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "codingns-session-provider-opencli-skill-"));
+    tempDirs.push(rootDir);
+
+    const codexHomeDir = path.join(rootDir, ".codex");
+    mkdirSync(path.join(codexHomeDir, "skills"), { recursive: true });
+    writeFileSync(path.join(codexHomeDir, "config.toml"), "model = \"gpt-5.4\"\n", "utf8");
+    writeFileSync(path.join(codexHomeDir, "auth.json"), "{\n  \"openai\": true\n}\n", "utf8");
+
+    const database = createDatabaseClient(":memory:");
+    const providerRepository = new OpenCliProviderRepository(database.db);
+    const catalogRepository = new OpenCliCatalogEntryRepository(database.db);
+    const bridgeSkillService = new OpenCliBridgeSkillService(providerRepository, catalogRepository);
+
+    providerRepository.upsert({
+      providerId: "opencli",
+      enabled: true,
+      installState: "installed",
+      healthState: "binary_ready",
+      version: "1.7.7",
+      installPath: "/opt/homebrew/lib/node_modules/@jackwener/opencli",
+      lastCheckedAt: "2026-04-26T05:00:00.000Z",
+      activeRuntimeId: "opencli-runtime-1",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      catalogRefreshedAt: "2026-04-26T05:00:00.000Z",
+      catalogSource: "manifest"
+    });
+    catalogRepository.replaceAll("opencli", [
+      {
+        providerId: "opencli",
+        commandId: "hackernews/top",
+        site: "hackernews",
+        name: "top",
+        description: "热门",
+        strategy: "public",
+        browser: false,
+        modulePath: "clis/hackernews/top.js",
+        sourceFile: "clis/hackernews/top.js",
+        enabled: true,
+        sortOrder: 1
+      }
+    ]);
+
+    const config = resolveHostConfig({
+      databasePath: path.join(rootDir, "host.sqlite"),
+      codexHomeDir
+    });
+    const service = new SessionProviderConfigService(
+      config,
+      {
+        readPresetRuntimeConfig: () => null
+      } as never,
+      {
+        resolveSessionRuntime: () => ({
+          availability: "ready",
+          runtimeRootPath: "/tmp/opencli-runtime",
+          runtimeBinPath: "/tmp/opencli-runtime/bin",
+          realHome: "/Users/real-home",
+          realUserProfile: "/Users/real-home",
+          errorCode: null,
+          errorDetail: null
+        })
+      },
+      bridgeSkillService
+    );
+
+    const binding = service.prepareSessionBinding({
+      sessionId: "session-opencli-skill",
+      provider: "codex",
+      providerConfigMode: "global-default"
+    });
+    const launchContext = service.resolveLaunchContext({
+      provider: "codex",
+      providerConfigMode: binding.providerConfigMode,
+      providerPresetId: binding.providerPresetId,
+      runtimeHomeDir: binding.runtimeHomeDir
+    });
+
+    expect(binding.runtimeHomeDir).toBeTruthy();
+    expect(launchContext.runtimeHomeDir).toBe(binding.runtimeHomeDir);
+    expect(launchContext.runtimeEnv.PATH?.split(path.delimiter)[0]).toBe("/tmp/opencli-runtime/bin");
+    expect(
+      existsSync(path.join(binding.runtimeHomeDir!, "skills", "codingns-opencli", "SKILL.md"))
+    ).toBe(true);
+    expect(
+      readFileSync(path.join(binding.runtimeHomeDir!, "skills", "codingns-opencli", "SKILL.md"), "utf8")
+    ).toContain("hackernews/top");
+
+    database.close();
   });
 
   it("Claude 会话在上一轮结束后切换 preset 时，会把 transcript 同步到新的 runtime home", () => {

@@ -85,6 +85,7 @@ import {
 import { ClaudeRuntimeHelperAdapter } from "./claude-runtime-helper-client.js";
 import { CodexAppServerHelperClient } from "./codex-app-server-helper-client.js";
 import { SessionProviderConfigService } from "./session-provider-config-service.js";
+import type { OpenCliSessionPromptService } from "../opencli/opencli-session-prompt-service.js";
 
 const OPENCODE_ORDER_DEBUG_ENABLED = /^(1|true|yes)$/i.test(
   process.env.CODINGNS_OPENCODE_ORDER_DEBUG?.trim() ?? ""
@@ -342,7 +343,8 @@ export class SessionLiveRuntimeService {
     private readonly sessionStatusSnapshotRepository: SessionStatusSnapshotRepository,
     private readonly sessionProviderConfigService: SessionProviderConfigService,
     private readonly config: HostConfig,
-    sessionActivityAuthorityService = new SessionActivityAuthorityService()
+    sessionActivityAuthorityService = new SessionActivityAuthorityService(),
+    private readonly openCliSessionPromptService: OpenCliSessionPromptService | null = null
   ) {
     this.sessionActivityAuthorityService = sessionActivityAuthorityService;
     this.sessionPermissionRequestService = new SessionPermissionRequestService(
@@ -407,6 +409,11 @@ export class SessionLiveRuntimeService {
         input.content,
         persistedAttachments.runtimeAttachments
       );
+      const resolvedProviderPrompt = this.composeProviderPrompt(
+        input.provider,
+        providerPrompt,
+        providerLaunchContext.runtimeEnv
+      );
       const providerInstructionFilePath = resolveRuntimeInstructionFilePath(
         input.provider,
         workspace.path,
@@ -434,7 +441,7 @@ export class SessionLiveRuntimeService {
             model: input.runtimeOptions?.model ?? null,
             reasoningLevel: input.runtimeOptions?.reasoningLevel ?? null,
             permissionMode: input.runtimeOptions?.permissionMode ?? null,
-            providerPrompt,
+            providerPrompt: resolvedProviderPrompt,
             providerInstructionFilePath,
             attachments: persistedAttachments.runtimeAttachments
           }
@@ -768,10 +775,12 @@ export class SessionLiveRuntimeService {
     sessionId: string | null;
     bridgeResponse: Record<string, unknown> | null;
   }> {
-    const provider = isClaudeCompatibleProvider(providerOrPayload)
+    const hasExplicitProvider = typeof providerOrPayload === "string"
+      && isClaudeCompatibleProvider(providerOrPayload);
+    const provider = hasExplicitProvider
       ? providerOrPayload
       : "claude-code";
-    const resolvedPayload = isClaudeCompatibleProvider(providerOrPayload)
+    const resolvedPayload = hasExplicitProvider
       ? (payload ?? {})
       : providerOrPayload;
     const hookEventName = normalizeClaudeHookEventName(resolvedPayload.hook_event_name);
@@ -1820,6 +1829,11 @@ export class SessionLiveRuntimeService {
         input.content,
         resolvedAttachments.runtimeAttachments
       );
+      const resolvedProviderPrompt = this.composeProviderPrompt(
+        session.provider,
+        providerPrompt,
+        providerLaunchContext.runtimeEnv
+      );
       const providerInstructionFilePath = resolveRuntimeInstructionFilePath(
         session.provider,
         workspace.path,
@@ -1844,7 +1858,7 @@ export class SessionLiveRuntimeService {
           model: input.runtimeOptions?.model ?? null,
           reasoningLevel: input.runtimeOptions?.reasoningLevel ?? null,
           permissionMode: input.runtimeOptions?.permissionMode ?? null,
-          providerPrompt,
+          providerPrompt: resolvedProviderPrompt,
           providerInstructionFilePath,
           attachments: resolvedAttachments.runtimeAttachments
         }
@@ -1961,6 +1975,29 @@ export class SessionLiveRuntimeService {
       this.failPendingSendDebugTrace(debugTrace, error);
       throw error;
     }
+  }
+
+  private composeProviderPrompt(
+    provider: string,
+    basePrompt: string | null,
+    runtimeEnv: Record<string, string>
+  ): string | null {
+    const openCliPrompt = this.openCliSessionPromptService?.buildPrompt({
+      provider,
+      runtimeEnv
+    }) ?? null;
+
+    if (!openCliPrompt) {
+      return basePrompt;
+    }
+
+    const normalizedBasePrompt = basePrompt?.trim() ?? "";
+
+    if (!normalizedBasePrompt) {
+      return openCliPrompt;
+    }
+
+    return `${normalizedBasePrompt}\n\n${openCliPrompt}`;
   }
 
   private async dispatchNextQueuedMessage(sessionId: string): Promise<void> {
@@ -3179,7 +3216,12 @@ export class SessionLiveRuntimeService {
   }
 
   private ensureCapability(
-    capabilities: { provider: string; canStartSession?: boolean; canSendMessage?: boolean; limitations: string[] },
+    capabilities: {
+      provider: string;
+      canStartSession?: boolean;
+      canSendMessage?: boolean;
+      limitations: string[];
+    },
     field: string,
     capability: "canStartSession" | "canSendMessage",
     detail: string
