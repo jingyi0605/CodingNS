@@ -29708,11 +29708,13 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   padding: 0 10px;
 }
 
+.parallel-create-provider-select,
 .parallel-create-deployment-select .composer-deployment-select {
   width: 100%;
   max-width: none;
 }
 
+.parallel-create-provider-select .composer-mac-select-trigger,
 .parallel-create-deployment-select .composer-deployment-select-trigger {
   min-height: 38px;
   padding: 0 10px;
@@ -29724,6 +29726,8 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   -webkit-backdrop-filter: none;
 }
 
+.parallel-create-provider-select .composer-mac-select-trigger:hover,
+.parallel-create-provider-select[data-open="true"] .composer-mac-select-trigger,
 .parallel-create-deployment-select .composer-deployment-select-trigger:hover,
 .parallel-create-deployment-select .composer-deployment-select[data-open="true"] .composer-deployment-select-trigger {
   border-color: var(--modal-control-border-hover);
@@ -29731,6 +29735,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   box-shadow: var(--modal-control-shadow);
 }
 
+.parallel-create-provider-select .composer-mac-select-trigger:focus-visible,
 .parallel-create-deployment-select .composer-deployment-select-trigger:focus-visible {
   border-color: var(--modal-control-border-focus);
   background: var(--modal-control-surface);
@@ -29739,6 +29744,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
     inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 88%, transparent);
 }
 
+.parallel-create-provider-select .composer-mac-select-label,
 .parallel-create-deployment-select .composer-deployment-select-label {
   font-size: 13px;
   font-weight: 500;

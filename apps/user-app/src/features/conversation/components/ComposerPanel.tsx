@@ -48,6 +48,7 @@ import {
 } from "../../settings/api/model-switch-api";
 import { WorkbenchModal } from "./WorkbenchModal";
 import { SessionTaskProgressButton } from "./SessionTaskProgressButton";
+import { MacSelect, type MacSelectOption } from "./MacSelect";
 import {
   createDeploymentPresetOptions,
   DeploymentMacSelect,
@@ -68,6 +69,8 @@ import {
   type QuickPhraseRecord,
   type StoredComposerDraftAttachment
 } from "./composer-local-storage";
+
+export { resolveMacSelectPopoverWidth as resolveComposerMacSelectPopoverWidth } from "./MacSelect";
 
 interface ComposerPanelProps {
   capabilities: ProviderCapabilitiesDto | null;
@@ -152,16 +155,9 @@ interface ComposerAttachment {
   previewUrl: string | null;
 }
 
-interface ComposerSelectOption {
-  value: string;
-  label: string;
-}
+type ComposerSelectOption = MacSelectOption;
 
 const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
-const MAC_SELECT_MIN_WIDTH = 144;
-const MAC_SELECT_DEFAULT_WIDTH = 196;
-const MAC_SELECT_COMPACT_WIDTH = 124;
-const MAC_SELECT_OPTION_EXTRA_WIDTH = 72;
 const FORK_PROVIDER_IDS: ProviderId[] = [
   "codex",
   "claude-code",
@@ -191,53 +187,7 @@ const HIDDEN_FILE_INPUT_STYLE: CSSProperties = {
   border: 0
 };
 
-let composerMacSelectMeasureCanvas: HTMLCanvasElement | null = null;
 const composerDeploymentSnapshotCache = new Map<ModelSwitchAppId, ModelManagementAppSnapshotDto>();
-
-function measureComposerMacSelectTextWidth(referenceElement: HTMLElement, text: string): number {
-  if (typeof document === "undefined") {
-    return text.length * 8;
-  }
-
-  composerMacSelectMeasureCanvas ??= document.createElement("canvas");
-  const context = composerMacSelectMeasureCanvas.getContext("2d");
-
-  if (!context) {
-    return text.length * 8;
-  }
-
-  const computedStyle = window.getComputedStyle(referenceElement);
-  const fontStyle = computedStyle.fontStyle || "normal";
-  const fontWeight = computedStyle.fontWeight || "600";
-  const fontSize = computedStyle.fontSize || "13px";
-  const fontFamily = computedStyle.fontFamily || "system-ui";
-  context.font = `${fontStyle} ${fontWeight} ${fontSize} ${fontFamily}`;
-
-  return context.measureText(text).width;
-}
-
-export function resolveComposerMacSelectPopoverWidth({
-  labels,
-  triggerWidth,
-  maxWidth,
-  preferredWidth,
-  measureText
-}: {
-  labels: string[];
-  triggerWidth: number;
-  maxWidth: number;
-  preferredWidth: number;
-  measureText: (text: string) => number;
-}): number {
-  const contentWidth = labels.reduce((widest, label) => {
-    return Math.max(widest, Math.ceil(measureText(label) + MAC_SELECT_OPTION_EXTRA_WIDTH));
-  }, 0);
-
-  return Math.min(
-    maxWidth,
-    Math.max(triggerWidth, MAC_SELECT_MIN_WIDTH, preferredWidth, contentWidth)
-  );
-}
 
 function createFallbackModelOptions(provider: ProviderId): ModelOption[] {
   return [
@@ -2627,185 +2577,6 @@ function ForkDropIcon() {
       <path d="M12 3v2" />
       <path d="M12 19v2" />
     </svg>
-  );
-}
-
-function MacSelect({
-  ariaLabel,
-  value,
-  options,
-  onChange,
-  disabled = false,
-  compact = false
-}: {
-  ariaLabel: string;
-  value: string;
-  options: ComposerSelectOption[];
-  onChange: (value: string) => void;
-  disabled?: boolean;
-  compact?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const wrapperRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const popoverRef = useRef<HTMLDivElement>(null);
-  const [popoverStyle, setPopoverStyle] = useState<CSSProperties | null>(null);
-  const listboxId = useId();
-  const selectedOption = options.find((option) => option.value === value) ?? options[0] ?? null;
-  const optionLabels = useMemo(() => options.map((option) => option.label), [options]);
-
-  const updatePopoverStyle = useCallback(() => {
-    const trigger = triggerRef.current;
-
-    if (!trigger || typeof window === "undefined") {
-      return;
-    }
-
-    const rect = trigger.getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-    const edgePadding = 12;
-    const gap = 10;
-    const maxWidth = Math.max(MAC_SELECT_MIN_WIDTH, viewportWidth - edgePadding * 2);
-    const preferredWidth = compact ? MAC_SELECT_COMPACT_WIDTH : MAC_SELECT_DEFAULT_WIDTH;
-    const width = resolveComposerMacSelectPopoverWidth({
-      labels: optionLabels,
-      triggerWidth: rect.width,
-      maxWidth,
-      preferredWidth,
-      measureText: (text) => measureComposerMacSelectTextWidth(trigger, text)
-    });
-    const left = Math.min(
-      Math.max(edgePadding, rect.left),
-      Math.max(edgePadding, viewportWidth - width - edgePadding)
-    );
-    const spaceAbove = rect.top - edgePadding;
-    const spaceBelow = viewportHeight - rect.bottom - edgePadding;
-    const shouldPlaceAbove = spaceAbove >= 180 || spaceAbove >= spaceBelow;
-
-    setPopoverStyle({
-      position: "fixed",
-      left,
-      width,
-      maxWidth,
-      top: shouldPlaceAbove ? undefined : rect.bottom + gap,
-      bottom: shouldPlaceAbove ? viewportHeight - rect.top + gap : undefined
-    });
-  }, [compact, optionLabels]);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target as Node;
-
-      if (
-        !wrapperRef.current?.contains(target)
-        && !popoverRef.current?.contains(target)
-      ) {
-        setOpen(false);
-      }
-    }
-
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setOpen(false);
-      }
-    }
-
-    window.addEventListener("pointerdown", handlePointerDown);
-    window.addEventListener("keydown", handleEscape);
-    window.addEventListener("resize", updatePopoverStyle);
-    window.addEventListener("scroll", updatePopoverStyle, true);
-    updatePopoverStyle();
-
-    return () => {
-      window.removeEventListener("pointerdown", handlePointerDown);
-      window.removeEventListener("keydown", handleEscape);
-      window.removeEventListener("resize", updatePopoverStyle);
-      window.removeEventListener("scroll", updatePopoverStyle, true);
-    };
-  }, [open, updatePopoverStyle]);
-
-  if (!selectedOption) {
-    return null;
-  }
-
-  return (
-    <div
-      ref={wrapperRef}
-      className={`composer-mac-select ${compact ? "is-compact" : ""}`}
-      data-open={open ? "true" : "false"}
-    >
-      <button
-        ref={triggerRef}
-        type="button"
-        className="composer-mac-select-trigger"
-        aria-label={ariaLabel}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={listboxId}
-        disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <span className="composer-mac-select-label">{selectedOption.label}</span>
-        <svg
-          className="composer-mac-select-chevron"
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-        >
-          <polyline points="6 14 12 8 18 14" />
-        </svg>
-      </button>
-
-      {open && popoverStyle && typeof document !== "undefined"
-        ? createPortal(
-            <div
-              ref={popoverRef}
-              className="composer-mac-select-popover"
-              style={popoverStyle}
-              role="presentation"
-            >
-              <div
-                id={listboxId}
-                className="composer-mac-select-list"
-                role="listbox"
-                aria-label={ariaLabel}
-              >
-                {options.map((option) => {
-                  const selected = option.value === value;
-
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      role="option"
-                      aria-selected={selected}
-                      className={`composer-mac-select-option ${selected ? "is-selected" : ""}`}
-                      onClick={() => {
-                        onChange(option.value);
-                        setOpen(false);
-                      }}
-                    >
-                      <span className="composer-mac-select-option-check" aria-hidden="true">
-                        {selected ? "✓" : ""}
-                      </span>
-                      <span className="composer-mac-select-option-label">{option.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
-    </div>
   );
 }
 

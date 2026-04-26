@@ -38,6 +38,7 @@ import {
   PROVIDER_DEFAULT_MODEL_ID,
   shouldShowDeploymentPresetColumn
 } from "./provider-deployment";
+import { MacSelect } from "./MacSelect";
 
 const DEPLOYMENT_SNAPSHOT_APPS: ModelSwitchAppId[] = ["codex", "claude-code", "gemini"];
 
@@ -849,6 +850,17 @@ export function ParallelSessionCreateModal({
               const providerSelectValue = memberProviderOptions.includes(draft.provider as BuiltinProviderId)
                 ? draft.provider
                 : "";
+              const providerSelectOptions = memberProviderOptions.length > 0
+                ? memberProviderOptions.map((providerId) => ({
+                    value: providerId,
+                    label: getProviderDisplayName(providerId, "full")
+                  }))
+                : [{
+                    value: "",
+                    label: loadingProviderCapabilities
+                      ? t("shell.parallelCreateProvidersLoading")
+                      : t("shell.parallelCreateNoAvailableProviders")
+                  }];
               const legacyModelOptions = resolveModelOptions(
                 providerCapabilitiesByProvider[draft.provider] ?? null,
                 draft.provider
@@ -895,14 +907,16 @@ export function ParallelSessionCreateModal({
                       label={t("shell.createSessionProviderLabel")}
                       htmlFor={`${modalFieldIdPrefix}-member-${index}-provider`}
                     >
-                      <select
-                        id={`${modalFieldIdPrefix}-member-${index}-provider`}
-                        className="parallel-create-select"
+                      <MacSelect
+                        triggerId={`${modalFieldIdPrefix}-member-${index}-provider`}
+                        className="parallel-create-provider-select"
+                        ariaLabel={t("shell.createSessionProviderLabel")}
                         value={providerSelectValue}
+                        options={providerSelectOptions}
                         disabled={!memberProviderOptions.length}
-                        onChange={(event) => {
+                        onChange={(value) => {
                           clearFeedbackForMember(index);
-                          const nextProvider = event.target.value as ProviderId;
+                          const nextProvider = value as ProviderId;
                           setMembers((current) =>
                             current.map((item, memberIndex) =>
                               memberIndex === index
@@ -917,21 +931,7 @@ export function ParallelSessionCreateModal({
                             )
                           );
                         }}
-                      >
-                        {memberProviderOptions.length > 0 ? (
-                          memberProviderOptions.map((providerId) => (
-                            <option key={providerId} value={providerId}>
-                              {getProviderDisplayName(providerId, "full")}
-                            </option>
-                          ))
-                        ) : (
-                          <option value="" disabled>
-                            {loadingProviderCapabilities
-                              ? t("shell.parallelCreateProvidersLoading")
-                              : t("shell.parallelCreateNoAvailableProviders")}
-                          </option>
-                        )}
-                      </select>
+                      />
                     </ModalField>
 
                     <ModalField

@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -139,6 +139,9 @@ describe("ParallelSessionCreateModal", () => {
 
     renderModal();
 
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: t("shell.parallelCreateSubmit") })).toBeEnabled();
+    });
     await user.click(screen.getByRole("button", { name: t("shell.parallelCreateSubmit") }));
 
     expect(await screen.findByText(t("shell.parallelCreatePromptRequired"))).toBeInTheDocument();
@@ -225,20 +228,20 @@ describe("ParallelSessionCreateModal", () => {
     expect(screen.getByText(t("shell.parallelCreateMembersTitle"))).toBeInTheDocument();
     expect(screen.getAllByText(t("shell.parallelCreateMemberPromptLabel")).length).toBeGreaterThan(0);
 
-    const [providerSelect] = await screen.findAllByLabelText(
-      t("shell.createSessionProviderLabel"),
-      { selector: "select" }
-    );
+    const [providerSelect] = await screen.findAllByRole("button", {
+      name: t("shell.createSessionProviderLabel")
+    });
+    await user.click(providerSelect);
 
-    expect(within(providerSelect).getByRole("option", { name: "Codex" })).toBeInTheDocument();
-    expect(within(providerSelect).getByRole("option", { name: "Claude Code" })).toBeInTheDocument();
-    expect(within(providerSelect).getByRole("option", { name: "OpenCode" })).toBeInTheDocument();
-    expect(within(providerSelect).queryByRole("option", { name: "Gemini" })).not.toBeInTheDocument();
-    expect(within(providerSelect).queryByRole("option", { name: "Kimi" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "Codex" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Claude Code" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "OpenCode" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Gemini" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Kimi" })).not.toBeInTheDocument();
 
     expect(screen.getAllByRole("button", { name: t("shell.parallelCreateModelLabel") })).toHaveLength(2);
 
-    await user.selectOptions(providerSelect, "opencode");
+    await user.click(screen.getByRole("option", { name: "OpenCode" }));
 
     const memberOneCard = screen.getByText(t("shell.parallelCreateMemberTitle", { index: 1 })).closest(".parallel-create-member-card");
 
@@ -265,14 +268,14 @@ describe("ParallelSessionCreateModal", () => {
 
     renderModal();
 
-    const [providerSelect] = await screen.findAllByLabelText(
-      t("shell.createSessionProviderLabel"),
-      { selector: "select" }
-    );
+    const [providerSelect] = await screen.findAllByRole("button", {
+      name: t("shell.createSessionProviderLabel")
+    });
+    await userEvent.setup().click(providerSelect);
 
-    expect(within(providerSelect).getByRole("option", { name: "Codex" })).toBeInTheDocument();
-    expect(within(providerSelect).getByRole("option", { name: "Claude Code" })).toBeInTheDocument();
-    expect(within(providerSelect).queryByRole("option", { name: "OpenCode" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "Codex" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Claude Code" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "OpenCode" })).not.toBeInTheDocument();
   });
 
   it("给已有并行组追加成员时，会锁定顶部消息并把数量限制在剩余槽位内", () => {
