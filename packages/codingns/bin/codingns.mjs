@@ -11,6 +11,7 @@ const ASSISTANT_REQUEST_SOURCE_HEADER = "X-CodingNS-Assistant-Source";
 const ASSISTANT_CLI_REQUEST_SOURCE = "assistant-cli";
 const PROVIDER_SESSION_DELETE_PROVIDERS = new Set([
   "claude-code",
+  "legna-code",
   "codex",
   "opencode",
   "gemini",
@@ -1057,12 +1058,23 @@ async function runProviderSessionsCommand(argv) {
         CodexAdapter,
         GeminiAdapter,
         KimiAdapter,
+        LegnaCodeAdapter,
         OpenCodeAdapter
       } = await import("@codingns/session-sync-core");
       const homeDir = os.homedir();
       const registry = new ProviderRegistry([
         new ClaudeCodeAdapter({
           homeDir: readStringOption(
+            process.env.CODINGNS_CLAUDE_CODE_HOME,
+            path.join(homeDir, ".claude")
+          )
+        }),
+        new LegnaCodeAdapter({
+          homeDir: readStringOption(
+            process.env.CODINGNS_LEGNA_CODE_HOME,
+            path.join(homeDir, ".legna")
+          ),
+          legacyClaudeHomeDir: readStringOption(
             process.env.CODINGNS_CLAUDE_CODE_HOME,
             path.join(homeDir, ".claude")
           )
@@ -2570,17 +2582,18 @@ codingns provider-sessions delete
   直接删除底层 provider 会话，不经过项目会话索引。适合给 Host 或脚本层做真实删除调用。
 
 用法：
-  codingns provider-sessions delete --provider <claude-code|codex|opencode|gemini|kimi> --provider-session-id <id> --raw-store-ref <ref>
+  codingns provider-sessions delete --provider <claude-code|legna-code|codex|opencode|gemini|kimi> --provider-session-id <id> --raw-store-ref <ref>
 `.trim();
     default:
       return `
 codingns provider-sessions 用法：
 
-  codingns provider-sessions delete --provider <claude-code|codex|opencode|gemini|kimi> --provider-session-id <id> --raw-store-ref <ref>
+  codingns provider-sessions delete --provider <claude-code|legna-code|codex|opencode|gemini|kimi> --provider-session-id <id> --raw-store-ref <ref>
 
 环境变量：
 
   CODINGNS_CLAUDE_CODE_HOME   Claude Code 数据目录，默认 ~/.claude
+  CODINGNS_LEGNA_CODE_HOME    Legna Code 数据目录，默认 ~/.legna
   CODINGNS_CODEX_HOME         Codex 数据目录，默认 ~/.codex
   CODINGNS_GEMINI_HOME        Gemini 数据目录，默认 ~/.gemini
   CODINGNS_GEMINI_COMMAND     Gemini CLI 路径，默认 gemini

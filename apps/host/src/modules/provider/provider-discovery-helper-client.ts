@@ -421,8 +421,10 @@ export function disposeSharedProviderDiscoveryHelperClient(): void {
 
 export interface ProviderSessionDiscoveryHelperConfig {
   claudeCodeHomeDir: string;
+  legnaCodeHomeDir: string;
   codexCliPath: string;
   codexHomeDir: string;
+  legnaCodeCliPath: string;
   geminiCliPath: string;
   geminiHomeDir: string;
   kimiDefaultModel: string | null;

@@ -1,5 +1,6 @@
 import { t } from "../../../shared/i18n";
 import claudeCodeIcon from "../../../assets/provider-icons/claude-code.png";
+import legnaCodeIcon from "../../../assets/provider-icons/legna-code.png";
 import type {
   BuiltinProviderId,
   InRunInputMode,
@@ -38,7 +39,8 @@ export const REGISTERED_PROVIDER_IDS: BuiltinProviderId[] = [
   "codex",
   "opencode",
   "gemini",
-  "kimi"
+  "kimi",
+  "legna-code"
 ];
 
 export const SESSION_PROVIDER_PICKER_IDS: BuiltinProviderId[] = [
@@ -46,7 +48,8 @@ export const SESSION_PROVIDER_PICKER_IDS: BuiltinProviderId[] = [
   "claude-code",
   "opencode",
   "gemini",
-  "kimi"
+  "kimi",
+  "legna-code"
 ];
 
 const PROVIDER_METADATA: Record<BuiltinProviderId, ProviderMetadata> = {
@@ -56,6 +59,20 @@ const PROVIDER_METADATA: Record<BuiltinProviderId, ProviderMetadata> = {
     draftTitleKey: "conversation.draftTitleClaude",
     defaultModelLabelKey: "conversation.modelUseCliDefault",
     icon: claudeCodeIcon,
+    defaultRunInputMode: "streaming_guidance",
+    reasoningLevelPersists: false,
+    defaultReasoningLevel: undefined,
+    supportsSlashMenuByDefault: true,
+    supportsRunSteeringByDefault: true,
+    supportsSessionDeleteByDefault: true,
+    foldRulesMessagesByDefault: false
+  },
+  "legna-code": {
+    displayNameKey: "conversation.providerLegna",
+    fullDisplayNameKey: "shell.providerLegnaCode",
+    draftTitleKey: "conversation.draftTitleLegna",
+    defaultModelLabelKey: "conversation.modelUseCliDefault",
+    icon: legnaCodeIcon,
     defaultRunInputMode: "streaming_guidance",
     reasoningLevelPersists: false,
     defaultReasoningLevel: undefined,

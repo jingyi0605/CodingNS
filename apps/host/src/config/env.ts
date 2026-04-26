@@ -33,11 +33,13 @@ export interface HostConfig {
   refreshTokenTtlSeconds: number;
   terminalIdleTimeoutSeconds: number;
   claudeCodeHomeDir: string;
+  legnaCodeHomeDir: string;
   codexHomeDir: string;
   tailscaleCliPath: string;
   ccSwitchCliPath: string;
   ccSwitchDbPath: string;
   codexCliPath: string;
+  legnaCodeCliPath: string;
   claudeHookBridgeToken: string;
   serverUpdatePackageName: string;
   npmRegistryBaseUrl: string;
@@ -83,6 +85,10 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     overrides.codexCliPath ?? process.env.CODINGNS_CODEX_COMMAND,
     homeDir
   );
+  const legnaCodeCliPath =
+    overrides.legnaCodeCliPath ??
+    process.env.CODINGNS_LEGNA_COMMAND ??
+    "legna";
   const geminiCliPath = resolveGeminiCliPath(
     overrides.geminiCliPath ?? process.env.CODINGNS_GEMINI_COMMAND,
     homeDir
@@ -166,6 +172,10 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
       overrides.claudeCodeHomeDir ??
       process.env.CODINGNS_CLAUDE_CODE_HOME ??
       path.join(homeDir, ".claude"),
+    legnaCodeHomeDir:
+      overrides.legnaCodeHomeDir ??
+      process.env.CODINGNS_LEGNA_CODE_HOME ??
+      path.join(homeDir, ".legna"),
     codexHomeDir:
       overrides.codexHomeDir ??
       process.env.CODINGNS_CODEX_HOME ??
@@ -177,6 +187,7 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     ccSwitchCliPath,
     ccSwitchDbPath,
     codexCliPath,
+    legnaCodeCliPath,
     claudeHookBridgeToken:
       overrides.claudeHookBridgeToken ??
       process.env.CODINGNS_CLAUDE_HOOK_TOKEN ??

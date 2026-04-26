@@ -55,17 +55,13 @@ export function buildClaudeProgressiveTrackKey(
 }
 
 function isClaudeFallbackRawRef(rawRef: string): boolean {
-  const prefix = "claude-code://message/";
+  const identity = readClaudeStableRawRefIdentity(rawRef);
 
-  if (!rawRef.startsWith(prefix)) {
+  if (!identity) {
     return false;
   }
 
-  try {
-    return decodeURIComponent(rawRef.slice(prefix.length)).startsWith("fallback:");
-  } catch {
-    return false;
-  }
+  return identity.startsWith("fallback:");
 }
 
 export function shouldReuseClaudeProgressiveIdentity(
@@ -193,19 +189,20 @@ export function normalizeClaudeMessageParts(content: unknown): Array<Record<stri
     .filter((item): item is Record<string, unknown> => item !== null);
 }
 
-export function buildClaudeStableRawRef(identity: string): string {
-  return `claude-code://message/${encodeURIComponent(identity)}`;
+export function buildClaudeStableRawRef(identity: string, providerId = "claude-code"): string {
+  return `${providerId}://message/${encodeURIComponent(identity)}`;
 }
 
 export function readClaudeStableRawRefIdentity(rawRef: string): string | null {
-  const prefix = "claude-code://message/";
+  const marker = "://message/";
+  const markerIndex = rawRef.indexOf(marker);
 
-  if (!rawRef.startsWith(prefix)) {
+  if (markerIndex < 0) {
     return null;
   }
 
   try {
-    return decodeURIComponent(rawRef.slice(prefix.length));
+    return decodeURIComponent(rawRef.slice(markerIndex + marker.length));
   } catch {
     return null;
   }
@@ -273,6 +270,7 @@ export function buildClaudePartIdentity(input: {
 export function normalizeClaudeMessagePart(input: {
   part: Record<string, unknown>;
   envelope: ClaudeMessageEnvelope;
+  providerId?: string;
   providerSessionId: string;
   partIndex: number;
   timestamp: string;
@@ -282,6 +280,7 @@ export function normalizeClaudeMessagePart(input: {
   const {
     part,
     envelope,
+    providerId = "claude-code",
     providerSessionId,
     partIndex,
     timestamp,
@@ -310,6 +309,7 @@ export function normalizeClaudeMessagePart(input: {
       }
 
       return createClaudeMessage({
+        providerId,
         providerSessionId,
         rawRef,
         sequence,
@@ -335,6 +335,7 @@ export function normalizeClaudeMessagePart(input: {
     }
 
     return createClaudeMessage({
+      providerId,
       providerSessionId,
       rawRef,
       sequence,
@@ -357,6 +358,7 @@ export function normalizeClaudeMessagePart(input: {
       toolNameById.set(callId, "apply_patch");
 
       return createClaudeMessage({
+        providerId,
         providerSessionId,
         rawRef,
         sequence,
@@ -382,6 +384,7 @@ export function normalizeClaudeMessagePart(input: {
     }
 
     return createClaudeMessage({
+      providerId,
       providerSessionId,
       rawRef,
       sequence,
@@ -407,6 +410,7 @@ export function normalizeClaudeMessagePart(input: {
   }
 
   return createClaudeMessage({
+    providerId,
     providerSessionId,
     rawRef,
     sequence,
@@ -419,6 +423,7 @@ export function normalizeClaudeMessagePart(input: {
 }
 
 function createClaudeMessage(input: {
+  providerId: string;
   providerSessionId: string;
   rawRef: string;
   sequence: number;
@@ -437,11 +442,11 @@ function createClaudeMessage(input: {
       }
     | null;
 }): NormalizedMessage {
-  const { providerSessionId, rawRef, sequence, timestamp, role, kind, content, toolCall } = input;
+  const { providerId, providerSessionId, rawRef, sequence, timestamp, role, kind, content, toolCall } = input;
 
   return {
     messageId: messageIdFromRawRef(rawRef),
-    provider: "claude-code",
+    provider: providerId,
     providerSessionId,
     role,
     kind,

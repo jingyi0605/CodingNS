@@ -12,6 +12,7 @@ import {
   type ForkSourceType,
   GeminiAdapter,
   KimiAdapter,
+  LegnaCodeAdapter,
   OpenCodeAdapter,
   type ProviderModelOption,
   ProviderRegistry,
@@ -252,12 +253,14 @@ type SessionDeletedObserver = (input: {
 const SESSION_START_DEFERRED_PROVIDERS = new Set([
   "codex",
   "claude-code",
+  "legna-code",
   "opencode",
   "gemini",
   "kimi"
 ]);
 const MUTABLE_HISTORY_TAIL_PROVIDERS = new Set([
   "claude-code",
+  "legna-code",
   "codex",
   "gemini",
   "kimi",
@@ -355,6 +358,7 @@ export class SessionHistoryService {
     this.claudeCodeHomeDir = config.claudeCodeHomeDir;
     this.providerCliCommandPaths = {
       "claude-code": process.platform === "win32" ? "claude.cmd" : "claude",
+      "legna-code": config.legnaCodeCliPath,
       codex: config.codexCliPath,
       gemini: config.geminiCliPath,
       kimi: config.kimiCliPath
@@ -363,8 +367,10 @@ export class SessionHistoryService {
     this.providerCliAvailability = buildProviderCliAvailabilitySnapshot(this.providerCliCommandPaths);
     this.providerSessionDiscoveryConfig = {
       claudeCodeHomeDir: config.claudeCodeHomeDir,
+      legnaCodeHomeDir: config.legnaCodeHomeDir,
       codexCliPath: config.codexCliPath,
       codexHomeDir: config.codexHomeDir,
+      legnaCodeCliPath: config.legnaCodeCliPath,
       geminiCliPath: config.geminiCliPath,
       geminiHomeDir: config.geminiHomeDir,
       kimiDefaultModel: config.kimiDefaultModel,
@@ -375,6 +381,10 @@ export class SessionHistoryService {
     };
     this.providerRegistry = new ProviderRegistry([
       new ClaudeCodeAdapter({ homeDir: config.claudeCodeHomeDir }),
+      new LegnaCodeAdapter({
+        homeDir: config.legnaCodeHomeDir,
+        legacyClaudeHomeDir: config.claudeCodeHomeDir
+      }),
       new CodexAdapter({
         homeDir: config.codexHomeDir,
         forkTransportFactory:
@@ -4541,8 +4551,14 @@ export class SessionHistoryService {
   }
 }
 
-function isProviderCliBacked(provider: string): provider is "claude-code" | "codex" | "gemini" | "kimi" {
-  return provider === "claude-code" || provider === "codex" || provider === "gemini" || provider === "kimi";
+function isProviderCliBacked(
+  provider: string
+): provider is "claude-code" | "legna-code" | "codex" | "gemini" | "kimi" {
+  return provider === "claude-code"
+    || provider === "legna-code"
+    || provider === "codex"
+    || provider === "gemini"
+    || provider === "kimi";
 }
 
 function buildProviderCliAvailabilitySnapshot(
@@ -4562,6 +4578,8 @@ function buildProviderCliUnavailableMessage(provider: string): string {
   switch (provider) {
     case "claude-code":
       return "未检测到 Claude CLI";
+    case "legna-code":
+      return "未检测到 Legna CLI";
     case "codex":
       return "未检测到 Codex CLI";
     case "gemini":

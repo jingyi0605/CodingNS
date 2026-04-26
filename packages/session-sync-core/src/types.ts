@@ -1,6 +1,6 @@
 import type { Stats } from "node:fs";
 
-export const BUILTIN_PROVIDER_IDS = ["claude-code", "codex"] as const;
+export const BUILTIN_PROVIDER_IDS = ["claude-code", "legna-code", "codex"] as const;
 export type BuiltinProviderId = (typeof BUILTIN_PROVIDER_IDS)[number];
 export type ProviderId = BuiltinProviderId | (string & {});
 export type SessionRole = "user" | "assistant" | "tool" | "system";

@@ -3,6 +3,7 @@ import { ApiError } from "../../../shared/network/api-error";
 
 export type BuiltinProviderId =
   | "claude-code"
+  | "legna-code"
   | "codex"
   | "opencode"
   | "gemini"

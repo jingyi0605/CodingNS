@@ -7,6 +7,7 @@ import { MobileSheet } from "../../../components/MobileSheet";
 import { ModalActions, ModalField, ModalSection } from "../../../components/ModalAtoms";
 import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import { usePreferencesSelector } from "../../../preferences/preferences-store";
+import { isPreferenceProviderId } from "../../../preferences/user-preference-store";
 import { usePlatform } from "../../../platform/platform-provider";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
@@ -266,7 +267,11 @@ export function ConversationSelectionActions({
 
   const preferredModelForProvider = useMemo(() => {
     return (provider: BuiltinProviderId): string =>
-      providerPreferences[provider]?.defaultModel?.trim() || PROVIDER_DEFAULT_MODEL_ID;
+      (
+        isPreferenceProviderId(provider)
+          ? providerPreferences[provider]?.defaultModel?.trim()
+          : null
+      ) || PROVIDER_DEFAULT_MODEL_ID;
   }, [providerPreferences]);
   const selectedProviderSelection = useMemo(
     () => normalizeProviderSelection(selectedProviderConfigMode, selectedProviderPresetId),

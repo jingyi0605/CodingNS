@@ -18,6 +18,12 @@ describe("provider-ui", () => {
     expect(SESSION_PROVIDER_PICKER_IDS.includes("kimi")).toBe(true);
   });
 
+  it("会把 legna-code 排在 kimi 之后", () => {
+    expect(SESSION_PROVIDER_PICKER_IDS.indexOf("legna-code")).toBeGreaterThan(
+      SESSION_PROVIDER_PICKER_IDS.indexOf("kimi")
+    );
+  });
+
   it("会给 gemini 草稿能力输出可中断且禁用附件的默认值", () => {
     const capabilities = createDraftCapabilities("gemini");
 

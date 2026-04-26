@@ -48,13 +48,20 @@ import {
   readFirstNonEmptyLine,
   readJsonLines,
   safeDate,
-  sliceHistory,
-  walkJsonlFiles,
-  workspaceSlug
+  sliceHistory
 } from "./utils.js";
+import {
+  CLAUDE_CODE_SESSION_STORE_PROFILE,
+  type ClaudeSessionStoreProfile
+} from "./claude-session-store.js";
 
 interface ClaudeCodeAdapterOptions {
   homeDir: string;
+  providerId?: ProviderId;
+  sessionStoreProfile?: ClaudeSessionStoreProfile;
+  modelOptions?: ProviderModelOption[];
+  defaultSessionTitle?: string;
+  capabilityLimitations?: string[];
 }
 
 interface ClaudeHistoryCacheEntry {
@@ -89,7 +96,7 @@ interface ClaudeForkTargetLocation {
 const HISTORY_CACHE_LIMIT = 6;
 const SESSION_SUMMARY_CACHE_LIMIT = 512;
 const DEFAULT_CLAUDE_CONTEXT_WINDOW = 200_000;
-const CLAUDE_MODEL_OPTIONS: ProviderModelOption[] = [
+export const CLAUDE_COMPAT_MODEL_OPTIONS: ProviderModelOption[] = [
   {
     id: "provider-default",
     name: "跟随 CLI 默认模型",
@@ -110,11 +117,13 @@ const CLAUDE_MODEL_OPTIONS: ProviderModelOption[] = [
 ];
 
 export class ClaudeCodeAdapter implements ProviderAdapter {
-  readonly providerId: ProviderId = "claude-code";
+  readonly providerId: ProviderId;
   private readonly historyCache = new Map<string, ClaudeHistoryCacheEntry>();
   private readonly sessionSummaryCache = new Map<string, ClaudeSessionSummaryCacheEntry>();
 
-  constructor(private readonly options: ClaudeCodeAdapterOptions) {}
+  constructor(private readonly options: ClaudeCodeAdapterOptions) {
+    this.providerId = options.providerId ?? "claude-code";
+  }
 
   async detectSessions(
     workspacePath: string,
@@ -378,10 +387,13 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     options: StartSessionOptions
   ): Promise<StartSessionResult> {
     const sessionId = crypto.randomUUID();
-    const projectDir = join(this.options.homeDir, "projects", workspaceSlug(workspacePath));
+    const filePath = this.getSessionStoreProfile().resolveSessionFilePath(
+      this.options.homeDir,
+      workspacePath,
+      sessionId
+    );
+    const projectDir = dirname(filePath);
     ensureDirectory(projectDir);
-
-    const filePath = join(projectDir, `${sessionId}.jsonl`);
     const now = nextTimestamp();
 
     appendJsonLine(filePath, {
@@ -411,14 +423,14 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     appendJsonLine(filePath, {
       type: "ai-title",
       sessionId,
-      aiTitle: options.initialPrompt?.slice(0, 48) || "New Claude Code session"
+      aiTitle: options.initialPrompt?.slice(0, 48) || this.getDefaultSessionTitle()
     });
 
     return {
       session: {
         provider: this.providerId,
         providerSessionId: sessionId,
-        title: options.initialPrompt?.slice(0, 48) || "New Claude Code session",
+        title: options.initialPrompt?.slice(0, 48) || this.getDefaultSessionTitle(),
         workspacePath,
         rawStoreRef: filePath,
         isArchived: false,
@@ -434,10 +446,19 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     workspacePath: string,
     options: ForkSessionOptions
   ): Promise<ForkSessionResult> {
-    const sourceFilePath = this.resolveForkSourceFilePath(options.rawStoreRef, providerSessionId);
+    const sourceFilePath = this.resolveForkSourceFilePath(
+      options.rawStoreRef,
+      providerSessionId,
+      workspacePath
+    );
     const sourceRecords = readJsonLines(sourceFilePath).map((record) => record.data);
     const forkedSessionId = crypto.randomUUID();
-    const projectDir = join(this.options.homeDir, "projects", workspaceSlug(workspacePath));
+    const targetFilePath = this.getSessionStoreProfile().resolveSessionFilePath(
+      this.options.homeDir,
+      workspacePath,
+      forkedSessionId
+    );
+    const projectDir = dirname(targetFilePath);
 
     ensureDirectory(projectDir);
 
@@ -468,7 +489,6 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
       forkMethod = "native_message_fork";
     }
 
-    const targetFilePath = join(projectDir, `${forkedSessionId}.jsonl`);
     const persistedForkRecords = forkedRecords
       // fork 后的标题必须由子会话自己生成，不能把父会话的 ai-title 原样抄过去。
       .filter((record) => shouldPreserveClaudeForkRecord(record));
@@ -632,8 +652,10 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
       supportsSessionFork: true,
       supportsSessionDelete: true,
       supportsCheckpoint: false,
-      modelOptions: CLAUDE_MODEL_OPTIONS,
-      limitations: ["当前实现只读取原生 jsonl，会话恢复不负责拉起外部 Claude 进程。"]
+      modelOptions: this.options.modelOptions ?? CLAUDE_COMPAT_MODEL_OPTIONS,
+      limitations:
+        this.options.capabilityLimitations
+        ?? ["当前实现只读取原生 jsonl，会话恢复不负责拉起外部 Claude 进程。"]
     };
   }
 
@@ -727,24 +749,26 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
   }
 
   private listWorkspaceFiles(workspacePath: string): string[] {
-    const exactProjectDir = join(this.options.homeDir, "projects", workspaceSlug(workspacePath));
-
-    if (existsSync(exactProjectDir)) {
-      return walkJsonlFiles(exactProjectDir);
-    }
-
-    return walkJsonlFiles(join(this.options.homeDir, "projects"));
+    return this.getSessionStoreProfile().resolveWorkspaceFiles(this.options.homeDir, workspacePath);
   }
 
-  private resolveForkSourceFilePath(rawStoreRef: string, providerSessionId: string): string {
+  private resolveForkSourceFilePath(
+    rawStoreRef: string,
+    providerSessionId: string,
+    workspacePath = ""
+  ): string {
     if (existsSync(rawStoreRef)) {
       return rawStoreRef;
     }
 
-    for (const filePath of walkJsonlFiles(join(this.options.homeDir, "projects"))) {
-      if (basename(filePath, ".jsonl") === providerSessionId) {
-        return filePath;
-      }
+    const discoveredFilePath = this.getSessionStoreProfile().findSessionFile(
+      this.options.homeDir,
+      workspacePath,
+      providerSessionId
+    );
+
+    if (discoveredFilePath) {
+      return discoveredFilePath;
     }
 
     throw new Error("PROVIDER_SESSION_NOT_FOUND");
@@ -769,6 +793,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
           const normalized = normalizeClaudeMessagePart({
             part,
             envelope,
+            providerId: this.providerId,
             providerSessionId,
             partIndex,
             timestamp: safeDate(envelope.timestamp, nextTimestamp()),
@@ -783,7 +808,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
               sequence += 1;
               const created: ClaudeStableMessageRef = {
                 sequence,
-                rawRef: buildClaudeStableRawRef(identity)
+                rawRef: buildClaudeStableRawRef(identity, this.providerId)
               };
               stableMessageRefByIdentity.set(identity, created);
               return created;
@@ -925,6 +950,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
           const normalized = normalizeClaudeMessagePart({
             part,
             envelope,
+            providerId: this.providerId,
             providerSessionId,
             partIndex,
             timestamp: safeDate(envelope.timestamp, nextTimestamp()),
@@ -939,7 +965,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
               sequence += 1;
               const created: ClaudeStableMessageRef = {
                 sequence,
-                rawRef: buildClaudeStableRawRef(identity)
+                rawRef: buildClaudeStableRawRef(identity, this.providerId)
               };
               stableMessageRefByIdentity.set(identity, created);
               return created;
@@ -1078,6 +1104,14 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
       timestamp: nested.timestamp ?? record.timestamp,
       message: nestedMessage as ClaudeMessageEnvelope["message"]
     };
+  }
+
+  private getSessionStoreProfile(): ClaudeSessionStoreProfile {
+    return this.options.sessionStoreProfile ?? CLAUDE_CODE_SESSION_STORE_PROFILE;
+  }
+
+  private getDefaultSessionTitle(): string {
+    return this.options.defaultSessionTitle ?? "New Claude Code session";
   }
 }
 

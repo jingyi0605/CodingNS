@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { accessSync, constants, existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, isAbsolute, join, sep } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -23,9 +23,12 @@ import {
   ensureText,
   nextTimestamp,
   safeDate,
-  stringifyStructuredValue,
-  workspaceSlug
+  stringifyStructuredValue
 } from "../providers/utils.js";
+import {
+  CLAUDE_CODE_SESSION_STORE_PROFILE,
+  type ClaudeSessionStoreProfile
+} from "../providers/claude-session-store.js";
 import type { NormalizedMessage } from "../types.js";
 import type {
   ProviderRuntimeAdapter,
@@ -37,6 +40,8 @@ import type {
 interface ClaudeRuntimeOptions {
   homeDir: string;
   commandPath?: string;
+  providerId?: string;
+  sessionStoreProfile?: ClaudeSessionStoreProfile;
   hookBridge?: {
     url: string;
     token: string;
@@ -83,10 +88,11 @@ interface ClaudeRuntimeSeed {
  * Claude 真实运行时：通过 claude.cmd 流式读取事件，而不是伪造写文件。
  */
 export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
-  readonly providerId = "claude-code" as const;
+  readonly providerId: string;
   private readonly commandPath: string;
 
   constructor(private readonly options: ClaudeRuntimeOptions) {
+    this.providerId = options.providerId ?? "claude-code";
     this.commandPath = resolveClaudeCommand(options.commandPath);
   }
 
@@ -95,8 +101,10 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     sink: ProviderRuntimeEventSink
   ): Promise<ProviderRuntimeLaunchResult> {
     const homeDir = request.runtimeHomeDir?.trim() || this.options.homeDir;
-    const providerSessionId = request.providerSessionId ?? buildPendingClaudeSessionId(request.sessionId);
+    const providerSessionId =
+      request.providerSessionId ?? buildPendingClaudeSessionId(this.providerId, request.sessionId);
     const rawStoreRef = buildClaudePendingRawStoreRef(
+      this.getSessionStoreProfile(),
       homeDir,
       request.workspacePath,
       request.sessionId
@@ -109,6 +117,9 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
 
     const runtimeSeed = await buildClaudeRuntimeSeed({
       homeDir,
+      providerId: this.providerId,
+      workspacePath: request.workspacePath,
+      sessionStoreProfile: this.getSessionStoreProfile(),
       providerSessionId,
       rawStoreRef
     });
@@ -133,9 +144,19 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
       "CLAUDE_PROVIDER_SESSION_ID_REQUIRED"
     );
     const rawStoreRef =
-      findClaudeSessionFile(homeDir, providerSessionId) ??
+      findClaudeSessionFile(
+        this.getSessionStoreProfile(),
+        homeDir,
+        request.workspacePath,
+        providerSessionId
+      ) ??
       request.rawStoreRef ??
-      buildClaudeRawStoreRef(homeDir, request.workspacePath, providerSessionId);
+      buildClaudeRawStoreRef(
+        this.getSessionStoreProfile(),
+        homeDir,
+        request.workspacePath,
+        providerSessionId
+      );
 
     sink.updateSessionBinding({
       providerSessionId,
@@ -144,6 +165,9 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
 
     const runtimeSeed = await buildClaudeRuntimeSeed({
       homeDir,
+      providerId: this.providerId,
+      workspacePath: request.workspacePath,
+      sessionStoreProfile: this.getSessionStoreProfile(),
       providerSessionId,
       rawStoreRef
     });
@@ -251,8 +275,18 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
 
       if (!isPendingClaudeSessionId(activeProviderSessionId)) {
         const nextRawStoreRef =
-          findClaudeSessionFile(homeDir, activeProviderSessionId) ??
-          buildClaudeRawStoreRef(homeDir, request.workspacePath, activeProviderSessionId);
+          findClaudeSessionFile(
+            this.getSessionStoreProfile(),
+            homeDir,
+            request.workspacePath,
+            activeProviderSessionId
+          ) ??
+          buildClaudeRawStoreRef(
+            this.getSessionStoreProfile(),
+            homeDir,
+            request.workspacePath,
+            activeProviderSessionId
+          );
 
         if (nextRawStoreRef !== activeRawStoreRef) {
           activeRawStoreRef = nextRawStoreRef;
@@ -515,6 +549,7 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
         const normalized = normalizeClaudeMessagePart({
           part,
           envelope,
+          providerId: this.providerId,
           providerSessionId: binding.providerSessionId,
           partIndex,
           timestamp: safeDate(envelope.timestamp, nextTimestamp()),
@@ -529,7 +564,7 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
             const sequence = input.allocateSequence();
             const created: ClaudeStableMessageRef = {
               sequence,
-              rawRef: buildClaudeStableRawRef(identity)
+              rawRef: buildClaudeStableRawRef(identity, this.providerId)
             };
 
             input.stableMessageRefByIdentity.set(identity, created);
@@ -581,6 +616,10 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
         });
       }
     }
+  }
+
+  private getSessionStoreProfile(): ClaudeSessionStoreProfile {
+    return this.options.sessionStoreProfile ?? CLAUDE_CODE_SESSION_STORE_PROFILE;
   }
 }
 
@@ -778,6 +817,9 @@ function shouldSpawnClaudeViaShell(commandPath: string): boolean {
 
 async function buildClaudeRuntimeSeed(input: {
   homeDir: string;
+  providerId: string;
+  workspacePath: string;
+  sessionStoreProfile: ClaudeSessionStoreProfile;
   providerSessionId: string;
   rawStoreRef: string;
 }): Promise<ClaudeRuntimeSeed> {
@@ -796,7 +838,11 @@ async function buildClaudeRuntimeSeed(input: {
   }
 
   try {
-    const historyAdapter = new ClaudeCodeAdapter({ homeDir: input.homeDir });
+    const historyAdapter = new ClaudeCodeAdapter({
+      homeDir: input.homeDir,
+      providerId: input.providerId,
+      sessionStoreProfile: input.sessionStoreProfile
+    });
     let cursor = null;
 
     while (true) {
@@ -959,51 +1005,39 @@ function pickFirstNonEmpty(...values: Array<string | undefined>): string | null 
   return null;
 }
 
-function buildPendingClaudeSessionId(sessionId: string): string {
-  return `pending://claude-code/${sessionId}`;
+function buildPendingClaudeSessionId(providerId: string, sessionId: string): string {
+  return `pending://${providerId}/${sessionId}`;
 }
 
 function isPendingClaudeSessionId(sessionId: string): boolean {
-  return sessionId.startsWith("pending://claude-code/");
+  return sessionId.startsWith("pending://");
 }
 
-function buildClaudeRawStoreRef(homeDir: string, workspacePath: string, sessionId: string): string {
-  return join(homeDir, "projects", workspaceSlug(workspacePath), `${sessionId}.jsonl`);
+function buildClaudeRawStoreRef(
+  profile: ClaudeSessionStoreProfile,
+  homeDir: string,
+  workspacePath: string,
+  sessionId: string
+): string {
+  return profile.resolveSessionFilePath(homeDir, workspacePath, sessionId);
 }
 
-function buildClaudePendingRawStoreRef(homeDir: string, workspacePath: string, sessionId: string): string {
-  return join(homeDir, "projects", workspaceSlug(workspacePath), `.pending-${sessionId}.jsonl`);
+function buildClaudePendingRawStoreRef(
+  profile: ClaudeSessionStoreProfile,
+  homeDir: string,
+  workspacePath: string,
+  sessionId: string
+): string {
+  return profile.resolvePendingSessionFilePath(homeDir, workspacePath, sessionId);
 }
 
-function findClaudeSessionFile(homeDir: string, sessionId: string): string | null {
-  const projectsDir = join(homeDir, "projects");
-
-  if (!existsSync(projectsDir)) {
-    return null;
-  }
-
-  const candidates = readdirSync(projectsDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => join(projectsDir, entry.name, `${sessionId}.jsonl`))
-    .filter((filePath) => existsSync(filePath));
-
-  if (candidates.length === 0) {
-    return null;
-  }
-
-  candidates.sort((left, right) => compareClaudeSessionFiles(right, left));
-  return candidates[0] ?? null;
-}
-
-function compareClaudeSessionFiles(left: string, right: string): number {
-  const leftStat = statSync(left);
-  const rightStat = statSync(right);
-
-  if (leftStat.size !== rightStat.size) {
-    return leftStat.size - rightStat.size;
-  }
-
-  return leftStat.mtimeMs - rightStat.mtimeMs;
+function findClaudeSessionFile(
+  profile: ClaudeSessionStoreProfile,
+  homeDir: string,
+  workspacePath: string,
+  sessionId: string
+): string | null {
+  return profile.findSessionFile(homeDir, workspacePath, sessionId);
 }
 
 function extractClaudeSessionId(parsed?: Record<string, unknown>): string | null {

@@ -130,6 +130,8 @@ function buildProviderSessionDeleteEnv(config: HostConfig): NodeJS.ProcessEnv {
   return {
     ...process.env,
     CODINGNS_CLAUDE_CODE_HOME: config.claudeCodeHomeDir,
+    CODINGNS_LEGNA_CODE_HOME: config.legnaCodeHomeDir,
+    CODINGNS_LEGNA_COMMAND: config.legnaCodeCliPath,
     CODINGNS_CODEX_HOME: config.codexHomeDir,
     CODINGNS_GEMINI_HOME: config.geminiHomeDir,
     CODINGNS_GEMINI_COMMAND: config.geminiCliPath,

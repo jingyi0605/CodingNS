@@ -3,6 +3,7 @@ import {
   CodexAdapter,
   GeminiAdapter,
   KimiAdapter,
+  LegnaCodeAdapter,
   OpenCodeAdapter,
   ProviderRegistry,
   SessionSyncService,
@@ -142,6 +143,10 @@ function getWorkspaceDiscoveryService(
 
   const registry = new ProviderRegistry([
     new ClaudeCodeAdapter({ homeDir: config.claudeCodeHomeDir }),
+    new LegnaCodeAdapter({
+      homeDir: config.legnaCodeHomeDir,
+      legacyClaudeHomeDir: config.claudeCodeHomeDir
+    }),
     new CodexAdapter({
       homeDir: config.codexHomeDir
     }),
