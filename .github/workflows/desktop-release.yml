@@ -112,7 +112,45 @@ jobs:
         run: |
           set -euo pipefail
           ./scripts/build-desktop.sh build macos
+          python3 ./scripts/verify-desktop-scrollbar-build.py \
+            --dist-dir apps/user-app/dist \
+            --app-archive apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/CodingNS.app.tar.gz
           ./scripts/build-desktop.sh release-macos
+
+      - name: 验证 macOS 发布 DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          dmg_path="apps/desktop/src-tauri/target/release/macos-release/CodingNS.dmg"
+          mount_dir="$RUNNER_TEMP/codingns-release-dmg"
+          expected_version="${GITHUB_REF_NAME#v}"
+
+          rm -rf "$mount_dir"
+          mkdir -p "$mount_dir"
+
+          hdiutil attach "$dmg_path" -mountpoint "$mount_dir" -nobrowse
+          trap 'hdiutil detach "$mount_dir" -quiet || true' EXIT
+
+          if [[ ! -d "$mount_dir/CodingNS.app" ]]; then
+            echo "DMG 中缺少 CodingNS.app" >&2
+            exit 1
+          fi
+
+          codesign --verify --deep --strict --verbose=2 "$mount_dir/CodingNS.app"
+
+          actual_version="$(
+            /usr/libexec/PlistBuddy \
+              -c "Print :CFBundleShortVersionString" \
+              "$mount_dir/CodingNS.app/Contents/Info.plist"
+          )"
+
+          if [[ "$actual_version" != "$expected_version" ]]; then
+            echo "DMG 中应用版本不匹配：expected=$expected_version actual=$actual_version" >&2
+            exit 1
+          fi
+
+          echo "DMG 校验通过：version=$actual_version"
 
       - name: Upload macOS release artifacts
         uses: actions/upload-artifact@v4
