@@ -16,6 +16,10 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { DesktopModal } from "../../../components/DesktopModal";
+import {
+  isTimelineScrollDebugEnabled,
+  logTimelineScrollDebug
+} from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { usePlatform } from "../../../platform/platform-provider";
@@ -3695,6 +3699,113 @@ export function MessageTimeline({
   );
   const showTimelineSkeleton = historyState === "loading" && messages.length === 0;
 
+  function summarizeMessageSignature(signature: string | null): Record<string, unknown> | null {
+    if (!signature) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(signature) as {
+        id?: unknown;
+        timestamp?: unknown;
+        deliveryState?: unknown;
+        content?: unknown;
+        attachments?: unknown;
+        toolCall?: {
+          status?: unknown;
+          output?: unknown;
+          error?: unknown;
+        } | null;
+      };
+
+      return {
+        id: typeof parsed.id === "string" ? parsed.id : null,
+        timestamp: typeof parsed.timestamp === "string" ? parsed.timestamp : null,
+        deliveryState: typeof parsed.deliveryState === "string" ? parsed.deliveryState : null,
+        contentLength: typeof parsed.content === "string" ? parsed.content.length : 0,
+        attachmentCount: Array.isArray(parsed.attachments) ? parsed.attachments.length : 0,
+        toolStatus: typeof parsed.toolCall?.status === "string" ? parsed.toolCall.status : null,
+        hasToolOutput:
+          typeof parsed.toolCall?.output === "string" ? parsed.toolCall.output.length > 0 : false,
+        hasToolError:
+          typeof parsed.toolCall?.error === "string" ? parsed.toolCall.error.length > 0 : false
+      };
+    } catch {
+      return {
+        parseError: true,
+        length: signature.length
+      };
+    }
+  }
+
+  function buildTimelineScrollDebugDetail(
+    list: HTMLDivElement | null,
+    extra: Record<string, unknown> = {}
+  ): Record<string, unknown> {
+    const firstMessage = messages[0] ?? null;
+    const lastMessage = messages.at(-1) ?? null;
+    const tailItem = renderItems.at(-1) ?? null;
+    const pendingRestoreState = pendingRestoreStateRef.current;
+    const currentScrollState = currentScrollStateRef.current;
+    const distanceToBottom =
+      list ? list.scrollHeight - list.clientHeight - list.scrollTop : null;
+
+    return {
+      sessionId,
+      historyState,
+      followTailUpdates,
+      messagesLength: messages.length,
+      renderItemsLength: renderItems.length,
+      firstMessageId: firstMessage?.id ?? null,
+      firstMessageRole: firstMessage?.role ?? null,
+      lastMessageId: lastMessage?.id ?? null,
+      lastMessageRole: lastMessage?.role ?? null,
+      lastMessageKind: lastMessage?.kind ?? null,
+      lastMessageTimestamp: lastMessage?.timestamp ?? null,
+      tailItemType: tailItem?.type ?? null,
+      tailToolCallId:
+        tailItem && tailItem.type === "tool_group" ? tailItem.group.tool.callId : null,
+      scrollTop: list?.scrollTop ?? null,
+      scrollHeight: list?.scrollHeight ?? null,
+      clientHeight: list?.clientHeight ?? null,
+      distanceToBottom,
+      stickToBottomRef: stickToBottomRef.current,
+      hasNewMessagesBelow: hasNewMessagesBelowRef.current,
+      previousMessageCount: previousMessageCountRef.current,
+      previousLastMessage: summarizeMessageSignature(previousLastMessageSignatureRef.current),
+      pendingRestoreState:
+        pendingRestoreState === null
+          ? null
+          : {
+              scrollTop: pendingRestoreState.scrollTop,
+              stickToBottom: pendingRestoreState.stickToBottom,
+              lastMessage: summarizeMessageSignature(pendingRestoreState.lastMessageSignature)
+            },
+      currentScrollState:
+        currentScrollState === null
+          ? null
+          : {
+              scrollTop: currentScrollState.scrollTop,
+              stickToBottom: currentScrollState.stickToBottom,
+              lastMessage: summarizeMessageSignature(currentScrollState.lastMessageSignature)
+            },
+      restoredTailMessage: summarizeMessageSignature(restoredTailSignatureRef.current),
+      ...extra
+    };
+  }
+
+  function emitTimelineScrollDebug(
+    scope: string,
+    list: HTMLDivElement | null,
+    extra: Record<string, unknown> = {}
+  ) {
+    if (!isTimelineScrollDebugEnabled()) {
+      return;
+    }
+
+    logTimelineScrollDebug(scope, buildTimelineScrollDebugDetail(list, extra));
+  }
+
   function buildCurrentScrollState(list: HTMLDivElement) {
     const distanceToBottom = list.scrollHeight - list.clientHeight - list.scrollTop;
     const stickToBottom = distanceToBottom <= STICK_TO_BOTTOM_DISTANCE_PX;
@@ -3733,6 +3844,10 @@ export function MessageTimeline({
       )
     );
     rememberCurrentScrollState(list);
+    emitTimelineScrollDebug("affordance.sync", list, {
+      distanceToBottom,
+      nextStickToBottom
+    });
   }
 
   function persistCurrentScrollState(list: HTMLDivElement | null = listRef.current) {
@@ -3784,8 +3899,20 @@ export function MessageTimeline({
     }, SCROLL_STATE_PERSIST_DELAY_MS);
   }
 
-  function jumpToBottom(list: HTMLDivElement) {
+  function jumpToBottom(
+    list: HTMLDivElement,
+    reason: string,
+    extra: Record<string, unknown> = {}
+  ) {
+    emitTimelineScrollDebug("jump_to_bottom.before", list, {
+      reason,
+      ...extra
+    });
     list.scrollTop = list.scrollHeight;
+    emitTimelineScrollDebug("jump_to_bottom.after", list, {
+      reason,
+      ...extra
+    });
   }
 
   function clearManualRestoreTimer() {
@@ -3812,6 +3939,11 @@ export function MessageTimeline({
     lastProgrammaticRestoreScrollTopRef.current = nextScrollTop;
     list.scrollTop = nextScrollTop;
     stickToBottomRef.current = false;
+    emitTimelineScrollDebug("manual_restore.apply", list, {
+      targetScrollTop,
+      maxScrollableTop,
+      nextScrollTop
+    });
     setShowScrollToBottomButton(
       messages.length > 0
       && (
@@ -3869,6 +4001,7 @@ export function MessageTimeline({
       return;
     }
 
+    emitTimelineScrollDebug("manual_restore.interrupt", listRef.current);
     finishManualRestore();
   }
 
@@ -3886,6 +4019,10 @@ export function MessageTimeline({
     olderLoadLockRef.current = true;
     pendingOlderLoadOffsetRef.current = list.scrollHeight - list.scrollTop;
     pendingOlderLoadHeadSignatureRef.current = buildMessageSignature(messages[0] ?? null);
+    emitTimelineScrollDebug("older_history.prefetch", list, {
+      pendingOlderLoadOffset: pendingOlderLoadOffsetRef.current,
+      pendingOlderLoadHeadMessage: summarizeMessageSignature(pendingOlderLoadHeadSignatureRef.current)
+    });
     onLoadOlderMessages();
     return true;
   }
@@ -3903,7 +4040,9 @@ export function MessageTimeline({
 
   useLayoutEffect(() => {
     if (previousSessionIdRef.current !== sessionId) {
-      persistCachedScrollState(previousSessionIdRef.current);
+      const previousSessionId = previousSessionIdRef.current;
+
+      persistCachedScrollState(previousSessionId);
       previousSessionIdRef.current = sessionId;
       previousMessageCountRef.current = 0;
       previousLastMessageSignatureRef.current = null;
@@ -3921,6 +4060,10 @@ export function MessageTimeline({
       hasNewMessagesBelowRef.current = false;
       setHasNewMessagesBelow(false);
       setShowScrollToBottomButton(false);
+      emitTimelineScrollDebug("session.switch", listRef.current, {
+        previousSessionId,
+        nextSessionId: sessionId
+      });
     }
   }, [followTailUpdates, persistScrollState, sessionId]);
 
@@ -3950,6 +4093,13 @@ export function MessageTimeline({
       messages.length !== previousCount ||
       currentLastSignature !== previousLastSignature;
 
+    emitTimelineScrollDebug("messages.effect.start", list, {
+      previousCount,
+      previousLastMessage: summarizeMessageSignature(previousLastSignature),
+      currentLastMessage: summarizeMessageSignature(currentLastSignature),
+      hasTailUpdate
+    });
+
     // 会话切回来时先恢复阅读位置；是否有新消息是另一件事，用 NEW 提示，不要强行把用户踢到底部。
     if (pendingRestoreState && historyState === "ready") {
       const hasTailUpdates =
@@ -3960,9 +4110,15 @@ export function MessageTimeline({
 
       if (pendingRestoreState.stickToBottom) {
         finishManualRestore();
-        jumpToBottom(list);
+        jumpToBottom(list, "restore_ready_stick_to_bottom", {
+          hasTailUpdates
+        });
       } else {
         startManualRestore(pendingRestoreState.scrollTop, list);
+        emitTimelineScrollDebug("restore_ready.manual", list, {
+          hasTailUpdates,
+          targetScrollTop: pendingRestoreState.scrollTop
+        });
       }
 
       hasNewMessagesBelowRef.current = hasTailUpdates;
@@ -3979,9 +4135,12 @@ export function MessageTimeline({
     if (pendingRestoreState && historyState === "error") {
       if (pendingRestoreState.stickToBottom) {
         finishManualRestore();
-        jumpToBottom(list);
+        jumpToBottom(list, "restore_error_stick_to_bottom");
       } else {
         startManualRestore(pendingRestoreState.scrollTop, list);
+        emitTimelineScrollDebug("restore_error.manual", list, {
+          targetScrollTop: pendingRestoreState.scrollTop
+        });
       }
 
       pendingRestoreStateRef.current = null;
@@ -4013,6 +4172,15 @@ export function MessageTimeline({
       hasTailUpdate
       && (followTailUpdates || stickToBottomRef.current);
 
+    emitTimelineScrollDebug("messages.effect.decision", list, {
+      currentHeadMessage: summarizeMessageSignature(currentHeadSignature),
+      pendingOlderLoadOffset,
+      pendingOlderLoadHeadMessage: summarizeMessageSignature(pendingOlderLoadHeadSignature),
+      shouldRestoreOlderLoadOffset,
+      shouldFollowTailUpdate,
+      loadingOlderMessages
+    });
+
     if (shouldRestoreOlderLoadOffset) {
       list.scrollTop = Math.max(0, list.scrollHeight - pendingOlderLoadOffset);
       pendingOlderLoadOffsetRef.current = null;
@@ -4022,10 +4190,12 @@ export function MessageTimeline({
       pendingOlderLoadHeadSignatureRef.current = null;
       if (shouldFollowTailUpdate) {
         // 并行 pane 是观察面板，尾部有更新时必须跟上最新输出。
-        jumpToBottom(list);
+        jumpToBottom(list, "older_load_offset_cleared_follow_tail", {
+          pendingOlderLoadOffset
+        });
       }
     } else if (shouldFollowTailUpdate) {
-      jumpToBottom(list);
+      jumpToBottom(list, "tail_update_follow");
     }
 
     syncScrollAffordance(list);
@@ -4043,6 +4213,24 @@ export function MessageTimeline({
       olderLoadLockRef.current = false;
     }
   }, [hasOlderMessages, loadingOlderMessages, messages.length]);
+
+  useEffect(() => {
+    const list = listRef.current;
+
+    if (!isTimelineScrollDebugEnabled() || !list || typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      emitTimelineScrollDebug("list.resize", list);
+    });
+
+    observer.observe(list);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [messages.length, sessionId]);
 
   function handleScroll() {
     const list = listRef.current;
@@ -4067,6 +4255,7 @@ export function MessageTimeline({
 
     syncScrollAffordance(list);
     schedulePersistCurrentScrollState();
+    emitTimelineScrollDebug("scroll", list);
 
     if (
       triggerOlderMessagesPrefetch(list)
@@ -4215,7 +4404,7 @@ export function MessageTimeline({
             }
 
             finishManualRestore();
-            jumpToBottom(list);
+            jumpToBottom(list, "scroll_button_click");
             hasNewMessagesBelowRef.current = false;
             restoredTailSignatureRef.current = buildMessageSignature(messages.at(-1) ?? null);
             setHasNewMessagesBelow(false);
