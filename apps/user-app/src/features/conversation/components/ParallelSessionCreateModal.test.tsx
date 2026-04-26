@@ -10,6 +10,7 @@ const mockCreateParallelGroupFromWorkspace = vi.fn();
 const mockCreateParallelGroupFromSession = vi.fn();
 const mockAppendParallelGroupMembers = vi.fn();
 const mockListProviderCapabilities = vi.fn();
+const mockListProviderCatalog = vi.fn();
 const mockGetProviderCapabilities = vi.fn();
 const mockFetchModelManagementSnapshot = vi.fn();
 const mockGetDefaultSessionPermissionMode = vi.fn(() => "bypassPermissions");
@@ -33,6 +34,8 @@ vi.mock("../api/conversation-api", async () => {
       mockCreateParallelGroupFromSession(...args),
     getProviderCapabilities: (...args: unknown[]) =>
       mockGetProviderCapabilities(...args),
+    listProviderCatalog: (...args: unknown[]) =>
+      mockListProviderCatalog(...args),
     listProviderCapabilities: (...args: unknown[]) =>
       mockListProviderCapabilities(...args)
   };
@@ -84,6 +87,13 @@ describe("ParallelSessionCreateModal", () => {
         }
       ]
     });
+    mockListProviderCatalog.mockResolvedValue([
+      { provider: "codex", displayName: "Codex", enabled: true },
+      { provider: "claude-code", displayName: "Claude Code", enabled: true },
+      { provider: "opencode", displayName: "OpenCode", enabled: true },
+      { provider: "gemini", displayName: "Gemini", enabled: false },
+      { provider: "kimi", displayName: "Kimi", enabled: false }
+    ]);
     mockListProviderCapabilities.mockResolvedValue({
       codex: createCapabilities("codex", [
         { id: "provider-default", name: "跟随 CLI 默认模型", usesProviderDefault: true },
@@ -131,7 +141,7 @@ describe("ParallelSessionCreateModal", () => {
 
     await user.click(screen.getByRole("button", { name: t("shell.parallelCreateSubmit") }));
 
-    expect(screen.getByText(t("shell.parallelCreatePromptRequired"))).toBeInTheDocument();
+    expect(await screen.findByText(t("shell.parallelCreatePromptRequired"))).toBeInTheDocument();
     expect(mockCreateParallelGroupFromWorkspace).not.toHaveBeenCalled();
   });
 
@@ -242,6 +252,27 @@ describe("ParallelSessionCreateModal", () => {
     );
 
     expect(await within(modelSelect).findByRole("option", { name: "OpenCode Pro" })).toBeInTheDocument();
+  });
+
+  it("provider catalog 禁用某项时，即使 capability 还可用，也不会继续出现在并行创建入口", async () => {
+    mockListProviderCatalog.mockResolvedValueOnce([
+      { provider: "codex", displayName: "Codex", enabled: true },
+      { provider: "claude-code", displayName: "Claude Code", enabled: true },
+      { provider: "opencode", displayName: "OpenCode", enabled: false },
+      { provider: "gemini", displayName: "Gemini", enabled: false },
+      { provider: "kimi", displayName: "Kimi", enabled: false }
+    ]);
+
+    renderModal();
+
+    const [providerSelect] = await screen.findAllByLabelText(
+      t("shell.createSessionProviderLabel"),
+      { selector: "select" }
+    );
+
+    expect(within(providerSelect).getByRole("option", { name: "Codex" })).toBeInTheDocument();
+    expect(within(providerSelect).getByRole("option", { name: "Claude Code" })).toBeInTheDocument();
+    expect(within(providerSelect).queryByRole("option", { name: "OpenCode" })).not.toBeInTheDocument();
   });
 
   it("给已有并行组追加成员时，会锁定顶部消息并把数量限制在剩余槽位内", () => {

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,11 +8,13 @@ import { ConversationSelectionActions } from "./ConversationSelectionActions";
 const {
   mockGetProviderCapabilities,
   mockListProviderCapabilities,
-  mockFetchModelManagementSnapshot
+  mockFetchModelManagementSnapshot,
+  mockListProviderCatalog
 } = vi.hoisted(() => ({
   mockGetProviderCapabilities: vi.fn(),
   mockListProviderCapabilities: vi.fn(),
-  mockFetchModelManagementSnapshot: vi.fn()
+  mockFetchModelManagementSnapshot: vi.fn(),
+  mockListProviderCatalog: vi.fn()
 }));
 
 vi.mock("react-router-dom", () => ({
@@ -52,6 +54,7 @@ vi.mock("../../../shared/toast", () => ({
 vi.mock("../api/conversation-api", () => ({
   forkSession: vi.fn(),
   getProviderCapabilities: mockGetProviderCapabilities,
+  listProviderCatalog: mockListProviderCatalog,
   listProviderCapabilities: mockListProviderCapabilities,
   getSessionDetail: vi.fn(),
   startLiveSession: vi.fn(),
@@ -71,8 +74,10 @@ vi.mock("../../settings/api/model-switch-api", async () => {
 });
 
 vi.mock("../capability/provider-ui", () => ({
-  SESSION_PROVIDER_PICKER_IDS: ["codex"],
-  createDraftCapabilities: () => ({
+  SESSION_PROVIDER_PICKER_IDS: ["codex", "claude-code"],
+  orderProviderIds: (providers: string[]) => providers,
+  createDraftCapabilities: (provider: string) => ({
+    provider,
     canStartSession: true,
     limitations: [],
     modelOptions: [
@@ -82,7 +87,7 @@ vi.mock("../capability/provider-ui", () => ({
       }
     ]
   }),
-  getProviderDisplayName: () => "Codex"
+  getProviderDisplayName: (provider: string) => provider === "claude-code" ? "Claude Code" : "Codex"
 }));
 
 vi.mock("./WorkbenchLayout", () => ({
@@ -117,8 +122,25 @@ describe("ConversationSelectionActions", () => {
         canStartSession: true,
         limitations: [],
         modelOptions: [{ id: "provider-default", name: "默认模型" }]
+      },
+      "claude-code": {
+        canStartSession: true,
+        limitations: [],
+        modelOptions: [{ id: "provider-default", name: "默认模型" }]
       }
     });
+    mockListProviderCatalog.mockResolvedValue([
+      {
+        provider: "codex",
+        displayName: "Codex",
+        enabled: true
+      },
+      {
+        provider: "claude-code",
+        displayName: "Claude Code",
+        enabled: true
+      }
+    ]);
     mockFetchModelManagementSnapshot.mockResolvedValue({
       scannedAt: "2026-04-25T10:00:00.000Z",
       items: [
@@ -381,6 +403,60 @@ describe("ConversationSelectionActions", () => {
     expect(
       screen.queryByRole("button", { name: t("conversation.copyAction") })
     ).not.toBeInTheDocument();
+  });
+
+  it("操作弹框里的 provider 列表会过滤掉 catalog 中已禁用的项", async () => {
+    mockListProviderCatalog.mockResolvedValueOnce([
+      {
+        provider: "codex",
+        displayName: "Codex",
+        enabled: true
+      },
+      {
+        provider: "claude-code",
+        displayName: "Claude Code",
+        enabled: false
+      }
+    ]);
+
+    render(<TestHarness />);
+
+    const messageText = screen.getByTestId("message-text");
+    const textNode = messageText.firstChild;
+
+    expect(textNode).not.toBeNull();
+
+    currentSelection = createSelection(textNode!, "只保留启用 provider", {
+      left: 160,
+      top: 220,
+      width: 112,
+      height: 22
+    });
+
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => {
+      vi.advanceTimersByTime(60);
+    });
+
+    const actionButton = screen.getByRole("button", {
+      name: t("conversation.selectionActionButton")
+    });
+    fireEvent.mouseDown(actionButton);
+    fireEvent.click(actionButton);
+
+    const dialog = screen.getByRole("dialog", {
+      name: t("conversation.selectionActionButton")
+    });
+    const providerSelect = within(dialog).getByRole("combobox");
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(within(providerSelect).getByRole("option", { name: "Codex" })).toBeInTheDocument();
+    expect(within(providerSelect).queryByRole("option", { name: "Claude Code" })).not.toBeInTheDocument();
   });
 });
 

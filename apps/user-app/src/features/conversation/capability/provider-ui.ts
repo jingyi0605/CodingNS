@@ -52,6 +52,36 @@ export const SESSION_PROVIDER_PICKER_IDS: BuiltinProviderId[] = [
   "legna-code"
 ];
 
+export function orderProviderIds(providerIds: readonly ProviderId[]): ProviderId[] {
+  const seen = new Set<string>();
+  const nextProviders: ProviderId[] = [];
+  const orderedRegisteredProviders = [...SESSION_PROVIDER_PICKER_IDS, ...REGISTERED_PROVIDER_IDS];
+
+  for (const providerId of orderedRegisteredProviders) {
+    if (!providerIds.includes(providerId)) {
+      continue;
+    }
+
+    if (seen.has(providerId)) {
+      continue;
+    }
+
+    seen.add(providerId);
+    nextProviders.push(providerId);
+  }
+
+  for (const providerId of providerIds) {
+    if (seen.has(providerId)) {
+      continue;
+    }
+
+    seen.add(providerId);
+    nextProviders.push(providerId);
+  }
+
+  return nextProviders;
+}
+
 const PROVIDER_METADATA: Record<BuiltinProviderId, ProviderMetadata> = {
   "claude-code": {
     displayNameKey: "conversation.providerClaude",

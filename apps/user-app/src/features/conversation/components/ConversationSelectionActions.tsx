@@ -24,6 +24,7 @@ import {
   startLiveSession,
   sendLiveMessage,
   type BuiltinProviderId,
+  type ProviderId,
   type ProviderCapabilitiesDto,
   type SessionProviderConfigMode,
   type SessionSummaryDto
@@ -33,6 +34,7 @@ import {
   getProviderDisplayName,
   SESSION_PROVIDER_PICKER_IDS
 } from "../capability/provider-ui";
+import { useEnabledProviderCatalog } from "../capability/use-enabled-provider-catalog";
 import {
   createDeploymentPresetOptions,
   DeploymentMacSelect,
@@ -124,12 +126,38 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-function resolveBuiltinProvider(value: string | null | undefined): BuiltinProviderId {
-  if (value && SESSION_PROVIDER_PICKER_IDS.includes(value as BuiltinProviderId)) {
+function resolveBuiltinProvider(
+  value: string | null | undefined,
+  allowedProviders: readonly BuiltinProviderId[] = SESSION_PROVIDER_PICKER_IDS
+): BuiltinProviderId {
+  if (value && allowedProviders.includes(value as BuiltinProviderId)) {
     return value as BuiltinProviderId;
   }
 
-  return "codex";
+  return allowedProviders[0] ?? "codex";
+}
+
+function isBuiltinSelectionProviderId(providerId: ProviderId): providerId is BuiltinProviderId {
+  return SESSION_PROVIDER_PICKER_IDS.includes(providerId as BuiltinProviderId);
+}
+
+function resolveVisibleSelectionProviders(
+  providerIds: readonly ProviderId[],
+  fallbackProvider: BuiltinProviderId | null
+): BuiltinProviderId[] {
+  const builtinProviders = providerIds.flatMap((providerId) => {
+    if (!isBuiltinSelectionProviderId(providerId)) {
+      return [];
+    }
+
+    return [providerId];
+  });
+
+  if (builtinProviders.length > 0) {
+    return builtinProviders;
+  }
+
+  return fallbackProvider ? [fallbackProvider] : [];
 }
 
 function getNodeElement(node: Node | null): Element | null {
@@ -231,6 +259,10 @@ export function ConversationSelectionActions({
   const [selection, setSelection] = useState<SelectionSnapshot | null>(null);
   const [dialogSelection, setDialogSelection] = useState<SelectionSnapshot | null>(null);
   const [actionDialogOpen, setActionDialogOpen] = useState(false);
+  const { visibleProviders: visibleCatalogProviders } = useEnabledProviderCatalog(
+    SESSION_PROVIDER_PICKER_IDS,
+    actionDialogOpen
+  );
   const [actionPrompt, setActionPrompt] = useState("");
   const [includeContext, setIncludeContext] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<BuiltinProviderId>(
@@ -247,7 +279,7 @@ export function ConversationSelectionActions({
   const [deploymentSnapshotLoading, setDeploymentSnapshotLoading] = useState(false);
   const [providerCapabilities, setProviderCapabilities] = useState<ProviderCapabilitiesDto | null>(null);
   const [providerCapabilitiesMap, setProviderCapabilitiesMap] = useState<
-    Partial<Record<BuiltinProviderId, ProviderCapabilitiesDto>>
+    Partial<Record<ProviderId, ProviderCapabilitiesDto>>
   >({});
   const [loadingCapabilities, setLoadingCapabilities] = useState(false);
   const [submittingAction, setSubmittingAction] = useState(false);
@@ -276,6 +308,10 @@ export function ConversationSelectionActions({
   const selectedProviderSelection = useMemo(
     () => normalizeProviderSelection(selectedProviderConfigMode, selectedProviderPresetId),
     [selectedProviderConfigMode, selectedProviderPresetId]
+  );
+  const visibleSelectionProviders = useMemo(
+    () => resolveVisibleSelectionProviders(visibleCatalogProviders, selectedProvider),
+    [selectedProvider, visibleCatalogProviders]
   );
   const selectedModelSwitchApp = useMemo(
     () => mapProviderToModelSwitchApp(selectedProvider),
@@ -718,23 +754,23 @@ export function ConversationSelectionActions({
 
     let cancelled = false;
 
-    void listProviderCapabilities(SESSION_PROVIDER_PICKER_IDS, session.workspaceId).then((nextCapabilities) => {
+    void listProviderCapabilities(visibleSelectionProviders, session.workspaceId).then((nextCapabilities) => {
       if (!cancelled) {
-        setProviderCapabilitiesMap(nextCapabilities as Partial<Record<BuiltinProviderId, ProviderCapabilitiesDto>>);
+        setProviderCapabilitiesMap(nextCapabilities);
       }
     });
 
     return () => {
       cancelled = true;
     };
-  }, [actionDialogOpen, session]);
+  }, [actionDialogOpen, session, visibleSelectionProviders]);
 
   useEffect(() => {
     if (!actionDialogOpen || !session) {
       return;
     }
 
-    const selectableProviders = SESSION_PROVIDER_PICKER_IDS.filter((providerId) => {
+    const selectableProviders = visibleSelectionProviders.filter((providerId) => {
       const capabilities = providerCapabilitiesMap[providerId];
       return !capabilities || capabilities.canStartSession !== false;
     });
@@ -749,7 +785,14 @@ export function ConversationSelectionActions({
 
     const nextProvider = selectableProviders[0];
     applySelectedProvider(nextProvider);
-  }, [actionDialogOpen, applySelectedProvider, providerCapabilitiesMap, selectedProvider, session]);
+  }, [
+    actionDialogOpen,
+    applySelectedProvider,
+    providerCapabilitiesMap,
+    selectedProvider,
+    session,
+    visibleSelectionProviders
+  ]);
 
   useEffect(() => {
     const preferredModel = preferredModelForProvider(selectedProvider);
@@ -846,7 +889,10 @@ export function ConversationSelectionActions({
     }
 
     const nextDialogSelection = selection;
-    const nextProvider = resolveBuiltinProvider(session.provider);
+    const nextProvider = resolveBuiltinProvider(
+      session.provider,
+      visibleSelectionProviders.length > 0 ? visibleSelectionProviders : SESSION_PROVIDER_PICKER_IDS
+    );
     applySelectedProvider(nextProvider);
     setActionPrompt("");
     setIncludeContext(false);
@@ -985,7 +1031,7 @@ export function ConversationSelectionActions({
       <button
         type="button"
         className="primary-button"
-        disabled={submittingAction || Boolean(selectedProviderDisabledReason)}
+        disabled={submittingAction || Boolean(selectedProviderDisabledReason) || visibleSelectionProviders.length === 0}
         onClick={() => void handleSubmitAction()}
       >
         {submittingAction ? t("conversation.sendingState") : t("conversation.selectionActionSubmit")}
@@ -1047,7 +1093,7 @@ export function ConversationSelectionActions({
                 applySelectedProvider(event.target.value as BuiltinProviderId);
               }}
             >
-              {SESSION_PROVIDER_PICKER_IDS.map((providerId) => (
+              {visibleSelectionProviders.map((providerId) => (
                 <option
                   key={providerId}
                   value={providerId}

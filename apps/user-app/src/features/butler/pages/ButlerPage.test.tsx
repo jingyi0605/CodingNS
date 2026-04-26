@@ -131,6 +131,7 @@ vi.mock("../../../shared/toast", () => ({
 
 vi.mock("../../conversation/api/conversation-api", () => ({
   deleteSession: vi.fn(),
+  listProviderCatalog: vi.fn(),
   getProviderCapabilities: vi.fn(),
   getSessionMessages: vi.fn(),
   getSessionCapabilities: vi.fn(),
@@ -207,6 +208,7 @@ import {
 } from "../api/butler-api";
 import {
   deleteSession,
+  listProviderCatalog,
   getProviderCapabilities,
   getSessionMessages,
   getSessionCapabilities,
@@ -217,6 +219,7 @@ import {
 
 const mockedUseToast = vi.mocked(useToast);
 const mockedAnalyzeButlerInboxItem = vi.mocked(analyzeButlerInboxItem);
+const mockedListProviderCatalog = vi.mocked(listProviderCatalog);
 const mockedCancelAssistantAutomation = vi.mocked(cancelAssistantAutomation);
 const mockedCancelButlerControlTimer = vi.mocked(cancelButlerControlTimer);
 const mockedCancelButlerVerificationRun = vi.mocked(cancelButlerVerificationRun);
@@ -298,6 +301,18 @@ describe("ButlerPage", () => {
       dismissToast: vi.fn()
     } as never);
     mockedDeleteSession.mockResolvedValue(undefined as never);
+    mockedListProviderCatalog.mockResolvedValue([
+      {
+        provider: "codex",
+        displayName: "Codex",
+        enabled: true
+      },
+      {
+        provider: "claude-code",
+        displayName: "Claude Code",
+        enabled: true
+      }
+    ] as never);
 
     mockedGetButlerProfile.mockResolvedValue({
       initialized: false,
@@ -766,6 +781,32 @@ describe("ButlerPage", () => {
         })
       );
     });
+  });
+
+  it("未初始化时会从 provider catalog 里过滤掉已禁用的 Butler provider", async () => {
+    mockedListProviderCatalog.mockResolvedValueOnce([
+      {
+        provider: "codex",
+        displayName: "Codex",
+        enabled: false
+      },
+      {
+        provider: "claude-code",
+        displayName: "Claude Code",
+        enabled: true
+      }
+    ] as never);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText(t("shell.butlerInitTitle"))).toBeInTheDocument();
+    });
+
+    const initProviderSelect = screen.getByRole("combobox", { name: t("shell.butlerProviderLabel") }) as HTMLSelectElement;
+    expect(initProviderSelect.value).toBe("claude-code");
+    expect(within(initProviderSelect).queryByRole("option", { name: "Codex" })).not.toBeInTheDocument();
+    expect(within(initProviderSelect).getByRole("option", { name: "Claude Code" })).toBeInTheDocument();
   });
 
   it("初始化后展示聚合概览和控制事件", async () => {

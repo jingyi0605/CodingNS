@@ -18,7 +18,12 @@ import { WorkbenchModal } from "./WorkbenchModal";
 import { ButlerActionIcon } from "./ConversationActionIcons";
 import { SessionProviderPicker } from "./SessionProviderPicker";
 
-import type { ProviderId, SessionSummaryDto } from "../api/conversation-api";
+import type {
+  ProviderCatalogEntryDto,
+  ProviderId,
+  SessionSummaryDto
+} from "../api/conversation-api";
+import { listProviderCatalog } from "../api/conversation-api";
 
 interface SessionButlerActionButtonProps {
   session: SessionSummaryDto | null;
@@ -66,13 +71,34 @@ function getDefaultCompletionCriteria(): string {
 }
 
 function resolveDefaultFollowUpProvider(
-  sessionProvider: string | null | undefined
-): FollowUpProviderId {
-  return sessionProvider === "claude-code" ? "claude-code" : "codex";
+  sessionProvider: string | null | undefined,
+  availableProviders: readonly FollowUpProviderId[] = FOLLOW_UP_PROVIDER_IDS
+): FollowUpProviderId | null {
+  if (sessionProvider === "claude-code" && availableProviders.includes("claude-code")) {
+    return "claude-code";
+  }
+
+  if (availableProviders.includes("codex")) {
+    return "codex";
+  }
+
+  return availableProviders[0] ?? null;
 }
 
 function isFollowUpProviderId(provider: ProviderId): provider is FollowUpProviderId {
   return provider === "codex" || provider === "claude-code";
+}
+
+function resolveEnabledFollowUpProviderIds(
+  providerCatalog: readonly ProviderCatalogEntryDto[]
+): FollowUpProviderId[] {
+  return providerCatalog.flatMap((item) => {
+    if (!item.enabled || !isFollowUpProviderId(item.provider)) {
+      return [];
+    }
+
+    return [item.provider];
+  });
 }
 
 export function SessionButlerActionButton({
@@ -91,7 +117,8 @@ export function SessionButlerActionButton({
   const [actionContext, setActionContext] = useState<ButlerSessionActionContextDto | null>(null);
   const [contextError, setContextError] = useState<string | null>(null);
   const [runningAction, setRunningAction] = useState<ButlerActionKind>(null);
-  const [followUpProviderId, setFollowUpProviderId] = useState<FollowUpProviderId>(
+  const [providerCatalog, setProviderCatalog] = useState<ProviderCatalogEntryDto[] | null>(null);
+  const [followUpProviderId, setFollowUpProviderId] = useState<FollowUpProviderId | null>(
     resolveDefaultFollowUpProvider(session?.provider)
   );
   const [followUpObjective, setFollowUpObjective] = useState("");
@@ -100,6 +127,14 @@ export function SessionButlerActionButton({
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [contextRequestSeq, setContextRequestSeq] = useState(0);
   const completionCriteriaPresets = buildCompletionCriteriaPresets();
+  const availableFollowUpProviders = useMemo<FollowUpProviderId[]>(() => {
+    if (!providerCatalog) {
+      return FOLLOW_UP_PROVIDER_IDS;
+    }
+
+    return resolveEnabledFollowUpProviderIds(providerCatalog);
+  }, [providerCatalog]);
+  const followUpProviderUnavailable = providerCatalog !== null && availableFollowUpProviders.length === 0;
 
   const currentTitle = useMemo(() => session?.title?.trim() || null, [session?.title]);
   const target = useMemo<ButlerSessionTargetDto | null>(() => {
@@ -129,11 +164,45 @@ export function SessionButlerActionButton({
     setAnalysisOpen(false);
     setContextError(null);
     setActionContext(null);
+    setProviderCatalog(null);
     setFollowUpObjective("");
     setFollowUpProviderId(resolveDefaultFollowUpProvider(session?.provider));
     setFollowUpCompletionCriteria(getDefaultCompletionCriteria());
     setFollowUpRoundLimit(DEFAULT_FOLLOW_UP_ROUND_LIMIT);
   }, [session?.sessionId]);
+
+  useEffect(() => {
+    if (!session?.sessionId) {
+      setProviderCatalog(null);
+      return;
+    }
+
+    let disposed = false;
+
+    void listProviderCatalog()
+      .then((items) => {
+        if (!disposed) {
+          setProviderCatalog(items);
+        }
+      })
+      .catch(() => {
+        if (!disposed) {
+          setProviderCatalog(null);
+        }
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [session?.sessionId]);
+
+  useEffect(() => {
+    const nextProviderId = resolveDefaultFollowUpProvider(session?.provider, availableFollowUpProviders);
+
+    if (!followUpProviderId || !availableFollowUpProviders.includes(followUpProviderId)) {
+      setFollowUpProviderId(nextProviderId);
+    }
+  }, [availableFollowUpProviders, followUpProviderId, session?.provider]);
 
   useEffect(() => {
     if (!session?.sessionId) {
@@ -202,6 +271,10 @@ export function SessionButlerActionButton({
   async function handleFollowUp() {
     if (!target) {
       ensureActionContext();
+      return;
+    }
+
+    if (!followUpProviderId) {
       return;
     }
 
@@ -474,7 +547,7 @@ export function SessionButlerActionButton({
             <button
               type="button"
               className="primary-button"
-              disabled={runningAction !== null}
+              disabled={runningAction !== null || followUpProviderUnavailable || !followUpProviderId}
               onClick={() => {
                 void handleFollowUp();
               }}
@@ -519,17 +592,23 @@ export function SessionButlerActionButton({
                     <label>{t("conversation.butlerFollowUpProviderLabel")}</label>
                     <small>{t("conversation.butlerFollowUpProviderHint")}</small>
                   </div>
-                  <SessionProviderPicker
-                    workspaceId={target.workspaceId}
-                    providers={FOLLOW_UP_PROVIDER_IDS}
-                    selectedProvider={followUpProviderId}
-                    disabled={runningAction !== null}
-                    onSelect={(provider) => {
-                      if (isFollowUpProviderId(provider)) {
-                        setFollowUpProviderId(provider);
-                      }
-                    }}
-                  />
+                  {followUpProviderUnavailable ? (
+                    <p className="conversation-butler-modal-hint">
+                      {t("conversation.butlerFollowUpProviderHint")}
+                    </p>
+                  ) : (
+                    <SessionProviderPicker
+                      workspaceId={target.workspaceId}
+                      providers={availableFollowUpProviders}
+                      selectedProvider={followUpProviderId}
+                      disabled={runningAction !== null}
+                      onSelect={(provider) => {
+                        if (isFollowUpProviderId(provider)) {
+                          setFollowUpProviderId(provider);
+                        }
+                      }}
+                    />
+                  )}
                 </div>
 
                 <div className="workbench-modal-field conversation-butler-modal-field conversation-butler-round-limit-field">

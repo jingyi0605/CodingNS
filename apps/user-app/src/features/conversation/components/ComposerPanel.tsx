@@ -23,6 +23,7 @@ import {
   shouldSupportRunSteering,
   supportsReasoningSelector
 } from "../capability/provider-ui";
+import { useEnabledProviderCatalog } from "../capability/use-enabled-provider-catalog";
 import type {
   AttachmentPayload,
   ContextUsageDto,
@@ -873,6 +874,10 @@ export function ComposerPanel({
   );
   const inRunInputMode = capabilities?.inRunInputMode ?? "none";
   const hasForkDraft = Boolean(forkDraft);
+  const { visibleProviders: visibleCatalogForkProviders } = useEnabledProviderCatalog(
+    FORK_PROVIDER_IDS,
+    hasForkDraft
+  );
   const activeForkProvider = forkDraft?.targetProvider ?? null;
   const forkModelSwitchApp = mapProviderToModelSwitchApp(activeForkProvider);
   const forkProviderSelection = useMemo(
@@ -970,7 +975,7 @@ export function ComposerPanel({
       return [];
     }
 
-    return FORK_PROVIDER_IDS.filter(
+    return visibleCatalogForkProviders.filter(
       (candidateProvider) => {
         if (resolveForkProviderDisabledReason(forkDraft.sourceProvider, candidateProvider) !== null) {
           return false;
@@ -979,7 +984,7 @@ export function ComposerPanel({
         return !isProviderStartDisabled(forkProviderCapabilities[candidateProvider] ?? null);
       }
     );
-  }, [forkDraft, forkProviderCapabilities]);
+  }, [forkDraft, forkProviderCapabilities, visibleCatalogForkProviders]);
   const visibleForkProviders = useMemo(() => {
     if (!forkDraft) {
       return [];
@@ -1634,7 +1639,7 @@ export function ComposerPanel({
 
     let cancelled = false;
 
-    void listProviderCapabilities(FORK_PROVIDER_IDS, forkDraft.workspaceId).then((nextCapabilities) => {
+    void listProviderCapabilities(visibleCatalogForkProviders, forkDraft.workspaceId).then((nextCapabilities) => {
       if (!cancelled) {
         setForkProviderCapabilities(nextCapabilities);
       }
@@ -1643,7 +1648,7 @@ export function ComposerPanel({
     return () => {
       cancelled = true;
     };
-  }, [forkDraft?.workspaceId]);
+  }, [forkDraft?.workspaceId, visibleCatalogForkProviders]);
 
   useEffect(() => {
     if (!forkDraft || !onForkDraftChange) {

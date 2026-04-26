@@ -11,6 +11,7 @@ import {
   SESSION_PROVIDER_PICKER_IDS,
   warmProviderIconCache
 } from "../capability/provider-ui";
+import { useEnabledProviderCatalog } from "../capability/use-enabled-provider-catalog";
 
 interface SessionProviderDefinition {
   provider: ProviderId;
@@ -46,11 +47,12 @@ export function SessionProviderPicker({
   onSelect
 }: SessionProviderPickerProps) {
   const haptics = useHaptics();
+  const { visibleProviders } = useEnabledProviderCatalog(providers);
   const requiresCapabilityResolution = Boolean(workspaceId);
   const [capabilitiesByProvider, setCapabilitiesByProvider] = useState<
     Partial<Record<ProviderId, ProviderCapabilitiesDto>>
-  >(() => readCachedCapabilities(providers, workspaceId));
-  const sessionProviderDefinitions: SessionProviderDefinition[] = providers.map((provider) => ({ provider }));
+  >(() => readCachedCapabilities(visibleProviders, workspaceId));
+  const sessionProviderDefinitions: SessionProviderDefinition[] = visibleProviders.map((provider) => ({ provider }));
 
   useEffect(() => {
     warmProviderIconCache();
@@ -62,10 +64,10 @@ export function SessionProviderPicker({
       return;
     }
 
-    const cachedCapabilities = readCachedCapabilities(providers, workspaceId);
+    const cachedCapabilities = readCachedCapabilities(visibleProviders, workspaceId);
     setCapabilitiesByProvider(cachedCapabilities);
 
-    const missingProviders = providers.filter((provider) => !cachedCapabilities[provider]);
+    const missingProviders = visibleProviders.filter((provider) => !cachedCapabilities[provider]);
 
     if (missingProviders.length === 0) {
       return;
@@ -87,7 +89,7 @@ export function SessionProviderPicker({
     return () => {
       cancelled = true;
     };
-  }, [providers, workspaceId]);
+  }, [visibleProviders, workspaceId]);
 
   return (
     <div className={`session-provider-grid${className ? ` ${className}` : ""}`}>

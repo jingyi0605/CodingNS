@@ -26,6 +26,10 @@ vi.mock("./SessionProviderPicker", () => ({
   )
 }));
 
+vi.mock("../api/conversation-api", () => ({
+  listProviderCatalog: vi.fn()
+}));
+
 vi.mock("../../butler/api/butler-api", () => ({
   cancelButlerVerificationRun: vi.fn(),
   cancelButlerFollowUpTask: vi.fn(),
@@ -36,6 +40,7 @@ vi.mock("../../butler/api/butler-api", () => ({
 
 import { useToast } from "../../../shared/toast";
 import { SessionButlerActionButton } from "./SessionButlerActionButton";
+import { listProviderCatalog } from "../api/conversation-api";
 import {
   cancelButlerVerificationRun,
   cancelButlerFollowUpTask,
@@ -51,6 +56,7 @@ const mockedCancelButlerVerificationRun = vi.mocked(cancelButlerVerificationRun)
 const mockedCancelButlerFollowUpTask = vi.mocked(cancelButlerFollowUpTask);
 const mockedCreateButlerFollowUpTask = vi.mocked(createButlerFollowUpTask);
 const mockedStartButlerVerificationAction = vi.mocked(startButlerVerificationAction);
+const mockedListProviderCatalog = vi.mocked(listProviderCatalog);
 
 function createSessionSummary(): SessionSummaryDto {
   return {
@@ -145,6 +151,18 @@ describe("SessionButlerActionButton", () => {
         latestVerificationRun: null
       }
     });
+    mockedListProviderCatalog.mockResolvedValue([
+      {
+        provider: "codex",
+        displayName: "Codex",
+        enabled: true
+      },
+      {
+        provider: "claude-code",
+        displayName: "Claude Code",
+        enabled: true
+      }
+    ] as never);
     mockedCreateButlerFollowUpTask.mockResolvedValue({
       task: {
         id: "follow-up-2"
@@ -376,6 +394,61 @@ describe("SessionButlerActionButton", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Claude Code" }));
+
+    fireEvent.change(
+      screen.getByRole("textbox", { name: t("conversation.butlerFollowUpObjectiveLabel") }),
+      {
+        target: {
+          value: "帮我把这个会话的功能真正做完"
+        }
+      }
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: t("conversation.butlerFollowUpAction")
+      })
+    );
+
+    await waitFor(() => {
+      expect(mockedCreateButlerFollowUpTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerId: "claude-code"
+        })
+      );
+    });
+  });
+
+  it("当前 provider 被禁用时，会自动回落到仍启用的 Butler provider", async () => {
+    mockedListProviderCatalog.mockResolvedValueOnce([
+      {
+        provider: "codex",
+        displayName: "Codex",
+        enabled: false
+      },
+      {
+        provider: "claude-code",
+        displayName: "Claude Code",
+        enabled: true
+      }
+    ] as never);
+
+    render(
+      <SessionButlerActionButton
+        session={createSessionSummary()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(mockedGetButlerSessionActionContext).toHaveBeenCalledWith("session-1");
+      expect(mockedListProviderCatalog).toHaveBeenCalled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: t("conversation.butlerActionButton") }));
+
+    await waitFor(() => {
+      expect(screen.getByText("项目甲")).toBeInTheDocument();
+    });
 
     fireEvent.change(
       screen.getByRole("textbox", { name: t("conversation.butlerFollowUpObjectiveLabel") }),

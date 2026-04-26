@@ -119,6 +119,7 @@ const preferenceStoreMock = vi.hoisted(() => ({
 const mockListQuickPhrases = vi.fn();
 const mockReplaceQuickPhrases = vi.fn();
 const mockGetProviderCapabilities = vi.fn();
+const mockListProviderCatalog = vi.fn();
 
 vi.mock("../api/conversation-api", async () => {
   const actual = await vi.importActual<typeof import("../api/conversation-api")>(
@@ -128,6 +129,7 @@ vi.mock("../api/conversation-api", async () => {
   return {
     ...actual,
     getProviderCapabilities: (...args: unknown[]) => mockGetProviderCapabilities(...args),
+    listProviderCatalog: (...args: unknown[]) => mockListProviderCatalog(...args),
     listQuickPhrases: (...args: unknown[]) => mockListQuickPhrases(...args),
     replaceQuickPhrases: (...args: unknown[]) => mockReplaceQuickPhrases(...args)
   };
@@ -285,6 +287,7 @@ describe("ComposerPanel", () => {
     mockListQuickPhrases.mockReset();
     mockReplaceQuickPhrases.mockReset();
     mockGetProviderCapabilities.mockReset();
+    mockListProviderCatalog.mockReset();
     mockListQuickPhrases.mockResolvedValue({
       items: [
         {
@@ -307,6 +310,13 @@ describe("ComposerPanel", () => {
         text: item.text
       }))
     }));
+    mockListProviderCatalog.mockResolvedValue([
+      { provider: "codex", displayName: "Codex", enabled: true },
+      { provider: "claude-code", displayName: "Claude Code", enabled: true },
+      { provider: "opencode", displayName: "OpenCode", enabled: true },
+      { provider: "gemini", displayName: "Gemini", enabled: false },
+      { provider: "kimi", displayName: "Kimi", enabled: false }
+    ]);
     mockGetProviderCapabilities.mockResolvedValue(createCapabilities());
     Object.defineProperty(URL, "createObjectURL", {
       writable: true,
@@ -334,7 +344,7 @@ describe("ComposerPanel", () => {
         preferredWidth: 220,
         measureText: (text) => text.length * 8
       })
-    ).toBe(324);
+    ).toBe(312);
   });
 
   it("连续提交两次时只会发送一次", async () => {
@@ -946,9 +956,11 @@ describe("ComposerPanel", () => {
     fireEvent.submit(container.querySelector(".composer-form")!);
 
     await waitFor(() => {
-      expect(onSend).toHaveBeenCalledWith("", {
+      expect(onSend).toHaveBeenCalledWith("", expect.objectContaining({
         model: undefined,
         reasoningLevel: "high",
+        providerConfigMode: "global-default",
+        providerPresetId: null,
         attachments: [
           {
             kind: "file",
@@ -966,7 +978,7 @@ describe("ComposerPanel", () => {
             fileSize: 4
           })
         ]
-      });
+      }));
     });
   });
 
@@ -1154,9 +1166,11 @@ describe("ComposerPanel", () => {
     await waitFor(() => {
       expect(onSend).toHaveBeenCalledTimes(1);
     });
-    expect(onSend).toHaveBeenCalledWith("", {
+    expect(onSend).toHaveBeenCalledWith("", expect.objectContaining({
       model: undefined,
       reasoningLevel: "high",
+      providerConfigMode: "global-default",
+      providerPresetId: null,
       attachments: [
         {
           kind: "image",
@@ -1174,7 +1188,7 @@ describe("ComposerPanel", () => {
           fileSize: 4
         })
       ]
-    });
+    }));
   });
 
   it("Codex 显式切换模型后会透传实际 model", async () => {
@@ -1199,12 +1213,14 @@ describe("ComposerPanel", () => {
     await waitFor(() => {
       expect(onSend).toHaveBeenCalledTimes(1);
     });
-    expect(onSend).toHaveBeenCalledWith("请输出当前模型", {
+    expect(onSend).toHaveBeenCalledWith("请输出当前模型", expect.objectContaining({
       model: "gpt-5.4",
       reasoningLevel: "high",
+      providerConfigMode: "global-default",
+      providerPresetId: null,
       attachments: [],
       attachmentMeta: []
-    });
+    }));
   });
 
   it("provider-default 在工具栏和下拉里都显示为默认短标签", () => {
@@ -1234,7 +1250,10 @@ describe("ComposerPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: t("conversation.modelSelectorLabel") }));
 
-    expect(screen.getByRole("option", { name: "默认" })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("listbox", { name: t("conversation.deploymentModelColumn") }))
+        .getByRole("option", { name: "默认" })
+    ).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "跟随 CLI 默认模型（当前：kimi-k2.5）" })).not.toBeInTheDocument();
   });
 
@@ -1272,12 +1291,14 @@ describe("ComposerPanel", () => {
     await waitFor(() => {
       expect(onSend).toHaveBeenCalledTimes(1);
     });
-    expect(onSend).toHaveBeenCalledWith("请回复OK", {
+    expect(onSend).toHaveBeenCalledWith("请回复OK", expect.objectContaining({
       model: undefined,
       reasoningLevel: undefined,
+      providerConfigMode: "global-default",
+      providerPresetId: null,
       attachments: [],
       attachmentMeta: []
-    });
+    }));
   });
 
   it("OpenCode 显式切换模型后会透传 provider/model", async () => {
@@ -1304,12 +1325,14 @@ describe("ComposerPanel", () => {
     await waitFor(() => {
       expect(onSend).toHaveBeenCalledTimes(1);
     });
-    expect(onSend).toHaveBeenCalledWith("请返回当前模型标识", {
+    expect(onSend).toHaveBeenCalledWith("请返回当前模型标识", expect.objectContaining({
       model: "opencode/gpt-5-nano",
       reasoningLevel: undefined,
+      providerConfigMode: "global-default",
+      providerPresetId: null,
       attachments: [],
       attachmentMeta: []
-    });
+    }));
   });
 
   it("传入初始模型时会作为当前会话默认模型发送", async () => {
@@ -1337,6 +1360,8 @@ describe("ComposerPanel", () => {
     expect(onSend).toHaveBeenCalledWith("沿用并行创建时选择的模型", {
       model: "gpt-5.1-codex-mini",
       reasoningLevel: "high",
+      providerConfigMode: "global-default",
+      providerPresetId: null,
       attachments: [],
       attachmentMeta: []
     });
@@ -1383,6 +1408,8 @@ describe("ComposerPanel", () => {
     expect(onSend).toHaveBeenCalledWith("模型列表加载完成后发送", {
       model: "gpt-5.1-codex-mini",
       reasoningLevel: "high",
+      providerConfigMode: "global-default",
+      providerPresetId: null,
       attachments: [],
       attachmentMeta: []
     });
@@ -1417,6 +1444,8 @@ describe("ComposerPanel", () => {
     expect(onSend).toHaveBeenCalledWith("继续这一条分支", {
       model: undefined,
       reasoningLevel: undefined,
+      providerConfigMode: "global-default",
+      providerPresetId: null,
       attachments: [],
       attachmentMeta: []
     });
@@ -1440,6 +1469,35 @@ describe("ComposerPanel", () => {
     expect(screen.getByRole("option", { name: /OpenCode/i })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Gemini/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Kimi/i })).not.toBeInTheDocument();
+  });
+
+  it("fork 目标 provider 列表会继续过滤 catalog 中已禁用的项", async () => {
+    mockListProviderCatalog.mockResolvedValueOnce([
+      { provider: "codex", displayName: "Codex", enabled: true },
+      { provider: "claude-code", displayName: "Claude Code", enabled: true },
+      { provider: "opencode", displayName: "OpenCode", enabled: false },
+      { provider: "gemini", displayName: "Gemini", enabled: false },
+      { provider: "kimi", displayName: "Kimi", enabled: false }
+    ]);
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        forkDraft={createForkDraft()}
+        onForkDraftChange={vi.fn()}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: t("conversation.forkTargetProviderLabel") }));
+
+    await waitFor(() => {
+      expect(mockListProviderCatalog).toHaveBeenCalled();
+      expect(screen.getByRole("option", { name: /Codex/i })).toBeInTheDocument();
+      expect(screen.getByRole("option", { name: /Claude Code/i })).toBeInTheDocument();
+      expect(screen.queryByRole("option", { name: /OpenCode/i })).not.toBeInTheDocument();
+    });
   });
 
   it("切换到其他 CLI 时会先弹确认框，选择保持原生不会改动当前 fork 配置", async () => {
@@ -1527,7 +1585,10 @@ describe("ComposerPanel", () => {
     });
     expect(screen.getByTestId("fork-target-model")).toHaveTextContent("");
     await waitFor(() => {
-      expect(mockGetProviderCapabilities).toHaveBeenCalledWith("opencode", "workspace-1");
+      expect(mockGetProviderCapabilities).toHaveBeenCalledWith("opencode", "workspace-1", {
+        providerConfigMode: "global-default",
+        providerPresetId: null
+      });
     });
 
     fireEvent.click(screen.getByRole("button", { name: t("conversation.forkTargetModelLabel") }));

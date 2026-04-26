@@ -27,6 +27,7 @@ import {
   getProviderDisplayName,
   SESSION_PROVIDER_PICKER_IDS
 } from "../capability/provider-ui";
+import { useEnabledProviderCatalog } from "../capability/use-enabled-provider-catalog";
 import {
   createDeploymentPresetOptions,
   DeploymentMacSelect,
@@ -142,6 +143,10 @@ export function ParallelSessionCreateModal({
   );
   const initialMemberCount = source?.kind === "group" ? 1 : 2;
   const initialSharedPrompt = source?.kind === "group" ? source.sharedPrompt : "";
+  const { visibleProviders: visibleCatalogProviders } = useEnabledProviderCatalog(
+    SESSION_PROVIDER_PICKER_IDS,
+    open
+  );
   const [sharedPrompt, setSharedPrompt] = useState(initialSharedPrompt);
   const [memberCount, setMemberCount] = useState(initialMemberCount);
   const [members, setMembers] = useState<ParallelSessionCreateMemberDraft[]>(() =>
@@ -243,7 +248,7 @@ export function ParallelSessionCreateModal({
     let cancelled = false;
     setLoadingProviderCapabilities(true);
 
-    void listProviderCapabilities(SESSION_PROVIDER_PICKER_IDS, source.workspaceId)
+    void listProviderCapabilities(visibleCatalogProviders, source.workspaceId)
       .then((capabilities) => {
         if (cancelled) {
           return;
@@ -262,7 +267,7 @@ export function ParallelSessionCreateModal({
     return () => {
       cancelled = true;
     };
-  }, [open, source?.workspaceId]);
+  }, [open, source?.workspaceId, visibleCatalogProviders]);
 
   useEffect(() => {
     if (!open) {
@@ -366,7 +371,7 @@ export function ParallelSessionCreateModal({
 
   const availableProviderIds = useMemo(
     () =>
-      SESSION_PROVIDER_PICKER_IDS.filter((providerId) => {
+      visibleCatalogProviders.filter((providerId) => {
         const capabilities = providerCapabilitiesByProvider[providerId];
         if (!capabilities) {
           return false;
@@ -374,7 +379,7 @@ export function ParallelSessionCreateModal({
 
         return capabilities.canStartSession !== false;
       }),
-    [providerCapabilitiesByProvider]
+    [providerCapabilitiesByProvider, visibleCatalogProviders]
   );
 
   useEffect(() => {

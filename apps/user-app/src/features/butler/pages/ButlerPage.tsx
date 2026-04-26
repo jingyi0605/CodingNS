@@ -17,7 +17,11 @@ import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { ModalList, ModalListItem } from "../../../components/ModalAtoms";
-import { deleteSession } from "../../conversation/api/conversation-api";
+import {
+  deleteSession,
+  listProviderCatalog,
+  type ProviderCatalogEntryDto
+} from "../../conversation/api/conversation-api";
 import { ComposerPanel } from "../../conversation/components/ComposerPanel";
 import { FileContextPanel } from "../../conversation/components/FileContextPanel";
 import { MessageTimeline } from "../../conversation/components/MessageTimeline";
@@ -135,6 +139,7 @@ const DEFAULT_BUTLER_SUMMARY_DEBOUNCE_SECONDS = 300;
 const CONTROL_SCHEDULE_HIDE_DELAY_MS = 1_500;
 const BUTLER_RUNTIME_ACTIVE_HIDE_DELAY_MS = 1_500;
 const ACTIVE_CONTROL_SESSION_WINDOW_MS = 8 * 60 * 60 * 1_000;
+const BUTLER_PROVIDER_IDS: ButlerProviderId[] = ["codex", "claude-code"];
 
 const DEFAULT_INIT_FORM_STATE: ButlerInitFormState = {
   displayName: "",
@@ -271,6 +276,7 @@ export function ButlerPage() {
   const [cancellingTimerId, setCancellingTimerId] = useState<string | null>(null);
   const [executingTimerId, setExecutingTimerId] = useState<string | null>(null);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
+  const [providerCatalog, setProviderCatalog] = useState<ProviderCatalogEntryDto[] | null>(null);
   const controlHistoryButtonRef = useRef<HTMLDivElement | null>(null);
   const controlHistoryPopoverRef = useRef<HTMLDivElement | null>(null);
   const controlHistorySearchInputRef = useRef<HTMLInputElement>(null);
@@ -312,6 +318,26 @@ export function ButlerPage() {
   const permissionToastSessionIdRef = useRef<string | null>(null);
   const permissionToastBaselineReadyRef = useRef(false);
   const pendingPermissionRequestIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    let disposed = false;
+
+    void listProviderCatalog()
+      .then((items) => {
+        if (!disposed) {
+          setProviderCatalog(items);
+        }
+      })
+      .catch(() => {
+        if (!disposed) {
+          setProviderCatalog(null);
+        }
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, []);
 
   const butlerDisplayName = profile?.displayName?.trim() || initForm.displayName.trim() || t("shell.butlerEntry");
   const butlerAvatar = useMemo(
@@ -1415,18 +1441,38 @@ export function ButlerPage() {
   }, [store]);
 
   const providerOptions = useMemo(
-    () => [
-      {
-        value: "codex",
-        label: "Codex"
-      },
-      {
-        value: "claude-code",
-        label: "Claude Code"
-      }
-    ] satisfies Array<{ value: ButlerProviderId; label: string }>,
-    []
+    () =>
+      resolveButlerProviderOptions(providerCatalog, [
+        initForm.providerId,
+        profile?.providerId ?? null,
+        activeProvider
+      ]),
+    [activeProvider, initForm.providerId, profile?.providerId, providerCatalog]
   );
+  const enabledProviderOptions = useMemo(
+    () => providerOptions.filter((option) => option.enabled),
+    [providerOptions]
+  );
+  const activeProviderEnabled = providerOptions.find((option) => option.value === activeProvider)?.enabled ?? true;
+  const canSwitchProvider = providerOptions.some(
+    (option) => option.enabled && option.value !== activeProvider
+  );
+
+  useEffect(() => {
+    if (initialized || enabledProviderOptions.length === 0) {
+      return;
+    }
+
+    if (enabledProviderOptions.some((option) => option.value === initForm.providerId)) {
+      return;
+    }
+
+    setInitForm((current) => ({
+      ...current,
+      providerId: enabledProviderOptions[0]?.value ?? current.providerId
+    }));
+  }, [enabledProviderOptions, initForm.providerId, initialized]);
+
   const agentsModeOptions = useMemo(
     () => [
       {
@@ -1792,7 +1838,7 @@ export function ButlerPage() {
                     <select
                       className="butler-form-control"
                       value={initForm.providerId}
-                      disabled={providerOptions.length <= 1}
+                      disabled={enabledProviderOptions.length <= 1}
                       onChange={(event) =>
                         setInitForm((current) => ({
                           ...current,
@@ -1801,7 +1847,7 @@ export function ButlerPage() {
                       }
                     >
                       {providerOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
+                        <option key={option.value} value={option.value} disabled={!option.enabled}>
                           {option.label}
                         </option>
                       ))}
@@ -1955,7 +2001,7 @@ export function ButlerPage() {
                 <button
                   className="butler-init-submit"
                   type="submit"
-                  disabled={loading || initializingProfile}
+                  disabled={loading || initializingProfile || enabledProviderOptions.length === 0}
                 >
                   {loading || initializingProfile
                     ? t("shell.butlerInitSubmitting")
@@ -2039,13 +2085,13 @@ export function ButlerPage() {
               <select
                 aria-label={t("shell.butlerProviderLabel")}
                 value={activeProvider}
-                disabled={providerOptions.length <= 1 || switchingProvider || sending}
+                disabled={!canSwitchProvider || switchingProvider || sending}
                 onChange={(event) => {
                   void handleProviderSwitch(event.target.value as ButlerProviderId);
                 }}
               >
                 {providerOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
+                  <option key={option.value} value={option.value} disabled={!option.enabled}>
                     {option.label}
                   </option>
                 ))}
@@ -2056,7 +2102,7 @@ export function ButlerPage() {
               className="terminal-tab-control butler-header-icon-button"
               aria-label={t("shell.butlerNewSessionAction")}
               title={t("shell.butlerNewSessionAction")}
-              disabled={loading || sending || switchingProvider}
+              disabled={loading || sending || switchingProvider || !activeProviderEnabled}
               onClick={() => {
                 void handleStartFreshSession();
               }}
@@ -5919,6 +5965,56 @@ function resolveProviderLabel(providerId: ButlerProviderId): string {
     default:
       return "Codex";
   }
+}
+
+function resolveButlerProviderOptions(
+  providerCatalog: readonly ProviderCatalogEntryDto[] | null,
+  extraProviders: readonly (ButlerProviderId | null | undefined)[]
+): Array<{ value: ButlerProviderId; label: string; enabled: boolean }> {
+  const items = providerCatalog
+    ?.flatMap((item) => {
+      if (!isButlerProviderId(item.provider)) {
+        return [];
+      }
+
+      const providerId = item.provider;
+      const providerLabel = item.displayName || resolveProviderLabel(providerId);
+
+      return [{
+        value: providerId,
+        label: item.enabled
+          ? providerLabel
+          : `${providerLabel} (${t("settings.skillTargetDisabledTag")})`,
+        enabled: item.enabled
+      }];
+    })
+    ?? BUTLER_PROVIDER_IDS.map((providerId) => ({
+      value: providerId,
+      label: resolveProviderLabel(providerId),
+      enabled: true
+    }));
+
+  const itemMap = new Map(items.map((item) => [item.value, item]));
+
+  for (const providerId of extraProviders) {
+    if (!providerId || itemMap.has(providerId)) {
+      continue;
+    }
+
+    itemMap.set(providerId, {
+      value: providerId,
+      label: `${resolveProviderLabel(providerId)} (${t("settings.skillTargetDisabledTag")})`,
+      enabled: false
+    });
+  }
+
+  return BUTLER_PROVIDER_IDS
+    .map((providerId) => itemMap.get(providerId))
+    .filter((item): item is { value: ButlerProviderId; label: string; enabled: boolean } => Boolean(item));
+}
+
+function isButlerProviderId(providerId: string): providerId is ButlerProviderId {
+  return BUTLER_PROVIDER_IDS.includes(providerId as ButlerProviderId);
 }
 
 function resolveOptionLabel<T extends string>(
