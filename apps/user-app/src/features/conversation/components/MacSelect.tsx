@@ -120,6 +120,7 @@ export function MacSelect({
       left,
       width,
       maxWidth,
+      zIndex: 1905,
       top: shouldPlaceAbove ? undefined : rect.bottom + gap,
       bottom: shouldPlaceAbove ? viewportHeight - rect.top + gap : undefined
     });
