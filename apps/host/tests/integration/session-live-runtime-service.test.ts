@@ -440,6 +440,95 @@ describe("SessionLiveRuntimeService", () => {
     expect(result.providerSessionId).toBe("thread-1");
   });
 
+  it("sendLiveMessage 在权威 user 尚未回流时，会用请求发起时间作为 synthetic 时间锚点", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-26T21:00:57.997Z"));
+    const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
+      createService();
+    const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
+      getSnapshot: vi.fn(() => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "thread-1",
+        rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+        runningState: "running",
+        attachedClients: 1,
+        startedAt: "2026-04-26T21:00:58.100Z",
+        lastEventAt: "2026-04-26T21:00:58.200Z",
+        completedAt: null,
+        detail: null,
+        errorCode: null,
+        supportsInterrupt: true
+      })),
+      submitToActiveRun: vi.fn(async () => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "thread-1",
+        rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+        runningState: "running",
+        attachedClients: 1,
+        startedAt: "2026-04-26T21:00:58.100Z",
+        lastEventAt: "2026-04-26T21:00:58.200Z",
+        completedAt: null,
+        detail: null,
+        errorCode: null,
+        supportsInterrupt: true
+      })),
+      abandonRun: vi.fn(async () => undefined)
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+      messageCount: 3
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "streaming_guidance",
+      supportsSubagents: true,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      limitations: []
+    });
+    sessionHistoryService.getBindingOrThrow.mockReturnValue({
+      providerSessionId: "thread-1"
+    });
+    sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+    sessionMessageAttachmentService.bindClientRequestToMessage.mockReturnValue([]);
+
+    const result = await service.sendLiveMessage({
+      sessionId: "session-1",
+      userId: "user-1",
+      content: "继续修复这轮顺序问题",
+      clientRequestId: null
+    });
+
+    expect(result.acceptedAt).toBe("2026-04-26T21:00:57.997Z");
+    expect(result.message.timestamp).toBe("2026-04-26T21:00:57.997Z");
+  });
+
   it("Codex steer 撞上陈旧 active run 时会丢弃旧句柄并重启本轮", async () => {
     const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
       createService();
@@ -1170,6 +1259,85 @@ describe("SessionLiveRuntimeService", () => {
     });
 
     expect(order).toEqual(["create", "attach"]);
+  });
+
+  it("startLiveSession 在首条权威 user 尚未落库时，会用请求发起时间作为 synthetic 时间锚点", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-26T21:00:57.997Z"));
+    const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
+      createService();
+    const runtimeSnapshot = {
+      sessionId: "runtime-session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+      runningState: "starting",
+      attachedClients: 1,
+      startedAt: "2026-04-26T21:00:58.100Z",
+      lastEventAt: null,
+      completedAt: null,
+      detail: null,
+      errorCode: null,
+      supportsInterrupt: true
+    };
+    const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
+      startSession: vi.fn(async () => ({
+        getSnapshot: vi.fn(() => ({ ...runtimeSnapshot })),
+        attach: vi.fn()
+      }))
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getProviderCapabilitiesSnapshot = vi.fn(() => ({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: false,
+      supportsCheckpoint: false,
+      limitations: []
+    }));
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+    sessionHistoryService.getBindingOrThrow.mockReturnValue({
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/thread-1.jsonl"
+    });
+    sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
+    sessionHistoryService.getSession.mockImplementation((sessionId: string) => ({
+      sessionId,
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+      messageCount: 0
+    }));
+
+    const result = await service.startLiveSession({
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      provider: "codex",
+      content: "请继续分析这个顺序问题",
+      clientRequestId: null
+    });
+
+    expect(result.acceptedAt).toBe("2026-04-26T21:00:57.997Z");
+    expect(result.message.timestamp).toBe("2026-04-26T21:00:57.997Z");
   });
 
   it("startLiveSession 首次读取 session 索引缺失时会重建基础记录并重试一次", async () => {

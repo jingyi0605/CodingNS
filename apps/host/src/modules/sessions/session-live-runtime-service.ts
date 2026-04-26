@@ -513,7 +513,7 @@ export class SessionLiveRuntimeService {
       if (!shouldAwaitStartBindingBeforeAcceptedUserLookup(input.provider)) {
         void startBindingTask;
       }
-      const acceptedAt = acceptedMessage?.timestamp ?? nowIso();
+      const acceptedAt = acceptedMessage?.timestamp ?? requestStartedAt;
       const boundAttachments = this.sessionMessageAttachmentService.bindClientRequestToMessage(
         sessionId,
         input.clientRequestId,
@@ -1927,7 +1927,7 @@ export class SessionLiveRuntimeService {
       this.logSendDebugStep(debugTrace, "accepted_user_lookup", acceptedLookupStartedAtMs, {
         matched: Boolean(acceptedMessage)
       });
-      const acceptedAt = acceptedMessage?.timestamp ?? nowIso();
+      const acceptedAt = acceptedMessage?.timestamp ?? requestStartedAt;
       this.sessionHistoryService.resolveMessageOriginByClientRequestId(
         input.sessionId,
         input.clientRequestId,

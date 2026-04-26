@@ -217,6 +217,7 @@ export function mergeAuthoritativeMessages(
 ): SessionMessageViewModel[] {
   const nextById = new Map<string, SessionMessageViewModel>();
   const currentMessageIds = new Set<string>();
+  const incomingMessages: SessionMessageViewModel[] = [];
 
   for (const item of current) {
     nextById.set(item.id, item);
@@ -225,6 +226,7 @@ export function mergeAuthoritativeMessages(
 
   for (const message of incoming) {
     const nextMessage = toViewMessage(sessionId, message);
+    incomingMessages.push(nextMessage);
     const authoritativeMessageId = findMatchingAuthoritativeMessageId(nextById, nextMessage);
 
     if (authoritativeMessageId && authoritativeMessageId !== nextMessage.id) {
@@ -296,7 +298,12 @@ export function mergeAuthoritativeMessages(
     );
   }
 
-  return sortMessages(Array.from(nextById.values()));
+  return sortMessages(
+    rebaseSyntheticCodexUserMessages(
+      Array.from(nextById.values()),
+      incomingMessages
+    )
+  );
 }
 
 export function reconcileMessage(
@@ -1630,6 +1637,41 @@ function isCodexAuthoritativeMessage(message: SessionMessageViewModel): boolean 
   );
 }
 
+function rebaseSyntheticCodexUserMessages(
+  messages: SessionMessageViewModel[],
+  incoming: SessionMessageViewModel[]
+): SessionMessageViewModel[] {
+  const incomingAuthoritativeCodexMessages = incoming.filter(isCodexAuthoritativeMessage);
+
+  if (incomingAuthoritativeCodexMessages.length === 0) {
+    return messages;
+  }
+
+  return messages.map((message) => {
+    if (!isSyntheticCodexUserMessage(message)) {
+      return message;
+    }
+
+    const messageTimestampMs = toTimestampMs(message.timestamp);
+    const earliestReplySequence = incomingAuthoritativeCodexMessages.reduce((currentMin, item) => {
+      if (toTimestampMs(item.timestamp) < messageTimestampMs) {
+        return currentMin;
+      }
+
+      return Math.min(currentMin, item.sequence);
+    }, Number.POSITIVE_INFINITY);
+
+    if (!Number.isFinite(earliestReplySequence) || earliestReplySequence >= message.sequence) {
+      return message;
+    }
+
+    return {
+      ...message,
+      sequence: earliestReplySequence
+    };
+  });
+}
+
 function isOpenCodeAuthoritativeMessage(message: SessionMessageViewModel): boolean {
   return (
     message.deliveryState === "sent"
@@ -1734,6 +1776,15 @@ function isOptimisticUserMessage(message: SessionMessageViewModel): boolean {
     message.rawRef.startsWith("pending://")
     || message.rawRef.startsWith("synthetic://")
     || message.rawRef.includes("#synthetic")
+  );
+}
+
+function isSyntheticCodexUserMessage(message: SessionMessageViewModel): boolean {
+  return (
+    message.deliveryState === "sent"
+    && message.role === "user"
+    && message.kind === "text"
+    && message.rawRef.startsWith("synthetic://codex/")
   );
 }
 

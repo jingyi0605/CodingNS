@@ -1136,6 +1136,62 @@ describe("session runtime machine", () => {
     expect(merged[0].rawRef).toBe("codex://demo#line=1");
   });
 
+  it("Codex 首条 synthetic user 没有权威 user 回流时，也会锚在后续 assistant/tool 之前", () => {
+    const merged = mergeAuthoritativeMessages(
+      [createSyntheticUserMessage()],
+      "session-1",
+      [
+        createHistoryMessage({
+          messageId: "server-thinking-1",
+          provider: "codex",
+          providerSessionId: "thread-1",
+          role: "assistant",
+          kind: "thinking",
+          content: "先分析一下问题。",
+          timestamp: "2026-03-24T10:00:01.000Z",
+          sequence: 3,
+          rawRef: "codex://demo#line=2"
+        }),
+        createHistoryMessage({
+          messageId: "server-tool-1",
+          provider: "codex",
+          providerSessionId: "thread-1",
+          role: "tool",
+          kind: "tool_call",
+          content: "{\"command\":\"pwd\"}",
+          timestamp: "2026-03-24T10:00:02.000Z",
+          sequence: 4,
+          rawRef: "codex://demo#line=3",
+          toolCall: {
+            callId: "call-1",
+            name: "shell",
+            input: "{\"command\":\"pwd\"}",
+            output: null,
+            error: null,
+            status: "running"
+          }
+        }),
+        createHistoryMessage({
+          messageId: "server-text-1",
+          provider: "codex",
+          providerSessionId: "thread-1",
+          role: "assistant",
+          content: "我先确认一下当前目录。",
+          timestamp: "2026-03-24T10:00:03.000Z",
+          sequence: 5,
+          rawRef: "codex://demo#line=4"
+        })
+      ]
+    );
+
+    expect(merged.map((item) => item.id)).toEqual([
+      "synthetic-1",
+      "server-thinking-1",
+      "server-tool-1",
+      "server-text-1"
+    ]);
+  });
+
   it("会把带内部附件调试块的 codex 首条权威 user 消息与 synthetic 首条消息合并", () => {
     const merged = mergeAuthoritativeMessages(
       [createSyntheticUserMessage()],
