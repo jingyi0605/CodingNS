@@ -1,6 +1,46 @@
 import { useEffect, useRef, type MutableRefObject } from "react";
 
 const TRANSIENT_SCROLLBAR_HIDE_DELAY_MS = 5_000;
+let cachedClassicScrollbarWidth: number | null = null;
+
+function resolveClassicScrollbarWidth(): number {
+  if (cachedClassicScrollbarWidth !== null) {
+    return cachedClassicScrollbarWidth;
+  }
+
+  if (typeof document === "undefined") {
+    cachedClassicScrollbarWidth = 0;
+    return cachedClassicScrollbarWidth;
+  }
+
+  const probe = document.createElement("div");
+  probe.dataset.scrollbarProbe = "true";
+  probe.style.position = "absolute";
+  probe.style.top = "-9999px";
+  probe.style.width = "120px";
+  probe.style.height = "120px";
+  probe.style.overflow = "scroll";
+  probe.style.visibility = "hidden";
+  probe.style.pointerEvents = "none";
+
+  document.body?.appendChild(probe);
+
+  cachedClassicScrollbarWidth = Math.max(0, probe.offsetWidth - probe.clientWidth);
+  probe.remove();
+
+  return cachedClassicScrollbarWidth;
+}
+
+function applyScrollbarLayoutMode(element: HTMLElement) {
+  const classicScrollbarWidth = resolveClassicScrollbarWidth();
+
+  if (classicScrollbarWidth > 0) {
+    element.dataset.scrollbarLayout = "stable";
+    return;
+  }
+
+  element.removeAttribute("data-scrollbar-layout");
+}
 
 export function useTransientScrollbarVisibility<T extends HTMLElement>(
   externalRef?: MutableRefObject<T | null>
@@ -14,6 +54,8 @@ export function useTransientScrollbarVisibility<T extends HTMLElement>(
     if (!element || typeof globalThis.window === "undefined") {
       return;
     }
+
+    applyScrollbarLayoutMode(element);
 
     let hideTimerId: number | null = null;
 
@@ -51,4 +93,8 @@ export function useTransientScrollbarVisibility<T extends HTMLElement>(
   }, [elementRef]);
 
   return elementRef;
+}
+
+export function __resetTransientScrollbarVisibilityCacheForTest() {
+  cachedClassicScrollbarWidth = null;
 }

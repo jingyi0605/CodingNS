@@ -6415,11 +6415,6 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary[data-custom-panel="true"] .butler-side-content,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-custom-panel .butler-side-content {
   overflow-x: hidden;
-  overflow-y: overlay;
-}
-
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] [data-scrollbar-autohide="true"] {
-  overflow-y: overlay;
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] [data-scrollbar-autohide="true"]::-webkit-scrollbar {
