@@ -97,10 +97,79 @@ export const enUS = {
     remoteAccessTunnelTab: "CodingNS Connect",
     remoteAccessTailscaleTab: "Tailscale Access",
     remoteAccessFeatureDisabledValue: "Off",
+    abilityManagement: "Capability Management",
+    abilityManagementSectionSummary:
+      "Manage which CLI providers stay available and switch model profile presets from one place.",
+    abilityManagementNavValue: "Providers / Profiles",
     modelManagement: "Model Management",
     modelManagementSectionSummary:
       "Read cc-switch presets and quickly switch models for Codex, Claude Code, Gemini, and OpenCode.",
     modelManagementNavValue: "Quick switch",
+    modelManagementSectionTitle: "Model Profile Management",
+    providerManagement: "CLI Providers",
+    providerManagementSectionSummary:
+      "Control which CLIs appear in session, fork, assistant, and Skill entry points.",
+    providerManagementNavValue: "Availability",
+    providerManagementDescription:
+      "Control which CLIs this Host is allowed to expose. Open the dialog to review the matrix, status, and enable switches.",
+    providerManagementManageAction: "Manage CLI Providers",
+    providerManagementModalTitle: "CLI Provider Management",
+    providerManagementModalDescription:
+      "Review what each CLI can do in the product, its current state, and whether it stays visible.",
+    providerManagementRefresh: "Refresh list",
+    providerManagementRefreshSuccess: "CLI provider list refreshed.",
+    providerManagementLoading: "Loading available CLI providers...",
+    providerManagementEmpty: "No CLI providers are available to manage yet.",
+    providerManagementEmptyDescription:
+      "This list will appear automatically once the Host reports available CLI providers.",
+    providerManagementLoginRequired: "Sign in before managing CLI providers.",
+    providerManagementLoadFailed: "Failed to load the CLI provider list.",
+    providerManagementSaveFailed: "Failed to save the CLI provider status.",
+    providerManagementSummaryTitle: "Provider Overview",
+    providerManagementSummaryDescription:
+      "Check the totals first, then decide which CLI should stay enabled.",
+    providerManagementSummaryEnabled: "Enabled",
+    providerManagementSummaryDisabled: "Disabled",
+    providerManagementSummaryTotal: "Total",
+    providerManagementMatrixTitle: "Capability Matrix",
+    providerManagementMatrixDescription:
+      "Rows are CLI providers and columns are product capabilities. Turning a provider off hides it across related entry points.",
+    providerManagementTableProvider: "CLI Provider",
+    providerManagementTableStatus: "Status",
+    providerManagementTableEnabled: "Enabled",
+    providerManagementStatusEnabled: "Enabled",
+    providerManagementStatusDisabled: "Disabled",
+    providerManagementInstallReady: "Installed",
+    providerManagementInstallMissing: "Not detected",
+    providerManagementInstallUnknown: "Unknown",
+    providerManagementStateEnabled:
+      "This CLI is currently shown in new session, fork, assistant, and Skill-related entry points.",
+    providerManagementStateDisabled:
+      "This CLI is hidden from new entry points, and its old sessions are also hidden from normal lists.",
+    providerManagementStateMissing:
+      "This CLI is allowed, but the local runtime is not ready yet, so it cannot be used until installation is complete.",
+    providerManagementToggleLabel: "Toggle {provider}",
+    providerManagementEnableSuccess: "{provider} has been enabled again.",
+    providerManagementDisableSuccess: "{provider} has been disabled.",
+    providerManagementCapabilityStreaming: "Streaming output",
+    providerManagementCapabilityToolCalls: "Tool calls",
+    providerManagementCapabilityAssistant: "Assistant service",
+    providerManagementCapabilityFork: "Session fork",
+    providerManagementCapabilitySkill: "Skill usage",
+    providerManagementCapabilityAvailable: "Available",
+    providerManagementCapabilityUnavailable: "Unavailable",
+    providerManagementImpactSessionStart: "new session start",
+    providerManagementImpactFork: "session fork",
+    providerManagementImpactAssistant: "assistant follow-up",
+    providerManagementImpactSkill: "new Skill targets",
+    providerManagementImpactEnabled:
+      "If you turn it off now, old sessions will be hidden and {actions} will be blocked.",
+    providerManagementImpactDisabled:
+      "It is currently blocking {actions}; once re-enabled, those entry points will show up again.",
+    providerManagementImpactEnabledFallback:
+      "If you turn it off now, this CLI will disappear from new entry points across the product.",
+    providerManagementImpactDisabledFallback:
+      "Once re-enabled, this CLI will return to the normal entry points across the product.",
     modelManagementTitle: "Quick Model Switching",
     modelManagementDescription:
       "This page does not add or edit presets. It only exposes the presets already managed by cc-switch so you can switch quickly.",
@@ -191,6 +260,8 @@ export const enUS = {
     skillUnmanagedListTitle: "Skills to Add",
     skillUnmanagedEmpty: "There are no new skills to add right now.",
     skillUnmanagedItemDescription: "Found in {target}. You can add it to your list.",
+    skillUnmanagedItemDisabledDescription:
+      "Found in {target}, but that target is disabled right now, so it cannot be added again yet.",
     skillAssistantRuntimeListTitle: "Built-in Assistant Skills",
     skillAssistantRuntimeListDescription:
       "These skills are provided by the system and only used by the assistant.",
@@ -202,6 +273,8 @@ export const enUS = {
     skillConflictedListTitle: "Needs Attention",
     skillConflictedEmpty: "There is nothing to fix right now.",
     skillConflictedItemDescription: "This item in {target} needs attention.",
+    skillConflictedItemDisabledDescription:
+      "This item still exists in {target}, but that target is disabled right now.",
     skillDiagnosticsTitle: "Notices",
     skillDiagnosticsEmpty: "There are no new notices right now.",
     skillDiagnosticTargetMissingTitle: "{target} Is Not Ready Yet",
@@ -221,6 +294,8 @@ export const enUS = {
     skillSyncAction: "Apply Again",
     skillSyncSuccess: "{name} was applied again.",
     skillSyncTargetMissing: "This skill has no target yet, so it cannot be applied again.",
+    skillSyncTargetDisabled:
+      "This skill currently only points at disabled targets. Re-enable a provider before applying it again.",
     skillLoadFailed: "Failed to load the skill overview.",
     skillTargetCodex: "Codex",
     skillTargetClaudeCode: "Claude Code",
@@ -230,6 +305,9 @@ export const enUS = {
     skillBindingSynced: "Available",
     skillBindingFailed: "Unavailable",
     skillBindingConflicted: "Needs Attention",
+    skillUploadTargetDisabled:
+      "All available Skill targets are disabled right now. Re-enable a provider in settings first.",
+    skillTargetDisabledTag: "Disabled",
     skillTagAssistantOnly: "Assistant Only",
     securityPrivacy: "Security & Privacy",
     securityPrivacySectionSummary: "Session permissions, risk boundaries, and default approval policy",

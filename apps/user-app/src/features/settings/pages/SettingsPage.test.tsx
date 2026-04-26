@@ -39,6 +39,10 @@ vi.mock("../../../settings/ModelManagementPanel", () => ({
   ModelManagementPanel: () => <div data-testid="model-management-panel">model-management-panel</div>
 }));
 
+vi.mock("../../../settings/ProviderManagementPanel", () => ({
+  ProviderManagementPanel: () => <div data-testid="provider-management-panel">provider-management-panel</div>
+}));
+
 vi.mock("../../../settings/AuthDeviceManagementPanel", () => ({
   AuthDeviceManagementPanel: () => <div data-testid="auth-device-management-panel">auth-device-management-panel</div>
 }));
@@ -97,11 +101,13 @@ describe("SettingsPage", () => {
 
     expect(screen.getByRole("heading", { name: t("settings.title") })).toBeInTheDocument();
     expect(screen.queryByText(t("settings.serverConnection"))).not.toBeInTheDocument();
+    expect(screen.getByText(t("settings.abilityManagement"))).toBeInTheDocument();
     expect(screen.getByText(t("settings.remoteAccess"))).toBeInTheDocument();
     expect(screen.queryByText(t("settings.skillManagerTitle"))).not.toBeInTheDocument();
     expect(screen.queryByText(t("settings.skillManagerDescription"))).not.toBeInTheDocument();
     expect(screen.queryByText(t("settings.skills"))).not.toBeInTheDocument();
     expect(screen.getByTestId("model-management-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("provider-management-panel")).toBeInTheDocument();
     expect(screen.queryByTestId("relay-tunnel-panel")).not.toBeInTheDocument();
     expect(screen.queryByTestId("tailscale-panel")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("settings.remoteAccessManageAction") })).toBeInTheDocument();
@@ -191,14 +197,32 @@ describe("SettingsPage", () => {
     expect(await within(dialog).findByTestId("tailscale-panel")).toBeInTheDocument();
   });
 
-  it("移动布局提供模型管理分类并能进入模型管理页", async () => {
+  it("移动布局提供能力管理分类并能进入统一页面", async () => {
     setViewportWidth(390);
     renderSettingsPage();
 
-    await userEvent.click(screen.getByRole("button", { name: new RegExp(t("settings.modelManagement")) }));
+    await userEvent.click(screen.getByRole("button", { name: new RegExp(t("settings.abilityManagement")) }));
+
+    expect(await screen.findByText(t("settings.abilityManagement"))).toBeInTheDocument();
+    expect(screen.getByText(t("settings.providerManagement"))).toBeInTheDocument();
+    expect(await screen.findByTestId("model-management-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("provider-management-panel")).toBeInTheDocument();
+  });
+
+  it("旧的模型和 provider 路由别名会落到能力管理页", async () => {
+    setViewportWidth(390);
+
+    const modelAliasView = renderSettingsPage("/settings/model-management");
 
     expect(await screen.findByTestId("model-management-panel")).toBeInTheDocument();
-    expect(screen.queryByText(t("settings.modelManagementSectionSummary"))).not.toBeInTheDocument();
+    expect(screen.getByTestId("provider-management-panel")).toBeInTheDocument();
+
+    modelAliasView.unmount();
+
+    renderSettingsPage("/settings/provider-management");
+
+    expect(await screen.findByTestId("model-management-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("provider-management-panel")).toBeInTheDocument();
   });
 
   it("移动布局不再提供 Skills 分类", () => {

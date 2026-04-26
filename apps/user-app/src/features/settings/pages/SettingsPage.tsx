@@ -24,6 +24,7 @@ import { useAppVersion } from "../../../shared/version/app-version";
 import { ParallelTaskDebugModal } from "../../../settings/ParallelTaskDebugModal";
 import { ClientUpdatePanel } from "../../../settings/ClientUpdatePanel";
 import { ModelManagementPanel } from "../../../settings/ModelManagementPanel";
+import { ProviderManagementPanel } from "../../../settings/ProviderManagementPanel";
 import { AuthDeviceManagementPanel } from "../../../settings/AuthDeviceManagementPanel";
 import { ServiceUpdatePanel } from "../../../settings/ServiceUpdatePanel";
 import { RemoteAccessManagerModal } from "../../../settings/RemoteAccessManagerModal";
@@ -38,7 +39,9 @@ const DEFAULT_DEBUG_PORT_POOLS: DebugPortPoolConfig = {
 
 type SettingsSectionId =
   | "appearance"
+  | "ability-management"
   | "model-management"
+  | "provider-management"
   | "server-connection"
   | "remote-access"
   | "security-privacy"
@@ -100,12 +103,26 @@ interface SettingsSectionMeta {
 function isSettingsSectionId(value: string | undefined): value is SettingsSectionId {
   return (
     value === "appearance" ||
+    value === "ability-management" ||
     value === "model-management" ||
+    value === "provider-management" ||
     value === "server-connection" ||
     value === "remote-access" ||
     value === "security-privacy" ||
     value === "software-update"
   );
+}
+
+function normalizeSettingsSectionId(value: string | undefined): SettingsSectionId | null {
+  if (!isSettingsSectionId(value)) {
+    return null;
+  }
+
+  if (value === "model-management" || value === "provider-management") {
+    return "ability-management";
+  }
+
+  return value;
 }
 
 function getLanguageLabel(language: AppLanguage): string {
@@ -524,9 +541,27 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
         ) : null}
 
         <section className="settings-section">
-          <h2 className="settings-section-title">{t("settings.modelManagement")}</h2>
+          <h2 className="settings-section-title">{t("settings.abilityManagement")}</h2>
           <div className="settings-card">
             <div className="settings-row">
+              <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.providerManagement")}</span>
+                <span className="settings-row-description">
+                  {t("settings.providerManagementDescription")}
+                </span>
+              </div>
+              <div className="settings-row-control">
+                <ProviderManagementPanel />
+              </div>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.modelManagementSectionTitle")}</span>
+                <span className="settings-row-description">
+                  {t("settings.modelManagementSectionSummary")}
+                </span>
+              </div>
               <div className="settings-row-control settings-row-control-stretch">
                 <ModelManagementPanel />
               </div>
@@ -761,7 +796,7 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
 function MobileSettingsPage({ model, appVersion }: { model: SettingsPageModel; appVersion: string }) {
   const navigate = useNavigate();
   const { section } = useParams<{ section?: string }>();
-  const activeSection = isSettingsSectionId(section) ? section : null;
+  const activeSection = normalizeSettingsSectionId(section);
   const sectionEntries: SettingsSectionMeta[] = [
     {
       id: "appearance",
@@ -784,11 +819,11 @@ function MobileSettingsPage({ model, appVersion }: { model: SettingsPageModel; a
 
   sectionEntries.push(
     {
-      id: "model-management",
-      title: t("settings.modelManagement"),
-      description: t("settings.modelManagementSectionSummary"),
-      value: t("settings.modelManagementNavValue"),
-      icon: <ModelManagementSectionIcon />
+      id: "ability-management",
+      title: t("settings.abilityManagement"),
+      description: t("settings.abilityManagementSectionSummary"),
+      value: t("settings.abilityManagementNavValue"),
+      icon: <ProviderManagementSectionIcon />
     },
     {
       id: "remote-access",
@@ -858,7 +893,7 @@ function MobileSettingsPage({ model, appVersion }: { model: SettingsPageModel; a
       <MobilePageHeader title={t("settings.title")} />
       <div className="settings-mobile-container">
         {activeSection === "appearance" ? <MobileAppearanceSection model={model} /> : null}
-        {activeSection === "model-management" ? <MobileModelManagementSection /> : null}
+        {activeSection === "ability-management" ? <MobileAbilityManagementSection /> : null}
         {activeSection === "server-connection" && model.showServerSettings
           ? <MobileServerConnectionSection model={model} />
           : null}
@@ -1286,12 +1321,30 @@ function MobileRemoteAccessSection({ model }: { model: SettingsPageModel }) {
   );
 }
 
-function MobileModelManagementSection() {
+function MobileAbilityManagementSection() {
   return (
     <section className="settings-mobile-group-section">
-      <h2 className="settings-mobile-group-title">{t("settings.modelManagement")}</h2>
-      <div className="settings-mobile-panel-shell settings-mobile-model-shell">
-        <ModelManagementPanel />
+      <h2 className="settings-mobile-group-title">{t("settings.abilityManagement")}</h2>
+      <p className="settings-mobile-group-note">{t("settings.abilityManagementSectionSummary")}</p>
+      <div className="settings-mobile-ability-stack">
+        <div className="settings-mobile-panel-shell settings-mobile-provider-shell">
+          <div className="settings-mobile-row-copy settings-mobile-ability-copy">
+            <span className="settings-mobile-row-title">{t("settings.providerManagement")}</span>
+            <span className="settings-mobile-row-description">
+              {t("settings.providerManagementDescription")}
+            </span>
+          </div>
+          <ProviderManagementPanel />
+        </div>
+        <div className="settings-mobile-panel-shell settings-mobile-model-shell">
+          <div className="settings-mobile-row-copy settings-mobile-ability-copy">
+            <span className="settings-mobile-row-title">{t("settings.modelManagementSectionTitle")}</span>
+            <span className="settings-mobile-row-description">
+              {t("settings.modelManagementSectionSummary")}
+            </span>
+          </div>
+          <ModelManagementPanel />
+        </div>
       </div>
     </section>
   );
@@ -1449,6 +1502,19 @@ function ModelManagementSectionIcon() {
       <rect x="3.5" y="4" width="13" height="12" rx="2.5" />
       <path d="M6.2 8.1h7.6M6.2 11.9h4.1" strokeLinecap="round" />
       <path d="m12.8 11.3 1.3 1.3 2-2.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ProviderManagementSectionIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path d="M4 5.5h7" />
+      <path d="M4 10h12" />
+      <path d="M4 14.5h9" />
+      <circle cx="13.5" cy="5.5" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="8" cy="10" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="15.5" cy="14.5" r="1.5" fill="currentColor" stroke="none" />
     </svg>
   );
 }

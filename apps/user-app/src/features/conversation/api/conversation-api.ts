@@ -705,6 +705,29 @@ export interface ProviderCapabilitiesDto {
   supportsRulesMessageFolding?: boolean;
 }
 
+export interface ProviderCatalogEntryDto {
+  provider: ProviderId;
+  displayName: string;
+  enabled: boolean;
+  installState: "ready" | "missing" | "unknown";
+  version: string | null;
+  disableImpact: {
+    hidesSessions: boolean;
+    blocksSessionStart: boolean;
+    blocksFork: boolean;
+    blocksAssistant: boolean;
+    blocksSkillTargets: boolean;
+  };
+  capabilities: ProviderCapabilitiesDto;
+  productCapabilities: {
+    streamingOutput: boolean;
+    toolCalls: boolean;
+    assistantService: boolean;
+    sessionFork: boolean;
+    skillUsage: boolean;
+  };
+}
+
 export interface HistoryMessageDto {
   messageId: string;
   provider: ProviderId;
@@ -1345,6 +1368,26 @@ export function getProviderCapabilities(
       search.size > 0 ? `?${search.toString()}` : ""
     }`
   );
+}
+
+export async function listProviderCatalog(): Promise<ProviderCatalogEntryDto[]> {
+  const response = await httpClient.request<{ items: ProviderCatalogEntryDto[] }>("/api/providers/catalog");
+  return response.items;
+}
+
+export async function updateProviderCatalogEntry(
+  provider: ProviderId,
+  enabled: boolean
+): Promise<ProviderCatalogEntryDto> {
+  const response = await httpClient.request<{ item: ProviderCatalogEntryDto }>(
+    `/api/providers/catalog/${encodeURIComponent(provider)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ enabled })
+    }
+  );
+
+  return response.item;
 }
 
 export async function listProviderCapabilities(
