@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clientConfigStore } from "../../../config/client-config-store";
@@ -515,6 +515,45 @@ function renderPage(
         <Routes>
           <Route path="/terminals" element={<TerminalPage {...props} />} />
           <Route path="/workspaces/:workspaceId/terminals" element={<TerminalPage {...props} />} />
+        </Routes>
+      </MemoryRouter>
+    </ToastProvider>
+  );
+}
+
+function WorkspaceRouteNavigator() {
+  const navigate = useNavigate();
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          navigate("/workspaces/workspace-1/terminals");
+        }}
+      >
+        切到工作区1终端
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          navigate("/workspaces/workspace-2/terminals");
+        }}
+      >
+        切到工作区2终端
+      </button>
+    </div>
+  );
+}
+
+function renderPageWithWorkspaceNavigator(initialEntry = "/workspaces/workspace-1/terminals") {
+  return render(
+    <ToastProvider>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <WorkspaceRouteNavigator />
+        <Routes>
+          <Route path="/terminals" element={<TerminalPage />} />
+          <Route path="/workspaces/:workspaceId/terminals" element={<TerminalPage />} />
         </Routes>
       </MemoryRouter>
     </ToastProvider>
@@ -1424,6 +1463,58 @@ describe("TerminalPage", () => {
       expect(screen.getByText("Docs 终端")).toBeInTheDocument();
     });
     expect(mockListWorkspaceTerminals).not.toHaveBeenCalled();
+  });
+
+  it("切换工作区后再回来时，会恢复该工作区上次最后使用的终端标签", async () => {
+    let now = Date.parse("2026-04-26T08:00:00.000Z");
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+
+    setTerminalManagerSnapshot("workspace-1", [
+      buildTerminal({
+        id: "workspace-1-terminal-1",
+        name: "工作区1-终端-1"
+      }),
+      buildTerminal({
+        id: "workspace-1-terminal-2",
+        name: "工作区1-终端-2",
+        runtimeSessionId: "session-2",
+        attachTarget: "tmux://session-2",
+        processId: 4567,
+        createdAt: "2026-03-26T08:01:00.000Z",
+        lastActiveAt: "2026-03-26T08:01:00.000Z"
+      })
+    ]);
+    setTerminalManagerSnapshot("workspace-2", [
+      buildTerminal({
+        id: "workspace-2-terminal-1",
+        workspaceId: "workspace-2",
+        name: "工作区2-终端-1",
+        cwd: "/Users/jackson/Code/Docs"
+      })
+    ]);
+
+    renderPageWithWorkspaceNavigator();
+
+    const workspaceOneSecondTab = await screen.findByRole("tab", { name: /工作区1-终端-2/ });
+    await userEvent.click(workspaceOneSecondTab);
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /工作区1-终端-2/ })).toHaveAttribute("aria-selected", "true");
+    });
+
+    now += 61_000;
+    await userEvent.click(screen.getByRole("button", { name: "切到工作区2终端" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /工作区2-终端-1/ })).toHaveAttribute("aria-selected", "true");
+    });
+
+    now += 61_000;
+    await userEvent.click(screen.getByRole("button", { name: "切到工作区1终端" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /工作区1-终端-2/ })).toHaveAttribute("aria-selected", "true");
+    });
   });
 
   it("滚到终端顶部时会继续加载更早历史", async () => {

@@ -367,6 +367,7 @@ export function TerminalPage({
   const [desktopCreateSheetOpen, setDesktopCreateSheetOpen] = useState(false);
   const [loadingShellOptions, setLoadingShellOptions] = useState(false);
   const [terminals, setTerminals] = useState<TerminalDto[]>([]);
+  const [activeTerminalPersistenceWorkspaceId, setActiveTerminalPersistenceWorkspaceId] = useState<string | null>(null);
   const [creatingTerminal, setCreatingTerminal] = useState(false);
   const [pendingTerminalCreationPaneId, setPendingTerminalCreationPaneId] = useState<PaneId | null>(
     null
@@ -634,6 +635,7 @@ export function TerminalPage({
 
       terminalsRef.current = nextTerminals;
       setTerminals(nextTerminals);
+      setActiveTerminalPersistenceWorkspaceId(workspaceId);
       setManuallyDisconnectedTerminalIds((current) => {
         const existingTerminalIdSet = new Set(nextTerminals.map((terminal) => terminal.id));
         return current.filter((terminalId) => existingTerminalIdSet.has(terminalId));
@@ -924,6 +926,7 @@ export function TerminalPage({
 
   useEffect(() => {
     if (!selectedWorkspaceId) {
+      setActiveTerminalPersistenceWorkspaceId(null);
       setShellOptions([]);
       setSelectedShell("");
       setMobileQuickDrawerOpen(false);
@@ -937,6 +940,7 @@ export function TerminalPage({
       return;
     }
 
+    setActiveTerminalPersistenceWorkspaceId(null);
     updateActivePane("primary");
     setPaneConnectionStates(INITIAL_CONNECTION_STATES);
     setPendingTerminalCreationPaneId(null);
@@ -1011,8 +1015,16 @@ export function TerminalPage({
       return;
     }
 
+    if (activeTerminalPersistenceWorkspaceId !== selectedWorkspaceId) {
+      return;
+    }
+
+    if (activeTerminal && activeTerminal.workspaceId !== selectedWorkspaceId) {
+      return;
+    }
+
     persistActiveTerminalId(selectedWorkspaceId, activeTerminalId ?? null);
-  }, [activeTerminalId, selectedWorkspaceId]);
+  }, [activeTerminal, activeTerminalId, activeTerminalPersistenceWorkspaceId, selectedWorkspaceId]);
 
   const handlePaneConnectionChange = useCallback((paneId: PaneId, state: TerminalConnectionState) => {
     setPaneConnectionStates((current) => ({
