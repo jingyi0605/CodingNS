@@ -7,6 +7,10 @@ import type { SessionHistoryService } from "../sessions/session-history-service.
 import type { SessionLiveRuntimeService } from "../sessions/session-live-runtime-service.js";
 import type { SessionProviderConfigMode } from "../../types/domain.js";
 import type { SessionProviderConfigService } from "../sessions/session-provider-config-service.js";
+import {
+  isClaudeCompatibleProvider,
+  type ClaudeCompatibleProviderId
+} from "../sessions/claude-compatible-provider-registry.js";
 
 interface ProviderParams {
   provider: string;
@@ -71,7 +75,7 @@ export class ProviderController {
   };
 
   readonly getClaudeHookBridgeConfig = async (
-    request: FastifyRequest,
+    request: FastifyRequest<{ Params: ProviderParams }>,
     reply: FastifyReply
   ): Promise<void> => {
     if (!request.auth?.user.userId) {
@@ -82,13 +86,15 @@ export class ProviderController {
       });
     }
 
-    reply.send(this.sessionLiveRuntimeService.getClaudeHookBridgeConfig());
+    const provider = requireClaudeCompatibleProvider(request.params.provider);
+    reply.send(this.sessionLiveRuntimeService.getClaudeHookBridgeConfig(provider));
   };
 
   readonly receiveClaudeHookEvent = async (
-    request: FastifyRequest<{ Body: ClaudeHookEventBody }>,
+    request: FastifyRequest<{ Params: ProviderParams; Body: ClaudeHookEventBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    const provider = requireClaudeCompatibleProvider(request.params.provider);
     const providedToken = request.headers["x-codingns-hook-token"];
     const normalizedToken =
       typeof providedToken === "string"
@@ -104,11 +110,12 @@ export class ProviderController {
       throw new AppError({
         statusCode: 401,
         errorCode: "UNAUTHORIZED",
-        detail: "Claude hook token 无效"
+        detail: "兼容 CLI hook token 无效"
       });
     }
 
     logPermissionDebug("claude_hook_bridge.receive", {
+      provider,
       hookEventName: request.body?.hook_event_name ?? null,
       sessionId: request.body?.session_id ?? null,
       cwd: request.body?.cwd ?? null,
@@ -116,8 +123,9 @@ export class ProviderController {
       toolName: request.body?.tool_name ?? null,
       notificationType: request.body?.notification_type ?? null
     });
-    const result = await this.sessionLiveRuntimeService.ingestClaudeHookEvent(request.body ?? {});
+    const result = await this.sessionLiveRuntimeService.ingestClaudeHookEvent(provider, request.body ?? {});
     logPermissionDebug("claude_hook_bridge.respond", {
+      provider,
       hookEventName: request.body?.hook_event_name ?? null,
       accepted: result.accepted,
       ignored: result.ignored,
@@ -144,5 +152,20 @@ function normalizeProviderConfigMode(
     errorCode: "INVALID_INPUT",
     detail: "providerConfigMode 非法",
     field: "providerConfigMode"
+  });
+}
+
+function requireClaudeCompatibleProvider(value: string): ClaudeCompatibleProviderId {
+  const normalized = value.trim();
+
+  if (isClaudeCompatibleProvider(normalized)) {
+    return normalized;
+  }
+
+  throw new AppError({
+    statusCode: 400,
+    errorCode: "INVALID_INPUT",
+    detail: "hook bridge 只支持 claude-code 或 legna-code",
+    field: "provider"
   });
 }

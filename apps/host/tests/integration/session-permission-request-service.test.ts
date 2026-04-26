@@ -10,6 +10,7 @@ import {
 describe("session-permission-request-service normalizers", () => {
   it("会把 Claude PreToolUse 的 Bash 请求映射成统一命令审批", () => {
     const request = normalizeClaudePreToolUseRequest({
+      provider: "claude-code",
       sessionId: "session-1",
       providerSessionId: "claude-session-1",
       createdAt: "2026-03-30T10:00:00.000Z",
@@ -36,6 +37,7 @@ describe("session-permission-request-service normalizers", () => {
 
   it("会把 Claude PreToolUse 的 Read 请求映射成可做会话级默认允许的审批", () => {
     const request = normalizeClaudePreToolUseRequest({
+      provider: "claude-code",
       sessionId: "session-1",
       providerSessionId: "claude-session-1",
       createdAt: "2026-03-30T10:00:00.000Z",
@@ -58,6 +60,27 @@ describe("session-permission-request-service normalizers", () => {
       "allow_session",
       "deny"
     ]);
+  });
+
+  it("会保留 Claude 兼容 provider 的原始 providerId", () => {
+    const request = normalizeClaudePreToolUseRequest({
+      provider: "legna-code",
+      sessionId: "session-4",
+      providerSessionId: "legna-session-1",
+      createdAt: "2026-04-26T10:00:00.000Z",
+      payload: {
+        hook_event_name: "PreToolUse",
+        session_id: "legna-session-1",
+        cwd: "/tmp/workspace",
+        tool_name: "Read",
+        tool_input: {
+          file_path: "/tmp/workspace/LEGNA.md"
+        }
+      }
+    });
+
+    expect(request.provider).toBe("legna-code");
+    expect(request.paths).toEqual(["/tmp/workspace/LEGNA.md"]);
   });
 
   it("会把 OpenCode permission 对象映射成统一权限申请", () => {

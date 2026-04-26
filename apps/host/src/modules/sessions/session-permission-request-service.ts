@@ -1,4 +1,4 @@
-import { basename, join } from "node:path";
+import { basename } from "node:path";
 
 import type { ProviderId } from "@codingns/session-sync-core";
 
@@ -12,6 +12,10 @@ import type { SessionBindingRepository } from "../../storage/repositories/sessio
 import type { SessionListItem } from "../../types/domain.js";
 import type { WorkspaceService } from "../workspace/workspace-service.js";
 import type { SessionHistoryService } from "./session-history-service.js";
+import {
+  buildClaudeCompatibleRawStoreRef,
+  type ClaudeCompatibleProviderId
+} from "./claude-compatible-provider-registry.js";
 
 export type SessionPermissionRequestKind =
   | "tool_call"
@@ -199,6 +203,7 @@ export class SessionPermissionRequestService {
     private readonly config: HostConfig,
     private readonly emitEnvelope: (envelope: SessionPermissionEnvelope) => Promise<void> | void,
     private readonly resolveActiveClaudeSession?: (input: {
+      provider: ClaudeCompatibleProviderId;
       providerSessionId: string;
       workspaceId: string;
       workspacePath: string;
@@ -341,9 +346,11 @@ export class SessionPermissionRequestService {
   }
 
   async handleClaudePreToolUse(
-    payload: ClaudeHookPermissionPayload
+    payload: ClaudeHookPermissionPayload,
+    provider: ClaudeCompatibleProviderId = "claude-code"
   ): Promise<ClaudePreToolUseResult> {
     logPermissionDebug("claude_permission.pre_tool_use.begin", {
+      provider,
       providerSessionId: payload.session_id ?? null,
       cwd: payload.cwd ?? null,
       toolName: payload.tool_name ?? null,
@@ -369,12 +376,14 @@ export class SessionPermissionRequestService {
     const transcriptPath = normalizeText(payload.transcript_path) || null;
     const binding =
       await this.resolveClaudeBinding(
-      providerSessionId,
-      workspace.id,
-      workspace.path,
-      transcriptPath
-    ).catch(() => null)
+        provider,
+        providerSessionId,
+        workspace.id,
+        workspace.path,
+        transcriptPath
+      ).catch(() => null)
       ?? this.resolveClaudeWorkspaceSessionFallback({
+        provider,
         providerSessionId,
         workspaceId: workspace.id,
         workspacePath: workspace.path,
@@ -382,6 +391,7 @@ export class SessionPermissionRequestService {
       })
       ?? (this.resolveActiveClaudeSession
         ? await this.resolveActiveClaudeSession({
+            provider,
             providerSessionId,
             workspaceId: workspace.id,
             workspacePath: workspace.path,
@@ -414,6 +424,7 @@ export class SessionPermissionRequestService {
 
     const now = nowIso();
     const normalized = normalizeClaudePreToolUseRequest({
+      provider,
       sessionId: binding.sessionId,
       providerSessionId,
       payload,
@@ -527,9 +538,11 @@ export class SessionPermissionRequestService {
   }
 
   async handleClaudePermissionRequest(
-    payload: ClaudeHookPermissionPayload
+    payload: ClaudeHookPermissionPayload,
+    provider: ClaudeCompatibleProviderId = "claude-code"
   ): Promise<ClaudePreToolUseResult> {
     logPermissionDebug("claude_permission.permission_request.begin", {
+      provider,
       providerSessionId: payload.session_id ?? null,
       cwd: payload.cwd ?? null,
       toolName: payload.tool_name ?? null,
@@ -559,12 +572,14 @@ export class SessionPermissionRequestService {
     const transcriptPath = normalizeText(payload.transcript_path) || null;
     const binding =
       await this.resolveClaudeBinding(
+        provider,
         providerSessionId,
         workspace.id,
         workspace.path,
         transcriptPath
       ).catch(() => null)
       ?? this.resolveClaudeWorkspaceSessionFallback({
+        provider,
         providerSessionId,
         workspaceId: workspace.id,
         workspacePath: workspace.path,
@@ -572,6 +587,7 @@ export class SessionPermissionRequestService {
       })
       ?? (this.resolveActiveClaudeSession
         ? await this.resolveActiveClaudeSession({
+            provider,
             providerSessionId,
             workspaceId: workspace.id,
             workspacePath: workspace.path,
@@ -604,6 +620,7 @@ export class SessionPermissionRequestService {
 
     const now = nowIso();
     const normalized = normalizeClaudePreToolUseRequest({
+      provider,
       sessionId: binding.sessionId,
       providerSessionId,
       payload,
@@ -1170,6 +1187,7 @@ export class SessionPermissionRequestService {
   }
 
   private resolveClaudeWorkspaceSessionFallback(input: {
+    provider: ClaudeCompatibleProviderId;
     providerSessionId: string;
     workspaceId: string;
     workspacePath: string;
@@ -1185,7 +1203,7 @@ export class SessionPermissionRequestService {
       .listWorkspaceSessions(input.workspaceId, userId)
       .filter(
         (session) =>
-          session.provider === "claude-code"
+          session.provider === input.provider
       );
 
     const preferredSession =
@@ -1206,10 +1224,15 @@ export class SessionPermissionRequestService {
     const rawStoreRef =
       input.transcriptPath ??
       preferredSession.rawStoreRef ??
-      buildClaudeRawStoreRef(this.config.claudeCodeHomeDir, input.workspacePath, input.providerSessionId);
+      buildClaudeCompatibleRawStoreRef(
+        this.config,
+        input.provider,
+        input.workspacePath,
+        input.providerSessionId
+      );
 
     this.sessionHistoryService.persistSessionBinding(preferredSession.sessionId, input.workspaceId, {
-      provider: "claude-code",
+      provider: input.provider,
       providerSessionId: input.providerSessionId,
       rawStoreRef
     });
@@ -1221,6 +1244,7 @@ export class SessionPermissionRequestService {
   }
 
   private async resolveClaudeBinding(
+    provider: ClaudeCompatibleProviderId,
     providerSessionId: string,
     workspaceId: string,
     workspacePath: string,
@@ -1228,11 +1252,11 @@ export class SessionPermissionRequestService {
   ): Promise<{ sessionId: string; rawStoreRef: string }> {
     const rawStoreRef =
       transcriptPath ??
-      this.sessionBindingRepository.findByProviderSession("claude-code", providerSessionId)?.rawStoreRef ??
-      buildClaudeRawStoreRef(this.config.claudeCodeHomeDir, workspacePath, providerSessionId);
+      this.sessionBindingRepository.findByProviderSession(provider, providerSessionId)?.rawStoreRef ??
+      buildClaudeCompatibleRawStoreRef(this.config, provider, workspacePath, providerSessionId);
     const existing =
-      this.sessionBindingRepository.findByProviderSession("claude-code", providerSessionId) ??
-      this.sessionBindingRepository.findByRawStoreRef("claude-code", rawStoreRef);
+      this.sessionBindingRepository.findByProviderSession(provider, providerSessionId) ??
+      this.sessionBindingRepository.findByRawStoreRef(provider, rawStoreRef);
 
     if (existing) {
       return {
@@ -1253,14 +1277,14 @@ export class SessionPermissionRequestService {
     }
 
     const refreshed =
-      this.sessionBindingRepository.findByProviderSession("claude-code", providerSessionId) ??
-      this.sessionBindingRepository.findByRawStoreRef("claude-code", rawStoreRef);
+      this.sessionBindingRepository.findByProviderSession(provider, providerSessionId) ??
+      this.sessionBindingRepository.findByRawStoreRef(provider, rawStoreRef);
 
     if (!refreshed) {
       throw new AppError({
         statusCode: 404,
         errorCode: "CLAUDE_SESSION_NOT_FOUND",
-        detail: "没有找到对应的 Claude 会话绑定"
+        detail: "没有找到对应的兼容 CLI 会话绑定"
       });
     }
 
@@ -1469,6 +1493,7 @@ export class SessionPermissionRequestService {
 }
 
 export function normalizeClaudePreToolUseRequest(input: {
+  provider: ClaudeCompatibleProviderId;
   sessionId: string;
   providerSessionId: string;
   payload: ClaudeHookPermissionPayload;
@@ -1486,7 +1511,7 @@ export function normalizeClaudePreToolUseRequest(input: {
   return {
     id: `permission-${createId()}`,
     sessionId: input.sessionId,
-    provider: "claude-code",
+    provider: input.provider,
     providerSessionId: input.providerSessionId,
     requestKey,
     kind: normalized.kind,
@@ -2727,16 +2752,4 @@ async function waitForDelay(delayMs: number, signal: AbortSignal): Promise<void>
 
     signal.addEventListener("abort", onAbort, { once: true });
   });
-}
-
-function buildClaudeRawStoreRef(homeDir: string, workspacePath: string, sessionId: string): string {
-  return join(homeDir, "projects", workspaceSlug(workspacePath), `${sessionId}.jsonl`);
-}
-
-function workspaceSlug(workspacePath: string): string {
-  return workspacePath
-    .replace(/:/g, "")
-    .replace(/[\\/]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .replace(/[^A-Za-z0-9._-]/g, "-");
 }

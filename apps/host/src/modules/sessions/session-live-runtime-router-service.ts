@@ -83,19 +83,28 @@ export class SessionLiveRuntimeRouterService implements SessionRuntimeRouterServ
     queueItemId
   ) => this.resolveServiceForSession(sessionId).steerQueuedMessage(sessionId, userId, queueItemId);
 
-  readonly getClaudeHookBridgeConfig: SessionLiveRuntimeService["getClaudeHookBridgeConfig"] = () =>
-    this.primaryService.getClaudeHookBridgeConfig();
+  readonly getClaudeHookBridgeConfig: SessionLiveRuntimeService["getClaudeHookBridgeConfig"] = (provider) =>
+    this.primaryService.getClaudeHookBridgeConfig(provider);
 
-  readonly ingestClaudeHookEvent: SessionLiveRuntimeService["ingestClaudeHookEvent"] = async (payload) => {
+  readonly ingestClaudeHookEvent: SessionLiveRuntimeService["ingestClaudeHookEvent"] = async (
+    providerOrPayload,
+    payload
+  ) => {
+    const provider = typeof providerOrPayload === "string" ? providerOrPayload : null;
+
     for (const service of this.services) {
-      const result = await service.ingestClaudeHookEvent(payload);
+      const result = provider
+        ? await service.ingestClaudeHookEvent(provider, payload)
+        : await service.ingestClaudeHookEvent(providerOrPayload);
 
       if (!result.ignored || result.sessionId) {
         return result;
       }
     }
 
-    return this.primaryService.ingestClaudeHookEvent(payload);
+    return provider
+      ? this.primaryService.ingestClaudeHookEvent(provider, payload)
+      : this.primaryService.ingestClaudeHookEvent(providerOrPayload);
   };
 
   readonly resolveLiveActivityObservation: SessionLiveRuntimeService["resolveLiveActivityObservation"] = (sessionId) =>

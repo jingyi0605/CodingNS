@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 
@@ -11,6 +11,7 @@ import {
   GeminiRuntimeAdapter,
   type InRunInputMode,
   KimiRuntimeAdapter,
+  LegnaRuntimeAdapter,
   type NormalizedMessageAttachment,
   OpenCodeRuntimeAdapter,
   ProviderRuntimeService,
@@ -72,6 +73,14 @@ import type {
   SessionHistoryMessageWithOrigin,
   SessionHistoryService
 } from "./session-history-service.js";
+import {
+  buildClaudeCompatibleHookBridgeUrl,
+  buildClaudeCompatibleRawStoreRef,
+  buildClaudeCompatibleSessionTitle,
+  findClaudeCompatibleSessionFile,
+  isClaudeCompatibleProvider,
+  type ClaudeCompatibleProviderId
+} from "./claude-compatible-provider-registry.js";
 import { ClaudeRuntimeHelperAdapter } from "./claude-runtime-helper-client.js";
 import { CodexAppServerHelperClient } from "./codex-app-server-helper-client.js";
 import { SessionProviderConfigService } from "./session-provider-config-service.js";
@@ -265,7 +274,7 @@ const EXTERNAL_RUNTIME_INTERRUPT_SUPPRESSION_MS = 30_000;
 const EXTERNAL_RUNTIME_SNAPSHOT_MAX_AGE_MS = 90_000;
 
 interface ClaudeHookBridgeConfig {
-  provider: "claude-code";
+  provider: ClaudeCompatibleProviderId;
   bridgeUrl: string;
   token: string;
   scriptPath: string;
@@ -290,7 +299,7 @@ interface ClaudeHookEventPayload {
 
 interface ExternalRuntimeSnapshot {
   sessionId: string;
-  provider: "claude-code";
+  provider: ClaudeCompatibleProviderId;
   providerSessionId: string;
   rawStoreRef: string;
   runningState: ExternalRuntimeStatus;
@@ -745,22 +754,32 @@ export class SessionLiveRuntimeService {
     };
   }
 
-  getClaudeHookBridgeConfig(): ClaudeHookBridgeConfig {
-    return buildClaudeHookBridgeConfig(this.config);
+  getClaudeHookBridgeConfig(provider: ClaudeCompatibleProviderId = "claude-code"): ClaudeHookBridgeConfig {
+    return buildClaudeHookBridgeConfig(this.config, provider);
   }
 
-  async ingestClaudeHookEvent(payload: ClaudeHookEventPayload): Promise<{
+  async ingestClaudeHookEvent(
+    providerOrPayload: ClaudeCompatibleProviderId | ClaudeHookEventPayload,
+    payload?: ClaudeHookEventPayload
+  ): Promise<{
     accepted: boolean;
     ignored: boolean;
     sessionId: string | null;
     bridgeResponse: Record<string, unknown> | null;
   }> {
-    const hookEventName = normalizeClaudeHookEventName(payload.hook_event_name);
+    const provider = isClaudeCompatibleProvider(providerOrPayload)
+      ? providerOrPayload
+      : "claude-code";
+    const resolvedPayload = isClaudeCompatibleProvider(providerOrPayload)
+      ? (payload ?? {})
+      : providerOrPayload;
+    const hookEventName = normalizeClaudeHookEventName(resolvedPayload.hook_event_name);
     logPermissionDebug("claude_hook_event.ingest.begin", {
+      provider,
       hookEventName,
-      sessionId: payload.session_id ?? null,
-      cwd: payload.cwd ?? null,
-      transcriptPath: payload.transcript_path ?? null
+      sessionId: resolvedPayload.session_id ?? null,
+      cwd: resolvedPayload.cwd ?? null,
+      transcriptPath: resolvedPayload.transcript_path ?? null
     });
 
     if (!hookEventName) {
@@ -789,7 +808,7 @@ export class SessionLiveRuntimeService {
         hookEventName,
         route: "handleClaudePreToolUse"
       });
-      return this.sessionPermissionRequestService.handleClaudePreToolUse(payload);
+      return this.sessionPermissionRequestService.handleClaudePreToolUse(resolvedPayload, provider);
     }
 
     if (hookEventName === "PermissionRequest") {
@@ -797,18 +816,18 @@ export class SessionLiveRuntimeService {
         hookEventName,
         route: "handleClaudePermissionRequest"
       });
-      return this.sessionPermissionRequestService.handleClaudePermissionRequest(payload);
+      return this.sessionPermissionRequestService.handleClaudePermissionRequest(resolvedPayload, provider);
     }
 
-    const providerSessionId = normalizeRequiredText(payload.session_id, "session_id");
-    const workspacePath = normalizeRequiredText(payload.cwd, "cwd");
+    const providerSessionId = normalizeRequiredText(resolvedPayload.session_id, "session_id");
+    const workspacePath = normalizeRequiredText(resolvedPayload.cwd, "cwd");
     const workspace = this.workspaceService.findWorkspaceByPath(workspacePath);
 
     if (!workspace) {
       logPermissionDebug("claude_hook_event.workspace_not_found", {
         hookEventName,
-        sessionId: payload.session_id ?? null,
-        cwd: payload.cwd ?? null
+        sessionId: resolvedPayload.session_id ?? null,
+        cwd: resolvedPayload.cwd ?? null
       });
       return {
         accepted: true,
@@ -819,14 +838,15 @@ export class SessionLiveRuntimeService {
     }
 
     const binding = await this.resolveClaudeExternalBinding({
+      provider,
       providerSessionId,
       workspaceId: workspace.id,
       workspacePath: workspace.path,
-      transcriptPath: normalizeOptionalText(payload.transcript_path)
+      transcriptPath: normalizeOptionalText(resolvedPayload.transcript_path)
     });
 
     const timestamp = nowIso();
-    const runtimeUpdate = mapClaudeHookToRuntimeUpdate(hookEventName, payload, timestamp);
+    const runtimeUpdate = mapClaudeHookToRuntimeUpdate(hookEventName, resolvedPayload, timestamp);
     logPermissionDebug("claude_hook_event.runtime_update", {
       hookEventName,
       sessionId: binding.sessionId,
@@ -855,6 +875,7 @@ export class SessionLiveRuntimeService {
     }
 
     await this.applyExternalRuntimeUpdate({
+      provider,
       sessionId: binding.sessionId,
       workspaceId: workspace.id,
       providerSessionId,
@@ -926,7 +947,7 @@ export class SessionLiveRuntimeService {
     if (externalRuntimeSnapshot) {
       return {
         sessionId,
-        provider: "claude-code",
+        provider: externalRuntimeSnapshot.provider,
         providerSessionId: externalRuntimeSnapshot.providerSessionId,
         runningState: resolution.runningState,
         hasActiveRun: externalHasActiveRun,
@@ -1450,6 +1471,7 @@ export class SessionLiveRuntimeService {
   }
 
   private async resolveClaudeExternalBinding(input: {
+    provider: ClaudeCompatibleProviderId;
     providerSessionId: string;
     workspaceId: string;
     workspacePath: string;
@@ -1460,11 +1482,21 @@ export class SessionLiveRuntimeService {
   }> {
     const rawStoreRef =
       input.transcriptPath ??
-      findClaudeSessionFile(this.config.claudeCodeHomeDir, input.providerSessionId) ??
-      buildClaudeRawStoreRef(this.config.claudeCodeHomeDir, input.workspacePath, input.providerSessionId);
+      findClaudeCompatibleSessionFile(
+        this.config,
+        input.provider,
+        input.workspacePath,
+        input.providerSessionId
+      ) ??
+      buildClaudeCompatibleRawStoreRef(
+        this.config,
+        input.provider,
+        input.workspacePath,
+        input.providerSessionId
+      );
     let binding =
-      this.sessionBindingRepository.findByProviderSession("claude-code", input.providerSessionId) ??
-      this.sessionBindingRepository.findByRawStoreRef("claude-code", rawStoreRef);
+      this.sessionBindingRepository.findByProviderSession(input.provider, input.providerSessionId) ??
+      this.sessionBindingRepository.findByRawStoreRef(input.provider, rawStoreRef);
 
     if (!binding) {
       const userIds = this.authUserRepository.listIds();
@@ -1480,8 +1512,8 @@ export class SessionLiveRuntimeService {
       }
 
       binding =
-        this.sessionBindingRepository.findByProviderSession("claude-code", input.providerSessionId) ??
-        this.sessionBindingRepository.findByRawStoreRef("claude-code", rawStoreRef);
+        this.sessionBindingRepository.findByProviderSession(input.provider, input.providerSessionId) ??
+        this.sessionBindingRepository.findByRawStoreRef(input.provider, rawStoreRef);
     }
 
     if (binding) {
@@ -1495,19 +1527,19 @@ export class SessionLiveRuntimeService {
     const timestamp = nowIso();
 
     this.sessionHistoryService.persistSessionBinding(sessionId, input.workspaceId, {
-      provider: "claude-code",
+      provider: input.provider,
       providerSessionId: input.providerSessionId,
       rawStoreRef
     });
     this.sessionIndexRepository.upsert({
       sessionId,
       workspaceId: input.workspaceId,
-      provider: "claude-code",
+      provider: input.provider,
       parentSessionId: null,
       sessionKind: "default",
       isSubagent: false,
       subagentLabel: null,
-      title: `Claude 会话 ${input.providerSessionId.slice(0, 8)}`,
+      title: buildClaudeCompatibleSessionTitle(input.provider, input.providerSessionId),
       messageCount: 0,
       isArchived: false,
       lastMessageAt: null,
@@ -1530,6 +1562,7 @@ export class SessionLiveRuntimeService {
   }
 
   private async applyExternalRuntimeUpdate(input: {
+    provider: ClaudeCompatibleProviderId;
     sessionId: string;
     workspaceId: string;
     providerSessionId: string;
@@ -1611,7 +1644,7 @@ export class SessionLiveRuntimeService {
     if (input.runningState === "running") {
       this.externalRuntimeSnapshots.set(input.sessionId, {
         sessionId: input.sessionId,
-        provider: "claude-code",
+        provider: input.provider,
         providerSessionId: input.providerSessionId,
         rawStoreRef: input.rawStoreRef,
         runningState: input.runningState,
@@ -1669,7 +1702,7 @@ export class SessionLiveRuntimeService {
     this.runtimeHistoryFallbackSentSessions.delete(request.sessionId);
     this.clearExternalRuntimeInterruptSuppression(request.sessionId);
 
-    if (request.provider === "claude-code") {
+    if (isClaudeCompatibleProvider(request.provider)) {
       this.clearExternalRuntimeSnapshot(request.sessionId);
     }
 
@@ -1725,7 +1758,7 @@ export class SessionLiveRuntimeService {
       const externalRuntimeSnapshot = this.getFreshExternalRuntimeSnapshot(runtimeSessionId);
       const hasActiveRun = Boolean(activeRun && isActiveRuntimeState(activeRun.runningState));
 
-      if (hasActiveRun && activeRun?.provider === "claude-code") {
+      if (hasActiveRun && isClaudeCompatibleProvider(activeRun?.provider)) {
         this.clearExternalRuntimeSnapshot(runtimeSessionId);
       }
 
@@ -1733,7 +1766,7 @@ export class SessionLiveRuntimeService {
         hasActiveRun
         || (
           !activeRun &&
-          session.provider === "claude-code" &&
+          isClaudeCompatibleProvider(session.provider) &&
           externalRuntimeSnapshot &&
           isActiveRuntimeState(externalRuntimeSnapshot.runningState)
         )
@@ -1746,7 +1779,7 @@ export class SessionLiveRuntimeService {
 
       if (
         !activeRun &&
-        session.provider === "claude-code" &&
+        isClaudeCompatibleProvider(session.provider) &&
         externalRuntimeSnapshot &&
         isActiveRuntimeState(externalRuntimeSnapshot.runningState)
       ) {
@@ -2040,7 +2073,7 @@ export class SessionLiveRuntimeService {
       return true;
     }
 
-    if (session.provider === "claude-code" && isPendingSessionRunningState(session.runningState)) {
+    if (isClaudeCompatibleProvider(session.provider) && isPendingSessionRunningState(session.runningState)) {
       return true;
     }
 
@@ -2081,7 +2114,7 @@ export class SessionLiveRuntimeService {
     const session = this.sessionHistoryService.getSession(sessionId, userId);
 
     if (
-      session.provider !== "claude-code"
+      !isClaudeCompatibleProvider(session.provider)
       || !isPendingSessionRunningState(session.runningState)
     ) {
       return session;
@@ -3114,7 +3147,7 @@ export class SessionLiveRuntimeService {
     sessionId: string,
     event: RuntimeEvent
   ): Promise<void> {
-    if (event.provider !== "claude-code") {
+    if (!isClaudeCompatibleProvider(event.provider)) {
       return;
     }
 
@@ -3173,7 +3206,7 @@ export class SessionLiveRuntimeService {
 
     return Boolean(
       runtimeSnapshot &&
-      runtimeSnapshot.provider === "claude-code" &&
+      isClaudeCompatibleProvider(runtimeSnapshot.provider) &&
       isActiveRuntimeState(runtimeSnapshot.runningState)
     );
   }
@@ -3230,6 +3263,7 @@ export class SessionLiveRuntimeService {
   }
 
   private async resolveActiveClaudePermissionSession(input: {
+    provider: ClaudeCompatibleProviderId;
     providerSessionId: string;
     workspaceId: string;
     workspacePath: string;
@@ -3239,7 +3273,7 @@ export class SessionLiveRuntimeService {
       .listSnapshots()
       .filter(
         (snapshot) =>
-          snapshot.provider === "claude-code" &&
+          snapshot.provider === input.provider &&
           snapshot.workspaceId === input.workspaceId &&
           isActiveRuntimeState(snapshot.runningState)
       );
@@ -3257,10 +3291,15 @@ export class SessionLiveRuntimeService {
     const rawStoreRef =
       input.transcriptPath ??
       activeSnapshot.rawStoreRef ??
-      buildClaudeRawStoreRef(this.config.claudeCodeHomeDir, input.workspacePath, input.providerSessionId);
+      buildClaudeCompatibleRawStoreRef(
+        this.config,
+        input.provider,
+        input.workspacePath,
+        input.providerSessionId
+      );
 
     this.sessionHistoryService.persistSessionBinding(activeSnapshot.sessionId, input.workspaceId, {
-      provider: "claude-code",
+      provider: input.provider,
       providerSessionId: input.providerSessionId,
       rawStoreRef
     });
@@ -3729,7 +3768,8 @@ function createProviderRuntimeAdapters(
   adapters: ProviderRuntimeAdapter[];
   disposables: Array<{ dispose(): void }>;
 } {
-  const claudeHookBridgeConfig = buildClaudeHookBridgeConfig(config);
+  const claudeHookBridgeConfig = buildClaudeHookBridgeConfig(config, "claude-code");
+  const legnaHookBridgeConfig = buildClaudeHookBridgeConfig(config, "legna-code");
   const claudeAdapter =
     process.env.VITEST
       ? new ClaudeRuntimeAdapter({
@@ -3757,6 +3797,16 @@ function createProviderRuntimeAdapters(
   return {
     adapters: [
       claudeAdapter,
+      new LegnaRuntimeAdapter({
+        homeDir: config.legnaCodeHomeDir,
+        commandPath: config.legnaCodeCliPath,
+        legacyClaudeHomeDir: config.claudeCodeHomeDir,
+        hookBridge: {
+          url: legnaHookBridgeConfig.bridgeUrl,
+          token: config.claudeHookBridgeToken,
+          scriptPath: legnaHookBridgeConfig.scriptPath
+        }
+      }),
       new CodexRuntimeAdapter({
         homeDir: config.codexHomeDir,
         commandPath: config.codexCliPath,
@@ -3808,24 +3858,34 @@ function resolveRuntimeInstructionFilePath(
     return existsSync(resolvedExplicit) ? resolvedExplicit : null;
   }
 
-  if (provider !== "claude-code") {
+  const defaultInstructionFileNames: Readonly<Partial<Record<string, string>>> = {
+    "claude-code": "CLAUDE.md",
+    "legna-code": "LEGNA.md"
+  };
+  const defaultInstructionFileName = defaultInstructionFileNames[provider];
+  const defaultInstructionPath = defaultInstructionFileName
+    ? path.join(workspacePath, defaultInstructionFileName)
+    : null;
+
+  if (!defaultInstructionPath) {
     return null;
   }
 
-  const defaultClaudeInstructionPath = path.join(workspacePath, "CLAUDE.md");
-
-  return existsSync(defaultClaudeInstructionPath)
-    ? path.resolve(defaultClaudeInstructionPath)
+  return existsSync(defaultInstructionPath)
+    ? path.resolve(defaultInstructionPath)
     : null;
 }
 
-function buildClaudeHookBridgeConfig(config: HostConfig): ClaudeHookBridgeConfig {
-  const bridgeUrl = `http://127.0.0.1:${config.port}/api/providers/claude-code/hook-bridge/events`;
+function buildClaudeHookBridgeConfig(
+  config: HostConfig,
+  provider: ClaudeCompatibleProviderId
+): ClaudeHookBridgeConfig {
+  const bridgeUrl = buildClaudeCompatibleHookBridgeUrl(config, provider);
   const scriptPath = resolveClaudeHookBridgeScriptPath();
   const command = `node "${scriptPath}" --url "${bridgeUrl}" --token "${config.claudeHookBridgeToken}"`;
 
   return {
-    provider: "claude-code",
+    provider,
     bridgeUrl,
     token: config.claudeHookBridgeToken,
     scriptPath,
@@ -3857,35 +3917,6 @@ function resolveClaudeHookBridgeScriptPath(): string {
   }
 
   return candidates[0]!;
-}
-
-function buildClaudeRawStoreRef(homeDir: string, workspacePath: string, sessionId: string): string {
-  return path.join(homeDir, "projects", workspaceSlug(workspacePath), `${sessionId}.jsonl`);
-}
-
-function findClaudeSessionFile(homeDir: string, sessionId: string): string | null {
-  const projectsDir = path.join(homeDir, "projects");
-
-  if (!existsSync(projectsDir)) {
-    return null;
-  }
-
-  const candidates = readdirSync(projectsDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => path.join(projectsDir, entry.name, `${sessionId}.jsonl`))
-    .filter((candidate) => existsSync(candidate));
-
-  return candidates[0] ?? null;
-}
-
-function workspaceSlug(workspacePath: string): string {
-  const trimmed = workspacePath.replace(/[\\/]+$/, "");
-  const normalizedDriveLetter = trimmed.replace(/^[A-Z](?=:)/, (value) => value.toLowerCase());
-
-  return normalizedDriveLetter
-    .replaceAll(":", "-")
-    .replaceAll("\\", "-")
-    .replaceAll("/", "-");
 }
 
 function normalizeOptionalBindingValue(value: string | null | undefined): string | null {
