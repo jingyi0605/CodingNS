@@ -30793,3 +30793,21 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
     animation: none;
   }
 }
+.workbench-archive-search-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.workbench-archive-search-status {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.workbench-archive-item-summary {
+  margin-top: 6px;
+  line-height: 1.6;
+}
+

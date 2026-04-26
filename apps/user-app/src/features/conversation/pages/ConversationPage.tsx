@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -13,6 +14,7 @@ import { DesktopModal } from "../../../components/DesktopModal";
 import {
   ModalActions,
   ModalEmptyState,
+  ModalField,
   ModalList,
   ModalListItem
 } from "../../../components/ModalAtoms";
@@ -43,6 +45,7 @@ import { QueuedMessageList } from "../components/QueuedMessageList";
 import { SessionBranchTreePanel } from "../components/SessionBranchTreePanel";
 import { SessionHeader } from "../components/SessionHeader";
 import { SessionButlerActionButton } from "../components/SessionButlerActionButton";
+import { useArchiveSessionSearch } from "../components/useArchiveSessionSearch";
 import {
   BranchTreeActionIcon
 } from "../components/ConversationActionIcons";
@@ -2704,6 +2707,22 @@ function ConversationArchiveFolderModal({
   onClose: () => void;
   onRestore: (sessionId: string) => void | Promise<void>;
 }) {
+  const {
+    searchOpen,
+    searchKeyword,
+    filteredSessions,
+    summaryLoading,
+    summaryError,
+    summaryBySessionId,
+    setSearchKeyword,
+    toggleSearch
+  } = useArchiveSessionSearch(open, sessions);
+  const archiveSearchInputId = useId();
+  const emptyTitle =
+    sessions.length > 0 && searchKeyword.trim().length > 0
+      ? t("shell.archiveSearchEmpty")
+      : t("shell.archiveEmpty");
+
   return (
     <DesktopModal
       open={open}
@@ -2716,13 +2735,44 @@ function ConversationArchiveFolderModal({
       size="regular"
       layout="list"
       dismissible={!restoringSessionId}
+      headerActions={sessions.length > 0 ? (
+        <button
+          type="button"
+          className="secondary-button"
+          aria-pressed={searchOpen}
+          onClick={toggleSearch}
+        >
+          {t("shell.archiveSearchAction")}
+        </button>
+      ) : undefined}
       showCloseButton={false}
       onClose={onClose}
     >
-      {sessions.length > 0 ? (
+      {searchOpen ? (
+        <div className="workbench-archive-search-panel">
+          <ModalField label={t("shell.archiveSearchLabel")} htmlFor={archiveSearchInputId}>
+            <input
+              id={archiveSearchInputId}
+              type="text"
+              value={searchKeyword}
+              placeholder={t("shell.archiveSearchPlaceholder")}
+              autoFocus
+              onChange={(event) => setSearchKeyword(event.target.value)}
+            />
+          </ModalField>
+          {summaryLoading ? (
+            <p className="workbench-archive-search-status">{t("shell.archiveSearchSummaryLoading")}</p>
+          ) : null}
+          {summaryError ? (
+            <p className="workbench-archive-search-status status-text" data-tone="warning">{summaryError}</p>
+          ) : null}
+        </div>
+      ) : null}
+      {filteredSessions.length > 0 ? (
         <ModalList className="workbench-archive-list">
-          {sessions.map((session) => {
+          {filteredSessions.map((session) => {
             const titlePresentation = buildSessionTitlePresentation(session.title, t("common.unknown"));
+            const archiveSummary = summaryBySessionId[session.sessionId]?.trim() ?? "";
 
             return (
               <ModalListItem
@@ -2744,6 +2794,9 @@ function ConversationArchiveFolderModal({
                 <div className="workbench-archive-item-main">
                   <strong title={titlePresentation.fullTitle}>{titlePresentation.displayTitle}</strong>
                   <p>{formatMobilePreviewMeta(session)}</p>
+                  {searchOpen && archiveSummary ? (
+                    <p className="workbench-archive-item-summary">{archiveSummary}</p>
+                  ) : null}
                 </div>
               </ModalListItem>
             );
@@ -2751,7 +2804,7 @@ function ConversationArchiveFolderModal({
         </ModalList>
       ) : (
         <ModalEmptyState
-          title={t("shell.archiveEmpty")}
+          title={emptyTitle}
           compact
           className="workbench-section-empty"
         />

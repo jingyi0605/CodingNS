@@ -840,7 +840,7 @@ describe("WorkbenchLayout", () => {
       expect(screen.queryAllByText("会话 Beta")).toHaveLength(0);
     });
 
-    const archiveFolders = screen.getAllByRole("button", { name: /归档会话/ });
+    const archiveFolders = screen.getAllByRole("button", { name: t("shell.archiveFolderLabel") });
     await userEvent.click(archiveFolders[0]!);
 
     expect(await screen.findByRole("dialog", { name: t("shell.archiveModalTitle") })).toBeInTheDocument();
@@ -2309,7 +2309,7 @@ describe("WorkbenchLayout", () => {
 
     renderWorkbenchRoute("/workspaces/workspace-1/sessions/archived-root");
 
-    const archiveFolder = await screen.findByRole("button", { name: /归档会话/ });
+    const archiveFolder = await screen.findByRole("button", { name: t("shell.archiveFolderLabel") });
     await userEvent.click(archiveFolder);
 
     const archiveDialog = await screen.findByRole("dialog", { name: t("shell.archiveModalTitle") });

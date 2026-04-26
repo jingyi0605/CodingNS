@@ -6,6 +6,7 @@ import {
   useDeferredValue,
   type Dispatch,
   useEffect,
+  useId,
   useLayoutEffect,
   lazy,
   useMemo,
@@ -22,6 +23,12 @@ import {
 import { createPortal } from "react-dom";
 import { Outlet, matchPath, useLocation, useNavigate } from "react-router-dom";
 
+import {
+  ModalEmptyState,
+  ModalField,
+  ModalList,
+  ModalListItem
+} from "../../../components/ModalAtoms";
 import {
   MobileWorkbenchShell,
   type MobileWorkbenchEntry
@@ -200,6 +207,7 @@ import { WorkspaceInboxPanel } from "./WorkspaceInboxModal";
 import { WorkspaceImportBrowserModal } from "./WorkspaceImportBrowserModal";
 import { WorkbenchUpdateBadge } from "./WorkbenchUpdateBadge";
 import { ParallelSessionCreateModal, type ParallelSessionCreateSource } from "./ParallelSessionCreateModal";
+import { useArchiveSessionSearch } from "./useArchiveSessionSearch";
 import { useTransientScrollbarVisibility } from "./useTransientScrollbarVisibility";
 
 const LEFT_PANEL_WIDTH_KEY = "workbench.left.width";
@@ -3683,6 +3691,18 @@ function SidebarContent({
   const archiveWorkspaceGroup = findSidebarArchiveTarget(workspaceGroups, archiveWorkspaceId);
   const archiveWorkspaceContext =
     archiveWorkspaceGroup ? getWorkspaceContext(archiveWorkspaceGroup.workspace) : null;
+  const archiveSessions = archiveWorkspaceGroup?.archivedSessions ?? [];
+  const {
+    searchOpen: archiveSearchOpen,
+    searchKeyword: archiveSearchKeyword,
+    filteredSessions: filteredArchiveSessions,
+    summaryLoading: archiveSummaryLoading,
+    summaryError: archiveSummaryError,
+    summaryBySessionId: archiveSummaryBySessionId,
+    setSearchKeyword: setArchiveSearchKeyword,
+    toggleSearch: toggleArchiveSearch
+  } = useArchiveSessionSearch(archiveWorkspaceGroup !== null, archiveSessions);
+  const archiveSearchInputId = useId();
   const activeBatchWorkspaceTarget = useMemo(
     () => findSidebarBatchTarget(workspaceGroups, batchWorkspaceId),
     [batchWorkspaceId, workspaceGroups]
@@ -6702,23 +6722,63 @@ function SidebarContent({
             ? `${archiveWorkspaceGroup.workspace.name} · ${t("shell.archiveModalDescription")}`
             : t("shell.archiveModalDescription")
         }
+        headerActions={archiveSessions.length > 0 ? (
+          <button
+            type="button"
+            className="secondary-button"
+            aria-pressed={archiveSearchOpen}
+            onClick={toggleArchiveSearch}
+          >
+            {t("shell.archiveSearchAction")}
+          </button>
+        ) : undefined}
         onClose={() => setArchiveWorkspaceId(null)}
       >
-        {archiveWorkspaceGroup && archiveWorkspaceGroup.archivedSessions.length > 0 ? (
-          <div
+        {archiveSearchOpen ? (
+          <div className="workbench-archive-search-panel">
+            <ModalField label={t("shell.archiveSearchLabel")} htmlFor={archiveSearchInputId}>
+              <input
+                id={archiveSearchInputId}
+                type="text"
+                value={archiveSearchKeyword}
+                placeholder={t("shell.archiveSearchPlaceholder")}
+                autoFocus
+                onChange={(event) => setArchiveSearchKeyword(event.target.value)}
+              />
+            </ModalField>
+            {archiveSummaryLoading ? (
+              <p className="workbench-archive-search-status">{t("shell.archiveSearchSummaryLoading")}</p>
+            ) : null}
+            {archiveSummaryError ? (
+              <p className="workbench-archive-search-status status-text" data-tone="warning">{archiveSummaryError}</p>
+            ) : null}
+          </div>
+        ) : null}
+        {archiveWorkspaceGroup && filteredArchiveSessions.length > 0 ? (
+          <ModalList
             className="workbench-archive-list"
             data-workspace-tone={archiveWorkspaceContext?.tone ?? "root"}
             style={createWorkspaceToneStyle(archiveWorkspaceContext)}
           >
-            {archiveWorkspaceGroup.archivedSessions.map((session) => {
+            {filteredArchiveSessions.map((session) => {
               const titlePresentation = buildSessionTitlePresentation(session.title, t("common.unknown"));
+              const archiveSummary = archiveSummaryBySessionId[session.sessionId]?.trim() ?? "";
 
               return (
-                <article
+                <ModalListItem
                   key={session.sessionId}
                   className="workbench-archive-item"
                   data-workspace-tone={archiveWorkspaceContext?.tone ?? "root"}
                   style={createWorkspaceToneStyle(archiveWorkspaceContext)}
+                  trailing={(
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => handleUnarchive(session.sessionId)}
+                    >
+                      {t("shell.unarchiveAction")}
+                    </button>
+                  )}
                 >
                   <div className="workbench-archive-item-main">
                     <strong title={titlePresentation.fullTitle}>{titlePresentation.displayTitle}</strong>
@@ -6726,20 +6786,24 @@ function SidebarContent({
                       {buildSessionMeta(session, archiveWorkspaceGroup.workspace, false)} ·{" "}
                       {formatProviderLabel(session.provider)}
                     </p>
+                    {archiveSearchOpen && archiveSummary ? (
+                      <p className="workbench-archive-item-summary">{archiveSummary}</p>
+                    ) : null}
                   </div>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => handleUnarchive(session.sessionId)}
-                  >
-                    {t("shell.unarchiveAction")}
-                  </button>
-                </article>
+                </ModalListItem>
               );
             })}
-          </div>
+          </ModalList>
         ) : (
-          <p className="workbench-section-empty">{t("shell.archiveEmpty")}</p>
+          <ModalEmptyState
+            title={
+              archiveSessions.length > 0 && archiveSearchKeyword.trim().length > 0
+                ? t("shell.archiveSearchEmpty")
+                : t("shell.archiveEmpty")
+            }
+            compact
+            className="workbench-section-empty"
+          />
         )}
       </SidebarModal>
 

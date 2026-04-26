@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -6,6 +7,7 @@ import { t } from "../../../shared/i18n";
 import { ConversationPage } from "./ConversationPage";
 
 const mockGetProviderCapabilities = vi.fn();
+const mockGetSessionMessages = vi.fn();
 const mockStartLiveSession = vi.fn();
 const mockUseWorkbenchShell = vi.fn();
 const mockRuntimeStoreInitialize = vi.fn();
@@ -78,6 +80,7 @@ vi.mock("../api/conversation-api", async () => {
   return {
     ...actual,
     getProviderCapabilities: (...args: unknown[]) => mockGetProviderCapabilities(...args),
+    getSessionMessages: (...args: unknown[]) => mockGetSessionMessages(...args),
     startLiveSession: (...args: unknown[]) => mockStartLiveSession(...args)
   };
 });
@@ -260,6 +263,13 @@ describe("ConversationPage", () => {
     mockRuntimeStoreSendMessage.mockReset();
     mockRuntimeStoreSendMessage.mockResolvedValue(undefined);
     mockStartLiveSession.mockReset();
+    mockGetSessionMessages.mockReset();
+    mockGetSessionMessages.mockResolvedValue({
+      messages: [],
+      cursor: null,
+      nextCursor: null,
+      total: 0
+    });
     mockStartLiveSession.mockResolvedValue({
       sessionId: "session-live-1",
       provider: "codex",
@@ -831,6 +841,116 @@ describe("ConversationPage", () => {
 
     expect(await screen.findByText("历史会话 Alpha")).toBeInTheDocument();
     expect(screen.queryByText(t("shell.favoriteSectionTitle"))).not.toBeInTheDocument();
+  });
+
+  it("归档会话模态框支持按摘要搜索", async () => {
+    mockGetSessionMessages.mockImplementation(async (sessionId: string) => {
+      if (sessionId === "archived-1") {
+        return {
+          messages: [
+            {
+              messageId: "message-archived-1",
+              provider: "codex",
+              providerSessionId: "provider-session-archived-1",
+              role: "assistant",
+              content: "这里记录了支付登录问题的排查结论",
+              timestamp: "2026-03-27T08:00:00.000Z",
+              sequence: 1,
+              rawRef: "store://archived-1#1"
+            }
+          ],
+          cursor: null,
+          nextCursor: null,
+          total: 1
+        };
+      }
+
+      return {
+        messages: [
+          {
+            messageId: "message-archived-2",
+            provider: "codex",
+            providerSessionId: "provider-session-archived-2",
+            role: "assistant",
+            content: "这里是另一个问题的摘要",
+            timestamp: "2026-03-26T08:00:00.000Z",
+            sequence: 1,
+            rawRef: "store://archived-2#1"
+          }
+        ],
+        cursor: null,
+        nextCursor: null,
+        total: 1
+      };
+    });
+
+    const baseSession = createMobileWorkbenchShellValue().navigationGroups[0].sessions[0];
+
+    mockUseWorkbenchShell.mockReturnValue(
+      createMobileWorkbenchShellValue({
+        navigationGroups: [
+          {
+            workspace: {
+              id: "workspace-1",
+              name: "工作区一",
+              path: "/Users/jackson/workspace-1"
+            },
+            sessions: [
+              {
+                ...baseSession,
+                sessionId: "session-1",
+                title: "历史会话 Alpha",
+                isArchived: false
+              },
+              {
+                ...baseSession,
+                sessionId: "archived-1",
+                providerSessionId: "provider-session-archived-1",
+                rawStoreRef: "store://archived-1",
+                title: "归档会话一",
+                isArchived: true
+              },
+              {
+                ...baseSession,
+                sessionId: "archived-2",
+                providerSessionId: "provider-session-archived-2",
+                rawStoreRef: "store://archived-2",
+                title: "归档会话二",
+                isArchived: true
+              }
+            ]
+          }
+        ]
+      })
+    );
+
+    const view = renderLiveConversationPage();
+    const stage = view.container.querySelector(".mobile-conversation-stage") as HTMLElement;
+
+    fireEvent.touchStart(stage, {
+      touches: [{ clientX: 24, clientY: 180 }]
+    });
+    fireEvent.touchMove(stage, {
+      touches: [{ clientX: 140, clientY: 184 }]
+    });
+    fireEvent.touchEnd(stage, {
+      changedTouches: [{ clientX: 140, clientY: 184 }]
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.archiveFolderLabel") }));
+
+    const archiveDialog = await screen.findByRole("dialog", { name: t("shell.archiveModalTitle") });
+    await userEvent.click(within(archiveDialog).getByRole("button", { name: t("shell.archiveSearchAction") }));
+
+    await userEvent.type(
+      within(archiveDialog).getByRole("textbox", { name: t("shell.archiveSearchLabel") }),
+      "支付登录"
+    );
+
+    await waitFor(() => {
+      expect(within(archiveDialog).getByText("归档会话一")).toBeInTheDocument();
+      expect(within(archiveDialog).queryByText("归档会话二")).toBeNull();
+    });
   });
 
   it("旧文件入口带来的 toolPanel 参数会自动打开对应面板", async () => {
