@@ -865,6 +865,21 @@ export function ParallelSessionCreateModal({
                 providerCapabilitiesByProvider[draft.provider] ?? null,
                 draft.provider
               );
+              const legacyModelSelectOptions = legacyModelOptions.length > 0
+                ? [{
+                    value: "",
+                    label: legacyModelOptions.find((option) => option.usesProviderDefault === true)?.name
+                      ?? t("shell.parallelPaneModelFallback")
+                  }, ...legacyModelOptions
+                    .filter((option) => option.usesProviderDefault !== true)
+                    .map((option) => ({
+                      value: option.id,
+                      label: option.name
+                    }))]
+                : [{
+                    value: "",
+                    label: t("shell.parallelCreateNoModelsAvailable")
+                  }];
 
               return (
                 <article
@@ -994,46 +1009,27 @@ export function ParallelSessionCreateModal({
                           />
                         </div>
                       ) : (
-                        <select
-                          id={`${modalFieldIdPrefix}-member-${index}-model`}
-                          className="parallel-create-select"
+                        <MacSelect
+                          triggerId={`${modalFieldIdPrefix}-member-${index}-model`}
+                          className="parallel-create-provider-select"
+                          ariaLabel={t("shell.parallelCreateModelLabel")}
                           value={draft.model}
-                          disabled={!memberProviderOptions.length}
-                          onChange={(event) => {
+                          options={legacyModelSelectOptions}
+                          disabled={!memberProviderOptions.length || legacyModelOptions.length === 0}
+                          onChange={(value) => {
                             clearFeedbackForMember(index);
-                            const nextModel = event.target.value;
                             setMembers((current) =>
                               current.map((item, memberIndex) =>
                                 memberIndex === index
                                   ? {
                                       ...item,
-                                      model: nextModel
+                                      model: value
                                     }
                                   : item
                               )
                             );
                           }}
-                        >
-                          {legacyModelOptions.length > 0 ? (
-                            <>
-                              <option value="">
-                                {legacyModelOptions.find((option) => option.usesProviderDefault === true)?.name
-                                  ?? t("shell.parallelPaneModelFallback")}
-                              </option>
-                              {legacyModelOptions
-                                .filter((option) => option.usesProviderDefault !== true)
-                                .map((option) => (
-                                  <option key={option.id} value={option.id}>
-                                    {option.name}
-                                  </option>
-                                ))}
-                            </>
-                          ) : (
-                            <option value="">
-                              {t("shell.parallelCreateNoModelsAvailable")}
-                            </option>
-                          )}
-                        </select>
+                        />
                       )}
                     </ModalField>
                   </div>

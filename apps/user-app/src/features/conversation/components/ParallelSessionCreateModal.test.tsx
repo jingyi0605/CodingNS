@@ -249,12 +249,12 @@ describe("ParallelSessionCreateModal", () => {
       throw new Error("未找到成员 1 卡片");
     }
 
-    const modelSelect = within(memberOneCard).getByLabelText(
-      t("shell.parallelCreateModelLabel"),
-      { selector: "select" }
-    );
+    const modelSelect = within(memberOneCard).getByRole("button", {
+      name: t("shell.parallelCreateModelLabel")
+    });
+    await user.click(modelSelect);
 
-    expect(await within(modelSelect).findByRole("option", { name: "OpenCode Pro" })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "OpenCode Pro" })).toBeInTheDocument();
   });
 
   it("provider catalog 禁用某项时，即使 capability 还可用，也不会继续出现在并行创建入口", async () => {
