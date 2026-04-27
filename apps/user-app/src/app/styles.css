@@ -17988,6 +17988,19 @@ textarea:focus-visible {
   gap: 10px;
 }
 
+.workbench-archive-search-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.workbench-archive-search-status {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .workbench-archive-item {
   display: flex;
   align-items: center;
@@ -18020,6 +18033,11 @@ textarea:focus-visible {
   margin: 4px 0 0;
   color: var(--text-secondary);
   font-size: 12px;
+}
+
+.workbench-archive-item-summary {
+  margin-top: 6px;
+  line-height: 1.6;
 }
 
 .workbench-archive-item[data-workspace-tone="worktree"] .workbench-archive-item-main p {
@@ -30807,21 +30825,3 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
     animation: none;
   }
 }
-.workbench-archive-search-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.workbench-archive-search-status {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.workbench-archive-item-summary {
-  margin-top: 6px;
-  line-height: 1.6;
-}
-
