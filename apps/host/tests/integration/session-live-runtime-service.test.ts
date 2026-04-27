@@ -7,7 +7,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "../../src/shared/errors/app-error.js";
 import { SessionLiveRuntimeService } from "../../src/modules/sessions/session-live-runtime-service.js";
 
-function createService(configOverrides: Partial<ConstructorParameters<typeof SessionLiveRuntimeService>[11]> = {}) {
+function createService(
+  configOverrides: Partial<ConstructorParameters<typeof SessionLiveRuntimeService>[11]> = {},
+  openCliSessionPromptService: { buildPrompt: ReturnType<typeof vi.fn> } | null = null
+) {
   const sessionHistoryService = {
     getSession: vi.fn(),
     listWorkspaceSessions: vi.fn(() => []),
@@ -160,7 +163,9 @@ function createService(configOverrides: Partial<ConstructorParameters<typeof Ses
       serverUpdatePackageName: "@codingns/test",
       npmRegistryBaseUrl: "https://registry.npmjs.org",
       ...configOverrides
-    }
+    },
+    undefined,
+    openCliSessionPromptService as never
   );
 
   return {
@@ -185,8 +190,14 @@ describe("SessionLiveRuntimeService", () => {
   });
 
   it("sendLiveMessage 在 active run 存在时会优先走 submitToActiveRun", async () => {
+    const openCliSessionPromptService = {
+      buildPrompt: vi.fn(() => [
+        "## OpenCLI CLI技能",
+        "- 当前会话已经注入 CodingNS 管理的裁剪版 OpenCLI 运行时，可以直接在 shell 里使用 `opencli`。"
+      ].join("\n"))
+    };
     const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService, sessionBindingRepository } =
-      createService();
+      createService({}, openCliSessionPromptService);
     const providerRuntimeService = {
       isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => ({
@@ -274,6 +285,7 @@ describe("SessionLiveRuntimeService", () => {
         providerPrompt: null
       })
     );
+    expect(openCliSessionPromptService.buildPrompt).not.toHaveBeenCalled();
     expect(result.providerSessionId).toBe("claude-session-1");
     expect(result.message?.content).toBe("继续补充这轮任务的要求");
   });

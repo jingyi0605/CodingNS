@@ -1978,26 +1978,20 @@ export class SessionLiveRuntimeService {
   }
 
   private composeProviderPrompt(
-    provider: string,
+    _provider: string,
     basePrompt: string | null,
-    runtimeEnv: Record<string, string>
+    _runtimeEnv: Record<string, string>
   ): string | null {
-    const openCliPrompt = this.openCliSessionPromptService?.buildPrompt({
-      provider,
-      runtimeEnv
-    }) ?? null;
-
-    if (!openCliPrompt) {
-      return basePrompt;
-    }
-
     const normalizedBasePrompt = basePrompt?.trim() ?? "";
 
     if (!normalizedBasePrompt) {
-      return openCliPrompt;
+      return null;
     }
 
-    return `${normalizedBasePrompt}\n\n${openCliPrompt}`;
+    // OpenCLI 约束必须走 runtime skill / runtime 环境本身，不能再内联到用户消息里。
+    // Codex / Claude 会优先把 providerPrompt 当成真实用户输入发送；一旦这里拼上
+    // OpenCLI 提示，就会覆盖或污染用户原始内容，导致模型只对提示词本身作答。
+    return normalizedBasePrompt;
   }
 
   private async dispatchNextQueuedMessage(sessionId: string): Promise<void> {

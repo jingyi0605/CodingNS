@@ -106,9 +106,11 @@ export function OpenCliManagementPanel({
 
     const load = async () => {
       setLoading(true);
+      setPanelError(null);
+      setStatusText(null);
 
       try {
-        const nextCatalog = await fetchOpenCliCatalog();
+        const nextCatalog = await refreshOpenCliState();
 
         if (!active) {
           return;
@@ -120,7 +122,24 @@ export function OpenCliManagementPanel({
           return;
         }
 
-        setPanelError(resolveOpenCliPanelError(error));
+        const refreshError = resolveOpenCliPanelError(error);
+
+        try {
+          const fallbackCatalog = await fetchOpenCliCatalog();
+
+          if (!active) {
+            return;
+          }
+
+          applyCatalogState(fallbackCatalog);
+          setPanelError(refreshError);
+        } catch (fallbackError) {
+          if (!active) {
+            return;
+          }
+
+          setPanelError(resolveOpenCliPanelError(fallbackError));
+        }
       } finally {
         if (active) {
           setLoading(false);

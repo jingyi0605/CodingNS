@@ -44,6 +44,10 @@ describe("SkillManagementPanel", () => {
         return createJsonResponse({ items: createProviderCatalogResponse() });
       }
 
+      if (url.endsWith("/api/opencli/check") && method === "POST") {
+        return createJsonResponse(createOpenCliCheckResponse());
+      }
+
       if (url.endsWith("/api/opencli/catalog") && method === "GET") {
         return createJsonResponse(createOpenCliCatalogResponse());
       }
@@ -204,6 +208,10 @@ describe("SkillManagementPanel", () => {
         return createJsonResponse({ items: createProviderCatalogResponse({ codexEnabled: false }) });
       }
 
+      if (url.endsWith("/api/opencli/check") && method === "POST") {
+        return createJsonResponse(createOpenCliCheckResponse());
+      }
+
       if (url.endsWith("/api/opencli/catalog") && method === "GET") {
         return createJsonResponse(createOpenCliCatalogResponse());
       }
@@ -270,6 +278,10 @@ describe("SkillManagementPanel", () => {
 
       if (url.endsWith("/api/providers/catalog") && method === "GET") {
         return createJsonResponse({ items: createProviderCatalogResponse({ codexEnabled: false }) });
+      }
+
+      if (url.endsWith("/api/opencli/check") && method === "POST") {
+        return createJsonResponse(createOpenCliCheckResponse());
       }
 
       if (url.endsWith("/api/opencli/catalog") && method === "GET") {
@@ -554,6 +566,16 @@ function createOpenCliCatalogResponse() {
         ]
       }
     ]
+  };
+}
+
+function createOpenCliCheckResponse() {
+  return {
+    ...createOpenCliCatalogResponse(),
+    refreshState: "fresh",
+    errorCode: null,
+    errorDetail: null,
+    runtimeAvailability: "disabled"
   };
 }
 

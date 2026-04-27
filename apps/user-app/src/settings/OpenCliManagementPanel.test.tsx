@@ -37,10 +37,6 @@ describe("OpenCliManagementPanel", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (url.endsWith("/api/opencli/catalog") && method === "GET") {
-        return createJsonResponse(createOpenCliCatalogResponse());
-      }
-
       if (url.endsWith("/api/opencli/config") && method === "POST") {
         latestSavedPayload = JSON.parse(String(init?.body));
         return createJsonResponse(createOpenCliUpdateResponse({
@@ -54,9 +50,18 @@ describe("OpenCliManagementPanel", () => {
         refreshCount += 1;
         return createJsonResponse(createOpenCliCheckResponse({
           refreshState: "fresh",
-          runtimeAvailability: "ready",
-          enabledCommandIds: ["hackernews/top"]
+          runtimeAvailability: refreshCount === 1 ? "disabled" : "ready",
+          providerEnabled: refreshCount !== 1,
+          enabledCommandIds: refreshCount === 1
+            ? ["hackernews/top", "twitter/trending"]
+            : ["hackernews/top"],
+          healthState: "ready",
+          lastCheckedAt: "2026-04-27T10:00:00.000Z"
         }));
+      }
+
+      if (url.endsWith("/api/opencli/catalog") && method === "GET") {
+        return createJsonResponse(createOpenCliCatalogResponse());
       }
 
       throw new Error(`Unexpected request: ${method} ${url}`);
@@ -78,6 +83,8 @@ describe("OpenCliManagementPanel", () => {
       name: t("settings.opencliDetailTitle")
     });
     expect(within(detailDialog).getByText("/opt/homebrew/lib/node_modules/@jackwener/opencli")).toBeInTheDocument();
+    expect(within(detailDialog).getByText(t("settings.opencliHealthReady"))).toBeInTheDocument();
+    expect(within(detailDialog).queryByText(t("settings.opencliHealthBridgeMissing"))).not.toBeInTheDocument();
     await userEvent.click(within(detailDialog).getByRole("button", { name: t("common.close") }));
 
     const twitterCard = screen.getByText("twitter").closest(".settings-opencli-site-card");
@@ -158,7 +165,7 @@ describe("OpenCliManagementPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: t("settings.opencliRefreshAction") }));
 
     await waitFor(() => {
-      expect(refreshCount).toBe(1);
+      expect(refreshCount).toBe(2);
     });
     expect(screen.getByText(t("settings.opencliRefreshReady"))).toBeInTheDocument();
 
@@ -210,11 +217,15 @@ function createJsonResponse(payload: unknown): Response {
 function createOpenCliCatalogResponse({
   providerEnabled = false,
   enabledCommandIds = ["hackernews/top", "twitter/trending"],
-  runtimeStatus = null
+  runtimeStatus = null,
+  healthState = "bridge_missing" as const,
+  lastCheckedAt = "2026-04-26T10:00:00.000Z"
 }: {
   providerEnabled?: boolean;
   enabledCommandIds?: string[];
   runtimeStatus?: "pending" | "ready" | "failed" | "stale" | null;
+  healthState?: "unknown" | "binary_ready" | "bridge_missing" | "ready" | "runtime_build_failed";
+  lastCheckedAt?: string;
 } = {}) {
   const entries = [
     {
@@ -263,10 +274,10 @@ function createOpenCliCatalogResponse({
       providerId: "opencli",
       enabled: providerEnabled,
       installState: "installed",
-      healthState: "bridge_missing",
+      healthState,
       version: "1.7.7",
       installPath: "/opt/homebrew/lib/node_modules/@jackwener/opencli",
-      lastCheckedAt: "2026-04-26T10:00:00.000Z",
+      lastCheckedAt,
       activeRuntimeId: runtimeStatus ? "opencli-runtime-1" : null,
       lastErrorCode: null,
       lastErrorDetail: null,
@@ -278,7 +289,7 @@ function createOpenCliCatalogResponse({
       enabledCount: enabledCommandIds.length,
       browserDependentCount: 1,
       installState: "installed",
-      healthState: "bridge_missing"
+      healthState
     },
     effectiveCatalogSource: "manifest",
     activeRuntimeProfile: runtimeStatus
@@ -319,17 +330,25 @@ function createOpenCliCatalogResponse({
 function createOpenCliCheckResponse({
   refreshState,
   runtimeAvailability,
-  enabledCommandIds
+  providerEnabled = true,
+  enabledCommandIds,
+  healthState = "bridge_missing",
+  lastCheckedAt = "2026-04-26T10:00:00.000Z"
 }: {
   refreshState: "fresh" | "cache_retained" | "unavailable";
   runtimeAvailability: "disabled" | "ready" | "unavailable";
+  providerEnabled?: boolean;
   enabledCommandIds: string[];
+  healthState?: "unknown" | "binary_ready" | "bridge_missing" | "ready" | "runtime_build_failed";
+  lastCheckedAt?: string;
 }) {
   return {
     ...createOpenCliCatalogResponse({
-      providerEnabled: true,
+      providerEnabled,
       enabledCommandIds,
-      runtimeStatus: runtimeAvailability === "ready" ? "ready" : null
+      runtimeStatus: runtimeAvailability === "ready" ? "ready" : null,
+      healthState,
+      lastCheckedAt
     }),
     refreshState,
     errorCode: null,

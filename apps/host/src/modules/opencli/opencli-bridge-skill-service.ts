@@ -8,7 +8,8 @@ import type { OpenCliProviderRepository } from "../../storage/repositories/openc
 const OPENCLI_BRIDGE_SKILL_DIRECTORY = "codingns-opencli";
 const SUPPORTED_SKILL_PROVIDERS = new Set<SessionBinding["provider"]>([
   "codex",
-  "claude-code"
+  "claude-code",
+  "legna-code"
 ]);
 const MAX_VISIBLE_COMMANDS = 80;
 

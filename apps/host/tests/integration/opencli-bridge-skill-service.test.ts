@@ -22,6 +22,20 @@ afterEach(() => {
 });
 
 describe("OpenCliBridgeSkillService", () => {
+  it("会为 Codex 和 Legna runtime 识别 OpenCLI 桥接 Skill 支持", () => {
+    const database = createDatabaseClient(":memory:");
+    const providerRepository = new OpenCliProviderRepository(database.db);
+    const catalogRepository = new OpenCliCatalogEntryRepository(database.db);
+    const service = new OpenCliBridgeSkillService(providerRepository, catalogRepository);
+
+    expect(service.supportsProvider("codex")).toBe(true);
+    expect(service.supportsProvider("claude-code")).toBe(true);
+    expect(service.supportsProvider("legna-code")).toBe(true);
+    expect(service.supportsProvider("gemini")).toBe(false);
+
+    database.close();
+  });
+
   it("会为 Codex runtime 生成 OpenCLI 桥接 Skill", () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-opencli-bridge-skill-"));
     tempDirs.push(tempDir);
