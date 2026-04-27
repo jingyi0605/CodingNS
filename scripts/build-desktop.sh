@@ -501,13 +501,93 @@ verify_macos_signature() {
     codesign --verify --deep --strict --verbose=2 "$app_path"
 }
 
+list_macos_hdi_devices() {
+    local target_image_path="$1"
+    local target_mount_point="$2"
+    local python_cmd
+
+    python_cmd="$(resolve_python_cmd)" || return 1
+
+    hdiutil info -plist | "$python_cmd" -c '
+import plistlib
+import sys
+
+target_image_path = sys.argv[1]
+target_mount_point = sys.argv[2]
+plist = plistlib.load(sys.stdin.buffer)
+devices = []
+
+for image in plist.get("images", []):
+    image_path = image.get("image-path", "")
+    entities = image.get("system-entities") or []
+
+    matched = image_path == target_image_path
+    if not matched:
+        matched = any(entity.get("mount-point") == target_mount_point for entity in entities)
+
+    if not matched:
+        continue
+
+    for entity in entities:
+        dev_entry = entity.get("dev-entry")
+        if dev_entry and dev_entry not in devices:
+            devices.append(dev_entry)
+
+for dev_entry in devices:
+    print(dev_entry)
+' "$target_image_path" "$target_mount_point"
+}
+
+detach_macos_hdi_device() {
+    local device="$1"
+
+    if hdiutil detach "$device" -quiet > /dev/null 2>&1; then
+        return 0
+    fi
+
+    # 有些 runner 会残留 Spotlight/Finder 句柄，普通 detach 不够，只能强拆。
+    hdiutil detach "$device" -force -quiet > /dev/null 2>&1
+}
+
+cleanup_stale_macos_dmg_state() {
+    local dmg_path="$1"
+    local volume_name="$2"
+    local mount_point="/Volumes/$volume_name"
+    local device
+
+    while IFS= read -r device; do
+        [[ -z "$device" ]] && continue
+        log_warn "检测到残留 DMG 挂载设备，准备卸载: $device"
+        if ! detach_macos_hdi_device "$device"; then
+            log_warn "卸载残留设备失败，继续尝试后续清理: $device"
+        fi
+    done < <(list_macos_hdi_devices "$dmg_path" "$mount_point" || true)
+
+    if mount | grep -F "on $mount_point (" > /dev/null 2>&1; then
+        log_warn "检测到残留挂载点仍在使用，尝试按挂载点卸载: $mount_point"
+        if ! detach_macos_hdi_device "$mount_point"; then
+            log_warn "按挂载点卸载失败: $mount_point"
+        fi
+    fi
+
+    # hdiutil 在 /Volumes 下看到同名残留目录时也可能失败，清掉它，别让脏状态污染下一次构建。
+    if [[ -d "$mount_point" ]] && ! mount | grep -F "on $mount_point (" > /dev/null 2>&1; then
+        rmdir "$mount_point" > /dev/null 2>&1 || rm -rf "$mount_point"
+    fi
+
+    rm -f "$dmg_path"
+}
+
 create_macos_release_dmg() {
     local signed_app_path="$1"
     local app_name
     local staging_dir
+    local tmp_dmg_dir
     local dmg_path
     local tmp_dmg_path
     local volume_name
+    local hdiutil_output
+    local attempt
 
     app_name="$(basename "$signed_app_path" .app)"
     dmg_path="$MACOS_RELEASE_DIR/${app_name}.dmg"
@@ -515,46 +595,60 @@ create_macos_release_dmg() {
 
     # 用临时目录和临时 dmg 路径，避免 runner 上已有同名文件句柄或系统索引占用目标路径。
     staging_dir="$(mktemp -d "${TMPDIR:-/tmp}/codingns-macos-dmg-src.XXXXXX")"
-    tmp_dmg_path="$(mktemp "${TMPDIR:-/tmp}/${app_name}.XXXXXX.dmg")"
+    tmp_dmg_dir="$(mktemp -d "${TMPDIR:-/tmp}/codingns-macos-dmg-out.XXXXXX")"
+    tmp_dmg_path="$tmp_dmg_dir/${app_name}.dmg"
 
-    if [[ -z "$staging_dir" || -z "$tmp_dmg_path" ]]; then
+    if [[ -z "$staging_dir" || -z "$tmp_dmg_dir" ]]; then
         log_error "创建 DMG 临时目录失败"
         rm -rf "$staging_dir"
-        rm -f "$tmp_dmg_path"
+        rm -rf "$tmp_dmg_dir"
         return 1
     fi
 
-    rm -f "$tmp_dmg_path"
     if ! ditto "$signed_app_path" "$staging_dir/${app_name}.app"; then
         log_error "复制 .app 到 DMG staging 目录失败"
         rm -rf "$staging_dir"
-        rm -f "$tmp_dmg_path"
+        rm -rf "$tmp_dmg_dir"
         return 1
     fi
 
     log_info "重新生成用于发布的 DMG..." >&2
-    rm -f "$dmg_path"
-
-    if ! hdiutil create \
-        -volname "$volume_name" \
-        -srcfolder "$staging_dir" \
-        -ov \
-        -format UDZO \
-        "$tmp_dmg_path" > /dev/null; then
-        log_error "重新生成 DMG 失败，hdiutil 无法写出镜像"
-        rm -rf "$staging_dir"
+    for attempt in 1 2; do
+        cleanup_stale_macos_dmg_state "$dmg_path" "$volume_name"
         rm -f "$tmp_dmg_path"
-        return 1
-    fi
+
+        if hdiutil_output="$(hdiutil create \
+            -volname "$volume_name" \
+            -srcfolder "$staging_dir" \
+            -ov \
+            -format UDZO \
+            "$tmp_dmg_path" 2>&1)"; then
+            break
+        fi
+
+        log_warn "第 ${attempt} 次生成 DMG 失败，准备清理后重试。"
+        [[ -n "$hdiutil_output" ]] && log_warn "hdiutil 输出: $hdiutil_output"
+        cleanup_stale_macos_dmg_state "$tmp_dmg_path" "$volume_name"
+
+        if [[ "$attempt" -eq 2 ]]; then
+            log_error "重新生成 DMG 失败，hdiutil 无法写出镜像"
+            rm -rf "$staging_dir"
+            rm -rf "$tmp_dmg_dir"
+            return 1
+        fi
+
+        sleep 1
+    done
 
     if ! mv "$tmp_dmg_path" "$dmg_path"; then
         log_error "无法把临时 DMG 移动到发布目录: $dmg_path"
         rm -rf "$staging_dir"
-        rm -f "$tmp_dmg_path"
+        rm -rf "$tmp_dmg_dir"
         return 1
     fi
 
     rm -rf "$staging_dir"
+    rm -rf "$tmp_dmg_dir"
 
     echo "$dmg_path"
 }
