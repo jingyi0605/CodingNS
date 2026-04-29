@@ -27,6 +27,15 @@ describe("mapSessionProviderError", () => {
     expect(mapped.message).toContain("请求超时");
   });
 
+  it("会把 OpenCode 提交结果未知的超时映射成显式确认提示", () => {
+    const mapped = mapSessionProviderError(new Error("OPENCODE_SUBMIT_TIMEOUT_AMBIGUOUS"));
+
+    expect(mapped.statusCode).toBe(503);
+    expect(mapped.errorCode).toBe("OPENCODE_SUBMIT_TIMEOUT_AMBIGUOUS");
+    expect(mapped.message).toContain("无法确认");
+    expect(mapped.message).toContain("再重试");
+  });
+
   it("会把 OpenCode 目录跑偏映射成明确的工作区冲突错误", () => {
     const mapped = mapSessionProviderError(new Error("OPENCODE_SESSION_DIRECTORY_MISMATCH"));
 

@@ -176,6 +176,14 @@ export function mapSessionProviderError(error: unknown): AppError {
     });
   }
 
+  if (error instanceof Error && error.message === "OPENCODE_SUBMIT_TIMEOUT_AMBIGUOUS") {
+    return new AppError({
+      statusCode: 503,
+      errorCode: "OPENCODE_SUBMIT_TIMEOUT_AMBIGUOUS",
+      detail: "OpenCode 提交请求超时，系统暂时无法确认这条消息是否已经写入；请先检查会话里是否已经出现该消息，确认没有后再重试"
+    });
+  }
+
   if (error instanceof Error && error.message === "OPENCODE_DB_NOT_FOUND") {
     return new AppError({
       statusCode: 404,
