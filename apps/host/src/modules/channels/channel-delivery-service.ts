@@ -452,7 +452,7 @@ export class ChannelDeliveryService {
       delayMs?: number;
     } = {}
   ): Promise<string | null> {
-    const attempts = options.attempts ?? 20;
+    const attempts = options.attempts ?? 60;
     const delayMs = options.delayMs ?? 1_000;
     const acceptedAtMs = Date.parse(acceptedAt);
 

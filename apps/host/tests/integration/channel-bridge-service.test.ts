@@ -370,6 +370,117 @@ describe("ChannelBridgeService", () => {
 
     database.close();
   });
+
+  it("已失效的 Butler control session 不会继续复用，而是会重建新的线程映射", async () => {
+    const database = createDatabaseClient(":memory:");
+    seedAuthUser(database.db, "user-1");
+    const accountRepository = new ChannelAccountRepository(database.db);
+    const threadRepository = new ChannelThreadRepository(database.db);
+    const eventRepository = new ChannelInboundEventRepository(database.db);
+    const controlSessionRepository = new ButlerControlSessionRepository(database.db);
+    const account = createChannelAccount(accountRepository, {
+      id: "account-wechat-1",
+      userId: "user-1",
+      platformCode: "wechat-claw",
+      displayName: "值班微信",
+      providerId: "codex",
+      connectionMode: "polling",
+      status: "active",
+      config: {}
+    });
+
+    const staleControlSession: ButlerControlSession = {
+      id: "control-stale-1",
+      providerId: "codex",
+      sessionId: "session-stale-1",
+      purpose: "chat",
+      title: "值班微信 · wechat-claw · Alice",
+      sourceItemId: null,
+      model: null,
+      reasoningLevel: null,
+      permissionMode: null,
+      status: "failed",
+      lastContextVersion: "ctx-stale",
+      lastSummary: "旧会话已失效",
+      createdAt: "2026-04-29T12:30:00.000Z",
+      updatedAt: "2026-04-29T12:31:00.000Z"
+    };
+    seedWorkspaceAndSessionBinding(database.db, staleControlSession);
+    controlSessionRepository.create(staleControlSession);
+    threadRepository.create({
+      id: "thread-stale-1",
+      channelAccountId: account.id,
+      externalConversationKey: "o9cq80yc0W5yEwB4LE7fljL36hxQ@im.wechat",
+      externalUserId: "wx-user-1",
+      externalThreadKey: null,
+      controlSessionId: staleControlSession.id,
+      sessionId: staleControlSession.sessionId,
+      title: staleControlSession.title,
+      status: "active",
+      lastInboundAt: "2026-04-29T12:31:00.000Z",
+      lastOutboundAt: null,
+      lastTransportContext: {},
+      createdAt: "2026-04-29T12:30:00.000Z",
+      updatedAt: "2026-04-29T12:31:00.000Z"
+    });
+
+    let startCount = 0;
+    const sendMessageToSession = vi.fn();
+    const bridgeService = new ChannelBridgeService(
+      accountRepository,
+      threadRepository,
+      eventRepository,
+      {
+        startSessionForProvider: vi.fn(async (_userId, providerId, input) => {
+          startCount += 1;
+          const timestamp = nowIso();
+          const controlSession: ButlerControlSession = {
+            id: `control-restarted-${startCount}`,
+            providerId,
+            sessionId: `session-restarted-${startCount}`,
+            purpose: input.purpose ?? "chat",
+            title: input.title ?? null,
+            sourceItemId: null,
+            model: null,
+            reasoningLevel: null,
+            permissionMode: null,
+            status: "running",
+            lastContextVersion: "ctx-new",
+            lastSummary: input.content ?? null,
+            createdAt: timestamp,
+            updatedAt: timestamp
+          };
+          seedWorkspaceAndSessionBinding(database.db, controlSession);
+          controlSessionRepository.create(controlSession);
+          return toControlSessionView(controlSession);
+        }),
+        sendMessageToSession: sendMessageToSession as any,
+        getSession: vi.fn((controlSessionId: string) => {
+          const current = controlSessionRepository.findById(controlSessionId);
+          return current ? toControlSessionView(current) : null;
+        })
+      }
+    );
+
+    const result = await bridgeService.dispatchInboundText(account.id, {
+      externalEventId: "evt-wechat-recover-1",
+      externalConversationKey: "o9cq80yc0W5yEwB4LE7fljL36hxQ@im.wechat",
+      externalUserId: "wx-user-1",
+      externalThreadKey: null,
+      text: "你好",
+      senderDisplayName: "Alice",
+      rawPayload: {},
+      transportContext: {}
+    });
+
+    expect(result.dispatch.mode).toBe("started");
+    expect(result.thread.id).toBe("thread-stale-1");
+    expect(result.thread.controlSessionId).toBe("control-restarted-1");
+    expect(startCount).toBe(1);
+    expect(sendMessageToSession).not.toHaveBeenCalled();
+
+    database.close();
+  });
 });
 
 function seedAuthUser(db: ReturnType<typeof createDatabaseClient>["db"], userId: string): void {

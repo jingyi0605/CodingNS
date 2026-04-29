@@ -138,23 +138,47 @@ export class ChannelBridgeService {
       let clientRequestId: string | null;
 
       if (thread?.controlSessionId) {
-        try {
-          const sent = await this.butlerControlSessionService.sendMessageToSession(account.userId, {
-            controlSessionId: thread.controlSessionId,
-            content: normalized.text,
-            clientRequestId: buildChannelClientRequestId(account.id, event.id, "send")
-          });
-          controlSession = sent.controlSession;
-          dispatchMode = "continued";
-          acceptedAt = sent.acceptedAt;
-          provider = sent.provider;
-          providerSessionId = sent.providerSessionId;
-          clientRequestId = sent.clientRequestId;
-        } catch (error) {
-          if (!isControlSessionMissing(error)) {
-            throw error;
-          }
+        const currentControlSession = this.butlerControlSessionService.getSession(
+          thread.controlSessionId,
+          account.userId
+        );
 
+        if (isReusableControlSession(currentControlSession)) {
+          try {
+            const sent = await this.butlerControlSessionService.sendMessageToSession(account.userId, {
+              controlSessionId: thread.controlSessionId,
+              content: normalized.text,
+              clientRequestId: buildChannelClientRequestId(account.id, event.id, "send")
+            });
+            controlSession = sent.controlSession;
+            dispatchMode = "continued";
+            acceptedAt = sent.acceptedAt;
+            provider = sent.provider;
+            providerSessionId = sent.providerSessionId;
+            clientRequestId = sent.clientRequestId;
+          } catch (error) {
+            if (!isRecoverableControlSessionError(error)) {
+              throw error;
+            }
+
+            const started = await this.butlerControlSessionService.startSessionForProvider(
+              account.userId,
+              account.providerId,
+              {
+                content: normalized.text,
+                title: thread.title ?? buildThreadTitle(touchedAccount, normalized),
+                purpose: "chat",
+                clientRequestId: buildChannelClientRequestId(account.id, event.id, "start")
+              }
+            );
+            controlSession = started;
+            dispatchMode = "started";
+            acceptedAt = started.updatedAt;
+            provider = started.providerId;
+            providerSessionId = started.session.providerSessionId;
+            clientRequestId = null;
+          }
+        } else {
           const started = await this.butlerControlSessionService.startSessionForProvider(
             account.userId,
             account.providerId,
@@ -423,4 +447,20 @@ function normalizePlainObject(value: Record<string, unknown>, field: string): Re
 
 function isControlSessionMissing(error: unknown): boolean {
   return error instanceof AppError && error.errorCode === "BUTLER_CONTROL_SESSION_NOT_FOUND";
+}
+
+function isReusableControlSession(
+  controlSession: ButlerControlSessionView | null
+): controlSession is ButlerControlSessionView {
+  return controlSession !== null && controlSession.status !== "failed" && controlSession.status !== "closed";
+}
+
+function isRecoverableControlSessionError(error: unknown): boolean {
+  if (isControlSessionMissing(error)) {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.trim().toLowerCase();
+  return normalized.includes("no rollout found for thread id") || normalized.includes("thread not loaded");
 }
