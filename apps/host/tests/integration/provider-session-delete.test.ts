@@ -169,6 +169,212 @@ describe("provider session delete", () => {
     });
   });
 
+  it("删除会话时会先解绑渠道历史里的 control session 引用", async () => {
+    const fixture = createEmptyFixture();
+    cleanupTargets.push(fixture.rootDir);
+    const cliDelete = {
+      deleteSession: vi.fn(async () => {})
+    };
+    const context = createServiceContext(fixture, cliDelete);
+
+    seedSession(context, {
+      sessionId: "session-channel-1",
+      provider: "codex",
+      providerSessionId: "codex-session-channel-1",
+      rawStoreRef: "codex://session/codex-session-channel-1",
+      runningState: "idle"
+    });
+
+    context.db.exec(`
+      INSERT INTO butler_control_sessions (
+        id,
+        provider_id,
+        session_id,
+        purpose,
+        title,
+        source_item_id,
+        model,
+        reasoning_level,
+        permission_mode,
+        status,
+        last_context_version,
+        last_summary,
+        created_at,
+        updated_at
+      ) VALUES (
+        'control-channel-1',
+        'codex',
+        'session-channel-1',
+        'chat',
+        '渠道控制会话',
+        NULL,
+        'gpt-5.4',
+        'high',
+        'default',
+        'idle',
+        NULL,
+        NULL,
+        '2026-04-19T10:00:00.000Z',
+        '2026-04-19T10:00:00.000Z'
+      );
+
+      INSERT INTO channel_accounts (
+        id,
+        user_id,
+        platform_code,
+        display_name,
+        provider_id,
+        connection_mode,
+        status,
+        config_json,
+        runtime_state_json,
+        last_inbound_at,
+        last_outbound_at,
+        last_error,
+        created_at,
+        updated_at
+      ) VALUES (
+        'channel-account-1',
+        'user-1',
+        'wechat-claw',
+        '测试渠道',
+        'codex',
+        'bridge',
+        'active',
+        '{}',
+        '{}',
+        NULL,
+        NULL,
+        NULL,
+        '2026-04-19T10:00:00.000Z',
+        '2026-04-19T10:00:00.000Z'
+      );
+
+      INSERT INTO channel_threads (
+        id,
+        channel_account_id,
+        external_conversation_key,
+        external_user_id,
+        external_thread_key,
+        control_session_id,
+        session_id,
+        title,
+        status,
+        last_inbound_at,
+        last_outbound_at,
+        last_transport_context_json,
+        created_at,
+        updated_at
+      ) VALUES (
+        'channel-thread-1',
+        'channel-account-1',
+        'conversation-1',
+        'external-user-1',
+        'thread-1',
+        'control-channel-1',
+        'session-channel-1',
+        '历史线程',
+        'active',
+        '2026-04-19T10:00:01.000Z',
+        '2026-04-19T10:00:02.000Z',
+        '{}',
+        '2026-04-19T10:00:00.000Z',
+        '2026-04-19T10:00:02.000Z'
+      );
+
+      INSERT INTO channel_inbound_events (
+        id,
+        channel_account_id,
+        external_event_id,
+        external_conversation_key,
+        external_user_id,
+        control_session_id,
+        session_id,
+        text_content,
+        payload_json,
+        status,
+        error_message,
+        received_at,
+        processed_at
+      ) VALUES (
+        'channel-inbound-1',
+        'channel-account-1',
+        'event-1',
+        'conversation-1',
+        'external-user-1',
+        'control-channel-1',
+        'session-channel-1',
+        '用户发来一条消息',
+        '{}',
+        'replied',
+        NULL,
+        '2026-04-19T10:00:03.000Z',
+        '2026-04-19T10:00:04.000Z'
+      );
+
+      INSERT INTO channel_deliveries (
+        id,
+        channel_account_id,
+        thread_id,
+        inbound_event_id,
+        control_session_id,
+        session_id,
+        text_content,
+        provider_message_ref,
+        status,
+        error_message,
+        created_at,
+        updated_at
+      ) VALUES (
+        'channel-delivery-1',
+        'channel-account-1',
+        'channel-thread-1',
+        'channel-inbound-1',
+        'control-channel-1',
+        'session-channel-1',
+        '助手回了一条消息',
+        'provider-message-1',
+        'sent',
+        NULL,
+        '2026-04-19T10:00:05.000Z',
+        '2026-04-19T10:00:05.000Z'
+      );
+    `);
+
+    await expect(
+      context.service.deleteSession("session-channel-1", "user-1")
+    ).resolves.toBeUndefined();
+
+    expect(
+      context.db.prepare("SELECT COUNT(*) AS count FROM butler_control_sessions WHERE session_id = ?")
+        .get("session-channel-1")
+    ).toEqual({ count: 0 });
+    expect(
+      context.db.prepare(
+        "SELECT control_session_id, session_id FROM channel_threads WHERE id = ?"
+      ).get("channel-thread-1")
+    ).toEqual({
+      control_session_id: null,
+      session_id: null
+    });
+    expect(
+      context.db.prepare(
+        "SELECT control_session_id, session_id FROM channel_inbound_events WHERE id = ?"
+      ).get("channel-inbound-1")
+    ).toEqual({
+      control_session_id: null,
+      session_id: null
+    });
+    expect(
+      context.db.prepare(
+        "SELECT control_session_id, session_id FROM channel_deliveries WHERE id = ?"
+      ).get("channel-delivery-1")
+    ).toEqual({
+      control_session_id: null,
+      session_id: null
+    });
+  });
+
   it("运行态会话如果回刷后已结束，删除接口不应继续误拦", async () => {
     const fixture = createEmptyFixture();
     cleanupTargets.push(fixture.rootDir);
@@ -353,6 +559,7 @@ function createServiceContext(
   });
 
   return {
+    db: database.db,
     service,
     sessionBindingRepository,
     sessionIndexRepository,
@@ -377,6 +584,9 @@ function seedSession(
     provider: input.provider,
     providerSessionId: input.providerSessionId,
     rawStoreRef: input.rawStoreRef,
+    providerConfigMode: "global-default",
+    providerPresetId: null,
+    runtimeHomeDir: null,
     createdAt: "2026-04-19T10:00:01.000Z",
     updatedAt: "2026-04-19T10:00:01.000Z"
   });

@@ -4284,6 +4284,15 @@ export class SessionHistoryService {
   }
 
   private detachSessionRelationsBeforeDelete(sessionId: string): void {
+    const controlSessionIds = this.db
+      .prepare(
+        `SELECT id
+         FROM butler_control_sessions
+         WHERE session_id = ?`
+      )
+      .all(sessionId)
+      .map((row) => String((row as { id: string }).id));
+
     this.db
       .prepare(
         `UPDATE session_indices
@@ -4298,6 +4307,60 @@ export class SessionHistoryService {
             OR fork_source_session_id = ?`
       )
       .run(sessionId, sessionId);
+
+    if (controlSessionIds.length > 0) {
+      const controlSessionPlaceholders = controlSessionIds.map(() => "?").join(", ");
+      this.db
+        .prepare(
+          `UPDATE channel_threads
+           SET control_session_id = NULL,
+               session_id = NULL
+           WHERE session_id = ?
+              OR control_session_id IN (${controlSessionPlaceholders})`
+        )
+        .run(sessionId, ...controlSessionIds);
+      this.db
+        .prepare(
+          `UPDATE channel_inbound_events
+           SET control_session_id = NULL,
+               session_id = NULL
+           WHERE session_id = ?
+              OR control_session_id IN (${controlSessionPlaceholders})`
+        )
+        .run(sessionId, ...controlSessionIds);
+      this.db
+        .prepare(
+          `UPDATE channel_deliveries
+           SET control_session_id = NULL,
+               session_id = NULL
+           WHERE session_id = ?
+              OR control_session_id IN (${controlSessionPlaceholders})`
+        )
+        .run(sessionId, ...controlSessionIds);
+    } else {
+      this.db
+        .prepare(
+          `UPDATE channel_threads
+           SET session_id = NULL
+           WHERE session_id = ?`
+        )
+        .run(sessionId);
+      this.db
+        .prepare(
+          `UPDATE channel_inbound_events
+           SET session_id = NULL
+           WHERE session_id = ?`
+        )
+        .run(sessionId);
+      this.db
+        .prepare(
+          `UPDATE channel_deliveries
+           SET session_id = NULL
+           WHERE session_id = ?`
+        )
+        .run(sessionId);
+    }
+
     this.db
       .prepare("DELETE FROM butler_control_sessions WHERE session_id = ?")
       .run(sessionId);
