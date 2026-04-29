@@ -70,6 +70,25 @@ function createSyntheticUserMessage(): SessionMessageViewModel {
   };
 }
 
+function createImageAttachment(
+  fileName: string,
+  fileSize: number
+): {
+  id: string;
+  kind: "image";
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+} {
+  return {
+    id: `attachment-${fileName}`,
+    kind: "image",
+    fileName,
+    mimeType: "image/png",
+    fileSize
+  };
+}
+
 function createSyntheticBootstrapMessage(overrides?: Partial<ReturnType<typeof createHistoryMessage>>) {
   return createHistoryMessage({
     messageId: "synthetic-bootstrap-1",
@@ -1293,6 +1312,79 @@ describe("session runtime machine", () => {
     expect(merged).toHaveLength(1);
     expect(merged[0].id).toBe("server-user-1");
     expect(merged[0].content).toBe("你好");
+  });
+
+  it("权威 user 只比 synthetic 多空白行时，仍会替换 synthetic，避免重复显示", () => {
+    const merged = mergeAuthoritativeMessages(
+      [
+        {
+          ...createSyntheticUserMessage(),
+          content: "请看附件\n第二行说明"
+        }
+      ],
+      "session-1",
+      [
+        createHistoryMessage({
+          messageId: "server-user-spacing-1",
+          provider: "codex",
+          providerSessionId: "thread-1",
+          role: "user",
+          content: "请看附件\n\n第二行说明",
+          timestamp: "2026-03-24T10:00:00.400Z",
+          sequence: 3,
+          rawRef: "codex://demo#line=1"
+        })
+      ]
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].id).toBe("server-user-spacing-1");
+    expect(merged[0].content).toBe("请看附件\n\n第二行说明");
+  });
+
+  it("同文案不同附件同时存在时，会优先替换附件签名更接近的 synthetic user", () => {
+    const merged = mergeAuthoritativeMessages(
+      [
+        {
+          ...createSyntheticUserMessage(),
+          id: "synthetic-image-a",
+          content: "请看附件",
+          timestamp: "2026-03-24T10:00:04.100Z",
+          sequence: 10,
+          rawRef: "synthetic://codex/thread-1/synthetic-image-a",
+          attachments: [createImageAttachment("a.png", 100)]
+        },
+        {
+          ...createSyntheticUserMessage(),
+          id: "synthetic-image-b",
+          content: "请看附件",
+          timestamp: "2026-03-24T10:00:04.500Z",
+          sequence: 11,
+          rawRef: "synthetic://codex/thread-1/synthetic-image-b",
+          attachments: [createImageAttachment("b.png", 200)]
+        }
+      ],
+      "session-1",
+      [
+        createHistoryMessage({
+          messageId: "server-image-b",
+          provider: "codex",
+          providerSessionId: "thread-1",
+          role: "user",
+          content: "请看附件",
+          timestamp: "2026-03-24T10:00:04.300Z",
+          sequence: 11,
+          rawRef: "codex://demo#line=11",
+          attachments: [createImageAttachment("b.png", 200)]
+        })
+      ]
+    );
+
+    expect(merged.map((message) => message.id)).toEqual([
+      "synthetic-image-a",
+      "server-image-b"
+    ]);
+    expect(merged[1]?.attachments).toEqual([createImageAttachment("b.png", 200)]);
   });
 
   it("缓存里已有正式 user 消息时，不会再注入重复的 bootstrap synthetic 消息", () => {

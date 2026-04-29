@@ -227,13 +227,21 @@ export function mergeAuthoritativeMessages(
   for (const message of incoming) {
     const nextMessage = toViewMessage(sessionId, message);
     incomingMessages.push(nextMessage);
-    const authoritativeMessageId = findMatchingAuthoritativeMessageId(nextById, nextMessage);
+    const authoritativeMessageId = findMatchingAuthoritativeMessageId(
+      nextById,
+      nextMessage,
+      sessionId
+    );
 
     if (authoritativeMessageId && authoritativeMessageId !== nextMessage.id) {
       continue;
     }
 
-    const optimisticMessageId = findMatchingOptimisticMessageId(nextById, nextMessage);
+    const optimisticMessageId = findMatchingOptimisticMessageId(
+      nextById,
+      nextMessage,
+      sessionId
+    );
 
     if (optimisticMessageId && optimisticMessageId !== nextMessage.id) {
       nextById.delete(optimisticMessageId);
@@ -1437,6 +1445,13 @@ function normalizeComparableCodexText(content: string): string {
   return stripInternalAttachmentDebugContent(content).replace(/\r\n/g, "\n").trimEnd();
 }
 
+function normalizeComparableUserMergeText(content: string): string {
+  return normalizeComparableCodexText(content)
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+}
+
 function normalizeViewMessageContent(
   provider: string,
   role: SessionMessageViewModel["role"],
@@ -1507,24 +1522,26 @@ function areEquivalentInlineImages(
 
 function findMatchingOptimisticMessageId(
   messagesById: Map<string, SessionMessageViewModel>,
-  incoming: SessionMessageViewModel
+  incoming: SessionMessageViewModel,
+  sessionId: string
 ): string | null {
   if (!isAuthoritativeUserTextMessage(incoming)) {
     return null;
   }
 
-  return findClosestMatchingUserMessageId(messagesById, incoming, "optimistic");
+  return findClosestMatchingUserMessageId(messagesById, incoming, "optimistic", sessionId);
 }
 
 function findMatchingAuthoritativeMessageId(
   messagesById: Map<string, SessionMessageViewModel>,
-  incoming: SessionMessageViewModel
+  incoming: SessionMessageViewModel,
+  sessionId: string
 ): string | null {
   if (!isOptimisticUserMessage(incoming)) {
     return null;
   }
 
-  return findClosestMatchingUserMessageId(messagesById, incoming, "authoritative");
+  return findClosestMatchingUserMessageId(messagesById, incoming, "authoritative", sessionId);
 }
 
 function findMatchingEquivalentCodexMessageId(
@@ -1621,12 +1638,16 @@ function findMatchingEquivalentOpenCodeMessageId(
 function findClosestMatchingUserMessageId(
   messagesById: Map<string, SessionMessageViewModel>,
   incoming: SessionMessageViewModel,
-  target: "optimistic" | "authoritative"
+  target: "optimistic" | "authoritative",
+  sessionId: string
 ): string | null {
   const incomingTimestampMs = toTimestampMs(incoming.timestamp);
   const comparableIncomingContent = normalizeComparableCodexText(incoming.content);
+  const relaxedIncomingContent = normalizeComparableUserMergeText(incoming.content);
+  const incomingAttachmentSignature = buildComparableAttachmentSignature(incoming.attachments);
   let matchedId: string | null = null;
-  let matchedDistance = Number.POSITIVE_INFINITY;
+  let matchedScore = Number.POSITIVE_INFINITY;
+  const debugCandidates: Array<Record<string, unknown>> = [];
 
   for (const [messageId, current] of messagesById.entries()) {
     const matchesTarget =
@@ -1638,7 +1659,12 @@ function findClosestMatchingUserMessageId(
       continue;
     }
 
-    if (normalizeComparableCodexText(current.content) !== comparableIncomingContent) {
+    const comparableCurrentContent = normalizeComparableCodexText(current.content);
+    const relaxedCurrentContent = normalizeComparableUserMergeText(current.content);
+    const strictTextMatches = comparableCurrentContent === comparableIncomingContent;
+    const relaxedTextMatches = relaxedCurrentContent === relaxedIncomingContent;
+
+    if (!strictTextMatches && !relaxedTextMatches) {
       continue;
     }
 
@@ -1649,10 +1675,63 @@ function findClosestMatchingUserMessageId(
       continue;
     }
 
-    if (distance < matchedDistance) {
-      matchedId = messageId;
-      matchedDistance = distance;
+    const sequenceDistance = Math.abs(current.sequence - incoming.sequence);
+    const currentAttachmentSignature = buildComparableAttachmentSignature(current.attachments);
+    const attachmentCompatibility = resolveAttachmentCompatibility(
+      currentAttachmentSignature,
+      incomingAttachmentSignature
+    );
+
+    if (
+      attachmentCompatibility === "conflict"
+      && (strictTextMatches || comparableIncomingContent.length === 0)
+    ) {
+      debugCandidates.push(
+        summarizeUserMatchCandidate(current, {
+          strictTextMatches,
+          relaxedTextMatches,
+          attachmentCompatibility,
+          distanceMs: distance,
+          sequenceDistance
+        })
+      );
+      continue;
     }
+
+    const score =
+      distance
+      + sequenceDistance * 15_000
+      + (strictTextMatches ? 0 : 500)
+      + resolveAttachmentPenalty(attachmentCompatibility);
+
+    debugCandidates.push(
+      summarizeUserMatchCandidate(current, {
+        strictTextMatches,
+        relaxedTextMatches,
+        attachmentCompatibility,
+        distanceMs: distance,
+        sequenceDistance
+      })
+    );
+
+    if (score < matchedScore) {
+      matchedId = messageId;
+      matchedScore = score;
+    }
+  }
+
+  if (debugCandidates.length > 0) {
+    logSessionMessageDedupDebug("session.messages.user_match", {
+      sessionId,
+      target,
+      matchedId,
+      matchedScore: Number.isFinite(matchedScore) ? matchedScore : null,
+      incoming: summarizeUserMessageMatchInput(incoming, {
+        relaxedContent: relaxedIncomingContent,
+        attachmentSignature: incomingAttachmentSignature
+      }),
+      candidates: debugCandidates.slice(0, 5)
+    });
   }
 
   return matchedId;
@@ -1872,6 +1951,87 @@ function summarizeMessageForDebug(message: SessionMessageViewModel): Record<stri
       message.kind === "text" || message.kind === "thinking"
         ? normalizeComparableCodexText(parseMessageRichContent(message.content).text).slice(0, 160)
         : normalizeComparableCodexText(message.content).slice(0, 160)
+  };
+}
+
+function buildComparableAttachmentSignature(
+  attachments: SessionMessageViewModel["attachments"]
+): string {
+  return (attachments ?? [])
+    .map((attachment) =>
+      [
+        attachment.kind,
+        attachment.fileName.trim().toLowerCase(),
+        attachment.mimeType.trim().toLowerCase(),
+        String(attachment.fileSize)
+      ].join(":")
+    )
+    .sort()
+    .join("|");
+}
+
+function resolveAttachmentCompatibility(
+  currentSignature: string,
+  incomingSignature: string
+): "same" | "one_side_missing" | "conflict" {
+  if (!currentSignature && !incomingSignature) {
+    return "same";
+  }
+
+  if (!currentSignature || !incomingSignature) {
+    return "one_side_missing";
+  }
+
+  return currentSignature === incomingSignature ? "same" : "conflict";
+}
+
+function resolveAttachmentPenalty(
+  compatibility: ReturnType<typeof resolveAttachmentCompatibility>
+): number {
+  switch (compatibility) {
+    case "same":
+      return 0;
+    case "one_side_missing":
+      return 2_500;
+    case "conflict":
+    default:
+      return 120_000;
+  }
+}
+
+function summarizeUserMatchCandidate(
+  message: SessionMessageViewModel,
+  detail: {
+    strictTextMatches: boolean;
+    relaxedTextMatches: boolean;
+    attachmentCompatibility: ReturnType<typeof resolveAttachmentCompatibility>;
+    distanceMs: number;
+    sequenceDistance: number;
+  }
+): Record<string, unknown> {
+  return {
+    ...summarizeMessageForDebug(message),
+    comparableContent: normalizeComparableUserMergeText(message.content).slice(0, 160),
+    attachmentSignature: buildComparableAttachmentSignature(message.attachments),
+    strictTextMatches: detail.strictTextMatches,
+    relaxedTextMatches: detail.relaxedTextMatches,
+    attachmentCompatibility: detail.attachmentCompatibility,
+    distanceMs: detail.distanceMs,
+    sequenceDistance: detail.sequenceDistance
+  };
+}
+
+function summarizeUserMessageMatchInput(
+  message: SessionMessageViewModel,
+  detail: {
+    relaxedContent: string;
+    attachmentSignature: string;
+  }
+): Record<string, unknown> {
+  return {
+    ...summarizeMessageForDebug(message),
+    comparableContent: detail.relaxedContent.slice(0, 160),
+    attachmentSignature: detail.attachmentSignature
   };
 }
 

@@ -51,6 +51,25 @@ export function logSessionMessageDedupDebug(
   }
 
   const timestamp = Math.round(performance.now());
+  const payload = {
+    scope,
+    timestampMs: timestamp,
+    ...(detail ?? {})
+  };
+
+  try {
+    const debugWindow = window as typeof window & {
+      __CODINGNS_SESSION_MESSAGE_DEDUP_DEBUG__?: Array<Record<string, unknown>>;
+    };
+    const bucket = debugWindow.__CODINGNS_SESSION_MESSAGE_DEDUP_DEBUG__ ?? [];
+    bucket.push(payload);
+    if (bucket.length > 300) {
+      bucket.splice(0, bucket.length - 300);
+    }
+    debugWindow.__CODINGNS_SESSION_MESSAGE_DEDUP_DEBUG__ = bucket;
+  } catch {
+    // 调试日志不能影响主流程。
+  }
 
   if (detail && Object.keys(detail).length > 0) {
     console.info(`[session-dedup] ${scope} ${timestamp}ms`, detail);

@@ -3933,6 +3933,45 @@ export function MessageTimeline({
     }
   }
 
+  function summarizeTimelineMessage(
+    message: SessionMessageViewModel
+  ): Record<string, unknown> {
+    return {
+      id: message.id,
+      rawRef: message.rawRef,
+      role: message.role,
+      kind: message.kind,
+      deliveryState: message.deliveryState,
+      timestamp: message.timestamp,
+      sequence: message.sequence,
+      attachmentCount: message.attachments?.length ?? 0,
+      contentPreview:
+        parseMessageRichContent(message.content).text.replace(/\r\n/g, "\n").trimEnd().slice(0, 120)
+    };
+  }
+
+  function summarizeTimelineRenderItem(
+    item: TimelineRenderItem
+  ): Record<string, unknown> {
+    if (item.type === "message") {
+      return {
+        type: item.type,
+        key: item.key,
+        message: summarizeTimelineMessage(item.message)
+      };
+    }
+
+    return {
+      type: item.type,
+      key: item.key,
+      callId: item.group.tool.callId,
+      name: item.group.tool.name,
+      hasRequest: item.group.hasRequest,
+      hasResult: item.group.hasResult,
+      updatedAt: item.group.updatedAt
+    };
+  }
+
   function buildTimelineScrollDebugDetail(
     list: HTMLDivElement | null,
     extra: Record<string, unknown> = {}
@@ -3968,6 +4007,8 @@ export function MessageTimeline({
       hasNewMessagesBelow: hasNewMessagesBelowRef.current,
       previousMessageCount: previousMessageCountRef.current,
       previousLastMessage: summarizeMessageSignature(previousLastMessageSignatureRef.current),
+      tailMessages: messages.slice(-5).map(summarizeTimelineMessage),
+      tailRenderItems: renderItems.slice(-5).map(summarizeTimelineRenderItem),
       pendingRestoreState:
         pendingRestoreState === null
           ? null
