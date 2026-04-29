@@ -1,4 +1,6 @@
 export const HOST_TASK_TYPES = {
+  channelAccountPoll: "channel.account_poll",
+  channelDeliveryRetry: "channel.delivery_retry",
   relayTunnelConnect: "relay_tunnel.connect",
   workspaceDiscovery: "workspace.discovery",
   workspaceDiscoveryScan: "workspace.discovery_scan",

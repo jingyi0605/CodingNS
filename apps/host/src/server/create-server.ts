@@ -49,6 +49,15 @@ import { ClientController } from "../modules/client/client-controller.js";
 import { ClientService } from "../modules/client/client-service.js";
 import { NpmGlobalPackageService } from "../modules/client/npm-global-package-service.js";
 import { ServiceUpdateTaskService } from "../modules/client/service-update-task-service.js";
+import { ChannelBridgeService } from "../modules/channels/channel-bridge-service.js";
+import { ChannelController } from "../modules/channels/channel-controller.js";
+import { ChannelDeliveryService } from "../modules/channels/channel-delivery-service.js";
+import { ChannelGatewayController } from "../modules/channels/channel-gateway-controller.js";
+import { ChannelGatewayService } from "../modules/channels/channel-gateway-service.js";
+import { ChannelPollingScheduler } from "../modules/channels/channel-polling-scheduler.js";
+import { ChannelPollingService } from "../modules/channels/channel-polling-service.js";
+import { createDefaultChannelPlatformAdapterRegistry } from "../modules/channels/channel-platform-adapters.js";
+import { ChannelService } from "../modules/channels/channel-service.js";
 import { DebugTargetController } from "../modules/debug-target/debug-target-controller.js";
 import { DebugRuntimeReconciliationScheduler } from "../modules/debug-target/debug-runtime-reconciliation-scheduler.js";
 import { DebugTargetService } from "../modules/debug-target/debug-target-service.js";
@@ -143,6 +152,7 @@ import { WorkspaceService } from "../modules/workspace/workspace-service.js";
 import { registerAuthRoutes } from "../routes/auth.js";
 import { registerAssistantCapabilityRoutes } from "../routes/assistant.js";
 import { registerButlerRoutes } from "../routes/butler.js";
+import { registerChannelRoutes } from "../routes/channels.js";
 import { registerClientRoutes } from "../routes/client.js";
 import { registerDebugTargetRoutes } from "../routes/debug-targets.js";
 import { registerFileRoutes } from "../routes/files.js";
@@ -191,6 +201,10 @@ import { PatrolRunRepository } from "../storage/repositories/patrol-run-reposito
 import { ProjectMemoryRepository } from "../storage/repositories/project-memory-repository.js";
 import { VerificationRunRepository } from "../storage/repositories/verification-run-repository.js";
 import { CommitRuleProfileRepository } from "../storage/repositories/commit-rule-profile-repository.js";
+import { ChannelAccountRepository } from "../storage/repositories/channel-account-repository.js";
+import { ChannelDeliveryRepository } from "../storage/repositories/channel-delivery-repository.js";
+import { ChannelInboundEventRepository } from "../storage/repositories/channel-inbound-event-repository.js";
+import { ChannelThreadRepository } from "../storage/repositories/channel-thread-repository.js";
 import { DebugRuntimeSessionRepository } from "../storage/repositories/debug-runtime-session-repository.js";
 import { DebugServiceRepository } from "../storage/repositories/debug-service-repository.js";
 import { DebugTargetRepository } from "../storage/repositories/debug-target-repository.js";
@@ -288,6 +302,10 @@ export function createServer(config: HostConfig) {
     butlerProjectRepository: new ButlerProjectRepository(database.db),
     butlerSessionRepository: new ButlerSessionRepository(database.db),
     butlerSessionSummaryStateRepository: new ButlerSessionSummaryStateRepository(database.db),
+    channelAccountRepository: new ChannelAccountRepository(database.db),
+    channelThreadRepository: new ChannelThreadRepository(database.db),
+    channelInboundEventRepository: new ChannelInboundEventRepository(database.db),
+    channelDeliveryRepository: new ChannelDeliveryRepository(database.db),
     projectMemoryRepository: new ProjectMemoryRepository(database.db),
     patrolPlanRepository: new PatrolPlanRepository(database.db),
     patrolRunRepository: new PatrolRunRepository(database.db),
@@ -467,6 +485,7 @@ export function createServer(config: HostConfig) {
     serviceUpdateTaskService,
     relayTunnelService
   );
+  const channelPlatformAdapterRegistry = createDefaultChannelPlatformAdapterRegistry();
   const ccSwitchAdapter = new CcSwitchAdapter({
     commandPath: config.ccSwitchCliPath,
     dbPath: config.ccSwitchDbPath
@@ -925,6 +944,50 @@ export function createServer(config: HostConfig) {
     sessionProviderUsageLimitGuardService,
     repositories.providerControlRepository
   );
+  const channelBridgeService = new ChannelBridgeService(
+    repositories.channelAccountRepository,
+    repositories.channelThreadRepository,
+    repositories.channelInboundEventRepository,
+    butlerControlSessionService
+  );
+  const channelDeliveryService = new ChannelDeliveryService(
+    repositories.channelAccountRepository,
+    repositories.channelThreadRepository,
+    repositories.channelInboundEventRepository,
+    repositories.channelDeliveryRepository,
+    sessionHistoryService,
+    channelPlatformAdapterRegistry,
+    taskManager
+  );
+  channelDeliveryService.recoverRetryableDeliveries();
+  const channelGatewayService = new ChannelGatewayService(
+    repositories.channelAccountRepository,
+    channelPlatformAdapterRegistry,
+    channelBridgeService,
+    channelDeliveryService
+  );
+  const channelPollingService = new ChannelPollingService(
+    repositories.channelAccountRepository,
+    channelPlatformAdapterRegistry,
+    channelBridgeService,
+    channelDeliveryService,
+    taskManager
+  );
+  const channelPollingScheduler = new ChannelPollingScheduler(
+    channelPollingService,
+    {
+      schedulerMetrics
+    }
+  );
+  const channelsService = new ChannelService(
+    repositories.channelAccountRepository,
+    repositories.channelThreadRepository,
+    repositories.channelInboundEventRepository,
+    repositories.channelDeliveryRepository,
+    repositories.providerControlRepository,
+    channelPlatformAdapterRegistry,
+    channelPollingService
+  );
   const assistantAutomationService = new AssistantAutomationService(
     butlerProfileService,
     butlerControlSessionService,
@@ -1069,6 +1132,8 @@ export function createServer(config: HostConfig) {
 
   const bootstrapController = new BootstrapController(bootstrapService);
   const clientController = new ClientController(clientService);
+  const channelController = new ChannelController(channelsService);
+  const channelGatewayController = new ChannelGatewayController(channelGatewayService);
   const debugTargetController = new DebugTargetController(debugTargetService);
   const handleDebugTargetTerminalExit = (event: {
     terminal: TerminalInstance;
@@ -1246,10 +1311,11 @@ export function createServer(config: HostConfig) {
     }
   }
 
-  void registerPublicRoutes(app, bootstrapController);
+  void registerPublicRoutes(app, bootstrapController, channelGatewayController);
   void registerProxyRoutes(app, templateReverseProxyService);
   void registerAuthRoutes(app, authController);
   void registerAssistantCapabilityRoutes(app, assistantCapabilityController);
+  void registerChannelRoutes(app, channelController);
   void registerClientRoutes(app, clientController);
   void registerDebugTargetRoutes(app, debugTargetController);
   void registerObservabilityRoutes(app, observabilityController);
@@ -1273,6 +1339,7 @@ export function createServer(config: HostConfig) {
   butlerFollowUpScheduler.start();
   assistantSandboxCleanupScheduler.start();
   butlerControlTimerScheduler.start();
+  channelPollingScheduler.start();
   debugRuntimeReconciliationScheduler.start();
 
   if (config.webUiDir) {
@@ -1289,6 +1356,7 @@ export function createServer(config: HostConfig) {
     await butlerFollowUpScheduler.dispose();
     await assistantSandboxCleanupScheduler.dispose();
     await butlerControlTimerScheduler.dispose();
+    await channelPollingScheduler.dispose();
     await debugRuntimeReconciliationScheduler.dispose();
     terminalService.off("exit", handleDebugTargetTerminalExit);
     await terminalService.dispose();
@@ -1318,6 +1386,12 @@ export function createServer(config: HostConfig) {
       modules: {
         bootstrapService,
         clientService,
+        channelsService,
+        channelBridgeService,
+        channelDeliveryService,
+        channelGatewayService,
+        channelPollingService,
+        channelPollingScheduler,
         debugTargetService,
         debugRuntimeReconciliationScheduler,
         authService,
