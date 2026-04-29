@@ -1206,6 +1206,10 @@ describe("ButlerPage", () => {
       within(currentRow as HTMLElement).getByRole("button", { name: t("shell.butlerHistoryDeleteAction") })
     );
 
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: t("shell.butlerHistoryTitle") })).toBeNull();
+    });
+
     const dialog = await screen.findByRole("dialog", { name: t("shell.deleteSessionConfirmTitle") });
     fireEvent.click(within(dialog).getByRole("button", { name: t("shell.deleteSessionAction") }));
 

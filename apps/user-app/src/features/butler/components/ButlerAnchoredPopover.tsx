@@ -22,6 +22,8 @@ interface PopoverPosition {
   placeAbove: boolean;
 }
 
+const BUTLER_POPOVER_Z_INDEX = 1700;
+
 export function ButlerAnchoredPopover({
   open,
   id,
@@ -98,7 +100,7 @@ export function ButlerAnchoredPopover({
     left: position.left,
     width: position.width,
     maxWidth: `calc(100vw - ${viewportPadding * 2}px)`,
-    zIndex: 9999,
+    zIndex: BUTLER_POPOVER_Z_INDEX,
     transform: position.placeAbove ? "translateY(-100%)" : undefined
   };
 

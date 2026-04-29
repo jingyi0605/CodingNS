@@ -2158,6 +2158,7 @@ export function ButlerPage() {
                     handleCloseControlHistory();
                   }}
                   onDeleteSession={(targetSession) => {
+                    handleCloseControlHistory();
                     setControlSessionDeletionTarget(targetSession);
                   }}
                 />
