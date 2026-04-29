@@ -170,6 +170,308 @@ export const enUS = {
       "If you turn it off now, this CLI will disappear from new entry points across the product.",
     providerManagementImpactDisabledFallback:
       "Once re-enabled, this CLI will return to the normal entry points across the product.",
+    channelsManagement: "Messaging Channels",
+    channelsManagementSectionSummary:
+      "Manage external channels, polling accounts, and recent inbound or outbound records in one place.",
+    channelsManagementNavValue: "Accounts / Records",
+    channelsManagementDescription:
+      "This panel keeps channel selection, polling account setup, recent thread mappings, inbound events, and deliveries together so the Butler control session bridge can be managed from one place.",
+    channelsManageAction: "Manage Channel Accounts",
+    channelsModalTitle: "Messaging Channel Accounts",
+    channelsAddAccountAction: "Add Channel Account",
+    channelsModalDescription:
+      "This first phase uses a shared account model. Text messages, fixed provider selection, polling, and Butler control session bridging are the main scope.",
+    channelsEntrypointPending: "Open this panel to review connected accounts, recent messages, and deliveries.",
+    channelsEntrypointSummary: "{accounts} accounts across {platforms} platforms.",
+    channelsActionPending: "Working...",
+    channelsRefresh: "Refresh data",
+    channelsRefreshSuccess: "Channel data refreshed.",
+    channelsLoading: "Loading channel data...",
+    channelsLoadingDetails: "Loading recent threads and messages...",
+    channelsLoadFailed: "Failed to load channel data.",
+    channelsLoadDetailsFailed: "Failed to load recent threads and messages.",
+    channelsSaveFailed: "Failed to save the channel account.",
+    channelsProbeFailed: "Failed to probe the channel account.",
+    channelsPollFailed: "Failed to trigger manual polling.",
+    channelsCreateSuccess: "{account} created.",
+    channelsUpdateSuccess: "{account} saved.",
+    channelsSelectAccountFirst: "Select an existing account first, or create a new one.",
+    channelsSummaryTitle: "Channel Overview",
+    channelsSummaryAccounts: "Accounts",
+    channelsSummaryActive: "Healthy",
+    channelsSummaryPlatforms: "Platforms",
+    channelsWizardTitle: "Setup Wizard",
+    channelsWizardCreateDescription:
+      "Choose a channel first, fill that channel's own config form, then bind the account to a fixed assistant engine.",
+    channelsWizardEditDescription:
+      "You are editing an existing account. The platform stays fixed here, and changing the assistant engine only affects new sessions.",
+    channelsWizardStepsTitle: "Channel account setup steps",
+    channelsWizardStepPlatform: "Choose channel",
+    channelsWizardStepConfig: "Channel config",
+    channelsWizardStepBinding: "Bind account",
+    channelsWizardNextToConfig: "Continue to config",
+    channelsWizardNextToBinding: "Continue to binding",
+    channelsWizardBackToPlatform: "Back to channel selection",
+    channelsWizardBackToConfig: "Back to channel config",
+    channelsWizardSelectPlatformHint:
+      "Pick a channel first so the matching platform-specific form can be shown below.",
+    channelsWizardBindingSummary: "Multi-session support",
+    channelsPlatformsTitle: "Platform Catalog",
+    channelsPlatformsDescription:
+      "Channel cards show the phase-one polling model, multi-session support, and the current limits.",
+    channelsPlatformsEmpty: "No platform capabilities are available yet.",
+    channelsPlatformsEmptyDescription:
+      "This list will appear automatically once the Host reports the platform catalog.",
+    channelsPlatformSummary: "Modes: {modes}; multi-session: {multiSession}",
+    channelsAccountsTitle: "Channel Accounts",
+    channelsAccountsDescription:
+      "Each account is fixed to one assistant engine and always uses polling in phase one. New sessions follow the account config, while old sessions keep their original context.",
+    channelsAccountsEmpty: "No channel accounts yet.",
+    channelsAccountsEmptyDescription:
+      "Add one channel account first. Thread mappings and delivery records will appear after real traffic arrives.",
+    channelsAccountRowDescription: "{platform} · {provider} · {mode}",
+    channelsCreateAction: "Create account",
+    channelsSaveAction: "Save account",
+    channelsResetToCreate: "New account form",
+    channelsCreateFormTitle: "Create Channel Account",
+    channelsCreateFormDescription:
+      "Build the shared account fields first. Platform-specific differences stay in the extra JSON config for this phase.",
+    channelsEditFormTitle: "Edit Channel Account",
+    channelsEditFormDescription:
+      "Changing the provider only affects new sessions. Existing sessions keep their original context.",
+    channelsFieldDisplayName: "Account name",
+    channelsFieldDisplayNamePlaceholder: "For example: Feishu Duty Bot",
+    channelsFieldPlatform: "Platform",
+    channelsFieldPlatformDescription: "Choose the platform first, then pick the connection mode and extra config.",
+    channelsFieldProvider: "Assistant engine",
+    channelsFieldProviderDescription:
+      "Phase one only allows Codex or Claude Code, and you cannot switch providers inside the same external thread.",
+    channelsFieldConnectionMode: "Connection mode",
+    channelsFieldConnectionModeDescription:
+      "All six platforms use polling in phase one. You do not switch to another mode here.",
+    channelsFieldStatus: "Account status",
+    channelsFieldStatusDescription:
+      "Use healthy, disabled, or degraded to control whether this account should keep serving traffic.",
+    channelsFieldConfig: "Extra platform config (JSON)",
+    channelsFieldConfigDescription:
+      "Use this only for fields that the dedicated form does not cover yet. The dedicated form stays the primary source.",
+    channelsAdvancedConfigTitle: "Extra fields (advanced)",
+    channelsAdvancedConfigDescription:
+      "Only put fields here when the dedicated form does not cover them yet, such as outbound URLs, temporary switches, or experiment flags.",
+    channelsValidationDisplayName: "Enter an account name first.",
+    channelsValidationPlatform: "Choose a platform first.",
+    channelsValidationConnectionMode: "Choose a connection mode first.",
+    channelsValidationConfigJson: "The extra config is not valid JSON.",
+    channelsValidationConfigObject: "The extra config must be a JSON object.",
+    channelsValidationRequiredField: "Fill in “{field}” first.",
+    channelsValidationFeishuCredential:
+      "Feishu still needs one working credential set: either a Tenant Access Token, or both App ID and App Secret.",
+    channelsConfigWechatUnavailableTitle: "WeChat (claw) runtime is not integrated yet",
+    channelsConfigWechatUnavailableDescription:
+      "The official path is to run the openclaw-weixin plugin inside the Gateway runtime. This project has not wired that runtime in yet, so the page only keeps the account slot and no longer pretends to support QR binding, polling, or outbound delivery.",
+    channelsDetailTitle: "Selected Account Overview",
+    channelsDetailDescription:
+      "Review the current account state, recent traffic, and whether the account needs manual follow-up.",
+    channelsDetailPlatform: "Platform",
+    channelsDetailProvider: "Assistant engine",
+    channelsDetailConnectionMode: "Connection mode",
+    channelsDetailStatus: "Account status",
+    channelsDetailLastInbound: "Last inbound",
+    channelsDetailLastOutbound: "Last outbound",
+    channelsDetailLastError: "Last error",
+    channelsProbeAction: "Probe account",
+    channelsPollAction: "Run polling",
+    channelsWebhookHint: "This account uses webhook mode, so manual polling is not needed.",
+    channelsConnectionModeFixedHint:
+      "Phase one always models these channels as polling. If a different mode is needed later, the account rules will be upgraded separately.",
+    channelsThreadsTitle: "Thread Mappings",
+    channelsThreadsDescription:
+      "Recent {count} thread mappings between external conversation keys and Butler control sessions.",
+    channelsThreadsEmpty: "No thread mappings yet.",
+    channelsThreadsEmptyDescription:
+      "This list appears automatically after the first external message is received.",
+    channelsEventsTitle: "Inbound Events",
+    channelsEventsDescription:
+      "Recent {count} inbound events so you can verify whether the Host received and dispatched them.",
+    channelsEventsEmpty: "No inbound events yet.",
+    channelsEventsEmptyDescription:
+      "Records will appear here after the channel starts pulling real text messages.",
+    channelsDeliveriesTitle: "Deliveries",
+    channelsDeliveriesDescription:
+      "Recent {count} outbound deliveries so you can confirm whether Butler's first text reached the external platform.",
+    channelsDeliveriesEmpty: "No deliveries yet.",
+    channelsDeliveriesEmptyDescription:
+      "Records will appear here after Butler produces the first outbound text.",
+    channelsConnectionModeWebhook: "Webhook",
+    channelsConnectionModePolling: "Polling",
+    channelsConnectionModeBridge: "Bridge",
+    channelsMultiSessionSupported: "Multi-session ready",
+    channelsMultiSessionLimited: "Limited multi-session",
+    channelsStatusActive: "Healthy",
+    channelsStatusDisabled: "Disabled",
+    channelsStatusDegraded: "Degraded",
+    channelsThreadStatusActive: "Active",
+    channelsThreadStatusClosed: "Closed",
+    channelsThreadStatusFailed: "Failed",
+    channelsEventStatusReceived: "Received",
+    channelsEventStatusDispatched: "Dispatched",
+    channelsEventStatusReplied: "Replied",
+    channelsEventStatusFailed: "Failed",
+    channelsEventStatusIgnored: "Ignored",
+    channelsDeliveryStatusSent: "Sent",
+    channelsDeliveryStatusFailed: "Failed",
+    channelsDeliveryStatusSkipped: "Skipped",
+    channelsThreadSummary: "{status} · conversation key: {conversationKey}",
+    channelsEventSummary: "{status} · conversation key: {conversationKey}",
+    channelsDeliverySummary: "{status} · latest outbound text",
+    channelsMetaCreatedAt: "Created",
+    channelsMetaUpdatedAt: "Updated",
+    channelsMetaReceivedAt: "Received",
+    channelsMetaExternalUser: "External user",
+    channelsMetaEventId: "External event",
+    channelsMetaProviderRef: "Platform ref",
+    channelsMetaError: "Error",
+    channelsTextFallback: "Empty text",
+    channelsTimeUnknown: "Not available",
+    channelsWechatBindingTitle: "WeChat runtime",
+    channelsWechatBindingDescription:
+      "WeChat (claw) needs the official openclaw-weixin runtime first. The current repository has not integrated that layer yet.",
+    channelsWechatBoundDescription:
+      "This version has not wired the official runtime into CodingNS yet, so binding, refresh, and unbind actions are not exposed here.",
+    channelsWechatCreateDescription:
+      "Name this WeChat account first. The current page only stores the account slot, and the real bind flow will be added after the official runtime is integrated.",
+    channelsWechatRuntimeRequiredTitle: "Direct WeChat binding is not available yet",
+    channelsWechatRuntimeRequiredDescription:
+      "This is not a missing field problem. The project still needs the official openclaw-weixin runtime integration. For now the page only keeps account management and capability notes.",
+    channelsWechatPendingTitle: "This account is still waiting for binding",
+    channelsWechatPendingDescription:
+      "Finish QR binding first. Polling, outbound delivery, and recent records only appear after the bind succeeds.",
+    channelsWechatBeginBindingAction: "Start binding",
+    channelsWechatContinueBindingAction: "Continue binding",
+    channelsWechatStartLoginAction: "Generate QR code",
+    channelsWechatRestartBindingAction: "Generate a new QR code",
+    channelsWechatRefreshLoginAction: "Refresh binding status",
+    channelsWechatLogoutAction: "Clear binding",
+    channelsWechatBindingModalTitle: "Scan the QR code to bind WeChat",
+    channelsWechatBindingModalDescription:
+      "Scan the QR code below with WeChat, then come back here and click “Refresh binding status”.",
+    channelsWechatBindingModeValue: "QR binding",
+    channelsWechatLoginStatus: "Binding status",
+    channelsWechatLoginStatusNotLoggedIn: "Not bound",
+    channelsWechatLoginStatusWaitingScan: "Waiting for scan",
+    channelsWechatLoginStatusScanConfirmed: "Scanned, waiting confirmation",
+    channelsWechatLoginStatusActive: "Bound",
+    channelsWechatLoginStatusExpired: "QR code expired",
+    channelsWechatQrHint: "After scanning successfully, click “Refresh binding status” to sync the result.",
+    channelsWechatQrAlt: "WeChat claw binding QR code",
+    channelsWechatOpenQrLinkAction: "Open binding QR code",
+    channelsWechatQrRawTitle: "View raw QR content",
+    channelsWechatQrRawDescription:
+      "The raw QR payload returned by the upstream service is kept here first so the scan flow can be debugged.",
+    channelsWechatQrEmpty: "No binding QR code yet",
+    channelsWechatQrEmptyDescription:
+      "Click “Generate QR code” above first, then scan it with WeChat to finish binding.",
+    channelsConfigFieldDingtalkAppKey: "DingTalk AppKey",
+    channelsConfigFieldDingtalkAppKeyDescription:
+      "This identifies the DingTalk app when the real polling API is wired in later.",
+    channelsConfigFieldDingtalkAppKeyPlaceholder: "Enter the DingTalk AppKey",
+    channelsConfigFieldDingtalkAppSecret: "DingTalk AppSecret",
+    channelsConfigFieldDingtalkAppSecretDescription:
+      "Use the production credential for the real duty account so test credentials do not leak into the live polling account.",
+    channelsConfigFieldDingtalkAppSecretPlaceholder: "Enter the DingTalk AppSecret",
+    channelsConfigFieldDingtalkRobotCode: "Robot code",
+    channelsConfigFieldDingtalkRobotCodeDescription:
+      "If replies will eventually be sent through a fixed robot, store the robot code here now.",
+    channelsConfigFieldDingtalkRobotCodePlaceholder: "For example: dingxxxxxxxx",
+    channelsConfigFieldFeishuAppId: "Feishu App ID",
+    channelsConfigFieldFeishuAppIdDescription:
+      "If you do not plan to fill a Tenant Access Token directly, enter this together with the App Secret.",
+    channelsConfigFieldFeishuAppIdPlaceholder: "Enter the Feishu App ID",
+    channelsConfigFieldFeishuAppSecret: "Feishu App Secret",
+    channelsConfigFieldFeishuAppSecretDescription:
+      "If you do not plan to fill a Tenant Access Token directly, enter this together with the App ID.",
+    channelsConfigFieldFeishuAppSecretPlaceholder: "Enter the Feishu App Secret",
+    channelsConfigFieldFeishuTenantAccessToken: "Tenant Access Token",
+    channelsConfigFieldFeishuTenantAccessTokenDescription:
+      "If you can reliably obtain a tenant_access_token, enter it here and you do not need to force App ID plus App Secret as well.",
+    channelsConfigFieldFeishuTenantAccessTokenPlaceholder: "Enter the Feishu tenant_access_token",
+    channelsConfigFieldFeishuChatId: "Target chat ID",
+    channelsConfigFieldFeishuChatIdDescription:
+      "Required. Phase one stays on one fixed chat so the Host knows where to pull messages and send replies.",
+    channelsConfigFieldFeishuChatIdPlaceholder: "For example: oc_xxx or chat_xxx",
+    channelsConfigFieldWechatBaseUrl: "claw service URL",
+    channelsConfigFieldWechatBaseUrlDescription:
+      "Host will use this address to pull messages and send replies. It must be reachable from the Host machine.",
+    channelsConfigFieldWechatBaseUrlPlaceholder: "For example: http://127.0.0.1:8787",
+    channelsConfigFieldWechatBridgeToken: "claw access token",
+    channelsConfigFieldWechatBridgeTokenDescription:
+      "If your claw transport requires an access token, place it here for basic protection.",
+    channelsConfigFieldWechatBridgeTokenPlaceholder: "Enter the claw transport token",
+    channelsConfigFieldWechatPollPath: "Polling path",
+    channelsConfigFieldWechatPollPathDescription:
+      "The default is `/poll`. Override it here if your transport uses another route.",
+    channelsConfigFieldWechatPollPathPlaceholder: "Default: /poll",
+    channelsConfigFieldWechatSendPath: "Send path",
+    channelsConfigFieldWechatSendPathDescription:
+      "The default is `/send`. Override it here if your transport uses another route.",
+    channelsConfigFieldWechatSendPathPlaceholder: "Default: /send",
+    channelsConfigFieldTelegramBotToken: "Telegram Bot Token",
+    channelsConfigFieldTelegramBotTokenDescription:
+      "Telegram polling and outbound replies both require this token. Without it the account cannot work.",
+    channelsConfigFieldTelegramBotTokenPlaceholder: "Enter the Telegram Bot Token",
+    channelsConfigFieldSlackBotToken: "Slack Bot Token",
+    channelsConfigFieldSlackBotTokenDescription:
+      "Required. Slack polling and outbound text replies both depend on this token.",
+    channelsConfigFieldSlackBotTokenPlaceholder: "Enter the Slack Bot Token",
+    channelsConfigFieldSlackAppToken: "Slack App Token",
+    channelsConfigFieldSlackAppTokenDescription:
+      "The minimum working config does not require this. Fill it only when your Slack app setup really needs it.",
+    channelsConfigFieldSlackAppTokenPlaceholder: "Enter the Slack App Token",
+    channelsConfigFieldSlackChannelId: "Channel ID",
+    channelsConfigFieldSlackChannelIdDescription:
+      "Required. Phase one binds the account to one fixed channel so polling and text delivery can work first.",
+    channelsConfigFieldSlackChannelIdPlaceholder: "For example: C0123456789",
+    channelsConfigFieldDiscordBotToken: "Discord Bot Token",
+    channelsConfigFieldDiscordBotTokenDescription:
+      "Required. Discord polling and outbound text replies both depend on this bot token.",
+    channelsConfigFieldDiscordBotTokenPlaceholder: "Enter the Discord Bot Token",
+    channelsConfigFieldDiscordApplicationId: "Application ID",
+    channelsConfigFieldDiscordApplicationIdDescription:
+      "The minimum working config does not require this. Fill it only when your app permissions really depend on it.",
+    channelsConfigFieldDiscordApplicationIdPlaceholder: "Enter the Discord Application ID",
+    channelsConfigFieldDiscordGuildId: "Guild ID",
+    channelsConfigFieldDiscordGuildIdDescription:
+      "Required. Lock the account to one server first. Thread branches will run under this guild.",
+    channelsConfigFieldDiscordGuildIdPlaceholder: "Enter the Discord Guild ID",
+    channelsConfigFieldDiscordChannelId: "Channel ID",
+    channelsConfigFieldDiscordChannelIdDescription:
+      "Required. Lock the account to one channel first. Thread branches will hang under this channel.",
+    channelsConfigFieldDiscordChannelIdPlaceholder: "Enter the Discord Channel ID",
+    channelsConfigChecklistTitle: "Minimum you need for this step",
+    channelsConfigChecklistFeishuSummary:
+      "This Feishu setup stays on fixed-chat polling in phase one, so the Host needs one target chat and one working credential path.",
+    channelsConfigChecklistFeishuItemCredential:
+      "Choose one credential path: either a Tenant Access Token, or both App ID and App Secret.",
+    channelsConfigChecklistFeishuItemChat:
+      "You must enter the target chat ID, otherwise the Host does not know which chat to pull from or reply to.",
+    channelsConfigChecklistFeishuItemScope:
+      "Phase one only handles text messages. Images, files, voice, and cards are not covered yet.",
+    channelsConfigChecklistSlackSummary:
+      "This Slack setup stays on one fixed channel for polling first, so inbound reads and outbound text replies can be verified.",
+    channelsConfigChecklistSlackItemToken:
+      "You must enter the Bot Token. Without it the account cannot read messages or send replies.",
+    channelsConfigChecklistSlackItemChannel:
+      "You must enter the channel ID. This account is fixed to one channel in phase one.",
+    channelsConfigChecklistSlackItemScope:
+      "Phase one only handles text messages, and Slack thread branches are not implemented yet.",
+    channelsConfigChecklistDiscordSummary:
+      "This Discord setup needs one fixed guild and channel first. Later thread branches will live inside that scope.",
+    channelsConfigChecklistDiscordItemToken:
+      "You must enter the Bot Token. Polling reads and outbound text replies both depend on it.",
+    channelsConfigChecklistDiscordItemGuild:
+      "You must enter the Guild ID so the account is fixed to one server first.",
+    channelsConfigChecklistDiscordItemChannel:
+      "You must enter the channel ID. Later thread branches will hang under this channel.",
     modelManagementTitle: "Quick Model Switching",
     modelManagementDescription:
       "This page does not add or edit presets. It only exposes the presets already managed by cc-switch so you can switch quickly.",

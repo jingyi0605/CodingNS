@@ -25,6 +25,7 @@ import { ParallelTaskDebugModal } from "../../../settings/ParallelTaskDebugModal
 import { ClientUpdatePanel } from "../../../settings/ClientUpdatePanel";
 import { ModelManagementPanel } from "../../../settings/ModelManagementPanel";
 import { ProviderManagementPanel } from "../../../settings/ProviderManagementPanel";
+import { ChannelsManagementPanel } from "../../../settings/ChannelsManagementPanel";
 import { AuthDeviceManagementPanel } from "../../../settings/AuthDeviceManagementPanel";
 import { ServiceUpdatePanel } from "../../../settings/ServiceUpdatePanel";
 import { RemoteAccessManagerModal } from "../../../settings/RemoteAccessManagerModal";
@@ -40,6 +41,7 @@ const DEFAULT_DEBUG_PORT_POOLS: DebugPortPoolConfig = {
 type SettingsSectionId =
   | "appearance"
   | "ability-management"
+  | "channels-management"
   | "model-management"
   | "provider-management"
   | "server-connection"
@@ -104,6 +106,7 @@ function isSettingsSectionId(value: string | undefined): value is SettingsSectio
   return (
     value === "appearance" ||
     value === "ability-management" ||
+    value === "channels-management" ||
     value === "model-management" ||
     value === "provider-management" ||
     value === "server-connection" ||
@@ -570,6 +573,23 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
         </section>
 
         <section className="settings-section">
+          <h2 className="settings-section-title">{t("settings.channelsManagement")}</h2>
+          <div className="settings-card">
+            <div className="settings-row">
+              <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.channelsManagement")}</span>
+                <span className="settings-row-description">
+                  {t("settings.channelsManagementDescription")}
+                </span>
+              </div>
+              <div className="settings-row-control settings-row-control-stretch">
+                <ChannelsManagementPanel />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="settings-section">
           <h2 className="settings-section-title">{t("settings.remoteAccess")}</h2>
           <div className="settings-card">
             <div className="settings-row">
@@ -826,6 +846,13 @@ function MobileSettingsPage({ model, appVersion }: { model: SettingsPageModel; a
       icon: <ProviderManagementSectionIcon />
     },
     {
+      id: "channels-management",
+      title: t("settings.channelsManagement"),
+      description: t("settings.channelsManagementSectionSummary"),
+      value: t("settings.channelsManagementNavValue"),
+      icon: <ChannelsManagementSectionIcon />
+    },
+    {
       id: "remote-access",
       title: t("settings.remoteAccess"),
       description: t("settings.remoteAccessSectionSummary"),
@@ -894,6 +921,7 @@ function MobileSettingsPage({ model, appVersion }: { model: SettingsPageModel; a
       <div className="settings-mobile-container">
         {activeSection === "appearance" ? <MobileAppearanceSection model={model} /> : null}
         {activeSection === "ability-management" ? <MobileAbilityManagementSection /> : null}
+        {activeSection === "channels-management" ? <MobileChannelsManagementSection /> : null}
         {activeSection === "server-connection" && model.showServerSettings
           ? <MobileServerConnectionSection model={model} />
           : null}
@@ -1350,6 +1378,24 @@ function MobileAbilityManagementSection() {
   );
 }
 
+function MobileChannelsManagementSection() {
+  return (
+    <section className="settings-mobile-group-section">
+      <h2 className="settings-mobile-group-title">{t("settings.channelsManagement")}</h2>
+      <p className="settings-mobile-group-note">{t("settings.channelsManagementSectionSummary")}</p>
+      <div className="settings-mobile-panel-shell settings-mobile-channels-shell">
+        <div className="settings-mobile-row-copy settings-mobile-ability-copy">
+          <span className="settings-mobile-row-title">{t("settings.channelsManagement")}</span>
+          <span className="settings-mobile-row-description">
+            {t("settings.channelsManagementDescription")}
+          </span>
+        </div>
+        <ChannelsManagementPanel />
+      </div>
+    </section>
+  );
+}
+
 function MobileSoftwareUpdateSection({ model }: { model: SettingsPageModel }) {
   return (
     <>
@@ -1515,6 +1561,21 @@ function ProviderManagementSectionIcon() {
       <circle cx="13.5" cy="5.5" r="1.5" fill="currentColor" stroke="none" />
       <circle cx="8" cy="10" r="1.5" fill="currentColor" stroke="none" />
       <circle cx="15.5" cy="14.5" r="1.5" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function ChannelsManagementSectionIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path d="M5 5.5h4.5" />
+      <path d="M10.5 5.5h4.5" />
+      <path d="M5 10h3.5" />
+      <path d="M11.5 10H15" />
+      <path d="M5 14.5h4.5" />
+      <path d="M10.5 14.5h4.5" />
+      <circle cx="10" cy="10" r="1.6" fill="currentColor" stroke="none" />
+      <path d="m8.9 8.9-1.8-1.8M11.1 8.9l1.8-1.8M8.9 11.1l-1.8 1.8M11.1 11.1l1.8 1.8" />
     </svg>
   );
 }
