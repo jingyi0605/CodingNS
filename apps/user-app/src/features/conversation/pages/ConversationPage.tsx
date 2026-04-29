@@ -1439,6 +1439,12 @@ function filterVisibleNavigationSessions(sessions: readonly SessionSummaryDto[])
       return true;
     }
 
+    if (parentSession.isArchived) {
+      const visible = !isRealSubagentSession(session);
+      visibilityCache.set(session.sessionId, visible);
+      return visible;
+    }
+
     const visible = isVisible(parentSession);
     visibilityCache.set(session.sessionId, visible);
     return visible;

@@ -2429,6 +2429,54 @@ describe("WorkbenchLayout", () => {
     expect(screen.getByText("Favorite Root")).toBeInTheDocument();
   });
 
+  it("对话页侧边会显示父会话已归档的普通分支会话", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "Project One"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "archived-root",
+            title: "已归档父会话",
+            workspaceId: "workspace-1",
+            isArchived: true
+          }),
+          createSessionSummary({
+            sessionId: "orphan-fork",
+            title: "普通分支会话",
+            workspaceId: "workspace-1",
+            parentSessionId: "archived-root",
+            isSubagent: false,
+            isArchived: false
+          }),
+          createSessionSummary({
+            sessionId: "visible-root",
+            title: "可见主会话",
+            workspaceId: "workspace-1",
+            isArchived: false
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/orphan-fork");
+
+    await screen.findByText("普通分支会话");
+
+    expect(screen.getByText("普通分支会话")).toBeInTheDocument();
+  });
+
   it("搜索按钮不会抢占页面焦点，并支持会话与代码搜索", async () => {
     const currentSnapshot = createWorkbenchSnapshot([
       {

@@ -1162,7 +1162,16 @@ function filterVisibleWorkspaceSessions(sessions: SessionSummaryDto[]) {
     }
 
     const parentSession = sessions.find((item) => item.sessionId === parentSessionId);
-    return !parentSession || !isArchivedSession(parentSession);
+
+    if (!parentSession) {
+      return true;
+    }
+
+    if (isArchivedSession(parentSession)) {
+      return !isSubagentSession(session);
+    }
+
+    return true;
   });
 }
 
