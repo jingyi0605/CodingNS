@@ -192,22 +192,30 @@ export class SessionProviderConfigService {
     const existingRuntimeHomeDir = input.existingBinding?.runtimeHomeDir?.trim() ?? "";
 
     if (selection.providerConfigMode === "global-default") {
+      const shouldUseManagedRuntimeHome = this.shouldUseManagedRuntimeHome(input.provider);
+
       if (
         input.existingBinding?.providerConfigMode === "global-default"
         && existingRuntimeHomeDir.length > 0
       ) {
-        if (this.shouldUseManagedRuntimeHome(input.provider)) {
+        if (shouldUseManagedRuntimeHome) {
           this.materializeGlobalRuntimeHome(input.provider, existingRuntimeHomeDir);
+
+          return {
+            providerConfigMode: "global-default",
+            providerPresetId: null,
+            runtimeHomeDir: existingRuntimeHomeDir
+          };
         }
 
         return {
           providerConfigMode: "global-default",
           providerPresetId: null,
-          runtimeHomeDir: existingRuntimeHomeDir
+          runtimeHomeDir: null
         };
       }
 
-      if (!this.shouldUseManagedRuntimeHome(input.provider)) {
+      if (!shouldUseManagedRuntimeHome) {
         return {
           providerConfigMode: "global-default",
           providerPresetId: null,
@@ -772,6 +780,12 @@ export class SessionProviderConfigService {
   }
 
   private shouldUseManagedRuntimeHome(provider: SessionBinding["provider"]): boolean {
+    if (provider === "codex") {
+      // Codex 的原生桌面端会直接读取同一个 home 里的 thread 索引和 transcript。
+      // 全局默认会话如果切到独立 runtime home，会把项目会话和原生 App 会话彻底分叉。
+      return false;
+    }
+
     if (!this.openCliBridgeSkillService?.supportsProvider(provider)) {
       return false;
     }
@@ -788,18 +802,34 @@ export class SessionProviderConfigService {
     binding: Pick<SessionBinding, "provider" | "runtimeHomeDir">,
     openCliResolution: OpenCliSessionRuntimeResolution | undefined
   ): void {
-    const runtimeHomeDir = binding.runtimeHomeDir?.trim() ?? "";
+    const targetHomeDir = this.resolveOpenCliBridgeSkillHomeDir(binding);
 
-    if (!runtimeHomeDir || !this.openCliBridgeSkillService?.supportsProvider(binding.provider)) {
+    if (!targetHomeDir || !this.openCliBridgeSkillService?.supportsProvider(binding.provider)) {
       return;
     }
 
     if (openCliResolution?.availability === "ready" && this.openCliBridgeSkillService.hasEnabledCommands()) {
-      this.openCliBridgeSkillService.syncRuntimeSkill(binding.provider, runtimeHomeDir);
+      this.openCliBridgeSkillService.syncRuntimeSkill(binding.provider, targetHomeDir);
       return;
     }
 
-    this.openCliBridgeSkillService.removeRuntimeSkill(binding.provider, runtimeHomeDir);
+    this.openCliBridgeSkillService.removeRuntimeSkill(binding.provider, targetHomeDir);
+  }
+
+  private resolveOpenCliBridgeSkillHomeDir(
+    binding: Pick<SessionBinding, "provider" | "runtimeHomeDir">
+  ): string | null {
+    const runtimeHomeDir = binding.runtimeHomeDir?.trim() ?? "";
+
+    if (runtimeHomeDir) {
+      return runtimeHomeDir;
+    }
+
+    if (binding.provider === "codex") {
+      return path.resolve(this.config.codexHomeDir);
+    }
+
+    return null;
   }
 }
 

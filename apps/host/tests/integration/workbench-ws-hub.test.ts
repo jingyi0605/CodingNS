@@ -773,7 +773,7 @@ describe("WorkbenchWsHub", () => {
     hub.cleanupClient(client);
   });
 
-  it("workbench.subscribe 会在发送纯读快照后显式调度后台刷新", async () => {
+  it("workbench.subscribe 会在发送纯读快照后等待 discovery，并把新快照补推给客户端", async () => {
     const client = {
       send: vi.fn()
     } as unknown as WebSocket;
@@ -786,16 +786,54 @@ describe("WorkbenchWsHub", () => {
         role: "admin"
       }
     };
-    const scheduleSnapshotRefresh = vi.fn();
+    const refreshSnapshot = vi.fn(async () => ({
+      revision: "rev-2",
+      items: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "CodingNS",
+            path: "/Users/jackson/Code/CodingNS"
+          },
+          sessions: [
+            {
+              sessionId: "session-1",
+              workspaceId: "workspace-1",
+              provider: "codex",
+              isArchived: false,
+              isFavorite: false,
+              title: "来自原生 Codex 的会话",
+              messageCount: 5,
+              lastMessageAt: "2026-04-29T10:00:00.000Z",
+              createdAt: "2026-04-29T09:55:00.000Z",
+              updatedAt: "2026-04-29T10:00:00.000Z",
+              syncStatus: "idle",
+              lastErrorCode: null,
+              lastErrorDetail: null,
+              runningState: "idle",
+              activitySource: "inferred",
+              activityResolutionSource: "history_refresh",
+              lastEventAt: "2026-04-29T10:00:00.000Z",
+              completedAt: null,
+              lastSeenAt: null,
+              activityState: "idle"
+            }
+          ],
+          collapsed: false
+        }
+      ]
+    }));
     const workbenchService = {
-      getSnapshot: vi.fn(() => ({ items: [] })),
+      getSnapshot: vi.fn(() => ({
+        revision: "rev-1",
+        items: []
+      })),
       shouldRefreshSnapshot: vi.fn(() => true),
-      refreshSnapshot: vi.fn(async () => ({ items: [] })),
-      syncSessionTitles: vi.fn(async () => ({ items: [] })),
-      scheduleSnapshotRefresh
+      refreshSnapshot,
+      syncSessionTitles: vi.fn(async () => ({ items: [] }))
     } satisfies Pick<
       WorkbenchService,
-      "getSnapshot" | "shouldRefreshSnapshot" | "refreshSnapshot" | "syncSessionTitles" | "scheduleSnapshotRefresh"
+      "getSnapshot" | "shouldRefreshSnapshot" | "refreshSnapshot" | "syncSessionTitles"
     >;
 
     const hub = new WorkbenchWsHub(
@@ -817,7 +855,28 @@ describe("WorkbenchWsHub", () => {
     await flushAsyncTasks();
 
     expect(workbenchService.getSnapshot).toHaveBeenCalledWith("user-1");
-    expect(scheduleSnapshotRefresh).toHaveBeenCalledWith("user-1");
+    expect(refreshSnapshot).toHaveBeenCalledWith("user-1", {
+      force: false,
+      awaitDiscovery: true
+    });
+
+    const sentPayloads = (client.send as unknown as ReturnType<typeof vi.fn>).mock.calls
+      .map((call) => JSON.parse(call[0] as string));
+
+    expect(sentPayloads).toHaveLength(2);
+    expect(sentPayloads[0]).toEqual(
+      expect.objectContaining({
+        type: "workbench.snapshot",
+        revision: "rev-1"
+      })
+    );
+    expect(sentPayloads[1]).toEqual(
+      expect.objectContaining({
+        type: "workbench.snapshot",
+        revision: "rev-2"
+      })
+    );
+    expect(sentPayloads[1]?.snapshot?.items?.[0]?.sessions?.[0]?.title).toBe("来自原生 Codex 的会话");
 
     hub.cleanupClient(client);
   });

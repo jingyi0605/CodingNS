@@ -178,7 +178,7 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
       path.join(homeDir, ".legna"),
     codexHomeDir:
       overrides.codexHomeDir ??
-      process.env.CODINGNS_CODEX_HOME ??
+      resolveHostCodexHomeDirFromEnv(homeDir) ??
       path.join(homeDir, ".codex"),
     tailscaleCliPath:
       overrides.tailscaleCliPath ??
@@ -207,6 +207,34 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     demoMode:
       overrides.demoMode ?? process.env.DEMO_MODE === "true"
   };
+}
+
+function resolveHostCodexHomeDirFromEnv(homeDir: string): string | null {
+  const configured = normalizeOptionalText(process.env.CODINGNS_CODEX_HOME);
+
+  if (!configured) {
+    return null;
+  }
+
+  // Host 的全局会话发现必须始终对齐原生 Codex Home。
+  // 如果当前进程只是跑在某条 Codex 会话里，环境变量里的 session-provider-runtime
+  // 只是这条会话的私有运行时目录，不能拿来当全局会话源。
+  if (isManagedCodexRuntimeHome(configured, homeDir)) {
+    return null;
+  }
+
+  return configured;
+}
+
+function isManagedCodexRuntimeHome(candidatePath: string, homeDir: string): boolean {
+  const normalizedCandidate = path.resolve(candidatePath).replaceAll("\\", "/").toLowerCase();
+  const codingnsHomeRoot = path.resolve(homeDir, ".codingns").replaceAll("\\", "/").toLowerCase();
+
+  return (
+    normalizedCandidate.includes("/session-provider-runtime/codex/")
+    || normalizedCandidate.includes("/runtime/codex/")
+    || normalizedCandidate.startsWith(`${codingnsHomeRoot}/session-provider-runtime/codex/`)
+  );
 }
 
 function resolveAllowedCorsOrigins(

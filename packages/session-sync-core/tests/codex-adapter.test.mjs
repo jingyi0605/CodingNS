@@ -3103,3 +3103,111 @@ test("CodexAdapter 会纠正 knownSessions 里已经缓存错的子 Agent 关系
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("CodexAdapter 不会把只有 forked_from_id 的普通分支会话误判成子 Agent", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-fork-thread-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const sessionDir = join(tempDir, "sessions", "2026", "04", "26");
+  const parentThreadId = "019dc78d-923b-74f3-898e-0e2832be87cb";
+  const childThreadId = "019dc8ff-4b24-7f83-bab1-31b8f8381340";
+  const childSessionFile = join(sessionDir, `rollout-${childThreadId}.jsonl`);
+
+  try {
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      childSessionFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-04-26T08:54:27.404Z",
+          type: "session_meta",
+          payload: {
+            id: childThreadId,
+            forked_from_id: parentThreadId,
+            timestamp: "2026-04-26T08:54:27.365Z",
+            cwd: workspacePath,
+            originator: "codingns-runtime-helper",
+            cli_version: "0.116.0",
+            source: "vscode",
+            model_provider: "gmn"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-26T08:55:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "随着CLI提供商越来越多，我希望在项目中将当前后端CLI提供商抽象层的能力具现化"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const db = new DatabaseSync(join(tempDir, "state_1.sqlite"));
+    db.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        cwd TEXT,
+        created_at INTEGER,
+        archived INTEGER,
+        first_user_message TEXT,
+        agent_nickname TEXT,
+        agent_role TEXT,
+        rollout_path TEXT
+      );
+    `);
+    db.prepare(
+      `INSERT INTO threads (
+         id,
+         title,
+         cwd,
+         created_at,
+         archived,
+         first_user_message,
+         agent_nickname,
+         agent_role,
+         rollout_path
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      childThreadId,
+      "随着CLI提供商越来越多，我希望在项目中将当前后端CLI提供商抽象层的能力具现化",
+      workspacePath,
+      Math.floor(Date.parse("2026-04-26T08:54:27.404Z") / 1000),
+      0,
+      "随着CLI提供商越来越多，我希望在项目中将当前后端CLI提供商抽象层的能力具现化",
+      null,
+      null,
+      childSessionFile
+    );
+    db.close();
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const stats = statSync(childSessionFile);
+    const sessions = await adapter.detectSessions(workspacePath, {
+      knownSessions: [
+        {
+          provider: "codex",
+          providerSessionId: childThreadId,
+          title: "随着CLI提供商越来越多，我希望在项目中将当前后端CLI提供商抽象层的能力具现化",
+          workspacePath,
+          rawStoreRef: childSessionFile,
+          lastMessageAt: "2026-04-26T08:55:00.000Z",
+          messageCount: 1,
+          parentProviderSessionId: null,
+          isSubagent: true,
+          subagentLabel: "worker · stale",
+          sourceMtimeMs: stats.mtimeMs,
+          sourceSizeBytes: stats.size
+        }
+      ]
+    });
+    const childSession = sessions.find((session) => session.providerSessionId === childThreadId);
+
+    assert.equal(childSession?.parentProviderSessionId, parentThreadId);
+    assert.equal(childSession?.isSubagent, false);
+    assert.equal(childSession?.subagentLabel, null);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});

@@ -2482,14 +2482,15 @@ export class SessionHistoryService {
               relation?.annotationSourceText
               ?? persistedSession.existingIndex?.annotationSourceText
               ?? null,
-            isSubagent:
-              relation?.isSubagent
-              ?? persistedSession.existingIndex?.isSubagent
-              ?? false,
-            subagentLabel:
-              relation?.subagentLabel
-              ?? persistedSession.existingIndex?.subagentLabel
-              ?? null,
+            isSubagent: resolvePersistedSubagentState({
+              discoveredIsSubagent: relation?.isSubagent,
+              existingIsSubagent: persistedSession.existingIndex?.isSubagent
+            }),
+            subagentLabel: resolvePersistedSubagentLabel({
+              discoveredIsSubagent: relation?.isSubagent,
+              discoveredSubagentLabel: relation?.subagentLabel ?? null,
+              existingSubagentLabel: persistedSession.existingIndex?.subagentLabel ?? null
+            }),
             title: resolvePersistedSessionTitle(
               persistedSession.session.provider,
               persistedSession.session.title,
@@ -2930,6 +2931,8 @@ export class SessionHistoryService {
         continue;
       }
 
+      const existingIndex = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
+
       const parentSessionId = session.parentProviderSessionId
         ? discoveredSessionIds.get(
             buildProviderSessionKey(session.provider, session.parentProviderSessionId)
@@ -2943,19 +2946,20 @@ export class SessionHistoryService {
 
       relationMap.set(sessionId, {
         parentSessionId,
-        sessionKind:
-          this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.sessionKind ?? "default",
+        sessionKind: existingIndex?.sessionKind ?? "default",
         annotationSourceMessageId:
-          this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.annotationSourceMessageId ?? null,
+          existingIndex?.annotationSourceMessageId ?? null,
         annotationSourceText:
-          this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.annotationSourceText ?? null,
-        isSubagent:
-          session.isSubagent === true
-          || this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.isSubagent === true,
-        subagentLabel:
-          session.subagentLabel?.trim()
-          || this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.subagentLabel
-          || null
+          existingIndex?.annotationSourceText ?? null,
+        isSubagent: resolvePersistedSubagentState({
+          discoveredIsSubagent: session.isSubagent,
+          existingIsSubagent: existingIndex?.isSubagent
+        }),
+        subagentLabel: resolvePersistedSubagentLabel({
+          discoveredIsSubagent: session.isSubagent,
+          discoveredSubagentLabel: session.subagentLabel ?? null,
+          existingSubagentLabel: existingIndex?.subagentLabel ?? null
+        })
       });
     }
 
@@ -4214,18 +4218,17 @@ export class SessionHistoryService {
         ?? targetIndex?.annotationSourceText
         ?? sourceIndex?.annotationSourceText
         ?? null,
-      isSubagent: Boolean(
-        targetRelation?.isSubagent
-        || sourceRelation?.isSubagent
-        || targetIndex?.isSubagent
-        || sourceIndex?.isSubagent
-      ),
-      subagentLabel:
-        targetRelation?.subagentLabel
-        ?? sourceRelation?.subagentLabel
-        ?? targetIndex?.subagentLabel
-        ?? sourceIndex?.subagentLabel
-        ?? null
+      isSubagent: resolvePersistedSubagentState({
+        discoveredIsSubagent: targetRelation?.isSubagent ?? sourceRelation?.isSubagent,
+        existingIsSubagent: targetIndex?.isSubagent ?? sourceIndex?.isSubagent
+      }),
+      subagentLabel: resolvePersistedSubagentLabel({
+        discoveredIsSubagent: targetRelation?.isSubagent ?? sourceRelation?.isSubagent,
+        discoveredSubagentLabel:
+          targetRelation?.subagentLabel ?? sourceRelation?.subagentLabel ?? null,
+        existingSubagentLabel:
+          targetIndex?.subagentLabel ?? sourceIndex?.subagentLabel ?? null
+      })
     });
 
     for (const relation of relationMap.values()) {
@@ -4970,8 +4973,13 @@ function mergeSessionIndexRecord(input: {
       input.target?.annotationSourceMessageId ?? input.source?.annotationSourceMessageId ?? null,
     annotationSourceText:
       input.target?.annotationSourceText ?? input.source?.annotationSourceText ?? null,
-    isSubagent: Boolean(input.target?.isSubagent || input.source?.isSubagent),
-    subagentLabel: input.target?.subagentLabel ?? input.source?.subagentLabel ?? null,
+    isSubagent: resolvePersistedSubagentState({
+      discoveredIsSubagent: input.target?.isSubagent ?? input.source?.isSubagent
+    }),
+    subagentLabel: resolvePersistedSubagentLabel({
+      discoveredIsSubagent: input.target?.isSubagent ?? input.source?.isSubagent,
+      discoveredSubagentLabel: input.target?.subagentLabel ?? input.source?.subagentLabel ?? null
+    }),
     title: pickPreferredSessionTitle(input.target?.title ?? null, input.source?.title ?? null),
     messageCount: Math.max(input.target?.messageCount ?? 0, input.source?.messageCount ?? 0),
     isArchived: mergePersistedArchiveState(
@@ -4997,6 +5005,35 @@ function mergePersistedArchiveState(
   }
 
   return targetArchived ?? sourceArchived ?? false;
+}
+
+function resolvePersistedSubagentState(input: {
+  discoveredIsSubagent?: boolean;
+  existingIsSubagent?: boolean | null;
+}): boolean {
+  if (typeof input.discoveredIsSubagent === "boolean") {
+    return input.discoveredIsSubagent;
+  }
+
+  return input.existingIsSubagent === true;
+}
+
+function resolvePersistedSubagentLabel(input: {
+  discoveredIsSubagent?: boolean;
+  discoveredSubagentLabel?: string | null;
+  existingSubagentLabel?: string | null;
+}): string | null {
+  if (input.discoveredIsSubagent === false) {
+    return null;
+  }
+
+  const discoveredSubagentLabel = input.discoveredSubagentLabel?.trim() || null;
+
+  if (discoveredSubagentLabel) {
+    return discoveredSubagentLabel;
+  }
+
+  return input.existingSubagentLabel ?? null;
 }
 
 function mergeSessionStatusSnapshot(input: {

@@ -120,6 +120,7 @@ interface CodexThreadMetadata {
 
 interface CodexSpawnRelation {
   parentProviderSessionId: string;
+  kind: "fork" | "spawn";
 }
 
 interface CodexSpawnRelationScanCacheEntry {
@@ -142,6 +143,7 @@ interface CodexSessionIdentity {
   threadId: string;
   cwd: string;
   parentThreadId: string | null;
+  parentThreadKind: "fork" | "spawn" | null;
 }
 
 const HISTORY_CACHE_LIMIT = 6;
@@ -1843,7 +1845,8 @@ export class CodexAdapter implements ProviderAdapter {
 
       if (sessionIdentity.parentThreadId) {
         const relation = {
-          parentProviderSessionId: sessionIdentity.parentThreadId
+          parentProviderSessionId: sessionIdentity.parentThreadId,
+          kind: sessionIdentity.parentThreadKind ?? "fork"
         } satisfies CodexSpawnRelation;
         directRelations.set(sessionIdentity.threadId, relation);
         this.touchSpawnRelationScanCache(filePath, {
@@ -1910,7 +1913,8 @@ export class CodexAdapter implements ProviderAdapter {
         }
 
         const relation = {
-          parentProviderSessionId: spawnRecord.parentProviderSessionId
+          parentProviderSessionId: spawnRecord.parentProviderSessionId,
+          kind: "spawn"
         } satisfies CodexSpawnRelation;
         directRelations.set(agentId, relation);
         fileDirectRelations.push([agentId, relation]);
@@ -1961,7 +1965,8 @@ export class CodexAdapter implements ProviderAdapter {
       }
 
       directRelations.set(threadId, {
-        parentProviderSessionId: matchedSpawn.parentProviderSessionId
+        parentProviderSessionId: matchedSpawn.parentProviderSessionId,
+        kind: "spawn"
       });
     }
 
@@ -1997,10 +2002,13 @@ export class CodexAdapter implements ProviderAdapter {
 
       const payload = (record.payload ?? {}) as Record<string, unknown>;
 
+      const parentThreadRelation = resolveCodexParentThreadRelation(payload);
+
       return {
         threadId: this.resolveCodexSessionId(payload, fallbackSessionId),
         cwd: ensureText(payload.cwd).trim(),
-        parentThreadId: resolveCodexParentThreadId(payload)
+        parentThreadId: parentThreadRelation.parentThreadId,
+        parentThreadKind: parentThreadRelation.kind
       };
     } catch {
       return null;
@@ -2882,13 +2890,10 @@ function parseCodexAgentIdFromToolOutput(output: string): string | null {
   return matched?.[1] ?? null;
 }
 
-function resolveCodexParentThreadId(payload: Record<string, unknown>): string | null {
-  const directParentThreadId = ensureText(payload.forked_from_id).trim();
-
-  if (directParentThreadId.length > 0) {
-    return directParentThreadId;
-  }
-
+function resolveCodexParentThreadRelation(payload: Record<string, unknown>): {
+  parentThreadId: string | null;
+  kind: "fork" | "spawn" | null;
+} {
   const source =
     typeof payload.source === "object" && payload.source !== null
       ? (payload.source as Record<string, unknown>)
@@ -2903,7 +2908,26 @@ function resolveCodexParentThreadId(payload: Record<string, unknown>): string | 
       : null;
   const nestedParentThreadId = ensureText(threadSpawn?.parent_thread_id).trim();
 
-  return nestedParentThreadId.length > 0 ? nestedParentThreadId : null;
+  if (nestedParentThreadId.length > 0) {
+    return {
+      parentThreadId: nestedParentThreadId,
+      kind: "spawn"
+    };
+  }
+
+  const directParentThreadId = ensureText(payload.forked_from_id).trim();
+
+  if (directParentThreadId.length > 0) {
+    return {
+      parentThreadId: directParentThreadId,
+      kind: "fork"
+    };
+  }
+
+  return {
+    parentThreadId: null,
+    kind: null
+  };
 }
 
 function toTimestampMs(value: unknown): number | null {
@@ -2948,7 +2972,9 @@ function isCodexSubagentThread(
   metadata: CodexThreadMetadata | null | undefined,
   relation: CodexSpawnRelation | null | undefined
 ): boolean {
-  return Boolean(relation?.parentProviderSessionId || metadata?.agentRole || metadata?.agentNickname);
+  return Boolean(
+    relation?.kind === "spawn" || metadata?.agentRole || metadata?.agentNickname
+  );
 }
 
 function buildCodexSubagentLabel(metadata: CodexThreadMetadata | null | undefined): string | null {

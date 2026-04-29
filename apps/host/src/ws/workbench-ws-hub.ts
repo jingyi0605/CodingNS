@@ -225,7 +225,11 @@ export class WorkbenchWsHub {
         case "workbench.subscribe":
           void this.sendWorkbenchSnapshotToClient(client, userId, channel, message.knownRevision);
           if (this.workbenchService.shouldRefreshSnapshot()) {
-            this.workbenchService.scheduleSnapshotRefresh(userId);
+            void this.refreshAndBroadcast(userId, false, {
+              awaitDiscovery: true
+            }).catch((error) => {
+              this.reportAsyncError("workbenchSubscribeRefresh", error, { userId });
+            });
           }
           return true;
         case "workbench.refresh":
@@ -555,7 +559,9 @@ export class WorkbenchWsHub {
         return;
       }
 
-      void this.refreshAndBroadcast(userId).catch((error) => {
+      void this.refreshAndBroadcast(userId, false, {
+        awaitDiscovery: true
+      }).catch((error) => {
         this.reportAsyncError("workbenchTimer", error, { userId });
       });
     }, WORKBENCH_REFRESH_INTERVAL_MS);

@@ -178,7 +178,7 @@ describe("SessionProviderConfigService", () => {
     expect(launchContext.runtimeEnv.USERPROFILE).toBeUndefined();
   });
 
-  it("OpenCLI ready 时会给全局默认的 Codex 会话分配 runtime home，并写入桥接 Skill", () => {
+  it("OpenCLI ready 时不会把全局默认的 Codex 会话切到独立 runtime home，但会把桥接 Skill 同步到共享 Codex home", () => {
     const rootDir = mkdtempSync(path.join(tmpdir(), "codingns-session-provider-opencli-skill-"));
     tempDirs.push(rootDir);
 
@@ -257,17 +257,58 @@ describe("SessionProviderConfigService", () => {
       runtimeHomeDir: binding.runtimeHomeDir
     });
 
-    expect(binding.runtimeHomeDir).toBeTruthy();
-    expect(launchContext.runtimeHomeDir).toBe(binding.runtimeHomeDir);
+    expect(binding.runtimeHomeDir).toBeNull();
+    expect(launchContext.runtimeHomeDir).toBeNull();
     expect(launchContext.runtimeEnv.PATH?.split(path.delimiter)[0]).toBe("/tmp/opencli-runtime/bin");
     expect(
-      existsSync(path.join(binding.runtimeHomeDir!, "skills", "codingns-opencli", "SKILL.md"))
+      existsSync(path.join(codexHomeDir, "skills", "codingns-opencli", "SKILL.md"))
     ).toBe(true);
     expect(
-      readFileSync(path.join(binding.runtimeHomeDir!, "skills", "codingns-opencli", "SKILL.md"), "utf8")
+      readFileSync(path.join(codexHomeDir, "skills", "codingns-opencli", "SKILL.md"), "utf8")
     ).toContain("hackernews/top");
 
     database.close();
+  });
+
+  it("Codex 旧的全局默认 runtime home 绑定会在继续会话前自动回落到原生 home", () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "codingns-session-provider-codex-reset-"));
+    tempDirs.push(rootDir);
+
+    const codexHomeDir = path.join(rootDir, ".codex");
+    const staleRuntimeHomeDir = path.join(rootDir, "session-provider-runtime", "codex", "session-old");
+    mkdirSync(codexHomeDir, { recursive: true });
+    mkdirSync(staleRuntimeHomeDir, { recursive: true });
+    writeFileSync(path.join(codexHomeDir, "config.toml"), "model = \"gpt-5.4\"\n", "utf8");
+    writeFileSync(path.join(staleRuntimeHomeDir, "config.toml"), "model = \"gpt-5.4\"\n", "utf8");
+
+    const config = resolveHostConfig({
+      databasePath: path.join(rootDir, "host.sqlite"),
+      codexHomeDir
+    });
+    const service = new SessionProviderConfigService(
+      config,
+      {
+        readPresetRuntimeConfig: () => null
+      } as never
+    );
+
+    const binding = service.resolveSessionBinding({
+      sessionId: "session-old",
+      provider: "codex",
+      existingBinding: {
+        providerConfigMode: "global-default",
+        providerPresetId: null,
+        runtimeHomeDir: staleRuntimeHomeDir,
+        providerSessionId: "thread-old",
+        rawStoreRef: path.join(staleRuntimeHomeDir, "sessions", "2026", "04", "29", "thread-old.jsonl")
+      },
+      providerConfigMode: "global-default",
+      providerPresetId: null
+    });
+
+    expect(binding.providerConfigMode).toBe("global-default");
+    expect(binding.providerPresetId).toBeNull();
+    expect(binding.runtimeHomeDir).toBeNull();
   });
 
   it("Claude 会话在上一轮结束后切换 preset 时，会把 transcript 同步到新的 runtime home", () => {

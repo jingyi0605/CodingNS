@@ -18,6 +18,7 @@ afterEach(() => {
   }
 
   delete process.env.CODINGNS_WEB_UI_PORT;
+  delete process.env.CODINGNS_CODEX_HOME;
 });
 
 describe("HostConfig 的 Tailscale 前端暴露端口规则", () => {
@@ -54,5 +55,22 @@ describe("HostConfig 的 Tailscale 前端暴露端口规则", () => {
     });
 
     expect(config.webUiPort).toBe(4310);
+  });
+
+  it("会忽略当前 Codex 会话注入的私有 runtime home，继续使用原生 ~/.codex", () => {
+    process.env.CODINGNS_CODEX_HOME =
+      "/Users/jackson/.codingns/session-provider-runtime/codex/session-123";
+
+    const config = resolveHostConfig();
+
+    expect(config.codexHomeDir).toBe(path.join(os.homedir(), ".codex"));
+  });
+
+  it("会保留用户显式指定的自定义 Codex Home", () => {
+    process.env.CODINGNS_CODEX_HOME = "/Users/jackson/custom-codex-home";
+
+    const config = resolveHostConfig();
+
+    expect(config.codexHomeDir).toBe("/Users/jackson/custom-codex-home");
   });
 });

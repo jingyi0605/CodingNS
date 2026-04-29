@@ -113,6 +113,190 @@ describe("provider control in SessionHistoryService", () => {
     service.dispose();
   });
 
+  it("Codex 会话列表会同时显示原生会话和旧私有 runtime 会话", () => {
+    const service = createSessionHistoryHarness();
+    seedWorkspace(service.workspaceRepository, service.database.db, service.workspacePath);
+    seedSession(service.database.db, {
+      sessionId: "session-native",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "codex-native-1",
+      rawStoreRef: "/Users/test/.codex/sessions/2026/04/29/rollout-native-1.jsonl",
+      title: "Native Codex Session",
+      messageCount: 3,
+      lastMessageAt: "2026-04-29T09:10:00.000Z",
+      createdAt: "2026-04-29T09:10:00.000Z",
+      updatedAt: "2026-04-29T09:10:00.000Z"
+    });
+    seedSession(service.database.db, {
+      sessionId: "session-stale-runtime",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "codex-runtime-1",
+      rawStoreRef:
+        "/Users/test/.codingns/session-provider-runtime/codex/runtime-1/sessions/2026/04/29/rollout-runtime-1.jsonl",
+      title: "Stale Runtime Codex Session",
+      messageCount: 2,
+      lastMessageAt: "2026-04-29T09:20:00.000Z",
+      createdAt: "2026-04-29T09:20:00.000Z",
+      updatedAt: "2026-04-29T09:20:00.000Z"
+    });
+
+    const sessions = service.instance.listWorkspaceSessions("workspace-1", "user-1");
+
+    expect(sessions.map((item) => item.sessionId)).toEqual([
+      "session-stale-runtime",
+      "session-native"
+    ]);
+
+    service.dispose();
+  });
+
+  it("工作区发现传给 helper 的 knownSessions 会保留旧私有 runtime 会话用于兼容显示", async () => {
+    let capturedKnownSessions:
+      | Array<{ provider: string; providerSessionId: string; rawStoreRef: string }>
+      | null = null;
+    const taskManager = createTaskManager(null, {
+      helper_process: {
+        execute: async (definition, input, context) => {
+          if (definition.taskType === HOST_TASK_TYPES.workspaceDiscoveryScan) {
+            capturedKnownSessions = [
+              ...((input as {
+                knownSessions: Array<{
+                  provider: string;
+                  providerSessionId: string;
+                  rawStoreRef: string;
+                }>;
+              }).knownSessions)
+            ];
+            return {
+              sessions: [],
+              isComplete: true,
+              providerDiagnostics: []
+            };
+          }
+
+          return await definition.run(input, context);
+        }
+      }
+    });
+    const service = createSessionHistoryHarness({}, taskManager);
+    seedWorkspace(service.workspaceRepository, service.database.db, service.workspacePath);
+    seedSession(service.database.db, {
+      sessionId: "session-native",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "codex-native-1",
+      rawStoreRef: "/Users/test/.codex/sessions/2026/04/29/rollout-native-1.jsonl",
+      title: "Native Codex Session",
+      messageCount: 3,
+      lastMessageAt: "2026-04-29T09:10:00.000Z",
+      createdAt: "2026-04-29T09:10:00.000Z",
+      updatedAt: "2026-04-29T09:10:00.000Z"
+    });
+    seedSession(service.database.db, {
+      sessionId: "session-stale-runtime",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "codex-runtime-1",
+      rawStoreRef:
+        "/Users/test/.codingns/session-provider-runtime/codex/runtime-1/sessions/2026/04/29/rollout-runtime-1.jsonl",
+      title: "Stale Runtime Codex Session",
+      messageCount: 2,
+      lastMessageAt: "2026-04-29T09:20:00.000Z",
+      createdAt: "2026-04-29T09:20:00.000Z",
+      updatedAt: "2026-04-29T09:20:00.000Z"
+    });
+
+    await service.instance.discoverWorkspaceSessions("workspace-1", "user-1", {
+      force: true
+    });
+
+    expect(capturedKnownSessions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: "codex",
+        providerSessionId: "codex-native-1",
+        rawStoreRef: "/Users/test/.codex/sessions/2026/04/29/rollout-native-1.jsonl"
+      }),
+      expect.objectContaining({
+        provider: "codex",
+        providerSessionId: "codex-runtime-1",
+        rawStoreRef:
+          "/Users/test/.codingns/session-provider-runtime/codex/runtime-1/sessions/2026/04/29/rollout-runtime-1.jsonl"
+      })
+    ]));
+    expect(capturedKnownSessions).toHaveLength(2);
+
+    service.dispose();
+  });
+
+  it("工作区发现会把只有 fork 父子关系的 Codex 会话从旧 subagent 误标记纠正回来", async () => {
+    let workspacePath = "";
+    const taskManager = createTaskManager(null, {
+      helper_process: {
+        execute: async (definition, input, context) => {
+          if (definition.taskType === HOST_TASK_TYPES.workspaceDiscoveryScan) {
+            return {
+              sessions: [
+                {
+                  provider: "codex",
+                  providerSessionId: "codex-fork-1",
+                  title: "Fork Codex Session",
+                  workspacePath,
+                  rawStoreRef: "/Users/test/.codex/sessions/2026/04/29/rollout-fork-1.jsonl",
+                  lastMessageAt: "2026-04-29T09:30:00.000Z",
+                  messageCount: 3,
+                  isArchived: false,
+                  parentProviderSessionId: "codex-parent-1",
+                  isSubagent: false,
+                  subagentLabel: null
+                }
+              ],
+              isComplete: true,
+              providerDiagnostics: []
+            };
+          }
+
+          return await definition.run(input, context);
+        }
+      }
+    });
+    const service = createSessionHistoryHarness({}, taskManager);
+    workspacePath = service.workspacePath;
+    seedWorkspace(service.workspaceRepository, service.database.db, service.workspacePath);
+    seedSession(service.database.db, {
+      sessionId: "session-fork",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "codex-fork-1",
+      rawStoreRef:
+        "/Users/test/.codingns/session-provider-runtime/codex/runtime-1/sessions/2026/04/28/rollout-fork-1.jsonl",
+      title: "Fork Codex Session",
+      messageCount: 2,
+      lastMessageAt: "2026-04-28T09:20:00.000Z",
+      createdAt: "2026-04-28T09:20:00.000Z",
+      updatedAt: "2026-04-28T09:20:00.000Z",
+      isSubagent: true,
+      subagentLabel: "worker · stale"
+    });
+
+    await service.instance.discoverWorkspaceSessions("workspace-1", "user-1", {
+      force: true
+    });
+
+    const sessions = service.instance.listWorkspaceSessions("workspace-1", "user-1");
+    const correctedSession = sessions.find((item) => item.sessionId === "session-fork");
+
+    expect(correctedSession).toMatchObject({
+      sessionId: "session-fork",
+      rawStoreRef: "/Users/test/.codex/sessions/2026/04/29/rollout-fork-1.jsonl",
+      isSubagent: false,
+      subagentLabel: null
+    });
+
+    service.dispose();
+  });
+
   it("禁用 provider 后，start/resume/send/fork 都会统一返回 PROVIDER_DISABLED", async () => {
     const service = createSessionHistoryHarness({
       codexCliPath: join(serviceTempRoot(tempDirs), "missing-codex")
@@ -280,6 +464,8 @@ function seedSession(
     lastMessageAt: string | null;
     createdAt: string;
     updatedAt: string;
+    isSubagent?: boolean;
+    subagentLabel?: string | null;
   }
 ): void {
   db.prepare(
@@ -328,8 +514,8 @@ function seedSession(
     "default",
     null,
     null,
-    0,
-    null,
+    input.isSubagent ? 1 : 0,
+    input.subagentLabel ?? null,
     input.title,
     input.messageCount,
     0,
