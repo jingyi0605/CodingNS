@@ -27,6 +27,7 @@ function createFallbackState(): ClientRuntimeConfig {
 
 class ClientConfigStore {
   private state = createFallbackState();
+  private initialized = false;
   private listeners = new Set<Listener>();
 
   subscribe = (listener: Listener) => {
@@ -38,8 +39,11 @@ class ClientConfigStore {
 
   getState = () => this.state;
 
+  isInitialized = () => this.initialized;
+
   hydrate(config: ClientRuntimeConfig | LegacyClientRuntimeConfigSnapshot): void {
     this.state = normalizeClientRuntimeConfigSnapshot(config, this.state.platform);
+    this.initialized = true;
     this.emit();
   }
 

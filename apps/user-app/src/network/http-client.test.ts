@@ -9,6 +9,10 @@ import type { HostTransport } from "./host-transport";
 import { setHostTransportResolverForTesting } from "./host-transport-registry";
 import { httpClient, resetLegacyCorsCompatibilityHostsForTesting } from "./http-client";
 
+vi.mock("../platform/server/client-runtime-manager", () => ({
+  syncActiveHostAuthenticatedRuntimeConfig: vi.fn(async () => undefined)
+}));
+
 const session: AuthSession = {
   accessToken: "access-token",
   refreshToken: "refresh-token",
@@ -165,6 +169,43 @@ describe("httpClient", () => {
 
     expect(firstHeaders.get("Authorization")).toBe("Bearer access-token");
     expect(secondHeaders.get("Authorization")).toBe("Bearer access-token-next");
+  });
+
+  it("access token 快过期时会先刷新再发起请求", async () => {
+    const fetchMock = vi.mocked(fetch);
+    const now = Date.now();
+    const refreshSpy = vi.spyOn(authStore, "refresh").mockImplementation(async () => {
+      const nextSession = {
+        ...session,
+        accessToken: "access-token-next"
+      };
+      authStore.hydrate(nextSession);
+
+      return {
+        status: "refreshed",
+        session: nextSession
+      };
+    });
+
+    vi.spyOn(Date, "now").mockReturnValue(now + 3590 * 1000);
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      })
+    );
+
+    await expect(httpClient.request<{ ok: boolean }>("/api/demo")).resolves.toEqual({
+      ok: true
+    });
+
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(headers.get("Authorization")).toBe("Bearer access-token-next");
   });
 
   it("刷新登录态只是暂时不可用时，不会清空本地会话", async () => {

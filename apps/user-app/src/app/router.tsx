@@ -15,6 +15,7 @@ import { useAuthSelector } from "../features/auth/store/auth-store";
 import { resolveWorkbenchShellMode } from "../features/workbench/components/workbench-shell-mode";
 import { usePlatform } from "../platform/platform-provider";
 import { shouldShowTrustedEntryLanding } from "../config/trusted-entry-mode";
+import { t } from "../shared/i18n";
 
 function RuntimeResetBoundary({
   runtimeKey,
@@ -40,6 +41,7 @@ function RequireAuth() {
   const config = useClientConfigSelector((state) => state);
   const platform = usePlatform();
   const session = useAuthSelector((state) => state.session);
+  const sessionReady = useAuthSelector((state) => state.sessionReady);
   const location = useLocation();
 
   if (shouldShowTrustedEntryLanding(config, platform.platform)) {
@@ -58,6 +60,10 @@ function RequireAuth() {
     }
 
     return <Navigate to={`/login?returnTo=${encodeURIComponent(returnTo)}`} replace />;
+  }
+
+  if (!sessionReady) {
+    return <div>{t("common.loading")}</div>;
   }
 
   return <AuthenticatedRuntimeOutlet />;

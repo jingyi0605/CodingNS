@@ -7,8 +7,11 @@ import {
   type HostProfile,
   type RuntimeHostProfile
 } from "../../../config/client-config-types";
+import { getHostRequestUrl } from "../../../config/env";
 import { hostLoginRouteHintStore } from "../../../config/host-login-route-hint-store";
-import { ApiError } from "../../../shared/network/api-error";
+import { isPageUnloading } from "../../../shared/browser/page-unload-state";
+import { ApiError, type ApiErrorPayload } from "../../../shared/network/api-error";
+import { getAuthClientHeaders } from "./client-device";
 import type { LoginPayload } from "../api/auth-api";
 
 export interface AuthenticatedUser {
@@ -27,6 +30,7 @@ export interface AuthSession {
 export interface AuthState {
   status: "anonymous" | "authenticated" | "refreshing";
   session: AuthSession | null;
+  sessionReady: boolean;
 }
 
 export interface HostSessionEnvelope {
@@ -56,6 +60,7 @@ type AuthListener = () => void;
 
 const STORAGE_KEY = "codingns.auth.session";
 const RUNTIME_CONFIG_SYNC_TIMEOUT_MS = 3_000;
+const ACCESS_TOKEN_REFRESH_SKEW_MS = 15_000;
 
 interface LegacyStoredAuthSession {
   serverBaseUrl?: string;
@@ -65,12 +70,15 @@ interface LegacyStoredAuthSession {
 class AuthStore {
   private state: AuthState = {
     status: "anonymous",
-    session: null
+    session: null,
+    sessionReady: true
   };
 
   private listeners = new Set<AuthListener>();
   private sessionMap: HostSessionMap = {};
   private lastRuntimeConfigSyncKey: string | null = null;
+  private lastStoredSessionValidationKey: string | null = null;
+  private refreshInFlight: Promise<AuthRefreshResult> | null = null;
 
   constructor() {
     this.syncCurrentHostSession();
@@ -96,7 +104,8 @@ class AuthStore {
       const session = await loginRequest(payload, baseUrl);
       this.updateState({
         status: "authenticated",
-        session
+        session,
+        sessionReady: true
       });
       return session;
     }
@@ -104,7 +113,8 @@ class AuthStore {
     const session = await this.loginForHost(currentHost, payload, baseUrl);
     this.updateState({
       status: "authenticated",
-      session
+      session,
+      sessionReady: true
     });
     return session;
   }
@@ -131,7 +141,8 @@ class AuthStore {
     if (this.getCurrentHost()?.id === host.id) {
       this.updateState({
         status: "authenticated",
-        session
+        session,
+        sessionReady: true
       });
       this.scheduleRuntimeConfigSync(host, session);
     }
@@ -154,7 +165,27 @@ class AuthStore {
   }
 
   async refresh(): Promise<AuthRefreshResult> {
-    const { refreshRequest } = await import("../api/auth-api");
+    if (this.refreshInFlight) {
+      return await this.refreshInFlight;
+    }
+
+    const refreshTask = this.runRefresh();
+    this.refreshInFlight = refreshTask;
+
+    try {
+      return await refreshTask;
+    } finally {
+      if (this.refreshInFlight === refreshTask) {
+        this.refreshInFlight = null;
+      }
+    }
+  }
+
+  shouldRefreshCurrentSession(now = Date.now()): boolean {
+    return shouldRefreshSessionBeforeRequest(this.getCurrentSessionEnvelope(), now);
+  }
+
+  private async runRefresh(): Promise<AuthRefreshResult> {
     const previousSession = this.state.session;
     const refreshToken = previousSession?.refreshToken;
     const currentHost = this.getCurrentHost();
@@ -174,7 +205,7 @@ class AuthStore {
     this.emit();
 
     try {
-      const nextSession = await refreshRequest({ refreshToken }, currentHost?.baseUrl);
+      const nextSession = await requestSessionRefresh(refreshToken, currentHost?.baseUrl);
       this.setSession(nextSession, currentHost);
       this.scheduleRuntimeConfigSync(currentHost, nextSession);
       return {
@@ -192,7 +223,8 @@ class AuthStore {
 
       this.state = {
         status: previousSession ? "authenticated" : "anonymous",
-        session: previousSession
+        session: previousSession,
+        sessionReady: this.state.sessionReady
       };
       this.emit();
 
@@ -207,6 +239,7 @@ class AuthStore {
   clear(): void {
     const currentHost = this.getCurrentHost();
     this.lastRuntimeConfigSyncKey = null;
+    this.lastStoredSessionValidationKey = null;
 
     if (!currentHost) {
       hostLoginRouteHintStore.clear();
@@ -214,7 +247,8 @@ class AuthStore {
       this.persistSessionMap();
       this.updateState({
         status: "anonymous",
-        session: null
+        session: null,
+        sessionReady: true
       });
       return;
     }
@@ -230,7 +264,8 @@ class AuthStore {
 
     this.updateState({
       status: "anonymous",
-      session: null
+      session: null,
+      sessionReady: true
     });
   }
 
@@ -252,26 +287,35 @@ class AuthStore {
 
     if (this.getCurrentHost()?.id === hostId) {
       this.lastRuntimeConfigSyncKey = null;
+      this.lastStoredSessionValidationKey = null;
       this.updateState({
         status: "anonymous",
-        session: null
+        session: null,
+        sessionReady: true
       });
     }
   }
 
-  private setSession(session: AuthSession, host = this.getCurrentHost()): void {
+  private setSession(
+    session: AuthSession,
+    host = this.getCurrentHost(),
+    options: { sessionReady?: boolean } = {}
+  ): void {
     if (!host) {
       return;
     }
 
     this.persistSession(host, session);
+    this.lastStoredSessionValidationKey = buildStoredSessionValidationKey(host, session);
     this.updateState({
       status: "authenticated",
-      session
+      session,
+      sessionReady: options.sessionReady ?? true
     });
   }
 
   private persistSession(host: RuntimeHostProfile, session: AuthSession): void {
+    this.lastStoredSessionValidationKey = buildStoredSessionValidationKey(host, session);
     this.sessionMap = {
       ...this.sessionMap,
       [host.id]: {
@@ -316,6 +360,10 @@ class AuthStore {
   }
 
   private syncCurrentHostSession(): void {
+    if (!clientConfigStore.isInitialized()) {
+      return;
+    }
+
     const currentHost = this.getCurrentHost();
     const { sessionMap, migrated } = this.readSessionMapFromStorage(currentHost);
     const normalizedSessionMap = pruneExpiredSessions(sessionMap);
@@ -327,21 +375,49 @@ class AuthStore {
     }
 
     const nextSession = currentHost ? normalizedSessionMap[currentHost.id]?.session ?? null : null;
-    this.updateState({
-      status: nextSession ? "authenticated" : "anonymous",
-      session: nextSession
-    });
 
     if (!currentHost || !nextSession) {
+      this.lastStoredSessionValidationKey = null;
+      this.updateState({
+        status: "anonymous",
+        session: null,
+        sessionReady: true
+      });
       this.lastRuntimeConfigSyncKey = null;
       return;
     }
 
-    this.scheduleRuntimeConfigSync(currentHost, nextSession);
+    const validationKey = buildStoredSessionValidationKey(currentHost, nextSession);
+
+    if (this.lastStoredSessionValidationKey === validationKey) {
+      this.updateState({
+        status: "authenticated",
+        session: nextSession,
+        sessionReady: true
+      });
+      return;
+    }
+
+    this.updateState({
+      status: "authenticated",
+      session: nextSession,
+      sessionReady: false
+    });
+    this.scheduleStoredSessionValidation(currentHost, nextSession);
   }
 
   private getCurrentHost(): RuntimeHostProfile | null {
     return getActiveHost(clientConfigStore.getState());
+  }
+
+  private getCurrentSessionEnvelope(): HostSessionEnvelope | null {
+    const currentHost = this.getCurrentHost();
+
+    if (!currentHost) {
+      return null;
+    }
+
+    return this.sessionMap[currentHost.id] ?? null;
   }
 
   private readSessionMapFromStorage(currentHost: HostProfile | null): {
@@ -407,7 +483,11 @@ class AuthStore {
   }
 
   private updateState(nextState: AuthState): void {
-    if (this.state.status === nextState.status && this.state.session === nextState.session) {
+    if (
+      this.state.status === nextState.status
+      && this.state.session === nextState.session
+      && this.state.sessionReady === nextState.sessionReady
+    ) {
       return;
     }
 
@@ -419,7 +499,7 @@ class AuthStore {
     host: RuntimeHostProfile | null,
     session: AuthSession | null
   ): Promise<void> {
-    if (!host || !session) {
+    if (!host || !session || isPageUnloading()) {
       this.lastRuntimeConfigSyncKey = null;
       return;
     }
@@ -459,6 +539,56 @@ class AuthStore {
     session: AuthSession | null
   ): void {
     void this.ensureRuntimeConfigSynced(host, session);
+  }
+
+  private scheduleStoredSessionValidation(
+    host: RuntimeHostProfile,
+    session: AuthSession
+  ): void {
+    void this.ensureStoredSessionValidated(host, session);
+  }
+
+  private async ensureStoredSessionValidated(
+    host: RuntimeHostProfile,
+    session: AuthSession
+  ): Promise<void> {
+    if (
+      isPageUnloading()
+      || this.getCurrentHost()?.id !== host.id
+      || this.state.session?.refreshToken !== session.refreshToken
+    ) {
+      return;
+    }
+
+    const validationKey = buildStoredSessionValidationKey(host, session);
+
+    try {
+      const nextSession = await requestSessionRefresh(session.refreshToken, host.baseUrl);
+
+      if (this.getCurrentHost()?.id !== host.id || this.state.session?.refreshToken !== session.refreshToken) {
+        return;
+      }
+
+      this.lastStoredSessionValidationKey = validationKey;
+      this.setSession(nextSession, host, { sessionReady: true });
+      this.scheduleRuntimeConfigSync(host, nextSession);
+    } catch (error) {
+      if (this.getCurrentHost()?.id !== host.id || this.state.session?.refreshToken !== session.refreshToken) {
+        return;
+      }
+
+      if (shouldClearSessionAfterRefreshFailure(error)) {
+        this.clear();
+        return;
+      }
+
+      this.lastStoredSessionValidationKey = validationKey;
+      this.updateState({
+        status: "authenticated",
+        session,
+        sessionReady: true
+      });
+    }
   }
 
   private emit(): void {
@@ -613,4 +743,62 @@ function isSessionExpired(envelope: HostSessionEnvelope): boolean {
   }
 
   return envelope.savedAt + ttlMs * 1000 <= Date.now();
+}
+
+function shouldRefreshSessionBeforeRequest(
+  envelope: HostSessionEnvelope | null,
+  now: number
+): boolean {
+  const ttlMs = envelope?.session?.expiresIn;
+
+  if (!envelope?.session || typeof ttlMs !== "number" || !Number.isFinite(ttlMs) || ttlMs <= 0) {
+    return false;
+  }
+
+  return envelope.savedAt + ttlMs * 1000 <= now + ACCESS_TOKEN_REFRESH_SKEW_MS;
+}
+
+function buildStoredSessionValidationKey(host: RuntimeHostProfile, session: AuthSession): string {
+  return `${host.id}:${session.refreshToken}`;
+}
+
+async function requestSessionRefresh(refreshToken: string, baseUrl?: string): Promise<AuthSession> {
+  const response = await fetch(getHostRequestUrl("/api/auth/refresh", baseUrl), {
+    method: "POST",
+    headers: {
+      ...getAuthClientHeaders(),
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ refreshToken })
+  });
+
+  const raw = await response.text();
+  const payload = raw ? tryParseRefreshPayload(raw) : null;
+
+  if (!response.ok) {
+    throw new ApiError(response.status, {
+      detail: payload?.detail ?? `请求失败（HTTP ${response.status}）`,
+      error_code: payload?.error_code ?? (response.status === 401 ? "UNAUTHORIZED" : "HTTP_ERROR"),
+      field: payload?.field,
+      data: payload?.data,
+      timestamp: payload?.timestamp
+    });
+  }
+
+  if (!payload || !isAuthSession(payload)) {
+    throw new ApiError(response.status, {
+      detail: "刷新登录态返回了无效响应",
+      error_code: "HTTP_ERROR"
+    });
+  }
+
+  return payload;
+}
+
+function tryParseRefreshPayload(raw: string): (Partial<AuthSession> & Partial<ApiErrorPayload>) | null {
+  try {
+    return JSON.parse(raw) as Partial<AuthSession> & Partial<ApiErrorPayload>;
+  } catch {
+    return null;
+  }
 }

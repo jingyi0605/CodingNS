@@ -62,6 +62,24 @@ class HttpClient {
     }
 
     if (!options.skipAuth) {
+      if (authStore.shouldRefreshCurrentSession()) {
+        const refreshed = await authStore.refresh();
+
+        if (refreshed.status === "invalid") {
+          throw new ApiError(401, {
+            detail: "登录态已经失效，请重新登录",
+            error_code: "UNAUTHORIZED"
+          });
+        }
+
+        if (refreshed.status === "deferred") {
+          throw new ApiError(0, {
+            detail: "登录态暂时无法恢复，请稍后重试",
+            error_code: "AUTH_REFRESH_UNAVAILABLE"
+          });
+        }
+      }
+
       const accessToken = authStore.getState().session?.accessToken;
 
       if (!accessToken) {
