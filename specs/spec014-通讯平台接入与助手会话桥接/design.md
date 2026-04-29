@@ -181,7 +181,7 @@
 | Telegram | `polling` | 最直接 |
 | Slack | `webhook` | 先支持 slash command / command-style 文本入口 |
 | Discord | `webhook` | 先支持 interaction / slash command 入口 |
-| 个人微信（claw） | `bridge` 或 `polling` | 第一阶段允许桥接模式 |
+| 个人微信（claw） | `polling` | 先由 Host 发起二维码绑定，绑定成功后再轮询收发文本 |
 
 ### 5.2 为什么不强行所有平台一个模式
 
@@ -191,7 +191,7 @@
 
 - Telegram 轮询很自然
 - Slack / Discord 通常要先 ACK
-- 微信个人号本来就更适合 bridge
+- 个人微信不是先填一堆地址，而是要先完成扫码绑定
 
 统一的是宿主模型，不是底层传输手段。
 
@@ -265,7 +265,7 @@
 | Telegram | 支持 | 按 chat id 维持多条映射，群聊和私聊都可分开 |
 | Slack | 支持 | 按 channel / dm 维持多条映射，可预留 thread ts |
 | Discord | 支持 | 按 channel / dm 维持多条映射，interaction 入口也落到独立会话 |
-| 个人微信（claw） | 有限支持 | 取决于 bridge 能否稳定提供 conversation key；第一阶段先按“能区分就多会话，不能区分就单主会话”实现 |
+| 个人微信（claw） | 有限支持 | 取决于上游 transport 能不能稳定恢复会话上下文；第一阶段先按一对一文本会话收住 |
 
 这张表里有两个意思，别混：
 
@@ -400,12 +400,22 @@ interface NormalizedChannelInboundMessage {
 
 个人微信不是普通官方 Bot 平台。
 
-所以第一阶段不承诺“把个人微信 transport 完整内嵌进 Host 主进程”。先允许两种方式：
+这里最容易做错的一点，是把它想成“用户手填一个 bridge 地址，然后 Host 去调 `/poll` 和 `/send`”。
 
-1. `bridge`：Host 调一个单独的 claw transport 服务
-2. `polling`：Host 调一个桥接接口按游标取消息
+真实第一阶段链路应该是：
 
-这样做的目的不是偷懒，是先把宿主模型和助手会话桥接链路定稳。
+1. 管理员先创建一个 `wechat-claw` 账号
+2. Host 发起二维码绑定
+3. 管理员用微信扫码
+4. Host 轮询登录状态
+5. 绑定成功后，Host 才保存 `botToken / baseUrl / boundUserId`
+6. 后续收消息和发消息都走真实 iLink polling 接口
+
+这样做的目的也很直接：
+
+- 不把假的表单字段塞给用户
+- 先把“扫码绑定 -> 登录态 -> polling -> 文本回发”这条真链路跑通
+- 再谈后面的媒体、上下文恢复和更复杂会话能力
 
 ## 12. 验证方案
 

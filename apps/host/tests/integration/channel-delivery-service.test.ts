@@ -1,6 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
 
 import { ChannelDeliveryService } from "../../src/modules/channels/channel-delivery-service.js";
+import { createDefaultChannelPlatformAdapterRegistry } from "../../src/modules/channels/channel-platform-adapters.js";
+import { WechatClawRuntimeClient } from "../../src/modules/channels/wechat-claw-runtime-client.js";
+import { WechatClawRuntimeManager } from "../../src/modules/channels/wechat-claw-runtime-manager.js";
 import { HOST_TASK_TYPES, type TaskDefinition, type TaskHandle } from "../../src/modules/tasks/task-types.js";
 import { ChannelAccountRepository } from "../../src/storage/repositories/channel-account-repository.js";
 import { ButlerControlSessionRepository } from "../../src/storage/repositories/butler-control-session-repository.js";
@@ -14,6 +21,28 @@ import type {
   ChannelInboundEvent,
   ChannelThread
 } from "../../src/types/domain.js";
+import { createWechatClawUpstreamStub, type WechatClawUpstreamStub } from "../helpers/wechat-claw-upstream-stub.js";
+
+const tempDirs: string[] = [];
+const runtimeManagers: WechatClawRuntimeManager[] = [];
+const upstreams: WechatClawUpstreamStub[] = [];
+
+afterEach(async () => {
+  while (runtimeManagers.length > 0) {
+    runtimeManagers.pop()?.dispose();
+  }
+
+  while (upstreams.length > 0) {
+    await upstreams.pop()?.close();
+  }
+
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
 
 describe("ChannelDeliveryService", () => {
   it("会等待 Butler 回复并落库 delivery", async () => {
@@ -293,6 +322,133 @@ describe("ChannelDeliveryService", () => {
     expect(delivery.errorMessage).toBeNull();
     expect(deliveryRepository.findById(delivery.id)?.errorMessage).toBeNull();
     expect(eventRepository.findById(event.id)?.errorMessage).toBeNull();
+
+    database.close();
+  });
+
+  it("个人微信（claw）会通过真实 helper 完成回发，并把 delivery 落库为 sent", async () => {
+    const upstream = await createWechatClawUpstreamStub();
+    upstreams.push(upstream);
+    upstream.setQrStatuses(["confirmed"]);
+
+    const runtimeRootDir = mkdtempSync(path.join(os.tmpdir(), "codingns-wechat-delivery-"));
+    tempDirs.push(runtimeRootDir);
+
+    const runtimeManager = new WechatClawRuntimeManager(runtimeRootDir);
+    runtimeManagers.push(runtimeManager);
+    const runtimeClient = new WechatClawRuntimeClient(runtimeManager);
+
+    const database = createDatabaseClient(":memory:");
+    seedAuthUser(database.db, "user-1");
+    const accountRepository = new ChannelAccountRepository(database.db);
+    const threadRepository = new ChannelThreadRepository(database.db);
+    const eventRepository = new ChannelInboundEventRepository(database.db);
+    const deliveryRepository = new ChannelDeliveryRepository(database.db);
+    const controlSessionRepository = new ButlerControlSessionRepository(database.db);
+
+    const account = createAccount(accountRepository, {
+      id: "account-wechat-send",
+      userId: "user-1",
+      platformCode: "wechat-claw",
+      displayName: "Wechat Claw",
+      providerId: "codex",
+      connectionMode: "polling",
+      status: "active",
+      config: {
+        loginBaseUrl: upstream.baseUrl,
+        apiBaseUrl: upstream.baseUrl
+      }
+    });
+    await runtimeClient.startLogin(account);
+    await runtimeClient.getLoginStatus(account.id);
+
+    const controlSession = createControlSession(database.db, controlSessionRepository, {
+      id: "control-wechat-send",
+      providerId: "codex",
+      sessionId: "session-wechat-send"
+    });
+    const thread = threadRepository.create({
+      id: "thread-wechat-send",
+      channelAccountId: account.id,
+      externalConversationKey: "wx-user-1",
+      externalUserId: "wx-user-1",
+      externalThreadKey: null,
+      controlSessionId: controlSession.id,
+      sessionId: controlSession.sessionId,
+      title: "微信线程",
+      status: "active",
+      lastInboundAt: "2026-04-27T01:30:00.000Z",
+      lastOutboundAt: null,
+      lastTransportContext: {
+        contextToken: "context-1"
+      },
+      createdAt: "2026-04-27T01:30:00.000Z",
+      updatedAt: "2026-04-27T01:30:00.000Z"
+    });
+    const event = createInboundEvent(eventRepository, account.id, controlSession, thread);
+
+    const service = new ChannelDeliveryService(
+      accountRepository,
+      threadRepository,
+      eventRepository,
+      deliveryRepository,
+      {
+        readRecentHistoryEnvelope: async () => ({
+          type: "session.delta",
+          sessionId: "session-wechat-send",
+          cursor: null,
+          messages: [{
+            sequence: 2,
+            role: "assistant",
+            kind: "text",
+            content: "这是通过 helper 发回微信的消息",
+            timestamp: "2026-04-27T01:30:10.000Z",
+            messageId: "assistant-wechat-send",
+            attachments: []
+          }]
+        })
+      },
+      createDefaultChannelPlatformAdapterRegistry({
+        wechatClawRuntimeClient: runtimeClient
+      }),
+      createFakeTaskManager()
+    );
+
+    const delivery = await service.deliverAssistantReply({
+      account,
+      thread,
+      event,
+      controlSession: toControlSessionView(controlSession),
+      dispatch: {
+        mode: "continued",
+        acceptedAt: "2026-04-27T01:30:00.000Z",
+        sessionId: "session-wechat-send",
+        provider: "codex",
+        providerSessionId: "provider-session-wechat-send",
+        clientRequestId: "client-wechat-send"
+      }
+    });
+
+    expect(delivery.status).toBe("sent");
+    expect(delivery.providerMessageRef).toContain("wechat-claw:account-wechat-send:");
+    expect(deliveryRepository.findById(delivery.id)).toEqual(expect.objectContaining({
+      id: delivery.id,
+      status: "sent",
+      textContent: "这是通过 helper 发回微信的消息"
+    }));
+    expect(upstream.calls.sendMessage).toBe(1);
+    expect(upstream.calls.sendBodies[0]).toEqual(expect.objectContaining({
+      msg: expect.objectContaining({
+        to_user_id: "wx-user-1",
+        context_token: "context-1",
+        item_list: [{
+          type: 1,
+          text_item: {
+            text: "这是通过 helper 发回微信的消息"
+          }
+        }]
+      })
+    }));
 
     database.close();
   });

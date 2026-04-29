@@ -5,6 +5,7 @@ import type {
   ButlerControlSession,
   ButlerControlSessionPurpose,
   ButlerProfile,
+  ButlerProfileProviderId,
   SessionListItem
 } from "../../types/domain.js";
 import type { ButlerControlSessionRepository } from "../../storage/repositories/butler-control-session-repository.js";
@@ -146,88 +147,19 @@ export class ButlerControlSessionService {
     input: StartButlerControlSessionInput = {}
   ): Promise<ButlerControlSessionView> {
     const profile = this.butlerProfileService.ensureInitialized();
-    this.assertProviderEnabled(profile.providerId);
-    const content = normalizeControlContent(input.content, "");
-    const model = normalizeNullableText(input.model);
-    const reasoningLevel = normalizeNullableText(input.reasoningLevel);
-    const permissionMode = normalizeNullableText(input.permissionMode);
-    const clientRequestId = normalizeNullableText(input.clientRequestId)
-      ?? `assistant-origin:butler-control-start:${createId()}`;
-    const promptContext = await this.butlerContextAggregator.resolvePromptContext(userId, input.content ?? null);
-    const preparedWorkspace = await this.prepareWorkspace(profile, promptContext, userId, {
-      title: normalizeNullableText(input.title),
-      content
+    return this.startSessionInternal(userId, profile.providerId, input, {
+      closeExistingCurrent: true
     });
-    const current = this.butlerControlSessionRepository.findLatestOpenByProvider(profile.providerId);
+  }
 
-    if (current && current.status !== "closed") {
-      this.butlerControlSessionRepository.update({
-        ...current,
-        status: "closed",
-        updatedAt: nowIso()
-      });
-    }
-
-    try {
-      const started = await this.sessionLiveRuntimeService.startLiveSession({
-        workspaceId: preparedWorkspace.workspaceId,
-        userId,
-        provider: profile.providerId,
-        content,
-        clientRequestId,
-        runtimeOptions: {
-          model,
-          reasoningLevel,
-          permissionMode,
-          attachments: []
-        }
-      });
-      recordButlerProxyMessageOrigin(this.sessionMessageOriginRepository, {
-        sessionId: started.sessionId,
-        clientRequestId,
-        messageId: started.message?.messageId ?? null,
-        content,
-        createdAt: started.acceptedAt,
-        fallbackKey: `butler-control-start:${started.sessionId}:${started.acceptedAt}`
-      });
-      const timestamp = started.acceptedAt;
-      const created = this.butlerControlSessionRepository.create({
-        id: createId(),
-        providerId: profile.providerId,
-        sessionId: started.sessionId,
-        purpose: input.purpose ?? "chat",
-        title: normalizeNullableText(input.title),
-        sourceItemId: normalizeNullableText(input.sourceItemId),
-        model,
-        reasoningLevel,
-        permissionMode,
-        status: "running",
-        lastContextVersion: promptContext.version,
-        lastSummary: normalizeNullableText(input.title) ?? summarizeMessage(content),
-        createdAt: timestamp,
-        updatedAt: timestamp
-      });
-
-      if (preparedWorkspace.sandboxId && this.assistantSandboxService) {
-        this.assistantSandboxService.markSandboxUsedByControlSession(
-          preparedWorkspace.sandboxId,
-          userId,
-          created.id
-        );
-      }
-
-      return this.toView(created, userId);
-    } catch (error) {
-      if (preparedWorkspace.sandboxId && this.assistantSandboxService) {
-        try {
-          this.assistantSandboxService.removeSandbox(preparedWorkspace.sandboxId, userId);
-        } catch {
-          // 控制会话没真正启动成功时，尽量把新建的空白沙箱收口，避免残留无主目录。
-        }
-      }
-
-      throw error;
-    }
+  async startSessionForProvider(
+    userId: string,
+    providerId: ButlerProfileProviderId,
+    input: StartButlerControlSessionInput = {}
+  ): Promise<ButlerControlSessionView> {
+    return this.startSessionInternal(userId, providerId, input, {
+      closeExistingCurrent: false
+    });
   }
 
   private assertProviderEnabled(providerId: string): void {
@@ -294,6 +226,42 @@ export class ButlerControlSessionService {
       input.controlSessionId?.trim()
         ? this.requireSessionById(input.controlSessionId, profile.providerId)
         : this.requireCurrentSession(profile.providerId);
+    return this.sendMessageInternal(userId, current, input);
+  }
+
+  async sendMessageToSession(
+    userId: string,
+    input: SendButlerControlMessageInput & {
+      controlSessionId: string;
+    }
+  ): Promise<{
+    controlSession: ButlerControlSessionView;
+    sessionId: string;
+    provider: string;
+    providerSessionId: string;
+    acceptedAt: string;
+    clientRequestId: string | null;
+    message: Awaited<ReturnType<SessionLiveRuntimeService["sendLiveMessage"]>>["message"];
+  }> {
+    const current = this.requireSessionByIdAnyProvider(input.controlSessionId);
+    return this.sendMessageInternal(userId, current, input);
+  }
+
+  private async sendMessageInternal(
+    userId: string,
+    current: ButlerControlSession,
+    input: SendButlerControlMessageInput
+  ): Promise<{
+    controlSession: ButlerControlSessionView;
+    sessionId: string;
+    provider: string;
+    providerSessionId: string;
+    acceptedAt: string;
+    clientRequestId: string | null;
+    message: Awaited<ReturnType<SessionLiveRuntimeService["sendLiveMessage"]>>["message"];
+  }> {
+    const profile = this.butlerProfileService.ensureInitialized();
+    this.assertProviderEnabled(current.providerId);
     await this.ensureSessionCanStartWork(current.sessionId, userId, "助手控制会话");
     const content = normalizeControlContent(input.content, "");
     const requestedAt = nowIso();
@@ -362,6 +330,99 @@ export class ButlerControlSessionService {
     }
   }
 
+  private async startSessionInternal(
+    userId: string,
+    providerId: ButlerProfileProviderId,
+    input: StartButlerControlSessionInput,
+    options: {
+      closeExistingCurrent: boolean;
+    }
+  ): Promise<ButlerControlSessionView> {
+    const profile = this.butlerProfileService.ensureInitialized();
+    this.assertProviderEnabled(providerId);
+    const content = normalizeControlContent(input.content, "");
+    const model = normalizeNullableText(input.model);
+    const reasoningLevel = normalizeNullableText(input.reasoningLevel);
+    const permissionMode = normalizeNullableText(input.permissionMode);
+    const clientRequestId = normalizeNullableText(input.clientRequestId)
+      ?? `assistant-origin:butler-control-start:${createId()}`;
+    const promptContext = await this.butlerContextAggregator.resolvePromptContext(userId, input.content ?? null);
+    const preparedWorkspace = await this.prepareWorkspace(profile, promptContext, userId, {
+      title: normalizeNullableText(input.title),
+      content
+    });
+    const current = this.butlerControlSessionRepository.findLatestOpenByProvider(providerId);
+
+    if (options.closeExistingCurrent && current && current.status !== "closed") {
+      this.butlerControlSessionRepository.update({
+        ...current,
+        status: "closed",
+        updatedAt: nowIso()
+      });
+    }
+
+    try {
+      const started = await this.sessionLiveRuntimeService.startLiveSession({
+        workspaceId: preparedWorkspace.workspaceId,
+        userId,
+        provider: providerId,
+        content,
+        clientRequestId,
+        runtimeOptions: {
+          model,
+          reasoningLevel,
+          permissionMode,
+          attachments: []
+        }
+      });
+      recordButlerProxyMessageOrigin(this.sessionMessageOriginRepository, {
+        sessionId: started.sessionId,
+        clientRequestId,
+        messageId: started.message?.messageId ?? null,
+        content,
+        createdAt: started.acceptedAt,
+        fallbackKey: `butler-control-start:${started.sessionId}:${started.acceptedAt}`
+      });
+      const timestamp = started.acceptedAt;
+      const created = this.butlerControlSessionRepository.create({
+        id: createId(),
+        providerId,
+        sessionId: started.sessionId,
+        purpose: input.purpose ?? "chat",
+        title: normalizeNullableText(input.title),
+        sourceItemId: normalizeNullableText(input.sourceItemId),
+        model,
+        reasoningLevel,
+        permissionMode,
+        status: "running",
+        lastContextVersion: promptContext.version,
+        lastSummary: normalizeNullableText(input.title) ?? summarizeMessage(content),
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+
+      if (preparedWorkspace.sandboxId && this.assistantSandboxService) {
+        this.assistantSandboxService.markSandboxUsedByControlSession(
+          preparedWorkspace.sandboxId,
+          userId,
+          created.id
+        );
+      }
+
+      return this.toView(created, userId);
+    } catch (error) {
+      if (preparedWorkspace.sandboxId && this.assistantSandboxService) {
+        try {
+          this.assistantSandboxService.removeSandbox(preparedWorkspace.sandboxId, userId);
+        } catch {
+          // 控制会话没真正启动成功时，尽量把新建的空白沙箱收口，避免残留无主目录。
+        }
+      }
+
+      throw error;
+    }
+  }
+
   private requireCurrentSession(providerId: ButlerProfile["providerId"]): ButlerControlSession {
     const current = this.butlerControlSessionRepository.findLatestOpenByProvider(providerId);
 
@@ -380,9 +441,23 @@ export class ButlerControlSessionService {
     controlSessionId: string,
     providerId: ButlerProfile["providerId"]
   ): ButlerControlSession {
+    const record = this.requireSessionByIdAnyProvider(controlSessionId);
+
+    if (record.providerId !== providerId) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "BUTLER_CONTROL_SESSION_NOT_FOUND",
+        detail: "指定的助手会话不存在或已经关闭"
+      });
+    }
+
+    return record;
+  }
+
+  private requireSessionByIdAnyProvider(controlSessionId: string): ButlerControlSession {
     const record = this.butlerControlSessionRepository.findById(controlSessionId.trim());
 
-    if (!record || record.providerId !== providerId || record.status === "closed") {
+    if (!record || record.status === "closed") {
       throw new AppError({
         statusCode: 404,
         errorCode: "BUTLER_CONTROL_SESSION_NOT_FOUND",

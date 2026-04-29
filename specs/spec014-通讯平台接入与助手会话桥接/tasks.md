@@ -104,7 +104,12 @@
 4. 不影响现有 Host 启动
 
 当前状态：
-- [ ] 待开始
+- [x] 已完成
+
+完成说明：
+- `apps/host` 已新增 `channels` 模块、4 张 SQLite 表、4 个 repository、管理 service / controller / routes。
+- Host 已挂出平台能力清单、账号管理、probe / poll、threads / events / deliveries 查询接口。
+- `channel_accounts.provider_id` 已收紧为 `codex / claude-code`，默认值是 `codex`。
 
 ## 任务 4：把 Butler control session 接成通道目标
 
@@ -137,7 +142,12 @@
 3. 助手会话能看到这条消息
 
 当前状态：
-- [ ] 待开始
+- [x] 已完成
+
+完成说明：
+- 已新增 `channel_bridge_service`，按 `channel_account_id + external_conversation_key` 复用或创建 Butler control session。
+- 同一个外部会话再次进来时，会复用已有 thread 映射，而不是重复起新控制会话。
+- 桥接入口走的还是现有 Butler control session 正式发送链路，没有绕开到普通 provider 会话或终端输入。
 
 ## 任务 5：实现平台适配器
 
@@ -172,7 +182,14 @@
 4. polling / bridge 平台能返回标准化事件
 
 当前状态：
-- [ ] 待开始
+- [x] 已完成
+
+完成说明：
+- 已为 6 个平台补统一 adapter registry。
+- 第一阶段已落地 webhook / polling / bridge 三种入口的标准化结构，能统一产出 `NormalizedChannelInboundMessage`。
+- Telegram 已接最小真实 HTTP API（`getMe / getUpdates / sendMessage`）。
+- 个人微信（claw）后续不再沿用假 `bridgeBaseUrl + /poll + /send` 口径，改按“先建账号，再生成二维码绑定，再进入 polling”推进。
+- Slack / Discord / 飞书 / 钉钉 继续按各自第一阶段能力收口。
 
 ## 任务 6：接入后台 polling 和延迟回发
 
@@ -206,7 +223,13 @@
 3. 失败状态能在账号和回发记录里看到
 
 当前状态：
-- [ ] 待开始
+- [x] 已完成
+
+完成说明：
+- 已新增 `channel.account_poll` 后台任务，并接到现有 `TaskManager`。
+- 已新增 `channel.delivery_retry` 正式后台任务；首次回发失败后会按 `delivery_id` 去重重试，Host 启动时也会补捞可重试的失败记录。
+- 已新增 polling scheduler，自动扫描 `polling / bridge` 账号并 enqueue 正式后台任务，不再在请求链路里长轮询。
+- webhook 和 polling 入站在桥接成功后，都会异步等待 Butler 首条文本回复并生成 `channel_deliveries` 记录。
 
 ## 任务 7：补测试和文档
 
@@ -243,4 +266,8 @@
 3. 文档写清楚当前已知限制
 
 当前状态：
-- [ ] 待开始
+- [x] 已完成
+
+完成说明：
+- 已补 `channels-routes`、`channel-bridge-service`、`channel-delivery-service`、`channel-gateway-and-polling` 定向测试。
+- 已补一份接入说明，把当前支持的配置字段、入口模式和已知限制写清楚。

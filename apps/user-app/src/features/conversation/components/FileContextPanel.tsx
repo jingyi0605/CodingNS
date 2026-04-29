@@ -23,7 +23,7 @@ import { getGitDiff, type GitChangeItemDto } from "../api/git-api";
 import { usePlatform } from "../../../platform/platform-provider";
 import {
   showDesktopContextMenu,
-  type DesktopContextMenuItem
+  type DesktopContextMenuActionItem
 } from "../../../platform/desktop/desktop-context-menu";
 import {
   useWorkbenchShell,
@@ -109,7 +109,7 @@ type PathOperationModalState =
 type WebContextMenuState = {
   positionX: number;
   positionY: number;
-  items: DesktopContextMenuItem[];
+  items: DesktopContextMenuActionItem[];
 };
 type WebContextMenuLayout = {
   left: number;
@@ -1814,7 +1814,7 @@ export function FileContextPanel({
     target: FileSelectionTarget,
     effectiveSelection: FileSelectionTarget[],
     baseDirectory: string
-  ): DesktopContextMenuItem[] {
+  ): DesktopContextMenuActionItem[] {
     return [
       {
         id: `open-${target.path}`,

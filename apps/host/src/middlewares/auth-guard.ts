@@ -20,6 +20,10 @@ export function isPublicRoute(method: string, routePath: string): boolean {
   return PUBLIC_ROUTE_RULES.has(`${method.toUpperCase()}:${routePath}`);
 }
 
+function isPublicRoutePrefix(routePath: string): boolean {
+  return routePath.startsWith("/api/public/channel-gateways/");
+}
+
 function isAssistantRoute(routePath: string): boolean {
   return routePath.startsWith("/api/assistant/");
 }
@@ -66,7 +70,7 @@ export function createAuthGuard(authService: AuthService) {
       return;
     }
 
-    if (isPublicRoute(request.method, routePath)) {
+    if (isPublicRoute(request.method, routePath) || isPublicRoutePrefix(routePath)) {
       return;
     }
 
