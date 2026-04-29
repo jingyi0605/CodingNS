@@ -961,6 +961,28 @@ function mergeEquivalentAuthoritativeVersion(
   current: SessionMessageViewModel,
   incoming: SessionMessageViewModel
 ): SessionMessageViewModel {
+  if (isEquivalentOpenCodeToolMessage(current, incoming)) {
+    const mergedToolCall = mergeToolCall(current.toolCall, incoming.toolCall);
+    const content = pickPreferredContent(current.content, incoming.content, current.timestamp, incoming.timestamp);
+    const attachments = pickPreferredAttachments(current.attachments, incoming.attachments);
+    const stableAnchor = pickStableAuthoritativeMessage(current, incoming);
+    const preferred = pickNewerAuthoritativeMessage(current, incoming);
+
+    return {
+      ...preferred,
+      id: current.id,
+      kind: mergedToolCall?.status === "running" ? "tool_call" : "tool_result",
+      content,
+      toolCall: mergedToolCall,
+      attachments,
+      attachmentPayloads: current.attachmentPayloads ?? incoming.attachmentPayloads ?? null,
+      rawRef: stableAnchor.rawRef,
+      timestamp: stableAnchor.timestamp,
+      sequence: stableAnchor.sequence,
+      clientRequestId: current.clientRequestId ?? incoming.clientRequestId
+    };
+  }
+
   if (
     current.role !== incoming.role
     || current.kind !== incoming.kind
@@ -1564,8 +1586,15 @@ function findMatchingEquivalentOpenCodeMessageId(
       messageId === incoming.id
       || !isOpenCodeAuthoritativeMessage(current)
       || current.role !== incoming.role
-      || current.kind !== incoming.kind
     ) {
+      continue;
+    }
+
+    if (isEquivalentOpenCodeToolMessage(current, incoming)) {
+      return messageId;
+    }
+
+    if (current.kind !== incoming.kind) {
       continue;
     }
 
@@ -1679,6 +1708,35 @@ function isOpenCodeAuthoritativeMessage(message: SessionMessageViewModel): boole
     && !isOptimisticUserMessage(message)
     && (message.role === "user" || message.role === "assistant" || message.role === "tool")
   );
+}
+
+function isOpenCodeToolMessage(message: SessionMessageViewModel): boolean {
+  return (
+    message.deliveryState === "sent"
+    && message.rawRef.startsWith("opencode://")
+    && message.role === "tool"
+    && (message.kind === "tool_call" || message.kind === "tool_result")
+    && message.toolCall !== null
+  );
+}
+
+function isEquivalentOpenCodeToolMessage(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): boolean {
+  if (!isOpenCodeToolMessage(current) || !isOpenCodeToolMessage(incoming)) {
+    return false;
+  }
+
+  const currentCallId = current.toolCall?.callId.trim() ?? "";
+  const incomingCallId = incoming.toolCall?.callId.trim() ?? "";
+
+  if (currentCallId && incomingCallId) {
+    return currentCallId === incomingCallId;
+  }
+
+  return extractEquivalentOpenCodeRawRefIdentity(current.rawRef)
+    === extractEquivalentOpenCodeRawRefIdentity(incoming.rawRef);
 }
 
 function extractEquivalentOpenCodeRawRefIdentity(rawRef: string): string | null {

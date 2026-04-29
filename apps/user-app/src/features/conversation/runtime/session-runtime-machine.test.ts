@@ -487,6 +487,86 @@ describe("session runtime machine", () => {
     expect(merged[0].toolCall?.output).toBe("/tmp/workspace");
   });
 
+  it("OpenCode 同一工具调用跨 runtime tool_call 和 history tool_result 时不会重复，也不会沉到底部", () => {
+    const merged = mergeAuthoritativeMessages(
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "assistant-1",
+            provider: "opencode",
+            providerSessionId: "thread-1",
+            role: "assistant",
+            content: "上一条回复",
+            timestamp: "2026-03-28T10:00:00.000Z",
+            sequence: 10,
+            rawRef: "opencode://session/thread-1/message/assistant-1/part/text-1"
+          })
+        ),
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "runtime-tool-call-1",
+            provider: "opencode",
+            providerSessionId: "thread-1",
+            role: "tool",
+            kind: "tool_call",
+            content: "{\"path\":\"/tmp/workspace/story.md\",\"content\":\"hello\"}",
+            timestamp: "2026-03-28T10:09:00.000Z",
+            sequence: 99,
+            rawRef: "opencode://session/thread-1/message/msg-runtime/part/prt-tool-1?part=3001",
+            toolCall: {
+              callId: "call-write-1",
+              name: "write",
+              input: "{\"path\":\"/tmp/workspace/story.md\",\"content\":\"hello\"}",
+              output: null,
+              error: null,
+              status: "running"
+            }
+          })
+        )
+      ],
+      "session-1",
+      [
+        createHistoryMessage({
+          messageId: "history-tool-result-1",
+          provider: "opencode",
+          providerSessionId: "thread-1",
+          role: "tool",
+          kind: "tool_result",
+          content: "[tool result]",
+          timestamp: "2026-03-28T10:00:01.000Z",
+          sequence: 11,
+          rawRef: "opencode://session/thread-1/message/msg-runtime/part/prt-tool-1",
+          toolCall: {
+            callId: "call-write-1",
+            name: "write",
+            input: "{\"path\":\"/tmp/workspace/story.md\",\"content\":\"hello\"}",
+            output: "[tool result]",
+            error: null,
+            status: "completed"
+          }
+        })
+      ]
+    );
+
+    expect(merged.map((item) => item.id)).toEqual([
+      "assistant-1",
+      "runtime-tool-call-1"
+    ]);
+    expect(merged[1]).toMatchObject({
+      id: "runtime-tool-call-1",
+      kind: "tool_result",
+      sequence: 11,
+      timestamp: "2026-03-28T10:00:01.000Z"
+    });
+    expect(merged[1]?.toolCall).toMatchObject({
+      callId: "call-write-1",
+      status: "completed",
+      output: "[tool result]"
+    });
+  });
+
   it("会折叠 codex 历史里只差末尾换行的重复文本消息", () => {
     const merged = mergeAuthoritativeMessages([], "session-1", [
       createHistoryMessage({

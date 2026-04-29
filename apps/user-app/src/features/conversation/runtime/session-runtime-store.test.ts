@@ -1846,6 +1846,94 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
+  it("OpenCode runtime tool_call 后续收到 backfill tool_result 时，不会保留一条沉底的旧工具消息", async () => {
+    const store = new SessionRuntimeStore("session-1");
+    await store.initialize();
+    emitRealtimeSubscribed();
+
+    emitRealtimeRuntimeMessage({
+      type: "session.runtime_message",
+      sessionId: "session-1",
+      source: "runtime",
+      message: {
+        messageId: "runtime-tool-call-1",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "tool",
+        kind: "tool_call",
+        content: "{\"path\":\"/tmp/workspace/story.md\",\"content\":\"hello\"}",
+        timestamp: "2026-03-28T10:09:00.000Z",
+        sequence: 99,
+        rawRef: "opencode://session/thread-1/message/msg-runtime/part/prt-tool-1?part=3001",
+        toolCall: {
+          callId: "call-write-1",
+          name: "write",
+          input: "{\"path\":\"/tmp/workspace/story.md\",\"content\":\"hello\"}",
+          output: null,
+          error: null,
+          status: "running"
+        }
+      }
+    });
+
+    emitRealtimeEnvelope({
+      type: "session.backfill",
+      sessionId: "session-1",
+      cursor: "cursor-after",
+      olderCursor: null,
+      messages: [
+        {
+          messageId: "assistant-1",
+          provider: "opencode",
+          providerSessionId: "thread-1",
+          role: "assistant",
+          kind: "text",
+          content: "上一条回复",
+          timestamp: "2026-03-28T10:00:00.000Z",
+          sequence: 10,
+          rawRef: "opencode://session/thread-1/message/assistant-1/part/text-1",
+          toolCall: null
+        },
+        {
+          messageId: "history-tool-result-1",
+          provider: "opencode",
+          providerSessionId: "thread-1",
+          role: "tool",
+          kind: "tool_result",
+          content: "[tool result]",
+          timestamp: "2026-03-28T10:00:01.000Z",
+          sequence: 11,
+          rawRef: "opencode://session/thread-1/message/msg-runtime/part/prt-tool-1",
+          toolCall: {
+            callId: "call-write-1",
+            name: "write",
+            input: "{\"path\":\"/tmp/workspace/story.md\",\"content\":\"hello\"}",
+            output: "[tool result]",
+            error: null,
+            status: "completed"
+          }
+        }
+      ]
+    });
+
+    expect(store.getState().messages.map((message) => message.id)).toEqual([
+      "assistant-1",
+      "runtime-tool-call-1"
+    ]);
+    expect(store.getState().messages[1]).toMatchObject({
+      id: "runtime-tool-call-1",
+      kind: "tool_result",
+      sequence: 11,
+      timestamp: "2026-03-28T10:00:01.000Z"
+    });
+    expect(store.getState().messages[1]?.toolCall).toMatchObject({
+      callId: "call-write-1",
+      status: "completed"
+    });
+
+    store.destroy();
+  });
+
   it("Codex 运行时消息和后续 backfill 使用不同 messageId 时，前端只保留一条权威消息", async () => {
     const store = new SessionRuntimeStore("session-1");
     await store.initialize();
