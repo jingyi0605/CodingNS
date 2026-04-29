@@ -1230,6 +1230,110 @@ CREATE INDEX IF NOT EXISTS idx_verification_runs_project_created_at
 CREATE INDEX IF NOT EXISTS idx_verification_runs_project_status
   ON verification_runs(project_id, status, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS channel_accounts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  platform_code TEXT NOT NULL CHECK (
+    platform_code IN ('wechat-claw', 'telegram')
+  ),
+  display_name TEXT NOT NULL,
+  provider_id TEXT NOT NULL CHECK (provider_id IN ('codex', 'claude-code')),
+  connection_mode TEXT NOT NULL CHECK (connection_mode IN ('webhook', 'polling', 'bridge')),
+  status TEXT NOT NULL CHECK (status IN ('active', 'disabled', 'degraded')),
+  config_json TEXT NOT NULL,
+  runtime_state_json TEXT NOT NULL,
+  last_inbound_at TEXT,
+  last_outbound_at TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_channel_accounts_user_updated_at
+  ON channel_accounts(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_channel_accounts_platform_status
+  ON channel_accounts(platform_code, status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS channel_threads (
+  id TEXT PRIMARY KEY,
+  channel_account_id TEXT NOT NULL,
+  external_conversation_key TEXT NOT NULL,
+  external_user_id TEXT,
+  external_thread_key TEXT,
+  control_session_id TEXT,
+  session_id TEXT,
+  title TEXT,
+  status TEXT NOT NULL CHECK (status IN ('active', 'closed', 'failed')),
+  last_inbound_at TEXT,
+  last_outbound_at TEXT,
+  last_transport_context_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (channel_account_id) REFERENCES channel_accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY (control_session_id) REFERENCES butler_control_sessions(id),
+  UNIQUE(channel_account_id, external_conversation_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_channel_threads_account_updated_at
+  ON channel_threads(channel_account_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_channel_threads_account_status
+  ON channel_threads(channel_account_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_channel_threads_control_session
+  ON channel_threads(control_session_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS channel_inbound_events (
+  id TEXT PRIMARY KEY,
+  channel_account_id TEXT NOT NULL,
+  external_event_id TEXT NOT NULL,
+  external_conversation_key TEXT NOT NULL,
+  external_user_id TEXT,
+  control_session_id TEXT,
+  session_id TEXT,
+  text_content TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('received', 'dispatched', 'replied', 'failed', 'ignored')),
+  error_message TEXT,
+  received_at TEXT NOT NULL,
+  processed_at TEXT,
+  FOREIGN KEY (channel_account_id) REFERENCES channel_accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY (control_session_id) REFERENCES butler_control_sessions(id),
+  UNIQUE(channel_account_id, external_event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_channel_inbound_events_account_received_at
+  ON channel_inbound_events(channel_account_id, received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_channel_inbound_events_account_status
+  ON channel_inbound_events(channel_account_id, status, received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_channel_inbound_events_control_session
+  ON channel_inbound_events(control_session_id, received_at DESC);
+
+CREATE TABLE IF NOT EXISTS channel_deliveries (
+  id TEXT PRIMARY KEY,
+  channel_account_id TEXT NOT NULL,
+  thread_id TEXT,
+  inbound_event_id TEXT,
+  control_session_id TEXT,
+  session_id TEXT,
+  text_content TEXT NOT NULL,
+  provider_message_ref TEXT,
+  status TEXT NOT NULL CHECK (status IN ('sent', 'failed', 'skipped')),
+  error_message TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (channel_account_id) REFERENCES channel_accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY (thread_id) REFERENCES channel_threads(id) ON DELETE SET NULL,
+  FOREIGN KEY (inbound_event_id) REFERENCES channel_inbound_events(id) ON DELETE SET NULL,
+  FOREIGN KEY (control_session_id) REFERENCES butler_control_sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_channel_deliveries_account_created_at
+  ON channel_deliveries(channel_account_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_channel_deliveries_account_status
+  ON channel_deliveries(channel_account_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_channel_deliveries_thread_created_at
+  ON channel_deliveries(thread_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS instance_tailscale_config (
   id TEXT PRIMARY KEY CHECK (id = 'default'),
   activated INTEGER NOT NULL DEFAULT 0 CHECK (activated IN (0, 1)),

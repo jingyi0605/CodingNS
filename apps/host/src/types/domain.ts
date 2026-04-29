@@ -507,6 +507,15 @@ export interface GitRemoteCredentialRecord {
 }
 
 export type ButlerProfileProviderId = "codex" | "claude-code";
+export type ChannelPlatformCode =
+  | "wechat-claw"
+  | "telegram";
+export type ChannelConnectionMode = "webhook" | "polling" | "bridge";
+export type ChannelAccountStatus = "active" | "disabled" | "degraded";
+export type ChannelMultiSessionSupportLevel = "supported" | "limited";
+export type ChannelThreadStatus = "active" | "closed" | "failed";
+export type ChannelInboundEventStatus = "received" | "dispatched" | "replied" | "failed" | "ignored";
+export type ChannelDeliveryStatus = "sent" | "failed" | "skipped";
 export type ButlerAgentsMode = "inline" | "file";
 export type ButlerControlSessionStatus = "idle" | "running" | "failed" | "closed";
 export type ButlerControlTimerStatus = "active" | "completed" | "cancelled" | "failed";
@@ -590,6 +599,79 @@ export interface ButlerProfile {
   persona: ButlerPersonaProfile;
   focus: ButlerFocusProfile;
   initializedAt: string;
+  updatedAt: string;
+}
+
+export interface ChannelPlatformCapability {
+  code: ChannelPlatformCode;
+  displayName: string;
+  supportedConnectionModes: ChannelConnectionMode[];
+  multiSessionSupportLevel: ChannelMultiSessionSupportLevel;
+  stageOneLimitations: string[];
+}
+
+export interface ChannelAccount {
+  id: string;
+  userId: string;
+  platformCode: ChannelPlatformCode;
+  displayName: string;
+  providerId: ButlerProfileProviderId;
+  connectionMode: ChannelConnectionMode;
+  status: ChannelAccountStatus;
+  config: Record<string, unknown>;
+  runtimeState: Record<string, unknown>;
+  lastInboundAt: string | null;
+  lastOutboundAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChannelThread {
+  id: string;
+  channelAccountId: string;
+  externalConversationKey: string;
+  externalUserId: string | null;
+  externalThreadKey: string | null;
+  controlSessionId: string | null;
+  sessionId: string | null;
+  title: string | null;
+  status: ChannelThreadStatus;
+  lastInboundAt: string | null;
+  lastOutboundAt: string | null;
+  lastTransportContext: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChannelInboundEvent {
+  id: string;
+  channelAccountId: string;
+  externalEventId: string;
+  externalConversationKey: string;
+  externalUserId: string | null;
+  controlSessionId: string | null;
+  sessionId: string | null;
+  textContent: string;
+  payload: Record<string, unknown>;
+  status: ChannelInboundEventStatus;
+  errorMessage: string | null;
+  receivedAt: string;
+  processedAt: string | null;
+}
+
+export interface ChannelDelivery {
+  id: string;
+  channelAccountId: string;
+  threadId: string | null;
+  inboundEventId: string | null;
+  controlSessionId: string | null;
+  sessionId: string | null;
+  textContent: string;
+  providerMessageRef: string | null;
+  status: ChannelDeliveryStatus;
+  errorMessage: string | null;
+  createdAt: string;
   updatedAt: string;
 }
 
