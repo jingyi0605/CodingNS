@@ -46,6 +46,15 @@ export class ChannelController {
     );
   };
 
+  readonly removeAccount = async (
+    request: FastifyRequest<{ Params: ChannelAccountParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      await this.channelService.removeAccount(requireUserId(request), request.params.accountId)
+    );
+  };
+
   readonly probeAccount = async (
     request: FastifyRequest<{ Params: ChannelAccountParams }>,
     reply: FastifyReply

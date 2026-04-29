@@ -25,7 +25,9 @@ import type {
   ChannelPlatformCapabilityDto,
   ChannelPlatformCode,
   ChannelThreadDto,
-  ChannelThreadStatus
+  ChannelThreadStatus,
+  WechatClawLoginActionResultDto,
+  WechatClawLoginStatus
 } from "../features/settings/api/channels-api";
 import {
   createChannelAccount,
@@ -34,8 +36,12 @@ import {
   listChannelEvents,
   listChannelPlatforms,
   listChannelThreads,
+  logoutWechatClaw,
   pollChannelAccount,
-  probeChannelAccount
+  probeChannelAccount,
+  refreshWechatClawLogin,
+  removeChannelAccount,
+  startWechatClawLogin
 } from "../features/settings/api/channels-api";
 import { usePlatform } from "../platform/platform-provider";
 import { t } from "../shared/i18n";
@@ -47,7 +53,11 @@ type PendingActionKey =
   | null
   | "refresh"
   | "probe"
-  | "poll";
+  | "poll"
+  | "remove-account"
+  | "wechat-start-login"
+  | "wechat-refresh-login"
+  | "wechat-logout";
 type CreatePendingActionKey = null | "save";
 
 interface ChannelAccountDraft {
@@ -112,6 +122,7 @@ export function ChannelsManagementPanel() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [createWizardStep, setCreateWizardStep] = useState<ChannelWizardStep>("platform");
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
+  const [pendingRemovalAccountId, setPendingRemovalAccountId] = useState<string | null>(null);
   const [createDraft, setCreateDraft] = useState<ChannelAccountDraft>(() => createEmptyDraft());
   const [threads, setThreads] = useState<ChannelThreadDto[]>([]);
   const [events, setEvents] = useState<ChannelInboundEventDto[]>([]);
@@ -139,6 +150,11 @@ export function ChannelsManagementPanel() {
   );
   const createSelectedPlatformIsWechatClaw = createSelectedPlatform?.code === "wechat-claw";
   const activeAccountIsWechatClaw = activeAccount?.platformCode === "wechat-claw";
+  const activeWechatClawBindingState = useMemo(
+    () => (activeAccount ? readWechatClawBindingState(activeAccount) : null),
+    [activeAccount]
+  );
+  const activeWechatClawIsBound = activeWechatClawBindingState?.loginStatus === "active";
 
   useEffect(() => {
     if (accessToken) {
@@ -159,11 +175,18 @@ export function ChannelsManagementPanel() {
     setCreateError(null);
     setCreateWizardStep("platform");
     setActiveAccountId(null);
+    setPendingRemovalAccountId(null);
     setCreateDraft(createEmptyDraft());
     setThreads([]);
     setEvents([]);
     setDeliveries([]);
   }, [accessToken]);
+
+  useEffect(() => {
+    if (!activeAccountId || pendingRemovalAccountId !== activeAccountId) {
+      setPendingRemovalAccountId(null);
+    }
+  }, [activeAccountId, pendingRemovalAccountId]);
 
   useEffect(() => {
     if (!modalOpen || !accessToken) {
@@ -254,6 +277,7 @@ export function ChannelsManagementPanel() {
   function handleCloseManageModal(): void {
     setModalOpen(false);
     setCreateModalOpen(false);
+    setPendingRemovalAccountId(null);
   }
 
   function resetCreateModalState(): void {
@@ -275,6 +299,7 @@ export function ChannelsManagementPanel() {
 
   function handleSelectAccount(account: ChannelAccountSummaryDto): void {
     setActiveAccountId(account.id);
+    setPendingRemovalAccountId(null);
     setStatusText(null);
     setPanelError(null);
   }
@@ -381,6 +406,72 @@ export function ChannelsManagementPanel() {
     }
   }
 
+  async function runWechatClawLoginAction(
+    action: "start" | "refresh" | "logout"
+  ): Promise<void> {
+    if (!accessToken || !activeAccountId || !activeAccountIsWechatClaw) {
+      return;
+    }
+
+    const pendingKey: Exclude<PendingActionKey, null | "refresh" | "probe" | "poll"> =
+      action === "start"
+        ? "wechat-start-login"
+        : action === "refresh"
+          ? "wechat-refresh-login"
+          : "wechat-logout";
+
+    setPendingAction(pendingKey);
+    setPanelError(null);
+    setStatusText(null);
+
+    try {
+      let result: WechatClawLoginActionResultDto;
+      if (action === "start") {
+        result = await startWechatClawLogin(activeAccountId);
+      } else if (action === "refresh") {
+        result = await refreshWechatClawLogin(activeAccountId);
+      } else {
+        result = await logoutWechatClaw(activeAccountId);
+      }
+
+      applyUpdatedAccount(result.account);
+      setStatusText(result.detail);
+    } catch (error) {
+      setPanelError(resolveChannelsError(error, action));
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
+  async function handleRemoveAccount(): Promise<void> {
+    if (!accessToken || !activeAccount) {
+      return;
+    }
+
+    setPendingAction("remove-account");
+    setPanelError(null);
+    setStatusText(null);
+
+    try {
+      const result = await removeChannelAccount(activeAccount.id);
+      setAccounts((current) => current.filter((item) => item.id !== result.accountId));
+      if (activeAccountId === result.accountId) {
+        setActiveAccountId(null);
+        setThreads([]);
+        setEvents([]);
+        setDeliveries([]);
+      }
+      setPendingRemovalAccountId(null);
+      setStatusText(t("settings.channelsRemoveSuccess", {
+        account: result.displayName
+      }));
+    } catch (error) {
+      setPanelError(resolveChannelsError(error, "remove"));
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
   function applyUpdatedAccount(account: ChannelAccountSummaryDto): void {
     setAccounts((current) => replaceAccount(current, account));
   }
@@ -424,6 +515,9 @@ export function ChannelsManagementPanel() {
       </button>
     </>
   );
+
+  const showProbeAndPollActions = !activeAccountIsWechatClaw || activeWechatClawIsBound;
+  const showRemoveConfirmation = activeAccount !== null && pendingRemovalAccountId === activeAccount.id;
 
   const createModalBody = (
     <div className="settings-channels-modal-layout">
@@ -783,34 +877,77 @@ export function ChannelsManagementPanel() {
           <ModalSection
             heading={t("settings.channelsDetailTitle")}
             description={t("settings.channelsDetailDescription")}
-            actions={!activeAccountIsWechatClaw ? (
+            actions={(
               <ModalActions className="settings-channels-inline-actions">
-                <button
-                  className="secondary-button"
-                  type="button"
-                  disabled={pendingAction === "probe"}
-                  onClick={() => {
-                    void handleProbe();
-                  }}
-                >
-                  {pendingAction === "probe"
-                    ? t("settings.channelsActionPending")
-                    : t("settings.channelsProbeAction")}
-                </button>
-                <button
-                  className="secondary-button"
-                  type="button"
-                  disabled={pendingAction === "poll"}
-                  onClick={() => {
-                    void handlePoll();
-                  }}
-                >
-                  {pendingAction === "poll"
-                    ? t("settings.channelsActionPending")
-                    : t("settings.channelsPollAction")}
-                </button>
+                {showProbeAndPollActions ? (
+                  <>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={pendingAction !== null}
+                      onClick={() => {
+                        void handleProbe();
+                      }}
+                    >
+                      {pendingAction === "probe"
+                        ? t("settings.channelsActionPending")
+                        : t("settings.channelsProbeAction")}
+                    </button>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={pendingAction !== null}
+                      onClick={() => {
+                        void handlePoll();
+                      }}
+                    >
+                      {pendingAction === "poll"
+                        ? t("settings.channelsActionPending")
+                        : t("settings.channelsPollAction")}
+                    </button>
+                  </>
+                ) : null}
+                {showRemoveConfirmation ? (
+                  <>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={pendingAction !== null}
+                      onClick={() => {
+                        setPendingRemovalAccountId(null);
+                      }}
+                    >
+                      {t("common.cancel")}
+                    </button>
+                    <button
+                      className="settings-button settings-button-danger"
+                      type="button"
+                      disabled={pendingAction !== null}
+                      onClick={() => {
+                        void handleRemoveAccount();
+                      }}
+                    >
+                      {pendingAction === "remove-account"
+                        ? t("settings.channelsActionPending")
+                        : t("settings.channelsRemoveConfirmAction")}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="settings-button settings-button-danger"
+                    type="button"
+                    disabled={pendingAction !== null}
+                    onClick={() => {
+                      if (activeAccount) {
+                        setPendingRemovalAccountId(activeAccount.id);
+                      }
+                    }}
+                  >
+                    {t("settings.channelsRemoveAction")}
+                  </button>
+                )}
               </ModalActions>
-            ) : undefined}
+            )}
           >
             <div className="settings-channels-detail-grid">
               <DetailCard label={t("settings.channelsDetailPlatform")} value={activeAccount.capability.displayName} />
@@ -825,13 +962,129 @@ export function ChannelsManagementPanel() {
                 {t("settings.channelsDetailLastError")}: {activeAccount.lastError}
               </p>
             ) : null}
+            {showRemoveConfirmation ? (
+              <p className="settings-channels-inline-note">
+                {t("settings.channelsRemoveConfirmDescription")}
+              </p>
+            ) : null}
           </ModalSection>
 
           {activeAccount.platformCode === "wechat-claw" ? (
             <ModalSection
-              heading={t("settings.channelsWechatRuntimeRequiredTitle")}
-              description={t("settings.channelsWechatRuntimeRequiredDescription")}
+              heading={t("settings.channelsWechatBindingTitle")}
+              description={t("settings.channelsWechatBindingDescription")}
+              actions={(
+                <ModalActions className="settings-channels-inline-actions">
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={pendingAction !== null}
+                    onClick={() => {
+                      void runWechatClawLoginAction("start");
+                    }}
+                  >
+                    {pendingAction === "wechat-start-login"
+                      ? t("settings.channelsActionPending")
+                      : activeWechatClawBindingState?.qrcodeUrl
+                        ? t("settings.channelsWechatRestartBindingAction")
+                        : t("settings.channelsWechatStartLoginAction")}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={pendingAction !== null}
+                    onClick={() => {
+                      void runWechatClawLoginAction("refresh");
+                    }}
+                  >
+                    {pendingAction === "wechat-refresh-login"
+                      ? t("settings.channelsActionPending")
+                      : t("settings.channelsWechatRefreshLoginAction")}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={pendingAction !== null}
+                    onClick={() => {
+                      void runWechatClawLoginAction("logout");
+                    }}
+                  >
+                    {pendingAction === "wechat-logout"
+                      ? t("settings.channelsActionPending")
+                      : t("settings.channelsWechatLogoutAction")}
+                  </button>
+                </ModalActions>
+              )}
             >
+              <div className="settings-channels-wechat-binding-entry">
+                <div className="settings-channels-detail-grid">
+                  <DetailCard
+                    label={t("settings.channelsWechatLoginStatus")}
+                    value={getWechatClawLoginStatusLabel(activeWechatClawBindingState?.loginStatus ?? "not_logged_in")}
+                  />
+                  <DetailCard
+                    label={t("settings.channelsDetailConnectionMode")}
+                    value={t("settings.channelsWechatBindingModeValue")}
+                  />
+                  <DetailCard
+                    label={t("settings.channelsMetaUpdatedAt")}
+                    value={formatTimestamp(activeWechatClawBindingState?.updatedAt ?? null)}
+                  />
+                </div>
+                <p className="settings-channels-inline-note">
+                  {activeWechatClawIsBound
+                    ? t("settings.channelsWechatBoundDescription")
+                    : t("settings.channelsWechatPendingDescription")}
+                </p>
+                {activeWechatClawBindingState?.lastDetail ? (
+                  <p className="settings-channels-inline-note">{activeWechatClawBindingState.lastDetail}</p>
+                ) : null}
+                {!activeWechatClawIsBound ? (
+                  <div className="settings-channels-wechat-qr-panel">
+                    {activeWechatClawBindingState?.qrcodeUrl ? (
+                      <>
+                        <img
+                          className="settings-channels-wechat-qr-image"
+                          src={activeWechatClawBindingState.qrcodeUrl}
+                          alt={t("settings.channelsWechatQrAlt")}
+                        />
+                        <p className="settings-channels-inline-note">{t("settings.channelsWechatQrHint")}</p>
+                        <ModalActions className="settings-channels-inline-actions">
+                          <a
+                            className="secondary-button"
+                            href={
+                              activeWechatClawBindingState.qrcodeSourceUrl
+                              ?? activeWechatClawBindingState.qrcodeUrl
+                            }
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {t("settings.channelsWechatOpenQrLinkAction")}
+                          </a>
+                        </ModalActions>
+                      </>
+                    ) : (
+                      <ModalEmptyState
+                        compact
+                        title={t("settings.channelsWechatQrEmpty")}
+                        description={t("settings.channelsWechatQrEmptyDescription")}
+                      />
+                    )}
+                    {activeWechatClawBindingState?.qrcodeText ? (
+                      <ModalField
+                        label={t("settings.channelsWechatQrRawTitle")}
+                        description={t("settings.channelsWechatQrRawDescription")}
+                      >
+                        <textarea
+                          className="settings-textarea settings-channels-textarea"
+                          value={activeWechatClawBindingState.qrcodeText}
+                          readOnly
+                        />
+                      </ModalField>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
               <div className="settings-channels-platform-selected-notes">
                 {activeAccount.capability.stageOneLimitations.map((line) => (
                   <p key={line} className="settings-channels-platform-limitations">
@@ -1170,6 +1423,44 @@ function PlatformConfigUnavailableNotice({ platformCode }: { platformCode: Chann
   );
 }
 
+interface WechatClawBindingState {
+  loginStatus: WechatClawLoginStatus;
+  qrcodeUrl: string | null;
+  qrcodeSourceUrl: string | null;
+  qrcodeText: string | null;
+  lastDetail: string | null;
+  updatedAt: string | null;
+}
+
+function readWechatClawBindingState(account: ChannelAccountSummaryDto): WechatClawBindingState {
+  return {
+    loginStatus: readWechatClawLoginStatus(account.runtimeState.wechatClawLoginStatus),
+    qrcodeUrl: readRuntimeStateText(account.runtimeState.wechatClawQrCodeUrl),
+    qrcodeSourceUrl: readRuntimeStateText(account.runtimeState.wechatClawQrCodeSourceUrl),
+    qrcodeText: readRuntimeStateText(account.runtimeState.wechatClawQrCodeText),
+    lastDetail: readRuntimeStateText(account.runtimeState.wechatClawLastDetail),
+    updatedAt: readRuntimeStateText(account.runtimeState.wechatClawUpdatedAt)
+  };
+}
+
+function readWechatClawLoginStatus(value: unknown): WechatClawLoginStatus {
+  return value === "waiting_scan"
+    || value === "scan_confirmed"
+    || value === "active"
+    || value === "expired"
+    ? value
+    : "not_logged_in";
+}
+
+function readRuntimeStateText(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
 function createEmptyDraft(overrides: Partial<ChannelAccountDraft> = {}): ChannelAccountDraft {
   return {
     platformCode: "",
@@ -1322,7 +1613,16 @@ function buildConfigPayload(
 
 function resolveChannelsError(
   error: unknown,
-  action: "loadOverview" | "loadDetails" | "save" | "probe" | "poll"
+  action:
+    | "loadOverview"
+    | "loadDetails"
+    | "save"
+    | "probe"
+    | "poll"
+    | "remove"
+    | "start"
+    | "refresh"
+    | "logout"
 ): string {
   if (error instanceof ApiError) {
     return error.message;
@@ -1335,6 +1635,12 @@ function resolveChannelsError(
       return t("settings.channelsProbeFailed");
     case "poll":
       return t("settings.channelsPollFailed");
+    case "remove":
+      return t("settings.channelsRemoveFailed");
+    case "start":
+    case "refresh":
+    case "logout":
+      return t("settings.channelsSaveFailed");
     case "loadDetails":
       return t("settings.channelsLoadDetailsFailed");
     default:
@@ -1486,5 +1792,21 @@ function getDeliveryStatusTone(status: ChannelDeliveryStatus): "success" | "dang
       return "default";
     default:
       return "success";
+  }
+}
+
+function getWechatClawLoginStatusLabel(status: WechatClawLoginStatus): string {
+  switch (status) {
+    case "waiting_scan":
+      return t("settings.channelsWechatLoginStatusWaitingScan");
+    case "scan_confirmed":
+      return t("settings.channelsWechatLoginStatusScanConfirmed");
+    case "active":
+      return t("settings.channelsWechatLoginStatusActive");
+    case "expired":
+      return t("settings.channelsWechatLoginStatusExpired");
+    case "not_logged_in":
+    default:
+      return t("settings.channelsWechatLoginStatusNotLoggedIn");
   }
 }

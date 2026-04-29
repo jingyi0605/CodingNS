@@ -10,6 +10,7 @@ export async function registerChannelRoutes(
   app.get("/api/channels/accounts", channelController.listAccounts);
   app.post("/api/channels/accounts", channelController.createAccount);
   app.patch("/api/channels/accounts/:accountId", channelController.updateAccount);
+  app.delete("/api/channels/accounts/:accountId", channelController.removeAccount);
   app.post("/api/channels/accounts/:accountId/probe", channelController.probeAccount);
   app.post("/api/channels/accounts/:accountId/poll", channelController.pollAccount);
   app.post("/api/channels/accounts/:accountId/wechat-claw/start-login", channelController.startWechatClawLogin);

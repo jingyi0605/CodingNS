@@ -10,6 +10,12 @@ export type ChannelMultiSessionSupportLevel = "supported" | "limited";
 export type ChannelThreadStatus = "active" | "closed" | "failed";
 export type ChannelInboundEventStatus = "received" | "dispatched" | "replied" | "failed" | "ignored";
 export type ChannelDeliveryStatus = "sent" | "failed" | "skipped";
+export type WechatClawLoginStatus =
+  | "not_logged_in"
+  | "waiting_scan"
+  | "scan_confirmed"
+  | "active"
+  | "expired";
 
 export interface ChannelPlatformCapabilityDto {
   code: ChannelPlatformCode;
@@ -103,6 +109,22 @@ export interface PollChannelAccountResultDto {
   detail: string;
 }
 
+export interface WechatClawLoginActionResultDto {
+  account: ChannelAccountSummaryDto;
+  actedAt: string;
+  detail: string;
+  loginStatus: WechatClawLoginStatus;
+  qrcodeUrl: string | null;
+  qrcodeSourceUrl: string | null;
+  qrcodeText: string | null;
+}
+
+export interface RemoveChannelAccountResultDto {
+  accountId: string;
+  displayName: string;
+  removedAt: string;
+}
+
 export interface UpsertChannelAccountInput {
   platformCode: ChannelPlatformCode;
   displayName: string;
@@ -139,6 +161,12 @@ export async function updateChannelAccount(
   });
 }
 
+export async function removeChannelAccount(accountId: string): Promise<RemoveChannelAccountResultDto> {
+  return await httpClient.request<RemoveChannelAccountResultDto>(`/api/channels/accounts/${accountId}`, {
+    method: "DELETE"
+  });
+}
+
 export async function probeChannelAccount(accountId: string): Promise<ProbeChannelAccountResultDto> {
   return await httpClient.request<ProbeChannelAccountResultDto>(`/api/channels/accounts/${accountId}/probe`, {
     method: "POST"
@@ -149,6 +177,33 @@ export async function pollChannelAccount(accountId: string): Promise<PollChannel
   return await httpClient.request<PollChannelAccountResultDto>(`/api/channels/accounts/${accountId}/poll`, {
     method: "POST"
   });
+}
+
+export async function startWechatClawLogin(accountId: string): Promise<WechatClawLoginActionResultDto> {
+  return await httpClient.request<WechatClawLoginActionResultDto>(
+    `/api/channels/accounts/${accountId}/wechat-claw/start-login`,
+    {
+      method: "POST"
+    }
+  );
+}
+
+export async function refreshWechatClawLogin(accountId: string): Promise<WechatClawLoginActionResultDto> {
+  return await httpClient.request<WechatClawLoginActionResultDto>(
+    `/api/channels/accounts/${accountId}/wechat-claw/refresh-login`,
+    {
+      method: "POST"
+    }
+  );
+}
+
+export async function logoutWechatClaw(accountId: string): Promise<WechatClawLoginActionResultDto> {
+  return await httpClient.request<WechatClawLoginActionResultDto>(
+    `/api/channels/accounts/${accountId}/wechat-claw/logout`,
+    {
+      method: "POST"
+    }
+  );
 }
 
 export async function listChannelThreads(accountId: string, limit = 20): Promise<ChannelThreadDto[]> {

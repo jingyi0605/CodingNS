@@ -58,6 +58,8 @@ import { ChannelPollingScheduler } from "../modules/channels/channel-polling-sch
 import { ChannelPollingService } from "../modules/channels/channel-polling-service.js";
 import { createDefaultChannelPlatformAdapterRegistry } from "../modules/channels/channel-platform-adapters.js";
 import { ChannelService } from "../modules/channels/channel-service.js";
+import { WechatClawRuntimeClient } from "../modules/channels/wechat-claw-runtime-client.js";
+import { WechatClawRuntimeManager } from "../modules/channels/wechat-claw-runtime-manager.js";
 import { DebugTargetController } from "../modules/debug-target/debug-target-controller.js";
 import { DebugRuntimeReconciliationScheduler } from "../modules/debug-target/debug-runtime-reconciliation-scheduler.js";
 import { DebugTargetService } from "../modules/debug-target/debug-target-service.js";
@@ -260,6 +262,8 @@ export function createServer(config: HostConfig) {
   const effectiveConfig: HostConfig = config.demoMode
     ? { ...config, accessTokenTtlSeconds: 900, refreshTokenTtlSeconds: 900 }
     : config;
+  const enableWechatClawHelperInTests = process.env.CODINGNS_ENABLE_WECHAT_CLAW_HELPER_IN_TESTS === "true";
+  const enableWechatClawHelper = !process.env.VITEST || enableWechatClawHelperInTests;
 
   const app = Fastify({
     logger: false
@@ -485,7 +489,17 @@ export function createServer(config: HostConfig) {
     serviceUpdateTaskService,
     relayTunnelService
   );
-  const channelPlatformAdapterRegistry = createDefaultChannelPlatformAdapterRegistry();
+  const wechatClawRuntimeManager = enableWechatClawHelper
+    ? new WechatClawRuntimeManager(
+        path.join(path.dirname(config.databasePath), "wechat-claw-helper")
+      )
+    : null;
+  const wechatClawRuntimeClient = wechatClawRuntimeManager
+    ? new WechatClawRuntimeClient(wechatClawRuntimeManager)
+    : null;
+  const channelPlatformAdapterRegistry = createDefaultChannelPlatformAdapterRegistry({
+    wechatClawRuntimeClient
+  });
   const ccSwitchAdapter = new CcSwitchAdapter({
     commandPath: config.ccSwitchCliPath,
     dbPath: config.ccSwitchDbPath
@@ -971,7 +985,11 @@ export function createServer(config: HostConfig) {
     channelPlatformAdapterRegistry,
     channelBridgeService,
     channelDeliveryService,
-    taskManager
+    taskManager,
+    {
+      logger: app.log,
+      wechatClawRuntimeClient
+    }
   );
   const channelPollingScheduler = new ChannelPollingScheduler(
     channelPollingService,
@@ -986,7 +1004,8 @@ export function createServer(config: HostConfig) {
     repositories.channelDeliveryRepository,
     repositories.providerControlRepository,
     channelPlatformAdapterRegistry,
-    channelPollingService
+    channelPollingService,
+    wechatClawRuntimeClient
   );
   const assistantAutomationService = new AssistantAutomationService(
     butlerProfileService,
@@ -1371,6 +1390,7 @@ export function createServer(config: HostConfig) {
     config.opencodeBaseUrlResolver?.dispose?.();
     gitCommandRunner.dispose();
     tailscaleHelperClient.dispose();
+    wechatClawRuntimeManager?.dispose();
     disposeSharedTaskHelperProcessClient();
     disposeSharedProviderDiscoveryHelperClient();
     disposeSharedOpenCodeSystemProbeHelperClient();

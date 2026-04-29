@@ -15,9 +15,11 @@ import {
   destroyFixture,
   type EmptyFixture
 } from "../helpers/test-app.js";
+import { createWechatClawUpstreamStub, type WechatClawUpstreamStub } from "../helpers/wechat-claw-upstream-stub.js";
 
 const activeServers: Array<ReturnType<typeof createTestApp>> = [];
 const activeFixtures: EmptyFixture[] = [];
+const activeUpstreams: WechatClawUpstreamStub[] = [];
 
 afterEach(async () => {
   while (activeServers.length > 0) {
@@ -35,6 +37,10 @@ afterEach(async () => {
     if (fixture) {
       destroyFixture(fixture);
     }
+  }
+
+  while (activeUpstreams.length > 0) {
+    await activeUpstreams.pop()?.close();
   }
 });
 
@@ -237,6 +243,48 @@ describe("channels 管理接口", () => {
     ]);
   });
 
+  it("移除账号时会级联清理该账号下的线程、入站消息和回发记录", async () => {
+    const hosted = await createHostedApp();
+    const accessToken = await bootstrapAndLogin(hosted);
+
+    const createdAccount = await hosted.app.inject({
+      method: "POST",
+      url: "/api/channels/accounts",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        platformCode: "telegram",
+        displayName: "待删除账号",
+        connectionMode: "polling",
+        config: {
+          botToken: "tg-token"
+        }
+      }
+    });
+    const account = createdAccount.json() as ChannelAccount;
+    seedChannelRecords(hosted, account);
+
+    const removeResponse = await hosted.app.inject({
+      method: "DELETE",
+      url: `/api/channels/accounts/${account.id}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    expect(removeResponse.statusCode).toBe(200);
+    expect(removeResponse.json()).toEqual({
+      accountId: account.id,
+      displayName: "待删除账号",
+      removedAt: expect.any(String)
+    });
+    expect(hosted.services.repositories.channelAccountRepository.findById(account.id)).toBeNull();
+    expect(hosted.services.repositories.channelThreadRepository.listByAccountId(account.id)).toEqual([]);
+    expect(hosted.services.repositories.channelInboundEventRepository.listByAccountId(account.id)).toEqual([]);
+    expect(hosted.services.repositories.channelDeliveryRepository.listByAccountId(account.id)).toEqual([]);
+  });
+
   it("probe 会回写基础校验结果，poll 会记录手动请求", async () => {
     const hosted = await createHostedApp();
     const accessToken = await bootstrapAndLogin(hosted);
@@ -366,19 +414,185 @@ describe("channels 管理接口", () => {
       }));
     }
   });
+
+  it("显式启用 helper 后，个人微信（claw）登录、刷新、poll 和退出会委托到 helper", async () => {
+    const upstream = await createWechatClawUpstreamStub();
+    activeUpstreams.push(upstream);
+    upstream.setQrStatuses(["confirmed"]);
+    upstream.setPollBatches([{
+      cursor: "cursor-1",
+      msgs: [{
+        message_id: 201,
+        from_user_id: "wx-user-1",
+        session_id: "wx-user-1",
+        item_list: [{
+          type: 1,
+          text_item: {
+            text: "测试微信入站消息"
+          }
+        }],
+        context_token: "context-1"
+      }]
+    }]);
+
+    const hosted = await createHostedApp({
+      enableWechatClawHelper: true
+    });
+    const accessToken = await bootstrapAndLogin(hosted);
+
+    const created = await hosted.app.inject({
+      method: "POST",
+      url: "/api/channels/accounts",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        platformCode: "wechat-claw",
+        displayName: "值班微信",
+        connectionMode: "polling",
+        config: {
+          loginBaseUrl: upstream.baseUrl,
+          apiBaseUrl: upstream.baseUrl
+        }
+      }
+    });
+    const accountId = created.json().id as string;
+
+    const startResponse = await hosted.app.inject({
+      method: "POST",
+      url: `/api/channels/accounts/${accountId}/wechat-claw/start-login`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(startResponse.statusCode).toBe(200);
+    expect(startResponse.json()).toEqual(expect.objectContaining({
+      loginStatus: "waiting_scan",
+      qrcodeText: `${upstream.baseUrl}/mock-qr.png`,
+      qrcodeUrl: expect.stringMatching(/^data:image\/svg\+xml;base64,/),
+      qrcodeSourceUrl: `${upstream.baseUrl}/mock-qr.png`,
+      account: expect.objectContaining({
+        runtimeState: expect.objectContaining({
+          wechatClawLoginStatus: "waiting_scan",
+          wechatClawQrCodeText: `${upstream.baseUrl}/mock-qr.png`,
+          wechatClawQrCodeSourceUrl: `${upstream.baseUrl}/mock-qr.png`
+        })
+      })
+    }));
+
+    const refreshResponse = await hosted.app.inject({
+      method: "POST",
+      url: `/api/channels/accounts/${accountId}/wechat-claw/refresh-login`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(refreshResponse.statusCode).toBe(200);
+    expect(refreshResponse.json()).toEqual(expect.objectContaining({
+      loginStatus: "active",
+      account: expect.objectContaining({
+        status: "active",
+        runtimeState: expect.objectContaining({
+          wechatClawLoginStatus: "active"
+        })
+      })
+    }));
+
+    const pollResponse = await hosted.app.inject({
+      method: "POST",
+      url: `/api/channels/accounts/${accountId}/poll`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(pollResponse.statusCode).toBe(200);
+    expect(pollResponse.json()).toEqual(expect.objectContaining({
+      accepted: true,
+      account: expect.objectContaining({
+        runtimeState: expect.objectContaining({
+          lastManualPollSource: "api"
+        })
+      })
+    }));
+
+    await waitForCondition(() => upstream.calls.getUpdates > 0);
+
+    const eventsResponse = await hosted.app.inject({
+      method: "GET",
+      url: `/api/channels/accounts/${accountId}/events`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(eventsResponse.statusCode).toBe(200);
+    expect(eventsResponse.json()).toEqual([
+      expect.objectContaining({
+        externalEventId: "201",
+        textContent: "测试微信入站消息"
+      })
+    ]);
+
+    const logoutResponse = await hosted.app.inject({
+      method: "POST",
+      url: `/api/channels/accounts/${accountId}/wechat-claw/logout`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(logoutResponse.statusCode).toBe(200);
+    expect(logoutResponse.json()).toEqual(expect.objectContaining({
+      loginStatus: "not_logged_in",
+      account: expect.objectContaining({
+        status: "degraded",
+        runtimeState: expect.objectContaining({
+          wechatClawLoginStatus: "not_logged_in",
+          wechatClawQrCodeUrl: null,
+          wechatClawQrCodeSourceUrl: null
+        })
+      })
+    }));
+  });
 });
 
-async function createHostedApp() {
+async function createHostedApp(options: {
+  enableWechatClawHelper?: boolean;
+} = {}) {
   const fixture = createEmptyFixture();
   activeFixtures.push(fixture);
+  const previousEnableHelper = process.env.CODINGNS_ENABLE_WECHAT_CLAW_HELPER_IN_TESTS;
+  if (options.enableWechatClawHelper) {
+    process.env.CODINGNS_ENABLE_WECHAT_CLAW_HELPER_IN_TESTS = "true";
+  } else {
+    delete process.env.CODINGNS_ENABLE_WECHAT_CLAW_HELPER_IN_TESTS;
+  }
 
   const hosted = createTestApp(fixture, {
     databasePath: path.join(fixture.rootDir, "host.sqlite")
   });
+
+  if (previousEnableHelper === undefined) {
+    delete process.env.CODINGNS_ENABLE_WECHAT_CLAW_HELPER_IN_TESTS;
+  } else {
+    process.env.CODINGNS_ENABLE_WECHAT_CLAW_HELPER_IN_TESTS = previousEnableHelper;
+  }
   activeServers.push(hosted);
   await hosted.app.ready();
 
   return hosted;
+}
+
+async function waitForCondition(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  throw new Error("等待异步条件超时");
 }
 
 function seedChannelRecords(

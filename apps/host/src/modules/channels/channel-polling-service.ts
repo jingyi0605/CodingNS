@@ -9,9 +9,8 @@ import type { ChannelDeliveryService } from "./channel-delivery-service.js";
 import type { ChannelPlatformAdapterRegistry } from "./channel-platform-adapters.js";
 import { HOST_TASK_TYPES, type TaskHandle } from "../tasks/task-types.js";
 import type { TaskManager } from "../tasks/task-manager.js";
-
-const WECHAT_CLAW_RUNTIME_REQUIRED_DETAIL =
-  "当前项目还没有把个人微信（claw）helper 接进 Host，Host 不能直接承担扫码绑定、轮询收信和消息回发。";
+import type { WechatClawRuntimeClient } from "./wechat-claw-runtime-client.js";
+import { createWechatClawRuntimeRequiredError } from "./wechat-claw-runtime-boundary.js";
 
 export interface ChannelPollTaskResult {
   accountId: string;
@@ -38,6 +37,7 @@ interface LoggerLike {
 
 export class ChannelPollingService {
   private readonly logger: LoggerLike;
+  private readonly wechatClawRuntimeClient: WechatClawRuntimeClient | null;
 
   constructor(
     private readonly channelAccountRepository: ChannelAccountRepository,
@@ -47,9 +47,11 @@ export class ChannelPollingService {
     private readonly taskManager: TaskManager,
     options: {
       logger?: LoggerLike;
+      wechatClawRuntimeClient?: WechatClawRuntimeClient | null;
     } = {}
   ) {
     this.logger = options.logger ?? console;
+    this.wechatClawRuntimeClient = options.wechatClawRuntimeClient ?? null;
     this.registerBackgroundTasks();
   }
 
@@ -86,7 +88,7 @@ export class ChannelPollingService {
   async runDuePolls(referenceAt: string): Promise<RunDueChannelPollsResult> {
     const accounts = this.channelAccountRepository
       .listActiveByConnectionModes(["polling"])
-      .filter((account) => account.platformCode !== "wechat-claw");
+      .filter((account) => account.platformCode !== "wechat-claw" || this.wechatClawRuntimeClient);
 
     for (const account of accounts) {
       const handle = this.taskManager.enqueue<{ accountId: string; requestedAt: string }, ChannelPollTaskResult>(
@@ -227,18 +229,10 @@ export class ChannelPollingService {
       });
     }
 
-    if (account.platformCode === "wechat-claw") {
+    if (account.platformCode === "wechat-claw" && !this.wechatClawRuntimeClient) {
       throw createWechatClawRuntimeRequiredError();
     }
 
     return account;
   }
-}
-
-function createWechatClawRuntimeRequiredError(): AppError {
-  return new AppError({
-    statusCode: 501,
-    errorCode: "CHANNEL_PLATFORM_RUNTIME_REQUIRED",
-    detail: WECHAT_CLAW_RUNTIME_REQUIRED_DETAIL
-  });
 }

@@ -16,9 +16,8 @@ import { createProviderDisabledError } from "../provider/provider-disabled.js";
 import { getChannelPlatformCapability, listChannelPlatformCapabilities } from "./channel-platform-catalog.js";
 import type { ChannelPlatformAdapterRegistry } from "./channel-platform-adapters.js";
 import type { ChannelPollingService } from "./channel-polling-service.js";
-
-const WECHAT_CLAW_RUNTIME_REQUIRED_DETAIL =
-  "当前项目还没有把个人微信（claw）helper 接进 Host，Host 不能直接承担扫码绑定、轮询收信和消息回发。";
+import type { WechatClawRuntimeClient } from "./wechat-claw-runtime-client.js";
+import { createWechatClawRuntimeRequiredError } from "./wechat-claw-runtime-boundary.js";
 
 export interface CreateChannelAccountInput {
   platformCode?: unknown;
@@ -72,7 +71,14 @@ export interface WechatClawLoginActionResult {
   detail: string;
   loginStatus: WechatClawLoginStatus;
   qrcodeUrl: string | null;
+  qrcodeSourceUrl: string | null;
   qrcodeText: string | null;
+}
+
+export interface RemoveChannelAccountResult {
+  accountId: string;
+  displayName: string;
+  removedAt: string;
 }
 
 interface ChannelAccountRepository {
@@ -80,6 +86,7 @@ interface ChannelAccountRepository {
   findById(id: string): ChannelAccount | null;
   create(record: ChannelAccount): ChannelAccount;
   update(record: ChannelAccount): ChannelAccount;
+  delete(id: string): boolean;
 }
 
 interface ChannelThreadRepository {
@@ -111,7 +118,8 @@ export class ChannelService {
     private readonly channelDeliveryRepository: ChannelDeliveryRepository,
     private readonly providerControlRepository: ProviderControlRepository,
     private readonly adapterRegistry: ChannelPlatformAdapterRegistry,
-    private readonly channelPollingService: Pick<ChannelPollingService, "requestPoll"> | null = null
+    private readonly channelPollingService: Pick<ChannelPollingService, "requestPoll"> | null = null,
+    private readonly wechatClawRuntimeClient: WechatClawRuntimeClient | null = null
   ) {}
 
   listPlatforms(): ChannelPlatformCapability[] {
@@ -197,6 +205,34 @@ export class ChannelService {
     return this.toAccountSummary(updated);
   }
 
+  async removeAccount(userId: string, accountId: string): Promise<RemoveChannelAccountResult> {
+    const account = this.getOwnedAccountOrThrow(userId, accountId);
+    const removedAt = nowIso();
+
+    if (account.platformCode === "wechat-claw" && this.wechatClawRuntimeClient) {
+      try {
+        await this.wechatClawRuntimeClient.logout(account.id);
+      } catch {
+        // 删除账号时以主库删除为准，helper 私有态清理失败不阻塞移除。
+      }
+    }
+
+    const deleted = this.channelAccountRepository.delete(account.id);
+    if (!deleted) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "CHANNEL_ACCOUNT_NOT_FOUND",
+        detail: "目标通讯平台账号不存在"
+      });
+    }
+
+    return {
+      accountId: account.id,
+      displayName: account.displayName,
+      removedAt
+    };
+  }
+
   async probeAccount(userId: string, accountId: string): Promise<ProbeChannelAccountResult> {
     const account = this.getOwnedAccountOrThrow(userId, accountId);
     const checkedAt = nowIso();
@@ -255,7 +291,7 @@ export class ChannelService {
       throw invalidField("accountId", "当前账号不是 polling 模式，不能手动触发 poll");
     }
 
-    if (account.platformCode === "wechat-claw") {
+    if (account.platformCode === "wechat-claw" && !this.wechatClawRuntimeClient) {
       throw createWechatClawRuntimeRequiredError();
     }
 
@@ -295,18 +331,65 @@ export class ChannelService {
   }
 
   async startWechatClawLogin(userId: string, accountId: string): Promise<WechatClawLoginActionResult> {
-    this.getOwnedWechatClawAccountOrThrow(userId, accountId);
-    throw createWechatClawRuntimeRequiredError();
+    const account = this.getOwnedWechatClawAccountOrThrow(userId, accountId);
+    const result = await this.requireWechatClawRuntimeClient().startLogin(account);
+    const updated = this.syncWechatClawRuntimeState(account, result.session, result.detail, result.actedAt);
+
+    return {
+      account: this.toAccountSummary(updated),
+      actedAt: result.actedAt,
+      detail: result.detail,
+      loginStatus: result.session.status,
+      qrcodeUrl: result.session.qrCodeUrl,
+      qrcodeSourceUrl: result.session.qrCodeSourceUrl,
+      qrcodeText: result.session.qrCodeText
+    };
   }
 
   async refreshWechatClawLogin(userId: string, accountId: string): Promise<WechatClawLoginActionResult> {
-    this.getOwnedWechatClawAccountOrThrow(userId, accountId);
-    throw createWechatClawRuntimeRequiredError();
+    const account = this.getOwnedWechatClawAccountOrThrow(userId, accountId);
+    const result = await this.requireWechatClawRuntimeClient().getLoginStatus(account.id);
+    const updated = this.syncWechatClawRuntimeState(account, result.session, result.detail, result.checkedAt);
+
+    return {
+      account: this.toAccountSummary(updated),
+      actedAt: result.checkedAt,
+      detail: result.detail,
+      loginStatus: result.session.status,
+      qrcodeUrl: result.session.qrCodeUrl,
+      qrcodeSourceUrl: result.session.qrCodeSourceUrl,
+      qrcodeText: result.session.qrCodeText
+    };
   }
 
   async logoutWechatClaw(userId: string, accountId: string): Promise<WechatClawLoginActionResult> {
-    this.getOwnedWechatClawAccountOrThrow(userId, accountId);
-    throw createWechatClawRuntimeRequiredError();
+    const account = this.getOwnedWechatClawAccountOrThrow(userId, accountId);
+    const result = await this.requireWechatClawRuntimeClient().logout(account.id);
+    const updated = this.channelAccountRepository.update({
+      ...account,
+      status: account.status === "disabled" ? "disabled" : "degraded",
+      runtimeState: {
+        ...account.runtimeState,
+        wechatClawLoginStatus: "not_logged_in",
+        wechatClawQrCodeText: null,
+        wechatClawQrCodeUrl: null,
+        wechatClawQrCodeSourceUrl: null,
+        wechatClawLastDetail: result.detail,
+        wechatClawUpdatedAt: result.actedAt
+      },
+      lastError: result.detail,
+      updatedAt: result.actedAt
+    });
+
+    return {
+      account: this.toAccountSummary(updated),
+      actedAt: result.actedAt,
+      detail: result.detail,
+      loginStatus: "not_logged_in",
+      qrcodeUrl: null,
+      qrcodeSourceUrl: null,
+      qrcodeText: null
+    };
   }
 
   private toAccountSummary(account: ChannelAccount): ChannelAccountSummary {
@@ -349,6 +432,14 @@ export class ChannelService {
     }
   }
 
+  private requireWechatClawRuntimeClient(): WechatClawRuntimeClient {
+    if (!this.wechatClawRuntimeClient) {
+      throw createWechatClawRuntimeRequiredError();
+    }
+
+    return this.wechatClawRuntimeClient;
+  }
+
   private getOwnedWechatClawAccountOrThrow(userId: string, accountId: string): ChannelAccount {
     const account = this.getOwnedAccountOrThrow(userId, accountId);
     if (account.platformCode !== "wechat-claw") {
@@ -356,6 +447,40 @@ export class ChannelService {
     }
 
     return account;
+  }
+
+  private syncWechatClawRuntimeState(
+    account: ChannelAccount,
+    session: {
+      status: WechatClawLoginStatus;
+      qrCodeText: string | null;
+      qrCodeUrl: string | null;
+      qrCodeSourceUrl?: string | null;
+      lastErrorMessage: string | null;
+    },
+    detail: string,
+    updatedAt: string
+  ): ChannelAccount {
+    return this.channelAccountRepository.update({
+      ...account,
+      status:
+        account.status === "disabled"
+          ? "disabled"
+          : session.status === "active"
+            ? "active"
+            : "degraded",
+      runtimeState: {
+        ...account.runtimeState,
+        wechatClawLoginStatus: session.status,
+        wechatClawQrCodeText: session.qrCodeText,
+        wechatClawQrCodeUrl: session.qrCodeUrl,
+        wechatClawQrCodeSourceUrl: session.qrCodeSourceUrl ?? null,
+        wechatClawLastDetail: detail,
+        wechatClawUpdatedAt: updatedAt
+      },
+      lastError: session.status === "active" ? null : session.lastErrorMessage ?? detail,
+      updatedAt
+    });
   }
 }
 
@@ -465,13 +590,5 @@ function invalidField(field: string, detail: string): AppError {
     errorCode: "INVALID_INPUT",
     detail,
     field
-  });
-}
-
-function createWechatClawRuntimeRequiredError(): AppError {
-  return new AppError({
-    statusCode: 501,
-    errorCode: "CHANNEL_PLATFORM_RUNTIME_REQUIRED",
-    detail: WECHAT_CLAW_RUNTIME_REQUIRED_DETAIL
   });
 }

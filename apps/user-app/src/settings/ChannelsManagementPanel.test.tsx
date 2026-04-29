@@ -218,7 +218,81 @@ describe("ChannelsManagementPanel", () => {
     expect(within(dialog).getByText("Telegram 值班号")).toBeInTheDocument();
   });
 
-  it("个人微信（claw）现在只创建账号位，不再显示其他平台配置项", async () => {
+  it("可以移除指定的通讯账号，并从列表和详情区同时清掉", async () => {
+    const requestLog: Array<{ method: string; url: string }> = [];
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      requestLog.push({ method, url });
+
+      if (url.endsWith("/api/channels/platforms") && method === "GET") {
+        return createJsonResponse(createPlatformsResponse());
+      }
+
+      if (url.endsWith("/api/channels/accounts") && method === "GET") {
+        return createJsonResponse([
+          createAccountResponse({
+            id: "telegram-account-remove",
+            displayName: "待删除 Telegram",
+            platformCode: "telegram",
+            config: {
+              botToken: "tg-token"
+            }
+          })
+        ]);
+      }
+
+      if (url.includes("/api/channels/accounts/telegram-account-remove/threads") && method === "GET") {
+        return createJsonResponse([]);
+      }
+
+      if (url.includes("/api/channels/accounts/telegram-account-remove/events") && method === "GET") {
+        return createJsonResponse([]);
+      }
+
+      if (url.includes("/api/channels/accounts/telegram-account-remove/deliveries") && method === "GET") {
+        return createJsonResponse([]);
+      }
+
+      if (url.endsWith("/api/channels/accounts/telegram-account-remove") && method === "DELETE") {
+        return createJsonResponse({
+          accountId: "telegram-account-remove",
+          displayName: "待删除 Telegram",
+          removedAt: "2026-04-29T11:00:00.000Z"
+        });
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    }) as typeof fetch;
+
+    renderPanel();
+
+    await userEvent.click(screen.getByRole("button", { name: t("settings.channelsManageAction") }));
+
+    const dialog = await screen.findByRole("dialog", { name: t("settings.channelsModalTitle") });
+    const accountsSection = within(dialog).getByText(t("settings.channelsAccountsTitle")).closest("section");
+
+    expect(accountsSection).not.toBeNull();
+    await userEvent.click(within(accountsSection as HTMLElement).getByRole("button", { name: /待删除 Telegram/ }));
+
+    expect(within(dialog).getByRole("button", { name: t("settings.channelsRemoveAction") })).toBeEnabled();
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.channelsRemoveAction") }));
+    expect(within(dialog).getByText(t("settings.channelsRemoveConfirmDescription"))).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.channelsRemoveConfirmAction") }));
+
+    await waitFor(() => {
+      expect(within(dialog).queryByRole("button", { name: /待删除 Telegram/ })).not.toBeInTheDocument();
+    });
+    expect(within(dialog).getByText(t("settings.channelsRemoveSuccess", {
+      account: "待删除 Telegram"
+    }))).toBeInTheDocument();
+    expect(within(dialog).queryByText(t("settings.channelsDetailTitle"))).not.toBeInTheDocument();
+    expect(requestLog.filter((item) => item.method === "DELETE" && item.url.endsWith("/telegram-account-remove"))).toHaveLength(1);
+  });
+
+  it("个人微信（claw）创建后会进入真实绑定区，不再显示 runtime 未接入提示", async () => {
     let latestPayload: unknown = null;
 
     global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -288,14 +362,17 @@ describe("ChannelsManagementPanel", () => {
       });
     });
 
-    expect(await within(dialog).findByText(t("settings.channelsWechatRuntimeRequiredTitle"))).toBeInTheDocument();
+    expect(await within(dialog).findByText(t("settings.channelsWechatBindingTitle"))).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: t("settings.channelsWechatStartLoginAction") })).toBeEnabled();
     expect(within(dialog).queryByRole("button", { name: t("settings.channelsPollAction") })).not.toBeInTheDocument();
   });
 
-  it("个人微信（claw）详情页会明确提示官方 runtime 尚未接入", async () => {
+  it("个人微信（claw）详情页会显示二维码绑定动作，并能刷新和清除绑定状态", async () => {
+    const requestLog: Array<{ method: string; url: string }> = [];
     global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
+      requestLog.push({ method, url });
 
       if (url.endsWith("/api/channels/platforms") && method === "GET") {
         return createJsonResponse(createPlatformsResponse());
@@ -307,6 +384,9 @@ describe("ChannelsManagementPanel", () => {
             id: "wechat-account-2",
             displayName: "个人微信值班号",
             platformCode: "wechat-claw",
+            runtimeState: {
+              wechatClawLoginStatus: "not_logged_in"
+            },
             capability: {
               code: "wechat-claw",
               displayName: "个人微信（claw）",
@@ -330,6 +410,78 @@ describe("ChannelsManagementPanel", () => {
         return createJsonResponse([]);
       }
 
+      if (url.endsWith("/api/channels/accounts/wechat-account-2/wechat-claw/start-login") && method === "POST") {
+        return createJsonResponse({
+          actedAt: "2026-04-29T10:01:00.000Z",
+          detail: "二维码已生成，请扫码。",
+          loginStatus: "waiting_scan",
+          qrcodeUrl: "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+          qrcodeSourceUrl: "https://wechat.example.com/mock-qr.png",
+          qrcodeText: "https://wechat.example.com/mock-qr.png",
+          account: createAccountResponse({
+            id: "wechat-account-2",
+            displayName: "个人微信值班号",
+            platformCode: "wechat-claw",
+            runtimeState: {
+              wechatClawLoginStatus: "waiting_scan",
+              wechatClawQrCodeUrl: "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+              wechatClawQrCodeSourceUrl: "https://wechat.example.com/mock-qr.png",
+              wechatClawQrCodeText: "https://wechat.example.com/mock-qr.png",
+              wechatClawLastDetail: "二维码已生成，请扫码。",
+              wechatClawUpdatedAt: "2026-04-29T10:01:00.000Z"
+            }
+          })
+        });
+      }
+
+      if (url.endsWith("/api/channels/accounts/wechat-account-2/wechat-claw/refresh-login") && method === "POST") {
+        return createJsonResponse({
+          actedAt: "2026-04-29T10:02:00.000Z",
+          detail: "微信账号已登录。",
+          loginStatus: "active",
+          qrcodeUrl: null,
+          qrcodeSourceUrl: null,
+          qrcodeText: null,
+          account: createAccountResponse({
+            id: "wechat-account-2",
+            displayName: "个人微信值班号",
+            platformCode: "wechat-claw",
+            runtimeState: {
+              wechatClawLoginStatus: "active",
+              wechatClawQrCodeUrl: null,
+              wechatClawQrCodeSourceUrl: null,
+              wechatClawQrCodeText: null,
+              wechatClawLastDetail: "微信账号已登录。",
+              wechatClawUpdatedAt: "2026-04-29T10:02:00.000Z"
+            }
+          })
+        });
+      }
+
+      if (url.endsWith("/api/channels/accounts/wechat-account-2/wechat-claw/logout") && method === "POST") {
+        return createJsonResponse({
+          actedAt: "2026-04-29T10:03:00.000Z",
+          detail: "微信 helper 私有运行态已清理。",
+          loginStatus: "not_logged_in",
+          qrcodeUrl: null,
+          qrcodeSourceUrl: null,
+          qrcodeText: null,
+          account: createAccountResponse({
+            id: "wechat-account-2",
+            displayName: "个人微信值班号",
+            platformCode: "wechat-claw",
+            runtimeState: {
+              wechatClawLoginStatus: "not_logged_in",
+              wechatClawQrCodeUrl: null,
+              wechatClawQrCodeSourceUrl: null,
+              wechatClawQrCodeText: null,
+              wechatClawLastDetail: "微信 helper 私有运行态已清理。",
+              wechatClawUpdatedAt: "2026-04-29T10:03:00.000Z"
+            }
+          })
+        });
+      }
+
       throw new Error(`Unexpected request: ${method} ${url}`);
     }) as typeof fetch;
 
@@ -343,9 +495,34 @@ describe("ChannelsManagementPanel", () => {
     expect(accountsSection).not.toBeNull();
     await userEvent.click(within(accountsSection as HTMLElement).getByRole("button", { name: /个人微信值班号/ }));
 
-    expect(await within(dialog).findByText(t("settings.channelsWechatRuntimeRequiredTitle"))).toBeInTheDocument();
+    expect(await within(dialog).findByText(t("settings.channelsWechatBindingTitle"))).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: t("settings.channelsProbeAction") })).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: t("settings.channelsPollAction") })).not.toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.channelsWechatStartLoginAction") }));
+    expect(await within(dialog).findByAltText(t("settings.channelsWechatQrAlt"))).toHaveAttribute(
+      "src",
+      "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4="
+    );
+    expect(within(dialog).getByRole("link", { name: t("settings.channelsWechatOpenQrLinkAction") })).toHaveAttribute(
+      "href",
+      "https://wechat.example.com/mock-qr.png"
+    );
+    expect(within(dialog).getByDisplayValue("https://wechat.example.com/mock-qr.png")).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.channelsWechatRefreshLoginAction") }));
+    expect(await within(dialog).findByText(t("settings.channelsWechatLoginStatusActive"))).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: t("settings.channelsProbeAction") })).toBeEnabled();
+    expect(within(dialog).getByRole("button", { name: t("settings.channelsPollAction") })).toBeEnabled();
+    expect(within(dialog).queryByAltText(t("settings.channelsWechatQrAlt"))).not.toBeInTheDocument();
+    expect(within(dialog).queryByDisplayValue("https://wechat.example.com/mock-qr.png")).not.toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.channelsWechatLogoutAction") }));
+    expect(await within(dialog).findByText(t("settings.channelsWechatLoginStatusNotLoggedIn"))).toBeInTheDocument();
+
+    expect(requestLog.filter((item) => item.url.endsWith("/wechat-claw/start-login"))).toHaveLength(1);
+    expect(requestLog.filter((item) => item.url.endsWith("/wechat-claw/refresh-login"))).toHaveLength(1);
+    expect(requestLog.filter((item) => item.url.endsWith("/wechat-claw/logout"))).toHaveLength(1);
   });
 });
 

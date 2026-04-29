@@ -5,9 +5,8 @@ import type {
   ChannelThread
 } from "../../types/domain.js";
 import type { NormalizedChannelInboundMessage } from "./channel-bridge-service.js";
-
-const WECHAT_CLAW_RUNTIME_REQUIRED_DETAIL =
-  "当前项目还没有把个人微信（claw）helper 接进 Host，Host 不能直接承担扫码绑定、轮询收信和消息回发。";
+import type { WechatClawRuntimeClient } from "./wechat-claw-runtime-client.js";
+import { createWechatClawRuntimeRequiredError, WECHAT_CLAW_RUNTIME_REQUIRED_DETAIL } from "./wechat-claw-runtime-boundary.js";
 
 export interface ChannelWebhookRequestContext {
   method: string;
@@ -77,15 +76,19 @@ export class ChannelPlatformAdapterRegistry {
   }
 }
 
-export function createDefaultChannelPlatformAdapterRegistry(): ChannelPlatformAdapterRegistry {
+export function createDefaultChannelPlatformAdapterRegistry(options: {
+  wechatClawRuntimeClient?: WechatClawRuntimeClient | null;
+} = {}): ChannelPlatformAdapterRegistry {
   return new ChannelPlatformAdapterRegistry([
-    new WechatClawChannelAdapter(),
+    new WechatClawChannelAdapter(options.wechatClawRuntimeClient ?? null),
     new TelegramChannelAdapter()
   ]);
 }
 
 class WechatClawChannelAdapter implements ChannelPlatformAdapter {
   readonly platformCode = "wechat-claw" as const;
+
+  constructor(private readonly runtimeClient: WechatClawRuntimeClient | null) {}
 
   async parseWebhook(
     _account: ChannelAccount,
@@ -99,24 +102,54 @@ class WechatClawChannelAdapter implements ChannelPlatformAdapter {
   }
 
   async poll(account: ChannelAccount): Promise<ChannelPollResult> {
-    void account;
-    throw createWechatClawRuntimeRequiredError();
+    const result = await this.requireRuntimeClient().poll(account);
+    return {
+      inboundMessages: result.inboundMessages.map((message) => ({
+        externalEventId: message.externalEventId,
+        externalConversationKey: message.externalConversationKey,
+        externalUserId: message.externalUserId,
+        externalThreadKey: message.externalThreadKey,
+        text: message.text,
+        senderDisplayName: message.senderDisplayName,
+        rawPayload: message.rawPayload,
+        transportContext: message.transportContext
+      })),
+      detail: result.detail
+    };
   }
 
   async sendText(account: ChannelAccount, thread: ChannelThread, text: string): Promise<ChannelSendTextResult> {
-    void account;
-    void thread;
-    void text;
-    throw createWechatClawRuntimeRequiredError();
+    const result = await this.requireRuntimeClient().sendText(account, thread, text);
+    return {
+      status: result.status,
+      providerMessageRef: result.providerMessageRef,
+      detail: result.detail ?? undefined
+    };
   }
 
   async probe(account: ChannelAccount): Promise<ChannelProbeResult> {
-    void account;
+    if (!this.runtimeClient) {
+      return {
+        ok: false,
+        detail: WECHAT_CLAW_RUNTIME_REQUIRED_DETAIL,
+        warnings: []
+      };
+    }
+
+    const result = await this.runtimeClient.probe(account);
     return {
-      ok: false,
-      detail: WECHAT_CLAW_RUNTIME_REQUIRED_DETAIL,
-      warnings: []
+      ok: result.ok,
+      detail: result.detail,
+      warnings: result.warnings
     };
+  }
+
+  private requireRuntimeClient(): WechatClawRuntimeClient {
+    if (!this.runtimeClient) {
+      throw createWechatClawRuntimeRequiredError();
+    }
+
+    return this.runtimeClient;
   }
 }
 
@@ -352,14 +385,6 @@ function invalidConfig(detail: string): never {
     statusCode: 400,
     errorCode: "INVALID_INPUT",
     detail
-  });
-}
-
-function createWechatClawRuntimeRequiredError(): AppError {
-  return new AppError({
-    statusCode: 501,
-    errorCode: "CHANNEL_PLATFORM_RUNTIME_REQUIRED",
-    detail: WECHAT_CLAW_RUNTIME_REQUIRED_DETAIL
   });
 }
 

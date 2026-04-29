@@ -162,6 +162,14 @@ export class ChannelAccountRepository {
 
     return record;
   }
+
+  delete(id: string): boolean {
+    const result = this.db
+      .prepare("DELETE FROM channel_accounts WHERE id = ?")
+      .run(id);
+
+    return result.changes > 0;
+  }
 }
 
 interface ChannelAccountRow {

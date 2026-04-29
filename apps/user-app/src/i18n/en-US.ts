@@ -193,8 +193,10 @@ export const enUS = {
     channelsSaveFailed: "Failed to save the channel account.",
     channelsProbeFailed: "Failed to probe the channel account.",
     channelsPollFailed: "Failed to trigger manual polling.",
+    channelsRemoveFailed: "Failed to remove the channel account.",
     channelsCreateSuccess: "{account} created.",
     channelsUpdateSuccess: "{account} saved.",
+    channelsRemoveSuccess: "Removed channel account “{account}”.",
     channelsSelectAccountFirst: "Select an existing account first, or create a new one.",
     channelsSummaryTitle: "Channel Overview",
     channelsSummaryAccounts: "Accounts",
@@ -266,9 +268,9 @@ export const enUS = {
     channelsValidationRequiredField: "Fill in “{field}” first.",
     channelsValidationFeishuCredential:
       "Feishu still needs one working credential set: either a Tenant Access Token, or both App ID and App Secret.",
-    channelsConfigWechatUnavailableTitle: "WeChat (claw) runtime is not integrated yet",
+    channelsConfigWechatUnavailableTitle: "WeChat (claw) does not need manual protocol fields",
     channelsConfigWechatUnavailableDescription:
-      "The official path is to run the openclaw-weixin plugin inside the Gateway runtime. This project has not wired that runtime in yet, so the page only keeps the account slot and no longer pretends to support QR binding, polling, or outbound delivery.",
+      "QR binding, login state, polling, and outbound delivery are handled by the Host helper, so this step does not require private protocol fields.",
     channelsDetailTitle: "Selected Account Overview",
     channelsDetailDescription:
       "Review the current account state, recent traffic, and whether the account needs manual follow-up.",
@@ -281,6 +283,10 @@ export const enUS = {
     channelsDetailLastError: "Last error",
     channelsProbeAction: "Probe account",
     channelsPollAction: "Run polling",
+    channelsRemoveAction: "Remove account",
+    channelsRemoveConfirmAction: "Confirm removal",
+    channelsRemoveConfirmDescription:
+      "Removing this account also clears its thread mappings, inbound events, and delivery records. This action cannot be undone.",
     channelsWebhookHint: "This account uses webhook mode, so manual polling is not needed.",
     channelsConnectionModeFixedHint:
       "Phase one always models these channels as polling. If a different mode is needed later, the account rules will be upgraded separately.",
@@ -333,16 +339,16 @@ export const enUS = {
     channelsMetaError: "Error",
     channelsTextFallback: "Empty text",
     channelsTimeUnknown: "Not available",
-    channelsWechatBindingTitle: "WeChat runtime",
+    channelsWechatBindingTitle: "WeChat binding",
     channelsWechatBindingDescription:
-      "WeChat (claw) needs the official openclaw-weixin runtime first. The current repository has not integrated that layer yet.",
+      "This account uses the Host-managed helper for QR login, polling, and outbound delivery.",
     channelsWechatBoundDescription:
-      "This version has not wired the official runtime into CodingNS yet, so binding, refresh, and unbind actions are not exposed here.",
+      "The WeChat account is already bound. You can continue with health checks, manual polling, and later session bridging.",
     channelsWechatCreateDescription:
-      "Name this WeChat account first. The current page only stores the account slot, and the real bind flow will be added after the official runtime is integrated.",
+      "Name this WeChat account first. After creation, generate the QR code in the detail panel and finish the bind there.",
     channelsWechatRuntimeRequiredTitle: "Direct WeChat binding is not available yet",
     channelsWechatRuntimeRequiredDescription:
-      "This is not a missing field problem. The project still needs the official openclaw-weixin runtime integration. For now the page only keeps account management and capability notes.",
+      "The current environment has not enabled the WeChat helper, so this page only shows the account basics. After the helper is enabled, the real QR binding flow appears here.",
     channelsWechatPendingTitle: "This account is still waiting for binding",
     channelsWechatPendingDescription:
       "Finish QR binding first. Polling, outbound delivery, and recent records only appear after the bind succeeds.",
