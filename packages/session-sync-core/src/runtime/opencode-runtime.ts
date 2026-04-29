@@ -4,8 +4,10 @@ import { dirname, join } from "node:path";
 
 import {
   buildSessionRawStoreRef,
+  normalizeOpenCodeMessageEnvelopes,
   normalizeOpenCodePartMessage,
   normalizeOpenCodeToolStatus,
+  type OpenCodeMessageEnvelope,
   type OpenCodeServerSession,
   parseSessionIdFromRawStoreRef,
   toJsonRecord
@@ -31,6 +33,7 @@ const TIMEOUT_WARNING_THRESHOLD_MS = 15_000;
 const MAX_CONSECUTIVE_TIMEOUTS = 5;
 const OPENCODE_STALE_EVENT_GRACE_MS = 15_000;
 const OPENCODE_REALISTIC_EPOCH_MS_THRESHOLD = Date.UTC(2000, 0, 1);
+const OPENCODE_SUBMIT_TIMEOUT_AMBIGUOUS = "OPENCODE_SUBMIT_TIMEOUT_AMBIGUOUS";
 const OPENCODE_ORDER_DEBUG_ENABLED = /^(1|true|yes)$/i.test(
   process.env.CODINGNS_OPENCODE_ORDER_DEBUG?.trim() ?? ""
 );
@@ -157,6 +160,7 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
     signal: AbortSignal
   ): Promise<void> {
     const eventStreamPromise = this.consumeEventStream(state, signal);
+    const promptStartedAt = nextTimestamp();
 
     try {
       await this.sendPrompt(state.providerSessionId, request, signal);
@@ -167,6 +171,35 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
 
       if (!state.hasObservedActivity && state.terminalStatus === null) {
         await waitForOpenCodeProgress(state, signal, 1_500);
+      }
+
+      if (
+        !signal.aborted
+        && !state.hasObservedActivity
+        && state.terminalStatus === null
+        && isOpenCodeSubmitTimeoutAmbiguous(error)
+      ) {
+        const acceptedMessage = await this.findAcceptedUserMessage(
+          state.providerSessionId,
+          request.options.providerPrompt?.trim() || request.options.content.trim(),
+          promptStartedAt,
+          request.workspacePath
+        );
+
+        if (acceptedMessage) {
+          try {
+            await eventStreamPromise;
+          } catch (streamError) {
+            if (
+              !signal.aborted
+              && state.terminalStatus !== "completed"
+              && state.terminalStatus !== "failed"
+            ) {
+              await this.emitRuntimeFailure(state, streamError);
+            }
+          }
+          return;
+        }
       }
 
       if (
@@ -721,9 +754,51 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
         },
         body: JSON.stringify(body),
         signal,
+        timeoutErrorMessage: OPENCODE_SUBMIT_TIMEOUT_AMBIGUOUS,
         workspacePath: request.workspacePath
       }
     );
+  }
+
+  private async findAcceptedUserMessage(
+    providerSessionId: string,
+    content: string,
+    minTimestamp: string,
+    workspacePath?: string
+  ) {
+    try {
+      const response = await this.fetchJson<OpenCodeMessageEnvelope[]>(
+        `/session/${encodeURIComponent(providerSessionId)}/message`,
+        {
+          query: {
+            limit: "20"
+          },
+          workspacePath
+        }
+      );
+      const messages = normalizeOpenCodeMessageEnvelopes(
+        providerSessionId,
+        providerSessionId,
+        response.reverse()
+      );
+      const trimmed = content.trim();
+
+      for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index];
+
+        if (
+          message?.role === "user"
+          && message.content.trim() === trimmed
+          && isTimestampOnOrAfter(message.timestamp, minTimestamp)
+        ) {
+          return message;
+        }
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   private async emitRuntimeFailure(
@@ -781,6 +856,7 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       body?: string;
       query?: Record<string, string | undefined>;
       signal?: AbortSignal;
+      timeoutErrorMessage?: string;
       workspacePath?: string;
     } = {}
   ): Promise<Response> {
@@ -795,6 +871,7 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       body?: string;
       query?: Record<string, string | undefined>;
       signal?: AbortSignal;
+      timeoutErrorMessage?: string;
       workspacePath?: string;
     },
     refresh: boolean,
@@ -842,6 +919,10 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
           throw error;
         }
 
+        if (!isTimeoutRetryableMethod(input.method)) {
+          throw new Error(input.timeoutErrorMessage ?? "SERVER_TIMEOUT");
+        }
+
         const nextTimeoutState = advanceTimeoutRetryState(timeoutState);
 
         if (!shouldSurfaceTimeout(nextTimeoutState)) {
@@ -878,6 +959,7 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       body?: string;
       query?: Record<string, string | undefined>;
       signal?: AbortSignal;
+      timeoutErrorMessage?: string;
       workspacePath?: string;
     } = {}
   ): Promise<T> {
@@ -1277,6 +1359,11 @@ function advanceTimeoutRetryState(state: TimeoutRetryState): TimeoutRetryState {
   };
 }
 
+function isTimeoutRetryableMethod(method: string | undefined): boolean {
+  const normalized = (method ?? "GET").trim().toUpperCase();
+  return normalized === "GET" || normalized === "HEAD" || normalized === "OPTIONS";
+}
+
 function shouldSurfaceTimeout(state: TimeoutRetryState): boolean {
   return (
     state.timeoutCount >= MAX_CONSECUTIVE_TIMEOUTS
@@ -1284,9 +1371,28 @@ function shouldSurfaceTimeout(state: TimeoutRetryState): boolean {
   );
 }
 
+function isOpenCodeSubmitTimeoutAmbiguous(error: unknown): boolean {
+  return error instanceof Error && error.message === OPENCODE_SUBMIT_TIMEOUT_AMBIGUOUS;
+}
+
+function isTimestampOnOrAfter(timestamp: string, minTimestamp: string): boolean {
+  const timestampMs = Date.parse(timestamp);
+  const minTimestampMs = Date.parse(minTimestamp);
+
+  if (!Number.isFinite(timestampMs) || !Number.isFinite(minTimestampMs)) {
+    return timestamp >= minTimestamp;
+  }
+
+  return timestampMs >= minTimestampMs;
+}
+
 function mapOpenCodeRuntimeErrorCode(error: unknown): string {
   if (!(error instanceof Error)) {
     return "OPENCODE_RUNTIME_FAILED";
+  }
+
+  if (error.message === OPENCODE_SUBMIT_TIMEOUT_AMBIGUOUS) {
+    return OPENCODE_SUBMIT_TIMEOUT_AMBIGUOUS;
   }
 
   if (error.message === "SERVER_TIMEOUT") {

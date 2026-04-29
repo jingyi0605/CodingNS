@@ -56,6 +56,7 @@ const MIN_POLL_INTERVAL_MS = 200;
 const DEFAULT_SERVER_PAGE_LIMIT = 100;
 const TIMEOUT_WARNING_THRESHOLD_MS = 15_000;
 const MAX_CONSECUTIVE_TIMEOUTS = 5;
+const OPENCODE_SUBMIT_TIMEOUT_AMBIGUOUS = "OPENCODE_SUBMIT_TIMEOUT_AMBIGUOUS";
 
 interface OpenCodeAdapterOptions {
   baseUrl?: string;
@@ -370,9 +371,20 @@ export class OpenCodeAdapter implements ProviderAdapter {
     options: StartSessionOptions
   ): Promise<StartSessionResult> {
     const session = await this.createSessionOnServer(workspacePath);
+    const initialPrompt = options.initialPrompt?.trim() ?? "";
+    const acceptedAt = initialPrompt ? nextTimestamp() : null;
 
-    if (options.initialPrompt?.trim()) {
-      await this.postTextPrompt(session.id, options.initialPrompt.trim(), undefined, workspacePath);
+    if (initialPrompt) {
+      try {
+        await this.postTextPrompt(session.id, initialPrompt, undefined, workspacePath);
+      } catch (error) {
+        if (
+          !isOpenCodeSubmitTimeoutAmbiguous(error)
+          || !(await this.findAcceptedUserMessage(session.id, initialPrompt, acceptedAt, workspacePath))
+        ) {
+          throw error;
+        }
+      }
     }
 
     const summary = await this.readSessionSummaryFromServer(session.id, workspacePath)
@@ -458,14 +470,34 @@ export class OpenCodeAdapter implements ProviderAdapter {
 
     const acceptedAt = nextTimestamp();
 
-    await this.postTextPrompt(sessionId, trimmed, permissionMode);
+    try {
+      await this.postTextPrompt(sessionId, trimmed, permissionMode);
+    } catch (error) {
+      if (!isOpenCodeSubmitTimeoutAmbiguous(error)) {
+        throw error;
+      }
 
-    const message = await this.findAcceptedUserMessage(sessionId, trimmed)
+      const acceptedMessage = await this.findAcceptedUserMessage(sessionId, trimmed, acceptedAt);
+
+      if (!acceptedMessage) {
+        throw error;
+      }
+
+      this.discoveryCache.clear();
+      return {
+        acceptedAt: acceptedMessage.timestamp,
+        clientRequestId,
+        message: acceptedMessage
+      };
+    }
+
+    const message = await this.findAcceptedUserMessage(sessionId, trimmed, acceptedAt)
       ?? buildSyntheticAcceptedMessage(sessionId, trimmed, acceptedAt);
+    const resolvedAcceptedAt = message.timestamp || acceptedAt;
     this.discoveryCache.clear();
 
     return {
-      acceptedAt,
+      acceptedAt: resolvedAcceptedAt,
       clientRequestId,
       message
     };
@@ -786,6 +818,7 @@ export class OpenCodeAdapter implements ProviderAdapter {
         headers: {
           "content-type": "application/json"
         },
+        timeoutErrorMessage: OPENCODE_SUBMIT_TIMEOUT_AMBIGUOUS,
         body: JSON.stringify({
           ...createOpenCodeMessagePermissionOptions(permissionMode),
           parts: [
@@ -801,7 +834,9 @@ export class OpenCodeAdapter implements ProviderAdapter {
 
   private async findAcceptedUserMessage(
     sessionId: string,
-    content: string
+    content: string,
+    minTimestamp: string | null = null,
+    workspacePath?: string | null
   ): Promise<NormalizedMessage | null> {
     try {
       const response = await this.fetchJson<OpenCodeMessageEnvelope[]>(
@@ -809,7 +844,8 @@ export class OpenCodeAdapter implements ProviderAdapter {
         {
           query: {
             limit: "20"
-          }
+          },
+          workspacePath
         }
       );
       const messages = normalizeOpenCodeMessageEnvelopes(
@@ -825,6 +861,7 @@ export class OpenCodeAdapter implements ProviderAdapter {
         if (
           message?.role === "user"
           && message.content.trim() === trimmed
+          && isTimestampOnOrAfter(message.timestamp, minTimestamp)
         ) {
           return message;
         }
@@ -1237,6 +1274,7 @@ export class OpenCodeAdapter implements ProviderAdapter {
       headers?: Record<string, string>;
       body?: string;
       query?: Record<string, string | undefined>;
+      timeoutErrorMessage?: string;
       workspacePath?: string | null;
     } = {}
   ): Promise<SessionPageResponse<T>> {
@@ -1250,6 +1288,7 @@ export class OpenCodeAdapter implements ProviderAdapter {
       headers?: Record<string, string>;
       body?: string;
       query?: Record<string, string | undefined>;
+      timeoutErrorMessage?: string;
       workspacePath?: string | null;
     },
     refresh: boolean,
@@ -1283,6 +1322,10 @@ export class OpenCodeAdapter implements ProviderAdapter {
       clearTimeout(timer);
 
       if (error instanceof Error && error.name === "AbortError") {
+        if (!isTimeoutRetryableMethod(input.method)) {
+          throw new Error(input.timeoutErrorMessage ?? "SERVER_TIMEOUT");
+        }
+
         const nextTimeoutState = advanceTimeoutRetryState(timeoutState);
 
         if (!shouldSurfaceTimeout(nextTimeoutState)) {
@@ -1735,9 +1778,33 @@ function advanceTimeoutRetryState(state: TimeoutRetryState): TimeoutRetryState {
   };
 }
 
+function isTimeoutRetryableMethod(method: string | undefined): boolean {
+  const normalized = (method ?? "GET").trim().toUpperCase();
+  return normalized === "GET" || normalized === "HEAD" || normalized === "OPTIONS";
+}
+
 function shouldSurfaceTimeout(state: TimeoutRetryState): boolean {
   return (
     state.timeoutCount >= MAX_CONSECUTIVE_TIMEOUTS
     || Date.now() - state.startedAtMs >= TIMEOUT_WARNING_THRESHOLD_MS
   );
+}
+
+function isOpenCodeSubmitTimeoutAmbiguous(error: unknown): boolean {
+  return error instanceof Error && error.message === OPENCODE_SUBMIT_TIMEOUT_AMBIGUOUS;
+}
+
+function isTimestampOnOrAfter(timestamp: string, minTimestamp: string | null): boolean {
+  if (!minTimestamp) {
+    return true;
+  }
+
+  const timestampMs = Date.parse(timestamp);
+  const minTimestampMs = Date.parse(minTimestamp);
+
+  if (!Number.isFinite(timestampMs) || !Number.isFinite(minTimestampMs)) {
+    return timestamp >= minTimestamp;
+  }
+
+  return timestampMs >= minTimestampMs;
 }

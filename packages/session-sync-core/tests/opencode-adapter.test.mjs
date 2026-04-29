@@ -98,6 +98,122 @@ test("OpenCodeAdapter 旧消息发送路径在非 default permissionMode 下也�
   assert.equal(result.message.content, "继续执行");
 });
 
+test("OpenCodeAdapter 提交超时后如果确认消息已入库，不会错误重发第二次", async (context) => {
+  const originalFetch = globalThis.fetch;
+  let submitAttempts = 0;
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init.method ?? "GET";
+
+    if (url === "http://127.0.0.1:41827/session/ses_send_timeout/message" && method === "POST") {
+      submitAttempts += 1;
+      return await new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => {
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        }, { once: true });
+      });
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_send_timeout/message?limit=20" && method === "GET") {
+      const createdAt = Date.now();
+      return jsonResponse([
+        {
+          info: {
+            id: "msg_user_timeout_confirmed",
+            sessionID: "ses_send_timeout",
+            role: "user",
+            time: {
+              created: createdAt
+            }
+          },
+          parts: [
+            {
+              id: "prt_user_timeout_confirmed",
+              messageID: "msg_user_timeout_confirmed",
+              sessionID: "ses_send_timeout",
+              type: "text",
+              text: "继续执行超时确认"
+            }
+          ]
+        }
+      ]);
+    }
+
+    throw new Error(`unexpected request: ${method} ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeAdapter({
+    baseUrl: "http://127.0.0.1:41827",
+    dbPath: "/tmp/codingns-opencode.db",
+    requestTimeoutMs: 5
+  });
+
+  const result = await adapter.sendMessage(
+    "ses_send_timeout",
+    "opencode://session/ses_send_timeout",
+    "继续执行超时确认",
+    "client-timeout-confirmed"
+  );
+
+  assert.equal(submitAttempts, 1);
+  assert.equal(result.clientRequestId, "client-timeout-confirmed");
+  assert.equal(result.message.content, "继续执行超时确认");
+  assert.equal(result.acceptedAt, result.message.timestamp);
+});
+
+test("OpenCodeAdapter 提交超时且确认不到已入库消息时，会明确抛出模糊超时错误", async (context) => {
+  const originalFetch = globalThis.fetch;
+  let submitAttempts = 0;
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init.method ?? "GET";
+
+    if (url === "http://127.0.0.1:41827/session/ses_send_timeout_fail/message" && method === "POST") {
+      submitAttempts += 1;
+      return await new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => {
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        }, { once: true });
+      });
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_send_timeout_fail/message?limit=20" && method === "GET") {
+      return jsonResponse([]);
+    }
+
+    throw new Error(`unexpected request: ${method} ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeAdapter({
+    baseUrl: "http://127.0.0.1:41827",
+    dbPath: "/tmp/codingns-opencode.db",
+    requestTimeoutMs: 5
+  });
+
+  await assert.rejects(
+    () =>
+      adapter.sendMessage(
+        "ses_send_timeout_fail",
+        "opencode://session/ses_send_timeout_fail",
+        "继续执行但这次真的超时",
+        "client-timeout-fail"
+      ),
+    (error) => error instanceof Error && error.message === "OPENCODE_SUBMIT_TIMEOUT_AMBIGUOUS"
+  );
+
+  assert.equal(submitAttempts, 1);
+});
+
 test("OpenCodeAdapter 会用 knownSessions 补回 server 短暂漏掉的会话，并标记发现结果不完整", async (context) => {
   const fixture = createOpenCodeFixture();
   const originalFetch = globalThis.fetch;

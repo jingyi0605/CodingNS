@@ -297,6 +297,125 @@ test("OpenCodeRuntimeAdapter 在发送请求先报错、SSE 稍后继续时，�
   assert.equal(completeEvent.status, "completed");
 });
 
+test("OpenCodeRuntimeAdapter 提交超时后如果确认消息已入库，不会错误重发第二次", async (context) => {
+  const originalFetch = globalThis.fetch;
+  const events = [];
+  let submitAttempts = 0;
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init.method ?? "GET";
+
+    if (url.startsWith("http://127.0.0.1:41827/session?") && method === "POST") {
+      return jsonResponse({ id: "ses_runtime_timeout_confirmed" });
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_runtime_timeout_confirmed" && method === "GET") {
+      return jsonResponse({
+        id: "ses_runtime_timeout_confirmed",
+        directory: "/Users/jackson/Code/CodingNS"
+      });
+    }
+
+    if (url === "http://127.0.0.1:41827/event" && method === "GET") {
+      return sseResponse([
+        {
+          delayMs: 1_600,
+          frame: {
+            payload: {
+              type: "session.idle",
+              properties: {
+                sessionID: "ses_runtime_timeout_confirmed"
+              }
+            }
+          }
+        }
+      ]);
+    }
+
+    if (
+      url === "http://127.0.0.1:41827/session/ses_runtime_timeout_confirmed/message"
+      && method === "POST"
+    ) {
+      submitAttempts += 1;
+      return await new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => {
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        }, { once: true });
+      });
+    }
+
+    if (
+      url === "http://127.0.0.1:41827/session/ses_runtime_timeout_confirmed/message?limit=20"
+      && method === "GET"
+    ) {
+      const createdAt = Date.now();
+      return jsonResponse([
+        {
+          info: {
+            id: "msg_runtime_timeout_confirmed",
+            sessionID: "ses_runtime_timeout_confirmed",
+            role: "user",
+            time: {
+              created: createdAt
+            }
+          },
+          parts: [
+            {
+              id: "prt_runtime_timeout_confirmed",
+              messageID: "msg_runtime_timeout_confirmed",
+              sessionID: "ses_runtime_timeout_confirmed",
+              type: "text",
+              text: "超时后确认不要重发"
+            }
+          ]
+        }
+      ]);
+    }
+
+    throw new Error(`unexpected request: ${method} ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeRuntimeAdapter({
+    baseUrl: "http://127.0.0.1:41827",
+    requestTimeoutMs: 5
+  });
+  const launch = await adapter.startSession(
+    {
+      sessionId: "local-session-timeout-confirmed",
+      workspaceId: "workspace-1",
+      workspacePath: "/Users/jackson/Code/CodingNS",
+      provider: "opencode",
+      providerSessionId: null,
+      rawStoreRef: null,
+      options: {
+        content: "超时后确认不要重发",
+        clientRequestId: null,
+        model: null,
+        reasoningLevel: null,
+        permissionMode: null,
+        providerPrompt: null,
+        attachments: []
+      }
+    },
+    {
+      updateSessionBinding() {},
+      async emit(event) {
+        events.push(event);
+      }
+    }
+  );
+
+  await launch.completed;
+
+  assert.equal(submitAttempts, 1);
+  assert.equal(events.some((event) => event.type === "error"), false);
+});
+
 test("OpenCodeRuntimeAdapter 会在服务端目录跑偏时直接拒绝启动会话", async (context) => {
   const originalFetch = globalThis.fetch;
 
@@ -1321,12 +1440,26 @@ test("OpenCodeRuntimeAdapter 会把网络失败收口成 SERVER_UNAVAILABLE", as
   );
 });
 
-test("OpenCodeRuntimeAdapter 只有连续超时达到阈值后才会收口成 SERVER_TIMEOUT", async (context) => {
+test("OpenCodeRuntimeAdapter 对 GET 请求只有连续超时达到阈值后才会收口成 SERVER_TIMEOUT", async (context) => {
   const originalFetch = globalThis.fetch;
-  let attempts = 0;
+  let getAttempts = 0;
 
-  globalThis.fetch = async (_input, init = {}) => {
-    attempts += 1;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init.method ?? "GET";
+
+    if (url.startsWith("http://127.0.0.1:4096/session?") && method === "POST") {
+      return jsonResponse({ id: "ses_timeout_retry_get" });
+    }
+
+    if (url === "http://127.0.0.1:4096/session/ses_timeout_retry_get" && method === "GET") {
+      getAttempts += 1;
+      return await new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => {
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        });
+      });
+    }
 
     return await new Promise((_resolve, reject) => {
       init.signal?.addEventListener("abort", () => {
@@ -1341,7 +1474,7 @@ test("OpenCodeRuntimeAdapter 只有连续超时达到阈值后才会收口成 SE
 
   const adapter = new OpenCodeRuntimeAdapter({
     baseUrl: "http://127.0.0.1:4096",
-    requestTimeoutMs: 1_000
+    requestTimeoutMs: 5
   });
 
   await assert.rejects(
@@ -1372,7 +1505,7 @@ test("OpenCodeRuntimeAdapter 只有连续超时达到阈值后才会收口成 SE
     (error) => error instanceof Error && error.message === "SERVER_TIMEOUT"
   );
 
-  assert.equal(attempts, 5);
+  assert.equal(getAttempts, 5);
 });
 
 test("OpenCodeRuntimeAdapter 会在 resolver 刷新后切换到新的 server 地址", async (context) => {
