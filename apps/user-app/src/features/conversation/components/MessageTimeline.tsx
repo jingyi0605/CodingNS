@@ -357,6 +357,21 @@ function readToolInputText(record: Record<string, unknown>, field: string): stri
   return typeof value === "string" ? value : "";
 }
 
+function readFirstToolInputText(
+  record: Record<string, unknown>,
+  fields: string[]
+): string {
+  for (const field of fields) {
+    const value = readToolInputText(record, field);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return "";
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -1534,7 +1549,10 @@ function buildEditableToolPreview(tool: ResolvedToolCall): ApplyPatchPreview | n
     return normalizedInput ? parseApplyPatchPreview(normalizedInput) : null;
   }
 
-  if (tool.name !== "Write" && tool.name !== "Edit" && tool.name !== "MultiEdit") {
+  const normalizedToolName = tool.name.trim().toLowerCase();
+  const editableToolKind = resolveEditableToolKind(normalizedToolName);
+
+  if (!editableToolKind) {
     return null;
   }
 
@@ -1544,14 +1562,14 @@ function buildEditableToolPreview(tool: ResolvedToolCall): ApplyPatchPreview | n
     return null;
   }
 
-  const filePath = readToolInputText(input, "file_path") || readToolInputText(input, "path");
+  const filePath = readFirstToolInputText(input, ["file_path", "filePath", "path"]);
 
   if (!filePath) {
     return null;
   }
 
-  if (tool.name === "Write") {
-    const content = readToolInputText(input, "content");
+  if (editableToolKind === "write") {
+    const content = readFirstToolInputText(input, ["content", "new_content", "newContent"]);
     const contentLines = content.length > 0 ? content.split(/\r?\n/) : [];
 
     return {
@@ -1576,9 +1594,11 @@ function buildEditableToolPreview(tool: ResolvedToolCall): ApplyPatchPreview | n
     };
   }
 
-  if (tool.name === "Edit") {
-    const oldLines = readToolInputText(input, "old_string").split(/\r?\n/);
-    const newLines = readToolInputText(input, "new_string").split(/\r?\n/);
+  if (editableToolKind === "edit") {
+    const oldLines = readFirstToolInputText(input, ["old_string", "oldString", "old_text", "oldText", "search", "searchText"])
+      .split(/\r?\n/);
+    const newLines = readFirstToolInputText(input, ["new_string", "newString", "new_text", "newText", "replacement", "replacementText", "replace"])
+      .split(/\r?\n/);
 
     return buildUpdatePreview(filePath, [{ oldLines, newLines }]);
   }
@@ -1592,13 +1612,33 @@ function buildEditableToolPreview(tool: ResolvedToolCall): ApplyPatchPreview | n
 
       const record = edit as Record<string, unknown>;
       return {
-        oldLines: readToolInputText(record, "old_string").split(/\r?\n/),
-        newLines: readToolInputText(record, "new_string").split(/\r?\n/)
+        oldLines: readFirstToolInputText(record, ["old_string", "oldString", "old_text", "oldText", "search", "searchText"])
+          .split(/\r?\n/),
+        newLines: readFirstToolInputText(record, ["new_string", "newString", "new_text", "newText", "replacement", "replacementText", "replace"])
+          .split(/\r?\n/)
       };
     })
     .filter((edit): edit is { oldLines: string[]; newLines: string[] } => Boolean(edit));
 
   return normalizedEdits.length > 0 ? buildUpdatePreview(filePath, normalizedEdits) : null;
+}
+
+function resolveEditableToolKind(
+  normalizedToolName: string
+): "write" | "edit" | "multiedit" | null {
+  if (normalizedToolName === "write" || normalizedToolName === "overwrite") {
+    return "write";
+  }
+
+  if (normalizedToolName === "edit") {
+    return "edit";
+  }
+
+  if (normalizedToolName === "multiedit" || normalizedToolName === "multi_edit") {
+    return "multiedit";
+  }
+
+  return null;
 }
 
 function buildUpdatePreview(

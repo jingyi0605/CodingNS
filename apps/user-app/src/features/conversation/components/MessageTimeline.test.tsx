@@ -1314,6 +1314,42 @@ ARGUMENTS: capabilities list`)
     expect(document.querySelectorAll(".apply-patch-summary-row")).toHaveLength(1);
   });
 
+  it("renders OpenCode lowercase write tool with the same edit-style preview", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="opencode"
+        onRetryMessage={vi.fn()}
+        messages={[
+          {
+            id: "tool-call-write-lowercase-1",
+            sessionId: "session-1",
+            role: "tool",
+            kind: "tool_call",
+            content: "{\"path\":\"C:/Code/CodingNS/notes.md\",\"content\":\"第一行\\n第二行\\n第三行\"}",
+            toolCall: {
+              callId: "call-write-lowercase-1",
+              name: "write",
+              input: "{\"path\":\"C:/Code/CodingNS/notes.md\",\"content\":\"第一行\\n第二行\\n第三行\"}",
+              output: null,
+              error: null,
+              status: "running"
+            },
+            timestamp: "2026-03-23T10:00:00.000Z",
+            sequence: 1,
+            rawRef: "opencode://session/thread-1/message/msg-1/part/tool-1",
+            deliveryState: "sent",
+            clientRequestId: null
+          }
+        ]}
+      />
+    );
+
+    expect(screen.queryByText(/^write$/)).not.toBeInTheDocument();
+    expect(screen.getByText("notes.md")).toBeInTheDocument();
+    expect(document.querySelectorAll(".apply-patch-summary-row")).toHaveLength(1);
+  });
+
   it("同一文件出现多个 patch 段时不会因为重复 key 报警", () => {
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
