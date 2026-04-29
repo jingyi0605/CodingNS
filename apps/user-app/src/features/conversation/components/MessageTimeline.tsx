@@ -2024,16 +2024,18 @@ async function writeTextToClipboard(
 function MarkdownInlineCode({
   className,
   children,
-  onCopy
+  onCopy,
+  exportMode = false
 }: {
   className?: string;
   children: ReactNode;
   onCopy: (text: string) => void;
+  exportMode?: boolean;
 }) {
   const isInsideLink = useContext(MarkdownLinkContext);
   const content = flattenReactNodeText(children).trim();
 
-  if (isInsideLink || !content) {
+  if (exportMode || isInsideLink || !content) {
     return <code className={className || undefined}>{children}</code>;
   }
 
@@ -2064,13 +2066,25 @@ function InteractiveMessageLink({
   href,
   children,
   className,
-  onInteract
+  onInteract,
+  exportMode = false
 }: {
   href?: string;
   children: ReactNode;
   className?: string;
   onInteract: (href: string | undefined, text: string) => void;
+  exportMode?: boolean;
 }) {
+  if (exportMode) {
+    return (
+      <MarkdownLinkContext.Provider value={true}>
+        <a href={href} className={className}>
+          {children}
+        </a>
+      </MarkdownLinkContext.Provider>
+    );
+  }
+
   const interactiveText = flattenReactNodeText(children).trim() || (href ? decodeMarkdownHref(href).trim() : "");
 
   return (
@@ -2092,11 +2106,13 @@ function InteractiveMessageLink({
 function CopyableContentBlock({
   language,
   codeClassName,
-  content
+  content,
+  exportMode = false
 }: {
   language: string | null;
   codeClassName?: string;
   content: string;
+  exportMode?: boolean;
 }) {
   const { showToast } = useToast();
   const platform = usePlatform();
@@ -2123,9 +2139,11 @@ function CopyableContentBlock({
     <div className={`code-block${isTextBlock ? " text-code-block" : ""}`}>
       <div className="code-header">
         <span className="code-header-label">{blockLabel}</span>
-        <button className="code-copy-button" type="button" onClick={() => void handleCopy()}>
-          {t("conversation.copyAction")}
-        </button>
+        {!exportMode ? (
+          <button className="code-copy-button" type="button" onClick={() => void handleCopy()}>
+            {t("conversation.copyAction")}
+          </button>
+        ) : null}
       </div>
       <pre className={codeClassName}>
         <code>{content}</code>
@@ -2136,10 +2154,12 @@ function CopyableContentBlock({
 
 function MessageMarkdownBody({
   content,
-  className
+  className,
+  exportMode = false
 }: {
   content: string;
   className: string;
+  exportMode?: boolean;
 }) {
   const { showToast } = useToast();
   const platform = usePlatform();
@@ -2203,6 +2223,7 @@ function MessageMarkdownBody({
                 href={typeof props.href === "string" ? props.href : undefined}
                 className={typeof props.className === "string" ? props.className : undefined}
                 onInteract={handleLinkInteract}
+                exportMode={exportMode}
               >
                 {props.children}
               </InteractiveMessageLink>
@@ -2220,6 +2241,7 @@ function MessageMarkdownBody({
                 language={blockProps.language}
                 codeClassName={blockProps.codeClassName}
                 content={blockProps.content}
+                exportMode={exportMode}
               />
             );
           },
@@ -2228,6 +2250,7 @@ function MessageMarkdownBody({
             return (
               <MarkdownInlineCode
                 className={codeClassName || undefined}
+                exportMode={exportMode}
                 onCopy={(text) => {
                   void handleCopyText(text);
                 }}
@@ -2583,10 +2606,12 @@ function TimelineSkeleton() {
 
 function ApplyPatchToolItem({
   tool,
-  preview
+  preview,
+  exportMode = false
 }: {
   tool: ResolvedToolCall;
   preview: ApplyPatchPreview;
+  exportMode?: boolean;
 }) {
   const [selectedFileIndex, setSelectedFileIndex] = useState<number | null>(null);
   const selectedFile =
@@ -2613,18 +2638,31 @@ function ApplyPatchToolItem({
     <>
       <div className="tool-call-item apply-patch-item">
         {preview.files.map((file, index) => (
-          <button
-            key={buildApplyPatchFileRenderKey(file, index)}
-            type="button"
-            className="apply-patch-summary-row"
-            onClick={() => setSelectedFileIndex(index)}
-          >
-            <span className="apply-patch-summary-label">{getApplyPatchActionLabel(file.action)}</span>
-            <span className="apply-patch-summary-file" title={buildApplyPatchFullPathLabel(file)}>
-              {getApplyPatchDisplayName(file.nextPath ?? file.path)}
-            </span>
-            {renderApplyPatchSummaryStats(file)}
-          </button>
+          exportMode ? (
+            <div
+              key={buildApplyPatchFileRenderKey(file, index)}
+              className="apply-patch-summary-row"
+            >
+              <span className="apply-patch-summary-label">{getApplyPatchActionLabel(file.action)}</span>
+              <span className="apply-patch-summary-file" title={buildApplyPatchFullPathLabel(file)}>
+                {getApplyPatchDisplayName(file.nextPath ?? file.path)}
+              </span>
+              {renderApplyPatchSummaryStats(file)}
+            </div>
+          ) : (
+            <button
+              key={buildApplyPatchFileRenderKey(file, index)}
+              type="button"
+              className="apply-patch-summary-row"
+              onClick={() => setSelectedFileIndex(index)}
+            >
+              <span className="apply-patch-summary-label">{getApplyPatchActionLabel(file.action)}</span>
+              <span className="apply-patch-summary-file" title={buildApplyPatchFullPathLabel(file)}>
+                {getApplyPatchDisplayName(file.nextPath ?? file.path)}
+              </span>
+              {renderApplyPatchSummaryStats(file)}
+            </button>
+          )
         ))}
       </div>
 
@@ -2688,7 +2726,7 @@ function ApplyPatchToolItem({
   );
 }
 
-function ToolCallItem({ group }: { group: ToolMessageGroup }) {
+function ToolCallItem({ group, exportMode = false }: { group: ToolMessageGroup; exportMode?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const { navigationGroups } = useWorkbenchShell();
   const { tool, hasRequest, hasResult } = group;
@@ -2715,7 +2753,7 @@ function ToolCallItem({ group }: { group: ToolMessageGroup }) {
   );
 
   if (applyPatchPreview) {
-    return <ApplyPatchToolItem tool={tool} preview={applyPatchPreview} />;
+    return <ApplyPatchToolItem tool={tool} preview={applyPatchPreview} exportMode={exportMode} />;
   }
 
   if (assistantCapabilitySnapshot) {
@@ -2726,6 +2764,7 @@ function ToolCallItem({ group }: { group: ToolMessageGroup }) {
         expanded={expanded}
         hasRequest={hasRequest}
         hasResult={hasResult}
+        exportMode={exportMode}
         onToggleExpanded={() => {
           setExpanded((current) => !current);
         }}
@@ -2741,6 +2780,7 @@ function ToolCallItem({ group }: { group: ToolMessageGroup }) {
         expanded={expanded}
         hasRequest={hasRequest}
         hasResult={hasResult}
+        exportMode={exportMode}
         onToggleExpanded={() => {
           setExpanded((current) => !current);
         }}
@@ -2756,6 +2796,7 @@ function ToolCallItem({ group }: { group: ToolMessageGroup }) {
         expanded={expanded}
         hasRequest={hasRequest}
         hasResult={hasResult}
+        exportMode={exportMode}
         onToggleExpanded={() => {
           setExpanded((current) => !current);
         }}
@@ -2765,28 +2806,40 @@ function ToolCallItem({ group }: { group: ToolMessageGroup }) {
 
   const preview = getToolPreview(tool);
   const hasDetails = Boolean(tool.input || tool.output || tool.error);
+  const canToggleExpanded = hasDetails && !exportMode;
+  const headerContent = (
+    <>
+      <div className="tool-call-info">
+        <span className="tool-call-name">{toolDisplayName}</span>
+        <span className="tool-call-input-preview">{preview}</span>
+      </div>
+      <div className="tool-call-meta">
+        {canToggleExpanded && (
+          <span className={`tool-call-toggle ${expanded ? "expanded" : ""}`}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </span>
+        )}
+      </div>
+    </>
+  );
 
   return (
     <div className={`tool-call-item ${hasResult ? "tool-result" : ""}`}>
-      <button
-        type="button"
-        className="tool-call-header"
-        onClick={() => hasDetails && setExpanded((current) => !current)}
-      >
-        <div className="tool-call-info">
-          <span className="tool-call-name">{toolDisplayName}</span>
-          <span className="tool-call-input-preview">{preview}</span>
+      {exportMode ? (
+        <div className="tool-call-header">
+          {headerContent}
         </div>
-        <div className="tool-call-meta">
-          {hasDetails && (
-            <span className={`tool-call-toggle ${expanded ? "expanded" : ""}`}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
-            </span>
-          )}
-        </div>
-      </button>
+      ) : (
+        <button
+          type="button"
+          className="tool-call-header"
+          onClick={() => hasDetails && setExpanded((current) => !current)}
+        >
+          {headerContent}
+        </button>
+      )}
 
       {expanded && hasDetails && (
         <div className="tool-call-output">
@@ -2817,7 +2870,8 @@ function AssistantCapabilityToolItem({
   expanded,
   hasRequest,
   hasResult,
-  onToggleExpanded
+  onToggleExpanded,
+  exportMode = false
 }: {
   tool: ResolvedToolCall;
   snapshot: AssistantCapabilitySnapshot;
@@ -2825,6 +2879,7 @@ function AssistantCapabilityToolItem({
   hasRequest: boolean;
   hasResult: boolean;
   onToggleExpanded: () => void;
+  exportMode?: boolean;
 }) {
   const rawLabel = expanded
     ? t("conversation.assistantCapabilityRawCollapse")
@@ -2843,13 +2898,15 @@ function AssistantCapabilityToolItem({
             <span className="assistant-capability-summary">{snapshot.summary}</span>
           </div>
         </div>
-        <button
-          type="button"
-          className="task-tool-raw-toggle"
-          onClick={onToggleExpanded}
-        >
-          {rawLabel}
-        </button>
+        {!exportMode ? (
+          <button
+            type="button"
+            className="task-tool-raw-toggle"
+            onClick={onToggleExpanded}
+          >
+            {rawLabel}
+          </button>
+        ) : null}
       </div>
 
       {snapshot.rows.length > 0 ? (
@@ -2863,7 +2920,7 @@ function AssistantCapabilityToolItem({
         </div>
       ) : null}
 
-      {expanded ? (
+      {!exportMode && expanded ? (
         <div className="tool-call-output">
           {hasRequest && tool.input ? (
             <div className="tool-call-section">
@@ -2892,7 +2949,8 @@ function TaskToolItem({
   expanded,
   hasRequest,
   hasResult,
-  onToggleExpanded
+  onToggleExpanded,
+  exportMode = false
 }: {
   tool: ResolvedToolCall;
   snapshot: ConversationTaskSnapshot;
@@ -2900,6 +2958,7 @@ function TaskToolItem({
   hasRequest: boolean;
   hasResult: boolean;
   onToggleExpanded: () => void;
+  exportMode?: boolean;
 }) {
   const summary = countConversationTasksByStatus(snapshot.items);
   const rawLabel = expanded
@@ -2922,13 +2981,15 @@ function TaskToolItem({
             </span>
           </div>
         </div>
-        <button
-          type="button"
-          className="task-tool-raw-toggle"
-          onClick={onToggleExpanded}
-        >
-          {rawLabel}
-        </button>
+        {!exportMode ? (
+          <button
+            type="button"
+            className="task-tool-raw-toggle"
+            onClick={onToggleExpanded}
+          >
+            {rawLabel}
+          </button>
+        ) : null}
       </div>
 
       <ol className="task-tool-list">
@@ -2942,7 +3003,7 @@ function TaskToolItem({
         ))}
       </ol>
 
-      {expanded ? (
+      {!exportMode && expanded ? (
         <div className="tool-call-output">
           {hasRequest && tool.input ? (
             <div className="tool-call-section">
@@ -3237,7 +3298,9 @@ function RulesMessageCard({
   tone,
   actionState,
   onRetry,
-  onForkMessage
+  onForkMessage,
+  forceExpanded = false,
+  exportMode = false
 }: {
   message: SessionMessageViewModel;
   kind: FoldedPromptKind;
@@ -3245,10 +3308,13 @@ function RulesMessageCard({
   actionState: MessageActionState;
   onRetry: (clientRequestId: string) => void;
   onForkMessage?: ((message: SessionMessageViewModel) => Promise<void> | void) | null;
+  forceExpanded?: boolean;
+  exportMode?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const summary = getFoldedPromptSummary(kind, message.content);
   const isUser = tone === "user-message";
+  const resolvedExpanded = forceExpanded || expanded;
   const title =
     kind === "system_prompt"
       ? t("conversation.systemPromptTitle")
@@ -3262,7 +3328,7 @@ function RulesMessageCard({
         ? t("conversation.skillContextHint")
       : t("conversation.rulesMessageHint");
   const actionLabel =
-    expanded
+    resolvedExpanded
       ? kind === "system_prompt"
         ? t("conversation.systemPromptCollapse")
         : kind === "skill_context"
@@ -3278,26 +3344,36 @@ function RulesMessageCard({
     <article className={`message-item ${tone} rules-message-row`} data-message-id={message.id}>
       <div className="message-content-wrapper">
         <div className="rules-message-card">
-          <button
-            type="button"
-            className="rules-message-toggle"
-            aria-expanded={expanded}
-            onClick={() => setExpanded((current) => !current)}
-          >
-            <div className="rules-message-heading">
-              <span className="rules-message-badge">{title}</span>
-              <span className="rules-message-summary">{summary}</span>
+          {forceExpanded ? (
+            <div className="rules-message-toggle" aria-expanded={resolvedExpanded}>
+              <div className="rules-message-heading">
+                <span className="rules-message-badge">{title}</span>
+                <span className="rules-message-summary">{summary}</span>
+              </div>
             </div>
-            <span className="rules-message-action">{actionLabel}</span>
-          </button>
+          ) : (
+            <button
+              type="button"
+              className="rules-message-toggle"
+              aria-expanded={resolvedExpanded}
+              onClick={() => setExpanded((current) => !current)}
+            >
+              <div className="rules-message-heading">
+                <span className="rules-message-badge">{title}</span>
+                <span className="rules-message-summary">{summary}</span>
+              </div>
+              <span className="rules-message-action">{actionLabel}</span>
+            </button>
+          )}
 
           <p className="rules-message-hint">{hint}</p>
 
-          {expanded && (
+          {resolvedExpanded && (
             <div className="rules-message-body">
               <MessageMarkdownBody
                 content={message.content}
                 className="message-text message-content markdown-content"
+                exportMode={exportMode}
               />
             </div>
           )}
@@ -3344,7 +3420,8 @@ function MessageItem({
   actionState,
   onRetry,
   onForkMessage,
-  assistantAvatar
+  assistantAvatar,
+  exportMode = false
 }: {
   message: SessionMessageViewModel;
   provider: ProviderId | null;
@@ -3354,6 +3431,7 @@ function MessageItem({
   onRetry: (clientRequestId: string) => void;
   onForkMessage?: ((message: SessionMessageViewModel) => Promise<void> | void) | null;
   assistantAvatar?: ReactNode;
+  exportMode?: boolean;
 }) {
   const isUser = message.role === "user";
   const isThinking = message.kind === "thinking";
@@ -3386,15 +3464,17 @@ function MessageItem({
           : "system-message";
 
     return (
-      <RulesMessageCard
-        message={message}
-        kind={promptKind}
-        tone={tone}
-        actionState={actionState}
-        onRetry={onRetry}
-        onForkMessage={onForkMessage}
-      />
-    );
+        <RulesMessageCard
+          message={message}
+          kind={promptKind}
+          tone={tone}
+          actionState={actionState}
+          onRetry={onRetry}
+          onForkMessage={onForkMessage}
+          forceExpanded={exportMode}
+          exportMode={exportMode}
+        />
+      );
   }
 
   if (turnAborted) {
@@ -3408,6 +3488,7 @@ function MessageItem({
           <MessageMarkdownBody
             content={displayText}
             className="message-text message-content markdown-content"
+            exportMode={exportMode}
           />
           <MessageMetadataBar
             text={displayText}
@@ -3503,6 +3584,7 @@ function MessageItem({
             <MessageMarkdownBody
               content={visibleContent}
               className="message-text message-content markdown-content"
+              exportMode={exportMode}
             />
           ) : null}
           {message.deliveryState === "failed" && message.clientRequestId && (
@@ -3544,6 +3626,7 @@ function MessageItem({
             <MessageMarkdownBody
               content={visibleContent}
               className="message-text message-content markdown-content thinking-message-text"
+              exportMode={exportMode}
             />
           )}
           <MessageMetadataBar
@@ -3572,6 +3655,7 @@ function MessageItem({
             <MessageMarkdownBody
               content={visibleContent}
               className="message-text message-content markdown-content"
+              exportMode={exportMode}
             />
           )}
           <MessageMetadataBar
@@ -3596,7 +3680,7 @@ function MessageItem({
         />
         {visibleContent ? (
           <div className="message-text message-content">
-            <CopyableContentBlock language="text" content={visibleContent} />
+            <CopyableContentBlock language="text" content={visibleContent} exportMode={exportMode} />
           </div>
         ) : null}
         <MessageMetadataBar
@@ -3607,6 +3691,77 @@ function MessageItem({
         />
       </div>
     </article>
+  );
+}
+
+export function ConversationTranscriptExport({
+  sessionId,
+  messages,
+  provider,
+  interruptedSource = null,
+  runtimeThinkingPlaceholder = null,
+  assistantAvatar
+}: {
+  sessionId?: string;
+  messages: SessionMessageViewModel[];
+  provider: ProviderId | null;
+  interruptedSource?: SessionInterruptSource | null;
+  runtimeThinkingPlaceholder?: string | null;
+  assistantAvatar?: ReactNode;
+}) {
+  const renderItems = buildTimelineRenderItems(messages);
+  const leadingSystemPromptMessageIds = useMemo(
+    () => collectLeadingSystemPromptMessageIds(messages, provider),
+    [messages, provider]
+  );
+
+  return (
+    <section className="message-timeline message-timeline-export" aria-label={t("conversation.exportPrintContainerTitle")}>
+      <div className="message-list message-list-export" data-export-mode="true">
+        {renderItems.length === 0 ? (
+          <div className="timeline-empty">
+            <p className="status-text">{t("conversation.timelineEmpty")}</p>
+          </div>
+        ) : null}
+
+        {renderItems.map((item) =>
+          item.type === "tool_group" ? (
+            <article key={item.key} className="message-item tool-message-row">
+              <ToolCallItem group={item.group} exportMode />
+            </article>
+          ) : (
+            <MessageItem
+              key={item.key}
+              message={item.message}
+              provider={provider}
+              foldedPromptKind={
+                leadingSystemPromptMessageIds.has(item.message.id)
+                  ? "system_prompt"
+                  : null
+              }
+              actionState={{ canCopy: false, canFork: false }}
+              onRetry={() => undefined}
+              onForkMessage={null}
+              interruptedSource={interruptedSource}
+              assistantAvatar={assistantAvatar}
+              exportMode
+            />
+          )
+        )}
+
+        {runtimeThinkingPlaceholder ? (
+          <div className="timeline-status timeline-status-inline thinking-status-inline">
+            <span
+              className="status-text thinking-status-text"
+              aria-label={runtimeThinkingPlaceholder}
+            >
+              <span>{stripThinkingTrailingDots(runtimeThinkingPlaceholder) || runtimeThinkingPlaceholder}</span>
+              <span className="thinking-status-dots" aria-hidden="true">...</span>
+            </span>
+          </div>
+        ) : null}
+      </div>
+    </section>
   );
 }
 

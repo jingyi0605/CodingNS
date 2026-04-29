@@ -12560,6 +12560,35 @@ textarea:focus-visible {
   background: color-mix(in srgb, var(--bg-hover) 86%, transparent);
 }
 
+.workbench-session-submenu {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workbench-session-submenu-caret {
+  margin-left: auto;
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.workbench-session-submenu-caret svg {
+  width: 12px;
+  height: 12px;
+}
+
+.workbench-session-submenu-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-left: 12px;
+  padding-left: 8px;
+  border-left: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
+}
+
 .workbench-archive-folder {
   display: flex;
   align-items: center;
@@ -30823,5 +30852,99 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   .parallel-conversation-page[data-parallel-entering="true"] .parallel-conversation-pane,
   .parallel-conversation-page[data-parallel-entering="true"] .parallel-conversation-pane::after {
     animation: none;
+  }
+}
+.session-export-print-root {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.session-export-print-shell {
+  width: min(980px, 100%);
+  margin: 0 auto;
+  padding: 32px 28px 48px;
+  background: #ffffff;
+  color: #0f172a;
+}
+
+.session-export-print-header {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 24px;
+}
+
+.session-export-print-header h1 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.session-export-print-header p {
+  margin: 0;
+  color: rgba(15, 23, 42, 0.62);
+  font-size: 13px;
+}
+
+.message-timeline-export .message-list-export {
+  height: auto;
+  max-height: none;
+  overflow: visible;
+  padding-bottom: 0;
+}
+
+.message-timeline-export .tool-call-header {
+  cursor: default;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .session-export-print-root,
+  .session-export-print-root * {
+    visibility: visible;
+  }
+
+  .session-export-print-root {
+    position: static;
+    inset: auto;
+    z-index: auto;
+    opacity: 1;
+    overflow: visible;
+  }
+
+  .session-export-print-shell {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .message-timeline-export,
+  .message-timeline-export .message-list-export {
+    overflow: visible;
+    height: auto;
+    max-height: none;
+  }
+
+  .message-timeline-export .conversation-scroll-to-bottom-button,
+  .message-timeline-export .message-metadata-bar,
+  .message-timeline-export .retry-button,
+  .message-timeline-export .code-copy-button,
+  .message-timeline-export .rules-message-action,
+  .message-timeline-export .message-origin-detail-popover {
+    display: none !important;
+  }
+
+  .message-item,
+  .tool-message-row,
+  .rules-message-row {
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 }

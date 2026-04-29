@@ -20,7 +20,7 @@ import {
   type FormEvent,
   type ReactNode
 } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { Outlet, matchPath, useLocation, useNavigate } from "react-router-dom";
 
 import {
@@ -110,6 +110,7 @@ import {
 } from "../api/git-api";
 import { createDraftCapabilities, getProviderDisplayName } from "../capability/provider-ui";
 import { searchFiles, type FileNodeDto } from "../api/file-context-api";
+import { ConversationTranscriptExport } from "./MessageTimeline";
 import {
   hasSessionDisplayError,
   resolveSessionActivityBadgeClassName,
@@ -133,7 +134,17 @@ import {
   resolveSessionForkBadgeLabel,
   resolveSessionForkBadgeTone
 } from "../session-fork-display";
+import {
+  buildSessionExportFileName,
+  buildSessionMarkdownExport,
+  buildSessionPdfExport,
+  buildStandaloneSessionExportHtml,
+  downloadBinaryFile,
+  downloadTextFile,
+  loadSessionExportSnapshot
+} from "../session-export";
 import { buildSessionTitlePresentation } from "../session-title";
+import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
 import {
   buildDraftSessionPath,
   buildWorkspaceDebugPath,
@@ -2894,6 +2905,16 @@ function PencilIcon() {
   );
 }
 
+function ExportMenuIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M12 4v10" />
+      <path d="M8.5 7.5L12 4l3.5 3.5" />
+      <path d="M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" />
+    </svg>
+  );
+}
+
 function TrashIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -3100,6 +3121,183 @@ function WorkspaceSearchModal({
   );
 }
 
+type SessionExportFormat = "md" | "pdf" | "html";
+const STANDALONE_SESSION_EXPORT_OVERRIDES = `
+html,
+body {
+  width: 100% !important;
+  height: auto !important;
+  min-height: auto !important;
+  overflow: visible !important;
+  overflow-x: visible !important;
+}
+
+body {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.session-export-document-root {
+  position: static !important;
+  inset: auto !important;
+  z-index: auto !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  overflow: visible !important;
+}
+
+.session-export-document-root,
+.session-export-document-root * {
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif);
+  letter-spacing: normal !important;
+  word-spacing: normal !important;
+  text-align: left !important;
+  -webkit-text-fill-color: currentColor !important;
+  text-fill-color: currentColor !important;
+  -webkit-background-clip: border-box !important;
+  background-clip: border-box !important;
+  text-shadow: none !important;
+  mix-blend-mode: normal !important;
+}
+
+.session-export-document-root .markdown-content p,
+.session-export-document-root .markdown-content blockquote,
+.session-export-document-root .markdown-content td {
+  display: block !important;
+}
+
+.session-export-document-root .markdown-content li {
+  display: list-item !important;
+}
+
+.session-export-document-root .markdown-content code,
+.session-export-document-root .markdown-content pre,
+.session-export-document-root .code-block pre,
+.session-export-document-root .tool-call-section pre,
+.session-export-document-root .tool-call-input-preview,
+.session-export-document-root .apply-patch-line-content,
+.session-export-document-root .apply-patch-summary-file {
+  font-family:
+    var(--font-mono, "SF Mono", "Consolas", "Cascadia Code", "Courier New", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", monospace) !important;
+}
+
+.session-export-document-root .thinking-message-label,
+.session-export-document-root .thinking-status-text {
+  background: none !important;
+  color: var(--text-secondary, #475569) !important;
+  -webkit-text-fill-color: currentColor !important;
+  animation: none !important;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .session-export-document-root,
+  .session-export-document-root * {
+    visibility: visible;
+  }
+
+  .session-export-document-root {
+    position: static !important;
+  }
+
+  .session-export-document-root .session-export-print-shell {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .session-export-document-root .message-timeline-export,
+  .session-export-document-root .message-timeline-export .message-list-export {
+    overflow: visible;
+    height: auto;
+    max-height: none;
+  }
+
+  .session-export-document-root .tool-call-header,
+  .session-export-document-root .tool-call-info,
+  .session-export-document-root .task-tool-header,
+  .session-export-document-root .task-tool-heading,
+  .session-export-document-root .task-tool-heading-main,
+  .session-export-document-root .task-tool-list-item,
+  .session-export-document-root .assistant-capability-header,
+  .session-export-document-root .assistant-capability-heading,
+  .session-export-document-root .assistant-capability-heading-main,
+  .session-export-document-root .assistant-capability-row,
+  .session-export-document-root .apply-patch-summary-row,
+  .session-export-document-root .rules-message-toggle {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: flex-start !important;
+    justify-content: flex-start !important;
+  }
+
+  .session-export-document-root .task-tool-list-item,
+  .session-export-document-root .assistant-capability-row,
+  .session-export-document-root .apply-patch-summary-row {
+    row-gap: 4px !important;
+  }
+
+  .session-export-document-root .tool-call-input-preview,
+  .session-export-document-root .rules-message-summary,
+  .session-export-document-root .task-tool-summary-text,
+  .session-export-document-root .task-tool-item-title,
+  .session-export-document-root .task-tool-item-detail,
+  .session-export-document-root .task-tool-item-status,
+  .session-export-document-root .assistant-capability-heading-main strong,
+  .session-export-document-root .assistant-capability-summary,
+  .session-export-document-root .assistant-capability-row-label,
+  .session-export-document-root .assistant-capability-row-value,
+  .session-export-document-root .apply-patch-summary-file,
+  .session-export-document-root .apply-patch-summary-stats,
+  .session-export-document-root .session-title,
+  .session-export-document-root .message-text,
+  .session-export-document-root .markdown-content,
+  .session-export-document-root .thinking-message-text,
+  .session-export-document-root .thinking-message-text :where(p, li, blockquote, strong, em, a, span),
+  .session-export-document-root .thinking-message-label,
+  .session-export-document-root .thinking-status-text {
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    word-break: break-word !important;
+    overflow-wrap: anywhere !important;
+  }
+
+  .session-export-document-root .assistant-capability-summary {
+    display: inline !important;
+  }
+
+  .session-export-document-root .task-tool-list {
+    list-style: decimal !important;
+    padding-left: 24px !important;
+  }
+
+  .session-export-document-root .message-timeline-export .conversation-scroll-to-bottom-button,
+  .session-export-document-root .message-timeline-export .message-metadata-bar,
+  .session-export-document-root .message-timeline-export .retry-button,
+  .session-export-document-root .message-timeline-export .code-copy-button,
+  .session-export-document-root .message-timeline-export .rules-message-action,
+  .session-export-document-root .message-timeline-export .message-origin-detail-popover {
+    display: none !important;
+  }
+
+  .session-export-document-root .message-item,
+  .session-export-document-root .tool-message-row,
+  .session-export-document-root .rules-message-row {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}
+`;
+
+interface SessionExportLayoutSnapshot {
+  shellWidthPx: number | null;
+}
+
 function SessionCard({
   menuKey,
   session,
@@ -3112,6 +3310,7 @@ function SessionCard({
   showWorkspaceName,
   depth = 0,
   showActions = true,
+  exportDisabled = false,
   hasSubagents = false,
   subagentListExpanded = false,
   selectionMode = false,
@@ -3121,6 +3320,7 @@ function SessionCard({
   onOpen,
   onRename,
   onOpenContextMenu,
+  onExport,
   onToggleFavorite,
   onArchive,
   onDelete,
@@ -3137,6 +3337,7 @@ function SessionCard({
   showWorkspaceName: boolean;
   depth?: number;
   showActions?: boolean;
+  exportDisabled?: boolean;
   hasSubagents?: boolean;
   subagentListExpanded?: boolean;
   selectionMode?: boolean;
@@ -3146,6 +3347,7 @@ function SessionCard({
   onOpen: () => void;
   onRename: () => void;
   onOpenContextMenu?: (anchorPoint: ContextMenuAnchorPoint) => void;
+  onExport: (format: SessionExportFormat) => void;
   onToggleFavorite: () => void;
   onArchive: () => void;
   onDelete?: () => void;
@@ -3153,6 +3355,7 @@ function SessionCard({
 }) {
   const platform = usePlatform();
   const supportsSessionDelete = createDraftCapabilities(session.provider).supportsSessionDelete === true;
+  const showWebExportMenu = !platform.isDesktop && !platform.isMobile;
   const subagentBadgeLabel = isSubagentSession(session)
     ? session.subagentLabel?.trim() || t("shell.subagentBadge")
     : null;
@@ -3172,6 +3375,13 @@ function SessionCard({
   const parallelGroupStyle = createParallelGroupStyle(session.parallelGroup);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [menuPositionStyle, setMenuPositionStyle] = useState<CSSProperties | null>(null);
+  const [exportSubmenuOpen, setExportSubmenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!menuOpen) {
+      setExportSubmenuOpen(false);
+    }
+  }, [menuOpen]);
 
   useLayoutEffect(() => {
     if (platform.isDesktop || !menuOpen || !menuAnchorPoint || typeof window === "undefined") {
@@ -3221,6 +3431,28 @@ function SessionCard({
         id: `rename:${session.sessionId}`,
         label: t("shell.renameAction"),
         onSelect: onRename
+      },
+      {
+        id: `export:${session.sessionId}`,
+        label: t("conversation.exportAction"),
+        disabled: exportDisabled,
+        items: [
+          {
+            id: `export-markdown:${session.sessionId}`,
+            label: t("conversation.exportMarkdownAction"),
+            onSelect: () => onExport("md")
+          },
+          {
+            id: `export-pdf:${session.sessionId}`,
+            label: t("conversation.exportPdfAction"),
+            onSelect: () => onExport("pdf")
+          },
+          {
+            id: `export-html:${session.sessionId}`,
+            label: t("conversation.exportHtmlAction"),
+            onSelect: () => onExport("html")
+          }
+        ]
       },
       {
         id: `favorite:${session.sessionId}`,
@@ -3296,6 +3528,65 @@ function SessionCard({
               <ArchiveIcon />
               <span>{t("shell.archiveAction")}</span>
             </button>
+            {showWebExportMenu ? (
+              <div className="workbench-session-submenu" data-open={exportSubmenuOpen}>
+                <button
+                  type="button"
+                  className="workbench-session-menu-item"
+                  aria-haspopup="menu"
+                  aria-expanded={exportSubmenuOpen}
+                  onClick={() => {
+                    setExportSubmenuOpen((current) => !current);
+                  }}
+                >
+                  <ExportMenuIcon />
+                  <span>{t("conversation.exportAction")}</span>
+                  <span className="workbench-session-submenu-caret" aria-hidden="true">
+                    <ChevronIcon expanded={exportSubmenuOpen} />
+                  </span>
+                </button>
+                {exportSubmenuOpen ? (
+                  <div className="workbench-session-submenu-panel" role="menu" aria-label={t("conversation.exportAction")}>
+                    <button
+                      type="button"
+                      className="workbench-session-menu-item"
+                      role="menuitem"
+                      disabled={exportDisabled}
+                      onClick={() => {
+                        onExport("md");
+                        onCloseMenu();
+                      }}
+                    >
+                      <span>{t("conversation.exportMarkdownAction")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="workbench-session-menu-item"
+                      role="menuitem"
+                      disabled={exportDisabled}
+                      onClick={() => {
+                        onExport("pdf");
+                        onCloseMenu();
+                      }}
+                    >
+                      <span>{t("conversation.exportPdfAction")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="workbench-session-menu-item"
+                      role="menuitem"
+                      disabled={exportDisabled}
+                      onClick={() => {
+                        onExport("html");
+                        onCloseMenu();
+                      }}
+                    >
+                      <span>{t("conversation.exportHtmlAction")}</span>
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             {supportsSessionDelete && onDelete ? (
               <button
                 type="button"
@@ -3467,6 +3758,466 @@ function SessionCard({
   );
 }
 
+async function waitForSessionExportRender(root: HTMLElement | null, doc: Document = document): Promise<void> {
+  await waitForSessionExportAnimationFrame();
+  await waitForSessionExportAnimationFrame();
+  await waitForSessionExportTimeout(420);
+  await waitForSessionExportFonts(doc, 1800);
+
+  if (!root) {
+    return;
+  }
+
+  await waitForSessionExportImages(root, 1800);
+}
+
+async function printSessionExportHtmlDocument(html: string): Promise<void> {
+  if (typeof document === "undefined") {
+    throw new Error(t("conversation.exportPrintFailed"));
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const iframe = document.createElement("iframe");
+    let settled = false;
+    let fallbackTimer: number | null = null;
+
+    const cleanup = () => {
+      if (fallbackTimer !== null) {
+        window.clearTimeout(fallbackTimer);
+      }
+
+      iframe.remove();
+    };
+
+    const settle = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      cleanup();
+      callback();
+    };
+
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    iframe.style.opacity = "0";
+    iframe.style.pointerEvents = "none";
+
+    iframe.onload = () => {
+      const printWindow = iframe.contentWindow;
+      const printDocument = iframe.contentDocument;
+
+      if (!printWindow || !printDocument) {
+        settle(() => reject(new Error(t("conversation.exportPrintFailed"))));
+        return;
+      }
+
+      void waitForSessionExportRender(printDocument.body, printDocument).then(() => {
+        const finish = () => settle(resolve);
+
+        try {
+          printWindow.addEventListener("afterprint", finish, { once: true });
+          fallbackTimer = window.setTimeout(finish, 2500);
+          printWindow.focus();
+          printWindow.print();
+        } catch (error) {
+          settle(() => reject(error instanceof Error ? error : new Error(t("conversation.exportPrintFailed"))));
+        }
+      });
+    };
+
+    iframe.onerror = () => {
+      settle(() => reject(new Error(t("conversation.exportPrintFailed"))));
+    };
+
+    document.body.append(iframe);
+    iframe.srcdoc = html;
+  });
+}
+
+async function buildSessionExportPdfPrintDocument(input: {
+  title: string;
+  bodyHtml: string;
+  styleText: string;
+  shellWidthPx: number;
+  shellHeightPx: number;
+  htmlAttributes?: Record<string, string>;
+  bodyAttributes?: Record<string, string>;
+  htmlStyle?: string | null;
+  bodyStyle?: string | null;
+}): Promise<string> {
+  const rasterCanvas = await rasterizeSessionExportMarkupToCanvas(input);
+  const pageImages = sliceSessionExportCanvasPages(rasterCanvas, input.shellWidthPx, input.shellHeightPx);
+
+  if (pageImages.length === 0) {
+    throw new Error(t("conversation.exportPrintFailed"));
+  }
+
+  const bodyHtml = pageImages
+    .map(
+      (pageImage, index) => [
+        `<section class="session-export-pdf-page"${index < pageImages.length - 1 ? ' data-page-break="true"' : ""}>`,
+        `<img src="${pageImage}" alt="" />`,
+        "</section>"
+      ].join("")
+    )
+    .join("");
+
+  return buildStandaloneSessionExportHtml({
+    title: input.title,
+    bodyHtml,
+    styleText: `
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  background: #ffffff;
+}
+
+body {
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif);
+}
+
+.session-export-pdf-page {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  break-after: page;
+  page-break-after: always;
+}
+
+.session-export-pdf-page:last-child {
+  break-after: auto;
+  page-break-after: auto;
+}
+
+.session-export-pdf-page img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+@page {
+  size: auto;
+  margin: 12mm;
+}
+
+@media print {
+  html,
+  body {
+    background: #ffffff;
+  }
+}
+`
+  });
+}
+
+function collectSessionExportStyles(): string {
+  if (typeof document === "undefined") {
+    return "";
+  }
+
+  const styleChunks: string[] = [];
+
+  for (const styleSheet of Array.from(document.styleSheets)) {
+    try {
+      const rules = styleSheet.cssRules;
+
+      if (!rules || rules.length === 0) {
+        continue;
+      }
+
+      styleChunks.push(Array.from(rules).map((rule) => rule.cssText).join("\n"));
+    } catch {
+      continue;
+    }
+  }
+
+  return styleChunks.join("\n");
+}
+
+function collectSessionExportAttributes(element: HTMLElement): Record<string, string> {
+  const attributes: Record<string, string> = {};
+
+  for (const attribute of Array.from(element.attributes)) {
+    if (attribute.name === "style") {
+      continue;
+    }
+
+    attributes[attribute.name] = attribute.value;
+  }
+
+  return attributes;
+}
+
+async function rasterizeSessionExportMarkupToCanvas(input: {
+  bodyHtml: string;
+  styleText: string;
+  shellWidthPx: number;
+  shellHeightPx: number;
+  htmlAttributes?: Record<string, string>;
+  bodyAttributes?: Record<string, string>;
+  htmlStyle?: string | null;
+  bodyStyle?: string | null;
+}): Promise<HTMLCanvasElement> {
+  if (typeof document === "undefined") {
+    throw new Error(t("conversation.exportPrintFailed"));
+  }
+
+  const svgMarkup = buildSessionExportSvgDocument(input);
+  const blob = new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" });
+  const objectUrl = URL.createObjectURL(blob);
+
+  try {
+    const image = await loadSessionExportRasterImage(objectUrl);
+    const scale = Math.max(2, Math.ceil(window.devicePixelRatio || 1));
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+
+    if (!context) {
+      throw new Error(t("conversation.exportPrintFailed"));
+    }
+
+    canvas.width = Math.max(1, Math.ceil(input.shellWidthPx * scale));
+    canvas.height = Math.max(1, Math.ceil(input.shellHeightPx * scale));
+
+    context.scale(scale, scale);
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, input.shellWidthPx, input.shellHeightPx);
+    context.drawImage(image, 0, 0, input.shellWidthPx, input.shellHeightPx);
+
+    return canvas;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function buildSessionExportSvgDocument(input: {
+  bodyHtml: string;
+  styleText: string;
+  shellWidthPx: number;
+  shellHeightPx: number;
+  htmlAttributes?: Record<string, string>;
+  bodyAttributes?: Record<string, string>;
+  htmlStyle?: string | null;
+  bodyStyle?: string | null;
+}): string {
+  const wrapperAttributes = serializeSessionExportSvgAttributes(
+    {
+      ...(input.htmlAttributes ?? {}),
+      ...(input.bodyAttributes ?? {})
+    },
+    [
+      `width:${input.shellWidthPx}px`,
+      `min-height:${input.shellHeightPx}px`,
+      "background:#ffffff",
+      input.htmlStyle ?? "",
+      input.bodyStyle ?? ""
+    ].filter((value) => value.trim().length > 0).join("; ")
+  );
+
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${input.shellWidthPx}" height="${input.shellHeightPx}" viewBox="0 0 ${input.shellWidthPx} ${input.shellHeightPx}">`,
+    `<foreignObject x="0" y="0" width="${input.shellWidthPx}" height="${input.shellHeightPx}">`,
+    `<div xmlns="http://www.w3.org/1999/xhtml"${wrapperAttributes}>`,
+    `<style>${input.styleText}</style>`,
+    `<div class="session-export-document-root">${input.bodyHtml}</div>`,
+    "</div>",
+    "</foreignObject>",
+    "</svg>"
+  ].join("");
+}
+
+function serializeSessionExportSvgAttributes(attributes?: Record<string, string>, style?: string | null): string {
+  const entries = Object.entries(attributes ?? {}).filter(([, value]) => value.trim().length > 0);
+
+  if (style?.trim()) {
+    entries.push(["style", style.trim()]);
+  }
+
+  if (entries.length === 0) {
+    return "";
+  }
+
+  return ` ${entries
+    .map(([name, value]) => `${name}="${escapeSessionExportAttribute(value)}"`)
+    .join(" ")}`;
+}
+
+function escapeSessionExportAttribute(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+async function loadSessionExportRasterImage(objectUrl: string): Promise<HTMLImageElement> {
+  await new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve(undefined));
+  });
+
+  return await new Promise((resolve, reject) => {
+    const image = new Image();
+
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error(t("conversation.exportPrintFailed")));
+    image.src = objectUrl;
+  });
+}
+
+function sliceSessionExportCanvasPages(
+  canvas: HTMLCanvasElement,
+  shellWidthPx: number,
+  shellHeightPx: number
+): string[] {
+  if (typeof document === "undefined") {
+    return [];
+  }
+
+  const scale = canvas.width / Math.max(1, shellWidthPx);
+  const pageHeightPx = Math.max(1, Math.floor(shellWidthPx * (297 / 210)));
+  const pages: string[] = [];
+
+  for (let offsetTop = 0; offsetTop < shellHeightPx; offsetTop += pageHeightPx) {
+    const currentPageHeightPx = Math.min(pageHeightPx, shellHeightPx - offsetTop);
+    const pageCanvas = document.createElement("canvas");
+    const pageContext = pageCanvas.getContext("2d");
+
+    if (!pageContext) {
+      continue;
+    }
+
+    pageCanvas.width = Math.max(1, Math.ceil(shellWidthPx * scale));
+    pageCanvas.height = Math.max(1, Math.ceil(currentPageHeightPx * scale));
+
+    pageContext.fillStyle = "#ffffff";
+    pageContext.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+    pageContext.drawImage(
+      canvas,
+      0,
+      Math.floor(offsetTop * scale),
+      pageCanvas.width,
+      pageCanvas.height,
+      0,
+      0,
+      pageCanvas.width,
+      pageCanvas.height
+    );
+    pages.push(pageCanvas.toDataURL("image/png"));
+  }
+
+  return pages;
+}
+
+function waitForSessionExportAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
+function waitForSessionExportTimeout(durationMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, durationMs);
+  });
+}
+
+async function waitForSessionExportFonts(doc: Document, timeoutMs: number): Promise<void> {
+  const fontFaceSet = doc.fonts;
+
+  if (!fontFaceSet || typeof fontFaceSet.ready === "undefined") {
+    return;
+  }
+
+  await Promise.race([
+    fontFaceSet.ready.catch(() => undefined),
+    waitForSessionExportTimeout(timeoutMs)
+  ]);
+}
+
+async function waitForSessionExportImages(root: HTMLElement, timeoutMs: number): Promise<void> {
+  const images = Array.from(root.querySelectorAll("img"));
+
+  if (images.length === 0) {
+    return;
+  }
+
+  await Promise.race([
+    Promise.all(images.map((image) => waitForSessionExportImage(image))),
+    waitForSessionExportTimeout(timeoutMs)
+  ]);
+}
+
+function captureSessionExportLayoutSnapshot(): SessionExportLayoutSnapshot {
+  if (typeof document === "undefined") {
+    return { shellWidthPx: null };
+  }
+
+  const selectors = [
+    ".conversation-timeline-shell",
+    ".conversation-main",
+    ".conversation-panel"
+  ];
+
+  for (const selector of selectors) {
+    const element = document.querySelector(selector);
+
+    if (!(element instanceof HTMLElement)) {
+      continue;
+    }
+
+    const rect = element.getBoundingClientRect();
+
+    if (!Number.isFinite(rect.width) || rect.width <= 0) {
+      continue;
+    }
+
+    return {
+      shellWidthPx: Math.round(rect.width)
+    };
+  }
+
+  return { shellWidthPx: null };
+}
+
+function measureSessionExportShell(root: HTMLElement | null): { width: number; height: number } | null {
+  const shell = root?.querySelector(".session-export-print-shell");
+
+  if (!(shell instanceof HTMLElement)) {
+    return null;
+  }
+
+  const rect = shell.getBoundingClientRect();
+  const width = Math.max(1, Math.ceil(Math.max(rect.width, shell.scrollWidth)));
+  const height = Math.max(1, Math.ceil(Math.max(rect.height, shell.scrollHeight)));
+
+  return { width, height };
+}
+
+function waitForSessionExportImage(image: HTMLImageElement): Promise<void> {
+  if (image.complete) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    const finalize = () => {
+      image.removeEventListener("load", finalize);
+      image.removeEventListener("error", finalize);
+      resolve();
+    };
+
+    image.addEventListener("load", finalize);
+    image.addEventListener("error", finalize);
+  });
+}
+
 function SidebarContent({
   workspaceGroups,
   workspaceVisualContextMap,
@@ -3603,6 +4354,12 @@ function SidebarContent({
   const [batchDeleting, setBatchDeleting] = useState(false);
   const [openSessionMenuKey, setOpenSessionMenuKey] = useState<string | null>(null);
   const [openSessionMenuAnchorPoint, setOpenSessionMenuAnchorPoint] = useState<ContextMenuAnchorPoint | null>(null);
+  const [exportingSessionId, setExportingSessionId] = useState<string | null>(null);
+  const [exportRenderJob, setExportRenderJob] = useState<{
+    session: SessionSummaryDto;
+    messages: SessionMessageViewModel[];
+    shellWidthPx: number | null;
+  } | null>(null);
   const [visibleFavoriteCount, setVisibleFavoriteCount] = useState(FAVORITE_SESSION_PAGE_SIZE);
   const [visibleWorkspaceSessionCounts, setVisibleWorkspaceSessionCounts] = useState<Record<string, number>>({});
   const [visibleSubagentCounts, setVisibleSubagentCounts] = useState<Record<string, number>>({});
@@ -3621,6 +4378,7 @@ function SidebarContent({
   const [dragWorkspaceId, setDragWorkspaceId] = useState<string | null>(null);
   const createWorktreeBaseRefPickerRef = useRef<HTMLDivElement | null>(null);
   const createWorktreeBaseRefPopoverRef = useRef<HTMLDivElement | null>(null);
+  const exportRenderRootRef = useRef<HTMLDivElement | null>(null);
   const workspaceDragCollapseFrameRef = useRef<number | null>(null);
   const workspaceGroupElementMapRef = useRef(new Map<string, HTMLElement>());
   const workspacePointerGestureRef = useRef<WorkspacePointerReorderGesture | null>(null);
@@ -4989,6 +5747,7 @@ function SidebarContent({
             showWorkspaceName={showWorkspaceName}
             depth={node.depth}
             showActions={favoriteEnabled}
+            exportDisabled={exportingSessionId !== null}
             hasSubagents={allowToggle && childNodes.length > 0}
             subagentListExpanded={subagentListExpanded}
             selectionMode={selectionMode}
@@ -5008,6 +5767,7 @@ function SidebarContent({
             onOpenContextMenu={(anchorPoint) =>
               openSessionMenu(`${menuKeyPrefix}:${session.sessionId}`, anchorPoint)
             }
+            onExport={(format) => handleExportSession(session, format)}
             onToggleFavorite={() => handleToggleFavorite(session.sessionId)}
             onArchive={() => handleArchive(session.sessionId)}
             onDelete={
@@ -5074,6 +5834,7 @@ function SidebarContent({
                     showWorkspaceName={showWorkspaceName}
                     depth={node.depth + 1}
                     showActions={favoriteEnabled}
+                    exportDisabled={exportingSessionId !== null}
                     hasSubagents={false}
                     subagentListExpanded={false}
                     selectionMode={selectionMode}
@@ -5092,6 +5853,7 @@ function SidebarContent({
                     onOpenContextMenu={(anchorPoint) =>
                       openSessionMenu(`${menuKeyPrefix}:parallel-anchor-replica:${session.sessionId}`, anchorPoint)
                     }
+                    onExport={(format) => handleExportSession(session, format)}
                     onToggleFavorite={() => handleToggleFavorite(session.sessionId)}
                     onArchive={() => handleArchive(session.sessionId)}
                     onDelete={
@@ -5296,6 +6058,90 @@ function SidebarContent({
         title: error instanceof Error ? error.message : t("shell.navigationLoadFailed"),
         tone: "error"
       });
+    }
+  }
+
+  async function handleExportSession(session: SessionSummaryDto, format: SessionExportFormat) {
+    if (exportingSessionId) {
+      return;
+    }
+
+    closeSessionMenu();
+    setExportingSessionId(session.sessionId);
+
+    try {
+      const snapshot = await loadSessionExportSnapshot(session.sessionId);
+      const exportLayout = captureSessionExportLayoutSnapshot();
+
+      if (format === "md") {
+        const fileName = buildSessionExportFileName(session, "md");
+        const markdown = buildSessionMarkdownExport(session, snapshot.messages);
+        downloadTextFile(fileName, markdown, "text/markdown;charset=utf-8");
+        showToast({
+          title: t("conversation.exportMarkdownSuccess"),
+          tone: "success"
+        });
+        return;
+      }
+
+      flushSync(() => {
+        setExportRenderJob({
+          session,
+          messages: snapshot.messages,
+          shellWidthPx: exportLayout.shellWidthPx
+        });
+      });
+
+      await waitForSessionExportRender(exportRenderRootRef.current);
+
+      const exportMarkup = exportRenderRootRef.current?.innerHTML.trim() ?? "";
+
+      if (!exportMarkup) {
+        throw new Error(t("conversation.exportLoadFailed"));
+      }
+
+      const htmlAttributes = collectSessionExportAttributes(document.documentElement);
+      const bodyAttributes = document.body ? collectSessionExportAttributes(document.body) : {};
+      const htmlStyle = document.documentElement.getAttribute("style");
+      const bodyStyle = document.body?.getAttribute("style") ?? null;
+      const exportStyleText = `${collectSessionExportStyles()}\n${STANDALONE_SESSION_EXPORT_OVERRIDES}`;
+      const htmlDocument = buildStandaloneSessionExportHtml({
+        title: session.title || t("conversation.titleFallback"),
+        bodyHtml: `<div class="session-export-document-root">${exportMarkup}</div>`,
+        styleText: exportStyleText,
+        htmlAttributes,
+        bodyAttributes,
+        htmlStyle,
+        bodyStyle
+      });
+
+      if (format === "html") {
+        const fileName = buildSessionExportFileName(session, "html");
+        downloadTextFile(fileName, htmlDocument, "text/html;charset=utf-8");
+        showToast({
+          title: t("conversation.exportHtmlSuccess"),
+          tone: "success"
+        });
+        return;
+      }
+
+      const fileName = buildSessionExportFileName(session, "pdf");
+      const pdfBytes = buildSessionPdfExport(session, snapshot.messages);
+      downloadBinaryFile(fileName, pdfBytes, "application/pdf");
+      showToast({
+        title: t("conversation.exportPdfPreparing"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("conversation.exportLoadFailed"),
+        tone: "error"
+      });
+    } finally {
+      flushSync(() => {
+        setExportRenderJob(null);
+      });
+      setExportingSessionId(null);
     }
   }
 
@@ -6856,6 +7702,32 @@ function SidebarContent({
           </div>
         </form>
       </SidebarModal>
+
+      {exportRenderJob ? (
+        <div ref={exportRenderRootRef} className="session-export-print-root" aria-hidden="true">
+          <div
+            className="session-export-print-shell"
+            style={
+              exportRenderJob.shellWidthPx
+                ? {
+                    width: `${exportRenderJob.shellWidthPx}px`,
+                    maxWidth: "100%"
+                  }
+                : undefined
+            }
+          >
+            <header className="session-export-print-header">
+              <h1>{exportRenderJob.session.title || t("conversation.titleFallback")}</h1>
+              <p>{t("conversation.exportAction")}</p>
+            </header>
+            <ConversationTranscriptExport
+              sessionId={exportRenderJob.session.sessionId}
+              messages={exportRenderJob.messages}
+              provider={exportRenderJob.session.provider}
+            />
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }

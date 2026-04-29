@@ -1501,12 +1501,67 @@ describe("WorkbenchLayout", () => {
     expect(showDesktopContextMenuMock).toHaveBeenCalledWith(
       expect.arrayContaining([
         expect.objectContaining({ label: t("shell.renameAction") }),
+        expect.objectContaining({
+          label: t("conversation.exportAction"),
+          items: [
+            expect.objectContaining({ label: t("conversation.exportMarkdownAction") }),
+            expect.objectContaining({ label: t("conversation.exportPdfAction") }),
+            expect.objectContaining({ label: t("conversation.exportHtmlAction") })
+          ]
+        }),
         expect.objectContaining({ label: t("shell.favoriteAction") }),
         expect.objectContaining({ label: t("shell.archiveAction") }),
         expect.objectContaining({ label: t("shell.deleteSessionAction") })
       ])
     );
     expect(document.querySelector(".workbench-session-menu")).toBeNull();
+  });
+
+  it("非移动端自定义会话菜单会显示导出二级菜单", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 1280
+    });
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 900
+    });
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+
+    const sessionCard = await findSessionCardByTitle("会话 Alpha");
+    openSessionCardContextMenu(sessionCard, { x: 260, y: 220 });
+
+    const exportButton = await screen.findByRole("button", { name: t("conversation.exportAction") });
+    await userEvent.click(exportButton);
+
+    expect(screen.getByRole("menuitem", { name: t("conversation.exportMarkdownAction") })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: t("conversation.exportPdfAction") })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: t("conversation.exportHtmlAction") })).toBeInTheDocument();
   });
 
   it("删除当前工作区会话后会调用真实删除接口并回到会话列表", async () => {
