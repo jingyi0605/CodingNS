@@ -17,6 +17,7 @@ import {
   importSkillEntry,
   syncManagedSkillTargets
 } from "../features/settings/api/skills-api";
+import type { ProviderCatalogEntryDto } from "../features/conversation/api/conversation-api";
 import { WorkbenchModal } from "../features/conversation/components/WorkbenchModal";
 import { useAuthSelector } from "../features/auth/store/auth-store";
 import { useProviderCatalog } from "../features/conversation/capability/provider-catalog-store";
