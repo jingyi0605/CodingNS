@@ -7,6 +7,7 @@ export async function registerProviderRoutes(
   providerController: ProviderController
 ): Promise<void> {
   app.get("/api/providers/catalog", providerController.listCatalog);
+  app.post("/api/providers/catalog/refresh", providerController.refreshCatalog);
   app.put("/api/providers/catalog/:provider", providerController.updateCatalogEntry);
   app.get("/api/providers/:provider/capabilities", providerController.getCapabilities);
   app.get("/api/providers/:provider/hook-bridge", providerController.getClaudeHookBridgeConfig);

@@ -109,6 +109,7 @@ import { OpenCliSessionPromptService } from "../modules/opencli/opencli-session-
 import { ProviderCatalogService } from "../modules/provider/provider-catalog-service.js";
 import { ProviderController } from "../modules/provider/provider-controller.js";
 import { disposeSharedProviderDiscoveryHelperClient } from "../modules/provider/provider-discovery-helper-client.js";
+import { ProviderRuntimeStateService } from "../modules/provider/provider-runtime-state-service.js";
 import { SkillController } from "../modules/skills/skill-controller.js";
 import { syncBuiltinSkillsOnStartup } from "../modules/skills/builtin-skill-service.js";
 import { cleanupLegacyAssistantRuntimeSkillCopies } from "../modules/skills/assistant-runtime-skill-cleanup.js";
@@ -221,6 +222,7 @@ import { PortLeaseRepository } from "../storage/repositories/port-lease-reposito
 import { ParallelSessionGroupRepository } from "../storage/repositories/parallel-session-group-repository.js";
 import { ParallelSessionMemberRepository } from "../storage/repositories/parallel-session-member-repository.js";
 import { ProviderControlRepository } from "../storage/repositories/provider-control-repository.js";
+import { ProviderRuntimeStateRepository } from "../storage/repositories/provider-runtime-state-repository.js";
 import { RecentFileRepository } from "../storage/repositories/recent-file-repository.js";
 import { RuntimeBindingRepository } from "../storage/repositories/runtime-binding-repository.js";
 import { SessionBindingRepository } from "../storage/repositories/session-binding-repository.js";
@@ -321,6 +323,7 @@ export function createServer(config: HostConfig) {
     openCliCatalogEntryRepository: new OpenCliCatalogEntryRepository(database.db),
     openCliRuntimeProfileRepository: new OpenCliRuntimeProfileRepository(database.db),
     providerControlRepository: new ProviderControlRepository(database.db),
+    providerRuntimeStateRepository: new ProviderRuntimeStateRepository(database.db),
     recentFileRepository: new RecentFileRepository(database.db),
     fileContextBindingRepository: new FileContextBindingRepository(database.db),
     sessionBindingRepository: new SessionBindingRepository(database.db),
@@ -601,6 +604,10 @@ export function createServer(config: HostConfig) {
     repositories.sessionChangedFileRepository
   );
   const sessionActivityAuthorityService = new SessionActivityAuthorityService();
+  const providerRuntimeStateService = new ProviderRuntimeStateService(
+    config,
+    repositories.providerRuntimeStateRepository
+  );
   const sessionHistoryService = new SessionHistoryService(
     database.db,
     repositories.workspaceRepository,
@@ -620,11 +627,13 @@ export function createServer(config: HostConfig) {
     repositories.parallelSessionMemberRepository,
     repositories.sessionIsolatedWorkspaceRepository,
     sessionProviderConfigService,
-    repositories.providerControlRepository
+    repositories.providerControlRepository,
+    providerRuntimeStateService
   );
   const providerCatalogService = new ProviderCatalogService(
     config,
-    repositories.providerControlRepository
+    repositories.providerControlRepository,
+    providerRuntimeStateService
   );
   runtimeObservabilityService = new RuntimeObservabilityService(
     () => sessionHistoryService.observeBackgroundTaskMetrics(),

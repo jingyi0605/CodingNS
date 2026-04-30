@@ -476,6 +476,16 @@ CREATE TABLE IF NOT EXISTS provider_control_profiles (
 CREATE INDEX IF NOT EXISTS idx_provider_control_profiles_enabled
   ON provider_control_profiles(enabled, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS provider_runtime_states (
+  provider_id TEXT PRIMARY KEY,
+  install_state TEXT NOT NULL CHECK (install_state IN ('ready', 'missing', 'unknown')),
+  version TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_runtime_states_install
+  ON provider_runtime_states(install_state, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS git_remote_credentials (
   user_id TEXT NOT NULL,
   remote_url TEXT NOT NULL,

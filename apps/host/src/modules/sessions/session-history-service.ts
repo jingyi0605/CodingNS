@@ -37,7 +37,6 @@ import {
   terminalDebugNowMs
 } from "../../shared/utils/terminal-debug-log.js";
 import { nowIso } from "../../shared/utils/time.js";
-import { isCommandAvailable } from "../../shared/utils/command-availability.js";
 import type {
   SessionActivityConfidence,
   SessionActivityResolutionSource,
@@ -93,6 +92,7 @@ import {
   applyProviderDisabledState,
   createProviderCapabilityBlockedError
 } from "../provider/provider-disabled.js";
+import { ProviderRuntimeStateService } from "../provider/provider-runtime-state-service.js";
 import { createTaskManager, TaskManager } from "../tasks/task-manager.js";
 import {
   HOST_TASK_TYPES,
@@ -292,8 +292,6 @@ export class SessionHistoryService {
   private readonly claudeCodeHomeDir: string;
   private readonly codexModelOptionsService: CodexModelOptionsService;
   private readonly openCodeModelOptionsService: OpenCodeModelOptionsService;
-  private readonly providerCliCommandPaths: Readonly<Partial<Record<string, string>>>;
-  private readonly providerCliAvailability: Readonly<Partial<Record<string, boolean>>>;
   private readonly parallelSessionGroupRepository: Pick<ParallelSessionGroupRepository, "listByIds"> | null;
   private readonly parallelSessionMemberRepository: Pick<
     ParallelSessionMemberRepository,
@@ -305,6 +303,7 @@ export class SessionHistoryService {
   > | null;
   private readonly providerDiscoveryHelperClient = getSharedProviderDiscoveryHelperClient();
   private readonly providerSessionDiscoveryConfig: ProviderSessionDiscoveryHelperConfig;
+  private readonly providerRuntimeStateService: Pick<ProviderRuntimeStateService, "isProviderCliAvailable">;
   private readonly sessionProviderConfigService: Pick<
     SessionProviderConfigService,
     "prepareSessionBinding"
@@ -351,7 +350,8 @@ export class SessionHistoryService {
       "findByOwnerSessionId" | "listByOwnerSessionIds" | "listBySourceWorkspaceId"
     > | null = null,
     sessionProviderConfigService: Pick<SessionProviderConfigService, "prepareSessionBinding"> | null = null,
-    providerControlRepository: Pick<ProviderControlRepository, "get"> | null = null
+    providerControlRepository: Pick<ProviderControlRepository, "get"> | null = null,
+    providerRuntimeStateService: Pick<ProviderRuntimeStateService, "isProviderCliAvailable"> | null = null
   ) {
     this.sessionActivityAuthorityService = sessionActivityAuthorityService;
     this.sessionForkRepository = sessionForkRepository ?? new SessionForkRepository(db);
@@ -362,6 +362,8 @@ export class SessionHistoryService {
     this.parallelSessionMemberRepository = parallelSessionMemberRepository;
     this.sessionIsolatedWorkspaceRepository = sessionIsolatedWorkspaceRepository;
     this.sessionProviderConfigService = sessionProviderConfigService;
+    this.providerRuntimeStateService = providerRuntimeStateService
+      ?? new ProviderRuntimeStateService(config);
     this.providerControlRepository = providerControlRepository ?? {
       get: (providerId: string) => ({
         providerId: providerId.trim(),
@@ -370,15 +372,6 @@ export class SessionHistoryService {
       })
     };
     this.claudeCodeHomeDir = config.claudeCodeHomeDir;
-    this.providerCliCommandPaths = {
-      "claude-code": process.platform === "win32" ? "claude.cmd" : "claude",
-      "legna-code": config.legnaCodeCliPath,
-      codex: config.codexCliPath,
-      gemini: config.geminiCliPath,
-      kimi: config.kimiCliPath
-    };
-    // CLI 是否可用只在 Host 启动时探测一次；后续统一读缓存，更新 CLI 后重启 Host 生效。
-    this.providerCliAvailability = buildProviderCliAvailabilitySnapshot(this.providerCliCommandPaths);
     this.providerSessionDiscoveryConfig = {
       claudeCodeHomeDir: config.claudeCodeHomeDir,
       legnaCodeHomeDir: config.legnaCodeHomeDir,
@@ -1096,7 +1089,7 @@ export class SessionHistoryService {
       return capabilities;
     }
 
-    if (this.providerCliAvailability[capabilities.provider]) {
+    if (this.providerRuntimeStateService.isProviderCliAvailable(capabilities.provider)) {
       return capabilities;
     }
 
@@ -4751,19 +4744,6 @@ function isProviderCliBacked(
     || provider === "codex"
     || provider === "gemini"
     || provider === "kimi";
-}
-
-function buildProviderCliAvailabilitySnapshot(
-  commandPaths: Readonly<Partial<Record<string, string>>>
-): Readonly<Partial<Record<string, boolean>>> {
-  return Object.freeze(
-    Object.fromEntries(
-      Object.entries(commandPaths).map(([provider, commandPath]) => [
-        provider,
-        isCommandAvailable(commandPath)
-      ])
-    )
-  );
 }
 
 function buildProviderCliUnavailableMessage(provider: string): string {

@@ -172,6 +172,47 @@ describe("provider catalog routes", () => {
     expect(disabledCapabilitiesResponse.json().limitations[0]).toBe("当前 provider 已被禁用");
   });
 
+  it("catalog 会直接读取启动时缓存的 provider 运行状态", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const fakeCodexPath = path.join(fixture.rootDir, "codex-version");
+    writeFileSync(
+      fakeCodexPath,
+      "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"codex 9.9.9\"\n  exit 0\nfi\nexit 1\n",
+      "utf8"
+    );
+    chmodSync(fakeCodexPath, 0o755);
+
+    const hosted = createTestApp(fixture, {
+      codexCliPath: fakeCodexPath
+    });
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    writeFileSync(
+      fakeCodexPath,
+      "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"codex 1.0.0\"\n  exit 0\nfi\nexit 1\n",
+      "utf8"
+    );
+    chmodSync(fakeCodexPath, 0o755);
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const response = await hosted.app.inject({
+      method: "GET",
+      url: "/api/providers/catalog",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const codexEntry = (response.json() as {
+      items: Array<{ provider: string; version: string | null }>;
+    }).items.find((item) => item.provider === "codex");
+    expect(codexEntry?.version).toBe("9.9.9");
+  });
+
   it("更新启用态时会校验 enabled 字段", async () => {
     const fixture = createEmptyFixture();
     activeFixtures.push(fixture);
@@ -197,6 +238,67 @@ describe("provider catalog routes", () => {
       error_code: "INVALID_INPUT",
       field: "enabled"
     });
+  });
+
+  it("显式刷新 catalog 会重新探测 provider 运行状态", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const fakeCodexPath = path.join(fixture.rootDir, "codex-version");
+    const fakeClaudePath = path.join(fixture.rootDir, "claude-version");
+    const fakeLegnaPath = path.join(fixture.rootDir, "legna-version");
+    const fakeGeminiPath = path.join(fixture.rootDir, "gemini-version");
+    const fakeKimiPath = path.join(fixture.rootDir, "kimi-version");
+    const fakeOpenCodePath = path.join(fixture.rootDir, "opencode-version");
+    writeFileSync(
+      fakeCodexPath,
+      "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"codex 2.0.0\"\n  exit 0\nfi\nexit 1\n",
+      "utf8"
+    );
+    chmodSync(fakeCodexPath, 0o755);
+    writeFileSync(fakeClaudePath, "#!/bin/sh\nexit 1\n", "utf8");
+    writeFileSync(fakeLegnaPath, "#!/bin/sh\nexit 1\n", "utf8");
+    writeFileSync(fakeGeminiPath, "#!/bin/sh\nexit 1\n", "utf8");
+    writeFileSync(fakeKimiPath, "#!/bin/sh\nexit 1\n", "utf8");
+    writeFileSync(fakeOpenCodePath, "#!/bin/sh\nexit 1\n", "utf8");
+    chmodSync(fakeClaudePath, 0o755);
+    chmodSync(fakeLegnaPath, 0o755);
+    chmodSync(fakeGeminiPath, 0o755);
+    chmodSync(fakeKimiPath, 0o755);
+    chmodSync(fakeOpenCodePath, 0o755);
+
+    const hosted = createTestApp(fixture, {
+      codexCliPath: fakeCodexPath,
+      claudeCodeHomeDir: path.join(fixture.rootDir, "missing-claude-home"),
+      legnaCodeCliPath: fakeLegnaPath,
+      geminiCliPath: fakeGeminiPath,
+      kimiCliPath: fakeKimiPath,
+      opencodeCliPath: fakeOpenCodePath
+    });
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    writeFileSync(
+      fakeCodexPath,
+      "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"codex 2.1.0\"\n  exit 0\nfi\nexit 1\n",
+      "utf8"
+    );
+    chmodSync(fakeCodexPath, 0o755);
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const response = await hosted.app.inject({
+      method: "POST",
+      url: "/api/providers/catalog/refresh",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const codexEntry = (response.json() as {
+      items: Array<{ provider: string; version: string | null }>;
+    }).items.find((item) => item.provider === "codex");
+    expect(codexEntry?.version).toBe("2.1.0");
   });
 });
 

@@ -102,6 +102,15 @@ export interface AuthLoginAttemptRecord {
   updatedAt: string;
 }
 
+export type ProviderInstallState = "ready" | "missing" | "unknown";
+
+export interface ProviderRuntimeStateRecord {
+  providerId: string;
+  installState: ProviderInstallState;
+  version: string | null;
+  updatedAt: string;
+}
+
 export interface Workspace {
   id: string;
   name: string;

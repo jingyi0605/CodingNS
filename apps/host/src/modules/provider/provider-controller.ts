@@ -86,6 +86,12 @@ export class ProviderController {
     });
   };
 
+  readonly refreshCatalog = async (_request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    reply.send({
+      items: this.providerCatalogService.refreshRuntimeStates()
+    });
+  };
+
   readonly updateCatalogEntry = async (
     request: FastifyRequest<{ Params: ProviderParams; Body: UpdateProviderCatalogBody }>,
     reply: FastifyReply
