@@ -44,6 +44,8 @@ interface OpenCodeRuntimeOptions {
   baseUrlResolver?: (
     input?: { refresh?: boolean; workspacePath?: string | null }
   ) => Promise<string> | string;
+  acquireManagedServerLease?: (workspacePath: string) => string | null | undefined;
+  releaseManagedServerLease?: (workspacePath: string, leaseId: string) => void;
   requestTimeoutMs?: number;
 }
 
@@ -119,6 +121,36 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
   ): ProviderRuntimeLaunchResult {
     const abortController = new AbortController();
     const runStartedAtMs = Date.now();
+    const managedServerLeaseId =
+      this.options.acquireManagedServerLease?.(request.workspacePath)?.trim() || null;
+    const completed = this.runSession(
+      request,
+      {
+        providerSessionId,
+        rawStoreRef,
+        workspacePath: request.workspacePath,
+        runStartedAtMs,
+        sequence: Math.max(0, request.sequenceBase ?? 0),
+        terminalStatus: null,
+        hasObservedActivity: false,
+        currentRunHasAcceptedActivity: false,
+        abortController,
+        sink,
+        messageInfoById: new Map(),
+        partById: new Map(),
+        messageIdByPartId: new Map(),
+        partIdsByMessageId: new Map(),
+        emittedPartSignatures: new Map(),
+        emittedSequenceByMessageId: new Map(),
+        emittedPartOrderByPartId: new Map(),
+        nextPartOrdinalByMessageKind: new Map()
+      },
+      abortController.signal
+    ).finally(() => {
+      if (managedServerLeaseId) {
+        this.options.releaseManagedServerLease?.(request.workspacePath, managedServerLeaseId);
+      }
+    });
 
     return {
       providerSessionId,
@@ -127,30 +159,7 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
         await this.abortSession(providerSessionId, request.workspacePath);
         abortController.abort();
       },
-      completed: this.runSession(
-        request,
-        {
-          providerSessionId,
-          rawStoreRef,
-          workspacePath: request.workspacePath,
-          runStartedAtMs,
-          sequence: Math.max(0, request.sequenceBase ?? 0),
-          terminalStatus: null,
-          hasObservedActivity: false,
-          currentRunHasAcceptedActivity: false,
-          abortController,
-          sink,
-          messageInfoById: new Map(),
-          partById: new Map(),
-          messageIdByPartId: new Map(),
-          partIdsByMessageId: new Map(),
-          emittedPartSignatures: new Map(),
-          emittedSequenceByMessageId: new Map(),
-          emittedPartOrderByPartId: new Map(),
-          nextPartOrdinalByMessageKind: new Map()
-        },
-        abortController.signal
-      )
+      completed
     };
   }
 
