@@ -635,7 +635,7 @@ describe("SessionIndexPage", () => {
     expect(within(workspaceSection).queryByRole("button", { name: t("shell.subagentExpandMore") })).not.toBeInTheDocument();
   });
 
-  it("移动端列表会显示会话失败错误摘要", () => {
+  it("移动端列表失败时只保留错误状态指示器，不显示错误摘要", () => {
     contextValue.navigationGroups[0].sessions[0] = {
       ...contextValue.navigationGroups[0].sessions[0],
       runningState: "failed",
@@ -648,8 +648,9 @@ describe("SessionIndexPage", () => {
     renderPage();
 
     expect(
-      screen.getByText(/CODEX_HTTP_429 · unexpected status 429 Too Many Requests/)
-    ).toBeInTheDocument();
+      screen.queryByText(/CODEX_HTTP_429 · unexpected status 429 Too Many Requests/)
+    ).not.toBeInTheDocument();
+    expect(document.querySelector(".session-list-indicator.is-error")).not.toBeNull();
   });
 
   it("从全部会话页进入会话时，会写入沉浸模式并且不自动展开侧边会话栏", async () => {

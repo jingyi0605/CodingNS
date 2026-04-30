@@ -148,6 +148,28 @@ describe("ConversationPage runtime thinking placeholder", () => {
       expect(readLatestRuntimeThinkingPlaceholder()).toBeNull();
     });
   });
+
+  it("会把当前会话错误信息传给消息时间线", async () => {
+    mockRuntimeStoreStateRef.current = createRuntimeStoreState({
+      session: createLiveSession({
+        runningState: "failed",
+        syncStatus: "error",
+        lastErrorCode: "CODEX_HTTP_429",
+        lastErrorDetail: "429 Too Many Requests"
+      }),
+      messages: [createUserMessage()]
+    });
+
+    renderLiveConversationPage();
+
+    await waitFor(() => {
+      expect(readLatestTimelineProps()?.sessionRunningState).toBe("failed");
+    });
+
+    expect(readLatestTimelineProps()?.sessionSyncStatus).toBe("error");
+    expect(readLatestTimelineProps()?.sessionLastErrorCode).toBe("CODEX_HTTP_429");
+    expect(readLatestTimelineProps()?.sessionLastErrorDetail).toBe("429 Too Many Requests");
+  });
 });
 
 function renderLiveConversationPage() {
@@ -170,6 +192,16 @@ function createLiveConversationPageElement() {
 function readLatestRuntimeThinkingPlaceholder(): string | null {
   const props = mockMessageTimeline.mock.calls.at(-1)?.[0] as { runtimeThinkingPlaceholder?: string | null } | undefined;
   return props?.runtimeThinkingPlaceholder ?? null;
+}
+
+function readLatestTimelineProps() {
+  return (mockMessageTimeline.mock.calls.at(-1)?.[0] ?? null) as {
+    runtimeThinkingPlaceholder?: string | null;
+    sessionRunningState?: string | null;
+    sessionSyncStatus?: string | null;
+    sessionLastErrorCode?: string | null;
+    sessionLastErrorDetail?: string | null;
+  } | null;
 }
 
 function createWorkbenchShellValue() {

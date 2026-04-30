@@ -669,6 +669,10 @@ function LiveConversationPage({
                 provider={session?.provider ?? null}
                 interruptedSource={runtimeInterruptSource}
                 runtimeThinkingPlaceholder={runtimeThinkingPlaceholder}
+                sessionRunningState={session?.runningState ?? null}
+                sessionSyncStatus={session?.syncStatus ?? null}
+                sessionLastErrorCode={session?.lastErrorCode ?? null}
+                sessionLastErrorDetail={session?.lastErrorDetail ?? null}
                 onLoadOlderMessages={loadOlderMessages}
                 onRetryMessage={retryMessage}
                 onSubmitStructuredQuestion={handleSubmitStructuredQuestion}
@@ -1247,6 +1251,10 @@ function DraftConversationPage({
                 hasOlderMessages={false}
                 provider={draft.provider}
                 runtimeThinkingPlaceholder={null}
+                sessionRunningState={null}
+                sessionSyncStatus={null}
+                sessionLastErrorCode={null}
+                sessionLastErrorDetail={null}
                 onLoadOlderMessages={() => {}}
                 onRetryMessage={() => {}}
               />

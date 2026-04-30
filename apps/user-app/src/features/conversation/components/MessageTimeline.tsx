@@ -57,10 +57,13 @@ import type {
   AttachmentPayload,
   MessageAttachmentDto,
   ProviderId,
-  SessionInterruptSource
+  SessionInterruptSource,
+  SessionRunningState,
+  SyncStatus
 } from "../api/conversation-api";
 import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
 import { shouldFoldRulesMessages } from "../capability/provider-ui";
+import { resolveSessionErrorDisplayContent } from "../session-error-display";
 
 interface MessageTimelineProps {
   sessionId?: string;
@@ -76,6 +79,10 @@ interface MessageTimelineProps {
   runtimeThinkingPlaceholder?: string | null;
   assistantAvatar?: ReactNode;
   followTailUpdates?: boolean;
+  sessionRunningState?: SessionRunningState | null;
+  sessionSyncStatus?: SyncStatus | null;
+  sessionLastErrorCode?: string | null;
+  sessionLastErrorDetail?: string | null;
   onSubmitStructuredQuestion?: (payload: { messageId: string; answers: Record<string, string[]> }) => Promise<void> | void;
 }
 
@@ -3955,6 +3962,10 @@ export function MessageTimeline({
   runtimeThinkingPlaceholder = null,
   assistantAvatar,
   followTailUpdates = false,
+  sessionRunningState = null,
+  sessionSyncStatus = null,
+  sessionLastErrorCode = null,
+  sessionLastErrorDetail = null,
   onSubmitStructuredQuestion
 }: MessageTimelineProps) {
   const { showToast } = useToast();
@@ -4001,6 +4012,16 @@ export function MessageTimeline({
     [messages]
   );
   const showTimelineSkeleton = historyState === "loading" && messages.length === 0;
+  const sessionErrorDisplay = useMemo(
+    () =>
+      resolveSessionErrorDisplayContent({
+        runningState: sessionRunningState,
+        syncStatus: sessionSyncStatus,
+        lastErrorCode: sessionLastErrorCode,
+        lastErrorDetail: sessionLastErrorDetail
+      }),
+    [sessionLastErrorCode, sessionLastErrorDetail, sessionRunningState, sessionSyncStatus]
+  );
 
   function summarizeMessageSignature(signature: string | null): Record<string, unknown> | null {
     if (!signature) {
@@ -4732,6 +4753,32 @@ export function MessageTimeline({
               <span className="thinking-status-dots" aria-hidden="true">...</span>
             </span>
           </div>
+        ) : null}
+
+        {sessionErrorDisplay ? (
+          <section
+            className="session-runtime-error-panel"
+            role="status"
+            aria-label={sessionErrorDisplay.title}
+          >
+            <div className="session-runtime-error-panel__header">
+              <span className="session-runtime-error-panel__dot" aria-hidden="true" />
+              <strong>{sessionErrorDisplay.title}</strong>
+            </div>
+            <p className="session-runtime-error-panel__summary">{sessionErrorDisplay.summary}</p>
+            {sessionErrorDisplay.code ? (
+              <div className="session-runtime-error-panel__meta">
+                <span className="session-runtime-error-panel__label">{t("conversation.runtimeErrorCodeLabel")}</span>
+                <code>{sessionErrorDisplay.code}</code>
+              </div>
+            ) : null}
+            {sessionErrorDisplay.detail ? (
+              <div className="session-runtime-error-panel__detail">
+                <span className="session-runtime-error-panel__label">{t("conversation.runtimeErrorDetailLabel")}</span>
+                <pre>{sessionErrorDisplay.detail}</pre>
+              </div>
+            ) : null}
+          </section>
         ) : null}
       </div>
       {showScrollToBottomButton ? (

@@ -15,6 +15,7 @@ import {
   resolveSessionActivityBadgeLabel,
   resolveSessionIndicatorClassName
 } from "../../conversation/session-activity-display";
+import { hasSessionErrorDisplayContent } from "../../conversation/session-error-display";
 import type { SessionSummaryDto } from "../../conversation/api/conversation-api";
 import { getProviderDisplayName } from "../../conversation/capability/provider-ui";
 import {
@@ -110,8 +111,6 @@ export function SessionListItem({
   ]
     .filter(Boolean)
     .join(" · ");
-  const errorSummary = getSessionErrorSummary(session);
-  const errorPreview = errorSummary ? truncateSessionErrorSummary(errorSummary) : null;
   const activityBadgeLabel = variant === "mobile" ? null : resolveSessionActivityBadgeLabel(session);
   const activityBadgeClassName =
     activityBadgeLabel
@@ -401,11 +400,6 @@ export function SessionListItem({
               </>
             )}
           </div>
-          {errorPreview ? (
-            <div className="session-list-error" title={errorSummary ?? undefined}>
-              {errorPreview}
-            </div>
-          ) : null}
         </div>
       </button>
       {sessionActionMenu}
@@ -440,43 +434,5 @@ function formatActivityTime(value: string | null) {
 }
 
 function hasSessionError(session: WorkbenchNavigationEntry["session"]) {
-  return (
-    hasSessionDisplayError(session)
-    || session.syncStatus === "error"
-  );
-}
-
-function getSessionErrorSummary(session: WorkbenchNavigationEntry["session"]) {
-  if (!hasSessionError(session)) {
-    return null;
-  }
-
-  const errorCode = session.lastErrorCode?.trim() ?? "";
-  const errorDetail = session.lastErrorDetail?.replace(/\s+/g, " ").trim() ?? "";
-
-  if (errorCode && errorDetail && !errorDetail.includes(errorCode)) {
-    return `${errorCode} · ${errorDetail}`;
-  }
-
-  if (errorDetail) {
-    return errorDetail;
-  }
-
-  if (errorCode) {
-    return errorCode;
-  }
-
-  if (session.syncStatus === "error" && !hasSessionDisplayError(session)) {
-    return t("conversation.syncStatusError");
-  }
-
-  return t("conversation.runtimeErrorTitle");
-}
-
-function truncateSessionErrorSummary(summary: string, maxLength = 96) {
-  if (summary.length <= maxLength) {
-    return summary;
-  }
-
-  return `${summary.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+  return hasSessionErrorDisplayContent(session);
 }

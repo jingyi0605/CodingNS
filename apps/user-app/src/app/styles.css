@@ -9923,6 +9923,77 @@ textarea:focus-visible {
   background: color-mix(in srgb, var(--bg-surface) 76%, transparent);
 }
 
+.session-runtime-error-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 4px 0 2px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--status-danger) 22%, var(--border-primary));
+  border-radius: 16px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--status-danger) 7%, var(--bg-surface)),
+    color-mix(in srgb, var(--bg-primary) 97%, transparent)
+  );
+  box-shadow: 0 10px 24px rgba(127, 29, 29, 0.06);
+}
+
+.session-runtime-error-panel__header {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: color-mix(in srgb, var(--status-danger) 82%, var(--text-primary));
+}
+
+.session-runtime-error-panel__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--status-danger);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--status-danger) 18%, transparent);
+  flex: 0 0 auto;
+}
+
+.session-runtime-error-panel__summary {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.session-runtime-error-panel__meta,
+.session-runtime-error-panel__detail {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.session-runtime-error-panel__label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+
+.session-runtime-error-panel__meta code,
+.session-runtime-error-panel__detail pre {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+
 .composer-panel {
   padding: 10px 12px 12px;
   background: transparent;

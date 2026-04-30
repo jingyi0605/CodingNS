@@ -359,6 +359,26 @@ describe("MessageTimeline", () => {
     expect(screen.queryByText("<turn_aborted>previous turn aborted</turn_aborted>")).not.toBeInTheDocument();
   });
 
+  it("会在消息列表底部格式化显示会话错误，而不是把错误混进消息正文", () => {
+    render(
+      <MessageTimeline
+        messages={[createAssistantTextMessage("已经收到你的请求。")]}
+        historyState="ready"
+        onRetryMessage={vi.fn()}
+        provider="codex"
+        sessionRunningState="failed"
+        sessionSyncStatus="error"
+        sessionLastErrorCode="CODEX_HTTP_429"
+        sessionLastErrorDetail="429 Too Many Requests, request id: demo-request-id"
+      />
+    );
+
+    expect(screen.getByText(t("conversation.runtimeErrorTitle"))).toBeInTheDocument();
+    expect(screen.getByText("CODEX_HTTP_429 · 429 Too Many Requests, request id: demo-request-id")).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.runtimeErrorCodeLabel"))).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.runtimeErrorDetailLabel"))).toBeInTheDocument();
+  });
+
   it("会把 Codex 历史里的 user turn_aborted 控制标记也渲染成助手消息", () => {
     render(
       <MessageTimeline

@@ -6506,7 +6506,7 @@ describe("WorkbenchLayout", () => {
     }
   });
 
-  it("会在侧栏会话列表里直接显示失败错误摘要", async () => {
+  it("会在侧栏会话列表里只显示失败状态，不显示错误摘要", async () => {
     const currentSnapshot = createWorkbenchSnapshot([
       {
         workspace: createWorkspace("workspace-1", "项目一"),
@@ -6541,10 +6541,10 @@ describe("WorkbenchLayout", () => {
     const sessionCard = await findSessionCardByTitle("失败会话");
 
     expect(
-      within(sessionCard).getByText(
+      within(sessionCard).queryByText(
         /CODEX_HTTP_502 · unexpected status 502 Bad Gateway: Upstream request failed/
       )
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
     expect(sessionCard.querySelector(".session-state-indicator.is-error")).not.toBeNull();
   });
 

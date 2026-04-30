@@ -1253,6 +1253,9 @@ export const enUS = {
     connectionReconnectFailed: "Reconnect failed",
     connectionClosed: "Connection closed",
     runtimeErrorTitle: "Session run failed",
+    runtimeErrorFallbackDetail: "The CLI provider returned an error without additional detail.",
+    runtimeErrorCodeLabel: "Error code",
+    runtimeErrorDetailLabel: "Error detail",
     permissionRequestSectionTitle: "Pending approvals",
     permissionRequestSectionDescription:
       "Provider-side approvals are unified here so you do not need to learn three different dialogs.",
