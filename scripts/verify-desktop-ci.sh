@@ -29,6 +29,7 @@ BRANCH_PREFIX="$DEFAULT_BRANCH_PREFIX"
 BRANCH_NAME=""
 REPO_SLUG=""
 HEAD_SHA=""
+GH_GIT_CREDENTIAL_HELPER=""
 ALLOW_DIRTY=0
 WAIT_FOR_COMPLETION=1
 KEEP_REMOTE_BRANCH=0
@@ -164,13 +165,33 @@ require_command() {
   fi
 }
 
+resolve_gh_git_credential_helper() {
+  local gh_path=""
+
+  gh_path="$(command -v gh)"
+  if [[ -z "$gh_path" ]]; then
+    log_error "找不到 gh 命令，无法为 git push 注入 GitHub 认证。"
+    exit 1
+  fi
+
+  # 只在当前 git push 命令里临时接管 github.com 认证，避免污染全局 Git 配置。
+  GH_GIT_CREDENTIAL_HELPER="!$gh_path auth git-credential"
+}
+
+git_push_with_gh_auth() {
+  git \
+    -c "credential.https://github.com.helper=" \
+    -c "credential.https://github.com.helper=$GH_GIT_CREDENTIAL_HELPER" \
+    push "$@"
+}
+
 cleanup_remote_branch() {
   if [[ "$KEEP_REMOTE_BRANCH" -eq 1 || "$DRY_RUN" -eq 1 || "$REMOTE_BRANCH_PUSHED" -ne 1 ]]; then
     return 0
   fi
 
   log_info "删除 GitHub 临时分支: $BRANCH_NAME"
-  if git push "$REMOTE_NAME" ":refs/heads/$BRANCH_NAME" >/dev/null 2>&1; then
+  if git_push_with_gh_auth "$REMOTE_NAME" ":refs/heads/$BRANCH_NAME" >/dev/null 2>&1; then
     log_success "已删除 GitHub 临时分支: $BRANCH_NAME"
   else
     log_warn "GitHub 临时分支删除失败，请手工检查: $BRANCH_NAME"
@@ -331,7 +352,7 @@ EOF
 
 push_temp_branch() {
   log_info "推送当前 HEAD 到 GitHub 临时分支..."
-  git push "$REMOTE_NAME" "$HEAD_SHA:refs/heads/$BRANCH_NAME"
+  git_push_with_gh_auth "$REMOTE_NAME" "$HEAD_SHA:refs/heads/$BRANCH_NAME"
   REMOTE_BRANCH_PUSHED=1
   log_success "已推送 GitHub 临时分支: $BRANCH_NAME"
 }
@@ -455,6 +476,7 @@ main() {
   fi
 
   check_github_auth
+  resolve_gh_git_credential_helper
 
   push_temp_branch
   dispatch_workflow
