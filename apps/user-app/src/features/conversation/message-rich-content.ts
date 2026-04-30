@@ -35,9 +35,16 @@ const HTML_DATA_IMAGE_PATTERN = /<img\b[^>]*src=["'](data:image\/[a-zA-Z0-9.+-]+
 const CUSTOM_IMAGE_BLOCK_PATTERN = /<image\b([^>]*)>([\s\S]*?)<\/image>/gi;
 const INTERNAL_ATTACHMENT_BLOCK_PATTERN =
   /\[\[CODINGNS_IMAGE_ATTACHMENTS\]\][\s\S]*?\[\[\/CODINGNS_IMAGE_ATTACHMENTS\]\]/g;
+const QUESTION_CODE_BLOCK_PATTERN = /```question\s*([\s\S]*?)```/i;
 
 export function parseMessageRichContent(content: string): ParsedMessageRichContent {
   const sanitizedContent = stripInternalAttachmentDebugContent(content);
+  const parsedQuestionCodeBlock = parseQuestionCodeBlockContent(sanitizedContent);
+
+  if (parsedQuestionCodeBlock) {
+    return parsedQuestionCodeBlock;
+  }
+
   const parsedStructuredContent = parseStructuredRichContent(sanitizedContent);
 
   if (parsedStructuredContent) {
@@ -48,6 +55,41 @@ export function parseMessageRichContent(content: string): ParsedMessageRichConte
     ...extractInlineImagesFromText(sanitizedContent),
     structuredQuestions: null
   };
+}
+
+function parseQuestionCodeBlockContent(content: string): ParsedMessageRichContent | null {
+  const matched = content.match(QUESTION_CODE_BLOCK_PATTERN);
+
+  if (!matched) {
+    return null;
+  }
+
+  const rawQuestionPayload = matched[1]?.trim() ?? "";
+
+  if (!rawQuestionPayload) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(rawQuestionPayload) as unknown;
+    const structuredQuestions = extractStructuredQuestionPrompt(parsed);
+
+    if (!structuredQuestions) {
+      return null;
+    }
+
+    const visibleText = normalizeDisplayText(
+      content.replace(QUESTION_CODE_BLOCK_PATTERN, "").trim()
+    );
+
+    return {
+      text: visibleText,
+      inlineImages: [],
+      structuredQuestions
+    };
+  } catch {
+    return null;
+  }
 }
 
 function stripInternalAttachmentDebugContent(content: string): string {

@@ -57,4 +57,48 @@ describe("parseMessageRichContent", () => {
       }
     });
   });
+
+  it("会识别正文后面的 question 代码块，并保留前置说明文字", () => {
+    const content = [
+      "我有两个问题需要确认：",
+      "```question",
+      JSON.stringify({
+        questions: [
+          {
+            question: "spec 目录下的 requirements.md 是否存在？",
+            header: "Spec 文件存在",
+            options: [
+              {
+                label: "帮我创建",
+                description: "按模板先补齐"
+              }
+            ]
+          }
+        ]
+      }, null, 2),
+      "```"
+    ].join("\n");
+
+    expect(parseMessageRichContent(content)).toEqual({
+      text: "我有两个问题需要确认：",
+      inlineImages: [],
+      structuredQuestions: {
+        questions: [
+          {
+            id: "structured-question-1",
+            header: "Spec 文件存在",
+            question: "spec 目录下的 requirements.md 是否存在？",
+            allowOther: false,
+            secret: false,
+            options: [
+              {
+                label: "帮我创建",
+                description: "按模板先补齐"
+              }
+            ]
+          }
+        ]
+      }
+    });
+  });
 });

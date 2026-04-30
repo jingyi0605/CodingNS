@@ -3009,4 +3009,47 @@ ARGUMENTS: capabilities list`)
       }
     });
   });
+
+  it("会识别正文后面的 question 代码块并渲染成问题卡片", async () => {
+    const onSubmitStructuredQuestion = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <MessageTimeline
+        messages={[
+          createAssistantTextMessage(`我有两个问题需要确认：
+
+\`\`\`question
+{
+  "questions": [
+    {
+      "id": "spec_status",
+      "question": "spec 目录下的 requirements.md 是否存在？",
+      "header": "Spec 文件存在",
+      "options": [
+        {
+          "label": "帮我创建",
+          "description": "按模板先补齐"
+        },
+        {
+          "label": "我有别的位置",
+          "description": "告诉你路径"
+        }
+      ]
+    }
+  ]
+}
+\`\`\``)
+        ]}
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        onSubmitStructuredQuestion={onSubmitStructuredQuestion}
+      />
+    );
+
+    expect(screen.getByText("我有两个问题需要确认：")).toBeInTheDocument();
+    expect(screen.getByText("spec 目录下的 requirements.md 是否存在？")).toBeInTheDocument();
+    expect(screen.queryByText(/```question/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/"questions"/)).not.toBeInTheDocument();
+  });
 });
