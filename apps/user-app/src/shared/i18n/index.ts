@@ -14,6 +14,8 @@ const extensionZhCN = {
   common: {
     close: "关闭",
     cancel: "\u53d6\u6d88",
+    copy: "复制",
+    copyFailed: "复制失败",
     logout: "\u9000\u51fa\u767b\u5f55",
     language: "\u8bed\u8a00"
   },
@@ -2216,6 +2218,8 @@ const extensionEnUS = {
   common: {
     close: "Close",
     cancel: "Cancel",
+    copy: "Copy",
+    copyFailed: "Copy failed",
     logout: "Log out",
     language: "Language"
   },

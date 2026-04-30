@@ -105,6 +105,12 @@ interface TerminalViewportRuntime {
   dispose: () => void;
 }
 
+interface TerminalSelectionContextMenuState {
+  text: string;
+  top: number;
+  left: number;
+}
+
 interface TerminalActionMenuState {
   terminalId: string;
   top: number;
@@ -3317,7 +3323,10 @@ function TerminalWorkspacePane({
   onRequestCreateTerminal,
   onRequestOpenTerminalDrawer
 }: TerminalWorkspacePaneProps) {
+  const platform = usePlatform();
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
+  const paneCardRef = useRef<HTMLElement | null>(null);
+  const selectionMenuRef = useRef<HTMLDivElement | null>(null);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
   const realtimeClientRef = useRef<TerminalRealtimeClient | null>(null);
   const viewportRuntimeRef = useRef<TerminalViewportRuntime | null>(null);
@@ -3331,6 +3340,8 @@ function TerminalWorkspacePane({
   const initialBackfillAppliedRef = useRef(false);
   const pendingLiveOutputRef = useRef<TerminalOutputChunkDto[]>([]);
   const activePaneRef = useRef(active);
+  const [selectionContextMenu, setSelectionContextMenu] =
+    useState<TerminalSelectionContextMenuState | null>(null);
   const useKeyboardFallback = !isMobileLayout;
 
   const forwardTerminalInput = useCallback((content: string) => {
@@ -3340,6 +3351,48 @@ function TerminalWorkspacePane({
 
     realtimeClientRef.current?.sendInput(content);
   }, []);
+
+  const closeSelectionContextMenu = useCallback(() => {
+    setSelectionContextMenu(null);
+  }, []);
+
+  const readSelectedTerminalText = useCallback((): string => {
+    const runtime = viewportRuntimeRef.current;
+    const selectionFromTerminal =
+      typeof runtime?.terminal.getSelection === "function" ? runtime.terminal.getSelection() : "";
+
+    if (selectionFromTerminal.trim()) {
+      return selectionFromTerminal.trim();
+    }
+
+    const selection = typeof document === "undefined" ? null : document.getSelection();
+    return selection?.toString().trim() ?? "";
+  }, []);
+
+  const handleCopySelectedText = useCallback(async () => {
+    const text = selectionContextMenu?.text ?? readSelectedTerminalText();
+
+    if (!text) {
+      closeSelectionContextMenu();
+      return;
+    }
+
+    const result = await platform.bridge.writeClipboardText(text);
+
+    if (!result.ok) {
+      notifyTerminal(result.detail || t("common.copyFailed"), "error");
+      return;
+    }
+
+    closeSelectionContextMenu();
+    viewportRuntimeRef.current?.focus();
+  }, [
+    closeSelectionContextMenu,
+    notifyTerminal,
+    platform.bridge,
+    readSelectedTerminalText,
+    selectionContextMenu?.text
+  ]);
 
   const updateOldestLoadedSeq = useCallback((cursor: string | null | undefined) => {
     const value = Number(cursor);
@@ -3447,6 +3500,10 @@ function TerminalWorkspacePane({
   }, [terminal?.status]);
 
   useEffect(() => {
+    closeSelectionContextMenu();
+  }, [closeSelectionContextMenu, terminal?.id]);
+
+  useEffect(() => {
     activePaneRef.current = active;
   }, [active]);
 
@@ -3455,6 +3512,40 @@ function TerminalWorkspacePane({
       viewportRuntimeRef.current?.focus();
     }
   }, [active, terminal?.id]);
+
+  useEffect(() => {
+    if (!selectionContextMenu) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent): void {
+      const target = event.target as Node | null;
+
+      if (target && (selectionMenuRef.current?.contains(target) ?? false)) {
+        return;
+      }
+
+      closeSelectionContextMenu();
+    }
+
+    function handleEscape(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        closeSelectionContextMenu();
+      }
+    }
+
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("scroll", closeSelectionContextMenu, true);
+    window.addEventListener("resize", closeSelectionContextMenu);
+    window.addEventListener("keydown", handleEscape);
+
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("scroll", closeSelectionContextMenu, true);
+      window.removeEventListener("resize", closeSelectionContextMenu);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [closeSelectionContextMenu, selectionContextMenu]);
 
   useEffect(() => {
     viewportRuntimeRef.current?.setFontSize(buildTerminalFontSize(zoomScale));
@@ -3855,19 +3946,55 @@ function TerminalWorkspacePane({
 
   return (
     <article
+      ref={paneCardRef}
       className="terminal-pane-card"
       data-active={active}
       data-empty={!terminal}
       tabIndex={terminal ? 0 : -1}
       onMouseDown={(event) => {
+        closeSelectionContextMenu();
         onActivate(paneId);
         event.currentTarget.focus({ preventScroll: true });
       }}
       onClick={() => {
+        closeSelectionContextMenu();
         viewportRuntimeRef.current?.focus();
       }}
       onKeyDown={handleKeyboardFallback}
       onPaste={handlePasteFallback}
+      onContextMenu={(event) => {
+        if (isMobileLayout || !terminal) {
+          return;
+        }
+
+        const selectedText = readSelectedTerminalText();
+
+        if (!selectedText) {
+          closeSelectionContextMenu();
+          return;
+        }
+
+        const paneRect = paneCardRef.current?.getBoundingClientRect();
+
+        if (!paneRect) {
+          return;
+        }
+
+        event.preventDefault();
+        onActivate(paneId);
+
+        const menuWidth = 164;
+        const menuHeight = 52;
+        const edgePadding = 8;
+        const maxLeft = Math.max(edgePadding, paneRect.width - menuWidth - edgePadding);
+        const maxTop = Math.max(edgePadding, paneRect.height - menuHeight - edgePadding);
+
+        setSelectionContextMenu({
+          text: selectedText,
+          left: clampNumber(event.clientX - paneRect.left, edgePadding, maxLeft),
+          top: clampNumber(event.clientY - paneRect.top, edgePadding, maxTop)
+        });
+      }}
       onTouchStart={(event) => {
         if (!isMobileLayout) {
           return;
@@ -3918,6 +4045,39 @@ function TerminalWorkspacePane({
       {terminal ? (
         <div className="terminal-canvas">
           <div ref={terminalContainerRef} className="terminal-xterm" />
+          {selectionContextMenu ? (
+            <div
+              ref={selectionMenuRef}
+              className="terminal-selection-menu"
+              style={{
+                top: selectionContextMenu.top,
+                left: selectionContextMenu.left
+              }}
+              role="menu"
+              aria-label={t("common.copy")}
+              onMouseDown={(event) => {
+                event.stopPropagation();
+              }}
+              onClick={(event) => {
+                event.stopPropagation();
+              }}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+            >
+              <button
+                type="button"
+                className="terminal-selection-menu-action"
+                role="menuitem"
+                onClick={() => {
+                  void handleCopySelectedText();
+                }}
+              >
+                {t("common.copy")}
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : pendingCreation ? (
         <div className="terminal-empty-state terminal-empty-state-inline terminal-pending-state">

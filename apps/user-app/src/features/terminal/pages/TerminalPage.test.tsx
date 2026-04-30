@@ -85,6 +85,7 @@ const {
       };
     };
     renderedContent: string;
+    selectionText: string;
     triggerScroll: (viewportY: number) => void;
     triggerWheel: (deltaY: number, deltaMode?: number) => boolean;
   }>,
@@ -246,6 +247,7 @@ vi.mock("@xterm/xterm", () => ({
     cols = 120;
     rows = 30;
     renderedContent = "";
+    selectionText = "";
     element: HTMLElement | null = null;
     _core = {
       _renderService: {
@@ -342,6 +344,10 @@ vi.mock("@xterm/xterm", () => ({
       this.renderedContent += _content;
       this.buffer.active.baseY = Math.max(0, this.renderedContent.split("\r\n").length - 2);
       callback?.();
+    }
+
+    getSelection() {
+      return this.selectionText;
     }
 
     focus() {
@@ -1057,6 +1063,52 @@ describe("TerminalPage", () => {
         cols: 98,
         rows: 19
       });
+    });
+  });
+
+  it("桌面端终端选中文本后右键会出现复制，并写入系统剪贴板", async () => {
+    const invokeMock = enableDesktopRuntime(
+      vi.fn(async (command: string) => {
+        if (command === "copy_text") {
+          return {
+            ok: true
+          };
+        }
+
+        return undefined;
+      }) as unknown as <T>(command: string, args?: Record<string, unknown>) => Promise<T>
+    );
+
+    setTerminalManagerSnapshot("workspace-1", [buildTerminal()]);
+
+    renderPage();
+
+    await screen.findByText("工作终端");
+    const terminalMarker = await screen.findByTestId("mock-xterm");
+    const paneCard = terminalMarker.closest(".terminal-pane-card");
+
+    if (!paneCard) {
+      throw new Error("未找到终端容器");
+    }
+
+    mockXtermInstances[0]!.selectionText = "ts error line";
+
+    fireEvent.contextMenu(paneCard, {
+      clientX: 80,
+      clientY: 96
+    });
+
+    const copyMenuItem = await screen.findByRole("menuitem", { name: "复制" });
+    await userEvent.click(copyMenuItem);
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("copy_text", {
+        text: "ts error line"
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("menuitem", { name: "复制" })).not.toBeInTheDocument();
     });
   });
 
