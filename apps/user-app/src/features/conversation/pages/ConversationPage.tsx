@@ -104,6 +104,7 @@ import {
   createWorkspaceToneStyle,
   createFallbackWorkspaceVisualContext
 } from "../../workbench/utils/worktree-visual-context";
+import { getSessionTreeChildren } from "../../workbench/utils/session-tree";
 import { useMobileConversationBottomLayer } from "../../mobile-shell/components/MobileConversationBottomLayerContext";
 import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
 import { MobileCreateSessionSheet } from "../../mobile-sessions/components/MobileCreateSessionSheet";
@@ -379,10 +380,19 @@ function LiveConversationPage({
     [navigationSession, session]
   );
   const supportsParallelSessionFeatures = showInlineHeader;
-  const activeParallelGroupId =
-    supportsParallelSessionFeatures && shouldUseParallelConversationLayout(currentSessionSummary)
-      ? currentSessionSummary?.parallelGroup?.groupId ?? null
-      : null;
+  const activeParallelGroupId = useMemo(() => {
+    if (!supportsParallelSessionFeatures) {
+      return null;
+    }
+
+    if (shouldUseParallelConversationLayout(currentSessionSummary)) {
+      return currentSessionSummary?.parallelGroup?.groupId ?? null;
+    }
+
+    const navigationTree = buildNavigationSessionTree(flattenedNavigationEntries);
+    const parallelAncestorId = findParallelAncestorGroupId(navigationTree, sessionId);
+    return parallelAncestorId;
+  }, [currentSessionSummary, flattenedNavigationEntries, sessionId, supportsParallelSessionFeatures]);
   const mobileMainGestureHandlers = !showInlineHeader
     ? mergeMobileGestureHandlers(mobilePreview.mainGestureHandlers, mobileToolPanel.mainGestureHandlers)
     : null;
@@ -895,6 +905,49 @@ function LiveConversationPage({
       ) : null}
     </>
   );
+}
+
+function findParallelAncestorGroupId(
+  nodes: readonly WorkbenchNavigationTreeNode[],
+  sessionId: string
+): string | null {
+  const normalizedSessionId = sessionId.trim();
+
+  if (!normalizedSessionId) {
+    return null;
+  }
+
+  for (const node of nodes) {
+    const groupId = findParallelAncestorGroupIdInNode(node, normalizedSessionId, null);
+
+    if (groupId) {
+      return groupId;
+    }
+  }
+
+  return null;
+}
+
+function findParallelAncestorGroupIdInNode(
+  node: WorkbenchNavigationTreeNode,
+  sessionId: string,
+  inheritedGroupId: string | null
+): string | null {
+  const nextInheritedGroupId = node.item.session.parallelGroup?.groupId?.trim() || inheritedGroupId;
+
+  if (node.item.session.sessionId === sessionId) {
+    return nextInheritedGroupId;
+  }
+
+  for (const childNode of getSessionTreeChildren(node)) {
+    const groupId = findParallelAncestorGroupIdInNode(childNode, sessionId, nextInheritedGroupId);
+
+    if (groupId) {
+      return groupId;
+    }
+  }
+
+  return null;
 }
 
 function DraftConversationPage({

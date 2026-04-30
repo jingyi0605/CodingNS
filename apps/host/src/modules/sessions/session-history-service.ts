@@ -3147,8 +3147,15 @@ export class SessionHistoryService {
           record.lifecycleStatus === "active"
           || record.lifecycleStatus === "removing"
       )
-      .map((record) => this.sessionIndexRepository.findBySessionId(record.ownerSessionId, userId))
-      .filter((item): item is SessionListItem => Boolean(item))
+      .flatMap((record) => {
+        const isolatedWorkspaceItems = this.sessionIndexRepository.listByWorkspace(record.workspaceId, userId);
+
+        if (isolatedWorkspaceItems.length === 0) {
+          return [];
+        }
+
+        return filterProjectedIsolatedWorkspaceSessionTree(isolatedWorkspaceItems, record.ownerSessionId);
+      })
       .filter((item) => !this.isPendingSessionAlias(item));
   }
 
@@ -4681,6 +4688,59 @@ export class SessionHistoryService {
       updatedAt: nowIso()
     });
   }
+}
+
+function filterProjectedIsolatedWorkspaceSessionTree(
+  items: readonly SessionListItem[],
+  ownerSessionId: string
+): SessionListItem[] {
+  const normalizedOwnerSessionId = ownerSessionId.trim();
+
+  if (!normalizedOwnerSessionId) {
+    return [];
+  }
+
+  const itemBySessionId = new Map(items.map((item) => [item.sessionId, item] as const));
+  const ownerItem = itemBySessionId.get(normalizedOwnerSessionId);
+
+  if (!ownerItem) {
+    return [];
+  }
+
+  const childSessionIdsByParentId = new Map<string, string[]>();
+
+  for (const item of items) {
+    const parentSessionId = item.parentSessionId?.trim();
+
+    if (!parentSessionId) {
+      continue;
+    }
+
+    const sessionIds = childSessionIdsByParentId.get(parentSessionId) ?? [];
+    sessionIds.push(item.sessionId);
+    childSessionIdsByParentId.set(parentSessionId, sessionIds);
+  }
+
+  const projectedSessionIds = new Set<string>();
+  const queue = [normalizedOwnerSessionId];
+
+  while (queue.length > 0) {
+    const currentSessionId = queue.shift();
+
+    if (!currentSessionId || projectedSessionIds.has(currentSessionId)) {
+      continue;
+    }
+
+    projectedSessionIds.add(currentSessionId);
+
+    for (const childSessionId of childSessionIdsByParentId.get(currentSessionId) ?? []) {
+      if (!projectedSessionIds.has(childSessionId)) {
+        queue.push(childSessionId);
+      }
+    }
+  }
+
+  return items.filter((item) => projectedSessionIds.has(item.sessionId));
 }
 
 function isProviderCliBacked(

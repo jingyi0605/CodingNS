@@ -30081,6 +30081,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
  .session-isolated-workspace-badge {
    display: inline-flex;
    align-items: center;
+   flex-shrink: 0;
    min-height: 20px;
    padding: 0 8px;
    border-radius: 999px;
@@ -30090,6 +30091,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
    font-size: 10px;
    font-weight: 700;
    letter-spacing: 0.03em;
+   white-space: nowrap;
  }
 
  .session-parallel-role-badge {
@@ -31126,6 +31128,137 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
  .parallel-conversation-pane .permission-request-list,
  .parallel-conversation-pane .queued-message-list {
    flex-shrink: 0;
+ }
+
+ .parallel-conversation-subagent-section {
+   flex-shrink: 0;
+   display: flex;
+   flex-direction: column;
+   gap: 6px;
+   padding: 2px 0 0;
+ }
+
+ .parallel-conversation-subagent-toggle {
+   display: inline-flex;
+   width: fit-content;
+   max-width: 100%;
+   align-items: center;
+   gap: 8px;
+   padding: 4px 10px;
+   border-radius: 999px;
+   border: 1px solid color-mix(in srgb, var(--parallel-group-accent) 18%, var(--hairline));
+   background: color-mix(in srgb, var(--parallel-group-surface) 72%, var(--bg-surface));
+   color: var(--text-secondary);
+ }
+
+ .parallel-conversation-subagent-toggle:hover,
+ .parallel-conversation-subagent-toggle:focus-visible {
+   border-color: color-mix(in srgb, var(--parallel-group-accent) 28%, var(--hairline));
+   background: color-mix(in srgb, var(--parallel-group-soft) 68%, var(--bg-surface));
+   color: var(--text-primary);
+ }
+
+ .parallel-conversation-subagent-toggle-icon,
+ .parallel-conversation-subagent-toggle-icon svg {
+   width: 14px;
+   height: 14px;
+   flex-shrink: 0;
+ }
+
+ .parallel-conversation-subagent-toggle-label {
+   min-width: 0;
+   font-size: 12px;
+   font-weight: 600;
+ }
+
+ .parallel-conversation-subagent-toggle-count {
+   display: inline-flex;
+   min-width: 18px;
+   align-items: center;
+   justify-content: center;
+   padding: 0 6px;
+   border-radius: 999px;
+   background: color-mix(in srgb, var(--parallel-group-accent) 14%, transparent);
+   color: var(--text-tertiary);
+   font-size: 11px;
+   font-variant-numeric: tabular-nums;
+ }
+
+ .parallel-conversation-subagent-list,
+ .parallel-conversation-subagent-children {
+   display: flex;
+   flex-direction: column;
+   gap: 4px;
+ }
+
+ .parallel-conversation-subagent-children {
+   margin-top: 4px;
+ }
+
+ .parallel-conversation-subagent-node {
+   --parallel-subagent-indent: calc(var(--parallel-subagent-depth, 0) * 16px);
+   position: relative;
+   padding-left: calc(var(--parallel-subagent-indent) + 10px);
+ }
+
+ .parallel-conversation-subagent-node::before {
+   content: "";
+   position: absolute;
+   top: 0;
+   bottom: 0;
+   left: calc(var(--parallel-subagent-indent) + 3px);
+   width: 1px;
+   background: color-mix(in srgb, var(--parallel-group-accent) 18%, transparent);
+ }
+
+ .parallel-conversation-subagent-link {
+   position: relative;
+   display: flex;
+   width: 100%;
+   min-width: 0;
+   align-items: center;
+   justify-content: space-between;
+   gap: 10px;
+   padding: 7px 10px;
+   border: 1px solid color-mix(in srgb, var(--parallel-group-accent) 12%, var(--hairline));
+   border-radius: 12px;
+   background: color-mix(in srgb, var(--parallel-group-surface) 48%, var(--bg-surface));
+   text-align: left;
+   color: inherit;
+ }
+
+ .parallel-conversation-subagent-link::before {
+   content: "";
+   position: absolute;
+   top: 50%;
+   left: -9px;
+   width: 9px;
+   border-top: 1px solid color-mix(in srgb, var(--parallel-group-accent) 18%, transparent);
+   transform: translateY(-50%);
+ }
+
+ .parallel-conversation-subagent-link:hover,
+ .parallel-conversation-subagent-link:focus-visible,
+ .parallel-conversation-subagent-link[data-active="true"] {
+   border-color: color-mix(in srgb, var(--parallel-group-accent) 26%, var(--hairline));
+   background: color-mix(in srgb, var(--parallel-group-soft) 52%, var(--bg-surface));
+ }
+
+ .parallel-conversation-subagent-link-main {
+   display: flex;
+   min-width: 0;
+   align-items: center;
+   gap: 8px;
+ }
+
+ .parallel-conversation-subagent-title {
+   min-width: 0;
+   overflow: hidden;
+   text-overflow: ellipsis;
+   white-space: nowrap;
+   color: var(--text-primary);
+   font-size: 12px;
+   font-weight: 600;
  }
 
  .parallel-conversation-empty-state {

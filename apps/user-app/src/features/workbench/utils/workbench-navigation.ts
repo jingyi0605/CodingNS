@@ -87,8 +87,8 @@ export function buildWorkspaceButlerPath(workspaceId: string, tab?: "info" | "au
 export function flattenNavigationSessions(
   groups: readonly WorkbenchNavigationGroup[]
 ): WorkbenchNavigationEntry[] {
-  return groups
-    .flatMap((group) =>
+  return dedupeNavigationEntries(
+    groups.flatMap((group) =>
       [
         ...group.sessions.map((session) => ({
           session,
@@ -97,6 +97,7 @@ export function flattenNavigationSessions(
         ...flattenWorktreeSessions(group.childWorktrees ?? [])
       ]
     )
+  )
     .sort((left, right) =>
       (right.session.lastMessageAt ?? right.session.updatedAt).localeCompare(
         left.session.lastMessageAt ?? left.session.updatedAt
@@ -110,7 +111,7 @@ export function buildNavigationSessionTree(
     mode?: NavigationSessionTreeMode;
   }
 ): WorkbenchNavigationTreeNode[] {
-  return buildSessionTree(entries, {
+  return buildSessionTree(dedupeNavigationEntries(entries), {
     getId: (entry) => entry.session.sessionId,
     getParentId: (entry) => resolveNavigationSessionParentId(entry.session, options),
     compare: sortNavigationEntries
@@ -165,4 +166,24 @@ function flattenWorktreeSessions(
     })),
     ...flattenWorktreeSessions(node.children)
   ]);
+}
+
+function dedupeNavigationEntries(
+  entries: readonly WorkbenchNavigationEntry[]
+): WorkbenchNavigationEntry[] {
+  const uniqueEntries: WorkbenchNavigationEntry[] = [];
+  const seenSessionIds = new Set<string>();
+
+  for (const entry of entries) {
+    const sessionId = entry.session.sessionId.trim();
+
+    if (!sessionId || seenSessionIds.has(sessionId)) {
+      continue;
+    }
+
+    seenSessionIds.add(sessionId);
+    uniqueEntries.push(entry);
+  }
+
+  return uniqueEntries;
 }

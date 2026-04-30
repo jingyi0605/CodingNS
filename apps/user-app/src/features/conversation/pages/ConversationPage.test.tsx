@@ -396,6 +396,81 @@ describe("ConversationPage", () => {
     expect(screen.queryByTestId("session-header")).not.toBeInTheDocument();
   });
 
+  it("桌面端切到并行成员的子 Agent 会话时仍保留并行分屏视图", () => {
+    mockLiveRuntimeState.session = {
+      ...mockLiveRuntimeState.session,
+      sessionId: "session-member-subagent",
+      workspaceId: "workspace-1",
+      parentSessionId: "session-member",
+      isSubagent: true,
+      parallelGroup: null
+    };
+    mockUseWorkbenchShell.mockReturnValue(
+      createMobileWorkbenchShellValue({
+        shellMode: "desktop",
+        navigationGroups: [
+          {
+            workspace: {
+              id: "workspace-1",
+              name: "工作区一",
+              path: "/Users/jackson/workspace-1"
+            },
+            sessions: [
+              {
+                ...mockLiveRuntimeState.session,
+                sessionId: "session-anchor",
+                parentSessionId: null,
+                isSubagent: false,
+                parallelGroup: {
+                  groupId: "parallel-group-1",
+                  role: "anchor",
+                  memberCount: 2,
+                  sourceType: "new",
+                  sourceSessionId: null,
+                  anchorSessionId: "session-anchor",
+                  colorToken: "parallel-group-1"
+                }
+              },
+              {
+                ...mockLiveRuntimeState.session,
+                sessionId: "session-member",
+                parentSessionId: "session-anchor",
+                isSubagent: false,
+                parallelGroup: {
+                  groupId: "parallel-group-1",
+                  role: "member",
+                  memberCount: 2,
+                  sourceType: "new",
+                  sourceSessionId: null,
+                  anchorSessionId: "session-anchor",
+                  colorToken: "parallel-group-1"
+                },
+                displayParentSessionId: "session-anchor"
+              },
+              {
+                ...mockLiveRuntimeState.session,
+                sessionId: "session-member-subagent",
+                parentSessionId: "session-member",
+                isSubagent: true,
+                parallelGroup: null
+              }
+            ],
+            childWorktrees: []
+          }
+        ]
+      })
+    );
+
+    renderLiveConversationPage({
+      initialEntry: "/workspaces/workspace-1/sessions/session-member-subagent"
+    });
+
+    expect(screen.getByTestId("parallel-conversation-group-view")).toHaveTextContent(
+      "parallel:parallel-group-1:session-member-subagent"
+    );
+    expect(screen.queryByTestId("session-header")).not.toBeInTheDocument();
+  });
+
   it("桌面端已升级为子工作区的并行会话按普通会话展示", () => {
     mockLiveRuntimeState.session = {
       ...mockLiveRuntimeState.session,
