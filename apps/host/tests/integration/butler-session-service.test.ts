@@ -869,11 +869,12 @@ describe("ButlerSessionService", () => {
     const createdCheckpoints: Array<{ summary: string; sourceKind: string }> = [];
     const butlerSessionRepository = {
       listByProject: vi.fn(() => createdSessions),
+      findBySessionId: vi.fn(() => null),
       create: vi.fn((record: ButlerSession) => {
         createdSessions.push(record);
         return record;
       })
-    } satisfies Pick<ButlerSessionRepository, "listByProject" | "create">;
+    } satisfies Pick<ButlerSessionRepository, "listByProject" | "findBySessionId" | "create">;
 
     const service = new ButlerSessionService(
       {
@@ -915,6 +916,133 @@ describe("ButlerSessionService", () => {
     expect(result[0]?.status).toBe("running");
     expect(createdSessions).toHaveLength(1);
     expect(createdCheckpoints[0]?.sourceKind).toBe("snapshot");
+  });
+
+  it("自动导入工作区会话时遇到重复 session_id，不会因为唯一键冲突打断同步", async () => {
+    const project: ButlerProject = {
+      id: "project-auto-duplicate",
+      workspaceId: "workspace-auto-duplicate",
+      name: "repo-auto-duplicate",
+      repoRoot: "/tmp/repo-auto-duplicate",
+      defaultProvider: "codex",
+      instructionProfileId: null,
+      approvalMode: "controlled",
+      lifecycleStatus: "active",
+      riskLevel: "low",
+      config: {
+        managedBy: "workspace-auto"
+      },
+      lastPatrolAt: null,
+      lastVerificationAt: null,
+      createdAt: "2026-04-02T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:00:00.000Z",
+      archivedAt: null
+    };
+    const workspaceSession: SessionListItem = {
+      sessionId: "session-auto-duplicate",
+      workspaceId: project.workspaceId,
+      provider: "codex",
+      providerSessionId: "provider-session-auto-duplicate",
+      rawStoreRef: "raw-auto-duplicate",
+      parentSessionId: null,
+      isSubagent: false,
+      subagentLabel: null,
+      isArchived: false,
+      isFavorite: false,
+      title: "重复导入的会话",
+      messageCount: 5,
+      lastMessageAt: "2026-04-02T00:10:00.000Z",
+      createdAt: "2026-04-02T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:10:00.000Z",
+      syncStatus: "idle",
+      syncCursor: null,
+      lastSyncAt: "2026-04-02T00:10:00.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      runningState: "running",
+      activitySource: "runtime",
+      activityResolutionSource: "authoritative_runtime",
+      activityConfidence: "authoritative",
+      runId: null,
+      lastEventAt: "2026-04-02T00:10:00.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      watchdogTriggeredAt: null,
+      activityState: "running"
+    };
+    const existingSession: ButlerSession = {
+      id: "butler-session-existing",
+      projectId: "project-another",
+      sessionId: workspaceSession.sessionId,
+      role: "adhoc",
+      ownershipMode: "observed",
+      status: "running",
+      lastSummary: "已有会话",
+      lastCheckpointAt: "2026-04-02T00:10:00.000Z",
+      createdAt: "2026-04-02T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:10:00.000Z"
+    };
+    const createError = Object.assign(
+      new Error("UNIQUE constraint failed: butler_sessions.session_id"),
+      {
+        code: "SQLITE_CONSTRAINT_UNIQUE"
+      }
+    );
+    const createdCheckpoints: Array<{ summary: string; sourceKind: string }> = [];
+    let findBySessionIdCallCount = 0;
+
+    const service = new ButlerSessionService(
+      {
+        findById: vi.fn(() => project)
+      } satisfies Pick<ButlerProjectRepository, "findById"> as ButlerProjectRepository,
+      {
+        listByProject: vi.fn(() => []),
+        findBySessionId: vi.fn(() => {
+          findBySessionIdCallCount += 1;
+          return findBySessionIdCallCount >= 2 ? existingSession : null;
+        }),
+        create: vi.fn(() => {
+          throw createError;
+        })
+      } satisfies Pick<ButlerSessionRepository, "listByProject" | "findBySessionId" | "create"> as ButlerSessionRepository,
+      {
+        getLatestSeq: vi.fn(() => createdCheckpoints.length),
+        create: vi.fn((record) => {
+          createdCheckpoints.push({
+            summary: record.summary,
+            sourceKind: record.sourceKind
+          });
+          return record;
+        })
+      } satisfies Pick<SessionCheckpointRepository, "getLatestSeq" | "create"> as SessionCheckpointRepository,
+      {
+        findBySessionId: vi.fn(() => ({
+          sessionId: workspaceSession.sessionId,
+          workspaceId: project.workspaceId,
+          provider: "codex",
+          providerSessionId: workspaceSession.providerSessionId,
+          rawStoreRef: workspaceSession.rawStoreRef,
+          createdAt: workspaceSession.createdAt,
+          updatedAt: workspaceSession.updatedAt
+        }))
+      } satisfies Pick<SessionBindingRepository, "findBySessionId"> as SessionBindingRepository,
+      {
+        findIndexRecordBySessionId: vi.fn(() => null)
+      } satisfies Pick<SessionIndexRepository, "findIndexRecordBySessionId"> as SessionIndexRepository,
+      {
+        findBySessionAndUser: vi.fn(() => null)
+      } satisfies Pick<SessionStateRepository, "findBySessionAndUser"> as SessionStateRepository,
+      undefined,
+      {
+        discoverWorkspaceSessions: vi.fn(async () => [workspaceSession]),
+        listWorkspaceSessions: vi.fn(() => [workspaceSession]),
+        resumeSession: vi.fn()
+      }
+    );
+
+    await expect(service.ensureProjectSessionsSynced(project.id, "user-1")).resolves.toBeUndefined();
+    expect(createdCheckpoints).toHaveLength(0);
   });
 
   it("默认不会返回归档会话，显式开启后才会包含", () => {

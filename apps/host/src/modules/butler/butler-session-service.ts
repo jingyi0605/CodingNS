@@ -770,16 +770,22 @@ export class ButlerSessionService {
     const workspaceSessions = this.sessionHistoryService.listWorkspaceSessions(project.workspaceId, userId);
 
     for (const session of workspaceSessions) {
+      const existing = this.butlerSessionRepository.findBySessionId(session.sessionId);
+
       if (
         session.isSubagent
         || (!includeArchived && session.isArchived)
         || existingSessionIds.has(session.sessionId)
+        || Boolean(existing)
       ) {
         continue;
       }
 
-      this.createObservedSession(project, session, userId);
-      existingSessionIds.add(session.sessionId);
+      const created = this.createObservedSession(project, session, userId);
+
+      if (created) {
+        existingSessionIds.add(session.sessionId);
+      }
     }
   }
 
@@ -787,7 +793,13 @@ export class ButlerSessionService {
     project: ButlerProject,
     session: ReturnType<SessionHistoryService["listWorkspaceSessions"]>[number],
     userId: string
-  ): void {
+  ): ButlerSession | null {
+    const existing = this.butlerSessionRepository.findBySessionId(session.sessionId);
+
+    if (existing) {
+      return existing.projectId === project.id ? existing : null;
+    }
+
     const state = this.sessionStateRepository.findBySessionAndUser(session.sessionId, userId);
     const normalizedRunningState = normalizeRunningState(session.runningState ?? state?.runningState ?? null);
     const timestamp = nowIso();
@@ -795,18 +807,33 @@ export class ButlerSessionService {
     const checkpointProgressState = mapCheckpointProgressState(normalizedRunningState);
     const checkpointRiskFlags = buildCheckpointRiskFlags(normalizedRunningState);
     const checkpointActions = buildCheckpointNextActions(checkpointProgressState);
-    const created = this.butlerSessionRepository.create({
-      id: createId(),
-      projectId: project.id,
-      sessionId: session.sessionId,
-      role: "adhoc",
-      ownershipMode: "observed",
-      status: mapButlerStatusFromRunningState(normalizedRunningState),
-      lastSummary: checkpointSummary,
-      lastCheckpointAt: timestamp,
-      createdAt: session.createdAt,
-      updatedAt: session.updatedAt
-    });
+    const recordId = createId();
+    let created: ButlerSession;
+
+    try {
+      created = this.butlerSessionRepository.create({
+        id: recordId,
+        projectId: project.id,
+        sessionId: session.sessionId,
+        role: "adhoc",
+        ownershipMode: "observed",
+        status: mapButlerStatusFromRunningState(normalizedRunningState),
+        lastSummary: checkpointSummary,
+        lastCheckpointAt: timestamp,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt
+      });
+    } catch (error) {
+      if (isButlerSessionUniqueConstraintError(error)) {
+        return this.butlerSessionRepository.findBySessionId(session.sessionId);
+      }
+
+      throw error;
+    }
+
+    if (created.id !== recordId) {
+      return created;
+    }
 
     this.sessionCheckpointRepository.create({
       id: createId(),
@@ -819,6 +846,8 @@ export class ButlerSessionService {
       nextActions: checkpointActions,
       capturedAt: timestamp
     });
+
+    return created;
   }
 }
 
@@ -851,6 +880,15 @@ function mapButlerStatusFromRunningState(runningState: SessionRunningState | nul
     default:
       return "idle";
   }
+}
+
+function isButlerSessionUniqueConstraintError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const code = "code" in error ? (error as { code?: unknown }).code : null;
+  return code === "SQLITE_CONSTRAINT_UNIQUE" && error.message.includes("butler_sessions.session_id");
 }
 
 function mapCheckpointProgressState(
