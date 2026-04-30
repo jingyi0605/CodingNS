@@ -1375,6 +1375,16 @@ export async function listProviderCatalog(): Promise<ProviderCatalogEntryDto[]> 
   return response.items;
 }
 
+export async function refreshProviderCatalog(): Promise<ProviderCatalogEntryDto[]> {
+  const response = await httpClient.request<{ items: ProviderCatalogEntryDto[] }>(
+    "/api/providers/catalog/refresh",
+    {
+      method: "POST"
+    }
+  );
+  return response.items;
+}
+
 export async function updateProviderCatalogEntry(
   provider: ProviderId,
   enabled: boolean

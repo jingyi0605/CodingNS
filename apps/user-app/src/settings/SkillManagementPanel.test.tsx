@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clientConfigStore } from "../config/client-config-store";
 import { authStore } from "../features/auth/store/auth-store";
+import { clearProviderCatalogStore } from "../features/conversation/capability/provider-catalog-store";
 import { I18nProvider, t } from "../shared/i18n";
 import { SkillManagementPanel } from "./SkillManagementPanel";
 
@@ -27,6 +28,7 @@ describe("SkillManagementPanel", () => {
     vi.restoreAllMocks();
     global.fetch = originalFetch;
     authStore.clear();
+    clearProviderCatalogStore();
   });
 
   it("可以加载 Skill 概况，并支持导入未纳管项与重新同步", async () => {

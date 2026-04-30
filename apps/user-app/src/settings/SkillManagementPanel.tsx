@@ -1,8 +1,6 @@
-import { useEffect, useId, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 
 import { ModalCloseButton } from "../components/ModalCloseButton";
-import type { ProviderCatalogEntryDto } from "../features/conversation/api/conversation-api";
-import { listProviderCatalog } from "../features/conversation/api/conversation-api";
 import type {
   AssistantRuntimeSkillOverviewItemDto,
   ManagedSkillOverviewItemDto,
@@ -21,6 +19,7 @@ import {
 } from "../features/settings/api/skills-api";
 import { WorkbenchModal } from "../features/conversation/components/WorkbenchModal";
 import { useAuthSelector } from "../features/auth/store/auth-store";
+import { useProviderCatalog } from "../features/conversation/capability/provider-catalog-store";
 import { t } from "../shared/i18n";
 import { ApiError } from "../shared/network/api-error";
 import {
@@ -52,7 +51,6 @@ export function SkillManagementPanel({
   const accessToken = useAuthSelector((state) => state.session?.accessToken ?? null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const [overview, setOverview] = useState<SkillOverviewDto | null>(null);
-  const [providerCatalog, setProviderCatalog] = useState<ProviderCatalogEntryDto[]>([]);
   const [loading, setLoading] = useState(false);
   const [pendingActionKey, setPendingActionKey] = useState<PendingActionKey>(null);
   const [panelError, setPanelError] = useState<string | null>(null);
@@ -69,7 +67,12 @@ export function SkillManagementPanel({
   const [activeTab, setActiveTab] = useState<SkillManagementTabId>("skills");
   const [openCliToolbarState, setOpenCliToolbarState] = useState<OpenCliManagementToolbarState | null>(null);
   const tabsBaseId = useId();
-  const providerCatalogByTargetCli = buildSkillTargetCatalogMap(providerCatalog);
+  const providerCatalogState = useProviderCatalog(modalOpen && Boolean(accessToken));
+  const providerCatalogItems = providerCatalogState.items ?? [];
+  const providerCatalogByTargetCli = useMemo(
+    () => buildSkillTargetCatalogMap(providerCatalogItems),
+    [providerCatalogItems]
+  );
 
   useEffect(() => {
     let active = true;
@@ -80,7 +83,6 @@ export function SkillManagementPanel({
 
     if (!accessToken) {
       setOverview(null);
-      setProviderCatalog([]);
       setPanelError(null);
       setStatusText(null);
       setLoading(false);
@@ -91,17 +93,13 @@ export function SkillManagementPanel({
       setLoading(true);
 
       try {
-        const [nextOverview, nextProviderCatalog] = await Promise.all([
-          fetchSkillOverview(),
-          listProviderCatalog()
-        ]);
+        const nextOverview = await fetchSkillOverview();
 
         if (!active) {
           return;
         }
 
         setOverview(nextOverview);
-        setProviderCatalog(nextProviderCatalog);
         setPanelError(null);
       } catch (error) {
         if (!active) {
@@ -124,12 +122,8 @@ export function SkillManagementPanel({
   }, [accessToken, modalOpen]);
 
   async function reloadPanelData(): Promise<void> {
-    const [nextOverview, nextProviderCatalog] = await Promise.all([
-      fetchSkillOverview(),
-      listProviderCatalog()
-    ]);
+    const nextOverview = await fetchSkillOverview();
     setOverview(nextOverview);
-    setProviderCatalog(nextProviderCatalog);
     setPanelError(null);
   }
 

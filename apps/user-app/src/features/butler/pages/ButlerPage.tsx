@@ -19,9 +19,9 @@ import { useToast } from "../../../shared/toast";
 import { ModalList, ModalListItem } from "../../../components/ModalAtoms";
 import {
   deleteSession,
-  listProviderCatalog,
   type ProviderCatalogEntryDto
 } from "../../conversation/api/conversation-api";
+import { useProviderCatalog } from "../../conversation/capability/provider-catalog-store";
 import { ComposerPanel } from "../../conversation/components/ComposerPanel";
 import { FileContextPanel } from "../../conversation/components/FileContextPanel";
 import { MessageTimeline } from "../../conversation/components/MessageTimeline";
@@ -276,7 +276,7 @@ export function ButlerPage() {
   const [cancellingTimerId, setCancellingTimerId] = useState<string | null>(null);
   const [executingTimerId, setExecutingTimerId] = useState<string | null>(null);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
-  const [providerCatalog, setProviderCatalog] = useState<ProviderCatalogEntryDto[] | null>(null);
+  const { items: providerCatalog } = useProviderCatalog(true);
   const controlHistoryButtonRef = useRef<HTMLDivElement | null>(null);
   const controlHistoryPopoverRef = useRef<HTMLDivElement | null>(null);
   const controlHistorySearchInputRef = useRef<HTMLInputElement>(null);
@@ -318,26 +318,6 @@ export function ButlerPage() {
   const permissionToastSessionIdRef = useRef<string | null>(null);
   const permissionToastBaselineReadyRef = useRef(false);
   const pendingPermissionRequestIdsRef = useRef<Set<string>>(new Set());
-
-  useEffect(() => {
-    let disposed = false;
-
-    void listProviderCatalog()
-      .then((items) => {
-        if (!disposed) {
-          setProviderCatalog(items);
-        }
-      })
-      .catch(() => {
-        if (!disposed) {
-          setProviderCatalog(null);
-        }
-      });
-
-    return () => {
-      disposed = true;
-    };
-  }, []);
 
   const butlerDisplayName = profile?.displayName?.trim() || initForm.displayName.trim() || t("shell.butlerEntry");
   const butlerAvatar = useMemo(

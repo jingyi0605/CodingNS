@@ -4,12 +4,15 @@ import { DesktopModal } from "../components/DesktopModal";
 import { MobileSheet } from "../components/MobileSheet";
 import { ModalActions, ModalEmptyState, ModalSection, ModalTag } from "../components/ModalAtoms";
 import type { ProviderCatalogEntryDto } from "../features/conversation/api/conversation-api";
-import {
-  listProviderCatalog,
-  updateProviderCatalogEntry
-} from "../features/conversation/api/conversation-api";
+import { updateProviderCatalogEntry } from "../features/conversation/api/conversation-api";
 import { useAuthSelector } from "../features/auth/store/auth-store";
 import { clearSessionProviderPickerCapabilityCache } from "../features/conversation/components/SessionProviderPicker";
+import {
+  ensureProviderCatalogLoaded,
+  refreshProviderCatalogStore,
+  setProviderCatalogEntryEnabled,
+  useProviderCatalog
+} from "../features/conversation/capability/provider-catalog-store";
 import { usePlatform } from "../platform/platform-provider";
 import { t } from "../shared/i18n";
 import { ApiError } from "../shared/network/api-error";
@@ -56,11 +59,10 @@ export function ProviderManagementPanel() {
   const platform = usePlatform();
   const accessToken = useAuthSelector((state) => state.session?.accessToken ?? null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [items, setItems] = useState<ProviderCatalogEntryDto[] | null>(null);
-  const [loading, setLoading] = useState(false);
   const [pendingProvider, setPendingProvider] = useState<string | null>(null);
   const [statusText, setStatusText] = useState<string | null>(null);
   const [panelError, setPanelError] = useState<string | null>(null);
+  const { items, loading } = useProviderCatalog(modalOpen && Boolean(accessToken));
   const capabilityColumns = PRODUCT_CAPABILITY_COLUMNS.map((column) => ({
     ...column,
     label: t(column.labelKey)
@@ -72,32 +74,22 @@ export function ProviderManagementPanel() {
     }
 
     setModalOpen(false);
-    setItems(null);
-    setLoading(false);
     setPendingProvider(null);
     setStatusText(null);
     setPanelError(null);
   }, [accessToken]);
 
-  async function loadCatalog(options: { showRefreshSuccess?: boolean } = {}): Promise<void> {
+  async function loadCatalog(): Promise<void> {
     if (!accessToken) {
       return;
     }
 
-    setLoading(true);
     setPanelError(null);
 
     try {
-      const nextItems = await listProviderCatalog();
-      setItems(nextItems);
-
-      if (options.showRefreshSuccess) {
-        setStatusText(t("settings.providerManagementRefreshSuccess"));
-      }
+      await ensureProviderCatalogLoaded(true);
     } catch (error) {
       setPanelError(resolveProviderManagementError(error, "load"));
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -122,9 +114,8 @@ export function ProviderManagementPanel() {
     setStatusText(null);
 
     try {
-      const nextEntry = await updateProviderCatalogEntry(entry.provider, nextEnabled);
+      await setProviderCatalogEntryEnabled(entry.provider, nextEnabled);
       clearSessionProviderPickerCapabilityCache();
-      setItems((current) => replaceProviderEntry(current, nextEntry));
       setStatusText(
         nextEnabled
           ? t("settings.providerManagementEnableSuccess", { provider: entry.displayName })
@@ -132,8 +123,23 @@ export function ProviderManagementPanel() {
       );
     } catch (error) {
       setPanelError(resolveProviderManagementError(error, "save"));
-    } finally {
-      setPendingProvider(null);
+    }
+    setPendingProvider(null);
+  }
+
+  async function handleRefresh(): Promise<void> {
+    if (!accessToken) {
+      return;
+    }
+
+    setPanelError(null);
+    setStatusText(null);
+
+    try {
+      await refreshProviderCatalogStore();
+      setStatusText(t("settings.providerManagementRefreshSuccess"));
+    } catch (error) {
+      setPanelError(resolveProviderManagementError(error, "load"));
     }
   }
 
@@ -177,15 +183,15 @@ export function ProviderManagementPanel() {
             title={t("settings.providerManagementEmpty")}
             description={t("settings.providerManagementEmptyDescription")}
             action={(
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={!accessToken}
-                onClick={() => {
-                  void loadCatalog();
-                }}
-              >
-                {t("settings.providerManagementRefresh")}
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={!accessToken}
+                  onClick={() => {
+                  void handleRefresh();
+                  }}
+                >
+                  {t("settings.providerManagementRefresh")}
               </button>
             )}
           />
@@ -281,7 +287,7 @@ export function ProviderManagementPanel() {
           className="secondary-button"
           disabled={!accessToken || loading || pendingProvider !== null}
           onClick={() => {
-            void loadCatalog({ showRefreshSuccess: true });
+            void handleRefresh();
           }}
         >
           {loading ? t("common.loading") : t("settings.providerManagementRefresh")}

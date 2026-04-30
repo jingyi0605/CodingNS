@@ -3,6 +3,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
+import { clearProviderCatalogStore } from "../../conversation/capability/provider-catalog-store";
 
 const setAuxiliaryPanelMock = vi.hoisted(() => vi.fn());
 const navigateMock = vi.hoisted(() => vi.fn());
@@ -286,6 +287,7 @@ describe("ButlerPage", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    clearProviderCatalogStore();
     setAuxiliaryPanelMock.mockReset();
     navigateMock.mockReset();
     clipboardWriteTextMock.mockReset();

@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
+import { clearProviderCatalogStore } from "../capability/provider-catalog-store";
 
 vi.mock("../../../shared/toast", () => ({
   useToast: vi.fn()
@@ -92,6 +93,7 @@ describe("SessionButlerActionButton", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    clearProviderCatalogStore();
     mockedUseToast.mockReturnValue({
       showToast,
       dismissToast: vi.fn()

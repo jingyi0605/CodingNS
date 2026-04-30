@@ -47,7 +47,7 @@ export function SessionProviderPicker({
   onSelect
 }: SessionProviderPickerProps) {
   const haptics = useHaptics();
-  const { visibleProviders } = useEnabledProviderCatalog(providers);
+  const { visibleProviders, ready: providerCatalogReady } = useEnabledProviderCatalog(providers);
   const requiresCapabilityResolution = Boolean(workspaceId);
   const [capabilitiesByProvider, setCapabilitiesByProvider] = useState<
     Partial<Record<ProviderId, ProviderCapabilitiesDto>>
@@ -59,6 +59,11 @@ export function SessionProviderPicker({
   }, []);
 
   useEffect(() => {
+    if (!providerCatalogReady) {
+      setCapabilitiesByProvider({});
+      return;
+    }
+
     if (!workspaceId) {
       setCapabilitiesByProvider({});
       return;
@@ -89,7 +94,19 @@ export function SessionProviderPicker({
     return () => {
       cancelled = true;
     };
-  }, [visibleProviders, workspaceId]);
+  }, [providerCatalogReady, visibleProviders, workspaceId]);
+
+  if (!providerCatalogReady) {
+    return (
+      <div className={`session-provider-grid${className ? ` ${className}` : ""}`}>
+        <div className="session-provider-card" aria-hidden="true" data-placeholder="true">
+          <span className="session-provider-card-copy">
+            <strong>{t("shell.providerChecking")}</strong>
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`session-provider-grid${className ? ` ${className}` : ""}`}>

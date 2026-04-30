@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clientConfigStore } from "../config/client-config-store";
 import { authStore } from "../features/auth/store/auth-store";
+import { clearProviderCatalogStore } from "../features/conversation/capability/provider-catalog-store";
 import { PlatformProvider } from "../platform/platform-provider";
 import { I18nProvider, t } from "../shared/i18n";
 import { ProviderManagementPanel } from "./ProviderManagementPanel";
@@ -36,6 +37,7 @@ describe("ProviderManagementPanel", () => {
     vi.restoreAllMocks();
     global.fetch = originalFetch;
     authStore.clear();
+    clearProviderCatalogStore();
   });
 
   it("设置页先显示入口按钮，打开后再展示能力矩阵", async () => {
@@ -60,6 +62,9 @@ describe("ProviderManagementPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: t("settings.providerManagementManageAction") }));
 
     const dialog = await screen.findByRole("dialog", { name: t("settings.providerManagementModalTitle") });
+    await waitFor(() => {
+      expect(within(dialog).getByText("Codex")).toBeInTheDocument();
+    });
 
     const summaryGrid = within(dialog).getByLabelText(t("settings.providerManagementSummaryTitle"));
     expect(summaryGrid).toBeInTheDocument();
@@ -70,7 +75,6 @@ describe("ProviderManagementPanel", () => {
     expect(within(summaryGrid).getByText("2")).toBeInTheDocument();
     expect(within(summaryGrid).getByText("1")).toBeInTheDocument();
     expect(within(summaryGrid).getByText("3")).toBeInTheDocument();
-    expect(within(dialog).getByText("Codex")).toBeInTheDocument();
     expect(within(dialog).getByText("Claude Code")).toBeInTheDocument();
     expect(within(dialog).getByText("OpenCode")).toBeInTheDocument();
     expect(within(dialog).getByText("1.8.0")).toBeInTheDocument();
@@ -124,6 +128,9 @@ describe("ProviderManagementPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: t("settings.providerManagementManageAction") }));
 
     const dialog = await screen.findByRole("dialog", { name: t("settings.providerManagementModalTitle") });
+    await waitFor(() => {
+      expect(within(dialog).getByText("Claude Code")).toBeInTheDocument();
+    });
     const toggle = within(dialog).getByRole("checkbox", {
       name: t("settings.providerManagementToggleLabel", { provider: "Claude Code" })
     });
@@ -139,6 +146,45 @@ describe("ProviderManagementPanel", () => {
       within(dialog).getByText(t("settings.providerManagementDisableSuccess", { provider: "Claude Code" }))
     ).toBeInTheDocument();
     expect(toggle).not.toBeChecked();
+  });
+
+  it("刷新列表会调用显式刷新接口，而不是普通 catalog 读取", async () => {
+    const requests: Array<{ method: string; url: string }> = [];
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      requests.push({ method, url });
+
+      if (url.endsWith("/api/providers/catalog") && method === "GET") {
+        return createJsonResponse({
+          items: createProviderCatalogResponse()
+        });
+      }
+
+      if (url.endsWith("/api/providers/catalog/refresh") && method === "POST") {
+        return createJsonResponse({
+          items: createProviderCatalogResponse()
+        });
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    }) as typeof fetch;
+
+    renderPanel();
+
+    await userEvent.click(screen.getByRole("button", { name: t("settings.providerManagementManageAction") }));
+    const dialog = await screen.findByRole("dialog", { name: t("settings.providerManagementModalTitle") });
+
+    await userEvent.click(within(dialog).getAllByRole("button", { name: t("settings.providerManagementRefresh") })[0]!);
+
+    await waitFor(() => {
+      expect(
+        requests.some((request) =>
+          request.method === "POST" && request.url.endsWith("/api/providers/catalog/refresh")
+        )
+      ).toBe(true);
+    });
   });
 });
 

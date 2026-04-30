@@ -1,65 +1,29 @@
 import { useEffect, useMemo, useState } from "react";
 
-import {
-  listProviderCatalog,
-  type ProviderCatalogEntryDto,
-  type ProviderId
-} from "../api/conversation-api";
+import type { ProviderCatalogEntryDto, ProviderId } from "../api/conversation-api";
 import { orderProviderIds } from "./provider-ui";
+import { useProviderCatalog } from "./provider-catalog-store";
 
 interface UseEnabledProviderCatalogResult {
   providerCatalog: ProviderCatalogEntryDto[] | null;
   visibleProviders: ProviderId[];
   loading: boolean;
+  ready: boolean;
 }
 
 export function useEnabledProviderCatalog(
   providers: readonly ProviderId[],
   enabled = true
 ): UseEnabledProviderCatalogResult {
-  const [providerCatalog, setProviderCatalog] = useState<ProviderCatalogEntryDto[] | null>(null);
-  const [loading, setLoading] = useState(false);
   const orderedProviders = useMemo(
     () => orderProviderIds(providers),
     [providers]
   );
-  const providersKey = orderedProviders.join("|");
-
-  useEffect(() => {
-    if (!enabled) {
-      setProviderCatalog(null);
-      setLoading(false);
-      return;
-    }
-
-    let disposed = false;
-    setLoading(true);
-
-    void listProviderCatalog()
-      .then((items) => {
-        if (!disposed) {
-          setProviderCatalog(items);
-        }
-      })
-      .catch(() => {
-        if (!disposed) {
-          setProviderCatalog(null);
-        }
-      })
-      .finally(() => {
-        if (!disposed) {
-          setLoading(false);
-        }
-      });
-
-    return () => {
-      disposed = true;
-    };
-  }, [enabled, providersKey]);
+  const { items: providerCatalog, loading, requested } = useProviderCatalog(enabled);
 
   const visibleProviders = useMemo(() => {
     if (!providerCatalog) {
-      return orderedProviders;
+      return requested && !loading ? orderedProviders : [];
     }
 
     const requestedProviderSet = new Set(orderedProviders);
@@ -73,6 +37,7 @@ export function useEnabledProviderCatalog(
   return {
     providerCatalog,
     visibleProviders,
-    loading
+    loading,
+    ready: providerCatalog !== null || (requested && !loading)
   };
 }

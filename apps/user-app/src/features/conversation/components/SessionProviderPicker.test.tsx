@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ProviderCapabilitiesDto, ProviderId } from "../api/conversation-api";
+import { clearProviderCatalogStore } from "../capability/provider-catalog-store";
 import {
   clearSessionProviderPickerCapabilityCache,
   SessionProviderPicker
@@ -27,6 +28,7 @@ vi.mock("../../../shared/haptics", () => ({
 
 describe("SessionProviderPicker", () => {
   beforeEach(() => {
+    clearProviderCatalogStore();
     mockListProviderCatalog.mockReset();
     mockListProviderCapabilities.mockReset();
     mockListProviderCatalog.mockResolvedValue([
@@ -55,7 +57,9 @@ describe("SessionProviderPicker", () => {
     );
 
     expect(screen.getByText(/检查中|Checking/i)).toBeInTheDocument();
-    expect(mockListProviderCapabilities).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(mockListProviderCapabilities).toHaveBeenCalledTimes(1);
+    });
 
     await waitFor(() => {
       expect(screen.getByText("未检测到 Gemini CLI")).toBeInTheDocument();
@@ -72,7 +76,9 @@ describe("SessionProviderPicker", () => {
       />
     );
 
-    expect(screen.getByText("未检测到 Gemini CLI")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("未检测到 Gemini CLI")).toBeInTheDocument();
+    });
     expect(screen.queryByText(/检查中|Checking/i)).not.toBeInTheDocument();
     expect(mockListProviderCapabilities).not.toHaveBeenCalled();
   });
@@ -107,7 +113,9 @@ describe("SessionProviderPicker", () => {
     );
 
     expect(screen.getByText(/检查中|Checking/i)).toBeInTheDocument();
-    expect(mockListProviderCapabilities).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(mockListProviderCapabilities).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("会把 catalog 中已禁用的 provider 从创建入口里隐藏", async () => {
@@ -130,6 +138,33 @@ describe("SessionProviderPicker", () => {
     });
 
     expect(screen.queryByRole("button", { name: "Gemini" })).not.toBeInTheDocument();
+  });
+
+  it("catalog 还没返回前不会先把全部 provider 渲染出来", () => {
+    let resolveCatalog: ((value: Array<{ provider: string; enabled: boolean }>) => void) | null = null;
+    mockListProviderCatalog.mockReturnValue(
+      new Promise((resolve) => {
+        resolveCatalog = resolve;
+      })
+    );
+    mockListProviderCapabilities.mockResolvedValue({});
+
+    render(
+      <SessionProviderPicker
+        workspaceId="workspace-picker-pending-catalog"
+        providers={["codex", "gemini"]}
+        onSelect={() => undefined}
+      />
+    );
+
+    expect(screen.queryByRole("button", { name: "Codex" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Gemini" })).not.toBeInTheDocument();
+    expect(screen.getByText(/检查中|Checking/i)).toBeInTheDocument();
+
+    resolveCatalog?.([
+      { provider: "codex", enabled: true },
+      { provider: "gemini", enabled: false }
+    ]);
   });
 });
 

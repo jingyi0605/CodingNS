@@ -23,7 +23,7 @@ import type {
   ProviderId,
   SessionSummaryDto
 } from "../api/conversation-api";
-import { listProviderCatalog } from "../api/conversation-api";
+import { useProviderCatalog } from "../capability/provider-catalog-store";
 
 interface SessionButlerActionButtonProps {
   session: SessionSummaryDto | null;
@@ -117,7 +117,6 @@ export function SessionButlerActionButton({
   const [actionContext, setActionContext] = useState<ButlerSessionActionContextDto | null>(null);
   const [contextError, setContextError] = useState<string | null>(null);
   const [runningAction, setRunningAction] = useState<ButlerActionKind>(null);
-  const [providerCatalog, setProviderCatalog] = useState<ProviderCatalogEntryDto[] | null>(null);
   const [followUpProviderId, setFollowUpProviderId] = useState<FollowUpProviderId | null>(
     resolveDefaultFollowUpProvider(session?.provider)
   );
@@ -126,6 +125,7 @@ export function SessionButlerActionButton({
   const [followUpRoundLimit, setFollowUpRoundLimit] = useState(DEFAULT_FOLLOW_UP_ROUND_LIMIT);
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [contextRequestSeq, setContextRequestSeq] = useState(0);
+  const { items: providerCatalog } = useProviderCatalog(Boolean(session?.sessionId));
   const completionCriteriaPresets = buildCompletionCriteriaPresets();
   const availableFollowUpProviders = useMemo<FollowUpProviderId[]>(() => {
     if (!providerCatalog) {
@@ -164,36 +164,10 @@ export function SessionButlerActionButton({
     setAnalysisOpen(false);
     setContextError(null);
     setActionContext(null);
-    setProviderCatalog(null);
     setFollowUpObjective("");
     setFollowUpProviderId(resolveDefaultFollowUpProvider(session?.provider));
     setFollowUpCompletionCriteria(getDefaultCompletionCriteria());
     setFollowUpRoundLimit(DEFAULT_FOLLOW_UP_ROUND_LIMIT);
-  }, [session?.sessionId]);
-
-  useEffect(() => {
-    if (!session?.sessionId) {
-      setProviderCatalog(null);
-      return;
-    }
-
-    let disposed = false;
-
-    void listProviderCatalog()
-      .then((items) => {
-        if (!disposed) {
-          setProviderCatalog(items);
-        }
-      })
-      .catch(() => {
-        if (!disposed) {
-          setProviderCatalog(null);
-        }
-      });
-
-    return () => {
-      disposed = true;
-    };
   }, [session?.sessionId]);
 
   useEffect(() => {
