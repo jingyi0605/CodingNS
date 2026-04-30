@@ -20670,7 +20670,7 @@ textarea:focus-visible {
 .settings-channels-entrypoint {
   display: inline-flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: flex-end;
   gap: 10px;
   width: 100%;
 }
