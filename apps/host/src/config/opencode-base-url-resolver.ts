@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
 
@@ -5,6 +6,8 @@ import { getSharedOpenCodeSystemProbeHelperClient } from "./opencode-system-prob
 const DEFAULT_CACHE_TTL_MS = 5_000;
 const DEFAULT_PROBE_TIMEOUT_MS = 800;
 const DEFAULT_MANAGED_SERVER_RETRY_COOLDOWN_MS = 10_000;
+const DEFAULT_MANAGED_SERVER_IDLE_TIMEOUT_MS = 120_000;
+const DEFAULT_MANAGED_SERVER_DISPOSE_GRACE_MS = 2_000;
 
 interface OpenCodeBaseUrlResolverOptions {
   configuredBaseUrl?: string | null;
@@ -16,6 +19,9 @@ interface OpenCodeBaseUrlResolverOptions {
   probeBaseUrl?: (baseUrl: string) => Promise<boolean>;
   now?: () => number;
   managedServerRetryCooldownMs?: number;
+  managedServerIdleTimeoutMs?: number;
+  managedServerDisposeGraceMs?: number;
+  disposeManagedServerInstance?: (baseUrl: string) => Promise<void>;
 }
 
 interface ResolveBaseUrlInput {
@@ -46,11 +52,17 @@ export class OpenCodeBaseUrlResolver {
   private readonly probeBaseUrl: (baseUrl: string) => Promise<boolean>;
   private readonly now: () => number;
   private readonly managedServerRetryCooldownMs: number;
+  private readonly managedServerIdleTimeoutMs: number;
+  private readonly managedServerDisposeGraceMs: number;
+  private readonly disposeManagedServerInstance: (baseUrl: string) => Promise<void>;
   private readonly cachedBaseUrlByWorkspaceKey = new Map<string, string>();
   private readonly cachedAtByWorkspaceKey = new Map<string, number>();
   private readonly inflightByWorkspaceKey = new Map<string, Promise<string>>();
   private readonly managedServerBaseUrlByWorkspaceKey = new Map<string, string>();
   private readonly managedServerProcessByWorkspaceKey = new Map<string, ManagedOpenCodeServerProcess>();
+  private readonly managedServerIdleTimerByWorkspaceKey = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly managedServerLeaseIdsByWorkspaceKey = new Map<string, Set<string>>();
+  private readonly managedServerLastUsedAtByWorkspaceKey = new Map<string, number>();
   private readonly managedServerInflightByWorkspaceKey = new Map<string, Promise<string>>();
   private readonly managedServerRetryBlockedUntilByWorkspaceKey = new Map<string, number>();
   private disposed = false;
@@ -74,6 +86,16 @@ export class OpenCodeBaseUrlResolver {
       1_000,
       Math.floor(options.managedServerRetryCooldownMs ?? DEFAULT_MANAGED_SERVER_RETRY_COOLDOWN_MS)
     );
+    this.managedServerIdleTimeoutMs = Math.max(
+      10,
+      Math.floor(options.managedServerIdleTimeoutMs ?? DEFAULT_MANAGED_SERVER_IDLE_TIMEOUT_MS)
+    );
+    this.managedServerDisposeGraceMs = Math.max(
+      0,
+      Math.floor(options.managedServerDisposeGraceMs ?? DEFAULT_MANAGED_SERVER_DISPOSE_GRACE_MS)
+    );
+    this.disposeManagedServerInstance =
+      options.disposeManagedServerInstance ?? disposeManagedOpenCodeInstance;
   }
 
   async resolve(input: ResolveBaseUrlInput = {}): Promise<string> {
@@ -123,6 +145,43 @@ export class OpenCodeBaseUrlResolver {
     return available;
   }
 
+  acquireManagedServerLease(workspacePath: string): string {
+    this.ensureNotDisposed();
+    const workspaceKey = normalizeWorkspaceKey(workspacePath);
+    const leaseId = randomUUID();
+    const existingLeaseIds = this.managedServerLeaseIdsByWorkspaceKey.get(workspaceKey) ?? new Set<string>();
+
+    existingLeaseIds.add(leaseId);
+    this.managedServerLeaseIdsByWorkspaceKey.set(workspaceKey, existingLeaseIds);
+    this.noteManagedServerActivity(workspaceKey);
+    this.clearManagedServerIdleTimer(workspaceKey);
+    return leaseId;
+  }
+
+  releaseManagedServerLease(workspacePath: string, leaseId: string): void {
+    if (this.disposed) {
+      return;
+    }
+
+    const workspaceKey = normalizeWorkspaceKey(workspacePath);
+    const existingLeaseIds = this.managedServerLeaseIdsByWorkspaceKey.get(workspaceKey);
+
+    if (!existingLeaseIds) {
+      return;
+    }
+
+    existingLeaseIds.delete(leaseId);
+
+    if (existingLeaseIds.size === 0) {
+      this.managedServerLeaseIdsByWorkspaceKey.delete(workspaceKey);
+      this.noteManagedServerActivity(workspaceKey);
+      this.scheduleManagedServerIdleDisposal(workspaceKey);
+      return;
+    }
+
+    this.managedServerLeaseIdsByWorkspaceKey.set(workspaceKey, existingLeaseIds);
+  }
+
   private async discoverAvailableBaseUrl(workspacePath: string | null): Promise<string> {
     const workspaceKey = normalizeWorkspaceKey(workspacePath);
     const candidates = await this.collectCandidateBaseUrls(workspacePath);
@@ -131,6 +190,9 @@ export class OpenCodeBaseUrlResolver {
       if (await this.probeBaseUrl(candidate)) {
         this.cachedBaseUrlByWorkspaceKey.set(workspaceKey, candidate);
         this.cachedAtByWorkspaceKey.set(workspaceKey, this.now());
+        if (candidate === this.managedServerBaseUrlByWorkspaceKey.get(workspaceKey)) {
+          this.noteManagedServerActivity(workspaceKey);
+        }
         return candidate;
       }
     }
@@ -144,6 +206,7 @@ export class OpenCodeBaseUrlResolver {
         this.managedServerBaseUrlByWorkspaceKey.set(workspaceKey, managedCandidate);
         this.cachedBaseUrlByWorkspaceKey.set(workspaceKey, managedCandidate);
         this.cachedAtByWorkspaceKey.set(workspaceKey, this.now());
+        this.noteManagedServerActivity(workspaceKey);
         return managedCandidate;
       }
     }
@@ -247,11 +310,15 @@ export class OpenCodeBaseUrlResolver {
 
     this.managedServerProcessByWorkspaceKey.set(workspaceKey, child);
     this.managedServerRetryBlockedUntilByWorkspaceKey.delete(workspaceKey);
+    this.clearManagedServerIdleTimer(workspaceKey);
 
     child.once("exit", () => {
       if (this.managedServerProcessByWorkspaceKey.get(workspaceKey) === child) {
         this.managedServerProcessByWorkspaceKey.delete(workspaceKey);
         this.managedServerBaseUrlByWorkspaceKey.delete(workspaceKey);
+        this.managedServerLastUsedAtByWorkspaceKey.delete(workspaceKey);
+        this.managedServerLeaseIdsByWorkspaceKey.delete(workspaceKey);
+        this.clearManagedServerIdleTimer(workspaceKey);
       }
     });
 
@@ -276,6 +343,7 @@ export class OpenCodeBaseUrlResolver {
 
           const baseUrl = normalizeBaseUrl(matched[1]) ?? matched[1];
           this.managedServerBaseUrlByWorkspaceKey.set(workspaceKey, baseUrl);
+          this.noteManagedServerActivity(workspaceKey);
           cleanup();
           resolve(baseUrl);
           return;
@@ -319,8 +387,16 @@ export class OpenCodeBaseUrlResolver {
     this.cachedAtByWorkspaceKey.clear();
     this.inflightByWorkspaceKey.clear();
     this.managedServerBaseUrlByWorkspaceKey.clear();
+    this.managedServerLastUsedAtByWorkspaceKey.clear();
+    this.managedServerLeaseIdsByWorkspaceKey.clear();
     this.managedServerInflightByWorkspaceKey.clear();
     this.managedServerRetryBlockedUntilByWorkspaceKey.clear();
+
+    for (const timer of this.managedServerIdleTimerByWorkspaceKey.values()) {
+      clearTimeout(timer);
+    }
+
+    this.managedServerIdleTimerByWorkspaceKey.clear();
 
     for (const child of this.managedServerProcessByWorkspaceKey.values()) {
       if (!child.killed) {
@@ -342,6 +418,105 @@ export class OpenCodeBaseUrlResolver {
       workspaceKey,
       this.now() + this.managedServerRetryCooldownMs
     );
+  }
+
+  private noteManagedServerActivity(workspaceKey: string): void {
+    if (!this.managedServerProcessByWorkspaceKey.has(workspaceKey)) {
+      return;
+    }
+
+    this.managedServerLastUsedAtByWorkspaceKey.set(workspaceKey, this.now());
+    this.clearManagedServerIdleTimer(workspaceKey);
+
+    if (this.getManagedServerLeaseCount(workspaceKey) === 0) {
+      this.scheduleManagedServerIdleDisposal(workspaceKey);
+    }
+  }
+
+  private scheduleManagedServerIdleDisposal(workspaceKey: string): void {
+    if (this.disposed || this.getManagedServerLeaseCount(workspaceKey) > 0) {
+      return;
+    }
+
+    const child = this.managedServerProcessByWorkspaceKey.get(workspaceKey);
+
+    if (!isChildProcessAlive(child)) {
+      return;
+    }
+
+    const baseUrl = this.managedServerBaseUrlByWorkspaceKey.get(workspaceKey);
+
+    if (!baseUrl) {
+      return;
+    }
+
+    const lastUsedAt = this.managedServerLastUsedAtByWorkspaceKey.get(workspaceKey) ?? this.now();
+    this.clearManagedServerIdleTimer(workspaceKey);
+    const timer = setTimeout(() => {
+      void this.disposeManagedServerIfIdle(workspaceKey, lastUsedAt);
+    }, this.managedServerIdleTimeoutMs);
+    this.managedServerIdleTimerByWorkspaceKey.set(workspaceKey, timer);
+  }
+
+  private clearManagedServerIdleTimer(workspaceKey: string): void {
+    const timer = this.managedServerIdleTimerByWorkspaceKey.get(workspaceKey);
+
+    if (!timer) {
+      return;
+    }
+
+    clearTimeout(timer);
+    this.managedServerIdleTimerByWorkspaceKey.delete(workspaceKey);
+  }
+
+  private async disposeManagedServerIfIdle(
+    workspaceKey: string,
+    expectedLastUsedAt: number
+  ): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+
+    const child = this.managedServerProcessByWorkspaceKey.get(workspaceKey);
+    const baseUrl = this.managedServerBaseUrlByWorkspaceKey.get(workspaceKey);
+    const lastUsedAt = this.managedServerLastUsedAtByWorkspaceKey.get(workspaceKey) ?? 0;
+
+    if (
+      !isChildProcessAlive(child)
+      || !baseUrl
+      || this.getManagedServerLeaseCount(workspaceKey) > 0
+      || lastUsedAt !== expectedLastUsedAt
+    ) {
+      return;
+    }
+
+    this.clearManagedServerIdleTimer(workspaceKey);
+
+    try {
+      await this.disposeManagedServerInstance(baseUrl);
+    } catch {
+      // 这里只做兜底清理，官方 dispose 失败时继续走本地信号。
+    }
+
+    await delay(this.managedServerDisposeGraceMs);
+
+    if (
+      this.disposed
+      || this.getManagedServerLeaseCount(workspaceKey) > 0
+      || (this.managedServerLastUsedAtByWorkspaceKey.get(workspaceKey) ?? 0) !== expectedLastUsedAt
+    ) {
+      return;
+    }
+
+    const activeChild = this.managedServerProcessByWorkspaceKey.get(workspaceKey);
+
+    if (isChildProcessAlive(activeChild)) {
+      activeChild.kill("SIGTERM");
+    }
+  }
+
+  private getManagedServerLeaseCount(workspaceKey: string): number {
+    return this.managedServerLeaseIdsByWorkspaceKey.get(workspaceKey)?.size ?? 0;
   }
 }
 
@@ -411,6 +586,38 @@ function normalizeBaseUrl(value: string | null): string | null {
   }
 
   return normalized.replace(/\/+$/, "");
+}
+
+function isChildProcessAlive(
+  child: ManagedOpenCodeServerProcess | null | undefined
+): child is ManagedOpenCodeServerProcess {
+  return Boolean(child && !child.killed);
+}
+
+async function disposeManagedOpenCodeInstance(baseUrl: string): Promise<void> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, DEFAULT_MANAGED_SERVER_DISPOSE_GRACE_MS);
+
+  try {
+    const response = await fetch(new URL("/instance/dispose", `${baseUrl}/`), {
+      method: "POST",
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error(`OPENCODE_HTTP_${response.status}`);
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function dedupeBaseUrls(values: Array<string | null | undefined>): string[] {

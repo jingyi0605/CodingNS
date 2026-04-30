@@ -3876,7 +3876,11 @@ function createProviderRuntimeAdapters(
       }),
       new OpenCodeRuntimeAdapter({
         baseUrl: config.opencodeBaseUrl,
-        baseUrlResolver: config.opencodeBaseUrlResolver?.resolve.bind(config.opencodeBaseUrlResolver)
+        baseUrlResolver: config.opencodeBaseUrlResolver?.resolve.bind(config.opencodeBaseUrlResolver),
+        acquireManagedServerLease:
+          config.opencodeBaseUrlResolver?.acquireManagedServerLease.bind(config.opencodeBaseUrlResolver),
+        releaseManagedServerLease:
+          config.opencodeBaseUrlResolver?.releaseManagedServerLease.bind(config.opencodeBaseUrlResolver)
       })
     ],
     disposables

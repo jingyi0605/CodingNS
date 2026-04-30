@@ -459,4 +459,211 @@ describe("OpenCodeBaseUrlResolver", () => {
       resolver.resolve({ workspacePath: "/Users/jackson/Code/CodingNS", refresh: true })
     ).rejects.toThrow("SERVER_UNAVAILABLE");
   });
+
+  it("空闲超时后会优先调用官方 instance/dispose 回收托管 serve", async () => {
+    vi.resetModules();
+
+    const stdoutHandlers: Array<(chunk: string) => void> = [];
+    const kill = vi.fn(() => {
+      child.killed = true;
+    });
+    const child = {
+      pid: 4312,
+      killed: false,
+      stdout: {
+        on: (event: string, handler: (chunk: string) => void) => {
+          if (event === "data") {
+            stdoutHandlers.push(handler);
+          }
+        },
+        off: vi.fn()
+      },
+      stderr: {
+        on: vi.fn(),
+        off: vi.fn()
+      },
+      once: vi.fn(),
+      off: vi.fn(),
+      kill
+    };
+    const spawn = vi.fn(() => {
+      queueMicrotask(() => {
+        for (const handler of stdoutHandlers) {
+          handler("opencode server listening on http://127.0.0.1:4312\n");
+        }
+      });
+
+      return child;
+    });
+
+    vi.doMock("node:child_process", () => ({
+      spawn
+    }));
+
+    const disposeManagedServerInstance = vi.fn(async () => {
+      child.killed = true;
+    });
+    const { OpenCodeBaseUrlResolver: Resolver } = await import(
+      "../../src/config/opencode-base-url-resolver.js"
+    );
+    const resolver = new Resolver({
+      commandPath: "/opt/homebrew/bin/opencode",
+      inspectProcessList: () => "",
+      inspectListeningSockets: () => [],
+      inspectProcessCwd: () => null,
+      probeBaseUrl: async (baseUrl) => baseUrl === "http://127.0.0.1:4312",
+      disposeManagedServerInstance,
+      managedServerIdleTimeoutMs: 10,
+      managedServerDisposeGraceMs: 0
+    });
+
+    await expect(
+      resolver.resolve({ workspacePath: "/Users/jackson/Code/CodingNS" })
+    ).resolves.toBe("http://127.0.0.1:4312");
+
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(disposeManagedServerInstance).toHaveBeenCalledWith("http://127.0.0.1:4312");
+    expect(kill).not.toHaveBeenCalled();
+  });
+
+  it("官方 instance/dispose 失败时会降级 SIGTERM 回收托管 serve", async () => {
+    vi.resetModules();
+
+    const stdoutHandlers: Array<(chunk: string) => void> = [];
+    const kill = vi.fn(() => {
+      child.killed = true;
+    });
+    const child = {
+      pid: 4313,
+      killed: false,
+      stdout: {
+        on: (event: string, handler: (chunk: string) => void) => {
+          if (event === "data") {
+            stdoutHandlers.push(handler);
+          }
+        },
+        off: vi.fn()
+      },
+      stderr: {
+        on: vi.fn(),
+        off: vi.fn()
+      },
+      once: vi.fn(),
+      off: vi.fn(),
+      kill
+    };
+    const spawn = vi.fn(() => {
+      queueMicrotask(() => {
+        for (const handler of stdoutHandlers) {
+          handler("opencode server listening on http://127.0.0.1:4313\n");
+        }
+      });
+
+      return child;
+    });
+
+    vi.doMock("node:child_process", () => ({
+      spawn
+    }));
+
+    const disposeManagedServerInstance = vi.fn(async () => {
+      throw new Error("dispose failed");
+    });
+    const { OpenCodeBaseUrlResolver: Resolver } = await import(
+      "../../src/config/opencode-base-url-resolver.js"
+    );
+    const resolver = new Resolver({
+      commandPath: "/opt/homebrew/bin/opencode",
+      inspectProcessList: () => "",
+      inspectListeningSockets: () => [],
+      inspectProcessCwd: () => null,
+      probeBaseUrl: async (baseUrl) => baseUrl === "http://127.0.0.1:4313",
+      disposeManagedServerInstance,
+      managedServerIdleTimeoutMs: 10,
+      managedServerDisposeGraceMs: 0
+    });
+
+    await expect(
+      resolver.resolve({ workspacePath: "/Users/jackson/Code/CodingNS" })
+    ).resolves.toBe("http://127.0.0.1:4313");
+
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(disposeManagedServerInstance).toHaveBeenCalledWith("http://127.0.0.1:4313");
+    expect(kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("托管 serve 持有租约时不会因为空闲超时被回收，释放后才会进入回收", async () => {
+    vi.resetModules();
+
+    const stdoutHandlers: Array<(chunk: string) => void> = [];
+    const kill = vi.fn(() => {
+      child.killed = true;
+    });
+    const child = {
+      pid: 4314,
+      killed: false,
+      stdout: {
+        on: (event: string, handler: (chunk: string) => void) => {
+          if (event === "data") {
+            stdoutHandlers.push(handler);
+          }
+        },
+        off: vi.fn()
+      },
+      stderr: {
+        on: vi.fn(),
+        off: vi.fn()
+      },
+      once: vi.fn(),
+      off: vi.fn(),
+      kill
+    };
+    const spawn = vi.fn(() => {
+      queueMicrotask(() => {
+        for (const handler of stdoutHandlers) {
+          handler("opencode server listening on http://127.0.0.1:4314\n");
+        }
+      });
+
+      return child;
+    });
+
+    vi.doMock("node:child_process", () => ({
+      spawn
+    }));
+
+    const disposeManagedServerInstance = vi.fn(async () => {
+      child.killed = true;
+    });
+    const { OpenCodeBaseUrlResolver: Resolver } = await import(
+      "../../src/config/opencode-base-url-resolver.js"
+    );
+    const resolver = new Resolver({
+      commandPath: "/opt/homebrew/bin/opencode",
+      inspectProcessList: () => "",
+      inspectListeningSockets: () => [],
+      inspectProcessCwd: () => null,
+      probeBaseUrl: async (baseUrl) => baseUrl === "http://127.0.0.1:4314",
+      disposeManagedServerInstance,
+      managedServerIdleTimeoutMs: 10,
+      managedServerDisposeGraceMs: 0
+    });
+
+    await expect(
+      resolver.resolve({ workspacePath: "/Users/jackson/Code/CodingNS" })
+    ).resolves.toBe("http://127.0.0.1:4314");
+
+    const leaseId = resolver.acquireManagedServerLease("/Users/jackson/Code/CodingNS");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(disposeManagedServerInstance).not.toHaveBeenCalled();
+    expect(kill).not.toHaveBeenCalled();
+
+    resolver.releaseManagedServerLease("/Users/jackson/Code/CodingNS", leaseId);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(disposeManagedServerInstance).toHaveBeenCalledWith("http://127.0.0.1:4314");
+  });
 });
