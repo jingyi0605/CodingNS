@@ -1,4 +1,13 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  isValidElement,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject
+} from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -1170,19 +1179,23 @@ function MarkdownPreview({ content }: { content: string }) {
       <Markdown
         remarkPlugins={[remarkGfm]}
         components={{
-          code(props) {
-            const codeClassName = typeof props.className === "string" ? props.className : "";
-            const match = /language-([\w-]+)/.exec(codeClassName);
+          pre(props) {
+            const blockProps = extractCodeBlockProps(props.children);
 
-            if (match) {
-              return (
-                <CodePreview
-                  content={String(props.children).replace(/\n$/, "")}
-                  language={normalizeLanguage(match[1] ?? "plain")}
-                />
-              );
+            if (!blockProps) {
+              return <pre>{props.children}</pre>;
             }
 
+            return (
+              <MarkdownCopyBlock
+                content={blockProps.content}
+                language={blockProps.language}
+                codeClassName={blockProps.codeClassName}
+              />
+            );
+          },
+          code(props) {
+            const codeClassName = typeof props.className === "string" ? props.className : "";
             return <code className={codeClassName || undefined}>{props.children}</code>;
           }
         }}
@@ -1217,7 +1230,10 @@ function CodePreview({
 
   return (
     <div className="file-viewer-code-block">
-      <div className="file-viewer-code-header">{formatLanguageLabel(language)}</div>
+      <div className="file-viewer-code-header">
+        <span className="file-viewer-code-header-label">{formatLanguageLabel(language)}</span>
+        <CopyBlockButton content={content} />
+      </div>
       <div className="file-viewer-scroll-shell">
         <div className="file-viewer-code-body" ref={bodyRef}>
           {lines.map((line, index) => {
@@ -1257,6 +1273,172 @@ function CodePreview({
       </div>
     </div>
   );
+}
+
+function MarkdownCopyBlock({
+  content,
+  language,
+  codeClassName
+}: {
+  content: string;
+  language: string | null;
+  codeClassName?: string;
+}) {
+  const normalizedLanguage = language ? normalizeLanguage(language) : null;
+
+  return (
+    <div className="file-viewer-markdown-copy-block">
+      <div className="file-viewer-markdown-copy-header">
+        <span className="file-viewer-markdown-copy-label">
+          {normalizedLanguage ? formatLanguageLabel(normalizedLanguage) : t("conversation.fileViewerPlainText")}
+        </span>
+        <CopyBlockButton content={content} />
+      </div>
+      <pre className={codeClassName}>
+        <code>{content}</code>
+      </pre>
+    </div>
+  );
+}
+
+function CopyBlockButton({ content }: { content: string }) {
+  const { showToast } = useToast();
+  const platform = usePlatform();
+  const [copying, setCopying] = useState(false);
+
+  if (!content.trim()) {
+    return null;
+  }
+
+  async function handleCopy() {
+    if (copying) {
+      return;
+    }
+
+    setCopying(true);
+
+    try {
+      await writeTextToClipboard(content, platform);
+      showToast({
+        title: t("conversation.copyContentSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("conversation.copyContentFailed"),
+        tone: "error"
+      });
+    } finally {
+      setCopying(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      className="file-viewer-copy-button"
+      aria-label={t("conversation.copyAction")}
+      title={t("conversation.copyAction")}
+      onClick={() => void handleCopy()}
+      disabled={copying}
+    >
+      <CopyIcon />
+    </button>
+  );
+}
+
+function flattenReactNodeText(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") {
+    return String(node);
+  }
+
+  if (Array.isArray(node)) {
+    return node.map((item) => flattenReactNodeText(item)).join("");
+  }
+
+  if (isValidElement(node)) {
+    return flattenReactNodeText(node.props?.children ?? "");
+  }
+
+  return "";
+}
+
+function extractCodeBlockProps(node: ReactNode): {
+  content: string;
+  codeClassName?: string;
+  language: string | null;
+} | null {
+  const candidate = Array.isArray(node) ? node[0] : node;
+
+  if (!isValidElement(candidate)) {
+    return null;
+  }
+
+  const props = candidate.props as {
+    className?: string;
+    children?: ReactNode;
+  };
+  const codeClassName = typeof props.className === "string" ? props.className : "";
+  const match = /language-([^\s]+)/.exec(codeClassName);
+
+  return {
+    content: flattenReactNodeText(props.children).replace(/\n$/, ""),
+    codeClassName: codeClassName || undefined,
+    language: match?.[1] ?? null
+  };
+}
+
+function copyTextWithExecCommand(text: string): boolean {
+  if (typeof document === "undefined" || typeof document.execCommand !== "function") {
+    return false;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.top = "-9999px";
+  textarea.style.left = "-9999px";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
+async function writeTextToClipboard(
+  text: string,
+  platform: ReturnType<typeof usePlatform>
+): Promise<void> {
+  if (platform.isDesktop) {
+    const desktopResult = await platform.bridge.writeClipboardText(text);
+
+    if (desktopResult.ok) {
+      return;
+    }
+  }
+
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // 某些 WebView/权限场景会拒绝异步剪贴板，继续回退到同步兼容路径。
+    }
+  }
+
+  if (copyTextWithExecCommand(text)) {
+    return;
+  }
+
+  throw new Error(t("conversation.copyContentFailed"));
 }
 
 function tokenizeLine(line: string, language: string): CodeToken[] {
@@ -2240,6 +2422,15 @@ function isMarkdownFile(filePath: string) {
 
 function isHtmlFile(filePath: string) {
   return detectLanguage(filePath) === "html";
+}
+
+function CopyIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M5 2.5h7.5v9H5z" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M3.5 5H2.4V13.5H10V12.4" fill="none" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
+  );
 }
 
 function readError(error: unknown, fallback: string): string {

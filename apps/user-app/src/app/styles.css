@@ -17621,6 +17621,8 @@ textarea:focus-visible {
 .file-viewer-code-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   min-height: 40px;
   padding: 0 14px;
   background: var(--code-block-header-bg);
@@ -17629,6 +17631,96 @@ textarea:focus-visible {
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.file-viewer-code-header-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-viewer-copy-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
+  color: color-mix(in srgb, var(--code-block-text) 82%, var(--text-secondary) 18%);
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.file-viewer-copy-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.file-viewer-copy-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bg-hover) 86%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border-primary));
+  color: var(--text-primary);
+}
+
+.file-viewer-copy-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  outline-offset: 1px;
+}
+
+.file-viewer-copy-button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.file-viewer-markdown-copy-block {
+  margin: 12px 0;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+  border-radius: 14px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--bg-surface) 95%, transparent);
+}
+
+.file-viewer-markdown-copy-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 40px;
+  padding: 0 14px;
+  background: color-mix(in srgb, var(--bg-hover) 92%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+}
+
+.file-viewer-markdown-copy-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.file-viewer-markdown-copy-block pre {
+  margin: 0;
+  padding: 12px 16px;
+  background: var(--bg-primary);
+  overflow: auto;
+}
+
+.file-viewer-markdown-copy-block pre code {
+  padding: 0;
+  background: none;
+  color: var(--text-primary);
 }
 
 .file-viewer-code-body {

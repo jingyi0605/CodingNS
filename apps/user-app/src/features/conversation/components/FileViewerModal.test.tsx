@@ -13,8 +13,10 @@ const fileApiMock = vi.hoisted(() => ({
   getFilePreview: vi.fn(),
   saveFileContent: vi.fn()
 }));
+const clipboardWriteTextMock = vi.hoisted(() => vi.fn());
 const platformMock = vi.hoisted(() => ({
   openExternal: vi.fn(),
+  writeClipboardText: vi.fn(),
   isDesktop: true
 }));
 
@@ -27,7 +29,8 @@ vi.mock("../../../platform/platform-provider", () => ({
   usePlatform: () => ({
     isDesktop: platformMock.isDesktop,
     bridge: {
-      openExternal: platformMock.openExternal
+      openExternal: platformMock.openExternal,
+      writeClipboardText: platformMock.writeClipboardText
     }
   })
 }));
@@ -40,6 +43,16 @@ describe("FileViewerModal", () => {
     fileApiMock.saveFileContent.mockReset();
     platformMock.openExternal.mockReset();
     platformMock.openExternal.mockResolvedValue({ ok: true });
+    platformMock.writeClipboardText.mockReset();
+    platformMock.writeClipboardText.mockResolvedValue({ ok: true });
+    clipboardWriteTextMock.mockReset();
+    clipboardWriteTextMock.mockResolvedValue(undefined);
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: clipboardWriteTextMock
+      }
+    });
   });
 
   afterEach(() => {
@@ -214,6 +227,140 @@ describe("FileViewerModal", () => {
 
     expect(await screen.findByTestId("file-viewer-editor")).toHaveValue("# 标题\n\n内容\n");
     expect(screen.queryByTestId("file-viewer-inline-render")).not.toBeInTheDocument();
+  });
+
+  it("Markdown 预览里的纯文本块和无语言代码块都提供复制按钮", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "docs/script.md",
+        kind: "markdown",
+        content: [
+          "```text",
+          "第一段纯文本",
+          "```",
+          "",
+          "```",
+          "第二段无语言代码块",
+          "```"
+        ].join("\n"),
+        version: "md-copy-v1"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="docs/script.md"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await screen.findByText("第一段纯文本");
+
+    const copyButtons = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(".file-viewer-markdown-copy-block .file-viewer-copy-button")
+    );
+    expect(copyButtons).toHaveLength(2);
+
+    await user.click(copyButtons[0]!);
+    await user.click(copyButtons[1]!);
+
+    expect(platformMock.writeClipboardText).toHaveBeenNthCalledWith(1, "第一段纯文本");
+    expect(platformMock.writeClipboardText).toHaveBeenNthCalledWith(2, "第二段无语言代码块");
+    expect(clipboardWriteTextMock).not.toHaveBeenCalled();
+  });
+
+  it("代码视图里的文件块头部提供复制图标，可直接复制全文", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "notes.ts",
+        content: "const alpha = 1;\nconst beta = 2;\n",
+        version: "code-copy-v1"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="notes.ts"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await waitFor(() => {
+      expect(document.querySelector(".file-viewer-code-header .file-viewer-copy-button")).not.toBeNull();
+    });
+
+    const copyButton = document.querySelector<HTMLButtonElement>(".file-viewer-code-header .file-viewer-copy-button");
+
+    await user.click(copyButton!);
+
+    expect(platformMock.writeClipboardText).toHaveBeenCalledWith("const alpha = 1;\nconst beta = 2;\n");
+    expect(clipboardWriteTextMock).not.toHaveBeenCalled();
+  });
+
+  it("桌面端原生剪贴板桥接失败时，复制按钮会回退到兼容复制路径", async () => {
+    const user = userEvent.setup();
+    const execCommandMock = vi.fn().mockReturnValue(true);
+    platformMock.writeClipboardText.mockResolvedValue({
+      ok: false,
+      detail: "clipboard unavailable"
+    });
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: undefined
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommandMock
+    });
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "docs/script.md",
+        kind: "markdown",
+        content: ["```text", "macOS fallback copy", "```"].join("\n"),
+        version: "md-copy-fallback-v1"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="docs/script.md"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await screen.findByText("macOS fallback copy");
+
+    const copyButton = document.querySelector<HTMLButtonElement>(
+      ".file-viewer-markdown-copy-block .file-viewer-copy-button"
+    );
+    expect(copyButton).not.toBeNull();
+
+    await user.click(copyButton!);
+
+    await waitFor(() => {
+      expect(platformMock.writeClipboardText).toHaveBeenCalledWith("macOS fallback copy");
+      expect(execCommandMock).toHaveBeenCalledWith("copy");
+    });
   });
 
   it("HTML 文件支持刷新预览、尺寸切换，并支持外部打开", async () => {
