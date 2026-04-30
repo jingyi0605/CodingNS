@@ -112,7 +112,6 @@ export function ChannelsManagementPanel() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [platforms, setPlatforms] = useState<ChannelPlatformCapabilityDto[]>([]);
   const [accounts, setAccounts] = useState<ChannelAccountSummaryDto[]>([]);
-  const [overviewLoaded, setOverviewLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingActionKey>(null);
@@ -165,7 +164,6 @@ export function ChannelsManagementPanel() {
     setCreateModalOpen(false);
     setPlatforms([]);
     setAccounts([]);
-    setOverviewLoaded(false);
     setLoading(false);
     setDetailLoading(false);
     setPendingAction(null);
@@ -220,7 +218,6 @@ export function ChannelsManagementPanel() {
         listChannelAccounts()
       ]);
 
-      setOverviewLoaded(true);
       setPlatforms(nextPlatforms);
       setAccounts(nextAccounts);
 
@@ -1229,17 +1226,9 @@ export function ChannelsManagementPanel() {
     </div>
   );
 
-  const entrypointValue = t("settings.channelsEntrypointSummary", {
-    accounts: accounts.length,
-    platforms: activePlatformCount
-  });
-
   return (
     <>
       <div className="settings-channels-entrypoint">
-        <p className="settings-channels-entrypoint-note">
-          {overviewLoaded ? entrypointValue : t("settings.channelsEntrypointPending")}
-        </p>
         <button
           className="secondary-button"
           type="button"

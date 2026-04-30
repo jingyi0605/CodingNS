@@ -175,14 +175,12 @@ export const enUS = {
       "Manage external channels, polling accounts, and recent inbound or outbound records in one place.",
     channelsManagementNavValue: "Accounts / Records",
     channelsManagementDescription:
-      "This panel keeps channel selection, polling account setup, recent thread mappings, inbound events, and deliveries together so the Butler control session bridge can be managed from one place.",
+      "Manage channel accounts here and review recent messages and delivery records.",
     channelsManageAction: "Manage Channel Accounts",
     channelsModalTitle: "Messaging Channel Accounts",
     channelsAddAccountAction: "Add Channel Account",
     channelsModalDescription:
       "This first phase uses a shared account model. Text messages, fixed provider selection, polling, and Butler control session bridging are the main scope.",
-    channelsEntrypointPending: "Open this panel to review connected accounts, recent messages, and deliveries.",
-    channelsEntrypointSummary: "{accounts} accounts across {platforms} platforms.",
     channelsActionPending: "Working...",
     channelsRefresh: "Refresh data",
     channelsRefreshSuccess: "Channel data refreshed.",

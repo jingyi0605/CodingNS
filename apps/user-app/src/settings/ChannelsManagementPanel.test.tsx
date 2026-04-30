@@ -124,6 +124,13 @@ describe("ChannelsManagementPanel", () => {
     expect(within(dialog).getByRole("button", { name: t("settings.channelsPollAction") })).toBeEnabled();
   });
 
+  it("入口只保留管理按钮，不再显示说明提示", () => {
+    renderPanel();
+
+    expect(screen.getByRole("button", { name: t("settings.channelsManageAction") })).toBeInTheDocument();
+    expect(screen.queryByText("进入后可查看已接入账号、最近消息和回发记录。")).not.toBeInTheDocument();
+  });
+
   it("Telegram 向导会要求 bot token，并能成功创建账号", async () => {
     let latestPayload: unknown = null;
 
