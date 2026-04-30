@@ -2940,4 +2940,53 @@ ARGUMENTS: capabilities list`)
     expect(meta?.contains(badge)).toBe(true);
     expect(meta?.contains(time!)).toBe(true);
   });
+
+  it("会把结构化问题渲染成可选择卡片并提交答案", async () => {
+    const onSubmitStructuredQuestion = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <MessageTimeline
+        messages={[
+          createAssistantTextMessage(
+            JSON.stringify({
+              questions: [
+                {
+                  id: "file_name",
+                  header: "文件名",
+                  question: "你想把笑话保存到哪个文件名？",
+                  options: [
+                    {
+                      label: "jokes.md",
+                      description: "保存为 jokes.md"
+                    },
+                    {
+                      label: "10-jokes.md",
+                      description: "保存为 10-jokes.md"
+                    }
+                  ]
+                }
+              ]
+            })
+          )
+        ]}
+        historyState="ready"
+        provider="opencode"
+        onRetryMessage={vi.fn()}
+        onSubmitStructuredQuestion={onSubmitStructuredQuestion}
+      />
+    );
+
+    expect(screen.getByText("你想把笑话保存到哪个文件名？")).toBeInTheDocument();
+    expect(screen.queryByText(/"questions"/)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getAllByRole("radio")[0]!);
+    await userEvent.click(screen.getByRole("button", { name: /confirm|确认|common\.confirm/i }));
+
+    expect(onSubmitStructuredQuestion).toHaveBeenCalledWith({
+      messageId: "assistant-1",
+      answers: {
+        file_name: ["jokes.md"]
+      }
+    });
+  });
 });

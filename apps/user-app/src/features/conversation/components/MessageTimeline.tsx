@@ -33,7 +33,10 @@ import {
   type ApplyPatchPreview,
   type ApplyPatchFileChange
 } from "../apply-patch-preview";
-import { parseMessageRichContent } from "../message-rich-content";
+import {
+  parseMessageRichContent,
+  type StructuredQuestionPrompt
+} from "../message-rich-content";
 import {
   buildConversationTaskSnapshotFromToolCall,
   countConversationTasksByStatus,
@@ -73,6 +76,7 @@ interface MessageTimelineProps {
   runtimeThinkingPlaceholder?: string | null;
   assistantAvatar?: ReactNode;
   followTailUpdates?: boolean;
+  onSubmitStructuredQuestion?: (payload: { messageId: string; answers: Record<string, string[]> }) => Promise<void> | void;
 }
 
 interface MessageActionState {
@@ -3461,7 +3465,8 @@ function MessageItem({
   onRetry,
   onForkMessage,
   assistantAvatar,
-  exportMode = false
+  exportMode = false,
+  onSubmitStructuredQuestion
 }: {
   message: SessionMessageViewModel;
   provider: ProviderId | null;
@@ -3472,6 +3477,7 @@ function MessageItem({
   onForkMessage?: ((message: SessionMessageViewModel) => Promise<void> | void) | null;
   assistantAvatar?: ReactNode;
   exportMode?: boolean;
+  onSubmitStructuredQuestion?: ((payload: { messageId: string; answers: Record<string, string[]> }) => Promise<void> | void) | null;
 }) {
   const isUser = message.role === "user";
   const isThinking = message.kind === "thinking";
@@ -3490,6 +3496,7 @@ function MessageItem({
   const richContent = useMemo(() => parseMessageRichContent(message.content), [message.content]);
   const visibleContent = richContent.text;
   const inlineImages = richContent.inlineImages;
+  const structuredQuestions = richContent.structuredQuestions;
   const [originDetailOpen, setOriginDetailOpen] = useState(false);
   const [originDetailLoading, setOriginDetailLoading] = useState(false);
   const [originDetailError, setOriginDetailError] = useState<string | null>(null);
@@ -3698,6 +3705,13 @@ function MessageItem({
               exportMode={exportMode}
             />
           )}
+          {structuredQuestions && onSubmitStructuredQuestion ? (
+            <StructuredQuestionCard
+              messageId={message.id}
+              prompt={structuredQuestions}
+              onSubmit={onSubmitStructuredQuestion}
+            />
+          ) : null}
           <MessageMetadataBar
             text={visibleContent}
             canCopy={actionState.canCopy}
@@ -3731,6 +3745,99 @@ function MessageItem({
         />
       </div>
     </article>
+  );
+}
+
+function StructuredQuestionCard({
+  messageId,
+  prompt,
+  onSubmit
+}: {
+  messageId: string;
+  prompt: StructuredQuestionPrompt;
+  onSubmit: (payload: { messageId: string; answers: Record<string, string[]> }) => Promise<void> | void;
+}) {
+  const [answers, setAnswers] = useState<Record<string, string[]>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const disableSubmit = prompt.questions.some(
+    (question) => (answers[question.id]?.filter(Boolean).length ?? 0) === 0
+  );
+
+  return (
+    <section className="permission-request-card permission-request-card-inline">
+      <header className="permission-request-card-header">
+        <div className="permission-request-provider">
+          <div className="permission-request-provider-copy">
+            <strong>{t("conversation.permissionRequestQuestionsLabel")}</strong>
+            <span>{t("conversation.permissionRequestSectionDescription")}</span>
+          </div>
+        </div>
+        <span className="permission-request-kind">{t("conversation.permissionRequestKindUserInput")}</span>
+      </header>
+
+      <div className="permission-request-card-body">
+        <div className="permission-request-block">
+          <div className="permission-request-block-label">
+            {t("conversation.permissionRequestQuestionsLabel")}
+          </div>
+          <div className="permission-request-question-list">
+            {prompt.questions.map((question) => (
+              <div key={`${messageId}:${question.id}`} className="permission-request-question">
+                <div className="permission-request-question-header">{question.header}</div>
+                <p>{question.question}</p>
+                <div className="permission-request-question-options">
+                  {question.options.map((option) => {
+                    const checked = answers[question.id]?.includes(option.label) ?? false;
+
+                    return (
+                      <label key={`${question.id}:${option.label}`} className="permission-request-question-option">
+                        <input
+                          type="radio"
+                          name={`${messageId}:${question.id}`}
+                          checked={checked}
+                          onChange={() => {
+                            setAnswers((current) => ({
+                              ...current,
+                              [question.id]: [option.label]
+                            }));
+                          }}
+                        />
+                        <span>
+                          <strong>{option.label}</strong>
+                          {option.description ? <small>{option.description}</small> : null}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <footer className="permission-request-card-footer">
+        <button
+          type="button"
+          className="primary-button permission-request-action"
+          disabled={submitting || disableSubmit}
+          onClick={async () => {
+            setSubmitting(true);
+
+            try {
+              await onSubmit({
+                messageId,
+                answers
+              });
+            } finally {
+              setSubmitting(false);
+            }
+          }}
+        >
+          {submitting ? t("conversation.permissionRequestSubmitting") : t("common.confirm")}
+        </button>
+      </footer>
+    </section>
   );
 }
 
@@ -3847,7 +3954,8 @@ export function MessageTimeline({
   interruptedSource = null,
   runtimeThinkingPlaceholder = null,
   assistantAvatar,
-  followTailUpdates = false
+  followTailUpdates = false,
+  onSubmitStructuredQuestion
 }: MessageTimelineProps) {
   const { showToast } = useToast();
   const platform = usePlatform();
@@ -4609,6 +4717,7 @@ export function MessageTimeline({
               onForkMessage={onForkMessage}
               interruptedSource={interruptedSource}
               assistantAvatar={assistantAvatar}
+              onSubmitStructuredQuestion={onSubmitStructuredQuestion}
             />
           )
         )}

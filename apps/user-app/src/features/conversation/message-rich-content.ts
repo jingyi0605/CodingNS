@@ -8,6 +8,25 @@ export interface InlineImagePreview {
 export interface ParsedMessageRichContent {
   text: string;
   inlineImages: InlineImagePreview[];
+  structuredQuestions: StructuredQuestionPrompt | null;
+}
+
+export interface StructuredQuestionPromptOption {
+  label: string;
+  description: string | null;
+}
+
+export interface StructuredQuestionPromptItem {
+  id: string;
+  header: string;
+  question: string;
+  allowOther: boolean;
+  secret: boolean;
+  options: StructuredQuestionPromptOption[];
+}
+
+export interface StructuredQuestionPrompt {
+  questions: StructuredQuestionPromptItem[];
 }
 
 const DATA_IMAGE_URL_PATTERN = /data:image\/([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)/g;
@@ -25,7 +44,10 @@ export function parseMessageRichContent(content: string): ParsedMessageRichConte
     return parsedStructuredContent;
   }
 
-  return extractInlineImagesFromText(sanitizedContent);
+  return {
+    ...extractInlineImagesFromText(sanitizedContent),
+    structuredQuestions: null
+  };
 }
 
 function stripInternalAttachmentDebugContent(content: string): string {
@@ -41,11 +63,30 @@ function parseStructuredRichContent(content: string): ParsedMessageRichContent |
 
   try {
     const parsed = JSON.parse(normalized) as unknown;
-    const richContent = collectRichContentFromValue(parsed);
-    return richContent.text || richContent.inlineImages.length > 0 ? richContent : null;
+    const structuredQuestions = extractStructuredQuestionPrompt(parsed);
+    const richContent = collectRichContentFromValue(
+      structuredQuestions ? stripStructuredQuestionPayload(parsed) : parsed
+    );
+    return richContent.text || richContent.inlineImages.length > 0 || structuredQuestions
+      ? {
+          ...richContent,
+          structuredQuestions
+        }
+      : null;
   } catch {
     return null;
   }
+}
+
+function stripStructuredQuestionPayload(value: unknown): unknown {
+  const record = asRecord(value);
+
+  if (!record || !("questions" in record)) {
+    return value;
+  }
+
+  const { questions: _questions, ...rest } = record;
+  return rest;
 }
 
 function looksLikeStructuredContent(content: string): boolean {
@@ -67,8 +108,96 @@ function collectRichContentFromValue(value: unknown): ParsedMessageRichContent {
 
   return {
     text: normalizeDisplayText(textSegments.join("\n\n")),
-    inlineImages: dedupeInlineImages(inlineImages)
+    inlineImages: dedupeInlineImages(inlineImages),
+    structuredQuestions: null
   };
+}
+
+function extractStructuredQuestionPrompt(value: unknown): StructuredQuestionPrompt | null {
+  const record = asRecord(value);
+
+  if (!record) {
+    return null;
+  }
+
+  const normalizedQuestions = normalizeStructuredQuestionItems(record.questions);
+
+  if (normalizedQuestions.length === 0) {
+    return null;
+  }
+
+  return {
+    questions: normalizedQuestions
+  };
+}
+
+function normalizeStructuredQuestionItems(value: unknown): StructuredQuestionPromptItem[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry, index) => normalizeStructuredQuestionItem(entry, index))
+    .filter((entry): entry is StructuredQuestionPromptItem => entry !== null);
+}
+
+function normalizeStructuredQuestionItem(
+  value: unknown,
+  index: number
+): StructuredQuestionPromptItem | null {
+  const record = asRecord(value);
+
+  if (!record) {
+    return null;
+  }
+
+  const question = normalizeOptionalText(ensureText(record.question));
+
+  if (!question) {
+    return null;
+  }
+
+  const options = normalizeStructuredQuestionOptions(record.options);
+
+  if (options.length === 0) {
+    return null;
+  }
+
+  return {
+    id: normalizeOptionalText(ensureText(record.id)) ?? `structured-question-${index + 1}`,
+    header: normalizeOptionalText(ensureText(record.header)) ?? "问题",
+    question,
+    allowOther: Boolean(record.allowOther ?? record.isOther),
+    secret: Boolean(record.secret ?? record.isSecret),
+    options
+  };
+}
+
+function normalizeStructuredQuestionOptions(value: unknown): StructuredQuestionPromptOption[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => {
+      const record = asRecord(entry);
+
+      if (!record) {
+        return null;
+      }
+
+      const label = normalizeOptionalText(ensureText(record.label));
+
+      if (!label) {
+        return null;
+      }
+
+      return {
+        label,
+        description: normalizeOptionalText(ensureText(record.description))
+      };
+    })
+    .filter((entry): entry is StructuredQuestionPromptOption => entry !== null);
 }
 
 function visitRichContentValue(
@@ -195,7 +324,8 @@ function extractInlineImagesFromText(content: string): ParsedMessageRichContent 
 
   return {
     text: normalizeDisplayText(nextContent),
-    inlineImages: dedupeInlineImages(inlineImages)
+    inlineImages: dedupeInlineImages(inlineImages),
+    structuredQuestions: null
   };
 }
 

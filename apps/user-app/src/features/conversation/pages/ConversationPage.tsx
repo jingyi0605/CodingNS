@@ -339,6 +339,13 @@ function LiveConversationPage({
     () => buildMobileFavoritePreviewItems(favoriteSessions, navigationGroups),
     [favoriteSessions, navigationGroups]
   );
+
+  async function handleSubmitStructuredQuestion(payload: {
+    messageId: string;
+    answers: Record<string, string[]>;
+  }) {
+    await send(formatStructuredQuestionAnswers(payload.answers));
+  }
   const [expandedMobilePreviewRootIds, setExpandedMobilePreviewRootIds] = useState<string[]>([]);
   const mobilePreviewTrees = useMemo(
     () => [...mobileFavoritePreviewItems, ...mobilePreviewItems],
@@ -664,6 +671,7 @@ function LiveConversationPage({
                 runtimeThinkingPlaceholder={runtimeThinkingPlaceholder}
                 onLoadOlderMessages={loadOlderMessages}
                 onRetryMessage={retryMessage}
+                onSubmitStructuredQuestion={handleSubmitStructuredQuestion}
                 onForkMessage={(message) => {
                   if (!session) {
                     return;
@@ -905,6 +913,13 @@ function LiveConversationPage({
       ) : null}
     </>
   );
+}
+
+function formatStructuredQuestionAnswers(answers: Record<string, string[]>): string {
+  return Object.entries(answers)
+    .map(([, values]) => values.filter(Boolean).join(" / "))
+    .filter(Boolean)
+    .join("\n");
 }
 
 function findParallelAncestorGroupId(

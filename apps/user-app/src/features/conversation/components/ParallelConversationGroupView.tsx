@@ -887,6 +887,17 @@ function ParallelConversationMemberPane({
       ? workspaceContext?.displayName ?? navigationWorkspaceId
       : isolatedWorkspaceBranchName ?? panePromptLabel;
   const isRemovingCurrentSession = removingSessionId === sessionId;
+  async function handleSubmitStructuredQuestion(payload: {
+    messageId: string;
+    answers: Record<string, string[]>;
+  }) {
+    await send(
+      Object.entries(payload.answers)
+        .map(([, values]) => values.filter(Boolean).join(" / "))
+        .filter(Boolean)
+        .join("\n")
+    );
+  }
   const infoPopoverStyle: CSSProperties | undefined =
     infoOpen && infoPopoverFrame
       ? {
@@ -1508,6 +1519,7 @@ function ParallelConversationMemberPane({
             followTailUpdates
             onLoadOlderMessages={loadOlderMessages}
             onRetryMessage={retryMessage}
+            onSubmitStructuredQuestion={handleSubmitStructuredQuestion}
             onForkMessage={(message) => {
               const currentSession = session ?? entry.session;
 
