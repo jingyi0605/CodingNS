@@ -13,6 +13,7 @@ const mockListProviderCapabilities = vi.fn();
 const mockNavigate = vi.fn();
 const mockRequestNavigationRefresh = vi.fn();
 const mockSelectWorkspace = vi.fn();
+const mockSetSessionWorkspace = vi.fn();
 const mockRefreshWorktreeMergePreview = vi.fn();
 const mockApplyWorktreeMerge = vi.fn();
 const mockRequestWorktreeCleanup = vi.fn();
@@ -82,6 +83,7 @@ vi.mock("./WorkbenchLayout", () => ({
     navigationGroups: mockNavigationGroups,
     requestNavigationRefresh: mockRequestNavigationRefresh,
     selectWorkspace: mockSelectWorkspace,
+    setSessionWorkspace: mockSetSessionWorkspace,
     upsertNavigationSession: vi.fn(),
     markNavigationSessionSeen: vi.fn(),
     worktreeMergeStateById: {},
@@ -581,6 +583,126 @@ describe("ParallelConversationGroupView", () => {
     expect(promptField).toHaveAttribute("readonly");
   });
 
+  it("不会在并行 pane 内重复渲染子 Agent 列表", async () => {
+    const detail = createDetail();
+    detail.members = [
+      detail.members[0],
+      createMember("session-2", 1, "比较版")
+    ];
+    mockNavigationGroups = [
+      {
+        workspace: {
+          id: "workspace-1",
+          name: "TEST",
+          path: "/Users/jackson/Code/TEST",
+          backgroundColor: null,
+          createdAt: "2026-04-23T12:00:00.000Z",
+          updatedAt: "2026-04-23T12:00:00.000Z"
+        },
+        sessions: [
+          {
+            ...detail.members[0].session,
+            sessionIsolatedWorkspace: null
+          },
+          {
+            ...detail.members[1].session,
+            sessionIsolatedWorkspace: null
+          },
+          createSubagentSession({
+            sessionId: "subagent-1",
+            parentSessionId: "session-1",
+            title: "原版子 Agent"
+          }),
+          createSubagentSession({
+            sessionId: "subagent-1-1",
+            parentSessionId: "subagent-1",
+            title: "原版深层子 Agent"
+          }),
+          createSubagentSession({
+            sessionId: "subagent-2",
+            parentSessionId: "session-2",
+            title: "比较版子 Agent"
+          })
+        ],
+        childWorktrees: []
+      }
+    ];
+    mockGetParallelGroupDetail.mockResolvedValueOnce(detail);
+
+    render(
+      <MemoryRouter>
+        <ParallelConversationGroupView
+          groupId="parallel-group-1"
+          currentSessionId="session-1"
+        />
+      </MemoryRouter>
+    );
+
+    const originalPanePrompt = await screen.findByText("原版风格");
+    const comparePanePrompt = await screen.findByText("比较版");
+    const originalPane = originalPanePrompt.closest(".parallel-conversation-pane");
+    const comparePane = comparePanePrompt.closest(".parallel-conversation-pane");
+
+    if (!(originalPane instanceof HTMLElement) || !(comparePane instanceof HTMLElement)) {
+      throw new Error("未找到并行 pane");
+    }
+
+    const originalScope = within(originalPane);
+    const compareScope = within(comparePane);
+
+    expect(originalScope.queryByText("原版子 Agent")).not.toBeInTheDocument();
+    expect(originalScope.queryByText("原版深层子 Agent")).not.toBeInTheDocument();
+    expect(compareScope.queryByText("比较版子 Agent")).not.toBeInTheDocument();
+    expect(document.querySelector(".parallel-conversation-subagent-list")).toBeNull();
+  });
+
+  it("并行 pane 会保持主会话视图，不会在 pane 内暴露子 Agent 跳转入口", async () => {
+    const detail = createDetail();
+    mockNavigationGroups = [
+      {
+        workspace: {
+          id: "workspace-1",
+          name: "TEST",
+          path: "/Users/jackson/Code/TEST",
+          backgroundColor: null,
+          createdAt: "2026-04-23T12:00:00.000Z",
+          updatedAt: "2026-04-23T12:00:00.000Z"
+        },
+        sessions: [
+          {
+            ...detail.members[0].session,
+            sessionIsolatedWorkspace: null
+          },
+          createSubagentSession({
+            sessionId: "subagent-1",
+            parentSessionId: "session-1",
+            title: "原版子 Agent"
+          })
+        ],
+        childWorktrees: []
+      }
+    ];
+    mockGetParallelGroupDetail.mockResolvedValueOnce(detail);
+
+    render(
+      <MemoryRouter>
+        <ParallelConversationGroupView
+          groupId="parallel-group-1"
+          currentSessionId="session-1"
+        />
+      </MemoryRouter>
+    );
+
+    await screen.findByText("原版风格");
+
+    expect(screen.queryByRole("button", { name: /原版子 Agent/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("原版子 Agent")).not.toBeInTheDocument();
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(mockSelectWorkspace).not.toHaveBeenCalled();
+    expect(mockSetSessionWorkspace).not.toHaveBeenCalledWith("subagent-1", "workspace-1");
+    expect(screen.getByTestId("message-timeline")).toBeInTheDocument();
+  });
+
   it("并行成员已满 4 个时会禁用追加按钮", async () => {
     const fullDetail = createDetail();
     fullDetail.group.requestedCount = 4;
@@ -776,6 +898,38 @@ function createMember(sessionId: string, ordinal: number, title: string) {
       },
       sessionIsolatedWorkspace: null
     },
+    sessionIsolatedWorkspace: null
+  };
+}
+
+function createSubagentSession(input: {
+  sessionId: string;
+  parentSessionId: string;
+  title: string;
+}) {
+  return {
+    sessionId: input.sessionId,
+    workspaceId: "workspace-1",
+    parentSessionId: input.parentSessionId,
+    provider: "codex",
+    title: input.title,
+    summary: null,
+    createdAt: "2026-04-23T12:00:00.000Z",
+    updatedAt: "2026-04-23T12:00:00.000Z",
+    lastMessageAt: "2026-04-23T12:00:00.000Z",
+    activityState: "idle",
+    runningState: "idle",
+    unreadCount: 0,
+    hasActiveRun: false,
+    hasPendingPermissionRequest: false,
+    forkDepth: 0,
+    forkOriginSessionId: null,
+    forkOriginMessageId: null,
+    forkDraftSourceSessionId: null,
+    forkDraftSourceMessageId: null,
+    isSubagent: true,
+    subagentLabel: "worker",
+    parallelGroup: null,
     sessionIsolatedWorkspace: null
   };
 }

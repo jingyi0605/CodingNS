@@ -21,10 +21,13 @@ import {
 } from "../../workbench/utils/worktree-visual-context";
 import {
   buildWorkspaceSessionIndexPath,
+  buildNavigationSessionTree,
   buildWorkspaceSessionPath,
   buildWorkspaceTerminalsPath,
-  flattenNavigationSessions
+  flattenNavigationSessions,
+  type WorkbenchNavigationTreeNode
 } from "../../workbench/utils/workbench-navigation";
+import { getSessionTreeChildren } from "../../workbench/utils/session-tree";
 import {
   deleteSession,
   getParallelGroupDetail,
@@ -108,8 +111,10 @@ interface ParallelConversationMemberPaneProps {
     memberPrompt: string | null;
     model: string | null;
     sessionIsolatedWorkspace: SessionIsolatedWorkspaceSummaryDto | null;
+    subagentTree: ParallelPaneSubagentNode[];
   };
   readonly isCurrent: boolean;
+  readonly routeCurrentSessionId: string;
   readonly workspaceContext: WorkspaceVisualContext | null;
   readonly infoOpen: boolean;
   readonly onCloseInfo: () => void;
@@ -118,6 +123,12 @@ interface ParallelConversationMemberPaneProps {
   readonly promotingWorkspaceId: string | null;
   readonly onRemoveSession: (sessionId: string) => void | Promise<void>;
   readonly removingSessionId: string | null;
+}
+
+interface ParallelPaneSubagentNode {
+  readonly session: SessionSummaryDto;
+  readonly workspaceId: string;
+  readonly children: ParallelPaneSubagentNode[];
 }
 
 function clampParallelToolsPanelFrame(
@@ -261,6 +272,23 @@ export function ParallelConversationGroupView({
     () => new Map(flattenedEntries.map((entry) => [entry.session.sessionId, entry] as const)),
     [flattenedEntries]
   );
+  const navigationSessionTree = useMemo(
+    () => buildNavigationSessionTree(flattenedEntries),
+    [flattenedEntries]
+  );
+  const navigationNodeBySessionId = useMemo(() => {
+    const nodeBySessionId = new Map<string, WorkbenchNavigationTreeNode>();
+
+    const visit = (nodes: readonly WorkbenchNavigationTreeNode[]) => {
+      for (const node of nodes) {
+        nodeBySessionId.set(node.item.session.sessionId, node);
+        visit(getSessionTreeChildren(node));
+      }
+    };
+
+    visit(navigationSessionTree);
+    return nodeBySessionId;
+  }, [navigationSessionTree]);
   const workspaceVisualContextMap = useMemo(
     () => buildWorkspaceVisualContextMap(navigationGroups),
     [navigationGroups]
@@ -352,10 +380,15 @@ export function ParallelConversationGroupView({
           ordinal: item.member.ordinal,
           memberPrompt: item.member.memberPrompt,
           model: item.member.model,
-          sessionIsolatedWorkspace: item.sessionIsolatedWorkspace
+          sessionIsolatedWorkspace: item.sessionIsolatedWorkspace,
+          subagentTree: buildParallelPaneSubagentTree(
+            latestSession.sessionId,
+            detail.group.id,
+            navigationNodeBySessionId
+          )
         };
       });
-  }, [detail, navigationEntryBySessionId]);
+  }, [detail, navigationEntryBySessionId, navigationNodeBySessionId]);
 
   useEffect(() => {
     if (
@@ -653,7 +686,11 @@ export function ParallelConversationGroupView({
             <ParallelConversationMemberPane
               key={item.session.sessionId}
               entry={item}
-              isCurrent={item.session.sessionId === currentSessionId}
+              isCurrent={
+                item.session.sessionId === currentSessionId
+                || parallelPaneSubagentTreeContainsSessionId(item.subagentTree, currentSessionId)
+              }
+              routeCurrentSessionId={currentSessionId}
               workspaceContext={workspaceContext}
               infoOpen={openInfoSessionId === item.session.sessionId}
               promotingWorkspaceId={promotingWorkspaceId}
@@ -706,6 +743,7 @@ export function ParallelConversationGroupView({
 function ParallelConversationMemberPane({
   entry,
   isCurrent,
+  routeCurrentSessionId,
   workspaceContext,
   infoOpen,
   onCloseInfo,
@@ -721,12 +759,32 @@ function ParallelConversationMemberPane({
   const {
     navigationGroups,
     requestNavigationRefresh,
-    selectWorkspace,
     setSessionWorkspace,
     upsertNavigationSession,
-    markNavigationSessionSeen
+    markNavigationSessionSeen,
+    selectWorkspace
   } = useWorkbenchShell();
-  const sessionId = entry.session.sessionId;
+  const memberSessionId = entry.session.sessionId;
+  const [paneSessionId, setPaneSessionId] = useState(() =>
+    resolveInitialParallelPaneSessionId(entry, routeCurrentSessionId)
+  );
+  const paneNavigationEntryBySessionId = useMemo(
+    () => new Map(flattenNavigationSessions(navigationGroups).map((item) => [item.session.sessionId, item] as const)),
+    [navigationGroups]
+  );
+  const activePaneSession =
+    paneSessionId === memberSessionId
+      ? entry.session
+      : paneNavigationEntryBySessionId.get(paneSessionId)?.session
+        ?? findParallelPaneSubagentSession(entry.subagentTree, paneSessionId)
+        ?? entry.session;
+  const activePaneWorkspaceId =
+    paneSessionId === memberSessionId
+      ? entry.workspaceId
+      : paneNavigationEntryBySessionId.get(paneSessionId)?.workspace.id
+        ?? findParallelPaneSubagentWorkspaceId(entry.subagentTree, paneSessionId)
+        ?? entry.workspaceId;
+  const sessionId = activePaneSession.sessionId;
   const [toolsOpen, setToolsOpen] = useState(false);
   const [activeToolPanel, setActiveToolPanel] = useState<"files" | "git" | "processes" | "terminals">("files");
   const [toolsPinned, setToolsPinned] = useState(false);
@@ -739,7 +797,7 @@ function ParallelConversationMemberPane({
   const toolsPanelRef = useRef<HTMLDivElement | null>(null);
   const toolsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [paneColorOverride, setPaneColorOverride] = useState<string | null>(() =>
-    readParallelPaneColorOverride(sessionId)
+    readParallelPaneColorOverride(memberSessionId)
   );
   const {
     session,
@@ -777,7 +835,7 @@ function ParallelConversationMemberPane({
     steerQueuedMessage
   } = useLiveSessionController({
     sessionId,
-    externalSession: entry.session,
+    externalSession: activePaneSession,
     onSeen: (seenSessionId, seenAt) => {
       markNavigationSessionSeen(seenSessionId, seenAt);
     },
@@ -787,7 +845,10 @@ function ParallelConversationMemberPane({
       selectWorkspace(workspaceId);
       navigate(buildWorkspaceSessionPath(workspaceId, targetSessionId));
     },
-    onBindSessionWorkspace: setSessionWorkspace,
+    onBindSessionWorkspace:
+      paneSessionId === memberSessionId
+        ? setSessionWorkspace
+        : undefined,
     onResolveMissingSession: () => {
       void requestNavigationRefresh();
     },
@@ -802,7 +863,7 @@ function ParallelConversationMemberPane({
   const parallelGroupStyle = createParallelGroupStyle(session?.parallelGroup ?? entry.session.parallelGroup);
   const parallelPaneStyle = createParallelPaneStyle({
     groupId: (session?.parallelGroup ?? entry.session.parallelGroup)?.groupId ?? "parallel-group",
-    sessionId,
+    sessionId: memberSessionId,
     ordinal: entry.ordinal,
     overrideColor: paneColorOverride
   });
@@ -816,9 +877,9 @@ function ParallelConversationMemberPane({
     || entry.model?.trim()
     || t("shell.parallelPaneModelFallback");
   const panePromptLabel = entry.memberPrompt?.trim() || t("shell.parallelPanePromptFallback");
-  const navigationWorkspaceId = entry.workspaceId;
+  const navigationWorkspaceId = activePaneWorkspaceId;
   const toolWorkspaceId = resolveSessionToolWorkspaceId(
-    session ?? entry.session,
+    session ?? activePaneSession,
     paneSessionIsolatedWorkspace
   );
   const toolWorkspaceName =
@@ -851,13 +912,29 @@ function ParallelConversationMemberPane({
       : undefined;
 
   useEffect(() => {
-    setPaneColorOverride(readParallelPaneColorOverride(sessionId));
+    setPaneColorOverride(readParallelPaneColorOverride(memberSessionId));
     setToolsOpen(false);
     setToolsPinned(false);
     setToolsFrame(null);
     setInfoPopoverFrame(null);
     setActiveToolPanel("files");
-  }, [sessionId]);
+  }, [memberSessionId]);
+
+  useEffect(() => {
+    if (parallelPaneSubagentTreeContainsSessionId(entry.subagentTree, routeCurrentSessionId)) {
+      setPaneSessionId(routeCurrentSessionId);
+      return;
+    }
+
+    if (routeCurrentSessionId === memberSessionId) {
+      setPaneSessionId(memberSessionId);
+      return;
+    }
+
+    setPaneSessionId((current) =>
+      isParallelPaneSessionIdOwnedByEntry(entry, current) ? current : memberSessionId
+    );
+  }, [entry, memberSessionId, routeCurrentSessionId]);
 
   useEffect(() => {
     if (!infoOpen) {
@@ -1256,7 +1333,7 @@ function ParallelConversationMemberPane({
                   className="ghost-button parallel-pane-color-reset"
                   disabled={!paneColorOverride || isRemovingCurrentSession}
                   onClick={() => {
-                    writeParallelPaneColorOverride(sessionId, null);
+                    writeParallelPaneColorOverride(memberSessionId, null);
                     setPaneColorOverride(null);
                   }}
                 >
@@ -1281,7 +1358,7 @@ function ParallelConversationMemberPane({
                     disabled={isRemovingCurrentSession}
                     style={{ backgroundColor: color }}
                     onClick={() => {
-                      const nextColor = writeParallelPaneColorOverride(sessionId, color);
+                      const nextColor = writeParallelPaneColorOverride(memberSessionId, color);
                       setPaneColorOverride(nextColor);
                     }}
                   />
@@ -1612,4 +1689,145 @@ function PaneTerminalIcon() {
       />
     </svg>
   );
+}
+
+function buildParallelPaneSubagentTree(
+  rootSessionId: string,
+  groupId: string,
+  navigationNodeBySessionId: ReadonlyMap<string, WorkbenchNavigationTreeNode>
+): ParallelPaneSubagentNode[] {
+  const rootNode = navigationNodeBySessionId.get(rootSessionId);
+
+  if (!rootNode) {
+    return [];
+  }
+
+  return getSessionTreeChildren(rootNode).flatMap((childNode) =>
+    projectParallelPaneSubagentBranch(childNode, groupId)
+  );
+}
+
+function projectParallelPaneSubagentBranch(
+  node: WorkbenchNavigationTreeNode,
+  groupId: string
+): ParallelPaneSubagentNode[] {
+  const session = node.item.session;
+
+  if (session.parallelGroup?.groupId === groupId) {
+    return [];
+  }
+
+  const children = getSessionTreeChildren(node).flatMap((childNode) =>
+    projectParallelPaneSubagentBranch(childNode, groupId)
+  );
+
+  if (session.isSubagent !== true) {
+    return children;
+  }
+
+  return [
+    {
+      session,
+      workspaceId: node.item.workspace.id,
+      children
+    }
+  ];
+}
+
+function parallelPaneSubagentTreeContainsSessionId(
+  nodes: readonly ParallelPaneSubagentNode[],
+  sessionId: string
+): boolean {
+  const normalizedSessionId = sessionId.trim();
+
+  if (!normalizedSessionId) {
+    return false;
+  }
+
+  return nodes.some(
+    (node) =>
+      node.session.sessionId === normalizedSessionId
+      || parallelPaneSubagentTreeContainsSessionId(node.children, normalizedSessionId)
+  );
+}
+
+function resolveInitialParallelPaneSessionId(
+  entry: ParallelConversationMemberPaneProps["entry"],
+  routeCurrentSessionId: string
+): string {
+  if (routeCurrentSessionId === entry.session.sessionId) {
+    return entry.session.sessionId;
+  }
+
+  if (parallelPaneSubagentTreeContainsSessionId(entry.subagentTree, routeCurrentSessionId)) {
+    return routeCurrentSessionId;
+  }
+
+  return entry.session.sessionId;
+}
+
+function isParallelPaneSessionIdOwnedByEntry(
+  entry: ParallelConversationMemberPaneProps["entry"],
+  sessionId: string
+): boolean {
+  const normalizedSessionId = sessionId.trim();
+
+  if (!normalizedSessionId) {
+    return false;
+  }
+
+  return (
+    normalizedSessionId === entry.session.sessionId
+    || parallelPaneSubagentTreeContainsSessionId(entry.subagentTree, normalizedSessionId)
+  );
+}
+
+function findParallelPaneSubagentSession(
+  nodes: readonly ParallelPaneSubagentNode[],
+  sessionId: string
+): SessionSummaryDto | null {
+  const normalizedSessionId = sessionId.trim();
+
+  if (!normalizedSessionId) {
+    return null;
+  }
+
+  for (const node of nodes) {
+    if (node.session.sessionId === normalizedSessionId) {
+      return node.session;
+    }
+
+    const childMatch = findParallelPaneSubagentSession(node.children, normalizedSessionId);
+
+    if (childMatch) {
+      return childMatch;
+    }
+  }
+
+  return null;
+}
+
+function findParallelPaneSubagentWorkspaceId(
+  nodes: readonly ParallelPaneSubagentNode[],
+  sessionId: string
+): string | null {
+  const normalizedSessionId = sessionId.trim();
+
+  if (!normalizedSessionId) {
+    return null;
+  }
+
+  for (const node of nodes) {
+    if (node.session.sessionId === normalizedSessionId) {
+      return node.workspaceId;
+    }
+
+    const childMatch = findParallelPaneSubagentWorkspaceId(node.children, normalizedSessionId);
+
+    if (childMatch) {
+      return childMatch;
+    }
+  }
+
+  return null;
 }
