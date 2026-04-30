@@ -30,6 +30,7 @@ export function PermissionRequestList({
       <div className="permission-request-list-header">
         <div>
           <strong>{t("conversation.permissionRequestSectionTitle")}</strong>
+          <p>{t("conversation.permissionRequestSectionDescription")}</p>
         </div>
         <span className="permission-request-count">{pendingRequests.length}</span>
       </div>
@@ -139,7 +140,7 @@ export function PermissionRequestList({
                   <button
                     key={`${request.id}:${action.value}`}
                     type="button"
-                    className={`permission-request-action permission-request-action-${action.tone}`}
+                    className={resolvePermissionActionClassName(action.tone)}
                     disabled={
                       replyingRequestId === request.id || (action.value === "submit" && disableSubmit)
                     }
@@ -162,6 +163,18 @@ export function PermissionRequestList({
       </div>
     </section>
   );
+}
+
+function resolvePermissionActionClassName(tone: SessionPermissionRequestDto["actions"][number]["tone"]) {
+  if (tone === "danger") {
+    return "workbench-danger-button permission-request-action";
+  }
+
+  if (tone === "primary") {
+    return "primary-button permission-request-action";
+  }
+
+  return "secondary-button permission-request-action";
 }
 
 function getRequestKindLabel(kind: SessionPermissionRequestDto["kind"]) {

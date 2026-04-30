@@ -27460,6 +27460,13 @@ textarea:focus-visible {
     0 0 28px rgba(255, 60, 247, 0.04);
 }
 .permission-request-list {
+  --permission-panel-border: color-mix(in srgb, var(--border-primary) 78%, var(--accent) 22%);
+  --permission-panel-border-strong: color-mix(in srgb, var(--border-primary) 62%, var(--accent) 38%);
+  --permission-panel-surface: color-mix(in srgb, var(--bg-surface) 94%, var(--accent) 6%);
+  --permission-panel-surface-muted: color-mix(in srgb, var(--surface-muted) 88%, var(--bg-surface) 12%);
+  --permission-panel-surface-soft: color-mix(in srgb, var(--bg-elevated) 90%, var(--surface-muted) 10%);
+  --permission-panel-accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --permission-panel-shadow: 0 12px 28px color-mix(in srgb, var(--text-primary) 8%, transparent);
   position: relative;
   z-index: 2500;
   isolation: isolate;
@@ -27474,11 +27481,11 @@ textarea:focus-visible {
   justify-content: space-between;
   gap: 12px;
   padding: 14px 16px;
-  border: 1px solid color-mix(in srgb, var(--color-warning, #d97706) 28%, transparent);
+  border: 1px solid var(--permission-panel-border);
   border-radius: 18px;
   background:
-    linear-gradient(135deg, color-mix(in srgb, var(--color-warning, #d97706) 16%, transparent), transparent),
-    color-mix(in srgb, var(--surface-raised, #ffffff) 92%, var(--color-warning, #d97706) 8%);
+    linear-gradient(135deg, var(--permission-panel-accent-soft), transparent 58%),
+    var(--permission-panel-surface);
 }
 
 .permission-request-list-header strong {
@@ -27501,7 +27508,7 @@ textarea:focus-visible {
   justify-content: center;
   padding: 0 10px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--color-warning, #d97706) 18%, transparent);
+  background: var(--permission-panel-accent-soft);
   color: var(--text-primary, #122033);
   font-weight: 700;
 }
@@ -27516,9 +27523,13 @@ textarea:focus-visible {
   gap: 14px;
   padding: 16px;
   border-radius: 20px;
-  border: 1px solid color-mix(in srgb, var(--surface-border, #d8dee8) 88%, var(--color-warning, #d97706) 12%);
-  background: var(--surface-raised, #ffffff);
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+  border: 1px solid var(--permission-panel-border);
+  background: var(--permission-panel-surface);
+  box-shadow: var(--permission-panel-shadow);
+}
+
+.permission-request-card-inline {
+  margin-top: 10px;
 }
 
 .permission-request-card-header {
@@ -27542,7 +27553,7 @@ textarea:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: color-mix(in srgb, var(--surface-muted, #eef2f7) 86%, transparent);
+  background: var(--permission-panel-surface-muted);
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -27573,7 +27584,7 @@ textarea:focus-visible {
   flex-shrink: 0;
   padding: 6px 10px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--color-warning, #d97706) 12%, transparent);
+  background: var(--permission-panel-accent-soft);
   color: var(--text-primary, #122033);
   font-size: 12px;
   font-weight: 600;
@@ -27613,7 +27624,7 @@ textarea:focus-visible {
   gap: 8px;
   padding: 12px;
   border-radius: 14px;
-  background: color-mix(in srgb, var(--surface-muted, #eef2f7) 72%, transparent);
+  background: var(--permission-panel-surface-muted);
 }
 
 .permission-request-block pre {
@@ -27637,7 +27648,8 @@ textarea:focus-visible {
   gap: 4px;
   padding: 10px 12px;
   border-radius: 12px;
-  background: var(--surface-raised, #ffffff);
+  background: var(--permission-panel-surface-soft);
+  border: 1px solid color-mix(in srgb, var(--permission-panel-border) 88%, transparent);
 }
 
 .permission-request-target-item strong {
@@ -27666,7 +27678,7 @@ textarea:focus-visible {
 .permission-request-path-list li {
   padding: 8px 10px;
   border-radius: 10px;
-  background: var(--surface-raised, #ffffff);
+  background: var(--permission-panel-surface-soft);
   font-size: 12px;
   word-break: break-word;
 }
@@ -27679,7 +27691,7 @@ textarea:focus-visible {
 .permission-request-permission-grid > div {
   padding: 10px;
   border-radius: 12px;
-  background: var(--surface-raised, #ffffff);
+  background: var(--permission-panel-surface-soft);
   display: grid;
   gap: 6px;
 }
@@ -27703,7 +27715,8 @@ textarea:focus-visible {
   gap: 8px;
   padding: 10px 12px;
   border-radius: 12px;
-  background: var(--surface-raised, #ffffff);
+  background: var(--permission-panel-surface-soft);
+  border: 1px solid color-mix(in srgb, var(--permission-panel-border) 88%, transparent);
 }
 
 .permission-request-question p {
@@ -27728,6 +27741,15 @@ textarea:focus-visible {
   align-items: flex-start;
   gap: 8px;
   font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--permission-panel-surface-soft) 72%, transparent);
+}
+
+.permission-request-question-option:has(input:checked) {
+  border-color: var(--permission-panel-border-strong);
+  background: color-mix(in srgb, var(--accent) 12%, var(--permission-panel-surface-soft));
 }
 
 .permission-request-question-option input {
@@ -27750,33 +27772,13 @@ textarea:focus-visible {
 }
 
 .permission-request-action {
-  min-height: 40px;
-  padding: 0 14px;
-  border-radius: 12px;
-  border: 1px solid transparent;
-  font-weight: 600;
-  cursor: pointer;
+  min-height: 38px;
+  min-width: 96px;
 }
 
 .permission-request-action:disabled {
   opacity: 0.6;
   cursor: not-allowed;
-}
-
-.permission-request-action-primary {
-  background: color-mix(in srgb, var(--color-success, #15803d) 82%, white);
-  color: #fff;
-}
-
-.permission-request-action-neutral {
-  background: color-mix(in srgb, var(--surface-muted, #eef2f7) 88%, transparent);
-  border-color: color-mix(in srgb, var(--surface-border, #d8dee8) 88%, transparent);
-  color: var(--text-primary, #122033);
-}
-
-.permission-request-action-danger {
-  background: color-mix(in srgb, var(--color-danger, #dc2626) 82%, white);
-  color: #fff;
 }
 
 @media (max-width: 768px) {
