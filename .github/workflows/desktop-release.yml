@@ -124,7 +124,20 @@ jobs:
 
           dmg_path="apps/desktop/src-tauri/target/release/macos-release/CodingNS.dmg"
           mount_dir="$RUNNER_TEMP/codingns-release-dmg"
-          expected_version="${GITHUB_REF_NAME#v}"
+          expected_version="$(tr -d '[:space:]' < VERSION)"
+
+          if [[ -z "$expected_version" ]]; then
+            echo "VERSION 文件为空，无法校验 DMG 版本" >&2
+            exit 1
+          fi
+
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            tag_version="${GITHUB_REF_NAME#v}"
+            if [[ "$tag_version" != "$expected_version" ]]; then
+              echo "Git tag 与仓库版本不一致：tag=$tag_version version=$expected_version" >&2
+              exit 1
+            fi
+          fi
 
           rm -rf "$mount_dir"
           mkdir -p "$mount_dir"
