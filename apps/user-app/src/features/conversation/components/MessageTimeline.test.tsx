@@ -374,9 +374,17 @@ describe("MessageTimeline", () => {
     );
 
     expect(screen.getByText(t("conversation.runtimeErrorTitle"))).toBeInTheDocument();
-    expect(screen.getByText("CODEX_HTTP_429 · 429 Too Many Requests, request id: demo-request-id")).toBeInTheDocument();
+    expect(document.querySelector(".session-runtime-error-panel__summary")?.textContent).toBe(
+      "CODEX_HTTP_429 · 429 Too Many Requests, request id: demo-request-id"
+    );
     expect(screen.getByText(t("conversation.runtimeErrorCodeLabel"))).toBeInTheDocument();
     expect(screen.getByText(t("conversation.runtimeErrorDetailLabel"))).toBeInTheDocument();
+    expect(screen.getByText("429 Too Many Requests")).toHaveClass(
+      "session-runtime-error-panel__summary-token--status_code"
+    );
+    expect(screen.getByText("request id: demo-request-id")).toHaveClass(
+      "session-runtime-error-panel__summary-token--request_id"
+    );
   });
 
   it("会把 Codex 历史里的 user turn_aborted 控制标记也渲染成助手消息", () => {

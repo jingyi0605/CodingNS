@@ -95,6 +95,59 @@ function stripThinkingTrailingDots(value: string): string {
   return value.replace(/(\.{3,}|…+)$/, "").trimEnd();
 }
 
+type SessionErrorSummarySegment =
+  | {
+      type: "text";
+      text: string;
+    }
+  | {
+      type: "status_code";
+      text: string;
+    }
+  | {
+      type: "request_id";
+      text: string;
+    };
+
+function tokenizeSessionErrorSummary(summary: string): SessionErrorSummarySegment[] {
+  const normalized = summary.trim();
+
+  if (!normalized) {
+    return [];
+  }
+
+  const pattern = /\b(?:last status:\s*\d{3}\s+[A-Za-z][A-Za-z ]*|\d{3}\s+(?:Too Many Requests|Bad Gateway|Gateway Timeout|Service Unavailable|Unauthorized|Forbidden|Not Found|Internal Server Error))\b|\brequest id:\s*[A-Za-z0-9-]+\b/gi;
+  const segments: SessionErrorSummarySegment[] = [];
+  let lastIndex = 0;
+
+  for (const match of normalized.matchAll(pattern)) {
+    const start = match.index ?? 0;
+    const matchedText = match[0];
+
+    if (start > lastIndex) {
+      segments.push({
+        type: "text",
+        text: normalized.slice(lastIndex, start)
+      });
+    }
+
+    segments.push({
+      type: /^request id:/i.test(matchedText) ? "request_id" : "status_code",
+      text: matchedText
+    });
+    lastIndex = start + matchedText.length;
+  }
+
+  if (lastIndex < normalized.length) {
+    segments.push({
+      type: "text",
+      text: normalized.slice(lastIndex)
+    });
+  }
+
+  return segments.filter((segment) => segment.text.length > 0);
+}
+
 function parseTurnAbortedMessage(value: string): { detail: string | null } | null {
   const match = value.match(/^\s*<turn_aborted>([\s\S]*?)<\/turn_aborted>\s*$/i);
 
@@ -4765,7 +4818,22 @@ export function MessageTimeline({
               <span className="session-runtime-error-panel__dot" aria-hidden="true" />
               <strong>{sessionErrorDisplay.title}</strong>
             </div>
-            <p className="session-runtime-error-panel__summary">{sessionErrorDisplay.summary}</p>
+            <p className="session-runtime-error-panel__summary">
+              {tokenizeSessionErrorSummary(sessionErrorDisplay.summary).map((segment, index) => {
+                if (segment.type === "text") {
+                  return <span key={`text-${index}`}>{segment.text}</span>;
+                }
+
+                return (
+                  <mark
+                    key={`${segment.type}-${index}`}
+                    className={`session-runtime-error-panel__summary-token session-runtime-error-panel__summary-token--${segment.type}`}
+                  >
+                    {segment.text}
+                  </mark>
+                );
+              })}
+            </p>
             {sessionErrorDisplay.code ? (
               <div className="session-runtime-error-panel__meta">
                 <span className="session-runtime-error-panel__label">{t("conversation.runtimeErrorCodeLabel")}</span>

@@ -10004,6 +10004,32 @@ textarea:focus-visible {
   word-break: break-word;
 }
 
+.session-runtime-error-panel__summary-token {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 0.14rem;
+  padding: 0.08rem 0.46rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 0.92em;
+  font-weight: 700;
+  line-height: 1.45;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+
+.session-runtime-error-panel__summary-token--status_code {
+  background: color-mix(in srgb, var(--status-danger) 14%, transparent);
+  border-color: color-mix(in srgb, var(--status-danger) 24%, transparent);
+  color: color-mix(in srgb, var(--status-danger) 86%, var(--text-primary));
+}
+
+.session-runtime-error-panel__summary-token--request_id {
+  background: color-mix(in srgb, #f59e0b 14%, transparent);
+  border-color: color-mix(in srgb, #f59e0b 24%, transparent);
+  color: color-mix(in srgb, #f59e0b 82%, var(--text-primary));
+}
+
 .session-runtime-error-panel__meta,
 .session-runtime-error-panel__detail {
   display: flex;
