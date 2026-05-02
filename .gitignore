@@ -103,6 +103,11 @@ apps/user-app/src-tauri/gen/apple/assets/assets/
 apps/host/claude-hook-token
 apps/user-app/src-tauri/mobile-splash/
 apps/user-app/src-tauri/gen/apple/Assets.xcassets/AppIcon.appiconset/*.png
+apps/user-app/src-tauri/gen/android/.gradle/
+apps/user-app/src-tauri/gen/android/app/build/
+apps/user-app/src-tauri/gen/android/buildSrc/.gradle/
+apps/user-app/src-tauri/gen/android/buildSrc/build/
+apps/user-app/src-tauri/gen/apple/Externals/
 .playwright-cli/*
 apps/host/file-preview-token
 apps/host/git-credential-key

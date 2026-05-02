@@ -2,3 +2,12 @@
 # will have compiled files and executables
 /target/
 /gen/schemas
+
+# Android 构建中间产物
+/gen/android/.gradle/
+/gen/android/app/build/
+/gen/android/buildSrc/.gradle/
+/gen/android/buildSrc/build/
+
+# Apple 本地生成依赖
+/gen/apple/Externals/
