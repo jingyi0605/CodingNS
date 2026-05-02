@@ -27,6 +27,7 @@ const gitApiMock = vi.hoisted(() => ({
 const conversationApiMock = vi.hoisted(() => ({
   startLiveSession: vi.fn(),
   getSessionDetail: vi.fn(),
+  listProviderCatalog: vi.fn(),
   listProviderCapabilities: vi.fn()
 }));
 
@@ -112,6 +113,7 @@ vi.mock("../api/git-api", () => ({
 vi.mock("../api/conversation-api", () => ({
   startLiveSession: conversationApiMock.startLiveSession,
   getSessionDetail: conversationApiMock.getSessionDetail,
+  listProviderCatalog: conversationApiMock.listProviderCatalog,
   listProviderCapabilities: conversationApiMock.listProviderCapabilities
 }));
 
@@ -181,7 +183,8 @@ describe("GitSidebar", () => {
       {
         name: "origin",
         fetchUrl: "https://example.com/repo.git",
-        pushUrl: "https://example.com/repo.git"
+        pushUrl: "https://example.com/repo.git",
+        credentialConfigured: false
       }
     ]);
     gitApiMock.stageGitTargets.mockResolvedValue(createStatus([], [
@@ -287,6 +290,13 @@ describe("GitSidebar", () => {
       }
     });
     conversationApiMock.getSessionDetail.mockResolvedValue(null);
+    conversationApiMock.listProviderCatalog.mockResolvedValue([
+      { provider: "codex", enabled: true, available: true, status: "ready", displayName: "Codex" },
+      { provider: "claude-code", enabled: true, available: true, status: "ready", displayName: "Claude Code" },
+      { provider: "gemini", enabled: true, available: true, status: "ready", displayName: "Gemini" },
+      { provider: "kimi", enabled: true, available: true, status: "ready", displayName: "Kimi" },
+      { provider: "opencode", enabled: true, available: true, status: "ready", displayName: "OpenCode" }
+    ]);
     conversationApiMock.listProviderCapabilities.mockResolvedValue({
       codex: {
         provider: "codex",
@@ -730,7 +740,9 @@ describe("GitSidebar", () => {
     fireEvent.click(screen.getByRole("button", { name: "操作菜单" }));
     fireEvent.click(screen.getByRole("button", { name: "远程认证" }));
 
-    await userEvent.selectOptions(screen.getByRole("combobox"), "token");
+    const authModeCombobox = await screen.findByRole("combobox");
+
+    await userEvent.selectOptions(authModeCombobox, "token");
     await userEvent.type(screen.getByPlaceholderText("可选，留空时默认使用 git"), "git");
     await userEvent.type(screen.getByPlaceholderText("输入 access token"), "secret-token");
     await userEvent.click(screen.getByRole("checkbox", { name: "记住账号密码到 Host" }));
@@ -753,12 +765,101 @@ describe("GitSidebar", () => {
     });
   });
 
+  it("多远端推送弹窗会按仓库显示各自的凭据状态", async () => {
+    gitApiMock.getGitRemotes.mockResolvedValue([
+      {
+        name: "github",
+        fetchUrl: "https://github.com/example/repo.git",
+        pushUrl: "https://github.com/example/repo.git",
+        credentialConfigured: true
+      },
+      {
+        name: "origin",
+        fetchUrl: "https://git.example.com/repo.git",
+        pushUrl: "https://git.example.com/repo.git",
+        credentialConfigured: false
+      }
+    ]);
+    renderSidebar();
+
+    fireEvent.click(await screen.findByRole("button", { name: /最近版本/ }));
+    fireEvent.click(screen.getByRole("button", { name: "操作菜单" }));
+    fireEvent.click(screen.getByRole("button", { name: "Push" }));
+
+    expect(await screen.findByText("Host 已配置")).toBeInTheDocument();
+    expect(await screen.findByText("未配置")).toBeInTheDocument();
+
+    const githubRow = screen.getByText("github").closest(".git-remote-item");
+
+    if (!(githubRow instanceof HTMLElement)) {
+      throw new Error("未找到 github 远端行");
+    }
+
+    await userEvent.click(within(githubRow).getByRole("button", { name: "远程认证" }));
+    expect(await screen.findByRole("combobox")).toBeInTheDocument();
+  });
+
+  it("多远端场景会按仓库分别保存当前页面认证并在推送时使用对应凭据", async () => {
+    gitApiMock.getGitRemotes.mockResolvedValue([
+      {
+        name: "github",
+        fetchUrl: "https://github.com/example/repo.git",
+        pushUrl: "https://github.com/example/repo.git",
+        credentialConfigured: false
+      },
+      {
+        name: "origin",
+        fetchUrl: "https://git.example.com/repo.git",
+        pushUrl: "https://git.example.com/repo.git",
+        credentialConfigured: false
+      }
+    ]);
+    renderSidebar();
+
+    fireEvent.click(await screen.findByRole("button", { name: /最近版本/ }));
+    fireEvent.click(screen.getByRole("button", { name: "操作菜单" }));
+    fireEvent.click(screen.getByRole("button", { name: "Push" }));
+
+    const githubRow = await screen.findByText("github");
+    const githubRemoteItem = githubRow.closest(".git-remote-item");
+
+    if (!(githubRemoteItem instanceof HTMLElement)) {
+      throw new Error("未找到 github 远端行");
+    }
+
+    await userEvent.click(within(githubRemoteItem).getByRole("button", { name: "远程认证" }));
+    await userEvent.selectOptions(screen.getByRole("combobox"), "token");
+    await userEvent.type(screen.getByPlaceholderText("可选，留空时默认使用 git"), "git");
+    await userEvent.type(screen.getByPlaceholderText("输入 access token"), "github-secret-token");
+    await userEvent.click(screen.getByRole("button", { name: "保存认证" }));
+
+    expect(await within(githubRemoteItem).findByText("当前页面已配置")).toBeInTheDocument();
+
+    await userEvent.click(within(githubRemoteItem).getByRole("checkbox"));
+    await userEvent.click(screen.getByRole("button", { name: "推送 (1)" }));
+
+    await waitFor(() => {
+      expect(gitApiMock.syncGitRemote).toHaveBeenCalledWith(
+        "workspace-1",
+        "push",
+        "github",
+        {
+          mode: "token",
+          username: "git",
+          token: "github-secret-token"
+        },
+        false
+      );
+    });
+  });
+
   it("GitHub 远程认证弹窗会提示使用 PAT", async () => {
     gitApiMock.getGitRemotes.mockResolvedValue([
       {
         name: "origin",
         fetchUrl: "https://github.com/example/repo.git",
-        pushUrl: "https://github.com/example/repo.git"
+        pushUrl: "https://github.com/example/repo.git",
+        credentialConfigured: false
       }
     ]);
     renderSidebar();

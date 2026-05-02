@@ -1400,7 +1400,12 @@ export const zhCN = {
     remoteAuthDescriptionGithub:
       "检测到当前远程仓库来自 GitHub。GitHub 的 HTTPS Git 操作请使用 Personal Access Token (PAT)，不要填写 GitHub 登录密码。",
     remoteAuthStatusLabel: "认证状态",
+    remoteAuthManageHint: "按仓库分别查看和配置",
+    remoteAuthManageTitle: "管理远程仓库认证",
+    remoteAuthManageDescription: "每个远程仓库单独显示自己的凭据状态，也在这里分别配置。",
     remoteAuthConfigured: "已配置",
+    remoteAuthConfiguredInSession: "当前页面已配置",
+    remoteAuthConfiguredOnHost: "Host 已配置",
     remoteAuthNotConfigured: "未配置",
     remoteAuthGithubPatLabel: "Personal Access Token (PAT)",
     remoteAuthGithubPatPlaceholder: "输入 GitHub PAT",

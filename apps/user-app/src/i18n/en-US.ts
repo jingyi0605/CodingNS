@@ -1584,7 +1584,13 @@ export const enUS = {
     remoteAuthDescriptionGithub:
       "The current remote points to GitHub. For GitHub HTTPS Git operations, use a Personal Access Token (PAT) instead of your GitHub login password.",
     remoteAuthStatusLabel: "Authentication",
+    remoteAuthManageHint: "Review and configure per remote",
+    remoteAuthManageTitle: "Manage Remote Authentication",
+    remoteAuthManageDescription:
+      "Each remote repository shows its own credential status and should be configured separately here.",
     remoteAuthConfigured: "Configured",
+    remoteAuthConfiguredInSession: "Configured In Session",
+    remoteAuthConfiguredOnHost: "Saved On Host",
     remoteAuthNotConfigured: "Not Configured",
     remoteAuthGithubPatLabel: "Personal Access Token (PAT)",
     remoteAuthGithubPatPlaceholder: "Enter GitHub PAT",

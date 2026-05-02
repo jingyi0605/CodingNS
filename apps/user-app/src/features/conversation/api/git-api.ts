@@ -156,6 +156,7 @@ export interface GitRemoteItemDto {
   name: string;
   fetchUrl: string;
   pushUrl: string;
+  credentialConfigured: boolean;
 }
 
 export interface GitUndoCommitResultDto {
