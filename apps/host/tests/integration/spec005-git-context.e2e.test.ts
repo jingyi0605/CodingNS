@@ -369,6 +369,68 @@ describe("spec005 Git 上下文与提交规则引擎", () => {
     expect(pullResponse.statusCode).toBe(200);
   }, 20_000);
 
+  it("查询远端列表时会返回每个仓库自己的 Host 凭据状态", async () => {
+    const fixture = createGitWorkspaceFixture({ withRemote: true });
+    activeFixtures.push(fixture);
+
+    const hosted = createGitTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    await bootstrapWorkspace(hosted, fixture);
+    const accessToken = await loginAsAdmin(hosted);
+
+    const initialRemotesResponse = await hosted.app.inject({
+      method: "GET",
+      url: `/api/git/remotes?workspaceId=${fixture.workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(initialRemotesResponse.statusCode).toBe(200);
+    expect(initialRemotesResponse.json()).toMatchObject([
+      {
+        name: "origin",
+        credentialConfigured: false
+      }
+    ]);
+
+    const rememberCredentialResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/git/remote/sync",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceId: fixture.workspaceId,
+        action: "fetch",
+        remote: "origin",
+        auth: {
+          mode: "token",
+          username: "git",
+          token: "remembered-token"
+        },
+        remember: true
+      }
+    });
+    expect(rememberCredentialResponse.statusCode).toBe(200);
+
+    const rememberedRemotesResponse = await hosted.app.inject({
+      method: "GET",
+      url: `/api/git/remotes?workspaceId=${fixture.workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(rememberedRemotesResponse.statusCode).toBe(200);
+    expect(rememberedRemotesResponse.json()).toMatchObject([
+      {
+        name: "origin",
+        credentialConfigured: true
+      }
+    ]);
+  }, 20_000);
+
   it("在远程同步失败时返回明确错误码", async () => {
     const noRemoteFixture = createGitWorkspaceFixture();
     activeFixtures.push(noRemoteFixture);

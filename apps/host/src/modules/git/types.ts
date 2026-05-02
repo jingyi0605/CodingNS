@@ -140,6 +140,7 @@ export interface GitRemoteItem {
   name: string;
   fetchUrl: string;
   pushUrl: string;
+  credentialConfigured: boolean;
 }
 
 export interface GitUndoCommitResult {

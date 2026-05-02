@@ -1253,7 +1253,12 @@ export function createServer(config: HostConfig) {
     fileContentService,
     fileContextService
   );
-  const gitController = new GitController(gitReadService, gitWriteService, commitOrchestrator);
+  const gitController = new GitController(
+    gitReadService,
+    gitWriteService,
+    commitOrchestrator,
+    gitRemoteCredentialService
+  );
   const terminalController = new TerminalController(terminalService, commandTemplateService);
   const observabilityController = new ObservabilityController(runtimeObservabilityService);
   const workbenchWsHub = new WorkbenchWsHub(

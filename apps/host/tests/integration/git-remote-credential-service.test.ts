@@ -29,6 +29,25 @@ describe("GitRemoteCredentialService", () => {
     database.close();
   });
 
+  it("可以按远端 URL 判断 Host 里是否已有已保存凭据", () => {
+    const database = createDatabaseClient(":memory:");
+    const repository = new GitRemoteCredentialRepository(database.db);
+    const service = new GitRemoteCredentialService(repository, "test-secret");
+    seedUser(database, "user-1");
+
+    expect(service.has("user-1", "https://example.com/repo.git")).toBe(false);
+
+    service.save("user-1", "https://example.com/repo.git", {
+      mode: "token",
+      username: "git",
+      token: "saved-token"
+    });
+
+    expect(service.has("user-1", "https://example.com/repo.git")).toBe(true);
+
+    database.close();
+  });
+
   it("凭据损坏时会自动删除，避免后续持续污染远程同步", () => {
     const database = createDatabaseClient(":memory:");
     const repository = new GitRemoteCredentialRepository(database.db);

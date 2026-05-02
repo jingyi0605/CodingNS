@@ -5,6 +5,7 @@ import { createRequestAbortSignal } from "../../shared/http/request-abort.js";
 import { requireUserId } from "../preferences/common.js";
 import type { GitAuthInput } from "./git-auth.js";
 import type { CommitOrchestrator } from "./commit-orchestrator.js";
+import type { GitRemoteCredentialService } from "./git-remote-credential-service.js";
 import type { GitReadService } from "./git-read-service.js";
 import type { GitWriteService } from "./git-write-service.js";
 import type { CommitRuleLanguage } from "./types.js";
@@ -76,7 +77,8 @@ export class GitController {
   constructor(
     private readonly gitReadService: GitReadService,
     private readonly gitWriteService: GitWriteService,
-    private readonly commitOrchestrator: CommitOrchestrator
+    private readonly commitOrchestrator: CommitOrchestrator,
+    private readonly gitRemoteCredentialService: GitRemoteCredentialService
   ) {}
 
   readonly getStatus = async (
@@ -329,11 +331,20 @@ export class GitController {
     request: FastifyRequest<{ Querystring: WorkspaceQuery }>,
     reply: FastifyReply
   ): Promise<void> => {
+    const userId = requireUserId(request);
+    const remotes = await this.gitReadService.getRemotes(
+      requireWorkspaceId(request.query.workspaceId),
+      createRequestAbortSignal(request)
+    );
+
     reply.send(
-      await this.gitReadService.getRemotes(
-        requireWorkspaceId(request.query.workspaceId),
-        createRequestAbortSignal(request)
-      )
+      remotes.map((remote) => ({
+        ...remote,
+        credentialConfigured: this.gitRemoteCredentialService.has(
+          userId,
+          remote.pushUrl || remote.fetchUrl
+        )
+      }))
     );
   };
 

@@ -40,6 +40,11 @@ export class GitRemoteCredentialService {
     }
   }
 
+  has(userId: string, remoteUrl: string): boolean {
+    const normalizedRemoteUrl = normalizeRemoteUrl(remoteUrl);
+    return this.repository.findByUserIdAndRemoteUrl(userId, normalizedRemoteUrl) !== null;
+  }
+
   save(userId: string, remoteUrl: string, auth: GitAuthInput | null | undefined): void {
     if (!auth || !auth.mode || auth.mode === "none") {
       return;

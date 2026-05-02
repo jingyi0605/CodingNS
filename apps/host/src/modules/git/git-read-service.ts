@@ -419,7 +419,8 @@ export class GitReadService {
         remotes.set(name, {
           name,
           fetchUrl: kind === "fetch" ? url : url,
-          pushUrl: kind === "push" ? url : url
+          pushUrl: kind === "push" ? url : url,
+          credentialConfigured: false
         });
       }
     }
