@@ -4769,13 +4769,13 @@ export function MessageTimeline({
             {sessionErrorDisplay.code ? (
               <div className="session-runtime-error-panel__meta">
                 <span className="session-runtime-error-panel__label">{t("conversation.runtimeErrorCodeLabel")}</span>
-                <code>{sessionErrorDisplay.code}</code>
+                <code className="session-runtime-error-panel__code">{sessionErrorDisplay.code}</code>
               </div>
             ) : null}
             {sessionErrorDisplay.detail ? (
               <div className="session-runtime-error-panel__detail">
                 <span className="session-runtime-error-panel__label">{t("conversation.runtimeErrorDetailLabel")}</span>
-                <pre>{sessionErrorDisplay.detail}</pre>
+                <pre className="session-runtime-error-panel__detail-text">{sessionErrorDisplay.detail}</pre>
               </div>
             ) : null}
           </section>
