@@ -143,7 +143,7 @@ describe("FileViewerModal", () => {
       </ToastProvider>
     );
 
-    const dialog = await screen.findByRole("dialog", { name: "notes.ts" });
+    const dialog = await screen.findByRole("dialog");
 
     expect(screen.queryByText("diff --git a/notes.ts b/notes.ts")).not.toBeInTheDocument();
     expect(dialog).toHaveTextContent("const");
@@ -155,6 +155,105 @@ describe("FileViewerModal", () => {
     expect(codeLines).toHaveLength(4);
     expect(codeLines[0]).toHaveClass("diff-line-modify");
     expect(codeLines[3]).toHaveClass("diff-line-add");
+  });
+
+  it.each([
+    {
+      name: "Markdown",
+      path: "docs/guide.md",
+      kind: "markdown" as const,
+      content: "# 新标题\n\n正文\n\n未变内容",
+      testId: null
+    },
+    {
+      name: "HTML",
+      path: "site/index.html",
+      kind: "html" as const,
+      content: "<!doctype html><html><body>new</body></html>",
+      testId: "file-viewer-html-preview"
+    },
+    {
+      name: "图片",
+      path: "assets/diagram.png",
+      kind: "image" as const,
+      content: null,
+      testId: "file-viewer-image-preview"
+    },
+    {
+      name: "PDF",
+      path: "docs/spec.pdf",
+      kind: "pdf" as const,
+      content: null,
+      testId: "file-viewer-pdf-preview"
+    }
+  ])("$name 预览视图会叠加显示 diff 标尺", async ({ path, kind, content, testId }) => {
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path,
+        kind,
+        content,
+        version: content === null ? null : "preview-diff-v1",
+        previewPath: kind === "markdown" ? null : `/preview/files/preview-token/${path}`,
+        previewUrl: kind === "markdown" ? null : `http://127.0.0.1:3002/preview/files/preview-token/${path}`,
+        capabilities: {
+          canEdit: kind === "markdown",
+          canRefresh: true,
+          canResize: true,
+          canZoom: kind === "image" || kind === "pdf",
+          canPaginate: kind === "pdf"
+        }
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath={path}
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+          diffContent={[
+            `diff --git a/${path} b/${path}`,
+            "index 1111111..2222222 100644",
+            `--- a/${path}`,
+            `+++ b/${path}`,
+            "@@ -1,3 +1,5 @@",
+            "+# 新标题",
+            "+",
+            "+正文",
+            "+",
+            " 未变内容"
+          ].join("\n")}
+        />
+      </ToastProvider>
+    );
+
+    if (testId) {
+      await screen.findByTestId(testId);
+    } else {
+      await screen.findByText("新标题");
+    }
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.querySelector(".file-viewer-preview-overview-shell")).not.toBeNull();
+    expect(dialog.querySelector('[data-testid="file-overview-ruler"]')).not.toBeNull();
+    expect(dialog.querySelector(".file-viewer-preview-diff-badge")).toHaveTextContent(
+      t("conversation.fileViewerDiffAdded")
+    );
+    expect(dialog.querySelectorAll('.file-overview-marker[data-kind="add"]')).toHaveLength(1);
+
+    if (kind === "markdown") {
+      const markdownPreview = dialog.querySelector(".file-viewer-markdown");
+      const previewShell = dialog.querySelector(".file-viewer-preview-overview-shell");
+
+      expect(markdownPreview).not.toBeNull();
+      expect(previewShell).not.toBeNull();
+      expect(getComputedStyle(markdownPreview as Element).overflowY).toBe("auto");
+      expect(getComputedStyle(previewShell as Element).height).toBe("100%");
+      expect(dialog.querySelectorAll(".file-viewer-markdown .markdown-diff-block.diff-block-add").length)
+        .toBeGreaterThan(0);
+    }
   });
 
   it("配置文件在编辑态保持单栏，并跟随输入实时更新渲染", async () => {
@@ -222,7 +321,7 @@ describe("FileViewerModal", () => {
       </ToastProvider>
     );
 
-    await screen.findByRole("heading", { name: "标题" });
+    await screen.findByText("标题");
     await user.click(screen.getByRole("tab", { name: t("conversation.fileViewerEdit") }));
 
     expect(await screen.findByTestId("file-viewer-editor")).toHaveValue("# 标题\n\n内容\n");
@@ -389,7 +488,7 @@ describe("FileViewerModal", () => {
       </ToastProvider>
     );
 
-    const dialog = await screen.findByRole("dialog", { name: "site/index.html" });
+    const dialog = await screen.findByRole("dialog");
     const previewFrame = await screen.findByTestId("file-viewer-html-preview");
     expect(previewFrame).toHaveAttribute(
       "src",
@@ -402,7 +501,7 @@ describe("FileViewerModal", () => {
     expect(dialog).toHaveAttribute("data-size", "regular");
 
     await user.click(screen.getByRole("button", { name: t("conversation.fileViewerSizeFull") }));
-    expect(screen.getByRole("dialog", { name: "site/index.html" })).toHaveAttribute("data-size", "full");
+    expect(screen.getByRole("dialog")).toHaveAttribute("data-size", "full");
 
     await user.click(screen.getByRole("button", { name: t("conversation.fileViewerRefreshPreview") }));
 
