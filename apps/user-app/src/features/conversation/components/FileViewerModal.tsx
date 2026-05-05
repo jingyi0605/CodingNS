@@ -8,7 +8,7 @@ import {
   type ReactNode,
   type RefObject
 } from "react";
-import Markdown from "react-markdown";
+import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import {
@@ -277,6 +277,10 @@ export function FileViewerModal({
 
   const detectedLanguage = useMemo(() => detectLanguage(filePath), [filePath]);
   const overviewMarkers = useMemo(() => buildFileOverviewMarkers(diffContent), [diffContent]);
+  const overviewTotalLines = useMemo(
+    () => resolveOverviewTotalLines(editorContent, overviewMarkers),
+    [editorContent, overviewMarkers]
+  );
   const previewKind = preview?.kind ?? null;
   const canEdit = Boolean(preview?.capabilities?.canEdit);
   const canRefresh = Boolean(preview?.capabilities?.canRefresh);
@@ -613,23 +617,40 @@ export function FileViewerModal({
             onContentChange={setEditorContent}
           />
         ) : mode === "preview" && previewKind === "html" ? (
-          <HtmlPreview src={htmlPreviewUrl} filePath={filePath} />
+          <HtmlPreview
+            src={htmlPreviewUrl}
+            filePath={filePath}
+            overviewMarkers={overviewMarkers}
+            overviewTotalLines={overviewTotalLines}
+          />
         ) : mode === "preview" && previewKind === "image" ? (
           <ImagePreview
             src={imagePreviewUrl}
             filePath={filePath}
             scale={imageScale}
             scaleMode={imageScaleMode}
+            overviewMarkers={overviewMarkers}
+            overviewTotalLines={overviewTotalLines}
           />
         ) : mode === "preview" && previewKind === "pdf" ? (
-          <PdfPreview src={pdfPreviewUrl} filePath={filePath} />
+          <PdfPreview
+            src={pdfPreviewUrl}
+            filePath={filePath}
+            overviewMarkers={overviewMarkers}
+            overviewTotalLines={overviewTotalLines}
+          />
         ) : mode === "preview" && previewKind === "markdown" ? (
-          <MarkdownPreview content={editorContent} />
+          <MarkdownPreview
+            content={editorContent}
+            overviewMarkers={overviewMarkers}
+            overviewTotalLines={overviewTotalLines}
+          />
         ) : (
           <CodePreview
             content={editorContent}
             language={detectedLanguage}
             overviewMarkers={overviewMarkers}
+            overviewTotalLines={overviewTotalLines}
           />
         )}
       </div>
@@ -1002,7 +1023,19 @@ function roundScale(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-function HtmlPreview({ src, filePath }: { src: string | null; filePath: string }) {
+function HtmlPreview({
+  src,
+  filePath,
+  overviewMarkers,
+  overviewTotalLines
+}: {
+  src: string | null;
+  filePath: string;
+  overviewMarkers: FileOverviewMarker[];
+  overviewTotalLines: number;
+}) {
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+
   if (!src) {
     return <p className="status-text">{t("conversation.fileViewerHtmlPreviewUnavailable")}</p>;
   }
@@ -1010,17 +1043,68 @@ function HtmlPreview({ src, filePath }: { src: string | null; filePath: string }
   const sandbox = resolveHtmlPreviewSandbox(src);
 
   return (
-    <div className="file-viewer-html-frame-shell">
-      <iframe
-        key={src}
-        className="file-viewer-html-frame"
-        data-testid="file-viewer-html-preview"
-        title={filePath}
-        src={src}
-        sandbox={sandbox}
+    <PreviewOverviewShell
+      overviewMarkers={overviewMarkers}
+      overviewTotalLines={overviewTotalLines}
+      scrollContainerRef={scrollContainerRef}
+    >
+      <div className="file-viewer-html-frame-shell" ref={scrollContainerRef}>
+        <iframe
+          key={src}
+          className="file-viewer-html-frame"
+          data-testid="file-viewer-html-preview"
+          title={filePath}
+          src={src}
+          sandbox={sandbox}
+        />
+      </div>
+    </PreviewOverviewShell>
+  );
+}
+
+function PreviewOverviewShell({
+  children,
+  overviewMarkers,
+  overviewTotalLines,
+  scrollContainerRef
+}: {
+  children: ReactNode;
+  overviewMarkers: FileOverviewMarker[];
+  overviewTotalLines: number;
+  scrollContainerRef: RefObject<HTMLDivElement | null>;
+}) {
+  const diffKind = resolvePreviewDiffKind(overviewMarkers);
+
+  return (
+    <div className="file-viewer-preview-overview-shell">
+      {children}
+      {diffKind ? (
+        <div className="file-viewer-preview-diff-badge" data-kind={diffKind}>
+          {diffKind === "modify"
+            ? t("conversation.fileViewerDiffModified")
+            : t("conversation.fileViewerDiffAdded")}
+        </div>
+      ) : null}
+      <OverviewRuler
+        markers={overviewMarkers}
+        totalLines={overviewTotalLines}
+        scrollContainerRef={scrollContainerRef}
+        hideWithoutMarkers
       />
     </div>
   );
+}
+
+function resolvePreviewDiffKind(markers: FileOverviewMarker[]): FileOverviewMarker["kind"] | null {
+  if (markers.some((marker) => marker.kind === "modify")) {
+    return "modify";
+  }
+
+  if (markers.some((marker) => marker.kind === "add")) {
+    return "add";
+  }
+
+  return null;
 }
 
 function EditModeLayout(input: {
@@ -1128,92 +1212,293 @@ function ImagePreview({
   src,
   filePath,
   scale,
-  scaleMode
+  scaleMode,
+  overviewMarkers,
+  overviewTotalLines
 }: {
   src: string | null;
   filePath: string;
   scale: number;
   scaleMode: ImageScaleMode;
+  overviewMarkers: FileOverviewMarker[];
+  overviewTotalLines: number;
 }) {
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+
   if (!src) {
     return <p className="status-text">{t("conversation.fileViewerImageUnavailable")}</p>;
   }
 
   return (
-    <div className="file-viewer-media-shell" data-mode={scaleMode}>
-      <div className="file-viewer-image-stage">
-        <img
-          className="file-viewer-image"
-          data-testid="file-viewer-image-preview"
-          data-mode={scaleMode}
-          src={src}
-          alt={filePath}
-          style={scaleMode === "fit" ? undefined : { transform: `scale(${scale})` }}
-        />
+    <PreviewOverviewShell
+      overviewMarkers={overviewMarkers}
+      overviewTotalLines={overviewTotalLines}
+      scrollContainerRef={scrollContainerRef}
+    >
+      <div className="file-viewer-media-shell" data-mode={scaleMode} ref={scrollContainerRef}>
+        <div className="file-viewer-image-stage">
+          <img
+            className="file-viewer-image"
+            data-testid="file-viewer-image-preview"
+            data-mode={scaleMode}
+            src={src}
+            alt={filePath}
+            style={scaleMode === "fit" ? undefined : { transform: `scale(${scale})` }}
+          />
+        </div>
       </div>
-    </div>
+    </PreviewOverviewShell>
   );
 }
 
-function PdfPreview({ src, filePath }: { src: string | null; filePath: string }) {
+function PdfPreview({
+  src,
+  filePath,
+  overviewMarkers,
+  overviewTotalLines
+}: {
+  src: string | null;
+  filePath: string;
+  overviewMarkers: FileOverviewMarker[];
+  overviewTotalLines: number;
+}) {
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+
   if (!src) {
     return <p className="status-text">{t("conversation.fileViewerPdfUnavailable")}</p>;
   }
 
   return (
-    <div className="file-viewer-pdf-shell">
-      <iframe
-        key={src}
-        className="file-viewer-pdf-frame"
-        data-testid="file-viewer-pdf-preview"
-        title={filePath}
-        src={src}
-      />
-    </div>
+    <PreviewOverviewShell
+      overviewMarkers={overviewMarkers}
+      overviewTotalLines={overviewTotalLines}
+      scrollContainerRef={scrollContainerRef}
+    >
+      <div className="file-viewer-pdf-shell" ref={scrollContainerRef}>
+        <iframe
+          key={src}
+          className="file-viewer-pdf-frame"
+          data-testid="file-viewer-pdf-preview"
+          title={filePath}
+          src={src}
+        />
+      </div>
+    </PreviewOverviewShell>
   );
 }
 
-function MarkdownPreview({ content }: { content: string }) {
-  return (
-    <div className="markdown-content file-viewer-markdown">
-      <Markdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          pre(props) {
-            const blockProps = extractCodeBlockProps(props.children);
-
-            if (!blockProps) {
-              return <pre>{props.children}</pre>;
-            }
-
-            return (
-              <MarkdownCopyBlock
-                content={blockProps.content}
-                language={blockProps.language}
-                codeClassName={blockProps.codeClassName}
-              />
-            );
-          },
-          code(props) {
-            const codeClassName = typeof props.className === "string" ? props.className : "";
-            return <code className={codeClassName || undefined}>{props.children}</code>;
-          }
-        }}
-      >
-        {content}
-      </Markdown>
-    </div>
+function MarkdownPreview({
+  content,
+  overviewMarkers,
+  overviewTotalLines
+}: {
+  content: string;
+  overviewMarkers: FileOverviewMarker[];
+  overviewTotalLines: number;
+}) {
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const markdownDiffIndex = useMemo(
+    () => buildMarkdownDiffIndex(overviewMarkers),
+    [overviewMarkers]
   );
+  const markdownComponents = useMemo(
+    () => buildMarkdownComponents(markdownDiffIndex),
+    [markdownDiffIndex]
+  );
+
+  return (
+    <PreviewOverviewShell
+      overviewMarkers={overviewMarkers}
+      overviewTotalLines={overviewTotalLines}
+      scrollContainerRef={scrollContainerRef}
+    >
+      <div className="markdown-content file-viewer-markdown" ref={scrollContainerRef}>
+        <Markdown
+          remarkPlugins={[remarkGfm]}
+          components={markdownComponents}
+        >
+          {content}
+        </Markdown>
+      </div>
+    </PreviewOverviewShell>
+  );
+}
+
+type MarkdownSourceNode = {
+  position?: {
+    start?: { line?: number | null };
+    end?: { line?: number | null };
+  } | null;
+};
+
+interface MarkdownDiffRange {
+  start: number;
+  end: number;
+  kind: FileOverviewMarker["kind"];
+}
+
+interface MarkdownDiffIndex {
+  ranges: MarkdownDiffRange[];
+}
+
+function buildMarkdownDiffIndex(markers: FileOverviewMarker[]): MarkdownDiffIndex {
+  return {
+    ranges: markers
+      .map((marker) => ({
+        start: marker.line,
+        end: marker.line + marker.span - 1,
+        kind: marker.kind
+      }))
+      .sort((left, right) => left.start - right.start)
+  };
+}
+
+function buildMarkdownComponents(diffIndex: MarkdownDiffIndex): Components {
+  return {
+    h1(props) {
+      const { node, className, ...rest } = props;
+      return <h1 {...rest} className={buildMarkdownDiffClass(className, node, diffIndex)} />;
+    },
+    h2(props) {
+      const { node, className, ...rest } = props;
+      return <h2 {...rest} className={buildMarkdownDiffClass(className, node, diffIndex)} />;
+    },
+    h3(props) {
+      const { node, className, ...rest } = props;
+      return <h3 {...rest} className={buildMarkdownDiffClass(className, node, diffIndex)} />;
+    },
+    h4(props) {
+      const { node, className, ...rest } = props;
+      return <h4 {...rest} className={buildMarkdownDiffClass(className, node, diffIndex)} />;
+    },
+    h5(props) {
+      const { node, className, ...rest } = props;
+      return <h5 {...rest} className={buildMarkdownDiffClass(className, node, diffIndex)} />;
+    },
+    h6(props) {
+      const { node, className, ...rest } = props;
+      return <h6 {...rest} className={buildMarkdownDiffClass(className, node, diffIndex)} />;
+    },
+    p(props) {
+      const { node, className, ...rest } = props;
+      return <p {...rest} className={buildMarkdownDiffClass(className, node, diffIndex)} />;
+    },
+    li(props) {
+      const { node, className, ...rest } = props;
+      return <li {...rest} className={buildMarkdownDiffClass(className, node, diffIndex)} />;
+    },
+    blockquote(props) {
+      const { node, className, ...rest } = props;
+      return <blockquote {...rest} className={buildMarkdownDiffClass(className, node, diffIndex)} />;
+    },
+    table(props) {
+      const { node, className, ...rest } = props;
+      return <table {...rest} className={buildMarkdownDiffClass(className, node, diffIndex)} />;
+    },
+    pre(props) {
+      const { node, className } = props;
+      const blockProps = extractCodeBlockProps(props.children);
+
+      if (!blockProps) {
+        return <pre className={buildMarkdownDiffClass(className, node, diffIndex)}>{props.children}</pre>;
+      }
+
+      return (
+        <MarkdownCopyBlock
+          content={blockProps.content}
+          language={blockProps.language}
+          codeClassName={blockProps.codeClassName}
+          changeKind={resolveMarkdownNodeChangeKind(node, diffIndex)}
+        />
+      );
+    },
+    code(props) {
+      const codeClassName = typeof props.className === "string" ? props.className : "";
+      return <code className={codeClassName || undefined}>{props.children}</code>;
+    }
+  };
+}
+
+function buildMarkdownDiffClass(
+  className: unknown,
+  node: MarkdownSourceNode | undefined,
+  diffIndex: MarkdownDiffIndex
+): string | undefined {
+  const normalizedClassName = typeof className === "string" ? className : "";
+  const changeKind = resolveMarkdownNodeChangeKind(node, diffIndex);
+
+  return mergeClassNames(
+    normalizedClassName,
+    changeKind ? "markdown-diff-block" : null,
+    changeKind ? `diff-block-${changeKind}` : null
+  );
+}
+
+function resolveMarkdownNodeChangeKind(
+  node: MarkdownSourceNode | undefined,
+  diffIndex: MarkdownDiffIndex
+): FileOverviewMarker["kind"] | null {
+  const startLine = node?.position?.start?.line;
+  const endLine = node?.position?.end?.line;
+
+  if (!startLine || !endLine) {
+    return null;
+  }
+
+  let hasAdd = false;
+  const firstCandidateIndex = findFirstPotentiallyOverlappingRangeIndex(diffIndex.ranges, startLine);
+
+  for (let index = firstCandidateIndex; index < diffIndex.ranges.length; index += 1) {
+    const range = diffIndex.ranges[index];
+
+    if (!range || range.start > endLine) {
+      break;
+    }
+
+    const overlaps = range.end >= startLine;
+
+    if (!overlaps) {
+      continue;
+    }
+
+    if (range.kind === "modify") {
+      return "modify";
+    }
+
+    hasAdd = true;
+  }
+
+  return hasAdd ? "add" : null;
+}
+
+function findFirstPotentiallyOverlappingRangeIndex(ranges: MarkdownDiffRange[], startLine: number): number {
+  let low = 0;
+  let high = ranges.length;
+
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    const range = ranges[middle];
+
+    if (range && range.end < startLine) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+
+  return low;
 }
 
 function CodePreview({
   content,
   language,
-  overviewMarkers = []
+  overviewMarkers = [],
+  overviewTotalLines
 }: {
   content: string;
   language: string;
   overviewMarkers?: FileOverviewMarker[];
+  overviewTotalLines: number;
 }) {
   const lines = content.split(/\r?\n/);
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -1267,7 +1552,7 @@ function CodePreview({
         </div>
         <OverviewRuler
           markers={overviewMarkers}
-          totalLines={lines.length}
+          totalLines={overviewTotalLines}
           scrollContainerRef={bodyRef}
         />
       </div>
@@ -1278,16 +1563,24 @@ function CodePreview({
 function MarkdownCopyBlock({
   content,
   language,
-  codeClassName
+  codeClassName,
+  changeKind = null
 }: {
   content: string;
   language: string | null;
   codeClassName?: string;
+  changeKind?: FileOverviewMarker["kind"] | null;
 }) {
   const normalizedLanguage = language ? normalizeLanguage(language) : null;
 
   return (
-    <div className="file-viewer-markdown-copy-block">
+    <div
+      className={mergeClassNames(
+        "file-viewer-markdown-copy-block",
+        changeKind ? "markdown-diff-block" : null,
+        changeKind ? `diff-block-${changeKind}` : null
+      )}
+    >
       <div className="file-viewer-markdown-copy-header">
         <span className="file-viewer-markdown-copy-label">
           {normalizedLanguage ? formatLanguageLabel(normalizedLanguage) : t("conversation.fileViewerPlainText")}
@@ -1299,6 +1592,11 @@ function MarkdownCopyBlock({
       </pre>
     </div>
   );
+}
+
+function mergeClassNames(...classNames: Array<string | null | undefined>): string | undefined {
+  const mergedClassName = classNames.filter(Boolean).join(" ");
+  return mergedClassName || undefined;
 }
 
 function CopyBlockButton({ content }: { content: string }) {
@@ -2549,6 +2847,16 @@ function buildFileOverviewMarkers(diffContent?: string | null): FileOverviewMark
   return markers;
 }
 
+function resolveOverviewTotalLines(content: string, markers: FileOverviewMarker[]): number {
+  const contentLineCount = content ? content.split(/\r?\n/).length : 1;
+  const diffLineCount = markers.reduce(
+    (maxLine, marker) => Math.max(maxLine, marker.line + marker.span - 1),
+    0
+  );
+
+  return Math.max(contentLineCount, diffLineCount, 1);
+}
+
 function appendOverviewMarkerRanges(
   target: FileOverviewMarker[],
   lineNumbers: number[],
@@ -2590,38 +2898,35 @@ function appendOverviewMarkerRanges(
 function OverviewRuler({
   markers,
   totalLines,
-  scrollContainerRef
+  scrollContainerRef,
+  hideWithoutMarkers = false
 }: {
   markers: FileOverviewMarker[];
   totalLines: number;
   scrollContainerRef: RefObject<HTMLDivElement | null>;
+  hideWithoutMarkers?: boolean;
 }) {
-  const [viewport, setViewport] = useState({
-    top: 0,
-    height: 0
-  });
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const shouldRenderViewport = !hideWithoutMarkers || markers.length > 0;
 
   useEffect(() => {
     const scrollContainer = scrollContainerRef.current;
+    const viewportElement = viewportRef.current;
 
-    if (!scrollContainer) {
-      setViewport({
-        top: 0,
-        height: 0
-      });
+    if (!scrollContainer || !viewportElement || !shouldRenderViewport) {
       return;
     }
 
     const activeScrollContainer = scrollContainer;
+    const activeViewportElement = viewportElement;
+    let animationFrameId: number | null = null;
 
     function updateViewport() {
+      animationFrameId = null;
       const { clientHeight, scrollHeight, scrollTop } = activeScrollContainer;
 
       if (scrollHeight <= 0 || clientHeight <= 0 || scrollHeight <= clientHeight) {
-        setViewport({
-          top: 0,
-          height: 0
-        });
+        activeViewportElement.style.display = "none";
         return;
       }
 
@@ -2631,23 +2936,34 @@ function OverviewRuler({
       const maxTop = Math.max(0, 100 - nextHeight);
       const nextTop = scrollableHeight <= 0 ? 0 : (scrollTop / scrollableHeight) * maxTop;
 
-      setViewport({
-        top: nextTop,
-        height: nextHeight
-      });
+      activeViewportElement.style.display = "block";
+      activeViewportElement.style.top = `${nextTop}%`;
+      activeViewportElement.style.height = `${nextHeight}%`;
+    }
+
+    function scheduleViewportUpdate() {
+      if (animationFrameId !== null) {
+        return;
+      }
+
+      animationFrameId = window.requestAnimationFrame(updateViewport);
     }
 
     updateViewport();
-    activeScrollContainer.addEventListener("scroll", updateViewport, { passive: true });
-    window.addEventListener("resize", updateViewport);
+    activeScrollContainer.addEventListener("scroll", scheduleViewportUpdate, { passive: true });
+    window.addEventListener("resize", scheduleViewportUpdate);
 
     return () => {
-      activeScrollContainer.removeEventListener("scroll", updateViewport);
-      window.removeEventListener("resize", updateViewport);
-    };
-  }, [scrollContainerRef]);
+      if (animationFrameId !== null) {
+        window.cancelAnimationFrame(animationFrameId);
+      }
 
-  if (markers.length === 0 && viewport.height === 0) {
+      activeScrollContainer.removeEventListener("scroll", scheduleViewportUpdate);
+      window.removeEventListener("resize", scheduleViewportUpdate);
+    };
+  }, [scrollContainerRef, shouldRenderViewport]);
+
+  if (hideWithoutMarkers && markers.length === 0) {
     return null;
   }
 
@@ -2668,13 +2984,10 @@ function OverviewRuler({
           />
         );
       })}
-      {viewport.height > 0 ? (
+      {shouldRenderViewport ? (
         <div
+          ref={viewportRef}
           className="file-overview-viewport"
-          style={{
-            top: `${viewport.top}%`,
-            height: `${viewport.height}%`
-          }}
         />
       ) : null}
     </div>

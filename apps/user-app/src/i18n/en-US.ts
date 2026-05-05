@@ -1386,6 +1386,8 @@ export const enUS = {
     fileViewerSizeDefault: "Default",
     fileViewerSizeWide: "Wide",
     fileViewerSizeFull: "Full",
+    fileViewerDiffModified: "Modified",
+    fileViewerDiffAdded: "Added Content",
     fileViewerImageUnavailable: "The image preview is unavailable right now. Try refreshing or opening it externally.",
     fileViewerPdfUnavailable: "The PDF preview is unavailable right now. Try refreshing or opening it externally.",
     fileViewerEnterFullscreen: "Full Screen",

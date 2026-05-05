@@ -1205,6 +1205,8 @@ export const zhCN = {
     fileViewerSizeDefault: "默认",
     fileViewerSizeWide: "加宽",
     fileViewerSizeFull: "铺满",
+    fileViewerDiffModified: "已修改",
+    fileViewerDiffAdded: "新增内容",
     fileViewerImageUnavailable: "当前无法显示图片预览，请尝试刷新或外部打开。",
     fileViewerPdfUnavailable: "当前无法显示 PDF 预览，请尝试刷新或外部打开。",
     fileViewerEnterFullscreen: "全屏",
