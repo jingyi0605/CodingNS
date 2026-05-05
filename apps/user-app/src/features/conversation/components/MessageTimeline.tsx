@@ -4051,6 +4051,7 @@ export function MessageTimeline({
   const manualRestoreInProgressRef = useRef(false);
   const lastProgrammaticRestoreScrollTopRef = useRef<number | null>(null);
   const touchStartYRef = useRef<number | null>(null);
+  const previousRuntimeThinkingPlaceholderRef = useRef<string | null>(null);
   const [showScrollToBottomButton, setShowScrollToBottomButton] = useState(false);
   const [hasNewMessagesBelow, setHasNewMessagesBelow] = useState(false);
   const hasNewMessagesBelowRef = useRef(false);
@@ -4154,6 +4155,82 @@ export function MessageTimeline({
     };
   }
 
+  function summarizeDomRect(
+    list: HTMLDivElement,
+    element: HTMLElement
+  ): Record<string, unknown> {
+    const listRect = list.getBoundingClientRect();
+    const elementRect = element.getBoundingClientRect();
+    const visibleTop = Math.max(elementRect.top, listRect.top);
+    const visibleBottom = Math.min(elementRect.bottom, listRect.bottom);
+    const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+
+    return {
+      top: Math.round(elementRect.top),
+      bottom: Math.round(elementRect.bottom),
+      height: Math.round(elementRect.height),
+      relativeTop: Math.round(elementRect.top - listRect.top),
+      relativeBottom: Math.round(elementRect.bottom - listRect.top),
+      bottomGap: Math.round(listRect.bottom - elementRect.bottom),
+      visibleHeight: Math.round(visibleHeight),
+      fullyVisible:
+        elementRect.top >= listRect.top
+        && elementRect.bottom <= listRect.bottom
+    };
+  }
+
+  function summarizeTimelineDomItem(
+    list: HTMLDivElement,
+    element: HTMLElement
+  ): Record<string, unknown> {
+    const messageId = element.dataset.messageId ?? null;
+    const message = messageId
+      ? messages.find((item) => item.id === messageId) ?? null
+      : null;
+
+    return {
+      messageId,
+      role: message?.role ?? null,
+      kind: message?.kind ?? null,
+      className: element.className,
+      textLength: element.textContent?.length ?? 0,
+      rect: summarizeDomRect(list, element)
+    };
+  }
+
+  function summarizeTimelineDom(list: HTMLDivElement | null): Record<string, unknown> | null {
+    if (!list) {
+      return null;
+    }
+
+    const listRect = list.getBoundingClientRect();
+    const messageElements = Array.from(list.children).filter(
+      (element): element is HTMLElement =>
+        element instanceof HTMLElement && element.classList.contains("message-item")
+    );
+    const runtimeThinkingElement = list.querySelector<HTMLElement>(
+      "[data-runtime-thinking-placeholder='true']"
+    );
+
+    return {
+      listRect: {
+        top: Math.round(listRect.top),
+        bottom: Math.round(listRect.bottom),
+        height: Math.round(listRect.height)
+      },
+      messageElementCount: messageElements.length,
+      tailDomItems: messageElements.slice(-5).map((element) =>
+        summarizeTimelineDomItem(list, element)
+      ),
+      runtimeThinkingPlaceholderDom: runtimeThinkingElement
+        ? {
+            textLength: runtimeThinkingElement.textContent?.length ?? 0,
+            rect: summarizeDomRect(list, runtimeThinkingElement)
+          }
+        : null
+    };
+  }
+
   function buildTimelineScrollDebugDetail(
     list: HTMLDivElement | null,
     extra: Record<string, unknown> = {}
@@ -4178,6 +4255,9 @@ export function MessageTimeline({
       lastMessageRole: lastMessage?.role ?? null,
       lastMessageKind: lastMessage?.kind ?? null,
       lastMessageTimestamp: lastMessage?.timestamp ?? null,
+      runtimeThinkingPlaceholderVisible: Boolean(runtimeThinkingPlaceholder),
+      runtimeThinkingPlaceholderLength: runtimeThinkingPlaceholder?.length ?? 0,
+      runtimeThinkingPlaceholderPreview: runtimeThinkingPlaceholder?.slice(0, 80) ?? null,
       tailItemType: tailItem?.type ?? null,
       tailToolCallId:
         tailItem && tailItem.type === "tool_group" ? tailItem.group.tool.callId : null,
@@ -4191,6 +4271,7 @@ export function MessageTimeline({
       previousLastMessage: summarizeMessageSignature(previousLastMessageSignatureRef.current),
       tailMessages: messages.slice(-5).map(summarizeTimelineMessage),
       tailRenderItems: renderItems.slice(-5).map(summarizeTimelineRenderItem),
+      dom: summarizeTimelineDom(list),
       pendingRestoreState:
         pendingRestoreState === null
           ? null
@@ -4632,6 +4713,24 @@ export function MessageTimeline({
     }
   }, [hasOlderMessages, loadingOlderMessages, messages.length]);
 
+  useLayoutEffect(() => {
+    const previousPlaceholder = previousRuntimeThinkingPlaceholderRef.current;
+
+    if (previousPlaceholder === runtimeThinkingPlaceholder) {
+      return;
+    }
+
+    emitTimelineScrollDebug("runtime_thinking.placeholder_change", listRef.current, {
+      previousVisible: Boolean(previousPlaceholder),
+      nextVisible: Boolean(runtimeThinkingPlaceholder),
+      previousLength: previousPlaceholder?.length ?? 0,
+      nextLength: runtimeThinkingPlaceholder?.length ?? 0,
+      note:
+        "Codex 思考中占位符不属于 messages，若这里出现但 messages.effect 没有 tail_update_follow，用户消息会停在可视底部。"
+    });
+    previousRuntimeThinkingPlaceholderRef.current = runtimeThinkingPlaceholder;
+  }, [runtimeThinkingPlaceholder, sessionId]);
+
   useEffect(() => {
     const list = listRef.current;
 
@@ -4797,7 +4896,10 @@ export function MessageTimeline({
         )}
 
         {runtimeThinkingPlaceholder ? (
-          <div className="timeline-status timeline-status-inline thinking-status-inline">
+          <div
+            className="timeline-status timeline-status-inline thinking-status-inline"
+            data-runtime-thinking-placeholder="true"
+          >
             <span
               className="status-text thinking-status-text"
               aria-label={runtimeThinkingPlaceholder}
