@@ -169,6 +169,33 @@ describe("session runtime machine", () => {
     expect(merged.map((item) => item.id)).toEqual(["m-1", "m-2"]);
   });
 
+  it("Codex 同一 rawStore 的行号顺序优先于漂移的 runtime sequence", () => {
+    const merged = mergeAuthoritativeMessages([], "session-1", [
+      createHistoryMessage({
+        messageId: "assistant-final-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        content: "上一轮最终回复",
+        timestamp: "2026-05-05T14:34:04.730Z",
+        sequence: 120,
+        rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=220"
+      }),
+      createHistoryMessage({
+        messageId: "user-next-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "user",
+        content: "下一轮用户消息",
+        timestamp: "2026-05-05T14:40:06.019Z",
+        sequence: 104,
+        rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=225"
+      })
+    ]);
+
+    expect(merged.map((item) => item.id)).toEqual(["assistant-final-1", "user-next-1"]);
+  });
+
   it("Codex 增量合并时相同 sequence 的用户消息不会被助手消息压到后面", () => {
     const merged = mergeAuthoritativeMessages([], "session-1", [
       createHistoryMessage({

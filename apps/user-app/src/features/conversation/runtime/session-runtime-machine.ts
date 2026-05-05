@@ -515,6 +515,12 @@ function compareViewMessageOrder(
   left: SessionMessageViewModel,
   right: SessionMessageViewModel
 ): number {
+  const codexRawRefTimelineOrder = compareCodexRawRefTimelineOrder(left.rawRef, right.rawRef);
+
+  if (codexRawRefTimelineOrder !== null && codexRawRefTimelineOrder !== 0) {
+    return codexRawRefTimelineOrder;
+  }
+
   if (left.sequence !== right.sequence) {
     return left.sequence - right.sequence;
   }
@@ -550,6 +556,40 @@ function compareViewMessageOrder(
   }
 
   return left.id.localeCompare(right.id);
+}
+
+function compareCodexRawRefTimelineOrder(leftRawRef: string, rightRawRef: string): number | null {
+  if (!leftRawRef.startsWith("codex://") || !rightRawRef.startsWith("codex://")) {
+    return null;
+  }
+
+  const leftStore = extractCodexRawRefStore(leftRawRef);
+  const rightStore = extractCodexRawRefStore(rightRawRef);
+
+  if (!leftStore || !rightStore || leftStore !== rightStore) {
+    return null;
+  }
+
+  const leftLine = extractRawRefLine(leftRawRef);
+  const rightLine = extractRawRefLine(rightRawRef);
+
+  if (leftLine === null || rightLine === null) {
+    return null;
+  }
+
+  if (leftLine !== rightLine) {
+    return leftLine - rightLine;
+  }
+
+  const leftPart = extractRawRefUrlNumber(leftRawRef, "part") ?? 0;
+  const rightPart = extractRawRefUrlNumber(rightRawRef, "part") ?? 0;
+
+  return leftPart - rightPart;
+}
+
+function extractCodexRawRefStore(rawRef: string): string | null {
+  const match = rawRef.match(/^codex:\/\/(.+?)(?:#|$)/);
+  return match?.[1] ?? null;
 }
 
 function compareRawRefStructuralOrder(leftRawRef: string, rightRawRef: string): number {
