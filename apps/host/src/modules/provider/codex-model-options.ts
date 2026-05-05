@@ -5,14 +5,6 @@ import { getSharedProviderDiscoveryHelperClient } from "./provider-discovery-hel
 const PROVIDER_DEFAULT_MODEL_ID = "provider-default";
 const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_CACHE_TTL_MS = 5_000;
-const VISIBLE_CODEX_MODEL_IDS = new Set([
-  "gpt-5.3-codex",
-  "gpt-5.4",
-  "gpt-5.2-codex",
-  "gpt-5.1-codex-max",
-  "gpt-5.2",
-  "gpt-5.1-codex-mini"
-]);
 const REASONING_EFFORTS = new Set(["low", "medium", "high", "xhigh"]);
 
 interface CodexModelListItem {
@@ -143,9 +135,19 @@ function buildCodexModelOptions(
   currentModel: string | null,
   models: CodexModelListItem[]
 ): ProviderModelOption[] {
-  const allowedModels = models.filter((model) => isVisibleCodexModel(model.model, model.hidden));
+  const allowedModels = models.filter((model) => isVisibleCodexModel(model));
   const currentModelEntry =
     allowedModels.find((model) => model.model === currentModel) ?? null;
+  const visibleModels = currentModel && !currentModelEntry
+    ? [
+        {
+          model: currentModel,
+          displayName: currentModel,
+          hidden: false
+        },
+        ...allowedModels
+      ]
+    : allowedModels;
 
   return [
     {
@@ -154,7 +156,7 @@ function buildCodexModelOptions(
       usesProviderDefault: true,
       supportedReasoningEfforts: normalizeReasoningEfforts(currentModelEntry)
     },
-    ...allowedModels.map((model) => ({
+    ...visibleModels.map((model) => ({
       id: model.model,
       name: normalizeText(model.displayName) ?? model.model,
       supportedReasoningEfforts: normalizeReasoningEfforts(model)
@@ -227,10 +229,6 @@ function normalizeReasoningLevel(value: unknown): string | null {
   return normalized;
 }
 
-function isVisibleCodexModel(modelId: string, hidden: boolean): boolean {
-  if (hidden) {
-    return false;
-  }
-
-  return VISIBLE_CODEX_MODEL_IDS.has(modelId);
+function isVisibleCodexModel(model: CodexModelListItem): boolean {
+  return model.model.trim().length > 0 && !model.hidden;
 }

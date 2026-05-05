@@ -528,7 +528,8 @@ function normalizeCodexConfigReadResult(
     return null;
   }
 
-  const result = input as {
+  const response = input as { config?: unknown };
+  const result = (response.config && typeof response.config === "object" ? response.config : input) as {
     model?: unknown;
     model_reasoning_effort?: unknown;
   };

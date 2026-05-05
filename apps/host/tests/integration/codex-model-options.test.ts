@@ -198,6 +198,107 @@ rl.on("line", (line) => {
           id: "gpt-5.1-codex-mini",
           name: "gpt-5.1-codex-mini",
           supportedReasoningEfforts: ["medium", "high"]
+        },
+        {
+          id: "gpt-6",
+          name: "gpt-6",
+          supportedReasoningEfforts: ["low", "medium"]
+        }
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("当前配置模型缺失于 model/list 时也会显示该模型", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "codingns-codex-current-model-"));
+    const commandPath = path.join(root, "codex-mock.js");
+
+    writeFileSync(
+      commandPath,
+      `#!/usr/bin/env node
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.method === "initialize") {
+    process.stdout.write(JSON.stringify({ id: request.id, result: {} }) + "\\n");
+    return;
+  }
+  if (request.method === "config/read") {
+    process.stdout.write(JSON.stringify({
+      id: request.id,
+      result: {
+        config: {
+          model: "gpt-5.5",
+          model_reasoning_effort: "high"
+        }
+      }
+    }) + "\\n");
+    return;
+  }
+  if (request.method === "model/list") {
+    process.stdout.write(JSON.stringify({
+      id: request.id,
+      result: {
+        data: [
+          {
+            model: "gpt-5.4",
+            displayName: "gpt-5.4",
+            hidden: false,
+            supportedReasoningEfforts: [
+              { reasoningEffort: "low" },
+              { reasoningEffort: "medium" },
+              { reasoningEffort: "high" }
+            ]
+          }
+        ],
+        nextCursor: null
+      }
+    }) + "\\n");
+  }
+});
+`,
+      "utf8"
+    );
+
+    try {
+      const service = new CodexModelOptionsService({
+        commandPath
+      });
+      const capabilities = await enrichCodexCapabilities(
+        {
+          provider: "codex",
+          canStartSession: true,
+          canResumeSession: true,
+          canSendMessage: true,
+          supportsSubagents: true,
+          supportsInterrupt: true,
+          supportsStructuredToolCalls: true,
+          supportsTokenUsage: true,
+          supportsAttachments: true,
+          supportsPermissionPrompt: true,
+          supportsCheckpoint: false,
+          limitations: []
+        },
+        service
+      );
+
+      expect(capabilities.defaultReasoningLevel).toBe("high");
+      expect(capabilities.modelOptions).toEqual([
+        {
+          id: "provider-default",
+          name: "跟随 CLI 默认模型",
+          usesProviderDefault: true
+        },
+        {
+          id: "gpt-5.5",
+          name: "gpt-5.5"
+        },
+        {
+          id: "gpt-5.4",
+          name: "gpt-5.4",
+          supportedReasoningEfforts: ["low", "medium", "high"]
         }
       ]);
     } finally {
