@@ -311,6 +311,8 @@ export function FileViewerModal({
   const canShowPreviewTab = canUsePreviewMode(previewKind);
   const canShowCodeTab = canUseCodeMode(previewKind);
   const canUseInlineRenderedEditor = canUseInlineRenderedEditorMode(previewKind, detectedLanguage);
+  const isMobileViewer = platform.isMobile;
+  const activeModalSizePreset = isMobileViewer ? "full" : modalSizePreset;
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -502,15 +504,15 @@ export function FileViewerModal({
     pdfFitWidth,
     setPdfFitWidth
   });
+  const visibleFormatActions = isMobileViewer ? formatActions.filter(isRefreshAction) : formatActions;
 
   return (
     <DesktopModal
       open={open}
       title={filePath}
-      description={t("conversation.fileViewerHint").replace("{language}", viewerLabel)}
-      size={modalSizePreset}
+      size={activeModalSizePreset}
       layout="viewer"
-      className={`file-viewer-modal${platform.isDesktop && modalSizePreset !== "full" ? " is-resizable" : ""}`}
+      className={`file-viewer-modal${platform.isDesktop && activeModalSizePreset !== "full" ? " is-resizable" : ""}`}
       bodyClassName="file-viewer-modal-body"
       onClose={onClose}
     >
@@ -555,29 +557,31 @@ export function FileViewerModal({
               </button>
             ) : null}
           </div>
-          <span className="file-viewer-language">{viewerLabel}</span>
+          {!isMobileViewer ? <span className="file-viewer-language">{viewerLabel}</span> : null}
         </div>
         <div className="file-viewer-toolbar-end">
-          <div className="file-viewer-size-group" role="group" aria-label={t("conversation.fileViewerSizeLabel")}>
-            <button
-              type="button"
-              className="secondary-button file-viewer-action-button"
-              data-active={modalSizePreset === "regular"}
-              onClick={() => setModalSizePreset("regular")}
-            >
-              {t("conversation.fileViewerSizeDefault")}
-            </button>
-            <button
-              type="button"
-              className="secondary-button file-viewer-action-button"
-              data-active={modalSizePreset === "full"}
-              onClick={() => setModalSizePreset("full")}
-            >
-              {t("conversation.fileViewerSizeFull")}
-            </button>
-          </div>
+          {!isMobileViewer ? (
+            <div className="file-viewer-size-group" role="group" aria-label={t("conversation.fileViewerSizeLabel")}>
+              <button
+                type="button"
+                className="secondary-button file-viewer-action-button"
+                data-active={modalSizePreset === "regular"}
+                onClick={() => setModalSizePreset("regular")}
+              >
+                {t("conversation.fileViewerSizeDefault")}
+              </button>
+              <button
+                type="button"
+                className="secondary-button file-viewer-action-button"
+                data-active={modalSizePreset === "full"}
+                onClick={() => setModalSizePreset("full")}
+              >
+                {t("conversation.fileViewerSizeFull")}
+              </button>
+            </div>
+          ) : null}
           <div className="file-viewer-actions">
-            {formatActions.map((action) => (
+            {visibleFormatActions.map((action) => (
               <button
                 key={action.id}
                 type="button"
@@ -898,6 +902,10 @@ function buildFormatActions(input: {
   }
 
   return actions;
+}
+
+function isRefreshAction(action: ViewerToolbarAction): boolean {
+  return action.id.endsWith("-refresh") || action.id === "text-refresh";
 }
 
 function resolveViewerLabel(

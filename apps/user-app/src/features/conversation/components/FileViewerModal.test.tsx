@@ -17,7 +17,8 @@ const clipboardWriteTextMock = vi.hoisted(() => vi.fn());
 const platformMock = vi.hoisted(() => ({
   openExternal: vi.fn(),
   writeClipboardText: vi.fn(),
-  isDesktop: true
+  isDesktop: true,
+  isMobile: false
 }));
 
 vi.mock("../api/file-context-api", () => ({
@@ -28,6 +29,7 @@ vi.mock("../api/file-context-api", () => ({
 vi.mock("../../../platform/platform-provider", () => ({
   usePlatform: () => ({
     isDesktop: platformMock.isDesktop,
+    isMobile: platformMock.isMobile,
     bridge: {
       openExternal: platformMock.openExternal,
       writeClipboardText: platformMock.writeClipboardText
@@ -38,6 +40,7 @@ vi.mock("../../../platform/platform-provider", () => ({
 describe("FileViewerModal", () => {
   beforeEach(() => {
     platformMock.isDesktop = true;
+    platformMock.isMobile = false;
     clientConfigStore.hydrate(createRuntimeConfigSnapshot("http://127.0.0.1:3002"));
     fileApiMock.getFilePreview.mockResolvedValue(createPreviewResponse());
     fileApiMock.saveFileContent.mockReset();
@@ -460,6 +463,45 @@ describe("FileViewerModal", () => {
       expect(platformMock.writeClipboardText).toHaveBeenCalledWith("macOS fallback copy");
       expect(execCommandMock).toHaveBeenCalledWith("copy");
     });
+  });
+
+  it("移动端文件预览默认全屏，并只保留视图、刷新和保存操作", async () => {
+    platformMock.isDesktop = false;
+    platformMock.isMobile = true;
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "site/index.html",
+        kind: "html",
+        content: "<!doctype html><html><body>preview</body></html>",
+        version: "html-v1",
+        previewPath: "/preview/files/preview-token/site/index.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/site/index.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="site/index.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    const dialog = await screen.findByRole("dialog");
+
+    expect(dialog).toHaveAttribute("data-size", "full");
+    expect(screen.getByRole("tab", { name: t("conversation.fileViewerPreview") })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("conversation.fileViewerRefreshPreview") })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("conversation.filePanelSave") })).toBeInTheDocument();
+    expect(screen.queryByText(/当前以 .* 模式打开/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("conversation.fileViewerSizeDefault") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("conversation.fileViewerSizeFull") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("conversation.fileViewerOpenExternal") })).not.toBeInTheDocument();
   });
 
   it("HTML 文件支持刷新预览、尺寸切换，并支持外部打开", async () => {
