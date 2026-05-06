@@ -9,6 +9,7 @@ import type { SessionMessageViewModel } from "../runtime/session-runtime-machine
 
 const revealWorkspaceFileMock = vi.hoisted(() => vi.fn(() => false));
 const getButlerFollowUpTaskMock = vi.hoisted(() => vi.fn());
+const getFilePreviewLinkMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./WorkbenchLayout", () => ({
   useWorkbenchShell: () => ({
@@ -35,6 +36,10 @@ vi.mock("./WorkbenchLayout", () => ({
 
 vi.mock("../../butler/api/butler-api", () => ({
   getButlerFollowUpTask: getButlerFollowUpTaskMock
+}));
+
+vi.mock("../api/file-context-api", () => ({
+  getFilePreviewLink: getFilePreviewLinkMock
 }));
 
 const SAMPLE_IMAGE_DATA_URL =
@@ -301,6 +306,12 @@ describe("MessageTimeline", () => {
         updatedAt: "2026-04-07T00:05:00.000Z",
         completedAt: null
       }
+    });
+    getFilePreviewLinkMock.mockReset();
+    getFilePreviewLinkMock.mockResolvedValue({
+      previewPath: "/preview/files/preview-token/apps/user-app/src/assets/menu.png",
+      previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/apps/user-app/src/assets/menu.png",
+      expiresAt: "2026-04-13T10:05:00.000Z"
     });
   });
 
@@ -970,6 +981,40 @@ describe("MessageTimeline", () => {
     await userEvent.click(screen.getByRole("button", { name: new RegExp(`^${t("conversation.roleTool")}`) }));
 
     expect(screen.getByText("C:/Code/FamilyClaw")).toBeInTheDocument();
+  });
+
+  it("会把 codex 的 view_image 工具调用渲染成图片预览", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        workspaceId="workspace-1"
+        workspacePath="/Users/jackson/Code/CodingNS"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "tool-call-view-image-1",
+            callId: "call-view-image-1",
+            name: "view_image",
+            kind: "tool_call",
+            content: JSON.stringify({
+              path: "/Users/jackson/Code/CodingNS/apps/user-app/src/assets/menu.png"
+            }),
+            status: "running"
+          })
+        ]}
+      />
+    );
+
+    expect(screen.getByText(t("conversation.toolViewImageActiveLabel"))).toBeInTheDocument();
+    expect(screen.getByText("apps/user-app/src/assets/menu.png")).toBeInTheDocument();
+    expect(getFilePreviewLinkMock).toHaveBeenCalledWith("workspace-1", "apps/user-app/src/assets/menu.png");
+
+    const image = await screen.findByAltText("menu.png");
+    expect(image.getAttribute("src")).toContain(
+      "/preview/files/preview-token/apps/user-app/src/assets/menu.png"
+    );
+    expect(screen.queryByText(/^view_image$/)).not.toBeInTheDocument();
   });
 
   it("会默认折叠 codex 会话里的规则消息，并允许手动展开", async () => {
