@@ -4996,44 +4996,42 @@ export function MessageTimeline({
         ) : null}
 
         {sessionErrorDisplay ? (
-          <section
-            className="session-runtime-error-panel"
-            role="status"
-            aria-label={sessionErrorDisplay.title}
-          >
-            <div className="session-runtime-error-panel__header">
-              <span className="session-runtime-error-panel__dot" aria-hidden="true" />
-              <strong>{sessionErrorDisplay.title}</strong>
-            </div>
-            <p className="session-runtime-error-panel__summary">
-              {tokenizeSessionErrorSummary(sessionErrorDisplay.summary).map((segment, index) => {
-                if (segment.type === "text") {
-                  return <span key={`text-${index}`}>{segment.text}</span>;
-                }
+          <article className="message-item assistant-message session-runtime-error-row">
+            <div className="session-runtime-error-row__spacer" aria-hidden="true" />
+            <section
+              className="message-content-wrapper session-runtime-error-panel"
+              role="status"
+              aria-label={sessionErrorDisplay.title}
+            >
+              <div className="session-runtime-error-panel__header">
+                <div className="session-runtime-error-panel__title-group">
+                  <span className="session-runtime-error-panel__dot" aria-hidden="true" />
+                  <strong>{sessionErrorDisplay.title}</strong>
+                </div>
+                {sessionErrorDisplay.code ? (
+                  <code className="session-runtime-error-panel__code">{sessionErrorDisplay.code}</code>
+                ) : null}
+              </div>
+              {sessionErrorDisplay.summary ? (
+                <p className="session-runtime-error-panel__summary">
+                  {tokenizeSessionErrorSummary(sessionErrorDisplay.summary).map((segment, index) => {
+                    if (segment.type === "text") {
+                      return <span key={`text-${index}`}>{segment.text}</span>;
+                    }
 
-                return (
-                  <mark
-                    key={`${segment.type}-${index}`}
-                    className={`session-runtime-error-panel__summary-token session-runtime-error-panel__summary-token--${segment.type}`}
-                  >
-                    {segment.text}
-                  </mark>
-                );
-              })}
-            </p>
-            {sessionErrorDisplay.code ? (
-              <div className="session-runtime-error-panel__meta">
-                <span className="session-runtime-error-panel__label">{t("conversation.runtimeErrorCodeLabel")}</span>
-                <code className="session-runtime-error-panel__code">{sessionErrorDisplay.code}</code>
-              </div>
-            ) : null}
-            {sessionErrorDisplay.detail ? (
-              <div className="session-runtime-error-panel__detail">
-                <span className="session-runtime-error-panel__label">{t("conversation.runtimeErrorDetailLabel")}</span>
-                <pre className="session-runtime-error-panel__detail-text">{sessionErrorDisplay.detail}</pre>
-              </div>
-            ) : null}
-          </section>
+                    return (
+                      <mark
+                        key={`${segment.type}-${index}`}
+                        className={`session-runtime-error-panel__summary-token session-runtime-error-panel__summary-token--${segment.type}`}
+                      >
+                        {segment.text}
+                      </mark>
+                    );
+                  })}
+                </p>
+              ) : null}
+            </section>
+          </article>
         ) : null}
       </div>
       {showScrollToBottomButton ? (

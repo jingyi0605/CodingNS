@@ -43,20 +43,16 @@ function buildSessionErrorSummary(
   detail: string | null,
   syncStatus: SyncStatus | null | undefined
 ): string {
-  if (code && detail && !detail.includes(code)) {
-    return `${code} · ${detail}`;
-  }
-
   if (detail) {
     return detail;
   }
 
-  if (code) {
-    return code;
-  }
-
   if (syncStatus === "error") {
     return t("conversation.syncStatusError");
+  }
+
+  if (code) {
+    return t("conversation.runtimeErrorFallbackDetail");
   }
 
   return t("conversation.runtimeErrorFallbackDetail");
