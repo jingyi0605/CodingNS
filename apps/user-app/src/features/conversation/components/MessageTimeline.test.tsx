@@ -385,11 +385,13 @@ describe("MessageTimeline", () => {
     );
 
     expect(screen.getByText(t("conversation.runtimeErrorTitle"))).toBeInTheDocument();
+    expect(document.querySelector(".session-runtime-error-row.message-item.assistant-message")).not.toBeNull();
     expect(document.querySelector(".session-runtime-error-panel__summary")?.textContent).toBe(
-      "CODEX_HTTP_429 · 429 Too Many Requests, request id: demo-request-id"
+      "429 Too Many Requests, request id: demo-request-id"
     );
-    expect(screen.getByText(t("conversation.runtimeErrorCodeLabel"))).toBeInTheDocument();
-    expect(screen.getByText(t("conversation.runtimeErrorDetailLabel"))).toBeInTheDocument();
+    expect(screen.getByText("CODEX_HTTP_429")).toHaveClass("session-runtime-error-panel__code");
+    expect(screen.queryByText(t("conversation.runtimeErrorCodeLabel"))).not.toBeInTheDocument();
+    expect(screen.queryByText(t("conversation.runtimeErrorDetailLabel"))).not.toBeInTheDocument();
     expect(screen.getByText("429 Too Many Requests")).toHaveClass(
       "session-runtime-error-panel__summary-token--status_code"
     );
