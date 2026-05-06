@@ -845,9 +845,11 @@ describe("ComposerPanel", () => {
       name: t("conversation.taskProgressButton", { count: 2 })
     });
 
+    const taskEntry = taskButton.closest(".conversation-task-progress-entry");
+
     expect(taskButton).toHaveClass("composer-task-progress-button");
-    expect(leftControls?.lastElementChild).toBe(taskButton);
-    expect(ring?.nextElementSibling).toBe(taskButton);
+    expect(leftControls?.lastElementChild).toBe(taskEntry);
+    expect(ring?.nextElementSibling).toBe(taskEntry);
   });
 
   it("粘贴图片后会显示预览卡片", async () => {
