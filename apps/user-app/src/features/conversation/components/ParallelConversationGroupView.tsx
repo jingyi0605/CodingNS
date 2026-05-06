@@ -886,6 +886,10 @@ function ParallelConversationMemberPane({
     toolWorkspaceId === navigationWorkspaceId
       ? workspaceContext?.displayName ?? navigationWorkspaceId
       : isolatedWorkspaceBranchName ?? panePromptLabel;
+  const toolWorkspacePath = useMemo(
+    () => navigationGroups.find((group) => group.workspace.id === toolWorkspaceId)?.workspace.path ?? null,
+    [navigationGroups, toolWorkspaceId]
+  );
   const isRemovingCurrentSession = removingSessionId === sessionId;
   async function handleSubmitStructuredQuestion(payload: {
     messageId: string;
@@ -1509,6 +1513,8 @@ function ParallelConversationMemberPane({
         <div className="parallel-conversation-pane-timeline">
           <MessageTimeline
             sessionId={sessionId}
+            workspaceId={toolWorkspaceId}
+            workspacePath={toolWorkspacePath}
             messages={timelineMessages}
             historyState={historyState}
             loadingOlderMessages={loadingOlderMessages}

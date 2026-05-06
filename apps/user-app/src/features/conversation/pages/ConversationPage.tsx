@@ -663,6 +663,8 @@ function LiveConversationPage({
             <div ref={timelineSelectionContainerRef} className="conversation-timeline-shell">
               <MessageTimeline
                 sessionId={sessionId}
+                workspaceId={mobileToolWorkspaceId}
+                workspacePath={currentWorkspaceEntity?.path ?? null}
                 messages={timelineMessages}
                 historyState={historyState}
                 loadingOlderMessages={loadingOlderMessages}
@@ -1246,6 +1248,8 @@ function DraftConversationPage({
             <div className="conversation-timeline-shell">
               <MessageTimeline
                 sessionId={draft.sessionId}
+                workspaceId={draft.workspaceId}
+                workspacePath={currentWorkspaceEntity?.path ?? null}
                 messages={draftMessages}
                 historyState="ready"
                 loadingOlderMessages={false}

@@ -1297,6 +1297,7 @@ export const zhCN = {
     roleUser: "你",
     roleAssistant: "助手",
     roleTool: "工具",
+    toolViewImageActiveLabel: "AI正在查看图片",
     roleSystem: "系统"
   },
   git: {

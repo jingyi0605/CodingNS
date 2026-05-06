@@ -16,10 +16,12 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { DesktopModal } from "../../../components/DesktopModal";
+import { getHostBaseUrl, getHostRequestUrl } from "../../../config/env";
 import {
   isTimelineScrollDebugEnabled,
   logTimelineScrollDebug
 } from "../../../shared/debug/perf-debug";
+import { resolveHostTransportTarget } from "../../../network/host-transport-registry";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { usePlatform } from "../../../platform/platform-provider";
@@ -52,6 +54,7 @@ import {
   readPersistedConversationScrollState
 } from "./conversation-scroll-persistence";
 import { useTransientScrollbarVisibility } from "./useTransientScrollbarVisibility";
+import { getFilePreviewLink } from "../api/file-context-api";
 
 import type {
   AttachmentPayload,
@@ -67,6 +70,8 @@ import { resolveSessionErrorDisplayContent } from "../session-error-display";
 
 interface MessageTimelineProps {
   sessionId?: string;
+  workspaceId?: string | null;
+  workspacePath?: string | null;
   messages: SessionMessageViewModel[];
   historyState: "idle" | "loading" | "ready" | "error";
   loadingOlderMessages?: boolean;
@@ -192,6 +197,18 @@ interface ToolMessageGroup {
   hasResult: boolean;
   updatedAt: string;
 }
+
+interface ViewImageToolSnapshot {
+  path: string;
+  displayPath: string;
+  fileName: string;
+}
+
+type ViewImagePreviewState =
+  | { status: "idle"; url: null }
+  | { status: "loading"; url: null }
+  | { status: "ready"; url: string }
+  | { status: "error"; url: null };
 
 interface AssistantCapabilityReceiptRecord {
   ok: true;
@@ -365,6 +382,59 @@ function resolveWorkspaceRelativePathFromHref(
   }
 
   return normalizeRelativePath(candidatePath);
+}
+
+function readViewImageToolPath(tool: ResolvedToolCall): string | null {
+  if (tool.name.trim() !== "view_image") {
+    return null;
+  }
+
+  const parsedInput = parseToolInputRecord(tool.input);
+  const imagePath = parsedInput ? readToolInputText(parsedInput, "path").trim() : "";
+  return imagePath || null;
+}
+
+function getFileNameFromPath(filePath: string): string {
+  const segments = normalizeMessagePathSeparators(filePath).split("/").filter(Boolean);
+  return segments.at(-1) ?? filePath;
+}
+
+function resolveViewImageToolSnapshot(
+  tool: ResolvedToolCall,
+  workspacePath: string | null | undefined
+): ViewImageToolSnapshot | null {
+  const imagePath = readViewImageToolPath(tool);
+
+  if (!imagePath) {
+    return null;
+  }
+
+  const relativePath = workspacePath
+    ? resolveWorkspaceRelativePathFromHref(imagePath, workspacePath)
+    : normalizeRelativePath(stripFileReferenceDecorations(imagePath));
+
+  return {
+    path: relativePath ?? imagePath,
+    displayPath: relativePath ?? imagePath,
+    fileName: getFileNameFromPath(imagePath)
+  };
+}
+
+function resolveToolImagePreviewAccessUrl(previewPath: string | null, previewUrl: string | null, isDesktop: boolean): string | null {
+  if (previewPath && !isDesktop && typeof window !== "undefined" && window.location?.origin) {
+    return new URL(previewPath, window.location.origin).toString();
+  }
+
+  if (previewPath && isDesktop) {
+    try {
+      const resolvedBaseUrl = resolveHostTransportTarget(getHostBaseUrl()).baseUrl;
+      return getHostRequestUrl(previewPath, resolvedBaseUrl);
+    } catch {
+      return previewUrl;
+    }
+  }
+
+  return previewUrl;
 }
 
 function isToolMessage(message: SessionMessageViewModel) {
@@ -2830,11 +2900,98 @@ function ApplyPatchToolItem({
   );
 }
 
-function ToolCallItem({ group, exportMode = false }: { group: ToolMessageGroup; exportMode?: boolean }) {
+function ViewImageToolItem({
+  tool,
+  snapshot,
+  workspaceId,
+  exportMode = false
+}: {
+  tool: ResolvedToolCall;
+  snapshot: ViewImageToolSnapshot;
+  workspaceId?: string | null;
+  exportMode?: boolean;
+}) {
+  const platform = usePlatform();
+  const [previewState, setPreviewState] = useState<ViewImagePreviewState>({ status: "idle", url: null });
+
+  useEffect(() => {
+    if (exportMode || !workspaceId || !snapshot.path) {
+      setPreviewState({ status: "idle", url: null });
+      return undefined;
+    }
+
+    let cancelled = false;
+    setPreviewState({ status: "loading", url: null });
+
+    void getFilePreviewLink(workspaceId, snapshot.path)
+      .then((previewLink) => {
+        if (cancelled) {
+          return;
+        }
+
+        const url = resolveToolImagePreviewAccessUrl(
+          previewLink.previewPath,
+          previewLink.previewUrl,
+          platform.isDesktop
+        );
+
+        setPreviewState(url ? { status: "ready", url } : { status: "error", url: null });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPreviewState({ status: "error", url: null });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [exportMode, platform.isDesktop, snapshot.path, workspaceId]);
+
+  return (
+    <div className={`tool-call-item view-image-tool-item ${tool.status === "completed" ? "tool-result" : ""}`}>
+      <div className="tool-call-header view-image-tool-header">
+        <div className="tool-call-info">
+          <span className="tool-call-name">{t("conversation.toolViewImageActiveLabel")}</span>
+          <span className="tool-call-input-preview">{snapshot.displayPath}</span>
+        </div>
+      </div>
+      {!exportMode ? (
+        <div className="view-image-tool-preview">
+          {previewState.status === "ready" ? (
+            <img src={previewState.url} alt={snapshot.fileName || t("conversation.attachmentPreviewAlt")} />
+          ) : (
+            <div className="view-image-tool-placeholder">
+              {previewState.status === "loading"
+                ? t("conversation.attachmentPreviewLoading")
+                : t("conversation.attachmentPreviewUnavailable")}
+            </div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ToolCallItem({
+  group,
+  workspaceId,
+  workspacePath,
+  exportMode = false
+}: {
+  group: ToolMessageGroup;
+  workspaceId?: string | null;
+  workspacePath?: string | null;
+  exportMode?: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   const { navigationGroups } = useWorkbenchShell();
   const { tool, hasRequest, hasResult } = group;
   const toolDisplayName = getToolDisplayName(tool.name);
+  const viewImageSnapshot = useMemo(
+    () => resolveViewImageToolSnapshot(tool, workspacePath),
+    [tool, workspacePath]
+  );
   const assistantCapabilityLookup = useMemo(
     () => buildAssistantCapabilityNavigationLookup(navigationGroups),
     [navigationGroups]
@@ -2855,6 +3012,17 @@ function ToolCallItem({ group, exportMode = false }: { group: ToolMessageGroup; 
     () => buildEditableToolPreview(tool),
     [tool.input, tool.name]
   );
+
+  if (viewImageSnapshot) {
+    return (
+      <ViewImageToolItem
+        tool={tool}
+        snapshot={viewImageSnapshot}
+        workspaceId={workspaceId}
+        exportMode={exportMode}
+      />
+    );
+  }
 
   if (applyPatchPreview) {
     return <ApplyPatchToolItem tool={tool} preview={applyPatchPreview} exportMode={exportMode} />;
@@ -3809,6 +3977,8 @@ function StructuredQuestionCard({
 
 export function ConversationTranscriptExport({
   sessionId,
+  workspaceId = null,
+  workspacePath = null,
   messages,
   provider,
   interruptedSource = null,
@@ -3816,6 +3986,8 @@ export function ConversationTranscriptExport({
   assistantAvatar
 }: {
   sessionId?: string;
+  workspaceId?: string | null;
+  workspacePath?: string | null;
   messages: SessionMessageViewModel[];
   provider: ProviderId | null;
   interruptedSource?: SessionInterruptSource | null;
@@ -3840,7 +4012,12 @@ export function ConversationTranscriptExport({
         {renderItems.map((item) =>
           item.type === "tool_group" ? (
             <article key={item.key} className="message-item tool-message-row">
-              <ToolCallItem group={item.group} exportMode />
+              <ToolCallItem
+                group={item.group}
+                workspaceId={workspaceId}
+                workspacePath={workspacePath}
+                exportMode
+              />
             </article>
           ) : (
             <MessageItem
@@ -3909,6 +4086,8 @@ function resolveFollowUpTaskStatusLabel(status: ButlerFollowUpTaskDto["status"])
 
 export function MessageTimeline({
   sessionId = "session",
+  workspaceId = null,
+  workspacePath = null,
   messages,
   historyState,
   loadingOlderMessages = false,
@@ -4774,7 +4953,7 @@ export function MessageTimeline({
         {renderItems.map((item) =>
           item.type === "tool_group" ? (
             <article key={item.key} className="message-item tool-message-row">
-              <ToolCallItem group={item.group} />
+              <ToolCallItem group={item.group} workspaceId={workspaceId} workspacePath={workspacePath} />
             </article>
           ) : (
             <MessageItem

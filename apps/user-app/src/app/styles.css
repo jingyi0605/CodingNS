@@ -3847,6 +3847,31 @@ a {
   color: var(--error);
 }
 
+.view-image-tool-preview {
+  padding: 8px;
+  background: color-mix(in srgb, var(--bg-primary) 96%, transparent);
+  border-top: 1px solid var(--border-primary);
+}
+
+.view-image-tool-preview img {
+  display: block;
+  width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-hover) 56%, transparent);
+}
+
+.view-image-tool-placeholder {
+  display: grid;
+  min-height: 120px;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--text-tertiary);
+  background: color-mix(in srgb, var(--bg-hover) 56%, transparent);
+  font-size: 12px;
+}
+
 /* Rules Message */
 .rules-message-row .message-content-wrapper {
   flex: 1;

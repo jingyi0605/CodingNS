@@ -1478,6 +1478,7 @@ export const enUS = {
     roleUser: "User",
     roleAssistant: "Assistant",
     roleTool: "Tool",
+    toolViewImageActiveLabel: "AI is viewing an image",
     roleSystem: "System"
   },
   git: {
