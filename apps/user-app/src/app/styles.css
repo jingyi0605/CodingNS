@@ -7987,6 +7987,42 @@ textarea:focus-visible {
   line-height: 16px;
 }
 
+.conversation-task-progress-entry {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+}
+
+.conversation-task-progress-popover {
+  position: fixed;
+  z-index: 130;
+  overflow: auto;
+  border-radius: 16px;
+  box-shadow:
+    0 22px 48px rgba(15, 23, 42, 0.18),
+    0 0 0 1px color-mix(in srgb, var(--border-primary) 70%, transparent);
+  overscroll-behavior: contain;
+}
+
+.conversation-task-progress-popover-card {
+  width: 100%;
+  border-radius: inherit;
+}
+
+.conversation-task-progress-popover-card .task-tool-header {
+  padding: 10px 12px;
+}
+
+.conversation-task-progress-popover-card .task-tool-list {
+  padding: 8px 12px 10px;
+}
+
+.conversation-task-progress-popover-card .task-tool-list-item {
+  min-height: 34px;
+}
+
 .conversation-header-overflow-button {
   min-width: 2.5rem;
   padding: 0 0.85rem;
@@ -8820,139 +8856,6 @@ textarea:focus-visible {
 .conversation-butler-preset-card span {
   font-size: 11px;
   line-height: 1.35;
-  color: var(--text-secondary);
-}
-
-.conversation-task-progress-modal {
-  width: min(680px, calc(100vw - 32px));
-}
-
-.conversation-task-progress-modal-body {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.conversation-task-progress-summary {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
-  gap: 10px;
-}
-
-.conversation-task-progress-summary-card {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 12px 14px;
-  border: 1px solid var(--border-primary);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
-}
-
-.conversation-task-progress-summary-card span {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.conversation-task-progress-summary-card strong {
-  font-size: 18px;
-  line-height: 1.1;
-}
-
-.conversation-task-progress-explanation {
-  padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border-primary));
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg-surface));
-}
-
-.conversation-task-progress-explanation strong {
-  display: block;
-  font-size: 13px;
-}
-
-.conversation-task-progress-explanation p {
-  margin: 8px 0 0;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-}
-
-.conversation-task-progress-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.conversation-task-progress-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 12px 14px;
-  border: 1px solid var(--border-primary);
-  border-radius: 14px;
-  background: var(--bg-surface);
-}
-
-.conversation-task-progress-item-indicator {
-  width: 10px;
-  min-width: 10px;
-  height: 10px;
-  margin-top: 6px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--text-secondary) 45%, transparent);
-}
-
-.conversation-task-progress-item-indicator[data-status="in_progress"] {
-  background: color-mix(in srgb, var(--accent) 88%, white 12%);
-}
-
-.conversation-task-progress-item-indicator[data-status="completed"] {
-  background: color-mix(in srgb, #16a34a 88%, white 12%);
-}
-
-.conversation-task-progress-item-indicator[data-status="failed"] {
-  background: color-mix(in srgb, #dc2626 88%, white 12%);
-}
-
-.conversation-task-progress-item-indicator[data-status="cancelled"] {
-  background: color-mix(in srgb, var(--text-secondary) 70%, transparent);
-}
-
-.conversation-task-progress-item-body {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.conversation-task-progress-item-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.conversation-task-progress-item-header strong {
-  min-width: 0;
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.conversation-task-progress-item-status {
-  flex: 0 0 auto;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.conversation-task-progress-item-detail {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
   color: var(--text-secondary);
 }
 
