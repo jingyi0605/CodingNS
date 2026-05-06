@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 
 import { resolveHostConfig, type HostConfig } from "../config/env.js";
+import { syncReleaseManifests } from "./release-manifest-sync.js";
 import { createServer } from "./create-server.js";
 
 export interface StartedHost {
@@ -11,6 +12,7 @@ export interface StartedHost {
 
 export async function startHost(overrides: Partial<HostConfig> = {}): Promise<StartedHost> {
   const config = resolveHostConfig(overrides);
+  await syncReleaseManifests(config);
   const hosted = createServer(config);
   let shuttingDown = false;
 
