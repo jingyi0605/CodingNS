@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# GitHub Actions 桌面端远端验包脚本
+# GitHub Actions 桌面端 + Android 远端验包脚本
 # 目标：
 # 1. 不切换当前本地分支
 # 2. 直接把当前 HEAD 推到 GitHub 临时分支
-# 3. 触发 workflow_dispatch 验证桌面端构建
+# 3. 触发 workflow_dispatch 验证桌面端和 Android 构建
 # 4. 等待结果并输出 run 链接
 #
 # 用法：
@@ -67,13 +67,13 @@ print_menu() {
 
   cat <<EOF
 
-================ GitHub Actions 桌面端验包 ================
+============= GitHub Actions 桌面端 + Android 验包 =============
 当前分支: $current_branch
 当前提交: $current_sha
 
 请选择要执行的操作：
   1) 标准验证
-     只验证当前 HEAD，要求工作区干净，等待 CI 结束
+     验证当前 HEAD，要求工作区干净，等待 CI 结束
   2) 验证当前 HEAD（忽略未提交改动）
      未提交改动不会进入 GitHub Actions，等待 CI 结束
   3) 只触发 CI，不等待结果
@@ -85,7 +85,11 @@ print_menu() {
   6) 自定义临时分支名
      适合你想给这次验证起个固定名字
   0) 退出
-==========================================================
+当前 workflow 会一起验证：
+  - macOS 桌面端
+  - Windows 桌面端
+  - Android APK
+============================================================
 EOF
 }
 
@@ -109,7 +113,8 @@ print_usage() {
 说明：
   1. 这个脚本不会切换您当前本地分支。
   2. 默认把当前 HEAD 推到 GitHub 临时分支，然后触发 workflow_dispatch。
-  3. 如果本地还有未提交改动，GitHub Actions 根本看不到；默认直接拦截。
+  3. 当前默认 workflow 会同时验证 macOS、Windows 和 Android 构建。
+  4. 如果本地还有未提交改动，GitHub Actions 根本看不到；默认直接拦截。
 EOF
 }
 
@@ -347,6 +352,7 @@ print_summary() {
   工作流: $WORKFLOW_ID
   提交 SHA: $HEAD_SHA
   临时分支: $BRANCH_NAME
+  验证范围: macOS / Windows / Android
 EOF
 }
 

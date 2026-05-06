@@ -9,6 +9,10 @@ on:
 env:
   NODE_VERSION: "22"
   PNPM_VERSION: "10.7.1"
+  JAVA_VERSION: "21"
+  ANDROID_API_LEVEL: "36"
+  ANDROID_BUILD_TOOLS_VERSION: "36.0.0"
+  ANDROID_NDK_VERSION: "27.2.12479018"
 
 jobs:
   build-macos-universal:
@@ -233,12 +237,99 @@ jobs:
             apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.sig
             apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.sig
 
+  build-android:
+    name: android-apk
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-${ANDROID_API_LEVEL}" \
+            "build-tools;${ANDROID_BUILD_TOOLS_VERSION}"
+
+          selected_ndk=""
+          for ndk_version in "${ANDROID_NDK_VERSION}" "27.0.12077973" "26.3.11579264"; do
+            if sdkmanager "ndk;${ndk_version}"; then
+              selected_ndk="${ndk_version}"
+              break
+            fi
+          done
+
+          if [[ -z "${selected_ndk}" ]]; then
+            echo "未能安装可用的 Android NDK" >&2
+            exit 1
+          fi
+
+          {
+            echo "ANDROID_HOME=${ANDROID_SDK_ROOT}"
+            echo "NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${selected_ndk}"
+          } >> "$GITHUB_ENV"
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache Rust artifacts
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./apps/user-app/src-tauri -> target"
+
+      - name: Install workspace dependencies
+        shell: bash
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Android release APK
+        shell: bash
+        run: bash ./scripts/build-android.sh release
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          if-no-files-found: error
+          path: |
+            apps/user-app/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+
   publish-release:
     name: publish-release
     if: startsWith(github.ref, 'refs/tags/')
     needs:
       - build-macos-universal
       - build-windows
+      - build-android
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -341,6 +432,38 @@ jobs:
           )
           PY
 
+      - name: 生成 Android android-apk.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          apk_path="$(find release-assets -type f -name 'app-universal-release.apk' | head -n 1)"
+
+          if [[ -z "${apk_path}" ]]; then
+            echo "缺少 Android APK 产物，无法生成 android-apk.json" >&2
+            exit 1
+          fi
+
+          gh release view "${GITHUB_REF_NAME}" \
+            --repo "${GH_REPO}" \
+            --json body \
+            --jq '.body' > release-assets/android-release-notes.txt
+
+          published_at="$(gh release view "${GITHUB_REF_NAME}" --repo "${GH_REPO}" --json publishedAt --jq '.publishedAt')"
+          html_url="$(gh release view "${GITHUB_REF_NAME}" --repo "${GH_REPO}" --json url --jq '.url')"
+
+          node ./scripts/generate-android-release-manifest.mjs \
+            --apk "${apk_path}" \
+            --output release-assets/android-apk.json \
+            --channel stable \
+            --download-url "https://github.com/${GH_REPO}/releases/latest/download/app-universal-release.apk" \
+            --published-at "${published_at}" \
+            --html-url "${html_url}" \
+            --notes-file release-assets/android-release-notes.txt
+
       - name: 上传 Release 资产
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -352,7 +475,7 @@ jobs:
 
           mapfile -d "" files < <(
             find release-assets -type f \
-              \( -name "*.dmg" -o -name "*.msi" -o -name "*.exe" -o -name "*.sig" -o -name "*.tar.gz" -o -name "latest.json" \) \
+              \( -name "*.dmg" -o -name "*.msi" -o -name "*.exe" -o -name "*.sig" -o -name "*.tar.gz" -o -name "*.apk" -o -name "latest.json" -o -name "android-apk.json" \) \
               -print0
           )
 
