@@ -208,6 +208,125 @@ test("CodexAdapter 会为 app-server 落盘的 assistant 与 tool 消息复用�
   }
 });
 
+test("CodexAdapter 会把 Codex 新版命令式编辑脚本归一化成 apply_patch", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-adapter-command-edit-"));
+  const sessionFile = join(tempDir, "session.jsonl");
+  const editCommand = [
+    "python3 - <<'PY'",
+    "from pathlib import Path",
+    "path = Path('src/runtime/codex-runtime.ts')",
+    "text = path.read_text()",
+    "old = '''const normalized = value.trim().toLowerCase();'''",
+    "new = '''const normalized = value.trim().toLowerCase();\\nreturn normalized;'''",
+    "text = text.replace(old, new, 1)",
+    "path.write_text(text)",
+    "PY",
+    "npm run build"
+  ].join("\\n");
+
+  try {
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-05-06T10:00:00.000Z",
+          type: "response_item",
+          payload: {
+            type: "function_call",
+            call_id: "command-edit-1",
+            name: "exec_command",
+            arguments: JSON.stringify({
+              cmd: editCommand,
+              workdir: "/Users/jackson/Code/CodingNS",
+              yield_time_ms: 1000
+            })
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-06T10:00:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "function_call_output",
+            call_id: "command-edit-1",
+            output: [
+              "Command: /bin/zsh -lc " + JSON.stringify(editCommand),
+              "Chunk ID: abc123",
+              "Wall time: 0.0000 seconds",
+              "Process exited with code 0",
+              "Output:"
+            ].join("\n"),
+            status: "completed"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-06T10:00:02.000Z",
+          type: "response_item",
+          payload: {
+            type: "function_call",
+            call_id: "poll-edit-1",
+            name: "write_stdin",
+            arguments: JSON.stringify({
+              session_id: 14837,
+              chars: "",
+              yield_time_ms: 1000
+            })
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-06T10:00:03.000Z",
+          type: "response_item",
+          payload: {
+            type: "function_call_output",
+            call_id: "poll-edit-1",
+            output: [
+              "Command: /bin/zsh -lc " + JSON.stringify(editCommand),
+              "Chunk ID: c395a4",
+              "Wall time: 0.0000 seconds",
+              "Process exited with code 0",
+              "Output:"
+            ].join("\n"),
+            status: "completed"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const page = await adapter.readSessionHistory("thread-command-edit", sessionFile, null, 50);
+    const commandCall = page.messages.find((message) => message.messageId === createStableMessageId(
+      "thread-command-edit",
+      "tool:call:command-edit-1"
+    ));
+    const commandResult = page.messages.find((message) => message.messageId === createStableMessageId(
+      "thread-command-edit",
+      "tool:result:command-edit-1"
+    ));
+    const pollCall = page.messages.find((message) => message.messageId === createStableMessageId(
+      "thread-command-edit",
+      "tool:call:poll-edit-1"
+    ));
+    const pollResult = page.messages.find((message) => message.messageId === createStableMessageId(
+      "thread-command-edit",
+      "tool:result:poll-edit-1"
+    ));
+
+    assert.equal(commandCall?.toolCall?.name, "apply_patch");
+    assert.match(commandCall?.toolCall?.input ?? "", /^\*\*\* Begin Patch/m);
+    assert.match(commandCall?.toolCall?.input ?? "", /\*\*\* Update File: src\/runtime\/codex-runtime\.ts/);
+    assert.equal(commandResult?.toolCall?.name, "apply_patch");
+    assert.match(commandResult?.toolCall?.input ?? "", /\*\*\* Update File: src\/runtime\/codex-runtime\.ts/);
+    assert.match(commandResult?.toolCall?.input ?? "", /-const normalized = value\.trim\(\)\.toLowerCase\(\);/);
+    assert.match(commandResult?.toolCall?.input ?? "", /\+return normalized;/);
+    assert.equal(pollCall?.toolCall?.name, "apply_patch");
+    assert.match(pollCall?.toolCall?.input ?? "", /\*\*\* Update File: src\/runtime\/codex-runtime\.ts/);
+    assert.equal(pollResult?.toolCall?.name, "apply_patch");
+    assert.match(pollResult?.toolCall?.input ?? "", /\*\*\* Update File: src\/runtime\/codex-runtime\.ts/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexAdapter 合并等价 assistant 记录时会保留 event_msg 提供的稳定 messageId", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-adapter-merged-stable-id-"));
   const sessionFile = join(tempDir, "session.jsonl");

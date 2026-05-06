@@ -1407,6 +1407,178 @@ test("CodexRuntimeAdapter 不会把 turn/completed 回放的同一批 items 再�
   }
 });
 
+test("CodexRuntimeAdapter 会把 exec_command 里的 apply_patch 归一化成编辑工具", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-exec-patch-"));
+  const scriptPath = join(tempDir, "fake-codex-app-server.cjs");
+  const launcherPath = join(
+    tempDir,
+    process.platform === "win32" ? "fake-codex.cmd" : "fake-codex.sh"
+  );
+  const threadPath = join(tempDir, "thread-exec-patch.jsonl").replace(/\\/g, "/");
+  const emitted = [];
+  const patchText = [
+    "*** Begin Patch",
+    "*** Update File: apps/user-app/src/main.ts",
+    "@@",
+    "-oldValue();",
+    "+newValue();",
+    "*** End Patch"
+  ].join("\n");
+  const patchCommand = `apply_patch <<'PATCH'\n${patchText}\nPATCH`;
+  const warning = "Warning: apply_patch was requested via exec_command. Use the apply_patch tool instead of exec_command.";
+
+  writeFakeCodexAppServer(
+    scriptPath,
+    `
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+function write(payload) {
+  process.stdout.write(JSON.stringify(payload) + "\\n");
+}
+rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === "initialize") {
+    write({ jsonrpc: "2.0", id: msg.id, result: {} });
+    return;
+  }
+  if (msg.method === "thread/start") {
+    write({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        thread: {
+          id: "thread-exec-patch",
+          preview: "",
+          ephemeral: false,
+          modelProvider: "openai",
+          createdAt: 0,
+          updatedAt: 0,
+          status: { type: "idle" },
+          path: ${JSON.stringify(threadPath)},
+          cwd: "C:/workspace-1",
+          cliVersion: "0.0.0",
+          source: "appServer",
+          agentNickname: null,
+          agentRole: null,
+          gitInfo: null,
+          name: null,
+          turns: []
+        }
+      }
+    });
+    return;
+  }
+  if (msg.method === "turn/start") {
+    write({
+      method: "item/started",
+      params: {
+        threadId: "thread-exec-patch",
+        turnId: "turn-exec-patch",
+        item: {
+          type: "commandExecution",
+          id: "patch-command-1",
+          command: ${JSON.stringify(patchCommand)},
+          cwd: "C:/workspace-1",
+          status: "inProgress",
+          aggregatedOutput: null,
+          exitCode: null
+        }
+      }
+    });
+    write({
+      method: "item/completed",
+      params: {
+        threadId: "thread-exec-patch",
+        turnId: "turn-exec-patch",
+        item: {
+          type: "commandExecution",
+          id: "patch-command-1",
+          command: ${JSON.stringify(patchCommand)},
+          cwd: "C:/workspace-1",
+          status: "completed",
+          aggregatedOutput: ${JSON.stringify(warning)},
+          exitCode: 0
+        }
+      }
+    });
+    write({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-exec-patch",
+        turn: { id: "turn-exec-patch", items: [], status: "completed" }
+      }
+    });
+    write({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        turn: { id: "turn-exec-patch", items: [], status: "completed" }
+      }
+    });
+    setTimeout(() => process.exit(0), 10);
+  }
+});
+`
+  );
+  writeFileSync(
+    launcherPath,
+    process.platform === "win32"
+      ? `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`
+      : `#!/usr/bin/env sh\n"${process.execPath}" "${scriptPath}" "$@"\n`,
+    "utf8"
+  );
+
+  if (process.platform !== "win32") {
+    chmodSync(launcherPath, 0o755);
+  }
+
+  try {
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      commandPath: launcherPath
+    });
+
+    const launch = await adapter.startSession(
+      createRunRequest({
+        sessionId: "session-exec-patch",
+        options: {
+          content: "请修改文件",
+          clientRequestId: "client-exec-patch",
+          model: null,
+          reasoningLevel: null,
+          permissionMode: null,
+          providerPrompt: null,
+          attachments: []
+        }
+      }),
+      {
+        async emit(event) {
+          emitted.push(event);
+        },
+        updateSessionBinding() {}
+      }
+    );
+
+    await launch.completed;
+
+    const toolCallEvent = emitted.find(
+      (event) => event.type === "message" && event.message.kind === "tool_call"
+    );
+    const toolResultEvent = emitted.find(
+      (event) => event.type === "message" && event.message.kind === "tool_result"
+    );
+
+    assert.equal(toolCallEvent?.message.toolCall?.name, "apply_patch");
+    assert.equal(toolResultEvent?.message.toolCall?.name, "apply_patch");
+    assert.match(toolCallEvent?.message.toolCall?.input ?? "", /^\*\*\* Begin Patch/m);
+    assert.match(toolResultEvent?.message.toolCall?.input ?? "", /^\*\*\* Begin Patch/m);
+    assert.equal(toolResultEvent?.message.toolCall?.status, "failed");
+    assert.equal(toolResultEvent?.message.toolCall?.error, warning);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexRuntimeAdapter 会把仅 completed 的 fileChange 转成标准 apply_patch 输入", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-file-change-"));
   const scriptPath = join(tempDir, "fake-codex-app-server.cjs");

@@ -44,6 +44,7 @@ import {
   walkJsonlFiles
 } from "./utils.js";
 import { buildCodexResumeHistoryFromRawStore } from "../codex-resume-history.js";
+import { buildApplyPatchFromCodexCommandLikeValue } from "../patch-builder.js";
 import { loadDatabaseSync, type DatabaseSyncType } from "../sqlite/node-sqlite.js";
 
 interface CodexAdapterOptions {
@@ -2066,6 +2067,8 @@ export class CodexAdapter implements ProviderAdapter {
     }> = [];
     const messageIndexesByKey = new Map<string, number[]>();
     const toolNameById = new Map<string, string>();
+    const toolInputById = new Map<string, string>();
+    const commandPatchByCallId = collectCodexCommandPatchesByCallId(effectiveRecords, filePath);
     let sequence = 0;
 
     const pushMessage = (
@@ -2246,10 +2249,14 @@ export class CodexAdapter implements ProviderAdapter {
 
         if (payloadType === "function_call" || payloadType === "custom_tool_call") {
           const callId = ensureText(payload.call_id).trim() || rawRef;
-          const name = ensureText(payload.name).trim() || "tool";
+          const rawName = ensureText(payload.name).trim() || "tool";
           const inputSource = payloadType === "custom_tool_call" ? payload.input : payload.arguments;
-          const input = stringifyStructuredValue(inputSource);
+          const commandPatch =
+            buildApplyPatchFromCodexCommandLikeValue(inputSource) ?? commandPatchByCallId.get(callId) ?? null;
+          const name = commandPatch ? "apply_patch" : rawName;
+          const input = commandPatch ?? stringifyStructuredValue(inputSource);
           toolNameById.set(callId, name);
+          toolInputById.set(callId, input);
 
           pushMessage("response_item", {
             messageId: resolveCodexParsedMessageId({
@@ -2280,8 +2287,10 @@ export class CodexAdapter implements ProviderAdapter {
 
         if (payloadType === "function_call_output" || payloadType === "custom_tool_call_output") {
           const callId = ensureText(payload.call_id).trim() || rawRef;
-          const name = toolNameById.get(callId) ?? "tool";
           const output = extractTextBlocks(payload.output).trim() || stringifyStructuredValue(payload.output);
+          const outputPatch = buildApplyPatchFromCodexCommandLikeValue(payload.output);
+          const name = outputPatch ? "apply_patch" : (toolNameById.get(callId) ?? "tool");
+          const input = resolveCodexCommandPatchResultInput(outputPatch, toolInputById.get(callId));
           const resultState = resolveToolResultState(payload, output);
 
           pushMessage("response_item", {
@@ -2300,7 +2309,7 @@ export class CodexAdapter implements ProviderAdapter {
             toolCall: {
               callId,
               name,
-              input: "",
+              input,
               output: resultState.status === "failed" ? null : output,
               error: resultState.status === "failed" ? output : null,
               status: resultState.status
@@ -2344,6 +2353,55 @@ export class CodexAdapter implements ProviderAdapter {
 
     return messages.map((entry) => entry.message);
   }
+}
+
+function resolveCodexCommandPatchResultInput(
+  outputPatch: string | null,
+  storedInput: string | undefined
+): string {
+  if (!outputPatch) {
+    return storedInput ?? "";
+  }
+
+  if (storedInput && isCodexPatchWithHunks(storedInput) && !isCodexPatchWithHunks(outputPatch)) {
+    return storedInput;
+  }
+
+  return outputPatch;
+}
+
+function isCodexPatchWithHunks(value: string): boolean {
+  return /(?:^|\n)@@\s/.test(value);
+}
+
+function collectCodexCommandPatchesByCallId(
+  records: Array<Pick<RawJsonLine, "lineNumber" | "partIndex" | "data">>,
+  filePath: string
+): Map<string, string> {
+  const patches = new Map<string, string>();
+
+  for (const { lineNumber, partIndex, data: record } of records) {
+    if (record.type !== "response_item") {
+      continue;
+    }
+
+    const payload = (record.payload ?? {}) as Record<string, unknown>;
+    const payloadType = ensureText(payload.type).trim();
+
+    if (payloadType !== "function_call_output" && payloadType !== "custom_tool_call_output") {
+      continue;
+    }
+
+    const rawRef = createRawRef("codex", filePath, lineNumber, partIndex || undefined);
+    const callId = ensureText(payload.call_id).trim() || rawRef;
+    const patchText = buildApplyPatchFromCodexCommandLikeValue(payload.output);
+
+    if (patchText && !patches.has(callId)) {
+      patches.set(callId, patchText);
+    }
+  }
+
+  return patches;
 }
 
 function filterRolledBackCodexRecords<T extends Pick<RawJsonLine, "lineNumber" | "partIndex" | "data">>(
@@ -2740,6 +2798,10 @@ function resolveToolResultState(
   const statusText = ensureText(payload.status).trim().toLowerCase();
 
   if (statusText === "failed" || statusText === "error") {
+    return { status: "failed" };
+  }
+
+  if (output.toLowerCase().includes("apply_patch was requested via exec_command")) {
     return { status: "failed" };
   }
 

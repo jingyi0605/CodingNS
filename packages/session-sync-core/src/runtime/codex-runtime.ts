@@ -20,6 +20,7 @@ import {
 } from "../providers/utils.js";
 import { buildCodexResumeHistoryFromRawStore } from "../codex-resume-history.js";
 import {
+  buildApplyPatchFromCodexCommandLikeValue,
   buildApplyPatchFromFileChangeList,
   extractApplyPatchTargetPathsFromToolOutput,
   normalizeApplyPatchText
@@ -2321,6 +2322,20 @@ function translateCodexAppServerItem(item: Record<string, unknown> | null): Reco
   }
 
   if (itemType === "commandExecution") {
+    const patchText = extractApplyPatchTextFromCommandLikeValues(item.command);
+
+    if (patchText) {
+      return {
+        type: "custom_tool_call",
+        id: item.id,
+        tool: "apply_patch",
+        input: patchText,
+        output: item.aggregatedOutput,
+        error: item.error,
+        status: normalizeCodexItemStatus(item.status)
+      };
+    }
+
     return {
       type: "command_execution",
       id: item.id,
@@ -2360,11 +2375,16 @@ function translateCodexAppServerItem(item: Record<string, unknown> | null): Reco
   }
 
   if (itemType === "dynamicToolCall") {
+    const toolName = ensureText(item.tool).trim();
+    const patchText = isCodexExecCommandToolName(toolName)
+      ? extractApplyPatchTextFromCommandLikeValues(item.arguments)
+      : null;
+
     return {
       type: "custom_tool_call",
       id: item.id,
-      tool: item.tool,
-      input: item.arguments,
+      tool: patchText ? "apply_patch" : item.tool,
+      input: patchText ?? item.arguments,
       output: item.contentItems,
       success: item.success,
       status: normalizeCodexItemStatus(item.status)
@@ -3180,6 +3200,12 @@ function inferToolSuccess(item: unknown, output: string): boolean {
     return false;
   }
 
+  const lowered = output.toLowerCase();
+
+  if (lowered.includes("apply_patch was requested via exec_command")) {
+    return false;
+  }
+
   if (status === "completed" || status === "success" || status === "succeeded") {
     return true;
   }
@@ -3189,8 +3215,6 @@ function inferToolSuccess(item: unknown, output: string): boolean {
   if (typeof exitCode === "number") {
     return exitCode === 0;
   }
-
-  const lowered = output.toLowerCase();
 
   if (lowered.includes("error")) {
     return false;
@@ -3541,6 +3565,19 @@ function buildCodexFileChangeOutput(value: unknown): string {
     })
     .filter((entry) => entry.length > 0)
     .join("\n\n");
+}
+
+function isCodexExecCommandToolName(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return (
+    normalized === "exec_command" ||
+    normalized === "shell_command" ||
+    normalized === "command_execution"
+  );
+}
+
+function extractApplyPatchTextFromCommandLikeValues(value: unknown): string | null {
+  return buildApplyPatchFromCodexCommandLikeValue(value);
 }
 
 function resolveCodexToolInput(name: string, item: unknown): string {
