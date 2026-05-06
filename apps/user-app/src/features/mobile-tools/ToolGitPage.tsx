@@ -31,5 +31,11 @@ export function ToolGitPage() {
     ? buildWorkspaceSessionPath(currentWorkspaceId, currentSessionInWorkspace.sessionId)
     : buildWorkspaceSessionIndexPath(currentWorkspaceId);
 
-  return <Navigate to={`${targetPath}?toolPanel=git`} replace />;
+  return (
+    <Navigate
+      to={`${targetPath}?toolPanel=git`}
+      replace
+      state={{ mobileToolPanelRouteRedirect: true }}
+    />
+  );
 }

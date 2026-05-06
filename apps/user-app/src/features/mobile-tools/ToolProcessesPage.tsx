@@ -31,5 +31,11 @@ export function ToolProcessesPage() {
     ? buildWorkspaceSessionPath(currentWorkspaceId, currentSessionInWorkspace.sessionId)
     : buildWorkspaceSessionIndexPath(currentWorkspaceId);
 
-  return <Navigate to={`${targetPath}?toolPanel=processes`} replace />;
+  return (
+    <Navigate
+      to={`${targetPath}?toolPanel=processes`}
+      replace
+      state={{ mobileToolPanelRouteRedirect: true }}
+    />
+  );
 }

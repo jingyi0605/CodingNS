@@ -23,6 +23,7 @@ import { useHaptics } from "../../../shared/haptics";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
+import { usePlatform } from "../../../platform/platform-provider";
 import {
   getProviderCapabilities,
   startLiveSession,
@@ -1754,7 +1755,9 @@ function useMobileConversationToolPanelController(input: {
   const location = useLocation();
   const navigate = useNavigate();
   const haptics = useHaptics();
+  const platform = usePlatform();
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const androidBackGuardInstalledRef = useRef(false);
   const [selectedPanel, setSelectedPanel] = useState<MobileConversationToolPanel>(() =>
     input.initialPanel ?? readMobileConversationToolPanel()
   );
@@ -1764,6 +1767,7 @@ function useMobileConversationToolPanelController(input: {
   useEffect(() => {
     if (!input.enabled) {
       touchStartRef.current = null;
+      androidBackGuardInstalledRef.current = false;
       return;
     }
 
@@ -1771,6 +1775,33 @@ function useMobileConversationToolPanelController(input: {
     setSelectedPanel(nextPanel);
     writeMobileConversationToolPanel(nextPanel);
   }, [input.enabled, input.initialPanel]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      androidBackGuardInstalledRef.current = false;
+      return;
+    }
+
+    if (
+      platform.platform !== "android"
+      || !shouldInstallMobileToolPanelAndroidBackGuard(location.state)
+      || androidBackGuardInstalledRef.current
+      || typeof window === "undefined"
+      || window.location.pathname !== location.pathname
+    ) {
+      return;
+    }
+
+    const baseSearchParams = new URLSearchParams(location.search);
+    baseSearchParams.delete("toolPanel");
+    const baseSearch = baseSearchParams.toString();
+    const baseUrl = `${location.pathname}${baseSearch ? `?${baseSearch}` : ""}${location.hash}`;
+    const panelUrl = `${location.pathname}${location.search}${location.hash}`;
+
+    window.history.replaceState(window.history.state, "", baseUrl);
+    window.history.pushState(window.history.state, "", panelUrl);
+    androidBackGuardInstalledRef.current = true;
+  }, [isOpen, location.hash, location.pathname, location.search, location.state, platform.platform]);
 
   function navigateToolPanel(
     nextPanel: MobileConversationToolPanel | null,
@@ -1811,6 +1842,13 @@ function useMobileConversationToolPanelController(input: {
     }
 
     void haptics.trigger("gesture");
+
+    if (androidBackGuardInstalledRef.current && typeof window !== "undefined") {
+      androidBackGuardInstalledRef.current = false;
+      window.history.back();
+      return;
+    }
+
     navigateToolPanel(null, {
       replace: true
     });
@@ -1989,8 +2027,8 @@ function MobileConversationToolPanelOverlay(props: {
     <section
       className="mobile-conversation-tool-panel"
       data-panel={props.activePanel}
-      onTouchStart={handleTouchStart}
-      onTouchEnd={handleTouchEnd}
+      onTouchStartCapture={handleTouchStart}
+      onTouchEndCapture={handleTouchEnd}
       onTouchCancel={() => {
         touchStartRef.current = null;
       }}
@@ -2053,6 +2091,15 @@ function MobileConversationToolPanelOverlay(props: {
         )}
       </div>
     </section>
+  );
+}
+
+function shouldInstallMobileToolPanelAndroidBackGuard(state: unknown) {
+  return (
+    typeof state === "object"
+    && state !== null
+    && "mobileToolPanelRouteRedirect" in state
+    && (state as { mobileToolPanelRouteRedirect?: unknown }).mobileToolPanelRouteRedirect === true
   );
 }
 
