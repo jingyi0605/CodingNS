@@ -1,6 +1,6 @@
 {
   "name": "@jingyi0605/codingns",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "type": "module",
   "bin": {
     "codingns": "./bin/codingns.mjs"
@@ -17,6 +17,10 @@
   ],
   "engines": {
     "node": ">=22.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jingyi0605/CodingNS"
   },
   "scripts": {
     "build": "node ./scripts/build.mjs",
