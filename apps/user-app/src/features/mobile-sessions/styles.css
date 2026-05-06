@@ -651,6 +651,14 @@
   transform: translateX(var(--mobile-conversation-preview-offset));
 }
 
+.android-workbench-shell .mobile-conversation-page[data-mobile-shell="true"][data-tool-panel-open="true"] .mobile-conversation-page-header {
+  display: none;
+}
+
+.android-workbench-shell .mobile-conversation-page[data-mobile-shell="true"][data-tool-panel-open="true"] .mobile-conversation-stage {
+  height: 100%;
+}
+
 .mobile-conversation-page[data-mobile-shell="true"][data-preview-mode="preview"] .system-message .message-content-wrapper,
 .mobile-conversation-page[data-mobile-shell="true"][data-preview-mode="preview"] .system-message .message-content,
 .mobile-conversation-page[data-mobile-shell="true"][data-preview-mode="preview"] .system-message .code-block,
@@ -930,6 +938,14 @@
   backdrop-filter: blur(18px);
 }
 
+.android-workbench-shell .mobile-conversation-tool-panel-header {
+  padding:
+    0.45rem
+    max(0.95rem, env(safe-area-inset-right, 0px))
+    0.55rem
+    max(0.95rem, env(safe-area-inset-left, 0px));
+}
+
 .mobile-conversation-tool-panel-back {
   display: inline-flex;
   align-items: center;
@@ -956,13 +972,19 @@
 }
 
 .mobile-conversation-tool-panel-tab {
+  min-width: 0;
   min-height: 2.35rem;
+  padding: 0 0.55rem;
   border: 0;
   border-radius: 999px;
   background: transparent;
   color: var(--text-secondary);
   font-size: 0.92rem;
   font-weight: 700;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   transition:
     background var(--transition-fast),
     color var(--transition-fast),
