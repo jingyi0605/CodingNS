@@ -1,11 +1,48 @@
+import type { ComponentProps } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
-import { MessageTimeline } from "./MessageTimeline";
+import {
+  buildConversationTimelineSourceItems,
+  type ConversationTimelineSourceItem
+} from "../timeline-source-items";
+import { MessageTimeline as RawMessageTimeline } from "./MessageTimeline";
 
 import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
+
+type LegacyMessageTimelineProps = Omit<ComponentProps<typeof RawMessageTimeline>, "items"> & {
+  items?: ConversationTimelineSourceItem[];
+  messages?: SessionMessageViewModel[];
+  runtimeThinkingPlaceholder?: string | null;
+  sessionRunningState?: Parameters<typeof buildConversationTimelineSourceItems>[0]["sessionRunningState"];
+  sessionSyncStatus?: Parameters<typeof buildConversationTimelineSourceItems>[0]["sessionSyncStatus"];
+  sessionLastErrorCode?: string | null;
+  sessionLastErrorDetail?: string | null;
+};
+
+function MessageTimeline({
+  items,
+  messages = [],
+  runtimeThinkingPlaceholder = null,
+  sessionRunningState = null,
+  sessionSyncStatus = null,
+  sessionLastErrorCode = null,
+  sessionLastErrorDetail = null,
+  ...rest
+}: LegacyMessageTimelineProps) {
+  const normalizedItems = items ?? buildConversationTimelineSourceItems({
+    messages,
+    runtimeThinkingPlaceholder,
+    sessionRunningState,
+    sessionSyncStatus,
+    sessionLastErrorCode,
+    sessionLastErrorDetail
+  });
+
+  return <RawMessageTimeline {...rest} items={normalizedItems} />;
+}
 
 const revealWorkspaceFileMock = vi.hoisted(() => vi.fn(() => false));
 const getButlerFollowUpTaskMock = vi.hoisted(() => vi.fn());
@@ -373,14 +410,16 @@ describe("MessageTimeline", () => {
   it("会在消息列表底部格式化显示会话错误，而不是把错误混进消息正文", () => {
     render(
       <MessageTimeline
-        messages={[createAssistantTextMessage("已经收到你的请求。")]}
+        items={buildConversationTimelineSourceItems({
+          messages: [createAssistantTextMessage("已经收到你的请求。")],
+          sessionRunningState: "failed",
+          sessionSyncStatus: "error",
+          sessionLastErrorCode: "CODEX_HTTP_429",
+          sessionLastErrorDetail: "429 Too Many Requests, request id: demo-request-id"
+        })}
         historyState="ready"
         onRetryMessage={vi.fn()}
         provider="codex"
-        sessionRunningState="failed"
-        sessionSyncStatus="error"
-        sessionLastErrorCode="CODEX_HTTP_429"
-        sessionLastErrorDetail="429 Too Many Requests, request id: demo-request-id"
       />
     );
 
@@ -433,6 +472,78 @@ describe("MessageTimeline", () => {
     expect(screen.getByText("3个吧")).toBeInTheDocument();
     expect(screen.queryByText(t("conversation.turnAbortedUser"))).not.toBeInTheDocument();
     expect(screen.queryByText("previous turn aborted")).not.toBeInTheDocument();
+  });
+
+  it("fork 子会话的可见时间线只在组件内部按继承边界裁剪一次", () => {
+    render(
+      <MessageTimeline
+        sessionSummary={{
+          sessionId: "session-1",
+          workspaceId: "workspace-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          rawStoreRef: "codex://raw-1",
+          title: "fork 子会话",
+          messageCount: 4,
+          lastMessageAt: "2026-05-06T10:00:03.000Z",
+          createdAt: "2026-05-06T10:00:02.000Z",
+          updatedAt: "2026-05-06T10:00:03.000Z",
+          syncStatus: "idle",
+          syncCursor: "cursor-1",
+          lastSyncAt: "2026-05-06T10:00:03.000Z",
+          lastErrorCode: null,
+          lastErrorDetail: null,
+          resumedAt: null,
+          runningState: "idle",
+          activitySource: "none",
+          lastEventAt: "2026-05-06T10:00:03.000Z",
+          completedAt: null,
+          lastSeenAt: null,
+          activityState: "idle",
+          forkSourceType: "message",
+          inheritedPrefixMessageCount: 2
+        }}
+        messages={[
+          {
+            ...createTextMessage("继承的用户前缀"),
+            id: "fork-user-prefix-1",
+            sequence: 1,
+            timestamp: "2026-05-06T10:00:00.000Z",
+            rawRef: "codex://raw#line=1"
+          },
+          {
+            ...createAssistantTextMessage("继承的助手前缀", "fork-assistant-prefix-1"),
+            sequence: 2,
+            timestamp: "2026-05-06T10:00:01.000Z",
+            rawRef: "codex://raw#line=2"
+          },
+          {
+            ...createAssistantTextMessage("不该留在子会话里的旧尾巴", "fork-stale-tail-1"),
+            sequence: 3,
+            timestamp: "2026-05-06T10:00:01.500Z",
+            rawRef: "codex://raw#line=3"
+          },
+          {
+            ...createTextMessage("子会话里的新用户消息"),
+            id: "fork-user-child-1",
+            sequence: 4,
+            timestamp: "2026-05-06T10:00:03.000Z",
+            rawRef: "codex://raw#line=4"
+          }
+        ]}
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    const timelineItems = Array.from(document.querySelectorAll(".message-item[data-message-id]"));
+    expect(timelineItems.map((item) => item.getAttribute("data-message-id"))).toEqual([
+      "fork-user-prefix-1",
+      "fork-assistant-prefix-1",
+      "fork-user-child-1"
+    ]);
+    expect(screen.queryByText("不该留在子会话里的旧尾巴")).not.toBeInTheDocument();
   });
 
   it("用户消息下方只显示复制按钮并复制正文", async () => {
@@ -1069,10 +1180,12 @@ describe("MessageTimeline", () => {
   it("运行中的 thinking 占位只保留动态文字类名", () => {
     render(
       <MessageTimeline
-        messages={[]}
+        items={buildConversationTimelineSourceItems({
+          messages: [],
+          runtimeThinkingPlaceholder: "Codex 正在思考..."
+        })}
         historyState="ready"
         provider="codex"
-        runtimeThinkingPlaceholder="Codex 正在思考..."
         onRetryMessage={vi.fn()}
       />
     );
@@ -1080,6 +1193,47 @@ describe("MessageTimeline", () => {
     expect(screen.getByLabelText("Codex 正在思考...")).toHaveClass("thinking-status-text");
     expect(document.querySelector(".thinking-status-inline")).not.toBeNull();
     expect(document.querySelector(".thinking-status-dots")).not.toBeNull();
+  });
+
+  it("消息、thinking 占位和错误尾项会按同一条时间线顺序渲染", () => {
+    render(
+      <MessageTimeline
+        items={buildConversationTimelineSourceItems({
+          messages: [createAssistantTextMessage("上一条助手回复", "assistant-tail-order-1")],
+          runtimeThinkingPlaceholder: "Codex 正在思考...",
+          sessionRunningState: "failed",
+          sessionSyncStatus: "error",
+          sessionLastErrorCode: "CODEX_HTTP_429",
+          sessionLastErrorDetail: "429 Too Many Requests, request id: demo-request-id"
+        })}
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    const children = Array.from(document.querySelectorAll(".message-list > *"));
+    const orderedMarkers = children.map((element) => {
+      if (element instanceof HTMLElement && element.dataset.runtimeThinkingPlaceholder === "true") {
+        return "runtime-thinking";
+      }
+
+      if (element instanceof HTMLElement && element.classList.contains("session-runtime-error-row")) {
+        return "session-error";
+      }
+
+      if (element instanceof HTMLElement && element.dataset.messageId) {
+        return element.dataset.messageId;
+      }
+
+      return null;
+    }).filter(Boolean);
+
+    expect(orderedMarkers).toEqual([
+      "assistant-tail-order-1",
+      "runtime-thinking",
+      "session-error"
+    ]);
   });
 
   it("会给代码块和 text 文本块渲染复制按钮", async () => {

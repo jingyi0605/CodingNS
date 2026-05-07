@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
+import { buildConversationTimelineSourceItems } from "../timeline-source-items";
 import { ConversationPage } from "./ConversationPage";
 
 const mockGetProviderCapabilities = vi.fn();
@@ -60,6 +61,7 @@ const mockLiveRuntimeState: any = {
   runtimeHasActiveRun: false,
   runtimeCanInterrupt: false,
   messages: [],
+  timelineItems: buildConversationTimelineSourceItems({ messages: [] }),
   permissionRequests: [],
   queuedMessages: [],
   contextUsage: null,

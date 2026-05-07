@@ -138,8 +138,21 @@ vi.mock("../../mobile-shell/components/MobileWorkspaceSwitcherHeader", () => ({
 }));
 
 vi.mock("../../conversation/components/MessageTimeline", () => ({
-  MessageTimeline: ({ messages }: { messages: Array<{ content: string }> }) => (
-    <div data-testid="butler-timeline">{messages.map((item) => item.content).join("|")}</div>
+  MessageTimeline: ({
+    items,
+    messages
+  }: {
+    items?: Array<{ type: string; message?: { content: string } }>;
+    messages?: Array<{ content: string }>;
+  }) => (
+    <div data-testid="butler-timeline">
+      {(items
+        ? items
+          .filter((item) => item.type === "message")
+          .map((item) => item.message?.content ?? "")
+        : messages ?? []
+      ).join("|")}
+    </div>
   )
 }));
 

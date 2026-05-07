@@ -3,6 +3,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
+import { buildConversationTimelineSourceItems } from "../timeline-source-items";
 import { ConversationPage } from "./ConversationPage";
 
 const mockMessageTimeline = vi.fn((_props?: unknown) => null);
@@ -163,12 +164,14 @@ describe("ConversationPage runtime thinking placeholder", () => {
     renderLiveConversationPage();
 
     await waitFor(() => {
-      expect(readLatestTimelineProps()?.sessionRunningState).toBe("failed");
+      expect(
+        readLatestTimelineProps()?.items?.find((item) => item.type === "session_error")?.error?.code
+      ).toBe("CODEX_HTTP_429");
     });
 
-    expect(readLatestTimelineProps()?.sessionSyncStatus).toBe("error");
-    expect(readLatestTimelineProps()?.sessionLastErrorCode).toBe("CODEX_HTTP_429");
-    expect(readLatestTimelineProps()?.sessionLastErrorDetail).toBe("429 Too Many Requests");
+    expect(
+      readLatestTimelineProps()?.items?.find((item) => item.type === "session_error")?.error?.summary
+    ).toContain("429 Too Many Requests");
   });
 });
 
@@ -190,17 +193,23 @@ function createLiveConversationPageElement() {
 }
 
 function readLatestRuntimeThinkingPlaceholder(): string | null {
-  const props = mockMessageTimeline.mock.calls.at(-1)?.[0] as { runtimeThinkingPlaceholder?: string | null } | undefined;
-  return props?.runtimeThinkingPlaceholder ?? null;
+  const props = mockMessageTimeline.mock.calls.at(-1)?.[0] as {
+    items?: Array<{ type: string; label?: string }>;
+  } | undefined;
+
+  return props?.items?.find((item) => item.type === "runtime_thinking")?.label ?? null;
 }
 
 function readLatestTimelineProps() {
   return (mockMessageTimeline.mock.calls.at(-1)?.[0] ?? null) as {
-    runtimeThinkingPlaceholder?: string | null;
-    sessionRunningState?: string | null;
-    sessionSyncStatus?: string | null;
-    sessionLastErrorCode?: string | null;
-    sessionLastErrorDetail?: string | null;
+    items?: Array<{
+      type: string;
+      label?: string;
+      error?: {
+        code?: string | null;
+        summary?: string | null;
+      };
+    }>;
   } | null;
 }
 
@@ -231,9 +240,20 @@ function createWorkbenchShellValue() {
 function createRuntimeStoreState(
   overrides: Partial<ReturnType<typeof createRuntimeStoreStateBase>> = {}
 ) {
-  return {
+  const state = {
     ...createRuntimeStoreStateBase(),
     ...overrides
+  };
+
+  return {
+    ...state,
+    timelineItems: buildConversationTimelineSourceItems({
+      messages: state.messages,
+      sessionRunningState: state.session?.runningState ?? null,
+      sessionSyncStatus: state.session?.syncStatus ?? null,
+      sessionLastErrorCode: state.session?.lastErrorCode ?? null,
+      sessionLastErrorDetail: state.session?.lastErrorDetail ?? null
+    })
   };
 }
 
@@ -259,6 +279,7 @@ function createRuntimeStoreStateBase() {
     runtimeHasActiveRun: false,
     runtimeCanInterrupt: false,
     messages: [] as Array<ReturnType<typeof createUserMessage>>,
+    timelineItems: [],
     permissionRequests: [],
     queuedMessages: [],
     contextUsage: null,

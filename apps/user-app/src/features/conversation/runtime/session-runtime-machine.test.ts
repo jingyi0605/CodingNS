@@ -5,6 +5,7 @@ import {
   createPendingMessage,
   markPendingAsFailed,
   mergeAuthoritativeMessages,
+  mergeRuntimeOverlayMessages,
   reconcileMessage,
   removeRuntimeThinkingPlaceholder,
   toViewMessage,
@@ -613,7 +614,7 @@ describe("session runtime machine", () => {
     });
   });
 
-  it("会折叠 codex 历史里只差末尾换行的重复文本消息", () => {
+  it("不会只因为文案相同就折叠不同 Codex user 消息", () => {
     const merged = mergeAuthoritativeMessages([], "session-1", [
       createHistoryMessage({
         messageId: "codex-response-item",
@@ -637,12 +638,13 @@ describe("session runtime machine", () => {
       })
     ]);
 
-    expect(merged).toHaveLength(1);
-    expect(merged[0].id).toBe("codex-response-item");
-    expect(merged[0].content).toBe("same message");
+    expect(merged.map((item) => item.id)).toEqual([
+      "codex-response-item",
+      "codex-event-msg"
+    ]);
   });
 
-  it("prefers the richer codex message when the duplicate only differs by an inline base64 image", () => {
+  it("不会把只差 inline image 的不同 Codex assistant 消息折叠", () => {
     const merged = mergeAuthoritativeMessages([], "session-1", [
       createHistoryMessage({
         messageId: "codex-plain-message",
@@ -666,12 +668,14 @@ describe("session runtime machine", () => {
       })
     ]);
 
-    expect(merged).toHaveLength(1);
-    expect(merged[0].id).toBe("codex-rich-message");
-    expect(merged[0].content).toContain(SAMPLE_IMAGE_DATA_URL);
+    expect(merged.map((item) => item.id)).toEqual([
+      "codex-plain-message",
+      "codex-rich-message"
+    ]);
+    expect(merged[1]?.content).toContain(SAMPLE_IMAGE_DATA_URL);
   });
 
-  it("prefers the codex message that keeps attachments when the visible text is the same", () => {
+  it("不会把只差附件的不同 Codex assistant 消息折叠", () => {
     const merged = mergeAuthoritativeMessages([], "session-1", [
       createHistoryMessage({
         messageId: "codex-plain-message",
@@ -705,9 +709,11 @@ describe("session runtime machine", () => {
       })
     ]);
 
-    expect(merged).toHaveLength(1);
-    expect(merged[0].id).toBe("codex-attachment-message");
-    expect(merged[0].attachments).toHaveLength(1);
+    expect(merged.map((item) => item.id)).toEqual([
+      "codex-plain-message",
+      "codex-attachment-message"
+    ]);
+    expect(merged[1]?.attachments).toHaveLength(1);
   });
 
   it("会在最新 user 消息之后插入运行中占位，并在 assistant 到达后移除", () => {
@@ -744,7 +750,43 @@ describe("session runtime machine", () => {
     expect(withoutPlaceholder[0]?.role).toBe("user");
   });
 
-  it("会折叠短时间内重复回流的 codex assistant 正文", () => {
+  it("只会在同一 rawRef 的 Codex 兼容桥场景下合并不同 messageId", () => {
+    const merged = mergeAuthoritativeMessages(
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "codex-legacy-message",
+            provider: "codex",
+            providerSessionId: "raw-1",
+            role: "assistant",
+            content: "同一条回复",
+            timestamp: "2026-03-24T01:05:29.100Z",
+            sequence: 2,
+            rawRef: "codex://demo#line=6"
+          })
+        )
+      ],
+      "session-1",
+      [
+        createHistoryMessage({
+          messageId: "codex-stable-message",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          content: "同一条回复",
+          timestamp: "2026-03-24T01:05:31.100Z",
+          sequence: 3,
+          rawRef: "codex://demo#line=6"
+        })
+      ]
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.id).toBe("codex-stable-message");
+  });
+
+  it("不会把不同轮次但文案相同的 Codex assistant 正文做弱身份兼容合并", () => {
     const merged = mergeAuthoritativeMessages([], "session-1", [
       createHistoryMessage({
         messageId: "codex-runtime-message",
@@ -753,8 +795,8 @@ describe("session runtime machine", () => {
         role: "assistant",
         content: "同一条回复",
         timestamp: "2026-03-24T01:05:29.100Z",
-        sequence: 2,
-        rawRef: "codex://demo#line=6"
+        sequence: 70,
+        rawRef: "codex://demo#line=18"
       }),
       createHistoryMessage({
         messageId: "codex-history-message",
@@ -763,12 +805,15 @@ describe("session runtime machine", () => {
         role: "assistant",
         content: "同一条回复",
         timestamp: "2026-03-24T01:05:31.100Z",
-        sequence: 3,
-        rawRef: "codex://demo#line=7"
+        sequence: 72,
+        rawRef: "codex://demo#line=32"
       })
     ]);
 
-    expect(merged).toHaveLength(1);
+    expect(merged.map((item) => item.id)).toEqual([
+      "codex-runtime-message",
+      "codex-history-message"
+    ]);
   });
 
   it("不会把被 codex 工具消息隔开的相同 assistant 正文误当成重复消息", () => {
@@ -952,7 +997,7 @@ describe("session runtime machine", () => {
     ]);
   });
 
-  it("会折叠 codex 过时 event_msg 和后续 response_item 的重复用户消息", () => {
+  it("不会再把 codex 过时 event_msg 和后续 response_item 仅按文案折叠成一条用户消息", () => {
     const merged = mergeAuthoritativeMessages(
       [
         toViewMessage(
@@ -984,11 +1029,13 @@ describe("session runtime machine", () => {
       ]
     );
 
-    expect(merged).toHaveLength(1);
-    expect(merged[0].id).toBe("codex-response-item");
+    expect(merged.map((item) => item.id)).toEqual([
+      "codex-event-msg",
+      "codex-response-item"
+    ]);
   });
 
-  it("会折叠只差内部附件调试块的 codex 重复用户消息", () => {
+  it("不会再把只差内部附件调试块的 codex 用户消息折叠成一条", () => {
     const merged = mergeAuthoritativeMessages(
       [
         toViewMessage(
@@ -1020,12 +1067,13 @@ describe("session runtime machine", () => {
       ]
     );
 
-    expect(merged).toHaveLength(1);
-    expect(merged[0].id).toBe("codex-response-item");
-    expect(merged[0].content).toBe("same message");
+    expect(merged.map((item) => item.id)).toEqual([
+      "codex-event-msg",
+      "codex-response-item"
+    ]);
   });
 
-  it("会用后续权威 codex assistant 消息替换运行时阶段的漂移 messageId", () => {
+  it("不会再把后续权威 codex assistant 消息仅按相同文案替换掉更早的另一条消息", () => {
     const merged = mergeAuthoritativeMessages(
       [
         toViewMessage(
@@ -1057,8 +1105,8 @@ describe("session runtime machine", () => {
       ]
     );
 
-    expect(merged).toHaveLength(1);
-    expect(merged[0]).toMatchObject({
+    expect(merged).toHaveLength(2);
+    expect(merged[1]).toMatchObject({
       id: "codex-history-message",
       content: "代码已经改完了，接下来补回归测试。"
     });
@@ -2020,4 +2068,84 @@ describe("session runtime machine", () => {
       "kimi-assistant-2"
     ]);
   });
+
+  it("runtime overlay 会按同一 messageId 覆盖更新，而不是重复追加", () => {
+    const merged = mergeRuntimeOverlayMessages(
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "assistant-runtime-1",
+            provider: "opencode",
+            providerSessionId: "thread-1",
+            role: "assistant",
+            content: "第一段",
+            timestamp: "2026-03-28T10:00:00.000Z",
+            sequence: 70,
+            rawRef: "opencode://session/thread-1/message/assistant-1/part/text-1"
+          })
+        )
+      ],
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "assistant-runtime-1",
+            provider: "opencode",
+            providerSessionId: "thread-1",
+            role: "assistant",
+            content: "第一段\n第二段",
+            timestamp: "2026-03-28T10:00:01.000Z",
+            sequence: 70,
+            rawRef: "opencode://session/thread-1/message/assistant-1/part/text-1"
+          })
+        )
+      ]
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.content).toBe("第一段\n第二段");
+  });
+
+  it("runtime overlay 不会把不同 messageId 的 Codex 回复按相似文本错误折叠", () => {
+    const merged = mergeRuntimeOverlayMessages(
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "assistant-runtime-1",
+            provider: "codex",
+            providerSessionId: "raw-1",
+            role: "assistant",
+            content: "好的，我来处理。",
+            timestamp: "2026-05-06T10:00:00.000Z",
+            sequence: 101,
+            rawRef: "codex://raw#line=101"
+          })
+        )
+      ],
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "assistant-runtime-2",
+            provider: "codex",
+            providerSessionId: "raw-1",
+            role: "assistant",
+            content: "好的，我来处理。",
+            timestamp: "2026-05-06T10:00:01.000Z",
+            sequence: 102,
+            rawRef: "codex://raw#line=102"
+          })
+        )
+      ]
+    );
+
+    expect(merged).toHaveLength(2);
+    expect(merged.map((item) => item.id)).toEqual([
+      "assistant-runtime-1",
+      "assistant-runtime-2"
+    ]);
+  });
+
 });

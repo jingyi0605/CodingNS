@@ -2,6 +2,7 @@ import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { buildConversationTimelineSourceItems } from "../timeline-source-items";
 import { ConversationPage } from "./ConversationPage";
 
 const mockGetProviderCapabilities = vi.fn();
@@ -307,6 +308,7 @@ function createRuntimeState(sessionId: string, messages: Array<ReturnType<typeof
     runtimeHasActiveRun: false,
     runtimeCanInterrupt: false,
     messages,
+    timelineItems: buildConversationTimelineSourceItems({ messages }),
     permissionRequests: [],
     queuedMessages: [],
     contextUsage: null,

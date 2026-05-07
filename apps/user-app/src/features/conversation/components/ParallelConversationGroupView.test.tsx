@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
 import { writeParallelGroupTransitionSignal } from "../parallel-session-display";
+import { buildConversationTimelineSourceItems } from "../timeline-source-items";
 import { ParallelConversationGroupView } from "./ParallelConversationGroupView";
 
 const mockGetParallelGroupDetail = vi.fn();
@@ -195,6 +196,9 @@ vi.mock("../runtime/session-runtime-store", () => {
         runtimeHasActiveRun: false,
         runtimeCanInterrupt: false,
         messages: [],
+        timelineItems: buildConversationTimelineSourceItems({
+          messages: []
+        }),
         permissionRequests: mockPermissionRequests,
         queuedMessages: [],
         contextUsage: {

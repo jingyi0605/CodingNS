@@ -3,10 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clientConfigStore } from "../../../config/client-config-store";
 import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import { authStore } from "../../auth/store/auth-store";
-import { clearViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
+import { clearViewSnapshot, readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
-import { SessionRuntimeStore } from "./session-runtime-store";
+import { createPendingMessage } from "./session-runtime-machine";
+import {
+  applyTimelineEventToLayers,
+  SessionRuntimeStore,
+  type TimelineLayersState
+} from "./session-runtime-store";
 
 const SESSION_RUNTIME_SNAPSHOT_KEY = "session-runtime.snapshot.session-1";
 
@@ -125,6 +130,34 @@ function emitRealtimeActivity(event: Record<string, unknown>) {
   const client = getRealtimeClient();
   (client.options.onActivity as ((payload: Record<string, unknown>) => void))(event);
   return client;
+}
+
+function createTimelineLayersState(): TimelineLayersState {
+  return {
+    authoritativeMessages: [],
+    runtimeOverlayMessages: [],
+    pendingMessages: [],
+    replaceSnapshotSeedOnBackfill: false
+  };
+}
+
+function createHistoryMessage(overrides: {
+  messageId: string;
+  provider: "codex" | "claude-code" | "opencode";
+  providerSessionId: string;
+  role: "user" | "assistant" | "tool" | "system";
+  content: string;
+  timestamp: string;
+  sequence: number;
+  rawRef: string;
+  kind?: "text" | "thinking" | "tool_call" | "tool_result";
+}) {
+  return {
+    kind: "text" as const,
+    toolCall: null,
+    attachments: [],
+    ...overrides
+  };
 }
 
 describe("SessionRuntimeStore", () => {
@@ -283,6 +316,129 @@ describe("SessionRuntimeStore", () => {
     clearViewSnapshot(SESSION_RUNTIME_SNAPSHOT_KEY);
     authStore.clear();
     vi.useRealTimers();
+  });
+
+  it("单入口 reducer 在 older history 合并时不会回卷尾部消息", () => {
+    const seeded = applyTimelineEventToLayers(createTimelineLayersState(), "session-1", {
+      type: "history.merge",
+      source: "realtime_backfill",
+      replaceSnapshotSeed: false,
+      messages: [
+        createHistoryMessage({
+          messageId: "assistant-tail-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          content: "最新回复",
+          timestamp: "2026-05-05T14:34:04.730Z",
+          sequence: 120,
+          rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=220"
+        }),
+        createHistoryMessage({
+          messageId: "user-tail-2",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "user",
+          content: "下一轮用户消息",
+          timestamp: "2026-05-05T14:40:06.019Z",
+          sequence: 121,
+          rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=225"
+        })
+      ]
+    });
+
+    const older = applyTimelineEventToLayers(seeded.timeline, "session-1", {
+      type: "history.merge",
+      source: "older_history_realtime",
+      replaceSnapshotSeed: false,
+      messages: [
+        createHistoryMessage({
+          messageId: "assistant-old-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          content: "更早的回复",
+          timestamp: "2026-05-05T14:30:00.000Z",
+          sequence: 118,
+          rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=210"
+        })
+      ]
+    });
+
+    expect(older.validationIssues).toEqual([]);
+    expect(older.messages.at(-1)?.id).toBe("user-tail-2");
+    expect(older.timeline.authoritativeMessages.at(-1)?.id).toBe("user-tail-2");
+  });
+
+  it("单入口 reducer 在 runtime 消息到达时不会改写权威层锚点", () => {
+    const seeded = applyTimelineEventToLayers(createTimelineLayersState(), "session-1", {
+      type: "history.merge",
+      source: "realtime_backfill",
+      replaceSnapshotSeed: false,
+      messages: [
+        createHistoryMessage({
+          messageId: "assistant-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          content: "最终正文",
+          timestamp: "2026-05-05T14:34:04.730Z",
+          sequence: 120,
+          rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=220"
+        })
+      ]
+    });
+
+    const runtime = applyTimelineEventToLayers(seeded.timeline, "session-1", {
+      type: "runtime.message",
+      source: "session.runtime_message",
+      message: {
+        ...seeded.timeline.authoritativeMessages[0],
+        sequence: 104,
+        timestamp: "2026-05-05T14:34:03.000Z",
+        rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=999"
+      }
+    });
+
+    expect(runtime.validationIssues).toEqual([]);
+    expect(runtime.timeline.authoritativeMessages[0]?.sequence).toBe(120);
+    expect(runtime.timeline.authoritativeMessages[0]?.rawRef).toBe(
+      "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=220"
+    );
+  });
+
+  it("单入口 reducer 在 pending resolve 后只保留权威消息", () => {
+    const pending = createPendingMessage("session-1", "继续", "client-1", [], [], 61);
+    const inserted = applyTimelineEventToLayers(createTimelineLayersState(), "session-1", {
+      type: "pending.insert",
+      source: "send_pending",
+      pending
+    });
+
+    const resolved = applyTimelineEventToLayers(inserted.timeline, "session-1", {
+      type: "pending.resolve",
+      source: "pending_resolved",
+      clientRequestId: "client-1",
+      message: createHistoryMessage({
+        messageId: "user-message-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "user",
+        content: "继续",
+        timestamp: "2026-03-24T10:00:02.000Z",
+        sequence: 61,
+        rawRef: "codex://raw#line=61"
+      })
+    });
+
+    expect(resolved.validationIssues).toEqual([]);
+    expect(resolved.timeline.pendingMessages).toHaveLength(0);
+    expect(resolved.messages).toHaveLength(1);
+    expect(resolved.messages[0]).toMatchObject({
+      id: "user-message-1",
+      deliveryState: "sent",
+      clientRequestId: "client-1"
+    });
   });
 
   it("loads the latest 30 messages from realtime backfill on initialize", async () => {
@@ -1846,6 +2002,116 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
+  it("runtime 覆盖层不会被写进快照，重新进入时只用权威历史重建时间线", async () => {
+    const store = new SessionRuntimeStore("session-1");
+    await store.initialize();
+    emitRealtimeSubscribed();
+
+    emitRealtimeRuntimeMessage({
+      type: "session.runtime_message",
+      sessionId: "session-1",
+      source: "runtime",
+      message: {
+        messageId: "assistant-runtime-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        kind: "text",
+        content: "先显示 runtime 正文",
+        timestamp: "2026-04-13T10:00:00.000Z",
+        sequence: 70,
+        rawRef: "codex://raw#line=18",
+        toolCall: null
+      }
+    });
+
+    const snapshotAfterRuntime = readViewSnapshot<{
+      messages: Array<{ id: string }>;
+    }>(SESSION_RUNTIME_SNAPSHOT_KEY, Number.POSITIVE_INFINITY);
+
+    expect(store.getState().messages.map((message) => message.id)).toEqual(["assistant-runtime-1"]);
+    expect(snapshotAfterRuntime?.messages ?? []).toEqual([]);
+
+    emitRealtimeEnvelope({
+      type: "session.backfill",
+      sessionId: "session-1",
+      cursor: "cursor-after",
+      messages: [
+        {
+          messageId: "assistant-history-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          kind: "text",
+          content: "先显示 runtime 正文",
+          timestamp: "2026-04-13T10:00:35.000Z",
+          sequence: 72,
+          rawRef: "codex://raw#line=32",
+          toolCall: null
+        }
+      ]
+    });
+
+    const snapshotAfterBackfill = readViewSnapshot<{
+      messages: Array<{ id: string }>;
+    }>(SESSION_RUNTIME_SNAPSHOT_KEY, Number.POSITIVE_INFINITY);
+
+    expect(snapshotAfterBackfill?.messages.map((message) => message.id)).toEqual([
+      "assistant-history-1"
+    ]);
+
+    store.destroy();
+  });
+
+  it("不同 messageId 但文案相同的 Codex runtime 回复不会在 overlay 内被错误合并", async () => {
+    const store = new SessionRuntimeStore("session-1");
+    await store.initialize();
+    emitRealtimeSubscribed();
+
+    emitRealtimeRuntimeMessage({
+      type: "session.runtime_message",
+      sessionId: "session-1",
+      source: "runtime",
+      message: {
+        messageId: "assistant-runtime-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        kind: "text",
+        content: "好的，我来处理。",
+        timestamp: "2026-05-06T10:00:00.000Z",
+        sequence: 101,
+        rawRef: "codex://raw#line=101",
+        toolCall: null
+      }
+    });
+
+    emitRealtimeRuntimeMessage({
+      type: "session.runtime_message",
+      sessionId: "session-1",
+      source: "runtime",
+      message: {
+        messageId: "assistant-runtime-2",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        kind: "text",
+        content: "好的，我来处理。",
+        timestamp: "2026-05-06T10:00:01.000Z",
+        sequence: 102,
+        rawRef: "codex://raw#line=102",
+        toolCall: null
+      }
+    });
+
+    expect(store.getState().messages.map((message) => message.id)).toEqual([
+      "assistant-runtime-1",
+      "assistant-runtime-2"
+    ]);
+
+    store.destroy();
+  });
+
   it("OpenCode runtime tool_call 后续收到 backfill tool_result 时，不会保留一条沉底的旧工具消息", async () => {
     const store = new SessionRuntimeStore("session-1");
     await store.initialize();
@@ -1918,10 +2184,10 @@ describe("SessionRuntimeStore", () => {
 
     expect(store.getState().messages.map((message) => message.id)).toEqual([
       "assistant-1",
-      "runtime-tool-call-1"
+      "history-tool-result-1"
     ]);
     expect(store.getState().messages[1]).toMatchObject({
-      id: "runtime-tool-call-1",
+      id: "history-tool-result-1",
       kind: "tool_result",
       sequence: 11,
       timestamp: "2026-03-28T10:00:01.000Z"
@@ -1934,7 +2200,7 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
-  it("Codex 运行时消息和后续 backfill 使用不同 messageId 时，前端只保留一条权威消息", async () => {
+  it("Codex 运行时消息和后续 backfill 只是文案相同但锚点不同，前端不会再做弱身份折叠", async () => {
     const store = new SessionRuntimeStore("session-1");
     await store.initialize();
     emitRealtimeSubscribed();
@@ -1972,6 +2238,62 @@ describe("SessionRuntimeStore", () => {
           timestamp: "2026-04-13T10:00:35.000Z",
           sequence: 72,
           rawRef: "codex://raw#line=32",
+          toolCall: null
+        }
+      ]
+    });
+
+    expect(store.getState().messages).toHaveLength(2);
+    expect(store.getState().messages[0]).toMatchObject({
+      id: "assistant-runtime-1",
+      content: "代码已经改完了，继续补回归。"
+    });
+    expect(store.getState().messages[1]).toMatchObject({
+      id: "assistant-history-1",
+      content: "代码已经改完了，继续补回归。"
+    });
+
+    store.destroy();
+  });
+
+  it("Codex runtime 和 backfill 同一 rawRef 但不同 messageId 时，会通过兼容桥收敛成一条权威消息", async () => {
+    const store = new SessionRuntimeStore("session-1");
+    await store.initialize();
+    emitRealtimeSubscribed();
+
+    emitRealtimeRuntimeMessage({
+      type: "session.runtime_message",
+      sessionId: "session-1",
+      source: "runtime",
+      message: {
+        messageId: "assistant-runtime-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        kind: "text",
+        content: "代码已经改完了，继续补回归。",
+        timestamp: "2026-04-13T10:00:00.000Z",
+        sequence: 70,
+        rawRef: "codex://raw#line=18",
+        toolCall: null
+      }
+    });
+
+    emitRealtimeEnvelope({
+      type: "session.backfill",
+      sessionId: "session-1",
+      cursor: "cursor-after",
+      messages: [
+        {
+          messageId: "assistant-history-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          kind: "text",
+          content: "代码已经改完了，继续补回归。",
+          timestamp: "2026-04-13T10:00:01.000Z",
+          sequence: 71,
+          rawRef: "codex://raw#line=18",
           toolCall: null
         }
       ]
