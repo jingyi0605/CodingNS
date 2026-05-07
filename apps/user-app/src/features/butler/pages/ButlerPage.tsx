@@ -28,6 +28,7 @@ import { MessageTimeline } from "../../conversation/components/MessageTimeline";
 import { PermissionRequestList } from "../../conversation/components/PermissionRequestList";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import { WorkbenchModal } from "../../conversation/components/WorkbenchModal";
+import { buildConversationTimelineSourceItems } from "../../conversation/timeline-source-items";
 import {
   buildWorkspaceButlerPath,
   buildWorkspaceSessionPath
@@ -2170,7 +2171,7 @@ export function ButlerPage() {
             />
             <MessageTimeline
               sessionId={controlSession?.session?.sessionId}
-              messages={messages}
+              items={buildConversationTimelineSourceItems({ messages })}
               historyState={historyState}
               loadingOlderMessages={loadingOlderMessages}
               hasOlderMessages={hasOlderMessages}

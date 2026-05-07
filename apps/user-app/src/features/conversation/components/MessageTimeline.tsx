@@ -19,6 +19,7 @@ import { DesktopModal } from "../../../components/DesktopModal";
 import { getHostBaseUrl, getHostRequestUrl } from "../../../config/env";
 import {
   isTimelineScrollDebugEnabled,
+  logOpenCodeOrderDebug,
   logTimelineScrollDebug
 } from "../../../shared/debug/perf-debug";
 import { resolveHostTransportTarget } from "../../../network/host-transport-registry";
@@ -55,24 +56,28 @@ import {
 } from "./conversation-scroll-persistence";
 import { useTransientScrollbarVisibility } from "./useTransientScrollbarVisibility";
 import { getFilePreviewLink } from "../api/file-context-api";
+import {
+  extractConversationTimelineMessages,
+  findConversationTimelineRuntimeThinkingLabel,
+  type ConversationTimelineSourceItem
+} from "../timeline-source-items";
 
 import type {
   AttachmentPayload,
   MessageAttachmentDto,
   ProviderId,
-  SessionInterruptSource,
-  SessionRunningState,
-  SyncStatus
+  SessionSummaryDto,
+  SessionInterruptSource
 } from "../api/conversation-api";
 import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
 import { shouldFoldRulesMessages } from "../capability/provider-ui";
-import { resolveSessionErrorDisplayContent } from "../session-error-display";
 
 interface MessageTimelineProps {
   sessionId?: string;
+  sessionSummary?: SessionSummaryDto | null;
   workspaceId?: string | null;
   workspacePath?: string | null;
-  messages: SessionMessageViewModel[];
+  items: ConversationTimelineSourceItem[];
   historyState: "idle" | "loading" | "ready" | "error";
   loadingOlderMessages?: boolean;
   hasOlderMessages?: boolean;
@@ -81,13 +86,8 @@ interface MessageTimelineProps {
   onForkMessage?: (message: SessionMessageViewModel) => Promise<void> | void;
   provider: ProviderId | null;
   interruptedSource?: SessionInterruptSource | null;
-  runtimeThinkingPlaceholder?: string | null;
   assistantAvatar?: ReactNode;
   followTailUpdates?: boolean;
-  sessionRunningState?: SessionRunningState | null;
-  sessionSyncStatus?: SyncStatus | null;
-  sessionLastErrorCode?: string | null;
-  sessionLastErrorDetail?: string | null;
   onSubmitStructuredQuestion?: (payload: { messageId: string; answers: Record<string, string[]> }) => Promise<void> | void;
 }
 
@@ -192,10 +192,26 @@ interface ResolvedToolCall {
 
 interface ToolMessageGroup {
   key: string;
+  messageIds: string[];
   tool: ResolvedToolCall;
   hasRequest: boolean;
   hasResult: boolean;
   updatedAt: string;
+}
+
+interface TimelineViewModel {
+  visibleMessages: SessionMessageViewModel[];
+  renderItems: TimelineRenderItem[];
+  leadingSystemPromptMessageIds: Set<string>;
+  actionStateByMessageId: Map<string, MessageActionState>;
+  hiddenMessageIds: string[];
+  validationIssues: string[];
+}
+
+interface TimelineViewModelInput {
+  sessionSummary?: SessionSummaryDto | null;
+  items: ConversationTimelineSourceItem[];
+  provider: ProviderId | null;
 }
 
 interface ViewImageToolSnapshot {
@@ -260,6 +276,16 @@ type TimelineRenderItem =
       type: "tool_group";
       key: string;
       group: ToolMessageGroup;
+    }
+  | {
+      type: "runtime_thinking";
+      key: string;
+      label: string;
+    }
+  | {
+      type: "session_error";
+      key: string;
+      error: Extract<ConversationTimelineSourceItem, { type: "session_error" }>["error"];
     };
 
 function normalizeMessagePathSeparators(value: string): string {
@@ -1906,6 +1932,7 @@ function mergeToolMessages(messages: SessionMessageViewModel[]): ToolMessageGrou
 
   return {
     key: tools.map(({ message }) => message.id).join(":"),
+    messageIds: tools.map(({ message }) => message.id),
     tool: merged,
     hasRequest,
     hasResult,
@@ -1948,63 +1975,218 @@ function mergeToolMessageBlock(messages: SessionMessageViewModel[]): ToolMessage
     .filter((group): group is ToolMessageGroup => Boolean(group));
 }
 
-function buildTimelineRenderItems(messages: SessionMessageViewModel[]): TimelineRenderItem[] {
-  const items: TimelineRenderItem[] = [];
+function buildTimelineRenderItems(
+  sourceItems: ConversationTimelineSourceItem[],
+  visibleMessages: SessionMessageViewModel[]
+): TimelineRenderItem[] {
+  const renderItems: TimelineRenderItem[] = [];
+  const toolMessageBlock: SessionMessageViewModel[] = [];
+  let messageIndex = 0;
 
-  for (let index = 0; index < messages.length; index += 1) {
-    const current = messages[index]!;
-
-    if (shouldSuppressTurnAbortedMessage(messages, index)) {
-      continue;
-    }
-
-    if (!isToolMessage(current)) {
-      items.push({
-        type: "message",
-        key: current.id,
-        message: current
-      });
-      continue;
-    }
-
-    const toolMessageBlock = [current];
-    let cursor = index + 1;
-
-    while (cursor < messages.length) {
-      const next = messages[cursor]!;
-
-      if (!isToolMessage(next)) {
-        break;
-      }
-
-      toolMessageBlock.push(next);
-      cursor += 1;
+  function flushToolMessageBlock() {
+    if (toolMessageBlock.length === 0) {
+      return;
     }
 
     const groups = mergeToolMessageBlock(toolMessageBlock);
 
     if (groups.length === 0) {
-      items.push({
-        type: "message",
-        key: current.id,
-        message: current
-      });
-      index = cursor - 1;
-      continue;
+      const firstToolMessage = toolMessageBlock[0];
+
+      if (firstToolMessage) {
+        renderItems.push({
+          type: "message",
+          key: firstToolMessage.id,
+          message: firstToolMessage
+        });
+      }
+
+      toolMessageBlock.length = 0;
+      return;
     }
 
     groups.forEach((group) => {
-      items.push({
+      renderItems.push({
         type: "tool_group",
         key: group.key,
         group
       });
     });
 
-    index = cursor - 1;
+    toolMessageBlock.length = 0;
   }
 
-  return items;
+  for (const sourceItem of sourceItems) {
+    if (sourceItem.type !== "message") {
+      flushToolMessageBlock();
+      renderItems.push(sourceItem);
+      continue;
+    }
+
+    const current = sourceItem.message;
+    const currentMessageIndex = messageIndex;
+    messageIndex += 1;
+
+    if (shouldSuppressTurnAbortedMessage(visibleMessages, currentMessageIndex)) {
+      continue;
+    }
+
+    if (!isToolMessage(current)) {
+      flushToolMessageBlock();
+      renderItems.push({
+        type: "message",
+        key: current.id,
+        message: current
+      });
+      continue;
+    }
+
+    toolMessageBlock.push(current);
+  }
+
+  flushToolMessageBlock();
+
+  return renderItems;
+}
+
+function sanitizeForkTimelineItems(
+  session: SessionSummaryDto | null | undefined,
+  sourceItems: ConversationTimelineSourceItem[]
+): {
+  visibleItems: ConversationTimelineSourceItem[];
+  visibleMessages: SessionMessageViewModel[];
+  hiddenMessageIds: string[];
+} {
+  if (
+    !session
+    || session.forkSourceType !== "message"
+    || typeof session.inheritedPrefixMessageCount !== "number"
+    || session.inheritedPrefixMessageCount < 0
+  ) {
+    return {
+      visibleItems: sourceItems,
+      visibleMessages: sourceItems.flatMap((item) => item.type === "message" ? [item.message] : []),
+      hiddenMessageIds: []
+    };
+  }
+
+  const childCreatedAt = session.createdAt?.trim() || "";
+
+  if (childCreatedAt.length === 0) {
+    return {
+      visibleItems: sourceItems,
+      visibleMessages: sourceItems.flatMap((item) => item.type === "message" ? [item.message] : []),
+      hiddenMessageIds: []
+    };
+  }
+
+  const inheritedBoundary = Math.max(0, session.inheritedPrefixMessageCount);
+  const visibleItems: ConversationTimelineSourceItem[] = [];
+  const visibleMessages: SessionMessageViewModel[] = [];
+  const hiddenMessageIds: string[] = [];
+
+  for (const item of sourceItems) {
+    if (item.type !== "message") {
+      visibleItems.push(item);
+      continue;
+    }
+
+    const message = item.message;
+
+    if (message.sequence <= inheritedBoundary || message.timestamp >= childCreatedAt) {
+      visibleItems.push(item);
+      visibleMessages.push(message);
+      continue;
+    }
+
+    hiddenMessageIds.push(message.id);
+  }
+
+  return {
+    visibleItems,
+    visibleMessages,
+    hiddenMessageIds
+  };
+}
+
+function buildTimelineViewModel(input: TimelineViewModelInput): TimelineViewModel {
+  const sanitized = sanitizeForkTimelineItems(input.sessionSummary, input.items);
+  const renderItems = buildTimelineRenderItems(sanitized.visibleItems, sanitized.visibleMessages);
+  const leadingSystemPromptMessageIds = collectLeadingSystemPromptMessageIds(
+    sanitized.visibleMessages,
+    input.provider
+  );
+  const actionStateByMessageId = buildMessageActionStateById(sanitized.visibleMessages);
+
+  return {
+    visibleMessages: sanitized.visibleMessages,
+    renderItems,
+    leadingSystemPromptMessageIds,
+    actionStateByMessageId,
+    hiddenMessageIds: sanitized.hiddenMessageIds,
+    validationIssues: validateTimelineViewModel(sanitized.visibleMessages, renderItems)
+  };
+}
+
+function validateTimelineViewModel(
+  visibleMessages: SessionMessageViewModel[],
+  renderItems: TimelineRenderItem[]
+): string[] {
+  const issues: string[] = [];
+  const renderKeys = renderItems.map((item) => item.key);
+  const duplicateRenderKeys = findDuplicateTimelineKeys(renderKeys);
+
+  if (duplicateRenderKeys.length > 0) {
+    issues.push(`duplicate_render_keys:${duplicateRenderKeys.join(",")}`);
+  }
+
+  const flattenedRenderableMessageIds: string[] = [];
+
+  for (const item of renderItems) {
+    if (item.type === "message") {
+      flattenedRenderableMessageIds.push(item.message.id);
+      continue;
+    }
+
+    if (item.type === "tool_group") {
+      flattenedRenderableMessageIds.push(...item.group.messageIds);
+    }
+  }
+
+  const flattenedRenderableIdSet = new Set(flattenedRenderableMessageIds);
+
+  for (const message of visibleMessages) {
+    if (shouldRenderTimelineMessage(visibleMessages, message.id) && !flattenedRenderableIdSet.has(message.id)) {
+      issues.push(`missing_render_message:${message.id}`);
+    }
+  }
+
+  return issues;
+}
+
+function shouldRenderTimelineMessage(
+  messages: SessionMessageViewModel[],
+  messageId: string
+): boolean {
+  const index = messages.findIndex((message) => message.id === messageId);
+
+  if (index < 0) {
+    return false;
+  }
+
+  return !shouldSuppressTurnAbortedMessage(messages, index);
+}
+
+function findDuplicateTimelineKeys(keys: string[]): string[] {
+  const counts = new Map<string, number>();
+
+  for (const key of keys) {
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  return Array.from(counts.entries())
+    .filter(([, count]) => count > 1)
+    .map(([key]) => key);
 }
 
 function shouldSuppressTurnAbortedMessage(
@@ -3975,30 +4157,94 @@ function StructuredQuestionCard({
   );
 }
 
+function renderRuntimeThinkingItem(item: Extract<TimelineRenderItem, { type: "runtime_thinking" }>) {
+  return (
+    <div
+      key={item.key}
+      className="timeline-status timeline-status-inline thinking-status-inline"
+      data-runtime-thinking-placeholder="true"
+    >
+      <span
+        className="status-text thinking-status-text"
+        aria-label={item.label}
+      >
+        <span>{stripThinkingTrailingDots(item.label) || item.label}</span>
+        <span className="thinking-status-dots" aria-hidden="true">...</span>
+      </span>
+    </div>
+  );
+}
+
+function renderSessionErrorItem(item: Extract<TimelineRenderItem, { type: "session_error" }>) {
+  return (
+    <article key={item.key} className="message-item assistant-message session-runtime-error-row">
+      <div className="session-runtime-error-row__spacer" aria-hidden="true" />
+      <section
+        className="message-content-wrapper session-runtime-error-panel"
+        role="status"
+        aria-label={item.error.title}
+      >
+        <div className="session-runtime-error-panel__header">
+          <div className="session-runtime-error-panel__title-group">
+            <span className="session-runtime-error-panel__dot" aria-hidden="true" />
+            <strong>{item.error.title}</strong>
+          </div>
+          {item.error.code ? (
+            <code className="session-runtime-error-panel__code">{item.error.code}</code>
+          ) : null}
+        </div>
+        {item.error.summary ? (
+          <p className="session-runtime-error-panel__summary">
+            {tokenizeSessionErrorSummary(item.error.summary).map((segment, index) => {
+              if (segment.type === "text") {
+                return <span key={`${item.key}:text:${index}`}>{segment.text}</span>;
+              }
+
+              return (
+                <mark
+                  key={`${item.key}:${segment.type}:${index}`}
+                  className={`session-runtime-error-panel__summary-token session-runtime-error-panel__summary-token--${segment.type}`}
+                >
+                  {segment.text}
+                </mark>
+              );
+            })}
+          </p>
+        ) : null}
+      </section>
+    </article>
+  );
+}
+
 export function ConversationTranscriptExport({
   sessionId,
+  sessionSummary = null,
   workspaceId = null,
   workspacePath = null,
-  messages,
+  items,
   provider,
   interruptedSource = null,
-  runtimeThinkingPlaceholder = null,
   assistantAvatar
 }: {
   sessionId?: string;
+  sessionSummary?: SessionSummaryDto | null;
   workspaceId?: string | null;
   workspacePath?: string | null;
-  messages: SessionMessageViewModel[];
+  items: ConversationTimelineSourceItem[];
   provider: ProviderId | null;
   interruptedSource?: SessionInterruptSource | null;
-  runtimeThinkingPlaceholder?: string | null;
   assistantAvatar?: ReactNode;
 }) {
-  const renderItems = buildTimelineRenderItems(messages);
-  const leadingSystemPromptMessageIds = useMemo(
-    () => collectLeadingSystemPromptMessageIds(messages, provider),
-    [messages, provider]
+  const timelineViewModel = useMemo(
+    () => buildTimelineViewModel({
+      sessionSummary,
+      items,
+      provider
+    }),
+    [items, provider, sessionSummary]
   );
+  const renderItems = timelineViewModel.renderItems;
+  const leadingSystemPromptMessageIds = timelineViewModel.leadingSystemPromptMessageIds;
 
   return (
     <section className="message-timeline message-timeline-export" aria-label={t("conversation.exportPrintContainerTitle")}>
@@ -4019,6 +4265,10 @@ export function ConversationTranscriptExport({
                 exportMode
               />
             </article>
+          ) : item.type === "runtime_thinking" ? (
+            renderRuntimeThinkingItem(item)
+          ) : item.type === "session_error" ? (
+            renderSessionErrorItem(item)
           ) : (
             <MessageItem
               key={item.key}
@@ -4038,18 +4288,6 @@ export function ConversationTranscriptExport({
             />
           )
         )}
-
-        {runtimeThinkingPlaceholder ? (
-          <div className="timeline-status timeline-status-inline thinking-status-inline">
-            <span
-              className="status-text thinking-status-text"
-              aria-label={runtimeThinkingPlaceholder}
-            >
-              <span>{stripThinkingTrailingDots(runtimeThinkingPlaceholder) || runtimeThinkingPlaceholder}</span>
-              <span className="thinking-status-dots" aria-hidden="true">...</span>
-            </span>
-          </div>
-        ) : null}
       </div>
     </section>
   );
@@ -4086,9 +4324,10 @@ function resolveFollowUpTaskStatusLabel(status: ButlerFollowUpTaskDto["status"])
 
 export function MessageTimeline({
   sessionId = "session",
+  sessionSummary = null,
   workspaceId = null,
   workspacePath = null,
-  messages,
+  items,
   historyState,
   loadingOlderMessages = false,
   hasOlderMessages = false,
@@ -4097,13 +4336,8 @@ export function MessageTimeline({
   onForkMessage,
   provider,
   interruptedSource = null,
-  runtimeThinkingPlaceholder = null,
   assistantAvatar,
   followTailUpdates = false,
-  sessionRunningState = null,
-  sessionSyncStatus = null,
-  sessionLastErrorCode = null,
-  sessionLastErrorDetail = null,
   onSubmitStructuredQuestion
 }: MessageTimelineProps) {
   const { showToast } = useToast();
@@ -4140,27 +4374,28 @@ export function MessageTimeline({
   const [showScrollToBottomButton, setShowScrollToBottomButton] = useState(false);
   const [hasNewMessagesBelow, setHasNewMessagesBelow] = useState(false);
   const hasNewMessagesBelowRef = useRef(false);
-  const renderItems = buildTimelineRenderItems(messages);
   const manualRestoreDurationMs = platform.isMobile ? 0 : MANUAL_RESTORE_DURATION_MS;
-  const leadingSystemPromptMessageIds = useMemo(
-    () => collectLeadingSystemPromptMessageIds(messages, provider),
-    [messages, provider]
+  const messages = useMemo(
+    () => extractConversationTimelineMessages(items),
+    [items]
   );
-  const actionStateByMessageId = useMemo(
-    () => buildMessageActionStateById(messages),
-    [messages]
+  const runtimeThinkingPlaceholder = useMemo(
+    () => findConversationTimelineRuntimeThinkingLabel(items),
+    [items]
   );
+  const timelineViewModel = useMemo(
+    () => buildTimelineViewModel({
+      sessionSummary,
+      items,
+      provider
+    }),
+    [items, provider, sessionSummary]
+  );
+  const visibleMessages = timelineViewModel.visibleMessages;
+  const renderItems = timelineViewModel.renderItems;
+  const leadingSystemPromptMessageIds = timelineViewModel.leadingSystemPromptMessageIds;
+  const actionStateByMessageId = timelineViewModel.actionStateByMessageId;
   const showTimelineSkeleton = historyState === "loading" && messages.length === 0;
-  const sessionErrorDisplay = useMemo(
-    () =>
-      resolveSessionErrorDisplayContent({
-        runningState: sessionRunningState,
-        syncStatus: sessionSyncStatus,
-        lastErrorCode: sessionLastErrorCode,
-        lastErrorDetail: sessionLastErrorDetail
-      }),
-    [sessionLastErrorCode, sessionLastErrorDetail, sessionRunningState, sessionSyncStatus]
-  );
 
   function summarizeMessageSignature(signature: string | null): Record<string, unknown> | null {
     if (!signature) {
@@ -4169,10 +4404,15 @@ export function MessageTimeline({
 
     try {
       const parsed = JSON.parse(signature) as {
+        type?: unknown;
+        key?: unknown;
         id?: unknown;
         timestamp?: unknown;
         deliveryState?: unknown;
         content?: unknown;
+        label?: unknown;
+        summary?: unknown;
+        messageIds?: unknown;
         attachments?: unknown;
         toolCall?: {
           status?: unknown;
@@ -4182,10 +4422,15 @@ export function MessageTimeline({
       };
 
       return {
+        type: typeof parsed.type === "string" ? parsed.type : "message",
+        key: typeof parsed.key === "string" ? parsed.key : null,
         id: typeof parsed.id === "string" ? parsed.id : null,
         timestamp: typeof parsed.timestamp === "string" ? parsed.timestamp : null,
         deliveryState: typeof parsed.deliveryState === "string" ? parsed.deliveryState : null,
         contentLength: typeof parsed.content === "string" ? parsed.content.length : 0,
+        labelLength: typeof parsed.label === "string" ? parsed.label.length : 0,
+        summaryLength: typeof parsed.summary === "string" ? parsed.summary.length : 0,
+        messageIdCount: Array.isArray(parsed.messageIds) ? parsed.messageIds.length : 0,
         attachmentCount: Array.isArray(parsed.attachments) ? parsed.attachments.length : 0,
         toolStatus: typeof parsed.toolCall?.status === "string" ? parsed.toolCall.status : null,
         hasToolOutput:
@@ -4226,6 +4471,23 @@ export function MessageTimeline({
         type: item.type,
         key: item.key,
         message: summarizeTimelineMessage(item.message)
+      };
+    }
+
+    if (item.type === "runtime_thinking") {
+      return {
+        type: item.type,
+        key: item.key,
+        labelPreview: item.label.slice(0, 80)
+      };
+    }
+
+    if (item.type === "session_error") {
+      return {
+        type: item.type,
+        key: item.key,
+        code: item.error.code,
+        summary: item.error.summary
       };
     }
 
@@ -4270,7 +4532,7 @@ export function MessageTimeline({
   ): Record<string, unknown> {
     const messageId = element.dataset.messageId ?? null;
     const message = messageId
-      ? messages.find((item) => item.id === messageId) ?? null
+      ? visibleMessages.find((item) => item.id === messageId) ?? null
       : null;
 
     return {
@@ -4320,8 +4582,8 @@ export function MessageTimeline({
     list: HTMLDivElement | null,
     extra: Record<string, unknown> = {}
   ): Record<string, unknown> {
-    const firstMessage = messages[0] ?? null;
-    const lastMessage = messages.at(-1) ?? null;
+    const firstMessage = visibleMessages[0] ?? null;
+    const lastMessage = visibleMessages.at(-1) ?? null;
     const tailItem = renderItems.at(-1) ?? null;
     const pendingRestoreState = pendingRestoreStateRef.current;
     const currentScrollState = currentScrollStateRef.current;
@@ -4332,7 +4594,8 @@ export function MessageTimeline({
       sessionId,
       historyState,
       followTailUpdates,
-      messagesLength: messages.length,
+      messagesLength: visibleMessages.length,
+      rawMessagesLength: messages.length,
       renderItemsLength: renderItems.length,
       firstMessageId: firstMessage?.id ?? null,
       firstMessageRole: firstMessage?.role ?? null,
@@ -4344,6 +4607,7 @@ export function MessageTimeline({
       runtimeThinkingPlaceholderLength: runtimeThinkingPlaceholder?.length ?? 0,
       runtimeThinkingPlaceholderPreview: runtimeThinkingPlaceholder?.slice(0, 80) ?? null,
       tailItemType: tailItem?.type ?? null,
+      tailItemKey: tailItem?.key ?? null,
       tailToolCallId:
         tailItem && tailItem.type === "tool_group" ? tailItem.group.tool.callId : null,
       scrollTop: list?.scrollTop ?? null,
@@ -4354,7 +4618,9 @@ export function MessageTimeline({
       hasNewMessagesBelow: hasNewMessagesBelowRef.current,
       previousMessageCount: previousMessageCountRef.current,
       previousLastMessage: summarizeMessageSignature(previousLastMessageSignatureRef.current),
-      tailMessages: messages.slice(-5).map(summarizeTimelineMessage),
+      hiddenMessageIds: timelineViewModel.hiddenMessageIds,
+      validationIssues: timelineViewModel.validationIssues,
+      tailMessages: visibleMessages.slice(-5).map(summarizeTimelineMessage),
       tailRenderItems: renderItems.slice(-5).map(summarizeTimelineRenderItem),
       dom: summarizeTimelineDom(list),
       pendingRestoreState:
@@ -4400,7 +4666,7 @@ export function MessageTimeline({
       lastMessageSignature:
         hasNewMessagesBelowRef.current && !stickToBottom
           ? restoredTailSignatureRef.current
-          : buildMessageSignature(messages.at(-1) ?? null)
+          : buildMessageSignature(renderItems.at(-1) ?? null)
     };
   }
 
@@ -4417,11 +4683,11 @@ export function MessageTimeline({
     if (nextStickToBottom && hasNewMessagesBelowRef.current) {
       finishManualRestore();
       hasNewMessagesBelowRef.current = false;
-      restoredTailSignatureRef.current = buildMessageSignature(messages.at(-1) ?? null);
+      restoredTailSignatureRef.current = buildMessageSignature(renderItems.at(-1) ?? null);
       setHasNewMessagesBelow(false);
     }
     setShowScrollToBottomButton(
-      messages.length > 0
+      renderItems.length > 0
       && (
         distanceToBottom > SCROLL_TO_BOTTOM_BUTTON_THRESHOLD_PX
         || hasNewMessagesBelowRef.current
@@ -4529,7 +4795,7 @@ export function MessageTimeline({
       nextScrollTop
     });
     setShowScrollToBottomButton(
-      messages.length > 0
+      renderItems.length > 0
       && (
         maxScrollableTop - nextScrollTop > SCROLL_TO_BOTTOM_BUTTON_THRESHOLD_PX
         || hasNewMessagesBelowRef.current
@@ -4602,7 +4868,7 @@ export function MessageTimeline({
 
     olderLoadLockRef.current = true;
     pendingOlderLoadOffsetRef.current = list.scrollHeight - list.scrollTop;
-    pendingOlderLoadHeadSignatureRef.current = buildMessageSignature(messages[0] ?? null);
+    pendingOlderLoadHeadSignatureRef.current = buildMessageSignature(renderItems[0] ?? null);
     emitTimelineScrollDebug("older_history.prefetch", list, {
       pendingOlderLoadOffset: pendingOlderLoadOffsetRef.current,
       pendingOlderLoadHeadMessage: summarizeMessageSignature(pendingOlderLoadHeadSignatureRef.current)
@@ -4661,10 +4927,10 @@ export function MessageTimeline({
 
   useLayoutEffect(() => {
     const list = listRef.current;
-    const currentLastSignature = buildMessageSignature(messages.at(-1) ?? null);
+    const currentLastSignature = buildMessageSignature(renderItems.at(-1) ?? null);
 
     if (!list) {
-      previousMessageCountRef.current = messages.length;
+      previousMessageCountRef.current = renderItems.length;
       previousLastMessageSignatureRef.current = currentLastSignature;
       return;
     }
@@ -4674,7 +4940,7 @@ export function MessageTimeline({
     const pendingRestoreState = pendingRestoreStateRef.current;
     const hasTailUpdate =
       previousCount === 0 ||
-      messages.length !== previousCount ||
+      renderItems.length !== previousCount ||
       currentLastSignature !== previousLastSignature;
 
     emitTimelineScrollDebug("messages.effect.start", list, {
@@ -4710,7 +4976,7 @@ export function MessageTimeline({
       setHasNewMessagesBelow(hasTailUpdates);
       pendingRestoreStateRef.current = null;
       syncScrollAffordance(list);
-      previousMessageCountRef.current = messages.length;
+      previousMessageCountRef.current = renderItems.length;
       previousLastMessageSignatureRef.current = currentLastSignature;
       rememberCurrentScrollState(list);
       return;
@@ -4729,7 +4995,7 @@ export function MessageTimeline({
 
       pendingRestoreStateRef.current = null;
       syncScrollAffordance(list);
-      previousMessageCountRef.current = messages.length;
+      previousMessageCountRef.current = renderItems.length;
       previousLastMessageSignatureRef.current = currentLastSignature;
       rememberCurrentScrollState(list);
       return;
@@ -4737,13 +5003,13 @@ export function MessageTimeline({
 
     if (manualRestoreInProgressRef.current) {
       applyManualRestorePosition(list, manualRestoreTargetRef.current ?? list.scrollTop);
-      previousMessageCountRef.current = messages.length;
+      previousMessageCountRef.current = renderItems.length;
       previousLastMessageSignatureRef.current = currentLastSignature;
       rememberCurrentScrollState(list);
       return;
     }
 
-    const currentHeadSignature = buildMessageSignature(messages[0] ?? null);
+    const currentHeadSignature = buildMessageSignature(renderItems[0] ?? null);
     const pendingOlderLoadOffset = pendingOlderLoadOffsetRef.current;
     const pendingOlderLoadHeadSignature = pendingOlderLoadHeadSignatureRef.current;
     const shouldRestoreOlderLoadOffset =
@@ -4751,7 +5017,7 @@ export function MessageTimeline({
       && !loadingOlderMessages
       && pendingOlderLoadHeadSignature !== null
       && pendingOlderLoadHeadSignature !== currentHeadSignature
-      && messages.length >= previousCount;
+      && renderItems.length >= previousCount;
     const shouldFollowTailUpdate =
       hasTailUpdate
       && (followTailUpdates || stickToBottomRef.current);
@@ -4783,9 +5049,9 @@ export function MessageTimeline({
     }
 
     syncScrollAffordance(list);
-    previousMessageCountRef.current = messages.length;
+    previousMessageCountRef.current = renderItems.length;
     previousLastMessageSignatureRef.current = currentLastSignature;
-  }, [historyState, loadingOlderMessages, messages, sessionId]);
+  }, [historyState, loadingOlderMessages, renderItems, sessionId]);
 
   useEffect(() => {
     if (!hasOlderMessages) {
@@ -4796,7 +5062,7 @@ export function MessageTimeline({
     if (!loadingOlderMessages && pendingOlderLoadOffsetRef.current === null) {
       olderLoadLockRef.current = false;
     }
-  }, [hasOlderMessages, loadingOlderMessages, messages.length]);
+  }, [hasOlderMessages, loadingOlderMessages, visibleMessages.length]);
 
   useLayoutEffect(() => {
     const previousPlaceholder = previousRuntimeThinkingPlaceholderRef.current;
@@ -4811,7 +5077,7 @@ export function MessageTimeline({
       previousLength: previousPlaceholder?.length ?? 0,
       nextLength: runtimeThinkingPlaceholder?.length ?? 0,
       note:
-        "Codex 思考中占位符不属于 messages，若这里出现但 messages.effect 没有 tail_update_follow，用户消息会停在可视底部。"
+        "Codex 思考中占位符已经并入统一 timeline source item 列表；调试时直接看 renderItems 尾部即可。"
     });
     previousRuntimeThinkingPlaceholderRef.current = runtimeThinkingPlaceholder;
   }, [runtimeThinkingPlaceholder, sessionId]);
@@ -4832,7 +5098,36 @@ export function MessageTimeline({
     return () => {
       observer.disconnect();
     };
-  }, [messages.length, sessionId]);
+  }, [sessionId, visibleMessages.length]);
+
+  useEffect(() => {
+    if (timelineViewModel.hiddenMessageIds.length === 0 && timelineViewModel.validationIssues.length === 0) {
+      return;
+    }
+
+    logOpenCodeOrderDebug("timeline.view_model", {
+      sessionId,
+      hiddenMessageIds: timelineViewModel.hiddenMessageIds,
+      validationIssues: timelineViewModel.validationIssues,
+      rawMessages: messages.map((message) => ({
+        id: message.id,
+        role: message.role,
+        kind: message.kind,
+        sequence: message.sequence,
+        timestamp: message.timestamp,
+        rawRef: message.rawRef
+      })),
+      visibleMessages: visibleMessages.map((message) => ({
+        id: message.id,
+        role: message.role,
+        kind: message.kind,
+        sequence: message.sequence,
+        timestamp: message.timestamp,
+        rawRef: message.rawRef
+      })),
+      renderItems: renderItems.map(summarizeTimelineRenderItem)
+    });
+  }, [messages, renderItems, sessionId, timelineViewModel.hiddenMessageIds, timelineViewModel.validationIssues, visibleMessages]);
 
   function handleScroll() {
     const list = listRef.current;
@@ -4955,6 +5250,10 @@ export function MessageTimeline({
             <article key={item.key} className="message-item tool-message-row">
               <ToolCallItem group={item.group} workspaceId={workspaceId} workspacePath={workspacePath} />
             </article>
+          ) : item.type === "runtime_thinking" ? (
+            renderRuntimeThinkingItem(item)
+          ) : item.type === "session_error" ? (
+            renderSessionErrorItem(item)
           ) : (
             <MessageItem
               key={item.key}
@@ -4979,60 +5278,6 @@ export function MessageTimeline({
             />
           )
         )}
-
-        {runtimeThinkingPlaceholder ? (
-          <div
-            className="timeline-status timeline-status-inline thinking-status-inline"
-            data-runtime-thinking-placeholder="true"
-          >
-            <span
-              className="status-text thinking-status-text"
-              aria-label={runtimeThinkingPlaceholder}
-            >
-              <span>{stripThinkingTrailingDots(runtimeThinkingPlaceholder) || runtimeThinkingPlaceholder}</span>
-              <span className="thinking-status-dots" aria-hidden="true">...</span>
-            </span>
-          </div>
-        ) : null}
-
-        {sessionErrorDisplay ? (
-          <article className="message-item assistant-message session-runtime-error-row">
-            <div className="session-runtime-error-row__spacer" aria-hidden="true" />
-            <section
-              className="message-content-wrapper session-runtime-error-panel"
-              role="status"
-              aria-label={sessionErrorDisplay.title}
-            >
-              <div className="session-runtime-error-panel__header">
-                <div className="session-runtime-error-panel__title-group">
-                  <span className="session-runtime-error-panel__dot" aria-hidden="true" />
-                  <strong>{sessionErrorDisplay.title}</strong>
-                </div>
-                {sessionErrorDisplay.code ? (
-                  <code className="session-runtime-error-panel__code">{sessionErrorDisplay.code}</code>
-                ) : null}
-              </div>
-              {sessionErrorDisplay.summary ? (
-                <p className="session-runtime-error-panel__summary">
-                  {tokenizeSessionErrorSummary(sessionErrorDisplay.summary).map((segment, index) => {
-                    if (segment.type === "text") {
-                      return <span key={`text-${index}`}>{segment.text}</span>;
-                    }
-
-                    return (
-                      <mark
-                        key={`${segment.type}-${index}`}
-                        className={`session-runtime-error-panel__summary-token session-runtime-error-panel__summary-token--${segment.type}`}
-                      >
-                        {segment.text}
-                      </mark>
-                    );
-                  })}
-                </p>
-              ) : null}
-            </section>
-          </article>
-        ) : null}
       </div>
       {showScrollToBottomButton ? (
         <button
@@ -5051,7 +5296,7 @@ export function MessageTimeline({
             finishManualRestore();
             jumpToBottom(list, "scroll_button_click");
             hasNewMessagesBelowRef.current = false;
-            restoredTailSignatureRef.current = buildMessageSignature(messages.at(-1) ?? null);
+            restoredTailSignatureRef.current = buildMessageSignature(renderItems.at(-1) ?? null);
             setHasNewMessagesBelow(false);
             syncScrollAffordance(list);
             persistCurrentScrollState(list);
@@ -5077,22 +5322,60 @@ export function MessageTimeline({
   );
 }
 
-function buildMessageSignature(message: SessionMessageViewModel | null): string | null {
-  if (!message) {
+function buildMessageSignature(
+  item: SessionMessageViewModel | TimelineRenderItem | null
+): string | null {
+  if (!item) {
     return null;
   }
 
+  if ("type" in item) {
+    if (item.type === "message") {
+      return buildMessageSignature(item.message);
+    }
+
+    if (item.type === "tool_group") {
+      return JSON.stringify({
+        type: item.type,
+        key: item.key,
+        messageIds: item.group.messageIds,
+        timestamp: item.group.updatedAt,
+        toolCall: {
+          status: item.group.tool.status,
+          output: item.group.tool.output,
+          error: item.group.tool.error
+        }
+      });
+    }
+
+    if (item.type === "runtime_thinking") {
+      return JSON.stringify({
+        type: item.type,
+        key: item.key,
+        label: item.label
+      });
+    }
+
+    return JSON.stringify({
+      type: item.type,
+      key: item.key,
+      summary: item.error.summary,
+      code: item.error.code
+    });
+  }
+
   return JSON.stringify({
-    id: message.id,
-    content: message.content,
-    attachments: message.attachments,
-    timestamp: message.timestamp,
-    deliveryState: message.deliveryState,
-    toolCall: message.toolCall
+    type: "message",
+    id: item.id,
+    content: item.content,
+    attachments: item.attachments,
+    timestamp: item.timestamp,
+    deliveryState: item.deliveryState,
+    toolCall: item.toolCall
       ? {
-          status: message.toolCall.status,
-          output: message.toolCall.output,
-          error: message.toolCall.error
+          status: item.toolCall.status,
+          output: item.toolCall.output,
+          error: item.toolCall.error
         }
       : null
   });

@@ -112,6 +112,10 @@ import { createDraftCapabilities, getProviderDisplayName } from "../capability/p
 import { searchFiles, type FileNodeDto } from "../api/file-context-api";
 import { ConversationTranscriptExport } from "./MessageTimeline";
 import {
+  buildConversationTimelineSourceItems,
+  type ConversationTimelineSourceItem
+} from "../timeline-source-items";
+import {
   hasSessionDisplayError,
   resolveSessionActivityBadgeClassName,
   resolveSessionActivityBadgeLabel,
@@ -4547,7 +4551,7 @@ function SidebarContent({
   const [exportingSessionId, setExportingSessionId] = useState<string | null>(null);
   const [exportRenderJob, setExportRenderJob] = useState<{
     session: SessionSummaryDto;
-    messages: SessionMessageViewModel[];
+    items: ConversationTimelineSourceItem[];
     shellWidthPx: number | null;
   } | null>(null);
   const [visibleFavoriteCount, setVisibleFavoriteCount] = useState(FAVORITE_SESSION_PAGE_SIZE);
@@ -6283,7 +6287,9 @@ function SidebarContent({
       flushSync(() => {
         setExportRenderJob({
           session,
-          messages: snapshot.messages,
+          items: buildConversationTimelineSourceItems({
+            messages: snapshot.messages
+          }),
           shellWidthPx: exportLayout.shellWidthPx
         });
       });
@@ -7919,7 +7925,7 @@ function SidebarContent({
             </header>
             <ConversationTranscriptExport
               sessionId={exportRenderJob.session.sessionId}
-              messages={exportRenderJob.messages}
+              items={exportRenderJob.items}
               provider={exportRenderJob.session.provider}
             />
           </div>

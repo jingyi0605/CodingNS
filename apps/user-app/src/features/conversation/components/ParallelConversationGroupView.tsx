@@ -803,7 +803,7 @@ function ParallelConversationMemberPane({
     session,
     capabilities,
     messages,
-    timelineMessages,
+    timelineItems,
     permissionRequests,
     queuedMessages,
     contextUsage,
@@ -823,7 +823,6 @@ function ParallelConversationMemberPane({
     composerIsRunning,
     canSteerQueuedMessage,
     hasPendingQueuedMessages,
-    runtimeThinkingPlaceholder,
     reconnect,
     loadOlderMessages,
     retryMessage,
@@ -1513,15 +1512,15 @@ function ParallelConversationMemberPane({
         <div className="parallel-conversation-pane-timeline">
           <MessageTimeline
             sessionId={sessionId}
+            sessionSummary={session ?? entry.session}
             workspaceId={toolWorkspaceId}
             workspacePath={toolWorkspacePath}
-            messages={timelineMessages}
+            items={timelineItems}
             historyState={historyState}
             loadingOlderMessages={loadingOlderMessages}
             hasOlderMessages={hasOlderMessages}
             provider={session?.provider ?? entry.session.provider}
             interruptedSource={runtimeInterruptSource}
-            runtimeThinkingPlaceholder={runtimeThinkingPlaceholder}
             followTailUpdates
             onLoadOlderMessages={loadOlderMessages}
             onRetryMessage={retryMessage}

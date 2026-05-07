@@ -19,6 +19,7 @@ import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout
 import { ComposerPanel } from "../../conversation/components/ComposerPanel";
 import { MessageTimeline } from "../../conversation/components/MessageTimeline";
 import { PermissionRequestList } from "../../conversation/components/PermissionRequestList";
+import { buildConversationTimelineSourceItems } from "../../conversation/timeline-source-items";
 import {
   cancelAssistantAutomation,
   cancelButlerControlTimer,
@@ -1766,7 +1767,7 @@ export function MobileButlerPage() {
                   <div className="conversation-timeline-shell mobile-butler-timeline-shell">
                     <MessageTimeline
                       sessionId={controlSession?.session?.sessionId}
-                      messages={messages}
+                      items={buildConversationTimelineSourceItems({ messages })}
                       historyState={historyState}
                       loadingOlderMessages={loadingOlderMessages}
                       hasOlderMessages={hasOlderMessages}

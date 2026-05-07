@@ -11,6 +11,7 @@ import type {
   SessionSummaryDto,
   ToolCallDto
 } from "../api/conversation-api";
+import type { ConversationTimelineSourceItem } from "../timeline-source-items";
 import { parseMessageRichContent } from "../message-rich-content";
 import { logSessionMessageDedupDebug } from "../../../shared/debug/perf-debug";
 
@@ -42,6 +43,7 @@ export interface SessionRuntimeState {
   runtimeCanInterrupt: boolean | null;
   contextUsage: ContextUsageDto | null;
   messages: SessionMessageViewModel[];
+  timelineItems: ConversationTimelineSourceItem[];
   permissionRequests: SessionPermissionRequestDto[];
   queuedMessages: SessionQueueItemDto[];
   historyState: RuntimeHistoryState;
@@ -57,7 +59,6 @@ export interface SessionRuntimeState {
 }
 
 const RUNTIME_THINKING_PLACEHOLDER_RAW_REF_PREFIX = "runtime-placeholder://thinking/";
-const CODEX_EQUIVALENT_TEXT_WINDOW_MS = 3 * 1000;
 const CODEX_EQUIVALENT_AUTHORITATIVE_WINDOW_MS = 2 * 60 * 1000;
 const CODEX_EQUIVALENT_AUTHORITATIVE_SEQUENCE_WINDOW = 8;
 const INTERNAL_ATTACHMENT_DEBUG_BLOCK_PATTERN =
@@ -75,6 +76,7 @@ export function createInitialRuntimeState(
       | "runtimeCanInterrupt"
       | "contextUsage"
       | "messages"
+      | "timelineItems"
       | "permissionRequests"
       | "queuedMessages"
       | "olderCursor"
@@ -92,6 +94,7 @@ export function createInitialRuntimeState(
     runtimeCanInterrupt: seed?.runtimeCanInterrupt ?? null,
     contextUsage: seed?.contextUsage ?? null,
     messages: seed?.messages ?? [],
+    timelineItems: seed?.timelineItems ?? [],
     permissionRequests: seed?.permissionRequests ?? [],
     queuedMessages: seed?.queuedMessages ?? [],
     historyState: "idle",
@@ -314,6 +317,45 @@ export function mergeAuthoritativeMessages(
   );
 }
 
+export function mergeRuntimeOverlayMessages(
+  current: SessionMessageViewModel[],
+  incoming: SessionMessageViewModel[]
+): SessionMessageViewModel[] {
+  const nextByOverlayKey = new Map<string, SessionMessageViewModel>();
+
+  for (const item of current) {
+    nextByOverlayKey.set(buildRuntimeOverlayKey(item), item);
+  }
+
+  for (const message of incoming) {
+    const overlayKey = buildRuntimeOverlayKey(message);
+    const currentMessage = nextByOverlayKey.get(overlayKey) ?? null;
+
+    if (currentMessage) {
+      logSessionMessageDedupDebug("session.messages.runtime_overlay_merge", {
+        overlayKey,
+        mode: "update",
+        previous: summarizeMessageForDebug(currentMessage),
+        incoming: summarizeMessageForDebug(message)
+      });
+      nextByOverlayKey.set(
+        overlayKey,
+        mergePreservingTimelineIdentity(currentMessage, message)
+      );
+      continue;
+    }
+
+    logSessionMessageDedupDebug("session.messages.runtime_overlay_merge", {
+      overlayKey,
+      mode: "insert",
+      incoming: summarizeMessageForDebug(message)
+    });
+    nextByOverlayKey.set(overlayKey, message);
+  }
+
+  return sortMessagesByTimeline(Array.from(nextByOverlayKey.values()));
+}
+
 export function reconcileMessage(
   current: SessionMessageViewModel[],
   sessionId: string,
@@ -343,25 +385,6 @@ export function markPendingAsFailed(
         }
       : item
   );
-}
-
-function collapseEquivalentCodexMessages(
-  messages: SessionMessageViewModel[]
-): SessionMessageViewModel[] {
-  const collapsed: SessionMessageViewModel[] = [];
-
-  for (const message of messages) {
-    const previous = collapsed.at(-1);
-
-    if (!previous || !isEquivalentCodexTextMessage(previous, message)) {
-      collapsed.push(message);
-      continue;
-    }
-
-    collapsed[collapsed.length - 1] = pickPreferredCodexTextMessage(previous, message);
-  }
-
-  return collapsed;
 }
 
 function collapseEquivalentOpenCodeUserMessages(
@@ -496,22 +519,26 @@ function collapseEquivalentKimiTextMessages(
 }
 
 function sortMessages(messages: SessionMessageViewModel[]): SessionMessageViewModel[] {
-  const sorted = [...messages].sort((left, right) => {
-    return compareViewMessageOrder(left, right);
-  });
+  const sorted = sortMessagesByTimeline(messages);
 
   return collapseEquivalentKimiTextMessages(
     collapseEquivalentGeminiTextMessages(
       collapseEquivalentOpenCodeUserMessages(
         collapseEquivalentOpenCodeTurnPairs(
-          collapseEquivalentOpenCodeAssistantMessages(collapseEquivalentCodexMessages(sorted))
+          collapseEquivalentOpenCodeAssistantMessages(sorted)
         )
       )
     )
   );
 }
 
-function compareViewMessageOrder(
+function sortMessagesByTimeline(messages: SessionMessageViewModel[]): SessionMessageViewModel[] {
+  return [...messages].sort((left, right) => {
+    return compareViewMessageOrder(left, right);
+  });
+}
+
+export function compareViewMessageOrder(
   left: SessionMessageViewModel,
   right: SessionMessageViewModel
 ): number {
@@ -1064,15 +1091,36 @@ function mergeEquivalentAuthoritativeVersion(
   };
 }
 
-function isEquivalentCodexTextMessage(
-  left: SessionMessageViewModel,
-  right: SessionMessageViewModel
-): boolean {
-  return isEquivalentCodexTextMessageWithinWindow(
-    left,
-    right,
-    CODEX_EQUIVALENT_TEXT_WINDOW_MS
-  );
+function mergePreservingTimelineIdentity(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): SessionMessageViewModel {
+  const merged = mergeAuthoritativeVersion(current, {
+    ...incoming,
+    id: current.id,
+    clientRequestId: current.clientRequestId ?? incoming.clientRequestId
+  });
+
+  return {
+    ...merged,
+    id: current.id,
+    rawRef: current.rawRef,
+    timestamp: current.timestamp,
+    sequence: current.sequence,
+    clientRequestId: current.clientRequestId ?? incoming.clientRequestId
+  };
+}
+
+function buildRuntimeOverlayKey(message: SessionMessageViewModel): string {
+  if (message.id) {
+    return `id:${message.id}`;
+  }
+
+  if (message.rawRef) {
+    return `rawRef:${message.rawRef}`;
+  }
+
+  return `fallback:${message.role}:${message.kind}:${message.timestamp}:${message.sequence}`;
 }
 
 function isEquivalentCodexTextMessageWithinWindow(
@@ -1204,43 +1252,6 @@ function pickPreferredOpenCodeAssistantMessage(
   }
 
   return pickNewerAuthoritativeMessage(left, right);
-}
-
-function pickPreferredCodexTextMessage(
-  left: SessionMessageViewModel,
-  right: SessionMessageViewModel
-): SessionMessageViewModel {
-  const leftAttachmentCount = left.attachments?.length ?? 0;
-  const rightAttachmentCount = right.attachments?.length ?? 0;
-
-  if (leftAttachmentCount !== rightAttachmentCount) {
-    return leftAttachmentCount > rightAttachmentCount ? left : right;
-  }
-
-  const leftInlineImageCount = parseMessageRichContent(left.content).inlineImages.length;
-  const rightInlineImageCount = parseMessageRichContent(right.content).inlineImages.length;
-
-  if (leftInlineImageCount !== rightInlineImageCount) {
-    return leftInlineImageCount > rightInlineImageCount ? left : right;
-  }
-
-  const leftHasTrailingWhitespace =
-    left.content !== normalizeComparableCodexText(left.content);
-  const rightHasTrailingWhitespace =
-    right.content !== normalizeComparableCodexText(right.content);
-
-  if (leftHasTrailingWhitespace !== rightHasTrailingWhitespace) {
-    return leftHasTrailingWhitespace ? right : left;
-  }
-
-  const leftHasDebugBlock = hasInternalAttachmentDebugBlock(left.content);
-  const rightHasDebugBlock = hasInternalAttachmentDebugBlock(right.content);
-
-  if (leftHasDebugBlock !== rightHasDebugBlock) {
-    return leftHasDebugBlock ? right : left;
-  }
-
-  return right;
 }
 
 function isEquivalentGeminiTextMessage(
@@ -1593,31 +1604,61 @@ function findMatchingEquivalentCodexMessageId(
     return null;
   }
 
-  const incomingTimestampMs = toTimestampMs(incoming.timestamp);
-  let matchedId: string | null = null;
-  let matchedScore = Number.POSITIVE_INFINITY;
-
   for (const [messageId, current] of messagesById.entries()) {
     if (
       messageId === incoming.id
       || !candidateMessageIds.has(messageId)
-      || !isEquivalentCodexAuthoritativeMessage(current, incoming)
+      || !isCompatibleCodexIdentityBridgeMessage(current, incoming)
     ) {
       continue;
     }
 
-    const currentTimestampMs = toTimestampMs(current.timestamp);
-    const timestampDistance = Math.abs(currentTimestampMs - incomingTimestampMs);
-    const sequenceDistance = Math.abs(current.sequence - incoming.sequence);
-    const score = sequenceDistance * CODEX_EQUIVALENT_AUTHORITATIVE_WINDOW_MS + timestampDistance;
-
-    if (score < matchedScore) {
-      matchedId = messageId;
-      matchedScore = score;
-    }
+    logSessionMessageDedupDebug("session.messages.codex_identity_bridge_match", {
+      previous: summarizeMessageForDebug(current),
+      incoming: summarizeMessageForDebug(incoming)
+    });
+    return messageId;
   }
 
-  return matchedId;
+  return null;
+}
+
+function isCompatibleCodexIdentityBridgeMessage(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): boolean {
+  if (!isEquivalentCodexAuthoritativeMessage(current, incoming)) {
+    return false;
+  }
+
+  if (current.rawRef === incoming.rawRef) {
+    return true;
+  }
+
+  if (current.kind === "tool_call" || current.kind === "tool_result") {
+    return isEquivalentCodexToolMessage(current, incoming);
+  }
+
+  const currentStore = extractCodexRawRefStore(current.rawRef);
+  const incomingStore = extractCodexRawRefStore(incoming.rawRef);
+
+  if (!currentStore || !incomingStore || currentStore !== incomingStore) {
+    return false;
+  }
+
+  const sequenceDistance = Math.abs(current.sequence - incoming.sequence);
+
+  if (sequenceDistance > 1) {
+    logSessionMessageDedupDebug("session.messages.codex_identity_bridge_rejected", {
+      reason: "sequence_distance",
+      sequenceDistance,
+      previous: summarizeMessageForDebug(current),
+      incoming: summarizeMessageForDebug(incoming)
+    });
+    return false;
+  }
+
+  return true;
 }
 
 function findMatchingEquivalentOpenCodeMessageId(

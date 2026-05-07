@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import { useLocalUiPreferenceSelector } from "../../../preferences/local-ui-preference-store";
@@ -24,6 +24,7 @@ import {
   useSessionRuntimeStore
 } from "./session-runtime-store";
 import type { SessionMessageViewModel } from "./session-runtime-machine";
+import { withConversationTimelineRuntimeThinkingItem } from "../timeline-source-items";
 
 const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
 const RUNTIME_TIMEOUT_TOAST_DELAY_MS = 15_000;
@@ -113,6 +114,7 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
   const runtimeHasActiveRun = useSessionRuntimeStore(store, (state) => state.runtimeHasActiveRun);
   const runtimeCanInterrupt = useSessionRuntimeStore(store, (state) => state.runtimeCanInterrupt);
   const messages = useSessionRuntimeStore(store, (state) => state.messages);
+  const baseTimelineItems = useSessionRuntimeStore(store, (state) => state.timelineItems);
   const permissionRequests = useSessionRuntimeStore(store, (state) => state.permissionRequests);
   const queuedMessages = useSessionRuntimeStore(store, (state) => state.queuedMessages);
   const contextUsage = useSessionRuntimeStore(store, (state) => state.contextUsage);
@@ -140,16 +142,13 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
     (item) => item.status === "queued" || item.status === "dispatching"
   );
   const sessionSummary = session ?? input.externalSession ?? null;
-  const timelineMessages = input.enableForkTimelineSanitizer === false
-    ? messages
-    : sanitizeForkTimelineMessages(sessionSummary, messages);
   const runtimeThinkingPlaceholderVisible = useStableRuntimeThinkingPlaceholder({
     sessionId: input.sessionId,
     provider: session?.provider ?? null,
     runningState: session?.runningState ?? null,
     activityState: session?.activityState ?? null,
     runtimeHasActiveRun,
-    messages: timelineMessages
+    messages
   });
   const runtimeThinkingPlaceholder =
     input.enableThinkingPlaceholder === false || !runtimeThinkingPlaceholderVisible
@@ -157,6 +156,10 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
       : t("conversation.runtimeThinkingPlaceholder", {
           provider: t("conversation.providerCodex")
         });
+  const timelineItems = useMemo(
+    () => withConversationTimelineRuntimeThinkingItem(baseTimelineItems, runtimeThinkingPlaceholder),
+    [baseTimelineItems, runtimeThinkingPlaceholder]
+  );
 
   useSessionSendRecovery({
     sending,
@@ -552,7 +555,7 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
     runtimeHasActiveRun,
     runtimeCanInterrupt,
     messages,
-    timelineMessages,
+    timelineItems,
     permissionRequests,
     queuedMessages,
     contextUsage,
@@ -574,7 +577,6 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
     composerIsRunning,
     canSteerQueuedMessage,
     hasPendingQueuedMessages,
-    runtimeThinkingPlaceholder,
     reconnect: store.reconnect.bind(store),
     loadOlderMessages: store.loadOlderMessages.bind(store),
     retryMessage: store.retryMessage.bind(store),
@@ -746,34 +748,4 @@ function findLatestRuntimePlaceholderUserIndex(messages: SessionMessageViewModel
   }
 
   return latestUserIndex;
-}
-
-function sanitizeForkTimelineMessages(
-  session: SessionSummaryDto | null,
-  messages: SessionMessageViewModel[]
-): SessionMessageViewModel[] {
-  if (
-    !session
-    || session.forkSourceType !== "message"
-    || typeof session.inheritedPrefixMessageCount !== "number"
-    || session.inheritedPrefixMessageCount < 0
-  ) {
-    return messages;
-  }
-
-  const childCreatedAt = session.createdAt?.trim() || "";
-
-  if (childCreatedAt.length === 0) {
-    return messages;
-  }
-
-  const inheritedBoundary = Math.max(0, session.inheritedPrefixMessageCount);
-
-  return messages.filter((message) => {
-    if (message.sequence <= inheritedBoundary) {
-      return true;
-    }
-
-    return message.timestamp >= childCreatedAt;
-  });
 }

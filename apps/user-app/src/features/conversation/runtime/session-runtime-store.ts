@@ -13,6 +13,10 @@ import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { parseMessageRichContent } from "../message-rich-content";
 import {
+  buildConversationTimelineSourceItems,
+  type ConversationTimelineSourceItem
+} from "../timeline-source-items";
+import {
   type AttachmentPayload,
   type ContextUsageDto,
   deleteSessionQueueItem,
@@ -55,13 +59,15 @@ import type {
   SessionRuntimeStatusEvent
 } from "../../../network/realtime-client";
 import {
+  compareViewMessageOrder,
   createInitialRuntimeState,
   createPendingMessage,
   getNextOptimisticUserSequence,
   insertPendingMessage,
   markPendingAsFailed,
   mergeAuthoritativeMessages,
-  reconcileMessage,
+  mergeRuntimeOverlayMessages,
+  toViewMessage,
   type RuntimeConnectionState,
   type SessionMessageViewModel,
   type SessionRuntimeState
@@ -78,6 +84,10 @@ const SESSION_RUNTIME_SNAPSHOT_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 const SESSION_MARK_SEEN_DELAY_MS = 600;
 const SESSION_MARK_SEEN_MIN_INTERVAL_MS = 5_000;
 const SESSION_RUNTIME_POLL_DELAY_MS = 10_000;
+const TIMELINE_CODEX_EQUIVALENT_AUTHORITATIVE_WINDOW_MS = 2 * 60 * 1000;
+const TIMELINE_CODEX_EQUIVALENT_AUTHORITATIVE_SEQUENCE_WINDOW = 8;
+const TIMELINE_INTERNAL_ATTACHMENT_DEBUG_BLOCK_PATTERN =
+  /\[\[CODINGNS_IMAGE_ATTACHMENTS\]\][\s\S]*?\[\[\/CODINGNS_IMAGE_ATTACHMENTS\]\]/g;
 
 interface SessionRuntimeSnapshot {
   session: SessionSummaryDto | null;
@@ -86,6 +96,7 @@ interface SessionRuntimeSnapshot {
   runtimeCanInterrupt: boolean | null;
   contextUsage: ContextUsageDto | null;
   messages: SessionMessageViewModel[];
+  timelineItems: ConversationTimelineSourceItem[];
   permissionRequests: SessionPermissionRequestDto[];
   queuedMessages: SessionQueueItemDto[];
   olderCursor: string | null;
@@ -103,8 +114,67 @@ interface PendingReplyDebugTrace {
   contentLength: number;
 }
 
+export interface TimelineLayersState {
+  authoritativeMessages: SessionMessageViewModel[];
+  runtimeOverlayMessages: SessionMessageViewModel[];
+  pendingMessages: SessionMessageViewModel[];
+  replaceSnapshotSeedOnBackfill: boolean;
+}
+
+export type TimelineEvent =
+  | {
+      type: "timeline.seed";
+      source: string;
+      snapshotMessages: SessionMessageViewModel[];
+      bootstrapMessages: HistoryMessageDto[];
+      replaceSnapshotSeedOnBackfill: boolean;
+    }
+  | {
+      type: "history.merge";
+      source: string;
+      messages: HistoryMessageDto[];
+      replaceSnapshotSeed: boolean;
+    }
+  | {
+      type: "runtime.message";
+      source: string;
+      message: SessionMessageViewModel;
+    }
+  | {
+      type: "pending.insert";
+      source: string;
+      pending: SessionMessageViewModel;
+    }
+  | {
+      type: "pending.retry";
+      source: string;
+      clientRequestId: string;
+    }
+  | {
+      type: "pending.fail";
+      source: string;
+      clientRequestId: string;
+    }
+  | {
+      type: "pending.resolve";
+      source: string;
+      clientRequestId: string;
+      message: HistoryMessageDto;
+    };
+
+export interface TimelineEventResult {
+  timeline: TimelineLayersState;
+  previousMessages: SessionMessageViewModel[];
+  messages: SessionMessageViewModel[];
+  replacedSnapshotSeed: boolean;
+  validationIssues: string[];
+}
+
 export class SessionRuntimeStore {
   private state: SessionRuntimeState;
+  private authoritativeMessages: SessionMessageViewModel[] = [];
+  private runtimeOverlayMessages: SessionMessageViewModel[] = [];
+  private pendingMessages: SessionMessageViewModel[] = [];
   private listeners = new Set<RuntimeListener>();
   private realtimeClient: RealtimeClient | null = null;
   private historyBootstrapFallbackTimer: number | null = null;
@@ -139,16 +209,25 @@ export class SessionRuntimeStore {
     );
     this.hasAuthoritativeBootstrapMessages = (options.bootstrapMessages?.length ?? 0) > 0;
     const seededSession = pickFreshestSessionSummary(options.initialSession ?? null, cachedSnapshot?.session ?? null);
-    const seededMessages = mergeAuthoritativeMessages(
-      cachedSnapshot?.messages ?? [],
+    const seededTimeline = applyTimelineEventToLayers(
+      createEmptyTimelineLayers(),
       this.sessionId,
-      options.bootstrapMessages ?? []
+      {
+        type: "timeline.seed",
+        source: "constructor_seed",
+        snapshotMessages: cachedSnapshot?.messages ?? [],
+        bootstrapMessages: options.bootstrapMessages ?? [],
+        replaceSnapshotSeedOnBackfill:
+          !this.hasAuthoritativeBootstrapMessages
+          && (cachedSnapshot?.messages.length ?? 0) > 0
+          && (cachedSnapshot?.messages.length ?? 0) < REALTIME_LIMIT
+          && (cachedSnapshot?.pagesLoaded ?? 0) <= 1
+      }
     );
-    this.replaceSnapshotSeedOnBackfill =
-      !this.hasAuthoritativeBootstrapMessages
-      && (cachedSnapshot?.messages.length ?? 0) > 0
-      && (cachedSnapshot?.messages.length ?? 0) < REALTIME_LIMIT
-      && (cachedSnapshot?.pagesLoaded ?? 0) <= 1;
+    this.authoritativeMessages = seededTimeline.timeline.authoritativeMessages;
+    this.runtimeOverlayMessages = seededTimeline.timeline.runtimeOverlayMessages;
+    this.pendingMessages = seededTimeline.timeline.pendingMessages;
+    this.replaceSnapshotSeedOnBackfill = seededTimeline.timeline.replaceSnapshotSeedOnBackfill;
 
     this.state = createInitialRuntimeState({
       session: seededSession,
@@ -156,7 +235,11 @@ export class SessionRuntimeStore {
       runtimeHasActiveRun: cachedSnapshot?.runtimeHasActiveRun ?? null,
       runtimeCanInterrupt: cachedSnapshot?.runtimeCanInterrupt ?? null,
       contextUsage: cachedSnapshot?.contextUsage ?? null,
-      messages: seededMessages,
+      messages: seededTimeline.messages,
+      timelineItems: buildConversationTimelineStateItems(
+        seededSession,
+        seededTimeline.messages
+      ),
       permissionRequests: cachedSnapshot?.permissionRequests ?? [],
       queuedMessages: cachedSnapshot?.queuedMessages ?? [],
       olderCursor: cachedSnapshot?.olderCursor ?? null,
@@ -182,20 +265,25 @@ export class SessionRuntimeStore {
     this.clearHistoryBootstrapFallbackTimer();
     this.clearOlderHistoryPrefetch();
     const bootstrapMessages = this.options.bootstrapMessages ?? [];
-    const mergedMessages = mergeAuthoritativeMessages(this.state.messages, this.sessionId, bootstrapMessages);
+    const bootstrapTimeline = this.applyTimelineEvent({
+      type: "history.merge",
+      source: "initialize_bootstrap",
+      messages: bootstrapMessages,
+      replaceSnapshotSeed: false
+    });
     const hasBootstrappedMessages = this.hasAuthoritativeBootstrapMessages;
 
     this.patch({
-      messages: mergedMessages,
+      messages: bootstrapTimeline.messages,
       historyState: resolveInitialHistoryState(
         this.state.session,
-        hasBootstrappedMessages ? mergedMessages.length : 0
+        hasBootstrappedMessages ? this.authoritativeMessages.length : 0
       ),
       loadingOlderMessages: false,
       olderCursor: hasBootstrappedMessages ? null : this.state.olderCursor,
       hasOlderMessages: resolveHasOlderMessages({
         session: this.state.session,
-        loadedMessageCount: mergedMessages.length,
+        loadedMessageCount: this.authoritativeMessages.length,
         olderCursor: hasBootstrappedMessages ? null : this.state.olderCursor,
         pagesLoaded: this.state.pagesLoaded,
         currentHasOlderMessages: this.state.hasOlderMessages
@@ -237,17 +325,24 @@ export class SessionRuntimeStore {
       buildSessionRuntimeSnapshotKey(this.sessionId),
       SESSION_RUNTIME_SNAPSHOT_CACHE_MAX_AGE_MS
     );
+    const reloadedTimeline = this.applyTimelineEvent({
+      type: "timeline.seed",
+      source: "reload_seed",
+      snapshotMessages: cachedSnapshot?.messages ?? [],
+      bootstrapMessages: this.options.bootstrapMessages ?? [],
+      replaceSnapshotSeedOnBackfill:
+        !this.hasAuthoritativeBootstrapMessages
+        && (cachedSnapshot?.messages.length ?? 0) > 0
+        && (cachedSnapshot?.messages.length ?? 0) < REALTIME_LIMIT
+        && (cachedSnapshot?.pagesLoaded ?? 0) <= 1
+    });
     this.state = createInitialRuntimeState({
       session: pickFreshestSessionSummary(this.options.initialSession ?? null, cachedSnapshot?.session ?? null),
       capabilities: cachedSnapshot?.capabilities ?? null,
       runtimeHasActiveRun: cachedSnapshot?.runtimeHasActiveRun ?? null,
       runtimeCanInterrupt: cachedSnapshot?.runtimeCanInterrupt ?? null,
       contextUsage: cachedSnapshot?.contextUsage ?? null,
-      messages: mergeAuthoritativeMessages(
-        cachedSnapshot?.messages ?? [],
-        this.sessionId,
-        this.options.bootstrapMessages ?? []
-      ),
+      messages: reloadedTimeline.messages,
       permissionRequests: cachedSnapshot?.permissionRequests ?? [],
       queuedMessages: cachedSnapshot?.queuedMessages ?? [],
       olderCursor: cachedSnapshot?.olderCursor ?? null,
@@ -256,11 +351,6 @@ export class SessionRuntimeStore {
       pagesLoaded: cachedSnapshot?.pagesLoaded ?? 0
     });
     this.seenWatermark = this.state.session?.lastSeenAt ?? null;
-    this.replaceSnapshotSeedOnBackfill =
-      !this.hasAuthoritativeBootstrapMessages
-      && (cachedSnapshot?.messages.length ?? 0) > 0
-      && (cachedSnapshot?.messages.length ?? 0) < REALTIME_LIMIT
-      && (cachedSnapshot?.pagesLoaded ?? 0) <= 1;
     this.emit();
     await this.initialize();
   }
@@ -280,7 +370,7 @@ export class SessionRuntimeStore {
       session: nextSession,
       hasOlderMessages: resolveHasOlderMessages({
         session: nextSession,
-        loadedMessageCount: this.state.messages.length,
+        loadedMessageCount: this.authoritativeMessages.length,
         olderCursor: this.state.olderCursor,
         pagesLoaded: this.state.pagesLoaded,
         currentHasOlderMessages: this.state.hasOlderMessages
@@ -307,11 +397,16 @@ export class SessionRuntimeStore {
       clientRequestId,
       options?.attachmentMeta ?? [],
       options?.attachments ?? [],
-      resolveNextOptimisticUserSequence(this.state.messages, this.state.session)
+      resolveNextOptimisticUserSequence(this.buildTimelineMessages("send_sequence"), this.state.session)
     );
+    const pendingTimeline = this.applyTimelineEvent({
+      type: "pending.insert",
+      source: "send_pending",
+      pending
+    });
 
     this.patch({
-      messages: insertPendingMessage(this.state.messages, pending),
+      messages: pendingTimeline.messages,
       session: withRunningState(this.state.session, "running"),
       runtimeHasActiveRun:
         shouldOptimisticallyAssumeActiveRun(this.state.session, this.state.capabilities)
@@ -331,19 +426,20 @@ export class SessionRuntimeStore {
         returnedMessageId: response.message.messageId,
         returnedProviderSessionId: response.message.providerSessionId
       });
+      this.resolvePendingMessage(response.message, clientRequestId);
 
       this.patch({
-        messages: reconcileMessage(
-          this.state.messages,
-          this.sessionId,
-          response.message,
-          clientRequestId
-        )
+        messages: this.buildTimelineMessages("send_resolved")
       });
     } catch (error) {
       this.failPendingReplyDebugTrace(clientRequestId, error);
+      const failedTimeline = this.applyTimelineEvent({
+        type: "pending.fail",
+        source: "send_failed",
+        clientRequestId
+      });
       this.patch({
-        messages: markPendingAsFailed(this.state.messages, clientRequestId),
+        messages: failedTimeline.messages,
         session: withRunningState(this.state.session, "failed"),
         runtimeHasActiveRun: false,
         runtimeCanInterrupt: false
@@ -353,21 +449,19 @@ export class SessionRuntimeStore {
   }
 
   async retryMessage(clientRequestId: string): Promise<void> {
-    const target = this.state.messages.find((item) => item.clientRequestId === clientRequestId);
+    const target = this.pendingMessages.find((item) => item.clientRequestId === clientRequestId);
 
     if (!target) {
       return;
     }
 
+    const retryTimeline = this.applyTimelineEvent({
+      type: "pending.retry",
+      source: "retry_pending",
+      clientRequestId
+    });
     this.patch({
-      messages: this.state.messages.map((item) =>
-        item.clientRequestId === clientRequestId
-          ? {
-              ...item,
-              deliveryState: "sending"
-            }
-          : item
-      ),
+      messages: retryTimeline.messages,
       runtimeHasActiveRun:
         shouldOptimisticallyAssumeActiveRun(this.state.session, this.state.capabilities)
           ? true
@@ -388,19 +482,20 @@ export class SessionRuntimeStore {
         returnedMessageId: response.message.messageId,
         returnedProviderSessionId: response.message.providerSessionId
       });
+      this.resolvePendingMessage(response.message, clientRequestId);
 
       this.patch({
-        messages: reconcileMessage(
-          this.state.messages,
-          this.sessionId,
-          response.message,
-          clientRequestId
-        )
+        messages: this.buildTimelineMessages("retry_resolved")
       });
     } catch (error) {
       this.failPendingReplyDebugTrace(clientRequestId, error);
+      const failedTimeline = this.applyTimelineEvent({
+        type: "pending.fail",
+        source: "retry_failed",
+        clientRequestId
+      });
       this.patch({
-        messages: markPendingAsFailed(this.state.messages, clientRequestId),
+        messages: failedTimeline.messages,
         session: withRunningState(this.state.session, "failed")
       });
       throw error;
@@ -567,7 +662,7 @@ export class SessionRuntimeStore {
           connectionState: "connected",
           hasOlderMessages: resolveHasOlderMessages({
             session: this.state.session,
-            loadedMessageCount: this.state.messages.length,
+            loadedMessageCount: this.authoritativeMessages.length,
             olderCursor: this.state.olderCursor,
             pagesLoaded: this.state.pagesLoaded,
             currentHasOlderMessages: this.state.hasOlderMessages
@@ -616,7 +711,7 @@ export class SessionRuntimeStore {
           cursor: event.cursor,
           olderCursor: event.olderCursor ?? null,
           incomingMessages: summarizeOrderDebugMessages(event.messages),
-          currentMessages: summarizeOrderDebugMessages(this.state.messages)
+          currentMessages: summarizeOrderDebugMessages(this.buildTimelineMessages("envelope_before"))
         });
         const { messages: merged, replacedSnapshotSeed } = this.mergeHistoryMessages(
           event.messages,
@@ -646,7 +741,7 @@ export class SessionRuntimeStore {
                 )
               : resolveHasOlderMessages({
                   session: this.state.session,
-                  loadedMessageCount: merged.length,
+                  loadedMessageCount: this.authoritativeMessages.length,
                   olderCursor: this.state.olderCursor,
                   pagesLoaded: this.state.pagesLoaded,
                   currentHasOlderMessages: this.state.hasOlderMessages
@@ -656,7 +751,7 @@ export class SessionRuntimeStore {
               ? (
                   !replacedSnapshotSeed && this.state.pagesLoaded > 1
                     ? this.state.pagesLoaded
-                    : Math.max(this.state.pagesLoaded, merged.length > 0 ? 1 : 0)
+                    : Math.max(this.state.pagesLoaded, this.authoritativeMessages.length > 0 ? 1 : 0)
                 )
               : this.state.pagesLoaded,
           session: withRunningState(
@@ -729,6 +824,23 @@ export class SessionRuntimeStore {
       };
     }
 
+    if (
+      Object.prototype.hasOwnProperty.call(nextInput, "session")
+      || Object.prototype.hasOwnProperty.call(nextInput, "messages")
+    ) {
+      nextInput = {
+        ...nextInput,
+        timelineItems: buildConversationTimelineStateItems(
+          (Object.prototype.hasOwnProperty.call(nextInput, "session")
+            ? nextInput.session
+            : this.state.session) ?? null,
+          (Object.prototype.hasOwnProperty.call(nextInput, "messages")
+            ? nextInput.messages
+            : this.state.messages) ?? []
+        )
+      };
+    }
+
     this.state = {
       ...this.state,
       ...nextInput
@@ -739,6 +851,7 @@ export class SessionRuntimeStore {
       || Object.prototype.hasOwnProperty.call(nextInput, "capabilities")
       || Object.prototype.hasOwnProperty.call(nextInput, "contextUsage")
       || Object.prototype.hasOwnProperty.call(nextInput, "messages")
+      || Object.prototype.hasOwnProperty.call(nextInput, "timelineItems")
       || Object.prototype.hasOwnProperty.call(nextInput, "permissionRequests")
       || Object.prototype.hasOwnProperty.call(nextInput, "queuedMessages")
     ) {
@@ -748,43 +861,112 @@ export class SessionRuntimeStore {
     this.emit();
   }
 
+  private applyTimelineEvent(event: TimelineEvent): TimelineEventResult {
+    const result = applyTimelineEventToLayers(
+      {
+        authoritativeMessages: this.authoritativeMessages,
+        runtimeOverlayMessages: this.runtimeOverlayMessages,
+        pendingMessages: this.pendingMessages,
+        replaceSnapshotSeedOnBackfill: this.replaceSnapshotSeedOnBackfill
+      },
+      this.sessionId,
+      event
+    );
+
+    this.authoritativeMessages = result.timeline.authoritativeMessages;
+    this.runtimeOverlayMessages = result.timeline.runtimeOverlayMessages;
+    this.pendingMessages = result.timeline.pendingMessages;
+    this.replaceSnapshotSeedOnBackfill = result.timeline.replaceSnapshotSeedOnBackfill;
+
+    logOpenCodeOrderDebug("timeline.event.applied", {
+      sessionId: this.sessionId,
+      eventType: event.type,
+      source: event.source,
+      replacedSnapshotSeed: result.replacedSnapshotSeed,
+      authoritativeCount: this.authoritativeMessages.length,
+      runtimeOverlayCount: this.runtimeOverlayMessages.length,
+      pendingCount: this.pendingMessages.length,
+      previousTail: summarizeOrderDebugMessages(result.previousMessages.slice(-4)),
+      nextTail: summarizeOrderDebugMessages(result.messages.slice(-4))
+    });
+
+    if (result.validationIssues.length > 0) {
+      logOpenCodeOrderDebug("timeline.event.invalid", {
+        sessionId: this.sessionId,
+        eventType: event.type,
+        source: event.source,
+        issues: result.validationIssues,
+        previousMessages: summarizeOrderDebugMessages(result.previousMessages),
+        nextMessages: summarizeOrderDebugMessages(result.messages)
+      });
+    }
+
+    return result;
+  }
+
   private mergeHistoryMessages(
     incoming: HistoryMessageDto[],
     replaceSnapshotSeed: boolean,
     source: string
   ): { messages: SessionMessageViewModel[]; replacedSnapshotSeed: boolean } {
-    // 首屏 backfill 可能比本地快照更旧，例如 provider 日志尚未落盘。
-    // 这种情况下只能合并，不能把已经看到的最新尾消息删掉。
-    const replacedSnapshotSeed =
+    const result = this.applyTimelineEvent({
+      type: "history.merge",
+      source,
+      messages: incoming,
       replaceSnapshotSeed
-      && this.replaceSnapshotSeedOnBackfill
-      && shouldReplaceSnapshotSeedWithIncoming(this.state.messages, incoming);
-    const baseMessages =
-      replacedSnapshotSeed
-        ? this.state.messages.filter((message) => message.deliveryState !== "sent")
-        : this.state.messages;
-    const merged = mergeAuthoritativeMessages(baseMessages, this.sessionId, incoming);
+    });
 
     this.logCodexMergeDebug(
       source,
-      this.state.messages,
+      result.previousMessages,
       incoming,
-      merged,
+      result.messages,
       {
         replacedSnapshotSeedAttempted: replaceSnapshotSeed,
-        replacedSnapshotSeed,
-        baseMessageCount: baseMessages.length
+        replacedSnapshotSeed: result.replacedSnapshotSeed,
+        baseMessageCount:
+          result.replacedSnapshotSeed ? 0 : result.previousMessages.length
       }
     );
 
-    if (replacedSnapshotSeed) {
-      this.replaceSnapshotSeedOnBackfill = false;
-    }
-
     return {
-      messages: merged,
-      replacedSnapshotSeed
+      messages: result.messages,
+      replacedSnapshotSeed: result.replacedSnapshotSeed
     };
+  }
+
+  private buildTimelineMessages(reason: string): SessionMessageViewModel[] {
+    const merged = deriveTimelineMessages(
+      {
+        authoritativeMessages: this.authoritativeMessages,
+        runtimeOverlayMessages: this.runtimeOverlayMessages,
+        pendingMessages: this.pendingMessages,
+        replaceSnapshotSeedOnBackfill: this.replaceSnapshotSeedOnBackfill
+      }
+    );
+
+    logOpenCodeOrderDebug("timeline.derived", {
+      sessionId: this.sessionId,
+      reason,
+      authoritativeCount: this.authoritativeMessages.length,
+      runtimeOverlayCount: this.runtimeOverlayMessages.length,
+      pendingCount: this.pendingMessages.length,
+      mergedMessages: summarizeOrderDebugMessages(merged)
+    });
+
+    return merged;
+  }
+
+  private resolvePendingMessage(
+    message: HistoryMessageDto,
+    clientRequestId: string
+  ): void {
+    this.applyTimelineEvent({
+      type: "pending.resolve",
+      source: "pending_resolved",
+      clientRequestId,
+      message
+    });
   }
 
   private handleError(error: unknown): void {
@@ -900,7 +1082,7 @@ export class SessionRuntimeStore {
       // WebSocket 首包偶发丢失时，主动拉一页最新历史兜底，避免首次点开会话看到旧快照。
       const fallbackLimit = Math.min(
         SNAPSHOT_HISTORY_LIMIT,
-        Math.max(REALTIME_LIMIT, this.state.messages.length, INITIAL_HISTORY_LIMIT)
+        Math.max(REALTIME_LIMIT, this.authoritativeMessages.length, INITIAL_HISTORY_LIMIT)
       );
       const page = await getSessionMessages(
         this.sessionId,
@@ -932,7 +1114,7 @@ export class SessionRuntimeStore {
             ? this.state.hasOlderMessages
             : resolveHasOlderMessages({
                 session: this.state.session,
-                loadedMessageCount: merged.length,
+                loadedMessageCount: this.authoritativeMessages.length,
                 olderCursor: page.nextCursor,
                 pagesLoaded: this.state.pagesLoaded,
                 currentHasOlderMessages: this.state.hasOlderMessages
@@ -942,7 +1124,7 @@ export class SessionRuntimeStore {
           !replacedSnapshotSeed && this.state.pagesLoaded > 1
             ? this.state.pagesLoaded
             : (
-                merged.length > 0
+                this.authoritativeMessages.length > 0
                   ? Math.max(this.state.pagesLoaded, 1)
                   : this.state.pagesLoaded
               ),
@@ -1453,13 +1635,19 @@ export class SessionRuntimeStore {
     if (event.message.role === "assistant") {
       this.completePendingReplyDebugTrace(event);
     }
+    const previousMessages = this.buildTimelineMessages("runtime_before");
     logOpenCodeOrderDebug("runtime_message.received", {
       sessionId: this.sessionId,
       source: event.source,
       message: summarizeOrderDebugMessage(event.message),
-      currentMessages: summarizeOrderDebugMessages(this.state.messages)
+      currentMessages: summarizeOrderDebugMessages(previousMessages)
     });
-    const merged = mergeAuthoritativeMessages(this.state.messages, this.sessionId, [event.message]);
+    const mergedResult = this.applyTimelineEvent({
+      type: "runtime.message",
+      source: event.source,
+      message: toViewMessage(this.sessionId, event.message)
+    });
+    const merged = mergedResult.messages;
     logOpenCodeOrderDebug("runtime_message.merged", {
       sessionId: this.sessionId,
       source: event.source,
@@ -1468,7 +1656,7 @@ export class SessionRuntimeStore {
 
     this.logCodexMergeDebug(
       "runtime_message",
-      this.state.messages,
+      previousMessages,
       [event.message],
       merged,
       {
@@ -1481,7 +1669,7 @@ export class SessionRuntimeStore {
       historyState: "ready",
       hasOlderMessages: resolveHasOlderMessages({
         session: this.state.session,
-        loadedMessageCount: merged.length,
+        loadedMessageCount: this.authoritativeMessages.length,
         olderCursor: this.state.olderCursor,
         pagesLoaded: this.state.pagesLoaded,
         currentHasOlderMessages: this.state.hasOlderMessages
@@ -1617,7 +1805,11 @@ export class SessionRuntimeStore {
       runtimeHasActiveRun: this.state.runtimeHasActiveRun,
       runtimeCanInterrupt: this.state.runtimeCanInterrupt,
       contextUsage: this.state.contextUsage,
-      messages: buildSnapshotMessages(this.state.messages),
+      messages: buildSnapshotMessages(this.authoritativeMessages),
+      timelineItems: buildConversationTimelineStateItems(
+        this.state.session,
+        buildSnapshotMessages(this.authoritativeMessages)
+      ),
       permissionRequests: this.state.permissionRequests,
       queuedMessages: this.state.queuedMessages,
       olderCursor: this.state.olderCursor,
@@ -1766,6 +1958,974 @@ export class SessionRuntimeStore {
   }
 }
 
+function createEmptyTimelineLayers(): TimelineLayersState {
+  return {
+    authoritativeMessages: [],
+    runtimeOverlayMessages: [],
+    pendingMessages: [],
+    replaceSnapshotSeedOnBackfill: false
+  };
+}
+
+function mergeAuthoritativeWithRuntimeOverlay(
+  authoritative: SessionMessageViewModel[],
+  runtimeOverlay: SessionMessageViewModel[]
+): SessionMessageViewModel[] {
+  const nextById = new Map<string, SessionMessageViewModel>();
+  const authoritativeMessageIds = new Set<string>();
+
+  for (const item of authoritative) {
+    nextById.set(item.id, item);
+    authoritativeMessageIds.add(item.id);
+  }
+
+  for (const message of runtimeOverlay) {
+    const currentMessage = nextById.get(message.id) ?? null;
+
+    if (currentMessage) {
+      logSessionMessageDedupDebug("session.messages.runtime_overlay_authoritative_bridge", {
+        mode: "same_id",
+        previous: summarizeTimelineBridgeMessageForDebug(currentMessage),
+        overlay: summarizeTimelineBridgeMessageForDebug(message)
+      });
+      nextById.set(message.id, mergeTimelineBridgePreservingIdentity(currentMessage, message));
+      continue;
+    }
+
+    const equivalentCodexMessageId = findMatchingTimelineEquivalentCodexMessageId(
+      nextById,
+      authoritativeMessageIds,
+      message
+    );
+
+    if (equivalentCodexMessageId) {
+      const equivalentCodexMessage = nextById.get(equivalentCodexMessageId) ?? null;
+
+      if (equivalentCodexMessage) {
+        logSessionMessageDedupDebug("session.messages.runtime_overlay_authoritative_bridge", {
+          mode: "codex_compat",
+          previous: summarizeTimelineBridgeMessageForDebug(equivalentCodexMessage),
+          overlay: summarizeTimelineBridgeMessageForDebug(message)
+        });
+        nextById.set(
+          equivalentCodexMessageId,
+          mergeTimelineBridgePreservingIdentity(equivalentCodexMessage, message)
+        );
+        continue;
+      }
+    }
+
+    const equivalentOpenCodeMessageId = findMatchingTimelineEquivalentOpenCodeMessageId(
+      nextById,
+      message
+    );
+
+    if (
+      equivalentOpenCodeMessageId
+      && authoritativeMessageIds.has(equivalentOpenCodeMessageId)
+    ) {
+      const equivalentOpenCodeMessage = nextById.get(equivalentOpenCodeMessageId) ?? null;
+
+      if (equivalentOpenCodeMessage) {
+        logSessionMessageDedupDebug("session.messages.runtime_overlay_authoritative_bridge", {
+          mode: "opencode_compat",
+          previous: summarizeTimelineBridgeMessageForDebug(equivalentOpenCodeMessage),
+          overlay: summarizeTimelineBridgeMessageForDebug(message)
+        });
+        if (isTimelineEquivalentOpenCodeToolMessage(equivalentOpenCodeMessage, message)) {
+          nextById.set(
+            equivalentOpenCodeMessageId,
+            mergeTimelineEquivalentAuthoritativeVersion(equivalentOpenCodeMessage, message)
+          );
+          continue;
+        }
+
+        nextById.set(
+          equivalentOpenCodeMessageId,
+          mergeTimelineEquivalentAuthoritativeVersion(equivalentOpenCodeMessage, message)
+        );
+        continue;
+      }
+    }
+
+    logSessionMessageDedupDebug("session.messages.runtime_overlay_authoritative_bridge", {
+      mode: "insert",
+      overlay: summarizeTimelineBridgeMessageForDebug(message)
+    });
+    nextById.set(message.id, message);
+  }
+
+  return sortTimelineBridgeMessagesByOrder(Array.from(nextById.values()));
+}
+
+function mergeTimelineBridgePreservingIdentity(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): SessionMessageViewModel {
+  const merged = mergeTimelineBridgeAuthoritativeVersion(current, {
+    ...incoming,
+    id: current.id,
+    clientRequestId: current.clientRequestId ?? incoming.clientRequestId
+  });
+
+  return {
+    ...merged,
+    id: current.id,
+    rawRef: current.rawRef,
+    timestamp: current.timestamp,
+    sequence: current.sequence,
+    clientRequestId: current.clientRequestId ?? incoming.clientRequestId
+  };
+}
+
+function mergeTimelineBridgeAuthoritativeVersion(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): SessionMessageViewModel {
+  if (current.id !== incoming.id) {
+    return incoming;
+  }
+
+  if (current.role !== incoming.role || current.kind !== incoming.kind) {
+    return pickTimelineBridgeNewerAuthoritativeMessage(current, incoming);
+  }
+
+  const mergedToolCall = mergeTimelineBridgeToolCall(current.toolCall, incoming.toolCall);
+  const content = pickTimelineBridgePreferredContent(
+    current.content,
+    incoming.content,
+    current.timestamp,
+    incoming.timestamp
+  );
+  const attachments = pickTimelineBridgePreferredAttachments(
+    current.attachments,
+    incoming.attachments
+  );
+  const stableAnchor = pickTimelineBridgeStableAuthoritativeMessage(current, incoming);
+
+  return {
+    ...pickTimelineBridgeNewerAuthoritativeMessage(current, incoming),
+    content,
+    toolCall: mergedToolCall,
+    attachments,
+    attachmentPayloads: current.attachmentPayloads ?? incoming.attachmentPayloads ?? null,
+    rawRef: stableAnchor.rawRef,
+    timestamp: stableAnchor.timestamp,
+    sequence: stableAnchor.sequence
+  };
+}
+
+function mergeTimelineEquivalentAuthoritativeVersion(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): SessionMessageViewModel {
+  if (isTimelineEquivalentOpenCodeToolMessage(current, incoming)) {
+    const mergedToolCall = mergeTimelineBridgeToolCall(current.toolCall, incoming.toolCall);
+    const content = pickTimelineBridgePreferredContent(
+      current.content,
+      incoming.content,
+      current.timestamp,
+      incoming.timestamp
+    );
+    const attachments = pickTimelineBridgePreferredAttachments(
+      current.attachments,
+      incoming.attachments
+    );
+    const stableAnchor = pickTimelineBridgeStableAuthoritativeMessage(current, incoming);
+    const preferred = pickTimelineBridgeNewerAuthoritativeMessage(current, incoming);
+
+    return {
+      ...preferred,
+      id: current.id,
+      kind: mergedToolCall?.status === "running" ? "tool_call" : "tool_result",
+      content,
+      toolCall: mergedToolCall,
+      attachments,
+      attachmentPayloads: current.attachmentPayloads ?? incoming.attachmentPayloads ?? null,
+      rawRef: stableAnchor.rawRef,
+      timestamp: stableAnchor.timestamp,
+      sequence: stableAnchor.sequence,
+      clientRequestId: current.clientRequestId ?? incoming.clientRequestId
+    };
+  }
+
+  if (current.role !== incoming.role || current.kind !== incoming.kind) {
+    const preferred = pickTimelineBridgeNewerAuthoritativeMessage(current, incoming);
+    return {
+      ...preferred,
+      id: current.id,
+      clientRequestId: current.clientRequestId ?? incoming.clientRequestId
+    };
+  }
+
+  const mergedToolCall = mergeTimelineBridgeToolCall(current.toolCall, incoming.toolCall);
+  const content = pickTimelineBridgePreferredContent(
+    current.content,
+    incoming.content,
+    current.timestamp,
+    incoming.timestamp
+  );
+  const attachments = pickTimelineBridgePreferredAttachments(
+    current.attachments,
+    incoming.attachments
+  );
+  const stableAnchor = pickTimelineBridgeStableAuthoritativeMessage(current, incoming);
+
+  return {
+    ...pickTimelineBridgeNewerAuthoritativeMessage(current, incoming),
+    id: current.id,
+    content,
+    toolCall: mergedToolCall,
+    attachments,
+    attachmentPayloads: current.attachmentPayloads ?? incoming.attachmentPayloads ?? null,
+    rawRef: stableAnchor.rawRef,
+    timestamp: stableAnchor.timestamp,
+    sequence: stableAnchor.sequence,
+    clientRequestId: current.clientRequestId ?? incoming.clientRequestId
+  };
+}
+
+function findMatchingTimelineEquivalentCodexMessageId(
+  messagesById: Map<string, SessionMessageViewModel>,
+  candidateMessageIds: Set<string>,
+  incoming: SessionMessageViewModel
+): string | null {
+  if (!isTimelineCodexAuthoritativeMessage(incoming)) {
+    return null;
+  }
+
+  for (const [messageId, current] of messagesById.entries()) {
+    if (
+      messageId === incoming.id
+      || !candidateMessageIds.has(messageId)
+      || !isCompatibleTimelineCodexIdentityBridgeMessage(current, incoming)
+    ) {
+      continue;
+    }
+
+    logSessionMessageDedupDebug("session.messages.codex_identity_bridge_match", {
+      previous: summarizeTimelineBridgeMessageForDebug(current),
+      incoming: summarizeTimelineBridgeMessageForDebug(incoming)
+    });
+    return messageId;
+  }
+
+  return null;
+}
+
+function isCompatibleTimelineCodexIdentityBridgeMessage(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): boolean {
+  if (!isTimelineEquivalentCodexAuthoritativeMessage(current, incoming)) {
+    return false;
+  }
+
+  if (current.rawRef === incoming.rawRef) {
+    return true;
+  }
+
+  if (current.kind === "tool_call" || current.kind === "tool_result") {
+    return isTimelineEquivalentCodexToolMessage(current, incoming);
+  }
+
+  const currentStore = extractTimelineCodexRawRefStore(current.rawRef);
+  const incomingStore = extractTimelineCodexRawRefStore(incoming.rawRef);
+
+  if (!currentStore || !incomingStore || currentStore !== incomingStore) {
+    return false;
+  }
+
+  const sequenceDistance = Math.abs(current.sequence - incoming.sequence);
+
+  if (sequenceDistance > 1) {
+    logSessionMessageDedupDebug("session.messages.codex_identity_bridge_rejected", {
+      reason: "sequence_distance",
+      sequenceDistance,
+      previous: summarizeTimelineBridgeMessageForDebug(current),
+      incoming: summarizeTimelineBridgeMessageForDebug(incoming)
+    });
+    return false;
+  }
+
+  return true;
+}
+
+function findMatchingTimelineEquivalentOpenCodeMessageId(
+  messagesById: Map<string, SessionMessageViewModel>,
+  incoming: SessionMessageViewModel
+): string | null {
+  if (!isTimelineOpenCodeAuthoritativeMessage(incoming)) {
+    return null;
+  }
+
+  const incomingIdentity = extractTimelineEquivalentOpenCodeRawRefIdentity(incoming.rawRef);
+
+  if (incomingIdentity === null) {
+    return null;
+  }
+
+  const incomingTimestampMs = toTimelineBridgeTimestampMs(incoming.timestamp);
+  let matchedId: string | null = null;
+  let matchedScore = Number.POSITIVE_INFINITY;
+
+  for (const [messageId, current] of messagesById.entries()) {
+    if (
+      messageId === incoming.id
+      || !isTimelineOpenCodeAuthoritativeMessage(current)
+      || current.role !== incoming.role
+    ) {
+      continue;
+    }
+
+    if (isTimelineEquivalentOpenCodeToolMessage(current, incoming)) {
+      return messageId;
+    }
+
+    if (current.kind !== incoming.kind) {
+      continue;
+    }
+
+    const currentIdentity = extractTimelineEquivalentOpenCodeRawRefIdentity(current.rawRef);
+
+    if (currentIdentity !== incomingIdentity) {
+      continue;
+    }
+
+    const currentTimestampMs = toTimelineBridgeTimestampMs(current.timestamp);
+    const timestampDistance = Math.abs(currentTimestampMs - incomingTimestampMs);
+    const sequenceDistance = Math.abs(current.sequence - incoming.sequence);
+    const score = sequenceDistance * 60_000 + timestampDistance;
+
+    if (score < matchedScore) {
+      matchedId = messageId;
+      matchedScore = score;
+    }
+  }
+
+  return matchedId;
+}
+
+function mergeTimelineBridgeToolCall(
+  current: SessionMessageViewModel["toolCall"],
+  incoming: SessionMessageViewModel["toolCall"]
+): SessionMessageViewModel["toolCall"] {
+  if (!current) {
+    return incoming;
+  }
+
+  if (!incoming) {
+    return current;
+  }
+
+  const preferred = pickTimelineBridgeHigherPriorityToolCall(current, incoming);
+
+  return {
+    ...preferred,
+    input: pickTimelineBridgeLongerText(current.input, incoming.input),
+    output: pickTimelineBridgeLongerNullableText(current.output, incoming.output),
+    error: pickTimelineBridgeLongerNullableText(current.error, incoming.error)
+  };
+}
+
+function pickTimelineBridgeHigherPriorityToolCall(
+  current: NonNullable<SessionMessageViewModel["toolCall"]>,
+  incoming: NonNullable<SessionMessageViewModel["toolCall"]>
+): NonNullable<SessionMessageViewModel["toolCall"]> {
+  const currentPriority = current.status === "running" ? 0 : 1;
+  const incomingPriority = incoming.status === "running" ? 0 : 1;
+
+  if (incomingPriority !== currentPriority) {
+    return incomingPriority > currentPriority ? incoming : current;
+  }
+
+  return incoming;
+}
+
+function pickTimelineBridgePreferredContent(
+  current: string,
+  incoming: string,
+  currentTimestamp: string,
+  incomingTimestamp: string
+): string {
+  const normalizedCurrent = normalizeTimelineComparableCodexText(current);
+  const normalizedIncoming = normalizeTimelineComparableCodexText(incoming);
+
+  if (normalizedCurrent === normalizedIncoming) {
+    return current.length >= incoming.length ? current : incoming;
+  }
+
+  if (
+    normalizedCurrent.length > normalizedIncoming.length
+    && normalizedCurrent.includes(normalizedIncoming)
+  ) {
+    return current;
+  }
+
+  if (
+    normalizedIncoming.length > normalizedCurrent.length
+    && normalizedIncoming.includes(normalizedCurrent)
+  ) {
+    return incoming;
+  }
+
+  return incomingTimestamp.localeCompare(currentTimestamp) >= 0 ? incoming : current;
+}
+
+function pickTimelineBridgePreferredAttachments(
+  current: SessionMessageViewModel["attachments"],
+  incoming: SessionMessageViewModel["attachments"]
+): SessionMessageViewModel["attachments"] {
+  const currentCount = current?.length ?? 0;
+  const incomingCount = incoming?.length ?? 0;
+
+  if (incomingCount !== currentCount) {
+    return incomingCount > currentCount ? incoming : current;
+  }
+
+  return incoming ?? current;
+}
+
+function pickTimelineBridgeLongerText(current: string, incoming: string): string {
+  return incoming.length > current.length ? incoming : current;
+}
+
+function pickTimelineBridgeLongerNullableText(
+  current: string | null,
+  incoming: string | null
+): string | null {
+  if (current === null) {
+    return incoming;
+  }
+
+  if (incoming === null) {
+    return current;
+  }
+
+  return pickTimelineBridgeLongerText(current, incoming);
+}
+
+function pickTimelineBridgeNewerAuthoritativeMessage(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): SessionMessageViewModel {
+  if (incoming.timestamp !== current.timestamp) {
+    return incoming.timestamp.localeCompare(current.timestamp) >= 0 ? incoming : current;
+  }
+
+  if (incoming.sequence !== current.sequence) {
+    return incoming.sequence >= current.sequence ? incoming : current;
+  }
+
+  return incoming;
+}
+
+function pickTimelineBridgeStableAuthoritativeMessage(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): Pick<SessionMessageViewModel, "timestamp" | "sequence" | "rawRef"> {
+  return compareViewMessageOrder(current, incoming) <= 0 ? current : incoming;
+}
+
+function normalizeTimelineComparableCodexText(content: string): string {
+  return content
+    .replace(TIMELINE_INTERNAL_ATTACHMENT_DEBUG_BLOCK_PATTERN, "")
+    .replace(/\r\n/g, "\n")
+    .trimEnd();
+}
+
+function sortTimelineBridgeMessagesByOrder(
+  messages: SessionMessageViewModel[]
+): SessionMessageViewModel[] {
+  return [...messages].sort((left, right) => compareViewMessageOrder(left, right));
+}
+
+function isTimelineCodexAuthoritativeMessage(message: SessionMessageViewModel): boolean {
+  return (
+    message.deliveryState === "sent"
+    && message.rawRef.startsWith("codex://")
+    && (message.role === "assistant" || message.role === "tool")
+  );
+}
+
+function isTimelineOpenCodeAuthoritativeMessage(message: SessionMessageViewModel): boolean {
+  return (
+    message.deliveryState === "sent"
+    && message.rawRef.startsWith("opencode://")
+    && !(message.rawRef.startsWith("pending://") || message.rawRef.startsWith("synthetic://") || message.rawRef.includes("#synthetic"))
+    && (message.role === "user" || message.role === "assistant" || message.role === "tool")
+  );
+}
+
+function isTimelineOpenCodeToolMessage(message: SessionMessageViewModel): boolean {
+  return (
+    message.deliveryState === "sent"
+    && message.rawRef.startsWith("opencode://")
+    && message.role === "tool"
+    && (message.kind === "tool_call" || message.kind === "tool_result")
+    && message.toolCall !== null
+  );
+}
+
+function isTimelineEquivalentOpenCodeToolMessage(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): boolean {
+  if (!isTimelineOpenCodeToolMessage(current) || !isTimelineOpenCodeToolMessage(incoming)) {
+    return false;
+  }
+
+  const currentCallId = current.toolCall?.callId.trim() ?? "";
+  const incomingCallId = incoming.toolCall?.callId.trim() ?? "";
+
+  if (currentCallId && incomingCallId) {
+    return currentCallId === incomingCallId;
+  }
+
+  return extractTimelineEquivalentOpenCodeRawRefIdentity(current.rawRef)
+    === extractTimelineEquivalentOpenCodeRawRefIdentity(incoming.rawRef);
+}
+
+function extractTimelineEquivalentOpenCodeRawRefIdentity(rawRef: string): string | null {
+  if (!rawRef.startsWith("opencode://")) {
+    return null;
+  }
+
+  const hashIndex = rawRef.indexOf("#");
+  const hashSuffix = hashIndex >= 0 ? rawRef.slice(hashIndex) : "";
+  const withoutHash = hashIndex >= 0 ? rawRef.slice(0, hashIndex) : rawRef;
+  const queryIndex = withoutHash.indexOf("?");
+
+  if (queryIndex < 0) {
+    return rawRef;
+  }
+
+  const base = withoutHash.slice(0, queryIndex);
+  const params = new URLSearchParams(withoutHash.slice(queryIndex + 1));
+
+  if (!params.has("part")) {
+    return rawRef;
+  }
+
+  params.delete("part");
+  const nextQuery = params.toString();
+
+  return `${base}${nextQuery ? `?${nextQuery}` : ""}${hashSuffix}`;
+}
+
+function isTimelineEquivalentCodexAuthoritativeMessage(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): boolean {
+  if (!isTimelineCodexAuthoritativeMessage(current) || !isTimelineCodexAuthoritativeMessage(incoming)) {
+    return false;
+  }
+
+  if (current.role !== incoming.role || current.kind !== incoming.kind) {
+    return false;
+  }
+
+  if (
+    Math.abs(current.sequence - incoming.sequence) > TIMELINE_CODEX_EQUIVALENT_AUTHORITATIVE_SEQUENCE_WINDOW
+    || !areTimelineTimestampsNearWithinWindow(
+      current.timestamp,
+      incoming.timestamp,
+      TIMELINE_CODEX_EQUIVALENT_AUTHORITATIVE_WINDOW_MS
+    )
+  ) {
+    return false;
+  }
+
+  if (incoming.kind === "text" || incoming.kind === "thinking") {
+    return isTimelineEquivalentCodexTextMessageWithinWindow(
+      current,
+      incoming,
+      TIMELINE_CODEX_EQUIVALENT_AUTHORITATIVE_WINDOW_MS
+    );
+  }
+
+  if (incoming.kind === "tool_call" || incoming.kind === "tool_result") {
+    return isTimelineEquivalentCodexToolMessage(current, incoming);
+  }
+
+  return false;
+}
+
+function isTimelineEquivalentCodexTextMessageWithinWindow(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel,
+  windowMs: number
+): boolean {
+  if (
+    left.deliveryState !== "sent"
+    || right.deliveryState !== "sent"
+    || !left.rawRef.startsWith("codex://")
+    || !right.rawRef.startsWith("codex://")
+    || left.role !== right.role
+    || left.kind !== right.kind
+    || left.toolCall !== null
+    || right.toolCall !== null
+  ) {
+    return false;
+  }
+
+  if (left.kind !== "text" && left.kind !== "thinking") {
+    return false;
+  }
+
+  const leftContent = parseMessageRichContent(left.content);
+  const rightContent = parseMessageRichContent(right.content);
+
+  return (
+    areTimelineTimestampsNearWithinWindow(left.timestamp, right.timestamp, windowMs)
+    && normalizeTimelineComparableCodexText(leftContent.text)
+      === normalizeTimelineComparableCodexText(rightContent.text)
+    && areTimelineEquivalentInlineImages(leftContent.inlineImages, rightContent.inlineImages)
+  );
+}
+
+function isTimelineEquivalentCodexToolMessage(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel
+): boolean {
+  if (
+    left.deliveryState !== "sent"
+    || right.deliveryState !== "sent"
+    || !left.rawRef.startsWith("codex://")
+    || !right.rawRef.startsWith("codex://")
+    || left.role !== "tool"
+    || right.role !== "tool"
+    || left.kind !== right.kind
+    || left.toolCall === null
+    || right.toolCall === null
+  ) {
+    return false;
+  }
+
+  return left.toolCall.callId === right.toolCall.callId;
+}
+
+function extractTimelineCodexRawRefStore(rawRef: string): string | null {
+  const match = rawRef.match(/^codex:\/\/(.+?)(?:#|$)/);
+  return match?.[1] ?? null;
+}
+
+function areTimelineEquivalentInlineImages(
+  left: ReturnType<typeof parseMessageRichContent>["inlineImages"],
+  right: ReturnType<typeof parseMessageRichContent>["inlineImages"]
+): boolean {
+  if (left.length === 0 || right.length === 0) {
+    return true;
+  }
+
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((item, index) => item.url === right[index]?.url);
+}
+
+function areTimelineTimestampsNearWithinWindow(
+  left: string,
+  right: string,
+  windowMs: number
+): boolean {
+  return Math.abs(toTimelineBridgeTimestampMs(left) - toTimelineBridgeTimestampMs(right)) <= windowMs;
+}
+
+function toTimelineBridgeTimestampMs(timestamp: string): number {
+  const value = Date.parse(timestamp);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function summarizeTimelineBridgeMessageForDebug(
+  message: SessionMessageViewModel
+): Record<string, unknown> {
+  return {
+    id: message.id,
+    rawRef: message.rawRef,
+    role: message.role,
+    kind: message.kind,
+    sequence: message.sequence,
+    timestamp: message.timestamp,
+    callId: message.toolCall?.callId ?? null,
+    contentPreview:
+      message.kind === "text" || message.kind === "thinking"
+        ? normalizeTimelineComparableCodexText(parseMessageRichContent(message.content).text).slice(0, 160)
+        : normalizeTimelineComparableCodexText(message.content).slice(0, 160)
+  };
+}
+
+function deriveTimelineMessages(
+  timeline: TimelineLayersState
+): SessionMessageViewModel[] {
+  let merged = mergeAuthoritativeWithRuntimeOverlay(
+    timeline.authoritativeMessages,
+    timeline.runtimeOverlayMessages
+  );
+
+  for (const pending of timeline.pendingMessages) {
+    merged = insertPendingMessage(merged, pending);
+  }
+
+  return merged;
+}
+
+export function applyTimelineEventToLayers(
+  current: TimelineLayersState,
+  sessionId: string,
+  event: TimelineEvent
+): TimelineEventResult {
+  const previousMessages = deriveTimelineMessages(current);
+  let next = current;
+  let replacedSnapshotSeed = false;
+
+  switch (event.type) {
+    case "timeline.seed": {
+      next = {
+        authoritativeMessages: mergeAuthoritativeMessages(
+          event.snapshotMessages,
+          sessionId,
+          event.bootstrapMessages
+        ),
+        runtimeOverlayMessages: [],
+        pendingMessages: [],
+        replaceSnapshotSeedOnBackfill: event.replaceSnapshotSeedOnBackfill
+      };
+      break;
+    }
+    case "history.merge": {
+      replacedSnapshotSeed =
+        event.replaceSnapshotSeed
+        && current.replaceSnapshotSeedOnBackfill
+        && shouldReplaceSnapshotSeedWithIncoming(current.authoritativeMessages, event.messages);
+      const baseMessages = replacedSnapshotSeed ? [] : current.authoritativeMessages;
+      next = {
+        ...current,
+        authoritativeMessages: mergeAuthoritativeMessages(baseMessages, sessionId, event.messages),
+        replaceSnapshotSeedOnBackfill:
+          replacedSnapshotSeed ? false : current.replaceSnapshotSeedOnBackfill
+      };
+      break;
+    }
+    case "runtime.message": {
+      next = {
+        ...current,
+        runtimeOverlayMessages: mergeRuntimeOverlayMessages(current.runtimeOverlayMessages, [event.message])
+      };
+      break;
+    }
+    case "pending.insert": {
+      next = {
+        ...current,
+        pendingMessages: insertPendingMessage(current.pendingMessages, event.pending)
+      };
+      break;
+    }
+    case "pending.retry": {
+      next = {
+        ...current,
+        pendingMessages: current.pendingMessages.map((item) =>
+          item.clientRequestId === event.clientRequestId
+            ? {
+                ...item,
+                deliveryState: "sending"
+              }
+            : item
+        )
+      };
+      break;
+    }
+    case "pending.fail": {
+      next = {
+        ...current,
+        pendingMessages: markPendingAsFailed(current.pendingMessages, event.clientRequestId)
+      };
+      break;
+    }
+    case "pending.resolve": {
+      const pending =
+        current.pendingMessages.find((item) => item.clientRequestId === event.clientRequestId) ?? null;
+      let authoritativeMessages = mergeAuthoritativeMessages(
+        current.authoritativeMessages,
+        sessionId,
+        [event.message]
+      );
+
+      if (pending) {
+        authoritativeMessages = authoritativeMessages.map((item) => {
+          if (item.id !== event.message.messageId) {
+            return item;
+          }
+
+          const authoritativeAttachments = item.attachments ?? [];
+
+          return {
+            ...item,
+            attachments:
+              authoritativeAttachments.length > 0
+                ? authoritativeAttachments
+                : pending.attachments ?? [],
+            attachmentPayloads: pending.attachmentPayloads ?? item.attachmentPayloads ?? null,
+            clientRequestId: event.clientRequestId
+          };
+        });
+      }
+
+      next = {
+        ...current,
+        authoritativeMessages,
+        pendingMessages: current.pendingMessages.filter(
+          (item) => item.clientRequestId !== event.clientRequestId
+        )
+      };
+      break;
+    }
+  }
+
+  const messages = deriveTimelineMessages(next);
+
+  return {
+    timeline: next,
+    previousMessages,
+    messages,
+    replacedSnapshotSeed,
+    validationIssues: validateTimelineEventResult(current, next, event, previousMessages, messages)
+  };
+}
+
+function validateTimelineEventResult(
+  previous: TimelineLayersState,
+  next: TimelineLayersState,
+  event: TimelineEvent,
+  previousMessages: SessionMessageViewModel[],
+  nextMessages: SessionMessageViewModel[]
+): string[] {
+  const issues: string[] = [];
+  const renderedDuplicateIds = collectDuplicateKeys(nextMessages.map((message) => message.id));
+
+  if (renderedDuplicateIds.length > 0) {
+    issues.push(`rendered_duplicate_ids:${renderedDuplicateIds.join(",")}`);
+  }
+
+  const authoritativeDuplicateIds = collectDuplicateKeys(
+    next.authoritativeMessages.map((message) => message.id)
+  );
+
+  if (authoritativeDuplicateIds.length > 0) {
+    issues.push(`authoritative_duplicate_ids:${authoritativeDuplicateIds.join(",")}`);
+  }
+
+  const pendingDuplicateIds = collectDuplicateKeys(
+    next.pendingMessages
+      .map((message) => message.clientRequestId)
+      .filter((message): message is string => Boolean(message))
+  );
+
+  if (pendingDuplicateIds.length > 0) {
+    issues.push(`pending_duplicate_client_request_ids:${pendingDuplicateIds.join(",")}`);
+  }
+
+  if (!isTimelineOrdered(nextMessages)) {
+    issues.push("rendered_order_not_monotonic");
+  }
+
+  if (event.type === "pending.resolve") {
+    const unresolved = next.pendingMessages.some(
+      (message) => message.clientRequestId === event.clientRequestId
+    );
+
+    if (unresolved) {
+      issues.push(`pending_not_cleared:${event.clientRequestId}`);
+    }
+  }
+
+  if (event.type === "runtime.message" && !sameMessageIdSequence(
+    previous.authoritativeMessages,
+    next.authoritativeMessages
+  )) {
+    issues.push("runtime_message_mutated_authoritative_layer");
+  }
+
+  if (
+    event.type === "history.merge"
+    && event.source.startsWith("older_history")
+    && !didOlderHistoryPreserveTail(previous.authoritativeMessages, next.authoritativeMessages)
+  ) {
+    issues.push("older_history_rewound_authoritative_tail");
+  }
+
+  if (
+    previousMessages.length > 0
+    && nextMessages.length > 0
+    && event.type === "history.merge"
+    && event.source.startsWith("older_history")
+    && previousMessages.at(-1)?.id !== nextMessages.at(-1)?.id
+  ) {
+    issues.push("older_history_changed_rendered_tail");
+  }
+
+  return issues;
+}
+
+function collectDuplicateKeys(values: string[]): string[] {
+  const counts = new Map<string, number>();
+
+  for (const value of values) {
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+
+  return Array.from(counts.entries())
+    .filter(([, count]) => count > 1)
+    .map(([value]) => value);
+}
+
+function isTimelineOrdered(messages: SessionMessageViewModel[]): boolean {
+  for (let index = 1; index < messages.length; index += 1) {
+    if (compareViewMessageOrder(messages[index - 1], messages[index]) > 0) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function sameMessageIdSequence(
+  left: SessionMessageViewModel[],
+  right: SessionMessageViewModel[]
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index]?.id !== right[index]?.id) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function didOlderHistoryPreserveTail(
+  previous: SessionMessageViewModel[],
+  next: SessionMessageViewModel[]
+): boolean {
+  const previousTail = previous.at(-1) ?? null;
+
+  if (!previousTail) {
+    return true;
+  }
+
+  const nextTail = next.at(-1) ?? null;
+
+  if (!nextTail) {
+    return false;
+  }
+
+  return previousTail.id === nextTail.id;
+}
+
 function summarizeOrderDebugMessage(
   message: Pick<
     SessionMessageViewModel,
@@ -1843,6 +3003,19 @@ export function summarizeCapabilities(capabilities: ProviderCapabilitiesDto | nu
   }
 
   return summary;
+}
+
+function buildConversationTimelineStateItems(
+  session: SessionSummaryDto | null,
+  messages: SessionMessageViewModel[]
+): ConversationTimelineSourceItem[] {
+  return buildConversationTimelineSourceItems({
+    messages,
+    sessionRunningState: session?.runningState ?? null,
+    sessionSyncStatus: session?.syncStatus ?? null,
+    sessionLastErrorCode: session?.lastErrorCode ?? null,
+    sessionLastErrorDetail: session?.lastErrorDetail ?? null
+  });
 }
 
 export function connectionTone(state: RuntimeConnectionState) {

@@ -52,6 +52,7 @@ import {
 } from "../components/ConversationActionIcons";
 import { useWorkbenchShell } from "../components/WorkbenchLayout";
 import { isRealSubagentSession } from "../session-fork-display";
+import { buildConversationTimelineSourceItems } from "../timeline-source-items";
 import {
   resolveSessionNavigationWorkspaceId,
   resolveSessionToolWorkspaceId,
@@ -234,7 +235,7 @@ function LiveConversationPage({
     session,
     capabilities,
     messages,
-    timelineMessages,
+    timelineItems,
     permissionRequests,
     queuedMessages,
     contextUsage,
@@ -254,7 +255,6 @@ function LiveConversationPage({
     composerIsRunning,
     canSteerQueuedMessage,
     hasPendingQueuedMessages,
-    runtimeThinkingPlaceholder,
     reconnect,
     loadOlderMessages,
     retryMessage,
@@ -663,19 +663,15 @@ function LiveConversationPage({
             <div ref={timelineSelectionContainerRef} className="conversation-timeline-shell">
               <MessageTimeline
                 sessionId={sessionId}
+                sessionSummary={session ?? navigationSession ?? null}
                 workspaceId={mobileToolWorkspaceId}
                 workspacePath={currentWorkspaceEntity?.path ?? null}
-                messages={timelineMessages}
+                items={timelineItems}
                 historyState={historyState}
                 loadingOlderMessages={loadingOlderMessages}
                 hasOlderMessages={hasOlderMessages}
                 provider={session?.provider ?? null}
                 interruptedSource={runtimeInterruptSource}
-                runtimeThinkingPlaceholder={runtimeThinkingPlaceholder}
-                sessionRunningState={session?.runningState ?? null}
-                sessionSyncStatus={session?.syncStatus ?? null}
-                sessionLastErrorCode={session?.lastErrorCode ?? null}
-                sessionLastErrorDetail={session?.lastErrorDetail ?? null}
                 onLoadOlderMessages={loadOlderMessages}
                 onRetryMessage={retryMessage}
                 onSubmitStructuredQuestion={handleSubmitStructuredQuestion}
@@ -1248,18 +1244,14 @@ function DraftConversationPage({
             <div className="conversation-timeline-shell">
               <MessageTimeline
                 sessionId={draft.sessionId}
+                sessionSummary={null}
                 workspaceId={draft.workspaceId}
                 workspacePath={currentWorkspaceEntity?.path ?? null}
-                messages={draftMessages}
+                items={buildConversationTimelineSourceItems({ messages: draftMessages })}
                 historyState="ready"
                 loadingOlderMessages={false}
                 hasOlderMessages={false}
                 provider={draft.provider}
-                runtimeThinkingPlaceholder={null}
-                sessionRunningState={null}
-                sessionSyncStatus={null}
-                sessionLastErrorCode={null}
-                sessionLastErrorDetail={null}
                 onLoadOlderMessages={() => {}}
                 onRetryMessage={() => {}}
               />
