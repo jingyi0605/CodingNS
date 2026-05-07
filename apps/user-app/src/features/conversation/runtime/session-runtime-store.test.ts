@@ -151,12 +151,29 @@ function createHistoryMessage(overrides: {
   sequence: number;
   rawRef: string;
   kind?: "text" | "thinking" | "tool_call" | "tool_result";
+  attachments?: Array<{
+    id: string;
+    kind: "image";
+    fileName: string;
+    mimeType: string;
+    fileSize: number;
+  }>;
 }) {
   return {
     kind: "text" as const,
     toolCall: null,
     attachments: [],
     ...overrides
+  };
+}
+
+function createImageAttachment(fileName: string, fileSize: number) {
+  return {
+    id: `attachment-${fileName}-${fileSize}`,
+    kind: "image" as const,
+    fileName,
+    mimeType: "image/png",
+    fileSize
   };
 }
 
@@ -438,6 +455,58 @@ describe("SessionRuntimeStore", () => {
       id: "user-message-1",
       deliveryState: "sent",
       clientRequestId: "client-1"
+    });
+  });
+
+  it("单入口 reducer 会抑制带图片用户消息的 runtime echo 重复", () => {
+    const imageAttachment = createImageAttachment("screen.png", 2048);
+    const pending = createPendingMessage(
+      "session-1",
+      "请看这张图",
+      "client-image-1",
+      [imageAttachment],
+      [],
+      61
+    );
+    const inserted = applyTimelineEventToLayers(createTimelineLayersState(), "session-1", {
+      type: "pending.insert",
+      source: "send_pending",
+      pending
+    });
+    const resolved = applyTimelineEventToLayers(inserted.timeline, "session-1", {
+      type: "pending.resolve",
+      source: "pending_resolved",
+      clientRequestId: "client-image-1",
+      message: createHistoryMessage({
+        messageId: "user-image-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "user",
+        content: "请看这张图",
+        timestamp: "2026-03-24T10:00:02.000Z",
+        sequence: 61,
+        rawRef: "codex://raw#line=61",
+        attachments: [imageAttachment]
+      })
+    });
+
+    const runtimeEcho = applyTimelineEventToLayers(resolved.timeline, "session-1", {
+      type: "runtime.message",
+      source: "session.runtime_message",
+      message: {
+        ...resolved.messages[0],
+        id: "runtime-user-image-echo",
+        rawRef: "codex://raw#line=999",
+        clientRequestId: null
+      }
+    });
+
+    expect(runtimeEcho.validationIssues).toEqual([]);
+    expect(runtimeEcho.timeline.runtimeOverlayMessages).toHaveLength(0);
+    expect(runtimeEcho.messages).toHaveLength(1);
+    expect(runtimeEcho.messages[0]).toMatchObject({
+      id: "user-image-1",
+      content: "请看这张图"
     });
   });
 
