@@ -2306,6 +2306,145 @@ function findMatchingTimelineEquivalentOpenCodeMessageId(
   return matchedId;
 }
 
+function shouldSuppressTimelineRuntimeEchoUserMessage(
+  timeline: TimelineLayersState,
+  incoming: SessionMessageViewModel,
+  sessionId: string
+): boolean {
+  if (!isTimelineUserTextMessage(incoming)) {
+    return false;
+  }
+
+  const authoritativeMatch = findMatchingTimelineUserMessage(
+    timeline.authoritativeMessages,
+    incoming,
+    "authoritative",
+    sessionId
+  );
+
+  if (authoritativeMatch) {
+    logSessionMessageDedupDebug("session.messages.runtime_user_echo_suppressed", {
+      sessionId,
+      target: "authoritative",
+      matched: summarizeTimelineBridgeMessageForDebug(authoritativeMatch),
+      incoming: summarizeTimelineBridgeMessageForDebug(incoming)
+    });
+    return true;
+  }
+
+  const pendingMatch = findMatchingTimelineUserMessage(
+    timeline.pendingMessages,
+    incoming,
+    "pending",
+    sessionId
+  );
+
+  if (pendingMatch) {
+    logSessionMessageDedupDebug("session.messages.runtime_user_echo_suppressed", {
+      sessionId,
+      target: "pending",
+      matched: summarizeTimelineBridgeMessageForDebug(pendingMatch),
+      incoming: summarizeTimelineBridgeMessageForDebug(incoming)
+    });
+    return true;
+  }
+
+  return false;
+}
+
+function findMatchingTimelineUserMessage(
+  candidates: SessionMessageViewModel[],
+  incoming: SessionMessageViewModel,
+  target: "authoritative" | "pending",
+  sessionId: string
+): SessionMessageViewModel | null {
+  const incomingTimestampMs = toTimelineBridgeTimestampMs(incoming.timestamp);
+  const comparableIncomingContent = normalizeTimelineComparableCodexText(incoming.content);
+  const relaxedIncomingContent = normalizeTimelineComparableUserMergeText(incoming.content);
+  const incomingAttachmentSignature = buildTimelineComparableAttachmentSignature(incoming.attachments);
+  let matched: SessionMessageViewModel | null = null;
+  let matchedScore = Number.POSITIVE_INFINITY;
+  const debugCandidates: Array<Record<string, unknown>> = [];
+
+  for (const current of candidates) {
+    const matchesTarget =
+      target === "authoritative"
+        ? isTimelineAuthoritativeUserTextMessage(current)
+        : isTimelinePendingUserMessage(current);
+
+    if (!matchesTarget) {
+      continue;
+    }
+
+    const comparableCurrentContent = normalizeTimelineComparableCodexText(current.content);
+    const relaxedCurrentContent = normalizeTimelineComparableUserMergeText(current.content);
+    const strictTextMatches = comparableCurrentContent === comparableIncomingContent;
+    const relaxedTextMatches = relaxedCurrentContent === relaxedIncomingContent;
+
+    if (!strictTextMatches && !relaxedTextMatches) {
+      continue;
+    }
+
+    const currentTimestampMs = toTimelineBridgeTimestampMs(current.timestamp);
+    const distance = Math.abs(currentTimestampMs - incomingTimestampMs);
+
+    if (distance > 5 * 60 * 1000) {
+      continue;
+    }
+
+    const sequenceDistance = Math.abs(current.sequence - incoming.sequence);
+    const currentAttachmentSignature = buildTimelineComparableAttachmentSignature(current.attachments);
+    const attachmentCompatibility = resolveTimelineAttachmentCompatibility(
+      currentAttachmentSignature,
+      incomingAttachmentSignature
+    );
+
+    debugCandidates.push(
+      summarizeTimelineUserMatchCandidate(current, {
+        strictTextMatches,
+        relaxedTextMatches,
+        attachmentCompatibility,
+        distanceMs: distance,
+        sequenceDistance
+      })
+    );
+
+    if (
+      attachmentCompatibility === "conflict"
+      && (strictTextMatches || comparableIncomingContent.length === 0)
+    ) {
+      continue;
+    }
+
+    const score =
+      distance
+      + sequenceDistance * 15_000
+      + (strictTextMatches ? 0 : 500)
+      + resolveTimelineAttachmentPenalty(attachmentCompatibility);
+
+    if (score < matchedScore) {
+      matched = current;
+      matchedScore = score;
+    }
+  }
+
+  if (debugCandidates.length > 0) {
+    logSessionMessageDedupDebug("session.messages.runtime_user_match", {
+      sessionId,
+      target,
+      matchedId: matched?.id ?? null,
+      matchedScore: Number.isFinite(matchedScore) ? matchedScore : null,
+      incoming: summarizeTimelineUserMatchInput(incoming, {
+        relaxedContent: relaxedIncomingContent,
+        attachmentSignature: incomingAttachmentSignature
+      }),
+      candidates: debugCandidates.slice(0, 5)
+    });
+  }
+
+  return matched;
+}
+
 function mergeTimelineBridgeToolCall(
   current: SessionMessageViewModel["toolCall"],
   incoming: SessionMessageViewModel["toolCall"]
@@ -2434,6 +2573,13 @@ function normalizeTimelineComparableCodexText(content: string): string {
     .trimEnd();
 }
 
+function normalizeTimelineComparableUserMergeText(content: string): string {
+  return normalizeTimelineComparableCodexText(content)
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+}
+
 function sortTimelineBridgeMessagesByOrder(
   messages: SessionMessageViewModel[]
 ): SessionMessageViewModel[] {
@@ -2446,6 +2592,26 @@ function isTimelineCodexAuthoritativeMessage(message: SessionMessageViewModel): 
     && message.rawRef.startsWith("codex://")
     && (message.role === "assistant" || message.role === "tool")
   );
+}
+
+function isTimelineUserTextMessage(message: SessionMessageViewModel): boolean {
+  return message.role === "user" && message.kind === "text";
+}
+
+function isTimelinePendingUserMessage(message: SessionMessageViewModel): boolean {
+  return (
+    isTimelineUserTextMessage(message)
+    && message.deliveryState !== "failed"
+    && (
+      message.rawRef.startsWith("pending://")
+      || message.rawRef.startsWith("synthetic://")
+      || message.rawRef.includes("#synthetic")
+    )
+  );
+}
+
+function isTimelineAuthoritativeUserTextMessage(message: SessionMessageViewModel): boolean {
+  return isTimelineUserTextMessage(message) && !isTimelinePendingUserMessage(message);
 }
 
 function isTimelineOpenCodeAuthoritativeMessage(message: SessionMessageViewModel): boolean {
@@ -2656,6 +2822,87 @@ function summarizeTimelineBridgeMessageForDebug(
   };
 }
 
+function buildTimelineComparableAttachmentSignature(
+  attachments: SessionMessageViewModel["attachments"]
+): string {
+  return (attachments ?? [])
+    .map((attachment) =>
+      [
+        attachment.kind,
+        attachment.fileName.trim().toLowerCase(),
+        attachment.mimeType.trim().toLowerCase(),
+        String(attachment.fileSize)
+      ].join(":")
+    )
+    .sort()
+    .join("|");
+}
+
+function resolveTimelineAttachmentCompatibility(
+  currentSignature: string,
+  incomingSignature: string
+): "same" | "one_side_missing" | "conflict" {
+  if (!currentSignature && !incomingSignature) {
+    return "same";
+  }
+
+  if (!currentSignature || !incomingSignature) {
+    return "one_side_missing";
+  }
+
+  return currentSignature === incomingSignature ? "same" : "conflict";
+}
+
+function resolveTimelineAttachmentPenalty(
+  compatibility: ReturnType<typeof resolveTimelineAttachmentCompatibility>
+): number {
+  switch (compatibility) {
+    case "same":
+      return 0;
+    case "one_side_missing":
+      return 2_500;
+    case "conflict":
+    default:
+      return 120_000;
+  }
+}
+
+function summarizeTimelineUserMatchCandidate(
+  message: SessionMessageViewModel,
+  detail: {
+    strictTextMatches: boolean;
+    relaxedTextMatches: boolean;
+    attachmentCompatibility: ReturnType<typeof resolveTimelineAttachmentCompatibility>;
+    distanceMs: number;
+    sequenceDistance: number;
+  }
+): Record<string, unknown> {
+  return {
+    ...summarizeTimelineBridgeMessageForDebug(message),
+    comparableContent: normalizeTimelineComparableUserMergeText(message.content).slice(0, 160),
+    attachmentSignature: buildTimelineComparableAttachmentSignature(message.attachments),
+    strictTextMatches: detail.strictTextMatches,
+    relaxedTextMatches: detail.relaxedTextMatches,
+    attachmentCompatibility: detail.attachmentCompatibility,
+    distanceMs: detail.distanceMs,
+    sequenceDistance: detail.sequenceDistance
+  };
+}
+
+function summarizeTimelineUserMatchInput(
+  message: SessionMessageViewModel,
+  detail: {
+    relaxedContent: string;
+    attachmentSignature: string;
+  }
+): Record<string, unknown> {
+  return {
+    ...summarizeTimelineBridgeMessageForDebug(message),
+    comparableContent: detail.relaxedContent.slice(0, 160),
+    attachmentSignature: detail.attachmentSignature
+  };
+}
+
 function deriveTimelineMessages(
   timeline: TimelineLayersState
 ): SessionMessageViewModel[] {
@@ -2709,6 +2956,11 @@ export function applyTimelineEventToLayers(
       break;
     }
     case "runtime.message": {
+      if (shouldSuppressTimelineRuntimeEchoUserMessage(current, event.message, sessionId)) {
+        next = current;
+        break;
+      }
+
       next = {
         ...current,
         runtimeOverlayMessages: mergeRuntimeOverlayMessages(current.runtimeOverlayMessages, [event.message])
