@@ -2181,4 +2181,47 @@ describe("session runtime machine", () => {
     ]);
   });
 
+  it("runtime overlay 会把同一条 Codex assistant 流式消息的换 id 增量更新折叠成一条", () => {
+    const merged = mergeRuntimeOverlayMessages(
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "assistant-runtime-1",
+            provider: "codex",
+            providerSessionId: "raw-1",
+            role: "assistant",
+            content: "第一段",
+            timestamp: "2026-05-06T10:00:00.000Z",
+            sequence: 101,
+            rawRef: "codex://raw#line=101"
+          })
+        )
+      ],
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "assistant-runtime-2",
+            provider: "codex",
+            providerSessionId: "raw-1",
+            role: "assistant",
+            content: "第一段\n第二段",
+            timestamp: "2026-05-06T10:00:01.000Z",
+            sequence: 101,
+            rawRef: "codex://raw#line=102"
+          })
+        )
+      ]
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({
+      id: "assistant-runtime-1",
+      rawRef: "codex://raw#line=101",
+      sequence: 101,
+      content: "第一段\n第二段"
+    });
+  });
+
 });

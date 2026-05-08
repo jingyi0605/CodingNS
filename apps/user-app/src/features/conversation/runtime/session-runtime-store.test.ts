@@ -136,6 +136,7 @@ function createTimelineLayersState(): TimelineLayersState {
   return {
     authoritativeMessages: [],
     runtimeOverlayMessages: [],
+    activeRuntimeOverlayKeys: [],
     pendingMessages: [],
     replaceSnapshotSeedOnBackfill: false
   };
@@ -424,6 +425,199 @@ describe("SessionRuntimeStore", () => {
     );
   });
 
+  it("单入口 reducer 会把活跃的 runtime assistant 流式消息强制钉在时间线尾部", () => {
+    const seeded = applyTimelineEventToLayers(createTimelineLayersState(), "session-1", {
+      type: "history.merge",
+      source: "realtime_backfill",
+      replaceSnapshotSeed: false,
+      messages: [
+        createHistoryMessage({
+          messageId: "assistant-prev-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          content: "上一轮回复",
+          timestamp: "2026-05-05T14:34:04.730Z",
+          sequence: 120,
+          rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=220"
+        }),
+        createHistoryMessage({
+          messageId: "user-latest-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "user",
+          content: "继续回答",
+          timestamp: "2026-05-05T14:40:06.019Z",
+          sequence: 121,
+          rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=225"
+        })
+      ]
+    });
+
+    const runtime = applyTimelineEventToLayers(seeded.timeline, "session-1", {
+      type: "runtime.message",
+      source: "session.runtime_message",
+      message: {
+        ...seeded.timeline.authoritativeMessages[0],
+        id: "assistant-stream-1",
+        content: "这是当前正在流式输出的回复",
+        timestamp: "2026-05-05T14:40:05.000Z",
+        sequence: 104,
+        rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=224"
+      }
+    });
+
+    expect(runtime.validationIssues).toEqual([]);
+    expect(runtime.timeline.runtimeOverlayMessages).toHaveLength(1);
+    expect(runtime.messages.map((item) => item.id)).toEqual([
+      "assistant-prev-1",
+      "user-latest-1",
+      "assistant-stream-1"
+    ]);
+    expect(runtime.messages.at(-1)?.content).toBe("这是当前正在流式输出的回复");
+  });
+
+  it("单入口 reducer 也会把活跃的 runtime 工具调用记录钉在时间线尾部", () => {
+    const seeded = applyTimelineEventToLayers(createTimelineLayersState(), "session-1", {
+      type: "history.merge",
+      source: "realtime_backfill",
+      replaceSnapshotSeed: false,
+      messages: [
+        createHistoryMessage({
+          messageId: "assistant-prev-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          content: "上一轮回复",
+          timestamp: "2026-05-05T14:34:04.730Z",
+          sequence: 120,
+          rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=220"
+        }),
+        createHistoryMessage({
+          messageId: "user-latest-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "user",
+          content: "继续回答",
+          timestamp: "2026-05-05T14:40:06.019Z",
+          sequence: 121,
+          rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=225"
+        })
+      ]
+    });
+
+    const runtime = applyTimelineEventToLayers(seeded.timeline, "session-1", {
+      type: "runtime.message",
+      source: "session.runtime_message",
+      message: {
+        id: "tool-runtime-1",
+        sessionId: "session-1",
+        role: "tool",
+        kind: "tool_call",
+        content: "{\"command\":\"pwd\"}",
+        toolCall: {
+          callId: "tool-runtime-1",
+          name: "shell",
+          input: "{\"command\":\"pwd\"}",
+          output: null,
+          error: null,
+          status: "running"
+        },
+        attachments: [],
+        attachmentPayloads: null,
+        origin: null,
+        originRef: null,
+        timestamp: "2026-05-05T14:40:05.000Z",
+        sequence: 104,
+        rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=224",
+        deliveryState: "sent",
+        clientRequestId: null
+      }
+    });
+
+    expect(runtime.validationIssues).toEqual([]);
+    expect(runtime.timeline.runtimeOverlayMessages).toHaveLength(1);
+    expect(runtime.messages.map((item) => item.id)).toEqual([
+      "assistant-prev-1",
+      "user-latest-1",
+      "tool-runtime-1"
+    ]);
+    expect(runtime.messages.at(-1)?.role).toBe("tool");
+    expect(runtime.messages.at(-1)?.kind).toBe("tool_call");
+  });
+
+  it("权威历史追上后会清掉已吸收的 runtime assistant overlay，避免旧流式消息继续参与排序", () => {
+    const seeded = applyTimelineEventToLayers(createTimelineLayersState(), "session-1", {
+      type: "history.merge",
+      source: "realtime_backfill",
+      replaceSnapshotSeed: false,
+      messages: [
+        createHistoryMessage({
+          messageId: "assistant-prev-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          content: "上一轮回复",
+          timestamp: "2026-05-05T14:34:04.730Z",
+          sequence: 120,
+          rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=220"
+        }),
+        createHistoryMessage({
+          messageId: "user-latest-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "user",
+          content: "继续回答",
+          timestamp: "2026-05-05T14:40:06.019Z",
+          sequence: 121,
+          rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=225"
+        })
+      ]
+    });
+
+    const runtime = applyTimelineEventToLayers(seeded.timeline, "session-1", {
+      type: "runtime.message",
+      source: "session.runtime_message",
+      message: {
+        ...seeded.timeline.authoritativeMessages[0],
+        id: "assistant-stream-1",
+        content: "这是当前正在流式输出的回复",
+        timestamp: "2026-05-05T14:40:05.000Z",
+        sequence: 104,
+        rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=224"
+      }
+    });
+
+    const authoritativeCatchUp = applyTimelineEventToLayers(runtime.timeline, "session-1", {
+      type: "history.merge",
+      source: "realtime_delta",
+      replaceSnapshotSeed: false,
+      messages: [
+        createHistoryMessage({
+          messageId: "assistant-stream-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          content: "这是当前正在流式输出的回复",
+          timestamp: "2026-05-05T14:40:07.000Z",
+          sequence: 122,
+          rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=226"
+        })
+      ]
+    });
+
+    expect(authoritativeCatchUp.validationIssues).toEqual([]);
+    expect(authoritativeCatchUp.timeline.runtimeOverlayMessages).toHaveLength(0);
+    expect(authoritativeCatchUp.messages.map((item) => item.id)).toEqual([
+      "assistant-prev-1",
+      "user-latest-1",
+      "assistant-stream-1"
+    ]);
+    expect(authoritativeCatchUp.messages.at(-1)?.rawRef).toBe(
+      "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=226"
+    );
+  });
+
   it("单入口 reducer 在 pending resolve 后只保留权威消息", () => {
     const pending = createPendingMessage("session-1", "继续", "client-1", [], [], 61);
     const inserted = applyTimelineEventToLayers(createTimelineLayersState(), "session-1", {
@@ -456,6 +650,198 @@ describe("SessionRuntimeStore", () => {
       deliveryState: "sent",
       clientRequestId: "client-1"
     });
+  });
+
+  it("单入口 reducer 不会把上一轮遗留的未吸收 runtime 工具消息继续钉在新用户消息底部", () => {
+    const seeded = applyTimelineEventToLayers(createTimelineLayersState(), "session-1", {
+      type: "history.merge",
+      source: "realtime_backfill",
+      replaceSnapshotSeed: false,
+      messages: [
+        createHistoryMessage({
+          messageId: "assistant-prev-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          content: "上一轮回复",
+          timestamp: "2026-05-05T14:34:04.730Z",
+          sequence: 120,
+          rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=220"
+        }),
+        {
+          ...createHistoryMessage({
+            messageId: "history-tool-call-1",
+            provider: "codex",
+            providerSessionId: "raw-1",
+            role: "tool",
+            kind: "tool_call",
+            content: "{\"cmd\":\"pwd\"}",
+            timestamp: "2026-05-05T14:34:05.000Z",
+            sequence: 121,
+            rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=240"
+          }),
+          toolCall: {
+            callId: "call-shell-old-1",
+            name: "command_execution",
+            input: "{\"cmd\":\"pwd\"}",
+            output: null,
+            error: null,
+            status: "running"
+          }
+        }
+      ]
+    });
+
+    const runtime = applyTimelineEventToLayers(seeded.timeline, "session-1", {
+      type: "runtime.message",
+      source: "session.runtime_message",
+      message: {
+        id: "history-tool-call-1",
+        sessionId: "session-1",
+        role: "tool",
+        kind: "tool_result",
+        content: "/Users/jackson/Code/CodingNS",
+        toolCall: {
+          callId: "call-shell-old-1",
+          name: "command_execution",
+          input: "{\"cmd\":\"pwd\"}",
+          output: "/Users/jackson/Code/CodingNS",
+          error: null,
+          status: "completed"
+        },
+        attachments: [],
+        attachmentPayloads: null,
+        origin: null,
+        originRef: null,
+        timestamp: "2026-05-05T14:34:05.050Z",
+        sequence: 121,
+        rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=42",
+        deliveryState: "sent",
+        clientRequestId: null
+      }
+    });
+
+    expect(runtime.messages.at(-1)?.id).toBe("history-tool-call-1");
+
+    const nextUserPending = createPendingMessage(
+      "session-1",
+      "这是下一轮新问题",
+      "client-next-user-1",
+      [],
+      [],
+      130
+    );
+    const withNextUser = applyTimelineEventToLayers(runtime.timeline, "session-1", {
+      type: "pending.insert",
+      source: "send_pending",
+      pending: nextUserPending
+    });
+
+    expect(withNextUser.validationIssues).toEqual([]);
+    expect(withNextUser.messages.at(-1)?.id).toBe(nextUserPending.id);
+    expect(withNextUser.messages.map((item) => item.id)).toEqual([
+      "assistant-prev-1",
+      "history-tool-call-1",
+      nextUserPending.id
+    ]);
+  });
+
+  it("单入口 reducer 在 history.merge 引入新的用户消息后，会清空旧 runtime 尾钉", () => {
+    const seeded = applyTimelineEventToLayers(createTimelineLayersState(), "session-1", {
+      type: "history.merge",
+      source: "realtime_backfill",
+      replaceSnapshotSeed: false,
+      messages: [
+        createHistoryMessage({
+          messageId: "assistant-prev-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          content: "上一轮回复",
+          timestamp: "2026-05-05T14:34:04.730Z",
+          sequence: 120,
+          rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=220"
+        }),
+        {
+          ...createHistoryMessage({
+            messageId: "history-tool-call-2",
+            provider: "codex",
+            providerSessionId: "raw-1",
+            role: "tool",
+            kind: "tool_call",
+            content: "{\"cmd\":\"ls\"}",
+            timestamp: "2026-05-05T14:34:05.000Z",
+            sequence: 121,
+            rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=241"
+          }),
+          toolCall: {
+            callId: "call-shell-old-2",
+            name: "command_execution",
+            input: "{\"cmd\":\"ls\"}",
+            output: null,
+            error: null,
+            status: "running"
+          }
+        }
+      ]
+    });
+
+    const runtime = applyTimelineEventToLayers(seeded.timeline, "session-1", {
+      type: "runtime.message",
+      source: "session.runtime_message",
+      message: {
+        id: "history-tool-call-2",
+        sessionId: "session-1",
+        role: "tool",
+        kind: "tool_result",
+        content: "README.md",
+        toolCall: {
+          callId: "call-shell-old-2",
+          name: "command_execution",
+          input: "{\"cmd\":\"ls\"}",
+          output: "README.md",
+          error: null,
+          status: "completed"
+        },
+        attachments: [],
+        attachmentPayloads: null,
+        origin: null,
+        originRef: null,
+        timestamp: "2026-05-05T14:34:05.050Z",
+        sequence: 121,
+        rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=44",
+        deliveryState: "sent",
+        clientRequestId: null
+      }
+    });
+
+    expect(runtime.messages.at(-1)?.id).toBe("history-tool-call-2");
+
+    const mergedNewUser = applyTimelineEventToLayers(runtime.timeline, "session-1", {
+      type: "history.merge",
+      source: "realtime_backfill",
+      replaceSnapshotSeed: false,
+      messages: [
+        createHistoryMessage({
+          messageId: "user-next-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "user",
+          content: "这是后续新问题",
+          timestamp: "2026-05-05T14:40:06.019Z",
+          sequence: 130,
+          rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=260"
+        })
+      ]
+    });
+
+    expect(mergedNewUser.validationIssues).toEqual([]);
+    expect(mergedNewUser.messages.at(-1)?.id).toBe("user-next-1");
+    expect(mergedNewUser.messages.map((item) => item.id)).toEqual([
+      "assistant-prev-1",
+      "history-tool-call-2",
+      "user-next-1"
+    ]);
   });
 
   it("单入口 reducer 会抑制带图片用户消息的 runtime echo 重复", () => {
@@ -2181,6 +2567,57 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
+  it("Codex assistant 流式消息在 runtime 过程中即使切换 messageId，也只保留一条最新正文", async () => {
+    const store = new SessionRuntimeStore("session-1");
+    await store.initialize();
+    emitRealtimeSubscribed();
+
+    emitRealtimeRuntimeMessage({
+      type: "session.runtime_message",
+      sessionId: "session-1",
+      source: "runtime",
+      message: {
+        messageId: "assistant-runtime-stream-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        kind: "text",
+        content: "第一段",
+        timestamp: "2026-05-06T10:00:00.000Z",
+        sequence: 101,
+        rawRef: "codex://raw#line=101",
+        toolCall: null
+      }
+    });
+
+    emitRealtimeRuntimeMessage({
+      type: "session.runtime_message",
+      sessionId: "session-1",
+      source: "runtime",
+      message: {
+        messageId: "assistant-runtime-stream-2",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        kind: "text",
+        content: "第一段\n第二段",
+        timestamp: "2026-05-06T10:00:01.000Z",
+        sequence: 101,
+        rawRef: "codex://raw#line=102",
+        toolCall: null
+      }
+    });
+
+    expect(store.getState().messages).toHaveLength(1);
+    expect(store.getState().messages[0]).toMatchObject({
+      id: "assistant-runtime-stream-1",
+      rawRef: "codex://raw#line=101",
+      content: "第一段\n第二段"
+    });
+
+    store.destroy();
+  });
+
   it("OpenCode runtime tool_call 后续收到 backfill tool_result 时，不会保留一条沉底的旧工具消息", async () => {
     const store = new SessionRuntimeStore("session-1");
     await store.initialize();
@@ -2269,7 +2706,95 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
-  it("Codex 运行时消息和后续 backfill 只是文案相同但锚点不同，前端不会再做弱身份折叠", async () => {
+  it("Codex runtime tool_call 后续收到 backfill tool_result 时，不会保留一条沉底的旧工具消息", async () => {
+    const store = new SessionRuntimeStore("session-1");
+    await store.initialize();
+    emitRealtimeSubscribed();
+
+    emitRealtimeRuntimeMessage({
+      type: "session.runtime_message",
+      sessionId: "session-1",
+      source: "runtime",
+      message: {
+        messageId: "runtime-tool-call-codex-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "tool",
+        kind: "tool_call",
+        content: "{\"cmd\":\"pwd\"}",
+        timestamp: "2026-04-15T10:09:00.000Z",
+        sequence: 99,
+        rawRef: "codex://raw#line=40",
+        toolCall: {
+          callId: "call-shell-1",
+          name: "command_execution",
+          input: "{\"cmd\":\"pwd\"}",
+          output: null,
+          error: null,
+          status: "running"
+        }
+      }
+    });
+
+    emitRealtimeEnvelope({
+      type: "session.backfill",
+      sessionId: "session-1",
+      cursor: "cursor-after",
+      olderCursor: null,
+      messages: [
+        {
+          messageId: "assistant-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          kind: "text",
+          content: "上一条回复",
+          timestamp: "2026-04-15T10:00:00.000Z",
+          sequence: 10,
+          rawRef: "codex://raw#line=10",
+          toolCall: null
+        },
+        {
+          messageId: "history-tool-result-codex-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "tool",
+          kind: "tool_result",
+          content: "[tool result]",
+          timestamp: "2026-04-15T10:00:01.000Z",
+          sequence: 11,
+          rawRef: "codex://raw#line=11",
+          toolCall: {
+            callId: "call-shell-1",
+            name: "command_execution",
+            input: "{\"cmd\":\"pwd\"}",
+            output: "[tool result]",
+            error: null,
+            status: "completed"
+          }
+        }
+      ]
+    });
+
+    expect(store.getState().messages.map((message) => message.id)).toEqual([
+      "assistant-1",
+      "history-tool-result-codex-1"
+    ]);
+    expect(store.getState().messages[1]).toMatchObject({
+      id: "history-tool-result-codex-1",
+      kind: "tool_result",
+      sequence: 11,
+      timestamp: "2026-04-15T10:00:01.000Z"
+    });
+    expect(store.getState().messages[1]?.toolCall).toMatchObject({
+      callId: "call-shell-1",
+      status: "completed"
+    });
+
+    store.destroy();
+  });
+
+  it("Codex 运行时消息和后续 backfill 只是文案相同但锚点不同时，会保留两条消息并让 live runtime 版本继续尾钉", async () => {
     const store = new SessionRuntimeStore("session-1");
     await store.initialize();
     emitRealtimeSubscribed();
@@ -2314,11 +2839,11 @@ describe("SessionRuntimeStore", () => {
 
     expect(store.getState().messages).toHaveLength(2);
     expect(store.getState().messages[0]).toMatchObject({
-      id: "assistant-runtime-1",
+      id: "assistant-history-1",
       content: "代码已经改完了，继续补回归。"
     });
     expect(store.getState().messages[1]).toMatchObject({
-      id: "assistant-history-1",
+      id: "assistant-runtime-1",
       content: "代码已经改完了，继续补回归。"
     });
 
@@ -2674,6 +3199,79 @@ describe("SessionRuntimeStore", () => {
 
     expect(store.getState().session?.runningState).toBe("completed");
     expect(store.getState().session?.activityState).toBe("idle");
+
+    store.destroy();
+  });
+
+  it("收到终态 runtime status 后会清掉残留的 runtime 工具尾钉", async () => {
+    const store = new SessionRuntimeStore("session-1");
+    await store.initialize();
+    emitRealtimeSubscribed();
+
+    emitRealtimeEnvelope({
+      type: "session.backfill",
+      sessionId: "session-1",
+      cursor: "cursor-after",
+      olderCursor: null,
+      messages: [
+        {
+          messageId: "assistant-latest-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          kind: "text",
+          content: "后面的正式回复",
+          timestamp: "2026-05-08T11:10:00.000Z",
+          sequence: 20,
+          rawRef: "codex://raw#line=20",
+          toolCall: null
+        }
+      ]
+    });
+
+    emitRealtimeRuntimeMessage({
+      type: "session.runtime_message",
+      sessionId: "session-1",
+      source: "runtime",
+      message: {
+        messageId: "runtime-tool-tail-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "tool",
+        kind: "tool_result",
+        content: "/Users/jackson/Code/CodingNS",
+        timestamp: "2026-05-08T11:09:59.000Z",
+        sequence: 10,
+        rawRef: "codex://raw#line=10",
+        toolCall: {
+          callId: "call-tail-1",
+          name: "command_execution",
+          input: "{\"cmd\":\"pwd\"}",
+          output: "/Users/jackson/Code/CodingNS",
+          error: null,
+          status: "completed"
+        }
+      }
+    });
+
+    expect(store.getState().messages.map((message) => message.id)).toEqual([
+      "assistant-latest-1",
+      "runtime-tool-tail-1"
+    ]);
+
+    const client = getRealtimeClient();
+    (client.options.onRuntimeStatus as ((event: Record<string, unknown>) => void))({
+      type: "session.runtime_status",
+      sessionId: "session-1",
+      status: "completed",
+      detail: "run completed",
+      timestamp: "2026-05-08T11:10:05.000Z"
+    });
+
+    expect(store.getState().messages.map((message) => message.id)).toEqual([
+      "runtime-tool-tail-1",
+      "assistant-latest-1"
+    ]);
 
     store.destroy();
   });

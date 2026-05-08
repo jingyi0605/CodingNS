@@ -767,6 +767,65 @@ describe("MessageTimeline", () => {
     expect(screen.getAllByText((content) => content.includes("M src/main.ts")).length).toBeGreaterThan(0);
   });
 
+  it("不会在工具分组阶段重排已经线性的时间线顺序", () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          {
+            id: "tool-call-first",
+            sessionId: "session-1",
+            role: "tool",
+            kind: "tool_call",
+            content: "{\n  \"command\": \"echo first\"\n}",
+            toolCall: {
+              callId: "call-first",
+              name: "shell_command",
+              input: "{\n  \"command\": \"echo first\"\n}",
+              output: null,
+              error: null,
+              status: "running"
+            },
+            timestamp: "2026-03-23T10:00:00.000Z",
+            sequence: 10,
+            rawRef: "codex://raw#line=100",
+            deliveryState: "sent",
+            clientRequestId: null
+          },
+          {
+            id: "tool-call-second",
+            sessionId: "session-1",
+            role: "tool",
+            kind: "tool_call",
+            content: "{\n  \"command\": \"echo second\"\n}",
+            toolCall: {
+              callId: "call-second",
+              name: "shell_command",
+              input: "{\n  \"command\": \"echo second\"\n}",
+              output: null,
+              error: null,
+              status: "running"
+            },
+            timestamp: "2026-03-23T10:00:01.000Z",
+            sequence: 9,
+            rawRef: "codex://raw#line=101",
+            deliveryState: "sent",
+            clientRequestId: null
+          }
+        ]}
+      />
+    );
+
+    const previews = Array.from(document.querySelectorAll(".tool-message-row")).map(
+      (node) => node.textContent?.replace(/\s+/g, " ").trim() ?? ""
+    );
+
+    expect(previews[0]).toContain("echo first");
+    expect(previews[1]).toContain("echo second");
+  });
+
   it("会把 update_plan 渲染成任务卡片，并保留原始展开入口", async () => {
     render(
       <MessageTimeline
