@@ -245,6 +245,10 @@ export function mergeAuthoritativeMessages(
       nextMessage,
       sessionId
     );
+    const optimisticMessage =
+      optimisticMessageId && optimisticMessageId !== nextMessage.id
+        ? (nextById.get(optimisticMessageId) ?? null)
+        : null;
 
     if (optimisticMessageId && optimisticMessageId !== nextMessage.id) {
       nextById.delete(optimisticMessageId);
@@ -301,11 +305,15 @@ export function mergeAuthoritativeMessages(
     }
 
     const currentMessage = nextById.get(message.messageId) ?? null;
+    const mergedIncomingMessage =
+      optimisticMessage === null
+        ? nextMessage
+        : mergeResolvedUserMessage(nextMessage, optimisticMessage);
     nextById.set(
       message.messageId,
       currentMessage
-        ? mergeAuthoritativeVersion(currentMessage, nextMessage)
-        : nextMessage
+        ? mergeAuthoritativeVersion(currentMessage, mergedIncomingMessage)
+        : mergedIncomingMessage
     );
   }
 

@@ -30,6 +30,7 @@ import {
   type HistoryMessageDto,
   type ProviderCapabilitiesDto,
   type ProviderId,
+  type StartLiveResponseDto,
   type SessionSummaryDto
 } from "../api/conversation-api";
 import { ConnectionBanner } from "../components/ConnectionBanner";
@@ -1330,12 +1331,18 @@ function DraftConversationPage({
                         providerConfigMode: options?.providerConfigMode ?? "global-default",
                         providerPresetId: options?.providerPresetId ?? null
                       },
-                      bootstrap: created.message
-                        ? {
-                            sessionId: created.sessionId,
-                            messages: [created.message]
-                          }
-                        : undefined
+                      bootstrap: {
+                        sessionId: created.sessionId,
+                        messages: [
+                          createDraftLiveBootstrapMessage({
+                            created,
+                            provider: draft.provider,
+                            content,
+                            clientRequestId,
+                            attachments: options?.attachmentMeta ?? []
+                          })
+                        ]
+                      }
                     }
                   });
                   requestNavigationRefresh();
@@ -2979,6 +2986,40 @@ function ParallelForkIcon() {
 
 function isDraftSessionId(sessionId: string): boolean {
   return sessionId.startsWith("draft-");
+}
+
+function createDraftLiveBootstrapMessage(input: {
+  created: StartLiveResponseDto;
+  provider: ProviderId;
+  content: string;
+  clientRequestId: string;
+  attachments: NonNullable<HistoryMessageDto["attachments"]>;
+}): HistoryMessageDto {
+  const providerSessionId =
+    input.created.message?.providerSessionId?.trim()
+    || input.created.providerSessionId.trim()
+    || `draft-bootstrap-${input.created.sessionId}`;
+  const messageId = `synthetic-user-${input.clientRequestId}`;
+  const normalizedSequence = Number.isFinite(input.created.message?.sequence)
+    ? Math.max(1, input.created.message?.sequence ?? 1)
+    : 1;
+  const timestamp =
+    input.created.message?.timestamp?.trim()
+    || input.created.acceptedAt.trim()
+    || new Date().toISOString();
+
+  return {
+    messageId,
+    provider: input.provider,
+    providerSessionId,
+    role: "user",
+    kind: "text",
+    content: input.content,
+    attachments: input.attachments,
+    timestamp,
+    sequence: normalizedSequence,
+    rawRef: `synthetic://${input.provider}/${input.created.sessionId}/${input.clientRequestId}`
+  };
 }
 
 function parseLiveBootstrapMessages(sessionId: string, state: unknown): HistoryMessageDto[] {
