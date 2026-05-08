@@ -2307,6 +2307,9 @@ describe("spec002 会话同步核心", () => {
       provider: "codex",
       providerSessionId,
       rawStoreRef,
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -2358,7 +2361,7 @@ describe("spec002 会话同步核心", () => {
     ]);
   });
 
-  it("Codex 订阅空 delta 时会重读尾部，修正运行中回写的消息位置", async () => {
+  it("Codex 订阅空 delta 时会在运行结束后恢复尾部刷新，避免流式期间双写时间线", async () => {
     const fixture = createEmptyFixture();
     const config = resolveHostConfig({
       databasePath: ":memory:",
@@ -2429,6 +2432,9 @@ describe("spec002 会话同步核心", () => {
       provider: "codex",
       providerSessionId,
       rawStoreRef,
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -2465,7 +2471,8 @@ describe("spec002 会话同步核心", () => {
           type: envelope.type,
           messages: envelope.messages.map((message) => message.content)
         });
-      }
+      },
+      "user-1"
     );
     activeClosers.push(() => subscription.close());
 
@@ -2487,6 +2494,27 @@ describe("spec002 会话同步核心", () => {
       ),
       "utf8"
     );
+
+    await new Promise((resolve) => setTimeout(resolve, 700));
+
+    expect(
+      delivered.some((envelope) =>
+        envelope.type === "session.delta"
+        && envelope.messages.includes("Codex 尾部消息已被真实历史修正")
+      )
+    ).toBe(false);
+
+    sessionStateRepository.upsert({
+      sessionId,
+      userId: "user-1",
+      runningState: "completed",
+      activitySource: "runtime",
+      favorite: false,
+      lastEventAt: "2026-03-23T10:00:02.000Z",
+      completedAt: "2026-03-23T10:00:03.000Z",
+      lastSeenAt: null,
+      updatedAt: "2026-03-23T10:00:03.000Z"
+    });
 
     await waitForDeliveredMessage(
       delivered,
