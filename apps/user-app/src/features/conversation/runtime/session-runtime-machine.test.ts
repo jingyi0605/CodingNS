@@ -225,6 +225,39 @@ describe("session runtime machine", () => {
     expect(merged.map((item) => item.role)).toEqual(["user", "assistant"]);
   });
 
+  it("synthetic bootstrap user 会被后续权威 user 替换，并保留本地附件", () => {
+    const seeded = mergeAuthoritativeMessages([], "session-1", [
+      createSyntheticBootstrapMessage({
+        messageId: "synthetic-user-1",
+        provider: "codex",
+        providerSessionId: "provider-session-live-1",
+        content: "请分析这张图片",
+        timestamp: "2026-05-07T10:00:00.000Z",
+        sequence: 1,
+        rawRef: "synthetic://codex/session-live-1/client-request-1",
+        attachments: [createImageAttachment("bug.png", 1024)]
+      })
+    ]);
+
+    const merged = mergeAuthoritativeMessages(seeded, "session-1", [
+      createHistoryMessage({
+        messageId: "user-live-1",
+        provider: "codex",
+        providerSessionId: "provider-session-live-1",
+        role: "user",
+        content: "请分析这张图片",
+        timestamp: "2026-05-07T10:00:01.000Z",
+        sequence: 1,
+        rawRef: "codex://session-live-1#line=10"
+      })
+    ]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.id).toBe("user-live-1");
+    expect(merged[0]?.attachments).toEqual([createImageAttachment("bug.png", 1024)]);
+    expect(merged[0]?.rawRef).toBe("codex://session-live-1#line=10");
+  });
+
   it("OpenCode 相同 sequence 冲突时会优先按 message/part 结构顺序，而不是按较晚 timestamp 排序", () => {
     const merged = mergeAuthoritativeMessages([], "session-1", [
       createHistoryMessage({

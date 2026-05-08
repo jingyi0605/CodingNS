@@ -107,6 +107,21 @@ vi.mock("../components/ComposerPanel", () => ({
         content: string,
         options?: {
           model?: string | null;
+          attachments?: Array<{
+            id: string;
+            kind: "image";
+            fileName: string;
+            mimeType: string;
+            fileSize: number;
+            contentBase64?: string;
+          }>;
+          attachmentMeta?: Array<{
+            id: string;
+            kind: "image";
+            fileName: string;
+            mimeType: string;
+            fileSize: number;
+          }>;
           providerConfigMode?: "global-default" | "cc-switch-preset";
           providerPresetId?: string | null;
         }
@@ -150,6 +165,35 @@ vi.mock("../components/ComposerPanel", () => ({
           }}
         >
           发送指定配置文件默认模型
+        </button>
+        <button
+          type="button"
+          data-testid="composer-send-with-image"
+          onClick={() => {
+            void composerProps.onSend?.("请分析这张图片", {
+              attachments: [
+                {
+                  id: "attachment-image-1",
+                  kind: "image",
+                  fileName: "bug.png",
+                  mimeType: "image/png",
+                  fileSize: 1024,
+                  contentBase64: "ZmFrZQ=="
+                }
+              ],
+              attachmentMeta: [
+                {
+                  id: "attachment-image-1",
+                  kind: "image",
+                  fileName: "bug.png",
+                  mimeType: "image/png",
+                  fileSize: 1024
+                }
+              ]
+            });
+          }}
+        >
+          发送图片
         </button>
       </div>
     );
@@ -718,6 +762,22 @@ describe("ConversationPage", () => {
       expect(props?.initialProviderConfigMode).toBe("cc-switch-preset");
       expect(props?.initialProviderPresetId).toBe("preset-deepseek");
     });
+  });
+
+  it("草稿会话发送图片时，live bootstrap 只注入本地 synthetic user 消息", async () => {
+    const view = renderDraftConversationPage({ withRouteProbe: true });
+
+    fireEvent.click(await screen.findByTestId("composer-send-with-image"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route-probe-state")).toHaveTextContent("\"role\":\"user\"");
+      expect(screen.getByTestId("route-probe-state")).toHaveTextContent("\"content\":\"请分析这张图片\"");
+      expect(screen.getByTestId("route-probe-state")).toHaveTextContent("\"attachmentCount\":1");
+      expect(screen.getByTestId("route-probe-state")).toHaveTextContent("\"rawRef\":\"synthetic://codex/session-live-1/");
+      expect(screen.getByTestId("route-probe-state")).not.toHaveTextContent("已创建会话");
+    });
+
+    expect(view.getByTestId("route-probe")).toHaveTextContent("/workspaces/workspace-1/sessions/session-live-1");
   });
 
   it("移动端在草稿对话页左滑会打开文件页", async () => {
@@ -1489,5 +1549,47 @@ function createMobileWorkbenchShellValue(overrides: Record<string, unknown> = {}
 
 function RouteProbe() {
   const location = useLocation();
-  return <div data-testid="route-probe">{location.pathname + location.search}</div>;
+  return (
+    <>
+      <div data-testid="route-probe">{location.pathname + location.search}</div>
+      <div data-testid="route-probe-state">
+        {JSON.stringify(summarizeRouteState(location.state))}
+      </div>
+    </>
+  );
+}
+
+function summarizeRouteState(state: unknown) {
+  if (!state || typeof state !== "object") {
+    return null;
+  }
+
+  const routeState = state as {
+    bootstrap?: {
+      sessionId?: unknown;
+      messages?: Array<{
+        role?: unknown;
+        content?: unknown;
+        rawRef?: unknown;
+        attachments?: unknown;
+      }>;
+    };
+  };
+  const bootstrap = routeState.bootstrap;
+
+  if (!bootstrap || typeof bootstrap !== "object") {
+    return null;
+  }
+
+  return {
+    sessionId: typeof bootstrap.sessionId === "string" ? bootstrap.sessionId : null,
+    messages: Array.isArray(bootstrap.messages)
+      ? bootstrap.messages.map((message) => ({
+          role: typeof message?.role === "string" ? message.role : null,
+          content: typeof message?.content === "string" ? message.content : null,
+          rawRef: typeof message?.rawRef === "string" ? message.rawRef : null,
+          attachmentCount: Array.isArray(message?.attachments) ? message.attachments.length : 0
+        }))
+      : []
+  };
 }
