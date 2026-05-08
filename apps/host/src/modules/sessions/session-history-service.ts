@@ -314,6 +314,7 @@ export class SessionHistoryService {
   private readonly workspaceStateRefreshStatuses = new Map<string, WorkspaceStateRefreshStatus>();
   private readonly providerCapabilityCache = new Map<string, ProviderCapabilityCacheEntry>();
   private readonly codexDirtyBindingRepairStates = new Map<string, CodexDirtyBindingRepairState>();
+  private readonly streamingDeltaSuppressionDebugState = new Map<string, string>();
   private readonly liveActivityObservationResolvers = new Set<LiveActivityObservationResolver>();
   private readonly sessionDeletedObservers = new Set<SessionDeletedObserver>();
   private readonly workspaceSessionRelations = new Map<
@@ -1792,7 +1793,8 @@ export class SessionHistoryService {
     sessionId: string,
     cursor: string | null,
     limit: number,
-    onEnvelope: (envelope: SessionHistoryEnvelope) => Promise<void> | void
+    onEnvelope: (envelope: SessionHistoryEnvelope) => Promise<void> | void,
+    userId: string | null = null
   ): Promise<ProviderSubscription> {
     const deliveredMessages = createDeliveredHistoryMessageState();
     const safeLimit = clampLimit(limit);
@@ -1841,6 +1843,10 @@ export class SessionHistoryService {
         return;
       }
 
+      if (this.shouldSuppressStreamingSessionDelta(sessionId, userId)) {
+        return;
+      }
+
       polling = true;
       void this.pullSessionHistory(
         sessionId,
@@ -1863,9 +1869,10 @@ export class SessionHistoryService {
     }, 300);
 
     return {
-      close() {
+      close: () => {
         closed = true;
         clearInterval(timer);
+        this.streamingDeltaSuppressionDebugState.delete(sessionId);
       }
     };
   }
@@ -3233,6 +3240,64 @@ export class SessionHistoryService {
 
     await this.publishHistoryEnvelope(sessionId, binding, page, deliveredMessages, onEnvelope, envelopeType);
     return page.cursor;
+  }
+
+  private shouldSuppressStreamingSessionDelta(sessionId: string, userId: string | null): boolean {
+    const previousDebugState = this.streamingDeltaSuppressionDebugState.get(sessionId) ?? null;
+
+    if (!userId) {
+      this.streamingDeltaSuppressionDebugState.delete(sessionId);
+      return false;
+    }
+
+    const binding = this.sessionBindingRepository.findBySessionId(sessionId);
+
+    if (!binding || binding.provider !== "codex") {
+      if (previousDebugState && isTerminalDebugEnabled()) {
+        logTerminalDebug("session.history.delta_resumed", {
+          sessionId,
+          userId,
+          provider: binding?.provider ?? null,
+          reason: "provider_not_codex"
+        });
+      }
+      this.streamingDeltaSuppressionDebugState.delete(sessionId);
+      return false;
+    }
+
+    const state = this.sessionStateRepository.findBySessionAndUser(sessionId, userId);
+    const shouldSuppress =
+      state?.activitySource === "runtime"
+      && (state.runningState === "starting" || state.runningState === "running");
+
+    if (!shouldSuppress) {
+      if (previousDebugState && isTerminalDebugEnabled()) {
+        logTerminalDebug("session.history.delta_resumed", {
+          sessionId,
+          userId,
+          provider: binding.provider,
+          runningState: state?.runningState ?? null,
+          activitySource: state?.activitySource ?? null
+        });
+      }
+      this.streamingDeltaSuppressionDebugState.delete(sessionId);
+      return false;
+    }
+
+    const debugState = `${binding.provider}:${state.activitySource}:${state.runningState}`;
+
+    if (previousDebugState !== debugState && isTerminalDebugEnabled()) {
+      logTerminalDebug("session.history.delta_suppressed", {
+        sessionId,
+        userId,
+        provider: binding.provider,
+        runningState: state.runningState,
+        activitySource: state.activitySource
+      });
+    }
+
+    this.streamingDeltaSuppressionDebugState.set(sessionId, debugState);
+    return true;
   }
 
   private async publishHistoryEnvelope(

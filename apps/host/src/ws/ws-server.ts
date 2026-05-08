@@ -340,7 +340,8 @@ export function createWsServer(
           payload.sessionId,
           currentCursor,
           safeLimit,
-          forwardEnvelope
+          forwardEnvelope,
+          authContext.user.userId
         );
         const subscribeAttachMs = Date.now() - subscribeAttachStartedAt;
 
