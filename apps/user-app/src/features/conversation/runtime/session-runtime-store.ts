@@ -6,8 +6,8 @@ import { getDefaultSessionPermissionMode } from "../../../preferences/default-se
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import {
   logPerfDebug,
+  logConversationTimelineDebug,
   logSessionMessageDedupDebug,
-  logOpenCodeOrderDebug
 } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
@@ -59,6 +59,7 @@ import type {
   SessionRuntimeStatusEvent
 } from "../../../network/realtime-client";
 import {
+  buildRuntimeOverlayKey,
   compareViewMessageOrder,
   createInitialRuntimeState,
   createPendingMessage,
@@ -117,6 +118,7 @@ interface PendingReplyDebugTrace {
 export interface TimelineLayersState {
   authoritativeMessages: SessionMessageViewModel[];
   runtimeOverlayMessages: SessionMessageViewModel[];
+  activeRuntimeOverlayKeys: string[];
   pendingMessages: SessionMessageViewModel[];
   replaceSnapshotSeedOnBackfill: boolean;
 }
@@ -174,6 +176,7 @@ export class SessionRuntimeStore {
   private state: SessionRuntimeState;
   private authoritativeMessages: SessionMessageViewModel[] = [];
   private runtimeOverlayMessages: SessionMessageViewModel[] = [];
+  private activeRuntimeOverlayKeys: string[] = [];
   private pendingMessages: SessionMessageViewModel[] = [];
   private listeners = new Set<RuntimeListener>();
   private realtimeClient: RealtimeClient | null = null;
@@ -226,6 +229,7 @@ export class SessionRuntimeStore {
     );
     this.authoritativeMessages = seededTimeline.timeline.authoritativeMessages;
     this.runtimeOverlayMessages = seededTimeline.timeline.runtimeOverlayMessages;
+    this.activeRuntimeOverlayKeys = seededTimeline.timeline.activeRuntimeOverlayKeys;
     this.pendingMessages = seededTimeline.timeline.pendingMessages;
     this.replaceSnapshotSeedOnBackfill = seededTimeline.timeline.replaceSnapshotSeedOnBackfill;
 
@@ -705,25 +709,11 @@ export class SessionRuntimeStore {
         this.clearHistoryBootstrapFallbackTimer();
         const shouldAttemptReplaceSnapshotSeed =
           event.type === "session.backfill" && this.replaceSnapshotSeedOnBackfill;
-        logOpenCodeOrderDebug("envelope.received", {
-          sessionId: this.sessionId,
-          type: event.type,
-          cursor: event.cursor,
-          olderCursor: event.olderCursor ?? null,
-          incomingMessages: summarizeOrderDebugMessages(event.messages),
-          currentMessages: summarizeOrderDebugMessages(this.buildTimelineMessages("envelope_before"))
-        });
         const { messages: merged, replacedSnapshotSeed } = this.mergeHistoryMessages(
           event.messages,
           shouldAttemptReplaceSnapshotSeed,
           event.type === "session.backfill" ? "realtime_backfill" : "realtime_delta"
         );
-        logOpenCodeOrderDebug("envelope.merged", {
-          sessionId: this.sessionId,
-          type: event.type,
-          replacedSnapshotSeed,
-          mergedMessages: summarizeOrderDebugMessages(merged)
-        });
         this.patch({
           messages: merged,
           lastCursor: event.cursor,
@@ -866,6 +856,7 @@ export class SessionRuntimeStore {
       {
         authoritativeMessages: this.authoritativeMessages,
         runtimeOverlayMessages: this.runtimeOverlayMessages,
+        activeRuntimeOverlayKeys: this.activeRuntimeOverlayKeys,
         pendingMessages: this.pendingMessages,
         replaceSnapshotSeedOnBackfill: this.replaceSnapshotSeedOnBackfill
       },
@@ -875,29 +866,34 @@ export class SessionRuntimeStore {
 
     this.authoritativeMessages = result.timeline.authoritativeMessages;
     this.runtimeOverlayMessages = result.timeline.runtimeOverlayMessages;
+    this.activeRuntimeOverlayKeys = result.timeline.activeRuntimeOverlayKeys;
     this.pendingMessages = result.timeline.pendingMessages;
     this.replaceSnapshotSeedOnBackfill = result.timeline.replaceSnapshotSeedOnBackfill;
+    const assistantMoves = collectTimelineMessageMoves(
+      result.previousMessages,
+      result.messages,
+      "assistant"
+    );
+    const eventMessages = extractTimelineEventMessages(event);
+    const shouldLogEvent =
+      result.validationIssues.length > 0
+      || eventMessages.some((message) => message.role === "assistant")
+      || assistantMoves.length > 0;
 
-    logOpenCodeOrderDebug("timeline.event.applied", {
-      sessionId: this.sessionId,
-      eventType: event.type,
-      source: event.source,
-      replacedSnapshotSeed: result.replacedSnapshotSeed,
-      authoritativeCount: this.authoritativeMessages.length,
-      runtimeOverlayCount: this.runtimeOverlayMessages.length,
-      pendingCount: this.pendingMessages.length,
-      previousTail: summarizeOrderDebugMessages(result.previousMessages.slice(-4)),
-      nextTail: summarizeOrderDebugMessages(result.messages.slice(-4))
-    });
-
-    if (result.validationIssues.length > 0) {
-      logOpenCodeOrderDebug("timeline.event.invalid", {
+    if (shouldLogEvent) {
+      logConversationTimelineDebug("timeline.event", {
         sessionId: this.sessionId,
         eventType: event.type,
         source: event.source,
-        issues: result.validationIssues,
-        previousMessages: summarizeOrderDebugMessages(result.previousMessages),
-        nextMessages: summarizeOrderDebugMessages(result.messages)
+        replacedSnapshotSeed: result.replacedSnapshotSeed,
+        validationIssues: result.validationIssues,
+        authoritativeCount: this.authoritativeMessages.length,
+        runtimeOverlayCount: this.runtimeOverlayMessages.length,
+        pendingCount: this.pendingMessages.length,
+        eventMessages: eventMessages.map((message) => summarizeOrderDebugMessage(message)),
+        assistantMoves,
+        previousTail: summarizeOrderDebugMessages(result.previousMessages.slice(-6)),
+        nextTail: summarizeOrderDebugMessages(result.messages.slice(-6))
       });
     }
 
@@ -936,25 +932,27 @@ export class SessionRuntimeStore {
   }
 
   private buildTimelineMessages(reason: string): SessionMessageViewModel[] {
-    const merged = deriveTimelineMessages(
+    void reason;
+
+    return deriveTimelineMessages(
       {
         authoritativeMessages: this.authoritativeMessages,
         runtimeOverlayMessages: this.runtimeOverlayMessages,
+        activeRuntimeOverlayKeys: this.activeRuntimeOverlayKeys,
         pendingMessages: this.pendingMessages,
         replaceSnapshotSeedOnBackfill: this.replaceSnapshotSeedOnBackfill
       }
     );
+  }
 
-    logOpenCodeOrderDebug("timeline.derived", {
-      sessionId: this.sessionId,
-      reason,
-      authoritativeCount: this.authoritativeMessages.length,
-      runtimeOverlayCount: this.runtimeOverlayMessages.length,
-      pendingCount: this.pendingMessages.length,
-      mergedMessages: summarizeOrderDebugMessages(merged)
-    });
+  private clearActiveRuntimeTail(reason: string): void {
+    if (this.activeRuntimeOverlayKeys.length === 0) {
+      return;
+    }
 
-    return merged;
+    this.activeRuntimeOverlayKeys = [];
+    const messages = this.buildTimelineMessages(reason);
+    this.patch({ messages });
   }
 
   private resolvePendingMessage(
@@ -1590,6 +1588,7 @@ export class SessionRuntimeStore {
     });
 
     if (isTerminalRuntimeState(nextRunningState)) {
+      this.clearActiveRuntimeTail("runtime_status_terminal");
       this.completePendingReplyDebugTraceWithoutAssistant("session_send.client_terminal_before_message", {
         status: event.status,
         detail: event.detail
@@ -1621,6 +1620,7 @@ export class SessionRuntimeStore {
     });
 
     if (isTerminalRuntimeState(event.runningState)) {
+      this.clearActiveRuntimeTail("activity_terminal");
       this.clearRuntimeRefreshTimer();
       void this.refreshQueue();
       return;
@@ -1635,28 +1635,16 @@ export class SessionRuntimeStore {
     if (event.message.role === "assistant") {
       this.completePendingReplyDebugTrace(event);
     }
-    const previousMessages = this.buildTimelineMessages("runtime_before");
-    logOpenCodeOrderDebug("runtime_message.received", {
-      sessionId: this.sessionId,
-      source: event.source,
-      message: summarizeOrderDebugMessage(event.message),
-      currentMessages: summarizeOrderDebugMessages(previousMessages)
-    });
     const mergedResult = this.applyTimelineEvent({
       type: "runtime.message",
       source: event.source,
       message: toViewMessage(this.sessionId, event.message)
     });
     const merged = mergedResult.messages;
-    logOpenCodeOrderDebug("runtime_message.merged", {
-      sessionId: this.sessionId,
-      source: event.source,
-      mergedMessages: summarizeOrderDebugMessages(merged)
-    });
 
     this.logCodexMergeDebug(
       "runtime_message",
-      previousMessages,
+      mergedResult.previousMessages,
       [event.message],
       merged,
       {
@@ -1962,6 +1950,7 @@ function createEmptyTimelineLayers(): TimelineLayersState {
   return {
     authoritativeMessages: [],
     runtimeOverlayMessages: [],
+    activeRuntimeOverlayKeys: [],
     pendingMessages: [],
     replaceSnapshotSeedOnBackfill: false
   };
@@ -2086,6 +2075,34 @@ function mergeTimelineBridgeAuthoritativeVersion(
     return incoming;
   }
 
+  if (isTimelineEquivalentToolLifecycleMessage(current, incoming)) {
+    const mergedToolCall = mergeTimelineBridgeToolCall(current.toolCall, incoming.toolCall);
+    const content = pickTimelineToolLifecycleMessageContent(
+      current,
+      incoming,
+      mergedToolCall,
+      pickTimelineBridgePreferredContent
+    );
+    const attachments = pickTimelineBridgePreferredAttachments(
+      current.attachments,
+      incoming.attachments
+    );
+    const stableAnchor = pickTimelineBridgeStableAuthoritativeMessage(current, incoming);
+    const preferred = pickTimelineBridgeNewerAuthoritativeMessage(current, incoming);
+
+    return {
+      ...preferred,
+      kind: mergedToolCall?.status === "running" ? "tool_call" : "tool_result",
+      content,
+      toolCall: mergedToolCall,
+      attachments,
+      attachmentPayloads: current.attachmentPayloads ?? incoming.attachmentPayloads ?? null,
+      rawRef: stableAnchor.rawRef,
+      timestamp: stableAnchor.timestamp,
+      sequence: stableAnchor.sequence
+    };
+  }
+
   if (current.role !== incoming.role || current.kind !== incoming.kind) {
     return pickTimelineBridgeNewerAuthoritativeMessage(current, incoming);
   }
@@ -2119,13 +2136,13 @@ function mergeTimelineEquivalentAuthoritativeVersion(
   current: SessionMessageViewModel,
   incoming: SessionMessageViewModel
 ): SessionMessageViewModel {
-  if (isTimelineEquivalentOpenCodeToolMessage(current, incoming)) {
+  if (isTimelineEquivalentToolLifecycleMessage(current, incoming)) {
     const mergedToolCall = mergeTimelineBridgeToolCall(current.toolCall, incoming.toolCall);
-    const content = pickTimelineBridgePreferredContent(
-      current.content,
-      incoming.content,
-      current.timestamp,
-      incoming.timestamp
+    const content = pickTimelineToolLifecycleMessageContent(
+      current,
+      incoming,
+      mergedToolCall,
+      pickTimelineBridgePreferredContent
     );
     const attachments = pickTimelineBridgePreferredAttachments(
       current.attachments,
@@ -2183,6 +2200,50 @@ function mergeTimelineEquivalentAuthoritativeVersion(
     sequence: stableAnchor.sequence,
     clientRequestId: current.clientRequestId ?? incoming.clientRequestId
   };
+}
+
+function isTimelineEquivalentToolLifecycleMessage(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): boolean {
+  return isTimelineEquivalentOpenCodeToolMessage(current, incoming)
+    || isTimelineEquivalentCodexToolMessage(current, incoming);
+}
+
+function pickTimelineToolLifecycleMessageContent(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel,
+  mergedToolCall: SessionMessageViewModel["toolCall"],
+  fallback: (
+    currentContent: string,
+    incomingContent: string,
+    currentTimestamp: string,
+    incomingTimestamp: string
+  ) => string
+): string {
+  if (mergedToolCall?.status === "running") {
+    if (incoming.kind === "tool_call" && incoming.content) {
+      return incoming.content;
+    }
+
+    if (current.kind === "tool_call" && current.content) {
+      return current.content;
+    }
+  } else {
+    if (incoming.kind === "tool_result" && incoming.content) {
+      return incoming.content;
+    }
+
+    if (current.kind === "tool_result" && current.content) {
+      return current.content;
+    }
+
+    if (mergedToolCall?.output) {
+      return mergedToolCall.output;
+    }
+  }
+
+  return fallback(current.content, incoming.content, current.timestamp, incoming.timestamp);
 }
 
 function findMatchingTimelineEquivalentCodexMessageId(
@@ -2445,6 +2506,32 @@ function findMatchingTimelineUserMessage(
   return matched;
 }
 
+function didHistoryMergeIntroduceNewAuthoritativeUserMessage(
+  currentAuthoritativeMessages: SessionMessageViewModel[],
+  incomingMessages: HistoryMessageDto[],
+  sessionId: string
+): boolean {
+  for (const message of incomingMessages) {
+    if (message.role !== "user" || message.kind !== "text") {
+      continue;
+    }
+
+    const incomingViewMessage = toViewMessage(sessionId, message, "sent", null);
+    const matched = findMatchingTimelineUserMessage(
+      currentAuthoritativeMessages,
+      incomingViewMessage,
+      "authoritative",
+      sessionId
+    );
+
+    if (!matched) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function mergeTimelineBridgeToolCall(
   current: SessionMessageViewModel["toolCall"],
   incoming: SessionMessageViewModel["toolCall"]
@@ -2687,8 +2774,20 @@ function isTimelineEquivalentCodexAuthoritativeMessage(
     return false;
   }
 
-  if (current.role !== incoming.role || current.kind !== incoming.kind) {
+  if (current.role !== incoming.role) {
     return false;
+  }
+
+  const isToolLifecycleMessage =
+    (current.kind === "tool_call" || current.kind === "tool_result")
+    && (incoming.kind === "tool_call" || incoming.kind === "tool_result");
+
+  if (!isToolLifecycleMessage && current.kind !== incoming.kind) {
+    return false;
+  }
+
+  if (isToolLifecycleMessage) {
+    return isTimelineEquivalentCodexToolMessage(current, incoming);
   }
 
   if (
@@ -2708,10 +2807,6 @@ function isTimelineEquivalentCodexAuthoritativeMessage(
       incoming,
       TIMELINE_CODEX_EQUIVALENT_AUTHORITATIVE_WINDOW_MS
     );
-  }
-
-  if (incoming.kind === "tool_call" || incoming.kind === "tool_result") {
-    return isTimelineEquivalentCodexToolMessage(current, incoming);
   }
 
   return false;
@@ -2761,14 +2856,18 @@ function isTimelineEquivalentCodexToolMessage(
     || !right.rawRef.startsWith("codex://")
     || left.role !== "tool"
     || right.role !== "tool"
-    || left.kind !== right.kind
+    || (left.kind !== "tool_call" && left.kind !== "tool_result")
+    || (right.kind !== "tool_call" && right.kind !== "tool_result")
     || left.toolCall === null
     || right.toolCall === null
   ) {
     return false;
   }
 
-  return left.toolCall.callId === right.toolCall.callId;
+  const leftCallId = left.toolCall.callId.trim();
+  const rightCallId = right.toolCall.callId.trim();
+
+  return leftCallId.length > 0 && leftCallId === rightCallId;
 }
 
 function extractTimelineCodexRawRefStore(rawRef: string): string | null {
@@ -2915,7 +3014,12 @@ function deriveTimelineMessages(
     merged = insertPendingMessage(merged, pending);
   }
 
-  return merged;
+  return pinActiveRuntimeLiveMessagesToTail(
+    merged,
+    timeline.authoritativeMessages,
+    timeline.runtimeOverlayMessages,
+    timeline.activeRuntimeOverlayKeys
+  );
 }
 
 export function applyTimelineEventToLayers(
@@ -2936,6 +3040,7 @@ export function applyTimelineEventToLayers(
           event.bootstrapMessages
         ),
         runtimeOverlayMessages: [],
+        activeRuntimeOverlayKeys: [],
         pendingMessages: [],
         replaceSnapshotSeedOnBackfill: event.replaceSnapshotSeedOnBackfill
       };
@@ -2950,6 +3055,13 @@ export function applyTimelineEventToLayers(
       next = {
         ...current,
         authoritativeMessages: mergeAuthoritativeMessages(baseMessages, sessionId, event.messages),
+        activeRuntimeOverlayKeys: didHistoryMergeIntroduceNewAuthoritativeUserMessage(
+          current.authoritativeMessages,
+          event.messages,
+          sessionId
+        )
+          ? []
+          : current.activeRuntimeOverlayKeys,
         replaceSnapshotSeedOnBackfill:
           replacedSnapshotSeed ? false : current.replaceSnapshotSeedOnBackfill
       };
@@ -2963,13 +3075,19 @@ export function applyTimelineEventToLayers(
 
       next = {
         ...current,
-        runtimeOverlayMessages: mergeRuntimeOverlayMessages(current.runtimeOverlayMessages, [event.message])
+        runtimeOverlayMessages: mergeRuntimeOverlayMessages(current.runtimeOverlayMessages, [event.message]),
+        activeRuntimeOverlayKeys: updateActiveRuntimeOverlayKeys(
+          current.activeRuntimeOverlayKeys,
+          event.message
+        )
       };
       break;
     }
     case "pending.insert": {
       next = {
         ...current,
+        activeRuntimeOverlayKeys:
+          event.pending.role === "user" ? [] : current.activeRuntimeOverlayKeys,
         pendingMessages: insertPendingMessage(current.pendingMessages, event.pending)
       };
       break;
@@ -3027,6 +3145,8 @@ export function applyTimelineEventToLayers(
       next = {
         ...current,
         authoritativeMessages,
+        activeRuntimeOverlayKeys:
+          event.message.role === "user" ? [] : current.activeRuntimeOverlayKeys,
         pendingMessages: current.pendingMessages.filter(
           (item) => item.clientRequestId !== event.clientRequestId
         )
@@ -3034,6 +3154,23 @@ export function applyTimelineEventToLayers(
       break;
     }
   }
+
+  next = {
+    ...next,
+    // runtime overlay 只保留“权威历史还没完全吸收”的那部分。
+    // 否则旧 overlay 会一直参与排序，时间线迟早再次长歪。
+    runtimeOverlayMessages: compactRuntimeOverlayMessages(
+      next.authoritativeMessages,
+      next.runtimeOverlayMessages
+    )
+  };
+  next = {
+    ...next,
+    activeRuntimeOverlayKeys: compactActiveRuntimeOverlayKeys(
+      next.runtimeOverlayMessages,
+      next.activeRuntimeOverlayKeys
+    )
+  };
 
   const messages = deriveTimelineMessages(next);
 
@@ -3054,6 +3191,12 @@ function validateTimelineEventResult(
   nextMessages: SessionMessageViewModel[]
 ): string[] {
   const issues: string[] = [];
+  const activeRuntimeTailIds = collectActiveRuntimeTailMessageIds(
+    nextMessages,
+    next.authoritativeMessages,
+    next.runtimeOverlayMessages,
+    next.activeRuntimeOverlayKeys
+  );
   const renderedDuplicateIds = collectDuplicateKeys(nextMessages.map((message) => message.id));
 
   if (renderedDuplicateIds.length > 0) {
@@ -3078,7 +3221,7 @@ function validateTimelineEventResult(
     issues.push(`pending_duplicate_client_request_ids:${pendingDuplicateIds.join(",")}`);
   }
 
-  if (!isTimelineOrdered(nextMessages)) {
+  if (!isTimelineOrdered(nextMessages, activeRuntimeTailIds)) {
     issues.push("rendered_order_not_monotonic");
   }
 
@@ -3117,7 +3260,267 @@ function validateTimelineEventResult(
     issues.push("older_history_changed_rendered_tail");
   }
 
+  if (activeRuntimeTailIds.length > 0) {
+    const renderedTailId = nextMessages.at(-1)?.id ?? null;
+
+    if (!renderedTailId || !activeRuntimeTailIds.includes(renderedTailId)) {
+      issues.push("runtime_live_item_not_pinned_to_tail");
+    }
+  }
+
   return issues;
+}
+
+function compactRuntimeOverlayMessages(
+  authoritativeMessages: SessionMessageViewModel[],
+  runtimeOverlayMessages: SessionMessageViewModel[]
+): SessionMessageViewModel[] {
+  if (runtimeOverlayMessages.length === 0) {
+    return runtimeOverlayMessages;
+  }
+
+  const authoritativeById = new Map(authoritativeMessages.map((message) => [message.id, message]));
+  const authoritativeMessageIds = new Set(authoritativeById.keys());
+  const next = runtimeOverlayMessages.filter((message) => {
+    const authoritativeMatch = findTimelineMessageMatch(
+      authoritativeById,
+      authoritativeMessageIds,
+      message
+    );
+
+    if (!authoritativeMatch) {
+      return true;
+    }
+
+    const absorbed = isRuntimeOverlayAbsorbedByAuthoritative(authoritativeMatch, message);
+
+    if (!absorbed && isRuntimePinnedTailMessage(message)) {
+      logConversationTimelineDebug("timeline.runtime_overlay_not_absorbed", {
+        overlay: summarizeTimelineBridgeMessageForDebug(message),
+        authoritativeMatch: summarizeTimelineBridgeMessageForDebug(authoritativeMatch)
+      });
+    }
+
+    return !absorbed;
+  });
+
+  return next.length === runtimeOverlayMessages.length ? runtimeOverlayMessages : next;
+}
+
+function pinActiveRuntimeLiveMessagesToTail(
+  messages: SessionMessageViewModel[],
+  authoritativeMessages: SessionMessageViewModel[],
+  runtimeOverlayMessages: SessionMessageViewModel[],
+  activeRuntimeOverlayKeys: string[]
+): SessionMessageViewModel[] {
+  const activeTailIds = collectActiveRuntimeTailMessageIds(
+    messages,
+    authoritativeMessages,
+    runtimeOverlayMessages,
+    activeRuntimeOverlayKeys
+  );
+
+  if (activeTailIds.length === 0) {
+    return messages;
+  }
+
+  const activeTailIdSet = new Set(activeTailIds);
+  const next = [
+    ...messages.filter((message) => !activeTailIdSet.has(message.id)),
+    ...messages.filter((message) => activeTailIdSet.has(message.id))
+  ];
+
+  return sameMessageIdSequence(messages, next) ? messages : next;
+}
+
+function collectActiveRuntimeTailMessageIds(
+  renderedMessages: SessionMessageViewModel[],
+  authoritativeMessages: SessionMessageViewModel[],
+  runtimeOverlayMessages: SessionMessageViewModel[],
+  activeRuntimeOverlayKeys: string[]
+): string[] {
+  if (
+    runtimeOverlayMessages.length === 0
+    || renderedMessages.length === 0
+    || activeRuntimeOverlayKeys.length === 0
+  ) {
+    return [];
+  }
+
+  const authoritativeById = new Map(authoritativeMessages.map((message) => [message.id, message]));
+  const authoritativeMessageIds = new Set(authoritativeById.keys());
+  const renderedById = new Map(renderedMessages.map((message) => [message.id, message]));
+  const renderedMessageIds = new Set(renderedById.keys());
+  const runtimeOverlayByKey = new Map(
+    runtimeOverlayMessages.map((message) => [buildRuntimeOverlayKey(message), message])
+  );
+  const activeTailIds: string[] = [];
+
+  for (const overlayKey of activeRuntimeOverlayKeys) {
+    const message = runtimeOverlayByKey.get(overlayKey) ?? null;
+
+    if (!message) {
+      continue;
+    }
+
+    if (!isRuntimePinnedTailMessage(message)) {
+      continue;
+    }
+
+    const authoritativeMatch = findTimelineMessageMatch(
+      authoritativeById,
+      authoritativeMessageIds,
+      message
+    );
+
+    if (authoritativeMatch && isRuntimeOverlayAbsorbedByAuthoritative(authoritativeMatch, message)) {
+      continue;
+    }
+
+    const renderedMatch = findTimelineMessageMatch(renderedById, renderedMessageIds, message);
+
+    if (!renderedMatch || activeTailIds.includes(renderedMatch.id)) {
+      continue;
+    }
+
+    activeTailIds.push(renderedMatch.id);
+  }
+
+  return activeTailIds;
+}
+
+function updateActiveRuntimeOverlayKeys(
+  current: string[],
+  message: SessionMessageViewModel
+): string[] {
+  if (!isRuntimePinnedTailMessage(message)) {
+    return current;
+  }
+
+  const overlayKey = buildRuntimeOverlayKey(message);
+
+  if (current.includes(overlayKey)) {
+    return current;
+  }
+
+  return [...current, overlayKey];
+}
+
+function compactActiveRuntimeOverlayKeys(
+  runtimeOverlayMessages: SessionMessageViewModel[],
+  activeRuntimeOverlayKeys: string[]
+): string[] {
+  if (activeRuntimeOverlayKeys.length === 0) {
+    return activeRuntimeOverlayKeys;
+  }
+
+  const runtimeOverlayKeySet = new Set(
+    runtimeOverlayMessages.map((message) => buildRuntimeOverlayKey(message))
+  );
+  const next = activeRuntimeOverlayKeys.filter((overlayKey) => runtimeOverlayKeySet.has(overlayKey));
+
+  return next.length === activeRuntimeOverlayKeys.length ? activeRuntimeOverlayKeys : next;
+}
+
+function findTimelineMessageMatch(
+  messagesById: Map<string, SessionMessageViewModel>,
+  candidateMessageIds: Set<string>,
+  incoming: SessionMessageViewModel
+): SessionMessageViewModel | null {
+  const exactMatch = messagesById.get(incoming.id) ?? null;
+
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  const equivalentCodexMessageId = findMatchingTimelineEquivalentCodexMessageId(
+    messagesById,
+    candidateMessageIds,
+    incoming
+  );
+
+  if (equivalentCodexMessageId) {
+    return messagesById.get(equivalentCodexMessageId) ?? null;
+  }
+
+  const equivalentOpenCodeMessageId = findMatchingTimelineEquivalentOpenCodeMessageId(
+    messagesById,
+    incoming
+  );
+
+  if (equivalentOpenCodeMessageId) {
+    return messagesById.get(equivalentOpenCodeMessageId) ?? null;
+  }
+
+  return null;
+}
+
+function isRuntimePinnedTailMessage(message: SessionMessageViewModel): boolean {
+  return (
+    (
+      message.role === "assistant"
+      && (message.kind === "text" || message.kind === "thinking")
+    )
+    || (
+      message.role === "tool"
+      && (message.kind === "tool_call" || message.kind === "tool_result")
+    )
+  );
+}
+
+function isRuntimeOverlayAbsorbedByAuthoritative(
+  authoritative: SessionMessageViewModel,
+  runtimeOverlay: SessionMessageViewModel
+): boolean {
+  if (authoritative.role !== runtimeOverlay.role) {
+    return false;
+  }
+
+  if (
+    authoritative.kind !== runtimeOverlay.kind
+    && !(
+      isTimelineEquivalentOpenCodeToolMessage(authoritative, runtimeOverlay)
+      || isTimelineEquivalentCodexToolMessage(authoritative, runtimeOverlay)
+    )
+  ) {
+    return false;
+  }
+
+  const merged = mergeTimelineBridgeAuthoritativeVersion(authoritative, {
+    ...runtimeOverlay,
+    id: authoritative.id,
+    clientRequestId: authoritative.clientRequestId ?? runtimeOverlay.clientRequestId
+  });
+
+  return buildTimelineRenderablePayloadSignature(merged)
+    === buildTimelineRenderablePayloadSignature(authoritative);
+}
+
+function buildTimelineRenderablePayloadSignature(
+  message: SessionMessageViewModel
+): string {
+  const normalizedText =
+    message.kind === "text" || message.kind === "thinking"
+      ? normalizeTimelineComparableCodexText(parseMessageRichContent(message.content).text)
+      : normalizeTimelineComparableCodexText(message.content);
+
+  return JSON.stringify({
+    role: message.role,
+    kind: message.kind,
+    content: normalizedText,
+    attachments: buildTimelineComparableAttachmentSignature(message.attachments),
+    toolCall:
+      message.toolCall === null
+        ? null
+        : {
+            callId: message.toolCall.callId,
+            name: message.toolCall.name,
+            status: message.toolCall.status,
+            input: normalizeTimelineComparableCodexText(message.toolCall.input),
+            output: normalizeTimelineComparableCodexText(message.toolCall.output ?? ""),
+            error: normalizeTimelineComparableCodexText(message.toolCall.error ?? "")
+          }
+  });
 }
 
 function collectDuplicateKeys(values: string[]): string[] {
@@ -3132,7 +3535,26 @@ function collectDuplicateKeys(values: string[]): string[] {
     .map(([value]) => value);
 }
 
-function isTimelineOrdered(messages: SessionMessageViewModel[]): boolean {
+function isTimelineOrdered(
+  messages: SessionMessageViewModel[],
+  pinnedTailIds: string[] = []
+): boolean {
+  if (pinnedTailIds.length > 0) {
+    const pinnedTailIdSet = new Set(pinnedTailIds);
+    const tailMessages = messages.filter((message) => pinnedTailIdSet.has(message.id));
+
+    if (tailMessages.length > 0) {
+      const prefixMessages = messages.filter((message) => !pinnedTailIdSet.has(message.id));
+      const renderedTail = messages.slice(-tailMessages.length);
+
+      if (renderedTail.some((message) => !pinnedTailIdSet.has(message.id))) {
+        return false;
+      }
+
+      return isTimelineOrdered(prefixMessages) && isTimelineOrdered(tailMessages);
+    }
+  }
+
   for (let index = 1; index < messages.length; index += 1) {
     if (compareViewMessageOrder(messages[index - 1], messages[index]) > 0) {
       return false;
@@ -3176,6 +3598,82 @@ function didOlderHistoryPreserveTail(
   }
 
   return previousTail.id === nextTail.id;
+}
+
+function extractTimelineEventMessages(
+  event: TimelineEvent
+): Array<
+  Pick<
+    SessionMessageViewModel,
+    "id" | "role" | "kind" | "sequence" | "timestamp" | "rawRef" | "content"
+  >
+  | Pick<HistoryMessageDto, "messageId" | "role" | "kind" | "sequence" | "timestamp" | "rawRef" | "content">
+> {
+  switch (event.type) {
+    case "timeline.seed":
+      return [...event.snapshotMessages, ...event.bootstrapMessages];
+    case "history.merge":
+      return event.messages;
+    case "runtime.message":
+      return [event.message];
+    case "pending.insert":
+      return [event.pending];
+    case "pending.resolve":
+      return [event.message];
+    case "pending.retry":
+    case "pending.fail":
+    default:
+      return [];
+  }
+}
+
+function collectTimelineMessageMoves(
+  previous: SessionMessageViewModel[],
+  next: SessionMessageViewModel[],
+  role: SessionMessageViewModel["role"]
+): Array<Record<string, unknown>> {
+  const previousIndexById = new Map(previous.map((message, index) => [message.id, index]));
+  const nextIndexById = new Map(next.map((message, index) => [message.id, index]));
+  const previousById = new Map(previous.map((message) => [message.id, message]));
+  const nextById = new Map(next.map((message) => [message.id, message]));
+  const allMessageIds = new Set<string>([
+    ...previous.map((message) => message.id),
+    ...next.map((message) => message.id)
+  ]);
+  const moves: Array<Record<string, unknown>> = [];
+
+  for (const messageId of allMessageIds) {
+    const previousMessage = previousById.get(messageId) ?? null;
+    const nextMessage = nextById.get(messageId) ?? null;
+    const targetMessage = nextMessage ?? previousMessage;
+
+    if (!targetMessage || targetMessage.role !== role) {
+      continue;
+    }
+
+    const previousIndex = previousIndexById.get(messageId) ?? null;
+    const nextIndex = nextIndexById.get(messageId) ?? null;
+
+    if (previousIndex === nextIndex) {
+      continue;
+    }
+
+    moves.push({
+      messageId,
+      fromIndex: previousIndex,
+      toIndex: nextIndex,
+      fromSequence: previousMessage?.sequence ?? null,
+      toSequence: nextMessage?.sequence ?? null,
+      fromRawRef: previousMessage?.rawRef ?? null,
+      toRawRef: nextMessage?.rawRef ?? null,
+      anchorChanged:
+        previousMessage?.sequence !== nextMessage?.sequence
+        || previousMessage?.timestamp !== nextMessage?.timestamp
+        || previousMessage?.rawRef !== nextMessage?.rawRef
+    });
+  }
+
+  return moves.slice(0, 8);
 }
 
 function summarizeOrderDebugMessage(

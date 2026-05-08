@@ -1013,6 +1013,31 @@ function mergeAuthoritativeVersion(
     return incoming;
   }
 
+  if (isEquivalentToolLifecycleMessage(current, incoming)) {
+    const mergedToolCall = mergeToolCall(current.toolCall, incoming.toolCall);
+    const content = pickToolLifecycleMessageContent(
+      current,
+      incoming,
+      mergedToolCall,
+      pickPreferredContent
+    );
+    const attachments = pickPreferredAttachments(current.attachments, incoming.attachments);
+    const stableAnchor = pickStableAuthoritativeMessage(current, incoming);
+    const preferred = pickNewerAuthoritativeMessage(current, incoming);
+
+    return {
+      ...preferred,
+      kind: mergedToolCall?.status === "running" ? "tool_call" : "tool_result",
+      content,
+      toolCall: mergedToolCall,
+      attachments,
+      attachmentPayloads: current.attachmentPayloads ?? incoming.attachmentPayloads ?? null,
+      rawRef: stableAnchor.rawRef,
+      timestamp: stableAnchor.timestamp,
+      sequence: stableAnchor.sequence
+    };
+  }
+
   if (
     current.role !== incoming.role
     || current.kind !== incoming.kind
@@ -1044,9 +1069,14 @@ function mergeEquivalentAuthoritativeVersion(
   current: SessionMessageViewModel,
   incoming: SessionMessageViewModel
 ): SessionMessageViewModel {
-  if (isEquivalentOpenCodeToolMessage(current, incoming)) {
+  if (isEquivalentToolLifecycleMessage(current, incoming)) {
     const mergedToolCall = mergeToolCall(current.toolCall, incoming.toolCall);
-    const content = pickPreferredContent(current.content, incoming.content, current.timestamp, incoming.timestamp);
+    const content = pickToolLifecycleMessageContent(
+      current,
+      incoming,
+      mergedToolCall,
+      pickPreferredContent
+    );
     const attachments = pickPreferredAttachments(current.attachments, incoming.attachments);
     const stableAnchor = pickStableAuthoritativeMessage(current, incoming);
     const preferred = pickNewerAuthoritativeMessage(current, incoming);
@@ -1099,6 +1129,50 @@ function mergeEquivalentAuthoritativeVersion(
   };
 }
 
+function isEquivalentToolLifecycleMessage(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): boolean {
+  return isEquivalentOpenCodeToolMessage(current, incoming)
+    || isEquivalentCodexToolMessage(current, incoming);
+}
+
+function pickToolLifecycleMessageContent(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel,
+  mergedToolCall: SessionMessageViewModel["toolCall"],
+  fallback: (
+    currentContent: string,
+    incomingContent: string,
+    currentTimestamp: string,
+    incomingTimestamp: string
+  ) => string
+): string {
+  if (mergedToolCall?.status === "running") {
+    if (incoming.kind === "tool_call" && incoming.content) {
+      return incoming.content;
+    }
+
+    if (current.kind === "tool_call" && current.content) {
+      return current.content;
+    }
+  } else {
+    if (incoming.kind === "tool_result" && incoming.content) {
+      return incoming.content;
+    }
+
+    if (current.kind === "tool_result" && current.content) {
+      return current.content;
+    }
+
+    if (mergedToolCall?.output) {
+      return mergedToolCall.output;
+    }
+  }
+
+  return fallback(current.content, incoming.content, current.timestamp, incoming.timestamp);
+}
+
 function mergePreservingTimelineIdentity(
   current: SessionMessageViewModel,
   incoming: SessionMessageViewModel
@@ -1119,7 +1193,30 @@ function mergePreservingTimelineIdentity(
   };
 }
 
-function buildRuntimeOverlayKey(message: SessionMessageViewModel): string {
+export function buildRuntimeOverlayKey(message: SessionMessageViewModel): string {
+  if (
+    message.role === "tool"
+    && (message.kind === "tool_call" || message.kind === "tool_result")
+  ) {
+    const toolCallId = message.toolCall?.callId.trim() ?? "";
+
+    if (toolCallId) {
+      return `toolCall:${toolCallId}`;
+    }
+  }
+
+  if (
+    message.role === "assistant"
+    && (message.kind === "text" || message.kind === "thinking")
+    && message.rawRef.startsWith("codex://")
+  ) {
+    const codexStore = extractCodexRawRefStore(message.rawRef);
+
+    if (codexStore) {
+      return `codexAssistantStream:${codexStore}:${message.kind}:${message.sequence}`;
+    }
+  }
+
   if (message.id) {
     return `id:${message.id}`;
   }
@@ -1862,10 +1959,18 @@ function rebaseSyntheticCodexUserMessages(
       return message;
     }
 
-    return {
+    const rebased = {
       ...message,
       sequence: earliestReplySequence
     };
+
+    logSessionMessageDedupDebug("session.messages.synthetic_user_rebased", {
+      syntheticMessage: summarizeMessageForDebug(message),
+      rebasedMessage: summarizeMessageForDebug(rebased),
+      incomingAnchors: incomingAuthoritativeCodexMessages.slice(0, 5).map(summarizeMessageForDebug)
+    });
+
+    return rebased;
   });
 }
 
@@ -1942,8 +2047,20 @@ function isEquivalentCodexAuthoritativeMessage(
     return false;
   }
 
-  if (current.role !== incoming.role || current.kind !== incoming.kind) {
+  if (current.role !== incoming.role) {
     return false;
+  }
+
+  const isToolLifecycleMessage =
+    (current.kind === "tool_call" || current.kind === "tool_result")
+    && (incoming.kind === "tool_call" || incoming.kind === "tool_result");
+
+  if (!isToolLifecycleMessage && current.kind !== incoming.kind) {
+    return false;
+  }
+
+  if (isToolLifecycleMessage) {
+    return isEquivalentCodexToolMessage(current, incoming);
   }
 
   if (
@@ -1965,10 +2082,6 @@ function isEquivalentCodexAuthoritativeMessage(
     );
   }
 
-  if (incoming.kind === "tool_call" || incoming.kind === "tool_result") {
-    return isEquivalentCodexToolMessage(current, incoming);
-  }
-
   return false;
 }
 
@@ -1983,14 +2096,18 @@ function isEquivalentCodexToolMessage(
     !right.rawRef.startsWith("codex://") ||
     left.role !== "tool" ||
     right.role !== "tool" ||
-    left.kind !== right.kind ||
+    (left.kind !== "tool_call" && left.kind !== "tool_result") ||
+    (right.kind !== "tool_call" && right.kind !== "tool_result") ||
     left.toolCall === null ||
     right.toolCall === null
   ) {
     return false;
   }
 
-  return left.toolCall.callId === right.toolCall.callId;
+  const leftCallId = left.toolCall.callId.trim();
+  const rightCallId = right.toolCall.callId.trim();
+
+  return leftCallId.length > 0 && leftCallId === rightCallId;
 }
 
 function isOptimisticUserMessage(message: SessionMessageViewModel): boolean {

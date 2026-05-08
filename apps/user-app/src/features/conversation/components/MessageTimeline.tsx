@@ -18,8 +18,8 @@ import remarkGfm from "remark-gfm";
 import { DesktopModal } from "../../../components/DesktopModal";
 import { getHostBaseUrl, getHostRequestUrl } from "../../../config/env";
 import {
+  logConversationTimelineDebug,
   isTimelineScrollDebugEnabled,
-  logOpenCodeOrderDebug,
   logTimelineScrollDebug
 } from "../../../shared/debug/perf-debug";
 import { resolveHostTransportTarget } from "../../../network/host-transport-registry";
@@ -1945,7 +1945,6 @@ function mergeToolMessageBlock(messages: SessionMessageViewModel[]): ToolMessage
     string,
     {
       messages: SessionMessageViewModel[];
-      firstSequence: number;
     }
   >();
 
@@ -1964,13 +1963,11 @@ function mergeToolMessageBlock(messages: SessionMessageViewModel[]): ToolMessage
     }
 
     groupsByCallId.set(tool.callId, {
-      messages: [message],
-      firstSequence: message.sequence
+      messages: [message]
     });
   }
 
   return Array.from(groupsByCallId.values())
-    .sort((left, right) => left.firstSequence - right.firstSequence)
     .map((entry) => mergeToolMessages(entry.messages))
     .filter((group): group is ToolMessageGroup => Boolean(group));
 }
@@ -2161,6 +2158,14 @@ function validateTimelineViewModel(
     }
   }
 
+  const expectedRenderableMessageIds = visibleMessages
+    .filter((message) => shouldRenderTimelineMessage(visibleMessages, message.id))
+    .map((message) => message.id);
+
+  if (flattenedRenderableMessageIds.join(",") !== expectedRenderableMessageIds.join(",")) {
+    issues.push("render_order_mismatch");
+  }
+
   return issues;
 }
 
@@ -2280,6 +2285,69 @@ function collectLeadingSystemPromptMessageIds(
   }
 
   return messageIds;
+}
+
+function collectRenderItemMessageIds(renderItems: TimelineRenderItem[]): string[] {
+  const messageIds: string[] = [];
+
+  for (const item of renderItems) {
+    if (item.type === "message") {
+      messageIds.push(item.message.id);
+      continue;
+    }
+
+    if (item.type === "tool_group") {
+      messageIds.push(...item.group.messageIds);
+    }
+  }
+
+  return messageIds;
+}
+
+function collectAssistantRenderMoves(
+  previousRenderMessageIds: string[] | null,
+  nextRenderMessageIds: string[],
+  visibleMessages: SessionMessageViewModel[]
+): Array<Record<string, unknown>> {
+  if (!previousRenderMessageIds) {
+    return [];
+  }
+
+  const assistantIds = new Set(
+    visibleMessages
+      .filter((message) => message.role === "assistant")
+      .map((message) => message.id)
+  );
+
+  if (assistantIds.size === 0) {
+    return [];
+  }
+
+  const previousIndexById = new Map(previousRenderMessageIds.map((messageId, index) => [messageId, index]));
+  const nextIndexById = new Map(nextRenderMessageIds.map((messageId, index) => [messageId, index]));
+  const messageById = new Map(visibleMessages.map((message) => [message.id, message]));
+  const moves: Array<Record<string, unknown>> = [];
+
+  for (const assistantId of assistantIds) {
+    const previousIndex = previousIndexById.get(assistantId) ?? null;
+    const nextIndex = nextIndexById.get(assistantId) ?? null;
+
+    if (previousIndex === nextIndex) {
+      continue;
+    }
+
+    const message = messageById.get(assistantId) ?? null;
+    moves.push({
+      messageId: assistantId,
+      fromIndex: previousIndex,
+      toIndex: nextIndex,
+      sequence: message?.sequence ?? null,
+      rawRef: message?.rawRef ?? null,
+      timestamp: message?.timestamp ?? null
+    });
+  }
+
+  return moves.slice(0, 8);
 }
 
 function flattenReactNodeText(node: ReactNode): string {
@@ -4374,6 +4442,7 @@ export function MessageTimeline({
   const [showScrollToBottomButton, setShowScrollToBottomButton] = useState(false);
   const [hasNewMessagesBelow, setHasNewMessagesBelow] = useState(false);
   const hasNewMessagesBelowRef = useRef(false);
+  const previousRenderMessageIdsRef = useRef<string[] | null>(null);
   const manualRestoreDurationMs = platform.isMobile ? 0 : MANUAL_RESTORE_DURATION_MS;
   const messages = useMemo(
     () => extractConversationTimelineMessages(items),
@@ -5101,32 +5170,30 @@ export function MessageTimeline({
   }, [sessionId, visibleMessages.length]);
 
   useEffect(() => {
-    if (timelineViewModel.hiddenMessageIds.length === 0 && timelineViewModel.validationIssues.length === 0) {
-      return;
+    const currentRenderMessageIds = collectRenderItemMessageIds(renderItems);
+    const assistantRenderMoves = collectAssistantRenderMoves(
+      previousRenderMessageIdsRef.current,
+      currentRenderMessageIds,
+      visibleMessages
+    );
+    const shouldLogRenderState =
+      timelineViewModel.hiddenMessageIds.length > 0
+      || timelineViewModel.validationIssues.length > 0
+      || assistantRenderMoves.length > 0;
+
+    if (shouldLogRenderState) {
+      logConversationTimelineDebug("timeline.render", {
+        sessionId,
+        hiddenMessageIds: timelineViewModel.hiddenMessageIds,
+        validationIssues: timelineViewModel.validationIssues,
+        assistantRenderMoves,
+        rawTailMessages: messages.slice(-6).map(summarizeTimelineMessage),
+        visibleTailMessages: visibleMessages.slice(-6).map(summarizeTimelineMessage),
+        renderTailItems: renderItems.slice(-6).map(summarizeTimelineRenderItem)
+      });
     }
 
-    logOpenCodeOrderDebug("timeline.view_model", {
-      sessionId,
-      hiddenMessageIds: timelineViewModel.hiddenMessageIds,
-      validationIssues: timelineViewModel.validationIssues,
-      rawMessages: messages.map((message) => ({
-        id: message.id,
-        role: message.role,
-        kind: message.kind,
-        sequence: message.sequence,
-        timestamp: message.timestamp,
-        rawRef: message.rawRef
-      })),
-      visibleMessages: visibleMessages.map((message) => ({
-        id: message.id,
-        role: message.role,
-        kind: message.kind,
-        sequence: message.sequence,
-        timestamp: message.timestamp,
-        rawRef: message.rawRef
-      })),
-      renderItems: renderItems.map(summarizeTimelineRenderItem)
-    });
+    previousRenderMessageIdsRef.current = currentRenderMessageIds;
   }, [messages, renderItems, sessionId, timelineViewModel.hiddenMessageIds, timelineViewModel.validationIssues, visibleMessages]);
 
   function handleScroll() {
