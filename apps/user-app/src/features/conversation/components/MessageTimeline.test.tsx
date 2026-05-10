@@ -826,6 +826,58 @@ describe("MessageTimeline", () => {
     expect(previews[1]).toContain("echo second");
   });
 
+  it("不会把被其他工具消息隔开的同 callId 片段重新合并到前面", () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "tool-call-a",
+            callId: "call-a",
+            name: "shell_command",
+            kind: "tool_call",
+            content: "{\"command\":\"echo A\"}",
+            toolInput: "{\"command\":\"echo A\"}",
+            sequence: 10,
+            rawRef: "codex://raw#line=10"
+          }),
+          createToolMessage({
+            id: "tool-call-b",
+            callId: "call-b",
+            name: "shell_command",
+            kind: "tool_call",
+            content: "{\"command\":\"echo B\"}",
+            toolInput: "{\"command\":\"echo B\"}",
+            sequence: 11,
+            rawRef: "codex://raw#line=11"
+          }),
+          createToolMessage({
+            id: "tool-result-a",
+            callId: "call-a",
+            name: "shell_command",
+            kind: "tool_result",
+            content: "A done",
+            toolInput: "{\"command\":\"echo A\"}",
+            toolOutput: "A done",
+            sequence: 12,
+            rawRef: "codex://raw#line=12"
+          })
+        ]}
+      />
+    );
+
+    const previews = Array.from(document.querySelectorAll(".tool-message-row")).map(
+      (node) => node.textContent?.replace(/\s+/g, " ").trim() ?? ""
+    );
+
+    expect(previews).toHaveLength(3);
+    expect(previews[0]).toContain("echo A");
+    expect(previews[1]).toContain("echo B");
+    expect(previews[2]).toContain("echo A");
+  });
+
   it("会把 update_plan 渲染成任务卡片，并保留原始展开入口", async () => {
     render(
       <MessageTimeline
@@ -2007,7 +2059,7 @@ ARGUMENTS: capabilities list`)
     expect(handleLoadOlderMessages).toHaveBeenCalledTimes(2);
   });
 
-  it("会把交错返回的工具调用和结果按 callId 成对合并显示", async () => {
+  it("交错返回的工具调用和结果会保持线性顺序，不跨位置强行按 callId 配对", async () => {
     render(
       <MessageTimeline
         historyState="ready"
@@ -2098,12 +2150,14 @@ ARGUMENTS: capabilities list`)
       />
     );
 
-    expect(document.querySelectorAll(".tool-message-row")).toHaveLength(2);
+    expect(document.querySelectorAll(".tool-message-row")).toHaveLength(4);
 
-    await userEvent.click(screen.getByRole("button", { name: new RegExp(`^${t("conversation.roleTool")}`) }));
-    expect(screen.getByText((content) => content.includes("M src/main.ts"))).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: new RegExp(`${t("conversation.toolPreviewCommand")}：git status --short`) })
+    );
+    expect(screen.getAllByText((content) => content.includes("git status --short")).length).toBeGreaterThan(0);
 
-    await userEvent.click(screen.getByRole("button", { name: /read_thread_terminal/ }));
+    await userEvent.click(screen.getAllByRole("button", { name: /read_thread_terminal/ })[1]!);
     expect(screen.getByText("PS C:\\Code\\CodingNS>")).toBeInTheDocument();
   });
 
