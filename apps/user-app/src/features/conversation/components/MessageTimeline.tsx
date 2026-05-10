@@ -1941,35 +1941,57 @@ function mergeToolMessages(messages: SessionMessageViewModel[]): ToolMessageGrou
 }
 
 function mergeToolMessageBlock(messages: SessionMessageViewModel[]): ToolMessageGroup[] {
-  const groupsByCallId = new Map<
-    string,
-    {
-      messages: SessionMessageViewModel[];
+  const groups: ToolMessageGroup[] = [];
+  let currentBlock: SessionMessageViewModel[] = [];
+  let currentCallId: string | null = null;
+
+  function flushCurrentBlock() {
+    if (currentBlock.length === 0) {
+      return;
     }
-  >();
+
+    const merged = mergeToolMessages(currentBlock);
+
+    if (merged) {
+      groups.push(merged);
+    }
+
+    currentBlock = [];
+    currentCallId = null;
+  }
 
   for (const message of messages) {
     const tool = resolveToolCall(message);
+    const nextCallId = tool?.callId.trim() ?? "";
 
-    if (!tool) {
+    if (!tool || nextCallId.length === 0) {
+      flushCurrentBlock();
+      const merged = mergeToolMessages([message]);
+
+      if (merged) {
+        groups.push(merged);
+      }
       continue;
     }
 
-    const existing = groupsByCallId.get(tool.callId);
-
-    if (existing) {
-      existing.messages.push(message);
+    if (currentBlock.length === 0) {
+      currentBlock = [message];
+      currentCallId = nextCallId;
       continue;
     }
 
-    groupsByCallId.set(tool.callId, {
-      messages: [message]
-    });
+    if (currentCallId === nextCallId) {
+      currentBlock.push(message);
+      continue;
+    }
+
+    flushCurrentBlock();
+    currentBlock = [message];
+    currentCallId = nextCallId;
   }
 
-  return Array.from(groupsByCallId.values())
-    .map((entry) => mergeToolMessages(entry.messages))
-    .filter((group): group is ToolMessageGroup => Boolean(group));
+  flushCurrentBlock();
+  return groups;
 }
 
 function buildTimelineRenderItems(

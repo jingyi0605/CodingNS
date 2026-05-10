@@ -1970,6 +1970,30 @@ function mergeAuthoritativeWithRuntimeOverlay(
 
   for (const message of runtimeOverlay) {
     const currentMessage = nextById.get(message.id) ?? null;
+    const preferredEquivalentMessageId = findPreferredTimelineEquivalentMessageId(
+      nextById,
+      authoritativeMessageIds,
+      message,
+      currentMessage
+    );
+
+    if (preferredEquivalentMessageId) {
+      const preferredEquivalentMessage = nextById.get(preferredEquivalentMessageId) ?? null;
+
+      if (preferredEquivalentMessage) {
+        logSessionMessageDedupDebug("session.messages.runtime_overlay_authoritative_bridge", {
+          mode: "prefer_equivalent",
+          previous: summarizeTimelineBridgeMessageForDebug(preferredEquivalentMessage),
+          overlay: summarizeTimelineBridgeMessageForDebug(message),
+          replacedSameId: currentMessage ? summarizeTimelineBridgeMessageForDebug(currentMessage) : null
+        });
+        nextById.set(
+          preferredEquivalentMessageId,
+          mergeTimelineBridgePreservingIdentity(preferredEquivalentMessage, message)
+        );
+        continue;
+      }
+    }
 
     if (currentMessage) {
       logSessionMessageDedupDebug("session.messages.runtime_overlay_authoritative_bridge", {
@@ -3077,6 +3101,7 @@ export function applyTimelineEventToLayers(
         ...current,
         runtimeOverlayMessages: mergeRuntimeOverlayMessages(current.runtimeOverlayMessages, [event.message]),
         activeRuntimeOverlayKeys: updateActiveRuntimeOverlayKeys(
+          current,
           current.activeRuntimeOverlayKeys,
           event.message
         )
@@ -3167,6 +3192,7 @@ export function applyTimelineEventToLayers(
   next = {
     ...next,
     activeRuntimeOverlayKeys: compactActiveRuntimeOverlayKeys(
+      next.authoritativeMessages,
       next.runtimeOverlayMessages,
       next.activeRuntimeOverlayKeys
     )
@@ -3281,6 +3307,7 @@ function compactRuntimeOverlayMessages(
 
   const authoritativeById = new Map(authoritativeMessages.map((message) => [message.id, message]));
   const authoritativeMessageIds = new Set(authoritativeById.keys());
+  const latestAuthoritativeMessage = authoritativeMessages.at(-1) ?? null;
   const next = runtimeOverlayMessages.filter((message) => {
     const authoritativeMatch = findTimelineMessageMatch(
       authoritativeById,
@@ -3293,6 +3320,18 @@ function compactRuntimeOverlayMessages(
     }
 
     const absorbed = isRuntimeOverlayAbsorbedByAuthoritative(authoritativeMatch, message);
+
+    if (!absorbed && isRuntimeOverlayStaleComparedWithAuthoritativeTail(latestAuthoritativeMessage, message)) {
+      logConversationTimelineDebug("timeline.runtime_overlay_stale_dropped", {
+        overlay: summarizeTimelineBridgeMessageForDebug(message),
+        authoritativeMatch: summarizeTimelineBridgeMessageForDebug(authoritativeMatch),
+        latestAuthoritative:
+          latestAuthoritativeMessage
+            ? summarizeTimelineBridgeMessageForDebug(latestAuthoritativeMessage)
+            : null
+      });
+      return false;
+    }
 
     if (!absorbed && isRuntimePinnedTailMessage(message)) {
       logConversationTimelineDebug("timeline.runtime_overlay_not_absorbed", {
@@ -3363,7 +3402,7 @@ function collectActiveRuntimeTailMessageIds(
       continue;
     }
 
-    if (!isRuntimePinnedTailMessage(message)) {
+    if (!isRuntimeOverlayEligibleForTail(authoritativeMessages, message)) {
       continue;
     }
 
@@ -3390,10 +3429,11 @@ function collectActiveRuntimeTailMessageIds(
 }
 
 function updateActiveRuntimeOverlayKeys(
+  timeline: TimelineLayersState,
   current: string[],
   message: SessionMessageViewModel
 ): string[] {
-  if (!isRuntimePinnedTailMessage(message)) {
+  if (!isRuntimeOverlayEligibleForTail(timeline.authoritativeMessages, message)) {
     return current;
   }
 
@@ -3406,7 +3446,54 @@ function updateActiveRuntimeOverlayKeys(
   return [...current, overlayKey];
 }
 
+function isRuntimeOverlayEligibleForTail(
+  authoritativeMessages: SessionMessageViewModel[],
+  message: SessionMessageViewModel
+): boolean {
+  if (!isRuntimePinnedTailMessage(message)) {
+    return false;
+  }
+
+  return !isRuntimeOverlayStaleComparedWithAuthoritativeTail(
+    authoritativeMessages.at(-1) ?? null,
+    message
+  );
+}
+
+function isRuntimeOverlayStaleComparedWithAuthoritativeTail(
+  latestAuthoritativeMessage: SessionMessageViewModel | null,
+  message: SessionMessageViewModel
+): boolean {
+  if (!latestAuthoritativeMessage) {
+    return false;
+  }
+
+  if (isTimelineEquivalentToolLifecycleMessage(message, latestAuthoritativeMessage)) {
+    return false;
+  }
+
+  return compareRuntimeOverlayFreshness(message, latestAuthoritativeMessage) < 0;
+}
+
+function compareRuntimeOverlayFreshness(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel
+): number {
+  const timestampOrder = left.timestamp.localeCompare(right.timestamp);
+
+  if (timestampOrder !== 0) {
+    return timestampOrder;
+  }
+
+  if (left.sequence !== right.sequence) {
+    return left.sequence - right.sequence;
+  }
+
+  return compareViewMessageOrder(left, right);
+}
+
 function compactActiveRuntimeOverlayKeys(
+  authoritativeMessages: SessionMessageViewModel[],
   runtimeOverlayMessages: SessionMessageViewModel[],
   activeRuntimeOverlayKeys: string[]
 ): string[] {
@@ -3414,10 +3501,30 @@ function compactActiveRuntimeOverlayKeys(
     return activeRuntimeOverlayKeys;
   }
 
-  const runtimeOverlayKeySet = new Set(
-    runtimeOverlayMessages.map((message) => buildRuntimeOverlayKey(message))
+  const runtimeOverlayByKey = new Map(
+    runtimeOverlayMessages.map((message) => [buildRuntimeOverlayKey(message), message])
   );
-  const next = activeRuntimeOverlayKeys.filter((overlayKey) => runtimeOverlayKeySet.has(overlayKey));
+  const latestAuthoritativeMessage = authoritativeMessages.at(-1) ?? null;
+  const next = activeRuntimeOverlayKeys.filter((overlayKey) => {
+    const message = runtimeOverlayByKey.get(overlayKey) ?? null;
+
+    if (!message) {
+      return false;
+    }
+
+    const keepActive = isRuntimeOverlayEligibleForTail(authoritativeMessages, message);
+
+    if (!keepActive) {
+      logConversationTimelineDebug("timeline.runtime_overlay_tail_deactivated", {
+        overlay: summarizeTimelineBridgeMessageForDebug(message),
+        latestAuthoritative: latestAuthoritativeMessage
+          ? summarizeTimelineBridgeMessageForDebug(latestAuthoritativeMessage)
+          : null
+      });
+    }
+
+    return keepActive;
+  });
 
   return next.length === activeRuntimeOverlayKeys.length ? activeRuntimeOverlayKeys : next;
 }
@@ -3428,6 +3535,16 @@ function findTimelineMessageMatch(
   incoming: SessionMessageViewModel
 ): SessionMessageViewModel | null {
   const exactMatch = messagesById.get(incoming.id) ?? null;
+  const preferredEquivalentMessageId = findPreferredTimelineEquivalentMessageId(
+    messagesById,
+    candidateMessageIds,
+    incoming,
+    exactMatch
+  );
+
+  if (preferredEquivalentMessageId) {
+    return messagesById.get(preferredEquivalentMessageId) ?? null;
+  }
 
   if (exactMatch) {
     return exactMatch;
@@ -3453,6 +3570,127 @@ function findTimelineMessageMatch(
   }
 
   return null;
+}
+
+function findPreferredTimelineEquivalentMessageId(
+  messagesById: Map<string, SessionMessageViewModel>,
+  candidateMessageIds: Set<string>,
+  incoming: SessionMessageViewModel,
+  exactMatch: SessionMessageViewModel | null
+): string | null {
+  const equivalentRuntimeCodexMessageId = findMatchingRuntimeOverlayEquivalentCodexMessageId(
+    messagesById,
+    candidateMessageIds,
+    incoming
+  );
+  const equivalentCodexMessageId = findMatchingTimelineEquivalentCodexMessageId(
+    messagesById,
+    candidateMessageIds,
+    incoming
+  );
+  const equivalentOpenCodeMessageId = findMatchingTimelineEquivalentOpenCodeMessageId(
+    messagesById,
+    incoming
+  );
+  const preferredEquivalentMessageId =
+    equivalentRuntimeCodexMessageId
+    ?? equivalentCodexMessageId
+    ?? equivalentOpenCodeMessageId;
+
+  if (!preferredEquivalentMessageId) {
+    return null;
+  }
+
+  if (!exactMatch) {
+    return preferredEquivalentMessageId;
+  }
+
+  const preferredEquivalentMessage = messagesById.get(preferredEquivalentMessageId) ?? null;
+
+  if (!preferredEquivalentMessage) {
+    return null;
+  }
+
+  if (!shouldPreferEquivalentTimelineMatch(exactMatch, preferredEquivalentMessage, incoming)) {
+    return null;
+  }
+
+  return preferredEquivalentMessageId;
+}
+
+function findMatchingRuntimeOverlayEquivalentCodexMessageId(
+  messagesById: Map<string, SessionMessageViewModel>,
+  candidateMessageIds: Set<string>,
+  incoming: SessionMessageViewModel
+): string | null {
+  if (
+    incoming.role !== "assistant"
+    || (incoming.kind !== "text" && incoming.kind !== "thinking")
+    || incoming.deliveryState !== "sent"
+    || !incoming.rawRef.startsWith("codex://")
+  ) {
+    return null;
+  }
+
+  const incomingStore = extractTimelineCodexRawRefStore(incoming.rawRef);
+
+  if (!incomingStore) {
+    return null;
+  }
+
+  for (const [messageId, current] of messagesById.entries()) {
+    if (
+      messageId === incoming.id
+      || !candidateMessageIds.has(messageId)
+      || current.role !== incoming.role
+      || current.kind !== incoming.kind
+      || current.deliveryState !== "sent"
+      || !current.rawRef.startsWith("codex://")
+    ) {
+      continue;
+    }
+
+    const currentStore = extractTimelineCodexRawRefStore(current.rawRef);
+
+    if (
+      !currentStore
+      || currentStore !== incomingStore
+      || compareViewMessageOrder(current, incoming) < 0
+      || !isTimelineEquivalentCodexTextMessageWithinWindow(
+        current,
+        incoming,
+        TIMELINE_CODEX_EQUIVALENT_AUTHORITATIVE_WINDOW_MS
+      )
+    ) {
+      continue;
+    }
+
+    logSessionMessageDedupDebug("session.messages.codex_runtime_overlay_bridge_match", {
+      previous: summarizeTimelineBridgeMessageForDebug(current),
+      incoming: summarizeTimelineBridgeMessageForDebug(incoming)
+    });
+    return messageId;
+  }
+
+  return null;
+}
+
+function shouldPreferEquivalentTimelineMatch(
+  exactMatch: SessionMessageViewModel,
+  equivalentMatch: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): boolean {
+  if (
+    !isTimelineEquivalentToolLifecycleMessage(exactMatch, incoming)
+    || !isTimelineEquivalentToolLifecycleMessage(equivalentMatch, incoming)
+  ) {
+    return false;
+  }
+
+  return (
+    !isRuntimeOverlayAbsorbedByAuthoritative(exactMatch, incoming)
+    && isRuntimeOverlayAbsorbedByAuthoritative(equivalentMatch, incoming)
+  );
 }
 
 function isRuntimePinnedTailMessage(message: SessionMessageViewModel): boolean {
