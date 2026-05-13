@@ -25,6 +25,8 @@ describe("mapSessionProviderError", () => {
     expect(mapped.statusCode).toBe(503);
     expect(mapped.errorCode).toBe("PROVIDER_RUNTIME_TIMEOUT");
     expect(mapped.message).toContain("请求超时");
+    expect(mapped.message).toContain("provider 运行时");
+    expect(mapped.message).not.toContain("OpenCode server");
   });
 
   it("会把 OpenCode 提交结果未知的超时映射成显式确认提示", () => {

@@ -1161,7 +1161,7 @@ describe("SessionLiveRuntimeService", () => {
     ).rejects.toMatchObject({
       statusCode: 503,
       errorCode: "PROVIDER_RUNTIME_UNAVAILABLE",
-      message: expect.stringContaining("OpenCode server 已启动")
+      message: expect.stringContaining("provider 运行时已启动")
     });
   });
 
