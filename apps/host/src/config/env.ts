@@ -312,6 +312,13 @@ function resolveCodexCliPath(configuredPath: string | undefined, homeDir: string
     return normalizedConfiguredPath;
   }
 
+  const configDir = path.dirname(fileURLToPath(import.meta.url));
+  const moduleSearchRoots = uniquePaths([
+    process.cwd(),
+    path.resolve(configDir, "..", "..", ".."),
+    path.resolve(configDir, "..", ".."),
+    resolveAppRootDir()
+  ]);
   const resolvedCodexScript = resolveModuleSpecifier("@openai/codex/bin/codex.js");
   const resolvedCodexSdkEntry = resolveModuleSpecifier("@openai/codex-sdk");
   const inferredPackageRoots = uniquePaths(
@@ -320,41 +327,17 @@ function resolveCodexCliPath(configuredPath: string | undefined, homeDir: string
       resolvedCodexSdkEntry ? path.dirname(path.dirname(resolvedCodexSdkEntry)) : null
     ].filter((value): value is string => Boolean(value))
   );
-
-  if (resolvedCodexScript) {
-    return resolvedCodexScript;
-  }
-
-  const configDir = path.dirname(fileURLToPath(import.meta.url));
-  const moduleSearchRoots = uniquePaths([
-    process.cwd(),
-    path.resolve(configDir, "..", "..", ".."),
-    path.resolve(configDir, "..", ".."),
-    resolveAppRootDir(),
-    ...inferredPackageRoots
-  ]);
-  const nestedBinSegments = ["node_modules", "@openai", "codex-sdk", "node_modules", ".bin"];
-  const nestedCodexScriptSegments = [
-    "node_modules",
-    "@openai",
-    "codex-sdk",
-    "node_modules",
-    "@openai",
-    "codex",
-    "bin",
-    "codex.js"
-  ];
-  const candidates = process.platform === "win32"
+  const packageCandidates = process.platform === "win32"
     ? [
       ...moduleSearchRoots.flatMap((root) => [
         path.join(root, "node_modules", ".bin", "codex.cmd"),
         path.join(root, "node_modules", ".bin", "codex.exe"),
         path.join(root, "node_modules", ".bin", "codex"),
         path.join(root, "node_modules", "@openai", "codex", "bin", "codex.js"),
-        path.join(root, ...nestedBinSegments, "codex.cmd"),
-        path.join(root, ...nestedBinSegments, "codex.exe"),
-        path.join(root, ...nestedBinSegments, "codex"),
-        path.join(root, ...nestedCodexScriptSegments)
+        path.join(root, "node_modules", "@openai", "codex-sdk", "node_modules", ".bin", "codex.cmd"),
+        path.join(root, "node_modules", "@openai", "codex-sdk", "node_modules", ".bin", "codex.exe"),
+        path.join(root, "node_modules", "@openai", "codex-sdk", "node_modules", ".bin", "codex"),
+        path.join(root, "node_modules", "@openai", "codex-sdk", "node_modules", "@openai", "codex", "bin", "codex.js")
       ]),
       normalizeOptionalText(process.env.APPDATA)
         ? path.join(process.env.APPDATA as string, "npm", "codex.cmd")
@@ -367,13 +350,22 @@ function resolveCodexCliPath(configuredPath: string | undefined, homeDir: string
       ...moduleSearchRoots.flatMap((root) => [
         path.join(root, "node_modules", ".bin", "codex"),
         path.join(root, "node_modules", "@openai", "codex", "bin", "codex.js"),
-        path.join(root, ...nestedBinSegments, "codex"),
-        path.join(root, ...nestedCodexScriptSegments)
+        path.join(root, "node_modules", "@openai", "codex-sdk", "node_modules", ".bin", "codex"),
+        path.join(root, "node_modules", "@openai", "codex-sdk", "node_modules", "@openai", "codex", "bin", "codex.js")
       ]),
       path.resolve(process.cwd(), "packages", "session-sync-core", "node_modules", ".bin", "codex"),
       path.join(homeDir, ".local", "bin", "codex"),
       process.platform === "darwin" ? "/Applications/Codex.app/Contents/Resources/codex" : null
     ];
+  const resolvedCandidates = [
+    resolvedCodexScript,
+    ...inferredPackageRoots.flatMap((root) => [
+      path.join(root, "node_modules", ".bin", process.platform === "win32" ? "codex.cmd" : "codex"),
+      path.join(root, "node_modules", "@openai", "codex", "bin", "codex.js")
+    ])
+  ];
+  const globalCodexPath = resolveExecutableOnPath("codex");
+  const candidates = [...packageCandidates, ...resolvedCandidates, globalCodexPath];
 
   for (const candidate of candidates) {
     if (candidate && existsSync(candidate)) {
@@ -677,4 +669,21 @@ function resolveModuleSpecifier(specifier: string): string | null {
   } catch {
     return null;
   }
+}
+
+function resolveExecutableOnPath(executableName: string): string | null {
+  const pathEntries = (process.env.PATH ?? "")
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  for (const entry of pathEntries) {
+    const candidatePath = path.join(entry, executableName);
+
+    if (existsSync(candidatePath)) {
+      return candidatePath;
+    }
+  }
+
+  return null;
 }

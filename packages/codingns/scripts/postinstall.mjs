@@ -8,6 +8,7 @@ const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const moduleRequire = createRequire(import.meta.url);
 const packageJsonPath = path.join(packageRoot, "package.json");
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+const cliVersionRange = packageJson.dependencies?.["@openai/codex"];
 const sdkVersionRange = packageJson.dependencies?.["@openai/codex-sdk"];
 const sessionSyncCoreRange = packageJson.dependencies?.["@codingns/session-sync-core"];
 
@@ -46,8 +47,9 @@ const repairResult = runNpmInstall([
   "--no-save",
   "--include=optional",
   "--package-lock=false",
+  cliVersionRange ? `@openai/codex@${cliVersionRange}` : null,
   `@openai/codex-sdk@${sdkVersionRange}`
-]);
+].filter(Boolean));
 
 if (repairResult.status !== 0) {
   process.exit(repairResult.status ?? 1);
@@ -71,8 +73,6 @@ async function verifyCodexRuntime() {
       return false;
     }
 
-    const sdkPackageRoot = path.dirname(path.dirname(sdkEntryPath));
-
     const sdkModule = await import(pathToFileURL(sdkEntryPath).href);
 
     if (typeof sdkModule.Codex !== "function") {
@@ -80,12 +80,17 @@ async function verifyCodexRuntime() {
       return false;
     }
 
-    const codexBinPath =
-      resolveModuleFile("@openai/codex/bin/codex.js") ??
-      resolveCodexCliScriptPath(sdkPackageRoot);
+    const codexBinPath = resolveCodexCliPath(sdkEntryPath);
 
     if (!codexBinPath) {
-      console.error(`[codingns] 未找到 Codex CLI 包装脚本：${codexBinPath}`);
+      console.error("[codingns] 未找到 Codex CLI 入口");
+      return false;
+    }
+
+    const nativeCodexBinaryPath = resolveCodexNativeBinaryPath(codexBinPath);
+
+    if (!nativeCodexBinaryPath) {
+      console.error("[codingns] 未找到 Codex CLI 平台二进制");
       return false;
     }
 
@@ -96,14 +101,22 @@ async function verifyCodexRuntime() {
       timeout: 30_000
     });
 
+    if (versionCheck.error) {
+      console.error(`[codingns] Codex CLI 启动失败：${versionCheck.error.message}`);
+      return false;
+    }
+
     if (versionCheck.status !== 0) {
-      const stderr = versionCheck.stderr?.trim() || versionCheck.stdout?.trim() || "unknown error";
-      console.error(`[codingns] Codex CLI 校验失败：${stderr}`);
+      console.error(
+        `[codingns] Codex CLI 校验失败：${formatSpawnFailure(versionCheck)}`
+      );
       return false;
     }
 
     const versionText = versionCheck.stdout?.trim() || "unknown";
-    logInfo(`[codingns] Codex CLI 已就绪：${versionText}`);
+    logInfo(`[codingns] Codex CLI 入口已就绪：${codexBinPath}`);
+    logInfo(`[codingns] Codex CLI 平台运行文件已就绪：${nativeCodexBinaryPath}`);
+    logInfo(`[codingns] Codex CLI 版本：${versionText}`);
     return true;
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -161,24 +174,152 @@ function isWorkspaceSourceInstall() {
   );
 }
 
-function resolveCodexCliScriptPath(sdkPackageRoot) {
-  const directNestedPath = path.join(
+function resolveCodexCliPath(sdkEntryPath) {
+  const sdkPackageRoot = path.dirname(path.dirname(sdkEntryPath));
+  const moduleRoots = uniquePaths([
+    packageRoot,
+    path.dirname(packageRoot),
     sdkPackageRoot,
-    "node_modules",
-    "@openai",
-    "codex",
-    "bin",
-    "codex.js"
-  );
+    path.dirname(sdkPackageRoot)
+  ]);
 
-  if (fs.existsSync(directNestedPath)) {
-    return directNestedPath;
+  const candidates = process.platform === "win32"
+    ? moduleRoots.flatMap((root) => [
+      path.join(root, "node_modules", ".bin", "codex.cmd"),
+      path.join(root, "node_modules", ".bin", "codex.exe"),
+      path.join(root, "node_modules", ".bin", "codex"),
+      path.join(root, "node_modules", "@openai", "codex", "bin", "codex.js"),
+      path.join(root, "node_modules", "@openai", "codex-sdk", "node_modules", ".bin", "codex.cmd"),
+      path.join(root, "node_modules", "@openai", "codex-sdk", "node_modules", ".bin", "codex.exe"),
+      path.join(root, "node_modules", "@openai", "codex-sdk", "node_modules", ".bin", "codex"),
+      path.join(root, "node_modules", "@openai", "codex-sdk", "node_modules", "@openai", "codex", "bin", "codex.js")
+    ])
+    : moduleRoots.flatMap((root) => [
+      path.join(root, "node_modules", ".bin", "codex"),
+      path.join(root, "node_modules", "@openai", "codex", "bin", "codex.js"),
+      path.join(root, "node_modules", "@openai", "codex-sdk", "node_modules", ".bin", "codex"),
+      path.join(root, "node_modules", "@openai", "codex-sdk", "node_modules", "@openai", "codex", "bin", "codex.js")
+    ]);
+
+  const resolvedCodexScript = resolveModuleFile("@openai/codex/bin/codex.js");
+
+  if (resolvedCodexScript) {
+    candidates.unshift(resolvedCodexScript);
   }
 
-  return (
-    findNodeModulesFile(sdkPackageRoot, ["@openai", "codex", "bin", "codex.js"]) ??
-    findNodeModulesFile(packageRoot, ["@openai", "codex", "bin", "codex.js"])
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function resolveCodexNativeBinaryPath(codexBinPath) {
+  const platformPackage = resolveCodexPlatformPackageName();
+
+  if (!platformPackage) {
+    return null;
+  }
+
+  const targetTriple = resolveCodexTargetTriple();
+  const codexBinaryName = process.platform === "win32" ? "codex.exe" : "codex";
+  const codexPackageRoot = findPackageRoot(codexBinPath);
+  const localBinaryPath = codexPackageRoot
+    ? path.join(codexPackageRoot, "vendor", targetTriple, "codex", codexBinaryName)
+    : null;
+
+  if (localBinaryPath && fs.existsSync(localBinaryPath)) {
+    return localBinaryPath;
+  }
+
+  const platformPackageJsonPath = resolveModuleFile(`${platformPackage}/package.json`);
+
+  if (!platformPackageJsonPath) {
+    return null;
+  }
+
+  const platformBinaryPath = path.join(
+    path.dirname(platformPackageJsonPath),
+    "vendor",
+    targetTriple,
+    "codex",
+    codexBinaryName
   );
+
+  return fs.existsSync(platformBinaryPath) ? platformBinaryPath : null;
+}
+
+function formatSpawnFailure(result) {
+  const parts = [
+    result.stderr?.trim(),
+    result.stdout?.trim(),
+    result.signal ? `signal=${result.signal}` : null,
+    typeof result.status === "number" ? `exitCode=${result.status}` : null
+  ].filter(Boolean);
+
+  return parts.join("\n") || "unknown error";
+}
+
+function resolveCodexPlatformPackageName() {
+  switch (`${process.platform}/${process.arch}`) {
+    case "linux/x64":
+      return "@openai/codex-linux-x64";
+    case "linux/arm64":
+      return "@openai/codex-linux-arm64";
+    case "darwin/x64":
+      return "@openai/codex-darwin-x64";
+    case "darwin/arm64":
+      return "@openai/codex-darwin-arm64";
+    case "win32/x64":
+      return "@openai/codex-win32-x64";
+    case "win32/arm64":
+      return "@openai/codex-win32-arm64";
+    default:
+      return null;
+  }
+}
+
+function resolveCodexTargetTriple() {
+  switch (`${process.platform}/${process.arch}`) {
+    case "linux/x64":
+      return "x86_64-unknown-linux-musl";
+    case "linux/arm64":
+      return "aarch64-unknown-linux-musl";
+    case "darwin/x64":
+      return "x86_64-apple-darwin";
+    case "darwin/arm64":
+      return "aarch64-apple-darwin";
+    case "win32/x64":
+      return "x86_64-pc-windows-msvc";
+    case "win32/arm64":
+      return "aarch64-pc-windows-msvc";
+    default:
+      return null;
+  }
+}
+
+function findPackageRoot(startPath) {
+  let currentDirectory = fs.statSync(startPath).isDirectory()
+    ? startPath
+    : path.dirname(startPath);
+
+  while (true) {
+    const packageJsonCandidate = path.join(currentDirectory, "package.json");
+
+    if (fs.existsSync(packageJsonCandidate)) {
+      return currentDirectory;
+    }
+
+    const parentDirectory = path.dirname(currentDirectory);
+
+    if (parentDirectory === currentDirectory) {
+      return null;
+    }
+
+    currentDirectory = parentDirectory;
+  }
 }
 
 function resolveModuleFile(specifier) {
@@ -215,4 +356,8 @@ function resolveNodeModulesCandidate(currentDirectory, relativeSegments) {
   }
 
   return path.join(currentDirectory, "node_modules", ...relativeSegments);
+}
+
+function uniquePaths(values) {
+  return Array.from(new Set(values.map((value) => path.resolve(value))));
 }
