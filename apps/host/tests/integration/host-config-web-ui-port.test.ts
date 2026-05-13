@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { resolveHostConfig } from "../../src/config/env.js";
 
 const tempDirs: string[] = [];
+const originalPath = process.env.PATH;
 
 afterEach(() => {
   while (tempDirs.length > 0) {
@@ -19,6 +20,7 @@ afterEach(() => {
 
   delete process.env.CODINGNS_WEB_UI_PORT;
   delete process.env.CODINGNS_CODEX_HOME;
+  process.env.PATH = originalPath;
 });
 
 describe("HostConfig 的 Tailscale 前端暴露端口规则", () => {
@@ -72,5 +74,34 @@ describe("HostConfig 的 Tailscale 前端暴露端口规则", () => {
     const config = resolveHostConfig();
 
     expect(config.codexHomeDir).toBe("/Users/jackson/custom-codex-home");
+  });
+
+  it("npm 包安装模式会优先使用随包安装的 Codex CLI", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-codex-cli-"));
+    tempDirs.push(tempDir);
+    const originalCwd = process.cwd();
+    const publicDir = path.join(tempDir, "public");
+    const globalBinDir = path.join(tempDir, "global-bin");
+    const globalCodexPath = path.join(globalBinDir, "codex");
+    const codexShimPath = path.join(tempDir, "node_modules", ".bin", "codex");
+    mkdirSync(publicDir, { recursive: true });
+    mkdirSync(globalBinDir, { recursive: true });
+    mkdirSync(path.dirname(codexShimPath), { recursive: true });
+    writeFileSync(globalCodexPath, "#!/usr/bin/env sh\n");
+    writeFileSync(codexShimPath, "#!/usr/bin/env sh\n");
+    process.env.PATH = globalBinDir;
+
+    try {
+      process.chdir(tempDir);
+
+      const config = resolveHostConfig({
+        webUiDir: publicDir
+      });
+
+      expect(realpathSync(config.codexCliPath)).toBe(realpathSync(codexShimPath));
+      expect(realpathSync(config.codexCliPath)).not.toBe(realpathSync(globalCodexPath));
+    } finally {
+      process.chdir(originalCwd);
+    }
   });
 });
