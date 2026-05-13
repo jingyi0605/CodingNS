@@ -164,7 +164,7 @@ export function mapSessionProviderError(error: unknown): AppError {
     return new AppError({
       statusCode: 503,
       errorCode: "PROVIDER_RUNTIME_UNAVAILABLE",
-      detail: "provider 服务暂时不可用，请确认 OpenCode server 已启动且可访问"
+      detail: "provider 服务暂时不可用，请确认对应 provider 运行时已启动且可访问"
     });
   }
 
@@ -172,7 +172,7 @@ export function mapSessionProviderError(error: unknown): AppError {
     return new AppError({
       statusCode: 503,
       errorCode: "PROVIDER_RUNTIME_TIMEOUT",
-      detail: "provider 服务请求超时，请确认 OpenCode server 正在运行且响应正常"
+      detail: "provider 服务请求超时，请确认对应 provider 运行时正在运行且响应正常"
     });
   }
 
