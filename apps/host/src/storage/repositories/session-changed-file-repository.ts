@@ -6,14 +6,15 @@ import type {
 } from "../../types/domain.js";
 
 export class SessionChangedFileRepository {
-  constructor(private readonly db: Database.Database) {}
+  private readonly upsertManyStatement: Database.Statement<any[], any>;
+  private readonly listBySessionIdStatement: Database.Statement<any[], any>;
+  private readonly findIndexStateBySessionIdStatement: Database.Statement<any[], any>;
+  private readonly upsertIndexStateStatement: Database.Statement<any[], any>;
+  private readonly deleteFilesBySessionIdStatement: Database.Statement<any[], any>;
+  private readonly deleteStatesBySessionIdStatement: Database.Statement<any[], any>;
 
-  upsertMany(records: SessionChangedFileRecord[]): void {
-    if (records.length === 0) {
-      return;
-    }
-
-    const statement = this.db.prepare(
+  constructor(private readonly db: Database.Database) {
+    this.upsertManyStatement = this.db.prepare(
       `INSERT INTO session_changed_files (
          session_id,
          workspace_id,
@@ -28,10 +29,52 @@ export class SessionChangedFileRepository {
          last_detected_at = MAX(session_changed_files.last_detected_at, excluded.last_detected_at),
          last_tool_name = COALESCE(excluded.last_tool_name, session_changed_files.last_tool_name)`
     );
+    this.listBySessionIdStatement = this.db.prepare(
+      `SELECT
+         session_id AS session_id,
+         workspace_id AS workspace_id,
+         path AS path,
+         first_detected_at AS first_detected_at,
+         last_detected_at AS last_detected_at,
+         last_tool_name AS last_tool_name
+       FROM session_changed_files
+       WHERE session_id = ?
+       ORDER BY path ASC`
+    );
+    this.findIndexStateBySessionIdStatement = this.db.prepare(
+      `SELECT
+         session_id AS session_id,
+         indexed_at AS indexed_at,
+         updated_at AS updated_at
+       FROM session_changed_file_states
+       WHERE session_id = ?`
+    );
+    this.upsertIndexStateStatement = this.db.prepare(
+      `INSERT INTO session_changed_file_states (
+         session_id,
+         indexed_at,
+         updated_at
+       ) VALUES (?, ?, ?)
+       ON CONFLICT(session_id) DO UPDATE SET
+         indexed_at = excluded.indexed_at,
+         updated_at = excluded.updated_at`
+    );
+    this.deleteFilesBySessionIdStatement = this.db.prepare(
+      "DELETE FROM session_changed_files WHERE session_id = ?"
+    );
+    this.deleteStatesBySessionIdStatement = this.db.prepare(
+      "DELETE FROM session_changed_file_states WHERE session_id = ?"
+    );
+  }
+
+  upsertMany(records: SessionChangedFileRecord[]): void {
+    if (records.length === 0) {
+      return;
+    }
 
     const persist = this.db.transaction((items: SessionChangedFileRecord[]) => {
       for (const record of items) {
-        statement.run(
+        this.upsertManyStatement.run(
           record.sessionId,
           record.workspaceId,
           record.path,
@@ -46,60 +89,25 @@ export class SessionChangedFileRepository {
   }
 
   listBySessionId(sessionId: string): SessionChangedFileRecord[] {
-    return this.db
-      .prepare(
-        `SELECT
-           session_id AS session_id,
-           workspace_id AS workspace_id,
-           path AS path,
-           first_detected_at AS first_detected_at,
-           last_detected_at AS last_detected_at,
-           last_tool_name AS last_tool_name
-         FROM session_changed_files
-         WHERE session_id = ?
-         ORDER BY path ASC`
-      )
-      .all(sessionId)
+    return this.listBySessionIdStatement.all(sessionId)
       .map((row) => mapSessionChangedFileRow(row as SessionChangedFileRow));
   }
 
   findIndexStateBySessionId(sessionId: string): SessionChangedFileIndexState | null {
-    const row = this.db
-      .prepare(
-        `SELECT
-           session_id AS session_id,
-           indexed_at AS indexed_at,
-           updated_at AS updated_at
-         FROM session_changed_file_states
-         WHERE session_id = ?`
-      )
-      .get(sessionId) as SessionChangedFileStateRow | undefined;
+    const row = this.findIndexStateBySessionIdStatement.get(sessionId) as
+      | SessionChangedFileStateRow
+      | undefined;
 
     return row ? mapSessionChangedFileStateRow(row) : null;
   }
 
   upsertIndexState(record: SessionChangedFileIndexState): void {
-    this.db
-      .prepare(
-        `INSERT INTO session_changed_file_states (
-           session_id,
-           indexed_at,
-           updated_at
-         ) VALUES (?, ?, ?)
-         ON CONFLICT(session_id) DO UPDATE SET
-           indexed_at = excluded.indexed_at,
-           updated_at = excluded.updated_at`
-      )
-      .run(record.sessionId, record.indexedAt, record.updatedAt);
+    this.upsertIndexStateStatement.run(record.sessionId, record.indexedAt, record.updatedAt);
   }
 
   deleteBySessionId(sessionId: string): void {
-    this.db
-      .prepare("DELETE FROM session_changed_files WHERE session_id = ?")
-      .run(sessionId);
-    this.db
-      .prepare("DELETE FROM session_changed_file_states WHERE session_id = ?")
-      .run(sessionId);
+    this.deleteFilesBySessionIdStatement.run(sessionId);
+    this.deleteStatesBySessionIdStatement.run(sessionId);
   }
 }
 

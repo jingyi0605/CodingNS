@@ -3,28 +3,39 @@ import type Database from "better-sqlite3";
 import type { SessionMessageOriginRecord } from "../../types/domain.js";
 
 export class SessionMessageOriginRepository {
-  constructor(private readonly db: Database.Database) {}
+  private readonly upsertStatement: Database.Statement<any[], any>;
+  private readonly resolveMessageIdStatement: Database.Statement<any[], any>;
+
+  constructor(private readonly db: Database.Database) {
+    this.upsertStatement = this.db.prepare(
+      `INSERT INTO session_message_origins (
+         session_id,
+         client_request_id,
+         message_id,
+         origin,
+         origin_ref,
+         content,
+         created_at,
+         updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(session_id, client_request_id) DO UPDATE SET
+         message_id = excluded.message_id,
+         origin = excluded.origin,
+         origin_ref = excluded.origin_ref,
+         content = excluded.content,
+         updated_at = excluded.updated_at`
+    );
+    this.resolveMessageIdStatement = this.db.prepare(
+      `UPDATE session_message_origins
+       SET message_id = ?,
+           updated_at = ?
+       WHERE session_id = ?
+         AND client_request_id = ?`
+    );
+  }
 
   upsert(record: SessionMessageOriginRecord): void {
-    this.db
-      .prepare(
-        `INSERT INTO session_message_origins (
-           session_id,
-           client_request_id,
-           message_id,
-           origin,
-           origin_ref,
-           content,
-           created_at,
-           updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(session_id, client_request_id) DO UPDATE SET
-           message_id = excluded.message_id,
-           origin = excluded.origin,
-           origin_ref = excluded.origin_ref,
-           content = excluded.content,
-           updated_at = excluded.updated_at`
-      )
+    this.upsertStatement
       .run(
         record.sessionId,
         record.clientRequestId,
@@ -43,15 +54,7 @@ export class SessionMessageOriginRepository {
     messageId: string,
     updatedAt: string
   ): void {
-    this.db
-      .prepare(
-        `UPDATE session_message_origins
-         SET message_id = ?,
-             updated_at = ?
-         WHERE session_id = ?
-           AND client_request_id = ?`
-      )
-      .run(messageId, updatedAt, sessionId, clientRequestId);
+    this.resolveMessageIdStatement.run(messageId, updatedAt, sessionId, clientRequestId);
   }
 
   listBySessionAndMessageIds(sessionId: string, messageIds: string[]): SessionMessageOriginRecord[] {

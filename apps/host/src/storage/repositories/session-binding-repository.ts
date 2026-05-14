@@ -3,101 +3,106 @@ import type Database from "better-sqlite3";
 import type { SessionBinding } from "../../types/domain.js";
 
 export class SessionBindingRepository {
-  constructor(private readonly db: Database.Database) {}
+  private readonly findBySessionIdStatement: Database.Statement<any[], any>;
+  private readonly findByProviderSessionStatement: Database.Statement<any[], any>;
+  private readonly findByRawStoreRefStatement: Database.Statement<any[], any>;
+  private readonly upsertStatement: Database.Statement<any[], any>;
+
+  constructor(private readonly db: Database.Database) {
+    this.findBySessionIdStatement = this.db.prepare(
+      `SELECT
+         session_id,
+         workspace_id,
+         provider,
+         provider_session_id,
+         raw_store_ref,
+         provider_config_mode,
+         provider_preset_id,
+         runtime_home_dir,
+         created_at,
+         updated_at
+       FROM session_bindings
+       WHERE session_id = ?`
+    );
+    this.findByProviderSessionStatement = this.db.prepare(
+      `SELECT
+         session_id,
+         workspace_id,
+         provider,
+         provider_session_id,
+         raw_store_ref,
+         provider_config_mode,
+         provider_preset_id,
+         runtime_home_dir,
+         created_at,
+         updated_at
+       FROM session_bindings
+       WHERE provider = ?
+         AND provider_session_id = ?`
+    );
+    this.findByRawStoreRefStatement = this.db.prepare(
+      `SELECT
+         session_id,
+         workspace_id,
+         provider,
+         provider_session_id,
+         raw_store_ref,
+         provider_config_mode,
+         provider_preset_id,
+         runtime_home_dir,
+         created_at,
+         updated_at
+       FROM session_bindings
+       WHERE provider = ?
+         AND raw_store_ref = ?`
+    );
+    this.upsertStatement = this.db.prepare(
+      `INSERT INTO session_bindings (
+         session_id,
+         workspace_id,
+         provider,
+         provider_session_id,
+         raw_store_ref,
+         provider_config_mode,
+         provider_preset_id,
+         runtime_home_dir,
+         created_at,
+         updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(session_id) DO UPDATE SET
+         workspace_id = excluded.workspace_id,
+         provider = excluded.provider,
+         provider_session_id = excluded.provider_session_id,
+         raw_store_ref = excluded.raw_store_ref,
+         provider_config_mode = excluded.provider_config_mode,
+         provider_preset_id = excluded.provider_preset_id,
+         runtime_home_dir = excluded.runtime_home_dir,
+         updated_at = excluded.updated_at`
+    );
+  }
 
   findBySessionId(sessionId: string): SessionBinding | null {
-    const row = this.db
-      .prepare(
-        `SELECT
-           session_id,
-           workspace_id,
-           provider,
-           provider_session_id,
-           raw_store_ref,
-           provider_config_mode,
-           provider_preset_id,
-           runtime_home_dir,
-           created_at,
-           updated_at
-         FROM session_bindings
-         WHERE session_id = ?`
-      )
-      .get(sessionId) as SessionBindingRow | undefined;
+    const row = this.findBySessionIdStatement.get(sessionId) as SessionBindingRow | undefined;
 
     return row ? mapSessionBindingRow(row) : null;
   }
 
   findByProviderSession(provider: string, providerSessionId: string): SessionBinding | null {
-    const row = this.db
-      .prepare(
-        `SELECT
-           session_id,
-           workspace_id,
-           provider,
-           provider_session_id,
-           raw_store_ref,
-           provider_config_mode,
-           provider_preset_id,
-           runtime_home_dir,
-           created_at,
-           updated_at
-         FROM session_bindings
-         WHERE provider = ?
-           AND provider_session_id = ?`
-      )
-      .get(provider, providerSessionId) as SessionBindingRow | undefined;
+    const row = this.findByProviderSessionStatement.get(provider, providerSessionId) as
+      | SessionBindingRow
+      | undefined;
 
     return row ? mapSessionBindingRow(row) : null;
   }
 
   findByRawStoreRef(provider: string, rawStoreRef: string): SessionBinding | null {
-    const row = this.db
-      .prepare(
-        `SELECT
-           session_id,
-           workspace_id,
-           provider,
-           provider_session_id,
-           raw_store_ref,
-           provider_config_mode,
-           provider_preset_id,
-           runtime_home_dir,
-           created_at,
-           updated_at
-         FROM session_bindings
-         WHERE provider = ?
-           AND raw_store_ref = ?`
-      )
-      .get(provider, rawStoreRef) as SessionBindingRow | undefined;
+    const row = this.findByRawStoreRefStatement.get(provider, rawStoreRef) as SessionBindingRow | undefined;
 
     return row ? mapSessionBindingRow(row) : null;
   }
 
   upsert(record: SessionBinding): void {
-    this.db
-      .prepare(
-        `INSERT INTO session_bindings (
-           session_id,
-           workspace_id,
-           provider,
-           provider_session_id,
-           raw_store_ref,
-           provider_config_mode,
-           provider_preset_id,
-           runtime_home_dir,
-           created_at,
-           updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(session_id) DO UPDATE SET
-           workspace_id = excluded.workspace_id,
-           provider = excluded.provider,
-           provider_session_id = excluded.provider_session_id,
-           raw_store_ref = excluded.raw_store_ref,
-           provider_config_mode = excluded.provider_config_mode,
-           provider_preset_id = excluded.provider_preset_id,
-           runtime_home_dir = excluded.runtime_home_dir,
-           updated_at = excluded.updated_at`
-      )
+    this.upsertStatement
       .run(
         record.sessionId,
         record.workspaceId,

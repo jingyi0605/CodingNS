@@ -3,42 +3,45 @@ import type Database from "better-sqlite3";
 import type { SessionStatusSnapshot } from "../../types/domain.js";
 
 export class SessionStatusSnapshotRepository {
-  constructor(private readonly db: Database.Database) {}
+  private readonly findBySessionIdStatement: Database.Statement<any[], any>;
+  private readonly upsertStatement: Database.Statement<any[], any>;
+
+  constructor(private readonly db: Database.Database) {
+    this.findBySessionIdStatement = this.db.prepare(
+      `SELECT session_id, sync_status, sync_cursor, last_sync_at, last_error_code, last_error_detail, resumed_at, updated_at
+       FROM session_status_snapshots
+       WHERE session_id = ?`
+    );
+    this.upsertStatement = this.db.prepare(
+      `INSERT INTO session_status_snapshots (
+         session_id,
+         sync_status,
+         sync_cursor,
+         last_sync_at,
+         last_error_code,
+         last_error_detail,
+         resumed_at,
+         updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(session_id) DO UPDATE SET
+         sync_status = excluded.sync_status,
+         sync_cursor = excluded.sync_cursor,
+         last_sync_at = excluded.last_sync_at,
+         last_error_code = excluded.last_error_code,
+         last_error_detail = excluded.last_error_detail,
+         resumed_at = excluded.resumed_at,
+         updated_at = excluded.updated_at`
+    );
+  }
 
   findBySessionId(sessionId: string): SessionStatusSnapshot | null {
-    const row = this.db
-      .prepare(
-        `SELECT session_id, sync_status, sync_cursor, last_sync_at, last_error_code, last_error_detail, resumed_at, updated_at
-         FROM session_status_snapshots
-         WHERE session_id = ?`
-      )
-      .get(sessionId) as SessionStatusSnapshotRow | undefined;
+    const row = this.findBySessionIdStatement.get(sessionId) as SessionStatusSnapshotRow | undefined;
 
     return row ? mapSessionStatusSnapshotRow(row) : null;
   }
 
   upsert(record: SessionStatusSnapshot): void {
-    this.db
-      .prepare(
-        `INSERT INTO session_status_snapshots (
-           session_id,
-           sync_status,
-           sync_cursor,
-           last_sync_at,
-           last_error_code,
-           last_error_detail,
-           resumed_at,
-           updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(session_id) DO UPDATE SET
-           sync_status = excluded.sync_status,
-           sync_cursor = excluded.sync_cursor,
-           last_sync_at = excluded.last_sync_at,
-           last_error_code = excluded.last_error_code,
-           last_error_detail = excluded.last_error_detail,
-           resumed_at = excluded.resumed_at,
-           updated_at = excluded.updated_at`
-      )
+    this.upsertStatement
       .run(
         record.sessionId,
         record.syncStatus,

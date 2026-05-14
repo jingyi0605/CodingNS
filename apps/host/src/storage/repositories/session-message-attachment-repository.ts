@@ -3,54 +3,120 @@ import type Database from "better-sqlite3";
 import type { SessionMessageAttachmentRecord } from "../../types/domain.js";
 
 export class SessionMessageAttachmentRepository {
-  constructor(private readonly db: Database.Database) {}
+  private readonly listBySessionAndClientRequestStatement: Database.Statement<any[], any>;
+  private readonly listBySessionStatement: Database.Statement<any[], any>;
+  private readonly findBySessionAndIdStatement: Database.Statement<any[], any>;
+  private readonly insertStatement: Database.Statement<any[], any>;
+  private readonly bindMessageStatement: Database.Statement<any[], any>;
+  private readonly listUnboundBySessionAndClientRequestStatement: Database.Statement<any[], any>;
+  private readonly deleteBySessionStatement: Database.Statement<any[], any>;
+
+  constructor(private readonly db: Database.Database) {
+    this.listBySessionAndClientRequestStatement = this.db.prepare(
+      `SELECT
+         id,
+         session_id,
+         client_request_id,
+         message_id,
+         kind,
+         file_name,
+         mime_type,
+         file_size,
+         storage_path,
+         created_at
+       FROM session_message_attachments
+       WHERE session_id = ?
+         AND client_request_id = ?
+       ORDER BY created_at ASC`
+    );
+    this.listBySessionStatement = this.db.prepare(
+      `SELECT
+         id,
+         session_id,
+         client_request_id,
+         message_id,
+         kind,
+         file_name,
+         mime_type,
+         file_size,
+         storage_path,
+         created_at
+       FROM session_message_attachments
+       WHERE session_id = ?
+       ORDER BY created_at ASC`
+    );
+    this.findBySessionAndIdStatement = this.db.prepare(
+      `SELECT
+         id,
+         session_id,
+         client_request_id,
+         message_id,
+         kind,
+         file_name,
+         mime_type,
+         file_size,
+         storage_path,
+         created_at
+       FROM session_message_attachments
+       WHERE session_id = ?
+         AND id = ?
+       LIMIT 1`
+    );
+    this.insertStatement = this.db.prepare(
+      `INSERT INTO session_message_attachments (
+         id,
+         session_id,
+         client_request_id,
+         message_id,
+         kind,
+         file_name,
+         mime_type,
+         file_size,
+         storage_path,
+         created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    this.bindMessageStatement = this.db.prepare(
+      `UPDATE session_message_attachments
+       SET message_id = ?
+       WHERE session_id = ?
+         AND client_request_id = ?`
+    );
+    this.listUnboundBySessionAndClientRequestStatement = this.db.prepare(
+      `SELECT
+         id,
+         session_id,
+         client_request_id,
+         message_id,
+         kind,
+         file_name,
+         mime_type,
+         file_size,
+         storage_path,
+         created_at
+       FROM session_message_attachments
+       WHERE session_id = ?
+         AND client_request_id = ?
+         AND message_id IS NULL
+       ORDER BY created_at ASC`
+    );
+    this.deleteBySessionStatement = this.db.prepare("DELETE FROM session_message_attachments WHERE session_id = ?");
+  }
 
   listBySessionAndClientRequest(
     sessionId: string,
     clientRequestId: string
   ): SessionMessageAttachmentRecord[] {
-    const rows = this.db
-      .prepare(
-        `SELECT
-           id,
-           session_id,
-           client_request_id,
-           message_id,
-           kind,
-           file_name,
-           mime_type,
-           file_size,
-           storage_path,
-           created_at
-         FROM session_message_attachments
-         WHERE session_id = ?
-           AND client_request_id = ?
-         ORDER BY created_at ASC`
-      )
-      .all(sessionId, clientRequestId) as SessionMessageAttachmentRow[];
+    const rows = this.listBySessionAndClientRequestStatement.all(
+      sessionId,
+      clientRequestId
+    ) as SessionMessageAttachmentRow[];
 
     return rows.map(mapSessionMessageAttachmentRow);
   }
 
   listBySession(sessionId: string): SessionMessageAttachmentRecord[] {
-    const rows = this.db
-      .prepare(
-        `SELECT
-           id,
-           session_id,
-           client_request_id,
-           message_id,
-           kind,
-           file_name,
-           mime_type,
-           file_size,
-           storage_path,
-           created_at
-         FROM session_message_attachments
-         WHERE session_id = ?
-         ORDER BY created_at ASC`
-      )
-      .all(sessionId) as SessionMessageAttachmentRow[];
+    const rows = this.listBySessionStatement.all(sessionId) as SessionMessageAttachmentRow[];
 
     return rows.map(mapSessionMessageAttachmentRow);
   }
@@ -91,45 +157,16 @@ export class SessionMessageAttachmentRepository {
     sessionId: string,
     attachmentId: string
   ): SessionMessageAttachmentRecord | null {
-    const row = this.db
-      .prepare(
-        `SELECT
-           id,
-           session_id,
-           client_request_id,
-           message_id,
-           kind,
-           file_name,
-           mime_type,
-           file_size,
-           storage_path,
-           created_at
-         FROM session_message_attachments
-         WHERE session_id = ?
-           AND id = ?
-         LIMIT 1`
-      )
-      .get(sessionId, attachmentId) as SessionMessageAttachmentRow | undefined;
+    const row = this.findBySessionAndIdStatement.get(
+      sessionId,
+      attachmentId
+    ) as SessionMessageAttachmentRow | undefined;
 
     return row ? mapSessionMessageAttachmentRow(row) : null;
   }
 
   insert(record: SessionMessageAttachmentRecord): void {
-    this.db
-      .prepare(
-        `INSERT INTO session_message_attachments (
-           id,
-           session_id,
-           client_request_id,
-           message_id,
-           kind,
-           file_name,
-           mime_type,
-           file_size,
-           storage_path,
-           created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
+    this.insertStatement
       .run(
         record.id,
         record.sessionId,
@@ -145,40 +182,17 @@ export class SessionMessageAttachmentRepository {
   }
 
   bindMessage(sessionId: string, clientRequestId: string, messageId: string): void {
-    this.db
-      .prepare(
-        `UPDATE session_message_attachments
-         SET message_id = ?
-         WHERE session_id = ?
-           AND client_request_id = ?`
-      )
-      .run(messageId, sessionId, clientRequestId);
+    this.bindMessageStatement.run(messageId, sessionId, clientRequestId);
   }
 
   listUnboundBySessionAndClientRequest(
     sessionId: string,
     clientRequestId: string
   ): SessionMessageAttachmentRecord[] {
-    const rows = this.db
-      .prepare(
-        `SELECT
-           id,
-           session_id,
-           client_request_id,
-           message_id,
-           kind,
-           file_name,
-           mime_type,
-           file_size,
-           storage_path,
-           created_at
-         FROM session_message_attachments
-         WHERE session_id = ?
-           AND client_request_id = ?
-           AND message_id IS NULL
-         ORDER BY created_at ASC`
-      )
-      .all(sessionId, clientRequestId) as SessionMessageAttachmentRow[];
+    const rows = this.listUnboundBySessionAndClientRequestStatement.all(
+      sessionId,
+      clientRequestId
+    ) as SessionMessageAttachmentRow[];
 
     return rows.map(mapSessionMessageAttachmentRow);
   }
@@ -195,9 +209,7 @@ export class SessionMessageAttachmentRepository {
   }
 
   deleteBySession(sessionId: string): void {
-    this.db
-      .prepare("DELETE FROM session_message_attachments WHERE session_id = ?")
-      .run(sessionId);
+    this.deleteBySessionStatement.run(sessionId);
   }
 }
 
