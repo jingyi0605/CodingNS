@@ -189,6 +189,7 @@ const GEMINI_RUNTIME_CHAT_DISCOVERY_GRACE_MS = 30_000;
 interface WorkspaceDiscoveryStatus {
   refreshedAt: number;
   isComplete: boolean;
+  partialCooldownUntil: number | null;
 }
 
 type WorkspaceStateRefreshPhase = "fresh" | "stale" | "running" | "cooldown" | "failed";
@@ -273,6 +274,7 @@ const MUTABLE_HISTORY_TAIL_PROVIDERS = new Set([
 ]);
 const MUTABLE_HISTORY_TAIL_REFRESH_INTERVAL_MS = 1_200;
 const WORKSPACE_DISCOVERY_BACKGROUND_MAX_AGE_MS = 15_000;
+const WORKSPACE_DISCOVERY_PARTIAL_COOLDOWN_MS = 60_000;
 const WORKSPACE_DISCOVERY_SCAN_CONCURRENCY = 2;
 const PROVIDER_CAPABILITY_CACHE_MAX_AGE_MS = 5_000;
 const WORKSPACE_DISCOVERY_PERSIST_BATCH_SIZE = 25;
@@ -540,12 +542,20 @@ export class SessionHistoryService {
     const force = options?.force ?? false;
     const discoveryStatus = this.workspaceDiscoveryStatuses.get(workspaceId);
     const lastRefreshedAt = discoveryStatus?.refreshedAt ?? 0;
+    const now = Date.now();
+    const isPartialCoolingDown =
+      discoveryStatus?.isComplete === false &&
+      discoveryStatus.partialCooldownUntil !== null &&
+      now < discoveryStatus.partialCooldownUntil;
+    const isCompleteAndFresh =
+      discoveryStatus?.isComplete === true &&
+      maxAgeMs > 0 &&
+      now - lastRefreshedAt <= maxAgeMs;
 
     if (
       !force &&
-      discoveryStatus?.isComplete === true &&
-      maxAgeMs > 0 &&
-      Date.now() - lastRefreshedAt <= maxAgeMs
+      discoveryStatus &&
+      (isPartialCoolingDown || isCompleteAndFresh)
     ) {
       this.taskManager.recordCacheHit(HOST_TASK_TYPES.workspaceDiscovery, workspaceId);
       return this.listWorkspaceSessions(workspaceId, userId);
@@ -628,7 +638,13 @@ export class SessionHistoryService {
       return true;
     }
 
-    if (!discoveryStatus.isComplete) {
+    if (
+      !discoveryStatus.isComplete &&
+      (
+        discoveryStatus.partialCooldownUntil === null ||
+        Date.now() >= discoveryStatus.partialCooldownUntil
+      )
+    ) {
       return true;
     }
 
@@ -2549,7 +2565,10 @@ export class SessionHistoryService {
       const refreshCandidates = buildSessionStateRefreshCandidates(items, refreshStateCount);
       this.workspaceDiscoveryStatuses.set(workspaceId, {
         refreshedAt: Date.now(),
-        isComplete: discovery.isComplete
+        isComplete: discovery.isComplete,
+        partialCooldownUntil: discovery.isComplete
+          ? null
+          : Date.now() + WORKSPACE_DISCOVERY_PARTIAL_COOLDOWN_MS
       });
 
       const refreshStateStartedAt = Date.now();
