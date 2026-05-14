@@ -199,6 +199,57 @@ describe("SessionHistoryService background tasks", () => {
     service.dispose();
   });
 
+  it("workspace discovery partial 结果在冷却期内会直接命中缓存，不会因为 maxAge 过期立刻重扫", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-12T10:00:00.000Z"));
+
+    const discoverMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sessions: [],
+        isComplete: false,
+        providerDiagnostics: []
+      });
+    const taskManager = createTaskManager(null, {
+      helper_process: {
+        execute: async (definition, input, context) => {
+          if (definition.taskType === HOST_TASK_TYPES.workspaceDiscoveryScan) {
+            return await discoverMock(input, context.signal);
+          }
+
+          return await definition.run(input, context);
+        }
+      }
+    });
+    const service = createSessionHistoryService(taskManager);
+    seedWorkspace(service.workspaceRepository, service.database.db, service.workspacePath);
+
+    await expect(
+      service.instance.discoverWorkspaceSessions("workspace-1", "user-1", {
+        force: true,
+        refreshStateMode: "deferred"
+      })
+    ).resolves.toEqual([]);
+
+    expect(discoverMock).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(new Date("2026-04-12T10:00:20.000Z"));
+
+    await expect(
+      service.instance.discoverWorkspaceSessions("workspace-1", "user-1", {
+        maxAgeMs: 15_000,
+        refreshStateMode: "deferred"
+      })
+    ).resolves.toEqual([]);
+
+    expect(discoverMock).toHaveBeenCalledTimes(1);
+
+    const metrics = service.instance.observeBackgroundTaskMetrics();
+    expect(metrics.taskTypes[HOST_TASK_TYPES.workspaceDiscovery]?.counters.cache_hit).toBe(1);
+
+    service.dispose();
+  });
+
   it("provider capability refresh 会进入统一任务管理器，并记录去重和缓存命中", async () => {
     const service = createSessionHistoryService();
     const privateService = service.instance as unknown as {
