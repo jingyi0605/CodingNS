@@ -65,31 +65,55 @@ function ensureDirectoryExists(targetPath, label) {
 }
 
 function runPnpm(args) {
-  execFileSync(resolvePnpmCommand(), args, {
+  const command = resolvePnpmInvocation(args);
+  execFileSync(command.file, command.args, {
     cwd: workspaceRoot,
     stdio: "inherit"
   });
 }
 
-function resolvePnpmCommand() {
+function resolvePnpmInvocation(args) {
+  const npmExecPath = process.env.npm_execpath;
+  if (npmExecPath && fs.existsSync(npmExecPath)) {
+    return {
+      file: process.execPath,
+      args: [npmExecPath, ...args]
+    };
+  }
+
   if (process.platform !== "win32") {
-    return "pnpm";
+    return {
+      file: "pnpm",
+      args
+    };
   }
 
-  const candidates = [];
   if (process.env.PNPM_HOME) {
-    candidates.push(path.join(process.env.PNPM_HOME, "pnpm.cmd"));
-  }
-  candidates.push("pnpm.cmd");
-
-  for (const candidate of candidates) {
-    if (candidate.includes(path.sep) && fs.existsSync(candidate)) {
-      return candidate;
-    }
-    if (!candidate.includes(path.sep)) {
-      return candidate;
+    const pnpmCmdPath = path.join(process.env.PNPM_HOME, "pnpm.cmd");
+    if (fs.existsSync(pnpmCmdPath)) {
+      return {
+        file: "cmd.exe",
+        args: ["/d", "/s", "/c", quoteWindowsCommand(pnpmCmdPath, args)]
+      };
     }
   }
 
-  return "pnpm.cmd";
+  return {
+    file: "cmd.exe",
+    args: ["/d", "/s", "/c", quoteWindowsCommand("pnpm", args)]
+  };
+}
+
+function quoteWindowsCommand(command, args) {
+  return [command, ...args].map(quoteWindowsArg).join(" ");
+}
+
+function quoteWindowsArg(value) {
+  if (!value.length) {
+    return '""';
+  }
+  if (!/[\s"]/u.test(value)) {
+    return value;
+  }
+  return `"${value.replace(/"/g, '\\"')}"`;
 }
