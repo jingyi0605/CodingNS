@@ -37,5 +37,15 @@
   "devDependencies": {
     "concurrently": "9.2.1",
     "vitepress": "^1.6.4"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "better-sqlite3",
+      "esbuild",
+      "node-pty",
+      "prisma"
+    ]
   }
 }
