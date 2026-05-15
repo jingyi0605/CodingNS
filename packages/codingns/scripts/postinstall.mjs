@@ -156,9 +156,7 @@ function runNpmInstall(args) {
     npm_config_location: "project"
   };
   delete env.npm_config_prefix;
-  delete env.npm_execpath;
   delete env.npm_command;
-  delete env.npm_config_user_agent;
 
   const installArgs = [
     ...args,
@@ -168,13 +166,72 @@ function runNpmInstall(args) {
     "--install-strategy=nested"
   ];
 
-  const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+  const command = resolveNpmInvocation(installArgs);
+  logInfo(
+    `[codingns] 执行运行时修复命令：${command.file} ${command.args.map(formatCommandArg).join(" ")}`
+  );
 
-  return spawnSync(npmCommand, installArgs, {
+  const result = spawnSync(command.file, command.args, {
     cwd: packageRoot,
     env,
     stdio: "inherit"
   });
+
+  if (result.error) {
+    const detail = result.error instanceof Error ? result.error.message : String(result.error);
+    console.error(`[codingns] 运行时修复命令启动失败：${detail}`);
+  }
+
+  if (typeof result.status === "number") {
+    logInfo(`[codingns] 运行时修复命令退出码：${result.status}`);
+  } else if (result.signal) {
+    console.error(`[codingns] 运行时修复命令被信号中断：${result.signal}`);
+  }
+
+  return result;
+}
+
+function resolveNpmInvocation(args) {
+  const npmExecPath = process.env.npm_execpath;
+
+  if (npmExecPath && fs.existsSync(npmExecPath)) {
+    return {
+      file: process.execPath,
+      args: [npmExecPath, ...args]
+    };
+  }
+
+  if (process.platform !== "win32") {
+    return {
+      file: "npm",
+      args
+    };
+  }
+
+  return {
+    file: "cmd.exe",
+    args: ["/d", "/s", "/c", quoteWindowsCommand("npm", args)]
+  };
+}
+
+function quoteWindowsCommand(command, args) {
+  return [command, ...args].map(quoteWindowsArg).join(" ");
+}
+
+function quoteWindowsArg(value) {
+  if (!value.length) {
+    return '""';
+  }
+
+  if (!/[\s"]/u.test(value)) {
+    return value;
+  }
+
+  return `"${value.replace(/"/g, '\\"')}"`;
+}
+
+function formatCommandArg(value) {
+  return /[\s"]/u.test(value) ? JSON.stringify(value) : value;
 }
 
 function logInfo(message) {
