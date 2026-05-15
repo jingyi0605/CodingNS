@@ -668,10 +668,122 @@ describe("FileContextPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("工作区首屏没有缓存时也不会主动请求 changed-files", async () => {
+  it("工作区首屏没有缓存时会先显示 0，并在后台补刷新本次会话数量", async () => {
+    conversationApiMock.getSessionChangedFiles.mockResolvedValue({
+      items: [
+        {
+          sessionId: "session-1",
+          workspaceId: "workspace-1",
+          path: "apps/user-app/src/app/App.tsx",
+          firstDetectedAt: "2026-03-24T12:00:00.000Z",
+          lastDetectedAt: "2026-03-24T12:00:00.000Z",
+          lastToolName: "apply_patch"
+        }
+      ]
+    });
+    gitApiMock.getGitStatus.mockResolvedValue({
+      snapshot: {
+        workspaceId: "workspace-1",
+        repoRoot: "C:/Code/CodingNS",
+        branch: "main",
+        ahead: 0,
+        behind: 0,
+        hasRemote: true,
+        isDirty: true,
+        lastFetchedAt: null
+      },
+      changes: [createGitChange("apps/user-app/src/app/App.tsx", false)]
+    });
+
     renderPanel();
 
     expect(screen.getByLabelText(`${t("conversation.filePanelSessionTab")} 0`)).toBeInTheDocument();
+    expect(await screen.findByLabelText(`${t("conversation.filePanelSessionTab")} 1`)).toBeInTheDocument();
+    expect(conversationApiMock.getSessionChangedFiles).toHaveBeenCalledTimes(1);
+  });
+
+  it("工作区标签点击刷新时会同步刷新本次会话数量", async () => {
+    conversationApiMock.getSessionChangedFiles.mockResolvedValue({
+      items: [
+        {
+          sessionId: "session-1",
+          workspaceId: "workspace-1",
+          path: "apps/user-app/src/app/App.tsx",
+          firstDetectedAt: "2026-03-24T12:00:00.000Z",
+          lastDetectedAt: "2026-03-24T12:00:00.000Z",
+          lastToolName: "apply_patch"
+        }
+      ]
+    });
+    gitApiMock.getGitStatus.mockResolvedValue({
+      snapshot: {
+        workspaceId: "workspace-1",
+        repoRoot: "C:/Code/CodingNS",
+        branch: "main",
+        ahead: 0,
+        behind: 0,
+        hasRemote: true,
+        isDirty: true,
+        lastFetchedAt: null
+      },
+      changes: [createGitChange("apps/user-app/src/app/App.tsx", false)]
+    });
+
+    renderPanel();
+
+    expect(screen.getByLabelText(`${t("conversation.filePanelSessionTab")} 0`)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelRefresh") }));
+
+    expect(await screen.findByLabelText(`${t("conversation.filePanelSessionTab")} 1`)).toBeInTheDocument();
+    expect(conversationApiMock.getSessionChangedFiles).toHaveBeenCalledTimes(2);
+  });
+
+  it("切换左侧会话后会同步刷新对应的本次会话数量", async () => {
+    writeViewSnapshot(SESSION_COUNT_SNAPSHOT_KEY, 0);
+
+    conversationApiMock.getSessionChangedFiles.mockResolvedValue({
+      items: [
+        {
+          sessionId: "session-2",
+          workspaceId: "workspace-1",
+          path: "apps/user-app/src/app/App.tsx",
+          firstDetectedAt: "2026-03-24T12:00:00.000Z",
+          lastDetectedAt: "2026-03-24T12:00:00.000Z",
+          lastToolName: "apply_patch"
+        }
+      ]
+    });
+    gitApiMock.getGitStatus.mockResolvedValue({
+      snapshot: {
+        workspaceId: "workspace-1",
+        repoRoot: "C:/Code/CodingNS",
+        branch: "main",
+        ahead: 0,
+        behind: 0,
+        hasRemote: true,
+        isDirty: true,
+        lastFetchedAt: null
+      },
+      changes: [createGitChange("apps/user-app/src/app/App.tsx", false)]
+    });
+
+    const view = render(
+      <ToastProvider>
+        <FileContextPanel sessionId="session-1" workspaceId="workspace-1" />
+      </ToastProvider>
+    );
+
+    expect(screen.getByLabelText(`${t("conversation.filePanelSessionTab")} 0`)).toBeInTheDocument();
+
+    view.rerender(
+      <ToastProvider>
+        <FileContextPanel sessionId="session-2" workspaceId="workspace-1" />
+      </ToastProvider>
+    );
+
+    expect(await screen.findByLabelText(`${t("conversation.filePanelSessionTab")} 1`)).toBeInTheDocument();
+    expect(conversationApiMock.getSessionChangedFiles).toHaveBeenCalled();
   });
 
   it("只选中项目而没有会话时，仍然显示工作区文件并禁用会话页签", async () => {
