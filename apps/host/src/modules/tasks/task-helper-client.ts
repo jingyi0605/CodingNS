@@ -8,6 +8,7 @@ import type { TaskHelperProcessHandlerName } from "./task-helper-process-handler
 interface PendingRequest<TResult> {
   resolve: (value: TResult) => void;
   reject: (reason?: unknown) => void;
+  child: ChildProcessWithoutNullStreams;
 }
 
 type HelperResponse =
@@ -102,6 +103,7 @@ export class TaskHelperProcessClient {
       }
 
       this.pendingRequests.set(id, {
+        child,
         resolve: (value) => {
           if (onAbort && signal) {
             signal.removeEventListener("abort", onAbort);
@@ -248,6 +250,17 @@ export class TaskHelperProcessClient {
     stdoutReader.on("line", (line) => {
       this.handleResponseLine(line);
     });
+    stdoutReader.on("close", () => {
+      if (this.stdoutReader === stdoutReader) {
+        this.stdoutReader = null;
+      }
+
+      if (this.child === child) {
+        this.child = null;
+      }
+
+      this.rejectPendingForChild(child, new Error("task helper stdout 已关闭"));
+    });
     child.stderr.on("data", (chunk) => {
       const content = String(chunk).trim();
 
@@ -257,16 +270,18 @@ export class TaskHelperProcessClient {
     });
     child.stdin.on("error", (error) => {
       this.handleChildTermination(
+        child,
         error instanceof Error
           ? error
           : new Error("task helper stdin 已断开")
       );
     });
     child.on("error", (error) => {
-      this.handleChildTermination(error);
+      this.handleChildTermination(child, error);
     });
     child.on("exit", (code, signal) => {
       this.handleChildTermination(
+        child,
         new Error(
           `task helper 已退出：code=${code ?? "null"} signal=${signal ?? "null"}`
         )
@@ -278,20 +293,57 @@ export class TaskHelperProcessClient {
     return child;
   }
 
-  private handleChildTermination(error: Error): void {
-    const child = this.child;
+  private handleChildTermination(
+    childOrError: ChildProcessWithoutNullStreams | Error,
+    maybeError?: Error
+  ): void {
+    const child = childOrError instanceof Error ? this.child : childOrError;
+    const error = childOrError instanceof Error ? childOrError : maybeError;
+
+    if (!error) {
+      return;
+    }
+
+    if (!child) {
+      this.rejectAll(error);
+      return;
+    }
+
+    if (this.child === child) {
+      this.child = null;
+    }
 
     if (this.stdoutReader) {
       this.stdoutReader.close();
+      this.stdoutReader = null;
     }
 
-    if (child && !child.killed) {
+    if (!child.killed && typeof child.kill === "function") {
       child.kill("SIGTERM");
     }
 
-    this.child = null;
-    this.stdoutReader = null;
-    this.rejectAll(error);
+    this.rejectPendingForChild(child, error);
+  }
+
+  private rejectPendingForChild(child: ChildProcessWithoutNullStreams, error: unknown): void {
+    const targetIds: string[] = [];
+
+    for (const [requestId, pending] of this.pendingRequests.entries()) {
+      if (pending.child === child) {
+        targetIds.push(requestId);
+      }
+    }
+
+    for (const requestId of targetIds) {
+      const pending = this.pendingRequests.get(requestId);
+
+      if (!pending) {
+        continue;
+      }
+
+      this.pendingRequests.delete(requestId);
+      pending.reject(error);
+    }
   }
 }
 

@@ -130,7 +130,7 @@ describe("TaskHelperProcessClient", () => {
     childEvents[0]?.exit?.(0, "SIGTERM");
 
     await vi.waitFor(() => {
-      expect(lineHandlers.length).toBeGreaterThanOrEqual(2);
+      expect(spawn).toHaveBeenCalledTimes(2);
     });
 
     lineHandlers[1]?.(
@@ -264,6 +264,102 @@ describe("TaskHelperProcessClient", () => {
       id: "2",
       input: {
         workspacePath: "/tmp/retry"
+      }
+    });
+  });
+
+  it("helper 正常退出后不会把仍可完成的请求误判为失败", async () => {
+    const lineHandlers: Array<(line: string) => void> = [];
+    const writesByChild: string[][] = [];
+    const childEvents: Array<Record<string, (value?: unknown, extra?: unknown) => void>> = [];
+    const spawn = vi.fn(() => {
+      const writes: string[] = [];
+      const events: Record<string, (value?: unknown, extra?: unknown) => void> = {};
+      writesByChild.push(writes);
+      childEvents.push(events);
+
+      return {
+        stdout: {},
+        stderr: {
+          on: vi.fn()
+        },
+        stdin: {
+          destroyed: false,
+          on: vi.fn(),
+          write: vi.fn((content: string, callback?: (error?: Error | null) => void) => {
+            writes.push(content.trim());
+            callback?.(null);
+            return true;
+          })
+        },
+        killed: false,
+        kill: vi.fn(),
+        on: vi.fn((event: string, handler: (value?: unknown, extra?: unknown) => void) => {
+          events[event] = handler;
+        })
+      };
+    });
+
+    vi.doMock("node:child_process", () => ({
+      spawn
+    }));
+    vi.doMock("node:readline", () => ({
+      default: {
+        createInterface: vi.fn(() => ({
+          on: vi.fn((event: string, handler: (line: string) => void) => {
+            if (event === "line") {
+              lineHandlers.push(handler);
+            }
+          }),
+          close: vi.fn()
+        }))
+      }
+    }));
+
+    const { TaskHelperProcessClient } = await import("../../src/modules/tasks/task-helper-client.js");
+    const client = new TaskHelperProcessClient();
+
+    const promise = client.execute("workspace.code_composition_scan", {
+      workspacePath: "/tmp/graceful-exit"
+    });
+
+    childEvents[0]?.exit?.(0, null);
+
+    await vi.waitFor(() => {
+      expect(spawn).toHaveBeenCalledTimes(2);
+      expect(lineHandlers.length).toBeGreaterThanOrEqual(2);
+    });
+
+    lineHandlers[1]?.(
+      JSON.stringify({
+        type: "result",
+        id: "2",
+        ok: true,
+        result: {
+          scannedFileCount: 1,
+          truncated: false,
+          items: [],
+          error: null
+        }
+      })
+    );
+
+    await expect(promise).resolves.toEqual({
+      scannedFileCount: 1,
+      truncated: false,
+      items: [],
+      error: null
+    });
+    expect(JSON.parse(writesByChild[0][0] ?? "{}")).toMatchObject({
+      id: "1",
+      input: {
+        workspacePath: "/tmp/graceful-exit"
+      }
+    });
+    expect(JSON.parse(writesByChild[1][0] ?? "{}")).toMatchObject({
+      id: "2",
+      input: {
+        workspacePath: "/tmp/graceful-exit"
       }
     });
   });
