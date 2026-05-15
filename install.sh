@@ -656,7 +656,9 @@ resolve_codingns_pty_dependency_metadata() {
   CODINGNS_PTY_PACKAGE_NAME=""
   CODINGNS_PTY_PACKAGE_VERSION=""
 
-  [[ -n "$CODINGNS_PACKAGE_ROOT" ]] || return
+  if [[ -z "$CODINGNS_PACKAGE_ROOT" ]]; then
+    return 0
+  fi
 
   local required_package_name=""
   local dependency_package_root=""
@@ -672,15 +674,20 @@ resolve_codingns_pty_dependency_metadata() {
     fi
   fi
 
-  [[ -n "$dependency_package_root" ]] || return
+  if [[ -z "$dependency_package_root" ]]; then
+    return 0
+  fi
 
   dependency_package_json="$dependency_package_root/package.json"
-  [[ -f "$dependency_package_json" ]] || return
+  if [[ ! -f "$dependency_package_json" ]]; then
+    return 0
+  fi
 
   CODINGNS_PTY_PACKAGE_NAME="$(read_package_json_field "$dependency_package_json" "name" || true)"
   CODINGNS_PTY_PACKAGE_VERSION="$(read_package_json_field "$dependency_package_json" "version" || true)"
 
   [[ -n "$CODINGNS_PTY_PACKAGE_NAME" ]] || CODINGNS_PTY_PACKAGE_NAME="$required_package_name"
+  return 0
 }
 
 resolve_script_from_npm_shim() {
