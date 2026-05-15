@@ -65,8 +65,31 @@ function ensureDirectoryExists(targetPath, label) {
 }
 
 function runPnpm(args) {
-  execFileSync("pnpm", args, {
+  execFileSync(resolvePnpmCommand(), args, {
     cwd: workspaceRoot,
     stdio: "inherit"
   });
+}
+
+function resolvePnpmCommand() {
+  if (process.platform !== "win32") {
+    return "pnpm";
+  }
+
+  const candidates = [];
+  if (process.env.PNPM_HOME) {
+    candidates.push(path.join(process.env.PNPM_HOME, "pnpm.cmd"));
+  }
+  candidates.push("pnpm.cmd");
+
+  for (const candidate of candidates) {
+    if (candidate.includes(path.sep) && fs.existsSync(candidate)) {
+      return candidate;
+    }
+    if (!candidate.includes(path.sep)) {
+      return candidate;
+    }
+  }
+
+  return "pnpm.cmd";
 }
