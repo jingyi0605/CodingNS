@@ -17,6 +17,7 @@ on:
   push:
     branches:
       - main
+      - "ci/windows-install-replay-*"
     paths:
       - "install.sh"
       - "package.json"
