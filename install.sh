@@ -798,6 +798,7 @@ for (const pattern of patterns) {
 
     const normalized = candidate
       .replace(/^%~dp0/i, "")
+      .replace(/^%dp0%/i, "")
       .replace(/^\$basedir\/?/i, "")
       .replace(/\\/g, "/");
     const resolved = path.resolve(shimDir, normalized);
@@ -1962,41 +1963,77 @@ write_private_runtime_state() {
     cp "$install_state_path" "$previous_state_path"
   fi
 
-  cat >"$install_state_path" <<EOF
-{
-  "schemaVersion": 1,
-  "packageName": "${CODINGNS_PACKAGE_NAME:-$PACKAGE_SPEC}",
-  "packageVersion": "${CODINGNS_PACKAGE_VERSION}",
-  "ptyPackageName": "${CODINGNS_PTY_PACKAGE_NAME}",
-  "ptyPackageVersion": "${CODINGNS_PTY_PACKAGE_VERSION}",
-  "packageSpec": "${PACKAGE_SPEC}",
-  "registry": "${ACTIVE_NPM_REGISTRY}",
-  "nodeVersion": "$(normalize_version_text "${TARGET_NODE_VERSION:-$WINDOWS_PRIVATE_NODE_VERSION}")",
-  "nodeExe": "${NODE_BIN}",
-  "npmCmd": "${NPM_BIN}",
-  "npmPrefix": "${NPM_GLOBAL_PREFIX}",
-  "pm2Home": "${PRIVATE_PM2_HOME}",
-  "codingnsCommand": "${CODINGNS_BIN}",
-  "pm2Command": "${PM2_BIN}",
-  "dataDir": "${SELECTED_DATA_DIR}",
-  "port": ${SELECTED_PORT},
-  "processName": "${PROCESS_NAME}",
-  "installedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-}
+  CODINGNS_STATE_PACKAGE_NAME="${CODINGNS_PACKAGE_NAME:-$PACKAGE_SPEC}" \
+  CODINGNS_STATE_PACKAGE_VERSION="${CODINGNS_PACKAGE_VERSION}" \
+  CODINGNS_STATE_PTY_PACKAGE_NAME="${CODINGNS_PTY_PACKAGE_NAME}" \
+  CODINGNS_STATE_PTY_PACKAGE_VERSION="${CODINGNS_PTY_PACKAGE_VERSION}" \
+  CODINGNS_STATE_PACKAGE_SPEC="${PACKAGE_SPEC}" \
+  CODINGNS_STATE_REGISTRY="${ACTIVE_NPM_REGISTRY}" \
+  CODINGNS_STATE_NODE_VERSION="$(normalize_version_text "${TARGET_NODE_VERSION:-$WINDOWS_PRIVATE_NODE_VERSION}")" \
+  CODINGNS_STATE_NODE_EXE="${NODE_BIN}" \
+  CODINGNS_STATE_NPM_CMD="${NPM_BIN}" \
+  CODINGNS_STATE_NPM_PREFIX="${NPM_GLOBAL_PREFIX}" \
+  CODINGNS_STATE_PM2_HOME="${PRIVATE_PM2_HOME}" \
+  CODINGNS_STATE_CODINGNS_COMMAND="${CODINGNS_BIN}" \
+  CODINGNS_STATE_PM2_COMMAND="${PM2_BIN}" \
+  CODINGNS_STATE_DATA_DIR="${SELECTED_DATA_DIR}" \
+  CODINGNS_STATE_PORT="${SELECTED_PORT}" \
+  CODINGNS_STATE_PROCESS_NAME="${PROCESS_NAME}" \
+  CODINGNS_STATE_INSTALLED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+    "$NODE_BIN" - "$install_state_path" <<'EOF'
+const fs = require("node:fs");
+
+const outputPath = process.argv[2];
+const payload = {
+  schemaVersion: 1,
+  packageName: process.env.CODINGNS_STATE_PACKAGE_NAME ?? "",
+  packageVersion: process.env.CODINGNS_STATE_PACKAGE_VERSION ?? "",
+  ptyPackageName: process.env.CODINGNS_STATE_PTY_PACKAGE_NAME ?? "",
+  ptyPackageVersion: process.env.CODINGNS_STATE_PTY_PACKAGE_VERSION ?? "",
+  packageSpec: process.env.CODINGNS_STATE_PACKAGE_SPEC ?? "",
+  registry: process.env.CODINGNS_STATE_REGISTRY ?? "",
+  nodeVersion: process.env.CODINGNS_STATE_NODE_VERSION ?? "",
+  nodeExe: process.env.CODINGNS_STATE_NODE_EXE ?? "",
+  npmCmd: process.env.CODINGNS_STATE_NPM_CMD ?? "",
+  npmPrefix: process.env.CODINGNS_STATE_NPM_PREFIX ?? "",
+  pm2Home: process.env.CODINGNS_STATE_PM2_HOME ?? "",
+  codingnsCommand: process.env.CODINGNS_STATE_CODINGNS_COMMAND ?? "",
+  pm2Command: process.env.CODINGNS_STATE_PM2_COMMAND ?? "",
+  dataDir: process.env.CODINGNS_STATE_DATA_DIR ?? "",
+  port: Number(process.env.CODINGNS_STATE_PORT ?? "0"),
+  processName: process.env.CODINGNS_STATE_PROCESS_NAME ?? "",
+  installedAt: process.env.CODINGNS_STATE_INSTALLED_AT ?? ""
+};
+
+fs.writeFileSync(outputPath, `${JSON.stringify(payload, null, 2)}\n`);
 EOF
 
-  cat >"$launch_env_path" <<EOF
-{
-  "PATH": "${PRIVATE_NODE_VERSION_DIR}:${PRIVATE_NPM_PREFIX}:${SYSTEM_PATH_SNAPSHOT}",
-  "PM2_HOME": "${PRIVATE_PM2_HOME}",
-  "npm_config_prefix": "${PRIVATE_NPM_PREFIX}",
-  "npm_config_cache": "${PRIVATE_NPM_CACHE_DIR}",
-  "npm_config_userconfig": "${PRIVATE_NPM_USERCONFIG}",
-  "CODINGNS_DATA_DIR": "${SELECTED_DATA_DIR}",
-  "CODINGNS_RUNTIME_ROOT": "${RUNTIME_HOME}",
-  "CODINGNS_RUNTIME_NODE_VERSION": "${WINDOWS_PRIVATE_NODE_VERSION}",
-  "CODINGNS_PM2_PROCESS_NAME": "${PROCESS_NAME}"
-}
+  CODINGNS_LAUNCH_PATH="${PRIVATE_NODE_VERSION_DIR}:${PRIVATE_NPM_PREFIX}:${SYSTEM_PATH_SNAPSHOT}" \
+  CODINGNS_LAUNCH_PM2_HOME="${PRIVATE_PM2_HOME}" \
+  CODINGNS_LAUNCH_NPM_PREFIX="${PRIVATE_NPM_PREFIX}" \
+  CODINGNS_LAUNCH_NPM_CACHE="${PRIVATE_NPM_CACHE_DIR}" \
+  CODINGNS_LAUNCH_NPM_USERCONFIG="${PRIVATE_NPM_USERCONFIG}" \
+  CODINGNS_LAUNCH_DATA_DIR="${SELECTED_DATA_DIR}" \
+  CODINGNS_LAUNCH_RUNTIME_ROOT="${RUNTIME_HOME}" \
+  CODINGNS_LAUNCH_RUNTIME_NODE_VERSION="${WINDOWS_PRIVATE_NODE_VERSION}" \
+  CODINGNS_LAUNCH_PM2_PROCESS_NAME="${PROCESS_NAME}" \
+    "$NODE_BIN" - "$launch_env_path" <<'EOF'
+const fs = require("node:fs");
+
+const outputPath = process.argv[2];
+const payload = {
+  PATH: process.env.CODINGNS_LAUNCH_PATH ?? "",
+  PM2_HOME: process.env.CODINGNS_LAUNCH_PM2_HOME ?? "",
+  npm_config_prefix: process.env.CODINGNS_LAUNCH_NPM_PREFIX ?? "",
+  npm_config_cache: process.env.CODINGNS_LAUNCH_NPM_CACHE ?? "",
+  npm_config_userconfig: process.env.CODINGNS_LAUNCH_NPM_USERCONFIG ?? "",
+  CODINGNS_DATA_DIR: process.env.CODINGNS_LAUNCH_DATA_DIR ?? "",
+  CODINGNS_RUNTIME_ROOT: process.env.CODINGNS_LAUNCH_RUNTIME_ROOT ?? "",
+  CODINGNS_RUNTIME_NODE_VERSION: process.env.CODINGNS_LAUNCH_RUNTIME_NODE_VERSION ?? "",
+  CODINGNS_PM2_PROCESS_NAME: process.env.CODINGNS_LAUNCH_PM2_PROCESS_NAME ?? ""
+};
+
+fs.writeFileSync(outputPath, `${JSON.stringify(payload, null, 2)}\n`);
 EOF
 }
 
