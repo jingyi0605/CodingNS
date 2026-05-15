@@ -551,6 +551,85 @@ resolve_private_package_root_from_spec() {
   printf '%s\n' "$package_root"
 }
 
+resolve_private_package_root_from_command_name() {
+  local npm_prefix="$1"
+  local command_name="$2"
+
+  [[ -n "$NODE_BIN" ]] || return 1
+  [[ -n "$npm_prefix" ]] || return 1
+  [[ -n "$command_name" ]] || return 1
+  [[ -d "$npm_prefix/node_modules" ]] || return 1
+
+  "$NODE_BIN" - "$npm_prefix" "$command_name" <<'EOF'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const [npmPrefix, commandName] = process.argv.slice(2);
+const nodeModulesRoot = path.join(npmPrefix, "node_modules");
+
+function normalizeBinName(binPath) {
+  return path.basename(binPath).replace(/\.(?:mjs|cjs|js)$/iu, "");
+}
+
+function packageOwnsCommand(packageJson) {
+  const binField = packageJson?.bin;
+
+  if (typeof binField === "string") {
+    return normalizeBinName(binField) === commandName;
+  }
+
+  if (binField && typeof binField === "object") {
+    return typeof binField[commandName] === "string" && binField[commandName].trim().length > 0;
+  }
+
+  return false;
+}
+
+function inspectPackageRoot(packageRoot) {
+  const packageJsonPath = path.join(packageRoot, "package.json");
+  if (!fs.existsSync(packageJsonPath)) {
+    return null;
+  }
+
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+    return packageOwnsCommand(packageJson) ? packageRoot : null;
+  } catch {
+    return null;
+  }
+}
+
+function printIfFound(packageRoot) {
+  const resolvedRoot = inspectPackageRoot(packageRoot);
+  if (resolvedRoot) {
+    process.stdout.write(resolvedRoot);
+    process.exit(0);
+  }
+}
+
+for (const entry of fs.readdirSync(nodeModulesRoot, { withFileTypes: true })) {
+  if (!entry.isDirectory()) {
+    continue;
+  }
+
+  if (entry.name.startsWith("@")) {
+    const scopeRoot = path.join(nodeModulesRoot, entry.name);
+    for (const scopedEntry of fs.readdirSync(scopeRoot, { withFileTypes: true })) {
+      if (!scopedEntry.isDirectory()) {
+        continue;
+      }
+      printIfFound(path.join(scopeRoot, scopedEntry.name));
+    }
+    continue;
+  }
+
+  printIfFound(path.join(nodeModulesRoot, entry.name));
+}
+
+process.exit(1);
+EOF
+}
+
 read_package_json_field() {
   local package_json_path="$1"
   local field_name="$2"
@@ -1835,7 +1914,10 @@ resolve_codingns_script_path() {
   [[ -n "$NODE_BIN" ]] || return 1
 
   if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
-    private_package_root="$(resolve_private_package_root_from_spec "$NPM_GLOBAL_PREFIX" "$PACKAGE_SPEC" || true)"
+    private_package_root="$(resolve_private_package_root_from_command_name "$NPM_GLOBAL_PREFIX" "codingns" || true)"
+    if [[ -z "$private_package_root" ]]; then
+      private_package_root="$(resolve_private_package_root_from_spec "$NPM_GLOBAL_PREFIX" "$PACKAGE_SPEC" || true)"
+    fi
     if [[ -n "$private_package_root" && -f "$private_package_root/bin/codingns.mjs" ]]; then
       printf '%s\n' "$private_package_root/bin/codingns.mjs"
       return 0
@@ -2012,7 +2094,10 @@ install_or_resolve_codingns() {
   CODINGNS_SCRIPT="$(resolve_codingns_script_path "$CODINGNS_BIN" || true)"
   [[ -n "$CODINGNS_SCRIPT" ]] || die error_no_codingns_after_install
 
-  CODINGNS_PACKAGE_ROOT="$(resolve_private_package_root_from_spec "$NPM_GLOBAL_PREFIX" "$PACKAGE_SPEC" || true)"
+  CODINGNS_PACKAGE_ROOT="$(resolve_private_package_root_from_command_name "$NPM_GLOBAL_PREFIX" "codingns" || true)"
+  if [[ -z "$CODINGNS_PACKAGE_ROOT" ]]; then
+    CODINGNS_PACKAGE_ROOT="$(resolve_private_package_root_from_spec "$NPM_GLOBAL_PREFIX" "$PACKAGE_SPEC" || true)"
+  fi
   if [[ -z "$CODINGNS_PACKAGE_ROOT" && -n "$CODINGNS_SCRIPT" ]]; then
     CODINGNS_PACKAGE_ROOT="$(dirname "$(dirname "$CODINGNS_SCRIPT")")"
   fi
