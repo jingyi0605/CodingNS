@@ -2144,6 +2144,16 @@ install_or_resolve_codingns() {
     CODINGNS_PACKAGE_VERSION="$(read_package_json_field "$CODINGNS_PACKAGE_ROOT/package.json" "version" || true)"
   fi
 
+  if [[ -z "$CODINGNS_PACKAGE_NAME" && -n "$CODINGNS_SCRIPT" ]]; then
+    local resolved_package_root=""
+    resolved_package_root="$(dirname "$(dirname "$CODINGNS_SCRIPT")")"
+    if [[ -f "$resolved_package_root/package.json" ]]; then
+      CODINGNS_PACKAGE_ROOT="$resolved_package_root"
+      CODINGNS_PACKAGE_NAME="$(read_package_json_field "$resolved_package_root/package.json" "name" || true)"
+      CODINGNS_PACKAGE_VERSION="$(read_package_json_field "$resolved_package_root/package.json" "version" || true)"
+    fi
+  fi
+
   [[ -n "$CODINGNS_PACKAGE_NAME" ]] || CODINGNS_PACKAGE_NAME="$(extract_package_name_from_spec "$PACKAGE_SPEC")"
   resolve_codingns_pty_dependency_metadata
 }
