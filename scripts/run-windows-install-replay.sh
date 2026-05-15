@@ -41,6 +41,7 @@ main() {
     printf 'y\n'
     printf 'y\n'
   } | env \
+    CODINGNS_INSTALL_INPUT_FD="0" \
     CODINGNS_PACKAGE_SPEC="$PACKAGE_STAGE_DIR" \
     CODINGNS_REGISTRY_PROBE_SPEC="@openai/codex-sdk" \
     bash "$REPO_DIR/install.sh" 2>&1 | tee "$OUTPUT_LOG_PATH"
