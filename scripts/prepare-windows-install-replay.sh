@@ -103,9 +103,18 @@ main() {
   log_info "安装工作区依赖（忽略 lifecycle scripts，避免 Windows 验收前误触原生脚本）"
   pnpm --dir "$REPO_DIR" install --ignore-scripts --frozen-lockfile
 
-  log_info "构建本地 @codingns/node-pty 预编译产物"
-  pnpm --dir "$REPO_DIR/packages/node-pty-fork" run build:native
-  pnpm --dir "$REPO_DIR/packages/node-pty-fork" run verify:runtime
+  log_info "对本地 @codingns/node-pty 应用 fork 补丁"
+  (
+    cd "$REPO_DIR/packages/node-pty-fork"
+    npm run apply:patches
+  )
+
+  log_info "构建本地 @codingns/node-pty 预编译产物（显式走 npm，避开 pnpm 自带 node-gyp 的 Windows 差异）"
+  (
+    cd "$REPO_DIR/packages/node-pty-fork"
+    npm run build:native
+    npm run verify:runtime
+  )
 
   log_info "生成 @codingns/node-pty npm tarball"
   local node_pty_tgz_name=""

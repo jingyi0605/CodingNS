@@ -26,18 +26,20 @@
 
 extern "C" void init(v8::Local<v8::Object>);
 
-// Taken from the RS5 Windows SDK, but redefined here in case we're targeting <= 17134
+// Taken from the RS5 Windows SDK, but redefined here in case we're targeting <= 17134.
 #ifndef PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE
 #define PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE \
   ProcThreadAttributeValue(22, FALSE, TRUE, FALSE)
+#endif
 
+#ifndef _HPCON_DEFINED
 typedef VOID* HPCON;
+#endif
+
 typedef HRESULT (__stdcall *PFNCREATEPSEUDOCONSOLE)(COORD c, HANDLE hIn, HANDLE hOut, DWORD dwFlags, HPCON* phpcon);
 typedef HRESULT (__stdcall *PFNRESIZEPSEUDOCONSOLE)(HPCON hpc, COORD newSize);
 typedef HRESULT (__stdcall *PFNCLEARPSEUDOCONSOLE)(HPCON hpc);
 typedef void (__stdcall *PFNCLOSEPSEUDOCONSOLE)(HPCON hpc);
-
-#endif
 
 struct pty_baton {
   int id;

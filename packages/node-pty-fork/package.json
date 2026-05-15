@@ -29,6 +29,7 @@
   "scripts": {
     "fetch:upstream": "node ./scripts/fetch-upstream.mjs",
     "sync:upstream": "node ./scripts/sync-upstream.mjs",
+    "apply:patches": "node ./scripts/apply-patches.mjs",
     "build:native": "node-gyp rebuild --release",
     "install": "node ./scripts/verify-runtime.cjs",
     "verify:runtime": "node ./scripts/verify-runtime.cjs",

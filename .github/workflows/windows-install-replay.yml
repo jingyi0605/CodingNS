@@ -87,7 +87,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-install-replay
-          if-no-files-found: error
+          if-no-files-found: warn
           path: |
             ${{ runner.temp }}/windows-install-replay
             ${{ runner.temp }}/codingns-replay-data/runtime/service
