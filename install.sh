@@ -1136,6 +1136,13 @@ expand_path() {
     "~/"*)
       printf '%s/%s\n' "$HOME" "${raw_path#~/}"
       ;;
+    [A-Za-z]:\\*|[A-Za-z]:/*)
+      if is_windows_environment && command_exists cygpath; then
+        cygpath -u "$raw_path"
+      else
+        printf '%s\n' "$raw_path"
+      fi
+      ;;
     /*)
       printf '%s\n' "$raw_path"
       ;;
