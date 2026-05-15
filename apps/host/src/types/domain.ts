@@ -49,7 +49,11 @@ export interface AuthTokenRecord {
   tokenType: "access" | "refresh";
   tokenHash: string;
   deviceSessionId: string | null;
-  callerKind: "interactive_user" | "assistant_runtime" | null;
+  callerKind: "interactive_user" | "assistant_runtime" | "workspace_session" | null;
+  capabilityProfile: string | null;
+  workspaceId: string | null;
+  projectId: string | null;
+  sessionId: string | null;
   expiresAt: string;
   revokedAt: string | null;
   createdAt: string;
@@ -234,6 +238,262 @@ export interface WorkspaceNavigationStateRecord {
   userId: string;
   collapsed: boolean;
   backgroundColor: string | null;
+  updatedAt: string;
+}
+
+export type OfficeTaskType = "browser" | "document" | "ops" | "workflow";
+export type OfficeTaskStatus =
+  | "draft"
+  | "pending_approval"
+  | "ready"
+  | "running"
+  | "paused"
+  | "waiting_external"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "rolled_back";
+export type OfficeRiskLevel = "low" | "medium" | "high";
+export type OfficeTaskStepStatus =
+  | "pending"
+  | "running"
+  | "waiting_approval"
+  | "waiting_external"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "skipped";
+export type OfficeArtifactKind =
+  | "screenshot"
+  | "ocr_result"
+  | "document_export"
+  | "command_log"
+  | "downloaded_file"
+  | "dom_snapshot"
+  | "approval_record"
+  | "custom";
+export type OfficeApprovalStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "expired"
+  | "cancelled";
+export type OfficeConnectorKind = "browser" | "document" | "ops" | "external";
+export type OfficeAuditEventKind =
+  | "task_created"
+  | "task_updated"
+  | "task_started"
+  | "task_finished"
+  | "task_cancelled"
+  | "task_approved"
+  | "task_rejected"
+  | "task_rolled_back"
+  | "artifact_created"
+  | "external_action"
+  | "permission_denied";
+export type OfficeRollbackStatus = "pending" | "running" | "succeeded" | "failed" | "skipped";
+export type BrowserEngine = "chrome" | "edge";
+export type BrowserProfileMode = "persistent" | "cdp_attached";
+export type BrowserProfileOwnershipScope = "user" | "workspace" | "target";
+export type BrowserProfileStatus = "active" | "locked" | "archived" | "error";
+export type DocumentTemplateEngine = "doct";
+export type DocumentTemplateStatus = "active" | "deprecated";
+export type OfficeDocumentStatus = "draft" | "reviewing" | "published" | "archived";
+export type OfficeDocumentCommentStatus = "open" | "resolved" | "archived";
+export type OfficeDocumentExportFormat = "docx" | "pdf" | "md";
+export type OpsTargetKind = "ssh_host" | "web_console";
+export type OpsTargetStatus = "active" | "disabled" | "error";
+
+export interface OfficeTask {
+  id: string;
+  userId: string;
+  workspaceId: string | null;
+  taskType: OfficeTaskType;
+  title: string;
+  description: string | null;
+  connectorId: string;
+  targetRefKind: string | null;
+  targetRefId: string | null;
+  inputJson: string;
+  status: OfficeTaskStatus;
+  riskLevel: OfficeRiskLevel;
+  approvalPolicyId: string | null;
+  currentStepId: string | null;
+  idempotencyKey: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OfficeTaskStep {
+  id: string;
+  taskId: string;
+  stepSeq: number;
+  stepType: string;
+  title: string;
+  inputJson: string | null;
+  outputJson: string | null;
+  status: OfficeTaskStepStatus;
+  retryCount: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OfficeArtifact {
+  id: string;
+  taskId: string;
+  stepId: string | null;
+  kind: OfficeArtifactKind;
+  name: string;
+  storagePath: string | null;
+  contentType: string | null;
+  metadataJson: string | null;
+  createdAt: string;
+}
+
+export interface OfficeApproval {
+  id: string;
+  taskId: string;
+  stepId: string | null;
+  policyId: string;
+  status: OfficeApprovalStatus;
+  approverUserId: string | null;
+  decisionNote: string | null;
+  decidedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OfficeReceipt {
+  id: string;
+  taskId: string;
+  stepId: string | null;
+  receiptType: string;
+  summary: string;
+  payloadJson: string;
+  createdAt: string;
+}
+
+export interface OfficeConnector {
+  id: string;
+  connectorKey: string;
+  kind: OfficeConnectorKind;
+  displayName: string;
+  capabilityJson: string;
+  status: "active" | "disabled";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OfficeAuditEvent {
+  id: string;
+  taskId: string | null;
+  stepId: string | null;
+  eventKind: OfficeAuditEventKind;
+  actorKind: "user" | "system" | "assistant" | "connector";
+  actorId: string | null;
+  summary: string;
+  payloadJson: string | null;
+  createdAt: string;
+}
+
+export interface OfficeRollbackRecord {
+  id: string;
+  taskId: string;
+  stepId: string | null;
+  status: OfficeRollbackStatus;
+  reason: string;
+  compensationJson: string | null;
+  summary: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BrowserProfile {
+  id: string;
+  userId: string;
+  workspaceId: string | null;
+  engine: BrowserEngine;
+  mode: BrowserProfileMode;
+  displayName: string;
+  userDataDir: string | null;
+  cdpEndpoint: string | null;
+  ownershipScope: BrowserProfileOwnershipScope;
+  status: BrowserProfileStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DocumentTemplate {
+  id: string;
+  templateKey: string;
+  displayName: string;
+  engine: DocumentTemplateEngine;
+  templateVersion: string;
+  templateSourcePath: string | null;
+  schemaJson: string;
+  mappingJson: string;
+  outputFormatsJson: string;
+  status: DocumentTemplateStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OfficeDocument {
+  id: string;
+  userId: string;
+  workspaceId: string | null;
+  title: string;
+  templateId: string;
+  currentRevisionId: string | null;
+  status: OfficeDocumentStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OfficeDocumentRevision {
+  id: string;
+  documentId: string;
+  revisionSeq: number;
+  baseRevisionId: string | null;
+  contentJson: string;
+  outlineJson: string | null;
+  summary: string | null;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface OfficeDocumentComment {
+  id: string;
+  documentId: string;
+  revisionId: string | null;
+  anchorType: string;
+  anchorKey: string;
+  body: string;
+  status: OfficeDocumentCommentStatus;
+  createdBy: string;
+  resolvedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt: string | null;
+}
+
+export interface OpsTarget {
+  id: string;
+  userId: string;
+  kind: OpsTargetKind;
+  displayName: string;
+  environment: string | null;
+  configJson: string;
+  credentialRef: string | null;
+  status: OpsTargetStatus;
+  createdAt: string;
   updatedAt: string;
 }
 

@@ -60,6 +60,13 @@ import { createDefaultChannelPlatformAdapterRegistry } from "../modules/channels
 import { ChannelService } from "../modules/channels/channel-service.js";
 import { WechatClawRuntimeClient } from "../modules/channels/wechat-claw-runtime-client.js";
 import { WechatClawRuntimeManager } from "../modules/channels/wechat-claw-runtime-manager.js";
+import { BrowserProfileService } from "../modules/browser-runtime/browser-profile-service.js";
+import { BrowserRuntimeController } from "../modules/browser-runtime/browser-runtime-controller.js";
+import { BrowserRuntimeService } from "../modules/browser-runtime/browser-runtime-service.js";
+import { PlaywrightBrowserExecutor } from "../modules/browser-runtime/playwright-browser-executor.js";
+import { DocumentRuntimeController } from "../modules/document-runtime/document-runtime-controller.js";
+import { DocumentExportExecutor } from "../modules/document-runtime/document-export-executor.js";
+import { DocumentRuntimeService } from "../modules/document-runtime/document-runtime-service.js";
 import { DebugTargetController } from "../modules/debug-target/debug-target-controller.js";
 import { DebugRuntimeReconciliationScheduler } from "../modules/debug-target/debug-runtime-reconciliation-scheduler.js";
 import { DebugTargetService } from "../modules/debug-target/debug-target-service.js";
@@ -83,11 +90,20 @@ import { GitRemoteCredentialService } from "../modules/git/git-remote-credential
 import { GitReadService } from "../modules/git/git-read-service.js";
 import { GitRuleRepository } from "../modules/git/git-rule-repository.js";
 import { GitWriteService } from "../modules/git/git-write-service.js";
+import { OfficeController } from "../modules/office/office-controller.js";
+import { OfficeService } from "../modules/office/office-service.js";
+import { OpsRuntimeController } from "../modules/ops-runtime/ops-runtime-controller.js";
+import { OpsRuntimeService } from "../modules/ops-runtime/ops-runtime-service.js";
+import { SshOpsExecutor } from "../modules/ops-runtime/ssh-ops-executor.js";
 import { WorkspaceRepoGuard } from "../modules/git/workspace-repo-guard.js";
 import { ProfileController } from "../modules/preferences/profile-controller.js";
 import { PreferenceProfileService } from "../modules/preferences/profile-service.js";
 import { QuickPhraseController } from "../modules/preferences/quick-phrase-controller.js";
 import { QuickPhraseService } from "../modules/preferences/quick-phrase-service.js";
+import { PresentationController } from "../modules/presentation/presentation-controller.js";
+import { PresentationExportTaskService } from "../modules/presentation/presentation-export-task-service.js";
+import { PresentationPdfExportService } from "../modules/presentation/presentation-pdf-export-service.js";
+import { PresentationPptxExportService } from "../modules/presentation/presentation-pptx-export-service.js";
 import { RelayTunnelController } from "../modules/relay-tunnel/relay-tunnel-controller.js";
 import { RelayTunnelRuntimeEdgeAdapter } from "../modules/relay-tunnel/relay-tunnel-runtime-adapter.js";
 import { RelayTunnelService } from "../modules/relay-tunnel/relay-tunnel-service.js";
@@ -128,6 +144,8 @@ import { SessionLiveRuntimeService } from "../modules/sessions/session-live-runt
 import { SessionProviderConfigService } from "../modules/sessions/session-provider-config-service.js";
 import { SessionProviderUsageLimitGuardService } from "../modules/sessions/session-provider-usage-guard-service.js";
 import { SessionMessageAttachmentService } from "../modules/sessions/session-message-attachment-service.js";
+import { WorkspaceSessionAuthService } from "../modules/sessions/workspace-session-auth-service.js";
+import { WorkspaceSessionRuntimeContextService } from "../modules/sessions/workspace-session-runtime-context-service.js";
 import { EventLoopMonitor } from "../modules/tasks/event-loop-monitor.js";
 import { ObservabilityController } from "../modules/tasks/observability-controller.js";
 import { RuntimeObservabilityService } from "../modules/tasks/observability-service.js";
@@ -155,14 +173,18 @@ import { WorkspaceService } from "../modules/workspace/workspace-service.js";
 import { registerAuthRoutes } from "../routes/auth.js";
 import { registerAssistantCapabilityRoutes } from "../routes/assistant.js";
 import { registerButlerRoutes } from "../routes/butler.js";
+import { registerBrowserRuntimeRoutes } from "../routes/browser-runtime.js";
 import { registerChannelRoutes } from "../routes/channels.js";
 import { registerClientRoutes } from "../routes/client.js";
 import { registerDebugTargetRoutes } from "../routes/debug-targets.js";
+import { registerDocumentRuntimeRoutes } from "../routes/document-runtime.js";
 import { registerFileRoutes } from "../routes/files.js";
 import { registerGitRoutes } from "../routes/git.js";
+import { registerOfficeRoutes } from "../routes/office.js";
 import { registerOpenCliRoutes } from "../routes/opencli.js";
 import { registerObservabilityRoutes } from "../routes/observability.js";
 import { registerParallelGroupRoutes } from "../routes/parallel-groups.js";
+import { registerPresentationRoutes } from "../routes/presentation.js";
 import { registerPreferenceRoutes } from "../routes/preferences.js";
 import { registerProviderRoutes } from "../routes/providers.js";
 import { registerPublicRoutes } from "../routes/public.js";
@@ -175,6 +197,7 @@ import { registerWorkbenchRoutes } from "../routes/workbench.js";
 import { registerWorktreeRoutes } from "../routes/worktrees.js";
 import { registerWorkspaceRoutes } from "../routes/workspaces.js";
 import { registerSystemRoutes } from "../routes/system.js";
+import { registerOpsRuntimeRoutes } from "../routes/ops-runtime.js";
 import { DemoCleanupService, DemoOnlineTracker } from "../modules/demo/demo-cleanup-service.js";
 import { setErrorHandler } from "../shared/http/error-handler.js";
 import { startTerminalDebugEventLoopLagMonitor } from "../shared/utils/terminal-debug-log.js";
@@ -199,6 +222,11 @@ import { ButlerProfileRepository } from "../storage/repositories/butler-profile-
 import { ButlerProjectRepository } from "../storage/repositories/butler-project-repository.js";
 import { ButlerSessionRepository } from "../storage/repositories/butler-session-repository.js";
 import { ButlerSessionSummaryStateRepository } from "../storage/repositories/butler-session-summary-state-repository.js";
+import { BrowserProfileRepository } from "../storage/repositories/browser-profile-repository.js";
+import { DocumentCommentRepository } from "../storage/repositories/document-comment-repository.js";
+import { DocumentRepository } from "../storage/repositories/document-repository.js";
+import { DocumentRevisionRepository } from "../storage/repositories/document-revision-repository.js";
+import { DocumentTemplateRepository } from "../storage/repositories/document-template-repository.js";
 import { PatrolPlanRepository } from "../storage/repositories/patrol-plan-repository.js";
 import { PatrolRunRepository } from "../storage/repositories/patrol-run-repository.js";
 import { ProjectMemoryRepository } from "../storage/repositories/project-memory-repository.js";
@@ -211,6 +239,15 @@ import { ChannelThreadRepository } from "../storage/repositories/channel-thread-
 import { DebugRuntimeSessionRepository } from "../storage/repositories/debug-runtime-session-repository.js";
 import { DebugServiceRepository } from "../storage/repositories/debug-service-repository.js";
 import { DebugTargetRepository } from "../storage/repositories/debug-target-repository.js";
+import { OfficeApprovalRepository } from "../storage/repositories/office-approval-repository.js";
+import { OfficeArtifactRepository } from "../storage/repositories/office-artifact-repository.js";
+import { OfficeAuditEventRepository } from "../storage/repositories/office-audit-event-repository.js";
+import { OfficeConnectorRepository } from "../storage/repositories/office-connector-repository.js";
+import { OfficeReceiptRepository } from "../storage/repositories/office-receipt-repository.js";
+import { OfficeRollbackRecordRepository } from "../storage/repositories/office-rollback-record-repository.js";
+import { OfficeTaskRepository } from "../storage/repositories/office-task-repository.js";
+import { OfficeTaskStepRepository } from "../storage/repositories/office-task-step-repository.js";
+import { OpsTargetRepository } from "../storage/repositories/ops-target-repository.js";
 import { FileContextBindingRepository } from "../storage/repositories/file-context-binding-repository.js";
 import { FrameworkAnalysisResultRepository } from "../storage/repositories/framework-analysis-result-repository.js";
 import { GitRemoteCredentialRepository } from "../storage/repositories/git-remote-credential-repository.js";
@@ -257,7 +294,7 @@ import { createWsServer } from "../ws/ws-server.js";
 import { WsAuthGuard } from "../ws/ws-auth-guard.js";
 import { registerStaticWebRoutes } from "./static-web.js";
 import { registerWorkbenchRuntimeTerminalSync } from "./workbench-runtime-terminal-sync.js";
-import type { TerminalInstance } from "../types/domain.js";
+import type { OfficeConnector, TerminalInstance } from "../types/domain.js";
 
 export function createServer(config: HostConfig) {
   // Demo 模式下覆盖 token TTL 为 15 分钟
@@ -295,6 +332,20 @@ export function createServer(config: HostConfig) {
     debugServiceRepository: new DebugServiceRepository(database.db),
     frameworkAnalysisResultRepository: new FrameworkAnalysisResultRepository(database.db),
     debugRuntimeSessionRepository: new DebugRuntimeSessionRepository(database.db),
+    officeTaskRepository: new OfficeTaskRepository(database.db),
+    officeTaskStepRepository: new OfficeTaskStepRepository(database.db),
+    officeArtifactRepository: new OfficeArtifactRepository(database.db),
+    officeApprovalRepository: new OfficeApprovalRepository(database.db),
+    officeReceiptRepository: new OfficeReceiptRepository(database.db),
+    officeConnectorRepository: new OfficeConnectorRepository(database.db),
+    officeAuditEventRepository: new OfficeAuditEventRepository(database.db),
+    officeRollbackRecordRepository: new OfficeRollbackRecordRepository(database.db),
+    browserProfileRepository: new BrowserProfileRepository(database.db),
+    documentTemplateRepository: new DocumentTemplateRepository(database.db),
+    documentRepository: new DocumentRepository(database.db),
+    documentRevisionRepository: new DocumentRevisionRepository(database.db),
+    documentCommentRepository: new DocumentCommentRepository(database.db),
+    opsTargetRepository: new OpsTargetRepository(database.db),
     portLeaseRepository: new PortLeaseRepository(database.db),
     runtimeBindingRepository: new RuntimeBindingRepository(database.db),
     aiFallbackEditRepository: new AiFallbackEditRepository(database.db),
@@ -348,6 +399,9 @@ export function createServer(config: HostConfig) {
     terminalRuntimeSessionRepository: new TerminalRuntimeSessionRepository(database.db),
     terminalCommandTemplateRepository: new TerminalCommandTemplateRepository(database.db)
   };
+
+  ensureDefaultOfficeConnectors(repositories.officeConnectorRepository);
+  ensureDefaultDocumentTemplates(repositories.documentTemplateRepository);
 
   const bootstrapService = new BootstrapService(
     database.db,
@@ -424,6 +478,14 @@ export function createServer(config: HostConfig) {
   const filePreviewLinkService = new FilePreviewLinkService(
     fileAccessGuard,
     config.filePreviewTokenSecret
+  );
+  const presentationPdfExportService = new PresentationPdfExportService(config);
+  const presentationPptxExportService = new PresentationPptxExportService(config);
+  const presentationExportTaskService = new PresentationExportTaskService(
+    taskManager,
+    presentationPdfExportService,
+    presentationPptxExportService,
+    fileAccessGuard
   );
   const workspaceRepoGuard = new WorkspaceRepoGuard(workspaceService, gitCommandRunner);
   const gitReadService = new GitReadService(gitCommandRunner, workspaceRepoGuard);
@@ -547,11 +609,16 @@ export function createServer(config: HostConfig) {
     repositories.openCliCatalogEntryRepository
   );
   const openCliController = new OpenCliController(openCliManagementService);
+  const workspaceSessionAuthService = new WorkspaceSessionAuthService(authService, config);
+  const workspaceSessionRuntimeContextService = new WorkspaceSessionRuntimeContextService(
+    workspaceSessionAuthService
+  );
   const sessionProviderConfigService = new SessionProviderConfigService(
     config,
     ccSwitchAdapter,
     openCliRuntimeResolver,
-    openCliBridgeSkillService
+    openCliBridgeSkillService,
+    workspaceSessionRuntimeContextService
   );
   const skillTargetAdapters = createDefaultSkillTargetAdapters(config);
   const skillManagerService = new SkillManagerService(
@@ -1206,6 +1273,84 @@ export function createServer(config: HostConfig) {
     parallelSessionGroupService,
     sessionIsolatedWorkspaceService
   );
+  const providerController = new ProviderController(
+    sessionHistoryService,
+    sessionProviderConfigService,
+    providerCatalogService,
+    routedSessionLiveRuntimeService,
+    config
+  );
+  const skillController = new SkillController(skillManagerService);
+  const tailscaleController = new TailscaleController(tailscaleService);
+  const relayTunnelController = new RelayTunnelController(relayTunnelService);
+  const modelSwitchController = new ModelSwitchController(modelSwitchService);
+  const quickPhraseController = new QuickPhraseController(quickPhraseService);
+  const profileController = new ProfileController(preferenceProfileService);
+  const officeService = new OfficeService(
+    repositories.officeTaskRepository,
+    repositories.officeTaskStepRepository,
+    repositories.officeArtifactRepository,
+    repositories.officeApprovalRepository,
+    repositories.officeReceiptRepository,
+    repositories.officeConnectorRepository,
+    repositories.officeAuditEventRepository,
+    repositories.officeRollbackRecordRepository
+  );
+  const officeController = new OfficeController(officeService);
+  const browserProfileService = new BrowserProfileService(
+    repositories.browserProfileRepository,
+    config.databasePath
+  );
+  const playwrightBrowserExecutor = new PlaywrightBrowserExecutor(
+    config,
+    repositories.officeTaskRepository,
+    repositories.officeTaskStepRepository,
+    repositories.officeArtifactRepository,
+    repositories.officeReceiptRepository,
+    repositories.officeAuditEventRepository
+  );
+  const browserRuntimeService = new BrowserRuntimeService(
+    browserProfileService,
+    officeService,
+    repositories.officeTaskRepository,
+    playwrightBrowserExecutor,
+    taskManager
+  );
+  const browserRuntimeController = new BrowserRuntimeController(browserRuntimeService);
+  const documentRuntimeService = new DocumentRuntimeService(
+    repositories.documentTemplateRepository,
+    repositories.documentRepository,
+    repositories.documentRevisionRepository,
+    repositories.documentCommentRepository,
+    officeService,
+    taskManager,
+    new DocumentExportExecutor(
+      config,
+      repositories.officeTaskRepository,
+      repositories.officeTaskStepRepository,
+      repositories.officeArtifactRepository,
+      repositories.officeReceiptRepository,
+      repositories.officeAuditEventRepository
+    )
+  );
+  const documentRuntimeController = new DocumentRuntimeController(documentRuntimeService);
+  const sshOpsExecutor = new SshOpsExecutor(
+    config,
+    repositories.officeTaskRepository,
+    repositories.officeTaskStepRepository,
+    repositories.officeArtifactRepository,
+    repositories.officeReceiptRepository,
+    repositories.officeAuditEventRepository
+  );
+  const opsRuntimeService = new OpsRuntimeService(
+    repositories.opsTargetRepository,
+    browserProfileService,
+    officeService,
+    repositories.officeTaskRepository,
+    sshOpsExecutor,
+    taskManager
+  );
+  const opsRuntimeController = new OpsRuntimeController(opsRuntimeService);
   const assistantCapabilityController = new AssistantCapabilityController(
     new AssistantCapabilityService(
       butlerProjectService,
@@ -1225,22 +1370,14 @@ export function createServer(config: HostConfig) {
       worktreeCleanupService,
       repositories.sessionMessageOriginRepository,
       butlerFollowUpService,
-      repositories.providerControlRepository
+      repositories.providerControlRepository,
+      documentRuntimeService,
+      officeService,
+      browserRuntimeService,
+      opsRuntimeService
     )
   );
-  const providerController = new ProviderController(
-    sessionHistoryService,
-    sessionProviderConfigService,
-    providerCatalogService,
-    routedSessionLiveRuntimeService,
-    config
-  );
-  const skillController = new SkillController(skillManagerService);
-  const tailscaleController = new TailscaleController(tailscaleService);
-  const relayTunnelController = new RelayTunnelController(relayTunnelService);
-  const modelSwitchController = new ModelSwitchController(modelSwitchService);
-  const quickPhraseController = new QuickPhraseController(quickPhraseService);
-  const profileController = new ProfileController(preferenceProfileService);
+  const presentationController = new PresentationController(presentationExportTaskService);
   const fileController = new FileController(
     fileTreeService,
     fileContentService,
@@ -1352,12 +1489,17 @@ export function createServer(config: HostConfig) {
   void registerClientRoutes(app, clientController);
   void registerDebugTargetRoutes(app, debugTargetController);
   void registerObservabilityRoutes(app, observabilityController);
+  void registerOfficeRoutes(app, officeController);
+  void registerBrowserRuntimeRoutes(app, browserRuntimeController);
+  void registerDocumentRuntimeRoutes(app, documentRuntimeController);
+  void registerOpsRuntimeRoutes(app, opsRuntimeController);
   void registerWorkspaceRoutes(app, workspaceController);
   void registerWorktreeRoutes(app, worktreeController);
   void registerWorkbenchRoutes(app, workbenchController);
   void registerButlerRoutes(app, butlerController);
   void registerSessionRoutes(app, sessionController);
   void registerParallelGroupRoutes(app, parallelSessionController);
+  void registerPresentationRoutes(app, presentationController);
   void registerPreferenceRoutes(app, quickPhraseController, profileController);
   void registerSkillRoutes(app, skillController);
   void registerOpenCliRoutes(app, openCliController);
@@ -1468,6 +1610,10 @@ export function createServer(config: HostConfig) {
         tailscaleManager,
         tailscaleService,
         modelSwitchService,
+        officeService,
+        browserProfileService,
+        documentRuntimeService,
+        opsRuntimeService,
         runtimeObservabilityService,
         sessionHistoryService,
         sessionChangedFileService,
@@ -1480,6 +1626,120 @@ export function createServer(config: HostConfig) {
     },
     startWs: () => wsHandle
   };
+}
+
+function ensureDefaultOfficeConnectors(
+  repository: Pick<OfficeConnectorRepository, "findByKey" | "create">
+): void {
+  const timestamp = new Date().toISOString();
+  const defaults: Array<Omit<OfficeConnector, "id" | "createdAt" | "updatedAt">> = [
+    {
+      connectorKey: "browser.playwright",
+      kind: "browser",
+      displayName: "Playwright Browser",
+      capabilityJson: JSON.stringify({
+        supportedTaskTypes: ["browser", "ops"],
+        supportedActions: ["goto", "click", "fill", "upload", "download", "read_dom", "screenshot"],
+        supportedArtifacts: ["screenshot", "ocr_result", "downloaded_file", "dom_snapshot"],
+        supportsSubscription: false
+      }),
+      status: "active"
+    },
+    {
+      connectorKey: "document.doct",
+      kind: "document",
+      displayName: "doct Document Runtime",
+      capabilityJson: JSON.stringify({
+        supportedTaskTypes: ["document"],
+        supportedActions: ["validate_template", "render_docx", "render_pdf", "render_md"],
+        supportedArtifacts: ["document_export"],
+        supportsSubscription: false
+      }),
+      status: "active"
+    },
+    {
+      connectorKey: "ops.ssh",
+      kind: "ops",
+      displayName: "SSH Ops Runtime",
+      capabilityJson: JSON.stringify({
+        supportedTaskTypes: ["ops"],
+        supportedActions: ["run_command", "collect_log"],
+        supportedArtifacts: ["command_log", "custom"],
+        supportsSubscription: false
+      }),
+      status: "active"
+    },
+    {
+      connectorKey: "ops.browser_console",
+      kind: "ops",
+      displayName: "Browser Console Ops Runtime",
+      capabilityJson: JSON.stringify({
+        supportedTaskTypes: ["ops"],
+        supportedActions: ["login_console", "goto", "click", "fill", "download", "screenshot"],
+        supportedArtifacts: ["screenshot", "dom_snapshot", "downloaded_file"],
+        supportsSubscription: false
+      }),
+      status: "active"
+    },
+    {
+      connectorKey: "file.workspace",
+      kind: "external",
+      displayName: "Workspace File Runtime",
+      capabilityJson: JSON.stringify({
+        supportedTaskTypes: ["document", "workflow"],
+        supportedActions: ["read_file", "write_file", "list_files"],
+        supportedArtifacts: ["custom"],
+        supportsSubscription: false
+      }),
+      status: "active"
+    }
+  ];
+
+  for (const item of defaults) {
+    if (repository.findByKey(item.connectorKey)) {
+      continue;
+    }
+
+    repository.create({
+      id: item.connectorKey,
+      ...item,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+  }
+}
+
+function ensureDefaultDocumentTemplates(
+  repository: Pick<DocumentTemplateRepository, "findByKey" | "create">
+): void {
+  if (repository.findByKey("default.doct.standard")) {
+    return;
+  }
+
+  const timestamp = new Date().toISOString();
+  repository.create({
+    id: "default.doct.standard@v1",
+    templateKey: "default.doct.standard",
+    displayName: "默认正式文档模板",
+    engine: "doct",
+    templateVersion: "v1",
+    templateSourcePath: null,
+    schemaJson: JSON.stringify({
+      requiredFields: ["title", "body"],
+      optionalFields: ["summary", "outline", "references", "annotations"]
+    }),
+    mappingJson: JSON.stringify({
+      title: "document.title",
+      summary: "revision.summary",
+      sections: "content.blocks",
+      references: "content.references",
+      annotations: "document.comments"
+    }),
+    outputFormatsJson: JSON.stringify(["docx", "pdf", "md"]),
+    status: "active",
+    createdAt: timestamp,
+    updatedAt: timestamp
+  });
 }
 
 function applyCorsHeaders(origin: string | undefined, reply: {

@@ -9,6 +9,8 @@ const sourceSchemaPath = path.join(appPath, "src", "storage", "sqlite", "schema.
 const outputSchemaPath = path.join(appPath, ".build", "src", "storage", "sqlite", "schema.sql");
 const sourceBuiltinSkillRoot = path.join(appPath, "src", "modules", "skills", "builtin-skills");
 const outputBuiltinSkillRoot = path.join(appPath, ".build", "src", "modules", "skills", "builtin-skills");
+const sourceDocumentRuntimeRoot = path.join(appPath, "src", "modules", "document-runtime");
+const outputDocumentRuntimeRoot = path.join(appPath, ".build", "src", "modules", "document-runtime");
 const require = createRequire(import.meta.url);
 const tscEntry = require.resolve("typescript/bin/tsc", {
   paths: [appPath]
@@ -34,4 +36,18 @@ if (fs.existsSync(sourceBuiltinSkillRoot)) {
   fs.rmSync(outputBuiltinSkillRoot, { recursive: true, force: true });
   fs.mkdirSync(path.dirname(outputBuiltinSkillRoot), { recursive: true });
   fs.cpSync(sourceBuiltinSkillRoot, outputBuiltinSkillRoot, { recursive: true });
+}
+
+const sourceDocxFallbackRendererPath = path.join(
+  sourceDocumentRuntimeRoot,
+  "document-docx-fallback-renderer.py"
+);
+const outputDocxFallbackRendererPath = path.join(
+  outputDocumentRuntimeRoot,
+  "document-docx-fallback-renderer.py"
+);
+
+if (fs.existsSync(sourceDocxFallbackRendererPath)) {
+  fs.mkdirSync(path.dirname(outputDocxFallbackRendererPath), { recursive: true });
+  fs.copyFileSync(sourceDocxFallbackRendererPath, outputDocxFallbackRendererPath);
 }

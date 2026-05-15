@@ -40,6 +40,9 @@ export interface HostConfig {
   ccSwitchDbPath: string;
   codexCliPath: string;
   legnaCodeCliPath: string;
+  chromeExecutablePath: string;
+  edgeExecutablePath: string;
+  doctCliPath: string;
   claudeHookBridgeToken: string;
   serverUpdatePackageName: string;
   npmRegistryBaseUrl: string;
@@ -188,6 +191,18 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     ccSwitchDbPath,
     codexCliPath,
     legnaCodeCliPath,
+    chromeExecutablePath:
+      overrides.chromeExecutablePath ??
+      process.env.CODINGNS_CHROME_EXECUTABLE_PATH ??
+      resolveChromeExecutablePath(homeDir),
+    edgeExecutablePath:
+      overrides.edgeExecutablePath ??
+      process.env.CODINGNS_EDGE_EXECUTABLE_PATH ??
+      resolveEdgeExecutablePath(homeDir),
+    doctCliPath:
+      overrides.doctCliPath ??
+      process.env.CODINGNS_DOCT_COMMAND ??
+      "doct",
     claudeHookBridgeToken:
       overrides.claudeHookBridgeToken ??
       process.env.CODINGNS_CLAUDE_HOOK_TOKEN ??
@@ -535,6 +550,65 @@ function resolvePersistentSecret(secretPath: string): string {
   } catch {
     return crypto.randomBytes(24).toString("hex");
   }
+}
+
+function resolveChromeExecutablePath(homeDir: string): string {
+  const candidates = process.platform === "win32"
+    ? [
+      "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+      "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+      normalizeOptionalText(process.env.LOCALAPPDATA)
+        ? path.join(process.env.LOCALAPPDATA as string, "Google", "Chrome", "Application", "chrome.exe")
+        : null
+    ]
+    : process.platform === "darwin"
+      ? [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        path.join(homeDir, "Applications", "Google Chrome.app", "Contents", "MacOS", "Google Chrome")
+      ]
+      : [
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/snap/bin/chromium",
+        path.join(homeDir, ".local", "bin", "google-chrome")
+      ];
+
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return "google-chrome";
+}
+
+function resolveEdgeExecutablePath(homeDir: string): string {
+  const candidates = process.platform === "win32"
+    ? [
+      "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+      "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+      normalizeOptionalText(process.env.LOCALAPPDATA)
+        ? path.join(process.env.LOCALAPPDATA as string, "Microsoft", "Edge", "Application", "msedge.exe")
+        : null
+    ]
+    : process.platform === "darwin"
+      ? [
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        path.join(homeDir, "Applications", "Microsoft Edge.app", "Contents", "MacOS", "Microsoft Edge")
+      ]
+      : [
+        "/usr/bin/microsoft-edge",
+        "/usr/bin/microsoft-edge-stable",
+        path.join(homeDir, ".local", "bin", "microsoft-edge")
+      ];
+
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return "microsoft-edge";
 }
 
 function readOptionalNumber(value: string | undefined): number | null {

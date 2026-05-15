@@ -17,7 +17,12 @@ export const HOST_TASK_TYPES = {
   assistantAutomationEvaluate: "assistant.automation.evaluate",
   assistantSandboxTick: "assistant.sandbox.tick",
   assistantSandboxCleanup: "assistant.sandbox.cleanup",
-  verificationRunExecute: "butler.verification_run.execute"
+  verificationRunExecute: "butler.verification_run.execute",
+  officeBrowserTaskExecute: "office.browser_task.execute",
+  officeDocumentExportExecute: "office.document_export.execute",
+  officeOpsSshTaskExecute: "office.ops_ssh_task.execute",
+  presentationExportPdf: "presentation.export_pdf",
+  presentationExportPptx: "presentation.export_pptx"
 } as const;
 
 export type HostTaskType = (typeof HOST_TASK_TYPES)[keyof typeof HOST_TASK_TYPES];

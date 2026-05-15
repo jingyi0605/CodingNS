@@ -24,7 +24,11 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
   token_type TEXT NOT NULL CHECK (token_type IN ('access', 'refresh')),
   token_hash TEXT NOT NULL UNIQUE,
   device_session_id TEXT,
-  caller_kind TEXT CHECK (caller_kind IN ('interactive_user', 'assistant_runtime')),
+  caller_kind TEXT CHECK (caller_kind IN ('interactive_user', 'assistant_runtime', 'workspace_session')),
+  capability_profile TEXT,
+  workspace_id TEXT,
+  project_id TEXT,
+  session_id TEXT,
   expires_at TEXT NOT NULL,
   revoked_at TEXT,
   created_at TEXT NOT NULL,
@@ -34,6 +38,8 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
 CREATE INDEX IF NOT EXISTS idx_auth_tokens_user_id ON auth_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_tokens_expires_at ON auth_tokens(expires_at);
 CREATE INDEX IF NOT EXISTS idx_auth_tokens_device_session_id ON auth_tokens(device_session_id);
+CREATE INDEX IF NOT EXISTS idx_auth_tokens_workspace_id ON auth_tokens(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_auth_tokens_session_id ON auth_tokens(session_id);
 
 CREATE TABLE IF NOT EXISTS auth_devices (
   id TEXT PRIMARY KEY,
@@ -125,6 +131,296 @@ CREATE TABLE IF NOT EXISTS workspace_navigation_states (
 
 CREATE INDEX IF NOT EXISTS idx_workspace_navigation_states_user_id
   ON workspace_navigation_states(user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS office_tasks (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  workspace_id TEXT,
+  task_type TEXT NOT NULL CHECK (task_type IN ('browser', 'document', 'ops', 'workflow')),
+  title TEXT NOT NULL,
+  description TEXT,
+  connector_id TEXT NOT NULL,
+  target_ref_kind TEXT,
+  target_ref_id TEXT,
+  input_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (
+    status IN ('draft', 'pending_approval', 'ready', 'running', 'paused', 'waiting_external', 'succeeded', 'failed', 'cancelled', 'rolled_back')
+  ),
+  risk_level TEXT NOT NULL CHECK (risk_level IN ('low', 'medium', 'high')),
+  approval_policy_id TEXT,
+  current_step_id TEXT,
+  idempotency_key TEXT,
+  started_at TEXT,
+  finished_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id),
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_office_tasks_user_id ON office_tasks(user_id);
+CREATE INDEX IF NOT EXISTS idx_office_tasks_workspace_id ON office_tasks(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_office_tasks_status ON office_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_office_tasks_task_type ON office_tasks(task_type);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_office_tasks_user_idempotency_key_active
+  ON office_tasks(user_id, idempotency_key)
+  WHERE idempotency_key IS NOT NULL
+    AND status IN ('draft', 'pending_approval', 'ready', 'running', 'paused', 'waiting_external');
+
+CREATE TABLE IF NOT EXISTS office_task_steps (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  step_seq INTEGER NOT NULL,
+  step_type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  input_json TEXT,
+  output_json TEXT,
+  status TEXT NOT NULL CHECK (
+    status IN ('pending', 'running', 'waiting_approval', 'waiting_external', 'succeeded', 'failed', 'cancelled', 'skipped')
+  ),
+  retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+  started_at TEXT,
+  finished_at TEXT,
+  error_message TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES office_tasks(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_office_task_steps_task_seq
+  ON office_task_steps(task_id, step_seq);
+CREATE INDEX IF NOT EXISTS idx_office_task_steps_task_id ON office_task_steps(task_id);
+CREATE INDEX IF NOT EXISTS idx_office_task_steps_status ON office_task_steps(status);
+
+CREATE TABLE IF NOT EXISTS office_artifacts (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  step_id TEXT,
+  kind TEXT NOT NULL CHECK (
+    kind IN ('screenshot', 'ocr_result', 'document_export', 'command_log', 'downloaded_file', 'dom_snapshot', 'approval_record', 'custom')
+  ),
+  name TEXT NOT NULL,
+  storage_path TEXT,
+  content_type TEXT,
+  metadata_json TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES office_tasks(id) ON DELETE CASCADE,
+  FOREIGN KEY (step_id) REFERENCES office_task_steps(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_office_artifacts_task_id ON office_artifacts(task_id);
+CREATE INDEX IF NOT EXISTS idx_office_artifacts_step_id ON office_artifacts(step_id);
+CREATE INDEX IF NOT EXISTS idx_office_artifacts_kind ON office_artifacts(kind);
+
+CREATE TABLE IF NOT EXISTS office_approvals (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  step_id TEXT,
+  policy_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'expired', 'cancelled')),
+  approver_user_id TEXT,
+  decision_note TEXT,
+  decided_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES office_tasks(id) ON DELETE CASCADE,
+  FOREIGN KEY (step_id) REFERENCES office_task_steps(id) ON DELETE SET NULL,
+  FOREIGN KEY (approver_user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_office_approvals_task_id ON office_approvals(task_id);
+CREATE INDEX IF NOT EXISTS idx_office_approvals_status ON office_approvals(status);
+
+CREATE TABLE IF NOT EXISTS office_receipts (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  step_id TEXT,
+  receipt_type TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES office_tasks(id) ON DELETE CASCADE,
+  FOREIGN KEY (step_id) REFERENCES office_task_steps(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_office_receipts_task_id ON office_receipts(task_id);
+CREATE INDEX IF NOT EXISTS idx_office_receipts_step_id ON office_receipts(step_id);
+
+CREATE TABLE IF NOT EXISTS browser_profiles (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  workspace_id TEXT,
+  engine TEXT NOT NULL CHECK (engine IN ('chrome', 'edge')),
+  mode TEXT NOT NULL CHECK (mode IN ('persistent', 'cdp_attached')),
+  display_name TEXT NOT NULL,
+  user_data_dir TEXT,
+  cdp_endpoint TEXT,
+  ownership_scope TEXT NOT NULL CHECK (ownership_scope IN ('user', 'workspace', 'target')),
+  status TEXT NOT NULL CHECK (status IN ('active', 'locked', 'archived', 'error')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id),
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_browser_profiles_user_id ON browser_profiles(user_id);
+CREATE INDEX IF NOT EXISTS idx_browser_profiles_workspace_id ON browser_profiles(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_browser_profiles_status ON browser_profiles(status);
+
+CREATE TABLE IF NOT EXISTS document_templates (
+  id TEXT PRIMARY KEY,
+  template_key TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  engine TEXT NOT NULL CHECK (engine IN ('doct')),
+  template_version TEXT NOT NULL,
+  template_source_path TEXT,
+  schema_json TEXT NOT NULL,
+  mapping_json TEXT NOT NULL DEFAULT '{}',
+  output_formats_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('active', 'deprecated')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_templates_key_version
+  ON document_templates(template_key, template_version);
+CREATE INDEX IF NOT EXISTS idx_document_templates_template_key
+  ON document_templates(template_key);
+CREATE INDEX IF NOT EXISTS idx_document_templates_status
+  ON document_templates(status);
+
+CREATE TABLE IF NOT EXISTS documents (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  workspace_id TEXT,
+  title TEXT NOT NULL,
+  template_id TEXT NOT NULL,
+  current_revision_id TEXT,
+  status TEXT NOT NULL CHECK (status IN ('draft', 'reviewing', 'published', 'archived')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id),
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+  FOREIGN KEY (template_id) REFERENCES document_templates(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_documents_user_id ON documents(user_id);
+CREATE INDEX IF NOT EXISTS idx_documents_workspace_id ON documents(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(status);
+
+CREATE TABLE IF NOT EXISTS document_revisions (
+  id TEXT PRIMARY KEY,
+  document_id TEXT NOT NULL,
+  revision_seq INTEGER NOT NULL,
+  base_revision_id TEXT,
+  content_json TEXT NOT NULL,
+  outline_json TEXT,
+  summary TEXT,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+  FOREIGN KEY (base_revision_id) REFERENCES document_revisions(id) ON DELETE SET NULL,
+  FOREIGN KEY (created_by) REFERENCES auth_users(id),
+  UNIQUE (document_id, revision_seq)
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_revisions_document_id
+  ON document_revisions(document_id);
+
+CREATE TABLE IF NOT EXISTS document_comments (
+  id TEXT PRIMARY KEY,
+  document_id TEXT NOT NULL,
+  revision_id TEXT,
+  anchor_type TEXT NOT NULL,
+  anchor_key TEXT NOT NULL,
+  body TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('open', 'resolved', 'archived')),
+  created_by TEXT NOT NULL,
+  resolved_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  resolved_at TEXT,
+  FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+  FOREIGN KEY (revision_id) REFERENCES document_revisions(id) ON DELETE SET NULL,
+  FOREIGN KEY (created_by) REFERENCES auth_users(id),
+  FOREIGN KEY (resolved_by) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_comments_document_id
+  ON document_comments(document_id);
+CREATE INDEX IF NOT EXISTS idx_document_comments_status
+  ON document_comments(status);
+
+CREATE TABLE IF NOT EXISTS ops_targets (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('ssh_host', 'web_console')),
+  display_name TEXT NOT NULL,
+  environment TEXT,
+  config_json TEXT NOT NULL,
+  credential_ref TEXT,
+  status TEXT NOT NULL CHECK (status IN ('active', 'disabled', 'error')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ops_targets_user_id ON ops_targets(user_id);
+CREATE INDEX IF NOT EXISTS idx_ops_targets_kind ON ops_targets(kind);
+CREATE INDEX IF NOT EXISTS idx_ops_targets_status ON ops_targets(status);
+
+CREATE TABLE IF NOT EXISTS office_connectors (
+  id TEXT PRIMARY KEY,
+  connector_key TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL CHECK (kind IN ('browser', 'document', 'ops', 'external')),
+  display_name TEXT NOT NULL,
+  capability_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('active', 'disabled')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_office_connectors_kind ON office_connectors(kind);
+CREATE INDEX IF NOT EXISTS idx_office_connectors_status ON office_connectors(status);
+
+CREATE TABLE IF NOT EXISTS office_audit_events (
+  id TEXT PRIMARY KEY,
+  task_id TEXT,
+  step_id TEXT,
+  event_kind TEXT NOT NULL CHECK (
+    event_kind IN ('task_created', 'task_updated', 'task_started', 'task_finished', 'task_cancelled', 'task_approved', 'task_rejected', 'task_rolled_back', 'artifact_created', 'external_action', 'permission_denied')
+  ),
+  actor_kind TEXT NOT NULL CHECK (actor_kind IN ('user', 'system', 'assistant', 'connector')),
+  actor_id TEXT,
+  summary TEXT NOT NULL,
+  payload_json TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES office_tasks(id) ON DELETE SET NULL,
+  FOREIGN KEY (step_id) REFERENCES office_task_steps(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_office_audit_events_task_id ON office_audit_events(task_id);
+CREATE INDEX IF NOT EXISTS idx_office_audit_events_step_id ON office_audit_events(step_id);
+CREATE INDEX IF NOT EXISTS idx_office_audit_events_event_kind ON office_audit_events(event_kind);
+
+CREATE TABLE IF NOT EXISTS office_rollback_records (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  step_id TEXT,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'skipped')),
+  reason TEXT NOT NULL,
+  compensation_json TEXT,
+  summary TEXT,
+  started_at TEXT,
+  finished_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES office_tasks(id) ON DELETE CASCADE,
+  FOREIGN KEY (step_id) REFERENCES office_task_steps(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_office_rollback_records_task_id ON office_rollback_records(task_id);
+CREATE INDEX IF NOT EXISTS idx_office_rollback_records_step_id ON office_rollback_records(step_id);
 
 CREATE TABLE IF NOT EXISTS workspace_worktrees (
   workspace_id TEXT PRIMARY KEY,
