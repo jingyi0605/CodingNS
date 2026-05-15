@@ -95,15 +95,16 @@ function verifyPrivateNodeExecutable(nodeExePath) {
 }
 
 function verifyInstalledPtyPackage(npmPrefix) {
-  const packageJsonPath = path.join(
-    npmPrefix,
-    "node_modules",
-    "@codingns",
-    "node-pty",
-    "package.json"
-  );
+  const candidatePaths = [
+    path.join(npmPrefix, "node_modules", "@codingns", "node-pty", "package.json"),
+    path.join(npmPrefix, "lib", "node_modules", "@codingns", "node-pty", "package.json")
+  ];
+  const packageJsonPath = candidatePaths.find((candidate) => fs.existsSync(candidate));
 
-  assertExists(packageJsonPath, "已安装的 @codingns/node-pty package.json");
+  if (!packageJsonPath) {
+    throw new Error(`缺少 已安装的 @codingns/node-pty package.json：${candidatePaths.join(" 或 ")}`);
+  }
+
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
 
   assertEqual(packageJson.name, "@codingns/node-pty", "已安装 PTY 包名不对");
