@@ -114,6 +114,9 @@ describe("ButlerSessionSummaryService", () => {
       provider: "codex",
       providerSessionId: "provider-session-1",
       rawStoreRef: "raw-1",
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
       createdAt: sessionView.createdAt,
       updatedAt: sessionView.updatedAt
     });
@@ -266,6 +269,133 @@ describe("ButlerSessionSummaryService", () => {
     database.close();
   });
 
+  it("runOnce 会把工作区会话同步放到后台模式", async () => {
+    const database = createDatabaseClient(":memory:");
+    const workspacePath = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-summary-bg-"));
+    tempDirs.push(workspacePath);
+    const workspaceRepository = new WorkspaceRepository(database.db);
+    const sessionBindingRepository = new SessionBindingRepository(database.db);
+    const sessionIndexRepository = new SessionIndexRepository(database.db);
+    const butlerProjectRepository = new ButlerProjectRepository(database.db);
+    const butlerSessionRepository = new ButlerSessionRepository(database.db);
+    const butlerSessionSummaryStateRepository = new ButlerSessionSummaryStateRepository(database.db);
+    const sessionCheckpointRepository = new SessionCheckpointRepository(database.db);
+    const workspace: Workspace = {
+      id: "workspace-bg",
+      name: "repo-bg",
+      path: workspacePath,
+      repoRoot: workspacePath,
+      favorite: false,
+      createdAt: "2026-04-06T10:20:00.000Z",
+      updatedAt: "2026-04-06T10:20:00.000Z",
+      removedAt: null
+    };
+    const project: ButlerProject = {
+      id: "project-bg",
+      workspaceId: workspace.id,
+      name: "repo-bg",
+      repoRoot: workspace.path,
+      defaultProvider: "codex",
+      instructionProfileId: null,
+      approvalMode: "controlled",
+      lifecycleStatus: "active",
+      riskLevel: "low",
+      config: {},
+      lastPatrolAt: null,
+      lastVerificationAt: null,
+      createdAt: "2026-04-06T10:20:00.000Z",
+      updatedAt: "2026-04-06T10:20:00.000Z",
+      archivedAt: null
+    };
+    const profile: ButlerProfile = {
+      id: "default",
+      displayName: "哆哆",
+      providerId: "codex",
+      workspacePath,
+      agentsMode: "inline",
+      agentsFilePath: null,
+      agentsContent: "# AGENTS.md\n你是代码助手",
+      persona: {
+        tone: "direct",
+        language: "zh-CN",
+        summaryStyle: "brief"
+      },
+      focus: {
+        projectIds: [],
+        riskPreference: "conservative",
+        reportPriority: ["risk", "blocker", "verification"],
+        summaryDebounceSeconds: 300
+      },
+      initializedAt: "2026-04-06T10:20:00.000Z",
+      updatedAt: "2026-04-06T10:20:00.000Z"
+    };
+    const sessionView: ButlerProjectSessionView = {
+      id: "butler-session-bg",
+      projectId: project.id,
+      sessionId: "session-bg",
+      provider: "codex",
+      title: "后台同步测试",
+      role: "adhoc",
+      ownershipMode: "observed",
+      status: "idle",
+      runningState: "completed",
+      lastSummary: "测试",
+      lastCheckpointAt: "2026-04-06T10:20:00.000Z",
+      createdAt: "2026-04-06T10:20:00.000Z",
+      updatedAt: "2026-04-06T10:20:00.000Z"
+    };
+    const ensureProjectSessionsSynced = vi.fn(async () => {});
+    const service = new ButlerSessionSummaryService(
+      {
+        getProfile: vi.fn(() => profile)
+      },
+      {
+        list: vi.fn(() => [project])
+      },
+      {
+        ensureProjectSessionsSynced,
+        listByProject: vi.fn(() => [sessionView])
+      },
+      butlerSessionRepository,
+      butlerSessionSummaryStateRepository,
+      sessionCheckpointRepository,
+      sessionIndexRepository,
+      {
+        listIds: vi.fn(() => ["user-1"])
+      },
+      {
+        importWorkspace: vi.fn(() => workspace)
+      },
+      {
+        readSessionHistory: vi.fn(async () => ({
+          messages: [],
+          cursor: null,
+          nextCursor: null,
+          total: 0
+        }))
+      },
+      {
+        get: vi.fn(() => ({
+          startPatrolSession: vi.fn(),
+          waitForSessionTerminal: vi.fn(),
+          readPatrolResult: vi.fn()
+        }))
+      } as never,
+      new SessionSummaryInstructionAdapter(),
+      {
+        now: () => "2026-04-06T10:20:00.000Z"
+      }
+    );
+
+    await service.runOnce();
+
+    expect(ensureProjectSessionsSynced).toHaveBeenCalledWith(project.id, "user-1", {
+      mode: "background"
+    });
+
+    database.close();
+  });
+
   it("已有摘要序号时只读取新增消息，并把旧摘要和增量合并成新摘要", async () => {
     const database = createDatabaseClient(":memory:");
     const workspacePath = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-summary-incremental-"));
@@ -329,6 +459,9 @@ describe("ButlerSessionSummaryService", () => {
       provider: "codex",
       providerSessionId: "provider-session-2",
       rawStoreRef: "raw-2",
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
       createdAt: sessionView.createdAt,
       updatedAt: sessionView.updatedAt
     });
@@ -560,6 +693,9 @@ describe("ButlerSessionSummaryService", () => {
       provider: "codex",
       providerSessionId: "provider-session-archived",
       rawStoreRef: "raw-archived",
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
       createdAt: sessionView.createdAt,
       updatedAt: sessionView.updatedAt
     });

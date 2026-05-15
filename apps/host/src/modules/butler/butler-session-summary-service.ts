@@ -125,7 +125,9 @@ export class ButlerSessionSummaryService {
     let summarizedCount = 0;
 
     for (const project of projects) {
-      await this.butlerSessionService.ensureProjectSessionsSynced(project.id, userId);
+      await this.butlerSessionService.ensureProjectSessionsSynced(project.id, userId, {
+        mode: "background"
+      });
       const sessions = this.butlerSessionService.listByProject(project.id, userId);
       sessionCount += sessions.length;
 
