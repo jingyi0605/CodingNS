@@ -20,13 +20,24 @@
 - Node.js `22` 或更高版本
 - npm `10` 或更高版本
 
-如果你准备在 Linux 上手动用 `npm install -g` 安装，建议先把编译工具一起装好。  
-CodingNS 依赖 `better-sqlite3` 这类原生模块，遇到拿不到预编译包时，会自动退回本机编译。
+CodingNS 依赖 `better-sqlite3`、`node-pty` 这类原生模块。  
+如果 npm 没拿到预编译包，就会自动退回本机编译，所以不同系统的前置条件不一样。
+
+Linux 上建议先装编译工具：
 
 ```bash
 apt-get update
 apt-get install -y build-essential python3
 ```
+
+Windows 上如果你准备用 `npm install -g` 或安装脚本，建议先确认这两件事：
+
+- 优先使用 Node.js `22 LTS`
+- 已安装 Visual Studio Build Tools 2022，并勾选 `Desktop development with C++`
+
+这是因为 Windows 上原生模块的预编译包通常从 GitHub Releases 下载。  
+一旦下载失败，npm 就会回退到 `node-gyp` 本机编译；这时候如果没有 C++ Build Tools，安装一定失败。  
+只切换 npm 源，解决不了这类问题。
 
 如果这台机器以后准备长期运行，建议将它作为常驻 Host 使用，方便后续在其他设备上继续访问。
 
@@ -58,6 +69,9 @@ curl -fsSL https://codingns.com/install | bash
 - 用 `pm2` 把 Host 托管起来
 - 在支持的系统上配置开机自动启动
 
+如果你在 Windows 上运行脚本，它会提示你检查 Visual Studio Build Tools。  
+这一项目前不会自动替你安装，因为自动装完整 C++ 工具链又慢又脆，失败时还更难排查。
+
 ### 安装完成后
 
 正常完成后，你会看到：
@@ -82,6 +96,17 @@ apt-get install -y build-essential python3
 ```
 
 然后再执行：
+
+```bash
+npm install -g @jingyi0605/codingns
+```
+
+如果你在 Windows 上手动安装，先确认：
+
+- `node -v` 最好是 `v22.x`
+- 已安装 Visual Studio Build Tools 2022，并勾选 `Desktop development with C++`
+
+再执行：
 
 ```bash
 npm install -g @jingyi0605/codingns
@@ -174,3 +199,21 @@ codingns start --data-dir /var/lib/codingns
 
 接下来直接看 [连接客户端](/quick-install/client-connection)。  
 连上之后，你会进入初始化或登录流程，再接着去 [首次登录与开始使用](/quick-install/first-login)。
+
+## 常见失败原因
+
+### Windows 上看到 `Could not find any Visual Studio installation to use`
+
+这不是 CodingNS 自己的业务错误，就是本机缺少 C++ 编译工具。  
+安装 Visual Studio Build Tools 2022，并勾选 `Desktop development with C++`，然后重试。
+
+### Windows 上看到 `prebuild-install warn install read ECONNRESET` 或 `Request timed out`
+
+这通常表示原生模块从 GitHub Releases 下载预编译包失败。  
+它和 npm 官方源、镜像源不是一回事，所以单纯切换 npm registry 往往没用。
+
+遇到这种情况，优先按下面顺序处理：
+
+1. 改用 Node.js `22 LTS`
+2. 装好 Visual Studio Build Tools 2022，让 npm 至少还能回退到本机编译
+3. 再重新执行安装
