@@ -18,6 +18,10 @@ function applyExactReplacements(filePath, replacements) {
   let normalized = normalize(original);
 
   for (const replacement of replacements) {
+    if (normalized.includes(replacement.to)) {
+      console.log(`[codingns-node-pty] 已是目标内容，跳过：${path.relative(packageRoot, filePath)} (${replacement.label})`);
+      continue;
+    }
     if (!normalized.includes(replacement.from)) {
       throw new Error(`未找到预期片段：${filePath}${"\n"}${replacement.label}`);
     }
