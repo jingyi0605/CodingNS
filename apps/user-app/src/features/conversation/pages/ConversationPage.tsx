@@ -157,7 +157,7 @@ export function ConversationPage() {
   }
 
   return (
-    <LiveConversationPage
+    <LiveConversationPageGuard
       sessionId={sessionId}
       bootstrapMessages={liveBootstrapMessages}
       initialComposerModel={liveComposerBootstrap.initialModel}
@@ -166,6 +166,57 @@ export function ConversationPage() {
       initialToolPanel={toolPanel}
     />
   );
+}
+
+function LiveConversationPageGuard(props: {
+  sessionId: string;
+  bootstrapMessages: HistoryMessageDto[];
+  initialComposerModel: string | null;
+  initialComposerProviderConfigMode: "global-default" | "cc-switch-preset";
+  initialComposerProviderPresetId: string | null;
+  initialToolPanel: MobileConversationToolPanel | null;
+}) {
+  const { shellMode, navigationGroups } = useWorkbenchShell();
+  const navigate = useNavigate();
+  const flattenedNavigationEntries = useMemo(
+    () => flattenNavigationSessions(navigationGroups),
+    [navigationGroups]
+  );
+  const navigationSession = useMemo(
+    () =>
+      flattenedNavigationEntries.find((entry) => entry.session.sessionId === props.sessionId)?.session ?? null,
+    [flattenedNavigationEntries, props.sessionId]
+  );
+  const liveSessionMissingFromNavigation =
+    !isDraftSessionId(props.sessionId)
+    && props.bootstrapMessages.length === 0
+    && flattenedNavigationEntries.length > 0
+    && navigationSession === null;
+  const missingSessionTarget = useMemo(() => {
+    if (!liveSessionMissingFromNavigation) {
+      return null;
+    }
+
+    return resolveMissingLiveSessionTarget({
+      shellMode,
+      navigationGroups,
+      flattenedNavigationEntries
+    });
+  }, [flattenedNavigationEntries, liveSessionMissingFromNavigation, navigationGroups, shellMode]);
+
+  useEffect(() => {
+    if (!missingSessionTarget) {
+      return;
+    }
+
+    navigate(missingSessionTarget, { replace: true });
+  }, [missingSessionTarget, navigate]);
+
+  if (missingSessionTarget) {
+    return null;
+  }
+
+  return <LiveConversationPage {...props} />;
 }
 
 function LiveConversationPage({
@@ -2986,6 +3037,33 @@ function ParallelForkIcon() {
 
 function isDraftSessionId(sessionId: string): boolean {
   return sessionId.startsWith("draft-");
+}
+
+function resolveMissingLiveSessionTarget(input: {
+  shellMode: "desktop" | "mobile";
+  navigationGroups: ReturnType<typeof useWorkbenchShell>["navigationGroups"];
+  flattenedNavigationEntries: WorkbenchNavigationEntry[];
+}): string {
+  const fallbackWorkspaceId = input.navigationGroups[0]?.workspace.id ?? null;
+  const fallbackSessionEntry =
+    (fallbackWorkspaceId
+      ? input.flattenedNavigationEntries.find((item) => item.workspace.id === fallbackWorkspaceId) ?? null
+      : null)
+    ?? input.flattenedNavigationEntries[0]
+    ?? null;
+
+  if (fallbackSessionEntry) {
+    return buildWorkspaceSessionPath(
+      fallbackSessionEntry.workspace.id,
+      fallbackSessionEntry.session.sessionId
+    );
+  }
+
+  if (fallbackWorkspaceId) {
+    return buildWorkspaceSessionIndexPath(fallbackWorkspaceId);
+  }
+
+  return input.shellMode === "mobile" ? buildWorkspaceHomePath() : "/landing";
 }
 
 function createDraftLiveBootstrapMessage(input: {

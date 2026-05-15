@@ -12,6 +12,7 @@ const mockGetSessionMessages = vi.fn();
 const mockStartLiveSession = vi.fn();
 const mockUseWorkbenchShell = vi.fn();
 const mockRuntimeStoreInitialize = vi.fn();
+const mockRuntimeStoreSessionIds: string[] = [];
 const mockRuntimeStoreDestroy = vi.fn();
 const mockRuntimeStoreApplyNavigationSession = vi.fn();
 const mockRuntimeStoreSendMessage = vi.fn();
@@ -282,6 +283,10 @@ vi.mock("../../workbench/components/TerminalManagerPanel", () => ({
 
 vi.mock("../runtime/session-runtime-store", () => ({
   SessionRuntimeStore: class {
+    constructor(sessionId: string) {
+      mockRuntimeStoreSessionIds.push(sessionId);
+    }
+
     initialize = mockRuntimeStoreInitialize;
     destroy = mockRuntimeStoreDestroy;
     applyNavigationSession = mockRuntimeStoreApplyNavigationSession;
@@ -302,6 +307,7 @@ vi.mock("../runtime/session-runtime-store", () => ({
 describe("ConversationPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRuntimeStoreSessionIds.length = 0;
     mockQueuedMessageList.mockClear();
     mockComposerPanel.mockClear();
     mockParallelConversationGroupView.mockClear();
@@ -411,6 +417,44 @@ describe("ConversationPage", () => {
       const props = lastCall?.[0] as { canSteer?: boolean } | undefined;
       expect(props?.canSteer).toBe(true);
     });
+  });
+
+  it("当前路由 session 已从导航快照消失时，不会启动 runtime store，并会跳回可用会话", async () => {
+    mockUseWorkbenchShell.mockReturnValue({
+      ...createMobileWorkbenchShellValue(),
+      shellMode: "desktop",
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "工作区一",
+            path: "/Users/jackson/workspace-1"
+          },
+          sessions: [
+            {
+              ...createBaseLiveSession(),
+              sessionId: "session-fallback-1",
+              title: "可用会话"
+            }
+          ],
+          childWorktrees: []
+        }
+      ]
+    });
+
+    renderLiveConversationPage({
+      initialEntry: "/workspaces/workspace-1/sessions/session-missing-1",
+      withRouteProbe: true
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route-probe")).toHaveTextContent(
+        "/workspaces/workspace-1/sessions/session-fallback-1"
+      );
+    });
+
+    expect(mockRuntimeStoreSessionIds).not.toContain("session-missing-1");
+    expect(mockRuntimeStoreSessionIds).toContain("session-fallback-1");
   });
 
   it("桌面端并行会话会切到并行分屏视图", () => {
@@ -814,7 +858,7 @@ describe("ConversationPage", () => {
       changedTouches: [{ clientX: 140, clientY: 184 }]
     });
 
-    expect(await screen.findByText("历史会话 Alpha")).toBeInTheDocument();
+    expect(await screen.findByText("父会话")).toBeInTheDocument();
     expect(view.container.querySelector(".mobile-conversation-preview-rail")).toBeInTheDocument();
   });
 
@@ -976,7 +1020,7 @@ describe("ConversationPage", () => {
       changedTouches: [{ clientX: 140, clientY: 184 }]
     });
 
-    expect(await screen.findByText("历史会话 Alpha")).toBeInTheDocument();
+    expect(await screen.findByText("父会话")).toBeInTheDocument();
     expect(screen.queryByText(t("shell.favoriteSectionTitle"))).not.toBeInTheDocument();
   });
 
@@ -1499,11 +1543,11 @@ function createMobileWorkbenchShellValue(overrides: Record<string, unknown> = {}
         },
         sessions: [
           {
-            sessionId: "session-1",
+            sessionId: "session-live-1",
             workspaceId: "workspace-1",
             provider: "codex",
-            providerSessionId: "provider-session-1",
-            rawStoreRef: "store://session-1",
+            providerSessionId: "provider-session-live-1",
+            rawStoreRef: "store://session-live-1",
             parentSessionId: null,
             forkMethod: null,
             forkSourceType: null,
@@ -1513,7 +1557,7 @@ function createMobileWorkbenchShellValue(overrides: Record<string, unknown> = {}
             subagentLabel: null,
             isArchived: false,
             isFavorite: false,
-            title: "历史会话 Alpha",
+            title: "父会话",
             messageCount: 4,
             lastMessageAt: "2026-03-28T08:00:00.000Z",
             createdAt: "2026-03-28T07:50:00.000Z",
