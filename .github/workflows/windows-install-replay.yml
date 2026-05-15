@@ -1,0 +1,94 @@
+name: windows-install-replay
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "install.sh"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "packages/codingns/**"
+      - "packages/node-pty-fork/**"
+      - "apps/host/src/modules/terminal/runtime/**"
+      - "scripts/prepare-windows-install-replay.sh"
+      - "scripts/run-windows-install-replay.sh"
+      - "scripts/verify-windows-install-replay.mjs"
+      - ".github/workflows/windows-install-replay.yml"
+  push:
+    branches:
+      - main
+      - "ci/windows-install-replay-*"
+    paths:
+      - "install.sh"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "packages/codingns/**"
+      - "packages/node-pty-fork/**"
+      - "apps/host/src/modules/terminal/runtime/**"
+      - "scripts/prepare-windows-install-replay.sh"
+      - "scripts/run-windows-install-replay.sh"
+      - "scripts/verify-windows-install-replay.mjs"
+      - ".github/workflows/windows-install-replay.yml"
+
+env:
+  PREPARE_NODE_VERSION: "22"
+  SYSTEM_NODE_VERSION: "24"
+  PRIVATE_NODE_VERSION: "22.16.0"
+  PNPM_VERSION: "10.7.1"
+
+jobs:
+  replay-install:
+    name: replay-install
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup prepare Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.PREPARE_NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Prepare Windows install replay inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/prepare-windows-install-replay.sh "$RUNNER_TEMP/windows-install-replay"
+
+      - name: Switch to system Node.js for replay
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.SYSTEM_NODE_VERSION }}
+
+      - name: Replay install.sh with private Node runtime
+        shell: bash
+        env:
+          CODINGNS_WINDOWS_NODE_VERSION: ${{ env.PRIVATE_NODE_VERSION }}
+        run: |
+          set -euo pipefail
+          bash scripts/run-windows-install-replay.sh \
+            "$RUNNER_TEMP/windows-install-replay/codingns-package" \
+            "$RUNNER_TEMP/codingns-replay-data" \
+            "$RUNNER_TEMP/windows-install-replay/install-output.log"
+
+      - name: Upload replay artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-install-replay
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/windows-install-replay
+            ${{ runner.temp }}/codingns-replay-data/runtime/service
+            ${{ runner.temp }}/codingns-replay-data/runtime/logs/install
