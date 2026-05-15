@@ -91,6 +91,27 @@ fs.writeFileSync(
 EOF
 }
 
+write_stage_metadata() {
+  local stage_dir="$1"
+
+  node - "$stage_dir" <<'EOF'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const [stageDir] = process.argv.slice(2);
+const packageJsonPath = path.join(stageDir, "package.json");
+const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+const metadataPath = path.join(stageDir, ".codingns-install-metadata.json");
+
+const metadata = {
+  packageName: typeof packageJson.name === "string" ? packageJson.name : "",
+  packageVersion: typeof packageJson.version === "string" ? packageJson.version : ""
+};
+
+fs.writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+EOF
+}
+
 main() {
   require_command pnpm
   require_command node
@@ -127,6 +148,7 @@ main() {
 
   log_info "把发布暂存目录改写为本地 node-pty 安装回放包"
   patch_stage_package_json "$PACKAGE_STAGE_DIR" "$node_pty_tgz_name"
+  write_stage_metadata "$PACKAGE_STAGE_DIR"
   write_manifest "$OUTPUT_DIR" "$node_pty_tgz_name"
 
   log_info "Windows 安装回放输入已准备完成：$OUTPUT_DIR"

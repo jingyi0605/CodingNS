@@ -665,6 +665,26 @@ if (typeof value === "string" && value.trim()) {
 EOF
 }
 
+read_install_metadata_field() {
+  local metadata_path="$1"
+  local field_name="$2"
+
+  [[ -n "$NODE_BIN" ]] || return 1
+  [[ -f "$metadata_path" ]] || return 1
+
+  "$NODE_BIN" - "$metadata_path" "$field_name" <<'EOF'
+const fs = require("node:fs");
+
+const [metadataPath, fieldName] = process.argv.slice(2);
+const payload = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
+const value = payload?.[fieldName];
+
+if (typeof value === "string" && value.trim()) {
+  process.stdout.write(value.trim());
+}
+EOF
+}
+
 resolve_package_root_from_dependency() {
   local owner_package_root="$1"
   local dependency_name="$2"
@@ -2157,6 +2177,14 @@ install_or_resolve_codingns() {
   if [[ -n "$CODINGNS_PACKAGE_ROOT" && -f "$CODINGNS_PACKAGE_ROOT/package.json" ]]; then
     CODINGNS_PACKAGE_NAME="$(read_package_json_field "$CODINGNS_PACKAGE_ROOT/package.json" "name" || true)"
     CODINGNS_PACKAGE_VERSION="$(read_package_json_field "$CODINGNS_PACKAGE_ROOT/package.json" "version" || true)"
+  fi
+
+  if [[ -z "$CODINGNS_PACKAGE_NAME" && -d "$PACKAGE_SPEC" ]]; then
+    local metadata_path="$PACKAGE_SPEC/.codingns-install-metadata.json"
+    if [[ -f "$metadata_path" ]]; then
+      CODINGNS_PACKAGE_NAME="$(read_install_metadata_field "$metadata_path" "packageName" || true)"
+      CODINGNS_PACKAGE_VERSION="$(read_install_metadata_field "$metadata_path" "packageVersion" || true)"
+    fi
   fi
 
   if [[ -z "$CODINGNS_PACKAGE_NAME" && -n "$CODINGNS_SCRIPT" ]]; then
