@@ -28,6 +28,7 @@ NPM_BIN=""
 NODE_BIN=""
 PM2_BIN=""
 CODINGNS_BIN=""
+CODINGNS_SCRIPT=""
 NPM_GLOBAL_PREFIX=""
 USE_SUDO_FOR_NPM="0"
 BREW_BIN=""
@@ -966,6 +967,38 @@ resolve_installed_binary() {
   printf '\n'
 }
 
+resolve_realpath_fallback() {
+  local target_path="$1"
+
+  if command_exists realpath; then
+    realpath "$target_path"
+    return
+  fi
+
+  "$NODE_BIN" -e 'const fs=require("node:fs"); const path=require("node:path"); console.log(fs.realpathSync(path.resolve(process.argv[1])));' "$target_path"
+}
+
+resolve_codingns_script_path() {
+  local binary_path="$1"
+  local resolved_path=""
+
+  [[ -n "$binary_path" ]] || return 1
+  [[ -n "$NODE_BIN" ]] || return 1
+
+  resolved_path="$(resolve_realpath_fallback "$binary_path" 2>/dev/null || true)"
+  resolved_path="$(trim "$resolved_path")"
+
+  if [[ -z "$resolved_path" ]]; then
+    return 1
+  fi
+
+  if [[ ! -f "$resolved_path" ]]; then
+    return 1
+  fi
+
+  printf '%s\n' "$resolved_path"
+}
+
 collect_access_urls() {
   local port="$1"
 
@@ -1051,12 +1084,14 @@ install_or_resolve_codingns() {
     install_global_package "$PACKAGE_SPEC" "CodingNS"
     CODINGNS_BIN="$(resolve_installed_binary "codingns")"
     [[ -n "$CODINGNS_BIN" ]] || die error_no_codingns_after_install
-    return
+  else
+    say_info info_skip_codingns
+    CODINGNS_BIN="$(resolve_installed_binary "codingns")"
+    [[ -n "$CODINGNS_BIN" ]] || die error_skip_codingns_without_existing
   fi
 
-  say_info info_skip_codingns
-  CODINGNS_BIN="$(resolve_installed_binary "codingns")"
-  [[ -n "$CODINGNS_BIN" ]] || die error_skip_codingns_without_existing
+  CODINGNS_SCRIPT="$(resolve_codingns_script_path "$CODINGNS_BIN" || true)"
+  [[ -n "$CODINGNS_SCRIPT" ]] || die error_no_codingns_after_install
 }
 
 install_or_resolve_pm2() {
@@ -1090,7 +1125,7 @@ start_pm2_service() {
 
   if [[ "$DRY_RUN" == "1" ]]; then
     say_info_custom "pm2 delete $PROCESS_NAME"
-    say_info_custom "pm2 start $CODINGNS_BIN --name $PROCESS_NAME -- start --host 0.0.0.0 --port $SELECTED_PORT --data-dir $SELECTED_DATA_DIR"
+    say_info_custom "pm2 start $NODE_BIN --name $PROCESS_NAME --cwd $HOME --interpreter none -- $CODINGNS_SCRIPT start --host 0.0.0.0 --port $SELECTED_PORT --data-dir $SELECTED_DATA_DIR"
     say_info_custom "pm2 save"
     return
   fi
@@ -1100,8 +1135,8 @@ start_pm2_service() {
     "$PM2_BIN" delete "$PROCESS_NAME" >/dev/null 2>&1 || true
   fi
 
-  "$PM2_BIN" start "$CODINGNS_BIN" --name "$PROCESS_NAME" -- \
-    start --host 0.0.0.0 --port "$SELECTED_PORT" --data-dir "$SELECTED_DATA_DIR"
+  "$PM2_BIN" start "$NODE_BIN" --name "$PROCESS_NAME" --cwd "$HOME" --interpreter none -- \
+    "$CODINGNS_SCRIPT" start --host 0.0.0.0 --port "$SELECTED_PORT" --data-dir "$SELECTED_DATA_DIR"
 
   "$PM2_BIN" save >/dev/null
 }
@@ -1186,7 +1221,7 @@ print_success_summary() {
     printf -- '- pm2 restart %s\n' "$PROCESS_NAME"
     printf -- '- pm2 stop %s\n' "$PROCESS_NAME"
     if [[ "$START_PM2_SERVICE" != "1" ]]; then
-      printf -- '- pm2 start %s --name %s -- start --host 0.0.0.0 --port %s --data-dir %s\n' "$CODINGNS_BIN" "$PROCESS_NAME" "$SELECTED_PORT" "$SELECTED_DATA_DIR"
+      printf -- '- pm2 start %s --name %s --cwd %s --interpreter none -- %s start --host 0.0.0.0 --port %s --data-dir %s\n' "$NODE_BIN" "$PROCESS_NAME" "$HOME" "$CODINGNS_SCRIPT" "$SELECTED_PORT" "$SELECTED_DATA_DIR"
     fi
   else
     printf -- '- %s\n' "$(msg info_pm2_skipped)"
