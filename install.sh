@@ -536,6 +536,21 @@ resolve_private_package_root_from_spec() {
   local package_spec="$2"
   local package_name=""
   local package_root=""
+  local local_package_root=""
+
+  local_package_root="$package_spec"
+  if [[ "$local_package_root" == file:* ]]; then
+    local_package_root="${local_package_root#file:}"
+  fi
+
+  if [[ "$local_package_root" =~ ^[A-Za-z]:[\\/].* ]] && is_windows_environment && command_exists cygpath; then
+    local_package_root="$(cygpath -u "$local_package_root" 2>/dev/null || printf '%s' "$local_package_root")"
+  fi
+
+  if [[ -d "$local_package_root" && -f "$local_package_root/package.json" ]]; then
+    printf '%s\n' "$local_package_root"
+    return 0
+  fi
 
   package_name="$(extract_package_name_from_spec "$package_spec")"
   [[ -n "$package_name" ]] || return 1
