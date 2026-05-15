@@ -18,9 +18,20 @@ import {
 import { getHostBaseUrl, getHostRequestUrl } from "../../../config/env";
 import { resolveHostTransportTarget } from "../../../network/host-transport-registry";
 import { usePlatform } from "../../../platform/platform-provider";
+import {
+  createPresentationExportTask,
+  getPresentationExportTask,
+  type PresentationExportTaskInfo
+} from "../../../platform/server/presentation-export-manager";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { useToast } from "../../../shared/toast";
+import {
+  StaticHtmlPresentationView,
+  inspectStaticHtmlPresentation,
+  type DocumentProject,
+  writeStaticHtmlDocumentProject
+} from "../../static-html-editor";
 import {
   getFilePreview,
   saveFileContent,
@@ -36,7 +47,7 @@ interface FileViewerModalProps {
   diffContent?: string | null;
 }
 
-type ViewerMode = "preview" | "code" | "edit";
+type ViewerMode = "preview" | "presentation" | "code" | "edit";
 type ViewerModalSizePreset = Extract<DesktopModalSizePreset, "regular" | "full">;
 type ImageScaleMode = "fit" | "custom" | "actual";
 type TokenKind =
@@ -260,8 +271,11 @@ export function FileViewerModal({
 }: FileViewerModalProps) {
   const [preview, setPreview] = useState<FilePreviewDto | null>(null);
   const [editorContent, setEditorContent] = useState("");
+  const [presentationProject, setPresentationProject] = useState<DocumentProject | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [exportingPptx, setExportingPptx] = useState(false);
   const [mode, setMode] = useState<ViewerMode>("preview");
   const [modalSizePreset, setModalSizePreset] = useState<ViewerModalSizePreset>("regular");
   const [resourceRefreshVersion, setResourceRefreshVersion] = useState(0);
@@ -307,7 +321,28 @@ export function FileViewerModal({
   );
   const currentContent = preview?.content ?? "";
   const deferredEditorContent = useDeferredValue(editorContent);
-  const isDirty = canEdit && editorContent !== currentContent;
+  const presentationSavedContent = useMemo(() => {
+    if (previewKind !== "html" || !presentationProject) {
+      return null;
+    }
+
+    return writeStaticHtmlDocumentProject({
+      html: currentContent,
+      project: presentationProject
+    });
+  }, [currentContent, presentationProject, previewKind]);
+  const isDirty = canEdit && (
+    editorContent !== currentContent
+    || (mode === "presentation" && Boolean(presentationSavedContent) && presentationSavedContent !== currentContent)
+  );
+  const presentationProbe = useMemo(() => {
+    if (previewKind !== "html" || !currentContent.trim()) {
+      return null;
+    }
+
+    return inspectStaticHtmlPresentation(currentContent, filePath ?? "document.html");
+  }, [currentContent, filePath, previewKind]);
+  const canShowPresentationTab = Boolean(presentationProbe?.supported);
   const canShowPreviewTab = canUsePreviewMode(previewKind);
   const canShowCodeTab = canUseCodeMode(previewKind);
   const canUseInlineRenderedEditor = canUseInlineRenderedEditorMode(previewKind, detectedLanguage);
@@ -326,8 +361,11 @@ export function FileViewerModal({
     if (!open) {
       setPreview(null);
       setEditorContent("");
+      setPresentationProject(null);
       setLoading(false);
       setSaving(false);
+      setExportingPdf(false);
+      setExportingPptx(false);
       setMode(resolveInitialViewerMode(filePath, null));
       resetResourceViewerState({
         setResourceRefreshVersion,
@@ -360,6 +398,7 @@ export function FileViewerModal({
             preserveMode: false,
             setPreview,
             setEditorContent,
+            setPresentationProject,
             setMode,
             setResourceRefreshVersion,
             setImageScale,
@@ -406,12 +445,17 @@ export function FileViewerModal({
     setSaving(true);
 
     try {
-      await saveFileContent(safeWorkspaceId, safeFilePath, editorContent, preview.version);
+      const nextContent = mode === "presentation" && presentationProject
+        ? presentationSavedContent ?? editorContent
+        : editorContent;
+
+      await saveFileContent(safeWorkspaceId, safeFilePath, nextContent, preview.version);
       const nextPreview = await getFilePreview(safeWorkspaceId, safeFilePath);
       applyPreviewState(nextPreview, safeFilePath, {
         preserveMode: false,
         setPreview,
         setEditorContent,
+        setPresentationProject,
         setMode,
         setResourceRefreshVersion,
         setImageScale,
@@ -448,6 +492,7 @@ export function FileViewerModal({
         preserveMode: true,
         setPreview,
         setEditorContent,
+        setPresentationProject,
         setMode,
         setResourceRefreshVersion,
         setImageScale,
@@ -482,7 +527,92 @@ export function FileViewerModal({
     }
   }
 
+  async function handleExportPdf() {
+    await handleExportPresentation("pdf");
+  }
+
+  async function handleExportPptx() {
+    await handleExportPresentation("pptx");
+  }
+
+  async function handleExportPresentation(format: "pdf" | "pptx") {
+    const isExporting = format === "pdf" ? exportingPdf : exportingPptx;
+
+    if (!safeWorkspaceId || previewKind !== "html" || !canShowPresentationTab || isExporting) {
+      return;
+    }
+
+    const htmlContent = mode === "presentation" && presentationProject
+      ? presentationSavedContent ?? editorContent
+      : editorContent;
+
+    if (!htmlContent.trim()) {
+      showToast({
+        title: format === "pdf"
+          ? t("conversation.fileViewerExportPdfMissingHtml")
+          : t("conversation.fileViewerExportPptxMissingHtml"),
+        tone: "error"
+      });
+      return;
+    }
+
+    if (format === "pdf") {
+      setExportingPdf(true);
+    } else {
+      setExportingPptx(true);
+    }
+
+    try {
+      const task = await createPresentationExportTask({
+        workspaceId: safeWorkspaceId,
+        path: safeFilePath,
+        htmlContent,
+        format
+      });
+      const finishedTask = await waitForPresentationExportTask(task.taskId);
+
+      if (finishedTask.status !== "succeeded") {
+        throw new ApiError(500, {
+          detail: finishedTask.errorMessage ?? (
+            format === "pdf"
+              ? t("conversation.fileViewerExportPdfFailed")
+              : t("conversation.fileViewerExportPptxFailed")
+          ),
+          error_code: "PRESENTATION_EXPORT_FAILED"
+        });
+      }
+
+      showToast({
+        title: format === "pdf"
+          ? t("conversation.fileViewerExportPdfSuccess", {
+            path: finishedTask.outputPath ?? safeFilePath.replace(/\.[^.]+$/, ".pdf")
+          })
+          : t("conversation.fileViewerExportPptxSuccess", {
+            path: finishedTask.outputPath ?? safeFilePath.replace(/\.[^.]+$/, ".pptx")
+          }),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: readError(
+          error,
+          format === "pdf"
+            ? t("conversation.fileViewerExportPdfFailed")
+            : t("conversation.fileViewerExportPptxFailed")
+        ),
+        tone: "error"
+      });
+    } finally {
+      if (format === "pdf") {
+        setExportingPdf(false);
+      } else {
+        setExportingPptx(false);
+      }
+    }
+  }
+
   const viewerTabs = buildViewerTabs({
+    canShowPresentationTab,
     canShowPreviewTab,
     canShowCodeTab,
     canEdit
@@ -490,8 +620,14 @@ export function FileViewerModal({
   const formatActions = buildFormatActions({
     preview,
     canOpenExternal: Boolean(externalPreviewUrl),
+    canExportPdf: previewKind === "html" && canShowPresentationTab,
+    canExportPptx: previewKind === "html" && canShowPresentationTab,
+    exportingPdf,
+    exportingPptx,
     isDirty,
     handleRefreshPreview,
+    handleExportPdf,
+    handleExportPptx,
     handleOpenExternal,
     imageScaleMode,
     imageScale,
@@ -519,6 +655,18 @@ export function FileViewerModal({
       <div className="file-viewer-toolbar">
         <div className="file-viewer-toolbar-start">
           <div className="file-viewer-tabs" role="tablist" aria-label={t("conversation.fileViewerModeLabel")}>
+            {viewerTabs.includes("presentation") ? (
+              <button
+                type="button"
+                className="file-viewer-tab"
+                data-active={mode === "presentation"}
+                role="tab"
+                aria-selected={mode === "presentation"}
+                onClick={() => setMode("presentation")}
+              >
+                {t("conversation.fileViewerPresentation")}
+              </button>
+            ) : null}
             {viewerTabs.includes("preview") ? (
               <button
                 type="button"
@@ -612,6 +760,12 @@ export function FileViewerModal({
           <p className="status-text">{t("common.loading")}</p>
         ) : preview?.supported === false ? (
           <p className="status-text">{preview.reason ?? t("conversation.filePanelUnsupported")}</p>
+        ) : mode === "presentation" && previewKind === "html" ? (
+          <StaticHtmlPresentationView
+            filePath={filePath}
+            html={editorContent}
+            onProjectChange={setPresentationProject}
+          />
         ) : mode === "edit" ? (
           <EditModeLayout
             content={editorContent}
@@ -677,6 +831,7 @@ function applyPreviewState(
     preserveMode: boolean;
     setPreview: (preview: FilePreviewDto) => void;
     setEditorContent: (content: string) => void;
+    setPresentationProject: (project: DocumentProject | null) => void;
     setMode: (updater: ViewerMode | ((current: ViewerMode) => ViewerMode)) => void;
     setResourceRefreshVersion: (updater: number) => void;
     setImageScale: (scale: number) => void;
@@ -688,6 +843,7 @@ function applyPreviewState(
 ): void {
   setters.setPreview(nextPreview);
   setters.setEditorContent(nextPreview.content ?? "");
+  setters.setPresentationProject(null);
   setters.setMode((current) => {
     if (setters.preserveMode && canUseMode(current, nextPreview.kind)) {
       return current;
@@ -726,6 +882,10 @@ function canUseCodeMode(previewKind: FilePreviewDto["kind"] | null): boolean {
 }
 
 function canUseMode(mode: ViewerMode, previewKind: FilePreviewDto["kind"] | null): boolean {
+  if (mode === "presentation") {
+    return previewKind === "html";
+  }
+
   if (mode === "preview") {
     return canUsePreviewMode(previewKind);
   }
@@ -745,11 +905,16 @@ function canUseInlineRenderedEditorMode(
 }
 
 function buildViewerTabs(input: {
+  canShowPresentationTab: boolean;
   canShowPreviewTab: boolean;
   canShowCodeTab: boolean;
   canEdit: boolean;
 }): ViewerMode[] {
   const tabs: ViewerMode[] = [];
+
+  if (input.canShowPresentationTab) {
+    tabs.push("presentation");
+  }
 
   if (input.canShowPreviewTab) {
     tabs.push("preview");
@@ -768,8 +933,14 @@ function buildViewerTabs(input: {
 function buildFormatActions(input: {
   preview: FilePreviewDto | null;
   canOpenExternal: boolean;
+  canExportPdf: boolean;
+  canExportPptx: boolean;
+  exportingPdf: boolean;
+  exportingPptx: boolean;
   isDirty: boolean;
   handleRefreshPreview: () => Promise<void>;
+  handleExportPdf: () => Promise<void>;
+  handleExportPptx: () => Promise<void>;
   handleOpenExternal: () => Promise<void>;
   imageScaleMode: ImageScaleMode;
   imageScale: number;
@@ -893,6 +1064,28 @@ function buildFormatActions(input: {
     });
   }
 
+  if (input.preview.kind === "html" && input.canExportPdf) {
+    actions.push({
+      id: "presentation-export-pdf",
+      label: input.exportingPdf
+        ? t("conversation.fileViewerExportPdfRunning")
+        : t("conversation.fileViewerExportPdf"),
+      disabled: input.exportingPdf,
+      onClick: input.handleExportPdf
+    });
+  }
+
+  if (input.preview.kind === "html" && input.canExportPptx) {
+    actions.push({
+      id: "presentation-export-pptx",
+      label: input.exportingPptx
+        ? t("conversation.fileViewerExportPptxRunning")
+        : t("conversation.fileViewerExportPptx"),
+      disabled: input.exportingPptx,
+      onClick: input.handleExportPptx
+    });
+  }
+
   if (input.canOpenExternal) {
     actions.push({
       id: "open-external",
@@ -905,7 +1098,10 @@ function buildFormatActions(input: {
 }
 
 function isRefreshAction(action: ViewerToolbarAction): boolean {
-  return action.id.endsWith("-refresh") || action.id === "text-refresh";
+  return action.id.endsWith("-refresh")
+    || action.id === "text-refresh"
+    || action.id === "presentation-export-pdf"
+    || action.id === "presentation-export-pptx";
 }
 
 function resolveViewerLabel(
@@ -918,7 +1114,7 @@ function resolveViewerLabel(
     case "pdf":
       return t("conversation.fileViewerPdf");
     case "html":
-      return "HTML";
+      return t("conversation.fileViewerHtml");
     case "markdown":
       return "Markdown";
     default:
@@ -2745,6 +2941,32 @@ function readError(error: unknown, fallback: string): string {
   }
 
   return fallback;
+}
+
+async function waitForPresentationExportTask(taskId: string): Promise<PresentationExportTaskInfo> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < 60_000) {
+    const task = await getPresentationExportTask(taskId);
+
+    if (task.status === "queued" || task.status === "running") {
+      await delay(800);
+      continue;
+    }
+
+    return task;
+  }
+
+  throw new ApiError(408, {
+    detail: t("conversation.fileViewerExportTaskTimeout"),
+    error_code: "PRESENTATION_EXPORT_TIMEOUT"
+  });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }
 
 // ==================== Git Diff 解析与渲染 ====================

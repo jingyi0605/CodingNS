@@ -17559,6 +17559,479 @@ textarea:focus-visible {
   overflow: hidden;
 }
 
+.static-html-presentation-shell {
+  display: grid;
+  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.static-html-presentation-sidebar,
+.static-html-presentation-stage,
+.static-html-presentation-empty {
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 84%, transparent);
+}
+
+.static-html-presentation-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.static-html-presentation-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 74%, transparent);
+}
+
+.static-html-presentation-badge {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-active) 68%, transparent);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.static-html-presentation-summary,
+.static-html-presentation-warning,
+.static-html-presentation-stage-kicker,
+.static-html-presentation-stage-caption {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.static-html-presentation-warning {
+  color: color-mix(in srgb, var(--warning) 78%, var(--text-secondary));
+}
+
+.static-html-presentation-page-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.static-html-presentation-page-toolbar {
+  padding: 12px 12px 0;
+}
+
+.static-html-presentation-page-toolbar-button {
+  width: 100%;
+}
+
+.static-html-presentation-page-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+  border-radius: 12px;
+  background: transparent;
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.static-html-presentation-page-item:hover,
+.static-html-presentation-page-item[data-active="true"] {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border-primary));
+  background: color-mix(in srgb, var(--bg-active) 60%, transparent);
+}
+
+.static-html-presentation-page-item[data-dragging="true"] {
+  opacity: 0.56;
+}
+
+.static-html-presentation-page-item[data-drop-target="true"] {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-primary));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.static-html-presentation-page-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.static-html-presentation-page-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+}
+
+.static-html-presentation-page-drag-hint {
+  margin-right: auto;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.static-html-presentation-page-drop-indicator {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  height: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 76%, transparent);
+  pointer-events: none;
+}
+
+.static-html-presentation-page-drop-indicator[data-position="before"] {
+  top: -2px;
+}
+
+.static-html-presentation-page-drop-indicator[data-position="after"] {
+  bottom: -2px;
+}
+
+.static-html-presentation-page-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 80%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.static-html-presentation-page-action svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.static-html-presentation-page-action:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border-primary));
+  background: color-mix(in srgb, var(--bg-hover) 84%, transparent);
+  color: var(--text-primary);
+}
+
+.static-html-presentation-page-action:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.static-html-presentation-page-no {
+  min-width: 24px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.static-html-presentation-page-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.static-html-presentation-stage {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 14px;
+  gap: 12px;
+}
+
+.static-html-presentation-stage-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.static-html-presentation-stage-title {
+  margin: 4px 0 0;
+  color: var(--text-primary);
+  font-size: 18px;
+  line-height: 1.4;
+}
+
+.static-html-presentation-node-strip {
+  display: flex;
+  gap: 8px;
+  overflow: auto;
+  padding-bottom: 2px;
+}
+
+.static-html-presentation-stage-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.static-html-presentation-toolbar-button {
+  width: fit-content;
+}
+
+.static-html-presentation-node-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 76%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.static-html-presentation-node-chip[data-active="true"] {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border-primary));
+  background: color-mix(in srgb, var(--bg-active) 68%, transparent);
+}
+
+.static-html-presentation-node-chip[data-locked="true"] {
+  opacity: 0.72;
+}
+
+.static-html-presentation-node-chip-type {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.static-html-presentation-node-chip-name {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.static-html-presentation-workarea {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+  gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.static-html-presentation-frame-shell {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 10px;
+  overflow: auto;
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-hover) 76%, transparent), transparent),
+    color-mix(in srgb, var(--bg-primary) 92%, transparent);
+}
+
+.static-html-presentation-frame-stage {
+  position: relative;
+  width: 100%;
+}
+
+.static-html-presentation-frame {
+  width: 100%;
+  min-height: clamp(620px, 72vh, 980px);
+  border: none;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 12px 40px color-mix(in srgb, #0f172a 12%, transparent);
+}
+
+.static-html-presentation-inline-editor {
+  position: absolute;
+  z-index: 2;
+  display: block;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  color: inherit;
+  -webkit-text-fill-color: currentColor;
+  box-shadow: none !important;
+  -webkit-box-shadow: none !important;
+  caret-color: currentColor;
+  font: inherit;
+  line-height: inherit;
+  outline: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.static-html-presentation-inline-editor:focus {
+  outline: 1px dashed color-mix(in srgb, var(--accent) 58%, transparent);
+  outline-offset: 2px;
+}
+
+.static-html-presentation-inspector,
+.static-html-presentation-inspector-empty {
+  min-height: 0;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 84%, transparent);
+}
+
+.static-html-presentation-inspector {
+  overflow: auto;
+}
+
+.static-html-presentation-inspector-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
+
+.static-html-presentation-inspector-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+}
+
+.static-html-presentation-inspector-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.static-html-presentation-inspector-kicker,
+.static-html-presentation-inspector-warning {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.static-html-presentation-inspector-warning {
+  color: color-mix(in srgb, var(--warning) 78%, var(--text-secondary));
+}
+
+.static-html-presentation-inspector-title {
+  margin: 4px 0 0;
+  color: var(--text-primary);
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.static-html-presentation-inspector-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-hover) 82%, transparent);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.static-html-presentation-inspector-badge[data-tone="warning"] {
+  background: color-mix(in srgb, var(--warning) 20%, transparent);
+}
+
+.static-html-presentation-textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--modal-control-border);
+  background: var(--modal-control-surface);
+  color: var(--text-primary);
+  box-shadow: var(--modal-control-shadow);
+  font: inherit;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.static-html-presentation-textarea:focus {
+  outline: none;
+  border-color: var(--modal-control-border-focus);
+  box-shadow:
+    var(--modal-control-focus-ring),
+    inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 88%, transparent);
+}
+
+.static-html-presentation-inspector-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.static-html-presentation-inspector-grid .workbench-modal-field input,
+.static-html-presentation-inspector-grid .workbench-modal-field select {
+  width: 100%;
+}
+
+.static-html-presentation-empty {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  min-height: 240px;
+  padding: 18px;
+}
+
+@media (max-width: 1280px) {
+  .static-html-presentation-shell {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  .static-html-presentation-workarea {
+    grid-template-columns: 1fr;
+  }
+
+  .static-html-presentation-inspector-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .file-viewer-preview-overview-shell {
   position: relative;
   display: flex;

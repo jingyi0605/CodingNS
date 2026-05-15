@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -13,6 +13,10 @@ const fileApiMock = vi.hoisted(() => ({
   getFilePreview: vi.fn(),
   saveFileContent: vi.fn()
 }));
+const presentationExportApiMock = vi.hoisted(() => ({
+  createPresentationExportTask: vi.fn(),
+  getPresentationExportTask: vi.fn()
+}));
 const clipboardWriteTextMock = vi.hoisted(() => vi.fn());
 const platformMock = vi.hoisted(() => ({
   openExternal: vi.fn(),
@@ -24,6 +28,11 @@ const platformMock = vi.hoisted(() => ({
 vi.mock("../api/file-context-api", () => ({
   getFilePreview: fileApiMock.getFilePreview,
   saveFileContent: fileApiMock.saveFileContent
+}));
+
+vi.mock("../../../platform/server/presentation-export-manager", () => ({
+  createPresentationExportTask: presentationExportApiMock.createPresentationExportTask,
+  getPresentationExportTask: presentationExportApiMock.getPresentationExportTask
 }));
 
 vi.mock("../../../platform/platform-provider", () => ({
@@ -44,6 +53,8 @@ describe("FileViewerModal", () => {
     clientConfigStore.hydrate(createRuntimeConfigSnapshot("http://127.0.0.1:3002"));
     fileApiMock.getFilePreview.mockResolvedValue(createPreviewResponse());
     fileApiMock.saveFileContent.mockReset();
+    presentationExportApiMock.createPresentationExportTask.mockReset();
+    presentationExportApiMock.getPresentationExportTask.mockReset();
     platformMock.openExternal.mockReset();
     platformMock.openExternal.mockResolvedValue({ ok: true });
     platformMock.writeClipboardText.mockReset();
@@ -550,16 +561,1010 @@ describe("FileViewerModal", () => {
     await waitFor(() => {
       expect(fileApiMock.getFilePreview).toHaveBeenCalledTimes(2);
     });
-    expect(screen.getByTestId("file-viewer-html-preview")).toHaveAttribute(
-      "src",
-      expect.stringContaining("_preview=1")
-    );
+    await waitFor(() => {
+      expect(screen.getByTestId("file-viewer-html-preview")).toHaveAttribute(
+        "src",
+        expect.stringContaining("_preview=1")
+      );
+    });
 
     await user.click(screen.getByRole("button", { name: t("conversation.fileViewerOpenExternal") }));
 
     expect(platformMock.openExternal).toHaveBeenCalledWith(
       "http://127.0.0.1:3002/preview/files/preview-token/site/index.html"
     );
+  });
+
+  it("静态 HTML PPT 会显示演示文档标签，并支持逐页切换", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/demo.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <head>
+              <style>:root { --deck-width: 1600px; --deck-height: 900px; }</style>
+            </head>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell"><h1>封面标题</h1></div>
+                </section>
+                <section class="slide" data-title="方案页">
+                  <div class="slide-shell"><h1>方案页标题</h1></div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-v1",
+        previewPath: "/preview/files/preview-token/slides/demo.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/demo.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/demo.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") });
+    await user.click(screen.getByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+
+    const presentationView = await screen.findByTestId("static-html-presentation-view");
+    expect(presentationView).toBeInTheDocument();
+    const pageList = document.querySelector(".static-html-presentation-page-list");
+    expect(pageList).not.toBeNull();
+    const pageButtons = Array.from(pageList?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+    expect(pageButtons.some((button) => button.textContent?.includes("封面"))).toBe(true);
+    expect(pageButtons.some((button) => button.textContent?.includes("方案页"))).toBe(true);
+
+    const solutionPageButton = pageButtons.find((button) => button.textContent?.includes("方案页"));
+    expect(solutionPageButton).toBeDefined();
+    await user.click(solutionPageButton!);
+
+    expect(screen.getByText(t("conversation.fileViewerPresentationCurrentPage"))).toBeInTheDocument();
+    expect(document.querySelector(".static-html-presentation-stage-title")).toHaveTextContent("方案页");
+    expect(screen.getByTestId("static-html-presentation-frame")).toBeInTheDocument();
+  });
+
+  it("演示文档视图支持选中组件并修改文字与基础样式", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/editable.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <head>
+              <style>:root { --deck-width: 1600px; --deck-height: 900px; }</style>
+            </head>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell">
+                    <div class="hero-card">
+                      <h1 style="font-size: 32px; color: #111111;">原始标题</h1>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-edit-v1",
+        previewPath: "/preview/files/preview-token/slides/editable.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/editable.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/editable.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+
+    const nodeChip = await screen.findByRole("button", { name: /原始标题/ });
+    await user.click(nodeChip);
+
+    const textarea = document.querySelector<HTMLTextAreaElement>(".static-html-presentation-textarea");
+    expect(textarea).not.toBeNull();
+    await user.clear(textarea);
+    await user.type(textarea, "改过的标题");
+
+    const numberInputs = document.querySelectorAll<HTMLInputElement>('.static-html-presentation-inspector input[type="number"]');
+    expect(numberInputs.length).toBeGreaterThanOrEqual(1);
+    const fontSizeInput = numberInputs[0]!;
+    await user.clear(fontSizeInput);
+    await user.type(fontSizeInput, "48");
+
+    const colorInputs = document.querySelectorAll<HTMLInputElement>('.static-html-presentation-inspector input[type="color"]');
+    expect(colorInputs.length).toBeGreaterThanOrEqual(1);
+    fireEvent.change(colorInputs[0]!, { target: { value: "#ff0000" } });
+
+    const frame = screen.getByTestId("static-html-presentation-frame");
+    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("改过的标题"));
+    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("font-size: 48px"));
+    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("color: #ff0000"));
+  });
+
+  it("演示文档视图支持点击画布里的 HTML 组件直接定位到右侧编辑区", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/canvas-pick.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <head>
+              <style>:root { --deck-width: 1600px; --deck-height: 900px; }</style>
+            </head>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell">
+                    <div class="hero-card">
+                      <h1 style="font-size: 32px; color: #111111;">画布标题</h1>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-canvas-v1",
+        previewPath: "/preview/files/preview-token/slides/canvas-pick.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/canvas-pick.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/canvas-pick.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        type: "codingns-static-html-node-select",
+        nodeId: "page-1-root-node-0-0-node-0-0-0"
+      }
+    }));
+
+    await waitFor(() => {
+      expect(document.querySelector(".static-html-presentation-inspector-title")).toHaveTextContent("画布标题");
+    });
+  });
+
+  it("演示文档视图支持点击画布里的按钮组件进入编辑区", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/button-pick.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell">
+                    <button>立即开始</button>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-button-v1",
+        previewPath: "/preview/files/preview-token/slides/button-pick.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/button-pick.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/button-pick.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        type: "codingns-static-html-node-select",
+        nodeId: "page-1-root-node-0-0"
+      }
+    }));
+
+    await waitFor(() => {
+      expect(document.querySelector(".static-html-presentation-inspector-title")).toHaveTextContent("立即开始");
+    });
+  });
+
+  it("演示文档视图支持双击文本组件后直接原位编辑", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/inline-edit.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell">
+                    <h1>原位标题</h1>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-inline-v1",
+        previewPath: "/preview/files/preview-token/slides/inline-edit.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/inline-edit.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/inline-edit.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        type: "codingns-static-html-node-select",
+        nodeId: "page-1-root-node-0-0",
+        eventType: "dblclick",
+        rect: {
+          left: 48,
+          top: 72,
+          width: 240,
+          height: 64
+        },
+        appearance: {
+          fontFamily: "\"PingFang SC\", sans-serif",
+          fontSize: "42px",
+          fontWeight: "600",
+          lineHeight: "1.3",
+          color: "rgb(255, 255, 255)",
+          textAlign: "left",
+          whiteSpace: "normal",
+          padding: "0px"
+        }
+      }
+    }));
+
+    const inlineEditor = await screen.findByTestId("static-html-presentation-inline-editor");
+    expect(inlineEditor).toHaveTextContent("原位标题");
+    await waitFor(() => {
+      expect(inlineEditor).toHaveFocus();
+    });
+    expect(inlineEditor).toHaveStyle({
+      fontSize: "42px",
+      fontWeight: "600",
+      color: "rgb(255, 255, 255)",
+      lineHeight: "1.3"
+    });
+
+    inlineEditor.textContent = "画布内改字";
+    fireEvent.input(inlineEditor);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("static-html-presentation-frame")).toHaveAttribute(
+        "srcdoc",
+        expect.stringContaining("画布内改字")
+      );
+    });
+  });
+
+  it("演示文档视图双击带底板的文本组件时，原位编辑区只覆盖文字内容区域", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/inline-card-edit.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell">
+                    <div style="padding: 24px; background: #ffffff; border-radius: 18px;">
+                      白底卡片里的文字
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-inline-card-v1",
+        previewPath: "/preview/files/preview-token/slides/inline-card-edit.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/inline-card-edit.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/inline-card-edit.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        type: "codingns-static-html-node-select",
+        nodeId: "page-1-root-node-0-0",
+        eventType: "dblclick",
+        rect: {
+          left: 48,
+          top: 72,
+          width: 300,
+          height: 120
+        },
+        appearance: {
+          fontSize: "28px",
+          color: "rgb(34, 34, 34)",
+          padding: "0px",
+          whiteSpace: "normal"
+        }
+      }
+    }));
+
+    const inlineEditor = await screen.findByTestId("static-html-presentation-inline-editor");
+    expect(inlineEditor).toHaveStyle({
+      background: "transparent",
+      padding: "0px"
+    });
+  });
+
+  it("演示文档视图支持复制组件并调整位置尺寸", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/duplicate.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <head>
+              <style>:root { --deck-width: 1600px; --deck-height: 900px; }</style>
+            </head>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell">
+                    <div class="hero-card">
+                      <h1 style="font-size: 32px; color: #111111;">原始标题</h1>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-duplicate-v1",
+        previewPath: "/preview/files/preview-token/slides/duplicate.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/duplicate.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/duplicate.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+    await user.click(await screen.findByRole("button", { name: /原始标题/ }));
+    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerPresentationDuplicateAction") }));
+
+    const duplicatedNodeChip = await screen.findByRole("button", { name: /原始标题 副本/ });
+    expect(duplicatedNodeChip).toBeInTheDocument();
+
+    const numberInputs = document.querySelectorAll<HTMLInputElement>('.static-html-presentation-inspector input[type="number"]');
+    expect(numberInputs.length).toBeGreaterThanOrEqual(5);
+
+    fireEvent.change(numberInputs[1]!, { target: { value: "120" } });
+    fireEvent.change(numberInputs[2]!, { target: { value: "180" } });
+    fireEvent.change(numberInputs[3]!, { target: { value: "420" } });
+    fireEvent.change(numberInputs[4]!, { target: { value: "96" } });
+
+    const frame = screen.getByTestId("static-html-presentation-frame");
+    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining('data-cns-node-id="page-1-root-node-0-0-node-0-0-0-copy-1"'));
+    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("left: 120px"));
+    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("top: 180px"));
+    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("width: 420px"));
+    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("height: 96px"));
+  });
+
+  it("演示文档视图保存时会把草稿项目回写成 HTML 再提交", async () => {
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/save-presentation.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <head>
+              <style>:root { --deck-width: 1600px; --deck-height: 900px; }</style>
+            </head>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell">
+                    <div class="hero-card">
+                      <h1 style="font-size: 32px; color: #111111;">原始标题</h1>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-save-v1",
+        previewPath: "/preview/files/preview-token/slides/save-presentation.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/save-presentation.html"
+      })
+    );
+    fileApiMock.saveFileContent.mockResolvedValue({
+      version: "ppt-save-v2",
+      updatedAt: "2026-05-15T10:50:00.000Z"
+    });
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/save-presentation.html"
+          open
+          onClose={vi.fn()}
+          onSaved={onSaved}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+    await user.click(await screen.findByRole("button", { name: /原始标题/ }));
+
+    const textarea = document.querySelector<HTMLTextAreaElement>(".static-html-presentation-textarea");
+    expect(textarea).not.toBeNull();
+    await user.clear(textarea!);
+    await user.type(textarea!, "保存后的标题");
+
+    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerPresentationDuplicateAction") }));
+
+    const saveButton = screen.getByRole("button", { name: t("conversation.filePanelSave") });
+    expect(saveButton).toBeEnabled();
+    await user.click(saveButton);
+
+    await waitFor(() => {
+      expect(fileApiMock.saveFileContent).toHaveBeenCalledTimes(1);
+    });
+
+    const saveArgs = fileApiMock.saveFileContent.mock.calls[0];
+    expect(saveArgs?.[0]).toBe("workspace-1");
+    expect(saveArgs?.[1]).toBe("slides/save-presentation.html");
+    expect(saveArgs?.[2]).toContain("保存后的标题");
+    expect(saveArgs?.[2]).toContain("data-title=\"封面\"");
+    expect(saveArgs?.[2].match(/保存后的标题/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    expect(saveArgs?.[2]).toContain("position: absolute");
+    expect(saveArgs?.[3]).toBe("ppt-save-v1");
+    await waitFor(() => {
+      expect(onSaved).toHaveBeenCalledWith("slides/save-presentation.html");
+    });
+  });
+
+  it("演示文档视图支持新增、删除并调整页面顺序后再保存", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/manage-pages.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell"><h1>封面标题</h1></div>
+                </section>
+                <section class="slide" data-title="方案页">
+                  <div class="slide-shell"><h1>方案页标题</h1></div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-pages-v1",
+        previewPath: "/preview/files/preview-token/slides/manage-pages.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/manage-pages.html"
+      })
+    );
+    fileApiMock.saveFileContent.mockResolvedValue({
+      version: "ppt-pages-v2",
+      updatedAt: "2026-05-15T11:00:00.000Z"
+    });
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/manage-pages.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+
+    await user.click(screen.getByRole("button", { name: /方案页/ }));
+    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerPresentationAddPage") }));
+
+    const pageItems = Array.from(document.querySelectorAll<HTMLElement>(".static-html-presentation-page-item"));
+    expect(pageItems).toHaveLength(3);
+    const transferStore = new Map<string, string>();
+    const dataTransfer = {
+      effectAllowed: "move",
+      dropEffect: "move",
+      setData: (type: string, value: string) => {
+        transferStore.set(type, value);
+      },
+      getData: (type: string) => transferStore.get(type) ?? ""
+    };
+
+    fireEvent.dragStart(pageItems[2]!, { dataTransfer });
+    fireEvent.dragOver(pageItems[0]!, { dataTransfer, clientY: 1 });
+    expect(pageItems[0]).toHaveAttribute("data-drop-target", "true");
+    expect(document.querySelector('[data-position="before"]')).not.toBeNull();
+    fireEvent.drop(pageItems[0]!, { dataTransfer });
+    fireEvent.dragEnd(pageItems[2]!, { dataTransfer });
+
+    const deleteButtons = screen.getAllByRole("button", {
+      name: t("conversation.fileViewerPresentationDeletePage")
+    });
+    await user.click(deleteButtons[1]!);
+
+    await user.click(screen.getByRole("button", { name: t("conversation.filePanelSave") }));
+
+    await waitFor(() => {
+      expect(fileApiMock.saveFileContent).toHaveBeenCalledTimes(1);
+    });
+
+    const saveArgs = fileApiMock.saveFileContent.mock.calls[0];
+    const untitledLabel = t("conversation.fileViewerPresentationUntitled");
+    expect(saveArgs?.[2]).toContain(`data-title="${untitledLabel}"`);
+    expect(saveArgs?.[2]).not.toContain('data-title="封面"');
+    expect(saveArgs?.[2].indexOf(`data-title="${untitledLabel}"`)).toBeLessThan(
+      saveArgs?.[2].indexOf('data-title="方案页"')
+    );
+  });
+
+  it("演示文档视图支持从左侧页面列表复制整页，并插入到下一页", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/duplicate-page.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="第一页">
+                  <div class="slide-shell">
+                    <h1>第一页标题</h1>
+                    <p>第一页说明</p>
+                  </div>
+                </section>
+                <section class="slide" data-title="第二页">
+                  <div class="slide-shell"><h1>第二页标题</h1></div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-duplicate-page-v1",
+        previewPath: "/preview/files/preview-token/slides/duplicate-page.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/duplicate-page.html"
+      })
+    );
+    fileApiMock.saveFileContent.mockResolvedValue({
+      version: "ppt-duplicate-page-v2",
+      updatedAt: "2026-05-15T12:00:00.000Z"
+    });
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/duplicate-page.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+
+    const duplicateButtons = screen.getAllByRole("button", {
+      name: t("conversation.fileViewerPresentationDuplicatePage")
+    });
+    await user.click(duplicateButtons[0]!);
+
+    const pageTitles = Array.from(document.querySelectorAll(".static-html-presentation-page-title"))
+      .map((node) => node.textContent?.trim());
+    expect(pageTitles).toEqual(["第一页", "第一页", "第二页"]);
+
+    await user.click(screen.getByRole("button", { name: t("conversation.filePanelSave") }));
+
+    await waitFor(() => {
+      expect(fileApiMock.saveFileContent).toHaveBeenCalledTimes(1);
+    });
+
+    const saveArgs = fileApiMock.saveFileContent.mock.calls[0];
+    expect(saveArgs?.[2].match(/第一页标题/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    expect(saveArgs?.[2].match(/第一页说明/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+  });
+
+  it("演示文档视图支持撤销最近一次编辑，最多回退最近操作", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/undo.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell">
+                    <h1>原始标题</h1>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-undo-v1",
+        previewPath: "/preview/files/preview-token/slides/undo.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/undo.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/undo.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+    await user.click(await screen.findByRole("button", { name: /原始标题/ }));
+
+    const textarea = document.querySelector<HTMLTextAreaElement>(".static-html-presentation-textarea");
+    expect(textarea).not.toBeNull();
+    await user.clear(textarea!);
+    await user.type(textarea!, "第一次修改");
+
+    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerPresentationUndoAction") }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("static-html-presentation-frame")).toHaveAttribute(
+        "srcdoc",
+        expect.stringContaining("原始标题")
+      );
+    });
+  });
+
+  it("演示文档视图支持导出 PDF", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/export-presentation.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <head>
+              <style>:root { --deck-width: 1600px; --deck-height: 900px; }</style>
+            </head>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell">
+                    <div class="hero-card">
+                      <h1 style="font-size: 32px; color: #111111;">导出标题</h1>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-export-v1",
+        previewPath: "/preview/files/preview-token/slides/export-presentation.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/export-presentation.html"
+      })
+    );
+    presentationExportApiMock.createPresentationExportTask.mockResolvedValue({
+      taskId: "presentation-export-task-1",
+      workspaceId: "workspace-1",
+      sourcePath: "slides/export-presentation.html",
+      format: "pdf",
+      status: "queued",
+      startedAt: null,
+      finishedAt: null,
+      errorMessage: null,
+      outputPath: "/tmp/export-presentation.pdf"
+    });
+    presentationExportApiMock.getPresentationExportTask
+      .mockResolvedValueOnce({
+        taskId: "presentation-export-task-1",
+        workspaceId: "workspace-1",
+        sourcePath: "slides/export-presentation.html",
+        format: "pdf",
+        status: "succeeded",
+        startedAt: "2026-05-15T10:00:00.000Z",
+        finishedAt: "2026-05-15T10:00:01.000Z",
+        errorMessage: null,
+        outputPath: "/tmp/export-presentation.pdf"
+      });
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/export-presentation.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerExportPdf") }));
+
+    await waitFor(() => {
+      expect(presentationExportApiMock.createPresentationExportTask).toHaveBeenCalledWith({
+        workspaceId: "workspace-1",
+        path: "slides/export-presentation.html",
+        format: "pdf",
+        htmlContent: expect.stringContaining("导出标题")
+      });
+    });
+    await waitFor(() => {
+      expect(presentationExportApiMock.getPresentationExportTask).toHaveBeenCalledWith(
+        "presentation-export-task-1"
+      );
+    });
+  });
+
+  it("演示文档视图支持导出 PPTX", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/export-presentation-pptx.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <h1>导出到 PPTX</h1>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-export-pptx-v1",
+        previewPath: "/preview/files/preview-token/slides/export-presentation-pptx.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/export-presentation-pptx.html"
+      })
+    );
+    presentationExportApiMock.createPresentationExportTask.mockResolvedValue({
+      taskId: "presentation-export-task-pptx-1",
+      workspaceId: "workspace-1",
+      sourcePath: "slides/export-presentation-pptx.html",
+      format: "pptx",
+      status: "queued",
+      startedAt: null,
+      finishedAt: null,
+      errorMessage: null,
+      outputPath: "/tmp/export-presentation-pptx.pptx"
+    });
+    presentationExportApiMock.getPresentationExportTask.mockResolvedValueOnce({
+      taskId: "presentation-export-task-pptx-1",
+      workspaceId: "workspace-1",
+      sourcePath: "slides/export-presentation-pptx.html",
+      format: "pptx",
+      status: "succeeded",
+      startedAt: "2026-05-15T10:00:00.000Z",
+      finishedAt: "2026-05-15T10:00:01.000Z",
+      errorMessage: null,
+      outputPath: "/tmp/export-presentation-pptx.pptx"
+    });
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/export-presentation-pptx.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerExportPptx") }));
+
+    await waitFor(() => {
+      expect(presentationExportApiMock.createPresentationExportTask).toHaveBeenCalledWith({
+        workspaceId: "workspace-1",
+        path: "slides/export-presentation-pptx.html",
+        format: "pptx",
+        htmlContent: expect.stringContaining("导出到 PPTX")
+      });
+    });
+  });
+
+  it("演示文档视图支持导出 PPTX", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/export-presentation-pptx.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <h1>导出到 PPTX</h1>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-export-pptx-v1",
+        previewPath: "/preview/files/preview-token/slides/export-presentation-pptx.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/export-presentation-pptx.html"
+      })
+    );
+    presentationExportApiMock.createPresentationExportTask.mockResolvedValue({
+      taskId: "presentation-export-task-pptx-1",
+      workspaceId: "workspace-1",
+      sourcePath: "slides/export-presentation-pptx.html",
+      format: "pptx",
+      status: "queued",
+      startedAt: null,
+      finishedAt: null,
+      errorMessage: null,
+      outputPath: "/tmp/export-presentation-pptx.pptx"
+    });
+    presentationExportApiMock.getPresentationExportTask.mockResolvedValueOnce({
+      taskId: "presentation-export-task-pptx-1",
+      workspaceId: "workspace-1",
+      sourcePath: "slides/export-presentation-pptx.html",
+      format: "pptx",
+      status: "succeeded",
+      startedAt: "2026-05-15T10:00:00.000Z",
+      finishedAt: "2026-05-15T10:00:01.000Z",
+      errorMessage: null,
+      outputPath: "/tmp/export-presentation-pptx.pptx"
+    });
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/export-presentation-pptx.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerExportPptx") }));
+
+    await waitFor(() => {
+      expect(presentationExportApiMock.createPresentationExportTask).toHaveBeenCalledWith({
+        workspaceId: "workspace-1",
+        path: "slides/export-presentation-pptx.html",
+        format: "pptx",
+        htmlContent: expect.stringContaining("导出到 PPTX")
+      });
+    });
   });
 
   it("桌面端外部打开使用当前 Host 连接地址，而不是后端返回的 127 预览地址", async () => {
