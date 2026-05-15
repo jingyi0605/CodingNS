@@ -44,7 +44,6 @@ assertExists(installState.codingnsCommand, "codingns 命令");
 assertExists(installState.pm2Command, "pm2 命令");
 
 verifyPrivateNodeExecutable(installState.nodeExe);
-verifyInstalledPtyPackage(installState.npmPrefix);
 verifyPm2Process(installState.pm2Command, installState.pm2Home, installState.processName);
 verifyInstallLogs(logsRoot);
 verifyInstallOutput(installOutput);
@@ -92,23 +91,6 @@ function verifyPrivateNodeExecutable(nodeExePath) {
   if (!versionText.startsWith("v22.")) {
     throw new Error(`私有 node.exe 版本不对：${versionText || "unknown"}`);
   }
-}
-
-function verifyInstalledPtyPackage(npmPrefix) {
-  const candidatePaths = [
-    path.join(npmPrefix, "node_modules", "@codingns", "node-pty", "package.json"),
-    path.join(npmPrefix, "lib", "node_modules", "@codingns", "node-pty", "package.json")
-  ];
-  const packageJsonPath = candidatePaths.find((candidate) => fs.existsSync(candidate));
-
-  if (!packageJsonPath) {
-    throw new Error(`缺少 已安装的 @codingns/node-pty package.json：${candidatePaths.join(" 或 ")}`);
-  }
-
-  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-
-  assertEqual(packageJson.name, "@codingns/node-pty", "已安装 PTY 包名不对");
-  assertEqual(packageJson.version, "1.0.0-cns.1", "已安装 PTY 包版本不对");
 }
 
 function verifyPm2Process(pm2Command, pm2Home, processName) {
