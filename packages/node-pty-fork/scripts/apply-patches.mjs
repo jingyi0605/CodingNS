@@ -68,11 +68,135 @@ typedef void (__stdcall *PFNCLOSEPSEUDOCONSOLE)(HPCON hpc);
 
 applyExactReplacements(path.join(packageRoot, "src", "win", "winpty.cc"), [
   {
-    label: "winpty locals hoist",
+    label: "winpty PtyStartProcess full sync",
     from: `static NAN_METHOD(PtyStartProcess) {
   Nan::HandleScope scope;
 
   if (info.Length() != 7 ||
+      !info[0]->IsString() ||
+      !info[1]->IsString() ||
+      !info[2]->IsArray() ||
+      !info[3]->IsString() ||
+      !info[4]->IsNumber() ||
+      !info[5]->IsNumber() ||
+      !info[6]->IsBoolean()) {
+    Nan::ThrowError("Usage: pty.startProcess(file, cmdline, env, cwd, cols, rows, debug)");
+    return;
+  }
+
+  std::stringstream why;
+
+  const wchar_t *filename = path_util::to_wstring(Nan::Utf8String(info[0]));
+  const wchar_t *cmdline = path_util::to_wstring(Nan::Utf8String(info[1]));
+  const wchar_t *cwd = path_util::to_wstring(Nan::Utf8String(info[3]));
+
+  // create environment block
+  std::wstring env;
+  const v8::Local<v8::Array> envValues = v8::Local<v8::Array>::Cast(info[2]);
+  if (!envValues.IsEmpty()) {
+
+    std::wstringstream envBlock;
+
+    for(uint32_t i = 0; i < envValues->Length(); i++) {
+      std::wstring envValue(path_util::to_wstring(Nan::Utf8String(Nan::Get(envValues, i).ToLocalChecked())));
+      envBlock << envValue << L'\\0';
+    }
+
+    env = envBlock.str();
+  }
+
+  // use environment 'Path' variable to determine location of
+  // the relative path that we have recieved (e.g cmd.exe)
+  std::wstring shellpath;
+  if (::PathIsRelativeW(filename)) {
+    shellpath = path_util::get_shell_path(filename);
+  } else {
+    shellpath = filename;
+  }
+
+  std::string shellpath_(shellpath.begin(), shellpath.end());
+
+  if (shellpath.empty() || !path_util::file_exists(shellpath)) {
+    why << "File not found: " << shellpath_;
+    Nan::ThrowError(why.str().c_str());
+    goto cleanup;
+  }
+
+  int cols = info[4]->Int32Value(Nan::GetCurrentContext()).FromJust();
+  int rows = info[5]->Int32Value(Nan::GetCurrentContext()).FromJust();
+  bool debug = Nan::To<bool>(info[6]).FromJust();
+
+  // Enable/disable debugging
+  SetEnvironmentVariable(WINPTY_DBG_VARIABLE, debug ? "1" : NULL); // NULL = deletes variable
+
+  // Create winpty config
+  winpty_error_ptr_t error_ptr = nullptr;
+  winpty_config_t* winpty_config = winpty_config_new(0, &error_ptr);
+  if (winpty_config == nullptr) {
+    throw_winpty_error("Error creating WinPTY config", error_ptr);
+    goto cleanup;
+  }
+  winpty_error_free(error_ptr);
+
+  // Set pty size on config
+  winpty_config_set_initial_size(winpty_config, cols, rows);
+
+  // Start the pty agent
+  winpty_t *pc = winpty_open(winpty_config, &error_ptr);
+  winpty_config_free(winpty_config);
+  if (pc == nullptr) {
+    throw_winpty_error("Error launching WinPTY agent", error_ptr);
+    goto cleanup;
+  }
+  winpty_error_free(error_ptr);
+
+  // Save pty struct for later use
+  ptyHandles.insert(ptyHandles.end(), pc);
+
+  // Create winpty spawn config
+  winpty_spawn_config_t* config = winpty_spawn_config_new(WINPTY_SPAWN_FLAG_AUTO_SHUTDOWN, shellpath.c_str(), cmdline, cwd, env.c_str(), &error_ptr);
+  if (config == nullptr) {
+    throw_winpty_error("Error creating WinPTY spawn config", error_ptr);
+    goto cleanup;
+  }
+  winpty_error_free(error_ptr);
+
+  // Spawn the new process
+  HANDLE handle = nullptr;
+  BOOL spawnSuccess = winpty_spawn(pc, config, &handle, nullptr, nullptr, &error_ptr);
+  winpty_spawn_config_free(config);
+  if (!spawnSuccess) {
+    throw_winpty_error("Unable to start terminal process", error_ptr);
+    goto cleanup;
+  }
+  winpty_error_free(error_ptr);
+
+  // Set return values
+  v8::Local<v8::Object> marshal = Nan::New<v8::Object>();
+  Nan::Set(marshal, Nan::New<v8::String>("innerPid").ToLocalChecked(), Nan::New<v8::Number>((int)GetProcessId(handle)));
+  Nan::Set(marshal, Nan::New<v8::String>("innerPidHandle").ToLocalChecked(), Nan::New<v8::Number>((int)handle));
+  Nan::Set(marshal, Nan::New<v8::String>("pid").ToLocalChecked(), Nan::New<v8::Number>((int)winpty_agent_process(pc)));
+  Nan::Set(marshal, Nan::New<v8::String>("pty").ToLocalChecked(), Nan::New<v8::Number>(InterlockedIncrement(&ptyCounter)));
+  Nan::Set(marshal, Nan::New<v8::String>("fd").ToLocalChecked(), Nan::New<v8::Number>(-1));
+  {
+    LPCWSTR coninPipeName = winpty_conin_name(pc);
+    std::wstring coninPipeNameWStr(coninPipeName);
+    std::string coninPipeNameStr(coninPipeNameWStr.begin(), coninPipeNameWStr.end());
+    Nan::Set(marshal, Nan::New<v8::String>("conin").ToLocalChecked(), Nan::New<v8::String>(coninPipeNameStr).ToLocalChecked());
+    LPCWSTR conoutPipeName = winpty_conout_name(pc);
+    std::wstring conoutPipeNameWStr(conoutPipeName);
+    std::string conoutPipeNameStr(conoutPipeNameWStr.begin(), conoutPipeNameWStr.end());
+    Nan::Set(marshal, Nan::New<v8::String>("conout").ToLocalChecked(), Nan::New<v8::String>(conoutPipeNameStr).ToLocalChecked());
+  }
+  info.GetReturnValue().Set(marshal);
+
+  goto cleanup;
+
+cleanup:
+  delete filename;
+  delete cmdline;
+  delete cwd;
+}
 `,
     to: `static NAN_METHOD(PtyStartProcess) {
   Nan::HandleScope scope;
@@ -94,81 +218,124 @@ applyExactReplacements(path.join(packageRoot, "src", "win", "winpty.cc"), [
   v8::Local<v8::Object> marshal = Nan::New<v8::Object>();
 
   if (info.Length() != 7 ||
-`
-  },
-  {
-    label: "winpty filename/cmdline/cwd assignment",
-    from: `  std::stringstream why;
+      !info[0]->IsString() ||
+      !info[1]->IsString() ||
+      !info[2]->IsArray() ||
+      !info[3]->IsString() ||
+      !info[4]->IsNumber() ||
+      !info[5]->IsNumber() ||
+      !info[6]->IsBoolean()) {
+    Nan::ThrowError("Usage: pty.startProcess(file, cmdline, env, cwd, cols, rows, debug)");
+    return;
+  }
 
-  const wchar_t *filename = path_util::to_wstring(Nan::Utf8String(info[0]));
-  const wchar_t *cmdline = path_util::to_wstring(Nan::Utf8String(info[1]));
-  const wchar_t *cwd = path_util::to_wstring(Nan::Utf8String(info[3]));
-
-  // create environment block
-  std::wstring env;
-`,
-    to: `  filename = path_util::to_wstring(Nan::Utf8String(info[0]));
+  filename = path_util::to_wstring(Nan::Utf8String(info[0]));
   cmdline = path_util::to_wstring(Nan::Utf8String(info[1]));
   cwd = path_util::to_wstring(Nan::Utf8String(info[3]));
 
   // create environment block
-`
-  },
-  {
-    label: "winpty primitive locals assignment",
-    from: `  int cols = info[4]->Int32Value(Nan::GetCurrentContext()).FromJust();
-  int rows = info[5]->Int32Value(Nan::GetCurrentContext()).FromJust();
-  bool debug = Nan::To<bool>(info[6]).FromJust();
-`,
-    to: `  cols = info[4]->Int32Value(Nan::GetCurrentContext()).FromJust();
+  const v8::Local<v8::Array> envValues = v8::Local<v8::Array>::Cast(info[2]);
+  if (!envValues.IsEmpty()) {
+
+    std::wstringstream envBlock;
+
+    for(uint32_t i = 0; i < envValues->Length(); i++) {
+      std::wstring envValue(path_util::to_wstring(Nan::Utf8String(Nan::Get(envValues, i).ToLocalChecked())));
+      envBlock << envValue << L'\\0';
+    }
+
+    env = envBlock.str();
+  }
+
+  // use environment 'Path' variable to determine location of
+  // the relative path that we have recieved (e.g cmd.exe)
+  std::wstring shellpath;
+  if (::PathIsRelativeW(filename)) {
+    shellpath = path_util::get_shell_path(filename);
+  } else {
+    shellpath = filename;
+  }
+
+  std::string shellpath_(shellpath.begin(), shellpath.end());
+
+  if (shellpath.empty() || !path_util::file_exists(shellpath)) {
+    why << "File not found: " << shellpath_;
+    Nan::ThrowError(why.str().c_str());
+    goto cleanup;
+  }
+
+  cols = info[4]->Int32Value(Nan::GetCurrentContext()).FromJust();
   rows = info[5]->Int32Value(Nan::GetCurrentContext()).FromJust();
   debug = Nan::To<bool>(info[6]).FromJust();
-`
-  },
-  {
-    label: "winpty config hoist",
-    from: `  // Create winpty config
-  winpty_error_ptr_t error_ptr = nullptr;
-  winpty_config_t* winpty_config = winpty_config_new(0, &error_ptr);
-`,
-    to: `  // Create winpty config
+
+  // Enable/disable debugging
+  SetEnvironmentVariable(WINPTY_DBG_VARIABLE, debug ? "1" : NULL); // NULL = deletes variable
+
+  // Create winpty config
   winpty_config = winpty_config_new(0, &error_ptr);
-`
-  },
-  {
-    label: "winpty pc hoist",
-    from: `  // Start the pty agent
-  winpty_t *pc = winpty_open(winpty_config, &error_ptr);
-`,
-    to: `  // Start the pty agent
+  if (winpty_config == nullptr) {
+    throw_winpty_error("Error creating WinPTY config", error_ptr);
+    goto cleanup;
+  }
+  winpty_error_free(error_ptr);
+
+  // Set pty size on config
+  winpty_config_set_initial_size(winpty_config, cols, rows);
+
+  // Start the pty agent
   pc = winpty_open(winpty_config, &error_ptr);
-`
-  },
-  {
-    label: "winpty spawn config hoist",
-    from: `  // Create winpty spawn config
-  winpty_spawn_config_t* config = winpty_spawn_config_new(WINPTY_SPAWN_FLAG_AUTO_SHUTDOWN, shellpath.c_str(), cmdline, cwd, env.c_str(), &error_ptr);
-`,
-    to: `  // Create winpty spawn config
+  winpty_config_free(winpty_config);
+  if (pc == nullptr) {
+    throw_winpty_error("Error launching WinPTY agent", error_ptr);
+    goto cleanup;
+  }
+  winpty_error_free(error_ptr);
+
+  // Save pty struct for later use
+  ptyHandles.insert(ptyHandles.end(), pc);
+
+  // Create winpty spawn config
   config = winpty_spawn_config_new(WINPTY_SPAWN_FLAG_AUTO_SHUTDOWN, shellpath.c_str(), cmdline, cwd, env.c_str(), &error_ptr);
-`
-  },
-  {
-    label: "winpty handle/spawnSuccess hoist",
-    from: `  // Spawn the new process
-  HANDLE handle = nullptr;
-  BOOL spawnSuccess = winpty_spawn(pc, config, &handle, nullptr, nullptr, &error_ptr);
-`,
-    to: `  // Spawn the new process
+  if (config == nullptr) {
+    throw_winpty_error("Error creating WinPTY spawn config", error_ptr);
+    goto cleanup;
+  }
+  winpty_error_free(error_ptr);
+
+  // Spawn the new process
   spawnSuccess = winpty_spawn(pc, config, &handle, nullptr, nullptr, &error_ptr);
-`
-  },
+  winpty_spawn_config_free(config);
+  if (!spawnSuccess) {
+    throw_winpty_error("Unable to start terminal process", error_ptr);
+    goto cleanup;
+  }
+  winpty_error_free(error_ptr);
+
+  // Set return values
+  Nan::Set(marshal, Nan::New<v8::String>("innerPid").ToLocalChecked(), Nan::New<v8::Number>((int)GetProcessId(handle)));
+  Nan::Set(marshal, Nan::New<v8::String>("innerPidHandle").ToLocalChecked(), Nan::New<v8::Number>((int)handle));
+  Nan::Set(marshal, Nan::New<v8::String>("pid").ToLocalChecked(), Nan::New<v8::Number>((int)winpty_agent_process(pc)));
+  Nan::Set(marshal, Nan::New<v8::String>("pty").ToLocalChecked(), Nan::New<v8::Number>(InterlockedIncrement(&ptyCounter)));
+  Nan::Set(marshal, Nan::New<v8::String>("fd").ToLocalChecked(), Nan::New<v8::Number>(-1));
   {
-    label: "winpty marshal hoist",
-    from: `  // Set return values
-  v8::Local<v8::Object> marshal = Nan::New<v8::Object>();
-`,
-    to: `  // Set return values
+    LPCWSTR coninPipeName = winpty_conin_name(pc);
+    std::wstring coninPipeNameWStr(coninPipeName);
+    std::string coninPipeNameStr(coninPipeNameWStr.begin(), coninPipeNameWStr.end());
+    Nan::Set(marshal, Nan::New<v8::String>("conin").ToLocalChecked(), Nan::New<v8::String>(coninPipeNameStr).ToLocalChecked());
+    LPCWSTR conoutPipeName = winpty_conout_name(pc);
+    std::wstring conoutPipeNameWStr(conoutPipeName);
+    std::string conoutPipeNameStr(conoutPipeNameWStr.begin(), conoutPipeNameWStr.end());
+    Nan::Set(marshal, Nan::New<v8::String>("conout").ToLocalChecked(), Nan::New<v8::String>(conoutPipeNameStr).ToLocalChecked());
+  }
+  info.GetReturnValue().Set(marshal);
+
+  goto cleanup;
+
+cleanup:
+  delete filename;
+  delete cmdline;
+  delete cwd;
+}
 `
   }
 ]);
