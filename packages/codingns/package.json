@@ -1,6 +1,6 @@
 {
   "name": "@jingyi0605/codingns",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "type": "module",
   "bin": {
     "codingns": "./bin/codingns.mjs"
@@ -38,7 +38,10 @@
     "chokidar": "^5.0.0",
     "fastify": "^5.8.2",
     "ignore": "^7.0.5",
-    "node-pty": "^1.0.0",
     "ws": "^8.20.0"
+  },
+  "optionalDependencies": {
+    "@codingns/node-pty": "workspace:*",
+    "node-pty": "^1.0.0"
   }
 }

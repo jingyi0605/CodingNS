@@ -11,6 +11,7 @@ const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
 const cliVersionRange = packageJson.dependencies?.["@openai/codex"];
 const sdkVersionRange = packageJson.dependencies?.["@openai/codex-sdk"];
 const sessionSyncCoreRange = packageJson.dependencies?.["@codingns/session-sync-core"];
+const windowsNodePtyRange = packageJson.optionalDependencies?.["@codingns/node-pty"];
 
 if (!sdkVersionRange) {
   logInfo("[codingns] 未声明 @openai/codex-sdk，跳过 Codex 安装校验");
@@ -27,7 +28,11 @@ if (process.env.CODINGNS_SKIP_CODEX_POSTINSTALL === "1") {
   process.exit(0);
 }
 
-logInfo(`[codingns] 正在校验 Codex 运行时依赖（${process.platform}/${process.arch}）...`);
+logInfo(`[codingns] 正在校验运行时依赖（${process.platform}/${process.arch}）...`);
+
+if (!verifyPtyRuntimeDependency()) {
+  process.exit(1);
+}
 
 if (await verifyCodexRuntime()) {
   logInfo("[codingns] Codex 运行时依赖已就绪");
@@ -62,10 +67,34 @@ if (!(await verifyCodexRuntime())) {
 
 logInfo("[codingns] Codex 运行时依赖修复完成");
 
+function verifyPtyRuntimeDependency() {
+  const requiredPackageName = resolveRequiredPtyPackageName();
+  const packageJsonPath = resolveModuleExportFile(requiredPackageName, "package.json");
+
+  if (!packageJsonPath) {
+    if (requiredPackageName === "@codingns/node-pty") {
+      console.error(
+        `[codingns] 当前 Windows Node 22 运行时需要 ${requiredPackageName}${windowsNodePtyRange ? `@${windowsNodePtyRange}` : ""}，但安装结果里没有找到它`
+      );
+    } else {
+      console.error(`[codingns] 未找到 PTY 运行时依赖：${requiredPackageName}`);
+    }
+    return false;
+  }
+
+  const packageVersion = readPackageVersion(packageJsonPath);
+  const packageSummary = packageVersion
+    ? `${requiredPackageName}@${packageVersion}`
+    : requiredPackageName;
+
+  logInfo(`[codingns] PTY 运行时依赖已就绪：${packageSummary}`);
+  return true;
+}
+
 async function verifyCodexRuntime() {
   try {
     const sdkEntryPath =
-      resolveModuleFile("@openai/codex-sdk") ??
+      resolveModuleExportFile("@openai/codex-sdk", "dist/index.js") ??
       findNodeModulesFile(packageRoot, ["@openai", "codex-sdk", "dist", "index.js"]);
 
     if (!sdkEntryPath) {
@@ -94,29 +123,13 @@ async function verifyCodexRuntime() {
       return false;
     }
 
-    const versionCheck = spawnSync(process.execPath, [codexBinPath, "--version"], {
-      cwd: packageRoot,
-      env: process.env,
-      encoding: "utf8",
-      timeout: 30_000
-    });
-
-    if (versionCheck.error) {
-      console.error(`[codingns] Codex CLI 启动失败：${versionCheck.error.message}`);
+    if (!isExecutableFile(nativeCodexBinaryPath)) {
+      console.error(`[codingns] Codex CLI 平台二进制不可执行：${nativeCodexBinaryPath}`);
       return false;
     }
 
-    if (versionCheck.status !== 0) {
-      console.error(
-        `[codingns] Codex CLI 校验失败：${formatSpawnFailure(versionCheck)}`
-      );
-      return false;
-    }
-
-    const versionText = versionCheck.stdout?.trim() || "unknown";
     logInfo(`[codingns] Codex CLI 入口已就绪：${codexBinPath}`);
     logInfo(`[codingns] Codex CLI 平台运行文件已就绪：${nativeCodexBinaryPath}`);
-    logInfo(`[codingns] Codex CLI 版本：${versionText}`);
     return true;
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -143,9 +156,7 @@ function runNpmInstall(args) {
     npm_config_location: "project"
   };
   delete env.npm_config_prefix;
-  delete env.npm_execpath;
   delete env.npm_command;
-  delete env.npm_config_user_agent;
 
   const installArgs = [
     ...args,
@@ -155,13 +166,72 @@ function runNpmInstall(args) {
     "--install-strategy=nested"
   ];
 
-  const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+  const command = resolveNpmInvocation(installArgs);
+  logInfo(
+    `[codingns] 执行运行时修复命令：${command.file} ${command.args.map(formatCommandArg).join(" ")}`
+  );
 
-  return spawnSync(npmCommand, installArgs, {
+  const result = spawnSync(command.file, command.args, {
     cwd: packageRoot,
     env,
     stdio: "inherit"
   });
+
+  if (result.error) {
+    const detail = result.error instanceof Error ? result.error.message : String(result.error);
+    console.error(`[codingns] 运行时修复命令启动失败：${detail}`);
+  }
+
+  if (typeof result.status === "number") {
+    logInfo(`[codingns] 运行时修复命令退出码：${result.status}`);
+  } else if (result.signal) {
+    console.error(`[codingns] 运行时修复命令被信号中断：${result.signal}`);
+  }
+
+  return result;
+}
+
+function resolveNpmInvocation(args) {
+  const npmExecPath = process.env.npm_execpath;
+
+  if (npmExecPath && fs.existsSync(npmExecPath)) {
+    return {
+      file: process.execPath,
+      args: [npmExecPath, ...args]
+    };
+  }
+
+  if (process.platform !== "win32") {
+    return {
+      file: "npm",
+      args
+    };
+  }
+
+  return {
+    file: "cmd.exe",
+    args: ["/d", "/s", "/c", quoteWindowsCommand("npm", args)]
+  };
+}
+
+function quoteWindowsCommand(command, args) {
+  return [command, ...args].map(quoteWindowsArg).join(" ");
+}
+
+function quoteWindowsArg(value) {
+  if (!value.length) {
+    return '""';
+  }
+
+  if (!/[\s"]/u.test(value)) {
+    return value;
+  }
+
+  return `"${value.replace(/"/g, '\\"')}"`;
+}
+
+function formatCommandArg(value) {
+  return /[\s"]/u.test(value) ? JSON.stringify(value) : value;
 }
 
 function logInfo(message) {
@@ -234,7 +304,11 @@ function resolveCodexNativeBinaryPath(codexBinPath) {
     return localBinaryPath;
   }
 
-  const platformPackageJsonPath = resolveModuleFile(`${platformPackage}/package.json`);
+  const platformPackageJsonPath =
+    resolveModuleExportFile(platformPackage, "package.json") ??
+    (codexPackageRoot
+      ? findNodeModulesFile(codexPackageRoot, [...platformPackage.split("/"), "package.json"])
+      : null);
 
   if (!platformPackageJsonPath) {
     return null;
@@ -249,17 +323,6 @@ function resolveCodexNativeBinaryPath(codexBinPath) {
   );
 
   return fs.existsSync(platformBinaryPath) ? platformBinaryPath : null;
-}
-
-function formatSpawnFailure(result) {
-  const parts = [
-    result.stderr?.trim(),
-    result.stdout?.trim(),
-    result.signal ? `signal=${result.signal}` : null,
-    typeof result.status === "number" ? `exitCode=${result.status}` : null
-  ].filter(Boolean);
-
-  return parts.join("\n") || "unknown error";
 }
 
 function resolveCodexPlatformPackageName() {
@@ -279,6 +342,36 @@ function resolveCodexPlatformPackageName() {
     default:
       return null;
   }
+}
+
+function isExecutableFile(filePath) {
+  try {
+    fs.accessSync(filePath, process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readPackageVersion(packageJsonPath) {
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+    return typeof packageJson?.version === "string" ? packageJson.version : "";
+  } catch {
+    return "";
+  }
+}
+
+function resolveRequiredPtyPackageName() {
+  if (
+    process.platform === "win32" &&
+    process.arch === "x64" &&
+    Number((process.versions.node || "").split(".")[0]) === 22
+  ) {
+    return "@codingns/node-pty";
+  }
+
+  return "node-pty";
 }
 
 function resolveCodexTargetTriple() {
@@ -328,6 +421,47 @@ function resolveModuleFile(specifier) {
   } catch {
     return null;
   }
+}
+
+function resolveModuleExportFile(specifier, fallbackRelativePath) {
+  const resolvedEntry = resolveModuleFile(specifier);
+
+  if (resolvedEntry) {
+    return resolvedEntry;
+  }
+
+  try {
+    const packageJsonPath = moduleRequire.resolve(`${specifier}/package.json`);
+    return fallbackRelativePath
+      ? path.join(path.dirname(packageJsonPath), fallbackRelativePath)
+      : packageJsonPath;
+  } catch (error) {
+    if (!isPackagePathNotExportedError(error)) {
+      return null;
+    }
+  }
+
+  const manualPackagePath = findNodeModulesFile(
+    packageRoot,
+    [...specifier.split("/"), "package.json"]
+  );
+
+  if (!manualPackagePath) {
+    return null;
+  }
+
+  return fallbackRelativePath
+    ? path.join(path.dirname(manualPackagePath), fallbackRelativePath)
+    : manualPackagePath;
+}
+
+function isPackagePathNotExportedError(error) {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "ERR_PACKAGE_PATH_NOT_EXPORTED"
+  );
 }
 
 function findNodeModulesFile(startDirectory, relativeSegments) {
