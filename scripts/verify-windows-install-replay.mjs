@@ -135,7 +135,7 @@ function verifyInstallLogs(logsRoot) {
   const latestLogPath = path.join(logsRoot, logFiles[logFiles.length - 1]);
   const latestLogText = fs.readFileSync(latestLogPath, "utf8");
 
-  if (/node-gyp rebuild/i.test(latestLogText)) {
+  if (/(^|\r?\n)gyp (?:info|ERR!)/i.test(latestLogText) || /(^|\r?\n)node-gyp\b/i.test(latestLogText)) {
     throw new Error(`安装日志仍触发了本机编译：${latestLogPath}`);
   }
 
