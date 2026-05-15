@@ -1,0 +1,45 @@
+{
+  "name": "@codingns/node-pty",
+  "version": "1.0.0-cns.1",
+  "description": "CodingNS-maintained node-pty fork for Windows x64 + Node 22",
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "./lib/index.js",
+  "types": "./typings/node-pty.d.ts",
+  "files": [
+    "README.md",
+    "LICENSE",
+    "binding.gyp",
+    "lib",
+    "src",
+    "typings",
+    "scripts",
+    "deps",
+    "build/Release"
+  ],
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "fetch:upstream": "node ./scripts/fetch-upstream.mjs",
+    "sync:upstream": "node ./scripts/sync-upstream.mjs",
+    "build:native": "node-gyp rebuild --release",
+    "install": "node ./scripts/verify-runtime.cjs",
+    "verify:runtime": "node ./scripts/verify-runtime.cjs",
+    "verify:tarball": "node ./scripts/verify-tarball.cjs",
+    "smoke:load": "node ./scripts/smoke-load.cjs",
+    "smoke:install": "node ./scripts/install-smoke.cjs"
+  },
+  "dependencies": {
+    "nan": "^2.17.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

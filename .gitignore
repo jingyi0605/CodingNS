@@ -97,6 +97,8 @@ apps/host/data/host/*
 apps/host/apps/host/*
 apps/host/runtime/
 runtime/
+!apps/host/src/modules/terminal/runtime/
+!apps/host/src/modules/terminal/runtime/**
 UsersjacksonAndroidSdk/
 apps/user-app/src-tauri/gen/apple/assets/index.html
 apps/user-app/src-tauri/gen/apple/assets/assets/

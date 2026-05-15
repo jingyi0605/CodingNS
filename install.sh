@@ -11,6 +11,11 @@ OFFICIAL_NPM_REGISTRY="${CODINGNS_OFFICIAL_REGISTRY:-https://registry.npmjs.org}
 MIRROR_NPM_REGISTRY="${CODINGNS_MIRROR_REGISTRY:-https://registry.npmmirror.com}"
 PROCESS_NAME="${CODINGNS_PM2_PROCESS_NAME:-codingns}"
 DRY_RUN="${CODINGNS_INSTALL_DRY_RUN:-0}"
+REGISTRY_PROBE_PACKAGE_SPEC="${CODINGNS_REGISTRY_PROBE_SPEC:-@openai/codex-sdk}"
+WINDOWS_PRIVATE_NODE_VERSION="${CODINGNS_WINDOWS_NODE_VERSION:-22.16.0}"
+WINDOWS_PRIVATE_NODE_DIST_BASE="${CODINGNS_WINDOWS_NODE_DIST_BASE:-https://nodejs.org/dist}"
+WINDOWS_NODE_PTY_PACKAGE_NAME="${CODINGNS_WINDOWS_NODE_PTY_PACKAGE_NAME:-@codingns/node-pty}"
+WINDOWS_BETTER_SQLITE_PACKAGE_NAME="${CODINGNS_WINDOWS_BETTER_SQLITE_PACKAGE_NAME:-better-sqlite3}"
 
 SUPPORTED_CLIS=(
   "claude-code|Claude Code|claude"
@@ -42,6 +47,42 @@ ENABLE_STARTUP="1"
 PROMPT_INPUT_FD=""
 PREREQUISITE_ISSUES=()
 INSTALL_OPENCODE="0"
+PREREQUISITE_WARNINGS=()
+LAST_INSTALL_LOG=""
+PRIVATE_INSTALL_CONTEXT="0"
+SYSTEM_PATH_SNAPSHOT="${PATH:-}"
+SYSTEM_NODE_BIN=""
+SYSTEM_NPM_BIN=""
+SYSTEM_NODE_VERSION=""
+SYSTEM_NODE_ABI=""
+TARGET_NODE_VERSION=""
+TARGET_NODE_ABI=""
+INSTALL_ENV_ARGS=()
+RUNTIME_HOME=""
+NODE_RUNTIME_ROOT=""
+NODE_RUNTIME_VERSIONS_DIR=""
+NODE_ACTIVE_META=""
+PRIVATE_NODE_VERSION_DIR=""
+PRIVATE_NPM_PREFIX=""
+PRIVATE_NPM_CACHE_DIR=""
+PRIVATE_DOWNLOAD_CACHE_DIR=""
+PRIVATE_LOG_DIR=""
+PRIVATE_INSTALL_LOG_DIR=""
+PRIVATE_PM2_HOME=""
+PRIVATE_SERVICE_STATE_DIR=""
+PRIVATE_NPM_USERCONFIG=""
+PRIVATE_NODE_SOURCE_URL=""
+PRIVATE_NODE_ARCHIVE_SHA256=""
+PRIVATE_NPM_CMD=""
+PRIVATE_NPX_CMD=""
+TARGET_RUNTIME_UNSUPPORTED_PACKAGES=()
+TARGET_RUNTIME_FALLBACK_PACKAGES=()
+TARGET_RUNTIME_MANAGED_PACKAGE_SUMMARY=()
+CODINGNS_PACKAGE_ROOT=""
+CODINGNS_PACKAGE_NAME=""
+CODINGNS_PACKAGE_VERSION=""
+CODINGNS_PTY_PACKAGE_NAME=""
+CODINGNS_PTY_PACKAGE_VERSION=""
 
 msg() {
   local key="$1"
@@ -108,6 +149,22 @@ msg() {
     en:error_no_supported_linux_installer) printf 'No supported automatic installer was detected for this Linux distribution. Only apt-get is supported for now.';;
     zh:error_brew_install_failed) printf 'Homebrew 安装或初始化失败，无法继续自动安装 Node.js。';;
     en:error_brew_install_failed) printf 'Homebrew installation or initialization failed, so Node.js cannot be installed automatically.';;
+    zh:error_windows_private_node_unsupported_arch) printf '当前 Windows 安装只支持 x64 架构，检测到：%s' "$@";;
+    en:error_windows_private_node_unsupported_arch) printf 'This Windows installer currently supports only x64. Detected: %s' "$@";;
+    zh:error_windows_private_node_missing_tools) printf '当前 Windows 环境缺少私有 Node.js 运行时所需工具，请先安装 curl 和 unzip，或设置 CODINGNS_WINDOWS_NODE_DIST_BASE 指向已可访问的分发源。';;
+    en:error_windows_private_node_missing_tools) printf 'The Windows environment is missing tools required for the private Node.js runtime. Install curl and unzip first, or set CODINGNS_WINDOWS_NODE_DIST_BASE to a reachable distribution source.';;
+    zh:error_windows_private_node_download_failed) printf '无法下载 Windows 私有 Node.js 运行时：%s' "$@";;
+    en:error_windows_private_node_download_failed) printf 'Unable to download the private Windows Node.js runtime: %s' "$@";;
+    zh:error_windows_private_node_extract_failed) printf '无法解压 Windows 私有 Node.js 运行时：%s' "$@";;
+    en:error_windows_private_node_extract_failed) printf 'Unable to extract the private Windows Node.js runtime: %s' "$@";;
+    zh:error_windows_private_node_incomplete) printf 'Windows 私有 Node.js 运行时不完整：%s' "$@";;
+    en:error_windows_private_node_incomplete) printf 'The private Windows Node.js runtime is incomplete: %s' "$@";;
+    zh:error_windows_private_node_checksum_missing) printf '无法获取 Windows 私有 Node.js 运行时的 SHA256 校验值：%s' "$@";;
+    en:error_windows_private_node_checksum_missing) printf 'Unable to determine the SHA256 checksum for the private Windows Node.js runtime: %s' "$@";;
+    zh:error_windows_private_node_checksum_failed) printf 'Windows 私有 Node.js 运行时校验失败：%s' "$@";;
+    en:error_windows_private_node_checksum_failed) printf 'The private Windows Node.js runtime checksum verification failed: %s' "$@";;
+    zh:error_windows_target_runtime_unsupported) printf '目标私有运行时不受支持：%s' "$@";;
+    en:error_windows_target_runtime_unsupported) printf 'The target private runtime is unsupported: %s' "$@";;
 
     zh:info_need_sudo) printf '检测到 npm 全局目录需要管理员权限，后续全局安装会使用 sudo。';;
     en:info_need_sudo) printf 'The npm global directory needs administrator permission. The installer will use sudo for global installs.';;
@@ -189,12 +246,42 @@ msg() {
     en:warn_no_startup_platform) printf 'This system does not expose a supported start-on-boot platform for automatic setup, so that step was skipped. You can still run pm2 startup manually later.';;
     zh:warn_linux_startup_no_sudo) printf '当前 Linux 平台需要 sudo 才能写入 systemd 启动项，已跳过自动配置。';;
     en:warn_linux_startup_no_sudo) printf 'This Linux machine needs sudo to write the systemd startup entry, so automatic startup setup was skipped.';;
+    zh:warn_windows_missing_build_tools) printf '当前是 Windows 环境，但未检测到 Visual Studio C++ Build Tools。CodingNS 依赖 better-sqlite3、node-pty 这类原生模块；如果预编译包下载失败，npm 会回退到本机编译，并要求你先安装 Visual Studio Build Tools 2022，勾选“Desktop development with C++”。';;
+    en:warn_windows_missing_build_tools) printf 'This is a Windows environment, but Visual Studio C++ Build Tools were not detected. CodingNS depends on native modules such as better-sqlite3 and node-pty. If the prebuilt binaries cannot be downloaded, npm falls back to local compilation and requires Visual Studio Build Tools 2022 with the "Desktop development with C++" workload.';;
+    zh:warn_windows_node24_native_modules) printf '当前是 Windows + Node.js %s。这个组合安装原生模块时更容易暴露预编译包下载或本机编译问题，建议优先使用 Node.js 22 LTS。' "$@";;
+    en:warn_windows_node24_native_modules) printf 'You are using Windows + Node.js %s. This combination is more likely to surface native module prebuild or local compilation issues, so Node.js 22 LTS is recommended first.' "$@";;
+    zh:warn_windows_registry_not_enough) printf '补充说明：切换 npm 源只会影响 npm 包下载，不会解决 better-sqlite3 或 node-pty 从 GitHub Releases 下载预编译包失败的问题。';;
+    en:warn_windows_registry_not_enough) printf 'Important: switching the npm registry only affects npm package downloads. It does not fix failures when better-sqlite3 or node-pty try to download prebuilt binaries from GitHub Releases.';;
+    zh:warn_windows_install_failed_vs) printf '安装日志里已经看到 node-gyp 找不到 Visual Studio。请先安装 Visual Studio Build Tools 2022，并勾选“Desktop development with C++”，然后重试。';;
+    en:warn_windows_install_failed_vs) printf 'The install log shows that node-gyp could not find Visual Studio. Install Visual Studio Build Tools 2022 with the "Desktop development with C++" workload, then retry.';;
+    zh:warn_windows_install_failed_prebuild_network) printf '安装日志里已经看到原生模块预编译包下载失败（例如 ECONNRESET 或 timed out）。这通常是访问 GitHub Releases 失败，不是 npm 源本身的问题。';;
+    en:warn_windows_install_failed_prebuild_network) printf 'The install log shows that downloading native prebuilt binaries failed (for example ECONNRESET or timed out). This is usually a GitHub Releases connectivity problem, not an npm registry problem.';;
+    zh:warn_windows_using_private_node) printf 'Windows 正式安装将使用 CodingNS 私有 Node.js %s 运行时，系统 Node 仅用于诊断。' "$@";;
+    en:warn_windows_using_private_node) printf 'Windows installation will use the private CodingNS Node.js %s runtime. The system Node.js is used for diagnostics only.' "$@";;
+    zh:warn_windows_target_runtime_fallback_build) printf '目标私有运行时下，以下原生依赖仍可能回退本机编译：%s' "$@";;
+    en:warn_windows_target_runtime_fallback_build) printf 'Under the target private runtime, these native dependencies may still fall back to local compilation: %s' "$@";;
+    zh:warn_windows_system_node_diagnostics) printf '检测到系统 Node.js：%s（ABI %s）' "$@";;
+    en:warn_windows_system_node_diagnostics) printf 'Detected system Node.js: %s (ABI %s)' "$@";;
+    zh:info_windows_target_runtime_summary) printf '目标私有运行时：Windows x64 + Node.js %s（ABI %s）' "$@";;
+    en:info_windows_target_runtime_summary) printf 'Target private runtime: Windows x64 + Node.js %s (ABI %s)' "$@";;
+    zh:info_windows_managed_package_summary) printf '受管原生依赖检查：%s' "$@";;
+    en:info_windows_managed_package_summary) printf 'Managed native package check: %s' "$@";;
+    zh:warn_install_log_path) printf '失败日志位置：%s' "$@";;
+    en:warn_install_log_path) printf 'Failure log path: %s' "$@";;
     zh:info_configuring_startup) printf '开始配置 PM2 开机自启（%s）...' "$@";;
     en:info_configuring_startup) printf 'Configuring PM2 to start on boot (%s)...' "$@";;
     zh:info_done) printf '安装流程已完成。';;
     en:info_done) printf 'The installation flow is complete.';;
     zh:info_registry) printf '当前 npm 源：%s' "$@";;
     en:info_registry) printf 'Registry used: %s' "$@";;
+    zh:info_runtime_node) printf '实际运行时 Node.js：%s' "$@";;
+    en:info_runtime_node) printf 'Runtime Node.js: %s' "$@";;
+    zh:info_runtime_prefix) printf '实际 npm 前缀：%s' "$@";;
+    en:info_runtime_prefix) printf 'Runtime npm prefix: %s' "$@";;
+    zh:info_runtime_pm2_home) printf '实际 PM2 HOME：%s' "$@";;
+    en:info_runtime_pm2_home) printf 'Runtime PM2 HOME: %s' "$@";;
+    zh:info_runtime_pty) printf '实际 PTY 依赖：%s' "$@";;
+    en:info_runtime_pty) printf 'Runtime PTY dependency: %s' "$@";;
     zh:info_access_title) printf '访问方式：';;
     en:info_access_title) printf 'Access:';;
     zh:info_process_name) printf 'PM2 进程名称：%s' "$@";;
@@ -337,6 +424,17 @@ command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
+is_windows_environment() {
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 is_root_user() {
   [[ "$(id -u)" -eq 0 ]]
 }
@@ -344,6 +442,582 @@ is_root_user() {
 refresh_runtime_binaries() {
   NODE_BIN="$(command -v node 2>/dev/null || true)"
   NPM_BIN="$(command -v npm 2>/dev/null || true)"
+}
+
+build_windows_runtime_paths() {
+  RUNTIME_HOME="$SELECTED_DATA_DIR/runtime"
+  NODE_RUNTIME_ROOT="$RUNTIME_HOME/node-22"
+  NODE_RUNTIME_VERSIONS_DIR="$NODE_RUNTIME_ROOT/versions"
+  NODE_ACTIVE_META="$NODE_RUNTIME_ROOT/active.json"
+  PRIVATE_NODE_VERSION_DIR="$NODE_RUNTIME_VERSIONS_DIR/node-v${WINDOWS_PRIVATE_NODE_VERSION}-win-x64"
+  PRIVATE_NPM_PREFIX="$RUNTIME_HOME/npm-global"
+  PRIVATE_NPM_CACHE_DIR="$RUNTIME_HOME/cache/npm"
+  PRIVATE_DOWNLOAD_CACHE_DIR="$RUNTIME_HOME/cache/downloads"
+  PRIVATE_LOG_DIR="$RUNTIME_HOME/logs"
+  PRIVATE_INSTALL_LOG_DIR="$PRIVATE_LOG_DIR/install"
+  PRIVATE_PM2_HOME="$RUNTIME_HOME/pm2"
+  PRIVATE_SERVICE_STATE_DIR="$RUNTIME_HOME/service"
+  PRIVATE_NPM_USERCONFIG="$PRIVATE_NPM_PREFIX/npmrc"
+}
+
+ensure_windows_runtime_dirs() {
+  mkdir -p \
+    "$NODE_RUNTIME_VERSIONS_DIR" \
+    "$PRIVATE_NPM_PREFIX" \
+    "$PRIVATE_NPM_CACHE_DIR" \
+    "$PRIVATE_DOWNLOAD_CACHE_DIR" \
+    "$PRIVATE_INSTALL_LOG_DIR" \
+    "$PRIVATE_PM2_HOME" \
+    "$PRIVATE_SERVICE_STATE_DIR"
+}
+
+read_node_version_text() {
+  local node_path="$1"
+  "$node_path" -p "process.version" 2>/dev/null | tr -d '\r'
+}
+
+read_node_abi_text() {
+  local node_path="$1"
+  "$node_path" -p "process.versions.modules" 2>/dev/null | tr -d '\r'
+}
+
+normalize_version_text() {
+  local version_text="$1"
+  printf '%s' "${version_text#v}"
+}
+
+to_native_windows_path() {
+  local target_path="$1"
+  if is_windows_environment && command_exists cygpath; then
+    cygpath -w "$target_path"
+    return
+  fi
+  printf '%s\n' "$target_path"
+}
+
+extract_package_name_from_spec() {
+  local package_spec="$1"
+
+  if [[ "$package_spec" == @*/* ]]; then
+    local without_scope_prefix="${package_spec#@}"
+    local scope_name="${without_scope_prefix%%/*}"
+    local package_tail="${without_scope_prefix#*/}"
+    printf '@%s/%s\n' "$scope_name" "${package_tail%%@*}"
+    return
+  fi
+
+  printf '%s\n' "${package_spec%%@*}"
+}
+
+is_registry_package_spec() {
+  local package_spec="$1"
+
+  case "$package_spec" in
+    file:*|git+*|github:*|http://*|https://*|./*|../*|/*|*.tgz|*.tar.gz)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
+resolve_registry_probe_package_spec() {
+  if is_registry_package_spec "$PACKAGE_SPEC"; then
+    printf '%s\n' "$PACKAGE_SPEC"
+    return
+  fi
+
+  printf '%s\n' "$REGISTRY_PROBE_PACKAGE_SPEC"
+}
+
+resolve_private_package_root_from_spec() {
+  local npm_prefix="$1"
+  local package_spec="$2"
+  local package_name=""
+  local package_root=""
+
+  package_name="$(extract_package_name_from_spec "$package_spec")"
+  [[ -n "$package_name" ]] || return 1
+
+  case "$package_name" in
+    http://*|https://*|file:*|git+*|github:*|./*|../*|/*)
+      return 1
+      ;;
+  esac
+
+  package_root="$npm_prefix/node_modules/$package_name"
+  [[ -f "$package_root/package.json" ]] || return 1
+  printf '%s\n' "$package_root"
+}
+
+read_package_json_field() {
+  local package_json_path="$1"
+  local field_name="$2"
+
+  [[ -n "$NODE_BIN" ]] || return 1
+  [[ -f "$package_json_path" ]] || return 1
+
+  "$NODE_BIN" - "$package_json_path" "$field_name" <<'EOF'
+const fs = require("node:fs");
+
+const [packageJsonPath, fieldName] = process.argv.slice(2);
+const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+const value = packageJson?.[fieldName];
+
+if (typeof value === "string" && value.trim()) {
+  process.stdout.write(value.trim());
+}
+EOF
+}
+
+resolve_package_root_from_dependency() {
+  local owner_package_root="$1"
+  local dependency_name="$2"
+
+  [[ -n "$NODE_BIN" ]] || return 1
+  [[ -n "$owner_package_root" ]] || return 1
+  [[ -f "$owner_package_root/package.json" ]] || return 1
+
+  "$NODE_BIN" - "$owner_package_root" "$dependency_name" <<'EOF'
+const fs = require("node:fs");
+const path = require("node:path");
+const { createRequire } = require("node:module");
+
+const [ownerPackageRoot, dependencyName] = process.argv.slice(2);
+
+function findPackageRoot(startPath, expectedPackageName) {
+  let currentDirectory = fs.statSync(startPath).isDirectory()
+    ? startPath
+    : path.dirname(startPath);
+
+  while (true) {
+    const packageJsonPath = path.join(currentDirectory, "package.json");
+
+    if (fs.existsSync(packageJsonPath)) {
+      try {
+        const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+        if (packageJson?.name === expectedPackageName) {
+          process.stdout.write(currentDirectory);
+          process.exit(0);
+        }
+      } catch {
+      }
+    }
+
+    const parentDirectory = path.dirname(currentDirectory);
+    if (parentDirectory === currentDirectory) {
+      process.exit(1);
+    }
+
+    currentDirectory = parentDirectory;
+  }
+}
+
+try {
+  const packageRequire = createRequire(path.join(ownerPackageRoot, "package.json"));
+  const resolvedEntry = packageRequire.resolve(dependencyName);
+  findPackageRoot(resolvedEntry, dependencyName);
+} catch (error) {
+  if (error && typeof error === "object" && error.code === "ERR_PACKAGE_PATH_NOT_EXPORTED") {
+    try {
+      const packageRequire = createRequire(path.join(ownerPackageRoot, "package.json"));
+      const resolvedPackageJson = packageRequire.resolve(`${dependencyName}/package.json`);
+      process.stdout.write(path.dirname(resolvedPackageJson));
+      process.exit(0);
+    } catch {
+      process.exit(1);
+    }
+  }
+
+  process.exit(1);
+}
+EOF
+}
+
+resolve_required_pty_package_name() {
+  if ! is_windows_environment; then
+    printf 'node-pty\n'
+    return
+  fi
+
+  local target_major=""
+  target_major="$(read_major_version "${TARGET_NODE_VERSION:-}")"
+
+  if [[ "$target_major" == "22" ]] && [[ "$(uname -m)" == "x86_64" || "$(uname -m)" == "amd64" ]]; then
+    printf '%s\n' "$WINDOWS_NODE_PTY_PACKAGE_NAME"
+    return
+  fi
+
+  printf 'node-pty\n'
+}
+
+resolve_codingns_pty_dependency_metadata() {
+  CODINGNS_PTY_PACKAGE_NAME=""
+  CODINGNS_PTY_PACKAGE_VERSION=""
+
+  [[ -n "$CODINGNS_PACKAGE_ROOT" ]] || return
+
+  local required_package_name=""
+  local dependency_package_root=""
+  local dependency_package_json=""
+
+  required_package_name="$(resolve_required_pty_package_name)"
+  dependency_package_root="$(resolve_package_root_from_dependency "$CODINGNS_PACKAGE_ROOT" "$required_package_name" 2>/dev/null || true)"
+
+  if [[ -z "$dependency_package_root" && "$required_package_name" != "node-pty" ]]; then
+    dependency_package_root="$(resolve_package_root_from_dependency "$CODINGNS_PACKAGE_ROOT" "node-pty" 2>/dev/null || true)"
+    if [[ -n "$dependency_package_root" ]]; then
+      required_package_name="node-pty"
+    fi
+  fi
+
+  [[ -n "$dependency_package_root" ]] || return
+
+  dependency_package_json="$dependency_package_root/package.json"
+  [[ -f "$dependency_package_json" ]] || return
+
+  CODINGNS_PTY_PACKAGE_NAME="$(read_package_json_field "$dependency_package_json" "name" || true)"
+  CODINGNS_PTY_PACKAGE_VERSION="$(read_package_json_field "$dependency_package_json" "version" || true)"
+
+  [[ -n "$CODINGNS_PTY_PACKAGE_NAME" ]] || CODINGNS_PTY_PACKAGE_NAME="$required_package_name"
+}
+
+resolve_script_from_npm_shim() {
+  local shim_path="$1"
+
+  [[ -n "$NODE_BIN" ]] || return 1
+  [[ -f "$shim_path" ]] || return 1
+
+  "$NODE_BIN" - "$shim_path" <<'EOF'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const shimPath = path.resolve(process.argv[2]);
+const shimDir = path.dirname(shimPath);
+const content = fs.readFileSync(shimPath, "utf8");
+const patterns = [
+  /%~dp0\\([^"\r\n]+?\.(?:mjs|cjs|js))/gi,
+  /\$basedir\/([^"\r\n]+?\.(?:mjs|cjs|js))/g,
+  /"([^"\r\n]*node_modules[\\/][^"\r\n]+?\.(?:mjs|cjs|js))"/g,
+  /'([^'\r\n]*node_modules[\\/][^'\r\n]+?\.(?:mjs|cjs|js))'/g
+];
+
+for (const pattern of patterns) {
+  for (const match of content.matchAll(pattern)) {
+    const candidate = (match[1] || "").trim();
+    if (!candidate) {
+      continue;
+    }
+
+    const normalized = candidate
+      .replace(/^%~dp0/i, "")
+      .replace(/^\$basedir\/?/i, "")
+      .replace(/\\/g, "/");
+    const resolved = path.resolve(shimDir, normalized);
+
+    if (fs.existsSync(resolved)) {
+      process.stdout.write(resolved);
+      process.exit(0);
+    }
+  }
+}
+
+process.exit(1);
+EOF
+}
+
+download_file_with_fallback() {
+  local source_url="$1"
+  local target_path="$2"
+  local native_target_path=""
+
+  if command_exists curl; then
+    curl -fL "$source_url" -o "$target_path"
+    return
+  fi
+
+  if command_exists powershell.exe; then
+    native_target_path="$(to_native_windows_path "$target_path")"
+    CODINGNS_DOWNLOAD_URL="$source_url" \
+    CODINGNS_DOWNLOAD_OUT="$native_target_path" \
+      powershell.exe -NoLogo -NoProfile -Command \
+        '$ErrorActionPreference = "Stop"; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri $env:CODINGNS_DOWNLOAD_URL -OutFile $env:CODINGNS_DOWNLOAD_OUT'
+    return
+  fi
+
+  return 1
+}
+
+extract_zip_with_fallback() {
+  local archive_path="$1"
+  local output_dir="$2"
+  local native_archive_path=""
+  local native_output_dir=""
+
+  if command_exists unzip; then
+    unzip -oq "$archive_path" -d "$output_dir"
+    return
+  fi
+
+  if command_exists tar; then
+    tar -xf "$archive_path" -C "$output_dir"
+    return
+  fi
+
+  if command_exists powershell.exe; then
+    native_archive_path="$(to_native_windows_path "$archive_path")"
+    native_output_dir="$(to_native_windows_path "$output_dir")"
+    CODINGNS_ZIP_PATH="$native_archive_path" \
+    CODINGNS_ZIP_OUT="$native_output_dir" \
+      powershell.exe -NoLogo -NoProfile -Command \
+        '$ErrorActionPreference = "Stop"; Expand-Archive -LiteralPath $env:CODINGNS_ZIP_PATH -DestinationPath $env:CODINGNS_ZIP_OUT -Force'
+    return
+  fi
+
+  return 1
+}
+
+compute_file_sha256() {
+  local target_path="$1"
+  local native_target_path=""
+
+  if command_exists sha256sum; then
+    sha256sum "$target_path" | awk '{print $1}'
+    return
+  fi
+
+  if command_exists shasum; then
+    shasum -a 256 "$target_path" | awk '{print $1}'
+    return
+  fi
+
+  if command_exists certutil.exe; then
+    certutil.exe -hashfile "$target_path" SHA256 2>/dev/null | awk 'NR==2 {print $1}' | tr -d '\r'
+    return
+  fi
+
+  if command_exists powershell.exe; then
+    native_target_path="$(to_native_windows_path "$target_path")"
+    CODINGNS_HASH_PATH="$native_target_path" \
+      powershell.exe -NoLogo -NoProfile -Command \
+        '$ErrorActionPreference = "Stop"; (Get-FileHash -LiteralPath $env:CODINGNS_HASH_PATH -Algorithm SHA256).Hash.ToLowerInvariant()' | tr -d '\r'
+    return
+  fi
+
+  return 1
+}
+
+write_private_node_active_meta() {
+  local node_exe="$PRIVATE_NODE_VERSION_DIR/node.exe"
+  local npm_cmd="$PRIVATE_NODE_VERSION_DIR/npm.cmd"
+  local npx_cmd="$PRIVATE_NODE_VERSION_DIR/npx.cmd"
+
+  cat >"$NODE_ACTIVE_META" <<EOF
+{
+  "version": "${WINDOWS_PRIVATE_NODE_VERSION}",
+  "platform": "win32",
+  "arch": "x64",
+  "nodeDir": "${PRIVATE_NODE_VERSION_DIR}",
+  "nodeExe": "${node_exe}",
+  "npmCmd": "${npm_cmd}",
+  "npxCmd": "${npx_cmd}",
+  "installedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "sourceUrl": "${PRIVATE_NODE_SOURCE_URL}",
+  "sha256": "${PRIVATE_NODE_ARCHIVE_SHA256}"
+}
+EOF
+}
+
+resolve_private_node_paths() {
+  local node_exe="$PRIVATE_NODE_VERSION_DIR/node.exe"
+  local npm_cmd="$PRIVATE_NODE_VERSION_DIR/npm.cmd"
+  local npx_cmd="$PRIVATE_NODE_VERSION_DIR/npx.cmd"
+
+  [[ -x "$node_exe" ]] || die error_windows_private_node_incomplete "$node_exe"
+  [[ -f "$npm_cmd" ]] || die error_windows_private_node_incomplete "$npm_cmd"
+  [[ -f "$npx_cmd" ]] || die error_windows_private_node_incomplete "$npx_cmd"
+
+  NODE_BIN="$node_exe"
+  NPM_BIN="$npm_cmd"
+  PRIVATE_NPM_CMD="$npm_cmd"
+  PRIVATE_NPX_CMD="$npx_cmd"
+  TARGET_NODE_VERSION="$(read_node_version_text "$NODE_BIN")"
+  TARGET_NODE_ABI="$(read_node_abi_text "$NODE_BIN")"
+  write_private_node_active_meta
+}
+
+download_windows_private_node_runtime() {
+  local archive_name="node-v${WINDOWS_PRIVATE_NODE_VERSION}-win-x64.zip"
+  local archive_path="$PRIVATE_DOWNLOAD_CACHE_DIR/$archive_name"
+  local shasums_path="$PRIVATE_DOWNLOAD_CACHE_DIR/SHASUMS256-v${WINDOWS_PRIVATE_NODE_VERSION}.txt"
+  local archive_url="${WINDOWS_PRIVATE_NODE_DIST_BASE}/v${WINDOWS_PRIVATE_NODE_VERSION}/${archive_name}"
+  local shasums_url="${WINDOWS_PRIVATE_NODE_DIST_BASE}/v${WINDOWS_PRIVATE_NODE_VERSION}/SHASUMS256.txt"
+  local extract_dir="$PRIVATE_NODE_VERSION_DIR"
+  local expected_sha256=""
+  local actual_sha256=""
+
+  PRIVATE_NODE_SOURCE_URL="$archive_url"
+  mkdir -p "$NODE_RUNTIME_VERSIONS_DIR"
+
+  if [[ "$DRY_RUN" == "1" ]]; then
+    say_info_custom "download \"$archive_url\" -> \"$archive_path\""
+    say_info_custom "download \"$shasums_url\" -> \"$shasums_path\""
+    say_info_custom "verify sha256 \"$archive_path\""
+    say_info_custom "extract \"$archive_path\" -> \"$NODE_RUNTIME_VERSIONS_DIR\""
+    PRIVATE_NODE_ARCHIVE_SHA256="dry-run"
+    return
+  fi
+
+  if [[ ! -f "$shasums_path" ]]; then
+    if ! download_file_with_fallback "$shasums_url" "$shasums_path"; then
+      die error_windows_private_node_download_failed "$shasums_url"
+    fi
+  fi
+
+  expected_sha256="$(awk -v target="$archive_name" '$2 == target {print $1; exit}' "$shasums_path" | tr -d '\r' | tr '[:upper:]' '[:lower:]')"
+  [[ -n "$expected_sha256" ]] || die error_windows_private_node_checksum_missing "$shasums_path"
+  PRIVATE_NODE_ARCHIVE_SHA256="$expected_sha256"
+
+  if [[ -f "$archive_path" ]]; then
+    actual_sha256="$(compute_file_sha256 "$archive_path" | tr -d '\r' | tr '[:upper:]' '[:lower:]' || true)"
+    if [[ "$actual_sha256" != "$expected_sha256" ]]; then
+      rm -f "$archive_path"
+    fi
+  fi
+
+  if [[ ! -f "$archive_path" ]]; then
+    if ! download_file_with_fallback "$archive_url" "$archive_path"; then
+      die error_windows_private_node_download_failed "$archive_url"
+    fi
+  fi
+
+  actual_sha256="$(compute_file_sha256 "$archive_path" | tr -d '\r' | tr '[:upper:]' '[:lower:]' || true)"
+  [[ -n "$actual_sha256" ]] || die error_windows_private_node_checksum_missing "$archive_path"
+  if [[ "$actual_sha256" != "$expected_sha256" ]]; then
+    rm -f "$archive_path"
+    die error_windows_private_node_checksum_failed "$archive_name"
+  fi
+
+  rm -rf "$extract_dir"
+  if ! extract_zip_with_fallback "$archive_path" "$NODE_RUNTIME_VERSIONS_DIR"; then
+    die error_windows_private_node_extract_failed "$archive_path"
+  fi
+}
+
+ensure_private_node_runtime() {
+  if ! is_windows_environment; then
+    return
+  fi
+
+  local machine_arch=""
+  machine_arch="$(uname -m)"
+  case "$machine_arch" in
+    x86_64|amd64)
+      ;;
+    *)
+      die error_windows_private_node_unsupported_arch "$machine_arch"
+      ;;
+  esac
+
+  build_windows_runtime_paths
+  ensure_windows_runtime_dirs
+
+  say_warn warn_windows_using_private_node "$WINDOWS_PRIVATE_NODE_VERSION"
+
+  if [[ -n "$SYSTEM_NODE_VERSION" ]]; then
+    say_warn warn_windows_system_node_diagnostics "${SYSTEM_NODE_VERSION:-unknown}" "${SYSTEM_NODE_ABI:-unknown}"
+  fi
+
+  if [[ -x "$PRIVATE_NODE_VERSION_DIR/node.exe" && -f "$PRIVATE_NODE_VERSION_DIR/npm.cmd" && -f "$PRIVATE_NODE_VERSION_DIR/npx.cmd" ]]; then
+    resolve_private_node_paths
+    return
+  fi
+
+  download_windows_private_node_runtime
+
+  if [[ "$DRY_RUN" == "1" ]]; then
+    NODE_BIN="$PRIVATE_NODE_VERSION_DIR/node.exe"
+    NPM_BIN="$PRIVATE_NODE_VERSION_DIR/npm.cmd"
+    TARGET_NODE_VERSION="v${WINDOWS_PRIVATE_NODE_VERSION}"
+    TARGET_NODE_ABI="unknown"
+    return
+  fi
+
+  resolve_private_node_paths
+}
+
+collect_target_runtime_native_support() {
+  TARGET_RUNTIME_UNSUPPORTED_PACKAGES=()
+  TARGET_RUNTIME_FALLBACK_PACKAGES=()
+  TARGET_RUNTIME_MANAGED_PACKAGE_SUMMARY=()
+
+  if ! is_windows_environment; then
+    return
+  fi
+
+  [[ -n "$TARGET_NODE_VERSION" ]] || TARGET_NODE_VERSION="$(read_node_version_text "$NODE_BIN")"
+  [[ -n "$TARGET_NODE_ABI" ]] || TARGET_NODE_ABI="$(read_node_abi_text "$NODE_BIN")"
+
+  local target_major=""
+  target_major="$(read_major_version "$TARGET_NODE_VERSION")"
+
+  TARGET_RUNTIME_MANAGED_PACKAGE_SUMMARY+=("${WINDOWS_NODE_PTY_PACKAGE_NAME}: 目标是 win32 + x64 + Node 22，预期使用随包预编译，不接受本机编译")
+  TARGET_RUNTIME_MANAGED_PACKAGE_SUMMARY+=("${WINDOWS_BETTER_SQLITE_PACKAGE_NAME}: 优先使用上游预编译，若未命中仍可能回退本机编译")
+
+  if [[ "$target_major" != "22" ]]; then
+    TARGET_RUNTIME_UNSUPPORTED_PACKAGES+=("${WINDOWS_NODE_PTY_PACKAGE_NAME}: requires Node 22")
+  fi
+
+  if [[ "$(uname -m)" != "x86_64" && "$(uname -m)" != "amd64" ]]; then
+    TARGET_RUNTIME_UNSUPPORTED_PACKAGES+=("${WINDOWS_NODE_PTY_PACKAGE_NAME}: requires x64")
+  fi
+
+  TARGET_RUNTIME_FALLBACK_PACKAGES+=("${WINDOWS_BETTER_SQLITE_PACKAGE_NAME}")
+}
+
+ensure_windows_target_runtime_supported() {
+  if ! is_windows_environment; then
+    return
+  fi
+
+  collect_target_runtime_native_support
+
+  say_info info_windows_target_runtime_summary "${TARGET_NODE_VERSION:-unknown}" "${TARGET_NODE_ABI:-unknown}"
+  local package_summary=""
+  for package_summary in "${TARGET_RUNTIME_MANAGED_PACKAGE_SUMMARY[@]}"; do
+    say_info info_windows_managed_package_summary "$package_summary"
+  done
+
+  if (( ${#TARGET_RUNTIME_UNSUPPORTED_PACKAGES[@]} > 0 )); then
+    die error_windows_target_runtime_unsupported "$(IFS=', '; printf '%s' "${TARGET_RUNTIME_UNSUPPORTED_PACKAGES[*]}")"
+  fi
+
+  if (( ${#TARGET_RUNTIME_FALLBACK_PACKAGES[@]} > 0 )); then
+    say_warn warn_windows_target_runtime_fallback_build "$(IFS=', '; printf '%s' "${TARGET_RUNTIME_FALLBACK_PACKAGES[*]}")"
+  fi
+}
+
+build_private_install_env() {
+  INSTALL_ENV_ARGS=()
+  PRIVATE_INSTALL_CONTEXT="0"
+
+  if ! is_windows_environment; then
+    return
+  fi
+
+  PRIVATE_INSTALL_CONTEXT="1"
+  INSTALL_ENV_ARGS=(
+    "PATH=${PRIVATE_NODE_VERSION_DIR}:${PRIVATE_NPM_PREFIX}:${SYSTEM_PATH_SNAPSHOT}"
+    "PM2_HOME=${PRIVATE_PM2_HOME}"
+    "npm_config_prefix=${PRIVATE_NPM_PREFIX}"
+    "npm_config_cache=${PRIVATE_NPM_CACHE_DIR}"
+    "npm_config_userconfig=${PRIVATE_NPM_USERCONFIG}"
+    "CODINGNS_DATA_DIR=${SELECTED_DATA_DIR}"
+    "CODINGNS_RUNTIME_ROOT=${RUNTIME_HOME}"
+    "CODINGNS_RUNTIME_NODE_VERSION=${WINDOWS_PRIVATE_NODE_VERSION}"
+    "CODINGNS_PM2_PROCESS_NAME=${PROCESS_NAME}"
+  )
 }
 
 path_or_parent_writable() {
@@ -481,32 +1155,57 @@ validate_port() {
   (( port_value >= 1 && port_value <= 65535 ))
 }
 
+has_windows_native_build_tools() {
+  command_exists cl && return 0
+  command_exists msbuild && return 0
+  command_exists vswhere && return 0
+  [[ -x "/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" ]] && return 0
+  [[ -x "/c/Program Files/Microsoft Visual Studio/2022/BuildTools/MSBuild/Current/Bin/MSBuild.exe" ]] && return 0
+  return 1
+}
+
 collect_prerequisite_issues() {
   PREREQUISITE_ISSUES=()
+  PREREQUISITE_WARNINGS=()
   refresh_runtime_binaries
 
   local node_version="" npm_version="" node_major="" npm_major=""
 
+  SYSTEM_NODE_BIN="$NODE_BIN"
+  SYSTEM_NPM_BIN="$NPM_BIN"
+  SYSTEM_NODE_VERSION=""
+  SYSTEM_NODE_ABI=""
+
   if [[ -z "$NODE_BIN" ]]; then
-    PREREQUISITE_ISSUES+=("error_no_node")
+    if ! is_windows_environment; then
+      PREREQUISITE_ISSUES+=("error_no_node")
+    fi
   else
     node_version="$("$NODE_BIN" -v 2>/dev/null || true)"
+    SYSTEM_NODE_VERSION="$node_version"
+    SYSTEM_NODE_ABI="$("$NODE_BIN" -p "process.versions.modules" 2>/dev/null | tr -d '\r' || true)"
     node_major="$(read_major_version "$node_version")"
     if [[ -z "$node_major" ]]; then
-      PREREQUISITE_ISSUES+=("error_read_node_version|$node_version")
-    elif (( node_major < 22 )); then
+      if ! is_windows_environment; then
+        PREREQUISITE_ISSUES+=("error_read_node_version|$node_version")
+      fi
+    elif (( node_major < 22 )) && ! is_windows_environment; then
       PREREQUISITE_ISSUES+=("error_bad_node_version|$node_version")
     fi
   fi
 
   if [[ -z "$NPM_BIN" ]]; then
-    PREREQUISITE_ISSUES+=("error_no_npm")
+    if ! is_windows_environment; then
+      PREREQUISITE_ISSUES+=("error_no_npm")
+    fi
   else
     npm_version="$("$NPM_BIN" -v 2>/dev/null || true)"
     npm_major="$(read_major_version "$npm_version")"
     if [[ -z "$npm_major" ]]; then
-      PREREQUISITE_ISSUES+=("error_read_npm_version|$npm_version")
-    elif (( npm_major < 10 )); then
+      if ! is_windows_environment; then
+        PREREQUISITE_ISSUES+=("error_read_npm_version|$npm_version")
+      fi
+    elif (( npm_major < 10 )) && ! is_windows_environment; then
       PREREQUISITE_ISSUES+=("error_bad_npm_version|$npm_version")
     fi
   fi
@@ -515,6 +1214,17 @@ collect_prerequisite_issues() {
     command_exists make || PREREQUISITE_ISSUES+=("error_no_make")
     command_exists g++ || PREREQUISITE_ISSUES+=("error_no_cpp_compiler")
     command_exists python3 || PREREQUISITE_ISSUES+=("error_no_python3")
+  fi
+
+  if is_windows_environment; then
+    if ! has_windows_native_build_tools; then
+      PREREQUISITE_WARNINGS+=("warn_windows_missing_build_tools")
+      PREREQUISITE_WARNINGS+=("warn_windows_registry_not_enough")
+    fi
+
+    if [[ -n "$node_major" ]] && (( node_major >= 24 )); then
+      PREREQUISITE_WARNINGS+=("warn_windows_node24_native_modules|$node_version")
+    fi
   fi
 
   if (( ${#PREREQUISITE_ISSUES[@]} > 0 )); then
@@ -537,6 +1247,18 @@ print_prerequisite_issues() {
       msg "$raw_key" >&2
     fi
     printf '\n' >&2
+  done
+}
+
+print_prerequisite_warnings() {
+  local issue raw_key raw_arg
+  for issue in "${PREREQUISITE_WARNINGS[@]}"; do
+    IFS='|' read -r raw_key raw_arg <<<"$issue"
+    if [[ -n "${raw_arg:-}" ]]; then
+      say_warn "$raw_key" "$raw_arg"
+    else
+      say_warn "$raw_key"
+    fi
   done
 }
 
@@ -701,6 +1423,13 @@ auto_install_prerequisites() {
 }
 
 ensure_npm_install_context() {
+  if is_windows_environment; then
+    [[ -n "$NPM_BIN" ]] || die error_no_npm
+    NPM_GLOBAL_PREFIX="$PRIVATE_NPM_PREFIX"
+    USE_SUDO_FOR_NPM="0"
+    return
+  fi
+
   refresh_runtime_binaries
 
   NPM_GLOBAL_PREFIX="$(trim "$("$NPM_BIN" config get prefix 2>/dev/null || true)")"
@@ -717,6 +1446,17 @@ ensure_npm_install_context() {
       die error_no_sudo
     fi
   fi
+}
+
+prepare_windows_install_runtime() {
+  if ! is_windows_environment; then
+    return
+  fi
+
+  ensure_private_node_runtime
+  ensure_windows_target_runtime_supported
+  build_private_install_env
+  ensure_npm_install_context
 }
 
 ensure_prerequisites() {
@@ -743,7 +1483,13 @@ ensure_prerequisites() {
     say_info info_auto_install_done
   fi
 
-  ensure_npm_install_context
+  if (( ${#PREREQUISITE_WARNINGS[@]} > 0 )); then
+    print_prerequisite_warnings
+  fi
+
+  if ! is_windows_environment; then
+    ensure_npm_install_context
+  fi
 }
 
 detect_supported_clis() {
@@ -857,7 +1603,18 @@ print_install_summary() {
 
 probe_registry() {
   local registry_url="$1"
-  "$NPM_BIN" view "$PACKAGE_SPEC" version \
+  local probe_package_spec=""
+  probe_package_spec="$(resolve_registry_probe_package_spec)"
+  if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
+    env "${INSTALL_ENV_ARGS[@]}" "$NPM_BIN" view "$probe_package_spec" version \
+      --registry "$registry_url" \
+      --fetch-retries=1 \
+      --fetch-timeout=6000 \
+      --silent >/dev/null 2>&1
+    return
+  fi
+
+  "$NPM_BIN" view "$probe_package_spec" version \
     --registry "$registry_url" \
     --fetch-retries=1 \
     --fetch-timeout=6000 \
@@ -891,13 +1648,76 @@ run_with_optional_sudo() {
   "$@"
 }
 
+create_install_log_file() {
+  local base_dir=""
+  local log_path=""
+
+  if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" && -n "$PRIVATE_INSTALL_LOG_DIR" ]]; then
+    base_dir="$PRIVATE_INSTALL_LOG_DIR"
+  else
+    base_dir="${TMPDIR:-/tmp}"
+  fi
+  mkdir -p "$base_dir" >/dev/null 2>&1 || true
+
+  if log_path="$(mktemp "$base_dir/codingns-install.XXXXXX.log" 2>/dev/null)"; then
+    printf '%s\n' "$log_path"
+    return
+  fi
+
+  if log_path="$(mktemp -t codingns-install.XXXXXX 2>/dev/null)"; then
+    printf '%s\n' "$log_path"
+    return
+  fi
+
+  log_path="$base_dir/codingns-install-$$.log"
+  : > "$log_path"
+  printf '%s\n' "$log_path"
+}
+
+diagnose_install_failure() {
+  local package_label="$1"
+  local log_path="$2"
+
+  [[ -n "$log_path" && -f "$log_path" ]] || return
+  [[ "$package_label" == "CodingNS" ]] || return
+
+  if grep -Eq 'Could not find any Visual Studio installation to use|Desktop development with C\+\+' "$log_path"; then
+    say_warn warn_windows_install_failed_vs
+  fi
+
+  if grep -Eq 'prebuild-install warn install (read ECONNRESET|Request timed out|No prebuilt binaries found)' "$log_path"; then
+    say_warn warn_windows_install_failed_prebuild_network
+    say_warn warn_windows_registry_not_enough
+  fi
+
+  say_warn warn_install_log_path "$log_path"
+}
+
 install_global_package_once() {
   local registry_url="$1"
   local package_spec="$2"
+  local install_log=""
 
   if [[ "$DRY_RUN" == "1" ]]; then
-    say_info_custom "npm install -g --registry $registry_url $package_spec"
+    if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
+      say_info_custom "env ${INSTALL_ENV_ARGS[*]} \"$NPM_BIN\" install -g --registry $registry_url $package_spec"
+    else
+      say_info_custom "npm install -g --registry $registry_url $package_spec"
+    fi
     return 0
+  fi
+
+  install_log="$(create_install_log_file)"
+  LAST_INSTALL_LOG="$install_log"
+
+  if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
+    env "${INSTALL_ENV_ARGS[@]}" npm_config_registry="$registry_url" \
+      "$NPM_BIN" install -g "$package_spec" \
+      --registry "$registry_url" \
+      --fetch-retries=1 \
+      --fetch-timeout=20000 \
+      --foreground-scripts 2>&1 | tee "$install_log"
+    return
   fi
 
   run_with_optional_sudo env npm_config_registry="$registry_url" \
@@ -905,7 +1725,7 @@ install_global_package_once() {
     --registry "$registry_url" \
     --fetch-retries=1 \
     --fetch-timeout=20000 \
-    --foreground-scripts
+    --foreground-scripts 2>&1 | tee "$install_log"
 }
 
 say_info_custom() {
@@ -936,6 +1756,7 @@ install_global_package() {
 
   ACTIVE_NPM_REGISTRY="$MIRROR_NPM_REGISTRY"
   install_global_package_once "$ACTIVE_NPM_REGISTRY" "$package_spec" || {
+    diagnose_install_failure "$package_label" "$LAST_INSTALL_LOG"
     if [[ "$LANG_MODE" == "zh" ]]; then
       die_custom "$package_label 在镜像源安装也失败了，请检查网络或权限。"
     else
@@ -952,6 +1773,18 @@ die_custom() {
 resolve_installed_binary() {
   local command_name="$1"
   local candidate=""
+
+  if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
+    if is_windows_environment && [[ -f "$NPM_GLOBAL_PREFIX/${command_name}.cmd" ]]; then
+      printf '%s\n' "$NPM_GLOBAL_PREFIX/${command_name}.cmd"
+      return
+    fi
+
+    if [[ -x "$NPM_GLOBAL_PREFIX/$command_name" || -f "$NPM_GLOBAL_PREFIX/$command_name" ]]; then
+      printf '%s\n' "$NPM_GLOBAL_PREFIX/$command_name"
+      return
+    fi
+  fi
 
   candidate="$(command -v "$command_name" 2>/dev/null || true)"
   if [[ -n "$candidate" ]]; then
@@ -981,9 +1814,19 @@ resolve_realpath_fallback() {
 resolve_codingns_script_path() {
   local binary_path="$1"
   local resolved_path=""
+  local private_package_root=""
+  local shim_target=""
 
   [[ -n "$binary_path" ]] || return 1
   [[ -n "$NODE_BIN" ]] || return 1
+
+  if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
+    private_package_root="$(resolve_private_package_root_from_spec "$NPM_GLOBAL_PREFIX" "$PACKAGE_SPEC" || true)"
+    if [[ -n "$private_package_root" && -f "$private_package_root/bin/codingns.mjs" ]]; then
+      printf '%s\n' "$private_package_root/bin/codingns.mjs"
+      return 0
+    fi
+  fi
 
   resolved_path="$(resolve_realpath_fallback "$binary_path" 2>/dev/null || true)"
   resolved_path="$(trim "$resolved_path")"
@@ -992,11 +1835,73 @@ resolve_codingns_script_path() {
     return 1
   fi
 
+  if [[ "$resolved_path" == *.cmd || "$resolved_path" == *.ps1 ]]; then
+    shim_target="$(resolve_script_from_npm_shim "$resolved_path" 2>/dev/null || true)"
+    shim_target="$(trim "$shim_target")"
+    if [[ -n "$shim_target" && -f "$shim_target" ]]; then
+      printf '%s\n' "$shim_target"
+      return 0
+    fi
+  fi
+
   if [[ ! -f "$resolved_path" ]]; then
     return 1
   fi
 
   printf '%s\n' "$resolved_path"
+}
+
+write_private_runtime_state() {
+  if [[ "$PRIVATE_INSTALL_CONTEXT" != "1" ]]; then
+    return
+  fi
+
+  local install_state_path="$PRIVATE_SERVICE_STATE_DIR/install-state.json"
+  local previous_state_path="$PRIVATE_SERVICE_STATE_DIR/install-state.previous.json"
+  local launch_env_path="$PRIVATE_SERVICE_STATE_DIR/launch-env.json"
+
+  mkdir -p "$PRIVATE_SERVICE_STATE_DIR"
+
+  if [[ -f "$install_state_path" ]]; then
+    cp "$install_state_path" "$previous_state_path"
+  fi
+
+  cat >"$install_state_path" <<EOF
+{
+  "schemaVersion": 1,
+  "packageName": "${CODINGNS_PACKAGE_NAME:-$PACKAGE_SPEC}",
+  "packageVersion": "${CODINGNS_PACKAGE_VERSION}",
+  "ptyPackageName": "${CODINGNS_PTY_PACKAGE_NAME}",
+  "ptyPackageVersion": "${CODINGNS_PTY_PACKAGE_VERSION}",
+  "packageSpec": "${PACKAGE_SPEC}",
+  "registry": "${ACTIVE_NPM_REGISTRY}",
+  "nodeVersion": "$(normalize_version_text "${TARGET_NODE_VERSION:-$WINDOWS_PRIVATE_NODE_VERSION}")",
+  "nodeExe": "${NODE_BIN}",
+  "npmCmd": "${NPM_BIN}",
+  "npmPrefix": "${NPM_GLOBAL_PREFIX}",
+  "pm2Home": "${PRIVATE_PM2_HOME}",
+  "codingnsCommand": "${CODINGNS_BIN}",
+  "pm2Command": "${PM2_BIN}",
+  "dataDir": "${SELECTED_DATA_DIR}",
+  "port": ${SELECTED_PORT},
+  "processName": "${PROCESS_NAME}",
+  "installedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+}
+EOF
+
+  cat >"$launch_env_path" <<EOF
+{
+  "PATH": "${PRIVATE_NODE_VERSION_DIR}:${PRIVATE_NPM_PREFIX}:${SYSTEM_PATH_SNAPSHOT}",
+  "PM2_HOME": "${PRIVATE_PM2_HOME}",
+  "npm_config_prefix": "${PRIVATE_NPM_PREFIX}",
+  "npm_config_cache": "${PRIVATE_NPM_CACHE_DIR}",
+  "npm_config_userconfig": "${PRIVATE_NPM_USERCONFIG}",
+  "CODINGNS_DATA_DIR": "${SELECTED_DATA_DIR}",
+  "CODINGNS_RUNTIME_ROOT": "${RUNTIME_HOME}",
+  "CODINGNS_RUNTIME_NODE_VERSION": "${WINDOWS_PRIVATE_NODE_VERSION}",
+  "CODINGNS_PM2_PROCESS_NAME": "${PROCESS_NAME}"
+}
+EOF
 }
 
 collect_access_urls() {
@@ -1092,6 +1997,19 @@ install_or_resolve_codingns() {
 
   CODINGNS_SCRIPT="$(resolve_codingns_script_path "$CODINGNS_BIN" || true)"
   [[ -n "$CODINGNS_SCRIPT" ]] || die error_no_codingns_after_install
+
+  CODINGNS_PACKAGE_ROOT="$(resolve_private_package_root_from_spec "$NPM_GLOBAL_PREFIX" "$PACKAGE_SPEC" || true)"
+  if [[ -z "$CODINGNS_PACKAGE_ROOT" && -n "$CODINGNS_SCRIPT" ]]; then
+    CODINGNS_PACKAGE_ROOT="$(dirname "$(dirname "$CODINGNS_SCRIPT")")"
+  fi
+
+  if [[ -n "$CODINGNS_PACKAGE_ROOT" && -f "$CODINGNS_PACKAGE_ROOT/package.json" ]]; then
+    CODINGNS_PACKAGE_NAME="$(read_package_json_field "$CODINGNS_PACKAGE_ROOT/package.json" "name" || true)"
+    CODINGNS_PACKAGE_VERSION="$(read_package_json_field "$CODINGNS_PACKAGE_ROOT/package.json" "version" || true)"
+  fi
+
+  [[ -n "$CODINGNS_PACKAGE_NAME" ]] || CODINGNS_PACKAGE_NAME="$(extract_package_name_from_spec "$PACKAGE_SPEC")"
+  resolve_codingns_pty_dependency_metadata
 }
 
 install_or_resolve_pm2() {
@@ -1124,9 +2042,28 @@ start_pm2_service() {
   mkdir -p "$SELECTED_DATA_DIR"
 
   if [[ "$DRY_RUN" == "1" ]]; then
-    say_info_custom "pm2 delete $PROCESS_NAME"
-    say_info_custom "pm2 start $NODE_BIN --name $PROCESS_NAME --cwd $HOME --interpreter none -- $CODINGNS_SCRIPT start --host 0.0.0.0 --port $SELECTED_PORT --data-dir $SELECTED_DATA_DIR"
-    say_info_custom "pm2 save"
+    if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
+      say_info_custom "env ${INSTALL_ENV_ARGS[*]} \"$PM2_BIN\" delete $PROCESS_NAME"
+      say_info_custom "env ${INSTALL_ENV_ARGS[*]} \"$PM2_BIN\" start $NODE_BIN --name $PROCESS_NAME --cwd $SELECTED_DATA_DIR --interpreter none -- $CODINGNS_SCRIPT start --host 0.0.0.0 --port $SELECTED_PORT --data-dir $SELECTED_DATA_DIR"
+      say_info_custom "env ${INSTALL_ENV_ARGS[*]} \"$PM2_BIN\" save"
+    else
+      say_info_custom "pm2 delete $PROCESS_NAME"
+      say_info_custom "pm2 start $NODE_BIN --name $PROCESS_NAME --cwd $HOME --interpreter none -- $CODINGNS_SCRIPT start --host 0.0.0.0 --port $SELECTED_PORT --data-dir $SELECTED_DATA_DIR"
+      say_info_custom "pm2 save"
+    fi
+    return
+  fi
+
+  if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
+    if env "${INSTALL_ENV_ARGS[@]}" "$PM2_BIN" describe "$PROCESS_NAME" >/dev/null 2>&1; then
+      say_info info_existing_pm2_process "$PROCESS_NAME"
+      env "${INSTALL_ENV_ARGS[@]}" "$PM2_BIN" delete "$PROCESS_NAME" >/dev/null 2>&1 || true
+    fi
+
+    env "${INSTALL_ENV_ARGS[@]}" "$PM2_BIN" start "$NODE_BIN" --name "$PROCESS_NAME" --cwd "$SELECTED_DATA_DIR" --interpreter none -- \
+      "$CODINGNS_SCRIPT" start --host 0.0.0.0 --port "$SELECTED_PORT" --data-dir "$SELECTED_DATA_DIR"
+
+    env "${INSTALL_ENV_ARGS[@]}" "$PM2_BIN" save >/dev/null
     return
   fi
 
@@ -1168,12 +2105,35 @@ configure_startup() {
   fi
 
   if [[ "$DRY_RUN" == "1" ]]; then
-    say_info_custom "pm2 startup $startup_platform -u $USER --hp $HOME"
-    say_info_custom "pm2 save"
+    if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
+      say_info_custom "env ${INSTALL_ENV_ARGS[*]} \"$PM2_BIN\" startup $startup_platform -u $USER --hp $HOME"
+      say_info_custom "env ${INSTALL_ENV_ARGS[*]} \"$PM2_BIN\" save"
+    else
+      say_info_custom "pm2 startup $startup_platform -u $USER --hp $HOME"
+      say_info_custom "pm2 save"
+    fi
     return
   fi
 
   say_info info_configuring_startup "$startup_platform"
+
+  if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
+    if [[ "$startup_platform" == "systemd" ]]; then
+      if is_root_user; then
+        env PATH="$PATH" "${INSTALL_ENV_ARGS[@]}" "$PM2_BIN" startup systemd -u "$USER" --hp "$HOME"
+      elif command_exists sudo; then
+        sudo env PATH="$PATH" "${INSTALL_ENV_ARGS[@]}" "$PM2_BIN" startup systemd -u "$USER" --hp "$HOME"
+      else
+        say_warn warn_linux_startup_no_sudo
+        return
+      fi
+    else
+      env "${INSTALL_ENV_ARGS[@]}" "$PM2_BIN" startup launchd -u "$USER" --hp "$HOME"
+    fi
+
+    env "${INSTALL_ENV_ARGS[@]}" "$PM2_BIN" save >/dev/null
+    return
+  fi
 
   if [[ "$startup_platform" == "systemd" ]]; then
     if is_root_user; then
@@ -1199,6 +2159,18 @@ print_success_summary() {
   if [[ "$ACTIVE_NPM_REGISTRY" != "" ]]; then
     printf -- '- %s\n' "$(msg info_registry "$ACTIVE_NPM_REGISTRY")"
   fi
+  if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
+    printf -- '- %s\n' "$(msg info_runtime_node "${TARGET_NODE_VERSION:-v$WINDOWS_PRIVATE_NODE_VERSION}")"
+    printf -- '- %s\n' "$(msg info_runtime_prefix "$NPM_GLOBAL_PREFIX")"
+    printf -- '- %s\n' "$(msg info_runtime_pm2_home "$PRIVATE_PM2_HOME")"
+    if [[ -n "$CODINGNS_PTY_PACKAGE_NAME" ]]; then
+      local runtime_pty_summary="$CODINGNS_PTY_PACKAGE_NAME"
+      if [[ -n "$CODINGNS_PTY_PACKAGE_VERSION" ]]; then
+        runtime_pty_summary="${runtime_pty_summary}@${CODINGNS_PTY_PACKAGE_VERSION}"
+      fi
+      printf -- '- %s\n' "$(msg info_runtime_pty "$runtime_pty_summary")"
+    fi
+  fi
 
   printf '\n'
   say_info info_access_title
@@ -1216,12 +2188,23 @@ print_success_summary() {
   say_info info_pm2_title
   if [[ "$USE_PM2" == "1" ]]; then
     printf -- '- %s\n' "$(msg info_process_name "$PROCESS_NAME")"
-    printf -- '- pm2 status\n'
-    printf -- '- pm2 logs %s\n' "$PROCESS_NAME"
-    printf -- '- pm2 restart %s\n' "$PROCESS_NAME"
-    printf -- '- pm2 stop %s\n' "$PROCESS_NAME"
+    if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
+      printf -- '- env PM2_HOME=%s %s status\n' "$PRIVATE_PM2_HOME" "$PM2_BIN"
+      printf -- '- env PM2_HOME=%s %s logs %s\n' "$PRIVATE_PM2_HOME" "$PM2_BIN" "$PROCESS_NAME"
+      printf -- '- env PM2_HOME=%s %s restart %s\n' "$PRIVATE_PM2_HOME" "$PM2_BIN" "$PROCESS_NAME"
+      printf -- '- env PM2_HOME=%s %s stop %s\n' "$PRIVATE_PM2_HOME" "$PM2_BIN" "$PROCESS_NAME"
+    else
+      printf -- '- pm2 status\n'
+      printf -- '- pm2 logs %s\n' "$PROCESS_NAME"
+      printf -- '- pm2 restart %s\n' "$PROCESS_NAME"
+      printf -- '- pm2 stop %s\n' "$PROCESS_NAME"
+    fi
     if [[ "$START_PM2_SERVICE" != "1" ]]; then
-      printf -- '- pm2 start %s --name %s --cwd %s --interpreter none -- %s start --host 0.0.0.0 --port %s --data-dir %s\n' "$NODE_BIN" "$PROCESS_NAME" "$HOME" "$CODINGNS_SCRIPT" "$SELECTED_PORT" "$SELECTED_DATA_DIR"
+      if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
+        printf -- '- env PM2_HOME=%s %s start %s --name %s --cwd %s --interpreter none -- %s start --host 0.0.0.0 --port %s --data-dir %s\n' "$PRIVATE_PM2_HOME" "$PM2_BIN" "$NODE_BIN" "$PROCESS_NAME" "$SELECTED_DATA_DIR" "$CODINGNS_SCRIPT" "$SELECTED_PORT" "$SELECTED_DATA_DIR"
+      else
+        printf -- '- pm2 start %s --name %s --cwd %s --interpreter none -- %s start --host 0.0.0.0 --port %s --data-dir %s\n' "$NODE_BIN" "$PROCESS_NAME" "$HOME" "$CODINGNS_SCRIPT" "$SELECTED_PORT" "$SELECTED_DATA_DIR"
+      fi
     fi
   else
     printf -- '- %s\n' "$(msg info_pm2_skipped)"
@@ -1230,7 +2213,7 @@ print_success_summary() {
   if [[ "$USE_PM2" != "1" || "$START_PM2_SERVICE" != "1" ]]; then
     printf '\n'
     say_info info_manual_start_title
-    printf 'codingns start --host 0.0.0.0 --port %s --data-dir %s\n' "$SELECTED_PORT" "$SELECTED_DATA_DIR"
+    printf '%s start --host 0.0.0.0 --port %s --data-dir %s\n' "$CODINGNS_BIN" "$SELECTED_PORT" "$SELECTED_DATA_DIR"
   fi
 
   printf '\n'
@@ -1255,9 +2238,11 @@ main() {
   printf '\n'
   say_info info_begin
   install_opencode_if_requested
+  prepare_windows_install_runtime
   ensure_registry_if_needed
   install_or_resolve_codingns
   install_or_resolve_pm2
+  write_private_runtime_state
   start_pm2_service
   configure_startup
   print_success_summary

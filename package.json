@@ -40,6 +40,7 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
+      "@codingns/node-pty",
       "@prisma/client",
       "@prisma/engines",
       "better-sqlite3",
