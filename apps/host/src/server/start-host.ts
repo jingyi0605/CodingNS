@@ -12,7 +12,6 @@ export interface StartedHost {
 
 export async function startHost(overrides: Partial<HostConfig> = {}): Promise<StartedHost> {
   const config = resolveHostConfig(overrides);
-  await syncReleaseManifests(config);
   const hosted = createServer(config);
   let shuttingDown = false;
 
@@ -54,6 +53,7 @@ export async function startHost(overrides: Partial<HostConfig> = {}): Promise<St
 
   hosted.startWs();
   console.info(`[host] 监听中 http://${config.host}:${config.port}`);
+  void syncReleaseManifests(config);
 
   return {
     app: hosted.app,

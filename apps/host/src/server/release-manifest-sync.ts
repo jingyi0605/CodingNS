@@ -5,7 +5,7 @@ import type { HostConfig } from "../config/env.js";
 
 const DEFAULT_ANDROID_RELEASE_MANIFEST_URL =
   "https://github.com/jingyi0605/CodingNS/releases/latest/download/android-apk.json";
-const RELEASE_SYNC_TIMEOUT_MS = 5_000;
+const RELEASE_SYNC_TIMEOUT_MS = 15_000;
 
 interface AndroidReleaseManifest {
   channel: "stable" | "beta";
@@ -47,13 +47,14 @@ export async function syncAndroidReleaseManifest(input: {
   releaseManifestRoot: string;
   manifestUrl: string;
   fetchImpl?: typeof fetch;
+  timeoutMs?: number;
 }): Promise<string> {
   const fetchImpl = input.fetchImpl ?? fetch;
   const response = await fetchImpl(input.manifestUrl, {
     headers: {
       accept: "application/json"
     },
-    signal: AbortSignal.timeout(RELEASE_SYNC_TIMEOUT_MS)
+    signal: AbortSignal.timeout(input.timeoutMs ?? RELEASE_SYNC_TIMEOUT_MS)
   });
 
   if (!response.ok) {

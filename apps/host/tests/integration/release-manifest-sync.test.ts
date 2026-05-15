@@ -112,4 +112,56 @@ describe("release-manifest-sync", () => {
 
     expect(readFileSync(manifestPath, "utf8")).toBe(originalContent);
   });
+
+  it("远端请求超时后不会覆盖本地已有文件", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-release-sync-"));
+    tempDirs.push(tempDir);
+
+    const stableDir = path.join(tempDir, "stable");
+    const manifestPath = path.join(stableDir, "android-apk.json");
+    mkdirSync(stableDir, { recursive: true });
+    writeFileSync(
+      manifestPath,
+      JSON.stringify(
+        {
+          channel: "stable",
+          version: "0.7.1",
+          versionCode: 7001,
+          packageName: "com.codingns.userapp",
+          fileName: "app-universal-release.apk",
+          downloadUrl: "https://example.invalid/app-universal-release.apk",
+          sha256: "sha256:old-digest",
+          publishedAt: "2026-05-05T08:00:00.000Z",
+          notes: "旧清单"
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const originalContent = readFileSync(manifestPath, "utf8");
+    const fetchMock = vi.fn((_: string, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => {
+            reject(init.signal?.reason ?? new Error("The operation was aborted"));
+          },
+          { once: true }
+        );
+      });
+    });
+
+    await expect(
+      syncAndroidReleaseManifest({
+        releaseManifestRoot: tempDir,
+        manifestUrl: "https://example.invalid/android-apk.json",
+        fetchImpl: fetchMock as typeof fetch,
+        timeoutMs: 1
+      })
+    ).rejects.toThrow();
+
+    expect(readFileSync(manifestPath, "utf8")).toBe(originalContent);
+  });
 });
