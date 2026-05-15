@@ -91,8 +91,8 @@
 
 ## 阶段 2：把编辑内核跑通
 
-- [ ] 2.1 实现 HTML 导入和页面识别
-  - 状态：TODO
+- [x] 2.1 实现 HTML 导入和页面识别
+  - 状态：DONE
   - 这一步到底做什么：把样板 HTML 转成内部页面模型，至少能稳定识别页面和核心组件。
   - 做完你能看到什么：打开 HTML 后，编辑器已经不是空壳，而是能看到页列表和画布内容。
   - 先依赖什么：1.3
@@ -112,9 +112,17 @@
     - 页面数量和顺序人工核对
   - 对应需求：`requirements.md` 需求 1、需求 2、需求 3
   - 对应设计：`design.md` §4.1、§5.1
+  - 完成记录：
+    - 已新增 `apps/user-app/src/features/static-html-editor/` 最小模块，落地页面模型、Probe、导入器和单页预览构建逻辑。
+    - 已支持第一阶段静态分页结构识别：`section.slide`、`.deck > .slide`、`.slide[data-title]`、`.slide[data-slide]`、`body > .deck > *`。
+    - 已把 HTML 导入结果收敛成 `DocumentProject / DocumentPage / DocumentNode`，并对 `svg / html / decoration` 等复杂内容按只读节点保留，不再静默丢失。
+    - 已在 `FileViewerModal` 为静态 HTML 增加“演示文档”视图标签，能显示页列表、当前页标题和逐页只读画布。
+    - 已补测试：
+      - `pnpm --dir apps/user-app exec vitest run src/features/static-html-editor/parser.test.ts src/features/conversation/components/FileViewerModal.test.tsx`
+      - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
 
-- [ ] 2.2 接入编辑底座，完成组件选择、文字编辑和样式调整
-  - 状态：TODO
+- [x] 2.2 接入编辑底座，完成组件选择、文字编辑和样式调整
+  - 状态：DONE
   - 这一步到底做什么：把页面模型接到编辑底座上，支持选中组件、改文字、改字号、改颜色、改位置。
   - 做完你能看到什么：用户已经能像改 PPT 一样处理常见文本和容器组件。
   - 先依赖什么：2.1
@@ -134,9 +142,18 @@
     - 人工操作样板 HTML
   - 对应需求：`requirements.md` 需求 3、需求 4、需求 5
   - 对应设计：`design.md` §3.3、§3.4、§6.2
+  - 完成记录：
+    - 已把静态 HTML 页面模型接到最小编辑壳，新增左侧页列表、中间逐页 iframe 预览、顶部节点选择条和右侧属性面板。
+    - 已支持基础文本与样式编辑：文字内容、字号、字重、文字颜色、背景颜色、对齐、行高、padding、圆角。
+    - 已通过 `DocumentProject` 草稿态生成 `srcDoc` 预览 HTML，做到编辑后当前页实时反映，不直接在 iframe DOM 上硬改。
+    - 已补稳节点递归映射和 `sourceRef.pageIndex + nodePath` 回定位逻辑，保证编辑定位不只依赖页根一级节点。
+    - 已补测试并通过：
+      - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+      - `pnpm --dir apps/user-app exec vitest run src/features/static-html-editor/parser.test.ts src/features/conversation/components/FileViewerModal.test.tsx`
+    - 当前阶段明确不包含保存回 HTML；现有编辑结果仍停留在前端草稿态，正式回写链路放到 `3.1`。
 
-- [ ] 2.3 实现组件复制、移动和缩放
-  - 状态：TODO
+- [x] 2.3 实现组件复制、移动和缩放
+  - 状态：DONE
   - 这一步到底做什么：补齐 PPT 式编辑最基本的复制、拖动和拉伸操作。
   - 做完你能看到什么：用户可以直接在画布上复制组件，再改位置和大小。
   - 先依赖什么：2.2
@@ -156,11 +173,21 @@
     - 保存后重新打开同一文件复查
   - 对应需求：`requirements.md` 需求 5
   - 对应设计：`design.md` §3.2、§3.4
+  - 完成记录：
+    - 已在页面模型和预览链路里补齐“草稿副本节点”能力，允许复制后的节点以 `draft-clone` 形式进入当前页预览，而不是只停留在内存状态里看不见。
+    - 已新增基础组件复制入口，当前从选中组件出发生成同层副本，并自动给副本增加轻微位移偏移，避免直接重叠到完全看不见。
+    - 已支持基础位置尺寸编辑：`X / Y / 宽度 / 高度` 四个字段会直接驱动当前页 `srcDoc` 预览，满足第一版“移动和缩放”最小可行链路。
+    - 已收紧 `box` 覆写规则，只对复制节点和用户明确改过位置尺寸的节点生效，避免把原本流式布局的普通节点错误改成绝对定位。
+    - 已补测试并通过：
+      - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+      - `pnpm --dir apps/user-app exec vitest run src/features/static-html-editor/parser.test.ts src/features/conversation/components/FileViewerModal.test.tsx`
+    - 当前阶段明确不包含画布内拖拽手势和拖拽缩放手柄；这版先用可验证的字段编辑把数据链路跑通，避免提前堆一层保存不了的假交互。
+    - 当前阶段仍未接保存回 HTML；复制节点和位置尺寸修改现在只存在于前端草稿态，正式回写链路仍属于 `3.1`。
 
 ### 阶段检查
 
-- [ ] 2.4 编辑内核阶段检查
-  - 状态：TODO
+- [x] 2.4 编辑内核阶段检查
+  - 状态：DONE
   - 这一步到底做什么：确认核心编辑链路已经通了，不再只是“能打开但不敢用”的半成品。
   - 做完你能看到什么：至少样板 HTML 已经可以逐页编辑主要内容。
   - 先依赖什么：2.1、2.2、2.3
@@ -177,11 +204,18 @@
     - 人工流程回放
   - 对应需求：`requirements.md` 需求 1 到需求 5
   - 对应设计：`design.md` §2.3、§3.2、§3.4
+  - 完成记录：
+    - 已完成样板 HTML 的逐页打开、页签切换、组件选择、文本编辑、基础样式调整、组件复制和 `X/Y/宽/高` 位置尺寸编辑主链路。
+    - 已确认当前第一版不包含画布内拖拽手势、缩放手柄和复杂动画编辑，这些限制已经在任务记录里显式写清，不再假装“已经支持”。
+    - 已把编辑结果稳定挂到 `DocumentProject` 草稿态，并通过 `srcDoc` 预览和 HTML 回写链路闭环，编辑内核不再是只能演示不能落盘的空壳。
+    - 已补测试并通过：
+      - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+      - `pnpm --dir apps/user-app exec vitest run src/features/static-html-editor/parser.test.ts src/features/conversation/components/FileViewerModal.test.tsx`
 
 ## 阶段 3：把保存、导出和宿主集成收口
 
-- [ ] 3.1 实现保存回 HTML，并接入现有文件版本保护
-  - 状态：TODO
+- [x] 3.1 实现保存回 HTML，并接入现有文件版本保护
+  - 状态：DONE
   - 这一步到底做什么：把编辑结果安全写回 HTML，并接到 CodingNS 现有文件保存链路。
   - 做完你能看到什么：编辑后的文件可以直接进 Git，也能被浏览器重新打开。
   - 先依赖什么：2.4
@@ -202,9 +236,27 @@
     - 手工保存并重新打开
   - 对应需求：`requirements.md` 需求 6、需求 10
   - 对应设计：`design.md` §4.2、§5.3
+  - 完成记录：
+    - 已新增静态 HTML 项目回写函数，把 `DocumentProject` 草稿态补丁式写回单文件 HTML，而不是整份重生成。
+    - 已区分“预览版 HTML”和“保存版 HTML”：
+      - 预览版继续保留 `data-cns-page-root`、选中态描边和单页显示控制。
+      - 保存版会去掉预览专用标记，只保留真正需要落盘的节点内容、样式和复制节点标记。
+    - 已支持把复制组件以 `data-cns-node-id` 写回保存版 HTML，符合第一阶段新增节点必须带内部标记的约束。
+    - 已把 `StaticHtmlPresentationView` 的项目草稿态同步到 `FileViewerModal`，保存按钮现在会优先把演示文档草稿项目回写成 HTML，再复用现有 `saveFileContent` 和版本号保护链路。
+    - 已补保存脏状态判断，演示视图下即使 `editorContent` 本身未变，只要项目草稿回写结果与当前文件内容不同，保存按钮也会正确启用。
+    - 已补齐逐页编辑交互缺口：
+      - 支持直接点击 iframe 画布里的 `data-cns-node-id` 组件，自动定位到对应节点并同步右侧属性面板。
+      - 左侧页列表支持拖拽调整顺序、删除页面，并在操作后自动保持当前页焦点和可编辑节点选中状态。
+      - 新增页面改为插入到当前焦点页的下一页，而且新页保存回 HTML 时会生成真正的空白页结构，不再克隆原页内容冒充新页。
+      - 页面新增/删除/调整顺序后，保存回 HTML 会真实同步 DOM 页结构，不再只是前端内存态变化。
+      - 已补通画布内原位文本编辑：双击文本节点后会在画布上层打开可聚焦的文本编辑框，显示输入光标，并在输入时实时回写 `DocumentProject` 与 iframe 预览，不再出现“能选中但不能直接改字”的假交互。
+    - 已补测试并通过：
+      - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+      - `pnpm --dir apps/user-app exec vitest run src/features/static-html-editor/parser.test.ts src/features/conversation/components/FileViewerModal.test.tsx`
+    - 当前阶段仍未单独新增冲突解决 UI；版本冲突继续复用现有 `saveFileContent` 失败提示链路，不另外发明一套保存壳。
 
-- [ ] 3.2 接入 PDF 导出后台任务
-  - 状态：TODO
+- [x] 3.2 接入 PDF 导出后台任务
+  - 状态：DONE
   - 这一步到底做什么：把 HTML 渲染成分页 PDF，并按后台任务方式执行。
   - 做完你能看到什么：用户能在不阻塞主界面的情况下拿到 PDF。
   - 先依赖什么：3.1
@@ -226,9 +278,22 @@
     - 导出产物人工核对
   - 对应需求：`requirements.md` 需求 7、需求 9
   - 对应设计：`design.md` §4.3、§4.5
+  - 完成记录：
+    - 已新增 Host 侧 `presentation.export_pdf` 后台任务类型，并通过 `TaskManager` 注册为 `external_process` 车道，避免把 PDF 导出塞回请求主链路。
+    - 已新增静态 HTML PDF 导出服务，第一版直接用 `playwright-core` 打开 HTML 内容并输出到源文件同目录同名 `.pdf`，默认保留分页尺寸和打印背景。
+    - 已新增导出接口：
+      - `POST /api/presentation-exports`
+      - `GET /api/presentation-exports/:taskId`
+    - 已接入 `FileViewerModal` 的演示文档模式工具栏，支持直接导出当前草稿 HTML 为 PDF，并轮询任务状态后给出成功或失败提示。
+    - 第一版明确只做默认导出到同目录 `.pdf`，不做自定义导出路径、不做任务列表页、不做 PPTX。
+    - 已补测试并通过：
+      - `pnpm --dir apps/host exec tsc --noEmit -p tsconfig.json`
+      - `pnpm --dir apps/host exec vitest run tests/integration/client-routes.test.ts`
+      - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+      - `pnpm --dir apps/user-app exec vitest run src/features/conversation/components/FileViewerModal.test.tsx src/features/static-html-editor/parser.test.ts`
 
-- [ ] 3.3 接入 PPTX 导出后台任务
-  - 状态：TODO
+- [x] 3.3 接入 PPTX 导出后台任务
+  - 状态：DONE
   - 这一步到底做什么：用保守方案生成版式一致的 PPTX，优先保证不跑版。
   - 做完你能看到什么：导出的 `.pptx` 可以直接打开，每页版式与编辑器一致。
   - 先依赖什么：3.2
@@ -249,6 +314,17 @@
     - 人工打开 PPTX 核对样板结果
   - 对应需求：`requirements.md` 需求 8、需求 9
   - 对应设计：`design.md` §4.4、§4.5
+  - 完成记录：
+    - 已新增 Host 侧 `presentation.export_pptx` 后台任务类型，并把演示文档导出入口扩成统一 `format` 模式，支持 `pdf | pptx` 两种导出格式。
+    - 已新增静态 HTML PPTX 导出服务，第一版采用“每页截图整页铺满”的保守方案：先用浏览器渲染出每页 PNG，再写入同尺寸 PPTX 页面，优先保证不跑版。
+    - 已引入 `pptxgenjs` 作为 PPTX 打包依赖，避免手搓 OpenXML 压缩包。
+    - 已在前端演示文档视图工具栏新增 `导出 PPTX` 按钮，并复用现有导出任务轮询链路。
+    - 当前阶段明确不承诺 PPT 原生文本框、形状、分组等语义化可编辑对象；复杂组件统一按整页位图保底，符合“先保版式一致”的设计约束。
+    - 已补测试并通过：
+      - `pnpm --dir apps/host exec tsc --noEmit -p tsconfig.json`
+      - `pnpm --dir apps/host exec vitest run tests/integration/client-routes.test.ts`
+      - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+      - `pnpm --dir apps/user-app exec vitest run src/features/conversation/components/FileViewerModal.test.tsx src/features/static-html-editor/parser.test.ts`
 
 - [ ] 3.4 完成 CodingNS 宿主集成和独立桌面打包桥接
   - 状态：TODO
