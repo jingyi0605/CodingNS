@@ -59,6 +59,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureButlerControlTimerSchema(db);
   ensureAssistantAutomationSchema(db);
   ensureAssistantSandboxSchema(db);
+  ensureDocumentTemplateSchema(db);
   ensureButlerInboxSchema(db);
   ensureButlerFollowUpTaskSchema(db);
   ensureVerificationRunSchema(db);
@@ -92,11 +93,29 @@ function ensureAuthTokenDeviceColumns(db: Database.Database): void {
 
   if (!columnNames.has("caller_kind")) {
     db.exec(
-      "ALTER TABLE auth_tokens ADD COLUMN caller_kind TEXT CHECK (caller_kind IN ('interactive_user', 'assistant_runtime'))"
+      "ALTER TABLE auth_tokens ADD COLUMN caller_kind TEXT CHECK (caller_kind IN ('interactive_user', 'assistant_runtime', 'workspace_session'))"
     );
   }
 
+  if (!columnNames.has("capability_profile")) {
+    db.exec("ALTER TABLE auth_tokens ADD COLUMN capability_profile TEXT");
+  }
+
+  if (!columnNames.has("workspace_id")) {
+    db.exec("ALTER TABLE auth_tokens ADD COLUMN workspace_id TEXT");
+  }
+
+  if (!columnNames.has("project_id")) {
+    db.exec("ALTER TABLE auth_tokens ADD COLUMN project_id TEXT");
+  }
+
+  if (!columnNames.has("session_id")) {
+    db.exec("ALTER TABLE auth_tokens ADD COLUMN session_id TEXT");
+  }
+
   db.exec("CREATE INDEX IF NOT EXISTS idx_auth_tokens_device_session_id ON auth_tokens(device_session_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_auth_tokens_workspace_id ON auth_tokens(workspace_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_auth_tokens_session_id ON auth_tokens(session_id)");
 }
 
 function tableExists(db: Database.Database, tableName: string): boolean {
@@ -873,6 +892,25 @@ function ensureVerificationRunSchema(db: Database.Database): void {
 
     PRAGMA foreign_keys = ON;
   `);
+}
+
+function ensureDocumentTemplateSchema(db: Database.Database): void {
+  if (!tableExists(db, "document_templates")) {
+    return;
+  }
+
+  const columns = db
+    .prepare("PRAGMA table_info(document_templates)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("mapping_json")) {
+    db.exec("ALTER TABLE document_templates ADD COLUMN mapping_json TEXT NOT NULL DEFAULT '{}'");
+  }
+
+  if (!columnNames.has("template_source_path")) {
+    db.exec("ALTER TABLE document_templates ADD COLUMN template_source_path TEXT");
+  }
 }
 
 function ensureButlerInboxSchema(db: Database.Database): void {

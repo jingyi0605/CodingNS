@@ -1,14 +1,16 @@
 import { accessSync, chmodSync, constants, existsSync } from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 
-import { spawn, type IPty } from "node-pty";
-
 import { AppError } from "../../../shared/errors/app-error.js";
 import type { TerminalInstance } from "../../../types/domain.js";
+import {
+  loadNodePty,
+  resolveLoadedNodePtyPackageRoot,
+  type IPty
+} from "./node-pty-loader.js";
 
-const require = createRequire(import.meta.url);
+const { spawn } = loadNodePty();
 let hasEnsuredPtySpawnHelper = false;
 
 export interface TerminalRuntimeExitEvent {
@@ -173,17 +175,18 @@ function ensurePtySpawnHelperExecutable(): void {
 }
 
 function resolvePtySpawnHelperPath(): string | null {
-  try {
-    const packageJsonPath = require.resolve("node-pty/package.json");
-    const helperPath = path.join(
-      path.dirname(packageJsonPath),
-      "prebuilds",
-      `${process.platform}-${process.arch}`,
-      "spawn-helper"
-    );
+  const packageRoot = resolveLoadedNodePtyPackageRoot();
 
-    return existsSync(helperPath) ? helperPath : null;
-  } catch {
+  if (!packageRoot) {
     return null;
   }
+
+  const helperPath = path.join(
+    packageRoot,
+    "prebuilds",
+    `${process.platform}-${process.arch}`,
+    "spawn-helper"
+  );
+
+  return existsSync(helperPath) ? helperPath : null;
 }

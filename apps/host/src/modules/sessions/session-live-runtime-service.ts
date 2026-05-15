@@ -388,6 +388,8 @@ export class SessionLiveRuntimeService {
       const capabilities = this.sessionHistoryService.getProviderCapabilitiesSnapshot(input.provider);
       const providerBinding = this.sessionProviderConfigService.prepareSessionBinding({
         sessionId,
+        userId: input.userId,
+        workspaceId: workspace.id,
         provider: input.provider as SessionListItem["provider"],
         providerConfigMode: input.providerConfigMode,
         providerPresetId: input.providerPresetId ?? null
@@ -417,7 +419,9 @@ export class SessionLiveRuntimeService {
       const providerInstructionFilePath = resolveRuntimeInstructionFilePath(
         input.provider,
         workspace.path,
-        input.runtimeOptions?.providerInstructionFilePath ?? null
+        input.runtimeOptions?.providerInstructionFilePath
+          ?? providerLaunchContext.providerInstructionFilePath
+          ?? null
       );
 
       this.ensureCapability(capabilities, "provider", "canStartSession", "provider 不支持 start-live");
@@ -1837,7 +1841,9 @@ export class SessionLiveRuntimeService {
       const providerInstructionFilePath = resolveRuntimeInstructionFilePath(
         session.provider,
         workspace.path,
-        input.runtimeOptions?.providerInstructionFilePath ?? null
+        input.runtimeOptions?.providerInstructionFilePath
+          ?? providerLaunchContext.providerInstructionFilePath
+          ?? null
       );
 
       this.ensureCapability(capabilities, "sessionId", "canSendMessage", "provider 不支持实时对话");
@@ -2383,12 +2389,14 @@ export class SessionLiveRuntimeService {
   }
 
   private resolveRequestedSessionProviderBinding(
-    session: Pick<SessionListItem, "sessionId" | "provider">,
-    input: Pick<SendLiveMessageInput, "providerConfigMode" | "providerPresetId">,
+    session: Pick<SessionListItem, "sessionId" | "provider" | "workspaceId">,
+    input: Pick<SendLiveMessageInput, "userId" | "providerConfigMode" | "providerPresetId">,
     existingBinding: ReturnType<SessionBindingRepository["findBySessionId"]>
   ) {
     return this.sessionProviderConfigService.resolveSessionBinding({
       sessionId: session.sessionId,
+      userId: input.userId,
+      workspaceId: session.workspaceId,
       provider: session.provider as SessionListItem["provider"],
       existingBinding,
       providerConfigMode: input.providerConfigMode,

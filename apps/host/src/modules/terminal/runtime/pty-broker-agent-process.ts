@@ -1,7 +1,5 @@
 import net from "node:net";
 
-import { spawn } from "node-pty";
-
 import {
   cleanupPtyBrokerEndpoint,
   createJsonLineParser,
@@ -15,12 +13,14 @@ import {
   readRequiredCliArg,
   writeJsonLine
 } from "./pty-broker-shared.js";
+import { loadNodePty } from "./node-pty-loader.js";
 
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 30;
 const MIN_COLS = 20;
 const MIN_ROWS = 5;
 const MAX_BUFFERED_BYTES = 1024 * 1024;
+const { spawn } = loadNodePty();
 
 await main();
 

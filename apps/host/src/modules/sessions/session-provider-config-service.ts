@@ -27,6 +27,7 @@ interface SessionProviderBindingPreparation {
 interface SessionProviderLaunchContext {
   runtimeHomeDir: string | null;
   runtimeEnv: Record<string, string>;
+  providerInstructionFilePath?: string | null;
 }
 
 export interface SessionProviderBindingDebugSummary {
@@ -61,6 +62,7 @@ interface StoredRuntimeMetadata {
   provider: SessionBinding["provider"];
   providerPresetId: string;
   runtimeEnv: Record<string, string>;
+  workspaceSessionInstructionFilePath?: string | null;
 }
 
 interface WorkspaceSessionRuntimeContextPort {
@@ -71,7 +73,11 @@ interface WorkspaceSessionRuntimeContextPort {
     projectId?: string | null;
     provider: SessionBinding["provider"];
     runtimeHomeDir: string;
-  }): void;
+  }): {
+    authFilePath: string;
+    instructionFilePath: string;
+    runtimeEnv: Record<string, string>;
+  };
 }
 
 const SESSION_RUNTIME_METADATA_FILE = ".codingns-provider-runtime.json";
@@ -151,7 +157,10 @@ export class SessionProviderConfigService {
 
       const runtimeHomeDir = this.resolveRuntimeHomeDir(input.provider, input.sessionId);
       this.materializeGlobalRuntimeHome(input.provider, runtimeHomeDir);
-      this.syncWorkspaceSessionRuntimeContext(input, runtimeHomeDir);
+      this.syncWorkspaceSessionRuntimeContext({
+        ...input,
+        providerPresetId: null
+      }, runtimeHomeDir);
 
       return {
         providerConfigMode: selection.providerConfigMode,
@@ -176,7 +185,10 @@ export class SessionProviderConfigService {
 
     const runtimeHomeDir = this.resolveRuntimeHomeDir(input.provider, input.sessionId);
     this.materializeRuntimeHome(input.provider, runtimeHomeDir, preset);
-    this.syncWorkspaceSessionRuntimeContext(input, runtimeHomeDir);
+    this.syncWorkspaceSessionRuntimeContext({
+      ...input,
+      providerPresetId: selection.providerPresetId
+    }, runtimeHomeDir);
 
     return {
       providerConfigMode: selection.providerConfigMode,
@@ -350,7 +362,8 @@ export class SessionProviderConfigService {
 
     return {
       runtimeHomeDir: baseLaunchContext.runtimeHomeDir,
-      runtimeEnv: mergeLaunchRuntimeEnv(baseLaunchContext.runtimeEnv, openCliResolution)
+      runtimeEnv: mergeLaunchRuntimeEnv(baseLaunchContext.runtimeEnv, openCliResolution),
+      providerInstructionFilePath: baseLaunchContext.providerInstructionFilePath ?? null
     };
   }
 
@@ -363,7 +376,8 @@ export class SessionProviderConfigService {
     if (!runtimeHomeDir) {
       return {
         runtimeHomeDir: null,
-        runtimeEnv: {}
+        runtimeEnv: {},
+        providerInstructionFilePath: null
       };
     }
 
@@ -371,7 +385,8 @@ export class SessionProviderConfigService {
 
     return {
       runtimeHomeDir,
-      runtimeEnv: metadata.runtimeEnv
+      runtimeEnv: metadata.runtimeEnv,
+      providerInstructionFilePath: metadata.workspaceSessionInstructionFilePath ?? null
     };
   }
 
@@ -504,6 +519,7 @@ export class SessionProviderConfigService {
       userId?: string | null;
       workspaceId?: string | null;
       projectId?: string | null;
+      providerPresetId?: string | null;
       provider: SessionBinding["provider"];
     },
     runtimeHomeDir: string
@@ -515,13 +531,26 @@ export class SessionProviderConfigService {
       return;
     }
 
-    this.workspaceSessionRuntimeContextService.syncRuntimeContext({
+    const runtimeContext = this.workspaceSessionRuntimeContextService.syncRuntimeContext({
       sessionId: input.sessionId,
       userId,
       workspaceId,
       projectId: input.projectId?.trim() || null,
       provider: input.provider,
       runtimeHomeDir
+    });
+    const metadata = this.readRuntimeMetadata(
+      runtimeHomeDir,
+      input.provider,
+      input.providerPresetId?.trim() || null
+    );
+    this.writeRuntimeMetadata(runtimeHomeDir, {
+      ...metadata,
+      runtimeEnv: {
+        ...metadata.runtimeEnv,
+        ...runtimeContext.runtimeEnv
+      },
+      workspaceSessionInstructionFilePath: runtimeContext.instructionFilePath
     });
   }
 

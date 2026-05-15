@@ -44,6 +44,7 @@ export function buildButlerInboxAnalysisInstruction(input: {
     `5. 必须检查项目会话：至少执行一次 \`codingns assistant sessions list --project ${input.project.id}\`。`,
     "6. 如果发现与当前代办直接相关的会话，继续按需读取 `sessions runtime` 和 `sessions messages`，只看最相关的 1 到 3 个会话。",
     "7. 如果项目下存在可用终端，按需读取 `terminals list` 和 `terminals history`，但不要发送任何终端输入。",
+    "8. 如果代办明显涉及办公文档、浏览器自动化或 SSH/控制台运维，必须补查对应 `codingns assistant office ... --help` 或实际 office 查询结果，不能只停留在普通项目会话信息。",
     "8. 必须根据你查到的真实信息判断：当前仓库是否已经有相关实现、相关会话是否已经做过一半、当前最合理的下一步是什么。",
     "",
     "## 严格禁止",
