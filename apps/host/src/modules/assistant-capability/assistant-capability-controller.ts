@@ -100,6 +100,88 @@ interface AssistantWorkspaceBrowseQuery {
   path?: string;
 }
 
+interface AssistantOfficeDocumentBody {
+  workspaceId?: string | null;
+  title?: string;
+  templateId?: string | null;
+  templateKey?: string | null;
+  content?: unknown;
+  outline?: unknown;
+  summary?: string | null;
+}
+
+interface AssistantOfficeDocumentUpdateBody {
+  title?: string | null;
+  templateId?: string | null;
+  content?: unknown;
+  outline?: unknown;
+  summary?: string | null;
+  status?: "draft" | "reviewing" | "published" | "archived";
+}
+
+interface AssistantOfficeDocumentExportBody {
+  workspaceId?: string | null;
+  format?: "docx" | "pdf" | "md";
+  riskLevel?: "low" | "medium" | "high";
+  execute?: boolean;
+}
+
+interface AssistantOfficeBrowserProfileQuery {
+  workspaceId?: string;
+}
+
+interface AssistantOfficeBrowserProfileBody {
+  workspaceId?: string | null;
+  engine?: "chrome" | "edge";
+  mode?: "persistent" | "cdp_attached";
+  displayName?: string | null;
+  ownershipScope?: "user" | "workspace";
+  cdpEndpoint?: string | null;
+}
+
+interface AssistantOfficeBrowserTaskBody {
+  workspaceId?: string | null;
+  title?: string;
+  profileId?: string;
+  riskLevel?: "low" | "medium" | "high";
+  input?: unknown;
+  execute?: boolean;
+}
+
+interface AssistantOfficeOpsTargetListQuery {
+  kind?: "ssh_host" | "web_console";
+  status?: "active" | "disabled" | "error";
+}
+
+interface AssistantOfficeOpsTargetBody {
+  kind?: "ssh_host" | "web_console";
+  displayName?: string;
+  environment?: string | null;
+  config?: unknown;
+  credentialRef?: string | null;
+}
+
+interface AssistantOfficeOpsSshTaskBody {
+  title?: string;
+  targetId?: string;
+  riskLevel?: "low" | "medium" | "high";
+  input?: unknown;
+  execute?: boolean;
+}
+
+interface AssistantOfficeOpsBrowserTaskBody {
+  title?: string;
+  targetId?: string;
+  profileId?: string;
+  riskLevel?: "low" | "medium" | "high";
+  input?: unknown;
+}
+
+interface AssistantOfficeTaskApprovalBody {
+  status?: "approved" | "rejected";
+  decisionNote?: string | null;
+}
+
 interface AssistantWorktreeTreeQuery {
   rootWorkspaceId?: string;
 }
@@ -265,6 +347,26 @@ interface AssistantReorderWorkspacesBody {
 
 interface AssistantWorkspaceParams {
   workspaceId: string;
+}
+
+interface AssistantOfficeDocumentParams {
+  documentId: string;
+}
+
+interface AssistantOfficeTaskParams {
+  taskId: string;
+}
+
+interface AssistantOfficeApprovalParams {
+  approvalId: string;
+}
+
+interface AssistantOfficeBrowserProfileParams {
+  profileId: string;
+}
+
+interface AssistantOfficeOpsTargetParams {
+  targetId: string;
 }
 
 interface AssistantWorkspaceNavigationStateBody {
@@ -889,6 +991,226 @@ export class AssistantCapabilityController {
     reply: FastifyReply
   ): Promise<void> => {
     reply.send(await this.assistantCapabilityService.closeTerminal(request.params.terminalId));
+  };
+
+  readonly createOfficeDocument = async (
+    request: FastifyRequest<{ Body: AssistantOfficeDocumentBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.createOfficeDocument({
+      userId: requireUserId(request),
+      workspaceId: normalizeNullableText(request.body.workspaceId),
+      title: requireNonEmptyText(request.body.title, "title", "创建文档必须提供 title"),
+      templateId: normalizeNullableText(request.body.templateId),
+      templateKey: normalizeNullableText(request.body.templateKey),
+      content: request.body.content,
+      outline: request.body.outline,
+      summary: normalizeNullableText(request.body.summary)
+    }));
+  };
+
+  readonly updateOfficeDocument = async (
+    request: FastifyRequest<{
+      Params: AssistantOfficeDocumentParams;
+      Body: AssistantOfficeDocumentUpdateBody;
+    }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.updateOfficeDocument({
+      userId: requireUserId(request),
+      documentId: request.params.documentId,
+      title: request.body.title === undefined ? undefined : normalizeNullableText(request.body.title),
+      templateId: normalizeNullableText(request.body.templateId),
+      content: request.body.content,
+      outline: request.body.outline,
+      summary: request.body.summary === undefined ? undefined : normalizeNullableText(request.body.summary),
+      status: request.body.status
+    }));
+  };
+
+  readonly exportOfficeDocument = async (
+    request: FastifyRequest<{
+      Params: AssistantOfficeDocumentParams;
+      Body: AssistantOfficeDocumentExportBody;
+    }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.assistantCapabilityService.exportOfficeDocument({
+      userId: requireUserId(request),
+      documentId: request.params.documentId,
+      workspaceId: normalizeNullableText(request.body.workspaceId),
+      format: request.body.format,
+      riskLevel: request.body.riskLevel,
+      execute: typeof request.body.execute === "boolean" ? request.body.execute : undefined
+    }));
+  };
+
+  readonly getOfficeDocumentTask = async (
+    request: FastifyRequest<{ Params: AssistantOfficeTaskParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.getOfficeDocumentTask(
+      request.params.taskId,
+      requireUserId(request)
+    ));
+  };
+
+  readonly listOfficeBrowserProfiles = async (
+    request: FastifyRequest<{ Querystring: AssistantOfficeBrowserProfileQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.listOfficeBrowserProfiles(
+      requireUserId(request),
+      normalizeNullableText(request.query.workspaceId)
+    ));
+  };
+
+  readonly createOfficeBrowserProfile = async (
+    request: FastifyRequest<{ Body: AssistantOfficeBrowserProfileBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.createOfficeBrowserProfile({
+      userId: requireUserId(request),
+      workspaceId: normalizeNullableText(request.body.workspaceId),
+      engine: request.body.engine ?? "chrome",
+      mode: request.body.mode ?? "persistent",
+      displayName: normalizeNullableText(request.body.displayName),
+      ownershipScope: request.body.ownershipScope ?? undefined,
+      cdpEndpoint: normalizeNullableText(request.body.cdpEndpoint)
+    }));
+  };
+
+  readonly getOfficeBrowserProfile = async (
+    request: FastifyRequest<{ Params: AssistantOfficeBrowserProfileParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.getOfficeBrowserProfile(
+      request.params.profileId,
+      requireUserId(request)
+    ));
+  };
+
+  readonly createOfficeBrowserTask = async (
+    request: FastifyRequest<{ Body: AssistantOfficeBrowserTaskBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.assistantCapabilityService.createOfficeBrowserTask({
+      userId: requireUserId(request),
+      workspaceId: normalizeNullableText(request.body.workspaceId),
+      title: request.body.title?.trim() ?? "浏览器任务",
+      profileId: requireNonEmptyText(request.body.profileId, "profileId", "创建浏览器任务必须提供 profileId"),
+      riskLevel: request.body.riskLevel,
+      input: request.body.input,
+      execute: typeof request.body.execute === "boolean" ? request.body.execute : undefined
+    }));
+  };
+
+  readonly getOfficeBrowserTask = async (
+    request: FastifyRequest<{ Params: AssistantOfficeTaskParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.getOfficeBrowserTask(
+      request.params.taskId,
+      requireUserId(request)
+    ));
+  };
+
+  readonly listOfficeOpsTargets = async (
+    request: FastifyRequest<{ Querystring: AssistantOfficeOpsTargetListQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.listOfficeOpsTargets(
+      requireUserId(request),
+      request.query.kind ?? null,
+      request.query.status ?? null
+    ));
+  };
+
+  readonly createOfficeOpsTarget = async (
+    request: FastifyRequest<{ Body: AssistantOfficeOpsTargetBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.createOfficeOpsTarget({
+      userId: requireUserId(request),
+      kind: request.body.kind ?? "ssh_host",
+      displayName: requireNonEmptyText(request.body.displayName, "displayName", "创建运维目标必须提供 displayName"),
+      environment: normalizeNullableText(request.body.environment),
+      config: request.body.config ?? {},
+      credentialRef: normalizeNullableText(request.body.credentialRef)
+    }));
+  };
+
+  readonly getOfficeOpsTarget = async (
+    request: FastifyRequest<{ Params: AssistantOfficeOpsTargetParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.getOfficeOpsTarget(
+      request.params.targetId,
+      requireUserId(request)
+    ));
+  };
+
+  readonly createOfficeOpsSshTask = async (
+    request: FastifyRequest<{ Body: AssistantOfficeOpsSshTaskBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.assistantCapabilityService.createOfficeOpsSshTask({
+      userId: requireUserId(request),
+      title: request.body.title?.trim() ?? "SSH 运维任务",
+      targetId: requireNonEmptyText(request.body.targetId, "targetId", "创建 SSH 运维任务必须提供 targetId"),
+      riskLevel: request.body.riskLevel,
+      input: request.body.input,
+      execute: typeof request.body.execute === "boolean" ? request.body.execute : undefined
+    }));
+  };
+
+  readonly executeOfficeOpsTask = async (
+    request: FastifyRequest<{ Params: AssistantOfficeTaskParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.assistantCapabilityService.executeOfficeOpsTask({
+      userId: requireUserId(request),
+      taskId: request.params.taskId
+    }));
+  };
+
+  readonly replyOfficeTaskApproval = async (
+    request: FastifyRequest<{
+      Params: AssistantOfficeApprovalParams;
+      Body: AssistantOfficeTaskApprovalBody;
+    }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.replyOfficeTaskApproval({
+      userId: requireUserId(request),
+      approvalId: request.params.approvalId,
+      status: request.body.status ?? "approved",
+      decisionNote: normalizeNullableText(request.body.decisionNote)
+    }));
+  };
+
+  readonly createOfficeOpsBrowserTask = async (
+    request: FastifyRequest<{ Body: AssistantOfficeOpsBrowserTaskBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.createOfficeOpsBrowserTask({
+      userId: requireUserId(request),
+      title: request.body.title?.trim() ?? "浏览器运维任务",
+      targetId: requireNonEmptyText(request.body.targetId, "targetId", "创建浏览器运维任务必须提供 targetId"),
+      profileId: requireNonEmptyText(request.body.profileId, "profileId", "创建浏览器运维任务必须提供 profileId"),
+      riskLevel: request.body.riskLevel,
+      input: request.body.input
+    }));
+  };
+
+  readonly getOfficeOpsTask = async (
+    request: FastifyRequest<{ Params: AssistantOfficeTaskParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.assistantCapabilityService.getOfficeOpsTask(
+      request.params.taskId,
+      requireUserId(request)
+    ));
   };
 
   readonly listWorkspaces = async (

@@ -60,6 +60,10 @@ export class ButlerAuthService {
       tokenHash: hashToken(accessToken),
       deviceSessionId: null,
       callerKind: "assistant_runtime",
+      capabilityProfile: "butler-full",
+      workspaceId: null,
+      projectId: null,
+      sessionId: null,
       expiresAt,
       revokedAt: null,
       createdAt: issuedAt

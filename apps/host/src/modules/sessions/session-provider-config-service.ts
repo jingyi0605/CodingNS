@@ -10,6 +10,7 @@ import {
   type ModelPresetRuntimeConfigDto,
   type ModelSwitchAppId
 } from "../model-switch/cc-switch-adapter.js";
+import type { WorkspaceSessionAuthService } from "./workspace-session-auth-service.js";
 import type { OpenCliSessionRuntimeResolution } from "../opencli/opencli-runtime-resolver.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import type {
@@ -62,6 +63,17 @@ interface StoredRuntimeMetadata {
   runtimeEnv: Record<string, string>;
 }
 
+interface WorkspaceSessionRuntimeContextPort {
+  syncRuntimeContext(input: {
+    sessionId: string;
+    userId: string;
+    workspaceId: string;
+    projectId?: string | null;
+    provider: SessionBinding["provider"];
+    runtimeHomeDir: string;
+  }): void;
+}
+
 const SESSION_RUNTIME_METADATA_FILE = ".codingns-provider-runtime.json";
 const PROVIDER_DEFAULT_MODEL_ID = "provider-default";
 const SUPPORTED_SESSION_PRESET_PROVIDERS = new Set<SessionBinding["provider"]>([
@@ -110,11 +122,15 @@ export class SessionProviderConfigService {
     private readonly config: HostConfig,
     private readonly ccSwitchAdapter: CcSwitchAdapter,
     private readonly openCliRuntimeResolver?: OpenCliRuntimeResolverPort,
-    private readonly openCliBridgeSkillService?: OpenCliBridgeSkillServicePort
+    private readonly openCliBridgeSkillService?: OpenCliBridgeSkillServicePort,
+    private readonly workspaceSessionRuntimeContextService?: WorkspaceSessionRuntimeContextPort
   ) {}
 
   prepareSessionBinding(input: {
     sessionId: string;
+    userId?: string | null;
+    workspaceId?: string | null;
+    projectId?: string | null;
     provider: SessionBinding["provider"];
     providerConfigMode?: SessionProviderConfigMode | null;
     providerPresetId?: string | null;
@@ -135,6 +151,7 @@ export class SessionProviderConfigService {
 
       const runtimeHomeDir = this.resolveRuntimeHomeDir(input.provider, input.sessionId);
       this.materializeGlobalRuntimeHome(input.provider, runtimeHomeDir);
+      this.syncWorkspaceSessionRuntimeContext(input, runtimeHomeDir);
 
       return {
         providerConfigMode: selection.providerConfigMode,
@@ -159,6 +176,7 @@ export class SessionProviderConfigService {
 
     const runtimeHomeDir = this.resolveRuntimeHomeDir(input.provider, input.sessionId);
     this.materializeRuntimeHome(input.provider, runtimeHomeDir, preset);
+    this.syncWorkspaceSessionRuntimeContext(input, runtimeHomeDir);
 
     return {
       providerConfigMode: selection.providerConfigMode,
@@ -169,6 +187,9 @@ export class SessionProviderConfigService {
 
   resolveSessionBinding(input: {
     sessionId: string;
+    userId?: string | null;
+    workspaceId?: string | null;
+    projectId?: string | null;
     provider: SessionBinding["provider"];
     existingBinding?: Pick<
       SessionBinding,
@@ -225,6 +246,9 @@ export class SessionProviderConfigService {
 
       const preparedBinding = this.prepareSessionBinding({
         sessionId: input.sessionId,
+        userId: input.userId ?? null,
+        workspaceId: input.workspaceId ?? existingBinding?.workspaceId ?? null,
+        projectId: input.projectId ?? null,
         provider: input.provider,
         providerConfigMode: selection.providerConfigMode,
         providerPresetId: selection.providerPresetId
@@ -253,6 +277,9 @@ export class SessionProviderConfigService {
 
     const preparedBinding = this.prepareSessionBinding({
       sessionId: input.sessionId,
+      userId: input.userId ?? null,
+      workspaceId: input.workspaceId ?? existingBinding?.workspaceId ?? null,
+      projectId: input.projectId ?? null,
       provider: input.provider,
       providerConfigMode: selection.providerConfigMode,
       providerPresetId: selection.providerPresetId
@@ -469,6 +496,33 @@ export class SessionProviderConfigService {
       provider,
       sessionId
     );
+  }
+
+  private syncWorkspaceSessionRuntimeContext(
+    input: {
+      sessionId: string;
+      userId?: string | null;
+      workspaceId?: string | null;
+      projectId?: string | null;
+      provider: SessionBinding["provider"];
+    },
+    runtimeHomeDir: string
+  ): void {
+    const userId = input.userId?.trim() ?? "";
+    const workspaceId = input.workspaceId?.trim() ?? "";
+
+    if (!this.workspaceSessionRuntimeContextService || !userId || !workspaceId) {
+      return;
+    }
+
+    this.workspaceSessionRuntimeContextService.syncRuntimeContext({
+      sessionId: input.sessionId,
+      userId,
+      workspaceId,
+      projectId: input.projectId?.trim() || null,
+      provider: input.provider,
+      runtimeHomeDir
+    });
   }
 
   private materializeRuntimeHome(

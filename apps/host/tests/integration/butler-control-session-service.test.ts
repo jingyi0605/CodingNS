@@ -492,6 +492,15 @@ describe("ButlerControlSessionService", () => {
     expect(readFileSync(path.join(sandboxWorkspacePath, "BUTLER_RULES.md"), "utf8")).toContain(
       "默认直接落在当前助手沙箱"
     );
+    expect(readFileSync(path.join(sandboxWorkspacePath, "BUTLER_RULES.md"), "utf8")).toContain(
+      "codingns assistant office"
+    );
+    expect(readFileSync(path.join(sandboxWorkspacePath, "BUTLER_API.md"), "utf8")).toContain(
+      "ops-task-execute"
+    );
+    expect(readFileSync(path.join(sandboxWorkspacePath, "BUTLER_API.md"), "utf8")).toContain(
+      "task-approval-reply"
+    );
     expect(JSON.parse(readFileSync(path.join(sandboxWorkspacePath, "BUTLER_AUTH.json"), "utf8")).accessToken).toBe(
       "token-1"
     );

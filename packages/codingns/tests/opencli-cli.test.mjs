@@ -122,6 +122,339 @@ test("codingns opencli config 会调用 Host API 并输出结果", async () => {
   }
 });
 
+test("codingns assistant office document-create 会调用 Host assistant API", async () => {
+  let receivedPayload = null;
+  let receivedHeaders = null;
+  const server = http.createServer(async (request, response) => {
+    if (request.method === "POST" && request.url === "/api/assistant/office/documents") {
+      receivedHeaders = request.headers;
+      receivedPayload = await readJsonBody(request);
+      response.writeHead(200, {
+        "Content-Type": "application/json",
+        "Connection": "close"
+      });
+      response.end(JSON.stringify({
+        ok: true,
+        capability: "office.document.create",
+        auditId: "audit-doc-1",
+        timestamp: "2026-05-15T12:00:00.000Z",
+        targetRef: {
+          kind: "workspace",
+          id: "workspace-1"
+        },
+        payload: {
+          document: {
+            id: "document-1",
+            title: "周报"
+          }
+        }
+      }));
+      return;
+    }
+
+    response.writeHead(404, {
+      "Content-Type": "application/json",
+      "Connection": "close"
+    });
+    response.end(JSON.stringify({ detail: "not found" }));
+  });
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const result = await runCli([
+      cliPath,
+      "assistant",
+      "office",
+      "document-create",
+      "--base-url",
+      baseUrl,
+      "--token",
+      "token-1",
+      "--title",
+      "周报",
+      "--template-key",
+      "team.doct.weekly",
+      "--content-json",
+      "{\"sections\":[]}"
+    ]);
+
+    assert.equal(result.status, 0);
+    assert.equal(receivedHeaders["x-codingns-assistant-source"], "assistant-cli");
+    assert.deepEqual(receivedPayload, {
+      workspaceId: null,
+      title: "周报",
+      templateId: null,
+      templateKey: "team.doct.weekly",
+      summary: null,
+      content: {
+        sections: []
+      }
+    });
+    assert.match(result.stdout, /"capability": "office.document.create"/);
+  } finally {
+    server.closeIdleConnections?.();
+    server.closeAllConnections?.();
+    await new Promise((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+});
+
+test("codingns assistant office browser-task-create 会调用 Host assistant API", async () => {
+  let receivedPayload = null;
+  const server = http.createServer(async (request, response) => {
+    if (request.method === "POST" && request.url === "/api/assistant/office/browser/tasks") {
+      receivedPayload = await readJsonBody(request);
+      response.writeHead(200, {
+        "Content-Type": "application/json",
+        "Connection": "close"
+      });
+      response.end(JSON.stringify({
+        ok: true,
+        capability: "office.browser.task.create",
+        auditId: "audit-browser-task-1",
+        timestamp: "2026-05-15T12:05:00.000Z",
+        targetRef: {
+          kind: "workspace",
+          id: "workspace-1"
+        },
+        payload: {
+          task: {
+            id: "browser-task-1"
+          },
+          execution: null
+        }
+      }));
+      return;
+    }
+
+    response.writeHead(404, {
+      "Content-Type": "application/json",
+      "Connection": "close"
+    });
+    response.end(JSON.stringify({ detail: "not found" }));
+  });
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const result = await runCli([
+      cliPath,
+      "assistant",
+      "office",
+      "browser-task-create",
+      "--base-url",
+      baseUrl,
+      "--token",
+      "token-1",
+      "--profile-id",
+      "profile-1",
+      "--risk-level",
+      "medium",
+      "--execute",
+      "true",
+      "--input-json",
+      "{\"startUrl\":\"https://example.invalid\",\"actions\":[{\"type\":\"read_dom\"}]}"
+    ]);
+
+    assert.equal(result.status, 0);
+    assert.deepEqual(receivedPayload, {
+      workspaceId: null,
+      title: null,
+      profileId: "profile-1",
+      riskLevel: "medium",
+      execute: true,
+      input: {
+        startUrl: "https://example.invalid",
+        actions: [
+          {
+            type: "read_dom"
+          }
+        ]
+      }
+    });
+    assert.match(result.stdout, /"capability": "office.browser.task.create"/);
+  } finally {
+    server.closeIdleConnections?.();
+    server.closeAllConnections?.();
+    await new Promise((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+});
+
+test("codingns assistant office ops-task-execute 会调用 Host assistant API", async () => {
+  const server = http.createServer(async (request, response) => {
+    if (request.method === "POST" && request.url === "/api/assistant/office/ops/tasks/task-ssh-1/execute") {
+      response.writeHead(200, {
+        "Content-Type": "application/json",
+        "Connection": "close"
+      });
+      response.end(JSON.stringify({
+        ok: true,
+        capability: "office.ops.task.execute",
+        auditId: "audit-ops-task-execute-1",
+        timestamp: "2026-05-15T12:10:00.000Z",
+        targetRef: {
+          kind: "none",
+          id: "target-1"
+        },
+        payload: {
+          task: {
+            id: "task-ssh-1"
+          },
+          execution: {
+            taskId: "task-ssh-1",
+            executionTaskId: "exec-1",
+            deduped: false
+          }
+        }
+      }));
+      return;
+    }
+
+    response.writeHead(404, {
+      "Content-Type": "application/json",
+      "Connection": "close"
+    });
+    response.end(JSON.stringify({ detail: "not found" }));
+  });
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const result = await runCli([
+      cliPath,
+      "assistant",
+      "office",
+      "ops-task-execute",
+      "task-ssh-1",
+      "--base-url",
+      baseUrl,
+      "--token",
+      "token-1"
+    ]);
+
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /"capability": "office.ops.task.execute"/);
+  } finally {
+    server.closeIdleConnections?.();
+    server.closeAllConnections?.();
+    await new Promise((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+});
+
+test("codingns assistant office task-approval-reply 会调用 Host assistant API", async () => {
+  let receivedPayload = null;
+  const server = http.createServer(async (request, response) => {
+    if (request.method === "POST" && request.url === "/api/assistant/office/task-approvals/approval-1/reply") {
+      receivedPayload = await readJsonBody(request);
+      response.writeHead(200, {
+        "Content-Type": "application/json",
+        "Connection": "close"
+      });
+      response.end(JSON.stringify({
+        ok: true,
+        capability: "office.task.approval.reply",
+        auditId: "audit-approval-reply-1",
+        timestamp: "2026-05-15T12:11:00.000Z",
+        targetRef: {
+          kind: "none",
+          id: "target-1"
+        },
+        payload: {
+          approval: {
+            id: "approval-1",
+            status: "approved"
+          },
+          task: {
+            id: "task-ssh-1"
+          }
+        }
+      }));
+      return;
+    }
+
+    response.writeHead(404, {
+      "Content-Type": "application/json",
+      "Connection": "close"
+    });
+    response.end(JSON.stringify({ detail: "not found" }));
+  });
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const result = await runCli([
+      cliPath,
+      "assistant",
+      "office",
+      "task-approval-reply",
+      "approval-1",
+      "--base-url",
+      baseUrl,
+      "--token",
+      "token-1",
+      "--status",
+      "approved",
+      "--decision-note",
+      "通过"
+    ]);
+
+    assert.equal(result.status, 0);
+    assert.deepEqual(receivedPayload, {
+      status: "approved",
+      decisionNote: "通过"
+    });
+    assert.match(result.stdout, /"capability": "office.task.approval.reply"/);
+  } finally {
+    server.closeIdleConnections?.();
+    server.closeAllConnections?.();
+    await new Promise((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+});
+
 async function readJsonBody(request) {
   const chunks = [];
 

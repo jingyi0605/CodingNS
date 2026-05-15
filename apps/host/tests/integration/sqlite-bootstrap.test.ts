@@ -922,6 +922,40 @@ describe("sqlite 启动引导", () => {
     });
   });
 
+  it("可以给旧版 document_templates 平滑补上 mapping_json 和 template_source_path 列", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-document-template-bootstrap-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+    const { default: Database } = await import("better-sqlite3");
+    const seed = new Database(databasePath);
+
+    seed.exec(`
+      CREATE TABLE document_templates (
+        id TEXT PRIMARY KEY,
+        template_key TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        engine TEXT NOT NULL CHECK (engine IN ('doct')),
+        template_version TEXT NOT NULL,
+        schema_json TEXT NOT NULL,
+        output_formats_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('active', 'deprecated')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+    seed.close();
+
+    const client = createDatabaseClient(databasePath);
+    const columns = client.db
+      .prepare("PRAGMA table_info(document_templates)")
+      .all() as Array<{ name: string }>;
+    client.close();
+
+    expect(columns.map((column) => column.name)).toEqual(
+      expect.arrayContaining(["mapping_json", "template_source_path"])
+    );
+  });
+
   it("可以在旧数据库上补齐终端日志索引表", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-terminal-log-bootstrap-"));
     tempDirs.push(tempDir);

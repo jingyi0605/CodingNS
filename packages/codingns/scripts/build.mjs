@@ -65,8 +65,55 @@ function ensureDirectoryExists(targetPath, label) {
 }
 
 function runPnpm(args) {
-  execFileSync("pnpm", args, {
+  const command = resolvePnpmInvocation(args);
+  execFileSync(command.file, command.args, {
     cwd: workspaceRoot,
     stdio: "inherit"
   });
+}
+
+function resolvePnpmInvocation(args) {
+  const npmExecPath = process.env.npm_execpath;
+  if (npmExecPath && fs.existsSync(npmExecPath)) {
+    return {
+      file: process.execPath,
+      args: [npmExecPath, ...args]
+    };
+  }
+
+  if (process.platform !== "win32") {
+    return {
+      file: "pnpm",
+      args
+    };
+  }
+
+  if (process.env.PNPM_HOME) {
+    const pnpmCmdPath = path.join(process.env.PNPM_HOME, "pnpm.cmd");
+    if (fs.existsSync(pnpmCmdPath)) {
+      return {
+        file: "cmd.exe",
+        args: ["/d", "/s", "/c", quoteWindowsCommand(pnpmCmdPath, args)]
+      };
+    }
+  }
+
+  return {
+    file: "cmd.exe",
+    args: ["/d", "/s", "/c", quoteWindowsCommand("pnpm", args)]
+  };
+}
+
+function quoteWindowsCommand(command, args) {
+  return [command, ...args].map(quoteWindowsArg).join(" ");
+}
+
+function quoteWindowsArg(value) {
+  if (!value.length) {
+    return '""';
+  }
+  if (!/[\s"]/u.test(value)) {
+    return value;
+  }
+  return `"${value.replace(/"/g, '\\"')}"`;
 }

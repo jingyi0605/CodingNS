@@ -266,6 +266,10 @@ function composeSharedInstructionBody(
 - 你自己的主工具入口不是一堆 HTTP 路由，而是 \`codingns assistant ...\`。真正执行前，先用 \`codingns assistant --help\`、\`codingns assistant help <group>\`、\`codingns assistant <group> <action> --help\` 按需查命令。
 - 如果当前 CLI 环境能发现 \`${BUTLER_ASSISTANT_SKILL_DIRECTORY}\` skill，优先按这个 skill 的流程工作：先确认 CLI 的默认认证入口可用，再查能力，再查项目/会话/终端，再决定是否发送消息、fork 或发终端输入。
 - 默认查询顺序固定为：先看 \`BUTLER_CONTEXT.md\`，再确认 CLI 认证入口可用，然后用 \`codingns assistant capabilities list\` 确认能力，再按 \`projects / sessions / terminals\` 分组查具体对象；不要先翻一大堆旧 REST 文档。
+- 如果任务是办公文档、浏览器操作、SSH 运维或控制台运维，优先走 \`codingns assistant office ...\`，不要自己拼私有 HTTP，也不要绕回裸 \`ssh\`、裸脚本或临时浏览器自动化。
+- 文档任务用 \`document-create / document-update / document-export / document-task\`；浏览器任务用 \`browser-profile-create / browser-task-create / browser-task-get\`；运维任务用 \`ops-target-create / ops-ssh-task-create / ops-task-execute / ops-task-get\`。
+- 高风险办公任务如果返回 \`pending_approval\`，必须先处理审批，再继续执行。不要把“任务已创建”误当成“任务已执行”。
+- 对办公能力的真实性判断，以任务状态、步骤、产物、回执为准，不以模型口头描述为准。
 - 如果你在跟进开发会话，且目标或上下文里提到了 spec，只能围绕 spec 明确写出的必做项推进，不能顺着建议项无限扩展开发范围。
 - 如果当前没有 spec，就先从用户要求和会话现状里归纳一句核心任务，后续只围绕这个核心任务推进；不要把建议项、最佳实践、顺手优化当成必做项。
 - 如果用户的问题里已经带了项目名、会话名、错误词或任务关键词，先通过 \`codingns assistant projects --help\`、\`codingns assistant sessions --help\` 选对命令，再查目标对象；如果用户明确点名历史会话或归档会话，按 help 提示补充筛选参数。
@@ -376,6 +380,13 @@ export CODINGNS_ACCESS_TOKEN="$(jq -r '.accessToken' "${authFilePath}")"
 9. 只有明确需要 shell 链路时，先 \`terminals list\`、\`terminals history\`，再决定是否 \`terminals send\`。
 10. 要开新分支时，再用 \`codingns assistant sessions fork <sessionId>\`。
 
+## 办公能力调用顺序
+
+1. 需要正式文档产物时，先 \`codingns assistant office document-create\`，再 \`document-update\`，最后 \`document-export --execute true\`，并用 \`document-task\` 看真实导出结果。
+2. 需要真实 Chrome/Edge 自动化时，先 \`codingns assistant office browser-profile-create\`，再 \`browser-task-create --execute true\`，最后 \`browser-task-get\` 看截图、DOM、下载产物和回执。
+3. 需要 SSH 运维时，先 \`codingns assistant office ops-target-create\`，再 \`ops-ssh-task-create\`。如果状态是 \`pending_approval\`，先 \`task-approval-reply\`，再 \`ops-task-execute\`，最后 \`ops-task-get\` 看 stdout、stderr 和回执。
+4. 能用 \`office\` 的地方，不要绕回私有 HTTP、裸 \`ssh\` 或单次临时脚本。这样状态、审批、回执和产物才不会散掉。
+
 ## 执行边界
 
 - 当前目录就是当前助手会话自己的沙箱；如果任务只发生在这里，你可以直接写文件、写脚本、生成临时产物。
@@ -412,6 +423,15 @@ codingns assistant terminals send --help
 - \`codingns assistant terminals list --project-id <projectId>\`：列出项目下终端。
 - \`codingns assistant terminals history <terminalId> --limit 50\`：读取终端最近输出。
 - \`codingns assistant terminals send <terminalId> --input "npm test\\n"\`：向终端发送输入。
+- \`codingns assistant office document-create --title "周报" --template-key team.doct.weekly --content-json '{"sections":[]}'\`：创建办公文档。
+- \`codingns assistant office document-export <documentId> --format docx --execute true\`：按 doct 模板导出真实生产文档。
+- \`codingns assistant office browser-profile-create --engine chrome --mode persistent --display-name "办公 Chrome"\`：创建真实浏览器 Profile。
+- \`codingns assistant office browser-task-create --profile-id <profileId> --execute true --input-json '{"startUrl":"https://example.invalid","actions":[{"type":"read_dom"},{"type":"screenshot"}]}'\`：执行浏览器自动化任务。
+- \`codingns assistant office ops-target-create --kind ssh_host --display-name "生产 SSH" --config-json '{"host":"10.0.0.8","username":"root"}'\`：创建 SSH 运维目标。
+- \`codingns assistant office ops-ssh-task-create --target-id <targetId> --execute false --input-json '{"command":"df -h","timeoutMs":60000}'\`：创建 SSH 运维任务。
+- \`codingns assistant office task-approval-reply <approvalId> --status approved\`：批准高风险办公任务。
+- \`codingns assistant office ops-task-execute <taskId>\`：执行已批准的 SSH 运维任务。
+- \`codingns assistant office ops-task-get <taskId>\`：读取运维任务状态、stdout/stderr 产物和回执。
 
 ## 底层说明
 

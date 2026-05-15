@@ -90,6 +90,12 @@ codingns assistant terminals list --project-id project-123
 codingns assistant terminals history terminal-123 --limit 50
 codingns assistant terminals send terminal-123 --input "npm test\n"
 codingns assistant terminals close terminal-123
+codingns assistant office document-create --title "周报" --template-key team.doct.weekly --content-json '{"sections":[]}' --token <token>
+codingns assistant office document-export <documentId> --format pdf --execute true --token <token>
+codingns assistant office browser-profile-create --engine chrome --mode persistent --display-name "办公 Chrome" --token <token>
+codingns assistant office browser-task-create --profile-id <profileId> --input-json '{"startUrl":"https://example.invalid","actions":[{"type":"read_dom"},{"type":"screenshot","fullPage":true}]}' --token <token>
+codingns assistant office ops-target-create --kind ssh_host --display-name "生产 SSH" --config-json '{"host":"10.0.0.8","username":"root"}' --token <token>
+codingns assistant office ops-ssh-task-create --target-id <targetId> --input-json '{"command":"df -h"}' --token <token>
 ```
 
 相关文档：

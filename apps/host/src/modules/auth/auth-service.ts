@@ -29,7 +29,8 @@ export interface AuthenticatedUser {
   role: "admin";
 }
 
-export type AuthCallerKind = "interactive_user" | "assistant_runtime";
+export type AuthCallerKind = "interactive_user" | "assistant_runtime" | "workspace_session";
+export type AuthCapabilityProfile = "butler-full" | "butler-ui" | "workspace-scoped";
 
 export interface AuthContext {
   accessToken: string;
@@ -37,6 +38,10 @@ export interface AuthContext {
   deviceSessionId: string | null;
   deviceId: string | null;
   callerKind: AuthCallerKind;
+  capabilityProfile: AuthCapabilityProfile | null;
+  workspaceId: string | null;
+  projectId: string | null;
+  sessionId: string | null;
   user: AuthenticatedUser;
 }
 
@@ -133,6 +138,16 @@ interface IssueTokenPairResult {
   accessTokenId: string;
   refreshTokenId: string;
   expiresIn: number;
+}
+
+export interface IssueScopedAccessTokenInput {
+  userId: string;
+  callerKind: "workspace_session";
+  capabilityProfile: "workspace-scoped";
+  workspaceId: string;
+  projectId?: string | null;
+  sessionId: string;
+  expiresInSeconds?: number;
 }
 
 const DEFAULT_AUTH_REQUEST_METADATA: AuthRequestMetadata = {
@@ -504,6 +519,10 @@ export class AuthService {
       deviceSessionId: accessRecord.deviceSessionId,
       deviceId: deviceSession?.deviceId ?? null,
       callerKind: accessRecord.callerKind ?? resolveAuthCallerKind(accessToken),
+      capabilityProfile: normalizeAuthCapabilityProfile(accessRecord.capabilityProfile),
+      workspaceId: accessRecord.workspaceId,
+      projectId: accessRecord.projectId,
+      sessionId: accessRecord.sessionId,
       user: {
         userId: user.id,
         username: user.username,
@@ -542,6 +561,63 @@ export class AuthService {
         detail: "系统尚未初始化，请先完成 setup"
       });
     }
+  }
+
+  issueScopedAccessToken(input: IssueScopedAccessTokenInput): {
+    accessToken: string;
+    accessTokenId: string;
+    expiresAt: string;
+    issuedAt: string;
+  } {
+    const workspaceId = input.workspaceId.trim();
+    const sessionId = input.sessionId.trim();
+
+    if (!workspaceId) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "workspaceId 不能为空",
+        field: "workspaceId"
+      });
+    }
+
+    if (!sessionId) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "sessionId 不能为空",
+        field: "sessionId"
+      });
+    }
+
+    const now = new Date();
+    const issuedAt = nowIso(now);
+    const expiresAt = addSeconds(now, input.expiresInSeconds ?? this.config.accessTokenTtlSeconds);
+    const accessToken = createOpaqueToken("ws_");
+    const accessTokenId = createId();
+
+    this.authTokenRepository.create({
+      id: accessTokenId,
+      userId: input.userId,
+      tokenType: "access",
+      tokenHash: hashToken(accessToken),
+      deviceSessionId: null,
+      callerKind: input.callerKind,
+      capabilityProfile: input.capabilityProfile,
+      workspaceId,
+      projectId: input.projectId?.trim() || null,
+      sessionId,
+      expiresAt,
+      revokedAt: null,
+      createdAt: issuedAt
+    });
+
+    return {
+      accessToken,
+      accessTokenId,
+      expiresAt,
+      issuedAt
+    };
   }
 
   private createDeviceSession(userId: string, deviceId: string | null, timestamp: string): AuthDeviceSessionRecord {
@@ -668,6 +744,10 @@ export class AuthService {
       tokenHash: hashToken(accessToken),
       deviceSessionId,
       callerKind,
+      capabilityProfile: callerKind === "assistant_runtime" ? "butler-full" : null,
+      workspaceId: null,
+      projectId: null,
+      sessionId: null,
       expiresAt: addSeconds(now, this.config.accessTokenTtlSeconds),
       revokedAt: null,
       createdAt
@@ -680,6 +760,10 @@ export class AuthService {
       tokenHash: hashToken(refreshToken),
       deviceSessionId,
       callerKind,
+      capabilityProfile: callerKind === "assistant_runtime" ? "butler-full" : null,
+      workspaceId: null,
+      projectId: null,
+      sessionId: null,
       expiresAt: addSeconds(now, this.config.refreshTokenTtlSeconds),
       revokedAt: null,
       createdAt
@@ -903,6 +987,14 @@ export class AuthService {
 
 export function resolveAuthCallerKind(accessToken: string): AuthCallerKind {
   return isButlerRuntimeAccessToken(accessToken) ? "assistant_runtime" : "interactive_user";
+}
+
+function normalizeAuthCapabilityProfile(value: string | null): AuthCapabilityProfile | null {
+  if (value === "butler-full" || value === "butler-ui" || value === "workspace-scoped") {
+    return value;
+  }
+
+  return null;
 }
 
 function toAuthDeviceView(device: AuthDeviceRecord, isCurrent: boolean): AuthDeviceView {

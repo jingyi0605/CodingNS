@@ -643,6 +643,231 @@ async function runAssistantCommand(argv) {
       }));
       return;
     }
+    case "office:document-create":
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: "/api/assistant/office/documents",
+        argv: rest,
+        supportedOptions: ["workspace-id", "title", "template-id", "template-key", "summary", "content-json", "outline-json"],
+        helpTopic: "office.document-create"
+      }, (options) => ({
+        workspaceId: readOptionalTrimmedValue(options.values["workspace-id"]),
+        title: requireOptionValue(options.values.title, "title"),
+        templateId: readOptionalTrimmedValue(options.values["template-id"]),
+        templateKey: readOptionalTrimmedValue(options.values["template-key"]),
+        summary: readOptionalTrimmedValue(options.values.summary),
+        content: parseJsonOption(options.values["content-json"], "content-json"),
+        outline: parseJsonOption(options.values["outline-json"], "outline-json")
+      })));
+      return;
+    case "office:document-update": {
+      const [documentId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "PATCH",
+        path: `/api/assistant/office/documents/${requirePositional(documentId, "documentId")}`,
+        argv: tail,
+        supportedOptions: ["title", "template-id", "summary", "status", "content-json", "outline-json"],
+        helpTopic: "office.document-update"
+      }, (options) => ({
+        title: readOptionalTrimmedValue(options.values.title),
+        templateId: readOptionalTrimmedValue(options.values["template-id"]),
+        summary: readOptionalTrimmedValue(options.values.summary),
+        status: readOptionalTrimmedValue(options.values.status),
+        content: parseJsonOption(options.values["content-json"], "content-json"),
+        outline: parseJsonOption(options.values["outline-json"], "outline-json")
+      })));
+      return;
+    }
+    case "office:document-export": {
+      const [documentId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: `/api/assistant/office/documents/${requirePositional(documentId, "documentId")}/export`,
+        argv: tail,
+        supportedOptions: ["workspace-id", "format", "risk-level", "execute"],
+        helpTopic: "office.document-export"
+      }, (options) => ({
+        workspaceId: readOptionalTrimmedValue(options.values["workspace-id"]),
+        format: readOptionalTrimmedValue(options.values.format),
+        riskLevel: readOptionalTrimmedValue(options.values["risk-level"]),
+        execute: parseOptionalBooleanOption(options.values.execute, "execute")
+      })));
+      return;
+    }
+    case "office:document-task": {
+      const [taskId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: `/api/assistant/office/document-tasks/${requirePositional(taskId, "taskId")}`,
+        argv: tail,
+        helpTopic: "office.document-task"
+      }));
+      return;
+    }
+    case "office:browser-profiles":
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: "/api/assistant/office/browser/profiles",
+        argv: rest,
+        supportedOptions: ["workspace-id"],
+        helpTopic: "office.browser-profiles"
+      }, (options) => ({
+        workspaceId: readOptionalTrimmedValue(options.values["workspace-id"])
+      })));
+      return;
+    case "office:browser-profile-create":
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: "/api/assistant/office/browser/profiles",
+        argv: rest,
+        supportedOptions: ["workspace-id", "engine", "mode", "display-name", "ownership-scope", "cdp-endpoint"],
+        helpTopic: "office.browser-profile-create"
+      }, (options) => ({
+        workspaceId: readOptionalTrimmedValue(options.values["workspace-id"]),
+        engine: readOptionalTrimmedValue(options.values.engine),
+        mode: readOptionalTrimmedValue(options.values.mode),
+        displayName: readOptionalTrimmedValue(options.values["display-name"]),
+        ownershipScope: readOptionalTrimmedValue(options.values["ownership-scope"]),
+        cdpEndpoint: readOptionalTrimmedValue(options.values["cdp-endpoint"])
+      })));
+      return;
+    case "office:browser-profile-get": {
+      const [profileId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: `/api/assistant/office/browser/profiles/${requirePositional(profileId, "profileId")}`,
+        argv: tail,
+        helpTopic: "office.browser-profile-get"
+      }));
+      return;
+    }
+    case "office:browser-task-create":
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: "/api/assistant/office/browser/tasks",
+        argv: rest,
+        supportedOptions: ["workspace-id", "title", "profile-id", "risk-level", "execute", "input-json"],
+        helpTopic: "office.browser-task-create"
+      }, (options) => ({
+        workspaceId: readOptionalTrimmedValue(options.values["workspace-id"]),
+        title: readOptionalTrimmedValue(options.values.title),
+        profileId: requireOptionValue(options.values["profile-id"], "profile-id"),
+        riskLevel: readOptionalTrimmedValue(options.values["risk-level"]),
+        execute: parseOptionalBooleanOption(options.values.execute, "execute"),
+        input: parseJsonOption(options.values["input-json"], "input-json")
+      })));
+      return;
+    case "office:browser-task-get": {
+      const [taskId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: `/api/assistant/office/browser/tasks/${requirePositional(taskId, "taskId")}`,
+        argv: tail,
+        helpTopic: "office.browser-task-get"
+      }));
+      return;
+    }
+    case "office:ops-targets":
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: "/api/assistant/office/ops/targets",
+        argv: rest,
+        supportedOptions: ["kind", "status"],
+        helpTopic: "office.ops-targets"
+      }, (options) => ({
+        kind: readOptionalTrimmedValue(options.values.kind),
+        status: readOptionalTrimmedValue(options.values.status)
+      })));
+      return;
+    case "office:ops-target-create":
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: "/api/assistant/office/ops/targets",
+        argv: rest,
+        supportedOptions: ["kind", "display-name", "environment", "credential-ref", "config-json"],
+        helpTopic: "office.ops-target-create"
+      }, (options) => ({
+        kind: readOptionalTrimmedValue(options.values.kind),
+        displayName: requireOptionValue(options.values["display-name"], "display-name"),
+        environment: readOptionalTrimmedValue(options.values.environment),
+        credentialRef: readOptionalTrimmedValue(options.values["credential-ref"]),
+        config: parseJsonOption(options.values["config-json"], "config-json") ?? {}
+      })));
+      return;
+    case "office:ops-target-get": {
+      const [targetId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: `/api/assistant/office/ops/targets/${requirePositional(targetId, "targetId")}`,
+        argv: tail,
+        helpTopic: "office.ops-target-get"
+      }));
+      return;
+    }
+    case "office:ops-ssh-task-create":
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: "/api/assistant/office/ops/ssh-tasks",
+        argv: rest,
+        supportedOptions: ["title", "target-id", "risk-level", "execute", "input-json"],
+        helpTopic: "office.ops-ssh-task-create"
+      }, (options) => ({
+        title: readOptionalTrimmedValue(options.values.title),
+        targetId: requireOptionValue(options.values["target-id"], "target-id"),
+        riskLevel: readOptionalTrimmedValue(options.values["risk-level"]),
+        execute: parseOptionalBooleanOption(options.values.execute, "execute"),
+        input: parseJsonOption(options.values["input-json"], "input-json")
+      })));
+      return;
+    case "office:ops-task-execute": {
+      const [taskId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: `/api/assistant/office/ops/tasks/${requirePositional(taskId, "taskId")}/execute`,
+        argv: tail,
+        helpTopic: "office.ops-task-execute"
+      }));
+      return;
+    }
+    case "office:task-approval-reply": {
+      const [approvalId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: `/api/assistant/office/task-approvals/${requirePositional(approvalId, "approvalId")}/reply`,
+        argv: tail,
+        supportedOptions: ["status", "decision-note"],
+        helpTopic: "office.task-approval-reply"
+      }, (options) => ({
+        status: readOptionalTrimmedValue(options.values.status) ?? "approved",
+        decisionNote: readOptionalTrimmedValue(options.values["decision-note"])
+      })));
+      return;
+    }
+    case "office:ops-browser-task-create":
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: "/api/assistant/office/ops/browser-tasks",
+        argv: rest,
+        supportedOptions: ["title", "target-id", "profile-id", "risk-level", "input-json"],
+        helpTopic: "office.ops-browser-task-create"
+      }, (options) => ({
+        title: readOptionalTrimmedValue(options.values.title),
+        targetId: requireOptionValue(options.values["target-id"], "target-id"),
+        profileId: requireOptionValue(options.values["profile-id"], "profile-id"),
+        riskLevel: readOptionalTrimmedValue(options.values["risk-level"]),
+        input: parseJsonOption(options.values["input-json"], "input-json")
+      })));
+      return;
+    case "office:ops-task-get": {
+      const [taskId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: `/api/assistant/office/ops/tasks/${requirePositional(taskId, "taskId")}`,
+        argv: tail,
+        helpTopic: "office.ops-task-get"
+      }));
+      return;
+    }
     case "debug-targets:compatibility-matrix":
       await printAssistantResponse(await requestAssistant({
         method: "GET",
@@ -1652,6 +1877,31 @@ function readOptionalTrimmedValue(value) {
   return normalized.length > 0 ? normalized : null;
 }
 
+function parseJsonOption(value, field) {
+  const normalized = readOptionalTrimmedValue(value);
+
+  if (!normalized) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(normalized);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "未知错误";
+    fail(`参数 --${field} 不是合法 JSON：${detail}`);
+  }
+}
+
+function parseOptionalBooleanOption(value, field) {
+  const normalized = readOptionalTrimmedValue(value);
+
+  if (normalized === null) {
+    return undefined;
+  }
+
+  return parseBooleanOption(normalized, field);
+}
+
 function readAssistantTerminalHistoryLimitOption(value) {
   const normalized = readOptionalTrimmedValue(value);
 
@@ -1814,6 +2064,10 @@ assistant 例子：
 
   codingns assistant capabilities list --token <token>
   codingns assistant projects list --status active --token <token>
+  codingns assistant office browser-profile-create --engine chrome --mode persistent --display-name "办公 Chrome" --token <token>
+  codingns assistant office browser-task-create --profile-id <profileId> --input-json '{"startUrl":"https://example.invalid","actions":[{"type":"read_dom"}]}' --token <token>
+  codingns assistant office ops-target-create --kind ssh_host --display-name "生产 SSH" --config-json '{"host":"10.0.0.8","username":"root"}' --token <token>
+  codingns assistant office document-create --title "周报" --template-key team.doct.weekly --content-json '{"sections":[]}' --token <token>
   codingns assistant workspaces list --token <token>
   codingns assistant debug-targets analyze --workspace-id <id> --root-path <path> --token <token>
   codingns assistant debug-targets launch-plan <targetId> --port-request role=backend,cwd=apps/api,port=44001 --token <token>
@@ -1899,6 +2153,205 @@ function printProviderSessionsHelpTopic(topic, exitCode) {
 
 function getAssistantHelpText(topic) {
   switch (topic) {
+    case "office":
+      return `
+codingns assistant office
+
+可用动作：
+  document-create            创建办公文档
+  document-update            更新办公文档
+  document-export            创建或执行文档导出任务
+  document-task              读取文档导出任务
+  browser-profiles           列出浏览器 Profile
+  browser-profile-create     创建浏览器 Profile
+  browser-profile-get        读取浏览器 Profile
+  browser-task-create        创建并可选执行浏览器任务
+  browser-task-get           读取浏览器任务
+  ops-targets                列出运维目标
+  ops-target-create          创建运维目标
+  ops-target-get             读取运维目标
+  ops-ssh-task-create        创建 SSH 运维任务
+  ops-task-execute           执行已创建的 SSH 运维任务
+  task-approval-reply        回复办公任务审批
+  ops-browser-task-create    创建浏览器运维任务
+  ops-task-get               读取运维任务
+
+示例：
+  codingns assistant office browser-profile-create --engine chrome --mode persistent --display-name "办公 Chrome" --token <token>
+  codingns assistant office browser-task-create --profile-id <profileId> --input-json '{"startUrl":"https://example.invalid","actions":[{"type":"read_dom"}]}' --token <token>
+  codingns assistant office ops-target-create --kind ssh_host --display-name "生产 SSH" --config-json '{"host":"10.0.0.8","username":"root"}' --token <token>
+  codingns assistant office document-create --title "周报" --template-key team.doct.weekly --content-json '{"sections":[]}' --token <token>
+`.trim();
+    case "office.document-create":
+      return `
+codingns assistant office document-create
+
+用途：
+  在助手能力面里创建正式办公文档。
+
+用法：
+  codingns assistant office document-create --title <title> [--workspace-id <id>] [--template-id <id> | --template-key <key>] [--summary <text>] [--content-json <json>] [--outline-json <json>] --token <token>
+`.trim();
+    case "office.document-update":
+      return `
+codingns assistant office document-update
+
+用途：
+  更新已有办公文档的标题、模板、摘要或结构化内容。
+
+用法：
+  codingns assistant office document-update <documentId> [--title <title>] [--template-id <id>] [--summary <text>] [--status draft|reviewing|published|archived] [--content-json <json>] [--outline-json <json>] --token <token>
+`.trim();
+    case "office.document-export":
+      return `
+codingns assistant office document-export
+
+用途：
+  创建文档导出任务，并可选择立即执行。
+
+用法：
+  codingns assistant office document-export <documentId> [--workspace-id <id>] [--format docx|pdf|md] [--risk-level low|medium|high] [--execute true|false] --token <token>
+`.trim();
+    case "office.document-task":
+      return `
+codingns assistant office document-task
+
+用途：
+  读取文档导出任务状态、产物和回执。
+
+用法：
+  codingns assistant office document-task <taskId> --token <token>
+`.trim();
+    case "office.browser-profiles":
+      return `
+codingns assistant office browser-profiles
+
+用途：
+  列出办公浏览器 Profile。
+
+用法：
+  codingns assistant office browser-profiles [--workspace-id <id>] --token <token>
+`.trim();
+    case "office.browser-profile-create":
+      return `
+codingns assistant office browser-profile-create
+
+用途：
+  创建独立持久化 Profile，或创建 CDP 接管模式的浏览器 Profile。
+
+用法：
+  codingns assistant office browser-profile-create [--workspace-id <id>] [--engine chrome|edge] [--mode persistent|cdp_attached] [--display-name <name>] [--ownership-scope user|workspace] [--cdp-endpoint <url>] --token <token>
+`.trim();
+    case "office.browser-profile-get":
+      return `
+codingns assistant office browser-profile-get
+
+用途：
+  读取办公浏览器 Profile 详情。
+
+用法：
+  codingns assistant office browser-profile-get <profileId> --token <token>
+`.trim();
+    case "office.browser-task-create":
+      return `
+codingns assistant office browser-task-create
+
+用途：
+  创建并可选立即执行办公浏览器任务，工作区会话里调用浏览器能力就走这条链路。
+
+用法：
+  codingns assistant office browser-task-create --profile-id <profileId> [--workspace-id <id>] [--title <title>] [--risk-level low|medium|high] [--execute true|false] [--input-json <json>] --token <token>
+`.trim();
+    case "office.browser-task-get":
+      return `
+codingns assistant office browser-task-get
+
+用途：
+  读取办公浏览器任务状态、产物和回执。
+
+用法：
+  codingns assistant office browser-task-get <taskId> --token <token>
+`.trim();
+    case "office.ops-targets":
+      return `
+codingns assistant office ops-targets
+
+用途：
+  列出办公运维目标。
+
+用法：
+  codingns assistant office ops-targets [--kind ssh_host|web_console] [--status active|disabled|error] --token <token>
+`.trim();
+    case "office.ops-target-create":
+      return `
+codingns assistant office ops-target-create
+
+用途：
+  创建 SSH 主机或网页控制台运维目标。
+
+用法：
+  codingns assistant office ops-target-create --display-name <name> [--kind ssh_host|web_console] [--environment <name>] [--credential-ref <ref>] [--config-json <json>] --token <token>
+`.trim();
+    case "office.ops-target-get":
+      return `
+codingns assistant office ops-target-get
+
+用途：
+  读取办公运维目标详情。
+
+用法：
+  codingns assistant office ops-target-get <targetId> --token <token>
+`.trim();
+    case "office.ops-ssh-task-create":
+      return `
+codingns assistant office ops-ssh-task-create
+
+用途：
+  创建 SSH 运维任务，可选立即执行。
+
+用法：
+  codingns assistant office ops-ssh-task-create --target-id <targetId> [--title <title>] [--risk-level low|medium|high] [--execute true|false] [--input-json <json>] --token <token>
+`.trim();
+    case "office.ops-task-execute":
+      return `
+codingns assistant office ops-task-execute
+
+用途：
+  执行已经创建并处于 ready 状态的 SSH 运维任务。
+
+用法：
+  codingns assistant office ops-task-execute <taskId> --token <token>
+`.trim();
+    case "office.task-approval-reply":
+      return `
+codingns assistant office task-approval-reply
+
+用途：
+  处理办公任务审批。高风险 SSH 任务审批通过后，才能继续执行。
+
+用法：
+  codingns assistant office task-approval-reply <approvalId> [--status approved|rejected] [--decision-note <text>] --token <token>
+`.trim();
+    case "office.ops-browser-task-create":
+      return `
+codingns assistant office ops-browser-task-create
+
+用途：
+  创建基于真实 Chrome/Edge Profile 的浏览器运维任务。
+
+用法：
+  codingns assistant office ops-browser-task-create --target-id <targetId> --profile-id <profileId> [--title <title>] [--risk-level low|medium|high] [--input-json <json>] --token <token>
+`.trim();
+    case "office.ops-task-get":
+      return `
+codingns assistant office ops-task-get
+
+用途：
+  读取办公运维任务状态、产物和回执。
+
+用法：
+  codingns assistant office ops-task-get <taskId> --token <token>
+`.trim();
     case "capabilities":
     case "capabilities.list":
       return `
@@ -2665,11 +3118,28 @@ codingns assistant worktrees cleanup
       return `
 codingns assistant 用法：
 
-  codingns assistant help [capabilities|projects|sessions|sandboxes|automations|timers|follow-ups|terminals|debug-targets|debug-runtimes|workspaces|worktrees] [action]
+  codingns assistant help [capabilities|projects|sessions|sandboxes|automations|timers|follow-ups|terminals|office|debug-targets|debug-runtimes|workspaces|worktrees] [action]
   codingns assistant capabilities list [--base-url http://127.0.0.1:3002] --token <token>
   codingns assistant projects list [--workspace-id <id>] [--status active|paused|archived] [--risk-level low|medium|high] --token <token>
   codingns assistant projects get <projectId> [--base-url ...] --token <token>
   codingns assistant follow-ups continue <taskId> --summary "..." --continue-prompt "..." --token <token>
+  codingns assistant office document-create --title <title> [--template-key <key>] [--content-json <json>] [--base-url ...] --token <token>
+  codingns assistant office document-update <documentId> [--title <title>] [--content-json <json>] [--base-url ...] --token <token>
+  codingns assistant office document-export <documentId> [--format docx|pdf|md] [--risk-level low|medium|high] [--execute true|false] [--base-url ...] --token <token>
+  codingns assistant office document-task <taskId> [--base-url ...] --token <token>
+  codingns assistant office browser-profiles [--workspace-id <id>] [--base-url ...] --token <token>
+  codingns assistant office browser-profile-create [--workspace-id <id>] [--engine chrome|edge] [--mode persistent|cdp_attached] [--display-name <name>] [--ownership-scope user|workspace] [--cdp-endpoint <url>] [--base-url ...] --token <token>
+  codingns assistant office browser-profile-get <profileId> [--base-url ...] --token <token>
+  codingns assistant office browser-task-create --profile-id <profileId> [--workspace-id <id>] [--title <title>] [--risk-level low|medium|high] [--execute true|false] [--input-json <json>] [--base-url ...] --token <token>
+  codingns assistant office browser-task-get <taskId> [--base-url ...] --token <token>
+  codingns assistant office ops-targets [--kind ssh_host|web_console] [--status active|disabled|error] [--base-url ...] --token <token>
+  codingns assistant office ops-target-create --display-name <name> [--kind ssh_host|web_console] [--environment <name>] [--credential-ref <ref>] [--config-json <json>] [--base-url ...] --token <token>
+  codingns assistant office ops-target-get <targetId> [--base-url ...] --token <token>
+  codingns assistant office ops-ssh-task-create --target-id <targetId> [--title <title>] [--risk-level low|medium|high] [--execute true|false] [--input-json <json>] [--base-url ...] --token <token>
+  codingns assistant office ops-task-execute <taskId> [--base-url ...] --token <token>
+  codingns assistant office task-approval-reply <approvalId> [--status approved|rejected] [--decision-note <text>] [--base-url ...] --token <token>
+  codingns assistant office ops-browser-task-create --target-id <targetId> --profile-id <profileId> [--title <title>] [--risk-level low|medium|high] [--input-json <json>] [--base-url ...] --token <token>
+  codingns assistant office ops-task-get <taskId> [--base-url ...] --token <token>
   codingns assistant debug-targets compatibility-matrix [--base-url ...] --token <token>
   codingns assistant debug-targets analyze --workspace-id <id> --root-path <path> [--command-hint <command>] [--command-hint <command>] [--base-url ...] --token <token>
   codingns assistant debug-targets framework-analysis <targetId> [--base-url ...] --token <token>

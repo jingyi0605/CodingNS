@@ -935,6 +935,498 @@ describe("assistant capability routes", () => {
     });
   });
 
+  it("办公文档路由会把 create/update/export/task.get 参数清洗后传给服务", async () => {
+    const assistantCapabilityService = {
+      createOfficeDocument: vi.fn(() => ({
+        ok: true,
+        capability: "office.document.create",
+        auditId: "audit-office-doc-create",
+        timestamp: "2026-05-15T10:00:00.000Z",
+        targetRef: {
+          kind: "workspace",
+          id: "workspace-1"
+        },
+        payload: {
+          document: {
+            id: "document-1",
+            title: "周报"
+          }
+        }
+      })),
+      updateOfficeDocument: vi.fn(() => ({
+        ok: true,
+        capability: "office.document.update",
+        auditId: "audit-office-doc-update",
+        timestamp: "2026-05-15T10:01:00.000Z",
+        targetRef: {
+          kind: "workspace",
+          id: "workspace-1"
+        },
+        payload: {
+          document: {
+            id: "document-1",
+            title: "周报-更新"
+          }
+        }
+      })),
+      exportOfficeDocument: vi.fn(async () => ({
+        ok: true,
+        capability: "office.document.export",
+        auditId: "audit-office-doc-export",
+        timestamp: "2026-05-15T10:02:00.000Z",
+        targetRef: {
+          kind: "workspace",
+          id: "workspace-1"
+        },
+        payload: {
+          task: {
+            id: "task-1",
+            status: "ready"
+          },
+          execution: {
+            taskId: "task-1",
+            executionTaskId: "exec-1",
+            deduped: false
+          }
+        }
+      })),
+      getOfficeDocumentTask: vi.fn(() => ({
+        ok: true,
+        capability: "office.document.task.get",
+        auditId: "audit-office-doc-task",
+        timestamp: "2026-05-15T10:03:00.000Z",
+        targetRef: {
+          kind: "workspace",
+          id: "workspace-1"
+        },
+        payload: {
+          task: {
+            id: "task-1",
+            status: "succeeded"
+          }
+        }
+      }))
+    };
+
+    const app = await createAssistantApp(assistantCapabilityService);
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/office/documents",
+      payload: {
+        workspaceId: "  workspace-1  ",
+        title: "  周报  ",
+        templateKey: "  team.doct.weekly  ",
+        summary: "  本周完成事项  ",
+        content: {
+          sections: []
+        }
+      }
+    });
+    expect(createResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.createOfficeDocument).toHaveBeenCalledWith({
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      title: "周报",
+      templateId: null,
+      templateKey: "team.doct.weekly",
+      content: {
+        sections: []
+      },
+      outline: undefined,
+      summary: "本周完成事项"
+    });
+
+    const updateResponse = await app.inject({
+      method: "PATCH",
+      url: "/api/assistant/office/documents/document-1",
+      payload: {
+        title: "  周报-更新  ",
+        summary: "  补充风险说明  ",
+        status: "reviewing"
+      }
+    });
+    expect(updateResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.updateOfficeDocument).toHaveBeenCalledWith({
+      userId: "user-1",
+      documentId: "document-1",
+      title: "周报-更新",
+      templateId: null,
+      content: undefined,
+      outline: undefined,
+      summary: "补充风险说明",
+      status: "reviewing"
+    });
+
+    const exportResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/office/documents/document-1/export",
+      payload: {
+        workspaceId: "  workspace-1  ",
+        format: "pdf",
+        riskLevel: "medium",
+        execute: true
+      }
+    });
+    expect(exportResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.exportOfficeDocument).toHaveBeenCalledWith({
+      userId: "user-1",
+      documentId: "document-1",
+      workspaceId: "workspace-1",
+      format: "pdf",
+      riskLevel: "medium",
+      execute: true
+    });
+
+    const taskResponse = await app.inject({
+      method: "GET",
+      url: "/api/assistant/office/document-tasks/task-1"
+    });
+    expect(taskResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.getOfficeDocumentTask).toHaveBeenCalledWith(
+      "task-1",
+      "user-1"
+    );
+  });
+
+  it("办公浏览器路由会把 profile 与 task 参数清洗后传给服务", async () => {
+    const assistantCapabilityService = {
+      listOfficeBrowserProfiles: vi.fn(() => ({
+        ok: true,
+        capability: "office.browser.profile.list",
+        auditId: "audit-office-browser-profile-list",
+        timestamp: "2026-05-15T11:00:00.000Z",
+        targetRef: { kind: "workspace", id: "workspace-1" },
+        payload: { items: [] }
+      })),
+      createOfficeBrowserProfile: vi.fn(() => ({
+        ok: true,
+        capability: "office.browser.profile.create",
+        auditId: "audit-office-browser-profile-create",
+        timestamp: "2026-05-15T11:01:00.000Z",
+        targetRef: { kind: "workspace", id: "workspace-1" },
+        payload: { profile: { id: "profile-1" } }
+      })),
+      getOfficeBrowserProfile: vi.fn(() => ({
+        ok: true,
+        capability: "office.browser.profile.get",
+        auditId: "audit-office-browser-profile-get",
+        timestamp: "2026-05-15T11:02:00.000Z",
+        targetRef: { kind: "workspace", id: "workspace-1" },
+        payload: { profile: { id: "profile-1" } }
+      })),
+      createOfficeBrowserTask: vi.fn(async () => ({
+        ok: true,
+        capability: "office.browser.task.create",
+        auditId: "audit-office-browser-task-create",
+        timestamp: "2026-05-15T11:03:00.000Z",
+        targetRef: { kind: "workspace", id: "workspace-1" },
+        payload: { task: { id: "task-browser-1" }, execution: null }
+      })),
+      getOfficeBrowserTask: vi.fn(() => ({
+        ok: true,
+        capability: "office.browser.task.get",
+        auditId: "audit-office-browser-task-get",
+        timestamp: "2026-05-15T11:04:00.000Z",
+        targetRef: { kind: "workspace", id: "workspace-1" },
+        payload: { task: { id: "task-browser-1" } }
+      }))
+    };
+    const app = await createAssistantApp(assistantCapabilityService);
+
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/api/assistant/office/browser/profiles?workspaceId=%20workspace-1%20"
+    });
+    expect(listResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.listOfficeBrowserProfiles).toHaveBeenCalledWith(
+      "user-1",
+      "workspace-1"
+    );
+
+    const createProfileResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/office/browser/profiles",
+      payload: {
+        workspaceId: "  workspace-1  ",
+        engine: "chrome",
+        mode: "cdp_attached",
+        displayName: "  办公 Chrome  ",
+        ownershipScope: "workspace",
+        cdpEndpoint: "  http://127.0.0.1:9222  "
+      }
+    });
+    expect(createProfileResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.createOfficeBrowserProfile).toHaveBeenCalledWith({
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      engine: "chrome",
+      mode: "cdp_attached",
+      displayName: "办公 Chrome",
+      ownershipScope: "workspace",
+      cdpEndpoint: "http://127.0.0.1:9222"
+    });
+
+    const getProfileResponse = await app.inject({
+      method: "GET",
+      url: "/api/assistant/office/browser/profiles/profile-1"
+    });
+    expect(getProfileResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.getOfficeBrowserProfile).toHaveBeenCalledWith(
+      "profile-1",
+      "user-1"
+    );
+
+    const createTaskResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/office/browser/tasks",
+      payload: {
+        workspaceId: "  workspace-1  ",
+        title: "  浏览器巡检  ",
+        profileId: "  profile-1  ",
+        riskLevel: "medium",
+        execute: true,
+        input: {
+          startUrl: "https://example.invalid",
+          actions: [{ type: "read_dom" }]
+        }
+      }
+    });
+    expect(createTaskResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.createOfficeBrowserTask).toHaveBeenCalledWith({
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      title: "浏览器巡检",
+      profileId: "profile-1",
+      riskLevel: "medium",
+      input: {
+        startUrl: "https://example.invalid",
+        actions: [{ type: "read_dom" }]
+      },
+      execute: true
+    });
+
+    const getTaskResponse = await app.inject({
+      method: "GET",
+      url: "/api/assistant/office/browser/tasks/task-browser-1"
+    });
+    expect(getTaskResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.getOfficeBrowserTask).toHaveBeenCalledWith(
+      "task-browser-1",
+      "user-1"
+    );
+  });
+
+  it("办公运维路由会把 target 与 task 参数清洗后传给服务", async () => {
+    const assistantCapabilityService = {
+      listOfficeOpsTargets: vi.fn(() => ({
+        ok: true,
+        capability: "office.ops.target.list",
+        auditId: "audit-office-ops-target-list",
+        timestamp: "2026-05-15T11:10:00.000Z",
+        targetRef: { kind: "none", id: null },
+        payload: { items: [] }
+      })),
+      createOfficeOpsTarget: vi.fn(() => ({
+        ok: true,
+        capability: "office.ops.target.create",
+        auditId: "audit-office-ops-target-create",
+        timestamp: "2026-05-15T11:11:00.000Z",
+        targetRef: { kind: "none", id: "target-1" },
+        payload: { target: { id: "target-1" } }
+      })),
+      getOfficeOpsTarget: vi.fn(() => ({
+        ok: true,
+        capability: "office.ops.target.get",
+        auditId: "audit-office-ops-target-get",
+        timestamp: "2026-05-15T11:12:00.000Z",
+        targetRef: { kind: "none", id: "target-1" },
+        payload: { target: { id: "target-1" } }
+      })),
+      createOfficeOpsSshTask: vi.fn(() => ({
+        ok: true,
+        capability: "office.ops.ssh-task.create",
+        auditId: "audit-office-ops-ssh-task",
+        timestamp: "2026-05-15T11:13:00.000Z",
+        targetRef: { kind: "none", id: "target-1" },
+        payload: { task: { id: "task-ssh-1" }, execution: null }
+      })),
+      executeOfficeOpsTask: vi.fn(() => ({
+        ok: true,
+        capability: "office.ops.task.execute",
+        auditId: "audit-office-ops-task-execute",
+        timestamp: "2026-05-15T11:13:30.000Z",
+        targetRef: { kind: "none", id: "target-1" },
+        payload: {
+          task: { id: "task-ssh-1" },
+          execution: { taskId: "task-ssh-1", executionTaskId: "exec-1", deduped: false }
+        }
+      })),
+      replyOfficeTaskApproval: vi.fn(() => ({
+        ok: true,
+        capability: "office.task.approval.reply",
+        auditId: "audit-office-task-approval-reply",
+        timestamp: "2026-05-15T11:13:40.000Z",
+        targetRef: { kind: "none", id: "target-1" },
+        payload: {
+          approval: { id: "approval-1", status: "approved" },
+          task: { id: "task-ssh-1" }
+        }
+      })),
+      createOfficeOpsBrowserTask: vi.fn(() => ({
+        ok: true,
+        capability: "office.ops.browser-task.create",
+        auditId: "audit-office-ops-browser-task",
+        timestamp: "2026-05-15T11:14:00.000Z",
+        targetRef: { kind: "none", id: "target-2" },
+        payload: { task: { id: "task-ops-browser-1" } }
+      })),
+      getOfficeOpsTask: vi.fn(() => ({
+        ok: true,
+        capability: "office.ops.task.get",
+        auditId: "audit-office-ops-task-get",
+        timestamp: "2026-05-15T11:15:00.000Z",
+        targetRef: { kind: "none", id: "target-1" },
+        payload: { task: { id: "task-ssh-1" } }
+      }))
+    };
+    const app = await createAssistantApp(assistantCapabilityService);
+
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/api/assistant/office/ops/targets?kind=ssh_host&status=active"
+    });
+    expect(listResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.listOfficeOpsTargets).toHaveBeenCalledWith(
+      "user-1",
+      "ssh_host",
+      "active"
+    );
+
+    const createTargetResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/office/ops/targets",
+      payload: {
+        kind: "ssh_host",
+        displayName: "  生产 SSH  ",
+        environment: "  prod  ",
+        config: {
+          host: "10.0.0.8",
+          username: "root"
+        },
+        credentialRef: "  cred-1  "
+      }
+    });
+    expect(createTargetResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.createOfficeOpsTarget).toHaveBeenCalledWith({
+      userId: "user-1",
+      kind: "ssh_host",
+      displayName: "生产 SSH",
+      environment: "prod",
+      config: {
+        host: "10.0.0.8",
+        username: "root"
+      },
+      credentialRef: "cred-1"
+    });
+
+    const getTargetResponse = await app.inject({
+      method: "GET",
+      url: "/api/assistant/office/ops/targets/target-1"
+    });
+    expect(getTargetResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.getOfficeOpsTarget).toHaveBeenCalledWith(
+      "target-1",
+      "user-1"
+    );
+
+    const createSshTaskResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/office/ops/ssh-tasks",
+      payload: {
+        title: "  检查磁盘  ",
+        targetId: "  target-1  ",
+        riskLevel: "medium",
+        input: {
+          command: "df -h"
+        },
+        execute: true
+      }
+    });
+    expect(createSshTaskResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.createOfficeOpsSshTask).toHaveBeenCalledWith({
+      userId: "user-1",
+      title: "检查磁盘",
+      targetId: "target-1",
+      riskLevel: "medium",
+      input: {
+        command: "df -h"
+      },
+      execute: true
+    });
+
+    const executeTaskResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/office/ops/tasks/task-ssh-1/execute"
+    });
+    expect(executeTaskResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.executeOfficeOpsTask).toHaveBeenCalledWith({
+      userId: "user-1",
+      taskId: "task-ssh-1"
+    });
+
+    const replyApprovalResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/office/task-approvals/approval-1/reply",
+      payload: {
+        status: "approved",
+        decisionNote: "  可以执行  "
+      }
+    });
+    expect(replyApprovalResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.replyOfficeTaskApproval).toHaveBeenCalledWith({
+      userId: "user-1",
+      approvalId: "approval-1",
+      status: "approved",
+      decisionNote: "可以执行"
+    });
+
+    const createBrowserTaskResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/office/ops/browser-tasks",
+      payload: {
+        title: "  控制台巡检  ",
+        targetId: "  target-2  ",
+        profileId: "  profile-9  ",
+        riskLevel: "high",
+        input: {
+          actions: [{ type: "click", selector: "#refresh" }]
+        }
+      }
+    });
+    expect(createBrowserTaskResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.createOfficeOpsBrowserTask).toHaveBeenCalledWith({
+      userId: "user-1",
+      title: "控制台巡检",
+      targetId: "target-2",
+      profileId: "profile-9",
+      riskLevel: "high",
+      input: {
+        actions: [{ type: "click", selector: "#refresh" }]
+      }
+    });
+
+    const getTaskResponse = await app.inject({
+      method: "GET",
+      url: "/api/assistant/office/ops/tasks/task-ssh-1"
+    });
+    expect(getTaskResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.getOfficeOpsTask).toHaveBeenCalledWith(
+      "task-ssh-1",
+      "user-1"
+    );
+  });
+
   it("缺少终端筛选条件时会返回结构化错误", async () => {
     const assistantCapabilityService = {
       listTerminals: vi.fn()
