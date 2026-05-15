@@ -21,7 +21,11 @@ export class WorkspaceSessionRuntimeContextService {
     projectId?: string | null;
     provider: SessionBinding["provider"];
     runtimeHomeDir: string;
-  }): void {
+  }): {
+    authFilePath: string;
+    instructionFilePath: string;
+    runtimeEnv: Record<string, string>;
+  } {
     const credential = this.workspaceSessionAuthService.ensureWorkspaceCredential({
       runtimeHomeDir: input.runtimeHomeDir,
       userId: input.userId,
@@ -56,6 +60,16 @@ export class WorkspaceSessionRuntimeContextService {
 
     // 这里保留一份显式可读认证信息，供 CLI 自动发现或运行时环境变量指向。
     fs.writeFileSync(authFilePath, `${JSON.stringify(credential, null, 2)}\n`, "utf8");
+    return {
+      authFilePath,
+      instructionFilePath: instructionPath,
+      runtimeEnv: {
+        CODINGNS_AUTH_FILE: authFilePath,
+        BUTLER_AUTH_FILE: authFilePath,
+        WORKSPACE_SESSION_AUTH_FILE: authFilePath,
+        WORKSPACE_SESSION_ASSISTANT_FILE: instructionPath
+      }
+    };
   }
 }
 
