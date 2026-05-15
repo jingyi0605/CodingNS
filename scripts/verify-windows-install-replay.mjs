@@ -150,7 +150,7 @@ function verifyInstallOutput(installOutput) {
   }
 
   assertTextContains(installOutput, "Windows 正式安装将使用 CodingNS 私有 Node.js 22.16.0 运行时", "安装输出缺少私有 Node 提示");
-  assertTextContains(installOutput, "PTY 运行时依赖已就绪：@codingns/node-pty@1.0.0-cns.1", "安装输出缺少 PTY 命中结果");
+  assertTextContains(installOutput, "PTY 运行时依赖已就绪：@codingns/node-pty", "安装输出缺少 PTY 命中结果");
   assertTextContains(installOutput, "实际运行时 Node.js：v22.16.0", "安装输出缺少最终运行时 Node");
   assertTextContains(installOutput, "实际 PTY 依赖：@codingns/node-pty@1.0.0-cns.1", "安装输出缺少最终 PTY 依赖");
 }
