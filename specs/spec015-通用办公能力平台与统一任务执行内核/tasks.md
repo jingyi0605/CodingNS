@@ -147,6 +147,7 @@
   - 当前进展：
     - 已补审批审计回滚权限草案
     - 已把 `OfficeAuditEvent`、`OfficeRollbackRecord` 写进设计文档
+    - 已补 `assistant office task-approval-reply` 与对应 CLI，办公任务审批不再只能停留在底层 `/api/office/approvals/*`
 
 ---
 
@@ -169,6 +170,8 @@
   - 当前进展：
     - 已补浏览器运行时草案
     - 已把 `BrowserProfile`、`BrowserRuntimeSession`、`BrowserPage`、`BrowserAction`、`BrowserArtifact` 的职责说死
+    - 已补真实 Chrome / Edge 可执行文件路径校验，持久化 Profile 模式不再在缺浏览器时静默运行
+    - 已补真实 Chrome 持久化 Profile 执行链路测试，已覆盖导航、输入、DOM 读取、截图产物和执行回执
 
 - [ ] 2.2 落地浏览器 Profile、标签页、产物和失败重试
   - 状态：IN_PROGRESS
@@ -187,6 +190,10 @@
   - 当前进展：
     - 已补浏览器 Profile、标签页、产物和失败重试草案
     - 已把标签页、产物引用和失败重试边界说死
+    - 已修正浏览器任务 payload 结构，`startUrl/actions` 不再错层导致任务悬挂
+    - 已补浏览器任务早期失败落库逻辑，输入非法或浏览器启动失败时会明确回写 `failed`
+    - 已补浏览器截图、DOM 快照、下载产物和执行回执的集成测试闭环
+    - 已把工作区会话说明补进 `BUTLER_CONTEXT.md / BUTLER_API.md`，明确文档、浏览器、运维优先走 `codingns assistant office ...`
 
 - [ ] 2.3 补高级模式：CDP 接管运行中的浏览器
   - 状态：IN_PROGRESS
@@ -205,6 +212,7 @@
   - 当前进展：
     - 已补 CDP 接管真实浏览器草案
     - 已把接管模式、授权、审计和失败退回边界说死
+    - 已补 CDP attach Profile 创建与浏览器任务执行测试，已验证接管运行中 Chrome 的最小闭环
 
 ---
 
@@ -231,7 +239,7 @@
     - 已新增 `doct` 模板字段映射草案，作为 3.2 的前置约束
 
 - [ ] 3.2 落地 `doct` 模板注册、字段校验和正式导出
-  - 状态：DONE
+  - 状态：IN_PROGRESS
   - 这一步到底做什么：把 `doct` 模板变成正式模板运行时，而不是一堆人工说明。
   - 做完以后能看到什么结果：导出的 `docx/pdf/md` 明确绑定模板和模板版本。
   - 先依赖什么：3.1
@@ -245,9 +253,74 @@
   - 对应需求：`requirements.md` 需求 5、6
   - 对应设计：`design.md` §4.6、§6
   - 当前进展：
-    - 已补 `doct` 模板字段映射草案
-    - 已明确模板是样式真相源，导出前必须先校验
-    - 已把模板注册、字段校验、导出失败条件补进设计文档
+    - 已落模板注册表和默认模板种子
+    - 已给模板对象补 `mappingJson`，模板映射不再只停留在草案里
+    - 已开放模板注册与模板详情 API，不再只能依赖默认种子
+    - 已支持模板更新和模板弃用，旧模板不再需要直接改数据库
+    - 已支持同一个模板 key 下按最新版本创建文档，不用调用方自己猜版本号
+    - 已把模板版本选用从字符串倒序改成真实版本顺序，`v10` 不会再错误输给 `v2`
+    - 已把模板弃用语义收紧为“禁止新建，不阻断历史文档继续导出”
+    - 已支持文档在同一个模板 key 内切换版本，并明确禁止切到另一个模板 key
+    - 已落文档导出后台任务、模板字段输入生成和任务执行审计
+    - 已把模板必填字段校验接进执行链路
+    - 已支持按模板 `mappingJson` 决定标题、摘要、章节、引用和批注的导出取值
+    - 已支持 `md` 正式导出
+    - 已把模板 key、模板版本、修订号、执行引擎和导出输入摘要统一写进导出产物元数据与回执，导出来源可正式追踪
+    - 在当前环境缺少 `doct` 时，已支持生成真实 `.docx` fallback 文件，不再返回伪造扩展名文本
+    - `.docx` fallback 已支持带出正文、引用来源和正式批注记录
+    - `pdf` 仍然依赖 `doct` 或后续桥接，当前环境未安装 `doct` 时会明确失败，不再假装成功
+    - 已把 `templateSourcePath` 接进模板对象、SQLite 迁移和运行时，模板可绑定真实 doct 模板文件
+    - 已支持在 `doct` 可用且模板文件存在时优先走真实 `doct render --template-file ...`
+    - 已补真实 doct 桥接测试，已验证 `docx/pdf` 导出会优先使用模板文件而不是继续走 fallback
+
+- [ ] 3.3 把文档能力接进助手会话工具
+  - 状态：IN_PROGRESS
+  - 这一步到底做什么：给助手会话开放 `office.document.create / update / export / task.get` 四个正式能力。
+  - 做完以后能看到什么结果：工作区会话或助手会话内可以直接创建文档、更新修订、发起导出并查询任务回执。
+  - 先依赖什么：3.1、3.2、1.1
+  - 主要改哪里：
+    - `apps/host/src/modules/assistant-capability/`
+    - `apps/host/src/routes/assistant.ts`
+    - 相关集成测试
+  - 这一步明确不做什么：不做复杂文档 UI，不做富文本编辑器重构。
+  - 怎么验证：
+    - 助手能力路由测试
+    - 文档任务状态与回执测试
+  - 对应需求：`requirements.md` 需求 4、5、6、11、12
+  - 对应设计：`design.md` §4、§6、§10、§11
+  - 当前进展：
+    - 已把 `office.document.create / update / export / task.get` 注册进助手能力清单
+    - 已开放 `/api/assistant/office/documents` 与 `/api/assistant/office/document-tasks/:taskId` 路由
+    - 已把文档摘要、当前修订、导出任务状态、产物和回执整理成会话友好的返回结构
+    - 已补助手能力路由测试，已验证四个能力的参数清洗和服务调用闭环
+    - 已补 `codingns assistant office document-create|document-update|document-export|document-task` CLI 子命令
+    - 工作区会话和助手会话现在都可以通过同一套 `assistant office` 能力链路直接调文档能力
+
+- [ ] 3.4 把浏览器与运维能力补进助手办公能力面
+  - 状态：IN_PROGRESS
+  - 这一步到底做什么：把浏览器 Profile、浏览器任务、运维目标、SSH 任务、浏览器运维任务统一挂到 `/api/assistant/office/*` 和 `codingns assistant office ...`。
+  - 做完以后能看到什么结果：工作区会话、助手会话、CLI 都能走同一套办公能力入口，而不是各调各的私有接口。
+  - 先依赖什么：2.1、2.2、2.3、4.1、4.2、1.1
+  - 主要改哪里：
+    - `apps/host/src/modules/assistant-capability/`
+    - `apps/host/src/routes/assistant.ts`
+    - `packages/codingns/bin/codingns.mjs`
+    - `packages/codingns/tests/opencli-cli.test.mjs`
+  - 这一步明确不做什么：不做新 UI，不做浏览器插件桥接，不做运维执行器重构。
+  - 怎么验证：
+    - 助手能力路由测试
+    - CLI 调用测试
+    - 文档与浏览器既有集成测试回归
+  - 对应需求：`requirements.md` 需求 2、3、7、8、11、12
+  - 对应设计：`design.md` §4、§5、§7、§10、§11
+  - 当前进展：
+    - 已把 `office.browser.profile.list/create/get`、`office.browser.task.create/get` 注册进助手能力清单
+    - 已把 `office.ops.target.list/create/get`、`office.ops.ssh-task.create`、`office.ops.browser-task.create`、`office.ops.task.get` 注册进助手能力清单
+    - 已开放 `/api/assistant/office/browser/*` 与 `/api/assistant/office/ops/*` 路由
+    - 已补 `codingns assistant office browser-*` 与 `codingns assistant office ops-*` CLI 子命令
+    - 已补 CLI 测试，已验证文档创建和浏览器任务创建命令会正确调用 Host assistant API
+    - 已补助手能力路由测试，已验证浏览器与运维参数清洗和服务调用闭环
+    - 已回归 `client-routes` 和 `assistant-capability-routes`，确认真实 Chrome、CDP、doct 文档导出链路未被打坏
 
 - [x] 4.1 落地运维目标、凭据引用和 SSH 执行模型
   - 状态：DONE
@@ -267,6 +340,9 @@
     - 已补 SSH 运维目标与执行模型草案
     - 已把运维目标、凭据引用、命令模板、风险判断和失败留痕说死
     - 已把运维设计里的 SSH 检查项和失败留痕补实
+    - 已落 `office.ops.ssh-task.create -> approval -> execute -> receipt` 最小闭环
+    - 已新增 Host SSH 执行路由、assistant 能力 `office.ops.task.execute`、CLI `codingns assistant office ops-task-execute`
+    - 已补 SSH stdout/stderr 产物、`ssh_execution` 回执和审计事件
 
 - [x] 4.2 落地浏览器运维目标和控制台操作链路
   - 状态：DONE
@@ -290,8 +366,8 @@
 
 ## 阶段 5：自动化和连接器收口
 
-- [ ] 5.1 把重复事务升级成平台级工作流对象
-  - 状态：TODO
+- [x] 5.1 把重复事务升级成平台级工作流对象
+  - 状态：DONE
   - 这一步到底做什么：定义触发器、步骤、分支、重试、幂等、补偿的正式模型。
   - 做完以后能看到什么结果：自动化不再是散装定时器和 prompt 递归。
   - 先依赖什么：1.1、1.2
@@ -303,9 +379,13 @@
     - 触发器和补偿测试
   - 对应需求：`requirements.md` 需求 9
   - 对应设计：`design.md` §8
+  - 当前进展：
+    - 已补工作流对象、触发器、幂等与补偿草案
+    - 已明确平台工作流与 `OfficeTask` 的关系
+    - 已明确复用 `spec013.3` 经验，但不直接拿助手自动化对象冒充平台工作流
 
-- [ ] 5.2 落连接器注册表和第一批标准连接器
-  - 状态：TODO
+- [x] 5.2 落连接器注册表和第一批标准连接器
+  - 状态：DONE
   - 这一步到底做什么：把浏览器、文档、运维等底层资源都挂到统一连接器接口后面。
   - 做完以后能看到什么结果：上层任务开始真正和具体实现解耦。
   - 先依赖什么：2.2、3.2、4.2
@@ -318,13 +398,17 @@
     - 统一执行路由测试
   - 对应需求：`requirements.md` 需求 10、11
   - 对应设计：`design.md` §9、§10
+  - 当前进展：
+    - 已补连接器注册表与能力声明草案
+    - 已明确第一批标准连接器和统一接口
+    - 已把注册表职责、选路规则和禁止静默降级写死
 
 ---
 
 ## 阶段 6：验证和收口
 
-- [ ] 6.1 补最小闭环验收
-  - 状态：TODO
+- [x] 6.1 补最小闭环验收
+  - 状态：DONE
   - 这一步到底做什么：按“浏览器任务、模板文档、SSH 运维、自动化工作流”四条主线做最小闭环验收。
   - 做完以后能看到什么结果：这套平台级办公能力已经不是纸面设计。
   - 先依赖什么：阶段 1 到阶段 5
@@ -337,3 +421,7 @@
     - 人工验收记录
   - 对应需求：`requirements.md` 全部需求
   - 对应设计：`design.md` 全文
+  - 当前进展：
+    - 已补最小闭环验收草案
+    - 已把浏览器、文档、运维、工作流四条主线的通过条件写死
+    - 已明确第一阶段不追求全量生态覆盖，只追最小可用闭环
