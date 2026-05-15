@@ -157,4 +157,82 @@ describe("session routes", () => {
       }
     });
   });
+
+  it("stale session 的只读接口会软降级，不再返回错误", async () => {
+    const missingSessionError = new AppError({
+      statusCode: 404,
+      errorCode: "SESSION_NOT_FOUND",
+      detail: "session 不存在"
+    });
+    const missingIndexError = new AppError({
+      statusCode: 500,
+      errorCode: "SESSION_INDEX_MISSING",
+      detail: "session 索引缺失"
+    });
+    const sessionHistoryService = {
+      getSessionCapabilities: vi.fn(async () => {
+        throw missingSessionError;
+      })
+    };
+    const sessionLiveRuntimeService = {
+      listPermissionRequests: vi.fn(async () => {
+        throw missingIndexError;
+      }),
+      listQueuedMessages: vi.fn(async () => {
+        throw missingIndexError;
+      }),
+      getSessionRuntime: vi.fn(async () => {
+        throw missingSessionError;
+      })
+    };
+    const app = await createSessionApp({
+      sessionHistoryService,
+      sessionLiveRuntimeService
+    });
+
+    const capabilitiesResponse = await app.inject({
+      method: "GET",
+      url: "/api/sessions/session-stale-1/capabilities"
+    });
+    expect(capabilitiesResponse.statusCode).toBe(200);
+    expect(capabilitiesResponse.json()).toMatchObject({
+      provider: "codex",
+      canStartSession: false,
+      canResumeSession: false,
+      canSendMessage: false,
+      limitations: ["session 已删除或不存在"]
+    });
+
+    const permissionResponse = await app.inject({
+      method: "GET",
+      url: "/api/sessions/session-stale-1/permission-requests"
+    });
+    expect(permissionResponse.statusCode).toBe(200);
+    expect(permissionResponse.json()).toEqual({
+      items: []
+    });
+
+    const queueResponse = await app.inject({
+      method: "GET",
+      url: "/api/sessions/session-stale-1/queue"
+    });
+    expect(queueResponse.statusCode).toBe(200);
+    expect(queueResponse.json()).toEqual({
+      items: []
+    });
+
+    const runtimeResponse = await app.inject({
+      method: "GET",
+      url: "/api/sessions/session-stale-1/runtime"
+    });
+    expect(runtimeResponse.statusCode).toBe(200);
+    expect(runtimeResponse.json()).toMatchObject({
+      sessionId: "session-stale-1",
+      runningState: "completed",
+      hasActiveRun: false,
+      canInterrupt: false,
+      errorCode: "SESSION_NOT_FOUND",
+      errorDetail: "session 已删除或不存在"
+    });
+  });
 });

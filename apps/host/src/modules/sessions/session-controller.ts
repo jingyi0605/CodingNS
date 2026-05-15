@@ -1,10 +1,15 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 
+import type { ProviderCapabilities } from "@codingns/session-sync-core";
+
 import { AppError } from "../../shared/errors/app-error.js";
 import type { ButlerControlSessionRepository } from "../../storage/repositories/butler-control-session-repository.js";
 import type { SessionProviderConfigMode } from "../../types/domain.js";
 import type { SessionHistoryService } from "./session-history-service.js";
-import type { SessionLiveRuntimeService } from "./session-live-runtime-service.js";
+import type {
+  SessionLiveRuntimeService,
+  SessionRuntimeStatusView
+} from "./session-live-runtime-service.js";
 import type { SessionAttachmentInput } from "./session-message-attachment-service.js";
 
 interface SessionListQuery {
@@ -352,7 +357,10 @@ export class SessionController {
     request: FastifyRequest<{ Params: SessionParams }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(await this.sessionHistoryService.getSessionCapabilities(request.params.sessionId));
+    reply.send(await this.resolveMissingSessionRead(
+      () => this.sessionHistoryService.getSessionCapabilities(request.params.sessionId),
+      () => createMissingSessionCapabilitiesSnapshot()
+    ));
   };
 
   readonly listPermissionRequests = async (
@@ -360,9 +368,12 @@ export class SessionController {
     reply: FastifyReply
   ): Promise<void> => {
     reply.send({
-      items: await this.sessionLiveRuntimeService.listPermissionRequests(
-        request.params.sessionId,
-        requireUserId(request)
+      items: await this.resolveMissingSessionRead(
+        () => this.sessionLiveRuntimeService.listPermissionRequests(
+          request.params.sessionId,
+          requireUserId(request)
+        ),
+        () => []
       )
     });
   };
@@ -372,9 +383,12 @@ export class SessionController {
     reply: FastifyReply
   ): Promise<void> => {
     reply.send({
-      items: await this.sessionLiveRuntimeService.listQueuedMessages(
-        request.params.sessionId,
-        requireUserId(request)
+      items: await this.resolveMissingSessionRead(
+        () => this.sessionLiveRuntimeService.listQueuedMessages(
+          request.params.sessionId,
+          requireUserId(request)
+        ),
+        () => []
       )
     });
   };
@@ -675,12 +689,13 @@ export class SessionController {
     request: FastifyRequest<{ Params: SessionParams }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(
-      await this.sessionLiveRuntimeService.getSessionRuntime(
+    reply.send(await this.resolveMissingSessionRead(
+      () => this.sessionLiveRuntimeService.getSessionRuntime(
         request.params.sessionId,
         requireUserId(request)
-      )
-    );
+      ),
+      () => createMissingSessionRuntimeSnapshot(request.params.sessionId)
+    ));
   };
 
   readonly interrupt = async (
@@ -745,6 +760,21 @@ export class SessionController {
       )
     );
   };
+
+  private async resolveMissingSessionRead<T>(
+    run: () => Promise<T>,
+    fallback: () => T
+  ): Promise<T> {
+    try {
+      return await run();
+    } catch (error) {
+      if (!isMissingSessionReadError(error)) {
+        throw error;
+      }
+
+      return fallback();
+    }
+  }
 }
 
 function filterButlerControlSessions(
@@ -758,4 +788,52 @@ function filterButlerControlSessions(
   }
 
   return sessions.filter((session) => !hiddenSessionIds.has(session.sessionId));
+}
+
+function isMissingSessionReadError(error: unknown): boolean {
+  return error instanceof AppError
+    && (error.errorCode === "SESSION_NOT_FOUND" || error.errorCode === "SESSION_INDEX_MISSING");
+}
+
+function createMissingSessionCapabilitiesSnapshot(): ProviderCapabilities {
+  return {
+    provider: "codex",
+    canStartSession: false,
+    canResumeSession: false,
+    canSendMessage: false,
+    inRunInputMode: "none",
+    supportsSubagents: false,
+    supportsInterrupt: false,
+    supportsStructuredToolCalls: false,
+    supportsTokenUsage: false,
+    supportsAttachments: false,
+    supportsPermissionPrompt: false,
+    supportsCheckpoint: false,
+    limitations: ["session 已删除或不存在"]
+  };
+}
+
+function createMissingSessionRuntimeSnapshot(sessionId: string): SessionRuntimeStatusView {
+  const timestamp = new Date().toISOString();
+
+  return {
+    sessionId,
+    runningState: "completed",
+    hasActiveRun: false,
+    canAttach: false,
+    canInterrupt: false,
+    inRunInputMode: "none",
+    provider: "codex",
+    providerSessionId: "",
+    activityResolutionSource: "unknown",
+    activityConfidence: "weak",
+    runId: null,
+    detail: "session 已删除或不存在",
+    interruptSource: null,
+    errorCode: "SESSION_NOT_FOUND",
+    errorDetail: "session 已删除或不存在",
+    updatedAt: timestamp,
+    watchdogTriggeredAt: null,
+    contextUsage: null
+  };
 }
