@@ -43,6 +43,7 @@ import {
   getPathLeafName
 } from "./file-entry-visibility";
 import { SessionChangedFilesPanel } from "./SessionChangedFilesPanel";
+import { loadSessionChangedGitFiles } from "./session-change-utils";
 import { useTransientScrollbarVisibility } from "./useTransientScrollbarVisibility";
 
 interface FileContextPanelProps {
@@ -236,6 +237,32 @@ export function FileContextPanel({
   useEffect(() => {
     activeDirectoryPathRef.current = activeDirectoryPath;
   }, [activeDirectoryPath]);
+
+  function syncSessionChangeCount(nextCount: number) {
+    setSessionChangeCount(nextCount);
+
+    if (!workspaceId || !sessionId) {
+      return;
+    }
+
+    writeViewSnapshot(buildSessionChangeCountSnapshotKey(workspaceId, sessionId), nextCount);
+  }
+
+  async function refreshSessionChangeCount() {
+    if (!workspaceId || !sessionId) {
+      syncSessionChangeCount(0);
+      return;
+    }
+
+    const sessionChanges = await loadSessionChangedGitFiles(sessionId, workspaceId);
+    const visibleCount = filterVisibleEntriesByName(
+      sessionChanges,
+      (item) => getPathLeafName(item.path),
+      showSystemFiles
+    ).length;
+
+    syncSessionChangeCount(visibleCount);
+  }
 
   function updateTreeCache(nextValue: FileTreeCacheUpdater) {
     setTreeCache((previous) => {
@@ -686,7 +713,19 @@ export function FileContextPanel({
     });
 
     setSessionChangeCount(cachedCount ?? 0);
-  }, [sessionId, sessionRefreshVersion, workspaceId]);
+
+    let cancelled = false;
+
+    void refreshSessionChangeCount().catch(() => {
+      if (cancelled) {
+        return;
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, sessionRefreshVersion, showSystemFiles, workspaceId]);
 
   // 通过 WebSocket 订阅 git 状态（复用 GitSidebar 的快照通道，避免冗余 HTTP 调用）
   useEffect(() => {
@@ -1264,6 +1303,21 @@ export function FileContextPanel({
       if (searchMode && searchKeyword.trim()) {
         const response = await searchFiles(wid, searchKeyword.trim());
         setSearchResult(response.items);
+      }
+
+      if (hasSessionContext && sessionId) {
+        if (activeTab === "session") {
+          setSessionRefreshVersion((current) => current + 1);
+        } else {
+          try {
+            await refreshSessionChangeCount();
+          } catch (error) {
+            showToast({
+              title: readError(error, t("conversation.filePanelSessionLoadFailed")),
+              tone: "error"
+            });
+          }
+        }
       }
     } catch (error) {
       showToast({
@@ -2770,7 +2824,7 @@ export function FileContextPanel({
               showSystemFiles={showSystemFiles}
               selectedPath={primarySelectedFilePath}
               refreshVersion={sessionRefreshVersion}
-              onCountChange={setSessionChangeCount}
+              onCountChange={syncSessionChangeCount}
               onSelectFile={selectFile}
               onOpenFile={openFileViewer}
             />
