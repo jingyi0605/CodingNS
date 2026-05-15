@@ -538,14 +538,7 @@ resolve_private_package_root_from_spec() {
   local package_root=""
   local local_package_root=""
 
-  local_package_root="$package_spec"
-  if [[ "$local_package_root" == file:* ]]; then
-    local_package_root="${local_package_root#file:}"
-  fi
-
-  if [[ "$local_package_root" =~ ^[A-Za-z]:[\\/].* ]] && is_windows_environment && command_exists cygpath; then
-    local_package_root="$(cygpath -u "$local_package_root" 2>/dev/null || printf '%s' "$local_package_root")"
-  fi
+  local_package_root="$(resolve_local_package_spec_dir "$package_spec" || true)"
 
   if [[ -d "$local_package_root" && -f "$local_package_root/package.json" ]]; then
     printf '%s\n' "$local_package_root"
@@ -564,6 +557,22 @@ resolve_private_package_root_from_spec() {
   package_root="$npm_prefix/node_modules/$package_name"
   [[ -f "$package_root/package.json" ]] || return 1
   printf '%s\n' "$package_root"
+}
+
+resolve_local_package_spec_dir() {
+  local package_spec="$1"
+  local local_package_root=""
+
+  local_package_root="$package_spec"
+  if [[ "$local_package_root" == file:* ]]; then
+    local_package_root="${local_package_root#file:}"
+  fi
+
+  if [[ "$local_package_root" =~ ^[A-Za-z]:[\\/].* ]] && is_windows_environment && command_exists cygpath; then
+    local_package_root="$(cygpath -u "$local_package_root" 2>/dev/null || printf '%s' "$local_package_root")"
+  fi
+
+  printf '%s\n' "$local_package_root"
 }
 
 resolve_private_package_root_from_command_name() {
@@ -2179,8 +2188,11 @@ install_or_resolve_codingns() {
     CODINGNS_PACKAGE_VERSION="$(read_package_json_field "$CODINGNS_PACKAGE_ROOT/package.json" "version" || true)"
   fi
 
-  if [[ -z "$CODINGNS_PACKAGE_NAME" && -d "$PACKAGE_SPEC" ]]; then
-    local metadata_path="$PACKAGE_SPEC/.codingns-install-metadata.json"
+  if [[ -z "$CODINGNS_PACKAGE_NAME" ]]; then
+    local local_package_spec_dir=""
+    local metadata_path=""
+    local_package_spec_dir="$(resolve_local_package_spec_dir "$PACKAGE_SPEC" || true)"
+    metadata_path="$local_package_spec_dir/.codingns-install-metadata.json"
     if [[ -f "$metadata_path" ]]; then
       CODINGNS_PACKAGE_NAME="$(read_install_metadata_field "$metadata_path" "packageName" || true)"
       CODINGNS_PACKAGE_VERSION="$(read_install_metadata_field "$metadata_path" "packageVersion" || true)"
