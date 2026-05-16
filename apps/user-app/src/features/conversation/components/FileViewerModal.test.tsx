@@ -752,7 +752,7 @@ describe("FileViewerModal", () => {
     expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("line-height: 1.8"));
   });
 
-  it("演示文档视图支持点击画布里的 HTML 组件直接定位到顶部编辑区", async () => {
+  it("演示文档视图点击画布里的 HTML 组件时，不会联动顶部编辑区", async () => {
     const user = userEvent.setup();
 
     fileApiMock.getFilePreview.mockResolvedValue(
@@ -806,8 +806,7 @@ describe("FileViewerModal", () => {
     }));
 
     await waitFor(() => {
-      expect(getPresentationRunsEditor()?.textContent)
-        .toBe("画布标题");
+      expect(getPresentationRunsEditor()).toBeNull();
     });
   });
 
@@ -1687,6 +1686,279 @@ describe("FileViewerModal", () => {
     );
   });
 
+  it("演示文档视图支持进入布局编辑并对多个组件做左右对齐", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/layout-align.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell">
+                    <div style="position: absolute; left: 40px; top: 60px; width: 160px; height: 60px;">卡片一</div>
+                    <div style="position: absolute; left: 220px; top: 180px; width: 120px; height: 56px;">卡片二</div>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-layout-align-v1",
+        previewPath: "/preview/files/preview-token/slides/layout-align.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/layout-align.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/layout-align.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerPresentationLayoutMode") }));
+
+    const nodeButtons = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(".static-html-presentation-node-chip")
+    );
+    const firstNodeButton = nodeButtons.find((button) => button.textContent?.includes("卡片一"));
+    const secondNodeButton = nodeButtons.find((button) => button.textContent?.includes("卡片二"));
+
+    expect(firstNodeButton).toBeTruthy();
+    expect(secondNodeButton).toBeTruthy();
+
+    await user.click(firstNodeButton!);
+    fireEvent.click(secondNodeButton!, { metaKey: true });
+
+    const alignLeftButton = screen.getByRole("button", { name: t("conversation.fileViewerPresentationLayoutAlignLeft") });
+    expect(alignLeftButton).toBeEnabled();
+    await user.click(alignLeftButton);
+
+    const positionInputs = Array.from(document.querySelectorAll<HTMLInputElement>(".static-html-presentation-layout-field input"));
+    expect(positionInputs[0]?.value).toBe("40");
+    expect(screen.getByText("已选中 2 个组件")).toBeInTheDocument();
+  });
+
+  it("演示文档视图保存布局编辑结果时，会把几何信息写回 HTML", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/layout-save.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell">
+                    <div style="position: absolute; left: 40px; top: 60px; width: 160px; height: 60px;">布局组件</div>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-layout-save-v1",
+        previewPath: "/preview/files/preview-token/slides/layout-save.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/layout-save.html"
+      })
+    );
+    fileApiMock.saveFileContent.mockResolvedValue({
+      version: "ppt-layout-save-v2",
+      updatedAt: "2026-05-16T10:50:00.000Z"
+    });
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/layout-save.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerPresentationLayoutMode") }));
+
+    const nodeButtons = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(".static-html-presentation-node-chip")
+    );
+    const targetNodeButton = nodeButtons.find((button) => button.textContent?.includes("布局组件"));
+    expect(targetNodeButton).toBeTruthy();
+    await user.click(targetNodeButton!);
+
+    const positionInputs = Array.from(document.querySelectorAll<HTMLInputElement>(".static-html-presentation-layout-field input"));
+    expect(positionInputs).toHaveLength(4);
+    await user.clear(positionInputs[0]!);
+    await user.type(positionInputs[0]!, "180");
+    await user.clear(positionInputs[1]!);
+    await user.type(positionInputs[1]!, "220");
+    await user.clear(positionInputs[2]!);
+    await user.type(positionInputs[2]!, "260");
+    await user.clear(positionInputs[3]!);
+    await user.type(positionInputs[3]!, "110");
+
+    await user.click(screen.getByRole("button", { name: t("conversation.filePanelSave") }));
+
+    await waitFor(() => {
+      expect(fileApiMock.saveFileContent).toHaveBeenCalledTimes(1);
+    });
+
+    const saveArgs = fileApiMock.saveFileContent.mock.calls[0];
+    expect(saveArgs?.[2]).toContain("left: 180px");
+    expect(saveArgs?.[2]).toContain("top: 220px");
+    expect(saveArgs?.[2]).toContain("width: 260px");
+    expect(saveArgs?.[2]).toContain("height: 110px");
+  });
+
+  it("演示文档视图在布局模式下单击选中组件时，不会误写入跳变后的几何位置", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/layout-click-stable.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell" style="position: relative; left: 120px; top: 80px; width: 800px; height: 400px;">
+                    <div style="position: absolute; left: 40px; top: 60px; width: 160px; height: 60px;">布局组件</div>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-layout-click-stable-v1",
+        previewPath: "/preview/files/preview-token/slides/layout-click-stable.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/layout-click-stable.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/layout-click-stable.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerPresentationLayoutMode") }));
+
+    const nodeButtons = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(".static-html-presentation-node-chip")
+    );
+    const targetNodeButton = nodeButtons.find((button) => button.textContent?.includes("布局组件"));
+    expect(targetNodeButton).toBeTruthy();
+
+    await user.click(targetNodeButton!);
+
+    const positionInputs = Array.from(document.querySelectorAll<HTMLInputElement>(".static-html-presentation-layout-field input"));
+    expect(positionInputs[0]?.value).toBe("40");
+    expect(positionInputs[1]?.value).toBe("60");
+  });
+
+  it("演示文档视图会锁定流式布局节点，并支持把当前容器转换为自由布局", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/layout-freeze-container.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell" style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px;">
+                    <div style="padding: 12px; background: #f5f5f5;">卡片一</div>
+                    <div style="padding: 12px; background: #f5f5f5;">卡片二</div>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-layout-freeze-container-v1",
+        previewPath: "/preview/files/preview-token/slides/layout-freeze-container.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/layout-freeze-container.html"
+      })
+    );
+    fileApiMock.saveFileContent.mockResolvedValue({
+      version: "ppt-layout-freeze-container-v2",
+      updatedAt: "2026-05-16T11:20:00.000Z"
+    });
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/layout-freeze-container.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerPresentationLayoutMode") }));
+
+    const nodeButtons = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(".static-html-presentation-node-chip")
+    );
+    const targetNodeButton = nodeButtons.find((button) => button.textContent?.includes("卡片一"));
+    expect(targetNodeButton).toBeTruthy();
+    await user.click(targetNodeButton!);
+
+    const freezeButton = await screen.findByRole("button", { name: t("conversation.fileViewerPresentationLayoutFreezeContainer") });
+    expect(freezeButton).toBeInTheDocument();
+    await waitFor(() => {
+      expect(freezeButton).toBeEnabled();
+    });
+    await user.click(freezeButton);
+
+    await waitFor(() => {
+      const positionInputs = Array.from(document.querySelectorAll<HTMLInputElement>(".static-html-presentation-layout-field input"));
+      expect(positionInputs[0]).toBeEnabled();
+    });
+
+    await user.click(screen.getByRole("button", { name: t("conversation.filePanelSave") }));
+
+    await waitFor(() => {
+      expect(fileApiMock.saveFileContent).toHaveBeenCalledTimes(1);
+    });
+
+    const saveArgs = fileApiMock.saveFileContent.mock.calls[0];
+    expect(saveArgs?.[2]).toContain("data-cns-layout-freeze=\"true\"");
+    expect(saveArgs?.[2]).toContain("position: absolute");
+  });
+
   it("复杂静态 HTML 在演示文档模式下会把第一页内容写进 iframe，而不是空白 srcdoc", async () => {
     const user = userEvent.setup();
     const html = readFileSync(
@@ -1824,6 +2096,64 @@ describe("FileViewerModal", () => {
     expect(frame.getAttribute("srcdoc")).toBe(initialSrcdoc);
 
     await user.click(deviceNodeButton!);
+    expect(frame.getAttribute("srcdoc")).toBe(initialSrcdoc);
+  });
+
+  it("演示文档视图在布局模式下修改几何输入前，不会因为选中节点而反复重建 iframe srcdoc", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/layout-drag-stable.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell">
+                    <div style="position: absolute; left: 40px; top: 60px; width: 160px; height: 60px;">布局组件</div>
+                    <div style="position: absolute; left: 320px; top: 60px; width: 180px; height: 60px;">参考组件</div>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-layout-drag-stable-v1",
+        previewPath: "/preview/files/preview-token/slides/layout-drag-stable.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/layout-drag-stable.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/layout-drag-stable.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerPresentationLayoutMode") }));
+
+    const frame = await screen.findByTestId("static-html-presentation-frame");
+    const initialSrcdoc = frame.getAttribute("srcdoc");
+    const nodeButtons = Array.from(document.querySelectorAll<HTMLButtonElement>(".static-html-presentation-node-chip"));
+    const targetNodeButton = nodeButtons.find((button) => button.textContent?.includes("布局组件"));
+    expect(targetNodeButton).toBeTruthy();
+    await user.click(targetNodeButton!);
+
+    expect(frame.getAttribute("srcdoc")).toBe(initialSrcdoc);
+
+    const positionInputs = Array.from(document.querySelectorAll<HTMLInputElement>(".static-html-presentation-layout-field input"));
+    expect(positionInputs).toHaveLength(4);
+    await user.click(positionInputs[0]!);
     expect(frame.getAttribute("srcdoc")).toBe(initialSrcdoc);
   });
 
