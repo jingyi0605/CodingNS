@@ -17627,6 +17627,17 @@ textarea:focus-visible {
   overflow: auto;
 }
 
+.static-html-presentation-sidebar-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px 12px 0;
+}
+
+.static-html-presentation-sidebar-action-button {
+  width: 100%;
+}
+
 .static-html-presentation-page-toolbar {
   padding: 12px 12px 0;
 }
@@ -17791,9 +17802,9 @@ textarea:focus-visible {
   flex-direction: column;
   align-items: stretch;
   gap: 6px;
-  height: 86px;
-  min-height: 86px;
-  max-height: 86px;
+  height: 88px;
+  min-height: 88px;
+  max-height: 88px;
   padding: 10px 12px;
   border-radius: 16px;
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -18045,16 +18056,19 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 0;
+  width: 100%;
   min-width: 0;
   height: 100%;
 }
 
 .static-html-presentation-text-edit-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: max-content minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   flex: 1 1 auto;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
   min-height: 0;
   height: 100%;
@@ -18062,6 +18076,7 @@ textarea:focus-visible {
 
 .static-html-presentation-inspector-panel[data-compact="true"] {
   width: 100%;
+  max-width: 100%;
   height: 100%;
   padding: 0;
 }
@@ -18070,9 +18085,11 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   flex: 0 0 auto;
-  min-width: 0;
+  min-width: max-content;
   min-height: 0;
   height: 100%;
+  max-width: 100%;
+  overflow: visible;
 }
 
 .static-html-presentation-text-toolbar-row {
@@ -18082,8 +18099,9 @@ textarea:focus-visible {
   flex-wrap: nowrap;
   gap: 5px;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
   width: 100%;
+  flex: 0 0 auto;
 }
 
 .static-html-presentation-text-toolbar-select {
@@ -18105,13 +18123,14 @@ textarea:focus-visible {
 }
 
 .static-html-presentation-text-toolbar-font {
-  width: 152px;
-  min-width: 152px;
-  max-width: 152px;
+  width: 160px;
+  min-width: 160px;
+  max-width: 160px;
 }
 
 .static-html-presentation-text-toolbar-size,
 .static-html-presentation-text-toolbar-line-height {
+  flex: 0 0 auto;
   width: 92px;
   min-width: 92px;
   max-width: 92px;
@@ -18156,7 +18175,9 @@ textarea:focus-visible {
   align-items: center;
   justify-content: center;
   width: 36px;
+  min-width: 36px;
   height: 30px;
+  padding: 0;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.05);
@@ -18166,33 +18187,40 @@ textarea:focus-visible {
 
 .static-html-presentation-text-toolbar-color-label {
   position: relative;
-  z-index: 1;
-  color: #f5f7fb;
-  font-size: 13px;
+  color: rgba(31, 41, 55, 0.92);
+  font-size: 14px;
   font-weight: 700;
   line-height: 1;
+  z-index: 1;
 }
 
 .static-html-presentation-text-toolbar-color-label::after {
   position: absolute;
-  left: 0;
-  right: 0;
+  left: -1px;
+  right: -1px;
   bottom: -5px;
   height: 3px;
   border-radius: 999px;
   content: "";
-  background: currentColor;
+  background: var(--static-html-toolbar-color, currentColor);
 }
 
 .static-html-presentation-text-toolbar-color-label-fill::after {
-  background: rgba(255, 255, 255, 0.86);
+  background: var(--static-html-toolbar-color, rgba(255, 255, 255, 0.86));
 }
 
 .static-html-presentation-text-toolbar-color input[type="color"] {
   position: absolute;
   inset: 0;
-  opacity: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.0001;
   cursor: pointer;
+  border: none;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
 }
 
 .static-html-presentation-inspector-panel[data-compact="true"] .static-html-presentation-inspector-controls[data-compact="true"] {
@@ -18201,6 +18229,8 @@ textarea:focus-visible {
   flex-wrap: nowrap;
   gap: 8px;
   flex: 1 1 auto;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -18211,6 +18241,7 @@ textarea:focus-visible {
   min-height: 52px;
   height: 52px;
   max-height: 52px;
+  width: 100%;
   padding: 7px 10px;
   font-size: 13px;
   line-height: 1.4;
@@ -18220,11 +18251,75 @@ textarea:focus-visible {
 
 .static-html-presentation-textarea-standalone {
   flex: 1 1 auto;
+  width: 100%;
+  justify-self: stretch;
   min-width: 0;
   min-height: 0;
   align-self: center;
   height: 52px;
   max-height: 52px;
+  overflow: hidden;
+}
+
+.static-html-presentation-runs-editor {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.static-html-presentation-runs-editor [data-static-html-run-wrapper="true"] {
+  display: flex;
+  align-items: stretch;
+  min-width: 96px;
+  flex: 1 1 0;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.static-html-presentation-runs-editor [data-static-html-run-wrapper="true"][data-active="true"] {
+  border-color: rgba(76, 163, 255, 0.72);
+  background: rgba(76, 163, 255, 0.08);
+  box-shadow: 0 0 0 2px rgba(76, 163, 255, 0.12);
+}
+
+.static-html-presentation-runs-editor [data-static-html-run-wrapper="true"]:focus-within {
+  border-color: rgba(76, 163, 255, 0.72);
+  background: rgba(76, 163, 255, 0.08);
+  box-shadow: 0 0 0 2px rgba(76, 163, 255, 0.12);
+}
+
+.static-html-presentation-run-input {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 34px;
+  max-height: 52px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  text-decoration: inherit;
+  text-align: inherit;
+  resize: none;
+  outline: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.static-html-presentation-run-input:disabled {
+  opacity: 0.72;
+  cursor: default;
 }
 
 .static-html-presentation-empty {
@@ -18251,7 +18346,7 @@ textarea:focus-visible {
 
   .static-html-presentation-text-edit-row {
     width: 100%;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .static-html-presentation-text-toolbar-font {
@@ -18265,9 +18360,9 @@ textarea:focus-visible {
 @media (max-width: 1024px) {
   .static-html-presentation-toolbar {
     gap: 8px;
-    height: 120px;
-    min-height: 120px;
-    max-height: 120px;
+    height: 128px;
+    min-height: 128px;
+    max-height: 128px;
     padding: 10px;
   }
 
@@ -18300,7 +18395,8 @@ textarea:focus-visible {
   }
 
   .static-html-presentation-text-edit-row {
-    grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .static-html-presentation-text-toolbar-font {

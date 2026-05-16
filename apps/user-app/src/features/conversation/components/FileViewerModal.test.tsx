@@ -26,6 +26,33 @@ const platformMock = vi.hoisted(() => ({
   isMobile: false
 }));
 
+function getPresentationRunsEditor(): HTMLDivElement | null {
+  return document.querySelector<HTMLDivElement>(".static-html-presentation-runs-editor");
+}
+
+function getPresentationRunWrappers(): HTMLElement[] {
+  return Array.from(
+    document.querySelectorAll<HTMLElement>(".static-html-presentation-runs-editor [data-static-html-run-wrapper='true']")
+  );
+}
+
+function getPresentationRunInputs(): HTMLTextAreaElement[] {
+  return Array.from(
+    document.querySelectorAll<HTMLTextAreaElement>(".static-html-presentation-runs-editor [data-static-html-run-input='true']")
+  );
+}
+
+async function replaceSingleRunText(
+  user: ReturnType<typeof userEvent.setup>,
+  nextText: string,
+  runIndex = 0
+): Promise<void> {
+  const input = getPresentationRunInputs()[runIndex];
+  expect(input).toBeTruthy();
+  await user.clear(input!);
+  await user.type(input!, nextText);
+}
+
 vi.mock("../api/file-context-api", () => ({
   getFilePreview: fileApiMock.getFilePreview,
   saveFileContent: fileApiMock.saveFileContent
@@ -689,10 +716,9 @@ describe("FileViewerModal", () => {
     const nodeChip = await screen.findByRole("button", { name: /原始标题/ });
     await user.click(nodeChip);
 
-    const textarea = document.querySelector<HTMLTextAreaElement>(".static-html-presentation-textarea");
-    expect(textarea).not.toBeNull();
-    await user.clear(textarea);
-    await user.type(textarea, "改过的标题");
+    const runsEditor = getPresentationRunsEditor();
+    expect(runsEditor).not.toBeNull();
+    await replaceSingleRunText(user, "改过的标题");
 
     const selects = document.querySelectorAll<HTMLSelectElement>(".static-html-presentation-text-toolbar-select");
     expect(selects.length).toBeGreaterThanOrEqual(3);
@@ -780,7 +806,7 @@ describe("FileViewerModal", () => {
     }));
 
     await waitFor(() => {
-      expect(document.querySelector<HTMLTextAreaElement>(".static-html-presentation-textarea")?.value)
+      expect(getPresentationRunsEditor()?.textContent)
         .toBe("画布标题");
     });
   });
@@ -834,9 +860,388 @@ describe("FileViewerModal", () => {
     }));
 
     await waitFor(() => {
-      expect(document.querySelector<HTMLTextAreaElement>(".static-html-presentation-textarea")?.value)
+      expect(getPresentationRunsEditor()?.textContent)
         .toBe("立即开始");
     });
+  });
+
+  it("演示文档视图顶部编辑器会按 runs 显示并保留 inline 装饰结构", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/runs-editor.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell">
+                    <div class="hero-tagline">
+                      <span class="hero-bracket">{</span> 核心文案 <span class="hero-bracket">}</span>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-runs-v1",
+        previewPath: "/preview/files/preview-token/slides/runs-editor.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/runs-editor.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/runs-editor.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+    await user.click(await screen.findByRole("button", { name: /核心文案/ }));
+
+    const runsEditor = getPresentationRunsEditor();
+    expect(runsEditor).not.toBeNull();
+    expect(runsEditor?.textContent).toContain("核心文案");
+    expect(runsEditor?.querySelectorAll(".hero-bracket")).toHaveLength(2);
+
+    const runWrappers = Array.from(
+      runsEditor!.querySelectorAll<HTMLElement>("[data-static-html-run-wrapper='true']")
+    );
+    const middleRun = runWrappers.find((node) => node.textContent?.includes("核心文案"));
+    expect(middleRun).toBeTruthy();
+    const middleRunIndex = runWrappers.findIndex((node) => node === middleRun);
+    const middleInput = getPresentationRunInputs()[middleRunIndex];
+    expect(middleInput).toBeTruthy();
+    await user.clear(middleInput!);
+    await user.type(middleInput!, " 新文案 ");
+
+    const frame = screen.getByTestId("static-html-presentation-frame");
+    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining('class="hero-bracket"'));
+    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("新文案"));
+  });
+
+  it("演示文档视图顶部 runs 编辑器会把尾部文本限制在当前 run 内编辑", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/runs-append.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell">
+                    <div class="fade-up slide-title">CodingNS <span class="gradient-text">=</span> 把工作流带走</div>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-runs-append-v1",
+        previewPath: "/preview/files/preview-token/slides/runs-append.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/runs-append.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/runs-append.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+    await user.click(await screen.findByRole("button", { name: /CodingNS/ }));
+
+    const runsEditor = getPresentationRunsEditor();
+    expect(runsEditor).not.toBeNull();
+    const runWrappers = getPresentationRunWrappers();
+    const lastRun = runWrappers[runWrappers.length - 1];
+    expect(lastRun).toBeTruthy();
+    expect(runWrappers.map((node) => node.textContent)).toEqual([
+      "CodingNS ",
+      "=",
+      " 把工作流带走"
+    ]);
+    const lastInput = getPresentationRunInputs()[runWrappers.length - 1];
+    expect(lastInput).toBeTruthy();
+    await user.type(lastInput!, "1");
+
+    const frame = screen.getByTestId("static-html-presentation-frame");
+    const srcdoc = frame.getAttribute("srcdoc") ?? "";
+
+    expect(srcdoc).toContain("CodingNS");
+    expect(srcdoc).toContain("把工作流带走1");
+    expect(srcdoc).toContain('class="gradient-text"');
+    expect((srcdoc.match(/CodingNS/g) ?? []).length).toBe(1);
+    expect((srcdoc.match(/把工作流带走1/g) ?? []).length).toBe(1);
+  });
+
+  it("演示文档视图顶部 runs 编辑器会把富文本拆成独立片段分别编辑", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/runs-switch-isolation.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell">
+                    <div class="fade-up slide-title">CodingNS <span class="gradient-text">=</span> 把工作流带走</div>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-runs-switch-v1",
+        previewPath: "/preview/files/preview-token/slides/runs-switch-isolation.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/runs-switch-isolation.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/runs-switch-isolation.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+    await user.click(await screen.findByRole("button", { name: /CodingNS/ }));
+
+    const runsEditor = getPresentationRunsEditor();
+    expect(runsEditor).not.toBeNull();
+    const runWrappers = Array.from(
+      runsEditor!.querySelectorAll<HTMLElement>("[data-static-html-run-wrapper='true']")
+    );
+    expect(runWrappers).toHaveLength(3);
+
+    const runInputs = getPresentationRunInputs();
+    expect(runInputs).toHaveLength(3);
+    await user.type(runInputs[0]!, "1");
+    await user.type(runInputs[2]!, "2");
+
+    const frame = screen.getByTestId("static-html-presentation-frame");
+    const srcdoc = frame.getAttribute("srcdoc") ?? "";
+
+    expect(srcdoc).toContain("CodingNS 1");
+    expect(srcdoc).toContain("把工作流带走2");
+    expect(srcdoc).toContain('class="gradient-text"');
+    expect((srcdoc.match(/CodingNS 1/g) ?? []).length).toBe(1);
+    expect((srcdoc.match(/把工作流带走2/g) ?? []).length).toBe(1);
+    expect(srcdoc).toContain('<span class="gradient-text">=</span>');
+  });
+
+  it("演示文档视图顶部 runs 编辑器会把首段文本限制在当前 run 内编辑", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/runs-merged-wrapper.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell">
+                    <div class="fade-up slide-title">CodingNS <span class="gradient-text">=</span> 把工作流带走</div>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-runs-merged-v1",
+        previewPath: "/preview/files/preview-token/slides/runs-merged-wrapper.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/runs-merged-wrapper.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/runs-merged-wrapper.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+    await user.click(await screen.findByRole("button", { name: /CodingNS/ }));
+
+    const runsEditor = getPresentationRunsEditor();
+    expect(runsEditor).not.toBeNull();
+    const runWrappers = getPresentationRunWrappers();
+    expect(runWrappers).toHaveLength(3);
+    const runInputs = getPresentationRunInputs();
+    expect(runInputs).toHaveLength(3);
+    await user.type(runInputs[0]!, "12");
+
+    const frame = screen.getByTestId("static-html-presentation-frame");
+    const srcdoc = frame.getAttribute("srcdoc") ?? "";
+
+    expect(srcdoc).toContain("CodingNS 12");
+    expect(srcdoc).toContain("把工作流带走");
+    expect(srcdoc).toContain('class="gradient-text"');
+    expect((srcdoc.match(/CodingNS 12/g) ?? []).length).toBe(1);
+    expect((srcdoc.match(/把工作流带走/g) ?? []).length).toBe(1);
+  });
+
+  it("演示文档视图顶部 runs 编辑器会按当前光标位置插入文本，而不是整块重算", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/runs-caret-insert.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell">
+                    <div class="fade-up slide-title">CodingNS <span class="gradient-text">=</span> 把工作流带走</div>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-runs-caret-insert-v1",
+        previewPath: "/preview/files/preview-token/slides/runs-caret-insert.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/runs-caret-insert.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/runs-caret-insert.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+    await user.click(await screen.findByRole("button", { name: /CodingNS/ }));
+
+    const runsEditor = getPresentationRunsEditor();
+    expect(runsEditor).not.toBeNull();
+
+    const runWrappers = Array.from(
+      runsEditor!.querySelectorAll<HTMLElement>("[data-static-html-run-wrapper='true']")
+    );
+    expect(runWrappers[runWrappers.length - 1]).toBeTruthy();
+    const lastInput = getPresentationRunInputs()[runWrappers.length - 1];
+    expect(lastInput).toBeTruthy();
+    await user.type(lastInput!, "1");
+
+    const frame = screen.getByTestId("static-html-presentation-frame");
+    const srcdoc = frame.getAttribute("srcdoc") ?? "";
+
+    expect(srcdoc).toContain("把工作流带走1");
+    expect(srcdoc).toContain('class="gradient-text"');
+    expect((srcdoc.match(/CodingNS/g) ?? []).length).toBe(1);
+  });
+
+  it("演示文档视图顶部 runs 编辑器会按当前光标位置退格删除，而不是整段回推", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/runs-caret-delete.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell">
+                    <div class="fade-up slide-title">CodingNS <span class="gradient-text">=</span> 把工作流带走</div>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-runs-caret-delete-v1",
+        previewPath: "/preview/files/preview-token/slides/runs-caret-delete.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/runs-caret-delete.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/runs-caret-delete.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+    await user.click(await screen.findByRole("button", { name: /CodingNS/ }));
+
+    const runsEditor = getPresentationRunsEditor();
+    expect(runsEditor).not.toBeNull();
+
+    const runWrappers = Array.from(
+      runsEditor!.querySelectorAll<HTMLElement>("[data-static-html-run-wrapper='true']")
+    );
+    expect(runWrappers[runWrappers.length - 1]).toBeTruthy();
+    const lastInput = getPresentationRunInputs()[runWrappers.length - 1];
+    expect(lastInput).toBeTruthy();
+    await user.type(lastInput!, "{backspace}");
+
+    const frame = screen.getByTestId("static-html-presentation-frame");
+    const srcdoc = frame.getAttribute("srcdoc") ?? "";
+
+    expect(srcdoc).toContain("把工作流带");
+    expect(srcdoc).not.toContain("把工作流带走</div>");
+    expect(srcdoc).toContain('class="gradient-text"');
+    expect((srcdoc.match(/CodingNS/g) ?? []).length).toBe(1);
   });
 
   it("演示文档视图支持双击文本组件后直接原位编辑", async () => {
@@ -1049,10 +1454,9 @@ describe("FileViewerModal", () => {
     await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
     await user.click(await screen.findByRole("button", { name: /原始标题/ }));
 
-    const textarea = document.querySelector<HTMLTextAreaElement>(".static-html-presentation-textarea");
-    expect(textarea).not.toBeNull();
-    await user.clear(textarea!);
-    await user.type(textarea!, "保存后的标题");
+    const runsEditor = getPresentationRunsEditor();
+    expect(runsEditor).not.toBeNull();
+    await replaceSingleRunText(user, "保存后的标题");
 
     const saveButton = screen.getByRole("button", { name: t("conversation.filePanelSave") });
     expect(saveButton).toBeEnabled();
@@ -1273,10 +1677,9 @@ describe("FileViewerModal", () => {
     await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
     await user.click(await screen.findByRole("button", { name: /原始标题/ }));
 
-    const textarea = document.querySelector<HTMLTextAreaElement>(".static-html-presentation-textarea");
-    expect(textarea).not.toBeNull();
-    await user.clear(textarea!);
-    await user.type(textarea!, "第一次修改");
+    const runsEditor = getPresentationRunsEditor();
+    expect(runsEditor).not.toBeNull();
+    await replaceSingleRunText(user, "第一次修改");
 
     expect(screen.getByTestId("static-html-presentation-frame")).toHaveAttribute(
       "srcdoc",
