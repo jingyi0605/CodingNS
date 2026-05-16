@@ -76,8 +76,70 @@ export interface SkillOverviewDto {
   scannedAt: string;
 }
 
+export interface WorkspaceSessionMcpCliStatusDto {
+  cli: "codex" | "claude-code" | "opencode";
+  label: string;
+  runtimeConfigFile: string;
+  runtimeConfigExists: boolean;
+  mcpConfigured: boolean;
+  callState: "ready" | "missing_runtime_config";
+  callStateDetail: string;
+}
+
+export interface WorkspaceSessionMcpCommandStatusDto {
+  globalCodingnsInstalled: boolean;
+  globalCodingnsPath: string | null;
+  globalCodingnsSupportsWorkspaceMcp: boolean;
+  globalCodingnsWorkspaceMcpDetail: string;
+  globalWorkspaceOfficeMcpInstalled: boolean;
+  globalWorkspaceOfficeMcpPath: string | null;
+  repoCodingnsSupportsWorkspaceMcp: boolean;
+  repoCodingnsWorkspaceMcpDetail: string;
+}
+
+export interface WorkspaceSessionMcpRuntimeStatusDto {
+  workspaceId: string;
+  workspacePath: string;
+  sessionId: string | null;
+  runtimeHomeDir: string | null;
+  runtimeHomeExists: boolean;
+  scopedAuthFilePath: string | null;
+  scopedAuthFileExists: boolean;
+  composedInstructionPath: string | null;
+  composedInstructionExists: boolean;
+  skillDirectoryPath: string | null;
+  skillDirectoryExists: boolean;
+}
+
+export interface WorkspaceSessionMcpStatusDto {
+  summary: {
+    readyCliCount: number;
+    configuredCliCount: number;
+    totalCliCount: number;
+  };
+  runtime: WorkspaceSessionMcpRuntimeStatusDto;
+  commands: WorkspaceSessionMcpCommandStatusDto;
+  cliStatuses: WorkspaceSessionMcpCliStatusDto[];
+}
+
 export async function fetchSkillOverview(): Promise<SkillOverviewDto> {
   return await httpClient.request<SkillOverviewDto>("/api/skills/overview");
+}
+
+export async function fetchWorkspaceSessionMcpStatus(input: {
+  workspaceId: string;
+  sessionId?: string | null;
+}): Promise<WorkspaceSessionMcpStatusDto> {
+  const query = new URLSearchParams();
+  query.set("workspaceId", input.workspaceId);
+
+  if (input.sessionId?.trim()) {
+    query.set("sessionId", input.sessionId.trim());
+  }
+
+  return await httpClient.request<WorkspaceSessionMcpStatusDto>(
+    `/api/skills/workspace-session-mcp-status?${query.toString()}`
+  );
 }
 
 export async function addSkillFromMarkdown(input: {

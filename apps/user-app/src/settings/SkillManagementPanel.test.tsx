@@ -46,6 +46,18 @@ describe("SkillManagementPanel", () => {
         return createJsonResponse({ items: createProviderCatalogResponse() });
       }
 
+      if (url.includes("/api/office/document-templates") && method === "GET") {
+        return createJsonResponse({ items: createDocumentTemplatesResponse() });
+      }
+
+      if (url.includes("/api/office/tasks") && method === "GET") {
+        return createJsonResponse({ items: createOfficeTasksResponse() });
+      }
+
+      if (url.includes("/api/office/ops/targets") && method === "GET") {
+        return createJsonResponse({ items: createOpsTargetsResponse() });
+      }
+
       if (url.endsWith("/api/opencli/check") && method === "POST") {
         return createJsonResponse(createOpenCliCheckResponse());
       }
@@ -100,6 +112,8 @@ describe("SkillManagementPanel", () => {
 
     expect(dialog).toBeInTheDocument();
     expect(within(dialog).getByRole("tab", { name: t("settings.skillConfigTabSkills") })).toHaveAttribute("aria-selected", "true");
+    expect(within(dialog).getByRole("tab", { name: t("settings.skillConfigTabOffice") })).toHaveAttribute("aria-selected", "false");
+    expect(within(dialog).getByRole("tab", { name: t("settings.skillConfigTabOps") })).toHaveAttribute("aria-selected", "false");
     expect(within(dialog).getByRole("tab", { name: t("settings.skillConfigTabOpenCli") })).toHaveAttribute("aria-selected", "false");
     expect(
       within(dialog).queryByRole("heading", { level: 3, name: t("settings.opencliSectionTitle") })
@@ -119,6 +133,8 @@ describe("SkillManagementPanel", () => {
     expect(within(dialog).getByText(t("settings.skillConflictedEmpty"))).toBeInTheDocument();
     expect(within(dialog).getByText(t("settings.skillDiagnosticsEmpty"))).toBeInTheDocument();
     expect(within(dialog).getAllByText(t("settings.skillTagAssistantOnly")).length).toBeGreaterThan(0);
+    expect(within(dialog).getByText("codingns-workspace-session")).toBeInTheDocument();
+    expect(within(dialog).getByText(t("settings.skillTagWorkspaceSessionOnly"))).toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("tab", { name: t("settings.skillConfigTabOpenCli") }));
     expect(
@@ -210,6 +226,18 @@ describe("SkillManagementPanel", () => {
         return createJsonResponse({ items: createProviderCatalogResponse({ codexEnabled: false }) });
       }
 
+      if (url.includes("/api/office/document-templates") && method === "GET") {
+        return createJsonResponse({ items: createDocumentTemplatesResponse() });
+      }
+
+      if (url.includes("/api/office/tasks") && method === "GET") {
+        return createJsonResponse({ items: createOfficeTasksResponse() });
+      }
+
+      if (url.includes("/api/office/ops/targets") && method === "GET") {
+        return createJsonResponse({ items: createOpsTargetsResponse() });
+      }
+
       if (url.endsWith("/api/opencli/check") && method === "POST") {
         return createJsonResponse(createOpenCliCheckResponse());
       }
@@ -282,6 +310,18 @@ describe("SkillManagementPanel", () => {
         return createJsonResponse({ items: createProviderCatalogResponse({ codexEnabled: false }) });
       }
 
+      if (url.includes("/api/office/document-templates") && method === "GET") {
+        return createJsonResponse({ items: createDocumentTemplatesResponse() });
+      }
+
+      if (url.includes("/api/office/tasks") && method === "GET") {
+        return createJsonResponse({ items: createOfficeTasksResponse() });
+      }
+
+      if (url.includes("/api/office/ops/targets") && method === "GET") {
+        return createJsonResponse({ items: createOpsTargetsResponse() });
+      }
+
       if (url.endsWith("/api/opencli/check") && method === "POST") {
         return createJsonResponse(createOpenCliCheckResponse());
       }
@@ -314,12 +354,206 @@ describe("SkillManagementPanel", () => {
     expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/api/skills/sync"))).toBe(false);
     expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/api/skills"))).toBe(false);
   });
+
+  it("可以在办公和运维标签页查看模板、任务和 SSH 主机", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (url.endsWith("/api/skills/overview") && method === "GET") {
+        return createJsonResponse(createSkillOverviewResponse({
+          imported: false,
+          uploaded: false,
+          assistantUploaded: false
+        }));
+      }
+
+      if (url.endsWith("/api/providers/catalog") && method === "GET") {
+        return createJsonResponse({ items: createProviderCatalogResponse() });
+      }
+
+      if (url.includes("/api/office/document-templates") && method === "GET") {
+        return createJsonResponse({ items: createDocumentTemplatesResponse() });
+      }
+
+      if (url.includes("/api/office/document-templates/import-file") && method === "POST") {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          fileName: "quarterly-report.domt",
+          fileContentBase64: btoa("fake domt template")
+        });
+        return createJsonResponse(createImportedDocumentTemplateResponse());
+      }
+
+      if (url.includes("/api/office/tasks/task-1") && method === "GET") {
+        return createJsonResponse(createOfficeTaskDetailResponse());
+      }
+
+      if (url.includes("/api/office/tasks") && method === "GET") {
+        return createJsonResponse({ items: createOfficeTasksResponse() });
+      }
+
+      if (url.includes("/api/office/approvals/approval-1/reply") && method === "POST") {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          status: "approved",
+          decisionNote: t("settings.skillOpsApprovalApproveNote")
+        });
+        return createJsonResponse({});
+      }
+
+      if (url.includes("/api/office/ops/targets") && method === "GET") {
+        return createJsonResponse({ items: createOpsTargetsResponse() });
+      }
+
+      if (url.endsWith("/api/opencli/check") && method === "POST") {
+        return createJsonResponse(createOpenCliCheckResponse());
+      }
+
+      if (url.endsWith("/api/opencli/catalog") && method === "GET") {
+        return createJsonResponse(createOpenCliCatalogResponse());
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    global.fetch = fetchMock as typeof fetch;
+
+    renderPanel("workspace-1");
+    await userEvent.click(await screen.findByRole("button", { name: t("settings.skillManageAction") }));
+
+    const dialog = await screen.findByRole("dialog", { name: t("settings.skillConfigModalTitle") });
+    await userEvent.click(within(dialog).getByRole("tab", { name: t("settings.skillConfigTabOffice") }));
+
+    expect(await within(dialog).findByText(t("settings.skillOfficeTemplateListTitle"))).toBeInTheDocument();
+    expect(within(dialog).getByText("项目日报模板")).toBeInTheDocument();
+    expect(within(dialog).getByText(t("settings.skillOfficeScoped"))).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillOfficeTemplateOpenCreateAction") }));
+    const officeModal = await screen.findByRole("dialog", { name: t("settings.skillOfficeTemplateModalTitle") });
+    const templateUploadInput = officeModal.querySelector('input[type="file"]');
+    expect(templateUploadInput).not.toBeNull();
+
+    await userEvent.upload(
+      templateUploadInput as HTMLInputElement,
+      new File(["fake domt template"], "quarterly-report.domt", {
+        type: "application/octet-stream"
+      })
+    );
+
+    expect(await within(officeModal).findByText("quarterly-report.domt")).toBeInTheDocument();
+    await userEvent.click(within(officeModal).getByRole("button", { name: t("settings.skillOfficeTemplateSaveAction") }));
+    await waitFor(() => {
+      expect(screen.getByText(t("settings.skillOfficeTemplateImported"))).toBeInTheDocument();
+    });
+
+    await userEvent.click(within(dialog).getByRole("tab", { name: t("settings.skillConfigTabOps") }));
+
+    expect(await within(dialog).findByText("发布前巡检")).toBeInTheDocument();
+    expect(within(dialog).getByText("预发 SSH")).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillOpsTaskDetailAction") }));
+    expect(await within(dialog).findByText("pending")).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillOpsApprovalApproveAction") }));
+    await waitFor(() => {
+      expect(screen.getByText(t("settings.skillOpsApprovalApproved"))).toBeInTheDocument();
+    });
+
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillOpsTargetEditAction") }));
+    const opsModal = await screen.findByRole("dialog", { name: t("settings.skillOpsTargetModalTitle") });
+    expect(within(opsModal).getByDisplayValue("pre.example.internal")).toBeInTheDocument();
+    expect(within(opsModal).getByDisplayValue("/Users/jackson/.ssh/id_ed25519")).toBeInTheDocument();
+  });
+
+  it("可以查看工作区会话 MCP 状态", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (url.endsWith("/api/skills/overview") && method === "GET") {
+        return createJsonResponse(createSkillOverviewResponse({
+          imported: false,
+          uploaded: false,
+          assistantUploaded: false
+        }));
+      }
+
+      if (url.endsWith("/api/providers/catalog") && method === "GET") {
+        return createJsonResponse({ items: createProviderCatalogResponse() });
+      }
+
+      if (url.includes("/api/office/document-templates") && method === "GET") {
+        return createJsonResponse({ items: createDocumentTemplatesResponse() });
+      }
+
+      if (url.includes("/api/office/tasks") && method === "GET") {
+        return createJsonResponse({ items: createOfficeTasksResponse() });
+      }
+
+      if (url.includes("/api/office/ops/targets") && method === "GET") {
+        return createJsonResponse({ items: createOpsTargetsResponse() });
+      }
+
+      if (url.endsWith("/api/opencli/check") && method === "POST") {
+        return createJsonResponse(createOpenCliCheckResponse());
+      }
+
+      if (url.endsWith("/api/opencli/catalog") && method === "GET") {
+        return createJsonResponse(createOpenCliCatalogResponse());
+      }
+
+      if (url.includes("/api/skills/workspace-session-mcp-status") && method === "GET") {
+        expect(url).toContain("workspaceId=workspace-1");
+        expect(url).toContain("sessionId=session-1");
+        return createJsonResponse(createWorkspaceSessionMcpStatusResponse());
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    global.fetch = fetchMock as typeof fetch;
+
+    renderPanel("workspace-1", "session-1");
+    await userEvent.click(await screen.findByRole("button", { name: t("settings.skillManageAction") }));
+
+    const dialog = await screen.findByRole("dialog", { name: t("settings.skillConfigModalTitle") });
+    const workspaceSkillCard = screen.getByText("codingns-workspace-session").closest(".settings-skill-entry");
+
+    expect(workspaceSkillCard).not.toBeNull();
+
+    await userEvent.click(
+      within(workspaceSkillCard as HTMLElement).getByRole("button", {
+        name: t("settings.skillWorkspaceSessionMcpStatusAction")
+      })
+    );
+
+    const statusDialog = await screen.findByRole("dialog", {
+      name: t("settings.skillWorkspaceSessionMcpModalTitle")
+    });
+
+    expect(within(statusDialog).getByText("/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1")).toBeInTheDocument();
+    expect(within(statusDialog).getByText("/opt/homebrew/bin/codingns")).toBeInTheDocument();
+    expect(within(statusDialog).getByText(t("settings.skillWorkspaceSessionMcpGlobalStandaloneMissing"))).toBeInTheDocument();
+    expect(within(statusDialog).getByText("codingns mcp workspace-office serve --help 可正常输出帮助")).toBeInTheDocument();
+    expect(within(statusDialog).getByText("/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/config.toml · 当前工作区会话 runtime 里已经写入 Codex MCP 配置，可以直接调用。")).toBeInTheDocument();
+    expect(within(statusDialog).getByText("/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/.claude.json · 当前工作区会话 runtime 里还没有这个 CLI 的 MCP 配置文件。")).toBeInTheDocument();
+    expect(within(statusDialog).getByText("/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/opencode.json · 当前工作区会话 runtime 里还没有这个 CLI 的 MCP 配置文件。")).toBeInTheDocument();
+    expect(within(statusDialog).getByRole("button", { name: t("settings.skillWorkspaceSessionMcpRefreshAction") })).toBeInTheDocument();
+
+    expect(fetchMock.mock.calls.some(([input, requestInit]) => {
+      return (
+        String(input).includes("/api/skills/workspace-session-mcp-status")
+        && (requestInit?.method ?? "GET").toUpperCase() === "GET"
+      );
+    })).toBe(true);
+
+    expect(dialog).toBeInTheDocument();
+  });
 });
 
-function renderPanel() {
+function renderPanel(workspaceId?: string | null, sessionId?: string | null) {
   return render(
     <I18nProvider language={clientConfigStore.getState().language}>
-      <SkillManagementPanel />
+      <SkillManagementPanel workspaceId={workspaceId ?? null} sessionId={sessionId ?? null} />
     </I18nProvider>
   );
 }
@@ -428,6 +662,12 @@ function createSkillOverviewResponse(
         name: "codingns-assistant",
         directoryName: "codingns-assistant",
         sourcePath: "/repo/builtin-skills/codingns-assistant",
+        usedByTargetCli: ["codex", "claude-code"]
+      },
+      {
+        name: "codingns-workspace-session",
+        directoryName: "codingns-workspace-session",
+        sourcePath: "/repo/builtin-skills/codingns-workspace-session",
         usedByTargetCli: ["codex", "claude-code"]
       },
       ...(assistantUploaded
@@ -639,5 +879,196 @@ function createProviderCatalogEntry(provider: "codex" | "claude-code" | "gemini"
       sessionFork: true,
       skillUsage: enabled
     }
+  };
+}
+
+function createDocumentTemplatesResponse() {
+  return [
+    {
+      id: "template-1",
+      templateKey: "daily-report",
+      displayName: "项目日报模板",
+      engine: "doct" as const,
+      templateVersion: "1.0.0",
+      templateSourcePath: "/templates/daily-report.docx",
+      schemaJson: "{\"type\":\"object\"}",
+      mappingJson: "{\"title\":\"reportTitle\"}",
+      outputFormatsJson: "[\"docx\",\"pdf\"]",
+      status: "active" as const,
+      createdAt: "2026-05-15T10:00:00.000Z",
+      updatedAt: "2026-05-15T10:00:00.000Z"
+    }
+  ];
+}
+
+function createOfficeTasksResponse() {
+  return [
+    {
+      id: "task-1",
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      taskType: "ops" as const,
+      title: "发布前巡检",
+      description: "检查预发主机磁盘与进程状态",
+      connectorId: "ops.ssh",
+      targetRefKind: "ops_target",
+      targetRefId: "target-1",
+      inputJson: "{\"command\":\"df -h\"}",
+      status: "pending_approval" as const,
+      riskLevel: "medium" as const,
+      approvalPolicyId: "policy-1",
+      currentStepId: "step-1",
+      idempotencyKey: null,
+      startedAt: null,
+      finishedAt: null,
+      createdAt: "2026-05-15T10:00:00.000Z",
+      updatedAt: "2026-05-15T10:00:00.000Z"
+    }
+  ];
+}
+
+function createOfficeTaskDetailResponse() {
+  return {
+    task: createOfficeTasksResponse()[0],
+    steps: [
+      {
+        id: "step-1",
+        taskId: "task-1",
+        stepSeq: 1,
+        stepType: "approval",
+        title: "等待人工确认",
+        inputJson: "{\"execute\":true}",
+        outputJson: null,
+        status: "pending",
+        retryCount: 0,
+        startedAt: null,
+        finishedAt: null,
+        errorMessage: null,
+        createdAt: "2026-05-15T10:00:00.000Z",
+        updatedAt: "2026-05-15T10:00:00.000Z"
+      }
+    ],
+    approvals: [
+      {
+        id: "approval-1",
+        taskId: "task-1",
+        stepId: "step-1",
+        policyId: "policy-1",
+        status: "pending" as const,
+        approverUserId: null,
+        decisionNote: null,
+        decidedAt: null,
+        createdAt: "2026-05-15T10:00:00.000Z",
+        updatedAt: "2026-05-15T10:00:00.000Z"
+      }
+    ],
+    receipts: [],
+    artifacts: []
+  };
+}
+
+function createOpsTargetsResponse() {
+  return [
+    {
+      id: "target-1",
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      kind: "ssh_host" as const,
+      displayName: "预发 SSH",
+      environment: "pre",
+      configJson: JSON.stringify({
+        host: "pre.example.internal",
+        port: 22,
+        username: "deploy",
+        privateKeyPath: "/Users/jackson/.ssh/id_ed25519",
+        knownHostsPath: "/Users/jackson/.ssh/known_hosts",
+        jumpHost: "bastion.example.internal",
+        workspacePath: "/srv/app",
+        strictHostKeyChecking: "accept-new"
+      }),
+      credentialRef: "cred-pre-1",
+      status: "active" as const,
+      createdAt: "2026-05-15T10:00:00.000Z",
+      updatedAt: "2026-05-15T10:00:00.000Z"
+    }
+  ];
+}
+
+function createImportedDocumentTemplateResponse() {
+  return {
+    id: "quarterly.report@v1",
+    templateKey: "quarterly.report",
+    displayName: "quarterly-report",
+    engine: "doct" as const,
+    templateVersion: "v1",
+    templateSourcePath: "/tmp/document-templates/quarterly.report/v1.domt",
+    schemaJson: "{\"requiredFields\":[\"title\",\"body\"],\"optionalFields\":[\"summary\"]}",
+    mappingJson: "{\"title\":\"document.title\",\"sections\":\"content.blocks\"}",
+    outputFormatsJson: "[\"docx\",\"pdf\"]",
+    status: "active" as const,
+    createdAt: "2026-05-16T10:00:00.000Z",
+    updatedAt: "2026-05-16T10:00:00.000Z"
+  };
+}
+
+function createWorkspaceSessionMcpStatusResponse() {
+  return {
+    summary: {
+      readyCliCount: 1,
+      configuredCliCount: 1,
+      totalCliCount: 3
+    },
+    runtime: {
+      workspaceId: "workspace-1",
+      workspacePath: "/Users/jackson/Code/CodingNS",
+      sessionId: "session-1",
+      runtimeHomeDir: "/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1",
+      runtimeHomeExists: true,
+      scopedAuthFilePath: "/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/WORKSPACE_SESSION_AUTH.json",
+      scopedAuthFileExists: true,
+      composedInstructionPath: "/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/WORKSPACE_SESSION_COMPOSED.md",
+      composedInstructionExists: true,
+      skillDirectoryPath: "/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/skills/codingns-workspace-session",
+      skillDirectoryExists: true
+    },
+    commands: {
+      globalCodingnsInstalled: true,
+      globalCodingnsPath: "/opt/homebrew/bin/codingns",
+      globalCodingnsSupportsWorkspaceMcp: false,
+      globalCodingnsWorkspaceMcpDetail: "[codingns] 不支持的命令：mcp",
+      globalWorkspaceOfficeMcpInstalled: false,
+      globalWorkspaceOfficeMcpPath: null,
+      repoCodingnsSupportsWorkspaceMcp: true,
+      repoCodingnsWorkspaceMcpDetail: "codingns mcp workspace-office serve --help 可正常输出帮助"
+    },
+    cliStatuses: [
+      {
+        cli: "codex",
+        label: "Codex",
+        runtimeConfigFile: "/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/config.toml",
+        runtimeConfigExists: true,
+        mcpConfigured: true,
+        callState: "ready",
+        callStateDetail: "当前工作区会话 runtime 里已经写入 Codex MCP 配置，可以直接调用。"
+      },
+      {
+        cli: "claude-code",
+        label: "Claude Code",
+        runtimeConfigFile: "/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/.claude.json",
+        runtimeConfigExists: false,
+        mcpConfigured: false,
+        callState: "missing_runtime_config",
+        callStateDetail: "当前工作区会话 runtime 里还没有这个 CLI 的 MCP 配置文件。"
+      },
+      {
+        cli: "opencode",
+        label: "OpenCode",
+        runtimeConfigFile: "/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/opencode.json",
+        runtimeConfigExists: false,
+        mcpConfigured: false,
+        callState: "missing_runtime_config",
+        callStateDetail: "当前工作区会话 runtime 里还没有这个 CLI 的 MCP 配置文件。"
+      }
+    ]
   };
 }

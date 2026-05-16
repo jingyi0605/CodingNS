@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 
 import { ModalCloseButton } from "../components/ModalCloseButton";
 import type {
@@ -9,14 +9,45 @@ import type {
   SkillScanDiagnosticDto,
   SkillScanEntryDto,
   SkillTargetBindingDto,
-  SkillTargetCli
+  SkillTargetCli,
+  WorkspaceSessionMcpStatusDto
 } from "../features/settings/api/skills-api";
 import {
   addSkillFromMarkdown,
   fetchSkillOverview,
+  fetchWorkspaceSessionMcpStatus,
   importSkillEntry,
   syncManagedSkillTargets
 } from "../features/settings/api/skills-api";
+import type {
+  DocumentTemplateDto,
+  OfficeTaskDetailDto,
+  OfficeTaskDto,
+  OfficeTaskStatus,
+  OpsTargetDto,
+  OpsTargetKind,
+  OpsTargetStatus
+} from "../features/settings/api/office-capability-api";
+import {
+  ModalActions,
+  ModalEmptyState,
+  ModalField,
+  ModalList,
+  ModalListItem,
+  ModalSection
+} from "../components/ModalAtoms";
+import {
+  createDocumentTemplate,
+  createOpsTarget,
+  fetchDocumentTemplates,
+  fetchOfficeTaskDetail,
+  fetchOfficeTasks,
+  fetchOpsTargets,
+  importDocumentTemplateFile,
+  replyOfficeApproval,
+  updateDocumentTemplate,
+  updateOpsTarget
+} from "../features/settings/api/office-capability-api";
 import type { ProviderCatalogEntryDto } from "../features/conversation/api/conversation-api";
 import { WorkbenchModal } from "../features/conversation/components/WorkbenchModal";
 import { useAuthSelector } from "../features/auth/store/auth-store";
@@ -29,35 +60,51 @@ import {
 } from "./OpenCliManagementPanel";
 
 type PendingActionKey = string | null;
-type SkillManagementTabId = "skills" | "opencli";
+type SkillManagementTabId = "skills" | "office" | "ops" | "opencli";
 
 interface SkillManagementPanelProps {
   readonly triggerClassName?: string;
   readonly triggerLabel?: string;
   readonly triggerLeading?: ReactNode;
+  readonly workspaceId?: string | null;
+  readonly sessionId?: string | null;
 }
 
 type SkillUploadSourceMode = "file" | "paste";
 
 const SKILL_MANAGEMENT_TABS: ReadonlyArray<{ id: SkillManagementTabId }> = [
   { id: "skills" },
+  { id: "office" },
+  { id: "ops" },
   { id: "opencli" }
 ];
 
 export function SkillManagementPanel({
   triggerClassName = "secondary-button",
   triggerLabel,
-  triggerLeading
+  triggerLeading,
+  workspaceId = null,
+  sessionId = null
 }: SkillManagementPanelProps) {
   const accessToken = useAuthSelector((state) => state.session?.accessToken ?? null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const templateUploadInputRef = useRef<HTMLInputElement | null>(null);
   const [overview, setOverview] = useState<SkillOverviewDto | null>(null);
+  const [documentTemplates, setDocumentTemplates] = useState<DocumentTemplateDto[]>([]);
+  const [opsTasks, setOpsTasks] = useState<OfficeTaskDto[]>([]);
+  const [opsTargets, setOpsTargets] = useState<OpsTargetDto[]>([]);
+  const [selectedOpsTaskDetail, setSelectedOpsTaskDetail] = useState<OfficeTaskDetailDto | null>(null);
   const [loading, setLoading] = useState(false);
   const [pendingActionKey, setPendingActionKey] = useState<PendingActionKey>(null);
   const [panelError, setPanelError] = useState<string | null>(null);
   const [statusText, setStatusText] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [officeTemplateModalOpen, setOfficeTemplateModalOpen] = useState(false);
+  const [opsTargetModalOpen, setOpsTargetModalOpen] = useState(false);
+  const [workspaceSessionMcpModalOpen, setWorkspaceSessionMcpModalOpen] = useState(false);
+  const [workspaceSessionMcpStatus, setWorkspaceSessionMcpStatus] = useState<WorkspaceSessionMcpStatusDto | null>(null);
+  const [workspaceSessionMcpLoading, setWorkspaceSessionMcpLoading] = useState(false);
   const [uploadDraft, setUploadDraft] = useState<SkillUploadDraft | null>(null);
   const [uploadSourceMode, setUploadSourceMode] = useState<SkillUploadSourceMode>("file");
   const [uploadScope, setUploadScope] = useState<SkillScope>("workspace");
@@ -67,6 +114,44 @@ export function SkillManagementPanel({
   );
   const [activeTab, setActiveTab] = useState<SkillManagementTabId>("skills");
   const [openCliToolbarState, setOpenCliToolbarState] = useState<OpenCliManagementToolbarState | null>(null);
+  const [opsTaskStatusFilter, setOpsTaskStatusFilter] = useState<OfficeTaskStatus | "all">("all");
+  const [opsTargetKindFilter, setOpsTargetKindFilter] = useState<OpsTargetKind | "all">("ssh_host");
+  const [officeTemplateDraft, setOfficeTemplateDraft] = useState<{
+    fileName: string;
+    fileContentBase64: string;
+  }>({
+    fileName: "",
+    fileContentBase64: ""
+  });
+  const [opsTargetDraft, setOpsTargetDraft] = useState<{
+    targetId: string | null;
+    displayName: string;
+    environment: string;
+    host: string;
+    port: string;
+    username: string;
+    privateKeyPath: string;
+    knownHostsPath: string;
+    jumpHost: string;
+    workspacePath: string;
+    credentialRef: string;
+    strictHostKeyChecking: "accept-new" | "yes" | "no";
+    status: OpsTargetStatus;
+  }>({
+    targetId: null,
+    displayName: "",
+    environment: "",
+    host: "",
+    port: "22",
+    username: "",
+    privateKeyPath: "",
+    knownHostsPath: "",
+    jumpHost: "",
+    workspacePath: "",
+    credentialRef: "",
+    strictHostKeyChecking: "accept-new",
+    status: "active"
+  });
   const tabsBaseId = useId();
   const providerCatalogState = useProviderCatalog(modalOpen && Boolean(accessToken));
   const providerCatalogItems = providerCatalogState.items ?? [];
@@ -94,13 +179,29 @@ export function SkillManagementPanel({
       setLoading(true);
 
       try {
-        const nextOverview = await fetchSkillOverview();
+        const [nextOverview, nextTemplates, nextOpsTasks, nextOpsTargets] = await Promise.all([
+          fetchSkillOverview(),
+          fetchDocumentTemplates("active"),
+          fetchOfficeTasks({
+            workspaceId,
+            taskType: "ops",
+            limit: 20
+          }),
+          fetchOpsTargets({
+            workspaceId,
+            kind: "ssh_host"
+          })
+        ]);
 
         if (!active) {
           return;
         }
 
         setOverview(nextOverview);
+        setDocumentTemplates(nextTemplates);
+        setOpsTasks(nextOpsTasks);
+        setOpsTargets(nextOpsTargets);
+        setSelectedOpsTaskDetail(null);
         setPanelError(null);
       } catch (error) {
         if (!active) {
@@ -120,11 +221,27 @@ export function SkillManagementPanel({
     return () => {
       active = false;
     };
-  }, [accessToken, modalOpen]);
+  }, [accessToken, modalOpen, workspaceId]);
 
   async function reloadPanelData(): Promise<void> {
-    const nextOverview = await fetchSkillOverview();
+    const [nextOverview, nextTemplates, nextOpsTasks, nextOpsTargets] = await Promise.all([
+      fetchSkillOverview(),
+      fetchDocumentTemplates("active"),
+      fetchOfficeTasks({
+        workspaceId,
+        taskType: "ops",
+        status: opsTaskStatusFilter === "all" ? undefined : opsTaskStatusFilter,
+        limit: 20
+      }),
+      fetchOpsTargets({
+        workspaceId,
+        kind: opsTargetKindFilter === "all" ? undefined : opsTargetKindFilter
+      })
+    ]);
     setOverview(nextOverview);
+    setDocumentTemplates(nextTemplates);
+    setOpsTasks(nextOpsTasks);
+    setOpsTargets(nextOpsTargets);
     setPanelError(null);
   }
 
@@ -145,6 +262,214 @@ export function SkillManagementPanel({
     } finally {
       setPendingActionKey(null);
     }
+  }
+
+  async function handleOfficeTemplateSubmit(): Promise<void> {
+    if (!accessToken) {
+      return;
+    }
+
+    setPendingActionKey("office-template-submit");
+    setPanelError(null);
+    setStatusText(null);
+
+    try {
+      await importDocumentTemplateFile({
+        fileName: officeTemplateDraft.fileName,
+        fileContentBase64: officeTemplateDraft.fileContentBase64
+      });
+
+      setOfficeTemplateDraft(createDefaultOfficeTemplateDraft());
+      setOfficeTemplateModalOpen(false);
+      setStatusText(t("settings.skillOfficeTemplateImported"));
+      await reloadPanelData();
+    } catch (error) {
+      setPanelError(resolveSkillPanelError(error));
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleOpenOpsTask(taskId: string): Promise<void> {
+    if (!accessToken) {
+      return;
+    }
+
+    setPendingActionKey(`ops-task-detail:${taskId}`);
+    setPanelError(null);
+
+    try {
+      const detail = await fetchOfficeTaskDetail(taskId);
+      setSelectedOpsTaskDetail(detail);
+    } catch (error) {
+      setPanelError(resolveSkillPanelError(error));
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleReplyOpsApproval(approvalId: string, status: "approved" | "rejected"): Promise<void> {
+    if (!accessToken) {
+      return;
+    }
+
+    setPendingActionKey(`ops-approval:${approvalId}:${status}`);
+    setPanelError(null);
+
+    try {
+      await replyOfficeApproval(approvalId, {
+        status,
+        decisionNote: status === "approved"
+          ? t("settings.skillOpsApprovalApproveNote")
+          : t("settings.skillOpsApprovalRejectNote")
+      });
+
+      if (selectedOpsTaskDetail) {
+        const detail = await fetchOfficeTaskDetail(selectedOpsTaskDetail.task.id);
+        setSelectedOpsTaskDetail(detail);
+      }
+      await reloadPanelData();
+      setStatusText(
+        status === "approved"
+          ? t("settings.skillOpsApprovalApproved")
+          : t("settings.skillOpsApprovalRejected")
+      );
+    } catch (error) {
+      setPanelError(resolveSkillPanelError(error));
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleOpsTargetSubmit(): Promise<void> {
+    if (!accessToken) {
+      return;
+    }
+
+    setPendingActionKey("ops-target-submit");
+    setPanelError(null);
+    setStatusText(null);
+
+    try {
+      const payload = {
+        workspaceId,
+        kind: "ssh_host" as const,
+        displayName: opsTargetDraft.displayName.trim(),
+        environment: opsTargetDraft.environment.trim() || null,
+        credentialRef: opsTargetDraft.credentialRef.trim() || null,
+        status: opsTargetDraft.status,
+        config: {
+          host: opsTargetDraft.host.trim(),
+          port: Number.parseInt(opsTargetDraft.port, 10) || 22,
+          username: opsTargetDraft.username.trim(),
+          privateKeyPath: opsTargetDraft.privateKeyPath.trim() || undefined,
+          knownHostsPath: opsTargetDraft.knownHostsPath.trim() || undefined,
+          jumpHost: opsTargetDraft.jumpHost.trim() || undefined,
+          workspacePath: opsTargetDraft.workspacePath.trim() || undefined,
+          strictHostKeyChecking: opsTargetDraft.strictHostKeyChecking
+        }
+      };
+
+      if (opsTargetDraft.targetId) {
+        await updateOpsTarget(opsTargetDraft.targetId, payload);
+        setStatusText(t("settings.skillOpsTargetUpdated"));
+      } else {
+        await createOpsTarget(payload);
+        setStatusText(t("settings.skillOpsTargetCreated"));
+      }
+
+      setOpsTargetDraft(createDefaultOpsTargetDraft());
+      setOpsTargetModalOpen(false);
+      await reloadPanelData();
+    } catch (error) {
+      setPanelError(resolveSkillPanelError(error));
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleOpenWorkspaceSessionMcpStatus(): Promise<void> {
+    if (!accessToken || !workspaceId?.trim()) {
+      return;
+    }
+
+    setWorkspaceSessionMcpModalOpen(true);
+    setWorkspaceSessionMcpLoading(true);
+    setPanelError(null);
+
+    try {
+      const status = await fetchWorkspaceSessionMcpStatus({
+        workspaceId,
+        sessionId
+      });
+      setWorkspaceSessionMcpStatus(status);
+    } catch (error) {
+      setPanelError(resolveSkillPanelError(error));
+      setWorkspaceSessionMcpStatus(null);
+    } finally {
+      setWorkspaceSessionMcpLoading(false);
+    }
+  }
+
+  function handleEditOpsTarget(target: OpsTargetDto): void {
+    const config = parseOpsTargetConfig(target.configJson);
+    setOpsTargetDraft({
+      targetId: target.id,
+      displayName: target.displayName,
+      environment: target.environment ?? "",
+      host: readConfigString(config.host),
+      port: readConfigNumber(config.port, 22),
+      username: readConfigString(config.username),
+      privateKeyPath: readConfigString(config.privateKeyPath),
+      knownHostsPath: readConfigString(config.knownHostsPath),
+      jumpHost: readConfigString(config.jumpHost),
+      workspacePath: readConfigString(config.workspacePath),
+      credentialRef: target.credentialRef ?? "",
+      strictHostKeyChecking: readStrictHostKeyChecking(config.strictHostKeyChecking),
+      status: target.status
+    });
+    setOpsTargetModalOpen(true);
+  }
+
+  function handleResetOpsTargetDraft(): void {
+    setOpsTargetDraft(createDefaultOpsTargetDraft());
+  }
+
+  function handleEditOfficeTemplate(template: DocumentTemplateDto): void {
+    void template;
+  }
+
+  async function handleOfficeTemplateFileChange(event: ChangeEvent<HTMLInputElement>): Promise<void> {
+    const file = event.target.files?.[0] ?? null;
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    setPanelError(null);
+    setStatusText(null);
+
+    try {
+      setOfficeTemplateDraft({
+        fileName: file.name,
+        fileContentBase64: await readFileAsBase64(file)
+      });
+    } catch (error) {
+      setPanelError(resolveSkillPanelError(error));
+    }
+  }
+
+  function openOfficeTemplateModal(): void {
+    setOfficeTemplateDraft(createDefaultOfficeTemplateDraft());
+    setOfficeTemplateModalOpen(true);
+    setPanelError(null);
+  }
+
+  function openOpsTargetModal(): void {
+    setOpsTargetDraft(createDefaultOpsTargetDraft());
+    setOpsTargetModalOpen(true);
+    setPanelError(null);
   }
 
   async function handleImport(entry: SkillScanEntryDto): Promise<void> {
@@ -367,6 +692,8 @@ export function SkillManagementPanel({
   });
   const resolvedTriggerLabel = triggerLabel ?? t("settings.skillManageAction");
   const skillTabSelected = activeTab === "skills";
+  const officeTabSelected = activeTab === "office";
+  const opsTabSelected = activeTab === "ops";
   const openCliTabSelected = activeTab === "opencli";
 
   return (
@@ -435,6 +762,52 @@ export function SkillManagementPanel({
                   onClick={openCreateModal}
                 >
                   {t("settings.skillCreateAction")}
+                </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={!accessToken || loading || pendingActionKey !== null}
+                  onClick={() => {
+                    void handleRefresh();
+                  }}
+                >
+                  {pendingActionKey === "refresh" ? t("common.loading") : t("settings.skillRefresh")}
+                </button>
+              </div>
+            ) : null}
+
+            {officeTabSelected ? (
+              <div className="settings-skill-modal-actions settings-skill-page-toolbar">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={!accessToken || loading || pendingActionKey !== null}
+                  onClick={openOfficeTemplateModal}
+                >
+                  {t("settings.skillOfficeTemplateOpenCreateAction")}
+                </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={!accessToken || loading || pendingActionKey !== null}
+                  onClick={() => {
+                    void handleRefresh();
+                  }}
+                >
+                  {pendingActionKey === "refresh" ? t("common.loading") : t("settings.skillRefresh")}
+                </button>
+              </div>
+            ) : null}
+
+            {opsTabSelected ? (
+              <div className="settings-skill-modal-actions settings-skill-page-toolbar">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={!accessToken || loading || pendingActionKey !== null}
+                  onClick={openOpsTargetModal}
+                >
+                  {t("settings.skillOpsTargetOpenCreateAction")}
                 </button>
                 <button
                   className="secondary-button"
@@ -643,7 +1016,7 @@ export function SkillManagementPanel({
                     </p>
                     <div className="settings-skill-tags">
                       <span className="settings-skill-tag" data-status="assistant-runtime">
-                        {t("settings.skillTagAssistantOnly")}
+                        {resolveAssistantRuntimeUsageTagLabel(item.usageTag)}
                       </span>
                       {item.usedByTargetCli.map((targetCli) => (
                         <span
@@ -662,6 +1035,20 @@ export function SkillManagementPanel({
                       ))}
                     </div>
                   </div>
+                  {item.directoryName === "codingns-workspace-session" ? (
+                    <div className="settings-skill-entry-actions">
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        disabled={loading || pendingActionKey !== null || !workspaceId?.trim()}
+                        onClick={() => {
+                          void handleOpenWorkspaceSessionMcpStatus();
+                        }}
+                      >
+                        {t("settings.skillWorkspaceSessionMcpStatusAction")}
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               )}
             />
@@ -726,7 +1113,184 @@ export function SkillManagementPanel({
               }}
             />
           </div>
-        ) : (
+        ) : null}
+
+        {officeTabSelected ? (
+          <div
+            id={`${tabsBaseId}-office-panel`}
+            role="tabpanel"
+            aria-labelledby={`${tabsBaseId}-office-tab`}
+            className="settings-skill-panel"
+          >
+            <section className="settings-skill-summary-block">
+              <div className="settings-skill-summary-grid">
+                <SummaryCard label={t("settings.skillOfficeTemplateCount")} value={String(documentTemplates.length)} />
+                <SummaryCard
+                  label={t("settings.skillOfficeWorkspaceScope")}
+                  value={workspaceId?.trim() ? t("settings.skillOfficeScoped") : t("settings.skillOfficeGlobal")}
+                />
+              </div>
+              {statusText ? <p className="settings-release-status">{statusText}</p> : null}
+              {panelError ? <p className="settings-release-status">{panelError}</p> : null}
+            </section>
+
+            <SkillSection
+              title={t("settings.skillOfficeTemplateListTitle")}
+              description={t("settings.skillOfficeTemplateListDescription")}
+              emptyText={t("settings.skillOfficeTemplateEmpty")}
+              items={documentTemplates}
+              renderItem={(template) => (
+                <div key={template.id} className="settings-skill-entry">
+                  <div className="settings-skill-entry-main">
+                    <strong className="settings-skill-entry-title">{template.displayName}</strong>
+                    <p className="settings-skill-entry-meta">
+                      {t("settings.skillOfficeTemplateListMeta", {
+                        key: template.templateKey,
+                        version: template.templateVersion
+                      })}
+                    </p>
+                    <div className="settings-skill-tags">
+                      <span className="settings-skill-tag" data-status="synced">{template.engine}</span>
+                      <span className="settings-skill-tag" data-status={template.status === "active" ? "synced" : "failed"}>
+                        {template.status}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="settings-skill-entry-actions">
+                    <span className="settings-skill-entry-meta">{template.templateSourcePath ?? "-"}</span>
+                  </div>
+                </div>
+              )}
+            />
+          </div>
+        ) : null}
+
+        {opsTabSelected ? (
+          <div
+            id={`${tabsBaseId}-ops-panel`}
+            role="tabpanel"
+            aria-labelledby={`${tabsBaseId}-ops-tab`}
+            className="settings-skill-panel"
+          >
+            <section className="settings-skill-summary-block">
+              <div className="settings-skill-summary-grid">
+                <SummaryCard label={t("settings.skillOpsTaskCount")} value={String(opsTasks.length)} />
+                <SummaryCard label={t("settings.skillOpsTargetCount")} value={String(opsTargets.length)} />
+                <SummaryCard
+                  label={t("settings.skillOpsWorkspaceScope")}
+                  value={workspaceId?.trim() ? t("settings.skillOfficeScoped") : t("settings.skillOfficeGlobal")}
+                />
+              </div>
+              {statusText ? <p className="settings-release-status">{statusText}</p> : null}
+              {panelError ? <p className="settings-release-status">{panelError}</p> : null}
+            </section>
+
+            <SkillSection
+              title={t("settings.skillOpsTaskListTitle")}
+              description={t("settings.skillOpsTaskListDescription")}
+              emptyText={t("settings.skillOpsTaskEmpty")}
+              items={opsTasks}
+              renderItem={(task) => (
+                <div key={task.id} className="settings-skill-entry">
+                  <div className="settings-skill-entry-main">
+                    <strong className="settings-skill-entry-title">{task.title}</strong>
+                    <p className="settings-skill-entry-meta">
+                      {t("settings.skillOpsTaskListMeta", {
+                        status: task.status,
+                        risk: task.riskLevel
+                      })}
+                    </p>
+                    <div className="settings-skill-tags">
+                      <span className="settings-skill-tag" data-status="synced">{task.connectorId}</span>
+                      <span className="settings-skill-tag" data-status={resolveOpsTaskStatusTag(task.status)}>
+                        {task.status}
+                      </span>
+                    </div>
+                    {selectedOpsTaskDetail?.task.id === task.id ? (
+                      <div className="settings-skill-tags">
+                        {selectedOpsTaskDetail.approvals.map((approval) => (
+                          <span
+                            key={approval.id}
+                            className="settings-skill-tag"
+                            data-status={approval.status === "pending" ? "pending" : approval.status === "approved" ? "synced" : "failed"}
+                          >
+                            {approval.status}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="settings-skill-entry-actions">
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={loading || pendingActionKey !== null}
+                      onClick={() => {
+                        void handleOpenOpsTask(task.id);
+                      }}
+                    >
+                      {pendingActionKey === `ops-task-detail:${task.id}`
+                        ? t("common.loading")
+                        : t("settings.skillOpsTaskDetailAction")}
+                    </button>
+                    {selectedOpsTaskDetail?.task.id === task.id
+                      ? selectedOpsTaskDetail.approvals
+                        .filter((approval) => approval.status === "pending")
+                        .map((approval) => (
+                          <button
+                            key={approval.id}
+                            className="secondary-button"
+                            type="button"
+                            disabled={loading || pendingActionKey !== null}
+                            onClick={() => {
+                              void handleReplyOpsApproval(approval.id, "approved");
+                            }}
+                          >
+                            {pendingActionKey === `ops-approval:${approval.id}:approved`
+                              ? t("common.loading")
+                              : t("settings.skillOpsApprovalApproveAction")}
+                          </button>
+                        ))
+                      : null}
+                  </div>
+                </div>
+              )}
+            />
+
+            <SkillSection
+              title={t("settings.skillOpsTargetListTitle")}
+              description={t("settings.skillOpsTargetListDescription")}
+              emptyText={t("settings.skillOpsTargetEmpty")}
+              items={opsTargets}
+              renderItem={(target) => (
+                <div key={target.id} className="settings-skill-entry">
+                  <div className="settings-skill-entry-main">
+                    <strong className="settings-skill-entry-title">{target.displayName}</strong>
+                    <p className="settings-skill-entry-meta">{buildOpsTargetSummary(target)}</p>
+                    <div className="settings-skill-tags">
+                      <span className="settings-skill-tag" data-status="synced">{target.kind}</span>
+                      <span className="settings-skill-tag" data-status={target.status === "active" ? "synced" : "failed"}>
+                        {target.status}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="settings-skill-entry-actions">
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={loading || pendingActionKey !== null}
+                      onClick={() => handleEditOpsTarget(target)}
+                    >
+                      {t("settings.skillOpsTargetEditAction")}
+                    </button>
+                  </div>
+                </div>
+              )}
+            />
+          </div>
+        ) : null}
+
+        {openCliTabSelected ? (
           <div
             id={`${tabsBaseId}-opencli-panel`}
             role="tabpanel"
@@ -738,7 +1302,278 @@ export function SkillManagementPanel({
               onToolbarStateChange={setOpenCliToolbarState}
             />
           </div>
-        )}
+        ) : null}
+      </WorkbenchModal>
+
+      <WorkbenchModal
+        open={officeTemplateModalOpen}
+        title={t("settings.skillOfficeTemplateModalTitle")}
+        description={t("settings.skillOfficeTemplateModalDescription")}
+        className="settings-skill-create-modal"
+        onClose={() => {
+          setOfficeTemplateModalOpen(false);
+          setOfficeTemplateDraft(createDefaultOfficeTemplateDraft());
+        }}
+      >
+        <ModalSection heading={t("settings.skillOfficeTemplateFormTitle")}>
+          <input
+            ref={templateUploadInputRef}
+            type="file"
+            accept=".domt,.doct,application/octet-stream"
+            className="settings-skill-upload-input"
+            onChange={(event) => {
+              void handleOfficeTemplateFileChange(event);
+            }}
+          />
+          <ModalField
+            label={t("settings.skillOfficeTemplateUploadLabel")}
+            description={t("settings.skillOfficeTemplateUploadDescription")}
+          >
+            <div className="settings-skill-create-toolbar">
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={loading || pendingActionKey !== null}
+                onClick={() => templateUploadInputRef.current?.click()}
+              >
+                {t("settings.skillOfficeTemplatePickAction")}
+              </button>
+            </div>
+          </ModalField>
+          {officeTemplateDraft.fileName ? (
+            <div className="settings-skill-entry">
+              <div className="settings-skill-entry-main">
+                <strong className="settings-skill-entry-title">{officeTemplateDraft.fileName}</strong>
+                <p className="settings-skill-entry-meta">{t("settings.skillOfficeTemplateAutoDetectHint")}</p>
+              </div>
+            </div>
+          ) : null}
+          <ModalActions>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => {
+                setOfficeTemplateModalOpen(false);
+                setOfficeTemplateDraft(createDefaultOfficeTemplateDraft());
+              }}
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              className="primary-button"
+              type="button"
+              disabled={!officeTemplateDraft.fileName || loading || pendingActionKey !== null}
+              onClick={() => {
+                void handleOfficeTemplateSubmit();
+              }}
+            >
+              {pendingActionKey === "office-template-submit"
+                ? t("common.loading")
+                : t("settings.skillOfficeTemplateSaveAction")}
+            </button>
+          </ModalActions>
+        </ModalSection>
+      </WorkbenchModal>
+
+      <WorkbenchModal
+        open={opsTargetModalOpen}
+        title={t("settings.skillOpsTargetModalTitle")}
+        description={t("settings.skillOpsTargetModalDescription")}
+        className="settings-skill-create-modal"
+        onClose={() => {
+          setOpsTargetModalOpen(false);
+          setOpsTargetDraft(createDefaultOpsTargetDraft());
+        }}
+      >
+        <ModalSection
+          heading={t("settings.skillOpsTargetFormTitle")}
+          description={t("settings.skillOpsTargetFormDescription")}
+        >
+          <p className="settings-skill-entry-meta">{t("settings.skillOpsPasswordNotice")}</p>
+          <ModalField label={t("settings.skillOpsTargetNameLabel")}>
+            <input className="settings-text-input" value={opsTargetDraft.displayName} onChange={(event) => setOpsTargetDraft((current) => ({ ...current, displayName: event.target.value }))} />
+          </ModalField>
+          <ModalField label={t("settings.skillOpsTargetEnvironmentLabel")}>
+            <input className="settings-text-input" value={opsTargetDraft.environment} onChange={(event) => setOpsTargetDraft((current) => ({ ...current, environment: event.target.value }))} />
+          </ModalField>
+          <ModalField label={t("settings.skillOpsTargetHostLabel")}>
+            <input className="settings-text-input" value={opsTargetDraft.host} onChange={(event) => setOpsTargetDraft((current) => ({ ...current, host: event.target.value }))} />
+          </ModalField>
+          <ModalField label={t("settings.skillOpsTargetPortLabel")}>
+            <input className="settings-text-input" value={opsTargetDraft.port} onChange={(event) => setOpsTargetDraft((current) => ({ ...current, port: event.target.value }))} />
+          </ModalField>
+          <ModalField label={t("settings.skillOpsTargetUsernameLabel")}>
+            <input className="settings-text-input" value={opsTargetDraft.username} onChange={(event) => setOpsTargetDraft((current) => ({ ...current, username: event.target.value }))} />
+          </ModalField>
+          <ModalField label={t("settings.skillOpsTargetPrivateKeyPathLabel")}>
+            <input className="settings-text-input" value={opsTargetDraft.privateKeyPath} onChange={(event) => setOpsTargetDraft((current) => ({ ...current, privateKeyPath: event.target.value }))} />
+          </ModalField>
+          <ModalField label={t("settings.skillOpsTargetKnownHostsPathLabel")}>
+            <input className="settings-text-input" value={opsTargetDraft.knownHostsPath} onChange={(event) => setOpsTargetDraft((current) => ({ ...current, knownHostsPath: event.target.value }))} />
+          </ModalField>
+          <ModalField label={t("settings.skillOpsTargetJumpHostLabel")}>
+            <input className="settings-text-input" value={opsTargetDraft.jumpHost} onChange={(event) => setOpsTargetDraft((current) => ({ ...current, jumpHost: event.target.value }))} />
+          </ModalField>
+          <ModalField label={t("settings.skillOpsTargetWorkspacePathLabel")}>
+            <input className="settings-text-input" value={opsTargetDraft.workspacePath} onChange={(event) => setOpsTargetDraft((current) => ({ ...current, workspacePath: event.target.value }))} />
+          </ModalField>
+          <ModalField label={t("settings.skillOpsTargetCredentialRefLabel")}>
+            <input className="settings-text-input" value={opsTargetDraft.credentialRef} onChange={(event) => setOpsTargetDraft((current) => ({ ...current, credentialRef: event.target.value }))} />
+          </ModalField>
+          <ModalField label={t("settings.skillOpsTargetHostKeyPolicyLabel")}>
+            <select
+              className="settings-select"
+              value={opsTargetDraft.strictHostKeyChecking}
+              onChange={(event) => setOpsTargetDraft((current) => ({
+                ...current,
+                strictHostKeyChecking: event.target.value as "accept-new" | "yes" | "no"
+              }))}
+            >
+              <option value="accept-new">accept-new</option>
+              <option value="yes">yes</option>
+              <option value="no">no</option>
+            </select>
+          </ModalField>
+          <ModalActions>
+            <button className="secondary-button" type="button" onClick={handleResetOpsTargetDraft}>
+              {t("settings.skillOpsTargetResetAction")}
+            </button>
+            <button
+              className="primary-button"
+              type="button"
+              disabled={loading || pendingActionKey !== null}
+              onClick={() => {
+                void handleOpsTargetSubmit();
+              }}
+            >
+              {pendingActionKey === "ops-target-submit"
+                ? t("common.loading")
+                : t("settings.skillOpsTargetSaveAction")}
+            </button>
+          </ModalActions>
+        </ModalSection>
+      </WorkbenchModal>
+
+      <WorkbenchModal
+        open={workspaceSessionMcpModalOpen}
+        title={t("settings.skillWorkspaceSessionMcpModalTitle")}
+        description={t("settings.skillWorkspaceSessionMcpModalDescription")}
+        className="settings-skill-create-modal"
+        onClose={() => {
+          setWorkspaceSessionMcpModalOpen(false);
+          setWorkspaceSessionMcpStatus(null);
+        }}
+      >
+        <ModalSection
+          heading={t("settings.skillWorkspaceSessionMcpRuntimeTitle")}
+          description={t("settings.skillWorkspaceSessionMcpRuntimeDescription")}
+        >
+          {workspaceSessionMcpLoading ? (
+            <div className="settings-skill-empty">{t("settings.skillWorkspaceSessionMcpLoading")}</div>
+          ) : workspaceSessionMcpStatus ? (
+            <div className="settings-skill-entry-list">
+              <div className="settings-skill-summary-grid">
+                <SummaryCard
+                  label={t("settings.skillWorkspaceSessionMcpReadyCliCount")}
+                  value={String(workspaceSessionMcpStatus.summary.readyCliCount)}
+                />
+                <SummaryCard
+                  label={t("settings.skillWorkspaceSessionMcpConfiguredCliCount")}
+                  value={String(workspaceSessionMcpStatus.summary.configuredCliCount)}
+                />
+                <SummaryCard
+                  label={t("settings.skillWorkspaceSessionMcpTotalCliCount")}
+                  value={String(workspaceSessionMcpStatus.summary.totalCliCount)}
+                />
+              </div>
+              <ModalList>
+                <ModalListItem
+                  label={t("settings.skillWorkspaceSessionMcpRuntimeHomeLabel")}
+                  description={workspaceSessionMcpStatus.runtime.runtimeHomeDir ?? t("settings.skillWorkspaceSessionMcpValueMissing")}
+                  trailing={renderWorkspaceSessionMcpStateTag(workspaceSessionMcpStatus.runtime.runtimeHomeExists)}
+                />
+                <ModalListItem
+                  label={t("settings.skillWorkspaceSessionMcpAuthFileLabel")}
+                  description={workspaceSessionMcpStatus.runtime.scopedAuthFilePath ?? t("settings.skillWorkspaceSessionMcpValueMissing")}
+                  trailing={renderWorkspaceSessionMcpStateTag(workspaceSessionMcpStatus.runtime.scopedAuthFileExists)}
+                />
+                <ModalListItem
+                  label={t("settings.skillWorkspaceSessionMcpInstructionFileLabel")}
+                  description={workspaceSessionMcpStatus.runtime.composedInstructionPath ?? t("settings.skillWorkspaceSessionMcpValueMissing")}
+                  trailing={renderWorkspaceSessionMcpStateTag(workspaceSessionMcpStatus.runtime.composedInstructionExists)}
+                />
+                <ModalListItem
+                  label={t("settings.skillWorkspaceSessionMcpSkillDirLabel")}
+                  description={workspaceSessionMcpStatus.runtime.skillDirectoryPath ?? t("settings.skillWorkspaceSessionMcpValueMissing")}
+                  trailing={renderWorkspaceSessionMcpStateTag(workspaceSessionMcpStatus.runtime.skillDirectoryExists)}
+                />
+              </ModalList>
+            </div>
+          ) : (
+            <ModalEmptyState
+              title={t("settings.skillWorkspaceSessionMcpEmptyTitle")}
+              description={panelError ?? t("settings.skillWorkspaceSessionMcpEmptyDescription")}
+              compact
+            />
+          )}
+        </ModalSection>
+
+        <ModalSection
+          heading={t("settings.skillWorkspaceSessionMcpCommandTitle")}
+          description={t("settings.skillWorkspaceSessionMcpCommandDescription")}
+        >
+          {workspaceSessionMcpStatus ? (
+            <ModalList>
+              <ModalListItem
+                label={t("settings.skillWorkspaceSessionMcpGlobalCodingnsLabel")}
+                description={workspaceSessionMcpStatus.commands.globalCodingnsPath ?? workspaceSessionMcpStatus.commands.globalCodingnsWorkspaceMcpDetail}
+                trailing={renderWorkspaceSessionMcpStateTag(workspaceSessionMcpStatus.commands.globalCodingnsSupportsWorkspaceMcp)}
+              />
+              <ModalListItem
+                label={t("settings.skillWorkspaceSessionMcpGlobalStandaloneLabel")}
+                description={workspaceSessionMcpStatus.commands.globalWorkspaceOfficeMcpPath ?? t("settings.skillWorkspaceSessionMcpGlobalStandaloneMissing")}
+                trailing={renderWorkspaceSessionMcpStateTag(workspaceSessionMcpStatus.commands.globalWorkspaceOfficeMcpInstalled)}
+              />
+              <ModalListItem
+                label={t("settings.skillWorkspaceSessionMcpRepoCodingnsLabel")}
+                description={workspaceSessionMcpStatus.commands.repoCodingnsWorkspaceMcpDetail}
+                trailing={renderWorkspaceSessionMcpStateTag(workspaceSessionMcpStatus.commands.repoCodingnsSupportsWorkspaceMcp)}
+              />
+            </ModalList>
+          ) : null}
+        </ModalSection>
+
+        <ModalSection
+          heading={t("settings.skillWorkspaceSessionMcpCliTitle")}
+          description={t("settings.skillWorkspaceSessionMcpCliDescription")}
+        >
+          {workspaceSessionMcpStatus ? (
+            <ModalList>
+              {workspaceSessionMcpStatus.cliStatuses.map((item) => (
+                <ModalListItem
+                  key={item.cli}
+                  label={item.label}
+                  description={`${item.runtimeConfigFile} · ${item.callStateDetail}`}
+                  trailing={renderWorkspaceSessionMcpStateTag(item.mcpConfigured)}
+                />
+              ))}
+            </ModalList>
+          ) : null}
+          <ModalActions>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={!workspaceId?.trim() || workspaceSessionMcpLoading}
+              onClick={() => {
+                void handleOpenWorkspaceSessionMcpStatus();
+              }}
+            >
+              {workspaceSessionMcpLoading
+                ? t("common.loading")
+                : t("settings.skillWorkspaceSessionMcpRefreshAction")}
+            </button>
+          </ModalActions>
+        </ModalSection>
       </WorkbenchModal>
 
       <WorkbenchModal
@@ -923,7 +1758,11 @@ function SkillSection<T>({
       <h3 className="settings-skill-section-title">{title}</h3>
       {description ? <p className="settings-skill-section-description">{description}</p> : null}
       {items.length > 0 ? (
-        <div className="settings-skill-entry-list">{items.map((item) => renderItem(item))}</div>
+        <div className="settings-skill-entry-list">
+          {items.map((item, index) => (
+            <Fragment key={index}>{renderItem(item)}</Fragment>
+          ))}
+        </div>
       ) : (
         <div className="settings-skill-empty">{emptyText}</div>
       )}
@@ -994,6 +1833,19 @@ function resolveSkillUploadSourceModeLabel(mode: SkillUploadSourceMode): string 
     : t("settings.skillCreateSourceFile");
 }
 
+function resolveSkillManagementTabLabel(tabId: SkillManagementTabId): string {
+  switch (tabId) {
+    case "office":
+      return t("settings.skillConfigTabOffice");
+    case "ops":
+      return t("settings.skillConfigTabOps");
+    case "opencli":
+      return t("settings.skillConfigTabOpenCli");
+    default:
+      return t("settings.skillConfigTabSkills");
+  }
+}
+
 function createDefaultUploadTargets(
   scope: SkillScope,
   providerCatalogByTargetCli: Partial<Record<SkillTargetCli, ProviderCatalogEntryDto>> = {}
@@ -1014,6 +1866,93 @@ function createDefaultUploadTargets(
 function getUploadTargetOptions(scope: SkillScope): readonly SkillTargetCli[] {
   return scope === "assistant" ? ASSISTANT_UPLOAD_TARGET_OPTIONS : SKILL_TARGET_OPTIONS;
 }
+
+function createDefaultOpsTargetDraft() {
+  return {
+    targetId: null,
+    displayName: "",
+    environment: "",
+    host: "",
+    port: "22",
+    username: "",
+    privateKeyPath: "",
+    knownHostsPath: "",
+    jumpHost: "",
+    workspacePath: "",
+    credentialRef: "",
+    strictHostKeyChecking: "accept-new" as const,
+    status: "active" as const
+  };
+}
+
+function createDefaultOfficeTemplateDraft() {
+  return {
+    fileName: "",
+    fileContentBase64: ""
+  };
+}
+
+function parseOpsTargetConfig(raw: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function readConfigString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function readConfigNumber(value: unknown, fallback: number): string {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : String(fallback);
+}
+
+function readStrictHostKeyChecking(value: unknown): "accept-new" | "yes" | "no" {
+  return value === "yes" || value === "no" || value === "accept-new"
+    ? value
+    : "accept-new";
+}
+
+function resolveOpsTaskStatusTag(status: OfficeTaskStatus): "pending" | "synced" | "failed" | "conflicted" {
+  if (status === "ready" || status === "running" || status === "succeeded") {
+    return "synced";
+  }
+
+  if (status === "pending_approval" || status === "waiting_external" || status === "paused") {
+    return "pending";
+  }
+
+  if (status === "failed" || status === "cancelled" || status === "rolled_back") {
+    return "failed";
+  }
+
+  return "conflicted";
+}
+
+function buildOpsTargetSummary(target: OpsTargetDto): string {
+  const config = parseOpsTargetConfig(target.configJson);
+  const host = readConfigString(config.host);
+  const username = readConfigString(config.username);
+  const port = readConfigNumber(config.port, 22);
+  const environment = target.environment?.trim();
+
+  return [environment, `${username}@${host}:${port}`]
+    .filter((item) => item && item.trim().length > 0)
+    .join(" · ");
+}
+
+function renderWorkspaceSessionMcpStateTag(ready: boolean) {
+  return (
+    <span className="settings-skill-tag" data-status={ready ? "synced" : "failed"}>
+      {ready ? t("settings.skillWorkspaceSessionMcpStateReady") : t("settings.skillWorkspaceSessionMcpStateMissing")}
+    </span>
+  );
+}
+
 
 function resolveCurrentUploadDraft({
   sourceMode,
@@ -1245,6 +2184,7 @@ interface AssistantRuntimeItemView {
   directoryName: string;
   sourcePath: string;
   usedByTargetCli: SkillTargetCli[];
+  usageTag: "assistant-only" | "workspace-session";
 }
 
 function buildAssistantRuntimeItems(
@@ -1257,7 +2197,8 @@ function buildAssistantRuntimeItems(
       name: item.name,
       directoryName: item.directoryName,
       sourcePath: item.sourcePath,
-      usedByTargetCli: item.usedByTargetCli
+      usedByTargetCli: item.usedByTargetCli,
+      usageTag: resolveAssistantRuntimeUsageTag(item.directoryName)
     }));
   }
 
@@ -1272,7 +2213,8 @@ function buildAssistantRuntimeItems(
       name: entry.name,
       directoryName: entry.directoryName,
       sourcePath: entry.directoryPath,
-      usedByTargetCli: [entry.targetCli]
+      usedByTargetCli: [entry.targetCli],
+      usageTag: resolveAssistantRuntimeUsageTag(entry.directoryName)
     });
   }
 
@@ -1292,7 +2234,8 @@ function buildAssistantRuntimeItems(
       name: diagnostic.directoryName ?? "codingns-assistant",
       directoryName: diagnostic.directoryName ?? "codingns-assistant",
       sourcePath: directoryPath,
-      usedByTargetCli: [diagnostic.targetCli]
+      usedByTargetCli: [diagnostic.targetCli],
+      usageTag: resolveAssistantRuntimeUsageTag(diagnostic.directoryName ?? "codingns-assistant")
     });
   }
 
@@ -1317,6 +2260,22 @@ function isAssistantRuntimeEntry(
 
 function isAssistantRuntimeDiagnostic(diagnostic: SkillScanDiagnosticDto): boolean {
   return diagnostic.code === "SKILL_RESERVED_FOR_ASSISTANT_RUNTIME";
+}
+
+function resolveAssistantRuntimeUsageTag(
+  directoryName: string
+): AssistantRuntimeItemView["usageTag"] {
+  return directoryName === "codingns-workspace-session"
+    ? "workspace-session"
+    : "assistant-only";
+}
+
+function resolveAssistantRuntimeUsageTagLabel(
+  usageTag: AssistantRuntimeItemView["usageTag"]
+): string {
+  return usageTag === "workspace-session"
+    ? t("settings.skillTagWorkspaceSessionOnly")
+    : t("settings.skillTagAssistantOnly");
 }
 
 function resolveScanEntryTags(
@@ -1418,6 +2377,46 @@ async function readTextFromFile(file: File): Promise<string> {
   });
 }
 
+async function readFileAsBase64(file: File): Promise<string> {
+  if (typeof file.arrayBuffer === "function") {
+    const arrayBuffer = await file.arrayBuffer();
+    return base64FromUint8Array(new Uint8Array(arrayBuffer));
+  }
+
+  if (typeof FileReader === "undefined") {
+    throw new Error(t("settings.skillUploadReadFailed"));
+  }
+
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onerror = () => {
+      reject(reader.error ?? new Error(t("settings.skillUploadReadFailed")));
+    };
+
+    reader.onload = () => {
+      if (reader.result instanceof ArrayBuffer) {
+        resolve(base64FromUint8Array(new Uint8Array(reader.result)));
+        return;
+      }
+
+      reject(new Error(t("settings.skillUploadReadFailed")));
+    };
+
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function base64FromUint8Array(bytes: Uint8Array): string {
+  let binary = "";
+
+  bytes.forEach((item) => {
+    binary += String.fromCharCode(item);
+  });
+
+  return btoa(binary);
+}
+
 function normalizeUploadedDirectoryName(input: string): string | null {
   const basename = input.replace(/\\/g, "/").split("/").pop() ?? input;
   const withoutExtension = basename.replace(/\.[A-Za-z0-9]+$/, "");
@@ -1450,13 +2449,4 @@ function formatSkillTitleFromDirectoryName(directoryName: string): string {
     .join(" ");
 
   return title || directoryName;
-}
-
-function resolveSkillManagementTabLabel(tabId: SkillManagementTabId): string {
-  switch (tabId) {
-    case "opencli":
-      return t("settings.skillConfigTabOpenCli");
-    default:
-      return t("settings.skillConfigTabSkills");
-  }
 }

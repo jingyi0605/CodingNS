@@ -6947,6 +6947,8 @@ function SidebarContent({
             triggerClassName="workbench-nav-segment-button"
             triggerLabel={t("shell.skillsEntry")}
             triggerLeading={<SkillIcon />}
+            workspaceId={activeWorkspaceId}
+            sessionId={activeSessionId}
           />
           <button
             type="button"
