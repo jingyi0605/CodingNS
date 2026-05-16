@@ -6,6 +6,7 @@ tmp-ios-debug
 *.tgz
 packages/node-pty-fork
 apps/host/office-artifacts
+.codingns
 
 # Build outputs
 dist/

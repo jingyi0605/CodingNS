@@ -364,11 +364,15 @@ function resolveCodexCliPath(configuredPath: string | undefined, homeDir: string
     : [
       ...moduleSearchRoots.flatMap((root) => [
         path.join(root, "node_modules", ".bin", "codex"),
+        path.join(root, "node_modules", ".pnpm", "node_modules", ".bin", "codex"),
         path.join(root, "node_modules", "@openai", "codex", "bin", "codex.js"),
         path.join(root, "node_modules", "@openai", "codex-sdk", "node_modules", ".bin", "codex"),
-        path.join(root, "node_modules", "@openai", "codex-sdk", "node_modules", "@openai", "codex", "bin", "codex.js")
+        path.join(root, "node_modules", "@openai", "codex-sdk", "node_modules", "@openai", "codex", "bin", "codex.js"),
+        path.join(root, "packages", "codingns", "node_modules", ".bin", "codex"),
+        path.join(root, "packages", "session-sync-core", "node_modules", ".bin", "codex")
       ]),
       path.resolve(process.cwd(), "packages", "session-sync-core", "node_modules", ".bin", "codex"),
+      path.resolve(process.cwd(), "packages", "codingns", "node_modules", ".bin", "codex"),
       path.join(homeDir, ".local", "bin", "codex"),
       process.platform === "darwin" ? "/Applications/Codex.app/Contents/Resources/codex" : null
     ];
