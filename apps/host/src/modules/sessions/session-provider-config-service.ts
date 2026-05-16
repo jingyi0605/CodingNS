@@ -76,6 +76,7 @@ interface WorkspaceSessionRuntimeContextPort {
   }): {
     authFilePath: string;
     instructionFilePath: string;
+    runtimeHomeDir: string;
     runtimeEnv: Record<string, string>;
   };
 }
@@ -863,6 +864,10 @@ export class SessionProviderConfigService {
   }
 
   private shouldUseManagedRuntimeHome(provider: SessionBinding["provider"]): boolean {
+    if (provider === "opencode") {
+      return false;
+    }
+
     if (provider === "codex") {
       // Codex 的原生桌面端会直接读取同一个 home 里的 thread 索引和 transcript。
       // 全局默认会话如果切到独立 runtime home，会把项目会话和原生 App 会话彻底分叉。

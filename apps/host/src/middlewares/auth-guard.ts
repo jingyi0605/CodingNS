@@ -54,6 +54,11 @@ function isAllowedAssistantCaller(
     return true;
   }
 
+  // 工作区会话通过 scoped token 调用 assistant-cli，本来就是这轮能力开放的正式入口。
+  if (callerKind === "workspace_session" && requestSource === ASSISTANT_CLI_REQUEST_SOURCE) {
+    return true;
+  }
+
   if (callerKind === "interactive_user" && isReadOnlyAssistantMethod(method)) {
     return true;
   }

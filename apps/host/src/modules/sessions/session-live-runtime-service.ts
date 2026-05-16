@@ -86,6 +86,7 @@ import { ClaudeRuntimeHelperAdapter } from "./claude-runtime-helper-client.js";
 import { CodexAppServerHelperClient } from "./codex-app-server-helper-client.js";
 import { SessionProviderConfigService } from "./session-provider-config-service.js";
 import type { OpenCliSessionPromptService } from "../opencli/opencli-session-prompt-service.js";
+import type { WorkspaceSessionRuntimeContextService } from "./workspace-session-runtime-context-service.js";
 
 const OPENCODE_ORDER_DEBUG_ENABLED = /^(1|true|yes)$/i.test(
   process.env.CODINGNS_OPENCODE_ORDER_DEBUG?.trim() ?? ""
@@ -344,7 +345,11 @@ export class SessionLiveRuntimeService {
     private readonly sessionProviderConfigService: SessionProviderConfigService,
     private readonly config: HostConfig,
     sessionActivityAuthorityService = new SessionActivityAuthorityService(),
-    private readonly openCliSessionPromptService: OpenCliSessionPromptService | null = null
+    private readonly openCliSessionPromptService: OpenCliSessionPromptService | null = null,
+    private readonly workspaceSessionRuntimeContextService: Pick<
+      WorkspaceSessionRuntimeContextService,
+      "prepareWorkspaceInstructionBundle"
+    > | null = null
   ) {
     this.sessionActivityAuthorityService = sessionActivityAuthorityService;
     this.sessionPermissionRequestService = new SessionPermissionRequestService(
@@ -416,10 +421,28 @@ export class SessionLiveRuntimeService {
         providerPrompt,
         providerLaunchContext.runtimeEnv
       );
+      const workspaceRuntimeContext = this.prepareWorkspaceRuntimeContext({
+        sessionId,
+        userId: input.userId,
+        workspaceId: workspace.id,
+        workspacePath: workspace.path,
+        projectId: null,
+        provider: input.provider as SessionListItem["provider"]
+      });
+      const runtimeEnv = {
+        ...providerLaunchContext.runtimeEnv,
+        ...workspaceRuntimeContext.runtimeEnv
+      };
+      const effectiveRuntimeHomeDir =
+        workspaceRuntimeContext.runtimeHomeDir
+        ?? providerLaunchContext.runtimeHomeDir
+        ?? providerBinding.runtimeHomeDir
+        ?? null;
       const providerInstructionFilePath = resolveRuntimeInstructionFilePath(
         input.provider,
         workspace.path,
         input.runtimeOptions?.providerInstructionFilePath
+          ?? workspaceRuntimeContext.instructionFilePath
           ?? providerLaunchContext.providerInstructionFilePath
           ?? null
       );
@@ -436,8 +459,8 @@ export class SessionLiveRuntimeService {
           provider: input.provider as ProviderRuntimeRunRequest["provider"],
           providerSessionId: null,
           rawStoreRef: null,
-          runtimeHomeDir: providerLaunchContext.runtimeHomeDir,
-          runtimeEnv: providerLaunchContext.runtimeEnv,
+          runtimeHomeDir: effectiveRuntimeHomeDir,
+          runtimeEnv,
           sequenceBase: 1,
           options: {
             content: input.content,
@@ -455,7 +478,7 @@ export class SessionLiveRuntimeService {
           provider: input.provider as SessionListItem["provider"],
           providerConfigMode: providerBinding.providerConfigMode,
           providerPresetId: providerBinding.providerPresetId,
-          runtimeHomeDir: providerBinding.runtimeHomeDir
+          runtimeHomeDir: effectiveRuntimeHomeDir
         }
       );
       this.logSendDebugStep(debugTrace, "launch_runtime", launchRuntimeStartedAtMs, {
@@ -1838,10 +1861,28 @@ export class SessionLiveRuntimeService {
         providerPrompt,
         providerLaunchContext.runtimeEnv
       );
+      const workspaceRuntimeContext = this.prepareWorkspaceRuntimeContext({
+        sessionId: input.sessionId,
+        userId: input.userId,
+        workspaceId: session.workspaceId,
+        workspacePath: workspace.path,
+        projectId: null,
+        provider: session.provider as SessionListItem["provider"]
+      });
+      const runtimeEnv = {
+        ...providerLaunchContext.runtimeEnv,
+        ...workspaceRuntimeContext.runtimeEnv
+      };
+      const effectiveRuntimeHomeDir =
+        workspaceRuntimeContext.runtimeHomeDir
+        ?? providerLaunchContext.runtimeHomeDir
+        ?? providerBinding.runtimeHomeDir
+        ?? null;
       const providerInstructionFilePath = resolveRuntimeInstructionFilePath(
         session.provider,
         workspace.path,
         input.runtimeOptions?.providerInstructionFilePath
+          ?? workspaceRuntimeContext.instructionFilePath
           ?? providerLaunchContext.providerInstructionFilePath
           ?? null
       );
@@ -1855,8 +1896,8 @@ export class SessionLiveRuntimeService {
         provider: session.provider,
         providerSessionId: runtimeMode === "start" ? null : session.providerSessionId,
         rawStoreRef: runtimeRawStoreRef,
-        runtimeHomeDir: providerLaunchContext.runtimeHomeDir,
-        runtimeEnv: providerLaunchContext.runtimeEnv,
+        runtimeHomeDir: effectiveRuntimeHomeDir,
+        runtimeEnv,
         sequenceBase: nextUserSequence,
         options: {
           content: input.content,
@@ -2225,6 +2266,36 @@ export class SessionLiveRuntimeService {
     snapshot: ReturnType<ActiveRunHandle["getSnapshot"]>;
   }): void {
     this.upsertRuntimeBackedSessionRecords(input);
+  }
+
+  private prepareWorkspaceRuntimeContext(input: {
+    sessionId: string;
+    userId: string;
+    workspaceId: string;
+    workspacePath: string;
+    projectId?: string | null;
+    provider: SessionListItem["provider"];
+  }): {
+    instructionFilePath: string | null;
+    runtimeHomeDir: string | null;
+    runtimeEnv: Record<string, string>;
+  } {
+    if (!this.workspaceSessionRuntimeContextService) {
+      return {
+        instructionFilePath: null,
+        runtimeHomeDir: null,
+        runtimeEnv: {}
+      };
+    }
+
+    return this.workspaceSessionRuntimeContextService.prepareWorkspaceInstructionBundle({
+      sessionId: input.sessionId,
+      userId: input.userId,
+      workspaceId: input.workspaceId,
+      workspacePath: input.workspacePath,
+      projectId: input.projectId ?? null,
+      provider: input.provider
+    });
   }
 
   private resolveStartedSession(input: {

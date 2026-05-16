@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ASSISTANT_CALLER_KIND_HEADER,
+  ASSISTANT_CLI_REQUEST_SOURCE,
   BUTLER_UI_REQUEST_SOURCE,
   createAuthGuard
 } from "../../src/middlewares/auth-guard.js";
@@ -210,6 +211,58 @@ describe("assistant capability routes", () => {
     expect(response.json()).toMatchObject({
       callerKind: "interactive_user"
     });
+  });
+
+  it("工作区会话通过 assistant-cli 读取能力面时会被放行并标记 workspace_session", async () => {
+    const assistantCapabilityService = {
+      listCapabilities: vi.fn(() => ({
+        ok: true,
+        capability: "capabilities.list",
+        auditId: "audit-workspace-session-1",
+        timestamp: "2026-05-16T12:30:00.000Z",
+        targetRef: {
+          kind: "none",
+          id: null
+        },
+        payload: {
+          version: "2026-05-16",
+          items: []
+        }
+      }))
+    };
+
+    const app = await createAssistantAppWithAuthGuard({
+      assistantCapabilityService,
+      authService: {
+        authenticateAccessToken: vi.fn((accessToken: string) => ({
+          accessToken,
+          callerKind: "workspace_session",
+          user: {
+            userId: "user-1",
+            username: "admin",
+            role: "admin"
+          }
+        }))
+      }
+    });
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/assistant/capabilities",
+      headers: {
+        authorization: "Bearer workspace_session_token",
+        "x-codingns-assistant-source": ASSISTANT_CLI_REQUEST_SOURCE
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers[ASSISTANT_CALLER_KIND_HEADER]).toBe("workspace_session");
+    expect(response.json()).toMatchObject({
+      callerKind: "workspace_session",
+      payload: {
+        version: "2026-05-16"
+      }
+    });
+    expect(assistantCapabilityService.listCapabilities).toHaveBeenCalledTimes(1);
   });
 
   it("普通登录态直接读取助手能力面时会被放行", async () => {

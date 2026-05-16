@@ -77,6 +77,7 @@ function ensurePreSchemaCompatibility(db: Database.Database): void {
   ensureAuthTokenDeviceColumns(db);
   ensureOpsTargetWorkspaceSchema(db);
   ensureManagedSkillScopeSchema(db);
+  ensureAuthTokenCallerKindSchema(db);
 }
 
 function ensureAuthTokenDeviceColumns(db: Database.Database): void {
@@ -118,6 +119,90 @@ function ensureAuthTokenDeviceColumns(db: Database.Database): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_auth_tokens_device_session_id ON auth_tokens(device_session_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_auth_tokens_workspace_id ON auth_tokens(workspace_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_auth_tokens_session_id ON auth_tokens(session_id)");
+}
+
+function ensureAuthTokenCallerKindSchema(db: Database.Database): void {
+  if (!tableExists(db, "auth_tokens")) {
+    return;
+  }
+
+  const table = db
+    .prepare(
+      `SELECT sql
+       FROM sqlite_master
+       WHERE type = 'table'
+         AND name = 'auth_tokens'
+       LIMIT 1`
+    )
+    .get() as { sql?: string | null } | undefined;
+  const definition = table?.sql ?? "";
+
+  if (
+    definition.includes("'interactive_user', 'assistant_runtime', 'workspace_session'")
+    || definition.includes("'interactive_user','assistant_runtime','workspace_session'")
+  ) {
+    return;
+  }
+
+  db.exec(`
+    ALTER TABLE auth_tokens RENAME TO auth_tokens_legacy;
+
+    CREATE TABLE auth_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      token_type TEXT NOT NULL CHECK (token_type IN ('access', 'refresh')),
+      token_hash TEXT NOT NULL UNIQUE,
+      device_session_id TEXT,
+      caller_kind TEXT CHECK (caller_kind IN ('interactive_user', 'assistant_runtime', 'workspace_session')),
+      capability_profile TEXT,
+      workspace_id TEXT,
+      project_id TEXT,
+      session_id TEXT,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES auth_users(id)
+    );
+
+    INSERT INTO auth_tokens (
+      id,
+      user_id,
+      token_type,
+      token_hash,
+      device_session_id,
+      caller_kind,
+      capability_profile,
+      workspace_id,
+      project_id,
+      session_id,
+      expires_at,
+      revoked_at,
+      created_at
+    )
+    SELECT
+      id,
+      user_id,
+      token_type,
+      token_hash,
+      device_session_id,
+      caller_kind,
+      capability_profile,
+      workspace_id,
+      project_id,
+      session_id,
+      expires_at,
+      revoked_at,
+      created_at
+    FROM auth_tokens_legacy;
+
+    DROP TABLE auth_tokens_legacy;
+
+    CREATE INDEX IF NOT EXISTS idx_auth_tokens_user_id ON auth_tokens(user_id);
+    CREATE INDEX IF NOT EXISTS idx_auth_tokens_expires_at ON auth_tokens(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_auth_tokens_device_session_id ON auth_tokens(device_session_id);
+    CREATE INDEX IF NOT EXISTS idx_auth_tokens_workspace_id ON auth_tokens(workspace_id);
+    CREATE INDEX IF NOT EXISTS idx_auth_tokens_session_id ON auth_tokens(session_id);
+  `);
 }
 
 function tableExists(db: Database.Database, tableName: string): boolean {

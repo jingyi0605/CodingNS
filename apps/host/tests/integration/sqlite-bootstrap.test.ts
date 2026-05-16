@@ -212,6 +212,131 @@ describe("sqlite 启动引导", () => {
     expect(deviceSessionIndex?.name).toBe("idx_auth_tokens_device_session_id");
   });
 
+  it("可以把旧 auth_tokens 的 caller_kind 约束平滑升级到支持 workspace_session", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-auth-token-caller-kind-bootstrap-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+    const { default: Database } = await import("better-sqlite3");
+    const seed = new Database(databasePath);
+
+    seed.exec(`
+      CREATE TABLE auth_users (
+        id TEXT PRIMARY KEY
+      );
+
+      CREATE TABLE auth_tokens (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        token_type TEXT NOT NULL CHECK (token_type IN ('access', 'refresh')),
+        token_hash TEXT NOT NULL UNIQUE,
+        device_session_id TEXT,
+        caller_kind TEXT CHECK (caller_kind IN ('interactive_user', 'assistant_runtime')),
+        capability_profile TEXT,
+        workspace_id TEXT,
+        project_id TEXT,
+        session_id TEXT,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES auth_users(id)
+      );
+
+      INSERT INTO auth_users (id) VALUES ('user-1');
+      INSERT INTO auth_tokens (
+        id,
+        user_id,
+        token_type,
+        token_hash,
+        device_session_id,
+        caller_kind,
+        capability_profile,
+        workspace_id,
+        project_id,
+        session_id,
+        expires_at,
+        revoked_at,
+        created_at
+      ) VALUES (
+        'token-old',
+        'user-1',
+        'access',
+        'hash-old',
+        NULL,
+        'interactive_user',
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        '2026-05-20T10:00:00.000Z',
+        NULL,
+        '2026-05-16T10:00:00.000Z'
+      );
+    `);
+    seed.close();
+
+    const client = createDatabaseClient(databasePath);
+    const tableSql = client.db
+      .prepare(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'auth_tokens'"
+      )
+      .get() as { sql: string } | undefined;
+
+    client.db
+      .prepare(
+        `INSERT INTO auth_tokens (
+          id,
+          user_id,
+          token_type,
+          token_hash,
+          device_session_id,
+          caller_kind,
+          capability_profile,
+          workspace_id,
+          project_id,
+          session_id,
+          expires_at,
+          revoked_at,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "token-workspace",
+        "user-1",
+        "access",
+        "hash-workspace",
+        null,
+        "workspace_session",
+        "workspace-scoped",
+        "workspace-1",
+        null,
+        "session-1",
+        "2026-05-20T10:00:00.000Z",
+        null,
+        "2026-05-16T10:01:00.000Z"
+      );
+
+    const inserted = client.db
+      .prepare("SELECT caller_kind, capability_profile, workspace_id, session_id FROM auth_tokens WHERE id = ?")
+      .get("token-workspace") as
+      | {
+          caller_kind: string;
+          capability_profile: string;
+          workspace_id: string;
+          session_id: string;
+        }
+      | undefined;
+
+    client.close();
+
+    expect(tableSql?.sql).toContain("'workspace_session'");
+    expect(inserted).toEqual({
+      caller_kind: "workspace_session",
+      capability_profile: "workspace-scoped",
+      workspace_id: "workspace-1",
+      session_id: "session-1"
+    });
+  });
+
   it("可以给缺少 auth_devices user_agent 列的旧数据库平滑补列并完成启动", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-auth-device-bootstrap-"));
     tempDirs.push(tempDir);
