@@ -1308,6 +1308,105 @@ describe("MessageTimeline", () => {
     expect(screen.queryByText(/^view_image$/)).not.toBeInTheDocument();
   });
 
+  it("会把 view_image 的 office artifact 绝对路径转换成办公预览链接", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        workspaceId="workspace-1"
+        workspacePath="/Users/jackson/Code/CodingNS"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "tool-call-view-image-office-artifact",
+            callId: "call-view-image-office-artifact",
+            name: "view_image",
+            kind: "tool_call",
+            content: JSON.stringify({
+              path: "/Users/jackson/.codingns/office-artifacts/browser-task-1/12345678-1234-1234-1234-123456789abc-zhihu-qr.png"
+            }),
+            status: "running"
+          })
+        ]}
+      />
+    );
+
+    expect(getOfficeArtifactPreviewLinkMock).toHaveBeenCalledWith("12345678-1234-1234-1234-123456789abc");
+    expect(getFilePreviewLinkMock).not.toHaveBeenCalled();
+
+    const image = await screen.findByAltText("12345678-1234-1234-1234-123456789abc-zhihu-qr.png");
+    expect(image.getAttribute("src")).toContain(
+      "/preview/office/artifacts/office-token/12345678-1234-1234-1234-123456789abc"
+    );
+  });
+
+  it("会把 view_image 的 office task file 绝对路径转换成任务文件预览链接", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        workspaceId="workspace-1"
+        workspacePath="/Users/jackson/Code/CodingNS"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "tool-call-view-image-office-task-file",
+            callId: "call-view-image-office-task-file",
+            name: "view_image",
+            kind: "tool_call",
+            content: JSON.stringify({
+              path: "/Users/jackson/Code/CodingNS/apps/host/data/host/office-artifacts/73c79787-1e73-41af-86fd-9896ea050176/zhihu-qr-crop.png"
+            }),
+            status: "running"
+          })
+        ]}
+      />
+    );
+
+    expect(getOfficeTaskFilePreviewLinkMock).toHaveBeenCalledWith(
+      "73c79787-1e73-41af-86fd-9896ea050176",
+      "zhihu-qr-crop.png"
+    );
+    expect(getFilePreviewLinkMock).not.toHaveBeenCalled();
+
+    const image = await screen.findByAltText("zhihu-qr-crop.png");
+    expect(image.getAttribute("src")).toContain(
+      "/preview/office/tasks/office-task-token/73c79787-1e73-41af-86fd-9896ea050176/zhihu-qr-crop.png"
+    );
+  });
+
+  it("遇到工作区外的 view_image 绝对路径时不会再请求普通文件预览接口", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        workspaceId="workspace-1"
+        workspacePath="/Users/jackson/Code/CodingNS"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "tool-call-view-image-outside-workspace",
+            callId: "call-view-image-outside-workspace",
+            name: "view_image",
+            kind: "tool_call",
+            content: JSON.stringify({
+              path: "/tmp/outside-workspace-preview.png"
+            }),
+            status: "running"
+          })
+        ]}
+      />
+    );
+
+    expect(screen.getByText(t("conversation.toolViewImageActiveLabel"))).toBeInTheDocument();
+    expect(screen.getByText("/tmp/outside-workspace-preview.png")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(getFilePreviewLinkMock).not.toHaveBeenCalled();
+      expect(getOfficeArtifactPreviewLinkMock).not.toHaveBeenCalled();
+      expect(getOfficeTaskFilePreviewLinkMock).not.toHaveBeenCalled();
+    });
+  });
+
   it("会把工作区内 markdown 本地图片路径转换成受控预览链接", async () => {
     render(
       <MessageTimeline

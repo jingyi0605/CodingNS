@@ -219,7 +219,21 @@ interface TimelineViewModelInput {
 }
 
 interface ViewImageToolSnapshot {
-  path: string;
+  previewTarget:
+    | {
+        kind: "workspace_file";
+        relativePath: string;
+      }
+    | {
+        kind: "office_artifact";
+        artifactId: string;
+      }
+    | {
+        kind: "office_task_file";
+        taskId: string;
+        fileName: string;
+      }
+    | null;
   displayPath: string;
   fileName: string;
 }
@@ -496,12 +510,36 @@ function resolveViewImageToolSnapshot(
     return null;
   }
 
+  const officeArtifactPreviewTarget = resolveOfficeArtifactPreviewTargetFromHref(imagePath);
+
+  if (officeArtifactPreviewTarget) {
+    return {
+      previewTarget: officeArtifactPreviewTarget.kind === "artifact"
+        ? {
+            kind: "office_artifact",
+            artifactId: officeArtifactPreviewTarget.artifactId
+          }
+        : {
+            kind: "office_task_file",
+            taskId: officeArtifactPreviewTarget.taskId,
+            fileName: officeArtifactPreviewTarget.fileName
+          },
+      displayPath: imagePath,
+      fileName: getFileNameFromPath(imagePath)
+    };
+  }
+
   const relativePath = workspacePath
     ? resolveWorkspaceRelativePathFromHref(imagePath, workspacePath)
     : normalizeRelativePath(stripFileReferenceDecorations(imagePath));
 
   return {
-    path: relativePath ?? imagePath,
+    previewTarget: relativePath
+      ? {
+          kind: "workspace_file",
+          relativePath
+        }
+      : null,
     displayPath: relativePath ?? imagePath,
     fileName: getFileNameFromPath(imagePath)
   };
@@ -3410,7 +3448,7 @@ function ViewImageToolItem({
   const [previewState, setPreviewState] = useState<ViewImagePreviewState>({ status: "idle", url: null });
 
   useEffect(() => {
-    if (exportMode || !workspaceId || !snapshot.path) {
+    if (exportMode || !snapshot.previewTarget) {
       setPreviewState({ status: "idle", url: null });
       return undefined;
     }
@@ -3418,7 +3456,15 @@ function ViewImageToolItem({
     let cancelled = false;
     setPreviewState({ status: "loading", url: null });
 
-    void getFilePreviewLink(workspaceId, snapshot.path)
+    const previewLinkPromise = snapshot.previewTarget.kind === "workspace_file"
+      ? (workspaceId
+        ? getFilePreviewLink(workspaceId, snapshot.previewTarget.relativePath)
+        : Promise.reject(new Error("workspace preview requires workspaceId")))
+      : snapshot.previewTarget.kind === "office_artifact"
+        ? getOfficeArtifactPreviewLink(snapshot.previewTarget.artifactId)
+        : getOfficeTaskFilePreviewLink(snapshot.previewTarget.taskId, snapshot.previewTarget.fileName);
+
+    void previewLinkPromise
       .then((previewLink) => {
         if (cancelled) {
           return;
@@ -3441,7 +3487,7 @@ function ViewImageToolItem({
     return () => {
       cancelled = true;
     };
-  }, [exportMode, platform.isDesktop, snapshot.path, workspaceId]);
+  }, [exportMode, platform.isDesktop, snapshot.previewTarget, workspaceId]);
 
   return (
     <div className={`tool-call-item view-image-tool-item ${tool.status === "completed" ? "tool-result" : ""}`}>
