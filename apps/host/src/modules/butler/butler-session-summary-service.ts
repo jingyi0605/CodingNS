@@ -30,6 +30,7 @@ const DEFAULT_RECENT_MESSAGE_LIMIT = 40;
 
 interface ButlerSessionSummaryLogger {
   error(message: string, detail?: unknown): void;
+  warn(message: string, detail?: unknown): void;
 }
 
 type SessionHistoryMessage = Awaited<
@@ -382,7 +383,7 @@ export class ButlerSessionSummaryService {
     const existing = this.butlerSessionRepository.findById(session.id);
 
     if (!existing) {
-      this.logger.error("[butler-session-summary] skip persist for removed session", {
+      this.logger.warn("[butler-session-summary] skip persist for removed session", {
         butlerSessionId: session.id,
         sessionId: session.sessionId
       });
@@ -421,7 +422,7 @@ export class ButlerSessionSummaryService {
     });
 
     if (timestamp < startedAt) {
-      this.logger.error("[butler-session-summary] invalid clock order", {
+      this.logger.warn("[butler-session-summary] invalid clock order", {
         butlerSessionId: session.id,
         startedAt,
         finishedAt: timestamp
