@@ -17845,7 +17845,7 @@ textarea:focus-visible {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  padding: 4px 8px 6px;
+  padding: 4px 8px 0;
 }
 
 .static-html-presentation-toolbar-viewport {
