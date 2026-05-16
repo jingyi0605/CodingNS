@@ -2,6 +2,10 @@ import { httpClient } from "../../../network/http-client";
 
 export type DocumentTemplateStatus = "active" | "deprecated";
 export type OfficeTaskType = "browser" | "document" | "ops" | "workflow";
+export type BrowserEngine = "chrome" | "edge";
+export type BrowserProfileMode = "persistent" | "cdp_attached";
+export type BrowserProfileOwnershipScope = "user" | "workspace" | "target";
+export type BrowserProfileStatus = "active" | "locked" | "archived" | "error";
 export type OfficeTaskStatus =
   | "draft"
   | "pending_approval"
@@ -17,6 +21,7 @@ export type OfficeRiskLevel = "low" | "medium" | "high";
 export type OfficeApprovalStatus = "pending" | "approved" | "rejected" | "expired" | "cancelled";
 export type OpsTargetKind = "ssh_host" | "web_console";
 export type OpsTargetStatus = "active" | "disabled" | "error";
+export type BrowserTaskExecutionStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "timeout";
 
 export interface DocumentTemplateDto {
   id: string;
@@ -29,6 +34,21 @@ export interface DocumentTemplateDto {
   mappingJson: string;
   outputFormatsJson: string;
   status: DocumentTemplateStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BrowserProfileDto {
+  id: string;
+  userId: string;
+  workspaceId: string | null;
+  engine: BrowserEngine;
+  mode: BrowserProfileMode;
+  displayName: string;
+  userDataDir: string | null;
+  cdpEndpoint: string | null;
+  ownershipScope: BrowserProfileOwnershipScope;
+  status: BrowserProfileStatus;
   createdAt: string;
   updatedAt: string;
 }
@@ -127,6 +147,21 @@ export interface OpsTargetDto {
   updatedAt: string;
 }
 
+export interface BrowserTaskExecutionDto {
+  taskId: string;
+  taskType: string;
+  key: string;
+  executionLane: string;
+  status: BrowserTaskExecutionStatus;
+  source: string | null;
+  attempt: number;
+  enqueuedAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  timeoutMs: number | null;
+  errorMessage?: string;
+}
+
 export async function fetchDocumentTemplates(status: DocumentTemplateStatus = "active"): Promise<DocumentTemplateDto[]> {
   const query = new URLSearchParams({ status });
   const response = await httpClient.request<{ items: DocumentTemplateDto[] }>(
@@ -148,6 +183,58 @@ export async function createDocumentTemplate(input: {
   return await httpClient.request<DocumentTemplateDto>("/api/office/document-templates", {
     method: "POST",
     body: JSON.stringify(input)
+  });
+}
+
+export async function fetchBrowserProfiles(input: {
+  workspaceId?: string | null;
+} = {}): Promise<BrowserProfileDto[]> {
+  const query = new URLSearchParams();
+
+  if (input.workspaceId?.trim()) {
+    query.set("workspaceId", input.workspaceId.trim());
+  }
+
+  const suffix = query.size > 0 ? `?${query.toString()}` : "";
+  const response = await httpClient.request<{ items: BrowserProfileDto[] }>(`/api/office/browser/profiles${suffix}`);
+  return response.items;
+}
+
+export async function createBrowserProfile(input: {
+  workspaceId?: string | null;
+  engine?: BrowserEngine;
+  mode?: BrowserProfileMode;
+  displayName?: string | null;
+  ownershipScope?: BrowserProfileOwnershipScope;
+  cdpEndpoint?: string | null;
+}): Promise<BrowserProfileDto> {
+  return await httpClient.request<BrowserProfileDto>("/api/office/browser/profiles", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function updateBrowserProfile(
+  profileId: string,
+  input: {
+    ownershipScope?: BrowserProfileOwnershipScope;
+  }
+): Promise<BrowserProfileDto> {
+  return await httpClient.request<BrowserProfileDto>(
+    `/api/office/browser/profiles/${encodeURIComponent(profileId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input)
+    }
+  );
+}
+
+export async function deleteBrowserProfile(profileId: string): Promise<{
+  profileId: string;
+  deleted: boolean;
+}> {
+  return await httpClient.request(`/api/office/browser/profiles/${encodeURIComponent(profileId)}`, {
+    method: "DELETE"
   });
 }
 
@@ -213,6 +300,45 @@ export async function fetchOfficeTasks(input: {
 
 export async function fetchOfficeTaskDetail(taskId: string): Promise<OfficeTaskDetailDto> {
   return await httpClient.request<OfficeTaskDetailDto>(`/api/office/tasks/${encodeURIComponent(taskId)}`);
+}
+
+export async function createBrowserTask(input: {
+  workspaceId?: string | null;
+  title?: string;
+  profileId: string;
+  riskLevel?: OfficeRiskLevel;
+  input?: unknown;
+}): Promise<OfficeTaskDto> {
+  return await httpClient.request<OfficeTaskDto>("/api/office/browser/tasks", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function executeBrowserTask(taskId: string): Promise<{
+  taskId: string;
+  executionTaskId: string;
+  deduped: boolean;
+}> {
+  return await httpClient.request(`/api/office/browser/tasks/${encodeURIComponent(taskId)}/execute`, {
+    method: "POST"
+  });
+}
+
+export async function fetchBrowserTaskExecution(taskId: string): Promise<BrowserTaskExecutionDto | null> {
+  const response = await httpClient.request<{ task: BrowserTaskExecutionDto | null }>(
+    `/api/office/browser/tasks/${encodeURIComponent(taskId)}/execution`
+  );
+  return response.task;
+}
+
+export async function cancelBrowserTaskExecution(taskId: string): Promise<{
+  taskId: string;
+  cancelled: boolean;
+}> {
+  return await httpClient.request(`/api/office/browser/tasks/${encodeURIComponent(taskId)}/execution/cancel`, {
+    method: "POST"
+  });
 }
 
 export async function replyOfficeApproval(

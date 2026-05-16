@@ -20,6 +20,11 @@ import {
   syncManagedSkillTargets
 } from "../features/settings/api/skills-api";
 import type {
+  BrowserEngine,
+  BrowserProfileDto,
+  BrowserProfileMode,
+  BrowserProfileOwnershipScope,
+  BrowserTaskExecutionDto,
   DocumentTemplateDto,
   OfficeTaskDetailDto,
   OfficeTaskDto,
@@ -37,18 +42,29 @@ import {
   ModalSection
 } from "../components/ModalAtoms";
 import {
+  cancelBrowserTaskExecution,
+  createBrowserProfile,
+  deleteBrowserProfile,
   createDocumentTemplate,
   createOpsTarget,
+  executeBrowserTask,
+  fetchBrowserProfiles,
+  fetchBrowserTaskExecution,
   fetchDocumentTemplates,
   fetchOfficeTaskDetail,
   fetchOfficeTasks,
   fetchOpsTargets,
   importDocumentTemplateFile,
   replyOfficeApproval,
+  updateBrowserProfile,
   updateDocumentTemplate,
   updateOpsTarget
 } from "../features/settings/api/office-capability-api";
-import type { ProviderCatalogEntryDto } from "../features/conversation/api/conversation-api";
+import {
+  listWorkspaces,
+  type ProviderCatalogEntryDto,
+  type WorkspaceDto
+} from "../features/conversation/api/conversation-api";
 import { WorkbenchModal } from "../features/conversation/components/WorkbenchModal";
 import { useAuthSelector } from "../features/auth/store/auth-store";
 import { useProviderCatalog } from "../features/conversation/capability/provider-catalog-store";
@@ -91,8 +107,16 @@ export function SkillManagementPanel({
   const templateUploadInputRef = useRef<HTMLInputElement | null>(null);
   const [overview, setOverview] = useState<SkillOverviewDto | null>(null);
   const [documentTemplates, setDocumentTemplates] = useState<DocumentTemplateDto[]>([]);
+  const [browserProfiles, setBrowserProfiles] = useState<BrowserProfileDto[]>([]);
+  const [browserTasks, setBrowserTasks] = useState<OfficeTaskDto[]>([]);
+  const [browserTaskExecutions, setBrowserTaskExecutions] = useState<Record<string, BrowserTaskExecutionDto | null>>({});
+  const [workspaceItems, setWorkspaceItems] = useState<WorkspaceDto[]>([]);
   const [opsTasks, setOpsTasks] = useState<OfficeTaskDto[]>([]);
   const [opsTargets, setOpsTargets] = useState<OpsTargetDto[]>([]);
+  const [selectedBrowserProfileForOptions, setSelectedBrowserProfileForOptions] = useState<BrowserProfileDto | null>(null);
+  const [selectedBrowserProfileForDelete, setSelectedBrowserProfileForDelete] = useState<BrowserProfileDto | null>(null);
+  const [selectedBrowserProfileForTasks, setSelectedBrowserProfileForTasks] = useState<BrowserProfileDto | null>(null);
+  const [selectedBrowserTaskDetail, setSelectedBrowserTaskDetail] = useState<OfficeTaskDetailDto | null>(null);
   const [selectedOpsTaskDetail, setSelectedOpsTaskDetail] = useState<OfficeTaskDetailDto | null>(null);
   const [loading, setLoading] = useState(false);
   const [pendingActionKey, setPendingActionKey] = useState<PendingActionKey>(null);
@@ -101,7 +125,12 @@ export function SkillManagementPanel({
   const [modalOpen, setModalOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [officeTemplateModalOpen, setOfficeTemplateModalOpen] = useState(false);
+  const [browserProfileModalOpen, setBrowserProfileModalOpen] = useState(false);
+  const [browserProfileOptionsModalOpen, setBrowserProfileOptionsModalOpen] = useState(false);
+  const [browserProfileDeleteModalOpen, setBrowserProfileDeleteModalOpen] = useState(false);
   const [opsTargetModalOpen, setOpsTargetModalOpen] = useState(false);
+  const [browserProfileTaskModalOpen, setBrowserProfileTaskModalOpen] = useState(false);
+  const [onlyCurrentWorkspaceBrowserProfiles, setOnlyCurrentWorkspaceBrowserProfiles] = useState(false);
   const [workspaceSessionMcpModalOpen, setWorkspaceSessionMcpModalOpen] = useState(false);
   const [workspaceSessionMcpStatus, setWorkspaceSessionMcpStatus] = useState<WorkspaceSessionMcpStatusDto | null>(null);
   const [workspaceSessionMcpLoading, setWorkspaceSessionMcpLoading] = useState(false);
@@ -122,6 +151,19 @@ export function SkillManagementPanel({
   }>({
     fileName: "",
     fileContentBase64: ""
+  });
+  const [browserProfileDraft, setBrowserProfileDraft] = useState<{
+    displayName: string;
+    engine: BrowserEngine;
+    mode: BrowserProfileMode;
+    ownershipScope: BrowserProfileOwnershipScope;
+    cdpEndpoint: string;
+  }>({
+    displayName: "",
+    engine: "chrome",
+    mode: "persistent",
+    ownershipScope: workspaceId?.trim() ? "workspace" : "user",
+    cdpEndpoint: ""
   });
   const [opsTargetDraft, setOpsTargetDraft] = useState<{
     targetId: string | null;
@@ -159,6 +201,24 @@ export function SkillManagementPanel({
     () => buildSkillTargetCatalogMap(providerCatalogItems),
     [providerCatalogItems]
   );
+  const workspaceItemsById = useMemo(
+    () => new Map(workspaceItems.map((item) => [item.id, item])),
+    [workspaceItems]
+  );
+  const filteredBrowserProfiles = useMemo(() => {
+    if (!onlyCurrentWorkspaceBrowserProfiles || !workspaceId?.trim()) {
+      return browserProfiles;
+    }
+
+    return browserProfiles.filter((profile) => profile.workspaceId === workspaceId);
+  }, [browserProfiles, onlyCurrentWorkspaceBrowserProfiles, workspaceId]);
+  const selectedBrowserProfileTasks = useMemo(() => {
+    if (!selectedBrowserProfileForTasks) {
+      return [];
+    }
+
+    return browserTasks.filter((task) => task.targetRefId === selectedBrowserProfileForTasks.id);
+  }, [browserTasks, selectedBrowserProfileForTasks]);
 
   useEffect(() => {
     let active = true;
@@ -179,9 +239,23 @@ export function SkillManagementPanel({
       setLoading(true);
 
       try {
-        const [nextOverview, nextTemplates, nextOpsTasks, nextOpsTargets] = await Promise.all([
+        const [
+          nextOverview,
+          nextTemplates,
+          nextBrowserProfiles,
+          nextBrowserTasks,
+          workspaceResponse,
+          nextOpsTasks,
+          nextOpsTargets
+        ] = await Promise.all([
           fetchSkillOverview(),
           fetchDocumentTemplates("active"),
+          fetchBrowserProfiles(),
+          fetchOfficeTasks({
+            taskType: "browser",
+            limit: 100
+          }),
+          listWorkspaces(),
           fetchOfficeTasks({
             workspaceId,
             taskType: "ops",
@@ -197,10 +271,18 @@ export function SkillManagementPanel({
           return;
         }
 
+        const nextBrowserTaskExecutions = await loadBrowserTaskExecutions(nextBrowserTasks);
+
         setOverview(nextOverview);
         setDocumentTemplates(nextTemplates);
+        setBrowserProfiles(nextBrowserProfiles);
+        setBrowserTasks(nextBrowserTasks);
+        setBrowserTaskExecutions(nextBrowserTaskExecutions);
+        setWorkspaceItems(workspaceResponse.items);
         setOpsTasks(nextOpsTasks);
         setOpsTargets(nextOpsTargets);
+        setSelectedBrowserProfileForTasks(null);
+        setSelectedBrowserTaskDetail(null);
         setSelectedOpsTaskDetail(null);
         setPanelError(null);
       } catch (error) {
@@ -223,10 +305,24 @@ export function SkillManagementPanel({
     };
   }, [accessToken, modalOpen, workspaceId]);
 
-  async function reloadPanelData(): Promise<void> {
-    const [nextOverview, nextTemplates, nextOpsTasks, nextOpsTargets] = await Promise.all([
+async function reloadPanelData(): Promise<void> {
+    const [
+      nextOverview,
+      nextTemplates,
+      nextBrowserProfiles,
+      nextBrowserTasks,
+      workspaceResponse,
+      nextOpsTasks,
+      nextOpsTargets
+    ] = await Promise.all([
       fetchSkillOverview(),
       fetchDocumentTemplates("active"),
+      fetchBrowserProfiles(),
+      fetchOfficeTasks({
+        taskType: "browser",
+        limit: 100
+      }),
+      listWorkspaces(),
       fetchOfficeTasks({
         workspaceId,
         taskType: "ops",
@@ -238,8 +334,13 @@ export function SkillManagementPanel({
         kind: opsTargetKindFilter === "all" ? undefined : opsTargetKindFilter
       })
     ]);
+    const nextBrowserTaskExecutions = await loadBrowserTaskExecutions(nextBrowserTasks);
     setOverview(nextOverview);
     setDocumentTemplates(nextTemplates);
+    setBrowserProfiles(nextBrowserProfiles);
+    setBrowserTasks(nextBrowserTasks);
+    setBrowserTaskExecutions(nextBrowserTaskExecutions);
+    setWorkspaceItems(workspaceResponse.items);
     setOpsTasks(nextOpsTasks);
     setOpsTargets(nextOpsTargets);
     setPanelError(null);
@@ -283,6 +384,202 @@ export function SkillManagementPanel({
       setOfficeTemplateModalOpen(false);
       setStatusText(t("settings.skillOfficeTemplateImported"));
       await reloadPanelData();
+    } catch (error) {
+      setPanelError(resolveSkillPanelError(error));
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleBrowserProfileSubmit(): Promise<void> {
+    if (!accessToken) {
+      return;
+    }
+
+    setPendingActionKey("browser-profile-submit");
+    setPanelError(null);
+    setStatusText(null);
+
+    try {
+      await createBrowserProfile({
+        workspaceId,
+        displayName: browserProfileDraft.displayName.trim() || null,
+        engine: browserProfileDraft.engine,
+        mode: browserProfileDraft.mode,
+        ownershipScope: browserProfileDraft.ownershipScope,
+        cdpEndpoint: browserProfileDraft.mode === "cdp_attached"
+          ? browserProfileDraft.cdpEndpoint.trim() || null
+          : null
+      });
+
+      setBrowserProfileDraft(createDefaultBrowserProfileDraft(workspaceId));
+      setBrowserProfileModalOpen(false);
+      setStatusText(t("settings.skillOfficeBrowserProfileCreated"));
+      await reloadPanelData();
+    } catch (error) {
+      setPanelError(resolveSkillPanelError(error));
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleToggleBrowserProfileOwnershipScope(profile: BrowserProfileDto): Promise<void> {
+    if (!accessToken) {
+      return;
+    }
+
+    const nextOwnershipScope = profile.ownershipScope === "user" ? "workspace" : "user";
+    if (nextOwnershipScope === "workspace" && !profile.workspaceId?.trim()) {
+      setPanelError(t("settings.skillOfficeBrowserProfileWorkspaceRequired"));
+      return;
+    }
+
+    setPendingActionKey(`browser-profile-scope:${profile.id}`);
+    setPanelError(null);
+    setStatusText(null);
+
+    try {
+      await updateBrowserProfile(profile.id, {
+        ownershipScope: nextOwnershipScope
+      });
+      await reloadPanelData();
+      setStatusText(
+        nextOwnershipScope === "user"
+          ? t("settings.skillOfficeBrowserProfileCrossWorkspaceEnabled")
+          : t("settings.skillOfficeBrowserProfileWorkspaceOnlyEnabled")
+      );
+    } catch (error) {
+      setPanelError(resolveSkillPanelError(error));
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  function handleOpenBrowserProfileOptions(profile: BrowserProfileDto): void {
+    setSelectedBrowserProfileForOptions(profile);
+    setBrowserProfileOptionsModalOpen(true);
+    setPanelError(null);
+  }
+
+  function handleOpenBrowserProfileDelete(profile: BrowserProfileDto): void {
+    setSelectedBrowserProfileForDelete(profile);
+    setBrowserProfileDeleteModalOpen(true);
+    setPanelError(null);
+  }
+
+  async function handleConfirmDeleteBrowserProfile(): Promise<void> {
+    if (!accessToken) {
+      return;
+    }
+
+    const profile = selectedBrowserProfileForDelete;
+    if (!profile) {
+      return;
+    }
+
+    setPendingActionKey(`browser-profile-delete:${profile.id}`);
+    setPanelError(null);
+    setStatusText(null);
+
+    try {
+      await deleteBrowserProfile(profile.id);
+      if (selectedBrowserProfileForTasks?.id === profile.id) {
+        setBrowserProfileTaskModalOpen(false);
+        setSelectedBrowserProfileForTasks(null);
+        setSelectedBrowserTaskDetail(null);
+      }
+      if (selectedBrowserProfileForOptions?.id === profile.id) {
+        setBrowserProfileOptionsModalOpen(false);
+        setSelectedBrowserProfileForOptions(null);
+      }
+      setBrowserProfileDeleteModalOpen(false);
+      setSelectedBrowserProfileForDelete(null);
+      await reloadPanelData();
+      setStatusText(t("settings.skillOfficeBrowserProfileDeleted"));
+    } catch (error) {
+      setPanelError(resolveSkillPanelError(error));
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleOpenBrowserProfileTasks(profile: BrowserProfileDto): Promise<void> {
+    if (!accessToken) {
+      return;
+    }
+
+    setPendingActionKey(`browser-profile-tasks:${profile.id}`);
+    setPanelError(null);
+
+    try {
+      setSelectedBrowserProfileForTasks(profile);
+      setSelectedBrowserTaskDetail(null);
+      setBrowserProfileTaskModalOpen(true);
+    } catch (error) {
+      setPanelError(resolveSkillPanelError(error));
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleOpenBrowserTask(taskId: string): Promise<void> {
+    if (!accessToken) {
+      return;
+    }
+
+    setPendingActionKey(`browser-task-detail:${taskId}`);
+    setPanelError(null);
+
+    try {
+      const [detail, execution] = await Promise.all([
+        fetchOfficeTaskDetail(taskId),
+        fetchBrowserTaskExecution(taskId)
+      ]);
+      setSelectedBrowserTaskDetail(detail);
+      setBrowserTaskExecutions((current) => ({
+        ...current,
+        [taskId]: execution
+      }));
+    } catch (error) {
+      setPanelError(resolveSkillPanelError(error));
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleExecuteBrowserTask(taskId: string): Promise<void> {
+    if (!accessToken) {
+      return;
+    }
+
+    setPendingActionKey(`browser-task-execute:${taskId}`);
+    setPanelError(null);
+    setStatusText(null);
+
+    try {
+      await executeBrowserTask(taskId);
+      await reloadBrowserTaskExecution(taskId);
+      setStatusText(t("settings.skillOfficeBrowserInstanceStarted"));
+    } catch (error) {
+      setPanelError(resolveSkillPanelError(error));
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleCancelBrowserTask(taskId: string): Promise<void> {
+    if (!accessToken) {
+      return;
+    }
+
+    setPendingActionKey(`browser-task-cancel:${taskId}`);
+    setPanelError(null);
+    setStatusText(null);
+
+    try {
+      await cancelBrowserTaskExecution(taskId);
+      await reloadBrowserTaskExecution(taskId);
+      setStatusText(t("settings.skillOfficeBrowserInstanceCancelled"));
     } catch (error) {
       setPanelError(resolveSkillPanelError(error));
     } finally {
@@ -466,10 +763,24 @@ export function SkillManagementPanel({
     setPanelError(null);
   }
 
+  function openBrowserProfileModal(): void {
+    setBrowserProfileDraft(createDefaultBrowserProfileDraft(workspaceId));
+    setBrowserProfileModalOpen(true);
+    setPanelError(null);
+  }
+
   function openOpsTargetModal(): void {
     setOpsTargetDraft(createDefaultOpsTargetDraft());
     setOpsTargetModalOpen(true);
     setPanelError(null);
+  }
+
+  async function reloadBrowserTaskExecution(taskId: string): Promise<void> {
+    const execution = await fetchBrowserTaskExecution(taskId);
+    setBrowserTaskExecutions((current) => ({
+      ...current,
+      [taskId]: execution
+    }));
   }
 
   async function handleImport(entry: SkillScanEntryDto): Promise<void> {
@@ -785,6 +1096,14 @@ export function SkillManagementPanel({
                   onClick={openOfficeTemplateModal}
                 >
                   {t("settings.skillOfficeTemplateOpenCreateAction")}
+                </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={!accessToken || loading || pendingActionKey !== null}
+                  onClick={openBrowserProfileModal}
+                >
+                  {t("settings.skillOfficeBrowserProfileOpenCreateAction")}
                 </button>
                 <button
                   className="secondary-button"
@@ -1125,6 +1444,8 @@ export function SkillManagementPanel({
             <section className="settings-skill-summary-block">
               <div className="settings-skill-summary-grid">
                 <SummaryCard label={t("settings.skillOfficeTemplateCount")} value={String(documentTemplates.length)} />
+                <SummaryCard label={t("settings.skillOfficeBrowserProfileCount")} value={String(filteredBrowserProfiles.length)} />
+                <SummaryCard label={t("settings.skillOfficeBrowserTaskCount")} value={String(browserTasks.length)} />
                 <SummaryCard
                   label={t("settings.skillOfficeWorkspaceScope")}
                   value={workspaceId?.trim() ? t("settings.skillOfficeScoped") : t("settings.skillOfficeGlobal")}
@@ -1158,6 +1479,98 @@ export function SkillManagementPanel({
                   </div>
                   <div className="settings-skill-entry-actions">
                     <span className="settings-skill-entry-meta">{template.templateSourcePath ?? "-"}</span>
+                  </div>
+                </div>
+              )}
+            />
+
+            <SkillSection
+              title={t("settings.skillOfficeBrowserProfileListTitle")}
+              description={t("settings.skillOfficeBrowserProfileListDescription")}
+              emptyText={t("settings.skillOfficeBrowserProfileEmpty")}
+              headerExtra={(
+                <label className="settings-skill-inline-toggle">
+                  <input
+                    type="checkbox"
+                    checked={onlyCurrentWorkspaceBrowserProfiles}
+                    disabled={!workspaceId?.trim()}
+                    onChange={(event) => setOnlyCurrentWorkspaceBrowserProfiles(event.target.checked)}
+                  />
+                  <span>{t("settings.skillOfficeBrowserProfileOnlyCurrentWorkspace")}</span>
+                </label>
+              )}
+              items={filteredBrowserProfiles}
+              renderItem={(profile) => (
+                <div key={profile.id} className="settings-skill-entry settings-browser-profile-entry">
+                  <div className="settings-skill-entry-main">
+                    <strong className="settings-skill-entry-title">{profile.displayName}</strong>
+                    <p className="settings-skill-entry-meta">
+                      {t("settings.skillOfficeBrowserProfileListMeta", {
+                        engine: resolveBrowserEngineLabel(profile.engine),
+                        mode: resolveBrowserProfileModeLabel(profile.mode),
+                        scope: resolveBrowserProfileScopeLabel(profile.ownershipScope)
+                      })}
+                    </p>
+                    <div className="settings-skill-tags">
+                      <span className="settings-skill-tag" data-status="synced">
+                        {resolveBrowserEngineLabel(profile.engine)}
+                      </span>
+                      <span className="settings-skill-tag" data-status={resolveBrowserProfileStatusTag(profile.status)}>
+                        {resolveBrowserProfileStatusLabel(profile.status)}
+                      </span>
+                      <span className="settings-skill-tag" data-status="pending">
+                        {t("settings.skillOfficeBrowserProfileWorkspaceTag", {
+                          workspaceName: resolveWorkspaceLabel(profile.workspaceId, workspaceItemsById)
+                        })}
+                      </span>
+                      {profile.ownershipScope === "user" ? (
+                        <span className="settings-skill-tag" data-status="synced">
+                          {t("settings.skillOfficeBrowserProfileCrossWorkspaceTag")}
+                        </span>
+                      ) : null}
+                      {profile.cdpEndpoint ? (
+                        <span className="settings-skill-tag" data-status="pending">
+                          {t("settings.skillOfficeBrowserProfileCdpEndpointTag")}
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="settings-skill-entry-meta settings-skill-path">
+                      {profile.userDataDir ?? profile.cdpEndpoint ?? t("settings.skillOfficeBrowserProfileUserDataDirLabel")}
+                    </p>
+                  </div>
+                  <div className="settings-skill-entry-actions settings-browser-profile-entry-actions">
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={loading || pendingActionKey !== null}
+                      onClick={() => {
+                        handleOpenBrowserProfileOptions(profile);
+                      }}
+                    >
+                      {t("settings.skillOfficeBrowserProfileOptionAction")}
+                    </button>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={loading || pendingActionKey !== null}
+                      onClick={() => {
+                        void handleOpenBrowserProfileTasks(profile);
+                      }}
+                    >
+                      {pendingActionKey === `browser-profile-tasks:${profile.id}`
+                        ? t("common.loading")
+                        : t("settings.skillOfficeBrowserProfileTaskAction")}
+                    </button>
+                    <button
+                      className="settings-button-danger"
+                      type="button"
+                      disabled={loading || pendingActionKey !== null}
+                      onClick={() => {
+                        handleOpenBrowserProfileDelete(profile);
+                      }}
+                    >
+                      {t("settings.skillOfficeBrowserProfileDeleteAction")}
+                    </button>
                   </div>
                 </div>
               )}
@@ -1370,6 +1783,326 @@ export function SkillManagementPanel({
               {pendingActionKey === "office-template-submit"
                 ? t("common.loading")
                 : t("settings.skillOfficeTemplateSaveAction")}
+            </button>
+          </ModalActions>
+        </ModalSection>
+      </WorkbenchModal>
+
+      <WorkbenchModal
+        open={browserProfileModalOpen}
+        title={t("settings.skillOfficeBrowserProfileModalTitle")}
+        description={t("settings.skillOfficeBrowserProfileModalDescription")}
+        className="settings-skill-create-modal"
+        onClose={() => {
+          setBrowserProfileModalOpen(false);
+          setBrowserProfileDraft(createDefaultBrowserProfileDraft(workspaceId));
+        }}
+      >
+        <ModalSection heading={t("settings.skillOfficeBrowserProfileFormTitle")}>
+          <ModalField label={t("settings.skillOfficeBrowserProfileNameLabel")} htmlFor="browser-profile-name">
+            <input
+              id="browser-profile-name"
+              className="settings-text-input"
+              value={browserProfileDraft.displayName}
+              onChange={(event) => setBrowserProfileDraft((current) => ({ ...current, displayName: event.target.value }))}
+            />
+          </ModalField>
+          <ModalField label={t("settings.skillOfficeBrowserProfileEngineLabel")} htmlFor="browser-profile-engine">
+            <select
+              id="browser-profile-engine"
+              className="settings-select"
+              value={browserProfileDraft.engine}
+              onChange={(event) => setBrowserProfileDraft((current) => ({
+                ...current,
+                engine: event.target.value as BrowserEngine
+              }))}
+            >
+              <option value="chrome">{t("settings.skillOfficeBrowserProfileEngineChrome")}</option>
+              <option value="edge">{t("settings.skillOfficeBrowserProfileEngineEdge")}</option>
+            </select>
+          </ModalField>
+          <ModalField label={t("settings.skillOfficeBrowserProfileModeLabel")} htmlFor="browser-profile-mode">
+            <select
+              id="browser-profile-mode"
+              className="settings-select"
+              value={browserProfileDraft.mode}
+              onChange={(event) => setBrowserProfileDraft((current) => ({
+                ...current,
+                mode: event.target.value as BrowserProfileMode
+              }))}
+            >
+              <option value="persistent">{t("settings.skillOfficeBrowserProfileModePersistent")}</option>
+              <option value="cdp_attached">{t("settings.skillOfficeBrowserProfileModeCdpAttached")}</option>
+            </select>
+          </ModalField>
+          <ModalField label={t("settings.skillOfficeBrowserProfileScopeLabel")} htmlFor="browser-profile-scope">
+            <select
+              id="browser-profile-scope"
+              className="settings-select"
+              value={browserProfileDraft.ownershipScope}
+              onChange={(event) => setBrowserProfileDraft((current) => ({
+                ...current,
+                ownershipScope: event.target.value as BrowserProfileOwnershipScope
+              }))}
+            >
+              <option value="user">{t("settings.skillOfficeBrowserProfileScopeUser")}</option>
+              <option value="workspace">{t("settings.skillOfficeBrowserProfileScopeWorkspace")}</option>
+              <option value="target">{t("settings.skillOfficeBrowserProfileScopeTarget")}</option>
+            </select>
+          </ModalField>
+          {browserProfileDraft.mode === "cdp_attached" ? (
+            <ModalField
+              label={t("settings.skillOfficeBrowserProfileCdpEndpointLabel")}
+              description={t("settings.skillOfficeBrowserProfileCdpEndpointDescription")}
+              htmlFor="browser-profile-cdp-endpoint"
+            >
+              <input
+                id="browser-profile-cdp-endpoint"
+                className="settings-text-input"
+                value={browserProfileDraft.cdpEndpoint}
+                onChange={(event) => setBrowserProfileDraft((current) => ({ ...current, cdpEndpoint: event.target.value }))}
+              />
+            </ModalField>
+          ) : null}
+          <ModalActions>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => {
+                setBrowserProfileModalOpen(false);
+                setBrowserProfileDraft(createDefaultBrowserProfileDraft(workspaceId));
+              }}
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              className="primary-button"
+              type="button"
+              disabled={loading || pendingActionKey !== null}
+              onClick={() => {
+                void handleBrowserProfileSubmit();
+              }}
+            >
+              {pendingActionKey === "browser-profile-submit"
+                ? t("common.loading")
+                : t("settings.skillOfficeBrowserProfileSaveAction")}
+            </button>
+          </ModalActions>
+        </ModalSection>
+      </WorkbenchModal>
+
+      <WorkbenchModal
+        open={browserProfileTaskModalOpen}
+        title={t("settings.skillOfficeBrowserProfileTaskModalTitle", {
+          profileName: selectedBrowserProfileForTasks?.displayName ?? "-"
+        })}
+        description={t("settings.skillOfficeBrowserProfileTaskModalDescription")}
+        className="settings-skill-detail-modal"
+        onClose={() => {
+          setBrowserProfileTaskModalOpen(false);
+          setSelectedBrowserProfileForTasks(null);
+          setSelectedBrowserTaskDetail(null);
+        }}
+      >
+        <ModalSection
+          heading={t("settings.skillOfficeBrowserProfileTaskListTitle")}
+          description={selectedBrowserProfileForTasks
+            ? t("settings.skillOfficeBrowserProfileTaskListDescription", {
+              workspaceName: resolveWorkspaceLabel(selectedBrowserProfileForTasks.workspaceId, workspaceItemsById)
+            })
+            : undefined}
+        >
+          {selectedBrowserProfileTasks.length === 0 ? (
+            <ModalEmptyState
+              title={t("settings.skillOfficeBrowserProfileTaskEmpty")}
+              compact
+            />
+          ) : (
+            <ModalList>
+              {selectedBrowserProfileTasks.map((task) => {
+                const execution = browserTaskExecutions[task.id] ?? null;
+                const isSelected = selectedBrowserTaskDetail?.task.id === task.id;
+
+                return (
+                  <ModalListItem
+                    key={task.id}
+                    className="settings-browser-task-list-item"
+                    label={task.title}
+                    description={t("settings.skillOfficeBrowserInstanceListMeta", {
+                      profileName: selectedBrowserProfileForTasks?.displayName ?? "-",
+                      status: resolveBrowserExecutionStatusText(execution, task.status),
+                      risk: task.riskLevel
+                    })}
+                    trailing={(
+                      <div className="settings-skill-entry-actions settings-browser-task-list-item-actions">
+                        <span className="settings-skill-entry-meta">{formatTaskTime(task.createdAt)}</span>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={loading || pendingActionKey !== null}
+                          onClick={() => {
+                            void handleOpenBrowserTask(task.id);
+                          }}
+                        >
+                          {pendingActionKey === `browser-task-detail:${task.id}`
+                            ? t("common.loading")
+                            : t("settings.skillOfficeBrowserInstanceDetailAction")}
+                        </button>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={loading || pendingActionKey !== null || !canExecuteBrowserTask(task.status)}
+                          onClick={() => {
+                            void handleExecuteBrowserTask(task.id);
+                          }}
+                        >
+                          {pendingActionKey === `browser-task-execute:${task.id}`
+                            ? t("common.loading")
+                            : t("settings.skillOfficeBrowserInstanceExecuteAction")}
+                        </button>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={loading || pendingActionKey !== null || !canCancelBrowserTask(execution)}
+                          onClick={() => {
+                            void handleCancelBrowserTask(task.id);
+                          }}
+                        >
+                          {pendingActionKey === `browser-task-cancel:${task.id}`
+                            ? t("common.loading")
+                            : t("settings.skillOfficeBrowserInstanceCancelAction")}
+                        </button>
+                      </div>
+                    )}
+                  >
+                    <div className="settings-skill-tags">
+                      <span className="settings-skill-tag" data-status={resolveOpsTaskStatusTag(task.status)}>
+                        {task.status}
+                      </span>
+                      <span className="settings-skill-tag" data-status={resolveBrowserExecutionStatusTag(execution)}>
+                        {resolveBrowserExecutionStatusText(execution, task.status)}
+                      </span>
+                    </div>
+                    {isSelected ? (
+                      <div className="settings-skill-entry-meta">
+                        <p>
+                          {execution
+                            ? t("settings.skillOfficeBrowserInstanceSnapshotMeta", {
+                              status: resolveBrowserExecutionSnapshotStatusLabel(execution.status),
+                              attempt: execution.attempt,
+                              startedAt: formatTaskTimestamp(execution.startedAt),
+                              finishedAt: formatTaskTimestamp(execution.finishedAt)
+                            })
+                            : t("settings.skillOfficeBrowserInstanceSnapshotPending")}
+                        </p>
+                        {selectedBrowserTaskDetail.steps.map((step) => (
+                          <p key={step.id}>
+                            {step.title} · {step.status}
+                          </p>
+                        ))}
+                      </div>
+                    ) : null}
+                  </ModalListItem>
+                );
+              })}
+            </ModalList>
+          )}
+        </ModalSection>
+      </WorkbenchModal>
+
+      <WorkbenchModal
+        open={browserProfileOptionsModalOpen}
+        title={t("settings.skillOfficeBrowserProfileOptionsModalTitle", {
+          profileName: selectedBrowserProfileForOptions?.displayName ?? "-"
+        })}
+        description={t("settings.skillOfficeBrowserProfileOptionsModalDescription")}
+        className="settings-skill-create-modal"
+        onClose={() => {
+          setBrowserProfileOptionsModalOpen(false);
+          setSelectedBrowserProfileForOptions(null);
+        }}
+      >
+        <ModalSection heading={t("settings.skillOfficeBrowserProfileOptionsSectionTitle")}>
+          <ModalField
+            label={t("settings.skillOfficeBrowserProfileCrossWorkspaceFieldLabel")}
+            description={t("settings.skillOfficeBrowserProfileCrossWorkspaceFieldDescription")}
+          >
+            <div className="settings-skill-entry-actions settings-browser-profile-entry-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={
+                  !selectedBrowserProfileForOptions
+                  || loading
+                  || pendingActionKey !== null
+                  || !canToggleBrowserProfileScope(selectedBrowserProfileForOptions)
+                }
+                onClick={() => {
+                  if (!selectedBrowserProfileForOptions) {
+                    return;
+                  }
+                  void handleToggleBrowserProfileOwnershipScope(selectedBrowserProfileForOptions);
+                }}
+              >
+                {selectedBrowserProfileForOptions && pendingActionKey === `browser-profile-scope:${selectedBrowserProfileForOptions.id}`
+                  ? t("common.loading")
+                  : selectedBrowserProfileForOptions?.ownershipScope === "user"
+                    ? t("settings.skillOfficeBrowserProfileSetWorkspaceOnlyAction")
+                    : t("settings.skillOfficeBrowserProfileAllowCrossWorkspaceAction")}
+              </button>
+            </div>
+          </ModalField>
+          <ModalActions>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => {
+                setBrowserProfileOptionsModalOpen(false);
+                setSelectedBrowserProfileForOptions(null);
+              }}
+            >
+              {t("common.close")}
+            </button>
+          </ModalActions>
+        </ModalSection>
+      </WorkbenchModal>
+
+      <WorkbenchModal
+        open={browserProfileDeleteModalOpen}
+        title={t("settings.skillOfficeBrowserProfileDeleteModalTitle")}
+        description={t("settings.skillOfficeBrowserProfileDeleteModalDescription")}
+        className="settings-skill-create-modal"
+        onClose={() => {
+          setBrowserProfileDeleteModalOpen(false);
+          setSelectedBrowserProfileForDelete(null);
+        }}
+      >
+        <ModalSection heading={selectedBrowserProfileForDelete?.displayName ?? "-"}>
+          <p className="settings-skill-entry-meta">
+            {t("settings.skillOfficeBrowserProfileDeleteModalWarning")}
+          </p>
+          <ModalActions>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => {
+                setBrowserProfileDeleteModalOpen(false);
+                setSelectedBrowserProfileForDelete(null);
+              }}
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              className="settings-button-danger"
+              type="button"
+              disabled={!selectedBrowserProfileForDelete || loading || pendingActionKey !== null}
+              onClick={() => {
+                void handleConfirmDeleteBrowserProfile();
+              }}
+            >
+              {selectedBrowserProfileForDelete && pendingActionKey === `browser-profile-delete:${selectedBrowserProfileForDelete.id}`
+                ? t("common.loading")
+                : t("settings.skillOfficeBrowserProfileDeleteConfirmAction")}
             </button>
           </ModalActions>
         </ModalSection>
@@ -1743,19 +2476,24 @@ export function SkillManagementPanel({
 function SkillSection<T>({
   title,
   description,
+  headerExtra,
   emptyText,
   items,
   renderItem
 }: {
   title: string;
   description?: string;
+  headerExtra?: ReactNode;
   emptyText: string;
   items: readonly T[];
   renderItem: (item: T) => ReactNode;
 }) {
   return (
     <section className="settings-skill-section">
-      <h3 className="settings-skill-section-title">{title}</h3>
+      <div className="settings-skill-section-header">
+        <h3 className="settings-skill-section-title">{title}</h3>
+        {headerExtra ? <div className="settings-skill-section-extra">{headerExtra}</div> : null}
+      </div>
       {description ? <p className="settings-skill-section-description">{description}</p> : null}
       {items.length > 0 ? (
         <div className="settings-skill-entry-list">
@@ -1885,6 +2623,16 @@ function createDefaultOpsTargetDraft() {
   };
 }
 
+function createDefaultBrowserProfileDraft(workspaceId?: string | null) {
+  return {
+    displayName: "",
+    engine: "chrome" as BrowserEngine,
+    mode: "persistent" as BrowserProfileMode,
+    ownershipScope: workspaceId?.trim() ? "workspace" as BrowserProfileOwnershipScope : "user" as BrowserProfileOwnershipScope,
+    cdpEndpoint: ""
+  };
+}
+
 function createDefaultOfficeTemplateDraft() {
   return {
     fileName: "",
@@ -1915,6 +2663,143 @@ function readStrictHostKeyChecking(value: unknown): "accept-new" | "yes" | "no" 
   return value === "yes" || value === "no" || value === "accept-new"
     ? value
     : "accept-new";
+}
+
+function resolveBrowserEngineLabel(engine: BrowserEngine): string {
+  return engine === "edge"
+    ? t("settings.skillOfficeBrowserProfileEngineEdge")
+    : t("settings.skillOfficeBrowserProfileEngineChrome");
+}
+
+function resolveBrowserProfileModeLabel(mode: BrowserProfileMode): string {
+  return mode === "cdp_attached"
+    ? t("settings.skillOfficeBrowserProfileModeCdpAttached")
+    : t("settings.skillOfficeBrowserProfileModePersistent");
+}
+
+function resolveBrowserProfileScopeLabel(scope: BrowserProfileOwnershipScope): string {
+  switch (scope) {
+    case "workspace":
+      return t("settings.skillOfficeBrowserProfileScopeWorkspace");
+    case "target":
+      return t("settings.skillOfficeBrowserProfileScopeTarget");
+    default:
+      return t("settings.skillOfficeBrowserProfileScopeUser");
+  }
+}
+
+function resolveBrowserProfileStatusLabel(status: BrowserProfileDto["status"]): string {
+  switch (status) {
+    case "locked":
+      return t("settings.skillOfficeBrowserProfileStatusLocked");
+    case "archived":
+      return t("settings.skillOfficeBrowserProfileStatusArchived");
+    case "error":
+      return t("settings.skillOfficeBrowserProfileStatusError");
+    default:
+      return t("settings.skillOfficeBrowserProfileStatusActive");
+  }
+}
+
+function resolveBrowserProfileStatusTag(status: BrowserProfileDto["status"]): "pending" | "synced" | "failed" | "conflicted" {
+  switch (status) {
+    case "locked":
+      return "pending";
+    case "archived":
+    case "error":
+      return "failed";
+    default:
+      return "synced";
+  }
+}
+
+function resolveWorkspaceLabel(
+  workspaceId: string | null,
+  workspaceItemsById: ReadonlyMap<string, WorkspaceDto>
+): string {
+  if (!workspaceId?.trim()) {
+    return t("settings.skillOfficeBrowserProfileWorkspaceUnbound");
+  }
+
+  return workspaceItemsById.get(workspaceId)?.name ?? t("settings.skillOfficeBrowserProfileWorkspaceUnknown");
+}
+
+function canToggleBrowserProfileScope(profile: BrowserProfileDto): boolean {
+  if (profile.ownershipScope === "user") {
+    return Boolean(profile.workspaceId?.trim());
+  }
+
+  return true;
+}
+
+function resolveBrowserExecutionStatusText(
+  execution: BrowserTaskExecutionDto | null,
+  taskStatus: OfficeTaskStatus
+): string {
+  if (!execution) {
+    return taskStatus === "succeeded"
+      ? t("settings.skillOfficeBrowserInstanceExecutionSucceeded")
+      : taskStatus === "failed"
+        ? t("settings.skillOfficeBrowserInstanceExecutionFailed")
+        : taskStatus === "cancelled"
+          ? t("settings.skillOfficeBrowserInstanceExecutionCancelled")
+          : t("settings.skillOfficeBrowserInstanceExecutionIdle");
+  }
+
+  return resolveBrowserExecutionSnapshotStatusLabel(execution.status);
+}
+
+function resolveBrowserExecutionSnapshotStatusLabel(status: BrowserTaskExecutionDto["status"]): string {
+  switch (status) {
+    case "queued":
+      return t("settings.skillOfficeBrowserInstanceExecutionQueued");
+    case "running":
+      return t("settings.skillOfficeBrowserInstanceExecutionRunning");
+    case "succeeded":
+      return t("settings.skillOfficeBrowserInstanceExecutionSucceeded");
+    case "failed":
+      return t("settings.skillOfficeBrowserInstanceExecutionFailed");
+    case "cancelled":
+      return t("settings.skillOfficeBrowserInstanceExecutionCancelled");
+    default:
+      return t("settings.skillOfficeBrowserInstanceExecutionTimeout");
+  }
+}
+
+function resolveBrowserExecutionStatusTag(
+  execution: BrowserTaskExecutionDto | null
+): "pending" | "synced" | "failed" | "conflicted" {
+  if (!execution) {
+    return "conflicted";
+  }
+
+  switch (execution.status) {
+    case "queued":
+    case "running":
+      return "pending";
+    case "succeeded":
+      return "synced";
+    case "failed":
+    case "cancelled":
+    case "timeout":
+      return "failed";
+    default:
+      return "conflicted";
+  }
+}
+
+function canExecuteBrowserTask(status: OfficeTaskStatus): boolean {
+  return status === "ready" || status === "failed";
+}
+
+function canCancelBrowserTask(execution: BrowserTaskExecutionDto | null): boolean {
+  return execution?.status === "queued" || execution?.status === "running";
+}
+
+function formatTaskTime(value: string): string {
+  return new Date(value).toLocaleString("zh-CN", {
+    hour12: false
+  });
 }
 
 function resolveOpsTaskStatusTag(status: OfficeTaskStatus): "pending" | "synced" | "failed" | "conflicted" {
@@ -2171,6 +3056,24 @@ function formatDateTime(value: string | null | undefined): string {
   }
 
   return new Date(timestamp).toLocaleString();
+}
+
+function formatTaskTimestamp(value: number | null): string {
+  if (value === null) {
+    return "-";
+  }
+
+  return new Date(value).toLocaleString();
+}
+
+async function loadBrowserTaskExecutions(
+  tasks: readonly OfficeTaskDto[]
+): Promise<Record<string, BrowserTaskExecutionDto | null>> {
+  const entries = await Promise.all(tasks.map(async (task) => (
+    [task.id, await fetchBrowserTaskExecution(task.id)] as const
+  )));
+
+  return Object.fromEntries(entries);
 }
 
 interface SkillTagView {

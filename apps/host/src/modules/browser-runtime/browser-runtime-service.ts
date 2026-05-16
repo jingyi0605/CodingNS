@@ -39,6 +39,42 @@ export class BrowserRuntimeService {
     return this.browserProfileService.createProfile(input);
   }
 
+  updateProfile(input: Parameters<BrowserProfileService["updateProfile"]>[0]): BrowserProfile {
+    return this.browserProfileService.updateProfile(input);
+  }
+
+  deleteProfile(profileId: string, userId: string): { profileId: string; deleted: true } {
+    const tasks = this.officeTaskRepository.list({
+      userId,
+      taskType: "browser"
+    }).filter((task) => task.targetRefId === profileId);
+    const blockingTask = tasks.find((task) =>
+      task.status === "running"
+      || task.status === "paused"
+      || task.status === "waiting_external"
+    );
+
+    if (blockingTask) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "BROWSER_PROFILE_TASK_IN_USE",
+        detail: "当前浏览器 Profile 仍有关联任务正在执行或等待外部完成，暂时不能删除"
+      });
+    }
+
+    for (const task of tasks) {
+      if (task.status === "draft" || task.status === "pending_approval" || task.status === "ready") {
+        this.officeService.cancelTask(task.id, userId);
+      }
+    }
+
+    this.browserProfileService.deleteProfile(profileId, userId);
+    return {
+      profileId,
+      deleted: true
+    };
+  }
+
   attachCdpProfile(input: Parameters<BrowserProfileService["createProfile"]>[0]): BrowserProfile {
     return this.browserProfileService.createProfile({
       ...input,

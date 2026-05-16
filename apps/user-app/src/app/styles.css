@@ -22862,11 +22862,31 @@ textarea:focus-visible {
   gap: 8px;
 }
 
+.settings-skill-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-skill-section-extra {
+  flex-shrink: 0;
+}
+
 .settings-skill-section-title {
   margin: 0;
   color: var(--text-primary);
   font-size: 13px;
   font-weight: 600;
+}
+
+.settings-skill-inline-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .settings-skill-section-description {
@@ -22920,6 +22940,49 @@ textarea:focus-visible {
 .settings-skill-path {
   font-family: var(--font-mono);
   word-break: break-all;
+}
+
+.settings-browser-profile-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 14px 18px;
+}
+
+.settings-browser-profile-entry-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 420px;
+}
+
+.settings-browser-profile-entry .settings-skill-entry-title,
+.settings-browser-profile-entry .settings-skill-entry-meta,
+.settings-browser-profile-entry .settings-skill-path {
+  overflow-wrap: anywhere;
+}
+
+.settings-browser-profile-entry .settings-skill-path {
+  margin-top: 2px;
+}
+
+.settings-browser-task-list-item .modal-list-item-trailing {
+  min-width: 0;
+}
+
+.settings-browser-task-list-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: min(100%, 320px);
+}
+
+.settings-browser-task-list-item-actions .settings-skill-entry-meta {
+  width: 100%;
+  text-align: right;
 }
 
 .settings-skill-tags {
@@ -24566,6 +24629,21 @@ textarea:focus-visible {
 
   .settings-skill-entry {
     flex-direction: column;
+  }
+
+  .settings-browser-profile-entry {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-browser-profile-entry-actions,
+  .settings-browser-task-list-item-actions {
+    justify-content: flex-start;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .settings-browser-task-list-item-actions .settings-skill-entry-meta {
+    text-align: left;
   }
 
   .parallel-task-debug-modal-card {

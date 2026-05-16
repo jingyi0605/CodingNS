@@ -168,6 +168,14 @@ export class BrowserProfileRepository {
 
     return record;
   }
+
+  deleteById(id: string): boolean {
+    const result = this.db
+      .prepare("DELETE FROM browser_profiles WHERE id = ?")
+      .run(id);
+
+    return result.changes > 0;
+  }
 }
 
 interface BrowserProfileRow {

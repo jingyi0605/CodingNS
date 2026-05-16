@@ -50,8 +50,24 @@ describe("SkillManagementPanel", () => {
         return createJsonResponse({ items: createDocumentTemplatesResponse() });
       }
 
+      if (url.includes("/api/office/browser/profiles") && method === "GET") {
+        return createJsonResponse({ items: createBrowserProfilesResponse() });
+      }
+
+      if (url.endsWith("/api/workspaces") && method === "GET") {
+        return createJsonResponse(createWorkspaceListResponse());
+      }
+
+      if (url.includes("/api/office/browser/tasks/") && url.includes("/execution") && method === "GET") {
+        return createJsonResponse({ task: createBrowserTaskExecutionResponse() });
+      }
+
       if (url.includes("/api/office/tasks") && method === "GET") {
-        return createJsonResponse({ items: createOfficeTasksResponse() });
+        return createJsonResponse({
+          items: url.includes("taskType=browser")
+            ? createBrowserOfficeTasksResponse()
+            : createOfficeTasksResponse()
+        });
       }
 
       if (url.includes("/api/office/ops/targets") && method === "GET") {
@@ -230,8 +246,24 @@ describe("SkillManagementPanel", () => {
         return createJsonResponse({ items: createDocumentTemplatesResponse() });
       }
 
+      if (url.includes("/api/office/browser/profiles") && method === "GET") {
+        return createJsonResponse({ items: createBrowserProfilesResponse() });
+      }
+
+      if (url.endsWith("/api/workspaces") && method === "GET") {
+        return createJsonResponse(createWorkspaceListResponse());
+      }
+
+      if (url.includes("/api/office/browser/tasks/") && url.includes("/execution") && method === "GET") {
+        return createJsonResponse({ task: createBrowserTaskExecutionResponse() });
+      }
+
       if (url.includes("/api/office/tasks") && method === "GET") {
-        return createJsonResponse({ items: createOfficeTasksResponse() });
+        return createJsonResponse({
+          items: url.includes("taskType=browser")
+            ? createBrowserOfficeTasksResponse()
+            : createOfficeTasksResponse()
+        });
       }
 
       if (url.includes("/api/office/ops/targets") && method === "GET") {
@@ -314,8 +346,24 @@ describe("SkillManagementPanel", () => {
         return createJsonResponse({ items: createDocumentTemplatesResponse() });
       }
 
+      if (url.includes("/api/office/browser/profiles") && method === "GET") {
+        return createJsonResponse({ items: createBrowserProfilesResponse() });
+      }
+
+      if (url.endsWith("/api/workspaces") && method === "GET") {
+        return createJsonResponse(createWorkspaceListResponse());
+      }
+
+      if (url.includes("/api/office/browser/tasks/") && url.includes("/execution") && method === "GET") {
+        return createJsonResponse({ task: createBrowserTaskExecutionResponse() });
+      }
+
       if (url.includes("/api/office/tasks") && method === "GET") {
-        return createJsonResponse({ items: createOfficeTasksResponse() });
+        return createJsonResponse({
+          items: url.includes("taskType=browser")
+            ? createBrowserOfficeTasksResponse()
+            : createOfficeTasksResponse()
+        });
       }
 
       if (url.includes("/api/office/ops/targets") && method === "GET") {
@@ -376,6 +424,62 @@ describe("SkillManagementPanel", () => {
         return createJsonResponse({ items: createDocumentTemplatesResponse() });
       }
 
+      if (url.includes("/api/office/browser/profiles") && method === "GET") {
+        return createJsonResponse({ items: createBrowserProfilesResponse() });
+      }
+
+      if (url.endsWith("/api/workspaces") && method === "GET") {
+        return createJsonResponse(createWorkspaceListResponse());
+      }
+
+      if (url.includes("/api/office/browser/profiles") && method === "POST") {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          workspaceId: "workspace-1",
+          displayName: "办公 Chrome",
+          engine: "chrome",
+          mode: "persistent",
+          ownershipScope: "workspace",
+          cdpEndpoint: null
+        });
+        return createJsonResponse(createBrowserProfilesResponse()[0]);
+      }
+
+      if (url.includes("/api/office/browser/profiles/browser-profile-1") && method === "PATCH") {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          ownershipScope: "user"
+        });
+        return createJsonResponse({
+          ...createBrowserProfilesResponse()[0],
+          ownershipScope: "user"
+        });
+      }
+
+      if (url.includes("/api/office/browser/profiles/browser-profile-1") && method === "DELETE") {
+        return createJsonResponse({
+          profileId: "browser-profile-1",
+          deleted: true
+        });
+      }
+
+      if (url.includes("/api/office/browser/tasks/browser-task-1/execution") && method === "GET") {
+        return createJsonResponse({ task: createBrowserTaskExecutionResponse() });
+      }
+
+      if (url.endsWith("/api/office/browser/tasks/browser-task-1/execute") && method === "POST") {
+        return createJsonResponse({
+          taskId: "browser-task-1",
+          executionTaskId: "execution-task-1",
+          deduped: false
+        });
+      }
+
+      if (url.endsWith("/api/office/browser/tasks/browser-task-1/execution/cancel") && method === "POST") {
+        return createJsonResponse({
+          taskId: "browser-task-1",
+          cancelled: true
+        });
+      }
+
       if (url.includes("/api/office/document-templates/import-file") && method === "POST") {
         expect(JSON.parse(String(init?.body))).toEqual({
           fileName: "quarterly-report.domt",
@@ -388,8 +492,16 @@ describe("SkillManagementPanel", () => {
         return createJsonResponse(createOfficeTaskDetailResponse());
       }
 
+      if (url.includes("/api/office/tasks/browser-task-1") && method === "GET") {
+        return createJsonResponse(createBrowserOfficeTaskDetailResponse());
+      }
+
       if (url.includes("/api/office/tasks") && method === "GET") {
-        return createJsonResponse({ items: createOfficeTasksResponse() });
+        return createJsonResponse({
+          items: url.includes("taskType=browser")
+            ? createBrowserOfficeTasksResponse()
+            : createOfficeTasksResponse()
+        });
       }
 
       if (url.includes("/api/office/approvals/approval-1/reply") && method === "POST") {
@@ -425,7 +537,57 @@ describe("SkillManagementPanel", () => {
 
     expect(await within(dialog).findByText(t("settings.skillOfficeTemplateListTitle"))).toBeInTheDocument();
     expect(within(dialog).getByText("项目日报模板")).toBeInTheDocument();
+    expect(within(dialog).getAllByText("办公 Chrome").length).toBeGreaterThan(0);
+    expect(within(dialog).getByText("跨区 Edge")).toBeInTheDocument();
     expect(within(dialog).getByText(t("settings.skillOfficeScoped"))).toBeInTheDocument();
+    expect(within(dialog).getByText("工作区：当前工作区")).toBeInTheDocument();
+    expect(within(dialog).getByText("工作区：历史工作区")).toBeInTheDocument();
+    expect(within(dialog).getByText(t("settings.skillOfficeBrowserProfileCrossWorkspaceTag"))).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillOfficeBrowserProfileOpenCreateAction") }));
+    const browserProfileModal = await screen.findByRole("dialog", { name: t("settings.skillOfficeBrowserProfileModalTitle") });
+    await userEvent.type(within(browserProfileModal).getByLabelText(t("settings.skillOfficeBrowserProfileNameLabel")), "办公 Chrome");
+    await userEvent.click(within(browserProfileModal).getByRole("button", { name: t("settings.skillOfficeBrowserProfileSaveAction") }));
+    await waitFor(() => {
+      expect(screen.getByText(t("settings.skillOfficeBrowserProfileCreated"))).toBeInTheDocument();
+    });
+
+    expect(within(dialog).queryByRole("button", { name: t("settings.skillOfficeBrowserInstanceOpenCreateAction") })).not.toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("checkbox", { name: t("settings.skillOfficeBrowserProfileOnlyCurrentWorkspace") }));
+    expect(within(dialog).queryByText("跨区 Edge")).not.toBeInTheDocument();
+    expect(within(dialog).getByText("办公 Chrome")).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillOfficeBrowserProfileOptionAction") }));
+    const browserProfileOptionsModal = await screen.findByRole("dialog", { name: "办公 Chrome 的选项" });
+    await userEvent.click(within(browserProfileOptionsModal).getByRole("button", { name: t("settings.skillOfficeBrowserProfileAllowCrossWorkspaceAction") }));
+    await waitFor(() => {
+      expect(screen.getByText(t("settings.skillOfficeBrowserProfileCrossWorkspaceEnabled"))).toBeInTheDocument();
+    });
+
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillOfficeBrowserProfileTaskAction") }));
+    const browserTaskModal = await screen.findByRole("dialog", { name: "办公 Chrome 的任务记录" });
+    expect(within(browserTaskModal).getByText("日报采集")).toBeInTheDocument();
+
+    await userEvent.click(within(browserTaskModal).getByRole("button", { name: t("settings.skillOfficeBrowserInstanceDetailAction") }));
+    expect(await within(browserTaskModal).findByText("读取页面 DOM · succeeded")).toBeInTheDocument();
+
+    await userEvent.click(within(browserTaskModal).getByRole("button", { name: t("settings.skillOfficeBrowserInstanceExecuteAction") }));
+    await waitFor(() => {
+      expect(screen.getByText(t("settings.skillOfficeBrowserInstanceStarted"))).toBeInTheDocument();
+    });
+
+    await userEvent.click(within(browserTaskModal).getByRole("button", { name: t("settings.skillOfficeBrowserInstanceCancelAction") }));
+    await waitFor(() => {
+      expect(screen.getByText(t("settings.skillOfficeBrowserInstanceCancelled"))).toBeInTheDocument();
+    });
+
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillOfficeBrowserProfileDeleteAction") }));
+    const browserProfileDeleteModal = await screen.findByRole("dialog", { name: t("settings.skillOfficeBrowserProfileDeleteModalTitle") });
+    await userEvent.click(within(browserProfileDeleteModal).getByRole("button", { name: t("settings.skillOfficeBrowserProfileDeleteConfirmAction") }));
+    await waitFor(() => {
+      expect(screen.getByText(t("settings.skillOfficeBrowserProfileDeleted"))).toBeInTheDocument();
+    });
 
     await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillOfficeTemplateOpenCreateAction") }));
     const officeModal = await screen.findByRole("dialog", { name: t("settings.skillOfficeTemplateModalTitle") });
@@ -485,8 +647,24 @@ describe("SkillManagementPanel", () => {
         return createJsonResponse({ items: createDocumentTemplatesResponse() });
       }
 
+      if (url.includes("/api/office/browser/profiles") && method === "GET") {
+        return createJsonResponse({ items: createBrowserProfilesResponse() });
+      }
+
+      if (url.endsWith("/api/workspaces") && method === "GET") {
+        return createJsonResponse(createWorkspaceListResponse());
+      }
+
+      if (url.includes("/api/office/browser/tasks/") && url.includes("/execution") && method === "GET") {
+        return createJsonResponse({ task: createBrowserTaskExecutionResponse() });
+      }
+
       if (url.includes("/api/office/tasks") && method === "GET") {
-        return createJsonResponse({ items: createOfficeTasksResponse() });
+        return createJsonResponse({
+          items: url.includes("taskType=browser")
+            ? createBrowserOfficeTasksResponse()
+            : createOfficeTasksResponse()
+        });
       }
 
       if (url.includes("/api/office/ops/targets") && method === "GET") {
@@ -901,6 +1079,81 @@ function createDocumentTemplatesResponse() {
   ];
 }
 
+function createBrowserProfilesResponse() {
+  return [
+    {
+      id: "browser-profile-1",
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      engine: "chrome" as const,
+      mode: "persistent" as const,
+      displayName: "办公 Chrome",
+      userDataDir: "/Users/jackson/.codingns/browser-profiles/browser-profile-1",
+      cdpEndpoint: null,
+      ownershipScope: "workspace" as const,
+      status: "active" as const,
+      createdAt: "2026-05-15T10:00:00.000Z",
+      updatedAt: "2026-05-15T10:00:00.000Z"
+    },
+    {
+      id: "browser-profile-2",
+      userId: "user-1",
+      workspaceId: "workspace-2",
+      engine: "edge" as const,
+      mode: "persistent" as const,
+      displayName: "跨区 Edge",
+      userDataDir: "/Users/jackson/.codingns/browser-profiles/browser-profile-2",
+      cdpEndpoint: null,
+      ownershipScope: "user" as const,
+      status: "active" as const,
+      createdAt: "2026-05-15T09:00:00.000Z",
+      updatedAt: "2026-05-15T09:00:00.000Z"
+    }
+  ];
+}
+
+function createBrowserOfficeTasksResponse() {
+  return [
+    {
+      id: "browser-task-1",
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      taskType: "browser" as const,
+      title: "日报采集",
+      description: "读取日报页面并截图",
+      connectorId: "browser.playwright",
+      targetRefKind: "browser_profile",
+      targetRefId: "browser-profile-1",
+      inputJson: "{\"startUrl\":\"https://example.com\"}",
+      status: "ready" as const,
+      riskLevel: "low" as const,
+      approvalPolicyId: null,
+      currentStepId: null,
+      idempotencyKey: null,
+      startedAt: null,
+      finishedAt: null,
+      createdAt: "2026-05-15T11:00:00.000Z",
+      updatedAt: "2026-05-15T11:00:00.000Z"
+    }
+  ];
+}
+
+function createBrowserTaskExecutionResponse() {
+  return {
+    taskId: "browser-task-1",
+    taskType: "office_browser_task_execute",
+    key: "browser-task-1",
+    executionLane: "host_background",
+    status: "running" as const,
+    source: "office.browser_task.execute",
+    attempt: 1,
+    enqueuedAt: Date.parse("2026-05-15T11:00:05.000Z"),
+    startedAt: Date.parse("2026-05-15T11:00:06.000Z"),
+    finishedAt: null,
+    timeoutMs: 180000
+  };
+}
+
 function createOfficeTasksResponse() {
   return [
     {
@@ -962,6 +1215,33 @@ function createOfficeTaskDetailResponse() {
         updatedAt: "2026-05-15T10:00:00.000Z"
       }
     ],
+    receipts: [],
+    artifacts: []
+  };
+}
+
+function createBrowserOfficeTaskDetailResponse() {
+  return {
+    task: createBrowserOfficeTasksResponse()[0],
+    steps: [
+      {
+        id: "browser-step-1",
+        taskId: "browser-task-1",
+        stepSeq: 1,
+        stepType: "read_dom",
+        title: "读取页面 DOM",
+        inputJson: "{\"type\":\"read_dom\"}",
+        outputJson: "{\"url\":\"https://example.com\"}",
+        status: "succeeded",
+        retryCount: 0,
+        startedAt: "2026-05-15T11:00:06.000Z",
+        finishedAt: "2026-05-15T11:00:08.000Z",
+        errorMessage: null,
+        createdAt: "2026-05-15T11:00:06.000Z",
+        updatedAt: "2026-05-15T11:00:08.000Z"
+      }
+    ],
+    approvals: [],
     receipts: [],
     artifacts: []
   };
@@ -1068,6 +1348,25 @@ function createWorkspaceSessionMcpStatusResponse() {
         mcpConfigured: false,
         callState: "missing_runtime_config",
         callStateDetail: "当前工作区会话 runtime 里还没有这个 CLI 的 MCP 配置文件。"
+      }
+    ]
+  };
+}
+
+function createWorkspaceListResponse() {
+  return {
+    items: [
+      {
+        id: "workspace-1",
+        name: "当前工作区",
+        path: "/Users/jackson/Code/CodingNS",
+        repoRoot: "/Users/jackson/Code/CodingNS"
+      },
+      {
+        id: "workspace-2",
+        name: "历史工作区",
+        path: "/Users/jackson/Code/HistoryWorkspace",
+        repoRoot: "/Users/jackson/Code/HistoryWorkspace"
       }
     ]
   };

@@ -16,6 +16,12 @@ export interface CreateBrowserProfileInput {
   cdpEndpoint?: string | null;
 }
 
+export interface UpdateBrowserProfileInput {
+  userId: string;
+  profileId: string;
+  ownershipScope?: BrowserProfileOwnershipScope;
+}
+
 export class BrowserProfileService {
   private readonly browserProfileRoot: string;
 
@@ -78,6 +84,32 @@ export class BrowserProfileService {
     };
 
     return this.repository.create(profile);
+  }
+
+  updateProfile(input: UpdateBrowserProfileInput): BrowserProfile {
+    const profile = this.getProfile(input.profileId, input.userId);
+    const nextOwnershipScope = input.ownershipScope ?? profile.ownershipScope;
+
+    if (nextOwnershipScope === "workspace" && !profile.workspaceId) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "BROWSER_PROFILE_WORKSPACE_SCOPE_NOT_ALLOWED",
+        detail: "未绑定工作区的浏览器 Profile 不能切回工作区范围"
+      });
+    }
+
+    const nextProfile: BrowserProfile = {
+      ...profile,
+      ownershipScope: nextOwnershipScope,
+      updatedAt: nowIso()
+    };
+
+    return this.repository.update(nextProfile);
+  }
+
+  deleteProfile(profileId: string, userId: string): void {
+    const profile = this.getProfile(profileId, userId);
+    this.repository.deleteById(profile.id);
   }
 }
 

@@ -17,6 +17,10 @@ interface CreateBrowserProfileBody {
   cdpEndpoint?: string | null;
 }
 
+interface UpdateBrowserProfileBody {
+  ownershipScope?: BrowserProfileOwnershipScope;
+}
+
 interface CreateBrowserTaskBody {
   workspaceId?: string | null;
   title?: string;
@@ -87,6 +91,31 @@ export class BrowserRuntimeController {
   ): Promise<void> => {
     reply.send(
       this.browserRuntimeService.getProfile(
+        request.params.profileId,
+        requireUserId(request)
+      )
+    );
+  };
+
+  readonly updateProfile = async (
+    request: FastifyRequest<{ Params: BrowserProfileParams; Body: UpdateBrowserProfileBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      this.browserRuntimeService.updateProfile({
+        userId: requireUserId(request),
+        profileId: request.params.profileId,
+        ownershipScope: request.body.ownershipScope
+      })
+    );
+  };
+
+  readonly deleteProfile = async (
+    request: FastifyRequest<{ Params: BrowserProfileParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      this.browserRuntimeService.deleteProfile(
         request.params.profileId,
         requireUserId(request)
       )
