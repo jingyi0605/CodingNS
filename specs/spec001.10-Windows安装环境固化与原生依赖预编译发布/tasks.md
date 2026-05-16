@@ -106,8 +106,8 @@
 
 ## 阶段 2：先把私有 Node 22 安装路径做出来
 
-- [ ] 2.1 给安装脚本增加 Windows 受管依赖矩阵判断与目标运行时决策
-  - 状态：TODO
+- [x] 2.1 给安装脚本增加 Windows 受管依赖矩阵判断与目标运行时决策
+  - 状态：DONE
   - 这一步到底做什么：在真正执行 npm 安装前，先固定 Windows 正式运行时为私有 Node 22，并判断目标运行时是否命中 `better-sqlite3` 和 `@codingns/node-pty` 的预编译支持。
   - 做完你能看到什么：安装脚本会在安装前就知道目标环境能不能装，以及哪个依赖还没被预编译覆盖。
   - 先依赖什么：1.3
@@ -126,6 +126,8 @@
     - 不同 Node 版本分支测试
   - 对应需求：`requirements.md` 需求 1、需求 2
   - 对应设计：`design.md` §3.2、§3.3
+  - 本次产出：
+    - `install.sh`
 
 - [x] 2.2 给安装脚本增加私有 Node 22 下载、校验和复用逻辑
   - 状态：DONE
@@ -180,7 +182,7 @@
 ### 阶段检查
 
 - [ ] 2.4 阶段检查：私有 Node 安装链路验收
-  - 状态：TODO
+  - 状态：IN_PROGRESS
   - 这一步到底做什么：确认在不修改系统 Node 的前提下，CodingNS 已经能稳定准备自己的运行时。
   - 做完你能看到什么：后续再接 `@codingns/node-pty` 时，环境底座已经站稳。
   - 先依赖什么：2.1、2.2、2.3
@@ -199,6 +201,12 @@
     - Windows 真机或 Runner 完整安装回放
   - 对应需求：`requirements.md` 需求 1、需求 2、需求 6
   - 对应设计：`design.md` §2.3.1、§3.3、§4.1
+  - 当前进展：
+    - `bash -n install.sh` 已通过
+    - 安装完成总结已补实际运行时 Node、私有 npm 前缀、私有 PM2 HOME 输出
+    - 私有运行时状态文件已补 `ptyPackageName`、`ptyPackageVersion`
+    - 已新增 `scripts/run-windows-install-replay.sh` 和 `scripts/verify-windows-install-replay.mjs`，用于 Windows 下回放 `install.sh` 并校验私有 Node 22 是否真正生效
+    - 仍缺 Windows 真机或 Runner 的完整安装回放，确认系统 Node 和其他 npm 包确实未受影响
 
 - [x] 2.0 细化私有运行时目录、环境变量与状态切换规则
   - 状态：DONE
@@ -305,13 +313,13 @@
   - 对应需求：`requirements.md` 需求 3、需求 4
   - 对应设计：`design.md` §3.4、§3.5、§5
   - 当前进展：
-    - 已补 `packages/node-pty-fork/.github/workflows/windows-prebuilt.yml`
-    - 已补 `build:native`、`verify:runtime`、`verify:tarball`、`smoke:install` 脚本链
-    - `verify:tarball` 已改为真实解包 `.tgz` 校验
-    - 仍缺真实 Windows Runner 成功记录与 `build/Release` 实产物验证
+    - 已拆到独立仓库 `jingyi0605/codingns-node-pty`
+    - 已补 `windows-prebuilt` workflow 和 `build:native`、`verify:runtime`、`verify:tarball`、`smoke:install` 脚本链
+    - 最新成功记录：GitHub Actions `windows-prebuilt` run `25896731471`
+    - 已确认产物上传：`codingns-node-pty-build-release`、`codingns-node-pty-tarball`
 
 - [ ] 3.3 切换正式服务包依赖到 `@codingns/node-pty`
-  - 状态：TODO
+  - 状态：IN_PROGRESS
   - 这一步到底做什么：让 `@jingyi0605/codingns` 和 Host 正式依赖 `@codingns/node-pty`。
   - 做完你能看到什么：Windows 安装时不再直接走官方 `node-pty` 的本机编译链。
   - 先依赖什么：3.2
@@ -331,6 +339,12 @@
     - Windows 安装验证
   - 对应需求：`requirements.md` 需求 5
   - 对应设计：`design.md` §2.3.3、§3.4
+  - 当前进展：
+    - 已给 Host 终端运行时增加 `node-pty` 分流加载器
+    - 已让发布包 `packages/codingns` 在 Windows Node 22 优先要求 `@codingns/node-pty`
+    - 已让 `postinstall` 前置校验 PTY 依赖，并直接打印实际命中的 PTY 包名和版本
+    - 已确认发布暂存会把 `@codingns/node-pty: workspace:*` 改写成真实版本 `1.0.0-cns.1`
+    - 仍需补 Windows 安装验证，确认正式包实装时不再落回官方 `node-pty` 本机编译链
 
 - [ ] 3.4 阶段检查：原生依赖安装链路验收
   - 状态：TODO
@@ -352,6 +366,11 @@
     - Windows 真机或 Runner 从零安装
   - 对应需求：`requirements.md` 需求 3、需求 4、需求 5
   - 对应设计：`design.md` §3.4、§3.5、§6.2
+  - 当前进展：
+    - 已新增 `.github/workflows/windows-install-replay.yml`
+    - 已新增 `scripts/prepare-windows-install-replay.sh`，会先用 Node 22 准备本地 `@codingns/node-pty` 预编译产物和 CodingNS 回放包
+    - 已补 `install.sh` 对本地目录 / `file:` / `.tgz` 安装规格的 registry 探测兼容
+    - 仍待 GitHub Actions 真跑一次，确认 Windows Runner 下没有触发 `node-gyp rebuild`
 
 ---
 
