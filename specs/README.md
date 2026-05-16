@@ -51,6 +51,7 @@
 31. `spec013.5-工作区会话助手能力开放与作用域收口`
 32. `spec014-通讯平台接入与助手会话桥接`
 33. `spec015-通用办公能力平台与统一任务执行内核`
+34. `spec015.1-opencli浏览器桥接接入office-browser`
 
 各 Spec 简述：
 
@@ -99,6 +100,7 @@
 - `spec013.5-工作区会话助手能力开放与作用域收口`：定义哪些 `codingns assistant` 能力可以正式开放给工作区会话、如何通过 `workspace_session` 和 scoped token 把范围锁死到当前工作区，以及如何补齐 `terminals.create` 和工作区办公能力入口
 - `spec014-通讯平台接入与助手会话桥接`：定义钉钉、飞书、个人微信（claw）、Telegram、Slack、Discord 这些平台怎么正式接到 Butler 助手会话，包括账号模型、外部会话映射、webhook / polling / bridge 接入和回发链路
 - `spec015-通用办公能力平台与统一任务执行内核`：定义浏览器执行内核、`doct` 模板驱动的专业文档内核、`SSH + 浏览器` 运维内核、重复事务自动化、统一任务模型和统一连接器体系，目标是把 `CodingNS` 从 AI 编码平台扩成完整办公执行平台
+- `spec015.1-opencli浏览器桥接接入office-browser`：定义 `office.browser` 的双执行支线，保留现有无头 `Playwright` 路线，并把 `opencli Browser Bridge` 接进来作为真实浏览器调试选项，同时保持现有浏览器 `Profile`、实例和任务模型不被打坏
 
 当前阅读建议：
 
@@ -114,3 +116,4 @@
 - 需要把一部分正式助手能力开放给工作区普通会话，并且保证它只能操作当前工作区资源时，先看 `spec013.5`
 - 需要让外部通讯平台成为助手正式入口，而不是临时 webhook 拼接时，再看 `spec014`
 - 需要把 `CodingNS` 从代码开发能力扩成完整办公平台，并统一浏览器、文档、运维、自动化和连接器模型时，再看 `spec015`
+- 需要在不破坏现有 `office.browser` 无头链路的前提下，把 `opencli` 浏览器扩展复用成真实浏览器调试支线时，再看 `spec015.1`
