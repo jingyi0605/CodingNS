@@ -612,7 +612,12 @@ export function createServer(config: HostConfig) {
   const openCliController = new OpenCliController(openCliManagementService);
   const workspaceSessionAuthService = new WorkspaceSessionAuthService(authService, config);
   const workspaceSessionRuntimeContextService = new WorkspaceSessionRuntimeContextService(
-    workspaceSessionAuthService
+    workspaceSessionAuthService,
+    {
+      codexHomeDir: config.codexHomeDir,
+      claudeCodeHomeDir: config.claudeCodeHomeDir,
+      runtimeStorageRootDir: path.dirname(config.databasePath)
+    }
   );
   const sessionProviderConfigService = new SessionProviderConfigService(
     config,
@@ -628,7 +633,10 @@ export function createServer(config: HostConfig) {
     skillTargetAdapters,
     {
       ssotRootDir: path.join(path.dirname(config.databasePath), "skills"),
-      providerControlRepository: repositories.providerControlRepository
+      providerControlRepository: repositories.providerControlRepository,
+      runtimeStorageRootDir: path.dirname(config.databasePath),
+      workspaceRootResolver: (workspaceId: string) =>
+        workspaceService.getWorkspaceOrThrow(workspaceId).path
     }
   );
   for (const result of cleanupLegacyAssistantRuntimeSkillCopies(skillTargetAdapters)) {
@@ -723,7 +731,8 @@ export function createServer(config: HostConfig) {
     sessionProviderConfigService,
     config,
     sessionActivityAuthorityService,
-    openCliSessionPromptService
+    openCliSessionPromptService,
+    workspaceSessionRuntimeContextService
   );
   sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
     sessionLiveRuntimeService.resolveLiveActivityObservation(sessionId)
@@ -1337,7 +1346,8 @@ export function createServer(config: HostConfig) {
       repositories.officeArtifactRepository,
       repositories.officeReceiptRepository,
       repositories.officeAuditEventRepository
-    )
+    ),
+    path.join(path.dirname(config.databasePath), "document-templates")
   );
   const documentRuntimeController = new DocumentRuntimeController(documentRuntimeService);
   const sshOpsExecutor = new SshOpsExecutor(

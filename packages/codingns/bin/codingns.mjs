@@ -40,6 +40,9 @@ switch (command) {
   case "opencli":
     await runOpenCliCommand(argv);
     break;
+  case "mcp":
+    await runMcpCommand(argv);
+    break;
   default:
     console.error(`[codingns] 不支持的命令：${command}`);
     printHelp(1);
@@ -725,12 +728,13 @@ async function runAssistantCommand(argv) {
       return;
     }
     case "office:browser-profiles":
+    case "office:browser-profile-list":
       await printAssistantResponse(await requestAssistant({
         method: "GET",
         path: "/api/assistant/office/browser/profiles",
         argv: rest,
         supportedOptions: ["workspace-id"],
-        helpTopic: "office.browser-profiles"
+        helpTopic: "office.browser-profile-list"
       }, (options) => ({
         workspaceId: readOptionalTrimmedValue(options.values["workspace-id"])
       })));
@@ -1198,6 +1202,83 @@ async function runAssistantCommand(argv) {
       console.error(`[codingns] 不支持的 assistant 子命令：${group}${action ? ` ${action}` : ""}`);
       printAssistantHelpTopic("assistant", 1);
   }
+}
+
+async function runMcpCommand(argv) {
+  const [target, action, ...rest] = argv;
+
+  if (!target || isHelpToken(target)) {
+    printMcpHelp(0);
+  }
+
+  if (target !== "workspace-office") {
+    console.error(`[codingns] 不支持的 MCP 目标：${target}`);
+    printMcpHelp(1);
+  }
+
+  if (!action || isHelpToken(action)) {
+    printMcpWorkspaceOfficeHelp(0);
+  }
+
+  switch (action) {
+    case "serve":
+      await runWorkspaceOfficeMcpServe(rest);
+      return;
+    default:
+      console.error(`[codingns] 不支持的 workspace-office MCP 动作：${action}`);
+      printMcpWorkspaceOfficeHelp(1);
+  }
+}
+
+async function runWorkspaceOfficeMcpServe(argv) {
+  const options = parseArgs(argv, {
+    supportedOptions: ["base-url", "token", "auth-file"],
+    supportedFlags: []
+  });
+
+  if (options.help) {
+    printMcpWorkspaceOfficeHelp(0);
+  }
+
+  if (options.errors.length > 0) {
+    for (const error of options.errors) {
+      console.error(`[codingns] ${error}`);
+    }
+    printMcpWorkspaceOfficeHelp(1);
+  }
+
+  const authFilePath = readStringOption(
+    options.values["auth-file"],
+    process.env.WORKSPACE_SESSION_AUTH_FILE,
+    process.env.CODINGNS_AUTH_FILE,
+    process.env.BUTLER_AUTH_FILE
+  );
+  const credential = authFilePath
+    ? readAssistantCredentialFromFile(path.resolve(authFilePath))
+    : readAssistantCredential();
+  const baseUrl = readStringOption(
+    options.values["base-url"],
+    process.env.CODINGNS_OFFICE_MCP_BASE_URL,
+    credential?.apiBaseUrl ?? ""
+  );
+  const accessToken = readStringOption(
+    options.values.token,
+    process.env.CODINGNS_OFFICE_MCP_ACCESS_TOKEN,
+    credential?.accessToken ?? ""
+  );
+
+  if (!baseUrl) {
+    fail("workspace-office MCP 缺少 baseUrl，请传 --base-url 或提供认证文件");
+  }
+
+  if (!accessToken) {
+    fail("workspace-office MCP 缺少 access token，请传 --token 或提供认证文件");
+  }
+
+  process.env.CODINGNS_OFFICE_MCP_BASE_URL = baseUrl;
+  process.env.CODINGNS_OFFICE_MCP_ACCESS_TOKEN = accessToken;
+  await import("./office-mcp-server.mjs");
+  await new Promise(() => {});
 }
 
 async function runSkillsCommand(argv) {
@@ -1842,6 +1923,15 @@ function readAssistantCredential() {
     return cachedAssistantCredential;
   }
 
+  cachedAssistantCredential = readAssistantCredentialFromFile(credentialFilePath);
+  return cachedAssistantCredential;
+}
+
+function readAssistantCredentialFromFile(credentialFilePath) {
+  if (!credentialFilePath) {
+    return null;
+  }
+
   let rawContent;
 
   try {
@@ -2087,6 +2177,7 @@ codingns 用法：
 
   codingns start [--host 0.0.0.0] [--port 3002] [--data-dir ~/.codingns] [--demo]
   codingns assistant <group> <action> [options]
+  codingns mcp workspace-office serve [--auth-file <path> | --base-url <url> --token <token>]
   codingns provider-sessions <action> [options]
   codingns skills <action> [options]
   codingns opencli <action> [options]
@@ -2103,6 +2194,7 @@ assistant 例子：
 
   codingns assistant capabilities list --token <token>
   codingns assistant projects list --status active --token <token>
+  codingns assistant office browser-profile-list --token <token>
   codingns assistant office browser-profile-create --engine chrome --mode persistent --display-name "办公 Chrome" --token <token>
   codingns assistant office browser-task-create --profile-id <profileId> --input-json '{"startUrl":"https://example.invalid","actions":[{"type":"read_dom"}]}' --token <token>
   codingns assistant office ops-target-create --kind ssh_host --display-name "生产 SSH" --config-json '{"host":"10.0.0.8","username":"root"}' --token <token>
@@ -2128,9 +2220,59 @@ opencli 例子：
   codingns opencli check --token <token>
   codingns opencli config --enabled true --command-id hackernews/top --token <token>
 
+mcp 例子：
+
+  codingns mcp workspace-office serve --auth-file ~/.codingns/host/workspace-session-runtime/<workspaceId>/<sessionId>/WORKSPACE_SESSION_AUTH.json
+
 provider-sessions 例子：
 
   codingns provider-sessions delete --provider codex --provider-session-id <id> --raw-store-ref <ref>
+`.trim();
+
+  if (exitCode === 0) {
+    console.log(output);
+  } else {
+    console.error(output);
+  }
+
+  process.exit(exitCode);
+}
+
+function printMcpHelp(exitCode) {
+  const output = `
+codingns mcp 用法：
+
+  codingns mcp workspace-office serve [--auth-file <path> | --base-url <url> --token <token>]
+
+说明：
+
+  workspace-office 会启动工作区专用 office MCP server。
+  它只暴露当前工作区允许的 office.document.* / office.browser.* / office.ops.*。
+`.trim();
+
+  if (exitCode === 0) {
+    console.log(output);
+  } else {
+    console.error(output);
+  }
+
+  process.exit(exitCode);
+}
+
+function printMcpWorkspaceOfficeHelp(exitCode) {
+  const output = `
+codingns mcp workspace-office serve
+
+用途：
+  启动工作区专用 office MCP server，供 Codex / Claude / OpenCode 这类支持 MCP 的 CLI 直接挂正式办公工具。
+
+用法：
+  codingns mcp workspace-office serve [--auth-file <path> | --base-url <url> --token <token>]
+
+说明：
+  - 优先复用工作区 scoped 认证文件。
+  - 真实执行仍走 Host /api/assistant/office/*。
+  - 暴露工具只包含当前工作区允许的 office.document.* / office.browser.* / office.ops.*。
 `.trim();
 
   if (exitCode === 0) {
@@ -2201,7 +2343,7 @@ codingns assistant office
   document-update            更新办公文档
   document-export            创建或执行文档导出任务
   document-task              读取文档导出任务
-  browser-profiles           列出浏览器 Profile
+  browser-profile-list       列出浏览器 Profile
   browser-profile-create     创建浏览器 Profile
   browser-profile-get        读取浏览器 Profile
   browser-task-create        创建并可选执行浏览器任务
@@ -2262,14 +2404,18 @@ codingns assistant office document-task
   codingns assistant office document-task <taskId> --token <token>
 `.trim();
     case "office.browser-profiles":
+    case "office.browser-profile-list":
       return `
-codingns assistant office browser-profiles
+codingns assistant office browser-profile-list
 
 用途：
   列出办公浏览器 Profile。
 
 用法：
-  codingns assistant office browser-profiles [--workspace-id <id>] --token <token>
+  codingns assistant office browser-profile-list [--workspace-id <id>] --token <token>
+
+兼容：
+  旧别名 \`codingns assistant office browser-profiles\` 仍可继续使用。
 `.trim();
     case "office.browser-profile-create":
       return `
@@ -2300,6 +2446,39 @@ codingns assistant office browser-task-create
 
 用法：
   codingns assistant office browser-task-create --profile-id <profileId> [--workspace-id <id>] [--title <title>] [--risk-level low|medium|high] [--execute true|false] [--input-json <json>] --token <token>
+
+输入约定：
+  --input-json 必须是一个 JSON 对象，最小结构如下：
+  {"startUrl":"https://example.invalid","actions":[{"type":"read_dom"}]}
+
+支持动作：
+  - goto：打开指定 url，字段：type、url
+  - click：点击元素，字段：type、selector
+  - fill：填写输入框，字段：type、selector、value
+  - press：按键，字段：type、key；可选 selector
+  - select：选择下拉项，字段：type、selector、value 或 values
+  - upload：上传文件，字段：type、selector、filePath 或 filePaths
+  - download：点击并等待下载，字段：type、selector；可选 fileName
+  - wait：纯等待，字段：type；可选 timeoutMs
+  - read_dom：读取 body 文本并生成 DOM 快照产物，字段：type
+  - extract_text：提取 body 文本并生成文本产物，字段：type
+  - screenshot：截图并生成 PNG 产物，字段：type；可选 fullPage、timeoutMs
+
+最小可抄样例：
+  1. 打开页面并读取内容
+     {"startUrl":"https://www.zhihu.com/signin","actions":[{"type":"read_dom"}]}
+  2. 打开页面后截图
+     {"startUrl":"https://www.zhihu.com/signin","actions":[{"type":"screenshot","fullPage":true}]}
+  3. 打开页面，等待，再读取 DOM
+     {"startUrl":"https://www.zhihu.com/signin","actions":[{"type":"wait","timeoutMs":3000},{"type":"read_dom"}]}
+  4. 点击按钮后截图
+     {"startUrl":"https://example.invalid","actions":[{"type":"click","selector":"button[type=\\"submit\\"]"},{"type":"screenshot"}]}
+  5. 填表单后停留
+     {"startUrl":"https://example.invalid/login","actions":[{"type":"fill","selector":"input[name=\\"username\\"]","value":"demo"},{"type":"fill","selector":"input[name=\\"password\\"]","value":"secret"},{"type":"screenshot"}]}
+
+建议顺序：
+  先 running \`browser-profile-list\` 看是否已有可复用 Profile；没有再创建 Profile。
+  遇到真实站点网页任务，先查这里的示例，不要退回去翻源码或自己猜私有 HTTP body。
 `.trim();
     case "office.browser-task-get":
       return `

@@ -1,17 +1,29 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { resolveBuiltinSkillDirectory } from "../skills/builtin-skill-service.js";
 import type { SessionBinding } from "../../types/domain.js";
 import type { WorkspaceSessionAuthService } from "./workspace-session-auth-service.js";
 
 const WORKSPACE_SESSION_ASSISTANT_FILE = "WORKSPACE_SESSION_ASSISTANT.md";
+const WORKSPACE_SESSION_SKILL_DIRECTORY = "codingns-workspace-session";
+const WORKSPACE_SESSION_COMPOSED_INSTRUCTION_FILE = "WORKSPACE_SESSION_COMPOSED.md";
+const WORKSPACE_OFFICE_MCP_NAME = "codingns-workspace-office";
+const REPO_ROOT_DIR = path.resolve(import.meta.dirname, "../../../../../");
+
+interface WorkspaceSessionRuntimeContextServiceOptions {
+  codexHomeDir?: string;
+  claudeCodeHomeDir?: string;
+  runtimeStorageRootDir?: string;
+}
 
 export class WorkspaceSessionRuntimeContextService {
   constructor(
     private readonly workspaceSessionAuthService: Pick<
       WorkspaceSessionAuthService,
       "ensureWorkspaceCredential" | "getCredentialFilePath"
-    >
+    >,
+    private readonly options: WorkspaceSessionRuntimeContextServiceOptions = {}
   ) {}
 
   syncRuntimeContext(input: {
@@ -24,6 +36,7 @@ export class WorkspaceSessionRuntimeContextService {
   }): {
     authFilePath: string;
     instructionFilePath: string;
+    runtimeHomeDir: string;
     runtimeEnv: Record<string, string>;
   } {
     const credential = this.workspaceSessionAuthService.ensureWorkspaceCredential({
@@ -40,37 +53,357 @@ export class WorkspaceSessionRuntimeContextService {
     );
 
     fs.mkdirSync(input.runtimeHomeDir, { recursive: true });
+    syncProviderRuntimeBase(input.runtimeHomeDir, input.provider, this.options);
+    syncWorkspaceSessionSkill(input.runtimeHomeDir);
     fs.writeFileSync(instructionPath, `${buildWorkspaceAssistantInstructions({
       workspaceId: input.workspaceId,
       projectId: input.projectId ?? null,
       authFilePath
     })}\n`, "utf8");
 
-    if (input.provider === "codex") {
-      const configPath = path.join(input.runtimeHomeDir, "config.toml");
-      if (fs.existsSync(configPath) && fs.statSync(configPath).isFile()) {
-        const current = fs.readFileSync(configPath, "utf8");
-        const lines = current
-          .split(/\r?\n/)
-          .filter((line) => !line.trim().startsWith("model_instructions_file"));
-        lines.push(`model_instructions_file = ${JSON.stringify(instructionPath)}`);
-        fs.writeFileSync(configPath, `${lines.filter((line) => line.length > 0).join("\n")}\n`, "utf8");
-      }
-    }
-
     // 这里保留一份显式可读认证信息，供 CLI 自动发现或运行时环境变量指向。
     fs.writeFileSync(authFilePath, `${JSON.stringify(credential, null, 2)}\n`, "utf8");
+    configureWorkspaceOfficeMcpRuntime(input.runtimeHomeDir, {
+      provider: input.provider,
+      authFilePath
+    });
+    configureWorkspaceInstructionRuntime(input.runtimeHomeDir, {
+      provider: input.provider,
+      instructionFilePath: instructionPath
+    });
     return {
       authFilePath,
       instructionFilePath: instructionPath,
+      runtimeHomeDir: input.runtimeHomeDir,
       runtimeEnv: {
         CODINGNS_AUTH_FILE: authFilePath,
         BUTLER_AUTH_FILE: authFilePath,
         WORKSPACE_SESSION_AUTH_FILE: authFilePath,
-        WORKSPACE_SESSION_ASSISTANT_FILE: instructionPath
+        WORKSPACE_SESSION_ASSISTANT_FILE: instructionPath,
+        CODINGNS_OFFICE_MCP_AUTH_FILE: authFilePath
       }
     };
   }
+
+  prepareWorkspaceInstructionBundle(input: {
+    sessionId: string;
+    userId: string;
+    workspaceId: string;
+    workspacePath: string;
+    projectId?: string | null;
+    provider: SessionBinding["provider"];
+  }): {
+    authFilePath: string;
+    instructionFilePath: string;
+    runtimeHomeDir: string;
+    runtimeEnv: Record<string, string>;
+  } {
+    const runtimeHomeDir = resolveWorkspaceSessionRuntimeArtifactDir({
+      workspacePath: input.workspacePath,
+      workspaceId: input.workspaceId,
+      sessionId: input.sessionId,
+      runtimeStorageRootDir: this.options.runtimeStorageRootDir
+    });
+    const credential = this.workspaceSessionAuthService.ensureWorkspaceCredential({
+      runtimeHomeDir,
+      userId: input.userId,
+      workspaceId: input.workspaceId,
+      projectId: input.projectId ?? null,
+      sessionId: input.sessionId
+    });
+    const authFilePath = this.workspaceSessionAuthService.getCredentialFilePath(runtimeHomeDir);
+
+    fs.mkdirSync(runtimeHomeDir, { recursive: true });
+    syncProviderRuntimeBase(runtimeHomeDir, input.provider, this.options);
+    syncWorkspaceSessionSkill(runtimeHomeDir);
+
+    const baseInstruction = `${buildWorkspaceAssistantInstructions({
+      workspaceId: input.workspaceId,
+      projectId: input.projectId ?? null,
+      authFilePath
+    })}\n`;
+    const workspaceAgentsPath = path.join(input.workspacePath, "AGENTS.md");
+    const composedInstructionPath = path.join(runtimeHomeDir, WORKSPACE_SESSION_COMPOSED_INSTRUCTION_FILE);
+    const composedInstruction = composeWorkspaceInstructionDocument({
+      workspaceAgentsPath,
+      workspaceInstruction: baseInstruction
+    });
+
+    fs.writeFileSync(authFilePath, `${JSON.stringify(credential, null, 2)}\n`, "utf8");
+    fs.writeFileSync(composedInstructionPath, composedInstruction, "utf8");
+    configureWorkspaceOfficeMcpRuntime(runtimeHomeDir, {
+      provider: input.provider,
+      authFilePath
+    });
+    configureWorkspaceInstructionRuntime(runtimeHomeDir, {
+      provider: input.provider,
+      instructionFilePath: composedInstructionPath
+    });
+
+    return {
+      authFilePath,
+      instructionFilePath: composedInstructionPath,
+      runtimeHomeDir,
+      runtimeEnv: {
+        CODINGNS_AUTH_FILE: authFilePath,
+        BUTLER_AUTH_FILE: authFilePath,
+        WORKSPACE_SESSION_AUTH_FILE: authFilePath,
+        WORKSPACE_SESSION_ASSISTANT_FILE: composedInstructionPath,
+        CODINGNS_OFFICE_MCP_AUTH_FILE: authFilePath
+      }
+    };
+  }
+}
+
+function resolveWorkspaceSessionRuntimeArtifactDir(input: {
+  workspacePath: string;
+  workspaceId: string;
+  sessionId: string;
+  runtimeStorageRootDir?: string;
+}): string {
+  const globalRuntimeRootDir = input.runtimeStorageRootDir?.trim() ?? "";
+
+  if (globalRuntimeRootDir) {
+    return path.join(globalRuntimeRootDir, "workspace-session-runtime", input.workspaceId, input.sessionId);
+  }
+
+  return path.join(input.workspacePath, ".codingns", "workspace-session-runtime", input.sessionId);
+}
+
+function syncWorkspaceSessionSkill(runtimeHomeDir: string): void {
+  const sourceDir = resolveBuiltinSkillDirectory(WORKSPACE_SESSION_SKILL_DIRECTORY);
+  const targetSkillsDir = path.join(runtimeHomeDir, "skills");
+  const targetDir = path.join(targetSkillsDir, WORKSPACE_SESSION_SKILL_DIRECTORY);
+
+  fs.mkdirSync(targetSkillsDir, { recursive: true });
+  fs.cpSync(sourceDir, targetDir, { recursive: true });
+}
+
+function syncProviderRuntimeBase(
+  runtimeHomeDir: string,
+  provider: SessionBinding["provider"],
+  options: WorkspaceSessionRuntimeContextServiceOptions
+): void {
+  switch (provider) {
+    case "codex":
+      syncCodexRuntimeBase(runtimeHomeDir, options.codexHomeDir);
+      return;
+    case "claude-code":
+      syncClaudeRuntimeBase(runtimeHomeDir, options.claudeCodeHomeDir);
+      return;
+    default:
+      return;
+  }
+}
+
+function syncCodexRuntimeBase(runtimeHomeDir: string, codexHomeDir?: string): void {
+  const sourceHomeDir = codexHomeDir?.trim() ?? "";
+
+  if (!sourceHomeDir || path.resolve(sourceHomeDir) === path.resolve(runtimeHomeDir)) {
+    return;
+  }
+
+  syncOptionalFile(path.join(sourceHomeDir, "auth.json"), path.join(runtimeHomeDir, "auth.json"));
+  syncOptionalDirectory(path.join(sourceHomeDir, "skills"), path.join(runtimeHomeDir, "skills"));
+
+  const sourceConfigPath = path.join(sourceHomeDir, "config.toml");
+
+  if (fs.existsSync(sourceConfigPath) && fs.statSync(sourceConfigPath).isFile()) {
+    const targetConfigPath = path.join(runtimeHomeDir, "config.toml");
+
+    if (!fs.existsSync(targetConfigPath)) {
+      fs.copyFileSync(sourceConfigPath, targetConfigPath);
+    }
+  }
+}
+
+function syncClaudeRuntimeBase(runtimeHomeDir: string, claudeCodeHomeDir?: string): void {
+  const sourceHomeDir = claudeCodeHomeDir?.trim() ?? "";
+
+  if (!sourceHomeDir || path.resolve(sourceHomeDir) === path.resolve(runtimeHomeDir)) {
+    return;
+  }
+
+  syncOptionalFile(path.join(sourceHomeDir, "config.json"), path.join(runtimeHomeDir, "config.json"));
+  syncOptionalFile(path.join(sourceHomeDir, "project-config.json"), path.join(runtimeHomeDir, "project-config.json"));
+  syncOptionalFile(path.join(sourceHomeDir, "settings.json"), path.join(runtimeHomeDir, "settings.json"));
+  syncOptionalFile(path.join(sourceHomeDir, "settings.local.json"), path.join(runtimeHomeDir, "settings.local.json"));
+  syncOptionalDirectory(path.join(sourceHomeDir, "plugins"), path.join(runtimeHomeDir, "plugins"));
+  syncOptionalDirectory(path.join(sourceHomeDir, "skills"), path.join(runtimeHomeDir, "skills"));
+}
+
+function configureWorkspaceInstructionRuntime(
+  runtimeHomeDir: string,
+  input: {
+    provider: SessionBinding["provider"];
+    instructionFilePath: string;
+  }
+): void {
+  if (input.provider === "codex") {
+    const configPath = path.join(runtimeHomeDir, "config.toml");
+
+    if (fs.existsSync(configPath) && fs.statSync(configPath).isFile()) {
+      const current = fs.readFileSync(configPath, "utf8");
+      const lines = current
+        .split(/\r?\n/)
+        .filter((line) => !line.trim().startsWith("model_instructions_file"));
+      lines.push(`model_instructions_file = ${JSON.stringify(input.instructionFilePath)}`);
+      fs.writeFileSync(configPath, `${lines.filter((line) => line.length > 0).join("\n")}\n`, "utf8");
+    }
+  }
+}
+
+function syncOptionalFile(sourcePath: string, targetPath: string): void {
+  if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+    return;
+  }
+
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.copyFileSync(sourcePath, targetPath);
+}
+
+function syncOptionalDirectory(sourcePath: string, targetPath: string): void {
+  if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isDirectory()) {
+    return;
+  }
+
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.cpSync(sourcePath, targetPath, { recursive: true });
+}
+
+function configureWorkspaceOfficeMcpRuntime(
+  runtimeHomeDir: string,
+  input: {
+    provider: SessionBinding["provider"];
+    authFilePath: string;
+  }
+): void {
+  switch (input.provider) {
+    case "codex":
+      upsertCodexMcpConfig(runtimeHomeDir, input.authFilePath);
+      return;
+    case "claude-code":
+      upsertClaudeMcpConfig(runtimeHomeDir, input.authFilePath);
+      return;
+    case "opencode":
+      upsertOpenCodeMcpConfig(runtimeHomeDir, input.authFilePath);
+      return;
+    default:
+      return;
+  }
+}
+
+function upsertCodexMcpConfig(runtimeHomeDir: string, authFilePath: string): void {
+  const configPath = path.join(runtimeHomeDir, "config.toml");
+  const current = fs.existsSync(configPath) && fs.statSync(configPath).isFile()
+    ? fs.readFileSync(configPath, "utf8")
+    : "";
+  const lines = current.split(/\r?\n/);
+  const nextLines: string[] = [];
+  let skippingCurrentTable = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (trimmed === `[mcp_servers.${WORKSPACE_OFFICE_MCP_NAME}]`) {
+      skippingCurrentTable = true;
+      continue;
+    }
+
+    if (skippingCurrentTable && trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      skippingCurrentTable = false;
+    }
+
+    if (!skippingCurrentTable) {
+      nextLines.push(line);
+    }
+  }
+
+  const mcpCommandArgs = buildWorkspaceOfficeMcpCommandArgs(runtimeHomeDir, authFilePath);
+  nextLines.push(`[mcp_servers.${WORKSPACE_OFFICE_MCP_NAME}]`);
+  nextLines.push(`command = ${JSON.stringify(process.execPath)}`);
+  nextLines.push(
+    `args = [${mcpCommandArgs.map((entry) => JSON.stringify(entry)).join(", ")}]`
+  );
+  nextLines.push(`[mcp_servers.${WORKSPACE_OFFICE_MCP_NAME}.env]`);
+  nextLines.push(`CODINGNS_OFFICE_MCP_AUTH_FILE = ${JSON.stringify(authFilePath)}`);
+  fs.writeFileSync(configPath, `${nextLines.filter((line, index, list) => !(line.length === 0 && list[index - 1]?.length === 0)).join("\n")}\n`, "utf8");
+}
+
+function upsertClaudeMcpConfig(runtimeHomeDir: string, authFilePath: string): void {
+  const configPath = path.join(runtimeHomeDir, ".claude.json");
+  const parsed = readJsonObject(configPath);
+  const mcpCommandArgs = buildWorkspaceOfficeMcpCommandArgs(runtimeHomeDir, authFilePath);
+  const next = {
+    ...parsed,
+    mcpServers: {
+      ...(isPlainObject(parsed.mcpServers) ? parsed.mcpServers : {}),
+      [WORKSPACE_OFFICE_MCP_NAME]: {
+        type: "stdio",
+        command: process.execPath,
+        args: mcpCommandArgs,
+        env: {
+          CODINGNS_OFFICE_MCP_AUTH_FILE: authFilePath
+        }
+      }
+    }
+  };
+  fs.writeFileSync(configPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+}
+
+function upsertOpenCodeMcpConfig(runtimeHomeDir: string, authFilePath: string): void {
+  const configPath = path.join(runtimeHomeDir, "opencode.json");
+  const parsed = readJsonObject(configPath);
+  const mcpCommandArgs = buildWorkspaceOfficeMcpCommandArgs(runtimeHomeDir, authFilePath);
+  const next = {
+    ...parsed,
+    mcp: {
+      ...(isPlainObject(parsed.mcp) ? parsed.mcp : {}),
+      [WORKSPACE_OFFICE_MCP_NAME]: {
+        type: "local",
+        enabled: true,
+        command: [
+          process.execPath,
+          ...mcpCommandArgs
+        ],
+        environment: {
+          CODINGNS_OFFICE_MCP_AUTH_FILE: authFilePath
+        }
+      }
+    }
+  };
+  fs.writeFileSync(configPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+}
+
+function readJsonObject(filePath: string): Record<string, unknown> {
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return isPlainObject(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function buildWorkspaceOfficeMcpCommandArgs(
+  _runtimeHomeDir: string,
+  authFilePath: string
+): string[] {
+  return [
+    path.join(REPO_ROOT_DIR, "packages", "codingns", "bin", "codingns.mjs"),
+    "mcp",
+    "workspace-office",
+    "serve",
+    "--auth-file",
+    authFilePath
+  ];
 }
 
 function buildWorkspaceAssistantInstructions(input: {
@@ -85,10 +418,42 @@ function buildWorkspaceAssistantInstructions(input: {
 - 助手正式能力必须优先走 \`codingns assistant ...\` 或对应 \`/api/assistant/*\` 入口，不要自己拼私有 HTTP。
 - 文档操作优先走 \`assistant office.document.*\`。
 - 浏览器操作优先走 \`assistant office.browser.*\`。
+- 当前工作区会话已经暴露正式浏览器入口命令：\`codingns assistant office browser-profile-list\`、\`codingns assistant office browser-profile-create\`、\`codingns assistant office browser-task-create\`、\`codingns assistant office browser-task-get\`。
+- 只要任务属于打开网页、登录网站、抓取页面、读取 DOM、截图、提交表单、下载文件这一类真实网页操作，默认先查 \`assistant office.browser.profile.list\` / \`assistant office.browser.task.create\`，不要先落到 Codex 自带 Browser。
+- \`browser-task-create --input-json\` 必须传 JSON 对象，不要猜私有 body。最小模板直接照抄：\`{"startUrl":"https://example.invalid","actions":[{"type":"read_dom"}]}\`。
+- 浏览器动作类型当前只支持：\`goto\`、\`click\`、\`fill\`、\`press\`、\`select\`、\`upload\`、\`download\`、\`wait\`、\`read_dom\`、\`extract_text\`、\`screenshot\`。
+- 常见模板：打开页面读 DOM 用 \`{"startUrl":"https://target.example","actions":[{"type":"read_dom"}]}\`；打开页面截图用 \`{"startUrl":"https://target.example","actions":[{"type":"screenshot","fullPage":true}]}\`；等待后再读用 \`{"startUrl":"https://target.example","actions":[{"type":"wait","timeoutMs":3000},{"type":"read_dom"}]}\`。
+- 不要回答“当前环境没有浏览器能力”或“没有暴露浏览器能力”；对真实站点任务，先查上面这组 \`codingns assistant office ...\` 命令的 \`--help\` 或直接调用它们。
+- 只有本地预览、开发调试 \`localhost\` / \`127.0.0.1\` / \`::1\`，或用户明确要求当前 in-app browser 时，才优先使用 Codex 自带 Browser。
+- 真实浏览器任务的最小顺序是：先看 \`assistant office.browser.profile.list\`，没有可复用 Profile 再 \`assistant office.browser.profile.create\`，随后用 \`assistant office.browser.task.create\`，需要继续看结果时再用 \`assistant office.browser.task.get\`。
+- 遇到真实站点浏览器任务，先查 \`browser-task-create --help\` 或工作区专用 skill 里的模板，不要退回去翻源码、编译产物或自己拼接口路径。
 - 运维任务优先走 \`assistant office.ops.*\`。
 - 新建终端优先走 \`assistant terminals create\`。
 - 写终端、执行运维、merge 工作树前，必须先征得用户确认。
 - 不要尝试跨工作区、跨项目，或调用当前未开放能力。
 - 当前工作区会话 scoped 认证文件：\`${input.authFilePath}\`。
 `;
+}
+
+function composeWorkspaceInstructionDocument(input: {
+  workspaceAgentsPath: string;
+  workspaceInstruction: string;
+}): string {
+  const sections: string[] = [];
+
+  if (fs.existsSync(input.workspaceAgentsPath) && fs.statSync(input.workspaceAgentsPath).isFile()) {
+    const workspaceAgentsContent = fs.readFileSync(input.workspaceAgentsPath, "utf8").trim();
+
+    if (workspaceAgentsContent.length > 0) {
+      sections.push(workspaceAgentsContent);
+    }
+  }
+
+  sections.push(`# 工作区会话附加规则
+
+下面这段规则由 Host 在工作区会话启动时显式注入，只对当前工作区会话生效。
+
+${input.workspaceInstruction.trim()}`);
+
+  return `${sections.join("\n\n")}\n`;
 }

@@ -53,6 +53,7 @@ describe("SkillManagerService.scanSkills", () => {
     managedSkillRepository.upsert({
       id: "skill-managed-1",
       name: "Team Helper",
+      scope: "workspace",
       directoryName: "team-helper",
       sourceType: "builtin",
       sourcePath: null,
@@ -64,6 +65,7 @@ describe("SkillManagerService.scanSkills", () => {
     managedSkillRepository.upsert({
       id: "skill-conflicted-1",
       name: "Conflicted Skill",
+      scope: "workspace",
       directoryName: "conflicted-skill",
       sourceType: "managed-copy",
       sourcePath: null,
@@ -75,6 +77,7 @@ describe("SkillManagerService.scanSkills", () => {
     managedSkillRepository.upsert({
       id: "skill-missing-1",
       name: "Missing On Gemini",
+      scope: "workspace",
       directoryName: "missing-on-gemini",
       sourceType: "managed-copy",
       sourcePath: null,
@@ -258,9 +261,51 @@ describe("SkillManagerService.scanSkills", () => {
         name: "codingns-assistant",
         directoryName: "codingns-assistant",
         usedByTargetCli: ["codex", "claude-code"]
+      }),
+      expect.objectContaining({
+        name: "codingns-workspace-session",
+        directoryName: "codingns-workspace-session",
+        usedByTargetCli: ["codex", "claude-code"]
       })
     ]);
     expect(overview.assistantRuntimeSkills[0]?.sourcePath).toContain("builtin-skills/codingns-assistant");
+    expect(overview.assistantRuntimeSkills[1]?.sourcePath).toContain("builtin-skills/codingns-workspace-session");
+  });
+
+  it("工作区会话 MCP 状态会使用仓库根目录解析 codingns.mjs，而不是误拼到 apps/host 下", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-skill-mcp-status-"));
+    tempDirs.push(tempDir);
+    const database = createDatabaseClient(":memory:");
+    const codexRoot = path.join(tempDir, "codex-skills");
+    const workspaceRoot = path.join(tempDir, "workspace");
+    const runtimeStorageRootDir = path.join(tempDir, "host-data");
+
+    mkdirSync(codexRoot, { recursive: true });
+    mkdirSync(workspaceRoot, { recursive: true });
+    mkdirSync(runtimeStorageRootDir, { recursive: true });
+
+    const service = new SkillManagerService(
+      new ManagedSkillRepository(database.db),
+      new SkillTargetBindingRepository(database.db),
+      [createAdapter("codex", codexRoot)],
+      {
+        runtimeStorageRootDir,
+        workspaceRootResolver: () => workspaceRoot
+      }
+    );
+
+    const status = service.getWorkspaceSessionMcpStatus({
+      workspaceId: "workspace-1",
+      sessionId: "session-1"
+    });
+
+    database.close();
+
+    expect(status.runtime.runtimeHomeDir).toBe(
+      path.join(runtimeStorageRootDir, "workspace-session-runtime", "workspace-1", "session-1")
+    );
+    expect(status.commands.repoCodingnsWorkspaceMcpDetail).toContain("workspace-office");
+    expect(status.commands.repoCodingnsWorkspaceMcpDetail).not.toContain("/apps/host/packages/codingns/bin/codingns.mjs");
   });
 });
 

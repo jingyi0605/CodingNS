@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 import { AppError } from "../../shared/errors/app-error.js";
 import { createId } from "../../shared/utils/id.js";
@@ -125,18 +126,69 @@ export interface SkillOverviewResult {
   scannedAt: string;
 }
 
+export interface WorkspaceSessionMcpCliStatus {
+  cli: "codex" | "claude-code" | "opencode";
+  label: string;
+  runtimeConfigFile: string;
+  runtimeConfigExists: boolean;
+  mcpConfigured: boolean;
+  callState: "ready" | "missing_runtime_config";
+  callStateDetail: string;
+}
+
+export interface WorkspaceSessionMcpCommandStatus {
+  globalCodingnsInstalled: boolean;
+  globalCodingnsPath: string | null;
+  globalCodingnsSupportsWorkspaceMcp: boolean;
+  globalCodingnsWorkspaceMcpDetail: string;
+  globalWorkspaceOfficeMcpInstalled: boolean;
+  globalWorkspaceOfficeMcpPath: string | null;
+  repoCodingnsSupportsWorkspaceMcp: boolean;
+  repoCodingnsWorkspaceMcpDetail: string;
+}
+
+export interface WorkspaceSessionMcpRuntimeStatus {
+  workspaceId: string;
+  workspacePath: string;
+  sessionId: string | null;
+  runtimeHomeDir: string | null;
+  runtimeHomeExists: boolean;
+  scopedAuthFilePath: string | null;
+  scopedAuthFileExists: boolean;
+  composedInstructionPath: string | null;
+  composedInstructionExists: boolean;
+  skillDirectoryPath: string | null;
+  skillDirectoryExists: boolean;
+}
+
+export interface WorkspaceSessionMcpStatusResult {
+  summary: {
+    readyCliCount: number;
+    configuredCliCount: number;
+    totalCliCount: number;
+  };
+  runtime: WorkspaceSessionMcpRuntimeStatus;
+  commands: WorkspaceSessionMcpCommandStatus;
+  cliStatuses: WorkspaceSessionMcpCliStatus[];
+}
+
 export interface SkillManagerServiceOptions {
   ssotRootDir?: string;
   now?: () => string;
   createId?: () => string;
   providerControlRepository?: Pick<ProviderControlRepository, "get"> | null;
+  workspaceRootResolver?: ((workspaceId: string) => string) | null;
+  runtimeStorageRootDir?: string | null;
 }
 
 const ASSISTANT_RUNTIME_TARGETS = ["codex", "claude-code"] as const satisfies readonly SkillTargetCli[];
 const ASSISTANT_RUNTIME_SSOT_DIRNAME = ".assistant-runtime";
+const REPO_ROOT_DIR = path.resolve(import.meta.dirname, "../../../../../");
 
 export class SkillManagerService {
   private readonly providerControlRepository: Pick<ProviderControlRepository, "get">;
+  private readonly workspaceRootResolver: (workspaceId: string) => string;
+  private readonly runtimeStorageRootDir: string | null;
 
   constructor(
     private readonly managedSkillRepository: ManagedSkillRepository,
@@ -153,6 +205,8 @@ export class SkillManagerService {
         updatedAt: ""
       })
     };
+    this.workspaceRootResolver = options.workspaceRootResolver ?? (() => "");
+    this.runtimeStorageRootDir = options.runtimeStorageRootDir?.trim() || null;
   }
 
   scanSkills(options: ScanSkillsOptions = {}): SkillScanResult {
@@ -234,6 +288,59 @@ export class SkillManagerService {
       conflictedEntries: scanResult.conflicted,
       diagnostics: scanResult.diagnostics,
       scannedAt: scanResult.scannedAt
+    };
+  }
+
+  getWorkspaceSessionMcpStatus(input: {
+    workspaceId: string;
+    sessionId?: string | null;
+  }): WorkspaceSessionMcpStatusResult {
+    const workspaceId = input.workspaceId.trim();
+
+    if (!workspaceId) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "workspaceId 不能为空",
+        field: "workspaceId"
+      });
+    }
+
+    const workspacePath = this.workspaceRootResolver(workspaceId).trim();
+
+    if (!workspacePath) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "WORKSPACE_NOT_FOUND",
+        detail: "找不到对应工作区路径",
+        field: "workspaceId"
+      });
+    }
+
+    const sessionId = input.sessionId?.trim() || null;
+    const runtimeHomeDir = sessionId
+      ? this.runtimeStorageRootDir
+        ? path.join(this.runtimeStorageRootDir, "workspace-session-runtime", workspaceId, sessionId)
+        : path.join(workspacePath, ".codingns", "workspace-session-runtime", sessionId)
+      : null;
+    const runtime = buildWorkspaceSessionMcpRuntimeStatus({
+      workspaceId,
+      workspacePath,
+      sessionId,
+      runtimeHomeDir
+    });
+    const commands = buildWorkspaceSessionMcpCommandStatus();
+    const cliStatuses = buildWorkspaceSessionMcpCliStatuses(runtimeHomeDir);
+
+    return {
+      summary: {
+        readyCliCount: cliStatuses.filter((item) => item.callState === "ready").length,
+        configuredCliCount: cliStatuses.filter((item) => item.mcpConfigured).length,
+        totalCliCount: cliStatuses.length
+      },
+      runtime,
+      commands,
+      cliStatuses
     };
   }
 
@@ -899,6 +1006,142 @@ function matchesRequestedTargets(
   }
 
   return targetCli.some((target) => requestedTargets.has(target));
+}
+
+function buildWorkspaceSessionMcpRuntimeStatus(input: {
+  workspaceId: string;
+  workspacePath: string;
+  sessionId: string | null;
+  runtimeHomeDir: string | null;
+}): WorkspaceSessionMcpRuntimeStatus {
+  const scopedAuthFilePath = input.runtimeHomeDir
+    ? path.join(input.runtimeHomeDir, "WORKSPACE_SESSION_AUTH.json")
+    : null;
+  const composedInstructionPath = input.runtimeHomeDir
+    ? path.join(input.runtimeHomeDir, "WORKSPACE_SESSION_COMPOSED.md")
+    : null;
+  const skillDirectoryPath = input.runtimeHomeDir
+    ? path.join(input.runtimeHomeDir, "skills", "codingns-workspace-session")
+    : null;
+
+  return {
+    workspaceId: input.workspaceId,
+    workspacePath: input.workspacePath,
+    sessionId: input.sessionId,
+    runtimeHomeDir: input.runtimeHomeDir,
+    runtimeHomeExists: input.runtimeHomeDir ? isDirectoryPath(input.runtimeHomeDir) : false,
+    scopedAuthFilePath,
+    scopedAuthFileExists: scopedAuthFilePath ? isFilePath(scopedAuthFilePath) : false,
+    composedInstructionPath,
+    composedInstructionExists: composedInstructionPath ? isFilePath(composedInstructionPath) : false,
+    skillDirectoryPath,
+    skillDirectoryExists: skillDirectoryPath ? isDirectoryPath(skillDirectoryPath) : false
+  };
+}
+
+function buildWorkspaceSessionMcpCommandStatus(): WorkspaceSessionMcpCommandStatus {
+  const globalCodingnsPath = readCommandPath("codingns");
+  const globalWorkspaceOfficeMcpPath = readCommandPath("codingns-workspace-office-mcp");
+  const globalCodingnsHelp = globalCodingnsPath
+    ? runCommandHelp(globalCodingnsPath, ["mcp", "workspace-office", "serve", "--help"])
+    : null;
+  const repoCodingnsPath = path.join(REPO_ROOT_DIR, "packages", "codingns", "bin", "codingns.mjs");
+  const repoCodingnsHelp = runCommandHelp(process.execPath, [
+    repoCodingnsPath,
+    "mcp",
+    "workspace-office",
+    "serve",
+    "--help"
+  ]);
+
+  return {
+    globalCodingnsInstalled: Boolean(globalCodingnsPath),
+    globalCodingnsPath,
+    globalCodingnsSupportsWorkspaceMcp: Boolean(globalCodingnsHelp?.ok),
+    globalCodingnsWorkspaceMcpDetail:
+      globalCodingnsHelp?.detail
+      ?? (globalCodingnsPath
+        ? "已安装，但当前全局 codingns 版本还不支持 workspace office MCP 命令。"
+        : "当前机器没有找到全局 codingns 命令。"),
+    globalWorkspaceOfficeMcpInstalled: Boolean(globalWorkspaceOfficeMcpPath),
+    globalWorkspaceOfficeMcpPath,
+    repoCodingnsSupportsWorkspaceMcp: repoCodingnsHelp.ok,
+    repoCodingnsWorkspaceMcpDetail: repoCodingnsHelp.detail
+  };
+}
+
+function buildWorkspaceSessionMcpCliStatuses(
+  runtimeHomeDir: string | null
+): WorkspaceSessionMcpCliStatus[] {
+  return [
+    buildWorkspaceSessionMcpCliStatus("codex", "Codex", runtimeHomeDir, "config.toml", (content) =>
+      content.includes("[mcp_servers.codingns-workspace-office]")
+    ),
+    buildWorkspaceSessionMcpCliStatus("claude-code", "Claude Code", runtimeHomeDir, ".claude.json", (content) =>
+      content.includes("\"codingns-workspace-office\"")
+    ),
+    buildWorkspaceSessionMcpCliStatus("opencode", "OpenCode", runtimeHomeDir, "opencode.json", (content) =>
+      content.includes("\"codingns-workspace-office\"")
+    )
+  ];
+}
+
+function buildWorkspaceSessionMcpCliStatus(
+  cli: WorkspaceSessionMcpCliStatus["cli"],
+  label: string,
+  runtimeHomeDir: string | null,
+  configFileName: string,
+  detectConfigured: (content: string) => boolean
+): WorkspaceSessionMcpCliStatus {
+  const runtimeConfigFile = runtimeHomeDir
+    ? path.join(runtimeHomeDir, configFileName)
+    : path.join("<runtime-home>", configFileName);
+  const runtimeConfigExists = runtimeHomeDir ? isFilePath(runtimeConfigFile) : false;
+  const content = runtimeConfigExists ? fs.readFileSync(runtimeConfigFile, "utf8") : "";
+  const mcpConfigured = runtimeConfigExists ? detectConfigured(content) : false;
+
+  return {
+    cli,
+    label,
+    runtimeConfigFile,
+    runtimeConfigExists,
+    mcpConfigured,
+    callState: mcpConfigured ? "ready" : "missing_runtime_config",
+    callStateDetail: mcpConfigured
+      ? "当前工作区会话 runtime 已写入 office MCP 配置。"
+      : "当前工作区会话 runtime 里还没有这个 CLI 的 MCP 配置文件，或者文件里未包含 codingns-workspace-office。"
+  };
+}
+
+function readCommandPath(command: string): string | null {
+  const result = spawnSync("which", [command], {
+    encoding: "utf8"
+  });
+  const resolved = result.status === 0 ? result.stdout.trim() : "";
+
+  return resolved || null;
+}
+
+function runCommandHelp(command: string, args: string[]): { ok: boolean; detail: string } {
+  const result = spawnSync(command, args, {
+    encoding: "utf8"
+  });
+  const stdout = result.stdout?.trim() ?? "";
+  const stderr = result.stderr?.trim() ?? "";
+  const detail = [stdout, stderr].filter(Boolean).join("\n");
+
+  return {
+    ok: result.status === 0,
+    detail: detail || `命令退出码 ${result.status ?? "unknown"}`
+  };
+}
+
+function isFilePath(targetPath: string): boolean {
+  return fs.existsSync(targetPath) && fs.statSync(targetPath).isFile();
+}
+
+function isDirectoryPath(targetPath: string): boolean {
+  return fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory();
 }
 
 function buildAssistantRuntimeTargetRef(targetCli: SkillTargetCli, directoryName: string): string {
