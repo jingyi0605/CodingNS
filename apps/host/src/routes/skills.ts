@@ -7,6 +7,7 @@ export async function registerSkillRoutes(
   skillController: SkillController
 ): Promise<void> {
   app.get("/api/skills/overview", skillController.getOverview);
+  app.get("/api/skills/workspace-session-mcp-status", skillController.getWorkspaceSessionMcpStatus);
   app.post("/api/skills", skillController.add);
   app.post("/api/skills/import", skillController.import);
   app.post("/api/skills/sync", skillController.sync);

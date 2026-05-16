@@ -76,6 +76,27 @@ export class OfficeArtifactRepository {
       .all(stepId)
       .map((row) => mapOfficeArtifactRow(row as OfficeArtifactRow));
   }
+
+  findById(artifactId: string): OfficeArtifact | null {
+    const row = this.db
+      .prepare(
+        `SELECT
+           id,
+           task_id,
+           step_id,
+           kind,
+           name,
+           storage_path,
+           content_type,
+           metadata_json,
+           created_at
+         FROM office_artifacts
+         WHERE id = ?`
+      )
+      .get(artifactId);
+
+    return row ? mapOfficeArtifactRow(row as OfficeArtifactRow) : null;
+  }
 }
 
 interface OfficeArtifactRow {

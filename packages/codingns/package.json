@@ -3,7 +3,8 @@
   "version": "0.7.4",
   "type": "module",
   "bin": {
-    "codingns": "./bin/codingns.mjs"
+    "codingns": "./bin/codingns.mjs",
+    "codingns-workspace-office-mcp": "./bin/office-mcp-server.mjs"
   },
   "files": [
     "bin",

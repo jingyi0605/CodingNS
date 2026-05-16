@@ -9,6 +9,7 @@ export async function registerOpsRuntimeRoutes(
   app.get("/api/office/ops/targets", opsRuntimeController.listTargets);
   app.post("/api/office/ops/targets", opsRuntimeController.createTarget);
   app.get("/api/office/ops/targets/:targetId", opsRuntimeController.getTarget);
+  app.patch("/api/office/ops/targets/:targetId", opsRuntimeController.updateTarget);
   app.post("/api/office/ops/ssh/tasks", opsRuntimeController.createSshTask);
   app.post("/api/office/ops/ssh/tasks/:taskId/execute", opsRuntimeController.executeSshTask);
   app.get("/api/office/ops/ssh/tasks/:taskId/execution", opsRuntimeController.getSshExecution);

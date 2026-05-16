@@ -215,12 +215,12 @@ test("OpenCodeRuntimeAdapter 运行期间会持有托管 server 租约，并在�
   const adapter = new OpenCodeRuntimeAdapter({
     baseUrl: "http://127.0.0.1:41827",
     requestTimeoutMs: 1_000,
-    acquireManagedServerLease(workspacePath) {
-      acquired.push(workspacePath);
+    acquireManagedServerLease(workspacePath, runtimeHomeDir) {
+      acquired.push({ workspacePath, runtimeHomeDir });
       return "lease-1";
     },
-    releaseManagedServerLease(workspacePath, leaseId) {
-      released.push({ workspacePath, leaseId });
+    releaseManagedServerLease(workspacePath, leaseId, runtimeHomeDir) {
+      released.push({ workspacePath, leaseId, runtimeHomeDir });
     }
   });
   const launch = await adapter.startSession(
@@ -231,6 +231,7 @@ test("OpenCodeRuntimeAdapter 运行期间会持有托管 server 租约，并在�
       provider: "opencode",
       providerSessionId: null,
       rawStoreRef: null,
+      runtimeHomeDir: "/tmp/workspace-session-runtime/opencode",
       options: {
         content: "测试租约释放",
         clientRequestId: null,
@@ -247,7 +248,10 @@ test("OpenCodeRuntimeAdapter 运行期间会持有托管 server 租约，并在�
     }
   );
 
-  assert.deepEqual(acquired, ["/Users/jackson/Code/CodingNS"]);
+  assert.deepEqual(acquired, [{
+    workspacePath: "/Users/jackson/Code/CodingNS",
+    runtimeHomeDir: "/tmp/workspace-session-runtime/opencode"
+  }]);
   assert.deepEqual(released, []);
 
   await launch.completed;
@@ -255,7 +259,8 @@ test("OpenCodeRuntimeAdapter 运行期间会持有托管 server 租约，并在�
   assert.deepEqual(released, [
     {
       workspacePath: "/Users/jackson/Code/CodingNS",
-      leaseId: "lease-1"
+      leaseId: "lease-1",
+      runtimeHomeDir: "/tmp/workspace-session-runtime/opencode"
     }
   ]);
 });

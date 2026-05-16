@@ -268,6 +268,8 @@ function composeSharedInstructionBody(
 - 默认查询顺序固定为：先看 \`BUTLER_CONTEXT.md\`，再确认 CLI 认证入口可用，然后用 \`codingns assistant capabilities list\` 确认能力，再按 \`projects / sessions / terminals\` 分组查具体对象；不要先翻一大堆旧 REST 文档。
 - 如果任务是办公文档、浏览器操作、SSH 运维或控制台运维，优先走 \`codingns assistant office ...\`，不要自己拼私有 HTTP，也不要绕回裸 \`ssh\`、裸脚本或临时浏览器自动化。
 - 文档任务用 \`document-create / document-update / document-export / document-task\`；浏览器任务用 \`browser-profile-create / browser-task-create / browser-task-get\`；运维任务用 \`ops-target-create / ops-ssh-task-create / ops-task-execute / ops-task-get\`。
+- 只要任务属于打开网页、登录网站、抓取页面、读取 DOM、截图、点击按钮、填写表单、下载文件这类真实网页操作，默认先走 \`codingns assistant office browser-profile-list / browser-task-create\`，不要先落到 Codex 自带 Browser。
+- 只有本地前端预览、开发调试 \`localhost\` / \`127.0.0.1\` / \`::1\` 页面，或者用户明确点名要用当前 in-app browser，才优先保留 Codex 自带 Browser。
 - 高风险办公任务如果返回 \`pending_approval\`，必须先处理审批，再继续执行。不要把“任务已创建”误当成“任务已执行”。
 - 对办公能力的真实性判断，以任务状态、步骤、产物、回执为准，不以模型口头描述为准。
 - 如果你在跟进开发会话，且目标或上下文里提到了 spec，只能围绕 spec 明确写出的必做项推进，不能顺着建议项无限扩展开发范围。
@@ -383,7 +385,7 @@ export CODINGNS_ACCESS_TOKEN="$(jq -r '.accessToken' "${authFilePath}")"
 ## 办公能力调用顺序
 
 1. 需要正式文档产物时，先 \`codingns assistant office document-create\`，再 \`document-update\`，最后 \`document-export --execute true\`，并用 \`document-task\` 看真实导出结果。
-2. 需要真实 Chrome/Edge 自动化时，先 \`codingns assistant office browser-profile-create\`，再 \`browser-task-create --execute true\`，最后 \`browser-task-get\` 看截图、DOM、下载产物和回执。
+2. 需要真实 Chrome/Edge 自动化时，先 \`codingns assistant office browser-profile-list\`，没有可复用 Profile 再 \`browser-profile-create\`，随后 \`browser-task-create --execute true\`，最后 \`browser-task-get\` 看截图、DOM、下载产物和回执。
 3. 需要 SSH 运维时，先 \`codingns assistant office ops-target-create\`，再 \`ops-ssh-task-create\`。如果状态是 \`pending_approval\`，先 \`task-approval-reply\`，再 \`ops-task-execute\`，最后 \`ops-task-get\` 看 stdout、stderr 和回执。
 4. 能用 \`office\` 的地方，不要绕回私有 HTTP、裸 \`ssh\` 或单次临时脚本。这样状态、审批、回执和产物才不会散掉。
 
@@ -425,6 +427,7 @@ codingns assistant terminals send --help
 - \`codingns assistant terminals send <terminalId> --input "npm test\\n"\`：向终端发送输入。
 - \`codingns assistant office document-create --title "周报" --template-key team.doct.weekly --content-json '{"sections":[]}'\`：创建办公文档。
 - \`codingns assistant office document-export <documentId> --format docx --execute true\`：按 doct 模板导出真实生产文档。
+- \`codingns assistant office browser-profile-list\`：列出当前工作区可复用的真实浏览器 Profile。
 - \`codingns assistant office browser-profile-create --engine chrome --mode persistent --display-name "办公 Chrome"\`：创建真实浏览器 Profile。
 - \`codingns assistant office browser-task-create --profile-id <profileId> --execute true --input-json '{"startUrl":"https://example.invalid","actions":[{"type":"read_dom"},{"type":"screenshot"}]}'\`：执行浏览器自动化任务。
 - \`codingns assistant office ops-target-create --kind ssh_host --display-name "生产 SSH" --config-json '{"host":"10.0.0.8","username":"root"}'\`：创建 SSH 运维目标。

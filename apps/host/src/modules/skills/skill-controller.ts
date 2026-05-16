@@ -14,6 +14,11 @@ interface SkillOverviewQuery {
   targetCli?: string | string[];
 }
 
+interface WorkspaceSessionMcpStatusQuery {
+  workspaceId?: string;
+  sessionId?: string;
+}
+
 export class SkillController {
   constructor(private readonly skillManagerService: SkillManagerService) {}
 
@@ -54,6 +59,17 @@ export class SkillController {
   ): Promise<void> => {
     requireUserId(request);
     reply.send(this.skillManagerService.syncManagedSkill(request.body ?? { skillId: "", targetCli: [] }));
+  };
+
+  readonly getWorkspaceSessionMcpStatus = async (
+    request: FastifyRequest<{ Querystring: WorkspaceSessionMcpStatusQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    requireUserId(request);
+    reply.send(this.skillManagerService.getWorkspaceSessionMcpStatus({
+      workspaceId: request.query.workspaceId ?? "",
+      sessionId: request.query.sessionId ?? null
+    }));
   };
 }
 

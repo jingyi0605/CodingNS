@@ -19,6 +19,20 @@ test("codingns opencli help 会输出帮助", () => {
   assert.match(result.stdout, /codingns opencli config/);
 });
 
+test("codingns assistant office browser-task-create help 会输出动作模板", () => {
+  const result = spawnSync(process.execPath, [cliPath, "assistant", "help", "office.browser-task-create"], {
+    encoding: "utf8",
+    env: createCliEnv()
+  });
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /支持动作/);
+  assert.match(result.stdout, /read_dom/);
+  assert.match(result.stdout, /screenshot/);
+  assert.match(result.stdout, /https:\/\/www\.zhihu\.com\/signin/);
+  assert.match(result.stdout, /不要退回去翻源码/);
+});
+
 test("codingns opencli config 会调用 Host API 并输出结果", async () => {
   let receivedPayload = null;
   const server = http.createServer(async (request, response) => {
@@ -287,6 +301,78 @@ test("codingns assistant office browser-task-create 会调用 Host assistant API
       }
     });
     assert.match(result.stdout, /"capability": "office.browser.task.create"/);
+  } finally {
+    server.closeIdleConnections?.();
+    server.closeAllConnections?.();
+    await new Promise((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+});
+
+test("codingns assistant office browser-profile-list 会调用 Host assistant API", async () => {
+  const server = http.createServer(async (request, response) => {
+    if (request.method === "GET" && request.url === "/api/assistant/office/browser/profiles?workspaceId=workspace-1") {
+      response.writeHead(200, {
+        "Content-Type": "application/json",
+        "Connection": "close"
+      });
+      response.end(JSON.stringify({
+        ok: true,
+        capability: "office.browser.profile.list",
+        auditId: "audit-browser-profile-list-1",
+        timestamp: "2026-05-16T10:05:00.000Z",
+        targetRef: {
+          kind: "workspace",
+          id: "workspace-1"
+        },
+        payload: {
+          items: [
+            {
+              id: "profile-1",
+              displayName: "办公 Chrome"
+            }
+          ]
+        }
+      }));
+      return;
+    }
+
+    response.writeHead(404, {
+      "Content-Type": "application/json",
+      "Connection": "close"
+    });
+    response.end(JSON.stringify({ detail: "not found" }));
+  });
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const result = await runCli([
+      cliPath,
+      "assistant",
+      "office",
+      "browser-profile-list",
+      "--base-url",
+      baseUrl,
+      "--token",
+      "token-1",
+      "--workspace-id",
+      "workspace-1"
+    ]);
+
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /"capability": "office.browser.profile.list"/);
+    assert.match(result.stdout, /"displayName": "办公 Chrome"/);
   } finally {
     server.closeIdleConnections?.();
     server.closeAllConnections?.();

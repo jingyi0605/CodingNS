@@ -9,6 +9,7 @@ export async function registerDocumentRuntimeRoutes(
   app.get("/api/office/document-templates", documentRuntimeController.listTemplates);
   app.get("/api/office/document-templates/:templateId", documentRuntimeController.getTemplate);
   app.post("/api/office/document-templates", documentRuntimeController.createTemplate);
+  app.post("/api/office/document-templates/import-file", documentRuntimeController.importTemplateFile);
   app.patch("/api/office/document-templates/:templateId", documentRuntimeController.updateTemplate);
   app.get("/api/office/documents", documentRuntimeController.listDocuments);
   app.post("/api/office/documents", documentRuntimeController.createDocument);

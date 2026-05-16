@@ -1,9 +1,23 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OpenCodeBaseUrlResolver } from "../../src/config/opencode-base-url-resolver.js";
 
 describe("OpenCodeBaseUrlResolver", () => {
+  const tempDirs: string[] = [];
+
   afterEach(() => {
+    while (tempDirs.length > 0) {
+      const target = tempDirs.pop();
+
+      if (target) {
+        rmSync(target, { recursive: true, force: true });
+      }
+    }
+
     vi.doUnmock("node:child_process");
     vi.doUnmock("../../src/config/opencode-system-probe-helper-client.js");
     vi.resetModules();
@@ -396,6 +410,105 @@ describe("OpenCodeBaseUrlResolver", () => {
         windowsHide: true
       })
     );
+  });
+
+  it("工作区 runtimeHomeDir 存在 opencode 配置时，会把 MCP 配置注入托管 serve 进程环境", async () => {
+    vi.resetModules();
+
+    const runtimeHomeDir = mkdtempSync(path.join(tmpdir(), "codingns-opencode-runtime-"));
+    tempDirs.push(runtimeHomeDir);
+    writeFileSync(
+      path.join(runtimeHomeDir, "opencode.json"),
+      JSON.stringify({
+        mcp: {
+          "codingns-workspace-office": {
+            type: "local",
+            enabled: true,
+            command: [
+              process.execPath,
+              "/mock/codingns.mjs",
+              "mcp",
+              "workspace-office",
+              "serve",
+              "--auth-file",
+              "/tmp/workspace-auth.json"
+            ],
+            environment: {
+              CODINGNS_OFFICE_MCP_AUTH_FILE: "/tmp/workspace-auth.json"
+            }
+          }
+        }
+      }, null, 2),
+      "utf8"
+    );
+
+    const stdoutHandlers: Array<(chunk: string) => void> = [];
+    const spawn = vi.fn((_command: string, _args: string[], options: { env?: Record<string, string> }) => {
+      const child = {
+        killed: false,
+        stdout: {
+          on: (event: string, handler: (chunk: string) => void) => {
+            if (event === "data") {
+              stdoutHandlers.push(handler);
+            }
+          },
+          off: vi.fn()
+        },
+        stderr: {
+          on: vi.fn(),
+          off: vi.fn()
+        },
+        once: vi.fn(),
+        off: vi.fn(),
+        kill: vi.fn(() => {
+          child.killed = true;
+        })
+      };
+
+      expect(options.env?.OPENCODE_CONFIG_CONTENT).toBeTruthy();
+      const parsed = JSON.parse(options.env?.OPENCODE_CONFIG_CONTENT ?? "{}") as {
+        mcp?: Record<string, { command?: string[] }>;
+      };
+      expect(parsed.mcp?.["codingns-workspace-office"]?.command).toEqual([
+        process.execPath,
+        "/mock/codingns.mjs",
+        "mcp",
+        "workspace-office",
+        "serve",
+        "--auth-file",
+        "/tmp/workspace-auth.json"
+      ]);
+
+      queueMicrotask(() => {
+        for (const handler of stdoutHandlers) {
+          handler("opencode server listening on http://127.0.0.1:4321\n");
+        }
+      });
+
+      return child;
+    });
+
+    vi.doMock("node:child_process", () => ({
+      spawn
+    }));
+
+    const { OpenCodeBaseUrlResolver: Resolver } = await import(
+      "../../src/config/opencode-base-url-resolver.js"
+    );
+    const resolver = new Resolver({
+      commandPath: "/opt/homebrew/bin/opencode",
+      inspectProcessList: () => "",
+      inspectListeningSockets: () => [],
+      inspectProcessCwd: () => null,
+      probeBaseUrl: async (baseUrl) => baseUrl === "http://127.0.0.1:4321"
+    });
+
+    await expect(
+      resolver.resolve({
+        workspacePath: "/Users/jackson/Code/CodingNS",
+        runtimeHomeDir
+      })
+    ).resolves.toBe("http://127.0.0.1:4321");
   });
 
   it("dispose 会终止托管 serve，并阻止后续继续 resolve", async () => {

@@ -21,6 +21,11 @@ const ASSISTANT_RUNTIME_SKILL_SPECS: readonly Omit<AssistantRuntimeSkillCatalogE
     name: "codingns-assistant",
     directoryName: "codingns-assistant",
     usedByTargetCli: ["codex", "claude-code"]
+  },
+  {
+    name: "codingns-workspace-session",
+    directoryName: "codingns-workspace-session",
+    usedByTargetCli: ["codex", "claude-code"]
   }
 ];
 

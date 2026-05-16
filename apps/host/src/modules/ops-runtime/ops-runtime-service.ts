@@ -20,6 +20,18 @@ export interface CreateOpsTargetInput {
   credentialRef?: string | null;
 }
 
+export interface UpdateOpsTargetInput {
+  userId: string;
+  targetId: string;
+  workspaceId?: string | null;
+  kind?: OpsTargetKind;
+  displayName?: string | null;
+  environment?: string | null;
+  config?: unknown;
+  credentialRef?: string | null;
+  status?: OpsTargetStatus;
+}
+
 export interface CreateOpsSshTaskInput {
   userId: string;
   title: string;
@@ -83,6 +95,48 @@ export class OpsRuntimeService {
       status: "active",
       createdAt: timestamp,
       updatedAt: timestamp
+    });
+  }
+
+  updateTarget(input: UpdateOpsTargetInput): OpsTarget {
+    const current = this.requireOwnedTarget(input.targetId, input.userId);
+    const nextKind = input.kind ?? current.kind;
+    const nextDisplayName = input.displayName === undefined
+      ? current.displayName
+      : typeof input.displayName === "string"
+        ? input.displayName.trim()
+        : "";
+
+    if (!nextDisplayName) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_OPS_TARGET_DISPLAY_NAME",
+        detail: "运维目标名称不能为空",
+        field: "displayName"
+      });
+    }
+
+    const nextConfig = input.config === undefined
+      ? JSON.parse(current.configJson) as unknown
+      : input.config;
+    validateOpsTargetConfig(nextKind, nextConfig);
+
+    return this.opsTargetRepository.update({
+      ...current,
+      workspaceId: input.workspaceId === undefined
+        ? current.workspaceId
+        : normalizeNullableText(input.workspaceId),
+      kind: nextKind,
+      displayName: nextDisplayName,
+      environment: input.environment === undefined
+        ? current.environment
+        : normalizeNullableText(input.environment),
+      configJson: JSON.stringify(nextConfig),
+      credentialRef: input.credentialRef === undefined
+        ? current.credentialRef
+        : normalizeNullableText(input.credentialRef),
+      status: input.status ?? current.status,
+      updatedAt: nowIso()
     });
   }
 

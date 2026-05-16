@@ -1,5 +1,6 @@
 const RESERVED_ASSISTANT_SKILL_NAMES = new Set([
-  "codingns-assistant"
+  "codingns-assistant",
+  "codingns-workspace-session"
 ]);
 
 export function isReservedAssistantSkillDirectoryName(directoryName: string): boolean {

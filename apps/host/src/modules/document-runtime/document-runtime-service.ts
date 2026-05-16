@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import { AppError } from "../../shared/errors/app-error.js";
 import { createId } from "../../shared/utils/id.js";
 import { nowIso } from "../../shared/utils/time.js";
@@ -39,6 +42,12 @@ export interface CreateDocumentTemplateInput {
   mapping: unknown;
   outputFormats: OfficeDocumentExportFormat[];
   status?: DocumentTemplateStatus;
+}
+
+export interface ImportDocumentTemplateFileInput {
+  userId: string;
+  fileName: string;
+  fileContentBase64: string;
 }
 
 export interface UpdateDocumentTemplateInput {
@@ -101,7 +110,8 @@ export class DocumentRuntimeService {
     private readonly commentRepository: DocumentCommentRepository,
     private readonly officeService: OfficeService,
     private readonly taskManager: TaskManager,
-    private readonly documentExportExecutor: DocumentExportExecutor
+    private readonly documentExportExecutor: DocumentExportExecutor,
+    private readonly templateStorageDir: string
   ) {
     this.registerBackgroundTask();
   }
@@ -151,6 +161,69 @@ export class DocumentRuntimeService {
       status: input.status ?? "active",
       createdAt: timestamp,
       updatedAt: timestamp
+    });
+  }
+
+  importTemplateFile(input: ImportDocumentTemplateFileInput): DocumentTemplate {
+    const fileName = input.fileName.trim();
+    const extension = path.extname(fileName).toLowerCase();
+
+    if (extension !== ".domt" && extension !== ".doct") {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_DOCUMENT_TEMPLATE_FILE",
+        detail: "当前只支持导入 .domt 或 .doct 模板文件",
+        field: "fileName"
+      });
+    }
+
+    const buffer = decodeBase64File(input.fileContentBase64);
+    if (buffer.byteLength === 0) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_DOCUMENT_TEMPLATE_FILE",
+        detail: "模板文件不能为空",
+        field: "fileContentBase64"
+      });
+    }
+
+    const basename = path.basename(fileName, extension).trim();
+    const templateKey = normalizeImportedTemplateKey(basename);
+    if (!templateKey) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_DOCUMENT_TEMPLATE_FILE",
+        detail: "无法从模板文件名推导模板 key，请使用有效文件名",
+        field: "fileName"
+      });
+    }
+
+    const nextVersion = resolveNextImportedTemplateVersion(this.templateRepository.list(), templateKey);
+    const storageDirectory = path.join(this.templateStorageDir, templateKey);
+    fs.mkdirSync(storageDirectory, { recursive: true });
+
+    const storedFilePath = path.join(storageDirectory, `${nextVersion}${extension}`);
+    fs.writeFileSync(storedFilePath, buffer);
+
+    return this.createTemplate({
+      userId: input.userId,
+      templateKey,
+      displayName: formatImportedTemplateDisplayName(basename),
+      templateVersion: nextVersion,
+      templateSourcePath: storedFilePath,
+      schema: {
+        requiredFields: ["title", "body"],
+        optionalFields: ["summary", "references", "annotations"]
+      },
+      mapping: {
+        title: "document.title",
+        summary: "revision.summary",
+        sections: "content.blocks",
+        references: "content.references",
+        annotations: "document.comments"
+      },
+      outputFormats: ["docx", "pdf"],
+      status: "active"
     });
   }
 
@@ -832,4 +905,54 @@ function validateTemplateMapping(
       detail: "模板 mapping 缺少 annotations"
     });
   }
+}
+
+function decodeBase64File(value: string): Buffer {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return Buffer.alloc(0);
+  }
+
+  try {
+    return Buffer.from(trimmed, "base64");
+  } catch {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_DOCUMENT_TEMPLATE_FILE",
+      detail: "模板文件内容不是合法的 base64",
+      field: "fileContentBase64"
+    });
+  }
+}
+
+function normalizeImportedTemplateKey(fileStem: string): string | null {
+  const normalized = fileStem
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ".")
+    .replace(/[^a-z0-9._-]+/g, ".")
+    .replace(/\.+/g, ".")
+    .replace(/^\.|\.$/g, "");
+
+  return normalized.length > 0 ? normalized : null;
+}
+
+function formatImportedTemplateDisplayName(fileStem: string): string {
+  const trimmed = fileStem.trim();
+  return trimmed.length > 0 ? trimmed : "未命名模板";
+}
+
+function resolveNextImportedTemplateVersion(
+  templates: readonly DocumentTemplate[],
+  templateKey: string
+): string {
+  const versions = templates
+    .filter((item) => item.templateKey === templateKey)
+    .map((item) => {
+      const match = item.templateVersion.match(/^v(\d+)$/i);
+      return match ? Number.parseInt(match[1] ?? "0", 10) : 0;
+    });
+
+  const maxVersion = versions.length > 0 ? Math.max(...versions) : 0;
+  return `v${maxVersion + 1}`;
 }

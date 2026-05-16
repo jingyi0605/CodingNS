@@ -51,6 +51,11 @@ interface CreateDocumentTemplateBody {
   status?: DocumentTemplateStatus;
 }
 
+interface ImportDocumentTemplateFileBody {
+  fileName?: string;
+  fileContentBase64?: string;
+}
+
 interface UpdateDocumentTemplateBody {
   displayName?: string;
   templateSourcePath?: string | null;
@@ -118,6 +123,19 @@ export class DocumentRuntimeController {
         mapping: request.body.mapping,
         outputFormats: Array.isArray(request.body.outputFormats) ? request.body.outputFormats : [],
         status: request.body.status
+      })
+    );
+  };
+
+  readonly importTemplateFile = async (
+    request: FastifyRequest<{ Body: ImportDocumentTemplateFileBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.status(201).send(
+      this.documentRuntimeService.importTemplateFile({
+        userId: requireUserId(request),
+        fileName: request.body.fileName?.trim() ?? "",
+        fileContentBase64: request.body.fileContentBase64?.trim() ?? ""
       })
     );
   };

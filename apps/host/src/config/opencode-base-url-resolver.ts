@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
@@ -27,6 +29,7 @@ interface OpenCodeBaseUrlResolverOptions {
 interface ResolveBaseUrlInput {
   refresh?: boolean;
   workspacePath?: string | null;
+  runtimeHomeDir?: string | null;
 }
 
 interface OpenCodeServeProcessRecord {
@@ -105,27 +108,27 @@ export class OpenCodeBaseUrlResolver {
       return this.configuredBaseUrl;
     }
 
-    const workspaceKey = normalizeWorkspaceKey(input.workspacePath);
-    const cachedBaseUrl = this.cachedBaseUrlByWorkspaceKey.get(workspaceKey) ?? null;
-    const cachedAt = this.cachedAtByWorkspaceKey.get(workspaceKey) ?? 0;
+    const scopeKey = normalizeResolverScopeKey(input.workspacePath, input.runtimeHomeDir);
+    const cachedBaseUrl = this.cachedBaseUrlByWorkspaceKey.get(scopeKey) ?? null;
+    const cachedAt = this.cachedAtByWorkspaceKey.get(scopeKey) ?? 0;
 
     if (!input.refresh && cachedBaseUrl && this.now() - cachedAt < this.cacheTtlMs) {
       return cachedBaseUrl;
     }
 
-    const inflight = this.inflightByWorkspaceKey.get(workspaceKey) ?? null;
+    const inflight = this.inflightByWorkspaceKey.get(scopeKey) ?? null;
 
     if (inflight) {
       return inflight;
     }
 
-    const task = this.discoverAvailableBaseUrl(input.workspacePath ?? null);
+    const task = this.discoverAvailableBaseUrl(input.workspacePath ?? null, input.runtimeHomeDir ?? null);
     const wrappedTask = task.finally(() => {
-      if (this.inflightByWorkspaceKey.get(workspaceKey) === wrappedTask) {
-        this.inflightByWorkspaceKey.delete(workspaceKey);
+      if (this.inflightByWorkspaceKey.get(scopeKey) === wrappedTask) {
+        this.inflightByWorkspaceKey.delete(scopeKey);
       }
     });
-    this.inflightByWorkspaceKey.set(workspaceKey, wrappedTask);
+    this.inflightByWorkspaceKey.set(scopeKey, wrappedTask);
 
     return wrappedTask;
   }
@@ -133,7 +136,10 @@ export class OpenCodeBaseUrlResolver {
   async listReachableBaseUrls(input: ResolveBaseUrlInput = {}): Promise<string[]> {
     this.ensureNotDisposed();
 
-    const candidates = await this.collectCandidateBaseUrls(input.workspacePath ?? null);
+    const candidates = await this.collectCandidateBaseUrls(
+      input.workspacePath ?? null,
+      input.runtimeHomeDir ?? null
+    );
     const available: string[] = [];
 
     for (const candidate of candidates) {
@@ -145,9 +151,9 @@ export class OpenCodeBaseUrlResolver {
     return available;
   }
 
-  acquireManagedServerLease(workspacePath: string): string {
+  acquireManagedServerLease(workspacePath: string, runtimeHomeDir?: string | null): string {
     this.ensureNotDisposed();
-    const workspaceKey = normalizeWorkspaceKey(workspacePath);
+    const workspaceKey = normalizeResolverScopeKey(workspacePath, runtimeHomeDir ?? null);
     const leaseId = randomUUID();
     const existingLeaseIds = this.managedServerLeaseIdsByWorkspaceKey.get(workspaceKey) ?? new Set<string>();
 
@@ -158,12 +164,16 @@ export class OpenCodeBaseUrlResolver {
     return leaseId;
   }
 
-  releaseManagedServerLease(workspacePath: string, leaseId: string): void {
+  releaseManagedServerLease(
+    workspacePath: string,
+    leaseId: string,
+    runtimeHomeDir?: string | null
+  ): void {
     if (this.disposed) {
       return;
     }
 
-    const workspaceKey = normalizeWorkspaceKey(workspacePath);
+    const workspaceKey = normalizeResolverScopeKey(workspacePath, runtimeHomeDir ?? null);
     const existingLeaseIds = this.managedServerLeaseIdsByWorkspaceKey.get(workspaceKey);
 
     if (!existingLeaseIds) {
@@ -182,9 +192,12 @@ export class OpenCodeBaseUrlResolver {
     this.managedServerLeaseIdsByWorkspaceKey.set(workspaceKey, existingLeaseIds);
   }
 
-  private async discoverAvailableBaseUrl(workspacePath: string | null): Promise<string> {
-    const workspaceKey = normalizeWorkspaceKey(workspacePath);
-    const candidates = await this.collectCandidateBaseUrls(workspacePath);
+  private async discoverAvailableBaseUrl(
+    workspacePath: string | null,
+    runtimeHomeDir: string | null
+  ): Promise<string> {
+    const workspaceKey = normalizeResolverScopeKey(workspacePath, runtimeHomeDir);
+    const candidates = await this.collectCandidateBaseUrls(workspacePath, runtimeHomeDir);
 
     for (const candidate of candidates) {
       if (await this.probeBaseUrl(candidate)) {
@@ -199,7 +212,8 @@ export class OpenCodeBaseUrlResolver {
 
     if (workspacePath || process.platform === "win32") {
       const managedCandidate = await this.ensureManagedServerBaseUrl(
-        workspacePath ?? process.cwd()
+        workspacePath ?? process.cwd(),
+        runtimeHomeDir
       );
 
       if (await this.probeBaseUrl(managedCandidate)) {
@@ -215,12 +229,23 @@ export class OpenCodeBaseUrlResolver {
     throw new Error("SERVER_UNAVAILABLE");
   }
 
-  private async collectCandidateBaseUrls(workspacePath: string | null): Promise<string[]> {
+  private async collectCandidateBaseUrls(
+    workspacePath: string | null,
+    runtimeHomeDir: string | null
+  ): Promise<string[]> {
     if (this.configuredBaseUrl) {
       return [this.configuredBaseUrl];
     }
 
-    const workspaceKey = normalizeWorkspaceKey(workspacePath);
+    const workspaceKey = normalizeResolverScopeKey(workspacePath, runtimeHomeDir);
+
+    if (runtimeHomeDir) {
+      return dedupeBaseUrls([
+        this.cachedBaseUrlByWorkspaceKey.get(workspaceKey) ?? null,
+        this.managedServerBaseUrlByWorkspaceKey.get(workspaceKey) ?? null
+      ]);
+    }
+
     const targetWorkspacePath = normalizeWorkspaceCompareValue(workspacePath);
     const serveProcesses = await Promise.all(
       parseServeProcesses(await this.inspectProcessList(), this.commandPath)
@@ -251,8 +276,11 @@ export class OpenCodeBaseUrlResolver {
     ]);
   }
 
-  private async ensureManagedServerBaseUrl(workspacePath: string): Promise<string> {
-    const workspaceKey = normalizeWorkspaceKey(workspacePath);
+  private async ensureManagedServerBaseUrl(
+    workspacePath: string,
+    runtimeHomeDir: string | null
+  ): Promise<string> {
+    const workspaceKey = normalizeResolverScopeKey(workspacePath, runtimeHomeDir);
     const managedServerProcess = this.managedServerProcessByWorkspaceKey.get(workspaceKey) ?? null;
     const managedServerBaseUrl = this.managedServerBaseUrlByWorkspaceKey.get(workspaceKey) ?? null;
 
@@ -272,7 +300,7 @@ export class OpenCodeBaseUrlResolver {
       throw new Error("SERVER_UNAVAILABLE");
     }
 
-    const task = this.startManagedServer(workspacePath);
+    const task = this.startManagedServer(workspacePath, runtimeHomeDir);
     const wrappedTask = task.finally(() => {
       if (this.managedServerInflightByWorkspaceKey.get(workspaceKey) === wrappedTask) {
         this.managedServerInflightByWorkspaceKey.delete(workspaceKey);
@@ -282,9 +310,12 @@ export class OpenCodeBaseUrlResolver {
     return wrappedTask;
   }
 
-  private async startManagedServer(workspacePath: string): Promise<string> {
+  private async startManagedServer(
+    workspacePath: string,
+    runtimeHomeDir: string | null
+  ): Promise<string> {
     const commandPath = this.commandPath?.trim();
-    const workspaceKey = normalizeWorkspaceKey(workspacePath);
+    const workspaceKey = normalizeResolverScopeKey(workspacePath, runtimeHomeDir);
 
     this.ensureNotDisposed();
 
@@ -296,6 +327,11 @@ export class OpenCodeBaseUrlResolver {
       ...process.env
     };
     delete env.OPENCODE_SERVER_PASSWORD;
+    const runtimeConfigContent = readOpenCodeRuntimeConfigContent(runtimeHomeDir);
+
+    if (runtimeConfigContent) {
+      env.OPENCODE_CONFIG_CONTENT = runtimeConfigContent;
+    }
 
     const child = spawn(
       commandPath,
@@ -652,6 +688,20 @@ function normalizeWorkspaceKey(value: string | null | undefined): string {
   return normalizeWorkspaceCompareValue(value) ?? "";
 }
 
+function normalizeResolverScopeKey(
+  workspacePath: string | null | undefined,
+  runtimeHomeDir: string | null | undefined
+): string {
+  const workspaceKey = normalizeWorkspaceKey(workspacePath);
+  const runtimeKey = normalizeWorkspaceCompareValue(runtimeHomeDir) ?? "";
+
+  if (!runtimeKey) {
+    return workspaceKey;
+  }
+
+  return `${workspaceKey}::${runtimeKey}`;
+}
+
 function normalizeWorkspaceCompareValue(value: string | null | undefined): string | null {
   const normalized = value?.trim().replaceAll("\\", "/").replace(/\/+$/, "") ?? "";
 
@@ -660,6 +710,32 @@ function normalizeWorkspaceCompareValue(value: string | null | undefined): strin
   }
 
   return /^[a-z]:(?:\/|$)/i.test(normalized) ? normalized.toLowerCase() : normalized;
+}
+
+function readOpenCodeRuntimeConfigContent(runtimeHomeDir: string | null): string | null {
+  const normalizedRuntimeHomeDir = runtimeHomeDir?.trim() ?? "";
+
+  if (!normalizedRuntimeHomeDir) {
+    return null;
+  }
+
+  const configPath = path.join(normalizedRuntimeHomeDir, "opencode.json");
+
+  if (!fs.existsSync(configPath) || !fs.statSync(configPath).isFile()) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(configPath, "utf8")) as unknown;
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+
+    return JSON.stringify(parsed);
+  } catch {
+    return null;
+  }
 }
 
 function isOpenCodeServeCommand(command: string, commandPath: string | null): boolean {

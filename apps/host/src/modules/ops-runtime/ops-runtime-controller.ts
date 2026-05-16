@@ -5,6 +5,7 @@ import { requireUserId } from "../preferences/common.js";
 import { OpsRuntimeService } from "./ops-runtime-service.js";
 
 interface OpsTargetListQuery {
+  workspaceId?: string;
   kind?: OpsTargetKind;
   status?: OpsTargetStatus;
 }
@@ -24,6 +25,7 @@ interface CreateOpsTargetBody {
   environment?: string | null;
   config?: unknown;
   credentialRef?: string | null;
+  status?: OpsTargetStatus;
 }
 
 interface CreateOpsSshTaskBody {
@@ -51,6 +53,7 @@ export class OpsRuntimeController {
     reply.send({
       items: this.opsRuntimeService.listTargets({
         userId: requireUserId(request),
+        workspaceId: normalizeOptionalText(request.query.workspaceId),
         kind: request.query.kind,
         status: request.query.status
       })
@@ -79,6 +82,25 @@ export class OpsRuntimeController {
     reply: FastifyReply
   ): Promise<void> => {
     reply.send(this.opsRuntimeService.getTarget(request.params.targetId, requireUserId(request)));
+  };
+
+  readonly updateTarget = async (
+    request: FastifyRequest<{ Params: OpsTargetParams; Body: CreateOpsTargetBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      this.opsRuntimeService.updateTarget({
+        userId: requireUserId(request),
+        targetId: request.params.targetId,
+        workspaceId: request.body.workspaceId,
+        kind: request.body.kind,
+        displayName: request.body.displayName,
+        environment: request.body.environment,
+        config: request.body.config,
+        credentialRef: request.body.credentialRef,
+        status: request.body.status
+      })
+    );
   };
 
   readonly createSshTask = async (
@@ -147,4 +169,13 @@ export class OpsRuntimeController {
       )
     );
   };
+}
+
+function normalizeOptionalText(value: string | undefined): string | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
