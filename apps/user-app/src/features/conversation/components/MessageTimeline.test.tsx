@@ -1,5 +1,5 @@
 import type { ComponentProps } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -47,6 +47,8 @@ function MessageTimeline({
 const revealWorkspaceFileMock = vi.hoisted(() => vi.fn(() => false));
 const getButlerFollowUpTaskMock = vi.hoisted(() => vi.fn());
 const getFilePreviewLinkMock = vi.hoisted(() => vi.fn());
+const getOfficeArtifactPreviewLinkMock = vi.hoisted(() => vi.fn());
+const getOfficeTaskFilePreviewLinkMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./WorkbenchLayout", () => ({
   useWorkbenchShell: () => ({
@@ -76,7 +78,9 @@ vi.mock("../../butler/api/butler-api", () => ({
 }));
 
 vi.mock("../api/file-context-api", () => ({
-  getFilePreviewLink: getFilePreviewLinkMock
+  getFilePreviewLink: getFilePreviewLinkMock,
+  getOfficeArtifactPreviewLink: getOfficeArtifactPreviewLinkMock,
+  getOfficeTaskFilePreviewLink: getOfficeTaskFilePreviewLinkMock
 }));
 
 const SAMPLE_IMAGE_DATA_URL =
@@ -350,6 +354,18 @@ describe("MessageTimeline", () => {
       previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/apps/user-app/src/assets/menu.png",
       expiresAt: "2026-04-13T10:05:00.000Z"
     });
+    getOfficeArtifactPreviewLinkMock.mockReset();
+    getOfficeArtifactPreviewLinkMock.mockResolvedValue({
+      previewPath: "/preview/office/artifacts/office-token/12345678-1234-1234-1234-123456789abc",
+      previewUrl: "http://localhost:3000/preview/office/artifacts/office-token/12345678-1234-1234-1234-123456789abc",
+      expiresAt: "2026-04-13T10:05:00.000Z"
+    });
+    getOfficeTaskFilePreviewLinkMock.mockReset();
+    getOfficeTaskFilePreviewLinkMock.mockResolvedValue({
+      previewPath: "/preview/office/tasks/office-task-token/73c79787-1e73-41af-86fd-9896ea050176/zhihu-qr-crop.png",
+      previewUrl: "http://localhost:3000/preview/office/tasks/office-task-token/73c79787-1e73-41af-86fd-9896ea050176/zhihu-qr-crop.png",
+      expiresAt: "2026-04-13T10:05:00.000Z"
+    });
   });
 
   it("点击行内蓝色代码会直接复制内容", async () => {
@@ -374,6 +390,57 @@ describe("MessageTimeline", () => {
 
     expect(writeText).toHaveBeenCalledWith("inline-flex");
     expect(revealWorkspaceFileMock).not.toHaveBeenCalled();
+  });
+
+  it("会把 office-artifacts 本地图片路径映射成受控预览地址", async () => {
+    render(
+      <MessageTimeline
+        messages={[
+          createAssistantTextMessage(
+            "![知乎扫码二维码](/Users/jackson/.codingns/office-artifacts/browser-task-1/12345678-1234-1234-1234-123456789abc-zhihu-qr.png)"
+          )
+        ]}
+        historyState="ready"
+        onRetryMessage={vi.fn()}
+        provider="codex"
+      />
+    );
+
+    const image = await screen.findByAltText("知乎扫码二维码");
+    await waitFor(() => {
+      expect(screen.getByAltText("知乎扫码二维码").getAttribute("src")).toBe(
+        "http://localhost:3000/preview/office/artifacts/office-token/12345678-1234-1234-1234-123456789abc"
+      );
+    });
+    expect(getOfficeArtifactPreviewLinkMock).toHaveBeenCalledWith("12345678-1234-1234-1234-123456789abc");
+    expect(getFilePreviewLinkMock).not.toHaveBeenCalled();
+  });
+
+  it("会把 office-artifacts 目录里的手工裁图文件映射成任务文件受控地址", async () => {
+    render(
+      <MessageTimeline
+        messages={[
+          createAssistantTextMessage(
+            "![知乎扫码二维码](/Users/jackson/Code/CodingNS/apps/host/data/host/office-artifacts/73c79787-1e73-41af-86fd-9896ea050176/zhihu-qr-crop.png)"
+          )
+        ]}
+        historyState="ready"
+        onRetryMessage={vi.fn()}
+        provider="codex"
+      />
+    );
+
+    const image = await screen.findByAltText("知乎扫码二维码");
+    await waitFor(() => {
+      expect(screen.getByAltText("知乎扫码二维码").getAttribute("src")).toBe(
+        "http://localhost:3000/preview/office/tasks/office-task-token/73c79787-1e73-41af-86fd-9896ea050176/zhihu-qr-crop.png"
+      );
+    });
+    expect(getOfficeTaskFilePreviewLinkMock).toHaveBeenCalledWith(
+      "73c79787-1e73-41af-86fd-9896ea050176",
+      "zhihu-qr-crop.png"
+    );
+    expect(getFilePreviewLinkMock).not.toHaveBeenCalled();
   });
 
   it("会把 turn_aborted 控制标记渲染成手动终止的助手消息", () => {
@@ -1239,6 +1306,47 @@ describe("MessageTimeline", () => {
       "/preview/files/preview-token/apps/user-app/src/assets/menu.png"
     );
     expect(screen.queryByText(/^view_image$/)).not.toBeInTheDocument();
+  });
+
+  it("会把工作区内 markdown 本地图片路径转换成受控预览链接", async () => {
+    render(
+      <MessageTimeline
+        messages={[
+          createAssistantTextMessage(
+            "直接扫这张：\n\n![知乎扫码二维码](/Users/jackson/Code/CodingNS/apps/user-app/src/assets/menu.png)"
+          )
+        ]}
+        historyState="ready"
+        provider="codex"
+        workspaceId="workspace-1"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    expect(getFilePreviewLinkMock).toHaveBeenCalledWith("workspace-1", "apps/user-app/src/assets/menu.png");
+
+    await screen.findByAltText("知乎扫码二维码");
+    await waitFor(() => {
+      expect(screen.getByAltText("知乎扫码二维码").getAttribute("src")).toContain(
+        "/preview/files/preview-token/apps/user-app/src/assets/menu.png"
+      );
+    });
+  });
+
+  it("会保留外部 markdown 图片链接，不走工作区预览转换", async () => {
+    render(
+      <MessageTimeline
+        messages={[createAssistantTextMessage("![外部图片](https://example.com/demo.png)")]}
+        historyState="ready"
+        provider="codex"
+        workspaceId="workspace-1"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    const image = await screen.findByAltText("外部图片");
+    expect(image.getAttribute("src")).toBe("https://example.com/demo.png");
+    expect(getFilePreviewLinkMock).not.toHaveBeenCalledWith("workspace-1", "demo.png");
   });
 
   it("会默认折叠 codex 会话里的规则消息，并允许手动展开", async () => {

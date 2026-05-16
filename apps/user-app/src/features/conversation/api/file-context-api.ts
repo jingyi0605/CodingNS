@@ -98,6 +98,18 @@ export interface FilePreviewLinkDto {
   expiresAt: string;
 }
 
+export function getOfficeArtifactPreviewLink(artifactId: string) {
+  return httpClient.request<FilePreviewLinkDto>(
+    `/api/office/artifacts/${encodeURIComponent(artifactId)}/preview-link`
+  );
+}
+
+export function getOfficeTaskFilePreviewLink(taskId: string, fileName: string) {
+  return httpClient.request<FilePreviewLinkDto>(
+    `/api/office/tasks/${encodeURIComponent(taskId)}/files/${encodeURIComponent(fileName)}/preview-link`
+  );
+}
+
 export interface FileContextBindingDto {
   id: string;
   sessionId: string;

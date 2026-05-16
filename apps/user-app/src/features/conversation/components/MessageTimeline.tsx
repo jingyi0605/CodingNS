@@ -29,6 +29,11 @@ import { usePlatform } from "../../../platform/platform-provider";
 import { getButlerFollowUpTask, type ButlerFollowUpTaskDto } from "../../butler/api/butler-api";
 import { getSessionAttachmentBlob } from "../api/conversation-api";
 import {
+  getFilePreviewLink,
+  getOfficeArtifactPreviewLink,
+  getOfficeTaskFilePreviewLink
+} from "../api/file-context-api";
+import {
   extractApplyPatchPathsFromToolOutput,
   getApplyPatchDisplayName,
   normalizeApplyPatchPreviewInput,
@@ -55,7 +60,6 @@ import {
   readPersistedConversationScrollState
 } from "./conversation-scroll-persistence";
 import { useTransientScrollbarVisibility } from "./useTransientScrollbarVisibility";
-import { getFilePreviewLink } from "../api/file-context-api";
 import {
   extractConversationTimelineMessages,
   findConversationTimelineRuntimeThinkingLabel,
@@ -408,6 +412,63 @@ function resolveWorkspaceRelativePathFromHref(
   }
 
   return normalizeRelativePath(candidatePath);
+}
+
+function resolveOfficeArtifactPreviewTargetFromHref(href: string): { kind: "artifact"; artifactId: string } | {
+  kind: "task_file";
+  taskId: string;
+  fileName: string;
+} | null {
+  const decodedHref = decodeMarkdownHref(href).trim();
+
+  if (!decodedHref || decodedHref.startsWith("#")) {
+    return null;
+  }
+
+  let candidatePath = decodedHref;
+
+  if (/^file:\/\//i.test(candidatePath)) {
+    try {
+      candidatePath = decodeURIComponent(new URL(candidatePath).pathname);
+      if (/^\/[a-zA-Z]:\//.test(candidatePath)) {
+        candidatePath = candidatePath.slice(1);
+      }
+    } catch {
+      return null;
+    }
+  } else if (/^https?:\/\//i.test(candidatePath)) {
+    try {
+      candidatePath = decodeURIComponent(new URL(candidatePath).pathname);
+    } catch {
+      return null;
+    }
+  } else if (looksLikeExternalProtocol(candidatePath)) {
+    return null;
+  }
+
+  const normalizedPath = normalizeMessagePathSeparators(stripFileReferenceDecorations(candidatePath));
+  const match = normalizedPath.match(
+    /(?:^|\/)office-artifacts\/[^/]+\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-[^/]+$/i
+  );
+
+  if (!match?.[1]) {
+    const legacyFileMatch = normalizedPath.match(/(?:^|\/)office-artifacts\/([^/]+)\/([^/]+)$/i);
+
+    if (!legacyFileMatch?.[1] || !legacyFileMatch?.[2]) {
+      return null;
+    }
+
+    return {
+      kind: "task_file",
+      taskId: legacyFileMatch[1],
+      fileName: legacyFileMatch[2]
+    };
+  }
+
+  return {
+    kind: "artifact",
+    artifactId: match[1]
+  };
 }
 
 function readViewImageToolPath(tool: ResolvedToolCall): string | null {
@@ -2610,12 +2671,155 @@ function MessageMarkdownBody({
   const { showToast } = useToast();
   const platform = usePlatform();
   const { navigationGroups, currentWorkspaceId, revealWorkspaceFile } = useWorkbenchShell();
+  const [markdownImagePreviewSources, setMarkdownImagePreviewSources] = useState<Record<string, string>>({});
   const currentWorkspace = useMemo(
     () =>
       navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace
       ?? null,
     [currentWorkspaceId, navigationGroups]
   );
+  const normalizedWorkspacePath = currentWorkspace?.path
+    ? trimTrailingSlashes(normalizeMessagePathSeparators(currentWorkspace.path.trim()))
+    : null;
+
+  useEffect(() => {
+    const markdownImageMatches = Array.from(
+      content.matchAll(/!\[[^\]]*]\(([^)\s]+(?:\s+"[^"]*")?)\)|<img\b[^>]*src=["']([^"']+)["'][^>]*>/gi)
+    );
+    const markdownImageUrls = markdownImageMatches
+      .map((match) => (match[1] ?? match[2] ?? "").trim())
+      .filter((value) => value.length > 0);
+
+    if (markdownImageUrls.length === 0) {
+      setMarkdownImagePreviewSources({});
+      return;
+    }
+
+    const directPreviewTargets = Array.from(
+      new Map(
+        markdownImageUrls
+          .map((rawUrl) => {
+            const sourceUrl = rawUrl.replace(/^<|>$/g, "").replace(/\s+"[^"]*"$/, "");
+
+            if (!sourceUrl || sourceUrl.startsWith("#")) {
+              return null;
+            }
+
+            const officeArtifactPreviewTarget = resolveOfficeArtifactPreviewTargetFromHref(sourceUrl);
+
+            if (officeArtifactPreviewTarget) {
+              return [sourceUrl, officeArtifactPreviewTarget] as const;
+            }
+
+            return null;
+          })
+          .filter((item): item is readonly [string, { kind: "artifact"; artifactId: string } | {
+            kind: "task_file";
+            taskId: string;
+            fileName: string;
+          }] => item !== null)
+      )
+    );
+    const directPreviewSourceUrls = new Set(directPreviewTargets.map(([sourceUrl]) => sourceUrl));
+
+    const imageCandidates = Array.from(
+      new Map(
+        markdownImageUrls
+          .map((rawUrl) => {
+            const sourceUrl = rawUrl.replace(/^<|>$/g, "").replace(/\s+"[^"]*"$/, "");
+
+            if (!sourceUrl || sourceUrl.startsWith("#")) {
+              return null;
+            }
+
+            if (directPreviewSourceUrls.has(sourceUrl)) {
+              return null;
+            }
+
+            if (/^data:image\//i.test(sourceUrl) || /^https?:\/\//i.test(sourceUrl)) {
+              return null;
+            }
+
+            if (!currentWorkspaceId || !normalizedWorkspacePath) {
+              return null;
+            }
+
+            const relativePath = resolveWorkspaceRelativePathFromHref(sourceUrl, normalizedWorkspacePath);
+
+            if (!relativePath) {
+              return null;
+            }
+
+            return [sourceUrl, relativePath] as const;
+          })
+          .filter((item): item is readonly [string, string] => item !== null)
+      ).entries()
+    ).map(([sourceUrl, relativePath]) => ({
+      sourceUrl,
+      relativePath
+    }));
+
+    let cancelled = false;
+
+    void Promise.all([
+      ...directPreviewTargets.map(async ([sourceUrl, target]) => {
+        try {
+          const previewLink = target.kind === "artifact"
+            ? await getOfficeArtifactPreviewLink(target.artifactId)
+            : await getOfficeTaskFilePreviewLink(target.taskId, target.fileName);
+          const resolvedUrl = resolveToolImagePreviewAccessUrl(
+            previewLink.previewPath,
+            previewLink.previewUrl,
+            platform.isDesktop
+          );
+
+          if (!resolvedUrl) {
+            return null;
+          }
+
+          return [sourceUrl, resolvedUrl] as const;
+        } catch {
+          return null;
+        }
+      }),
+      ...imageCandidates.map(async (candidate) => {
+        try {
+          if (!currentWorkspaceId) {
+            return null;
+          }
+
+          const previewLink = await getFilePreviewLink(currentWorkspaceId, candidate.relativePath);
+          const resolvedUrl = resolveToolImagePreviewAccessUrl(
+            previewLink.previewPath,
+            previewLink.previewUrl,
+            platform.isDesktop
+          );
+
+          if (!resolvedUrl) {
+            return null;
+          }
+
+          return [candidate.sourceUrl, resolvedUrl] as const;
+        } catch {
+          return null;
+        }
+      })
+    ]).then((results) => {
+      if (cancelled) {
+        return;
+      }
+
+      setMarkdownImagePreviewSources(
+        Object.fromEntries([
+          ...results.filter((entry): entry is readonly [string, string] => entry !== null)
+        ])
+      );
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [content, currentWorkspaceId, normalizedWorkspacePath, platform.isDesktop]);
 
   async function handleCopyText(text: string) {
     if (!text.trim()) {
@@ -2673,6 +2877,25 @@ function MessageMarkdownBody({
               >
                 {props.children}
               </InteractiveMessageLink>
+            );
+          },
+          img(props) {
+            const rawSrc = typeof props.src === "string" ? props.src.trim() : "";
+            const resolvedSrc = markdownImagePreviewSources[rawSrc] ?? rawSrc;
+            const altText = typeof props.alt === "string" ? props.alt : "";
+
+            if (!resolvedSrc) {
+              return null;
+            }
+
+            return (
+              <img
+                src={resolvedSrc}
+                alt={altText}
+                className="message-markdown-image"
+                loading="lazy"
+                decoding="async"
+              />
             );
           },
           pre(props) {
