@@ -9665,6 +9665,17 @@ textarea:focus-visible {
   margin-top: 8px;
 }
 
+.message-markdown-image {
+  display: block;
+  max-width: min(100%, 320px);
+  max-height: 360px;
+  margin-top: 10px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
+  background: color-mix(in srgb, var(--bg-hover) 72%, transparent);
+  object-fit: contain;
+}
+
 .message-time {
   padding: 0;
   font-size: 11px;
@@ -17565,6 +17576,7 @@ textarea:focus-visible {
   gap: 12px;
   flex: 1 1 auto;
   min-height: 0;
+  align-items: stretch;
 }
 
 .static-html-presentation-sidebar,
@@ -17779,8 +17791,11 @@ textarea:focus-visible {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  padding: 14px;
+  padding: 0 0 14px;
   gap: 12px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
 .static-html-presentation-stage-header {
@@ -17797,16 +17812,73 @@ textarea:focus-visible {
   line-height: 1.4;
 }
 
+.static-html-presentation-toolbar-panel,
+.static-html-presentation-content-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 84%, transparent);
+}
+
+.static-html-presentation-toolbar-panel {
+  flex: 0 0 auto;
+  height: 150px;
+  min-height: 150px;
+  max-height: 150px;
+  overflow: hidden;
+}
+
+.static-html-presentation-toolbar-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  padding: 6px 8px 0;
+}
+
+.static-html-presentation-toolbar-panel-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 4px 8px 6px;
+}
+
+.static-html-presentation-toolbar-viewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.static-html-presentation-toolbar-scale-shell {
+  transform-origin: top left;
+  will-change: transform;
+}
+
+.static-html-presentation-content-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .static-html-presentation-toolbar {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 6px;
-  height: 88px;
-  min-height: 88px;
-  max-height: 88px;
-  padding: 10px 12px;
-  border-radius: 16px;
+  gap: 4px;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background:
     linear-gradient(180deg, rgba(50, 50, 52, 0.96), rgba(35, 35, 37, 0.98));
@@ -17827,13 +17899,107 @@ textarea:focus-visible {
   color: rgba(255, 255, 255, 0.72);
 }
 
+.static-html-presentation-mode-switch {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: fit-content;
+  padding: 2px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.static-html-presentation-mode-button {
+  min-height: 26px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.static-html-presentation-mode-button[data-active="true"] {
+  border: none;
+  border-color: rgba(76, 163, 255, 0.76);
+  background: rgba(76, 163, 255, 0.24);
+  color: #ffffff;
+}
+
+.static-html-presentation-layout-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.static-html-presentation-layout-toolbar-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.static-html-presentation-layout-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #f5f7fb;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.static-html-presentation-layout-action {
+  min-height: 28px;
+}
+
+.static-html-presentation-layout-form {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.static-html-presentation-layout-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 84px;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.static-html-presentation-layout-field input {
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: #f5f7fb;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.static-html-presentation-layout-hint {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .static-html-presentation-node-sidebar {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  padding: 10px 0 10px 10px;
   border-left: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
-  padding-left: 10px;
 }
 
 .static-html-presentation-node-sidebar-header {
@@ -17891,6 +18057,12 @@ textarea:focus-visible {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
+.static-html-presentation-node-chip[data-selected="true"] {
+  box-shadow:
+    inset 0 0 0 1px rgba(76, 163, 255, 0.24),
+    0 0 0 2px rgba(76, 163, 255, 0.12);
+}
+
 .static-html-presentation-node-chip[data-locked="true"] {
   opacity: 0.72;
 }
@@ -17912,12 +18084,27 @@ textarea:focus-visible {
   font-weight: 600;
 }
 
+.static-html-presentation-node-chip-status {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .static-html-presentation-workarea {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(120px, 10%);
   gap: 12px;
   flex: 1 1 auto;
   min-height: 0;
+  padding: 12px;
+}
+
+.static-html-presentation-canvas-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .static-html-presentation-frame-shell {
@@ -17953,6 +18140,78 @@ textarea:focus-visible {
   border-radius: 12px;
   background: #ffffff;
   box-shadow: 0 12px 40px color-mix(in srgb, #0f172a 12%, transparent);
+}
+
+.static-html-presentation-layout-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.static-html-presentation-layout-guide {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(94, 234, 212, 0.96);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.26),
+    0 0 10px rgba(94, 234, 212, 0.34);
+}
+
+.static-html-presentation-layout-box {
+  position: absolute;
+  border: 2px solid rgba(76, 163, 255, 0.82);
+  border-radius: 12px;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.48),
+    0 0 0 3px rgba(76, 163, 255, 0.18);
+  pointer-events: auto;
+  cursor: move;
+}
+
+.static-html-presentation-layout-box-hover {
+  border-color: rgba(96, 165, 250, 0.72);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.3),
+    0 0 0 4px rgba(96, 165, 250, 0.16);
+}
+
+.static-html-presentation-layout-box[data-primary="true"] {
+  border-color: rgba(94, 234, 212, 0.88);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.62),
+    0 0 0 4px rgba(94, 234, 212, 0.24),
+    0 10px 28px rgba(15, 23, 42, 0.16);
+}
+
+.static-html-presentation-layout-box[data-disabled="true"] {
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
+.static-html-presentation-layout-resize-handle {
+  position: absolute;
+  right: -10px;
+  bottom: -10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  background: rgba(76, 163, 255, 0.92);
+  box-shadow:
+    0 0 0 2px rgba(76, 163, 255, 0.22),
+    0 6px 16px rgba(15, 23, 42, 0.28);
+  cursor: nwse-resize;
+}
+
+.static-html-presentation-layout-resize-handle span {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #ffffff;
 }
 
 .static-html-presentation-inline-editor {
@@ -17991,13 +18250,10 @@ textarea:focus-visible {
 .static-html-presentation-inspector-empty {
   min-height: 0;
   border-radius: 16px;
-  border: none;
-  background: transparent;
-  box-shadow: none;
 }
 
 .static-html-presentation-inspector {
-  height: 100%;
+  height: auto;
   overflow: hidden;
 }
 
@@ -18012,7 +18268,7 @@ textarea:focus-visible {
 .static-html-presentation-inspector-panel {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  height: auto;
   padding: 0;
   overflow: hidden;
 }
@@ -18055,23 +18311,22 @@ textarea:focus-visible {
 .static-html-presentation-inspector-controls {
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 4px;
   width: 100%;
   min-width: 0;
-  height: 100%;
+  height: auto;
+  overflow: hidden;
 }
 
 .static-html-presentation-text-edit-row {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  flex: 0 0 auto;
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  min-height: 0;
-  height: 100%;
 }
 
 .static-html-presentation-inspector-panel[data-compact="true"] {
@@ -18085,19 +18340,20 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   flex: 0 0 auto;
-  min-width: max-content;
-  min-height: 0;
-  height: 100%;
+  min-width: 0;
+  min-height: auto;
+  height: auto;
   max-width: 100%;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .static-html-presentation-text-toolbar-row {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  flex-wrap: nowrap;
-  gap: 5px;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  gap: 4px;
   min-width: 0;
   overflow: visible;
   width: 100%;
@@ -18105,7 +18361,7 @@ textarea:focus-visible {
 }
 
 .static-html-presentation-text-toolbar-select {
-  height: 30px;
+  height: 28px;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.05);
@@ -18123,9 +18379,9 @@ textarea:focus-visible {
 }
 
 .static-html-presentation-text-toolbar-font {
-  width: 160px;
-  min-width: 160px;
-  max-width: 160px;
+  width: 140px;
+  min-width: 140px;
+  max-width: 140px;
 }
 
 .static-html-presentation-text-toolbar-size,
@@ -18139,7 +18395,7 @@ textarea:focus-visible {
 .static-html-presentation-text-toolbar-button {
   min-width: 36px;
   width: 36px;
-  height: 30px;
+  height: 28px;
   padding: 0;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -18176,18 +18432,18 @@ textarea:focus-visible {
   justify-content: center;
   width: 36px;
   min-width: 36px;
-  height: 30px;
+  height: 28px;
   padding: 0;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid color-mix(in srgb, var(--border-primary) 84%, transparent);
+  background: color-mix(in srgb, var(--bg-hover) 72%, transparent);
   cursor: pointer;
   flex: 0 0 auto;
 }
 
 .static-html-presentation-text-toolbar-color-label {
   position: relative;
-  color: rgba(31, 41, 55, 0.92);
+  color: color-mix(in srgb, var(--text-primary) 88%, var(--bg-surface));
   font-size: 14px;
   font-weight: 700;
   line-height: 1;
@@ -18206,7 +18462,7 @@ textarea:focus-visible {
 }
 
 .static-html-presentation-text-toolbar-color-label-fill::after {
-  background: var(--static-html-toolbar-color, rgba(255, 255, 255, 0.86));
+  background: var(--static-html-toolbar-color, color-mix(in srgb, var(--text-primary) 82%, var(--bg-surface)));
 }
 
 .static-html-presentation-text-toolbar-color input[type="color"] {
@@ -18225,25 +18481,25 @@ textarea:focus-visible {
 
 .static-html-presentation-inspector-panel[data-compact="true"] .static-html-presentation-inspector-controls[data-compact="true"] {
   display: flex;
-  align-items: center;
-  flex-wrap: nowrap;
-  gap: 8px;
-  flex: 1 1 auto;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: 0 0 auto;
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  min-height: 0;
-  overflow: hidden;
+  min-height: auto;
+  overflow: visible;
   padding-bottom: 0;
 }
 
 .static-html-presentation-inspector-panel[data-compact="true"] .static-html-presentation-textarea {
-  min-height: 52px;
-  height: 52px;
-  max-height: 52px;
+  min-height: 44px;
+  height: 44px;
+  max-height: 56px;
   width: 100%;
-  padding: 7px 10px;
-  font-size: 13px;
+  padding: 6px 9px;
+  font-size: 12px;
   line-height: 1.4;
   resize: none;
   overflow: auto;
@@ -18257,7 +18513,7 @@ textarea:focus-visible {
   min-height: 0;
   align-self: center;
   height: 52px;
-  max-height: 52px;
+  max-height: 56px;
   overflow: hidden;
 }
 
@@ -18355,15 +18611,25 @@ textarea:focus-visible {
     max-width: 136px;
   }
 
+  .static-html-presentation-layout-form {
+    gap: 4px;
+  }
+
 }
 
 @media (max-width: 1024px) {
   .static-html-presentation-toolbar {
     gap: 8px;
-    height: 128px;
-    min-height: 128px;
-    max-height: 128px;
-    padding: 10px;
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    padding: 8px;
+  }
+
+  .static-html-presentation-toolbar-panel {
+    height: 150px;
+    min-height: 150px;
+    max-height: 150px;
   }
 
   .static-html-presentation-workarea {
@@ -18373,8 +18639,7 @@ textarea:focus-visible {
   .static-html-presentation-node-sidebar {
     border-left: none;
     border-top: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
-    padding-left: 0;
-    padding-top: 10px;
+    padding: 10px 0 0;
   }
 
   .static-html-presentation-node-strip {

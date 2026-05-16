@@ -82,6 +82,7 @@ const BLOCK_KEYWORDS = [
 ];
 
 const STYLE_KEY_TO_CSS_PROPERTY: Record<keyof DocumentNodeStyle, string> = {
+  position: "position",
   fontFamily: "font-family",
   fontSize: "font-size",
   fontWeight: "font-weight",
@@ -202,7 +203,10 @@ export function buildStaticHtmlDocumentProject(input: {
         pageIndex: index,
         pageSelector,
         nodePath: mainContainerPath
-      }
+      },
+      runtimeFlags: mainContainer.hasAttribute("data-cns-layout-freeze")
+        ? ["layout-freeze-container"]
+        : []
     });
 
     collectChildNodes({
@@ -546,6 +550,9 @@ function buildStaticHtmlDocumentFromProject(input: {
     bridgeScript.textContent = `
     (() => {
       const eventTypes = ["pointerdown", "click", "dblclick"];
+      let layoutModeEnabled = false;
+      let activeLayoutPointer = null;
+      let layoutHoveredNodeId = null;
       const parsePixelValue = (value) => {
         if (!value) {
           return 0;
@@ -679,6 +686,39 @@ function buildStaticHtmlDocumentFromProject(input: {
 
         return null;
       };
+      const resolveLayoutMeasurementElement = (nodeId) => {
+        const hostElement = document.querySelector('[data-cns-node-host-id="' + CSS.escape(nodeId) + '"]');
+
+        if (hostElement instanceof HTMLElement) {
+          return hostElement;
+        }
+
+        const element = document.querySelector('[data-cns-node-id="' + CSS.escape(nodeId) + '"]');
+
+        if (!(element instanceof HTMLElement)) {
+          return null;
+        }
+
+        if (element.parentElement?.getAttribute("data-cns-node-host") === "true") {
+          return element.parentElement;
+        }
+
+        const hostParent = element.closest('[data-cns-node-host="true"]');
+        return hostParent instanceof HTMLElement ? hostParent : element;
+      };
+      const resolveLayoutParentElement = (element) => {
+        if (!(element instanceof HTMLElement)) {
+          return document.body instanceof HTMLElement ? document.body : null;
+        }
+
+        const positionedParent = element.offsetParent;
+
+        if (positionedParent instanceof HTMLElement) {
+          return positionedParent;
+        }
+
+        return document.body instanceof HTMLElement ? document.body : null;
+      };
 
       const handler = (event) => {
         const element = resolveElement(event.target);
@@ -708,6 +748,8 @@ function buildStaticHtmlDocumentFromProject(input: {
           nodeId,
           runIndex: Number.isInteger(runIndex) ? runIndex : null,
           eventType: event.type,
+          metaKey: Boolean(event.metaKey),
+          ctrlKey: Boolean(event.ctrlKey),
           rect: editableRect.rect
             ? {
                 left: editableRect.rect.left,
@@ -741,9 +783,77 @@ function buildStaticHtmlDocumentFromProject(input: {
         };
 
         window.parent?.postMessage(payload, "*");
+
+        if (layoutModeEnabled && event.type === "pointerdown") {
+          if (typeof matched.setPointerCapture === "function" && typeof event.pointerId === "number") {
+            try {
+              matched.setPointerCapture(event.pointerId);
+            } catch {
+              // ignore setPointerCapture failures
+            }
+          }
+
+          activeLayoutPointer = {
+            pointerId: typeof event.pointerId === "number" ? event.pointerId : null,
+            nodeId
+          };
+
+          window.parent?.postMessage({
+            type: "codingns-static-html-layout-pointer",
+            phase: "start",
+            nodeId,
+            clientX: event.clientX,
+            clientY: event.clientY,
+            metaKey: Boolean(event.metaKey),
+            ctrlKey: Boolean(event.ctrlKey)
+          }, "*");
+
+          event.preventDefault();
+        }
+      };
+
+      const handlePointerOver = (event) => {
+        if (!layoutModeEnabled) {
+          return;
+        }
+
+        const element = resolveElement(event.target);
+        const matched = element?.closest ? element.closest("[data-cns-node-id]") : null;
+        const nodeId = matched?.getAttribute("data-cns-node-id")?.trim() || null;
+
+        if (nodeId === layoutHoveredNodeId) {
+          return;
+        }
+
+        layoutHoveredNodeId = nodeId;
+        window.parent?.postMessage({
+          type: "codingns-static-html-layout-hover",
+          nodeId: nodeId || ""
+        }, "*");
+      };
+
+      const handlePointerLeaveViewport = () => {
+        if (!layoutModeEnabled || !layoutHoveredNodeId) {
+          return;
+        }
+
+        layoutHoveredNodeId = null;
+        window.parent?.postMessage({
+          type: "codingns-static-html-layout-hover",
+          nodeId: ""
+        }, "*");
       };
 
       const syncSelectionState = (payload) => {
+        layoutModeEnabled = Boolean(payload?.layoutModeEnabled);
+        layoutHoveredNodeId = typeof payload?.layoutHoveredNodeId === "string" && payload.layoutHoveredNodeId.trim()
+          ? payload.layoutHoveredNodeId.trim()
+          : null;
+        if (!layoutModeEnabled) {
+          activeLayoutPointer = null;
+          layoutHoveredNodeId = null;
+        }
+
         const selectedNodeId = typeof payload?.selectedNodeId === "string" && payload.selectedNodeId.trim()
           ? payload.selectedNodeId.trim()
           : null;
@@ -753,6 +863,9 @@ function buildStaticHtmlDocumentFromProject(input: {
         const inlineEditingNodeId = typeof payload?.inlineEditingNodeId === "string" && payload.inlineEditingNodeId.trim()
           ? payload.inlineEditingNodeId.trim()
           : null;
+        const layoutSelectedNodeIds = Array.isArray(payload?.layoutSelectedNodeIds)
+          ? payload.layoutSelectedNodeIds.filter((value) => typeof value === "string" && value.trim()).map((value) => value.trim())
+          : [];
 
         document.querySelectorAll("[data-cns-node-selected]").forEach((element) => {
           if (element.getAttribute("data-cns-node-id") !== selectedNodeId) {
@@ -784,6 +897,34 @@ function buildStaticHtmlDocumentFromProject(input: {
           }
         }
 
+        document.querySelectorAll("[data-cns-layout-selected]").forEach((element) => {
+          if (!layoutSelectedNodeIds.includes(element.getAttribute("data-cns-node-id") || "")) {
+            element.removeAttribute("data-cns-layout-selected");
+          }
+        });
+
+        document.querySelectorAll("[data-cns-layout-hovered]").forEach((element) => {
+          if (element.getAttribute("data-cns-node-id") !== layoutHoveredNodeId) {
+            element.removeAttribute("data-cns-layout-hovered");
+          }
+        });
+
+        layoutSelectedNodeIds.forEach((nodeId) => {
+          const layoutElement = resolveLayoutMeasurementElement(nodeId);
+
+          if (layoutElement) {
+            layoutElement.setAttribute("data-cns-layout-selected", "true");
+          }
+        });
+
+        if (layoutHoveredNodeId) {
+          const hoveredElement = resolveLayoutMeasurementElement(layoutHoveredNodeId);
+
+          if (hoveredElement) {
+            hoveredElement.setAttribute("data-cns-layout-hovered", "true");
+          }
+        }
+
         if (inlineEditingNodeId) {
           const editingElement = document.querySelector('[data-cns-node-id="' + CSS.escape(inlineEditingNodeId) + '"]');
 
@@ -793,9 +934,100 @@ function buildStaticHtmlDocumentFromProject(input: {
         }
       };
 
+      const postLayoutMeasurements = (payload) => {
+        const nodeIds = Array.isArray(payload?.nodeIds)
+          ? payload.nodeIds.filter((value) => typeof value === "string" && value.trim()).map((value) => value.trim())
+          : [];
+
+        const measurements = nodeIds
+          .map((nodeId) => {
+            const element = resolveLayoutMeasurementElement(nodeId);
+
+            if (!(element instanceof HTMLElement)) {
+              return null;
+            }
+
+            const rect = element.getBoundingClientRect();
+            const parentElement = resolveLayoutParentElement(element);
+            const parentRect = parentElement?.getBoundingClientRect?.() ?? null;
+            const viewportRect = document.documentElement?.getBoundingClientRect?.() ?? null;
+            const localLeft = element.offsetLeft;
+            const localTop = element.offsetTop;
+            const absoluteLeft = viewportRect ? rect.left - viewportRect.left : rect.left;
+            const absoluteTop = viewportRect ? rect.top - viewportRect.top : rect.top;
+            const parentLeft = parentRect ? rect.left - parentRect.left : localLeft;
+            const parentTop = parentRect ? rect.top - parentRect.top : localTop;
+
+            return {
+              nodeId,
+              left: absoluteLeft,
+              top: absoluteTop,
+              width: rect.width,
+              height: rect.height,
+              localLeft: Number.isFinite(localLeft) ? localLeft : parentLeft,
+              localTop: Number.isFinite(localTop) ? localTop : parentTop
+            };
+          })
+          .filter(Boolean);
+
+        window.parent?.postMessage({
+          type: "codingns-static-html-layout-measurements",
+          measurements
+        }, "*");
+      };
+
       eventTypes.forEach((eventType) => {
         document.addEventListener(eventType, handler, true);
       });
+
+      document.addEventListener("pointerover", handlePointerOver, true);
+      document.addEventListener("pointerleave", handlePointerLeaveViewport, true);
+
+      document.addEventListener("pointermove", (event) => {
+        if (!layoutModeEnabled || !activeLayoutPointer) {
+          return;
+        }
+
+        if (typeof activeLayoutPointer.pointerId === "number" && event.pointerId !== activeLayoutPointer.pointerId) {
+          return;
+        }
+
+        window.parent?.postMessage({
+          type: "codingns-static-html-layout-pointer",
+          phase: "move",
+          nodeId: activeLayoutPointer.nodeId,
+          clientX: event.clientX,
+          clientY: event.clientY
+        }, "*");
+      }, true);
+
+      const finishLayoutPointer = (event, phase) => {
+        if (!activeLayoutPointer) {
+          return;
+        }
+
+        if (typeof activeLayoutPointer.pointerId === "number" && event.pointerId !== activeLayoutPointer.pointerId) {
+          return;
+        }
+
+        window.parent?.postMessage({
+          type: "codingns-static-html-layout-pointer",
+          phase,
+          nodeId: activeLayoutPointer.nodeId,
+          clientX: event.clientX,
+          clientY: event.clientY
+        }, "*");
+
+        activeLayoutPointer = null;
+      };
+
+      document.addEventListener("pointerup", (event) => {
+        finishLayoutPointer(event, "end");
+      }, true);
+
+      document.addEventListener("pointercancel", (event) => {
+        finishLayoutPointer(event, "cancel");
+      }, true);
 
       window.addEventListener("message", (event) => {
         const payload = event.data;
@@ -805,6 +1037,10 @@ function buildStaticHtmlDocumentFromProject(input: {
         }
 
         if (payload.type !== "codingns-static-html-selection-sync") {
+          if (payload.type === "codingns-static-html-layout-measure-request") {
+            postLayoutMeasurements(payload);
+          }
+
           return;
         }
 
@@ -899,6 +1135,41 @@ export function updateProjectNode(
       ...project.nodes,
       [nodeId]: updater(currentNode)
     }
+  };
+}
+
+export function updateProjectNodes(
+  project: DocumentProject,
+  nodeIds: string[],
+  updater: (node: DocumentNode, nodeId: string) => DocumentNode
+): DocumentProject {
+  if (nodeIds.length === 0) {
+    return project;
+  }
+
+  const nextNodes = {
+    ...project.nodes
+  };
+  let changed = false;
+
+  nodeIds.forEach((nodeId) => {
+    const currentNode = nextNodes[nodeId];
+
+    if (!currentNode) {
+      return;
+    }
+
+    nextNodes[nodeId] = updater(currentNode, nodeId);
+    changed = true;
+  });
+
+  if (!changed) {
+    return project;
+  }
+
+  return {
+    ...project,
+    nodes: nextNodes
   };
 }
 
@@ -1701,7 +1972,22 @@ function collectChildNodes(input: {
       return;
     }
 
-    nodes[childNode.id] = childNode;
+    const nextRuntimeFlags = [...childNode.runtimeFlags];
+
+    if (containerElement.hasAttribute("data-cns-layout-freeze") && !nextRuntimeFlags.includes("layout-freeze-child")) {
+      nextRuntimeFlags.push("layout-freeze-child");
+    }
+
+    if (childElement.hasAttribute("data-cns-layout-freeze") && !nextRuntimeFlags.includes("layout-freeze-container")) {
+      nextRuntimeFlags.push("layout-freeze-container");
+    }
+
+    nodes[childNode.id] = nextRuntimeFlags.length === childNode.runtimeFlags.length
+      ? childNode
+      : {
+          ...childNode,
+          runtimeFlags: nextRuntimeFlags
+        };
     nodes[parentNodeId]?.children.push(childNode.id);
 
     if (childNode.type === "group") {
@@ -1867,6 +2153,7 @@ function createGroupNode(input: {
   id: string;
   name: string;
   sourceRef: SourceRef | null;
+  runtimeFlags?: string[];
 }): DocumentNode {
   return {
     id: input.id,
@@ -1880,7 +2167,7 @@ function createGroupNode(input: {
     children: [],
     sourceRef: input.sourceRef,
     patchStrategy: "style_only",
-    runtimeFlags: []
+    runtimeFlags: input.runtimeFlags ?? []
   };
 }
 
@@ -2037,6 +2324,7 @@ function readInlineStyle(element: Element): DocumentNodeStyle {
   const styleMap = readInlineStyleMap(element);
 
   return {
+    position: styleMap.get("position") ?? null,
     fontFamily: styleMap.get("font-family") ?? null,
     fontSize: parsePixelValue(styleMap.get("font-size")),
     fontWeight: styleMap.get("font-weight") ?? null,
@@ -2306,8 +2594,8 @@ function collectTextRuns(
 }
 
 function normalizeTextRuns(runs: DocumentTextRun[]): DocumentTextRun[] {
-  return runs
-    .map((run) => {
+  const normalizedRuns = runs
+    .map((run): DocumentTextRun | null => {
       const text = normalizeInlineTextContent(run.text);
 
       if (!text) {
@@ -2321,8 +2609,9 @@ function normalizeTextRuns(runs: DocumentTextRun[]): DocumentTextRun[] {
         style: run.style ?? null,
         sourceKind: run.sourceKind ?? null
       } satisfies DocumentTextRun;
-    })
-    .filter((run): run is DocumentTextRun => Boolean(run));
+    });
+
+  return normalizedRuns.filter((run): run is DocumentTextRun => run !== null);
 }
 
 function normalizeTextRunsText(runs: DocumentTextRun[]): string {
@@ -2466,6 +2755,7 @@ function applyDocumentNodeToElement(element: Element, node: DocumentNode) {
 
   applyNodeStyleToElement(element, node.style);
   applyNodeBoxToElement(element, node);
+  applyNodeRuntimeAttributes(element, node);
 }
 
 function applyTextRunsToElement(
@@ -2705,6 +2995,7 @@ function mountPreviewTextProxy(
   proxy.setAttribute("data-cns-text-proxy", "true");
   proxy.setAttribute("data-cns-node-id", node.id);
   element.setAttribute("data-cns-node-host", "true");
+  element.setAttribute("data-cns-node-host-id", node.id);
   element.removeAttribute("data-cns-node-id");
 
   if (options.selected) {
@@ -2837,6 +3128,18 @@ function applyNodeBoxToElement(
   }
 
   element.setAttribute("style", nextStyle);
+}
+
+function applyNodeRuntimeAttributes(
+  element: Element,
+  node: DocumentNode
+) {
+  if (hasRuntimeFlag(node, "layout-freeze-container")) {
+    element.setAttribute("data-cns-layout-freeze", "true");
+    return;
+  }
+
+  element.removeAttribute("data-cns-layout-freeze");
 }
 
 function mergeInlineStyle(
@@ -3172,6 +3475,7 @@ function clearPreviewArtifacts(document: Document) {
 
     parent.textContent = element.textContent ?? "";
     parent.removeAttribute("data-cns-node-host");
+    parent.removeAttribute("data-cns-node-host-id");
   });
 
   document.querySelectorAll("[data-cns-node-id]").forEach((element) => {
@@ -3188,6 +3492,7 @@ function clearPreviewArtifacts(document: Document) {
 
   document.querySelectorAll("[data-cns-node-host]").forEach((element) => {
     element.removeAttribute("data-cns-node-host");
+    element.removeAttribute("data-cns-node-host-id");
   });
 
   document.querySelectorAll("[data-cns-page-id]").forEach((element) => {

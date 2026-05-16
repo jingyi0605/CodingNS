@@ -2,23 +2,27 @@ import type { CSSProperties } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { t } from "../../shared/i18n";
-import type { DocumentNode, DocumentNodeStyle, DocumentProject, DocumentTextRun } from "./model";
+import type { DocumentNode, DocumentNodeBox, DocumentNodeStyle, DocumentProject, DocumentTextRun } from "./model";
+import { alignBoxes, applyBoxesToProject, clampLayoutBox, resolveBoundingBox, resolveBoxAnchorPoints } from "./layout";
 import {
   appendProjectPage,
   buildStaticHtmlDocumentProject,
   buildStaticHtmlPresentationPreviewFromProject,
+  duplicateProjectNode,
   duplicateProjectPage,
   inspectStaticHtmlPresentation,
   listPageNodeIds,
   moveProjectPageToIndex,
   removeProjectPage,
-  updateProjectNode
+  updateProjectNode,
+  updateProjectNodes
 } from "./parser";
 
 interface EditorHistoryEntry {
   project: DocumentProject;
   currentPageIndex: number;
   selectedNodeId: string | null;
+  selectedNodeIds: string[];
 }
 
 interface DragPreviewState {
@@ -60,6 +64,58 @@ interface RunsSelectionOffsets {
   end: number;
 }
 
+type EditorInteractionMode = "content" | "layout";
+
+interface LayoutCapability {
+  movable: boolean;
+  resizable: boolean;
+  alignable: boolean;
+  reason: string | null;
+  strictModeLocked: boolean;
+}
+
+interface LayoutNodeMeasurement {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  localLeft: number;
+  localTop: number;
+}
+
+interface LayoutGuideLine {
+  orientation: "vertical" | "horizontal";
+  position: number;
+  start: number;
+  end: number;
+}
+
+type LayoutGestureHandle = "move" | "resize-se";
+
+interface LayoutGestureState {
+  source: "overlay" | "iframe";
+  handle: LayoutGestureHandle;
+  nodeIds: string[];
+  pointerStartX: number;
+  pointerStartY: number;
+  activated: boolean;
+  startProject: DocumentProject;
+  startPageIndex: number;
+  pageNodeIds: string[];
+  referenceBoxes: Record<string, DocumentNodeBox>;
+  startSelectedNodeId: string | null;
+  startSelectedNodeIds: string[];
+  originBoxes: Record<string, {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    zIndex: number;
+  }>;
+}
+
+const LAYOUT_DRAG_ACTIVATION_DISTANCE = 4;
+
 export function StaticHtmlPresentationView({
   filePath,
   html,
@@ -82,9 +138,12 @@ export function StaticHtmlPresentationView({
     () => buildStaticHtmlDocumentProject({ html, filePath }),
     [filePath, html]
   );
-  const [project, setProject] = useState(initialProject);
+  const [draftProject, setDraftProject] = useState(initialProject);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
+  const [interactionMode, setInteractionMode] = useState<EditorInteractionMode>("content");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [selectedRunIndex, setSelectedRunIndex] = useState<number | null>(null);
   const [history, setHistory] = useState<EditorHistoryEntry[]>([]);
   const [draggingPageId, setDraggingPageId] = useState<string | null>(null);
@@ -94,9 +153,20 @@ export function StaticHtmlPresentationView({
   const frameStageRef = useRef<HTMLDivElement | null>(null);
   const frameShellRef = useRef<HTMLDivElement | null>(null);
   const inlineEditorRef = useRef<HTMLDivElement | null>(null);
+  const toolbarViewportRef = useRef<HTMLDivElement | null>(null);
+  const toolbarContentRef = useRef<HTMLDivElement | null>(null);
+  const projectRef = useRef<DocumentProject | null>(initialProject);
+  const frameScaleRef = useRef(1);
+  const layoutGestureRef = useRef<LayoutGestureState | null>(null);
+  const layoutPreviewBoxesRef = useRef<Record<string, DocumentNodeBox>>({});
   const historyCoalesceKeyRef = useRef<string | null>(null);
   const [frameScale, setFrameScale] = useState(1);
-  const currentProject = project;
+  const [toolbarScale, setToolbarScale] = useState(1);
+  const [layoutMeasurements, setLayoutMeasurements] = useState<Record<string, LayoutNodeMeasurement>>({});
+  const [layoutPreviewBoxes, setLayoutPreviewBoxes] = useState<Record<string, DocumentNodeBox>>({});
+  const [layoutGuideLines, setLayoutGuideLines] = useState<LayoutGuideLine[]>([]);
+  const [layoutGesture, setLayoutGesture] = useState<LayoutGestureState | null>(null);
+  const currentProject = draftProject;
   const currentPage = currentProject?.pages[currentPageIndex] ?? currentProject?.pages[0] ?? null;
   const pageNodeIds = useMemo(() => {
     if (!currentProject || !currentPage) {
@@ -107,40 +177,127 @@ export function StaticHtmlPresentationView({
   }, [currentPage, currentProject]);
 
   useEffect(() => {
-    setProject(initialProject);
+    setDraftProject(initialProject);
     setCurrentPageIndex(0);
+    setInteractionMode("content");
     setSelectedNodeId(null);
+    setSelectedNodeIds([]);
+    setHoveredNodeId(null);
     setSelectedRunIndex(null);
     setHistory([]);
     setDraggingPageId(null);
     setDragPreview(null);
     setInlineEditor(null);
+    setLayoutMeasurements({});
+    setLayoutPreviewBoxes({});
+    setLayoutGuideLines([]);
+    setLayoutGesture(null);
     historyCoalesceKeyRef.current = null;
   }, [initialProject]);
 
   useEffect(() => {
-    onProjectChange?.(project);
-  }, [onProjectChange, project]);
+    onProjectChange?.(draftProject);
+  }, [draftProject, onProjectChange]);
+
+  useEffect(() => {
+    projectRef.current = draftProject;
+  }, [draftProject]);
+
+  useEffect(() => {
+    frameScaleRef.current = frameScale;
+  }, [frameScale]);
+
+  useEffect(() => {
+    const viewport = toolbarViewportRef.current;
+    const content = toolbarContentRef.current;
+
+    if (!viewport || !content) {
+      setToolbarScale(1);
+      return;
+    }
+
+    const updateToolbarScale = () => {
+      const viewportWidth = viewport.clientWidth;
+      const viewportHeight = viewport.clientHeight;
+      const contentWidth = content.scrollWidth;
+      const contentHeight = content.scrollHeight;
+
+      if (viewportWidth <= 0 || viewportHeight <= 0 || contentWidth <= 0 || contentHeight <= 0) {
+        setToolbarScale(1);
+        return;
+      }
+
+      const widthScale = viewportWidth / contentWidth;
+      const heightScale = viewportHeight / contentHeight;
+      const nextScale = Math.min(1, widthScale, heightScale);
+      setToolbarScale((current) => Math.abs(current - nextScale) < 0.01 ? current : nextScale);
+    };
+
+    updateToolbarScale();
+
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      updateToolbarScale();
+    });
+
+    observer.observe(viewport);
+    observer.observe(content);
+    return () => {
+      observer.disconnect();
+    };
+  }, [interactionMode, selectedNodeId, selectedNodeIds, selectedRunIndex]);
+
+  useEffect(() => {
+    layoutGestureRef.current = layoutGesture;
+  }, [layoutGesture]);
+
+  useEffect(() => {
+    layoutPreviewBoxesRef.current = layoutPreviewBoxes;
+  }, [layoutPreviewBoxes]);
 
   useEffect(() => {
     if (!currentProject || !currentPage) {
       setSelectedNodeId(null);
+      setSelectedNodeIds([]);
+      setHoveredNodeId(null);
       setSelectedRunIndex(null);
       return;
+    }
+
+    const firstEditableNodeId = pageNodeIds.find((nodeId) => currentProject.nodes[nodeId]?.editable) ?? null;
+    const safeSelectedNodeIds = selectedNodeIds.filter((nodeId) => pageNodeIds.includes(nodeId));
+
+    if (safeSelectedNodeIds.length !== selectedNodeIds.length) {
+      setSelectedNodeIds(safeSelectedNodeIds);
+    }
+
+    if (hoveredNodeId && !pageNodeIds.includes(hoveredNodeId)) {
+      setHoveredNodeId(null);
     }
 
     if (selectedNodeId && pageNodeIds.includes(selectedNodeId)) {
       return;
     }
 
-    const firstEditableNodeId = pageNodeIds.find((nodeId) => currentProject.nodes[nodeId]?.editable) ?? null;
     setSelectedNodeId(firstEditableNodeId);
+    setSelectedNodeIds(firstEditableNodeId ? [firstEditableNodeId] : []);
     setSelectedRunIndex(null);
-  }, [currentPage, currentProject, pageNodeIds, selectedNodeId]);
+  }, [currentPage, currentProject, hoveredNodeId, pageNodeIds, selectedNodeId, selectedNodeIds]);
 
   const selectedNode = selectedNodeId && currentProject
     ? currentProject.nodes[selectedNodeId] ?? null
     : null;
+  const inspectorNode = interactionMode === "content" && selectedNode?.type === "html"
+    ? null
+    : selectedNode;
+  const selectedNodes = useMemo(() => (
+    selectedNodeIds
+      .map((nodeId) => currentProject?.nodes[nodeId] ?? null)
+      .filter((node): node is DocumentNode => Boolean(node))
+  ), [currentProject, selectedNodeIds]);
   const previewHtml = useMemo(() => {
     if (!currentProject) {
       return null;
@@ -183,6 +340,105 @@ export function StaticHtmlPresentationView({
         return;
       }
 
+      if (payload.type === "codingns-static-html-layout-pointer") {
+        const phase = typeof payload.phase === "string" ? payload.phase : "";
+        const nodeId = typeof payload.nodeId === "string" ? payload.nodeId.trim() : "";
+        const clientX = typeof payload.clientX === "number" ? payload.clientX : Number.NaN;
+        const clientY = typeof payload.clientY === "number" ? payload.clientY : Number.NaN;
+
+        if (!nodeId || !Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+          return;
+        }
+
+        if (phase === "start") {
+          if (interactionMode !== "layout") {
+            return;
+          }
+
+          const node = currentProject.nodes[nodeId];
+          const capability = resolveLayoutCapability(node);
+          const additive = Boolean(payload.metaKey) || Boolean(payload.ctrlKey);
+          const activeNodeIds = additive
+            ? (selectedNodeIds.includes(nodeId) ? selectedNodeIds : [...selectedNodeIds, nodeId])
+            : [nodeId];
+
+          setSelectedNodeId(nodeId);
+          setSelectedNodeIds(activeNodeIds);
+          setSelectedRunIndex(null);
+          setInlineEditor(null);
+
+          if (!capability.movable) {
+            return;
+          }
+
+          const originBoxes = Object.fromEntries(
+            activeNodeIds
+              .map((activeNodeId) => {
+                const activeNode = currentProject.nodes[activeNodeId];
+                return activeNode
+                  ? [activeNodeId, resolveNodeAbsoluteLayoutBox(activeNode, layoutMeasurements[activeNodeId])]
+                  : null;
+              })
+              .filter((entry): entry is [string, DocumentNodeBox] => Boolean(entry))
+          );
+          const referenceBoxes = Object.fromEntries(
+            pageNodeIds
+              .map((pageNodeId) => {
+                const pageNode = currentProject.nodes[pageNodeId];
+                return pageNode
+                  ? [pageNodeId, resolveNodeAbsoluteLayoutBox(pageNode, layoutMeasurements[pageNodeId])]
+                  : null;
+              })
+              .filter((entry): entry is [string, DocumentNodeBox] => Boolean(entry))
+          );
+
+          setLayoutGesture({
+            source: "iframe",
+            handle: "move",
+            nodeIds: activeNodeIds,
+            pointerStartX: clientX,
+            pointerStartY: clientY,
+            activated: false,
+            startProject: currentProject,
+            startPageIndex: currentPageIndex,
+            pageNodeIds,
+            referenceBoxes,
+            startSelectedNodeId: selectedNodeId,
+            startSelectedNodeIds: selectedNodeIds,
+            originBoxes
+          });
+          return;
+        }
+
+        const currentGesture = layoutGestureRef.current;
+
+        if (!currentGesture || currentGesture.source !== "iframe") {
+          return;
+        }
+
+        if (phase === "move") {
+          applyLayoutGestureDelta(currentGesture, clientX, clientY);
+          return;
+        }
+
+        if (phase === "end" || phase === "cancel") {
+          finishLayoutGesture(currentGesture);
+          return;
+        }
+
+        return;
+      }
+
+      if (payload.type === "codingns-static-html-layout-hover") {
+        if (interactionMode !== "layout") {
+          return;
+        }
+
+        const nodeId = typeof payload.nodeId === "string" ? payload.nodeId.trim() : "";
+        setHoveredNodeId(nodeId || null);
+        return;
+      }
+
       if (payload.type !== "codingns-static-html-node-select") {
         return;
       }
@@ -200,15 +456,52 @@ export function StaticHtmlPresentationView({
         listPageNodeIds(currentProject, page.id).includes(nodeId)
       );
 
-                      if (matchedPageIndex >= 0 && matchedPageIndex !== currentPageIndex) {
-                        setCurrentPageIndex(matchedPageIndex);
-                      }
+      if (matchedPageIndex >= 0 && matchedPageIndex !== currentPageIndex) {
+        setCurrentPageIndex(matchedPageIndex);
+      }
 
-                      setSelectedNodeId(nodeId);
-                      setSelectedRunIndex(runIndex);
+      const node = currentProject.nodes[nodeId];
+
+      if (!node) {
+        return;
+      }
+
+      if (interactionMode === "layout") {
+        if (node.type === "html") {
+          return;
+        }
+
+        const capability = resolveLayoutCapability(node);
+        if (capability.movable || capability.resizable || capability.alignable) {
+          const additive = payload.eventType === "click" && (Boolean(payload.metaKey) || Boolean(payload.ctrlKey));
+          setSelectedNodeIds((current) => {
+            if (!additive) {
+              return [nodeId];
+            }
+
+            if (current.includes(nodeId)) {
+              const filtered = current.filter((item) => item !== nodeId);
+              return filtered.length > 0 ? filtered : [nodeId];
+            }
+
+            return [...current, nodeId];
+          });
+        }
+        setSelectedNodeId(nodeId);
+        setSelectedRunIndex(null);
+        setInlineEditor(null);
+        return;
+      }
+
+      if (node.type === "html") {
+        return;
+      }
+
+      setSelectedNodeId(nodeId);
+      setSelectedNodeIds([nodeId]);
+      setSelectedRunIndex(runIndex);
 
       if (payload.eventType === "dblclick") {
-        const node = currentProject.nodes[nodeId];
         const hasMultipleRuns = Array.isArray(node?.content.runs) && node.content.runs.length > 1;
         const isInlineEditable = node?.editable && (node.type === "text" || typeof node.content.text === "string");
         const rect = isMessageRect(payload.rect) ? payload.rect : null;
@@ -233,7 +526,7 @@ export function StaticHtmlPresentationView({
     return () => {
       window.removeEventListener("message", handleWindowMessage);
     };
-  }, [currentPageIndex, currentProject, previewHtml]);
+  }, [currentPageIndex, currentProject, interactionMode, layoutMeasurements, previewHtml, selectedNodeId, selectedNodeIds]);
 
   useEffect(() => {
     const frameWindow = frameRef.current?.contentWindow;
@@ -247,11 +540,14 @@ export function StaticHtmlPresentationView({
         type: "codingns-static-html-selection-sync",
         selectedNodeId,
         selectedRunIndex,
-        inlineEditingNodeId: inlineEditor?.nodeId ?? null
+        inlineEditingNodeId: inlineEditor?.nodeId ?? null,
+        layoutModeEnabled: interactionMode === "layout",
+        layoutHoveredNodeId: interactionMode === "layout" ? hoveredNodeId : null,
+        layoutSelectedNodeIds: interactionMode === "layout" ? selectedNodeIds : []
       },
       "*"
     );
-  }, [inlineEditor?.nodeId, previewHtml, selectedNodeId, selectedRunIndex]);
+  }, [hoveredNodeId, inlineEditor?.nodeId, interactionMode, previewHtml, selectedNodeId, selectedNodeIds, selectedRunIndex]);
 
   const currentPageId = currentPage?.id ?? null;
   const canUndo = history.length > 0;
@@ -265,11 +561,15 @@ export function StaticHtmlPresentationView({
 
     historyCoalesceKeyRef.current = null;
     setHistory((current) => current.slice(0, -1));
-    setProject(previousEntry.project);
+    setDraftProject(previousEntry.project);
+    setLayoutPreviewBoxes({});
+    setLayoutGuideLines([]);
     setCurrentPageIndex(previousEntry.currentPageIndex);
     setSelectedNodeId(previousEntry.selectedNodeId);
+    setSelectedNodeIds(previousEntry.selectedNodeId ? [previousEntry.selectedNodeId] : previousEntry.selectedNodeIds);
     setSelectedRunIndex(null);
     setInlineEditor(null);
+    setLayoutGesture(null);
   }
 
   useEffect(() => {
@@ -433,19 +733,32 @@ export function StaticHtmlPresentationView({
     options?: {
       focusPageId?: string | null;
       selectedNodeId?: string | null;
+      selectedNodeIds?: string[];
     }
   ) {
-    setProject(nextProject);
+    setDraftProject(nextProject);
+    setLayoutPreviewBoxes({});
+    setLayoutGuideLines([]);
 
     if (options?.focusPageId !== undefined) {
       const focusState = resolveFocusStateByPageId(options.focusPageId, nextProject);
       setCurrentPageIndex(focusState.nextIndex);
       setSelectedNodeId(options.selectedNodeId ?? focusState.nextSelectedNodeId);
+      setSelectedNodeIds(
+        options.selectedNodeIds
+          ?? (options.selectedNodeId
+            ? [options.selectedNodeId]
+            : (focusState.nextSelectedNodeId ? [focusState.nextSelectedNodeId] : []))
+      );
       return;
     }
 
     if (options?.selectedNodeId !== undefined) {
       setSelectedNodeId(options.selectedNodeId);
+    }
+
+    if (options?.selectedNodeIds !== undefined) {
+      setSelectedNodeIds(options.selectedNodeIds);
     }
   }
 
@@ -453,6 +766,7 @@ export function StaticHtmlPresentationView({
     nextProject: DocumentProject;
     focusPageId?: string | null;
     selectedNodeId?: string | null;
+    selectedNodeIds?: string[];
     historyKey?: string | null;
     preserveInlineEditor?: boolean;
   }) {
@@ -466,7 +780,8 @@ export function StaticHtmlPresentationView({
         {
           project: currentProject,
           currentPageIndex,
-          selectedNodeId
+          selectedNodeId,
+          selectedNodeIds
         }
       ].slice(-10));
     }
@@ -474,13 +789,594 @@ export function StaticHtmlPresentationView({
     historyCoalesceKeyRef.current = input.historyKey ?? null;
     applyProjectState(input.nextProject, {
       focusPageId: input.focusPageId,
-      selectedNodeId: input.selectedNodeId
+      selectedNodeId: input.selectedNodeId,
+      selectedNodeIds: input.selectedNodeIds
     });
 
     if (!input.preserveInlineEditor) {
       setInlineEditor(null);
     }
   }
+
+  function pushHistoryEntry(entry: EditorHistoryEntry) {
+    setHistory((current) => [
+      ...current,
+      entry
+    ].slice(-10));
+  }
+
+  function applyLayoutGestureDelta(gesture: LayoutGestureState, clientX: number, clientY: number) {
+    const scale = frameScaleRef.current;
+    const deltaX = scale > 0 ? (clientX - gesture.pointerStartX) / scale : 0;
+    const deltaY = scale > 0 ? (clientY - gesture.pointerStartY) / scale : 0;
+    const distance = Math.hypot(deltaX, deltaY);
+
+    if (!gesture.activated && gesture.handle === "move" && distance < LAYOUT_DRAG_ACTIVATION_DISTANCE) {
+      return;
+    }
+
+    if (!gesture.activated) {
+      setLayoutGesture((current) => current
+        ? {
+            ...current,
+            activated: true
+          }
+        : current);
+    }
+
+    const resolved = resolveGesturePreview(gesture, deltaX, deltaY);
+    setLayoutPreviewBoxes(resolved.previewBoxes);
+    setLayoutGuideLines(resolved.guideLines);
+  }
+
+  function finishLayoutGesture(gesture: LayoutGestureState) {
+    const latestProject = projectRef.current;
+    const previewBoxes = layoutPreviewBoxesRef.current;
+
+    if (latestProject && gesture.activated && Object.keys(previewBoxes).length > 0) {
+      const localBoxes = Object.fromEntries(
+        Object.entries(previewBoxes)
+          .map(([nodeId, previewBox]) => {
+            const node = latestProject.nodes[nodeId];
+            const measurement = layoutMeasurements[nodeId];
+
+            if (!node) {
+              return null;
+            }
+
+            const fallbackLocalBox = resolveNodeLayoutBox(node, measurement);
+            const currentAbsoluteBox = resolveNodeAbsoluteLayoutBox(node, measurement);
+            const offsetX = currentAbsoluteBox.x - fallbackLocalBox.x;
+            const offsetY = currentAbsoluteBox.y - fallbackLocalBox.y;
+
+            return [
+              nodeId,
+              clampLayoutBox({
+                ...previewBox,
+                x: previewBox.x - offsetX,
+                y: previewBox.y - offsetY
+              })
+            ] as const;
+          })
+          .filter((entry): entry is readonly [string, DocumentNodeBox] => Boolean(entry))
+      );
+      const committedProject = applyBoxesToProject(latestProject, localBoxes);
+      historyCoalesceKeyRef.current = null;
+      pushHistoryEntry({
+        project: gesture.startProject,
+        currentPageIndex: gesture.startPageIndex,
+        selectedNodeId: gesture.startSelectedNodeId,
+        selectedNodeIds: gesture.startSelectedNodeIds
+      });
+      setDraftProject(committedProject);
+    }
+
+    setLayoutPreviewBoxes({});
+    setLayoutGuideLines([]);
+    setLayoutGesture(null);
+  }
+
+  function selectNode(nodeId: string, options?: { additive?: boolean; switchToLayout?: boolean }) {
+    if (!currentProject) {
+      return;
+    }
+
+    const node = currentProject.nodes[nodeId];
+
+    if (!node) {
+      return;
+    }
+
+    const additive = options?.additive ?? false;
+
+    setSelectedNodeId(nodeId);
+    setSelectedRunIndex(null);
+
+    if (options?.switchToLayout) {
+      setInteractionMode("layout");
+    }
+
+    setSelectedNodeIds((current) => {
+      if (!additive) {
+        return [nodeId];
+      }
+
+      if (current.includes(nodeId)) {
+        const filtered = current.filter((item) => item !== nodeId);
+        return filtered.length > 0 ? filtered : [nodeId];
+      }
+
+      return [...current, nodeId];
+    });
+  }
+
+  function resolveParentNodeId(targetNodeId: string): string | null {
+    if (!currentProject) {
+      return null;
+    }
+
+    return Object.values(currentProject.nodes).find((node) => node.children.includes(targetNodeId))?.id ?? null;
+  }
+
+  function resolveLayoutFreezeContainerNodeId(targetNodeId: string | null): string | null {
+    if (!currentProject) {
+      return null;
+    }
+
+    if (!targetNodeId) {
+      return null;
+    }
+
+    const parentNodeId = resolveParentNodeId(targetNodeId);
+
+    if (!parentNodeId) {
+      return null;
+    }
+
+    const parentNode = currentProject.nodes[parentNodeId];
+
+    if (!parentNode || parentNode.runtimeFlags.includes("layout-freeze-container") || !parentNode.sourceRef) {
+      return null;
+    }
+
+    return parentNodeId;
+  }
+
+  function canFreezeLayoutContainer(targetNodeId: string | null): boolean {
+    if (!currentProject) {
+      return false;
+    }
+
+    const containerNodeId = resolveLayoutFreezeContainerNodeId(targetNodeId);
+
+    if (!containerNodeId) {
+      return false;
+    }
+
+    const containerNode = currentProject.nodes[containerNodeId];
+
+    if (!containerNode) {
+      return false;
+    }
+
+    const targetNode = currentProject.nodes[targetNodeId ?? ""];
+
+    if (!targetNode) {
+      return false;
+    }
+
+    const containerAbsoluteBox = resolveLayoutFreezeContainerAbsoluteBox(containerNodeId, containerNode);
+
+    if (!containerAbsoluteBox) {
+      return false;
+    }
+
+    return Boolean(resolveLayoutFreezeChildBox(targetNode, containerAbsoluteBox));
+  }
+
+  function freezeSelectedNodeContainer() {
+    if (!currentProject || !selectedNodeId) {
+      return;
+    }
+
+    if (!canFreezeLayoutContainer(selectedNodeId)) {
+      return;
+    }
+
+    const containerNodeId = resolveLayoutFreezeContainerNodeId(selectedNodeId);
+
+    if (!containerNodeId) {
+      return;
+    }
+
+    const containerNode = currentProject.nodes[containerNodeId];
+
+    if (!containerNode) {
+      return;
+    }
+
+    const containerAbsoluteBox = resolveLayoutFreezeContainerAbsoluteBox(containerNodeId, containerNode);
+
+    if (!containerAbsoluteBox) {
+      return;
+    }
+
+    const nextProject = updateProjectNodes(
+      currentProject,
+      [containerNodeId, ...containerNode.children],
+      (node, nodeId) => {
+        if (nodeId === containerNodeId) {
+          const nextRuntimeFlags = node.runtimeFlags.includes("layout-freeze-container")
+            ? node.runtimeFlags
+            : [...node.runtimeFlags, "layout-freeze-container"];
+
+          return {
+            ...node,
+            style: {
+              ...node.style,
+              position: isFreeLayoutPosition(node.style.position) ? node.style.position : "relative"
+            },
+            runtimeFlags: nextRuntimeFlags
+          };
+        }
+
+        const nextBox = resolveLayoutFreezeChildBox(node, containerAbsoluteBox);
+
+        if (!nextBox) {
+          return node;
+        }
+        const nextRuntimeFlags = node.runtimeFlags
+          .filter((flag) => flag !== "layout-freeze-container")
+          .concat(
+            node.runtimeFlags.includes("layout-freeze-child") ? [] : ["layout-freeze-child"],
+            node.runtimeFlags.includes("draft-box") ? [] : ["draft-box"]
+          );
+
+        return {
+          ...node,
+          box: nextBox,
+          style: {
+            ...node.style,
+            position: "absolute",
+            margin: "0px"
+          },
+          runtimeFlags: nextRuntimeFlags
+        };
+      }
+    );
+
+    commitProjectChange({
+      nextProject,
+      selectedNodeId,
+      selectedNodeIds: [selectedNodeId],
+      historyKey: `layout-freeze:${containerNodeId}`
+    });
+    setInteractionMode("layout");
+  }
+
+  function resolveLayoutFreezeContainerAbsoluteBox(
+    containerNodeId: string,
+    containerNode: DocumentNode
+  ): DocumentNodeBox | null {
+    const containerMeasurement = layoutMeasurements[containerNodeId];
+
+    if (containerMeasurement) {
+      return resolveNodeAbsoluteLayoutBox(containerNode, containerMeasurement);
+    }
+
+    if (containerNodeId === currentPage?.rootNodeId) {
+      return clampLayoutBox({
+        x: 0,
+        y: 0,
+        width: currentProject?.canvas.width ?? containerNode.box.width,
+        height: currentProject?.canvas.height ?? containerNode.box.height,
+        zIndex: containerNode.box.zIndex
+      });
+    }
+
+    for (const childNodeId of containerNode.children) {
+      const childNode = currentProject?.nodes[childNodeId];
+      const childMeasurement = layoutMeasurements[childNodeId];
+
+      if (!childNode || !childMeasurement) {
+        continue;
+      }
+
+      const inferredX = childMeasurement.left - childMeasurement.localLeft;
+      const inferredY = childMeasurement.top - childMeasurement.localTop;
+      const inferredSize = resolveLayoutFreezeContainerSize(containerNode);
+
+      return clampLayoutBox({
+        x: inferredX,
+        y: inferredY,
+        width: inferredSize.width,
+        height: inferredSize.height,
+        zIndex: containerNode.box.zIndex
+      });
+    }
+
+    const fallbackSize = resolveLayoutFreezeContainerSize(containerNode);
+    return clampLayoutBox({
+      x: containerNode.box.x,
+      y: containerNode.box.y,
+      width: fallbackSize.width,
+      height: fallbackSize.height,
+      zIndex: containerNode.box.zIndex
+    });
+  }
+
+  function resolveLayoutFreezeContainerSize(
+    containerNode: DocumentNode
+  ): Pick<DocumentNodeBox, "width" | "height"> {
+    const measuredChildren = containerNode.children
+      .map((childNodeId) => resolveLayoutFreezeChildLocalBox(currentProject?.nodes[childNodeId] ?? null))
+      .filter((box): box is DocumentNodeBox => Boolean(box));
+
+    const fallbackWidth = containerNode.box.width;
+    const fallbackHeight = containerNode.box.height;
+
+    if (!measuredChildren.length) {
+      return {
+        width: fallbackWidth,
+        height: fallbackHeight
+      };
+    }
+
+    const inferredWidth = measuredChildren.reduce((maxWidth, box) => Math.max(maxWidth, box.x + box.width), 0);
+    const inferredHeight = measuredChildren.reduce((maxHeight, box) => Math.max(maxHeight, box.y + box.height), 0);
+
+    return {
+      width: Math.max(fallbackWidth, inferredWidth),
+      height: Math.max(fallbackHeight, inferredHeight)
+    };
+  }
+
+  function resolveLayoutFreezeChildLocalBox(
+    node: DocumentNode | null
+  ): DocumentNodeBox | null {
+    if (!node) {
+      return null;
+    }
+
+    const measurement = layoutMeasurements[node.id];
+
+    if (measurement) {
+      return clampLayoutBox({
+        x: measurement.localLeft,
+        y: measurement.localTop,
+        width: measurement.width,
+        height: measurement.height,
+        zIndex: node.box.zIndex
+      });
+    }
+
+    return clampLayoutBox(node.box);
+  }
+
+  function resolveLayoutFreezeChildBox(
+    node: DocumentNode,
+    containerAbsoluteBox: DocumentNodeBox
+  ): DocumentNodeBox | null {
+    const measurement = layoutMeasurements[node.id];
+
+    if (measurement) {
+      const absoluteBox = resolveNodeAbsoluteLayoutBox(node, measurement);
+      return clampLayoutBox({
+        x: absoluteBox.x - containerAbsoluteBox.x,
+        y: absoluteBox.y - containerAbsoluteBox.y,
+        width: absoluteBox.width,
+        height: absoluteBox.height,
+        zIndex: absoluteBox.zIndex
+      });
+    }
+
+    const fallbackLocalBox = resolveLayoutFreezeChildLocalBox(node);
+
+    if (!fallbackLocalBox) {
+      return null;
+    }
+
+    return clampLayoutBox(fallbackLocalBox);
+  }
+
+  function duplicateSelectedNode() {
+    if (!currentProject || !selectedNodeId) {
+      return;
+    }
+
+    const duplicated = duplicateProjectNode(currentProject, selectedNodeId);
+
+    if (!duplicated.duplicatedNodeId) {
+      return;
+    }
+
+    commitProjectChange({
+      nextProject: duplicated.project,
+      selectedNodeId: duplicated.duplicatedNodeId,
+      selectedNodeIds: [duplicated.duplicatedNodeId],
+      historyKey: `duplicate:${selectedNodeId}`
+    });
+    setInteractionMode("layout");
+  }
+
+  function updateSelectedNodeBox(nextBox: {
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+  }) {
+    if (!currentProject || !selectedNodeId) {
+      return;
+    }
+
+    const currentNode = currentProject.nodes[selectedNodeId];
+
+    if (!currentNode) {
+      return;
+    }
+
+    const baseBox = resolveNodeLayoutBox(currentNode, layoutMeasurements[selectedNodeId]);
+    const patchedBox = clampLayoutBox({
+      ...baseBox,
+      x: nextBox.x ?? baseBox.x,
+      y: nextBox.y ?? baseBox.y,
+      width: nextBox.width ?? baseBox.width,
+      height: nextBox.height ?? baseBox.height,
+      zIndex: baseBox.zIndex
+    });
+    const nextProject = applyBoxesToProject(currentProject, {
+      [selectedNodeId]: patchedBox
+    });
+
+    commitProjectChange({
+      nextProject,
+      selectedNodeId,
+      selectedNodeIds,
+      historyKey: `layout-box:${selectedNodeId}`
+    });
+  }
+
+  function applyLayoutAlignment(command: "left" | "right" | "top" | "bottom") {
+    if (!currentProject) {
+      return;
+    }
+
+    const alignableNodeIds = selectedNodeIds.filter((nodeId) => resolveLayoutCapability(currentProject.nodes[nodeId]).alignable);
+
+    if (alignableNodeIds.length < 2) {
+      return;
+    }
+
+    const nextBoxes = alignBoxes(
+      Object.fromEntries(
+        alignableNodeIds
+          .map((nodeId) => {
+            const node = currentProject.nodes[nodeId];
+
+            if (!node) {
+              return null;
+            }
+
+            return [nodeId, resolveNodeLayoutBox(node, layoutMeasurements[nodeId])] as const;
+          })
+          .filter((entry): entry is readonly [string, DocumentNodeBox] => Boolean(entry))
+      ),
+      command
+    );
+    const nextProject = applyBoxesToProject(currentProject, nextBoxes);
+
+    commitProjectChange({
+      nextProject,
+      selectedNodeId,
+      selectedNodeIds: alignableNodeIds,
+      historyKey: `layout-align:${command}:${alignableNodeIds.join(",")}`
+    });
+  }
+
+  useEffect(() => {
+    if (!previewHtml || interactionMode !== "layout") {
+      setLayoutMeasurements({});
+      return;
+    }
+
+    const handleWindowMessage = (event: MessageEvent) => {
+      const payload = event.data;
+
+      if (!payload || typeof payload !== "object") {
+        return;
+      }
+
+      if (payload.type !== "codingns-static-html-layout-measurements") {
+        return;
+      }
+
+      if (!Array.isArray(payload.measurements)) {
+        return;
+      }
+
+      const nextMeasurements: Record<string, LayoutNodeMeasurement> = {};
+
+      payload.measurements.forEach((item: unknown) => {
+        if (!item || typeof item !== "object") {
+          return;
+        }
+
+        const measurement = item as Record<string, unknown>;
+
+        const nodeId = typeof measurement.nodeId === "string" ? measurement.nodeId.trim() : "";
+        const left = typeof measurement.left === "number" ? measurement.left : Number.NaN;
+        const top = typeof measurement.top === "number" ? measurement.top : Number.NaN;
+        const width = typeof measurement.width === "number" ? measurement.width : Number.NaN;
+        const height = typeof measurement.height === "number" ? measurement.height : Number.NaN;
+        const localLeft = typeof measurement.localLeft === "number" ? measurement.localLeft : left;
+        const localTop = typeof measurement.localTop === "number" ? measurement.localTop : top;
+
+        if (!nodeId || !Number.isFinite(left) || !Number.isFinite(top) || !Number.isFinite(width) || !Number.isFinite(height)) {
+          return;
+        }
+
+        nextMeasurements[nodeId] = {
+          left,
+          top,
+          width,
+          height,
+          localLeft,
+          localTop
+        };
+      });
+
+      setLayoutMeasurements(nextMeasurements);
+    };
+
+    window.addEventListener("message", handleWindowMessage);
+    return () => {
+      window.removeEventListener("message", handleWindowMessage);
+    };
+  }, [interactionMode, previewHtml]);
+
+  useEffect(() => {
+    if (interactionMode !== "layout" || !previewHtml) {
+      return;
+    }
+
+    const frameWindow = frameRef.current?.contentWindow;
+
+    if (!frameWindow) {
+      return;
+    }
+
+    frameWindow.postMessage(
+      {
+        type: "codingns-static-html-layout-measure-request",
+        nodeIds: Array.from(new Set([
+          currentPage?.rootNodeId ?? "",
+          ...pageNodeIds
+        ].filter((nodeId) => nodeId && currentProject?.nodes[nodeId])))
+      },
+      "*"
+    );
+  }, [currentPage?.rootNodeId, currentProject, interactionMode, pageNodeIds, previewHtml]);
+
+  useEffect(() => {
+    if (!layoutGesture || layoutGesture.source !== "overlay") {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      applyLayoutGestureDelta(layoutGesture, event.clientX, event.clientY);
+    };
+
+    const handlePointerUp = () => {
+      finishLayoutGesture(layoutGesture);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [layoutGesture]);
 
   if (!probe.supported || !currentProject) {
     return (
@@ -670,182 +1566,412 @@ export function StaticHtmlPresentationView({
       </aside>
 
       <section className="static-html-presentation-stage">
-        <div className="static-html-presentation-toolbar static-html-presentation-inspector">
-          {selectedNode ? (
-            <NodeInspector
-              node={selectedNode}
-              selectedRunIndex={selectedRunIndex}
-              onSelectedRunChange={setSelectedRunIndex}
-              compact
-              onTextChange={({ text: nextText, runs: nextRuns }) => {
-                if (!selectedNodeId) {
-                  return;
-                }
-
-                const nextProject = updateProjectNode(currentProject, selectedNodeId, (node) => ({
-                  ...node,
-                  content: {
-                    ...node.content,
-                    text: nextText,
-                    runs: nextRuns ?? updateNodeTextRuns(node, nextText)
-                  }
-                }));
-                commitProjectChange({
-                  nextProject,
-                  historyKey: `text:${selectedNodeId}`
-                });
-              }}
-              onStyleChange={(stylePatch) => {
-                if (!selectedNodeId) {
-                  return;
-                }
-
-                const nextProject = updateProjectNode(currentProject, selectedNodeId, (node) => ({
-                  ...node,
-                  style: {
-                    ...node.style,
-                    ...stylePatch
-                  }
-                }));
-                commitProjectChange({
-                  nextProject,
-                  historyKey: `style:${selectedNodeId}`
-                });
-              }}
-            />
-          ) : (
-            <div className="static-html-presentation-toolbar-empty static-html-presentation-inspector-empty">
-              <p className="status-text">{t("conversation.fileViewerPresentationSelectNode")}</p>
-            </div>
-          )}
-        </div>
-
-        <div className="static-html-presentation-workarea">
-          <div ref={frameShellRef} className="static-html-presentation-frame-shell">
-            {previewHtml ? (
-              <div
-                ref={frameStageRef}
-                className="static-html-presentation-frame-stage"
-                style={frameStageStyle}
+        <section className="static-html-presentation-toolbar-panel">
+          <div className="static-html-presentation-toolbar-panel-header">
+            <div className="static-html-presentation-mode-switch" role="group" aria-label={t("conversation.fileViewerModeLabel")}>
+              <button
+                type="button"
+                className="static-html-presentation-mode-button"
+                data-active={interactionMode === "content" ? "true" : undefined}
+                onClick={() => setInteractionMode("content")}
               >
-                <iframe
-                  ref={frameRef}
-                  className="static-html-presentation-frame"
-                  data-testid="static-html-presentation-frame"
-                  title={currentPage?.title ?? filePath}
-                  srcDoc={previewHtml}
-                  sandbox="allow-forms allow-modals allow-scripts"
-                  style={frameStyle}
-                  onLoad={() => {
-                    frameRef.current?.contentWindow?.postMessage(
-                      {
-                        type: "codingns-static-html-selection-sync",
-                        selectedNodeId,
-                        inlineEditingNodeId: inlineEditor?.nodeId ?? null
-                      },
-                      "*"
-                    );
-                  }}
-                />
-                {inlineEditor ? (
-                  <div
-                    ref={inlineEditorRef}
-                    className="static-html-presentation-inline-editor"
-                    data-testid="static-html-presentation-inline-editor"
-                    role="textbox"
-                    aria-multiline="true"
-                    contentEditable
-                    suppressContentEditableWarning
-                    spellCheck={false}
-                    style={inlineEditorStyle}
-                    onInput={(event) => {
-                      const nextText = readInlineEditorDomText(event.currentTarget);
-                      const currentInlineEditor = inlineEditor;
-
-                      setInlineEditor((current) => current
-                        ? {
-                            ...current,
-                            text: nextText
-                          }
-                        : current);
-
-                      if (!currentInlineEditor || !currentProject.nodes[currentInlineEditor.nodeId]) {
-                        return;
-                      }
-
-                      const nextProject = updateProjectNode(currentProject, currentInlineEditor.nodeId, (node) => ({
-                        ...node,
-                        content: {
-                          ...node.content,
-                          text: nextText,
-                          runs: updateNodeTextRuns(node, nextText)
-                        }
-                      }));
-                      commitProjectChange({
-                        nextProject,
-                        selectedNodeId: currentInlineEditor.nodeId,
-                        historyKey: `inline-text:${currentInlineEditor.nodeId}`,
-                        preserveInlineEditor: true
-                      });
-                    }}
-                    onBlur={() => {
-                      setInlineEditor(null);
-                    }}
-                    onPaste={(event) => {
-                      event.preventDefault();
-                      const pastedText = event.clipboardData.getData("text/plain");
-                      insertPlainTextIntoInlineEditor(pastedText);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === "Escape") {
-                        event.preventDefault();
-                        setInlineEditor(null);
-                      }
-                    }}
-                  />
-                ) : null}
-              </div>
-            ) : (
-              <p className="status-text">{t("conversation.fileViewerHtmlPreviewUnavailable")}</p>
-            )}
+                {t("conversation.fileViewerPresentationTextMode")}
+              </button>
+              <button
+                type="button"
+                className="static-html-presentation-mode-button"
+                data-active={interactionMode === "layout" ? "true" : undefined}
+                onClick={() => {
+                  setInteractionMode("layout");
+                  if (selectedNodeId) {
+                    setSelectedNodeIds([selectedNodeId]);
+                  }
+                }}
+              >
+                {t("conversation.fileViewerPresentationLayoutMode")}
+              </button>
+            </div>
           </div>
+          <div className="static-html-presentation-toolbar-panel-body">
+            <div ref={toolbarViewportRef} className="static-html-presentation-toolbar-viewport">
+              <div
+                ref={toolbarContentRef}
+                className="static-html-presentation-toolbar-scale-shell"
+                style={{
+                  transform: `scale(${toolbarScale})`,
+                  width: toolbarScale < 1 ? `${100 / toolbarScale}%` : "100%"
+                }}
+              >
+                <div className="static-html-presentation-toolbar static-html-presentation-inspector">
+                  {interactionMode === "layout" ? (
+                    <LayoutInspector
+                      selectedNode={selectedNode}
+                      selectedLayoutBox={selectedNode ? resolveNodeLayoutBox(selectedNode, selectedNodeId ? layoutMeasurements[selectedNodeId] : undefined) : null}
+                      selectedNodes={selectedNodes}
+                      showFreezeContainerAction={Boolean(selectedNodeId && resolveLayoutFreezeContainerNodeId(selectedNodeId))}
+                      canFreezeContainer={canFreezeLayoutContainer(selectedNodeId)}
+                      onDuplicate={duplicateSelectedNode}
+                      onFreezeContainer={freezeSelectedNodeContainer}
+                      onAlignLeft={() => applyLayoutAlignment("left")}
+                      onAlignRight={() => applyLayoutAlignment("right")}
+                      onAlignTop={() => applyLayoutAlignment("top")}
+                      onAlignBottom={() => applyLayoutAlignment("bottom")}
+                      onBoxChange={updateSelectedNodeBox}
+                    />
+                  ) : inspectorNode ? (
+                    <NodeInspector
+                      node={inspectorNode}
+                      selectedRunIndex={selectedRunIndex}
+                      onSelectedRunChange={setSelectedRunIndex}
+                      compact
+                      onTextChange={({ text: nextText, runs: nextRuns }) => {
+                        if (!selectedNodeId) {
+                          return;
+                        }
 
-          <aside className="static-html-presentation-node-sidebar">
-            <div className="static-html-presentation-node-sidebar-header">
-              <p className="static-html-presentation-node-sidebar-kicker">
-                {t("conversation.fileViewerPresentationComponentList")}
-              </p>
+                        const nextProject = updateProjectNode(currentProject, selectedNodeId, (node) => ({
+                          ...node,
+                          content: {
+                            ...node.content,
+                            text: nextText,
+                            runs: nextRuns ?? updateNodeTextRuns(node, nextText)
+                          }
+                        }));
+                        commitProjectChange({
+                          nextProject,
+                          historyKey: `text:${selectedNodeId}`
+                        });
+                      }}
+                      onStyleChange={(stylePatch) => {
+                        if (!selectedNodeId) {
+                          return;
+                        }
+
+                        const nextProject = updateProjectNode(currentProject, selectedNodeId, (node) => ({
+                          ...node,
+                          style: {
+                            ...node.style,
+                            ...stylePatch
+                          }
+                        }));
+                        commitProjectChange({
+                          nextProject,
+                          historyKey: `style:${selectedNodeId}`
+                        });
+                      }}
+                    />
+                  ) : (
+                    <div className="static-html-presentation-toolbar-empty static-html-presentation-inspector-empty">
+                      <p className="status-text">{t("conversation.fileViewerPresentationSelectNode")}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
-            <div className="static-html-presentation-node-strip" role="list">
-              {pageNodeIds.map((nodeId) => {
-                const node = currentProject.nodes[nodeId];
+          </div>
+        </section>
 
-                if (!node) {
-                  return null;
-                }
-
-                return (
-                  <button
-                    key={nodeId}
-                    type="button"
-                    className="static-html-presentation-node-chip"
-                    data-active={nodeId === selectedNodeId ? "true" : undefined}
-                    data-locked={node.editable ? undefined : "true"}
-                    onClick={() => {
-                      setSelectedNodeId(nodeId);
-                      setSelectedRunIndex(null);
-                    }}
+        <section className="static-html-presentation-content-panel">
+          <div className="static-html-presentation-workarea">
+            <div className="static-html-presentation-canvas-panel">
+              <div ref={frameShellRef} className="static-html-presentation-frame-shell">
+                {previewHtml ? (
+                  <div
+                    ref={frameStageRef}
+                    className="static-html-presentation-frame-stage"
+                    style={frameStageStyle}
                   >
-                    <span className="static-html-presentation-node-chip-type">{node.type}</span>
-                    <span className="static-html-presentation-node-chip-name">
-                      {node.name || node.id}
-                    </span>
-                  </button>
-                );
-              })}
+                    <iframe
+                      ref={frameRef}
+                      className="static-html-presentation-frame"
+                      data-testid="static-html-presentation-frame"
+                      title={currentPage?.title ?? filePath}
+                      srcDoc={previewHtml}
+                      sandbox="allow-forms allow-modals allow-scripts"
+                      style={frameStyle}
+                      onLoad={() => {
+                        frameRef.current?.contentWindow?.postMessage(
+                          {
+                            type: "codingns-static-html-selection-sync",
+                            selectedNodeId,
+                            inlineEditingNodeId: inlineEditor?.nodeId ?? null,
+                            layoutModeEnabled: interactionMode === "layout",
+                            layoutHoveredNodeId: interactionMode === "layout" ? hoveredNodeId : null,
+                            layoutSelectedNodeIds: interactionMode === "layout" ? selectedNodeIds : []
+                          },
+                          "*"
+                        );
+                      }}
+                    />
+                    {interactionMode === "layout" ? (
+                      <div className="static-html-presentation-layout-overlay" data-testid="static-html-presentation-layout-overlay">
+                        {layoutGuideLines.map((guideLine, index) => (
+                          <div
+                            key={`${guideLine.orientation}-${guideLine.position}-${index}`}
+                            className="static-html-presentation-layout-guide"
+                            data-orientation={guideLine.orientation}
+                            style={resolveLayoutGuideStyle(guideLine, frameScale)}
+                          />
+                        ))}
+                        {hoveredNodeId && !selectedNodeIds.includes(hoveredNodeId) && layoutMeasurements[hoveredNodeId] ? (
+                          <div
+                            className="static-html-presentation-layout-box static-html-presentation-layout-box-hover"
+                            data-hovered="true"
+                            style={resolveLayoutBoxStyle(layoutMeasurements[hoveredNodeId]!, frameScale)}
+                          />
+                        ) : null}
+                        {selectedNodeIds.map((nodeId) => {
+                      const previewBox = layoutPreviewBoxes[nodeId];
+                      const measurement = layoutMeasurements[nodeId];
+                      const node = currentProject.nodes[nodeId];
+                      const capability = resolveLayoutCapability(node);
+                      const boxStyle = previewBox
+                        ? resolveLayoutBoxStyle(
+                            {
+                              left: previewBox.x,
+                              top: previewBox.y,
+                              width: previewBox.width,
+                              height: previewBox.height,
+                              localLeft: previewBox.x,
+                              localTop: previewBox.y
+                            },
+                            frameScale
+                          )
+                        : (measurement ? resolveLayoutBoxStyle(measurement, frameScale) : undefined);
+
+                      if (!boxStyle || !node) {
+                        return null;
+                      }
+
+                          return (
+                            <div
+                              key={nodeId}
+                          className="static-html-presentation-layout-box"
+                          data-primary={nodeId === selectedNodeId ? "true" : undefined}
+                          data-disabled={capability.movable ? undefined : "true"}
+                          style={boxStyle}
+                              onPointerEnter={() => {
+                                setHoveredNodeId(nodeId);
+                              }}
+                              onPointerLeave={() => {
+                                setHoveredNodeId((current) => current === nodeId ? null : current);
+                              }}
+                              onPointerDown={(event) => {
+                                if (!capability.movable) {
+                                  return;
+                                }
+
+                                event.preventDefault();
+                                event.stopPropagation();
+                                selectNode(nodeId, {
+                                  additive: event.metaKey || event.ctrlKey,
+                                  switchToLayout: true
+                                });
+
+                                const activeNodeIds = (event.metaKey || event.ctrlKey)
+                                  ? (selectedNodeIds.includes(nodeId) ? selectedNodeIds : [...selectedNodeIds, nodeId])
+                                  : [nodeId];
+                                const originBoxes = Object.fromEntries(
+                                  activeNodeIds
+                                    .map((activeNodeId) => {
+                                      const activeNode = currentProject.nodes[activeNodeId];
+                                      return activeNode
+                                        ? [activeNodeId, resolveNodeAbsoluteLayoutBox(activeNode, layoutMeasurements[activeNodeId])]
+                                        : null;
+                                    })
+                                    .filter((entry): entry is [string, DocumentNode["box"]] => Boolean(entry))
+                                );
+                                const referenceBoxes = Object.fromEntries(
+                                  pageNodeIds
+                                    .map((pageNodeId) => {
+                                      const pageNode = currentProject.nodes[pageNodeId];
+                                      return pageNode
+                                        ? [pageNodeId, resolveNodeAbsoluteLayoutBox(pageNode, layoutMeasurements[pageNodeId])]
+                                        : null;
+                                    })
+                                    .filter((entry): entry is [string, DocumentNodeBox] => Boolean(entry))
+                                );
+
+                                setLayoutGesture({
+                                  source: "overlay",
+                                  handle: "move",
+                                  nodeIds: activeNodeIds,
+                                  pointerStartX: event.clientX,
+                                  pointerStartY: event.clientY,
+                                  startProject: currentProject,
+                                  startPageIndex: currentPageIndex,
+                                  pageNodeIds,
+                                  referenceBoxes,
+                                  startSelectedNodeId: selectedNodeId,
+                                  startSelectedNodeIds: selectedNodeIds,
+                                  activated: false,
+                                  originBoxes
+                                });
+                              }}
+                            >
+                              {capability.resizable ? (
+                                <button
+                                  type="button"
+                                  className="static-html-presentation-layout-resize-handle"
+                                  aria-label={t("conversation.fileViewerPresentationResizeHandle")}
+                                  onPointerDown={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    selectNode(nodeId, {
+                                      switchToLayout: true
+                                    });
+
+                                    setLayoutGesture({
+                                      source: "overlay",
+                                      handle: "resize-se",
+                                      nodeIds: [nodeId],
+                                      pointerStartX: event.clientX,
+                                      pointerStartY: event.clientY,
+                                      startProject: currentProject,
+                                      startPageIndex: currentPageIndex,
+                                      pageNodeIds,
+                                      referenceBoxes: Object.fromEntries(
+                                        pageNodeIds
+                                          .map((pageNodeId) => {
+                                            const pageNode = currentProject.nodes[pageNodeId];
+                                            return pageNode
+                                              ? [pageNodeId, resolveNodeAbsoluteLayoutBox(pageNode, layoutMeasurements[pageNodeId])]
+                                              : null;
+                                          })
+                                          .filter((entry): entry is [string, DocumentNodeBox] => Boolean(entry))
+                                      ),
+                                      startSelectedNodeId: selectedNodeId,
+                                      startSelectedNodeIds: selectedNodeIds,
+                                      activated: true,
+                                      originBoxes: {
+                                        [nodeId]: resolveNodeAbsoluteLayoutBox(
+                                          currentProject.nodes[nodeId]!,
+                                          layoutMeasurements[nodeId]
+                                        )
+                                      }
+                                    });
+                                  }}
+                                >
+                                  <span />
+                                </button>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                    {inlineEditor ? (
+                      <div
+                        ref={inlineEditorRef}
+                        className="static-html-presentation-inline-editor"
+                        data-testid="static-html-presentation-inline-editor"
+                        role="textbox"
+                        aria-multiline="true"
+                        contentEditable
+                        suppressContentEditableWarning
+                        spellCheck={false}
+                        style={inlineEditorStyle}
+                        onInput={(event) => {
+                          const nextText = readInlineEditorDomText(event.currentTarget);
+                          const currentInlineEditor = inlineEditor;
+
+                          setInlineEditor((current) => current
+                            ? {
+                                ...current,
+                                text: nextText
+                              }
+                            : current);
+
+                          if (!currentInlineEditor || !currentProject.nodes[currentInlineEditor.nodeId]) {
+                            return;
+                          }
+
+                          const nextProject = updateProjectNode(currentProject, currentInlineEditor.nodeId, (node) => ({
+                            ...node,
+                            content: {
+                              ...node.content,
+                              text: nextText,
+                              runs: updateNodeTextRuns(node, nextText)
+                            }
+                          }));
+                          commitProjectChange({
+                            nextProject,
+                            selectedNodeId: currentInlineEditor.nodeId,
+                            historyKey: `inline-text:${currentInlineEditor.nodeId}`,
+                            preserveInlineEditor: true
+                          });
+                        }}
+                        onBlur={() => {
+                          setInlineEditor(null);
+                        }}
+                        onPaste={(event) => {
+                          event.preventDefault();
+                          const pastedText = event.clipboardData.getData("text/plain");
+                          insertPlainTextIntoInlineEditor(pastedText);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            setInlineEditor(null);
+                          }
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                ) : (
+                  <p className="status-text">{t("conversation.fileViewerHtmlPreviewUnavailable")}</p>
+                )}
+              </div>
             </div>
-          </aside>
-        </div>
+
+            <aside className="static-html-presentation-node-sidebar">
+              <div className="static-html-presentation-node-sidebar-header">
+                <p className="static-html-presentation-node-sidebar-kicker">
+                  {t("conversation.fileViewerPresentationComponentList")}
+                </p>
+              </div>
+              <div className="static-html-presentation-node-strip" role="list">
+                {pageNodeIds.map((nodeId) => {
+                  const node = currentProject.nodes[nodeId];
+
+                  if (!node) {
+                    return null;
+                  }
+
+                  return (
+                    <button
+                      key={nodeId}
+                      type="button"
+                      className="static-html-presentation-node-chip"
+                      data-active={nodeId === selectedNodeId ? "true" : undefined}
+                      data-selected={selectedNodeIds.includes(nodeId) ? "true" : undefined}
+                      data-locked={node.editable ? undefined : "true"}
+                      title={interactionMode === "layout" ? (resolveLayoutCapability(node).reason ?? undefined) : undefined}
+                      onClick={(event) => {
+                        selectNode(nodeId, {
+                          additive: interactionMode === "layout" && (event.metaKey || event.ctrlKey),
+                          switchToLayout: interactionMode === "layout"
+                        });
+                      }}
+                    >
+                      <span className="static-html-presentation-node-chip-type">{node.type}</span>
+                      <span className="static-html-presentation-node-chip-name">
+                        {node.name || node.id}
+                      </span>
+                      {interactionMode === "layout" ? (
+                        <span className="static-html-presentation-node-chip-status">
+                          {resolveLayoutCapability(node).reason
+                            ? t("conversation.fileViewerPresentationLayoutLocked")
+                            : t("conversation.fileViewerPresentationLayoutEditable")}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </aside>
+          </div>
+        </section>
       </section>
     </div>
   );
@@ -1046,6 +2172,641 @@ function resolveDragInsertIndex(
   const insertIndex = dragPreview.position === "before" ? targetIndex : targetIndex + 1;
   const normalizedIndex = sourceIndex < insertIndex ? insertIndex - 1 : insertIndex;
   return Math.max(0, Math.min(normalizedIndex, pages.length - 1));
+}
+
+function resolveLayoutCapability(node: DocumentNode | null | undefined): LayoutCapability {
+  if (!node) {
+    return {
+      movable: false,
+      resizable: false,
+      alignable: false,
+      reason: t("conversation.fileViewerPresentationLayoutUnsupported"),
+      strictModeLocked: false
+    };
+  }
+
+  if (!node.editable) {
+    return {
+      movable: false,
+      resizable: false,
+      alignable: false,
+      reason: node.lockedReason || t("conversation.fileViewerPresentationLayoutUnsupported"),
+      strictModeLocked: false
+    };
+  }
+
+  if (node.type === "svg" || node.type === "html" || node.type === "decoration") {
+    return {
+      movable: false,
+      resizable: false,
+      alignable: false,
+      reason: t("conversation.fileViewerPresentationLayoutUnsupported"),
+      strictModeLocked: false
+    };
+  }
+
+  if (node.id.endsWith("-root")) {
+    return {
+      movable: false,
+      resizable: false,
+      alignable: false,
+      reason: t("conversation.fileViewerPresentationLayoutRootLocked"),
+      strictModeLocked: false
+    };
+  }
+
+  if (!hasStableLayoutWriteback(node)) {
+    return {
+      movable: false,
+      resizable: false,
+      alignable: false,
+      reason: t("conversation.fileViewerPresentationLayoutStrictLocked"),
+      strictModeLocked: true
+    };
+  }
+
+  return {
+    movable: true,
+    resizable: true,
+    alignable: true,
+    reason: null,
+    strictModeLocked: false
+  };
+}
+
+function resolveLayoutBoxStyle(
+  measurement: LayoutNodeMeasurement,
+  frameScale: number
+): CSSProperties {
+  return {
+    left: `${measurement.left * frameScale}px`,
+    top: `${measurement.top * frameScale}px`,
+    width: `${measurement.width * frameScale}px`,
+    height: `${measurement.height * frameScale}px`
+  };
+}
+
+function resolveLayoutGuideStyle(
+  guideLine: LayoutGuideLine,
+  frameScale: number
+): CSSProperties {
+  if (guideLine.orientation === "vertical") {
+    return {
+      left: `${guideLine.position * frameScale}px`,
+      top: `${guideLine.start * frameScale}px`,
+      width: "1px",
+      height: `${Math.max(0, (guideLine.end - guideLine.start) * frameScale)}px`
+    };
+  }
+
+  return {
+    left: `${guideLine.start * frameScale}px`,
+    top: `${guideLine.position * frameScale}px`,
+    width: `${Math.max(0, (guideLine.end - guideLine.start) * frameScale)}px`,
+    height: "1px"
+  };
+}
+
+function hasStableLayoutWriteback(node: DocumentNode): boolean {
+  if (node.runtimeFlags.includes("draft-clone") || node.runtimeFlags.includes("draft-box")) {
+    return true;
+  }
+
+  if (!node.sourceRef) {
+    return false;
+  }
+
+  if (node.runtimeFlags.includes("layout-freeze-child")) {
+    return true;
+  }
+
+  if (isFreeLayoutPosition(node.style.position)) {
+    return true;
+  }
+
+  return false;
+}
+
+function isFreeLayoutPosition(position: string | null | undefined): boolean {
+  const normalizedPosition = position?.trim().toLowerCase() ?? "";
+  return normalizedPosition === "absolute" || normalizedPosition === "fixed";
+}
+
+function resolveNodeLayoutBox(
+  node: DocumentNode,
+  measurement: LayoutNodeMeasurement | undefined
+): DocumentNodeBox {
+  if (node.runtimeFlags.includes("draft-clone") || node.runtimeFlags.includes("draft-box")) {
+    return clampLayoutBox(node.box);
+  }
+
+  if (measurement) {
+    return clampLayoutBox({
+      x: measurement.localLeft,
+      y: measurement.localTop,
+      width: measurement.width,
+      height: measurement.height,
+      zIndex: node.box.zIndex
+    });
+  }
+
+  return clampLayoutBox(node.box);
+}
+
+function resolveNodeAbsoluteLayoutBox(
+  node: DocumentNode,
+  measurement: LayoutNodeMeasurement | undefined
+): DocumentNodeBox {
+  if (measurement) {
+    return clampLayoutBox({
+      x: measurement.left,
+      y: measurement.top,
+      width: measurement.width,
+      height: measurement.height,
+      zIndex: node.box.zIndex
+    });
+  }
+
+  return clampLayoutBox(node.box);
+}
+
+function resolveLayoutGuideLines(
+  gesture: LayoutGestureState,
+  previewBoxes: Record<string, DocumentNodeBox>
+): LayoutGuideLine[] {
+  if (gesture.nodeIds.length !== 1) {
+    return [];
+  }
+
+  const activeNodeId = gesture.nodeIds[0];
+  const activeBox = previewBoxes[activeNodeId];
+
+  if (!activeNodeId || !activeBox) {
+    return [];
+  }
+
+  const verticalCandidates = [activeBox.x, activeBox.x + (activeBox.width / 2), activeBox.x + activeBox.width];
+  const horizontalCandidates = [activeBox.y, activeBox.y + (activeBox.height / 2), activeBox.y + activeBox.height];
+  const tolerance = 6;
+  const guideLines: LayoutGuideLine[] = [];
+
+  Object.entries(gesture.originBoxes).forEach(([nodeId]) => {
+    if (nodeId === activeNodeId) {
+      return;
+    }
+  });
+
+  Object.entries(gesture.startProject.nodes).forEach(([nodeId, node]) => {
+    if (nodeId === activeNodeId || gesture.nodeIds.includes(nodeId)) {
+      return;
+    }
+
+    const box = gesture.startProject.nodes[nodeId]
+      ? resolveNodeLayoutBox(node, undefined)
+      : null;
+
+    if (!box) {
+      return;
+    }
+
+    const otherVerticals = [box.x, box.x + (box.width / 2), box.x + box.width];
+    const otherHorizontals = [box.y, box.y + (box.height / 2), box.y + box.height];
+
+    verticalCandidates.forEach((value) => {
+      const matched = otherVerticals.find((candidate) => Math.abs(candidate - value) <= tolerance);
+
+      if (matched === undefined) {
+        return;
+      }
+
+      guideLines.push({
+        orientation: "vertical",
+        position: matched,
+        start: Math.min(activeBox.y, box.y),
+        end: Math.max(activeBox.y + activeBox.height, box.y + box.height)
+      });
+    });
+
+    horizontalCandidates.forEach((value) => {
+      const matched = otherHorizontals.find((candidate) => Math.abs(candidate - value) <= tolerance);
+
+      if (matched === undefined) {
+        return;
+      }
+
+      guideLines.push({
+        orientation: "horizontal",
+        position: matched,
+        start: Math.min(activeBox.x, box.x),
+        end: Math.max(activeBox.x + activeBox.width, box.x + box.width)
+      });
+    });
+  });
+
+  return dedupeGuideLines(guideLines);
+}
+
+function resolveGesturePreview(
+  gesture: LayoutGestureState,
+  deltaX: number,
+  deltaY: number
+): {
+  previewBoxes: Record<string, DocumentNodeBox>;
+  guideLines: LayoutGuideLine[];
+} {
+  const previewBoxes: Record<string, DocumentNodeBox> = {};
+
+  gesture.nodeIds.forEach((nodeId) => {
+    const originBox = gesture.originBoxes[nodeId];
+
+    if (!originBox) {
+      return;
+    }
+
+    if (gesture.handle === "move") {
+      previewBoxes[nodeId] = clampLayoutBox({
+        ...originBox,
+        x: originBox.x + deltaX,
+        y: originBox.y + deltaY
+      });
+      return;
+    }
+
+    previewBoxes[nodeId] = clampLayoutBox({
+      ...originBox,
+      width: originBox.width + deltaX,
+      height: originBox.height + deltaY
+    });
+  });
+
+  if (gesture.handle !== "move") {
+    return {
+      previewBoxes,
+      guideLines: resolveLayoutGuideLines(gesture, previewBoxes)
+    };
+  }
+
+  const snapped = snapSelectionPreview(gesture, previewBoxes);
+  return {
+    previewBoxes: snapped.previewBoxes,
+    guideLines: snapped.guideLines
+  };
+}
+
+function snapSelectionPreview(
+  gesture: LayoutGestureState,
+  previewBoxes: Record<string, DocumentNodeBox>
+): {
+  previewBoxes: Record<string, DocumentNodeBox>;
+  guideLines: LayoutGuideLine[];
+} {
+  const selectionBoxes = gesture.nodeIds
+    .map((nodeId) => previewBoxes[nodeId])
+    .filter((box): box is DocumentNodeBox => Boolean(box));
+  const selectionBox = resolveBoundingBox(selectionBoxes);
+
+  if (!selectionBox) {
+    return {
+      previewBoxes,
+      guideLines: []
+    };
+  }
+
+  const snapTolerance = 6;
+  const selectionAnchors = resolveBoxAnchorPoints(selectionBox);
+
+  let snapDeltaX = 0;
+  let snapDeltaY = 0;
+  let bestVerticalDistance = snapTolerance + 1;
+  let bestHorizontalDistance = snapTolerance + 1;
+  const guideLines: LayoutGuideLine[] = [];
+
+  const referenceBoxes = gesture.pageNodeIds
+    .filter((nodeId) => !gesture.nodeIds.includes(nodeId))
+    .map((nodeId) => gesture.referenceBoxes[nodeId])
+    .filter((box): box is DocumentNodeBox => Boolean(box) && box.width > 0 && box.height > 0);
+  const canvasBox = {
+    x: 0,
+    y: 0,
+    width: gesture.startProject.canvas.width,
+    height: gesture.startProject.canvas.height,
+    zIndex: 0
+  } satisfies DocumentNodeBox;
+
+  [...referenceBoxes, canvasBox].forEach((box) => {
+    const referenceAnchors = resolveBoxAnchorPoints(box);
+
+    selectionAnchors.verticals.forEach((value) => {
+      referenceAnchors.verticals.forEach((candidate) => {
+        const distance = Math.abs(candidate - (value + snapDeltaX));
+
+        if (distance > snapTolerance || distance >= bestVerticalDistance) {
+          return;
+        }
+
+        bestVerticalDistance = distance;
+        snapDeltaX = candidate - value;
+        guideLines.push({
+          orientation: "vertical",
+          position: candidate,
+          start: Math.min(selectionBox.y, box.y),
+          end: Math.max(selectionBox.y + selectionBox.height, box.y + box.height)
+        });
+      });
+    });
+
+    selectionAnchors.horizontals.forEach((value) => {
+      referenceAnchors.horizontals.forEach((candidate) => {
+        const distance = Math.abs(candidate - (value + snapDeltaY));
+
+        if (distance > snapTolerance || distance >= bestHorizontalDistance) {
+          return;
+        }
+
+        bestHorizontalDistance = distance;
+        snapDeltaY = candidate - value;
+        guideLines.push({
+          orientation: "horizontal",
+          position: candidate,
+          start: Math.min(selectionBox.x, box.x),
+          end: Math.max(selectionBox.x + selectionBox.width, box.x + box.width)
+        });
+      });
+    });
+  });
+
+  if (snapDeltaX !== 0 || snapDeltaY !== 0) {
+    gesture.nodeIds.forEach((nodeId) => {
+      const box = previewBoxes[nodeId];
+
+      if (!box) {
+        return;
+      }
+
+      previewBoxes[nodeId] = clampLayoutBox({
+        ...box,
+        x: box.x + snapDeltaX,
+        y: box.y + snapDeltaY
+      });
+    });
+  }
+
+  return {
+    previewBoxes,
+    guideLines: dedupeGuideLines(guideLines)
+  };
+}
+
+function dedupeGuideLines(guideLines: LayoutGuideLine[]): LayoutGuideLine[] {
+  const map = new Map<string, LayoutGuideLine>();
+
+  guideLines.forEach((guideLine) => {
+    const key = `${guideLine.orientation}:${Math.round(guideLine.position)}`;
+    const current = map.get(key);
+
+    if (!current) {
+      map.set(key, guideLine);
+      return;
+    }
+
+    map.set(key, {
+      ...guideLine,
+      start: Math.min(current.start, guideLine.start),
+      end: Math.max(current.end, guideLine.end)
+    });
+  });
+
+  return Array.from(map.values());
+}
+
+type LayoutFieldKey = "x" | "y" | "width" | "height";
+
+interface LayoutFieldDraft {
+  x: string;
+  y: string;
+  width: string;
+  height: string;
+}
+
+function createLayoutFieldDraft(box: DocumentNodeBox | null): LayoutFieldDraft {
+  return {
+    x: box ? String(box.x) : "",
+    y: box ? String(box.y) : "",
+    width: box ? String(box.width) : "",
+    height: box ? String(box.height) : ""
+  };
+}
+
+function LayoutInspector({
+  selectedNode,
+  selectedLayoutBox,
+  selectedNodes,
+  showFreezeContainerAction,
+  canFreezeContainer,
+  onDuplicate,
+  onFreezeContainer,
+  onAlignLeft,
+  onAlignRight,
+  onAlignTop,
+  onAlignBottom,
+  onBoxChange
+}: {
+  selectedNode: DocumentNode | null;
+  selectedLayoutBox: DocumentNodeBox | null;
+  selectedNodes: DocumentNode[];
+  showFreezeContainerAction: boolean;
+  canFreezeContainer: boolean;
+  onDuplicate: () => void;
+  onFreezeContainer: () => void;
+  onAlignLeft: () => void;
+  onAlignRight: () => void;
+  onAlignTop: () => void;
+  onAlignBottom: () => void;
+  onBoxChange: (nextBox: {
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+  }) => void;
+}) {
+  const capability = resolveLayoutCapability(selectedNode);
+  const hasMultipleSelection = selectedNodes.length > 1;
+  const canAlign = hasMultipleSelection && selectedNodes.every((node) => resolveLayoutCapability(node).alignable);
+  const shouldShowFreezeAction = Boolean(selectedNode) && capability.strictModeLocked && showFreezeContainerAction;
+  const [draftBox, setDraftBox] = useState<LayoutFieldDraft>(() => createLayoutFieldDraft(selectedLayoutBox));
+
+  useEffect(() => {
+    setDraftBox(createLayoutFieldDraft(selectedLayoutBox));
+  }, [
+    selectedNode?.id,
+    selectedLayoutBox?.x,
+    selectedLayoutBox?.y,
+    selectedLayoutBox?.width,
+    selectedLayoutBox?.height
+  ]);
+
+  function commitDraftField(field: LayoutFieldKey) {
+    if (!selectedNode) {
+      return;
+    }
+
+    const rawValue = draftBox[field].trim();
+
+    if (!rawValue) {
+      setDraftBox(createLayoutFieldDraft(selectedLayoutBox));
+      return;
+    }
+
+    const parsedValue = Number(rawValue);
+
+    if (!Number.isFinite(parsedValue)) {
+      setDraftBox(createLayoutFieldDraft(selectedLayoutBox));
+      return;
+    }
+
+    onBoxChange({
+      [field]: parsedValue
+    });
+  }
+
+  return (
+    <div className="static-html-presentation-layout-toolbar">
+      <div className="static-html-presentation-layout-toolbar-row">
+        <span className="static-html-presentation-layout-badge">
+          {selectedNodes.length > 1
+            ? t("conversation.fileViewerPresentationLayoutSelectionCount").replace("{count}", String(selectedNodes.length))
+            : t("conversation.fileViewerPresentationLayoutMode")}
+        </span>
+        <button
+          type="button"
+          className="secondary-button static-html-presentation-layout-action"
+          onClick={onDuplicate}
+          disabled={!selectedNode || !capability.movable}
+        >
+          {t("conversation.fileViewerPresentationDuplicateAction")}
+        </button>
+        <button
+          type="button"
+          className="secondary-button static-html-presentation-layout-action"
+          onClick={onAlignLeft}
+          disabled={!canAlign}
+        >
+          {t("conversation.fileViewerPresentationLayoutAlignLeft")}
+        </button>
+        <button
+          type="button"
+          className="secondary-button static-html-presentation-layout-action"
+          onClick={onAlignRight}
+          disabled={!canAlign}
+        >
+          {t("conversation.fileViewerPresentationLayoutAlignRight")}
+        </button>
+        <button
+          type="button"
+          className="secondary-button static-html-presentation-layout-action"
+          onClick={onAlignTop}
+          disabled={!canAlign}
+        >
+          {t("conversation.fileViewerPresentationLayoutAlignTop")}
+        </button>
+        <button
+          type="button"
+          className="secondary-button static-html-presentation-layout-action"
+          onClick={onAlignBottom}
+          disabled={!canAlign}
+        >
+          {t("conversation.fileViewerPresentationLayoutAlignBottom")}
+        </button>
+        {shouldShowFreezeAction ? (
+          <button
+            type="button"
+            className="secondary-button static-html-presentation-layout-action"
+            onClick={onFreezeContainer}
+            disabled={!canFreezeContainer}
+          >
+            {t("conversation.fileViewerPresentationLayoutFreezeContainer")}
+          </button>
+        ) : null}
+      </div>
+      {selectedNode ? (
+        <div className="static-html-presentation-layout-form">
+          <label className="static-html-presentation-layout-field">
+            <span>{t("conversation.fileViewerPresentationPositionXLabel")}</span>
+            <input
+              type="number"
+              value={draftBox.x}
+              onChange={(event) => setDraftBox((current) => ({ ...current, x: event.target.value }))}
+              onBlur={() => commitDraftField("x")}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  commitDraftField("x");
+                }
+              }}
+              disabled={!capability.movable}
+            />
+          </label>
+          <label className="static-html-presentation-layout-field">
+            <span>{t("conversation.fileViewerPresentationPositionYLabel")}</span>
+            <input
+              type="number"
+              value={draftBox.y}
+              onChange={(event) => setDraftBox((current) => ({ ...current, y: event.target.value }))}
+              onBlur={() => commitDraftField("y")}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  commitDraftField("y");
+                }
+              }}
+              disabled={!capability.movable}
+            />
+          </label>
+          <label className="static-html-presentation-layout-field">
+            <span>{t("conversation.fileViewerPresentationWidthLabel")}</span>
+            <input
+              type="number"
+              value={draftBox.width}
+              onChange={(event) => setDraftBox((current) => ({ ...current, width: event.target.value }))}
+              onBlur={() => commitDraftField("width")}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  commitDraftField("width");
+                }
+              }}
+              disabled={!capability.resizable}
+            />
+          </label>
+          <label className="static-html-presentation-layout-field">
+            <span>{t("conversation.fileViewerPresentationHeightLabel")}</span>
+            <input
+              type="number"
+              value={draftBox.height}
+              onChange={(event) => setDraftBox((current) => ({ ...current, height: event.target.value }))}
+              onBlur={() => commitDraftField("height")}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  commitDraftField("height");
+                }
+              }}
+              disabled={!capability.resizable}
+            />
+          </label>
+          {capability.reason ? null : (
+            <p className="static-html-presentation-layout-hint">
+              {t("conversation.fileViewerPresentationLayoutHint")}
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="static-html-presentation-toolbar-empty static-html-presentation-inspector-empty">
+          <p className="status-text">{t("conversation.fileViewerPresentationLayoutSelectNode")}</p>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function NodeInspector({

@@ -50,6 +50,7 @@ export interface DocumentNodeBox {
 }
 
 export interface DocumentNodeStyle {
+  position?: string | null;
   fontFamily?: string | null;
   fontSize?: number | null;
   fontWeight?: string | null;
