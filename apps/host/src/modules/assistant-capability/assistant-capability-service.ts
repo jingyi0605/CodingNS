@@ -42,6 +42,7 @@ import type { WorktreeSyncService } from "../worktree/worktree-sync-service.js";
 import { createProviderDisabledError } from "../provider/provider-disabled.js";
 import type { OfficeDocumentExportFormat, OfficeTaskStatus } from "../../types/domain.js";
 import type { OfficeService } from "../office/office-service.js";
+import type { OfficePreviewLinkService } from "../office/office-preview-link-service.js";
 
 type AssistantCapabilityMode = "read" | "proxy_execute";
 export type AssistantCapabilityProfile = "butler-full" | "butler-ui" | "workspace-scoped";
@@ -1117,6 +1118,10 @@ export class AssistantCapabilityService {
       OfficeService,
       "getTaskDetail" | "replyApproval"
     > | null = null,
+    private readonly officePreviewLinkService: Pick<
+      OfficePreviewLinkService,
+      "createArtifactLink"
+    > | null = null,
     private readonly browserRuntimeService: Pick<
       BrowserRuntimeService,
       | "listProfiles"
@@ -1283,7 +1288,10 @@ export class AssistantCapabilityService {
       kind: "workspace",
       id: detail.task.workspaceId
     }, {
-      task: summarizeOfficeTaskDetail(detail),
+      task: summarizeOfficeTaskDetail(detail, {
+        officePreviewLinkService: this.officePreviewLinkService,
+        userId: input.userId
+      }),
       execution
     });
   }
@@ -1300,7 +1308,10 @@ export class AssistantCapabilityService {
       kind: "workspace",
       id: detail.task.workspaceId
     }, {
-      task: summarizeOfficeTaskDetail(detail)
+      task: summarizeOfficeTaskDetail(detail, {
+        officePreviewLinkService: this.officePreviewLinkService,
+        userId
+      })
     });
   }
 
@@ -1402,7 +1413,10 @@ export class AssistantCapabilityService {
       kind: "workspace",
       id: detail.task.workspaceId
     }, {
-      task: summarizeOfficeTaskDetail(detail),
+      task: summarizeOfficeTaskDetail(detail, {
+        officePreviewLinkService: this.officePreviewLinkService,
+        userId: input.userId
+      }),
       execution
     });
   }
@@ -1419,7 +1433,10 @@ export class AssistantCapabilityService {
       kind: "workspace",
       id: detail.task.workspaceId
     }, {
-      task: summarizeOfficeTaskDetail(detail)
+      task: summarizeOfficeTaskDetail(detail, {
+        officePreviewLinkService: this.officePreviewLinkService,
+        userId
+      })
     });
   }
 
@@ -1515,7 +1532,10 @@ export class AssistantCapabilityService {
       kind: "workspace",
       id: detail.task.workspaceId
     }, {
-      task: summarizeOfficeTaskDetail(detail),
+      task: summarizeOfficeTaskDetail(detail, {
+        officePreviewLinkService: this.officePreviewLinkService,
+        userId: input.userId
+      }),
       execution
     });
   }
@@ -1538,7 +1558,10 @@ export class AssistantCapabilityService {
       id: detail.task.workspaceId
     }, {
       execution,
-      task: summarizeOfficeTaskDetail(detail)
+      task: summarizeOfficeTaskDetail(detail, {
+        officePreviewLinkService: this.officePreviewLinkService,
+        userId: input.userId
+      })
     });
   }
 
@@ -1561,7 +1584,10 @@ export class AssistantCapabilityService {
       id: detail.task.workspaceId
     }, {
       approval,
-      task: summarizeOfficeTaskDetail(detail)
+      task: summarizeOfficeTaskDetail(detail, {
+        officePreviewLinkService: this.officePreviewLinkService,
+        userId: input.userId
+      })
     });
   }
 
@@ -1584,7 +1610,10 @@ export class AssistantCapabilityService {
       kind: "workspace",
       id: detail.task.workspaceId
     }, {
-      task: summarizeOfficeTaskDetail(detail)
+      task: summarizeOfficeTaskDetail(detail, {
+        officePreviewLinkService: this.officePreviewLinkService,
+        userId: input.userId
+      })
     });
   }
 
@@ -1600,7 +1629,10 @@ export class AssistantCapabilityService {
       kind: "workspace",
       id: detail.task.workspaceId
     }, {
-      task: summarizeOfficeTaskDetail(detail)
+      task: summarizeOfficeTaskDetail(detail, {
+        officePreviewLinkService: this.officePreviewLinkService,
+        userId
+      })
     });
   }
 
@@ -3312,7 +3344,11 @@ function summarizeOfficeDocumentDetail(
 }
 
 function summarizeOfficeTaskDetail(
-  detail: ReturnType<OfficeService["getTaskDetail"]>
+  detail: ReturnType<OfficeService["getTaskDetail"]>,
+  options?: {
+    officePreviewLinkService?: Pick<OfficePreviewLinkService, "createArtifactLink"> | null;
+    userId?: string | null;
+  }
 ) {
   return {
     id: detail.task.id,
@@ -3341,7 +3377,8 @@ function summarizeOfficeTaskDetail(
       kind: artifact.kind,
       name: artifact.name,
       contentType: artifact.contentType,
-      storagePath: artifact.storagePath,
+      previewPath: buildAssistantOfficeArtifactPreviewPath(artifact.id, options),
+      previewUrl: null,
       metadataJson: artifact.metadataJson,
       createdAt: artifact.createdAt
     })),
@@ -3353,6 +3390,26 @@ function summarizeOfficeTaskDetail(
       createdAt: receipt.createdAt
     }))
   };
+}
+
+function buildAssistantOfficeArtifactPreviewPath(
+  artifactId: string,
+  options?: {
+    officePreviewLinkService?: Pick<OfficePreviewLinkService, "createArtifactLink"> | null;
+    userId?: string | null;
+  }
+) {
+  const normalizedUserId = options?.userId?.trim();
+
+  if (!options?.officePreviewLinkService || !normalizedUserId) {
+    return null;
+  }
+
+  try {
+    return options.officePreviewLinkService.createArtifactLink(artifactId, normalizedUserId).previewPath;
+  } catch {
+    return null;
+  }
 }
 
 function buildAssistantAutomationTriggerInput(

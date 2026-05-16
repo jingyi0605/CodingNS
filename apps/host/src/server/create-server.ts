@@ -91,6 +91,7 @@ import { GitReadService } from "../modules/git/git-read-service.js";
 import { GitRuleRepository } from "../modules/git/git-rule-repository.js";
 import { GitWriteService } from "../modules/git/git-write-service.js";
 import { OfficeController } from "../modules/office/office-controller.js";
+import { OfficePreviewLinkService } from "../modules/office/office-preview-link-service.js";
 import { OfficeService } from "../modules/office/office-service.js";
 import { OpsRuntimeController } from "../modules/ops-runtime/ops-runtime-controller.js";
 import { OpsRuntimeService } from "../modules/ops-runtime/ops-runtime-service.js";
@@ -1294,9 +1295,14 @@ export function createServer(config: HostConfig) {
     repositories.officeReceiptRepository,
     repositories.officeConnectorRepository,
     repositories.officeAuditEventRepository,
-    repositories.officeRollbackRecordRepository
+    repositories.officeRollbackRecordRepository,
+    config.databasePath
   );
-  const officeController = new OfficeController(officeService);
+  const officePreviewLinkService = new OfficePreviewLinkService(
+    officeService,
+    config.filePreviewTokenSecret
+  );
+  const officeController = new OfficeController(officeService, officePreviewLinkService);
   const browserProfileService = new BrowserProfileService(
     repositories.browserProfileRepository,
     config.databasePath
@@ -1374,6 +1380,7 @@ export function createServer(config: HostConfig) {
       repositories.providerControlRepository,
       documentRuntimeService,
       officeService,
+      officePreviewLinkService,
       browserRuntimeService,
       opsRuntimeService
     )

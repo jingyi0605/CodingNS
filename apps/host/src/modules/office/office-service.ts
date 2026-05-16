@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import { AppError } from "../../shared/errors/app-error.js";
 import { createId } from "../../shared/utils/id.js";
 import { nowIso } from "../../shared/utils/time.js";
@@ -61,7 +64,8 @@ export class OfficeService {
     private readonly receiptRepository: OfficeReceiptRepository,
     private readonly connectorRepository: OfficeConnectorRepository,
     private readonly auditEventRepository: OfficeAuditEventRepository,
-    private readonly rollbackRecordRepository: OfficeRollbackRecordRepository
+    private readonly rollbackRecordRepository: OfficeRollbackRecordRepository,
+    private readonly databasePath?: string
   ) {}
 
   listTasks(filters: OfficeTaskListFilters): OfficeTask[] {
@@ -77,6 +81,77 @@ export class OfficeService {
       approvals: this.approvalRepository.listByTaskId(task.id),
       receipts: this.receiptRepository.listByTaskId(task.id),
       audits: this.auditEventRepository.listByTaskId(task.id)
+    };
+  }
+
+  getArtifact(artifactId: string, userId: string): OfficeArtifact {
+    const artifact = this.artifactRepository.findById(artifactId.trim());
+
+    if (!artifact) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "OFFICE_ARTIFACT_NOT_FOUND",
+        detail: "未找到对应办公产物"
+      });
+    }
+
+    this.requireOwnedTask(artifact.taskId, userId);
+    return artifact;
+  }
+
+  getArtifactFile(taskId: string, fileName: string, userId: string): {
+    absolutePath: string;
+    fileName: string;
+    contentType: string;
+  } {
+    const task = this.requireOwnedTask(taskId.trim(), userId);
+    const normalizedFileName = path.basename(fileName.trim());
+
+    if (!normalizedFileName) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "OFFICE_ARTIFACT_FILE_INVALID",
+        detail: "办公产物文件名不能为空"
+      });
+    }
+
+    if (!this.databasePath) {
+      throw new AppError({
+        statusCode: 500,
+        errorCode: "OFFICE_ARTIFACT_FILE_UNAVAILABLE",
+        detail: "当前环境未配置办公产物根目录"
+      });
+    }
+
+    const taskArtifactDir = path.resolve(path.dirname(this.databasePath), "office-artifacts", task.id);
+    const absolutePath = path.resolve(taskArtifactDir, normalizedFileName);
+
+    if (!absolutePath.startsWith(`${taskArtifactDir}${path.sep}`) && absolutePath !== path.join(taskArtifactDir, normalizedFileName)) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "OFFICE_ARTIFACT_FILE_INVALID",
+        detail: "办公产物文件路径非法"
+      });
+    }
+
+    try {
+      const stats = fs.statSync(absolutePath);
+
+      if (!stats.isFile()) {
+        throw new Error("not_file");
+      }
+    } catch {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "OFFICE_ARTIFACT_FILE_NOT_FOUND",
+        detail: "未找到对应办公产物文件"
+      });
+    }
+
+    return {
+      absolutePath,
+      fileName: normalizedFileName,
+      contentType: resolveOfficeArtifactFileContentType(normalizedFileName)
     };
   }
 
@@ -326,6 +401,33 @@ export class OfficeService {
     }
 
     return connector;
+  }
+}
+
+function resolveOfficeArtifactFileContentType(fileName: string): string {
+  const ext = path.extname(fileName).toLowerCase();
+
+  switch (ext) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".webp":
+      return "image/webp";
+    case ".gif":
+      return "image/gif";
+    case ".pdf":
+      return "application/pdf";
+    case ".html":
+      return "text/html; charset=utf-8";
+    case ".json":
+      return "application/json; charset=utf-8";
+    case ".txt":
+    case ".md":
+      return "text/plain; charset=utf-8";
+    default:
+      return "application/octet-stream";
   }
 }
 

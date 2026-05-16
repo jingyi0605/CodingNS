@@ -1787,6 +1787,8 @@ printf 'doct generated docx' > "$output"
     expect(taskDetail.receipts[0]?.payloadJson).toContain("\"finalUrl\":\"https://example.invalid/dashboard\"");
     expect(taskDetail.artifacts.some((item) => item.contentType === "application/json")).toBe(true);
     expect(taskDetail.artifacts.some((item) => item.contentType === "image/png")).toBe(true);
+    expect(taskDetail.artifacts[0]?.previewPath).toMatch(/^\/preview\/office\/artifacts\/.+$/);
+    expect(taskDetail.artifacts[0]?.previewUrl).toContain("/preview/office/artifacts/");
   }, SLOW_TEST_TIMEOUT_MS);
 
   it("可以创建 CDP attach 浏览器 Profile 并执行任务", async () => {
@@ -1852,6 +1854,102 @@ printf 'doct generated docx' > "$output"
     expect(taskDetail.receipts[0]?.receiptType).toBe("browser_execution");
     expect(taskDetail.artifacts.some((item) => item.contentType === "application/json")).toBe(true);
   });
+
+  it("可以通过受控接口读取办公截图产物内容", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const chromePath = path.join(fixture.rootDir, "fake-chrome");
+    writeFileSync(chromePath, "#!/bin/sh\nexit 0\n", "utf8");
+    chmodSync(chromePath, 0o755);
+
+    const hosted = createTestApp(fixture, {
+      chromeExecutablePath: chromePath
+    });
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const tokens = await bootstrapAndLogin(hosted);
+    const headers = {
+      authorization: `Bearer ${tokens.accessToken}`
+    };
+
+    const createProfileResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/office/browser/profiles",
+      headers,
+      payload: {
+        engine: "chrome",
+        mode: "persistent",
+        displayName: "办公截图读取"
+      }
+    });
+
+    expect(createProfileResponse.statusCode).toBe(200);
+    const profileId = createProfileResponse.json().id as string;
+
+    const createTaskResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/office/browser/tasks",
+      headers,
+      payload: {
+        title: "读取办公截图",
+        profileId,
+        input: {
+          startUrl: "https://example.invalid/read-artifact",
+          actions: [
+            {
+              type: "screenshot",
+              fullPage: true
+            }
+          ]
+        }
+      }
+    });
+
+    expect(createTaskResponse.statusCode).toBe(200);
+    const browserTaskId = createTaskResponse.json().task.id as string;
+
+    const executeResponse = await hosted.app.inject({
+      method: "POST",
+      url: `/api/office/browser/tasks/${browserTaskId}/execute`,
+      headers
+    });
+
+    expect(executeResponse.statusCode).toBe(200);
+
+    const taskDetail = await waitForOfficeTask(hosted, tokens.accessToken, browserTaskId);
+    const screenshotArtifact = taskDetail.artifacts.find((item) => item.contentType === "image/png");
+    expect(screenshotArtifact).toBeTruthy();
+
+    const artifactResponse = await hosted.app.inject({
+      method: "GET",
+      url: `/api/office/artifacts/${screenshotArtifact!.id}/content`,
+      headers
+    });
+
+    expect(artifactResponse.statusCode).toBe(200);
+    expect(artifactResponse.headers["content-type"]).toContain("image/png");
+    expect(Buffer.from(artifactResponse.body).toString("utf8")).toBe("mock png");
+
+    const previewLinkResponse = await hosted.app.inject({
+      method: "GET",
+      url: `/api/office/artifacts/${screenshotArtifact!.id}/preview-link`,
+      headers
+    });
+
+    expect(previewLinkResponse.statusCode).toBe(200);
+    expect(previewLinkResponse.json().previewPath).toContain("/preview/office/artifacts/");
+
+    const previewContentResponse = await hosted.app.inject({
+      method: "GET",
+      url: previewLinkResponse.json().previewPath
+    });
+
+    expect(previewContentResponse.statusCode).toBe(200);
+    expect(previewContentResponse.headers["content-type"]).toContain("image/png");
+    expect(Buffer.from(previewContentResponse.body).toString("utf8")).toBe("mock png");
+  }, SLOW_TEST_TIMEOUT_MS);
 
   it("可以创建并执行 SSH 运维任务，产出 stdout/stderr 与回执", async () => {
     const fixture = createEmptyFixture();
@@ -2023,7 +2121,14 @@ async function waitForOfficeTask(
   taskId: string
 ): Promise<{
   task: { status: string };
-  artifacts: Array<{ storagePath: string; contentType: string; metadataJson: string }>;
+  artifacts: Array<{
+    id: string;
+    storagePath: string;
+    previewPath?: string | null;
+    previewUrl?: string | null;
+    contentType: string;
+    metadataJson: string;
+  }>;
   receipts: Array<{ receiptType: string; payloadJson: string }>;
 }> {
   for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -2038,7 +2143,14 @@ async function waitForOfficeTask(
     expect(response.statusCode).toBe(200);
     const detail = response.json() as {
       task: { status: string };
-      artifacts: Array<{ storagePath: string; contentType: string; metadataJson: string }>;
+      artifacts: Array<{
+        id: string;
+        storagePath: string;
+        previewPath?: string | null;
+        previewUrl?: string | null;
+        contentType: string;
+        metadataJson: string;
+      }>;
       receipts: Array<{ receiptType: string; payloadJson: string }>;
     };
 
