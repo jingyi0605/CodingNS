@@ -766,6 +766,7 @@ export function FileViewerModal({
           <StaticHtmlPresentationView
             filePath={filePath}
             html={editorContent}
+            baseHref={htmlPreviewUrl}
             onProjectChange={setPresentationProject}
             onSave={() => void handleSave()}
             canSave={isDirty}

@@ -63,6 +63,7 @@ interface RunsSelectionOffsets {
 export function StaticHtmlPresentationView({
   filePath,
   html,
+  baseHref,
   onProjectChange,
   onSave,
   canSave = false,
@@ -70,6 +71,7 @@ export function StaticHtmlPresentationView({
 }: {
   filePath: string;
   html: string;
+  baseHref?: string | null;
   onProjectChange?: (project: DocumentProject | null) => void;
   onSave?: () => void;
   canSave?: boolean;
@@ -147,9 +149,10 @@ export function StaticHtmlPresentationView({
     return buildStaticHtmlPresentationPreviewFromProject({
       html,
       project: currentProject,
-      pageIndex: currentPageIndex
+      pageIndex: currentPageIndex,
+      baseHref: baseHref ?? null
     });
-  }, [currentPageIndex, currentProject, html]);
+  }, [baseHref, currentPageIndex, currentProject, html]);
 
   useEffect(() => {
     if (!inlineEditorRef.current || !inlineEditor) {

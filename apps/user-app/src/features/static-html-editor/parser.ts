@@ -288,6 +288,7 @@ export function buildStaticHtmlDocumentProject(input: {
 export function buildStaticHtmlPresentationPreview(input: {
   html: string;
   pageIndex: number;
+  baseHref?: string | null;
 }): string | null {
   const project = buildStaticHtmlDocumentProject({
     html: input.html,
@@ -302,7 +303,8 @@ export function buildStaticHtmlPresentationPreview(input: {
   return buildStaticHtmlPresentationPreviewFromProject({
     html: input.html,
     project,
-    pageIndex: input.pageIndex
+    pageIndex: input.pageIndex,
+    baseHref: input.baseHref ?? null
   });
 }
 
@@ -313,6 +315,7 @@ export function buildStaticHtmlPresentationPreviewFromProject(input: {
   selectedNodeId?: string | null;
   selectedRunIndex?: number | null;
   inlineEditingNodeId?: string | null;
+  baseHref?: string | null;
 }): string | null {
   return buildStaticHtmlDocumentFromProject({
     html: input.html,
@@ -321,6 +324,7 @@ export function buildStaticHtmlPresentationPreviewFromProject(input: {
     selectedNodeId: input.selectedNodeId ?? null,
     selectedRunIndex: input.selectedRunIndex ?? null,
     inlineEditingNodeId: input.inlineEditingNodeId ?? null,
+    baseHref: input.baseHref ?? null,
     mode: "preview"
   });
 }
@@ -345,6 +349,7 @@ function buildStaticHtmlDocumentFromProject(input: {
   selectedNodeId: string | null;
   selectedRunIndex?: number | null;
   inlineEditingNodeId?: string | null;
+  baseHref?: string | null;
   mode: "preview" | "save";
 }): string | null {
   const document = parseHtml(input.html);
@@ -367,6 +372,7 @@ function buildStaticHtmlDocumentFromProject(input: {
 
   if (input.mode === "preview") {
     normalizePreviewViewportScaling(document, input.project);
+    applyPreviewBaseHref(document, input.baseHref ?? null);
   }
 
   latestResolvedPages.elements.forEach((element, index) => {
@@ -812,6 +818,31 @@ function buildStaticHtmlDocumentFromProject(input: {
   }
 
   return document.documentElement.outerHTML;
+}
+
+function applyPreviewBaseHref(document: Document, baseHref: string | null): void {
+  const trimmedBaseHref = baseHref?.trim() ?? "";
+
+  if (!trimmedBaseHref) {
+    return;
+  }
+
+  const head = document.head ?? document.querySelector("head");
+
+  if (!(head instanceof HTMLHeadElement)) {
+    return;
+  }
+
+  const existingBase = head.querySelector("base");
+
+  if (existingBase) {
+    existingBase.setAttribute("href", trimmedBaseHref);
+    return;
+  }
+
+  const baseElement = document.createElement("base");
+  baseElement.setAttribute("href", trimmedBaseHref);
+  head.insertBefore(baseElement, head.firstChild);
 }
 
 function stripSourceScripts(document: Document): void {

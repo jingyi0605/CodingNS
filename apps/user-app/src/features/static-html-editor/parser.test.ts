@@ -103,6 +103,33 @@ describe("static html presentation parser", () => {
     expect(preview).toContain("[data-cns-page-root");
   });
 
+  it("逐页预览会注入 base href，保证相对资源按原文件目录解析", () => {
+    const html = `
+      <!doctype html>
+      <html>
+        <head></head>
+        <body>
+          <div class="deck">
+            <section class="slide" data-title="第一页">
+              <img src="./assets/chart.png" alt="图表" />
+            </section>
+          </div>
+        </body>
+      </html>
+    `;
+
+    const preview = buildStaticHtmlPresentationPreview({
+      html,
+      pageIndex: 0,
+      baseHref: "http://127.0.0.1:3100/preview/files/token/demo/index.html?_preview=3"
+    });
+
+    expect(preview).toContain(
+      '<base href="http://127.0.0.1:3100/preview/files/token/demo/index.html?_preview=3">'
+    );
+    expect(preview).toContain('<img src="./assets/chart.png" alt="图表"');
+  });
+
   it("逐页预览会显式隐藏非当前页，并显式显示当前页", () => {
     const html = `
       <!doctype html>
@@ -521,6 +548,7 @@ describe("static html presentation parser", () => {
     expect(savedHtml).toContain("position: absolute");
     expect(savedHtml).not.toContain("data-cns-page-root");
     expect(savedHtml).not.toContain("data-cns-node-selected");
+    expect(savedHtml).not.toContain("<base ");
   });
 
   it("新增、删除和调整页面顺序后，保存回 HTML 会同步页面结构", () => {
