@@ -47,7 +47,8 @@
 - 不重写整套全局鉴权体系
 
 当前状态：
-- [ ] 未开始
+- [x] 已完成基础实现
+- [ ] 待补更多链路验证与边角测试
 
 ## 任务 3：给助手能力服务补 profile 过滤和作用域校验
 
@@ -67,7 +68,13 @@
 - 不做复杂可视化权限管理页
 
 当前状态：
-- [ ] 未开始
+- [x] 已完成基础实现
+- [x] 已补 `sessions.get/messages/runtime` 的真实工作区校验
+- [x] 已补 `worktrees.*` 的真实作用域校验
+- [x] 已补 `office.document.*` / `office.browser.*` 的真实作用域校验
+- [x] 已补 `office.ops.*` / `debug-targets.*` / `debug-runtimes.get` 的真实作用域校验
+- [x] 已补关键接口级自动化测试
+- [ ] 待补更大范围回归验证
 
 ## 任务 4：补工作区会话能力说明注入
 
@@ -86,7 +93,8 @@
 - 不做复杂 UI 配置器
 
 当前状态：
-- [ ] 未开始
+- [x] 已完成基础实现
+- [ ] 待补 Host/CLI 联调验证
 
 ## 任务 5：补 `terminals.create`
 
@@ -108,7 +116,8 @@
 - 不在这一步重做整套终端 UI
 
 当前状态：
-- [ ] 未开始
+- [x] 已完成基础注入
+- [ ] 待补更多 provider 场景验证
 
 ## 任务 6：把办公能力入口正式接到工作区会话
 
@@ -129,7 +138,10 @@
 - 不在这一步做复杂前端管理页
 
 当前状态：
-- [ ] 未开始
+- [x] 已完成
+- [x] 已把 `office.document.*` / `office.browser.*` 正式接到 `workspace-scoped`
+- [x] 已把 `office.ops.target.* / office.ops.ssh-task.create / office.ops.browser-task.create / office.ops.task.get / office.ops.task.execute` 接回 `workspace-scoped`
+- [x] 已给 `ops_targets` 和相关任务链补 `workspace_id`，执行入口会按当前工作区做真实校验
 
 ## 任务 7：补条件开放能力的确认与拒绝回执
 
@@ -150,7 +162,10 @@
 - 不在这一轮设计完整 RBAC 系统
 
 当前状态：
-- [ ] 未开始
+- [x] 已完成基础实现
+- [x] 已给 `terminals.input.send` / `terminals.close` / `office.ops.task.execute` / `worktrees.merge-into-parent` 接入显式确认
+- [x] 已给 `office.ops.ssh-task.create(execute=true)` / `office.ops.browser-task.create` / `debug-targets.*` 执行类接入显式确认
+- [ ] 待补更完整的拒绝回执示例和更大范围回归测试
 
 ## 任务 8：补测试、示例和最小使用说明
 
@@ -173,4 +188,7 @@
 - 不追求一次覆盖所有 provider 组合
 
 当前状态：
-- [ ] 未开始
+- [~] 部分完成
+- [x] 已通过 `pnpm -C apps/host exec tsc --noEmit`
+- [x] 已补 `assistant-capability-routes.test.ts` / `assistant-capability-service.test.ts` 的接口级测试
+- [ ] 待补最小人工验证记录

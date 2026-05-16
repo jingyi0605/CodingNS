@@ -1364,6 +1364,7 @@ export function createServer(config: HostConfig) {
       terminalService,
       debugTargetService,
       workspaceService,
+      repositories.workspaceWorktreeRepository,
       worktreeManager,
       worktreeSyncService,
       worktreeMergeService,

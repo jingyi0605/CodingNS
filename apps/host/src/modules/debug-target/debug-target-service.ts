@@ -226,6 +226,24 @@ export class DebugTargetService {
     };
   }
 
+  getTargetWorkspaceId(targetId: string): string {
+    return this.getTargetOrThrow(targetId).workspaceId;
+  }
+
+  getRuntimeWorkspaceId(runtimeId: string): string {
+    const runtimeSession = this.debugRuntimeSessionRepository.findById(runtimeId);
+
+    if (!runtimeSession) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "DEBUG_RUNTIME_NOT_FOUND",
+        detail: "调试运行时不存在"
+      });
+    }
+
+    return this.getTargetOrThrow(runtimeSession.targetId).workspaceId;
+  }
+
   async createLaunchPlan(
     targetId: string,
     portRequests: DebugTargetPortRequest[] = [],

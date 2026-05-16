@@ -4,6 +4,7 @@ import type { OpsTarget, OpsTargetKind, OpsTargetStatus } from "../../types/doma
 
 export interface OpsTargetListFilters {
   userId?: string;
+  workspaceId?: string | null;
   kind?: OpsTargetKind;
   status?: OpsTargetStatus;
 }
@@ -17,6 +18,7 @@ export class OpsTargetRepository {
         `INSERT INTO ops_targets (
            id,
            user_id,
+           workspace_id,
            kind,
            display_name,
            environment,
@@ -30,6 +32,7 @@ export class OpsTargetRepository {
       .run(
         record.id,
         record.userId,
+        record.workspaceId,
         record.kind,
         record.displayName,
         record.environment,
@@ -49,6 +52,7 @@ export class OpsTargetRepository {
         `SELECT
            id,
            user_id,
+           workspace_id,
            kind,
            display_name,
            environment,
@@ -74,6 +78,15 @@ export class OpsTargetRepository {
       values.push(filters.userId.trim());
     }
 
+    if (filters.workspaceId !== undefined) {
+      if (filters.workspaceId === null) {
+        whereParts.push("workspace_id IS NULL");
+      } else {
+        whereParts.push("workspace_id = ?");
+        values.push(filters.workspaceId.trim());
+      }
+    }
+
     if (filters.kind) {
       whereParts.push("kind = ?");
       values.push(filters.kind);
@@ -90,6 +103,7 @@ export class OpsTargetRepository {
         `SELECT
            id,
            user_id,
+           workspace_id,
            kind,
            display_name,
            environment,
@@ -111,6 +125,7 @@ export class OpsTargetRepository {
       .prepare(
         `UPDATE ops_targets
          SET user_id = ?,
+             workspace_id = ?,
              kind = ?,
              display_name = ?,
              environment = ?,
@@ -122,6 +137,7 @@ export class OpsTargetRepository {
       )
       .run(
         record.userId,
+        record.workspaceId,
         record.kind,
         record.displayName,
         record.environment,
@@ -139,6 +155,7 @@ export class OpsTargetRepository {
 interface OpsTargetRow {
   id: string;
   user_id: string;
+  workspace_id: string | null;
   kind: OpsTargetKind;
   display_name: string;
   environment: string | null;
@@ -153,6 +170,7 @@ function mapOpsTargetRow(row: OpsTargetRow): OpsTarget {
   return {
     id: row.id,
     userId: row.user_id,
+    workspaceId: row.workspace_id,
     kind: row.kind,
     displayName: row.display_name,
     environment: row.environment,

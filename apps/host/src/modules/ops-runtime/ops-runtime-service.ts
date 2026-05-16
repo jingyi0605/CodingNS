@@ -12,6 +12,7 @@ import type { SshOpsExecutor } from "./ssh-ops-executor.js";
 
 export interface CreateOpsTargetInput {
   userId: string;
+  workspaceId?: string | null;
   kind: OpsTargetKind;
   displayName: string;
   environment?: string | null;
@@ -73,6 +74,7 @@ export class OpsRuntimeService {
     return this.opsTargetRepository.create({
       id: createId(),
       userId: input.userId,
+      workspaceId: normalizeNullableText(input.workspaceId),
       kind: input.kind,
       displayName,
       environment: normalizeNullableText(input.environment),
@@ -89,7 +91,7 @@ export class OpsRuntimeService {
 
     return this.officeService.createTask({
       userId: input.userId,
-      workspaceId: null,
+      workspaceId: target.workspaceId,
       taskType: "ops",
       title: input.title.trim() || "SSH 运维任务",
       connectorId: "ops.ssh",
@@ -113,6 +115,14 @@ export class OpsRuntimeService {
         statusCode: 409,
         errorCode: "BROWSER_PROFILE_NOT_ACTIVE",
         detail: "当前浏览器 Profile 不可用"
+      });
+    }
+
+    if (target.workspaceId !== profile.workspaceId) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "OPS_TARGET_BROWSER_PROFILE_WORKSPACE_MISMATCH",
+        detail: "浏览器运维目标和浏览器 Profile 不属于同一工作区"
       });
     }
 

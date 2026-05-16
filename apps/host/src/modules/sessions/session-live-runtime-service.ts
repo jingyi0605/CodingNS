@@ -2363,7 +2363,7 @@ export class SessionLiveRuntimeService {
 
   private resolveEffectiveSessionProviderBinding(
     session: Pick<SessionListItem, "sessionId" | "workspaceId" | "provider">,
-    input: Pick<SendLiveMessageInput, "providerConfigMode" | "providerPresetId">
+    input: Pick<SendLiveMessageInput, "userId" | "providerConfigMode" | "providerPresetId">
   ) {
     const existingBinding = this.getSessionBindingOrThrow(session.sessionId);
     const providerBinding = this.resolveRequestedSessionProviderBinding(

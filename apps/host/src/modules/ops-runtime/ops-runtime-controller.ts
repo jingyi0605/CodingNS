@@ -18,6 +18,7 @@ interface OpsTaskParams {
 }
 
 interface CreateOpsTargetBody {
+  workspaceId?: string | null;
   kind?: OpsTargetKind;
   displayName?: string;
   environment?: string | null;
@@ -63,6 +64,7 @@ export class OpsRuntimeController {
     reply.send(
       this.opsRuntimeService.createTarget({
         userId: requireUserId(request),
+        workspaceId: request.body.workspaceId,
         kind: request.body.kind ?? "ssh_host",
         displayName: request.body.displayName?.trim() ?? "",
         environment: request.body.environment,

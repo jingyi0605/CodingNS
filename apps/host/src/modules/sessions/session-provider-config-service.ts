@@ -259,7 +259,7 @@ export class SessionProviderConfigService {
       const preparedBinding = this.prepareSessionBinding({
         sessionId: input.sessionId,
         userId: input.userId ?? null,
-        workspaceId: input.workspaceId ?? existingBinding?.workspaceId ?? null,
+        workspaceId: input.workspaceId ?? null,
         projectId: input.projectId ?? null,
         provider: input.provider,
         providerConfigMode: selection.providerConfigMode,
@@ -290,7 +290,7 @@ export class SessionProviderConfigService {
     const preparedBinding = this.prepareSessionBinding({
       sessionId: input.sessionId,
       userId: input.userId ?? null,
-      workspaceId: input.workspaceId ?? existingBinding?.workspaceId ?? null,
+      workspaceId: input.workspaceId ?? null,
       projectId: input.projectId ?? null,
       provider: input.provider,
       providerConfigMode: selection.providerConfigMode,

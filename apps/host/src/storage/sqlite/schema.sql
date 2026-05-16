@@ -354,6 +354,7 @@ CREATE INDEX IF NOT EXISTS idx_document_comments_status
 CREATE TABLE IF NOT EXISTS ops_targets (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
+  workspace_id TEXT,
   kind TEXT NOT NULL CHECK (kind IN ('ssh_host', 'web_console')),
   display_name TEXT NOT NULL,
   environment TEXT,
@@ -362,10 +363,12 @@ CREATE TABLE IF NOT EXISTS ops_targets (
   status TEXT NOT NULL CHECK (status IN ('active', 'disabled', 'error')),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  FOREIGN KEY (user_id) REFERENCES auth_users(id)
+  FOREIGN KEY (user_id) REFERENCES auth_users(id),
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_ops_targets_user_id ON ops_targets(user_id);
+CREATE INDEX IF NOT EXISTS idx_ops_targets_workspace_id ON ops_targets(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_ops_targets_kind ON ops_targets(kind);
 CREATE INDEX IF NOT EXISTS idx_ops_targets_status ON ops_targets(status);
 

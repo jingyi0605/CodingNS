@@ -606,6 +606,21 @@ async function runAssistantCommand(argv) {
         projectId: readOptionalTrimmedValue(options.values["project-id"])
       })));
       return;
+    case "terminals:create":
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: "/api/assistant/terminals",
+        argv: rest,
+        supportedOptions: ["workspace-id", "project-id", "name", "cwd", "shell"],
+        helpTopic: "terminals.create"
+      }, (options) => ({
+        workspaceId: readOptionalTrimmedValue(options.values["workspace-id"]),
+        projectId: readOptionalTrimmedValue(options.values["project-id"]),
+        name: readOptionalTrimmedValue(options.values.name),
+        cwd: readOptionalTrimmedValue(options.values.cwd),
+        shell: readOptionalTrimmedValue(options.values.shell)
+      })));
+      return;
     case "terminals:history": {
       const [terminalId, ...tail] = rest;
       await printAssistantResponse(await requestAssistant({
@@ -627,9 +642,11 @@ async function runAssistantCommand(argv) {
         path: `/api/assistant/terminals/${requirePositional(terminalId, "terminalId")}/input`,
         argv: tail,
         supportedOptions: ["input"],
+        supportedFlags: ["confirm"],
         helpTopic: "terminals.send"
       }, (options) => ({
-        content: requireOptionValue(options.values.input, "input")
+        content: requireOptionValue(options.values.input, "input"),
+        confirm: options.flags.confirm === true
       })));
       return;
     }
@@ -639,8 +656,11 @@ async function runAssistantCommand(argv) {
         method: "DELETE",
         path: `/api/assistant/terminals/${requirePositional(terminalId, "terminalId")}`,
         argv: tail,
+        supportedFlags: ["confirm"],
         helpTopic: "terminals.close"
-      }));
+      }, (options) => ({
+        confirm: options.flags.confirm === true
+      })));
       return;
     }
     case "office:document-create":
@@ -772,9 +792,10 @@ async function runAssistantCommand(argv) {
         method: "GET",
         path: "/api/assistant/office/ops/targets",
         argv: rest,
-        supportedOptions: ["kind", "status"],
+        supportedOptions: ["workspace-id", "kind", "status"],
         helpTopic: "office.ops-targets"
       }, (options) => ({
+        workspaceId: readOptionalTrimmedValue(options.values["workspace-id"]),
         kind: readOptionalTrimmedValue(options.values.kind),
         status: readOptionalTrimmedValue(options.values.status)
       })));
@@ -784,9 +805,10 @@ async function runAssistantCommand(argv) {
         method: "POST",
         path: "/api/assistant/office/ops/targets",
         argv: rest,
-        supportedOptions: ["kind", "display-name", "environment", "credential-ref", "config-json"],
+        supportedOptions: ["workspace-id", "kind", "display-name", "environment", "credential-ref", "config-json"],
         helpTopic: "office.ops-target-create"
       }, (options) => ({
+        workspaceId: readOptionalTrimmedValue(options.values["workspace-id"]),
         kind: readOptionalTrimmedValue(options.values.kind),
         displayName: requireOptionValue(options.values["display-name"], "display-name"),
         environment: readOptionalTrimmedValue(options.values.environment),
@@ -825,8 +847,11 @@ async function runAssistantCommand(argv) {
         method: "POST",
         path: `/api/assistant/office/ops/tasks/${requirePositional(taskId, "taskId")}/execute`,
         argv: tail,
+        supportedFlags: ["confirm"],
         helpTopic: "office.ops-task-execute"
-      }));
+      }, (options) => ({
+        confirm: options.flags.confirm === true
+      })));
       return;
     }
     case "office:task-approval-reply": {
@@ -849,13 +874,15 @@ async function runAssistantCommand(argv) {
         path: "/api/assistant/office/ops/browser-tasks",
         argv: rest,
         supportedOptions: ["title", "target-id", "profile-id", "risk-level", "input-json"],
+        supportedFlags: ["confirm"],
         helpTopic: "office.ops-browser-task-create"
       }, (options) => ({
         title: readOptionalTrimmedValue(options.values.title),
         targetId: requireOptionValue(options.values["target-id"], "target-id"),
         profileId: requireOptionValue(options.values["profile-id"], "profile-id"),
         riskLevel: readOptionalTrimmedValue(options.values["risk-level"]),
-        input: parseJsonOption(options.values["input-json"], "input-json")
+        input: parseJsonOption(options.values["input-json"], "input-json"),
+        confirm: options.flags.confirm === true
       })));
       return;
     case "office:ops-task-get": {
@@ -883,11 +910,13 @@ async function runAssistantCommand(argv) {
         argv: rest,
         supportedOptions: ["workspace-id", "root-path", "command-hint"],
         repeatableOptions: ["command-hint"],
+        supportedFlags: ["confirm"],
         helpTopic: "debug-targets.analyze"
       }, (options) => ({
         workspaceId: requireOptionValue(options.values["workspace-id"], "workspace-id"),
         rootPath: requireOptionValue(options.values["root-path"], "root-path"),
-        commandHints: readMultiOptionValues(options.values["command-hint"])
+        commandHints: readMultiOptionValues(options.values["command-hint"]),
+        confirm: options.flags.confirm === true
       })));
       return;
     case "debug-targets:framework-analysis": {
@@ -906,8 +935,11 @@ async function runAssistantCommand(argv) {
         method: "POST",
         path: `/api/assistant/debug-targets/${requirePositional(targetId, "targetId")}/framework-analysis/refresh`,
         argv: tail,
+        supportedFlags: ["confirm"],
         helpTopic: "debug-targets.refresh-framework-analysis"
-      }));
+      }, (options) => ({
+        confirm: options.flags.confirm === true
+      })));
       return;
     }
     case "debug-targets:launch-plan": {
@@ -918,9 +950,11 @@ async function runAssistantCommand(argv) {
         argv: tail,
         supportedOptions: ["port-request"],
         repeatableOptions: ["port-request"],
+        supportedFlags: ["confirm"],
         helpTopic: "debug-targets.launch-plan"
       }, (options) => ({
-        portRequests: parseDebugPortRequests(options.values["port-request"])
+        portRequests: parseDebugPortRequests(options.values["port-request"]),
+        confirm: options.flags.confirm === true
       })));
       return;
     }
@@ -932,11 +966,13 @@ async function runAssistantCommand(argv) {
         argv: tail,
         supportedOptions: ["shell", "runtime-type", "port-request"],
         repeatableOptions: ["port-request"],
+        supportedFlags: ["confirm"],
         helpTopic: "debug-targets.run"
       }, (options) => ({
         shell: readOptionalTrimmedValue(options.values.shell),
         runtimeType: readOptionalTrimmedValue(options.values["runtime-type"]),
-        portRequests: parseDebugPortRequests(options.values["port-request"])
+        portRequests: parseDebugPortRequests(options.values["port-request"]),
+        confirm: options.flags.confirm === true
       })));
       return;
     }
@@ -1138,8 +1174,11 @@ async function runAssistantCommand(argv) {
         method: "POST",
         path: `/api/assistant/worktrees/${requirePositional(workspaceId, "workspaceId")}/merge-into-parent`,
         argv: tail,
+        supportedFlags: ["confirm"],
         helpTopic: "worktrees.merge"
-      }));
+      }, (options) => ({
+        confirm: options.flags.confirm === true
+      })));
       return;
     }
     case "worktrees:cleanup": {
@@ -1456,7 +1495,7 @@ async function requestAssistant(command, buildPayload) {
   let response;
 
   try {
-    const usesJsonBody = command.method === "POST" || command.method === "PUT";
+    const usesJsonBody = command.method === "POST" || command.method === "PUT" || command.method === "DELETE";
     response = await fetch(url, {
       method: command.method,
       headers: {
@@ -2069,13 +2108,13 @@ assistant 例子：
   codingns assistant office ops-target-create --kind ssh_host --display-name "生产 SSH" --config-json '{"host":"10.0.0.8","username":"root"}' --token <token>
   codingns assistant office document-create --title "周报" --template-key team.doct.weekly --content-json '{"sections":[]}' --token <token>
   codingns assistant workspaces list --token <token>
-  codingns assistant debug-targets analyze --workspace-id <id> --root-path <path> --token <token>
-  codingns assistant debug-targets launch-plan <targetId> --port-request role=backend,cwd=apps/api,port=44001 --token <token>
+  codingns assistant debug-targets analyze --workspace-id <id> --root-path <path> --confirm --token <token>
+  codingns assistant debug-targets launch-plan <targetId> --port-request role=backend,cwd=apps/api,port=44001 --confirm --token <token>
   codingns assistant worktrees tree --root-workspace-id <id> --token <token>
   codingns assistant sessions send <sessionId> --message "继续修复类型错误" --token <token>
   codingns assistant follow-ups continue <taskId> --summary "目标还没完成" --continue-prompt "继续补齐剩余实现" --token <token>
-  codingns assistant terminals send <terminalId> --input "npm test\\n" --token <token>
-  codingns assistant terminals close <terminalId> --token <token>
+  codingns assistant terminals send <terminalId> --input "npm test\\n" --confirm --token <token>
+  codingns assistant terminals close <terminalId> --confirm --token <token>
 
 skills 例子：
 
@@ -2280,7 +2319,7 @@ codingns assistant office ops-targets
   列出办公运维目标。
 
 用法：
-  codingns assistant office ops-targets [--kind ssh_host|web_console] [--status active|disabled|error] --token <token>
+  codingns assistant office ops-targets [--workspace-id <id>] [--kind ssh_host|web_console] [--status active|disabled|error] --token <token>
 `.trim();
     case "office.ops-target-create":
       return `
@@ -2290,7 +2329,7 @@ codingns assistant office ops-target-create
   创建 SSH 主机或网页控制台运维目标。
 
 用法：
-  codingns assistant office ops-target-create --display-name <name> [--kind ssh_host|web_console] [--environment <name>] [--credential-ref <ref>] [--config-json <json>] --token <token>
+  codingns assistant office ops-target-create --workspace-id <id> --display-name <name> [--kind ssh_host|web_console] [--environment <name>] [--credential-ref <ref>] [--config-json <json>] --token <token>
 `.trim();
     case "office.ops-target-get":
       return `
@@ -2320,7 +2359,7 @@ codingns assistant office ops-task-execute
   执行已经创建并处于 ready 状态的 SSH 运维任务。
 
 用法：
-  codingns assistant office ops-task-execute <taskId> --token <token>
+  codingns assistant office ops-task-execute <taskId> --confirm --token <token>
 `.trim();
     case "office.task-approval-reply":
       return `
@@ -2340,7 +2379,7 @@ codingns assistant office ops-browser-task-create
   创建基于真实 Chrome/Edge Profile 的浏览器运维任务。
 
 用法：
-  codingns assistant office ops-browser-task-create --target-id <targetId> --profile-id <profileId> [--title <title>] [--risk-level low|medium|high] [--input-json <json>] --token <token>
+  codingns assistant office ops-browser-task-create --target-id <targetId> --profile-id <profileId> [--title <title>] [--risk-level low|medium|high] [--input-json <json>] [--confirm] --token <token>
 `.trim();
     case "office.ops-task-get":
       return `
@@ -2882,14 +2921,26 @@ codingns assistant follow-ups fail
 codingns assistant terminals
 
 可用动作：
+  create   在当前工作区或项目下新建终端
   list     列出项目或工作区下的终端
   history  读取终端历史输出
   send     向受控终端发送输入
   close    关闭受控终端
 
 示例：
+  codingns assistant terminals create --workspace-id <workspaceId> --token <token>
   codingns assistant terminals list --project-id <projectId> --token <token>
   codingns assistant terminals send <terminalId> --input "npm test\\n" --token <token>
+`.trim();
+    case "terminals.create":
+      return `
+codingns assistant terminals create
+
+用途：
+  在指定工作区或项目作用域下正式新建一个受控终端。
+
+用法：
+  codingns assistant terminals create [--workspace-id <id> | --project-id <id>] [--name <name>] [--cwd <cwd>] [--shell <shell>] --token <token>
 `.trim();
     case "terminals.list":
       return `
@@ -2919,7 +2970,7 @@ codingns assistant terminals send
   向受控终端发送输入，比如测试命令或构建命令。
 
 用法：
-  codingns assistant terminals send <terminalId> --input "npm test\\n" --token <token>
+  codingns assistant terminals send <terminalId> --input "npm test\\n" --confirm --token <token>
 `.trim();
     case "terminals.close":
       return `
@@ -2929,7 +2980,7 @@ codingns assistant terminals close
   关闭指定受控终端，常用于停止调试进程或回收运行资源。
 
 用法：
-  codingns assistant terminals close <terminalId> --token <token>
+  codingns assistant terminals close <terminalId> --confirm --token <token>
 `.trim();
     case "debug-targets":
       return `
@@ -2946,8 +2997,8 @@ codingns assistant debug-targets
   runtimes                   读取运行历史
 
 示例：
-  codingns assistant debug-targets analyze --workspace-id <id> --root-path /repo/demo --token <token>
-  codingns assistant debug-targets launch-plan <targetId> --port-request role=backend,cwd=apps/api,port=44001 --token <token>
+  codingns assistant debug-targets analyze --workspace-id <id> --root-path /repo/demo --confirm --token <token>
+  codingns assistant debug-targets launch-plan <targetId> --port-request role=backend,cwd=apps/api,port=44001 --confirm --token <token>
 `.trim();
     case "debug-targets.compatibility-matrix":
       return `
@@ -2967,7 +3018,7 @@ codingns assistant debug-targets analyze
   分析指定工作区下的调试目标、服务和框架兼容性。
 
 用法：
-  codingns assistant debug-targets analyze --workspace-id <id> --root-path <path> [--command-hint "pnpm dev"] [--command-hint "node server.js"] --token <token>
+  codingns assistant debug-targets analyze --workspace-id <id> --root-path <path> [--command-hint "pnpm dev"] [--command-hint "node server.js"] [--confirm] --token <token>
 `.trim();
     case "debug-targets.framework-analysis":
       return `
@@ -2987,7 +3038,7 @@ codingns assistant debug-targets refresh-framework-analysis
   刷新指定调试目标的框架分析结果。
 
 用法：
-  codingns assistant debug-targets refresh-framework-analysis <targetId> --token <token>
+  codingns assistant debug-targets refresh-framework-analysis <targetId> [--confirm] --token <token>
 `.trim();
     case "debug-targets.launch-plan":
       return `
@@ -2997,7 +3048,7 @@ codingns assistant debug-targets launch-plan
   生成调试目标启动计划，可通过重复的 --port-request 显式请求服务端口。
 
 用法：
-  codingns assistant debug-targets launch-plan <targetId> [--port-request role=frontend,cwd=apps/web,port=43001] [--port-request role=backend,cwd=apps/api,port=44001] --token <token>
+  codingns assistant debug-targets launch-plan <targetId> [--port-request role=frontend,cwd=apps/web,port=43001] [--port-request role=backend,cwd=apps/api,port=44001] [--confirm] --token <token>
 `.trim();
     case "debug-targets.run":
       return `
@@ -3007,7 +3058,7 @@ codingns assistant debug-targets run
   启动调试目标，可选指定 shell、runtimeType 和显式端口请求。
 
 用法：
-  codingns assistant debug-targets run <targetId> [--shell zsh] [--runtime-type tmux|embedded-pty|conpty-powershell|conpty-cmd|conpty-git-bash] [--port-request role=backend,cwd=apps/api,port=44001] --token <token>
+  codingns assistant debug-targets run <targetId> [--shell zsh] [--runtime-type tmux|embedded-pty|conpty-powershell|conpty-cmd|conpty-git-bash] [--port-request role=backend,cwd=apps/api,port=44001] [--confirm] --token <token>
 `.trim();
     case "debug-targets.runtime-latest":
       return `
@@ -3102,7 +3153,7 @@ codingns assistant worktrees merge
   把子工作树合并回父工作区。
 
 用法：
-  codingns assistant worktrees merge <workspaceId> --token <token>
+  codingns assistant worktrees merge <workspaceId> --confirm --token <token>
 `.trim();
     case "worktrees.cleanup":
       return `
@@ -3132,20 +3183,20 @@ codingns assistant 用法：
   codingns assistant office browser-profile-get <profileId> [--base-url ...] --token <token>
   codingns assistant office browser-task-create --profile-id <profileId> [--workspace-id <id>] [--title <title>] [--risk-level low|medium|high] [--execute true|false] [--input-json <json>] [--base-url ...] --token <token>
   codingns assistant office browser-task-get <taskId> [--base-url ...] --token <token>
-  codingns assistant office ops-targets [--kind ssh_host|web_console] [--status active|disabled|error] [--base-url ...] --token <token>
-  codingns assistant office ops-target-create --display-name <name> [--kind ssh_host|web_console] [--environment <name>] [--credential-ref <ref>] [--config-json <json>] [--base-url ...] --token <token>
+  codingns assistant office ops-targets [--workspace-id <id>] [--kind ssh_host|web_console] [--status active|disabled|error] [--base-url ...] --token <token>
+  codingns assistant office ops-target-create --workspace-id <id> --display-name <name> [--kind ssh_host|web_console] [--environment <name>] [--credential-ref <ref>] [--config-json <json>] [--base-url ...] --token <token>
   codingns assistant office ops-target-get <targetId> [--base-url ...] --token <token>
   codingns assistant office ops-ssh-task-create --target-id <targetId> [--title <title>] [--risk-level low|medium|high] [--execute true|false] [--input-json <json>] [--base-url ...] --token <token>
-  codingns assistant office ops-task-execute <taskId> [--base-url ...] --token <token>
+  codingns assistant office ops-task-execute <taskId> [--confirm] [--base-url ...] --token <token>
   codingns assistant office task-approval-reply <approvalId> [--status approved|rejected] [--decision-note <text>] [--base-url ...] --token <token>
-  codingns assistant office ops-browser-task-create --target-id <targetId> --profile-id <profileId> [--title <title>] [--risk-level low|medium|high] [--input-json <json>] [--base-url ...] --token <token>
+  codingns assistant office ops-browser-task-create --target-id <targetId> --profile-id <profileId> [--title <title>] [--risk-level low|medium|high] [--input-json <json>] [--confirm] [--base-url ...] --token <token>
   codingns assistant office ops-task-get <taskId> [--base-url ...] --token <token>
   codingns assistant debug-targets compatibility-matrix [--base-url ...] --token <token>
-  codingns assistant debug-targets analyze --workspace-id <id> --root-path <path> [--command-hint <command>] [--command-hint <command>] [--base-url ...] --token <token>
+  codingns assistant debug-targets analyze --workspace-id <id> --root-path <path> [--command-hint <command>] [--command-hint <command>] [--confirm] [--base-url ...] --token <token>
   codingns assistant debug-targets framework-analysis <targetId> [--base-url ...] --token <token>
-  codingns assistant debug-targets refresh-framework-analysis <targetId> [--base-url ...] --token <token>
-  codingns assistant debug-targets launch-plan <targetId> [--port-request role=backend,cwd=apps/api,port=44001] [--base-url ...] --token <token>
-  codingns assistant debug-targets run <targetId> [--shell zsh] [--runtime-type tmux|embedded-pty|conpty-powershell|conpty-cmd|conpty-git-bash] [--port-request role=backend,cwd=apps/api,port=44001] [--base-url ...] --token <token>
+  codingns assistant debug-targets refresh-framework-analysis <targetId> [--confirm] [--base-url ...] --token <token>
+  codingns assistant debug-targets launch-plan <targetId> [--port-request role=backend,cwd=apps/api,port=44001] [--confirm] [--base-url ...] --token <token>
+  codingns assistant debug-targets run <targetId> [--shell zsh] [--runtime-type tmux|embedded-pty|conpty-powershell|conpty-cmd|conpty-git-bash] [--port-request role=backend,cwd=apps/api,port=44001] [--confirm] [--base-url ...] --token <token>
   codingns assistant debug-targets runtime-latest <targetId> [--base-url ...] --token <token>
   codingns assistant debug-targets runtimes <targetId> [--limit 5] [--base-url ...] --token <token>
   codingns assistant debug-runtimes get <runtimeId> [--base-url ...] --token <token>
@@ -3182,12 +3233,12 @@ codingns assistant 用法：
   codingns assistant timers cancel <timerId> [--base-url ...] --token <token>
   codingns assistant terminals list [--workspace-id <id> | --project-id <id>] --token <token>
   codingns assistant terminals history <terminalId> [--before-seq <n>] [--limit 20] --token <token>
-  codingns assistant terminals send <terminalId> --input "npm test\\n" --token <token>
-  codingns assistant terminals close <terminalId> [--base-url ...] --token <token>
+  codingns assistant terminals send <terminalId> --input "npm test\\n" --confirm --token <token>
+  codingns assistant terminals close <terminalId> [--confirm] [--base-url ...] --token <token>
   codingns assistant worktrees tree --root-workspace-id <id> [--base-url ...] --token <token>
   codingns assistant worktrees create --source-workspace-id <id> --branch-name <name> [--display-name <name>] [--base-ref <ref>] [--base-url ...] --token <token>
   codingns assistant worktrees merge-preview <workspaceId> [--base-url ...] --token <token>
-  codingns assistant worktrees merge <workspaceId> [--base-url ...] --token <token>
+  codingns assistant worktrees merge <workspaceId> [--confirm] [--base-url ...] --token <token>
   codingns assistant worktrees cleanup <workspaceId> [--delete-branch] [--base-url ...] --token <token>
 
 环境变量：

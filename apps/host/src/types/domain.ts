@@ -487,6 +487,7 @@ export interface OfficeDocumentComment {
 export interface OpsTarget {
   id: string;
   userId: string;
+  workspaceId: string | null;
   kind: OpsTargetKind;
   displayName: string;
   environment: string | null;

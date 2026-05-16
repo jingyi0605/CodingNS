@@ -1451,7 +1451,14 @@ function normalizeFetchHeaders(headers: unknown): Record<string, string> {
     return {};
   }
 
-  return Object.fromEntries(new Headers(headers as ConstructorParameters<typeof Headers>[0]).entries());
+  const normalized: Record<string, string> = {};
+  const requestHeaders = new Headers(headers as ConstructorParameters<typeof Headers>[0]);
+
+  requestHeaders.forEach((headerValue, headerName) => {
+    normalized[headerName] = headerValue;
+  });
+
+  return normalized;
 }
 
 function normalizeFetchBody(body: unknown): string | Buffer | null {

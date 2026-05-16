@@ -270,13 +270,13 @@ export class RelayTunnelGatewayService {
 function flattenResponseHeaders(headers: Headers, sessionId: string | null): Record<string, string> {
   const flattened: Record<string, string> = {};
 
-  for (const [headerName, headerValue] of headers.entries()) {
+  headers.forEach((headerValue, headerName) => {
     if (HOP_BY_HOP_HEADERS.has(headerName.toLowerCase())) {
-      continue;
+      return;
     }
 
     flattened[headerName] = headerValue;
-  }
+  });
 
   if (sessionId) {
     flattened["x-codingns-relay-session-id"] = sessionId;

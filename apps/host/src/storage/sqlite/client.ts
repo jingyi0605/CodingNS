@@ -60,6 +60,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureAssistantAutomationSchema(db);
   ensureAssistantSandboxSchema(db);
   ensureDocumentTemplateSchema(db);
+  ensureOpsTargetWorkspaceSchema(db);
   ensureButlerInboxSchema(db);
   ensureButlerFollowUpTaskSchema(db);
   ensureVerificationRunSchema(db);
@@ -74,6 +75,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
 function ensurePreSchemaCompatibility(db: Database.Database): void {
   // 旧库还没有这些列时，schema.sql 里的索引会先炸掉，所以必须先补齐。
   ensureAuthTokenDeviceColumns(db);
+  ensureOpsTargetWorkspaceSchema(db);
   ensureManagedSkillScopeSchema(db);
 }
 
@@ -911,6 +913,23 @@ function ensureDocumentTemplateSchema(db: Database.Database): void {
   if (!columnNames.has("template_source_path")) {
     db.exec("ALTER TABLE document_templates ADD COLUMN template_source_path TEXT");
   }
+}
+
+function ensureOpsTargetWorkspaceSchema(db: Database.Database): void {
+  if (!tableExists(db, "ops_targets")) {
+    return;
+  }
+
+  const columns = db
+    .prepare("PRAGMA table_info(ops_targets)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("workspace_id")) {
+    db.exec("ALTER TABLE ops_targets ADD COLUMN workspace_id TEXT");
+  }
+
+  db.exec("CREATE INDEX IF NOT EXISTS idx_ops_targets_workspace_id ON ops_targets(workspace_id)");
 }
 
 function ensureButlerInboxSchema(db: Database.Database): void {

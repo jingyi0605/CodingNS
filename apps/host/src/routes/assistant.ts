@@ -1,11 +1,15 @@
 import type { FastifyInstance } from "fastify";
 
 import type { AssistantCapabilityController } from "../modules/assistant-capability/assistant-capability-controller.js";
-import type { AssistantCapabilityReceipt } from "../modules/assistant-capability/assistant-capability-service.js";
+import type {
+  AssistantCapabilityReceipt,
+  AssistantCapabilityService
+} from "../modules/assistant-capability/assistant-capability-service.js";
 
 export async function registerAssistantCapabilityRoutes(
   app: FastifyInstance,
-  assistantCapabilityController: AssistantCapabilityController
+  assistantCapabilityController: AssistantCapabilityController,
+  assistantCapabilityService?: AssistantCapabilityService
 ): Promise<void> {
   app.addHook("preSerialization", async (request, _reply, payload) => {
     const routePath = request.url.split("?")[0] ?? request.url;
@@ -24,6 +28,7 @@ export async function registerAssistantCapabilityRoutes(
     };
   });
 
+  void assistantCapabilityService;
   app.get("/api/assistant/capabilities", assistantCapabilityController.listCapabilities);
   app.get("/api/assistant/projects", assistantCapabilityController.listProjects);
   app.get("/api/assistant/projects/:projectId", assistantCapabilityController.getProject);
@@ -60,6 +65,7 @@ export async function registerAssistantCapabilityRoutes(
   app.post("/api/assistant/follow-ups/:taskId/waiting-user", assistantCapabilityController.markFollowUpWaitingUser);
   app.post("/api/assistant/follow-ups/:taskId/complete", assistantCapabilityController.completeFollowUp);
   app.post("/api/assistant/follow-ups/:taskId/fail", assistantCapabilityController.failFollowUp);
+  app.post("/api/assistant/terminals", assistantCapabilityController.createTerminal);
   app.get("/api/assistant/terminals", assistantCapabilityController.listTerminals);
   app.get("/api/assistant/terminals/:terminalId/history", assistantCapabilityController.readTerminalHistory);
   app.post("/api/assistant/terminals/:terminalId/input", assistantCapabilityController.sendTerminalInput);

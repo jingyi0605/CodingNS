@@ -102,6 +102,9 @@ describe("AssistantCapabilityService", () => {
         updateNavigationState: vi.fn()
       } as any,
       {
+        findByWorkspaceId: vi.fn()
+      } as any,
+      {
         getTree: vi.fn(),
         create: vi.fn()
       } as any,
@@ -235,6 +238,9 @@ describe("AssistantCapabilityService", () => {
         updateNavigationState: vi.fn()
       } as any,
       {
+        findByWorkspaceId: vi.fn()
+      } as any,
+      {
         getTree: vi.fn(),
         create: vi.fn()
       } as any,
@@ -363,6 +369,9 @@ describe("AssistantCapabilityService", () => {
         getManagementSummary: vi.fn(),
         removeWorkspace: vi.fn(),
         updateNavigationState: vi.fn()
+      } as any,
+      {
+        findByWorkspaceId: vi.fn()
       } as any,
       {
         getTree: vi.fn(),
@@ -524,6 +533,9 @@ describe("AssistantCapabilityService", () => {
         updateNavigationState: vi.fn()
       } as any,
       {
+        findByWorkspaceId: vi.fn()
+      } as any,
+      {
         getTree: vi.fn(),
         create: vi.fn()
       } as any,
@@ -679,6 +691,9 @@ describe("AssistantCapabilityService", () => {
         getManagementSummary: vi.fn(),
         removeWorkspace: vi.fn(),
         updateNavigationState: vi.fn()
+      } as any,
+      {
+        findByWorkspaceId: vi.fn()
       } as any,
       {
         getTree: vi.fn(),
@@ -867,6 +882,9 @@ describe("AssistantCapabilityService", () => {
         updateNavigationState: vi.fn()
       } as any,
       {
+        findByWorkspaceId: vi.fn()
+      } as any,
+      {
         getTree: vi.fn(),
         create: vi.fn()
       } as any,
@@ -1002,6 +1020,9 @@ describe("AssistantCapabilityService", () => {
         updateNavigationState: vi.fn()
       } as any,
       {
+        findByWorkspaceId: vi.fn()
+      } as any,
+      {
         getTree: vi.fn(),
         create: vi.fn()
       } as any,
@@ -1129,6 +1150,9 @@ describe("AssistantCapabilityService", () => {
         getManagementSummary: vi.fn(),
         removeWorkspace: vi.fn(),
         updateNavigationState: vi.fn()
+      } as any,
+      {
+        findByWorkspaceId: vi.fn()
       } as any,
       {
         getTree: vi.fn(),

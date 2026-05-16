@@ -3,7 +3,11 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { AppError } from "../../shared/errors/app-error.js";
 import type { DebugServiceRole } from "../../types/domain.js";
 import { requireUserId } from "../preferences/common.js";
-import type { AssistantCapabilityService } from "./assistant-capability-service.js";
+import type {
+  AssistantCapabilityProfile,
+  AssistantCapabilityService,
+  AssistantExecutionContext
+} from "./assistant-capability-service.js";
 
 interface AssistantProjectListQuery {
   workspaceId?: string;
@@ -149,11 +153,13 @@ interface AssistantOfficeBrowserTaskBody {
 }
 
 interface AssistantOfficeOpsTargetListQuery {
+  workspaceId?: string;
   kind?: "ssh_host" | "web_console";
   status?: "active" | "disabled" | "error";
 }
 
 interface AssistantOfficeOpsTargetBody {
+  workspaceId?: string | null;
   kind?: "ssh_host" | "web_console";
   displayName?: string;
   environment?: string | null;
@@ -167,6 +173,7 @@ interface AssistantOfficeOpsSshTaskBody {
   riskLevel?: "low" | "medium" | "high";
   input?: unknown;
   execute?: boolean;
+  confirm?: boolean;
 }
 
 interface AssistantOfficeOpsBrowserTaskBody {
@@ -175,11 +182,16 @@ interface AssistantOfficeOpsBrowserTaskBody {
   profileId?: string;
   riskLevel?: "low" | "medium" | "high";
   input?: unknown;
+  confirm?: boolean;
 }
 
 interface AssistantOfficeTaskApprovalBody {
   status?: "approved" | "rejected";
   decisionNote?: string | null;
+}
+
+interface AssistantConfirmationBody {
+  confirm?: boolean;
 }
 
 interface AssistantWorktreeTreeQuery {
@@ -217,6 +229,15 @@ interface AssistantForkBody {
 
 interface AssistantTerminalInputBody {
   content?: string;
+  confirm?: boolean;
+}
+
+interface AssistantCreateTerminalBody {
+  workspaceId?: string | null;
+  projectId?: string | null;
+  name?: string | null;
+  cwd?: string | null;
+  shell?: string | null;
 }
 
 interface AssistantCreateTimerBody {
@@ -383,6 +404,7 @@ interface AssistantCreateWorktreeBody {
 
 interface AssistantWorktreeCleanupBody {
   deleteBranch?: boolean;
+  confirm?: boolean;
 }
 
 interface AssistantDebugTargetPortRequestBodyItem {
@@ -398,10 +420,12 @@ interface AssistantAnalyzeDebugTargetBody {
   workspaceId?: string;
   rootPath?: string;
   commandHints?: unknown;
+  confirm?: boolean;
 }
 
 interface AssistantDebugTargetLaunchPlanBody {
   portRequests?: unknown;
+  confirm?: boolean;
 }
 
 interface AssistantRunDebugTargetBody extends AssistantDebugTargetLaunchPlanBody {
@@ -413,10 +437,10 @@ export class AssistantCapabilityController {
   constructor(private readonly assistantCapabilityService: AssistantCapabilityService) {}
 
   readonly listCapabilities = async (
-    _request: FastifyRequest,
+    request: FastifyRequest,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(this.assistantCapabilityService.listCapabilities());
+    reply.send(this.assistantCapabilityService.listCapabilities(readAssistantExecutionContext(request)));
   };
 
   readonly listProjects = async (
@@ -434,6 +458,11 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Params: AssistantProjectParams }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "projects.get",
+      readAssistantExecutionContext(request),
+      { projectId: request.params.projectId }
+    );
     reply.send(await this.assistantCapabilityService.getProject(
       request.params.projectId,
       requireUserId(request)
@@ -444,6 +473,11 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Params: AssistantProjectParams }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "projects.sessions.list",
+      readAssistantExecutionContext(request),
+      { projectId: request.params.projectId }
+    );
     reply.send(await this.assistantCapabilityService.listProjectSessions(
       request.params.projectId,
       requireUserId(request)
@@ -487,6 +521,11 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Params: AssistantSessionParams }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "sessions.get",
+      readAssistantExecutionContext(request),
+      { sessionId: request.params.sessionId }
+    );
     reply.send(this.assistantCapabilityService.getSession(
       request.params.sessionId,
       requireUserId(request)
@@ -510,6 +549,11 @@ export class AssistantCapabilityController {
     }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "sessions.messages.list",
+      readAssistantExecutionContext(request),
+      { sessionId: request.params.sessionId }
+    );
     reply.send(await this.assistantCapabilityService.listSessionMessages({
       sessionId: request.params.sessionId,
       userId: requireUserId(request),
@@ -523,6 +567,11 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Params: AssistantSessionParams }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "sessions.runtime.get",
+      readAssistantExecutionContext(request),
+      { sessionId: request.params.sessionId }
+    );
     reply.send(await this.assistantCapabilityService.getSessionRuntime(
       request.params.sessionId,
       requireUserId(request)
@@ -955,10 +1004,39 @@ export class AssistantCapabilityController {
       });
     }
 
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "terminals.list",
+      readAssistantExecutionContext(request),
+      { projectId, workspaceId }
+    );
+
     reply.send(await this.assistantCapabilityService.listTerminals({
       userId: requireUserId(request),
       projectId,
       workspaceId
+    }));
+  };
+
+  readonly createTerminal = async (
+    request: FastifyRequest<{ Body: AssistantCreateTerminalBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const projectId = normalizeNullableText(request.body.projectId);
+    const workspaceId = normalizeNullableText(request.body.workspaceId);
+
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "terminals.create",
+      readAssistantExecutionContext(request),
+      { projectId, workspaceId }
+    );
+
+    reply.send(await this.assistantCapabilityService.createTerminal({
+      userId: requireUserId(request),
+      projectId,
+      workspaceId,
+      name: normalizeNullableText(request.body.name),
+      cwd: normalizeNullableText(request.body.cwd),
+      shell: normalizeNullableText(request.body.shell)
     }));
   };
 
@@ -969,6 +1047,11 @@ export class AssistantCapabilityController {
     }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "terminals.history.read",
+      readAssistantExecutionContext(request),
+      { terminalId: request.params.terminalId }
+    );
     reply.send(await this.assistantCapabilityService.readTerminalHistory({
       terminalId: request.params.terminalId,
       beforeSeq: normalizeOptionalInteger(request.query.beforeSeq, "beforeSeq"),
@@ -980,6 +1063,11 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Params: AssistantTerminalParams; Body: AssistantTerminalInputBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "terminals.input.send",
+      readAssistantExecutionContext(request, request.body.confirm === true),
+      { terminalId: request.params.terminalId }
+    );
     reply.send(await this.assistantCapabilityService.sendTerminalInput({
       terminalId: request.params.terminalId,
       content: requireNonEmptyText(request.body.content, "content", "终端输入必须提供 content")
@@ -987,9 +1075,14 @@ export class AssistantCapabilityController {
   };
 
   readonly closeTerminal = async (
-    request: FastifyRequest<{ Params: AssistantTerminalParams }>,
+    request: FastifyRequest<{ Params: AssistantTerminalParams; Body: AssistantConfirmationBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "terminals.close",
+      readAssistantExecutionContext(request, request.body?.confirm === true),
+      { terminalId: request.params.terminalId }
+    );
     reply.send(await this.assistantCapabilityService.closeTerminal(request.params.terminalId));
   };
 
@@ -997,6 +1090,11 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Body: AssistantOfficeDocumentBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "office.document.create",
+      readAssistantExecutionContext(request),
+      { workspaceId: normalizeNullableText(request.body.workspaceId) }
+    );
     reply.send(this.assistantCapabilityService.createOfficeDocument({
       userId: requireUserId(request),
       workspaceId: normalizeNullableText(request.body.workspaceId),
@@ -1016,6 +1114,11 @@ export class AssistantCapabilityController {
     }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "office.document.update",
+      readAssistantExecutionContext(request),
+      { documentId: request.params.documentId }
+    );
     reply.send(this.assistantCapabilityService.updateOfficeDocument({
       userId: requireUserId(request),
       documentId: request.params.documentId,
@@ -1035,6 +1138,14 @@ export class AssistantCapabilityController {
     }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "office.document.export",
+      readAssistantExecutionContext(request),
+      {
+        documentId: request.params.documentId,
+        workspaceId: normalizeNullableText(request.body.workspaceId)
+      }
+    );
     reply.send(await this.assistantCapabilityService.exportOfficeDocument({
       userId: requireUserId(request),
       documentId: request.params.documentId,
@@ -1049,6 +1160,11 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Params: AssistantOfficeTaskParams }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "office.document.task.get",
+      readAssistantExecutionContext(request),
+      { officeTaskId: request.params.taskId }
+    );
     reply.send(this.assistantCapabilityService.getOfficeDocumentTask(
       request.params.taskId,
       requireUserId(request)
@@ -1059,6 +1175,11 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Querystring: AssistantOfficeBrowserProfileQuery }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "office.browser.profile.list",
+      readAssistantExecutionContext(request),
+      { workspaceId: normalizeNullableText(request.query.workspaceId) }
+    );
     reply.send(this.assistantCapabilityService.listOfficeBrowserProfiles(
       requireUserId(request),
       normalizeNullableText(request.query.workspaceId)
@@ -1069,6 +1190,11 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Body: AssistantOfficeBrowserProfileBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "office.browser.profile.create",
+      readAssistantExecutionContext(request),
+      { workspaceId: normalizeNullableText(request.body.workspaceId) }
+    );
     reply.send(this.assistantCapabilityService.createOfficeBrowserProfile({
       userId: requireUserId(request),
       workspaceId: normalizeNullableText(request.body.workspaceId),
@@ -1084,6 +1210,11 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Params: AssistantOfficeBrowserProfileParams }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "office.browser.profile.get",
+      readAssistantExecutionContext(request),
+      { browserProfileId: request.params.profileId }
+    );
     reply.send(this.assistantCapabilityService.getOfficeBrowserProfile(
       request.params.profileId,
       requireUserId(request)
@@ -1094,6 +1225,14 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Body: AssistantOfficeBrowserTaskBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "office.browser.task.create",
+      readAssistantExecutionContext(request),
+      {
+        workspaceId: normalizeNullableText(request.body.workspaceId),
+        browserProfileId: request.body.profileId?.trim() ?? null
+      }
+    );
     reply.send(await this.assistantCapabilityService.createOfficeBrowserTask({
       userId: requireUserId(request),
       workspaceId: normalizeNullableText(request.body.workspaceId),
@@ -1109,6 +1248,11 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Params: AssistantOfficeTaskParams }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "office.browser.task.get",
+      readAssistantExecutionContext(request),
+      { officeTaskId: request.params.taskId }
+    );
     reply.send(this.assistantCapabilityService.getOfficeBrowserTask(
       request.params.taskId,
       requireUserId(request)
@@ -1119,8 +1263,14 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Querystring: AssistantOfficeOpsTargetListQuery }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "office.ops.target.list",
+      readAssistantExecutionContext(request),
+      { workspaceId: normalizeNullableText(request.query.workspaceId) }
+    );
     reply.send(this.assistantCapabilityService.listOfficeOpsTargets(
       requireUserId(request),
+      normalizeNullableText(request.query.workspaceId),
       request.query.kind ?? null,
       request.query.status ?? null
     ));
@@ -1130,8 +1280,14 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Body: AssistantOfficeOpsTargetBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "office.ops.target.create",
+      readAssistantExecutionContext(request),
+      { workspaceId: normalizeNullableText(request.body.workspaceId) }
+    );
     reply.send(this.assistantCapabilityService.createOfficeOpsTarget({
       userId: requireUserId(request),
+      workspaceId: normalizeNullableText(request.body.workspaceId),
       kind: request.body.kind ?? "ssh_host",
       displayName: requireNonEmptyText(request.body.displayName, "displayName", "创建运维目标必须提供 displayName"),
       environment: normalizeNullableText(request.body.environment),
@@ -1144,6 +1300,10 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Params: AssistantOfficeOpsTargetParams }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "office.ops.target.get",
+      readAssistantExecutionContext(request)
+    );
     reply.send(this.assistantCapabilityService.getOfficeOpsTarget(
       request.params.targetId,
       requireUserId(request)
@@ -1154,6 +1314,11 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Body: AssistantOfficeOpsSshTaskBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    const requiresConfirm = request.body.execute === true;
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "office.ops.ssh-task.create",
+      readAssistantExecutionContext(request, requiresConfirm && request.body.confirm === true)
+    );
     reply.send(await this.assistantCapabilityService.createOfficeOpsSshTask({
       userId: requireUserId(request),
       title: request.body.title?.trim() ?? "SSH 运维任务",
@@ -1165,9 +1330,14 @@ export class AssistantCapabilityController {
   };
 
   readonly executeOfficeOpsTask = async (
-    request: FastifyRequest<{ Params: AssistantOfficeTaskParams }>,
+    request: FastifyRequest<{ Params: AssistantOfficeTaskParams; Body: AssistantConfirmationBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "office.ops.task.execute",
+      readAssistantExecutionContext(request, request.body?.confirm === true),
+      { officeTaskId: request.params.taskId }
+    );
     reply.send(await this.assistantCapabilityService.executeOfficeOpsTask({
       userId: requireUserId(request),
       taskId: request.params.taskId
@@ -1193,6 +1363,11 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Body: AssistantOfficeOpsBrowserTaskBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "office.ops.browser-task.create",
+      readAssistantExecutionContext(request, request.body.confirm === true),
+      { browserProfileId: request.body.profileId?.trim() ?? null }
+    );
     reply.send(this.assistantCapabilityService.createOfficeOpsBrowserTask({
       userId: requireUserId(request),
       title: request.body.title?.trim() ?? "浏览器运维任务",
@@ -1207,6 +1382,11 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Params: AssistantOfficeTaskParams }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "office.ops.task.get",
+      readAssistantExecutionContext(request),
+      { officeTaskId: request.params.taskId }
+    );
     reply.send(this.assistantCapabilityService.getOfficeOpsTask(
       request.params.taskId,
       requireUserId(request)
@@ -1342,6 +1522,11 @@ export class AssistantCapabilityController {
       });
     }
 
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "worktrees.tree",
+      readAssistantExecutionContext(request),
+      { worktreeWorkspaceId: rootWorkspaceId }
+    );
     reply.send(await this.assistantCapabilityService.getWorktreeTree(rootWorkspaceId));
   };
 
@@ -1349,12 +1534,18 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Body: AssistantCreateWorktreeBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    const sourceWorkspaceId = requireNonEmptyText(
+      request.body.sourceWorkspaceId,
+      "sourceWorkspaceId",
+      "创建工作树必须提供 sourceWorkspaceId"
+    );
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "worktrees.create",
+      readAssistantExecutionContext(request),
+      { worktreeWorkspaceId: sourceWorkspaceId }
+    );
     reply.send(await this.assistantCapabilityService.createWorktree({
-      sourceWorkspaceId: requireNonEmptyText(
-        request.body.sourceWorkspaceId,
-        "sourceWorkspaceId",
-        "创建工作树必须提供 sourceWorkspaceId"
-      ),
+      sourceWorkspaceId,
       branchName: requireNonEmptyText(
         request.body.branchName,
         "branchName",
@@ -1369,15 +1560,25 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Params: AssistantWorkspaceParams }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "worktrees.merge-preview",
+      readAssistantExecutionContext(request),
+      { worktreeWorkspaceId: request.params.workspaceId }
+    );
     reply.send(await this.assistantCapabilityService.getWorktreeMergePreview(
       request.params.workspaceId
     ));
   };
 
   readonly mergeWorktreeIntoParent = async (
-    request: FastifyRequest<{ Params: AssistantWorkspaceParams }>,
+    request: FastifyRequest<{ Params: AssistantWorkspaceParams; Body: AssistantConfirmationBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "worktrees.merge-into-parent",
+      readAssistantExecutionContext(request, request.body?.confirm === true),
+      { worktreeWorkspaceId: request.params.workspaceId }
+    );
     reply.send(await this.assistantCapabilityService.mergeWorktreeIntoParent(
       request.params.workspaceId
     ));
@@ -1387,6 +1588,11 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Params: AssistantWorkspaceParams; Body: AssistantWorktreeCleanupBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "worktrees.cleanup",
+      readAssistantExecutionContext(request),
+      { worktreeWorkspaceId: request.params.workspaceId }
+    );
     reply.send(await this.assistantCapabilityService.cleanupWorktree(
       request.params.workspaceId,
       requireUserId(request),
@@ -1407,12 +1613,18 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Body: AssistantAnalyzeDebugTargetBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    const workspaceId = requireNonEmptyText(
+      request.body.workspaceId,
+      "workspaceId",
+      "分析调试目标必须提供 workspaceId"
+    );
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "debug-targets.analyze",
+      readAssistantExecutionContext(request, request.body.confirm === true),
+      { workspaceId }
+    );
     reply.send(this.assistantCapabilityService.analyzeDebugTarget({
-      workspaceId: requireNonEmptyText(
-        request.body.workspaceId,
-        "workspaceId",
-        "分析调试目标必须提供 workspaceId"
-      ),
+      workspaceId,
       rootPath: requireNonEmptyText(
         request.body.rootPath,
         "rootPath",
@@ -1426,13 +1638,23 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Params: AssistantDebugTargetParams }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "debug-targets.framework-analysis.get",
+      readAssistantExecutionContext(request),
+      { debugTargetId: request.params.targetId }
+    );
     reply.send(this.assistantCapabilityService.getDebugFrameworkAnalysis(request.params.targetId));
   };
 
   readonly refreshDebugFrameworkAnalysis = async (
-    request: FastifyRequest<{ Params: AssistantDebugTargetParams }>,
+    request: FastifyRequest<{ Params: AssistantDebugTargetParams; Body: AssistantConfirmationBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "debug-targets.framework-analysis.refresh",
+      readAssistantExecutionContext(request, request.body?.confirm === true),
+      { debugTargetId: request.params.targetId }
+    );
     reply.send(this.assistantCapabilityService.refreshDebugFrameworkAnalysis(request.params.targetId));
   };
 
@@ -1443,6 +1665,11 @@ export class AssistantCapabilityController {
     }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "debug-targets.launch-plan.create",
+      readAssistantExecutionContext(request, request.body?.confirm === true),
+      { debugTargetId: request.params.targetId }
+    );
     reply.send(await this.assistantCapabilityService.createDebugLaunchPlan({
       targetId: request.params.targetId,
       userId: requireUserId(request),
@@ -1457,6 +1684,11 @@ export class AssistantCapabilityController {
     }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "debug-targets.run",
+      readAssistantExecutionContext(request, request.body?.confirm === true),
+      { debugTargetId: request.params.targetId }
+    );
     reply.send(await this.assistantCapabilityService.runDebugTarget({
       targetId: request.params.targetId,
       userId: requireUserId(request),
@@ -1470,6 +1702,11 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Params: AssistantDebugTargetParams }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "debug-targets.runtime-latest.get",
+      readAssistantExecutionContext(request),
+      { debugTargetId: request.params.targetId }
+    );
     reply.send(await this.assistantCapabilityService.getLatestDebugRuntime(request.params.targetId));
   };
 
@@ -1480,6 +1717,11 @@ export class AssistantCapabilityController {
     }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "debug-targets.runtimes.list",
+      readAssistantExecutionContext(request),
+      { debugTargetId: request.params.targetId }
+    );
     reply.send(await this.assistantCapabilityService.listDebugRuntimes({
       targetId: request.params.targetId,
       limit: normalizePositiveInteger(request.query.limit, 5, 50, "limit")
@@ -1490,6 +1732,11 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Params: AssistantDebugRuntimeParams }>,
     reply: FastifyReply
   ): Promise<void> => {
+    this.assistantCapabilityService.assertExecutionAllowed(
+      "debug-runtimes.get",
+      readAssistantExecutionContext(request),
+      { debugRuntimeId: request.params.runtimeId }
+    );
     reply.send(await this.assistantCapabilityService.getDebugRuntime(request.params.runtimeId));
   };
 }
@@ -1867,4 +2114,27 @@ function normalizeDebugPortRequestRole(value?: string | null): DebugServiceRole 
     detail: `不支持的调试服务角色：${normalized}`,
     field: "portRequests"
   });
+}
+
+function readAssistantExecutionContext(
+  request: FastifyRequest,
+  confirmed = false
+): AssistantExecutionContext {
+  return {
+    userId: request.auth?.user.userId ?? null,
+    callerKind: request.auth?.callerKind ?? null,
+    capabilityProfile: normalizeAssistantCapabilityProfile(request.auth?.capabilityProfile),
+    workspaceId: request.auth?.workspaceId ?? null,
+    projectId: request.auth?.projectId ?? null,
+    sessionId: request.auth?.sessionId ?? null,
+    confirmationToken: confirmed ? "confirmed" : null
+  };
+}
+
+function normalizeAssistantCapabilityProfile(value: string | null | undefined): AssistantCapabilityProfile | null {
+  if (value === "butler-full" || value === "butler-ui" || value === "workspace-scoped") {
+    return value;
+  }
+
+  return null;
 }

@@ -27,6 +27,7 @@ import type { SessionHistoryService } from "../sessions/session-history-service.
 import type { SessionLiveRuntimeService } from "../sessions/session-live-runtime-service.js";
 import type { SessionMessageOriginRepository } from "../../storage/repositories/session-message-origin-repository.js";
 import type { ProviderControlRepository } from "../../storage/repositories/provider-control-repository.js";
+import type { WorkspaceWorktreeRepository } from "../../storage/repositories/workspace-worktree-repository.js";
 import { recordButlerProxyMessageOrigin } from "../sessions/session-message-origin-utils.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
 import type {
@@ -43,13 +44,119 @@ import type { OfficeDocumentExportFormat, OfficeTaskStatus } from "../../types/d
 import type { OfficeService } from "../office/office-service.js";
 
 type AssistantCapabilityMode = "read" | "proxy_execute";
+export type AssistantCapabilityProfile = "butler-full" | "butler-ui" | "workspace-scoped";
+export type AssistantCapabilityScopeKind = "none" | "workspace" | "project";
 
 export interface AssistantCapabilityDescriptor {
   name: string;
   mode: AssistantCapabilityMode;
   enabled: boolean;
   summary: string;
+  requiresConfirmation?: boolean;
 }
+
+interface AssistantCapabilityDefinition extends AssistantCapabilityDescriptor {
+  allowedProfiles: AssistantCapabilityProfile[];
+  scopeKind: AssistantCapabilityScopeKind;
+}
+
+export interface AssistantExecutionContext {
+  userId?: string | null;
+  callerKind?: AuthCallerKind | null;
+  capabilityProfile?: AssistantCapabilityProfile | null;
+  workspaceId?: string | null;
+  projectId?: string | null;
+  sessionId?: string | null;
+  confirmationToken?: string | null;
+}
+
+const WORKSPACE_SCOPED_DEFAULT_CAPABILITIES = new Set([
+  "capabilities.list",
+  "projects.get",
+  "sessions.get",
+  "sessions.messages.list",
+  "sessions.runtime.get",
+  "terminals.create",
+  "terminals.list",
+  "terminals.history.read",
+  "office.document.create",
+  "office.document.update",
+  "office.document.export",
+  "office.document.task.get",
+  "office.browser.profile.list",
+  "office.browser.profile.create",
+  "office.browser.profile.get",
+  "office.browser.task.create",
+  "office.browser.task.get",
+  "office.ops.target.list",
+  "office.ops.target.create",
+  "office.ops.target.get",
+  "office.ops.ssh-task.create",
+  "office.ops.browser-task.create",
+  "office.ops.task.get",
+  "worktrees.tree",
+  "worktrees.create",
+  "worktrees.merge-preview",
+  "worktrees.cleanup"
+]);
+
+const WORKSPACE_SCOPED_CONFIRMATION_CAPABILITIES = new Set([
+  "terminals.input.send",
+  "terminals.close",
+  "office.ops.task.execute",
+  "debug-targets.analyze",
+  "debug-targets.framework-analysis.refresh",
+  "debug-targets.launch-plan.create",
+  "debug-targets.run",
+  "worktrees.merge-into-parent"
+]);
+
+const PROJECT_SCOPED_CAPABILITIES = new Set([
+  "projects.get",
+  "projects.sessions.list",
+  "projects.sessions.start",
+  "worktrees.tree",
+  "worktrees.create",
+  "worktrees.merge-preview",
+  "worktrees.merge-into-parent",
+  "worktrees.cleanup"
+]);
+
+const WORKSPACE_SCOPED_CAPABILITIES = new Set([
+  "capabilities.list",
+  "sessions.get",
+  "sessions.messages.list",
+  "sessions.runtime.get",
+  "terminals.create",
+  "terminals.list",
+  "terminals.history.read",
+  "terminals.input.send",
+  "terminals.close",
+  "office.document.create",
+  "office.document.update",
+  "office.document.export",
+  "office.document.task.get",
+  "office.browser.profile.list",
+  "office.browser.profile.create",
+  "office.browser.profile.get",
+  "office.browser.task.create",
+  "office.browser.task.get",
+  "office.ops.target.list",
+  "office.ops.target.create",
+  "office.ops.target.get",
+  "office.ops.ssh-task.create",
+  "office.ops.browser-task.create",
+  "office.ops.task.get",
+  "office.ops.task.execute",
+  "debug-targets.analyze",
+  "debug-targets.framework-analysis.get",
+  "debug-targets.framework-analysis.refresh",
+  "debug-targets.launch-plan.create",
+  "debug-targets.run",
+  "debug-targets.runtime-latest.get",
+  "debug-targets.runtimes.list",
+  "debug-runtimes.get"
+]);
 
 export interface AssistantCapabilityReceipt<TPayload> {
   ok: true;
@@ -130,6 +237,15 @@ interface ListAssistantTerminalsInput {
   userId: string;
   projectId?: string | null;
   workspaceId?: string | null;
+}
+
+interface CreateAssistantTerminalInput {
+  userId: string;
+  workspaceId?: string | null;
+  projectId?: string | null;
+  name?: string | null;
+  cwd?: string | null;
+  shell?: string | null;
 }
 
 interface ReadAssistantTerminalHistoryInput {
@@ -389,6 +505,7 @@ interface CreateAssistantOfficeBrowserTaskInput {
 
 interface CreateAssistantOfficeOpsTargetInput {
   userId: string;
+  workspaceId?: string | null;
   kind: "ssh_host" | "web_console";
   displayName: string;
   environment?: string | null;
@@ -892,6 +1009,8 @@ const ASSISTANT_CAPABILITIES: AssistantCapabilityDescriptor[] = [
 ];
 
 export class AssistantCapabilityService {
+  private readonly capabilityDefinitions = augmentAssistantCapabilities(ASSISTANT_CAPABILITIES);
+
   constructor(
     private readonly butlerProjectService: Pick<
       ButlerProjectService,
@@ -938,11 +1057,13 @@ export class AssistantCapabilityService {
     >,
     private readonly terminalService: Pick<
       TerminalService,
-      "listTerminals" | "readTerminalHistory" | "writeInput" | "closeTerminal"
+      "createTerminal" | "listTerminals" | "readTerminalHistory" | "writeInput" | "closeTerminal" | "getTerminalOrThrow"
     >,
     private readonly debugTargetService: Pick<
       DebugTargetService,
       | "analyze"
+      | "getTargetWorkspaceId"
+      | "getRuntimeWorkspaceId"
       | "getFrameworkAnalysis"
       | "refreshFrameworkAnalysis"
       | "createLaunchPlan"
@@ -964,6 +1085,7 @@ export class AssistantCapabilityService {
       | "removeWorkspace"
       | "updateNavigationState"
     >,
+    private readonly workspaceWorktreeRepository: Pick<WorkspaceWorktreeRepository, "findByWorkspaceId">,
     private readonly worktreeManager: Pick<WorktreeManager, "getTree" | "create">,
     private readonly worktreeSyncService: Pick<WorktreeSyncService, "syncRoot">,
     private readonly worktreeMergeService: Pick<WorktreeMergeService, "preview" | "apply">,
@@ -986,6 +1108,7 @@ export class AssistantCapabilityService {
     private readonly documentRuntimeService: Pick<
       DocumentRuntimeService,
       | "createDocument"
+      | "getDocumentDetail"
       | "updateDocument"
       | "createExportTask"
       | "executeExportTask"
@@ -1014,7 +1137,7 @@ export class AssistantCapabilityService {
     > | null = null
   ) {}
 
-  listCapabilities(): AssistantCapabilityReceipt<{
+  listCapabilities(context?: AssistantExecutionContext): AssistantCapabilityReceipt<{
     version: string;
     items: AssistantCapabilityDescriptor[];
   }> {
@@ -1023,7 +1146,7 @@ export class AssistantCapabilityService {
       id: null
     }, {
       version: "2026-04-16",
-      items: ASSISTANT_CAPABILITIES
+      items: this.listVisibleCapabilities(context)
     });
   }
 
@@ -1302,6 +1425,7 @@ export class AssistantCapabilityService {
 
   listOfficeOpsTargets(
     userId: string,
+    workspaceId?: string | null,
     kind?: "ssh_host" | "web_console" | null,
     status?: "active" | "disabled" | "error" | null
   ): AssistantCapabilityReceipt<{
@@ -1309,13 +1433,14 @@ export class AssistantCapabilityService {
   }> {
     const items = this.requireOpsRuntimeService().listTargets({
       userId,
+      workspaceId: normalizeAssistantText(workspaceId) ?? undefined,
       kind: kind ?? undefined,
       status: status ?? undefined
     });
 
     return this.createReceipt("office.ops.target.list", {
-      kind: "none",
-      id: null
+      kind: "workspace",
+      id: normalizeAssistantText(workspaceId)
     }, {
       items
     });
@@ -1330,8 +1455,8 @@ export class AssistantCapabilityService {
     const target = this.requireOpsRuntimeService().getTarget(targetId, userId);
 
     return this.createReceipt("office.ops.target.get", {
-      kind: "none",
-      id: target.id
+      kind: "workspace",
+      id: target.workspaceId
     }, {
       target
     });
@@ -1344,6 +1469,7 @@ export class AssistantCapabilityService {
   }> {
     const target = this.requireOpsRuntimeService().createTarget({
       userId: input.userId,
+      workspaceId: normalizeAssistantText(input.workspaceId) ?? undefined,
       kind: input.kind,
       displayName: input.displayName,
       environment: input.environment ?? undefined,
@@ -1352,8 +1478,8 @@ export class AssistantCapabilityService {
     });
 
     return this.createReceipt("office.ops.target.create", {
-      kind: "none",
-      id: target.id
+      kind: "workspace",
+      id: target.workspaceId
     }, {
       target
     });
@@ -1386,8 +1512,8 @@ export class AssistantCapabilityService {
     const detail = this.requireOfficeTaskService().getTaskDetail(createResult.task.id, input.userId);
 
     return this.createReceipt("office.ops.ssh-task.create", {
-      kind: "none",
-      id: detail.task.targetRefId
+      kind: "workspace",
+      id: detail.task.workspaceId
     }, {
       task: summarizeOfficeTaskDetail(detail),
       execution
@@ -1408,8 +1534,8 @@ export class AssistantCapabilityService {
     const detail = this.requireOfficeTaskService().getTaskDetail(input.taskId, input.userId);
 
     return this.createReceipt("office.ops.task.execute", {
-      kind: "none",
-      id: detail.task.targetRefId
+      kind: "workspace",
+      id: detail.task.workspaceId
     }, {
       execution,
       task: summarizeOfficeTaskDetail(detail)
@@ -1431,8 +1557,8 @@ export class AssistantCapabilityService {
     const detail = this.requireOfficeTaskService().getTaskDetail(approval.taskId, input.userId);
 
     return this.createReceipt("office.task.approval.reply", {
-      kind: "none",
-      id: detail.task.targetRefId
+      kind: "workspace",
+      id: detail.task.workspaceId
     }, {
       approval,
       task: summarizeOfficeTaskDetail(detail)
@@ -1455,8 +1581,8 @@ export class AssistantCapabilityService {
     const detail = this.requireOfficeTaskService().getTaskDetail(createResult.task.id, input.userId);
 
     return this.createReceipt("office.ops.browser-task.create", {
-      kind: "none",
-      id: detail.task.targetRefId
+      kind: "workspace",
+      id: detail.task.workspaceId
     }, {
       task: summarizeOfficeTaskDetail(detail)
     });
@@ -1471,8 +1597,8 @@ export class AssistantCapabilityService {
     const detail = this.requireOfficeTaskService().getTaskDetail(taskId, userId);
 
     return this.createReceipt("office.ops.task.get", {
-      kind: "none",
-      id: detail.task.targetRefId
+      kind: "workspace",
+      id: detail.task.workspaceId
     }, {
       task: summarizeOfficeTaskDetail(detail)
     });
@@ -1604,6 +1730,7 @@ export class AssistantCapabilityService {
   }): Promise<AssistantCapabilityReceipt<{
     page: Awaited<ReturnType<SessionHistoryService["readSessionHistory"]>>;
   }>> {
+    this.sessionHistoryService.getSession(input.sessionId, input.userId);
     const page = await this.sessionHistoryService.readSessionHistory(
       input.sessionId,
       input.cursor,
@@ -1626,6 +1753,7 @@ export class AssistantCapabilityService {
   ): Promise<AssistantCapabilityReceipt<{
     runtime: Awaited<ReturnType<SessionLiveRuntimeService["getSessionRuntime"]>>;
   }>> {
+    this.sessionHistoryService.getSession(sessionId, userId);
     const runtime = await this.sessionLiveRuntimeService.getSessionRuntime(sessionId, userId);
 
     return this.createReceipt("sessions.runtime.get", {
@@ -2201,6 +2329,56 @@ export class AssistantCapabilityService {
     });
   }
 
+  async createTerminal(
+    input: CreateAssistantTerminalInput
+  ): Promise<AssistantCapabilityReceipt<{
+    workspaceId: string;
+    terminal: {
+      id: string;
+      workspaceId: string;
+      name: string;
+      cwd: string;
+      shell: string;
+      status: string;
+    };
+  }>> {
+    const workspaceId = input.projectId?.trim()
+      ? this.butlerProjectService.getById(input.projectId).workspaceId
+      : input.workspaceId?.trim() || "";
+
+    if (!workspaceId) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "创建终端必须提供 workspaceId 或 projectId",
+        field: "workspaceId"
+      });
+    }
+
+    const terminal = await this.terminalService.createTerminal({
+      workspaceId,
+      name: normalizeAssistantText(input.name) ?? undefined,
+      cwd: normalizeAssistantText(input.cwd) ?? undefined,
+      shell: normalizeAssistantText(input.shell) ?? undefined,
+      createdByUserId: input.userId
+    });
+
+    return this.createReceipt("terminals.create", {
+      kind: input.projectId?.trim() ? "project" : "workspace",
+      id: input.projectId?.trim() || workspaceId
+    }, {
+      workspaceId,
+      terminal: {
+        id: terminal.id,
+        workspaceId: terminal.workspaceId,
+        name: terminal.name,
+        cwd: terminal.cwd,
+        shell: terminal.shell,
+        status: terminal.status
+      }
+    });
+  }
+
   async listTerminals(
     input: ListAssistantTerminalsInput
   ): Promise<AssistantCapabilityReceipt<{
@@ -2650,6 +2828,240 @@ export class AssistantCapabilityService {
     };
   }
 
+  getCapabilityDefinition(capability: string): AssistantCapabilityDefinition | null {
+    return this.capabilityDefinitions.find((item) => item.name === capability) ?? null;
+  }
+
+  private listVisibleCapabilities(context?: AssistantExecutionContext): AssistantCapabilityDescriptor[] {
+    const profile = context?.capabilityProfile ?? resolveAssistantCapabilityProfile(context?.callerKind);
+    return this.capabilityDefinitions
+      .filter((item) => item.enabled)
+      .filter((item) => profile ? item.allowedProfiles.includes(profile) : true)
+      .map((item) => toVisibleCapabilityDescriptor(item));
+  }
+
+  assertExecutionAllowed(
+    capability: string,
+    context: AssistantExecutionContext,
+    target?: {
+      workspaceId?: string | null;
+      projectId?: string | null;
+      terminalId?: string | null;
+      sessionId?: string | null;
+      documentId?: string | null;
+      officeTaskId?: string | null;
+      browserProfileId?: string | null;
+      worktreeWorkspaceId?: string | null;
+      debugTargetId?: string | null;
+      debugRuntimeId?: string | null;
+    }
+  ): void {
+    const definition = this.getCapabilityDefinition(capability);
+
+    if (!definition) {
+      return;
+    }
+
+    const profile = context.capabilityProfile ?? resolveAssistantCapabilityProfile(context.callerKind);
+
+    if (profile && !definition.allowedProfiles.includes(profile)) {
+      throw new AppError({
+        statusCode: 403,
+        errorCode: "ASSISTANT_CAPABILITY_NOT_ALLOWED",
+        detail: `当前调用者无权使用能力 ${capability}`
+      });
+    }
+
+    if (profile === "workspace-scoped" && definition.requiresConfirmation) {
+      this.assertConfirmationSatisfied(capability, context);
+    }
+
+    if (profile !== "workspace-scoped") {
+      return;
+    }
+
+    if (definition.scopeKind === "workspace") {
+      const userId = this.requireExecutionUserId(context, capability);
+      const targetWorkspaceId = target?.workspaceId
+        ?? (target?.projectId ? this.butlerProjectService.getById(target.projectId).workspaceId : null)
+        ?? (target?.sessionId ? this.sessionHistoryService.getSession(target.sessionId, userId).workspaceId : null)
+        ?? (target?.terminalId ? this.terminalService.getTerminalOrThrow(target.terminalId).workspaceId : null);
+      const documentWorkspaceId = target?.documentId
+        ? this.requireDocumentRuntimeService().getDocumentDetail(target.documentId, userId).document.workspaceId
+        : null;
+      const officeTaskWorkspaceId = target?.officeTaskId
+        ? this.requireOfficeTaskService().getTaskDetail(target.officeTaskId, userId).task.workspaceId
+        : null;
+      const browserProfileWorkspaceId = target?.browserProfileId
+        ? this.requireBrowserRuntimeService().getProfile(target.browserProfileId, userId).workspaceId
+        : null;
+      const debugTargetWorkspaceId = target?.debugTargetId
+        ? this.debugTargetService.getTargetWorkspaceId(target.debugTargetId)
+        : null;
+      const debugRuntimeWorkspaceId = target?.debugRuntimeId
+        ? this.debugTargetService.getRuntimeWorkspaceId(target.debugRuntimeId)
+        : null;
+      this.assertConsistentWorkspaceTargets(
+        capability,
+        [
+          targetWorkspaceId,
+          documentWorkspaceId,
+          officeTaskWorkspaceId,
+          browserProfileWorkspaceId,
+          debugTargetWorkspaceId,
+          debugRuntimeWorkspaceId
+        ]
+      );
+      const resolvedWorkspaceId = target?.worktreeWorkspaceId
+        ? this.resolveRootWorkspaceId(target.worktreeWorkspaceId)
+        : debugRuntimeWorkspaceId
+          ?? debugTargetWorkspaceId
+          ?? browserProfileWorkspaceId
+          ?? officeTaskWorkspaceId
+          ?? documentWorkspaceId
+          ?? targetWorkspaceId;
+      this.assertWorkspaceScopedTarget(context.workspaceId, resolvedWorkspaceId, capability);
+      return;
+    }
+
+    if (definition.scopeKind === "project") {
+      if (capability.startsWith("worktrees.")) {
+        this.assertWorktreeExecutionAllowed(capability, context, target?.worktreeWorkspaceId ?? target?.workspaceId);
+        return;
+      }
+
+      const projectId = target?.projectId
+        ?? (target?.worktreeWorkspaceId
+          ? (() => {
+            const rootWorkspaceId = this.resolveRootWorkspaceId(target.worktreeWorkspaceId);
+            return rootWorkspaceId ? this.resolveWorkspaceProject(rootWorkspaceId).id : null;
+          })()
+          : null)
+        ?? context.projectId;
+      if (!projectId) {
+        throw new AppError({
+          statusCode: 403,
+          errorCode: "ASSISTANT_PROJECT_SCOPE_REQUIRED",
+          detail: `能力 ${capability} 必须绑定当前项目作用域`
+        });
+      }
+
+      const project = this.butlerProjectService.getById(projectId);
+      this.assertWorkspaceScopedTarget(context.workspaceId, project.workspaceId, capability);
+
+      if (context.projectId && context.projectId !== projectId) {
+        throw new AppError({
+          statusCode: 403,
+          errorCode: "ASSISTANT_PROJECT_SCOPE_MISMATCH",
+          detail: `能力 ${capability} 不能跨项目执行`
+        });
+      }
+    }
+  }
+
+  private assertWorkspaceScopedTarget(
+    scopedWorkspaceId: string | null | undefined,
+    targetWorkspaceId: string | null | undefined,
+    capability: string
+  ): void {
+    if (!scopedWorkspaceId || !targetWorkspaceId || scopedWorkspaceId !== targetWorkspaceId) {
+      throw new AppError({
+        statusCode: 403,
+        errorCode: "ASSISTANT_WORKSPACE_SCOPE_MISMATCH",
+        detail: `能力 ${capability} 不能跨工作区执行`
+      });
+    }
+  }
+
+  private assertConfirmationSatisfied(capability: string, context: AssistantExecutionContext): void {
+    if (normalizeAssistantText(context.confirmationToken) === "confirmed") {
+      return;
+    }
+
+    throw new AppError({
+      statusCode: 409,
+      errorCode: "ASSISTANT_CONFIRMATION_REQUIRED",
+      detail: `能力 ${capability} 需要用户显式确认后才能执行`,
+      data: {
+        capability,
+        confirmationRequired: true
+      }
+    });
+  }
+
+  private assertConsistentWorkspaceTargets(capability: string, workspaceIds: Array<string | null | undefined>): void {
+    const normalized = workspaceIds.filter((item): item is string => Boolean(item));
+
+    if (normalized.length <= 1) {
+      return;
+    }
+
+    const first = normalized[0];
+    if (normalized.some((item) => item !== first)) {
+      throw new AppError({
+        statusCode: 403,
+        errorCode: "ASSISTANT_WORKSPACE_SCOPE_MISMATCH",
+        detail: `能力 ${capability} 的目标资源不属于同一工作区`
+      });
+    }
+  }
+
+  private assertWorktreeExecutionAllowed(
+    capability: string,
+    context: AssistantExecutionContext,
+    targetWorkspaceId: string | null | undefined
+  ): void {
+    if (!targetWorkspaceId) {
+      throw new AppError({
+        statusCode: 403,
+        errorCode: "ASSISTANT_PROJECT_SCOPE_REQUIRED",
+        detail: `能力 ${capability} 必须绑定当前项目作用域`
+      });
+    }
+
+    const scopedRootWorkspaceId = this.resolveRootWorkspaceId(context.workspaceId);
+    const targetRootWorkspaceId = this.resolveRootWorkspaceId(targetWorkspaceId);
+    this.assertWorkspaceScopedTarget(scopedRootWorkspaceId, targetRootWorkspaceId, capability);
+  }
+
+  private resolveRootWorkspaceId(workspaceId: string | null | undefined): string | null {
+    const normalizedWorkspaceId = normalizeAssistantText(workspaceId);
+    if (!normalizedWorkspaceId) {
+      return null;
+    }
+
+    return this.workspaceWorktreeRepository.findByWorkspaceId(normalizedWorkspaceId)?.rootWorkspaceId
+      ?? normalizedWorkspaceId;
+  }
+
+  private requireExecutionUserId(context: AssistantExecutionContext, capability: string): string {
+    const userId = normalizeAssistantText(context.userId);
+    if (!userId) {
+      throw new AppError({
+        statusCode: 403,
+        errorCode: "ASSISTANT_EXECUTION_CONTEXT_INVALID",
+        detail: `能力 ${capability} 缺少用户上下文`
+      });
+    }
+
+    return userId;
+  }
+
+  private resolveWorkspaceProject(workspaceId: string) {
+    const candidates = this.butlerProjectService.list({ workspaceId });
+    const project = candidates.find((item) => item.lifecycleStatus === "active") ?? candidates[0] ?? null;
+
+    if (!project) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "BUTLER_PROJECT_NOT_FOUND",
+        detail: "当前工作区没有可用项目，不能执行项目级能力"
+      });
+    }
+
+    return project;
+  }
+
   private requireFollowUpService(): Pick<
     ButlerFollowUpService,
     | "listTasks"
@@ -2674,6 +3086,7 @@ export class AssistantCapabilityService {
   private requireDocumentRuntimeService(): Pick<
     DocumentRuntimeService,
     | "createDocument"
+    | "getDocumentDetail"
     | "updateDocument"
     | "createExportTask"
     | "executeExportTask"
@@ -3029,4 +3442,59 @@ function requireAssistantConditionKind(
 
 function assertNeverAssistantAutomationTriggerType(value: never): never {
   throw new Error(`Unexpected assistant automation triggerType: ${String(value)}`);
+}
+
+function augmentAssistantCapabilities(
+  items: AssistantCapabilityDescriptor[]
+): AssistantCapabilityDefinition[] {
+  return items.map((item) => {
+    const allowedProfiles = (
+      WORKSPACE_SCOPED_DEFAULT_CAPABILITIES.has(item.name)
+        ? ["butler-full", "butler-ui", "workspace-scoped"] satisfies AssistantCapabilityProfile[]
+        : ["butler-full", "butler-ui"] satisfies AssistantCapabilityProfile[]
+    );
+    const scopeKind = (
+      PROJECT_SCOPED_CAPABILITIES.has(item.name)
+        ? "project"
+        : WORKSPACE_SCOPED_CAPABILITIES.has(item.name)
+          ? "workspace"
+          : "none"
+    );
+    const requiresConfirmation = item.requiresConfirmation ?? WORKSPACE_SCOPED_CONFIRMATION_CAPABILITIES.has(item.name);
+
+    return {
+      ...item,
+      allowedProfiles,
+      scopeKind,
+      requiresConfirmation
+    };
+  });
+}
+
+function toVisibleCapabilityDescriptor(item: AssistantCapabilityDefinition): AssistantCapabilityDescriptor {
+  return {
+    name: item.name,
+    mode: item.mode,
+    enabled: item.enabled,
+    summary: item.summary,
+    requiresConfirmation: item.requiresConfirmation
+  };
+}
+
+function resolveAssistantCapabilityProfile(
+  callerKind: AuthCallerKind | null | undefined
+): AssistantCapabilityProfile | null {
+  if (callerKind === "assistant_runtime") {
+    return "butler-full";
+  }
+
+  if (callerKind === "workspace_session") {
+    return "workspace-scoped";
+  }
+
+  if (callerKind === "interactive_user") {
+    return "butler-ui";
+  }
+
+  return null;
 }

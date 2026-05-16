@@ -30,8 +30,12 @@ describe("assistant capability routes", () => {
   async function createAssistantApp(
     assistantCapabilityService: Partial<AssistantCapabilityService>
   ): Promise<FastifyInstance> {
+    const service = {
+      assertExecutionAllowed: vi.fn(),
+      ...assistantCapabilityService
+    };
     const controller = new AssistantCapabilityController(
-      assistantCapabilityService as AssistantCapabilityService
+      service as AssistantCapabilityService
     );
     const app = Fastify({ logger: false });
     apps.push(app);
@@ -55,8 +59,12 @@ describe("assistant capability routes", () => {
     assistantCapabilityService: Partial<AssistantCapabilityService>;
     authService?: Partial<AuthService>;
   }): Promise<FastifyInstance> {
+    const service = {
+      assertExecutionAllowed: vi.fn(),
+      ...input.assistantCapabilityService
+    };
     const controller = new AssistantCapabilityController(
-      input.assistantCapabilityService as AssistantCapabilityService
+      service as AssistantCapabilityService
     );
     const app = Fastify({ logger: false });
     apps.push(app);
@@ -1299,6 +1307,7 @@ describe("assistant capability routes", () => {
     expect(listResponse.statusCode).toBe(200);
     expect(assistantCapabilityService.listOfficeOpsTargets).toHaveBeenCalledWith(
       "user-1",
+      null,
       "ssh_host",
       "active"
     );
@@ -1320,6 +1329,7 @@ describe("assistant capability routes", () => {
     expect(createTargetResponse.statusCode).toBe(200);
     expect(assistantCapabilityService.createOfficeOpsTarget).toHaveBeenCalledWith({
       userId: "user-1",
+      workspaceId: null,
       kind: "ssh_host",
       displayName: "生产 SSH",
       environment: "prod",
@@ -1350,7 +1360,8 @@ describe("assistant capability routes", () => {
         input: {
           command: "df -h"
         },
-        execute: true
+        execute: true,
+        confirm: true
       }
     });
     expect(createSshTaskResponse.statusCode).toBe(200);
@@ -1367,7 +1378,10 @@ describe("assistant capability routes", () => {
 
     const executeTaskResponse = await app.inject({
       method: "POST",
-      url: "/api/assistant/office/ops/tasks/task-ssh-1/execute"
+      url: "/api/assistant/office/ops/tasks/task-ssh-1/execute",
+      payload: {
+        confirm: true
+      }
     });
     expect(executeTaskResponse.statusCode).toBe(200);
     expect(assistantCapabilityService.executeOfficeOpsTask).toHaveBeenCalledWith({
@@ -1818,7 +1832,10 @@ describe("assistant capability routes", () => {
 
     const closeResponse = await app.inject({
       method: "DELETE",
-      url: "/api/assistant/terminals/terminal-1"
+      url: "/api/assistant/terminals/terminal-1",
+      payload: {
+        confirm: true
+      }
     });
     expect(closeResponse.statusCode).toBe(200);
     expect(assistantCapabilityService.closeTerminal).toHaveBeenCalledWith("terminal-1");
@@ -1836,7 +1853,8 @@ describe("assistant capability routes", () => {
       payload: {
         workspaceId: " workspace-1 ",
         rootPath: " /tmp/repo ",
-        commandHints: [" pnpm dev ", 42, "node server.js"]
+        commandHints: [" pnpm dev ", 42, "node server.js"],
+        confirm: true
       }
     });
     expect(analyzeResponse.statusCode).toBe(200);
@@ -1857,7 +1875,8 @@ describe("assistant capability routes", () => {
             command: " node ",
             port: "44123"
           }
-        ]
+        ],
+        confirm: true
       }
     });
     expect(launchPlanResponse.statusCode).toBe(200);
@@ -1888,7 +1907,8 @@ describe("assistant capability routes", () => {
             cwd: ".",
             port: 43001
           }
-        ]
+        ],
+        confirm: true
       }
     });
     expect(runResponse.statusCode).toBe(200);
