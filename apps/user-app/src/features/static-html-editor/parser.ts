@@ -3,6 +3,7 @@ import type {
   DocumentAsset,
   DocumentNode,
   DocumentNodeContent,
+  DocumentTextRun,
   DocumentNodeStyle,
   DocumentProject,
   PresentationProbePage,
@@ -310,6 +311,7 @@ export function buildStaticHtmlPresentationPreviewFromProject(input: {
   project: DocumentProject;
   pageIndex: number;
   selectedNodeId?: string | null;
+  selectedRunIndex?: number | null;
   inlineEditingNodeId?: string | null;
 }): string | null {
   return buildStaticHtmlDocumentFromProject({
@@ -317,6 +319,7 @@ export function buildStaticHtmlPresentationPreviewFromProject(input: {
     project: input.project,
     pageIndex: input.pageIndex,
     selectedNodeId: input.selectedNodeId ?? null,
+    selectedRunIndex: input.selectedRunIndex ?? null,
     inlineEditingNodeId: input.inlineEditingNodeId ?? null,
     mode: "preview"
   });
@@ -340,6 +343,7 @@ function buildStaticHtmlDocumentFromProject(input: {
   project: DocumentProject;
   pageIndex: number;
   selectedNodeId: string | null;
+  selectedRunIndex?: number | null;
   inlineEditingNodeId?: string | null;
   mode: "preview" | "save";
 }): string | null {
@@ -361,7 +365,9 @@ function buildStaticHtmlDocumentFromProject(input: {
     return null;
   }
 
-  normalizePreviewViewportScaling(document, input.project);
+  if (input.mode === "preview") {
+    normalizePreviewViewportScaling(document, input.project);
+  }
 
   latestResolvedPages.elements.forEach((element, index) => {
     if (input.mode === "preview") {
@@ -418,7 +424,8 @@ function buildStaticHtmlDocumentFromProject(input: {
 
     if (input.mode === "preview") {
       mountPreviewTextProxy(element, node, {
-        selected: input.selectedNodeId === node.id
+        selected: input.selectedNodeId === node.id,
+        selectedRunIndex: input.selectedNodeId === node.id ? (input.selectedRunIndex ?? null) : null
       });
     }
   });
@@ -681,6 +688,8 @@ function buildStaticHtmlDocumentFromProject(input: {
         }
 
         const nodeId = matched.getAttribute("data-cns-node-id");
+        const runIndexValue = matched.getAttribute("data-cns-run-index");
+        const runIndex = runIndexValue !== null ? Number.parseInt(runIndexValue, 10) : null;
 
         if (!nodeId) {
           return;
@@ -691,6 +700,7 @@ function buildStaticHtmlDocumentFromProject(input: {
         const payload = {
           type: "codingns-static-html-node-select",
           nodeId,
+          runIndex: Number.isInteger(runIndex) ? runIndex : null,
           eventType: event.type,
           rect: editableRect.rect
             ? {
@@ -731,6 +741,9 @@ function buildStaticHtmlDocumentFromProject(input: {
         const selectedNodeId = typeof payload?.selectedNodeId === "string" && payload.selectedNodeId.trim()
           ? payload.selectedNodeId.trim()
           : null;
+        const selectedRunIndex = typeof payload?.selectedRunIndex === "number" && Number.isInteger(payload.selectedRunIndex)
+          ? payload.selectedRunIndex
+          : null;
         const inlineEditingNodeId = typeof payload?.inlineEditingNodeId === "string" && payload.inlineEditingNodeId.trim()
           ? payload.inlineEditingNodeId.trim()
           : null;
@@ -748,10 +761,20 @@ function buildStaticHtmlDocumentFromProject(input: {
         });
 
         if (selectedNodeId) {
-          const selectedElement = document.querySelector('[data-cns-node-id="' + CSS.escape(selectedNodeId) + '"]');
+          if (selectedRunIndex !== null) {
+            const selectedRunElement = document.querySelector(
+              '[data-cns-node-id="' + CSS.escape(selectedNodeId) + '"][data-cns-run-index="' + String(selectedRunIndex) + '"]'
+            );
 
-          if (selectedElement) {
-            selectedElement.setAttribute("data-cns-node-selected", "true");
+            if (selectedRunElement) {
+              selectedRunElement.setAttribute("data-cns-node-selected", "true");
+            }
+          } else {
+            const selectedElement = document.querySelector('[data-cns-node-id="' + CSS.escape(selectedNodeId) + '"]');
+
+            if (selectedElement) {
+              selectedElement.setAttribute("data-cns-node-selected", "true");
+            }
           }
         }
 
@@ -942,7 +965,7 @@ export function appendProjectPage(
     rootNodeId,
     sourceRef: {
       pageIndex: insertIndex,
-      pageSelector: "",
+      pageSelector: `[data-cns-page-id="${pageId}"]`,
       nodePath: []
     },
     runtimeHints: previousPage?.runtimeHints ?? {
@@ -1529,9 +1552,24 @@ function escapeRegExp(value: string): string {
 }
 
 function resolveMainContentContainer(pageElement: Element): Element {
+  const relevantChildren = getRelevantChildren(pageElement);
+
+  // 只有唯一内容壳时才下钻，避免像 slide-header + content 这种结构把页标题漏掉。
+  if (relevantChildren.length === 1) {
+    const onlyChild = relevantChildren[0];
+
+    if (onlyChild && !isTextOwnerElement(onlyChild)) {
+      return onlyChild;
+    }
+  }
+
   for (const selector of MAIN_CONTENT_SELECTORS) {
     const matched = pageElement.querySelector(selector);
     if (matched) {
+      if (matched.parentElement === pageElement && relevantChildren.length > 1) {
+        return pageElement;
+      }
+
       return matched;
     }
   }
@@ -1606,6 +1644,18 @@ function collectChildNodes(input: {
     }
 
     const childPath = [...containerPath, childIndex];
+
+    if (shouldDeduplicateContainer(childElement)) {
+      collectChildNodes({
+        ...input,
+        containerElement: childElement,
+        containerPath: childPath,
+        parentNodeId,
+        nodeIdPrefix
+      });
+      return;
+    }
+
     const childNodeId = `${nodeIdPrefix}-node-${childPath.join("-") || "root"}`;
     const childNode = createNodeFromElement({
       element: childElement,
@@ -1649,7 +1699,7 @@ function createNodeFromElement(input: {
     pageSelector,
     nodePath
   };
-  const relevantChildren = Array.from(element.children).filter((child) => !shouldSkipElement(child));
+  const relevantChildren = getRelevantChildren(element);
 
   if (element.tagName === "IMG") {
     const src = element.getAttribute("src") ?? "";
@@ -1702,6 +1752,10 @@ function createNodeFromElement(input: {
   }
 
   if (TEXT_TAGS.has(element.tagName) || isStandaloneTextElement(element)) {
+    return createTextLeafNode(nodeId, element, sourceRef);
+  }
+
+  if (isCompositeTextElement(element, relevantChildren)) {
     return createTextLeafNode(nodeId, element, sourceRef);
   }
 
@@ -1759,7 +1813,8 @@ function createTextLeafNode(
   element: Element,
   sourceRef: SourceRef
 ): DocumentNode | null {
-  const text = normalizeTextContent(element.textContent ?? "");
+  const runs = extractTextRuns(element);
+  const text = normalizeTextRunsText(runs);
 
   if (!text) {
     return null;
@@ -1769,9 +1824,11 @@ function createTextLeafNode(
     id: nodeId,
     name: text.slice(0, 20),
     text,
+    runs,
     sourceRef,
     style: readInlineStyle(element),
-    box: readElementBox(element)
+    box: readElementBox(element),
+    preserveStructure: shouldPreserveTextStructure(element)
   });
 }
 
@@ -1818,16 +1875,20 @@ function resolveProjectPageElement(
   const pageSelector = page.sourceRef.pageSelector?.trim();
 
   if (pageSelector) {
-    const matched = Array.from(document.querySelectorAll(pageSelector)).find((element) => pageElements.includes(element));
+    const matchedElements = Array.from(document.querySelectorAll(pageSelector))
+      .filter((element) => pageElements.includes(element));
 
-    if (matched instanceof Element) {
-      return matched;
+    if (matchedElements.length === 1 && matchedElements[0] instanceof Element) {
+      return matchedElements[0];
     }
 
-    return pageElements[page.sourceRef.pageIndex] ?? null;
+    if (/^\[data-cns-page-id=/.test(pageSelector)) {
+      return null;
+    }
   }
 
-  return null;
+  const indexedElement = pageElements[page.sourceRef.pageIndex] ?? null;
+  return indexedElement instanceof Element ? indexedElement : null;
 }
 
 function createProjectPageElement(
@@ -1901,10 +1962,17 @@ function createTextNode(input: {
   id: string;
   name: string;
   text: string;
+  runs?: DocumentTextRun[] | null;
   sourceRef: SourceRef;
   style?: DocumentNodeStyle;
   box?: DocumentNode["box"];
+  preserveStructure?: boolean;
 }): DocumentNode {
+  const hasStructuredRuns = Boolean(input.preserveStructure) || (
+    Array.isArray(input.runs)
+      && input.runs.some((run) => run.tagName || run.className || run.sourceKind === "element")
+  );
+
   return {
     id: input.id,
     type: "text",
@@ -1914,12 +1982,13 @@ function createTextNode(input: {
     box: input.box ?? createDefaultBox(),
     style: input.style ?? {},
     content: {
-      text: input.text
+      text: input.text,
+      runs: input.runs ?? null
     },
     children: [],
     sourceRef: input.sourceRef,
     patchStrategy: "text_and_style",
-    runtimeFlags: []
+    runtimeFlags: hasStructuredRuns ? ["preserve-text-structure"] : []
   };
 }
 
@@ -2027,6 +2096,239 @@ function isStandaloneTextElement(element: Element): boolean {
   return Boolean(text) && element.children.length === 0;
 }
 
+function getRelevantChildren(element: Element): Element[] {
+  return Array.from(element.children).filter((child) => !shouldSkipElement(child));
+}
+
+function hasMeaningfulDirectText(element: Element): boolean {
+  return Array.from(element.childNodes).some((node) => {
+    if (node.nodeType !== Node.TEXT_NODE) {
+      return false;
+    }
+
+    return Boolean(normalizeInlineTextContent(node.textContent ?? ""));
+  });
+}
+
+const INLINE_TEXT_CONTAINER_TAGS = new Set([
+  "SPAN",
+  "STRONG",
+  "B",
+  "I",
+  "EM",
+  "U",
+  "SMALL",
+  "MARK",
+  "SUB",
+  "SUP",
+  "CODE",
+  "A",
+  "BR"
+]);
+
+function isCompositeTextElement(
+  element: Element,
+  relevantChildren: Element[]
+): boolean {
+  return resolveTextOwnerPriority(element, relevantChildren) > 0;
+}
+
+function isTextOwnerElement(element: Element): boolean {
+  return resolveTextOwnerPriority(element) > 0;
+}
+
+function resolveTextOwnerPriority(
+  element: Element,
+  presetRelevantChildren?: Element[]
+): number {
+  const text = normalizeTextContent(element.textContent ?? "");
+
+  if (!text) {
+    return 0;
+  }
+
+  if (TEXT_TAGS.has(element.tagName)) {
+    return 500;
+  }
+
+  if (isStandaloneTextElement(element)) {
+    return 460;
+  }
+
+  const relevantChildren = presetRelevantChildren ?? getRelevantChildren(element);
+
+  if (relevantChildren.length === 0) {
+    return 420;
+  }
+
+  if (!relevantChildren.every((child) => isInlineTextContainerChild(child))) {
+    return 0;
+  }
+
+  const hasDirectText = hasMeaningfulDirectText(element);
+
+  if (hasDirectText) {
+    return 360;
+  }
+
+  return 0;
+}
+
+function shouldDeduplicateContainer(element: Element): boolean {
+  if (shouldSkipElement(element)) {
+    return false;
+  }
+
+  if (resolveTextOwnerPriority(element) > 0) {
+    return false;
+  }
+
+  const relevantChildren = getRelevantChildren(element);
+
+  if (relevantChildren.length !== 1 || hasMeaningfulDirectText(element)) {
+    return false;
+  }
+
+  const onlyChild = relevantChildren[0];
+
+  if (!onlyChild) {
+    return false;
+  }
+
+  if (resolveTextOwnerPriority(onlyChild) > 0) {
+    return true;
+  }
+
+  return shouldDeduplicateContainer(onlyChild);
+}
+
+function isInlineTextContainerChild(element: Element): boolean {
+  if (INLINE_TEXT_CONTAINER_TAGS.has(element.tagName)) {
+    return true;
+  }
+
+  if (element.tagName === "SPAN" && element.children.length === 0) {
+    return true;
+  }
+
+  return false;
+}
+
+function extractTextRuns(element: Element): DocumentTextRun[] {
+  const runs: DocumentTextRun[] = [];
+  collectTextRuns(element, runs, element);
+  return normalizeTextRuns(runs);
+}
+
+function collectTextRuns(
+  rootElement: Element,
+  runs: DocumentTextRun[],
+  currentNode: Node
+): void {
+  if (currentNode.nodeType === Node.TEXT_NODE) {
+    const rawText = currentNode.textContent ?? "";
+
+    if (!hasMeaningfulInlineText(rawText)) {
+      return;
+    }
+
+    const text = normalizeInlineTextContent(rawText);
+
+    if (text) {
+      runs.push({
+        text,
+        sourceKind: "text"
+      });
+    }
+    return;
+  }
+
+  if (!(currentNode instanceof Element)) {
+    return;
+  }
+
+  if (shouldSkipElement(currentNode) && currentNode !== rootElement) {
+    return;
+  }
+
+  if (currentNode !== rootElement && isInlineTextContainerChild(currentNode)) {
+    const text = normalizeInlineTextContent(currentNode.textContent ?? "");
+
+    if (text) {
+      runs.push({
+        text,
+        tagName: currentNode.tagName.toLowerCase(),
+        className: typeof currentNode.className === "string" && currentNode.className.trim()
+          ? currentNode.className.trim()
+          : null,
+        style: readInlineStyle(currentNode),
+        sourceKind: "element"
+      });
+    }
+
+    return;
+  }
+
+  currentNode.childNodes.forEach((childNode) => {
+    collectTextRuns(rootElement, runs, childNode);
+  });
+}
+
+function normalizeTextRuns(runs: DocumentTextRun[]): DocumentTextRun[] {
+  return runs
+    .map((run) => {
+      const text = normalizeInlineTextContent(run.text);
+
+      if (!text) {
+        return null;
+      }
+
+      return {
+        text,
+        tagName: run.tagName ?? null,
+        className: run.className ?? null,
+        style: run.style ?? null,
+        sourceKind: run.sourceKind ?? null
+      } satisfies DocumentTextRun;
+    })
+    .filter((run): run is DocumentTextRun => Boolean(run));
+}
+
+function normalizeTextRunsText(runs: DocumentTextRun[]): string {
+  return normalizeTextContent(runs.map((run) => run.text).join(" "));
+}
+
+function shouldPreserveTextStructure(element: Element): boolean {
+  if (element.querySelector("br")) {
+    return true;
+  }
+
+  let meaningfulSegmentCount = 0;
+
+  element.childNodes.forEach((childNode) => {
+    if (childNode.nodeType === Node.TEXT_NODE) {
+      if (hasMeaningfulInlineText(childNode.textContent ?? "")) {
+        meaningfulSegmentCount += 1;
+      }
+      return;
+    }
+
+    if (!(childNode instanceof Element)) {
+      return;
+    }
+
+    if (childNode.tagName === "BR") {
+      return;
+    }
+
+    if (isInlineTextContainerChild(childNode) && normalizeInlineTextContent(childNode.textContent ?? "")) {
+      meaningfulSegmentCount += 1;
+    }
+  });
+
+  return meaningfulSegmentCount > 1;
+}
+
 function isBlockLikeElement(element: Element): boolean {
   const className = typeof element.className === "string" ? element.className.toLowerCase() : "";
   return BLOCK_KEYWORDS.some((keyword) => className.includes(keyword));
@@ -2044,6 +2346,24 @@ function resolveElementName(element: Element): string {
 
 function normalizeTextContent(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function normalizeInlineTextContent(value: string): string {
+  return value
+    .replace(/\r\n/g, "\n")
+    .replace(/[^\S\r\n]+/g, " ");
+}
+
+function hasMeaningfulInlineText(value: string): boolean {
+  if (!value) {
+    return false;
+  }
+
+  if (!/\S/.test(value)) {
+    return false;
+  }
+
+  return !/^[\n\r\t ]+$/.test(value);
 }
 
 function dedupeStrings(values: string[]): string[] {
@@ -2090,7 +2410,11 @@ function resolveElementBySourceRef(
 function applyDocumentNodeToElement(element: Element, node: DocumentNode) {
   switch (node.type) {
     case "text":
-      if (typeof node.content.text === "string") {
+      if (Array.isArray(node.content.runs) && node.content.runs.length > 0) {
+        applyTextRunsToElement(element, node.content.runs, {
+          preserveStructure: hasRuntimeFlag(node, "preserve-text-structure")
+        });
+      } else if (typeof node.content.text === "string") {
         element.textContent = node.content.text;
       }
       break;
@@ -2113,11 +2437,216 @@ function applyDocumentNodeToElement(element: Element, node: DocumentNode) {
   applyNodeBoxToElement(element, node);
 }
 
+function applyTextRunsToElement(
+  element: Element,
+  runs: DocumentTextRun[],
+  options?: {
+    preserveStructure?: boolean;
+  }
+): void {
+  if (options?.preserveStructure && patchTextRunsInPlace(element, runs)) {
+    return;
+  }
+
+  const ownerDocument = element.ownerDocument;
+
+  if (!ownerDocument) {
+    element.textContent = normalizeTextRunsText(runs);
+    return;
+  }
+
+  while (element.firstChild) {
+    element.removeChild(element.firstChild);
+  }
+
+  runs.forEach((run) => {
+    if (!run.text) {
+      return;
+    }
+
+    if (!run.tagName) {
+      element.appendChild(ownerDocument.createTextNode(run.text));
+      return;
+    }
+
+    const childElement = ownerDocument.createElement(run.tagName);
+
+    if (run.className) {
+      childElement.setAttribute("class", run.className);
+    }
+
+    childElement.textContent = run.text;
+    applyNodeStyleToElement(childElement, run.style ?? {});
+    element.appendChild(childElement);
+  });
+}
+
+function patchTextRunsInPlace(
+  element: Element,
+  runs: DocumentTextRun[]
+): boolean {
+  if (normalizeTextContent(element.textContent ?? "") === normalizeTextRunsText(runs)) {
+    return true;
+  }
+
+  const targetSegments = flattenTextRunSegments(runs);
+
+  if (!targetSegments.length) {
+    return false;
+  }
+
+  const sourceSegments = collectElementTextSegments(element);
+
+  if (!sourceSegments.length || sourceSegments.length !== targetSegments.length) {
+    return false;
+  }
+
+  for (let index = 0; index < sourceSegments.length; index += 1) {
+    const sourceSegment = sourceSegments[index];
+    const targetSegment = targetSegments[index];
+
+    if (!sourceSegment || !targetSegment) {
+      return false;
+    }
+
+    if (sourceSegment.kind !== targetSegment.kind) {
+      return false;
+    }
+
+    if (sourceSegment.kind === "element") {
+      if (
+        (sourceSegment.tagName ?? null) !== (targetSegment.tagName ?? null)
+        || (sourceSegment.className ?? null) !== (targetSegment.className ?? null)
+      ) {
+        return false;
+      }
+    }
+  }
+
+  sourceSegments.forEach((segment, index) => {
+    const targetSegment = targetSegments[index];
+
+    if (!targetSegment) {
+      return;
+    }
+
+    if (segment.kind === "text" && segment.node.nodeType === Node.TEXT_NODE) {
+      segment.node.textContent = targetSegment.text;
+      return;
+    }
+
+    if (segment.node instanceof Element) {
+      segment.node.textContent = targetSegment.text;
+      applyNodeStyleToElement(segment.node, targetSegment.style ?? {});
+    }
+  });
+
+  return true;
+}
+
+function flattenTextRunSegments(runs: DocumentTextRun[]): Array<{
+  kind: "text" | "element";
+  text: string;
+  tagName: string | null;
+  className: string | null;
+  style: DocumentNodeStyle | null;
+}> {
+  return runs
+    .map((run) => {
+      const text = run.text ?? "";
+
+      if (!text) {
+        return null;
+      }
+
+      const kind = run.tagName || run.className || run.sourceKind === "element"
+        ? "element"
+        : "text";
+
+      return {
+        kind,
+        text,
+        tagName: run.tagName ?? null,
+        className: run.className ?? null,
+        style: run.style ?? null
+      };
+    })
+    .filter((segment): segment is {
+      kind: "text" | "element";
+      text: string;
+      tagName: string | null;
+      className: string | null;
+      style: DocumentNodeStyle | null;
+    } => Boolean(segment));
+}
+
+function collectElementTextSegments(element: Element): Array<{
+  kind: "text" | "element";
+  node: Node;
+  tagName: string | null;
+  className: string | null;
+}> {
+  const segments: Array<{
+    kind: "text" | "element";
+    node: Node;
+    tagName: string | null;
+    className: string | null;
+  }> = [];
+
+  element.childNodes.forEach((childNode) => {
+    if (childNode.nodeType === Node.TEXT_NODE) {
+      const rawText = childNode.textContent ?? "";
+
+      if (!hasMeaningfulInlineText(rawText)) {
+        return;
+      }
+
+      segments.push({
+        kind: "text",
+        node: childNode,
+        tagName: null,
+        className: null
+      });
+      return;
+    }
+
+    if (!(childNode instanceof Element)) {
+      return;
+    }
+
+    if (childNode.tagName === "BR") {
+      return;
+    }
+
+    if (!isInlineTextContainerChild(childNode)) {
+      return;
+    }
+
+    const text = normalizeInlineTextContent(childNode.textContent ?? "");
+
+    if (!text) {
+      return;
+    }
+
+    segments.push({
+      kind: "element",
+      node: childNode,
+      tagName: childNode.tagName.toLowerCase(),
+      className: typeof childNode.className === "string" && childNode.className.trim()
+        ? childNode.className.trim()
+        : null
+    });
+  });
+
+  return segments;
+}
+
 function mountPreviewTextProxy(
   element: Element,
   node: DocumentNode,
   options: {
     selected: boolean;
+    selectedRunIndex?: number | null;
   }
 ) {
   if (node.type !== "text") {
@@ -2129,6 +2658,7 @@ function mountPreviewTextProxy(
   }
 
   const text = typeof node.content.text === "string" ? node.content.text : normalizeTextContent(element.textContent ?? "");
+  const runs = Array.isArray(node.content.runs) ? node.content.runs : [];
 
   if (!text) {
     return;
@@ -2150,8 +2680,6 @@ function mountPreviewTextProxy(
     proxy.setAttribute("data-cns-node-selected", "true");
     element.removeAttribute("data-cns-node-selected");
   }
-
-  proxy.textContent = text;
   proxy.setAttribute(
     "style",
     [
@@ -2168,6 +2696,28 @@ function mountPreviewTextProxy(
       "text-transform: inherit"
     ].join("; ")
   );
+
+  if (runs.length > 1) {
+    runs.forEach((run, index) => {
+      const runElement = ownerDocument.createElement(run.tagName || "span");
+      runElement.setAttribute("data-cns-node-id", node.id);
+      runElement.setAttribute("data-cns-run-index", String(index));
+
+      if (run.className) {
+        runElement.setAttribute("class", run.className);
+      }
+
+      if (options.selected && options.selectedRunIndex === index) {
+        runElement.setAttribute("data-cns-node-selected", "true");
+      }
+
+      runElement.textContent = run.text;
+      applyNodeStyleToElement(runElement, run.style ?? {});
+      proxy.appendChild(runElement);
+    });
+  } else {
+    proxy.textContent = text;
+  }
 
   while (element.firstChild) {
     element.removeChild(element.firstChild);

@@ -70,8 +70,17 @@ export interface DocumentNodeStyle {
   opacity?: number | null;
 }
 
+export interface DocumentTextRun {
+  text: string;
+  tagName?: string | null;
+  className?: string | null;
+  style?: DocumentNodeStyle | null;
+  sourceKind?: "text" | "element" | null;
+}
+
 export interface DocumentNodeContent {
   text?: string | null;
+  runs?: DocumentTextRun[] | null;
   src?: string | null;
   alt?: string | null;
   html?: string | null;
