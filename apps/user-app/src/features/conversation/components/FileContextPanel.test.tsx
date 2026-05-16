@@ -1168,6 +1168,73 @@ describe("FileContextPanel", () => {
     });
   });
 
+  it("目录快照长时间不返回时会回退到 HTTP 文件树接口完成展开", async () => {
+    fileApiMock.getFileTree.mockImplementation(async (_workspaceId: string, filePath?: string) => {
+      if (filePath === "tmp") {
+        return {
+          items: [
+            {
+              path: "tmp/demo.txt",
+              name: "demo.txt",
+              kind: "file",
+              size: 12,
+              updatedAt: "2026-03-24T12:00:00.000Z"
+            }
+          ]
+        };
+      }
+
+      return {
+        items: [
+          {
+            path: "tmp",
+            name: "tmp",
+            kind: "directory",
+            size: null,
+            updatedAt: "2026-03-24T12:00:00.000Z"
+          },
+          ...rootItemsMock
+        ]
+      };
+    });
+
+    workbenchShellMock.requestFileTreeRefresh.mockImplementation(async (workspaceId: string, paths?: string[]) => {
+      const targetPaths = paths && paths.length > 0 ? paths : [""];
+
+      await Promise.all(
+        targetPaths.map(async (path) => {
+          if (path === "tmp") {
+            return;
+          }
+
+          const response = await fileApiMock.getFileTree(workspaceId, path ? path : undefined);
+
+          queueMicrotask(() => {
+            fileTreeSnapshotListeners.forEach((listener) => {
+              listener({
+                workspaceId,
+                path,
+                items: response.items
+              });
+            });
+          });
+        })
+      );
+    });
+
+    renderPanel();
+
+    fireEvent.click(await screen.findByText("tmp"));
+    expect(screen.getByText(t("common.loading"))).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(fileApiMock.getFileTree).toHaveBeenCalledWith("workspace-1", "tmp");
+    }, {
+      timeout: 5000
+    });
+    expect(await screen.findByText("demo.txt")).toBeInTheDocument();
+  }, 10000);
+
   it("支持复制当前选中文件的相对路径", async () => {
     renderPanel();
 

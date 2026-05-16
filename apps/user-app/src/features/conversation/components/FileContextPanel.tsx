@@ -13,6 +13,7 @@ import type {
   GitRealtimeSnapshotDto
 } from "../../../network/workbench-realtime-client";
 import {
+  getFileTree,
   downloadFile,
   operateFile,
   searchFiles,
@@ -127,6 +128,7 @@ const WEB_CONTEXT_MENU_MIN_HEIGHT_PX = 120;
 const FILE_PANEL_WORKSPACE_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 const FILE_PANEL_SESSION_COUNT_CACHE_MAX_AGE_MS = 60 * 1000;
 const FILE_TREE_SNAPSHOT_TIMEOUT_MS = 1600;
+const FILE_TREE_HTTP_FALLBACK_DELAY_MS = 220;
 const SIDEBAR_TREE_ROOT_PADDING_PX = 20;
 const SIDEBAR_TREE_DEPTH_STEP_PX = 16;
 
@@ -994,9 +996,38 @@ export function FileContextPanel({
     requestFileTreeRefresh(workspaceId, [directoryPath], {
       knownRevisionByPath: treeRevisionByPathRef.current
     });
-    return waitForDirectorySnapshot(directoryPath, FILE_TREE_SNAPSHOT_TIMEOUT_MS, {
-      allowCached: options?.force !== true
+    const waitForRealtimeSnapshot = waitForDirectorySnapshot(
+      directoryPath,
+      FILE_TREE_SNAPSHOT_TIMEOUT_MS,
+      {
+        allowCached: options?.force !== true
+      }
+    );
+    const waitForHttpFallback = delay(FILE_TREE_HTTP_FALLBACK_DELAY_MS).then(async () => {
+      if (!workspaceId) {
+        return [];
+      }
+
+      const fallbackResponse = await getFileTree(workspaceId, directoryPath || undefined);
+      const fallbackItems = fallbackResponse.items;
+
+      treeRevisionByPathRef.current = {
+        ...treeRevisionByPathRef.current,
+        [directoryPath]: null
+      };
+      resolveDirectoryWaiters(directoryPath, fallbackItems);
+      return fallbackItems;
     });
+
+    try {
+      return await Promise.race([waitForRealtimeSnapshot, waitForHttpFallback]);
+    } catch (error) {
+      if (!isDirectorySnapshotTimeoutError(error)) {
+        throw error;
+      }
+
+      return await waitForHttpFallback;
+    }
   }
 
   function waitForDirectorySnapshot(
@@ -3466,12 +3497,24 @@ function readError(error: unknown, fallback: string): string {
   return fallback;
 }
 
-function isSnapshotTimeoutError(error: unknown): boolean {
+function isDirectorySnapshotTimeoutError(error: unknown): boolean {
   return (
     error instanceof Error &&
-    (error.message.startsWith("FILE_TREE_SNAPSHOT_TIMEOUT:") ||
-      error.message.startsWith("FILE_TREE_ABORTED:"))
+    error.message.startsWith("FILE_TREE_SNAPSHOT_TIMEOUT:")
   );
+}
+
+function isSnapshotTimeoutError(error: unknown): boolean {
+  return (
+    isDirectorySnapshotTimeoutError(error)
+    || (error instanceof Error && error.message.startsWith("FILE_TREE_ABORTED:"))
+  );
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }
 
 function CollapseIcon() {
