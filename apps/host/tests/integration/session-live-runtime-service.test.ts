@@ -1581,7 +1581,7 @@ describe("SessionLiveRuntimeService", () => {
           WORKSPACE_SESSION_AUTH_FILE: workspaceAuthFilePath,
           CODINGNS_OFFICE_MCP_AUTH_FILE: workspaceAuthFilePath
         }),
-        runtimeHomeDir: path.dirname(workspaceInstructionFilePath),
+        runtimeHomeDir: null,
         options: expect.objectContaining({
           providerInstructionFilePath: workspaceInstructionFilePath
         })
@@ -1810,7 +1810,7 @@ describe("SessionLiveRuntimeService", () => {
           WORKSPACE_SESSION_AUTH_FILE: workspaceAuthFilePath,
           CODINGNS_OFFICE_MCP_AUTH_FILE: workspaceAuthFilePath
         }),
-        runtimeHomeDir: path.dirname(workspaceInstructionFilePath),
+        runtimeHomeDir: null,
         options: expect.objectContaining({
           providerInstructionFilePath: workspaceInstructionFilePath
         })
