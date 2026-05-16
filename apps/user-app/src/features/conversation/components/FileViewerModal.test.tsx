@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 
 import "../../../app/styles.css";
 import { clientConfigStore } from "../../../config/client-config-store";
@@ -515,7 +516,7 @@ describe("FileViewerModal", () => {
     expect(screen.queryByRole("button", { name: t("conversation.fileViewerOpenExternal") })).not.toBeInTheDocument();
   });
 
-  it("HTML 文件支持刷新预览、尺寸切换，并支持外部打开", async () => {
+  it("HTML 文件默认铺满视图，且支持刷新预览与外部打开", async () => {
     const user = userEvent.setup();
 
     fileApiMock.getFilePreview.mockResolvedValue(
@@ -551,10 +552,9 @@ describe("FileViewerModal", () => {
       "sandbox",
       "allow-forms allow-modals allow-scripts allow-same-origin"
     );
-    expect(dialog).toHaveAttribute("data-size", "regular");
-
-    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerSizeFull") }));
-    expect(screen.getByRole("dialog")).toHaveAttribute("data-size", "full");
+    expect(dialog).toHaveAttribute("data-size", "full");
+    expect(screen.queryByRole("button", { name: t("conversation.fileViewerSizeDefault") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("conversation.fileViewerSizeFull") })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: t("conversation.fileViewerRefreshPreview") }));
 
@@ -633,12 +633,14 @@ describe("FileViewerModal", () => {
     expect(solutionPageButton).toBeDefined();
     await user.click(solutionPageButton!);
 
-    expect(screen.getByText(t("conversation.fileViewerPresentationCurrentPage"))).toBeInTheDocument();
-    expect(document.querySelector(".static-html-presentation-stage-title")).toHaveTextContent("方案页");
     expect(screen.getByTestId("static-html-presentation-frame")).toBeInTheDocument();
+    expect(screen.getByTestId("static-html-presentation-frame")).toHaveAttribute(
+      "title",
+      "方案页"
+    );
   });
 
-  it("演示文档视图支持选中组件并修改文字与基础样式", async () => {
+  it("演示文档视图支持通过顶部文字工具栏修改文本与样式", async () => {
     const user = userEvent.setup();
 
     fileApiMock.getFilePreview.mockResolvedValue(
@@ -692,23 +694,39 @@ describe("FileViewerModal", () => {
     await user.clear(textarea);
     await user.type(textarea, "改过的标题");
 
-    const numberInputs = document.querySelectorAll<HTMLInputElement>('.static-html-presentation-inspector input[type="number"]');
-    expect(numberInputs.length).toBeGreaterThanOrEqual(1);
-    const fontSizeInput = numberInputs[0]!;
-    await user.clear(fontSizeInput);
-    await user.type(fontSizeInput, "48");
+    const selects = document.querySelectorAll<HTMLSelectElement>(".static-html-presentation-text-toolbar-select");
+    expect(selects.length).toBeGreaterThanOrEqual(3);
+    fireEvent.change(selects[1]!, { target: { value: "48" } });
+    fireEvent.change(selects[2]!, { target: { value: "1.8" } });
 
-    const colorInputs = document.querySelectorAll<HTMLInputElement>('.static-html-presentation-inspector input[type="color"]');
-    expect(colorInputs.length).toBeGreaterThanOrEqual(1);
+    const toolbarButtons = screen.getAllByRole("button");
+    const boldButton = toolbarButtons.find((button) => button.getAttribute("aria-label") === t("conversation.fileViewerPresentationBoldAction"));
+    const italicButton = toolbarButtons.find((button) => button.getAttribute("aria-label") === t("conversation.fileViewerPresentationItalicAction"));
+    const underlineButton = toolbarButtons.find((button) => button.getAttribute("aria-label") === t("conversation.fileViewerPresentationUnderlineAction"));
+    expect(boldButton).toBeDefined();
+    expect(italicButton).toBeDefined();
+    expect(underlineButton).toBeDefined();
+    await user.click(boldButton!);
+    await user.click(italicButton!);
+    await user.click(underlineButton!);
+
+    const colorInputs = document.querySelectorAll<HTMLInputElement>('.static-html-presentation-text-toolbar-color input[type="color"]');
+    expect(colorInputs.length).toBe(2);
     fireEvent.change(colorInputs[0]!, { target: { value: "#ff0000" } });
+    fireEvent.change(colorInputs[1]!, { target: { value: "#0000ff" } });
 
     const frame = screen.getByTestId("static-html-presentation-frame");
     expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("改过的标题"));
     expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("font-size: 48px"));
+    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("font-weight: 700"));
+    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("font-style: italic"));
+    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("text-decoration: underline"));
     expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("color: #ff0000"));
+    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("background-color: #0000ff"));
+    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("line-height: 1.8"));
   });
 
-  it("演示文档视图支持点击画布里的 HTML 组件直接定位到右侧编辑区", async () => {
+  it("演示文档视图支持点击画布里的 HTML 组件直接定位到顶部编辑区", async () => {
     const user = userEvent.setup();
 
     fileApiMock.getFilePreview.mockResolvedValue(
@@ -762,7 +780,8 @@ describe("FileViewerModal", () => {
     }));
 
     await waitFor(() => {
-      expect(document.querySelector(".static-html-presentation-inspector-title")).toHaveTextContent("画布标题");
+      expect(document.querySelector<HTMLTextAreaElement>(".static-html-presentation-textarea")?.value)
+        .toBe("画布标题");
     });
   });
 
@@ -815,7 +834,8 @@ describe("FileViewerModal", () => {
     }));
 
     await waitFor(() => {
-      expect(document.querySelector(".static-html-presentation-inspector-title")).toHaveTextContent("立即开始");
+      expect(document.querySelector<HTMLTextAreaElement>(".static-html-presentation-textarea")?.value)
+        .toBe("立即开始");
     });
   });
 
@@ -977,73 +997,6 @@ describe("FileViewerModal", () => {
     });
   });
 
-  it("演示文档视图支持复制组件并调整位置尺寸", async () => {
-    const user = userEvent.setup();
-
-    fileApiMock.getFilePreview.mockResolvedValue(
-      createPreviewResponse({
-        path: "slides/duplicate.html",
-        kind: "html",
-        content: `
-          <!doctype html>
-          <html>
-            <head>
-              <style>:root { --deck-width: 1600px; --deck-height: 900px; }</style>
-            </head>
-            <body>
-              <div class="deck">
-                <section class="slide" data-title="封面">
-                  <div class="slide-shell">
-                    <div class="hero-card">
-                      <h1 style="font-size: 32px; color: #111111;">原始标题</h1>
-                    </div>
-                  </div>
-                </section>
-              </div>
-            </body>
-          </html>
-        `,
-        version: "ppt-duplicate-v1",
-        previewPath: "/preview/files/preview-token/slides/duplicate.html",
-        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/duplicate.html"
-      })
-    );
-
-    render(
-      <ToastProvider>
-        <FileViewerModal
-          workspaceId="workspace-1"
-          filePath="slides/duplicate.html"
-          open
-          onClose={vi.fn()}
-          onSaved={vi.fn()}
-        />
-      </ToastProvider>
-    );
-
-    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
-    await user.click(await screen.findByRole("button", { name: /原始标题/ }));
-    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerPresentationDuplicateAction") }));
-
-    const duplicatedNodeChip = await screen.findByRole("button", { name: /原始标题 副本/ });
-    expect(duplicatedNodeChip).toBeInTheDocument();
-
-    const numberInputs = document.querySelectorAll<HTMLInputElement>('.static-html-presentation-inspector input[type="number"]');
-    expect(numberInputs.length).toBeGreaterThanOrEqual(5);
-
-    fireEvent.change(numberInputs[1]!, { target: { value: "120" } });
-    fireEvent.change(numberInputs[2]!, { target: { value: "180" } });
-    fireEvent.change(numberInputs[3]!, { target: { value: "420" } });
-    fireEvent.change(numberInputs[4]!, { target: { value: "96" } });
-
-    const frame = screen.getByTestId("static-html-presentation-frame");
-    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining('data-cns-node-id="page-1-root-node-0-0-node-0-0-0-copy-1"'));
-    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("left: 120px"));
-    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("top: 180px"));
-    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("width: 420px"));
-    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("height: 96px"));
-  });
-
   it("演示文档视图保存时会把草稿项目回写成 HTML 再提交", async () => {
     const user = userEvent.setup();
     const onSaved = vi.fn();
@@ -1101,8 +1054,6 @@ describe("FileViewerModal", () => {
     await user.clear(textarea!);
     await user.type(textarea!, "保存后的标题");
 
-    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerPresentationDuplicateAction") }));
-
     const saveButton = screen.getByRole("button", { name: t("conversation.filePanelSave") });
     expect(saveButton).toBeEnabled();
     await user.click(saveButton);
@@ -1116,8 +1067,7 @@ describe("FileViewerModal", () => {
     expect(saveArgs?.[1]).toBe("slides/save-presentation.html");
     expect(saveArgs?.[2]).toContain("保存后的标题");
     expect(saveArgs?.[2]).toContain("data-title=\"封面\"");
-    expect(saveArgs?.[2].match(/保存后的标题/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
-    expect(saveArgs?.[2]).toContain("position: absolute");
+    expect(saveArgs?.[2]).toContain(">保存后的标题<");
     expect(saveArgs?.[3]).toBe("ppt-save-v1");
     await waitFor(() => {
       expect(onSaved).toHaveBeenCalledWith("slides/save-presentation.html");
@@ -1328,14 +1278,150 @@ describe("FileViewerModal", () => {
     await user.clear(textarea!);
     await user.type(textarea!, "第一次修改");
 
-    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerPresentationUndoAction") }));
+    expect(screen.getByTestId("static-html-presentation-frame")).toHaveAttribute(
+      "srcdoc",
+      expect.stringContaining("第一次修改")
+    );
+  });
 
-    await waitFor(() => {
-      expect(screen.getByTestId("static-html-presentation-frame")).toHaveAttribute(
-        "srcdoc",
-        expect.stringContaining("原始标题")
-      );
-    });
+  it("复杂静态 HTML 在演示文档模式下会把第一页内容写进 iframe，而不是空白 srcdoc", async () => {
+    const user = userEvent.setup();
+    const html = readFileSync(
+      "/Users/jackson/Code/CodingNS/tmp/20260426-AI模型贴脸对战.html",
+      "utf8"
+    );
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "tmp/20260426-AI模型贴脸对战.html",
+        kind: "html",
+        content: html,
+        version: "ppt-real-preview-v1",
+        previewPath: "/preview/files/preview-token/tmp/20260426-AI模型贴脸对战.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/tmp/20260426-AI模型贴脸对战.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="tmp/20260426-AI模型贴脸对战.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+
+    const frame = await screen.findByTestId("static-html-presentation-frame");
+    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("AI 贴脸对战"));
+    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("DeepSeek-V4"));
+    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("model-pill"));
+  });
+
+  it("演示文档画布会按页面基准尺寸缩放展示，而不是只显示左上角局部", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/fit-stage.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <head>
+              <style>:root { --deck-width: 1600px; --deck-height: 900px; }</style>
+            </head>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell"><h1>整页适配</h1></div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "ppt-fit-stage-v1",
+        previewPath: "/preview/files/preview-token/slides/fit-stage.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/fit-stage.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/fit-stage.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+
+    const frame = await screen.findByTestId("static-html-presentation-frame");
+    expect(frame.getAttribute("style")).toContain("width: 1600px");
+    expect(frame.getAttribute("style")).toContain("height: 900px");
+    expect(frame.getAttribute("style")).toContain("transform: scale(");
+  });
+
+  it("演示文档视图单纯切换选中组件时，不会重新生成 iframe srcdoc", async () => {
+    const user = userEvent.setup();
+    const html = readFileSync(
+      "/Users/jackson/Code/CodingNS/tmp/codingns-presentation.html",
+      "utf8"
+    );
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "tmp/codingns-presentation.html",
+        kind: "html",
+        content: html,
+        version: "ppt-selection-stable-v1",
+        previewPath: "/preview/files/preview-token/tmp/codingns-presentation.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/tmp/codingns-presentation.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="tmp/codingns-presentation.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+
+    const frame = await screen.findByTestId("static-html-presentation-frame");
+    const initialSrcdoc = frame.getAttribute("srcdoc");
+    const nodeButtons = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(".static-html-presentation-node-chip")
+    );
+    const codingNsNodeButton = nodeButtons.find((button) =>
+      button.textContent?.includes("CodingNS")
+    );
+    const deviceNodeButton = nodeButtons.find((button) =>
+      button.textContent?.includes("任意设备接续")
+    );
+
+    expect(codingNsNodeButton).toBeTruthy();
+    expect(deviceNodeButton).toBeTruthy();
+
+    await user.click(codingNsNodeButton!);
+    expect(frame.getAttribute("srcdoc")).toBe(initialSrcdoc);
+
+    await user.click(deviceNodeButton!);
+    expect(frame.getAttribute("srcdoc")).toBe(initialSrcdoc);
   });
 
   it("演示文档视图支持导出 PDF", async () => {

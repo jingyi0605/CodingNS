@@ -84,10 +84,13 @@ const STYLE_KEY_TO_CSS_PROPERTY: Record<keyof DocumentNodeStyle, string> = {
   fontFamily: "font-family",
   fontSize: "font-size",
   fontWeight: "font-weight",
+  fontStyle: "font-style",
   lineHeight: "line-height",
   letterSpacing: "letter-spacing",
   color: "color",
   textAlign: "text-align",
+  textDecoration: "text-decoration",
+  textDecorationColor: "text-decoration-color",
   whiteSpace: "white-space",
   padding: "padding",
   margin: "margin",
@@ -358,6 +361,8 @@ function buildStaticHtmlDocumentFromProject(input: {
     return null;
   }
 
+  normalizePreviewViewportScaling(document, input.project);
+
   latestResolvedPages.elements.forEach((element, index) => {
     if (input.mode === "preview") {
       element.setAttribute("data-cns-page-root", "true");
@@ -433,9 +438,11 @@ function buildStaticHtmlDocumentFromProject(input: {
   });
 
   if (input.mode === "preview") {
+    stripSourceScripts(document);
+
     const styleTag = document.createElement("style");
     styleTag.textContent = `
-    [data-cns-page-root="true"] {
+    [data-cns-page-root="true"]:not([data-cns-active-page="true"]) {
       display: none !important;
       opacity: 0 !important;
       pointer-events: none !important;
@@ -443,11 +450,19 @@ function buildStaticHtmlDocumentFromProject(input: {
     }
 
     [data-cns-page-root="true"][data-cns-active-page="true"] {
-      display: block !important;
       opacity: 1 !important;
       pointer-events: auto !important;
       visibility: visible !important;
       transform: none !important;
+      transition: none !important;
+      width: ${input.project.canvas.width}px !important;
+      min-width: ${input.project.canvas.width}px !important;
+      max-width: ${input.project.canvas.width}px !important;
+      height: ${input.project.canvas.height}px !important;
+      min-height: ${input.project.canvas.height}px !important;
+      max-height: ${input.project.canvas.height}px !important;
+      margin: 0 !important;
+      box-sizing: border-box !important;
     }
 
     [data-cns-node-selected="true"] {
@@ -468,11 +483,47 @@ function buildStaticHtmlDocumentFromProject(input: {
     }
 
     .deck {
-      transform: none !important;
+      width: ${input.project.canvas.width}px !important;
+      min-width: ${input.project.canvas.width}px !important;
+      max-width: ${input.project.canvas.width}px !important;
+      margin: 0 !important;
+    }
+
+    html,
+    body {
+      width: ${input.project.canvas.width}px !important;
+      min-width: ${input.project.canvas.width}px !important;
+      max-width: ${input.project.canvas.width}px !important;
+      height: ${input.project.canvas.height}px !important;
+      min-height: ${input.project.canvas.height}px !important;
+      max-height: ${input.project.canvas.height}px !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      overflow: hidden !important;
     }
 
     body {
-      overflow: auto !important;
+      transform-origin: center center !important;
+    }
+
+    body[data-cns-preview-body-scale-reset="true"] {
+      transform: none !important;
+    }
+
+    [data-cns-page-root="true"][data-cns-active-page="true"] .fade-up,
+    [data-cns-page-root="true"][data-cns-active-page="true"] .roadmap-line,
+    [data-cns-page-root="true"][data-cns-active-page="true"] [class*="fade-"],
+    [data-cns-page-root="true"][data-cns-active-page="true"] [class*="reveal-"] {
+      opacity: 1 !important;
+      transform: none !important;
+      transition: none !important;
+      transition-delay: 0s !important;
+      animation-delay: 0s !important;
+    }
+
+    [data-cns-page-root="true"][data-cns-active-page="true"] .typing-cursor {
+      opacity: 1 !important;
+      animation: none !important;
     }
   `;
     document.head.appendChild(styleTag);
@@ -676,8 +727,59 @@ function buildStaticHtmlDocumentFromProject(input: {
         window.parent?.postMessage(payload, "*");
       };
 
+      const syncSelectionState = (payload) => {
+        const selectedNodeId = typeof payload?.selectedNodeId === "string" && payload.selectedNodeId.trim()
+          ? payload.selectedNodeId.trim()
+          : null;
+        const inlineEditingNodeId = typeof payload?.inlineEditingNodeId === "string" && payload.inlineEditingNodeId.trim()
+          ? payload.inlineEditingNodeId.trim()
+          : null;
+
+        document.querySelectorAll("[data-cns-node-selected]").forEach((element) => {
+          if (element.getAttribute("data-cns-node-id") !== selectedNodeId) {
+            element.removeAttribute("data-cns-node-selected");
+          }
+        });
+
+        document.querySelectorAll("[data-cns-inline-editing]").forEach((element) => {
+          if (element.getAttribute("data-cns-node-id") !== inlineEditingNodeId) {
+            element.removeAttribute("data-cns-inline-editing");
+          }
+        });
+
+        if (selectedNodeId) {
+          const selectedElement = document.querySelector('[data-cns-node-id="' + CSS.escape(selectedNodeId) + '"]');
+
+          if (selectedElement) {
+            selectedElement.setAttribute("data-cns-node-selected", "true");
+          }
+        }
+
+        if (inlineEditingNodeId) {
+          const editingElement = document.querySelector('[data-cns-node-id="' + CSS.escape(inlineEditingNodeId) + '"]');
+
+          if (editingElement) {
+            editingElement.setAttribute("data-cns-inline-editing", "true");
+          }
+        }
+      };
+
       eventTypes.forEach((eventType) => {
         document.addEventListener(eventType, handler, true);
+      });
+
+      window.addEventListener("message", (event) => {
+        const payload = event.data;
+
+        if (!payload || typeof payload !== "object") {
+          return;
+        }
+
+        if (payload.type !== "codingns-static-html-selection-sync") {
+          return;
+        }
+
+        syncSelectionState(payload);
       });
     })();
   `;
@@ -687,6 +789,43 @@ function buildStaticHtmlDocumentFromProject(input: {
   }
 
   return document.documentElement.outerHTML;
+}
+
+function stripSourceScripts(document: Document): void {
+  document.querySelectorAll("script").forEach((element) => {
+    element.remove();
+  });
+}
+
+function normalizePreviewViewportScaling(document: Document, project: DocumentProject): void {
+  const body = document.body;
+
+  if (!body || !body.getAttribute) {
+    return;
+  }
+
+  body.style.width = `${project.canvas.width}px`;
+  body.style.minWidth = `${project.canvas.width}px`;
+  body.style.maxWidth = `${project.canvas.width}px`;
+  body.style.height = `${project.canvas.height}px`;
+  body.style.minHeight = `${project.canvas.height}px`;
+  body.style.maxHeight = `${project.canvas.height}px`;
+
+  const currentTransform = body.style.transform?.trim() ?? "";
+  const hasBodyScaleRule = Array.from(document.querySelectorAll("style")).some((styleElement) => {
+    const content = styleElement.textContent ?? "";
+    return /body\s*\{[\s\S]*?transform\s*:\s*scale\(/i.test(content);
+  });
+
+  if (/scale\(/i.test(currentTransform) && !/translate\(/i.test(currentTransform)) {
+    body.style.transform = "none";
+  }
+
+  if (hasBodyScaleRule) {
+    body.setAttribute("data-cns-preview-body-scale-reset", "true");
+  } else {
+    body.removeAttribute("data-cns-preview-body-scale-reset");
+  }
 }
 
 export function updateProjectNode(
@@ -1264,14 +1403,10 @@ function resolveViewport(document: Document, html: string): { width: number; hei
     };
   }
 
-  const fallbackWidth = resolveSizeFromCss(html, "width");
-  const fallbackHeight = resolveSizeFromCss(html, "height");
+  const inferredViewport = inferViewportFromPresentationCss(styles);
 
-  if (fallbackWidth && fallbackHeight) {
-    return {
-      width: fallbackWidth,
-      height: fallbackHeight
-    };
+  if (inferredViewport) {
+    return inferredViewport;
   }
 
   return {
@@ -1280,9 +1415,113 @@ function resolveViewport(document: Document, html: string): { width: number; hei
   };
 }
 
+function inferViewportFromPresentationCss(
+  styles: string
+): { width: number; height: number } | null {
+  const slideAspectRatio = resolveAspectRatioFromRule(styles, ".slide");
+  const slideWidth = resolvePropertySizeFromRule(styles, ".slide", "width");
+  const slideHeight = resolvePropertySizeFromRule(styles, ".slide", "height");
+  const slideMaxHeight = resolvePropertySizeFromRule(styles, ".slide", "max-height");
+
+  if (slideWidth && slideHeight) {
+    return {
+      width: slideWidth,
+      height: slideHeight
+    };
+  }
+
+  if (slideWidth && slideAspectRatio) {
+    return {
+      width: slideWidth,
+      height: Math.round(slideWidth / slideAspectRatio)
+    };
+  }
+
+  if (slideMaxHeight && slideAspectRatio) {
+    return {
+      width: Math.round(slideMaxHeight * slideAspectRatio),
+      height: slideMaxHeight
+    };
+  }
+
+  const deckWidth = resolvePropertySizeFromRule(styles, ".deck", "width");
+  const deckHeight = resolvePropertySizeFromRule(styles, ".deck", "height");
+
+  if (deckWidth && deckHeight) {
+    return {
+      width: deckWidth,
+      height: deckHeight
+    };
+  }
+
+  return null;
+}
+
 function resolveSizeFromCss(source: string, propertyName: string): number | null {
-  const matched = new RegExp(`${escapeRegExp(propertyName)}\\s*:\\s*(\\d{3,5})px`, "i").exec(source);
+  const matched = new RegExp(`(?:^|[\\s;{])${escapeRegExp(propertyName)}\\s*:\\s*(\\d{3,5})px`, "i").exec(source);
   return matched ? Number(matched[1]) : null;
+}
+
+function resolvePropertySizeFromRule(
+  styles: string,
+  selector: string,
+  propertyName: string
+): number | null {
+  const block = resolveCssRuleBlock(styles, selector);
+
+  if (!block) {
+    return null;
+  }
+
+  const directPx = new RegExp(`(?:^|[\\s;])${escapeRegExp(propertyName)}\\s*:\\s*(\\d{3,5})px`, "i").exec(block);
+
+  if (directPx) {
+    return Number(directPx[1]);
+  }
+
+  const minPx = new RegExp(`(?:^|[\\s;])${escapeRegExp(propertyName)}\\s*:\\s*min\\(\\s*(\\d{3,5})px\\s*,`, "i").exec(block);
+
+  if (minPx) {
+    return Number(minPx[1]);
+  }
+
+  const calcViewportPx = new RegExp(`(?:^|[\\s;])${escapeRegExp(propertyName)}\\s*:\\s*calc\\(\\s*100v[wh]\\s*-\\s*(\\d{1,4})px\\s*\\)`, "i").exec(block);
+
+  if (calcViewportPx) {
+    return propertyName.includes("height")
+      ? DEFAULT_VIEWPORT.height - Number(calcViewportPx[1])
+      : DEFAULT_VIEWPORT.width - Number(calcViewportPx[1]);
+  }
+
+  return null;
+}
+
+function resolveAspectRatioFromRule(styles: string, selector: string): number | null {
+  const block = resolveCssRuleBlock(styles, selector);
+
+  if (!block) {
+    return null;
+  }
+
+  const matched = /aspect-ratio\s*:\s*(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/i.exec(block);
+
+  if (!matched) {
+    return null;
+  }
+
+  const width = Number(matched[1]);
+  const height = Number(matched[2]);
+
+  if (!width || !height) {
+    return null;
+  }
+
+  return width / height;
+}
+
+function resolveCssRuleBlock(styles: string, selector: string): string | null {
+  const matched = new RegExp(`${escapeRegExp(selector)}\\s*\\{([\\s\\S]*?)\\}`, "i").exec(styles);
+  return matched?.[1] ?? null;
 }
 
 function escapeRegExp(value: string): string {
@@ -1701,10 +1940,13 @@ function readInlineStyle(element: Element): DocumentNodeStyle {
     fontFamily: styleMap.get("font-family") ?? null,
     fontSize: parsePixelValue(styleMap.get("font-size")),
     fontWeight: styleMap.get("font-weight") ?? null,
+    fontStyle: styleMap.get("font-style") ?? null,
     lineHeight: styleMap.get("line-height") ?? null,
     letterSpacing: styleMap.get("letter-spacing") ?? null,
     color: styleMap.get("color") ?? null,
     textAlign: styleMap.get("text-align") ?? null,
+    textDecoration: styleMap.get("text-decoration") ?? null,
+    textDecorationColor: styleMap.get("text-decoration-color") ?? null,
     whiteSpace: styleMap.get("white-space") ?? null,
     padding: styleMap.get("padding") ?? null,
     margin: styleMap.get("margin") ?? null,

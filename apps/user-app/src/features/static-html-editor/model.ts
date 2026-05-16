@@ -53,10 +53,13 @@ export interface DocumentNodeStyle {
   fontFamily?: string | null;
   fontSize?: number | null;
   fontWeight?: string | null;
+  fontStyle?: string | null;
   lineHeight?: string | null;
   letterSpacing?: string | null;
   color?: string | null;
   textAlign?: string | null;
+  textDecoration?: string | null;
+  textDecorationColor?: string | null;
   whiteSpace?: string | null;
   padding?: string | null;
   margin?: string | null;

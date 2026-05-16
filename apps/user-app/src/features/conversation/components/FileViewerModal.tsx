@@ -347,7 +347,9 @@ export function FileViewerModal({
   const canShowCodeTab = canUseCodeMode(previewKind);
   const canUseInlineRenderedEditor = canUseInlineRenderedEditorMode(previewKind, detectedLanguage);
   const isMobileViewer = platform.isMobile;
-  const activeModalSizePreset = isMobileViewer ? "full" : modalSizePreset;
+  const isPresentationMode = mode === "presentation" && previewKind === "html";
+  const useForcedFullSize = !isMobileViewer && previewKind === "html";
+  const activeModalSizePreset = isMobileViewer || useForcedFullSize ? "full" : modalSizePreset;
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -708,7 +710,7 @@ export function FileViewerModal({
           {!isMobileViewer ? <span className="file-viewer-language">{viewerLabel}</span> : null}
         </div>
         <div className="file-viewer-toolbar-end">
-          {!isMobileViewer ? (
+          {!isMobileViewer && !useForcedFullSize ? (
             <div className="file-viewer-size-group" role="group" aria-label={t("conversation.fileViewerSizeLabel")}>
               <button
                 type="button"
@@ -742,7 +744,7 @@ export function FileViewerModal({
               </button>
             ))}
           </div>
-          {canEdit ? (
+          {canEdit && !isPresentationMode ? (
             <button
               type="button"
               className="primary-button"
@@ -765,6 +767,9 @@ export function FileViewerModal({
             filePath={filePath}
             html={editorContent}
             onProjectChange={setPresentationProject}
+            onSave={() => void handleSave()}
+            canSave={isDirty}
+            saving={saving}
           />
         ) : mode === "edit" ? (
           <EditModeLayout

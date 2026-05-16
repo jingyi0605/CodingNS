@@ -1,7 +1,6 @@
 import type { CSSProperties } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { ModalField } from "../../components/ModalAtoms";
 import { t } from "../../shared/i18n";
 import type { DocumentNode, DocumentNodeStyle, DocumentProject } from "./model";
 import {
@@ -9,7 +8,6 @@ import {
   buildStaticHtmlDocumentProject,
   buildStaticHtmlPresentationPreviewFromProject,
   duplicateProjectPage,
-  duplicateProjectNode,
   inspectStaticHtmlPresentation,
   listPageNodeIds,
   moveProjectPageToIndex,
@@ -55,11 +53,17 @@ interface InlineEditorState {
 export function StaticHtmlPresentationView({
   filePath,
   html,
-  onProjectChange
+  onProjectChange,
+  onSave,
+  canSave = false,
+  saving = false
 }: {
   filePath: string;
   html: string;
   onProjectChange?: (project: DocumentProject | null) => void;
+  onSave?: () => void;
+  canSave?: boolean;
+  saving?: boolean;
 }) {
   const probe = useMemo(() => inspectStaticHtmlPresentation(html, filePath), [filePath, html]);
   const initialProject = useMemo(
@@ -75,8 +79,10 @@ export function StaticHtmlPresentationView({
   const [inlineEditor, setInlineEditor] = useState<InlineEditorState | null>(null);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const frameStageRef = useRef<HTMLDivElement | null>(null);
+  const frameShellRef = useRef<HTMLDivElement | null>(null);
   const inlineEditorRef = useRef<HTMLDivElement | null>(null);
   const historyCoalesceKeyRef = useRef<string | null>(null);
+  const [frameScale, setFrameScale] = useState(1);
   const currentProject = project;
   const currentPage = currentProject?.pages[currentPageIndex] ?? currentProject?.pages[0] ?? null;
   const pageNodeIds = useMemo(() => {
@@ -127,11 +133,9 @@ export function StaticHtmlPresentationView({
     return buildStaticHtmlPresentationPreviewFromProject({
       html,
       project: currentProject,
-      pageIndex: currentPageIndex,
-      selectedNodeId,
-      inlineEditingNodeId: inlineEditor?.nodeId ?? null
+      pageIndex: currentPageIndex
     });
-  }, [currentPageIndex, currentProject, html, inlineEditor?.nodeId, selectedNodeId]);
+  }, [currentPageIndex, currentProject, html]);
 
   useEffect(() => {
     if (!inlineEditorRef.current || !inlineEditor) {
@@ -209,8 +213,113 @@ export function StaticHtmlPresentationView({
     };
   }, [currentPageIndex, currentProject, previewHtml]);
 
+  useEffect(() => {
+    const frameWindow = frameRef.current?.contentWindow;
+
+    if (!frameWindow) {
+      return;
+    }
+
+    frameWindow.postMessage(
+      {
+        type: "codingns-static-html-selection-sync",
+        selectedNodeId,
+        inlineEditingNodeId: inlineEditor?.nodeId ?? null
+      },
+      "*"
+    );
+  }, [inlineEditor?.nodeId, previewHtml, selectedNodeId]);
+
   const currentPageId = currentPage?.id ?? null;
   const canUndo = history.length > 0;
+
+  function handleUndo() {
+    const previousEntry = history[history.length - 1];
+
+    if (!previousEntry) {
+      return;
+    }
+
+    historyCoalesceKeyRef.current = null;
+    setHistory((current) => current.slice(0, -1));
+    setProject(previousEntry.project);
+    setCurrentPageIndex(previousEntry.currentPageIndex);
+    setSelectedNodeId(previousEntry.selectedNodeId);
+    setInlineEditor(null);
+  }
+
+  useEffect(() => {
+    if (!currentProject || !frameShellRef.current) {
+      setFrameScale(1);
+      return;
+    }
+
+    const shell = frameShellRef.current;
+
+    const updateScale = () => {
+      const shellRect = shell.getBoundingClientRect();
+      const safePadding = 24;
+      const shellWidth = Math.max(1, shellRect.width - safePadding);
+      const shellHeight = Math.max(1, shellRect.height - safePadding);
+      const widthScale = shellWidth / currentProject.canvas.width;
+      const heightScale = shellHeight / currentProject.canvas.height;
+      const nextScale = Math.min(widthScale, heightScale, 1);
+      setFrameScale(nextScale > 0 ? nextScale : 1);
+    };
+
+    updateScale();
+    window.addEventListener("resize", updateScale);
+
+    if (typeof ResizeObserver === "undefined") {
+      return () => {
+        window.removeEventListener("resize", updateScale);
+      };
+    }
+
+    const resizeObserver = new ResizeObserver(() => {
+      updateScale();
+    });
+    resizeObserver.observe(shell);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", updateScale);
+    };
+  }, [currentProject]);
+
+  const frameStageStyle = useMemo<CSSProperties | undefined>(() => {
+    if (!currentProject) {
+      return undefined;
+    }
+
+    const scaledWidth = currentProject.canvas.width * frameScale;
+    const scaledHeight = currentProject.canvas.height * frameScale;
+
+    return {
+      display: "flex",
+      alignItems: "flex-start",
+      justifyContent: "flex-start",
+      width: `${scaledWidth}px`,
+      height: `${scaledHeight}px`
+    };
+  }, [currentProject, frameScale]);
+
+  const frameStyle = useMemo<CSSProperties | undefined>(() => {
+    if (!currentProject) {
+      return undefined;
+    }
+
+    return {
+      position: "absolute",
+      left: 0,
+      top: 0,
+      width: `${currentProject.canvas.width}px`,
+      height: `${currentProject.canvas.height}px`,
+      transform: `scale(${frameScale})`,
+      transformOrigin: "top left"
+    };
+  }, [currentProject, frameScale]);
+
   const inlineEditorOverlayStyle = useMemo(() => {
     if (!inlineEditor) {
       return null;
@@ -228,16 +337,16 @@ export function StaticHtmlPresentationView({
       };
     }
 
-    const left = iframeRect.left - stageRect.left + inlineEditor.rect.left;
-    const top = iframeRect.top - stageRect.top + inlineEditor.rect.top;
+    const left = iframeRect.left - stageRect.left + (inlineEditor.rect.left * frameScale);
+    const top = iframeRect.top - stageRect.top + (inlineEditor.rect.top * frameScale);
 
     return {
       left: Math.max(0, left),
       top: Math.max(0, top),
-      width: Math.max(120, inlineEditor.rect.width),
-      minHeight: Math.max(48, inlineEditor.rect.height)
+      width: Math.max(120, inlineEditor.rect.width * frameScale),
+      minHeight: Math.max(48, inlineEditor.rect.height * frameScale)
     };
-  }, [inlineEditor]);
+  }, [frameScale, inlineEditor]);
 
   useEffect(() => {
     if (!inlineEditorRef.current || !inlineEditorOverlayStyle) {
@@ -368,23 +477,23 @@ export function StaticHtmlPresentationView({
       data-testid="static-html-presentation-view"
     >
       <aside className="static-html-presentation-sidebar">
-        <div className="static-html-presentation-meta">
-          <span className="static-html-presentation-badge">
-            {t("conversation.fileViewerPresentationBadge")}
-          </span>
-          <p className="static-html-presentation-summary">
-            {t("conversation.fileViewerPresentationSummary")
-              .replace("{count}", String(currentProject.pages.length))
-              .replace("{size}", `${currentProject.canvas.width} × ${currentProject.canvas.height}`)}
-          </p>
-          {currentProject.warnings.length ? (
-            <p className="static-html-presentation-warning">
-              {t("conversation.fileViewerPresentationWarningCount").replace(
-                "{count}",
-                String(currentProject.warnings.length)
-              )}
-            </p>
-          ) : null}
+        <div className="static-html-presentation-sidebar-actions">
+          <button
+            type="button"
+            className="secondary-button static-html-presentation-sidebar-action-button"
+            onClick={handleUndo}
+            disabled={!canUndo}
+          >
+            {t("conversation.fileViewerPresentationUndoAction")}
+          </button>
+          <button
+            type="button"
+            className="primary-button static-html-presentation-sidebar-action-button"
+            onClick={onSave}
+            disabled={!canSave || saving}
+          >
+            {saving ? t("conversation.filePanelSaving") : t("conversation.filePanelSave")}
+          </button>
         </div>
         <div className="static-html-presentation-page-toolbar">
           <button
@@ -537,98 +646,60 @@ export function StaticHtmlPresentationView({
       </aside>
 
       <section className="static-html-presentation-stage">
-        <div className="static-html-presentation-stage-header">
-          <div>
-            <p className="static-html-presentation-stage-kicker">
-              {t("conversation.fileViewerPresentationCurrentPage")}
-            </p>
-            <h3 className="static-html-presentation-stage-title">
-              {currentPage?.title ?? t("conversation.fileViewerPresentationUntitled")}
-            </h3>
-          </div>
-          <p className="static-html-presentation-stage-caption">
-            {t("conversation.fileViewerPresentationCanvasSelectHint")}
-          </p>
-        </div>
-
-        <div className="static-html-presentation-stage-actions">
-          <button
-            type="button"
-            className="secondary-button static-html-presentation-toolbar-button"
-            onClick={() => {
-              const latestHistory = history[history.length - 1];
-
-              if (!latestHistory) {
-                return;
-              }
-
-              setHistory((current) => current.slice(0, -1));
-              historyCoalesceKeyRef.current = null;
-              setProject(latestHistory.project);
-              setCurrentPageIndex(latestHistory.currentPageIndex);
-              setSelectedNodeId(latestHistory.selectedNodeId);
-              setDraggingPageId(null);
-              setDragPreview(null);
-              setInlineEditor(null);
-            }}
-            disabled={!canUndo}
-          >
-            {t("conversation.fileViewerPresentationUndoAction")}
-          </button>
+        <div className="static-html-presentation-toolbar static-html-presentation-inspector">
           {selectedNode ? (
-            <button
-              type="button"
-              className="secondary-button static-html-presentation-toolbar-button"
-              onClick={() => {
+            <NodeInspector
+              node={selectedNode}
+              compact
+              onTextChange={(nextText) => {
                 if (!selectedNodeId) {
                   return;
                 }
 
-                const duplicated = duplicateProjectNode(currentProject, selectedNodeId);
+                const nextProject = updateProjectNode(currentProject, selectedNodeId, (node) => ({
+                  ...node,
+                  content: {
+                    ...node.content,
+                    text: nextText
+                  }
+                }));
                 commitProjectChange({
-                  nextProject: duplicated.project,
-                  selectedNodeId: duplicated.duplicatedNodeId
+                  nextProject,
+                  historyKey: `text:${selectedNodeId}`
                 });
               }}
-              disabled={!selectedNode.editable}
-            >
-              {t("conversation.fileViewerPresentationDuplicateAction")}
-            </button>
-          ) : null}
-        </div>
+              onStyleChange={(stylePatch) => {
+                if (!selectedNodeId) {
+                  return;
+                }
 
-        <div className="static-html-presentation-node-strip" role="list">
-          {pageNodeIds.map((nodeId) => {
-            const node = currentProject.nodes[nodeId];
-
-            if (!node) {
-              return null;
-            }
-
-            return (
-              <button
-                key={nodeId}
-                type="button"
-                className="static-html-presentation-node-chip"
-                data-active={nodeId === selectedNodeId ? "true" : undefined}
-                data-locked={node.editable ? undefined : "true"}
-                onClick={() => setSelectedNodeId(nodeId)}
-              >
-                <span className="static-html-presentation-node-chip-type">{node.type}</span>
-                <span className="static-html-presentation-node-chip-name">
-                  {node.name || node.id}
-                </span>
-              </button>
-            );
-          })}
+                const nextProject = updateProjectNode(currentProject, selectedNodeId, (node) => ({
+                  ...node,
+                  style: {
+                    ...node.style,
+                    ...stylePatch
+                  }
+                }));
+                commitProjectChange({
+                  nextProject,
+                  historyKey: `style:${selectedNodeId}`
+                });
+              }}
+            />
+          ) : (
+            <div className="static-html-presentation-toolbar-empty static-html-presentation-inspector-empty">
+              <p className="status-text">{t("conversation.fileViewerPresentationSelectNode")}</p>
+            </div>
+          )}
         </div>
 
         <div className="static-html-presentation-workarea">
-          <div className="static-html-presentation-frame-shell">
+          <div ref={frameShellRef} className="static-html-presentation-frame-shell">
             {previewHtml ? (
               <div
                 ref={frameStageRef}
                 className="static-html-presentation-frame-stage"
+                style={frameStageStyle}
               >
                 <iframe
                   ref={frameRef}
@@ -637,6 +708,17 @@ export function StaticHtmlPresentationView({
                   title={currentPage?.title ?? filePath}
                   srcDoc={previewHtml}
                   sandbox="allow-forms allow-modals allow-scripts"
+                  style={frameStyle}
+                  onLoad={() => {
+                    frameRef.current?.contentWindow?.postMessage(
+                      {
+                        type: "codingns-static-html-selection-sync",
+                        selectedNodeId,
+                        inlineEditingNodeId: inlineEditor?.nodeId ?? null
+                      },
+                      "*"
+                    );
+                  }}
                 />
                 {inlineEditor ? (
                   <div
@@ -700,69 +782,38 @@ export function StaticHtmlPresentationView({
             )}
           </div>
 
-          <div className="static-html-presentation-inspector">
-            {selectedNode ? (
-              <NodeInspector
-                node={selectedNode}
-                onTextChange={(nextText) => {
-                  if (!selectedNodeId) {
-                    return;
-                  }
+          <aside className="static-html-presentation-node-sidebar">
+            <div className="static-html-presentation-node-sidebar-header">
+              <p className="static-html-presentation-node-sidebar-kicker">
+                {t("conversation.fileViewerPresentationComponentList")}
+              </p>
+            </div>
+            <div className="static-html-presentation-node-strip" role="list">
+              {pageNodeIds.map((nodeId) => {
+                const node = currentProject.nodes[nodeId];
 
-                  const nextProject = updateProjectNode(currentProject, selectedNodeId, (node) => ({
-                    ...node,
-                    content: {
-                      ...node.content,
-                      text: nextText
-                    }
-                  }));
-                  commitProjectChange({
-                    nextProject,
-                    historyKey: `text:${selectedNodeId}`
-                  });
-                }}
-                onStyleChange={(stylePatch) => {
-                  if (!selectedNodeId) {
-                    return;
-                  }
+                if (!node) {
+                  return null;
+                }
 
-                  const nextProject = updateProjectNode(currentProject, selectedNodeId, (node) => ({
-                    ...node,
-                    style: {
-                      ...node.style,
-                      ...stylePatch
-                    }
-                  }));
-                  commitProjectChange({
-                    nextProject,
-                    historyKey: `style:${selectedNodeId}`
-                  });
-                }}
-                onBoxChange={(boxPatch) => {
-                  if (!selectedNodeId) {
-                    return;
-                  }
-
-                  const nextProject = updateProjectNode(currentProject, selectedNodeId, (node) => ({
-                    ...node,
-                    box: {
-                      ...node.box,
-                      ...boxPatch
-                    },
-                    runtimeFlags: Array.from(new Set([...node.runtimeFlags, "draft-box"]))
-                  }));
-                  commitProjectChange({
-                    nextProject,
-                    historyKey: `box:${selectedNodeId}`
-                  });
-                }}
-              />
-            ) : (
-              <div className="static-html-presentation-inspector-empty">
-                <p className="status-text">{t("conversation.fileViewerPresentationSelectNode")}</p>
-              </div>
-            )}
-          </div>
+                return (
+                  <button
+                    key={nodeId}
+                    type="button"
+                    className="static-html-presentation-node-chip"
+                    data-active={nodeId === selectedNodeId ? "true" : undefined}
+                    data-locked={node.editable ? undefined : "true"}
+                    onClick={() => setSelectedNodeId(nodeId)}
+                  >
+                    <span className="static-html-presentation-node-chip-type">{node.type}</span>
+                    <span className="static-html-presentation-node-chip-name">
+                      {node.name || node.id}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </aside>
         </div>
       </section>
     </div>
@@ -968,183 +1019,188 @@ function resolveDragInsertIndex(
 
 function NodeInspector({
   node,
+  compact = false,
   onTextChange,
-  onStyleChange,
-  onBoxChange
+  onStyleChange
 }: {
   node: DocumentNode;
+  compact?: boolean;
   onTextChange: (value: string) => void;
   onStyleChange: (patch: Partial<DocumentNodeStyle>) => void;
-  onBoxChange: (patch: Partial<DocumentNode["box"]>) => void;
 }) {
   const isTextLike = node.type === "text" || typeof node.content.text === "string";
+  const fontSizeValue = typeof node.style.fontSize === "number" ? node.style.fontSize : null;
+  const fontFamilyValue = node.style.fontFamily ?? "";
+  const fontWeightValue = normalizeFontWeightValue(node.style.fontWeight);
+  const fontStyleValue = node.style.fontStyle ?? "";
+  const textDecorationValue = node.style.textDecoration ?? "";
+  const lineHeightValue = node.style.lineHeight ?? "";
+  const colorValue = normalizeColorValue(node.style.color);
+  const backgroundColorValue = normalizeColorValue(node.style.backgroundColor);
 
   return (
-    <div className="static-html-presentation-inspector-panel">
-      <div className="static-html-presentation-inspector-header">
-        <div>
-          <p className="static-html-presentation-inspector-kicker">
-            {t("conversation.fileViewerPresentationInspector")}
+    <div
+      className="static-html-presentation-inspector-panel"
+      data-compact={compact ? "true" : undefined}
+    >
+      <div
+        className="static-html-presentation-inspector-controls"
+        data-compact={compact ? "true" : undefined}
+      >
+        {isTextLike ? (
+          <div className="static-html-presentation-text-edit-row">
+            <div className="static-html-presentation-text-toolbar" role="toolbar" aria-label={t("conversation.fileViewerPresentationTextToolbar")}>
+              <div className="static-html-presentation-text-toolbar-row">
+                <select
+                  className="static-html-presentation-text-toolbar-select static-html-presentation-text-toolbar-font"
+                  value={fontFamilyValue}
+                  onChange={(event) => onStyleChange({ fontFamily: event.target.value || null })}
+                  disabled={!node.editable}
+                  aria-label={t("conversation.fileViewerPresentationFontFamilyLabel")}
+                >
+                  <option value="">{t("conversation.fileViewerPresentationKeepOriginal")}</option>
+                  <option value={'"PingFang SC", "Microsoft YaHei", sans-serif'}>{t("conversation.fileViewerPresentationFontPresetTitle")}</option>
+                  <option value={'"Noto Sans SC", "PingFang SC", sans-serif'}>{t("conversation.fileViewerPresentationFontPresetSans")}</option>
+                  <option value={'Georgia, "Times New Roman", serif'}>{t("conversation.fileViewerPresentationFontPresetSerif")}</option>
+                  <option value={'"SF Mono", "Cascadia Mono", monospace'}>{t("conversation.fileViewerPresentationFontPresetMono")}</option>
+                </select>
+
+                <select
+                  className="static-html-presentation-text-toolbar-select static-html-presentation-text-toolbar-size"
+                  value={fontSizeValue ? String(fontSizeValue) : ""}
+                  onChange={(event) => {
+                    const nextValue = event.target.value.trim();
+                    onStyleChange({
+                      fontSize: nextValue ? Number(nextValue) : null
+                    });
+                  }}
+                  disabled={!node.editable}
+                  aria-label={t("conversation.fileViewerPresentationFontSizeLabel")}
+                >
+                  <option value="">{t("conversation.fileViewerPresentationKeepOriginal")}</option>
+                  {[12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 60].map((size) => (
+                    <option key={size} value={size}>{size}</option>
+                  ))}
+                </select>
+
+                <button
+                  type="button"
+                  className="secondary-button static-html-presentation-text-toolbar-button"
+                  data-active={fontWeightValue === "700" ? "true" : undefined}
+                  onClick={() => onStyleChange({ fontWeight: fontWeightValue === "700" ? null : "700" })}
+                  disabled={!node.editable}
+                  aria-label={t("conversation.fileViewerPresentationBoldAction")}
+                >
+                  B
+                </button>
+
+                <button
+                  type="button"
+                  className="secondary-button static-html-presentation-text-toolbar-button static-html-presentation-text-toolbar-button-italic"
+                  data-active={fontStyleValue === "italic" ? "true" : undefined}
+                  onClick={() => onStyleChange({ fontStyle: fontStyleValue === "italic" ? null : "italic" })}
+                  disabled={!node.editable}
+                  aria-label={t("conversation.fileViewerPresentationItalicAction")}
+                >
+                  I
+                </button>
+
+                <button
+                  type="button"
+                  className="secondary-button static-html-presentation-text-toolbar-button static-html-presentation-text-toolbar-button-underline"
+                  data-active={textDecorationValue.includes("underline") ? "true" : undefined}
+                  onClick={() => onStyleChange({
+                    textDecoration: textDecorationValue.includes("underline") ? null : "underline"
+                  })}
+                  disabled={!node.editable}
+                  aria-label={t("conversation.fileViewerPresentationUnderlineAction")}
+                >
+                  U
+                </button>
+
+                <label className="static-html-presentation-text-toolbar-color" aria-label={t("conversation.fileViewerPresentationTextColorLabel")}>
+                  <span className="static-html-presentation-text-toolbar-color-label">
+                    字
+                  </span>
+                  <span
+                    className="static-html-presentation-text-toolbar-color-swatch"
+                    style={{ backgroundColor: colorValue }}
+                    aria-hidden="true"
+                  />
+                  <input
+                    type="color"
+                    value={colorValue}
+                    onChange={(event) => onStyleChange({ color: event.target.value })}
+                    disabled={!node.editable}
+                  />
+                </label>
+
+                <label className="static-html-presentation-text-toolbar-color" aria-label={t("conversation.fileViewerPresentationBackgroundColorLabel")}>
+                  <span className="static-html-presentation-text-toolbar-color-label">
+                    底
+                  </span>
+                  <span
+                    className="static-html-presentation-text-toolbar-color-swatch"
+                    style={{ backgroundColor: backgroundColorValue }}
+                    aria-hidden="true"
+                  />
+                  <input
+                    type="color"
+                    value={backgroundColorValue}
+                    onChange={(event) => onStyleChange({ backgroundColor: event.target.value })}
+                    disabled={!node.editable}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="secondary-button static-html-presentation-text-toolbar-button"
+                  onClick={() => onStyleChange({ fontSize: Math.max(8, (fontSizeValue ?? 24) - 2) })}
+                  disabled={!node.editable}
+                  aria-label={t("conversation.fileViewerPresentationFontSizeDecreaseAction")}
+                >
+                  A-
+                </button>
+
+                <button
+                  type="button"
+                  className="secondary-button static-html-presentation-text-toolbar-button"
+                  onClick={() => onStyleChange({ fontSize: Math.min(160, (fontSizeValue ?? 24) + 2) })}
+                  disabled={!node.editable}
+                  aria-label={t("conversation.fileViewerPresentationFontSizeIncreaseAction")}
+                >
+                  A+
+                </button>
+
+                <select
+                  className="static-html-presentation-text-toolbar-select static-html-presentation-text-toolbar-line-height"
+                  value={lineHeightValue}
+                  onChange={(event) => onStyleChange({ lineHeight: event.target.value || null })}
+                  disabled={!node.editable}
+                  aria-label={t("conversation.fileViewerPresentationLineHeightLabel")}
+                >
+                  <option value="">{t("conversation.fileViewerPresentationLineHeightAuto")}</option>
+                  <option value="1">1.0</option>
+                  <option value="1.2">1.2</option>
+                  <option value="1.4">1.4</option>
+                  <option value="1.6">1.6</option>
+                  <option value="1.8">1.8</option>
+                  <option value="2">2.0</option>
+                </select>
+              </div>
+            </div>
+
+            <textarea
+              className="static-html-presentation-textarea static-html-presentation-textarea-standalone"
+              value={node.content.text ?? ""}
+              onChange={(event) => onTextChange(event.target.value)}
+              disabled={!node.editable}
+            />
+          </div>
+        ) : (
+          <p className="static-html-presentation-inspector-warning">
+            {node.lockedReason || t("conversation.fileViewerPresentationReadOnlyHint")}
           </p>
-          <h4 className="static-html-presentation-inspector-title">{node.name || node.id}</h4>
-        </div>
-        <span
-          className="static-html-presentation-inspector-badge"
-          data-tone={node.editable ? "default" : "warning"}
-        >
-          {node.editable
-            ? t("conversation.fileViewerPresentationEditable")
-            : t("conversation.fileViewerPresentationReadOnly")}
-        </span>
-      </div>
-
-      {!node.editable && node.lockedReason ? (
-        <p className="static-html-presentation-inspector-warning">{node.lockedReason}</p>
-      ) : null}
-
-      {isTextLike ? (
-        <ModalField
-          label={t("conversation.fileViewerPresentationTextLabel")}
-          description={t("conversation.fileViewerPresentationTextDescription")}
-        >
-          <textarea
-            className="static-html-presentation-textarea"
-            value={node.content.text ?? ""}
-            onChange={(event) => onTextChange(event.target.value)}
-            disabled={!node.editable}
-          />
-        </ModalField>
-      ) : null}
-
-      <div className="static-html-presentation-inspector-grid">
-        <ModalField label={t("conversation.fileViewerPresentationFontSizeLabel")}>
-          <input
-            type="number"
-            min="8"
-            max="160"
-            value={node.style.fontSize ?? ""}
-            onChange={(event) => {
-              const value = event.target.value.trim();
-              onStyleChange({
-                fontSize: value ? Number(value) : null
-              });
-            }}
-            disabled={!node.editable}
-          />
-        </ModalField>
-
-        <ModalField label={t("conversation.fileViewerPresentationFontWeightLabel")}>
-          <select
-            value={node.style.fontWeight ?? ""}
-            onChange={(event) => onStyleChange({ fontWeight: event.target.value || null })}
-            disabled={!node.editable}
-          >
-            <option value="">{t("conversation.fileViewerPresentationKeepOriginal")}</option>
-            <option value="400">400</option>
-            <option value="500">500</option>
-            <option value="600">600</option>
-            <option value="700">700</option>
-          </select>
-        </ModalField>
-
-        <ModalField label={t("conversation.fileViewerPresentationTextColorLabel")}>
-          <input
-            type="color"
-            value={normalizeColorValue(node.style.color)}
-            onChange={(event) => onStyleChange({ color: event.target.value })}
-            disabled={!node.editable}
-          />
-        </ModalField>
-
-        <ModalField label={t("conversation.fileViewerPresentationBackgroundColorLabel")}>
-          <input
-            type="color"
-            value={normalizeColorValue(node.style.backgroundColor)}
-            onChange={(event) => onStyleChange({ backgroundColor: event.target.value })}
-            disabled={!node.editable}
-          />
-        </ModalField>
-
-        <ModalField label={t("conversation.fileViewerPresentationTextAlignLabel")}>
-          <select
-            value={node.style.textAlign ?? ""}
-            onChange={(event) => onStyleChange({ textAlign: event.target.value || null })}
-            disabled={!node.editable}
-          >
-            <option value="">{t("conversation.fileViewerPresentationKeepOriginal")}</option>
-            <option value="left">{t("conversation.fileViewerPresentationAlignLeft")}</option>
-            <option value="center">{t("conversation.fileViewerPresentationAlignCenter")}</option>
-            <option value="right">{t("conversation.fileViewerPresentationAlignRight")}</option>
-          </select>
-        </ModalField>
-
-        <ModalField label={t("conversation.fileViewerPresentationLineHeightLabel")}>
-          <input
-            type="text"
-            value={node.style.lineHeight ?? ""}
-            placeholder="例如 1.6 / 28px"
-            onChange={(event) => onStyleChange({ lineHeight: event.target.value || null })}
-            disabled={!node.editable}
-          />
-        </ModalField>
-
-        <ModalField label={t("conversation.fileViewerPresentationPaddingLabel")}>
-          <input
-            type="text"
-            value={node.style.padding ?? ""}
-            placeholder="例如 12px 16px"
-            onChange={(event) => onStyleChange({ padding: event.target.value || null })}
-            disabled={!node.editable}
-          />
-        </ModalField>
-
-        <ModalField label={t("conversation.fileViewerPresentationRadiusLabel")}>
-          <input
-            type="text"
-            value={node.style.borderRadius ?? ""}
-            placeholder="例如 16px"
-            onChange={(event) => onStyleChange({ borderRadius: event.target.value || null })}
-            disabled={!node.editable}
-          />
-        </ModalField>
-
-        <ModalField label={t("conversation.fileViewerPresentationPositionXLabel")}>
-          <input
-            type="number"
-            value={node.box.x}
-            onChange={(event) => onBoxChange({ x: Number(event.target.value || 0) })}
-            disabled={!node.editable}
-          />
-        </ModalField>
-
-        <ModalField label={t("conversation.fileViewerPresentationPositionYLabel")}>
-          <input
-            type="number"
-            value={node.box.y}
-            onChange={(event) => onBoxChange({ y: Number(event.target.value || 0) })}
-            disabled={!node.editable}
-          />
-        </ModalField>
-
-        <ModalField label={t("conversation.fileViewerPresentationWidthLabel")}>
-          <input
-            type="number"
-            min="0"
-            value={node.box.width}
-            onChange={(event) => onBoxChange({ width: Number(event.target.value || 0) })}
-            disabled={!node.editable}
-          />
-        </ModalField>
-
-        <ModalField label={t("conversation.fileViewerPresentationHeightLabel")}>
-          <input
-            type="number"
-            min="0"
-            value={node.box.height}
-            onChange={(event) => onBoxChange({ height: Number(event.target.value || 0) })}
-            disabled={!node.editable}
-          />
-        </ModalField>
+        )}
       </div>
     </div>
   );
@@ -1162,4 +1218,16 @@ function normalizeColorValue(value: string | null | undefined): string {
   }
 
   return normalized;
+}
+
+function normalizeFontWeightValue(value: string | null | undefined): string {
+  if (!value) {
+    return "";
+  }
+
+  if (value === "bold") {
+    return "700";
+  }
+
+  return value;
 }

@@ -13,6 +13,7 @@ import {
   removeProjectPage,
   writeStaticHtmlDocumentProject
 } from "./parser";
+import { readFileSync } from "node:fs";
 
 describe("static html presentation parser", () => {
   it("能识别 deck + slide 的静态 HTML 演示文档", () => {
@@ -100,6 +101,91 @@ describe("static html presentation parser", () => {
     expect(preview).toContain('data-cns-active-page="true"');
     expect(preview).toContain("第二页");
     expect(preview).toContain("[data-cns-page-root");
+  });
+
+  it("逐页预览会显式隐藏非当前页，并显式显示当前页", () => {
+    const html = `
+      <!doctype html>
+      <html>
+        <body>
+          <div class="deck">
+            <section class="slide" data-title="第一页"><h1>第一页</h1></section>
+            <section class="slide" data-title="第二页"><h1>第二页</h1></section>
+          </div>
+        </body>
+      </html>
+    `;
+
+    const preview = buildStaticHtmlPresentationPreview({
+      html,
+      pageIndex: 0
+    });
+
+    expect(preview).toContain('[data-cns-page-root="true"]:not([data-cns-active-page="true"]) {');
+    expect(preview).toContain('display: none !important;');
+    expect(preview).toContain('[data-cns-page-root="true"][data-cns-active-page="true"] {');
+    expect(preview).toContain('visibility: visible !important;');
+  });
+
+  it("复杂静态 HTML 在演示文档模式下仍能保留当前页内容，不会生成白屏", () => {
+    const html = readFileSync(
+      "/Users/jackson/Code/CodingNS/tmp/20260426-AI模型贴脸对战.html",
+      "utf8"
+    );
+
+    const project = buildStaticHtmlDocumentProject({
+      html,
+      filePath: "20260426-AI模型贴脸对战.html"
+    });
+
+    expect(project).not.toBeNull();
+    expect(project?.canvas.width).toBe(1220);
+    expect(project?.canvas.height).toBe(686);
+
+    const preview = buildStaticHtmlPresentationPreviewFromProject({
+      html,
+      project: project!,
+      pageIndex: 0
+    });
+
+    expect(preview).toContain('data-cns-active-page="true"');
+    expect(preview).toContain("AI 贴脸对战");
+    expect(preview).toContain("DeepSeek-V4");
+    expect(preview).toContain("model-pill");
+  });
+
+  it("响应式静态 HTML 在演示文档模式下仍会保留第一页可见内容和主题样式", () => {
+    const html = readFileSync(
+      "/Users/jackson/Code/CodingNS/tmp/codingns-presentation.html",
+      "utf8"
+    );
+
+    const project = buildStaticHtmlDocumentProject({
+      html,
+      filePath: "codingns-presentation.html"
+    });
+
+    expect(project).not.toBeNull();
+    expect(project?.canvas.width).toBe(1600);
+    expect(project?.canvas.height).toBe(900);
+
+    const preview = buildStaticHtmlPresentationPreviewFromProject({
+      html,
+      project: project!,
+      pageIndex: 0
+    });
+
+    expect(preview).toContain('data-cns-active-page="true"');
+    expect(preview).toContain("有请今天的主角");
+    expect(preview).toContain("CodingNS");
+    expect(preview).toContain("hero-logo");
+    expect(preview).toContain(".bg-grid");
+    expect(preview).toContain("--dark-bg: #0a0e1a");
+    expect(preview).toContain('.fade-up,');
+    expect(preview).toContain('opacity: 1 !important;');
+    expect(preview).toContain('transition: none !important;');
+    expect(preview).not.toContain("let current = 0;");
+    expect(preview).not.toContain("setTimeout(() => { isAnimating = false; }, 600);");
   });
 
   it("根据项目草稿生成预览时会把节点编辑结果回写进当前页 HTML", () => {
