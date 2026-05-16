@@ -142,6 +142,12 @@
 - [x] 已把 `office.document.*` / `office.browser.*` 正式接到 `workspace-scoped`
 - [x] 已把 `office.ops.target.* / office.ops.ssh-task.create / office.ops.browser-task.create / office.ops.task.get / office.ops.task.execute` 接回 `workspace-scoped`
 - [x] 已给 `ops_targets` 和相关任务链补 `workspace_id`，执行入口会按当前工作区做真实校验
+- [x] 已在工作台左侧技能面板复用现有 tab 结构接入“办公 / 运维”入口
+- [x] 已让技能面板可查看文档模板、运维任务和当前工作区下的 SSH 主机配置
+- [x] 已把文档模板添加、SSH 主机添加/编辑改成独立模态框入口，不再把表单堆在 tab 主面板里
+- [x] 文档模板添加已简化为上传 `.domt/.doct` 文件，由 Host 自动保存并推导模板 key / 版本
+- [x] SSH 主机配置当前只承诺正式支持字段：`host / username / port / privateKeyPath / knownHostsPath / jumpHost / workspacePath / credentialRef / strictHostKeyChecking`
+- [ ] 密码认证链路仍未完整接通，本轮没有做假表单能力
 
 ## 任务 7：补条件开放能力的确认与拒绝回执
 
@@ -191,4 +197,24 @@
 - [~] 部分完成
 - [x] 已通过 `pnpm -C apps/host exec tsc --noEmit`
 - [x] 已补 `assistant-capability-routes.test.ts` / `assistant-capability-service.test.ts` 的接口级测试
-- [ ] 待补最小人工验证记录
+- [x] 已补 `SkillManagementPanel.test.tsx`，覆盖办公/运维 tab 的最小前端验证
+- [x] 已把 `codingns-assistant` runtime skill、Butler 注入说明、工作区会话注入说明统一改成“真实网页操作默认优先走 `office.browser.*`，只有 localhost 调试才优先 Codex Browser”
+- [x] 已确认 `codingns-assistant` 仅限助手会话使用，并新增工作区会话专用内置 skill `codingns-workspace-session`
+- [x] 已让 workspace session 初始化 runtime home 时同步 `codingns-workspace-session` 到 `runtimeHomeDir/skills`
+- [x] 已让普通工作区会话在 `start/send live` 时显式注入组合说明文件，并把 scoped 认证环境变量直接传给当前运行时，不再依赖 Codex 默认 home 自动发现
+- [x] 已补 `workspace-session-runtime-context-service.test.ts` 与 `session-live-runtime-service.test.ts`，覆盖工作区说明落盘和真实运行时注入
+- [x] 已补 `browser-profile-list` CLI 正式别名，并把工作区会话注入说明/专用 skill 文案统一成真实可执行命令，减少模型误判成“没有浏览器能力”
+- [x] 已把 `office.browser.task.create --input-json` 的最小 JSON 结构、动作类型列表和可直接照抄的 CLI 模板补进 CLI help、工作区专用 skill 与 Host 注入说明，避免模型继续退回去翻源码猜 payload
+- [x] 已把技能面板里的 `codingns-workspace-session` 标签从“仅助手使用”改成“工作区会话使用”，避免 UI 继续误导
+- [x] 已修 `workspace_session + assistant-cli` 被 auth guard 误拦截的问题；工作区会话现在可以正式读取 assistant capability 列表
+- [x] 已新增可分发的工作区专用 office MCP server，正式暴露 `office.document.* / office.browser.* / office.ops.*`
+- [x] 已给工作区 runtime 自动写入 Codex / Claude / OpenCode 的 MCP 配置文件，后续其他环境分发后可直接复用
+- [x] 已让工作区 live session 真实跑在 CodingNS 全局目录下的工作区会话专用 runtime home 上，避免 Codex 继续漏读工作区专用 MCP 与说明文件
+- [x] 已把 `codingns-workspace-session` skill 收窄成“路由 + 安全规则说明”，不再继续承担整套 CLI 教程
+- [x] 已补 `workspace-office-mcp` 最小自动化测试，以及 Host 侧 runtime home / 注入链测试
+- [x] 已补最小人工验证记录，明确说明怎么在工作区会话里确认 MCP 工具已真实可见
+- [x] 已把 `opencode` 的托管 `server/baseUrl` 模式从“只写配置文件”收紧到“启动托管进程时真实注入 `OPENCODE_CONFIG_CONTENT`，并按 `workspaceId + runtimeHomeDir` 隔离”
+- [x] 已在左侧技能面板的 `codingns-workspace-session` 卡片接入“MCP 状态”按钮，可查看当前工作区会话 runtime、全局 CLI、仓库内 CLI 和各 CLI MCP 配置是否真的可用
+- [x] 已修工作区会话专用 runtime 漏同步 Codex/Claude 基础运行时的问题，避免切到专用 home 后丢失认证导致 `401 Unauthorized`
+- [x] 已修工作区会话 MCP 状态里仓库内 `codingns.mjs` 的路径探测，不再误拼到 `apps/host/packages/...`
+- [x] 已把工作区会话 runtime/MCP 资产从“工作区目录内 `.codingns` 落盘”收口为“CodingNS 全局数据目录统一管理”，避免污染每个项目目录
