@@ -2765,6 +2765,54 @@ describe("WorkbenchLayout", () => {
     });
   });
 
+  it("活动工作区短暂丢失时，文件面板继续保留上一次有效工作区", async () => {
+    let currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话一",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    const user = userEvent.setup();
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+
+    await user.click(await screen.findByRole("tab", { name: t("shell.filesEntry") }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("file-context-panel")).toBeInTheDocument();
+    });
+
+    currentSnapshot = createWorkbenchSnapshot([]);
+    MockWebSocket.instances[0]?.dispatchMessage({
+      type: "workbench.snapshot",
+      snapshot: currentSnapshot
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("file-context-panel")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText(t("shell.filesPanelEmpty"))).not.toBeInTheDocument();
+    expect(screen.queryByText(t("conversation.filePanelNoWorkspace"))).not.toBeInTheDocument();
+  });
+
   it("支持会话重命名，并立即更新左侧列表标题", async () => {
     let currentSnapshot = createWorkbenchSnapshot([
       {

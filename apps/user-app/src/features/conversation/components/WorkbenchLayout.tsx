@@ -7967,6 +7967,14 @@ function WorkbenchInfoPanel({
   onCleanupWorktree: (meta: WorktreeMetaDto) => void;
 }) {
   const fallbackWorkspaceId = activeWorkspaceId ?? navigationGroups[0]?.workspace.id ?? null;
+  const normalizedActiveWorkspaceId = activeWorkspaceId?.trim() || null;
+  const knownWorkspaceIdSet = useMemo(
+    () => collectKnownWorkspaceIds(navigationGroups),
+    [navigationGroups]
+  );
+  const [stickyFilesWorkspaceId, setStickyFilesWorkspaceId] = useState<string | null>(
+    () => normalizedActiveWorkspaceId
+  );
   const platform = usePlatform();
   const macOsNativeTitlebarDragRegion = resolveMacOsNativeTitlebarDragRegion(platform);
   const { showToast } = useToast();
@@ -7987,6 +7995,32 @@ function WorkbenchInfoPanel({
   const canDetachTerminalsTab = canDetachTabs && Boolean(fallbackWorkspaceId);
   const supportsPointerDetachGesture =
     typeof globalThis !== "undefined" && "PointerEvent" in globalThis;
+  const effectiveFilesWorkspaceId = normalizedActiveWorkspaceId ?? stickyFilesWorkspaceId;
+  const effectiveFilesSessionId =
+    effectiveFilesWorkspaceId && effectiveFilesWorkspaceId === normalizedActiveWorkspaceId
+      ? currentSessionId
+      : null;
+  const effectiveFileRevealRequest =
+    effectiveFilesWorkspaceId && effectiveFilesWorkspaceId === normalizedActiveWorkspaceId
+      ? fileRevealRequest
+      : null;
+
+  useEffect(() => {
+    if (normalizedActiveWorkspaceId) {
+      setStickyFilesWorkspaceId((current) =>
+        current === normalizedActiveWorkspaceId ? current : normalizedActiveWorkspaceId
+      );
+      return;
+    }
+
+    if (knownWorkspaceIdSet.size === 0) {
+      return;
+    }
+
+    setStickyFilesWorkspaceId((current) =>
+      current && knownWorkspaceIdSet.has(current) ? current : null
+    );
+  }, [knownWorkspaceIdSet, normalizedActiveWorkspaceId]);
 
   const openDetachedWindowByTab = useCallback(async (
     tab: InfoTab,
@@ -8370,12 +8404,12 @@ function WorkbenchInfoPanel({
         ) : null}
 
         {panelReady && activeTab === "files" ? (
-          activeWorkspaceId ? (
+          effectiveFilesWorkspaceId ? (
             <Suspense fallback={<InfoPanelSkeleton />}>
               <LazyFileContextPanel
-                sessionId={currentSessionId}
-                workspaceId={activeWorkspaceId}
-                externalRevealRequest={fileRevealRequest}
+                sessionId={effectiveFilesSessionId}
+                workspaceId={effectiveFilesWorkspaceId}
+                externalRevealRequest={effectiveFileRevealRequest}
               />
             </Suspense>
           ) : (
