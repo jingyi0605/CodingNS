@@ -433,11 +433,12 @@ export class SessionLiveRuntimeService {
         ...providerLaunchContext.runtimeEnv,
         ...workspaceRuntimeContext.runtimeEnv
       };
-      const effectiveRuntimeHomeDir =
-        workspaceRuntimeContext.runtimeHomeDir
-        ?? providerLaunchContext.runtimeHomeDir
-        ?? providerBinding.runtimeHomeDir
-        ?? null;
+      const effectiveRuntimeHomeDir = this.resolveEffectiveRuntimeHomeDir({
+        provider: input.provider as SessionListItem["provider"],
+        workspaceRuntimeHomeDir: workspaceRuntimeContext.runtimeHomeDir,
+        providerLaunchRuntimeHomeDir: providerLaunchContext.runtimeHomeDir,
+        providerBindingRuntimeHomeDir: providerBinding.runtimeHomeDir
+      });
       const providerInstructionFilePath = resolveRuntimeInstructionFilePath(
         input.provider,
         workspace.path,
@@ -1873,11 +1874,12 @@ export class SessionLiveRuntimeService {
         ...providerLaunchContext.runtimeEnv,
         ...workspaceRuntimeContext.runtimeEnv
       };
-      const effectiveRuntimeHomeDir =
-        workspaceRuntimeContext.runtimeHomeDir
-        ?? providerLaunchContext.runtimeHomeDir
-        ?? providerBinding.runtimeHomeDir
-        ?? null;
+      const effectiveRuntimeHomeDir = this.resolveEffectiveRuntimeHomeDir({
+        provider: session.provider as SessionListItem["provider"],
+        workspaceRuntimeHomeDir: workspaceRuntimeContext.runtimeHomeDir,
+        providerLaunchRuntimeHomeDir: providerLaunchContext.runtimeHomeDir,
+        providerBindingRuntimeHomeDir: providerBinding.runtimeHomeDir
+      });
       const providerInstructionFilePath = resolveRuntimeInstructionFilePath(
         session.provider,
         workspace.path,
@@ -2296,6 +2298,28 @@ export class SessionLiveRuntimeService {
       projectId: input.projectId ?? null,
       provider: input.provider
     });
+  }
+
+  private resolveEffectiveRuntimeHomeDir(input: {
+    provider: SessionListItem["provider"];
+    workspaceRuntimeHomeDir: string | null;
+    providerLaunchRuntimeHomeDir: string | null;
+    providerBindingRuntimeHomeDir: string | null;
+  }): string | null {
+    // Codex 的 thread 索引和 transcript 依赖同一个 home。
+    // 工作区会话需要注入鉴权/MCP/指令文件，但不能顺手把 CODEX_HOME 也切到
+    // workspace-session-runtime 目录，否则真实 transcript 会落到私有目录里，
+    // Host 又会继续绑定 synthetic .stream，最终表现成 assistant 文本极慢地“拼”出来。
+    if (input.provider === "codex") {
+      return input.providerLaunchRuntimeHomeDir ?? input.providerBindingRuntimeHomeDir ?? null;
+    }
+
+    return (
+      input.workspaceRuntimeHomeDir
+      ?? input.providerLaunchRuntimeHomeDir
+      ?? input.providerBindingRuntimeHomeDir
+      ?? null
+    );
   }
 
   private resolveStartedSession(input: {
