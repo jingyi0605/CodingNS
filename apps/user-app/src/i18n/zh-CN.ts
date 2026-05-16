@@ -1242,7 +1242,7 @@ export const zhCN = {
     fileViewerPresentationWarningCount: "当前有 {count} 条导入提醒。",
     fileViewerPresentationCurrentPage: "当前页面",
     fileViewerPresentationUntitled: "未命名页面",
-    fileViewerPresentationReadOnlyHint: "这一版先做逐页识别和只读预览，下一步再接组件编辑。",
+    fileViewerPresentationReadOnlyHint: "请选择要编辑的组件以查看文本和布局编辑工具",
     fileViewerPresentationEditHint: "这一版已经支持选中组件、修改文字和基础样式，复杂结构继续保持只读。",
     fileViewerPresentationCanvasSelectHint: "可以直接点击画布里的组件进入顶部编辑栏，也可以在右侧组件列表里切换。",
     fileViewerPresentationUnsupported: "这份 HTML 还不适合进入演示文档视图。",

@@ -1423,7 +1423,7 @@ export const enUS = {
     fileViewerPresentationWarningCount: "{count} import warnings detected.",
     fileViewerPresentationCurrentPage: "Current Page",
     fileViewerPresentationUntitled: "Untitled Page",
-    fileViewerPresentationReadOnlyHint: "This pass only does page detection and read-only preview. Component editing comes next.",
+    fileViewerPresentationReadOnlyHint: "Select a component to view text and layout editing tools.",
     fileViewerPresentationEditHint: "This pass supports node selection plus basic text and style edits. Complex structures stay read-only.",
     fileViewerPresentationCanvasSelectHint: "Click a component on the canvas to edit it from the top toolbar, or switch from the component list on the right.",
     fileViewerPresentationUnsupported: "This HTML file is not ready for presentation view yet.",
