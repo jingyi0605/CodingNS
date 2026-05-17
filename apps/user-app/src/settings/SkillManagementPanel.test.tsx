@@ -54,6 +54,17 @@ describe("SkillManagementPanel", () => {
         return createJsonResponse({ items: createBrowserProfilesResponse() });
       }
 
+      if (url.endsWith("/api/office/browser/bridge-status") && method === "GET") {
+        return createJsonResponse({
+          provider: "opencli",
+          availability: "ready",
+          detail: null,
+          checkedAt: "2026-05-17T08:00:00.000Z",
+          installPath: "/opt/homebrew/lib/node_modules/@jackwener/opencli",
+          version: "0.1.0"
+        });
+      }
+
       if (url.endsWith("/api/workspaces") && method === "GET") {
         return createJsonResponse(createWorkspaceListResponse());
       }
@@ -540,6 +551,13 @@ describe("SkillManagementPanel", () => {
     expect(within(dialog).getAllByText("办公 Chrome").length).toBeGreaterThan(0);
     expect(within(dialog).getByText("跨区 Edge")).toBeInTheDocument();
     expect(within(dialog).getByText(t("settings.skillOfficeScoped"))).toBeInTheDocument();
+    expect(within(dialog).getByText(t("settings.skillOfficeBrowserBridgeSummaryLabel"))).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([input, requestInit]) => {
+      return (
+        String(input).endsWith("/api/office/browser/bridge-status")
+        && (requestInit?.method ?? "GET").toUpperCase() === "GET"
+      );
+    })).toBe(true);
     expect(within(dialog).getByText("工作区：当前工作区")).toBeInTheDocument();
     expect(within(dialog).getByText("工作区：历史工作区")).toBeInTheDocument();
     expect(within(dialog).getByText(t("settings.skillOfficeBrowserProfileCrossWorkspaceTag"))).toBeInTheDocument();
@@ -552,7 +570,7 @@ describe("SkillManagementPanel", () => {
       expect(screen.getByText(t("settings.skillOfficeBrowserProfileCreated"))).toBeInTheDocument();
     });
 
-    expect(within(dialog).queryByRole("button", { name: t("settings.skillOfficeBrowserInstanceOpenCreateAction") })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "新建浏览器实例" })).not.toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("checkbox", { name: t("settings.skillOfficeBrowserProfileOnlyCurrentWorkspace") }));
     expect(within(dialog).queryByText("跨区 Edge")).not.toBeInTheDocument();
@@ -568,6 +586,7 @@ describe("SkillManagementPanel", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillOfficeBrowserProfileTaskAction") }));
     const browserTaskModal = await screen.findByRole("dialog", { name: "办公 Chrome 的任务记录" });
     expect(within(browserTaskModal).getByText("日报采集")).toBeInTheDocument();
+    expect(within(browserTaskModal).getAllByText(t("settings.skillOfficeBrowserExecutionBackendPlaywright")).length).toBeGreaterThan(0);
 
     await userEvent.click(within(browserTaskModal).getByRole("button", { name: t("settings.skillOfficeBrowserInstanceDetailAction") }));
     expect(await within(browserTaskModal).findByText("读取页面 DOM · succeeded")).toBeInTheDocument();

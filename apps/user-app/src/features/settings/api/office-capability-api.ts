@@ -6,6 +6,7 @@ export type BrowserEngine = "chrome" | "edge";
 export type BrowserProfileMode = "persistent" | "cdp_attached";
 export type BrowserProfileOwnershipScope = "user" | "workspace" | "target";
 export type BrowserProfileStatus = "active" | "locked" | "archived" | "error";
+export type BrowserExecutionBackend = "playwright" | "opencli_bridge";
 export type OfficeTaskStatus =
   | "draft"
   | "pending_approval"
@@ -64,6 +65,7 @@ export interface OfficeTaskDto {
   targetRefKind: string | null;
   targetRefId: string | null;
   inputJson: string;
+  executionBackend?: BrowserExecutionBackend;
   status: OfficeTaskStatus;
   riskLevel: OfficeRiskLevel;
   approvalPolicyId: string | null;
@@ -133,6 +135,19 @@ export interface OfficeTaskDetailDto {
   }>;
 }
 
+export function resolveBrowserTaskExecutionBackend(task: Pick<OfficeTaskDto, "executionBackend" | "inputJson">): BrowserExecutionBackend {
+  if (task.executionBackend === "opencli_bridge" || task.executionBackend === "playwright") {
+    return task.executionBackend;
+  }
+
+  try {
+    const parsed = JSON.parse(task.inputJson) as { executionBackend?: unknown };
+    return parsed.executionBackend === "opencli_bridge" ? "opencli_bridge" : "playwright";
+  } catch {
+    return "playwright";
+  }
+}
+
 export interface OpsTargetDto {
   id: string;
   userId: string;
@@ -160,6 +175,15 @@ export interface BrowserTaskExecutionDto {
   finishedAt: number | null;
   timeoutMs: number | null;
   errorMessage?: string;
+}
+
+export interface BrowserBridgeStatusDto {
+  provider: "opencli";
+  availability: "ready" | "daemon_missing" | "extension_missing" | "unavailable";
+  detail: string | null;
+  checkedAt: string;
+  installPath: string | null;
+  version: string | null;
 }
 
 export async function fetchDocumentTemplates(status: DocumentTemplateStatus = "active"): Promise<DocumentTemplateDto[]> {
@@ -307,6 +331,7 @@ export async function createBrowserTask(input: {
   title?: string;
   profileId: string;
   riskLevel?: OfficeRiskLevel;
+  executionBackend?: BrowserExecutionBackend;
   input?: unknown;
 }): Promise<OfficeTaskDto> {
   return await httpClient.request<OfficeTaskDto>("/api/office/browser/tasks", {
@@ -330,6 +355,10 @@ export async function fetchBrowserTaskExecution(taskId: string): Promise<Browser
     `/api/office/browser/tasks/${encodeURIComponent(taskId)}/execution`
   );
   return response.task;
+}
+
+export async function fetchBrowserBridgeStatus(): Promise<BrowserBridgeStatusDto> {
+  return await httpClient.request<BrowserBridgeStatusDto>("/api/office/browser/bridge-status");
 }
 
 export async function cancelBrowserTaskExecution(taskId: string): Promise<{

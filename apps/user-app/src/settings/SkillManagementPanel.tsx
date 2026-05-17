@@ -20,7 +20,9 @@ import {
   syncManagedSkillTargets
 } from "../features/settings/api/skills-api";
 import type {
+  BrowserBridgeStatusDto,
   BrowserEngine,
+  BrowserExecutionBackend,
   BrowserProfileDto,
   BrowserProfileMode,
   BrowserProfileOwnershipScope,
@@ -48,6 +50,7 @@ import {
   createDocumentTemplate,
   createOpsTarget,
   executeBrowserTask,
+  fetchBrowserBridgeStatus,
   fetchBrowserProfiles,
   fetchBrowserTaskExecution,
   fetchDocumentTemplates,
@@ -56,6 +59,7 @@ import {
   fetchOpsTargets,
   importDocumentTemplateFile,
   replyOfficeApproval,
+  resolveBrowserTaskExecutionBackend,
   updateBrowserProfile,
   updateDocumentTemplate,
   updateOpsTarget
@@ -110,6 +114,7 @@ export function SkillManagementPanel({
   const [browserProfiles, setBrowserProfiles] = useState<BrowserProfileDto[]>([]);
   const [browserTasks, setBrowserTasks] = useState<OfficeTaskDto[]>([]);
   const [browserTaskExecutions, setBrowserTaskExecutions] = useState<Record<string, BrowserTaskExecutionDto | null>>({});
+  const [browserBridgeStatus, setBrowserBridgeStatus] = useState<BrowserBridgeStatusDto | null>(null);
   const [workspaceItems, setWorkspaceItems] = useState<WorkspaceDto[]>([]);
   const [opsTasks, setOpsTasks] = useState<OfficeTaskDto[]>([]);
   const [opsTargets, setOpsTargets] = useState<OpsTargetDto[]>([]);
@@ -272,11 +277,13 @@ export function SkillManagementPanel({
         }
 
         const nextBrowserTaskExecutions = await loadBrowserTaskExecutions(nextBrowserTasks);
+        const nextBrowserBridgeStatus = await fetchBrowserBridgeStatus().catch(() => null);
 
         setOverview(nextOverview);
         setDocumentTemplates(nextTemplates);
         setBrowserProfiles(nextBrowserProfiles);
         setBrowserTasks(nextBrowserTasks);
+        setBrowserBridgeStatus(nextBrowserBridgeStatus);
         setBrowserTaskExecutions(nextBrowserTaskExecutions);
         setWorkspaceItems(workspaceResponse.items);
         setOpsTasks(nextOpsTasks);
@@ -335,10 +342,12 @@ async function reloadPanelData(): Promise<void> {
       })
     ]);
     const nextBrowserTaskExecutions = await loadBrowserTaskExecutions(nextBrowserTasks);
+    const nextBrowserBridgeStatus = await fetchBrowserBridgeStatus().catch(() => null);
     setOverview(nextOverview);
     setDocumentTemplates(nextTemplates);
     setBrowserProfiles(nextBrowserProfiles);
     setBrowserTasks(nextBrowserTasks);
+    setBrowserBridgeStatus(nextBrowserBridgeStatus);
     setBrowserTaskExecutions(nextBrowserTaskExecutions);
     setWorkspaceItems(workspaceResponse.items);
     setOpsTasks(nextOpsTasks);
@@ -1089,6 +1098,29 @@ async function reloadPanelData(): Promise<void> {
 
             {officeTabSelected ? (
               <div className="settings-skill-modal-actions settings-skill-page-toolbar">
+                <div
+                  className="settings-skill-toolbar-status"
+                  role="status"
+                  title={browserBridgeStatus
+                    ? t("settings.skillOfficeBrowserBridgeSummaryDetail", {
+                      provider: browserBridgeStatus.provider,
+                      status: resolveBrowserBridgeAvailabilityLabel(browserBridgeStatus),
+                      detail: browserBridgeStatus.detail ?? t("settings.skillOfficeBrowserBridgeDetailReady")
+                    })
+                    : t("settings.skillOfficeBrowserBridgeAvailabilityUnknown")}
+                >
+                  <span
+                    className="settings-skill-toolbar-status-dot"
+                    data-status={resolveBrowserBridgeAvailabilityTag(browserBridgeStatus)}
+                    aria-hidden="true"
+                  />
+                  <span className="settings-skill-toolbar-status-label">
+                    {t("settings.skillOfficeBrowserBridgeSummaryLabel")}
+                  </span>
+                  <strong className="settings-skill-toolbar-status-value">
+                    {resolveBrowserBridgeAvailabilityLabel(browserBridgeStatus)}
+                  </strong>
+                </div>
                 <button
                   className="secondary-button"
                   type="button"
@@ -1979,6 +2011,9 @@ async function reloadPanelData(): Promise<void> {
                       <span className="settings-skill-tag" data-status={resolveOpsTaskStatusTag(task.status)}>
                         {task.status}
                       </span>
+                      <span className="settings-skill-tag" data-status={resolveBrowserExecutionBackendTag(resolveBrowserTaskExecutionBackend(task))}>
+                        {resolveBrowserExecutionBackendLabel(resolveBrowserTaskExecutionBackend(task))}
+                      </span>
                       <span className="settings-skill-tag" data-status={resolveBrowserExecutionStatusTag(execution)}>
                         {resolveBrowserExecutionStatusText(execution, task.status)}
                       </span>
@@ -2713,6 +2748,17 @@ function resolveBrowserProfileStatusTag(status: BrowserProfileDto["status"]): "p
   }
 }
 
+function resolveOfficeRiskLevelLabel(riskLevel: "low" | "medium" | "high"): string {
+  switch (riskLevel) {
+    case "medium":
+      return "中";
+    case "high":
+      return "高";
+    default:
+      return "低";
+  }
+}
+
 function resolveWorkspaceLabel(
   workspaceId: string | null,
   workspaceItemsById: ReadonlyMap<string, WorkspaceDto>
@@ -2763,6 +2809,53 @@ function resolveBrowserExecutionSnapshotStatusLabel(status: BrowserTaskExecution
       return t("settings.skillOfficeBrowserInstanceExecutionCancelled");
     default:
       return t("settings.skillOfficeBrowserInstanceExecutionTimeout");
+  }
+}
+
+function resolveBrowserExecutionBackendLabel(backend: BrowserExecutionBackend): string {
+  return backend === "opencli_bridge"
+    ? t("settings.skillOfficeBrowserExecutionBackendOpenCliBridge")
+    : t("settings.skillOfficeBrowserExecutionBackendPlaywright");
+}
+
+function resolveBrowserExecutionBackendTag(
+  backend: BrowserExecutionBackend
+): "pending" | "synced" | "failed" | "conflicted" {
+  return backend === "opencli_bridge" ? "pending" : "synced";
+}
+
+function resolveBrowserBridgeAvailabilityLabel(status: BrowserBridgeStatusDto | null): string {
+  if (!status) {
+    return t("settings.skillOfficeBrowserBridgeAvailabilityUnknown");
+  }
+
+  switch (status.availability) {
+    case "ready":
+      return t("settings.skillOfficeBrowserBridgeAvailabilityReady");
+    case "daemon_missing":
+      return t("settings.skillOfficeBrowserBridgeAvailabilityDaemonMissing");
+    case "extension_missing":
+      return t("settings.skillOfficeBrowserBridgeAvailabilityExtensionMissing");
+    default:
+      return t("settings.skillOfficeBrowserBridgeAvailabilityUnavailable");
+  }
+}
+
+function resolveBrowserBridgeAvailabilityTag(
+  status: BrowserBridgeStatusDto | null
+): "pending" | "synced" | "failed" | "conflicted" {
+  if (!status) {
+    return "conflicted";
+  }
+
+  switch (status.availability) {
+    case "ready":
+      return "synced";
+    case "daemon_missing":
+    case "extension_missing":
+      return "pending";
+    default:
+      return "failed";
   }
 }
 

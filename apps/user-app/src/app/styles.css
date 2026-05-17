@@ -23276,6 +23276,59 @@ textarea:focus-visible {
   border-radius: 12px;
 }
 
+.settings-skill-toolbar-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-primary) 94%, rgba(255, 255, 255, 0.72));
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.settings-skill-toolbar-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--text-tertiary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.settings-skill-toolbar-status-dot[data-status="synced"] {
+  background: var(--accent);
+  color: var(--accent);
+}
+
+.settings-skill-toolbar-status-dot[data-status="pending"] {
+  background: #f59e0b;
+  color: #f59e0b;
+}
+
+.settings-skill-toolbar-status-dot[data-status="failed"] {
+  background: #ef4444;
+  color: #ef4444;
+}
+
+.settings-skill-toolbar-status-dot[data-status="conflicted"] {
+  background: var(--text-tertiary);
+  color: var(--text-tertiary);
+}
+
+.settings-skill-toolbar-status-label {
+  white-space: nowrap;
+}
+
+.settings-skill-toolbar-status-value {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .settings-opencli-panel {
   gap: 6px;
 }
