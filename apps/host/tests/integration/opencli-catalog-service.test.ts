@@ -92,6 +92,40 @@ describe("OpenCliInstallDiscovery", () => {
       }
     });
   });
+
+  it("没有全局 PATH 时会优先识别项目自带的 OpenCLI 安装", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-opencli-discovery-packaged-"));
+    tempDirs.push(tempDir);
+    const fixture = createFakeOpenCliInstall(tempDir, [
+      {
+        site: "hackernews",
+        name: "top",
+        description: "读取热门内容",
+        strategy: "public",
+        browser: false,
+        modulePath: "hackernews/top.js",
+        sourceFile: "hackernews/top.js"
+      }
+    ]);
+    const discovery = new OpenCliInstallDiscovery({
+      env: {
+        PATH: ""
+      },
+      packagedInstallRootCandidates: [fixture.packageRoot]
+    });
+    const result = discovery.discover();
+    const expectedInstallPath = path.resolve(fixture.packageRoot);
+
+    expect(result.installState).toBe("installed");
+    expect(result.version).toBe("1.7.7");
+    expect(result.installPath).toBe(expectedInstallPath);
+    expect(result.binaryPath).toBe(path.join(expectedInstallPath, "bin", "opencli"));
+    expect(result.manifestSource).toEqual({
+      kind: "manifest",
+      rootPath: expectedInstallPath,
+      manifestPath: path.join(expectedInstallPath, "cli-manifest.json")
+    });
+  });
 });
 
 describe("OpenCliCatalogService", () => {
@@ -413,12 +447,15 @@ function createFakeOpenCliInstall(
 } {
   const packageRoot = path.join(rootDir, "lib", "node_modules", "@jackwener", "opencli");
   const binDir = path.join(rootDir, "bin");
+  const packageBinDir = path.join(packageRoot, "bin");
   const distMainPath = path.join(packageRoot, "dist", "src", "main.js");
   const binaryPath = path.join(binDir, "opencli");
+  const packagedBinaryPath = path.join(packageBinDir, "opencli");
 
   mkdirSync(path.dirname(distMainPath), { recursive: true });
   mkdirSync(path.join(packageRoot, "clis"), { recursive: true });
   mkdirSync(binDir, { recursive: true });
+  mkdirSync(packageBinDir, { recursive: true });
   writeFileSync(
     path.join(packageRoot, "package.json"),
     JSON.stringify({
@@ -434,6 +471,7 @@ function createFakeOpenCliInstall(
   writeFileSync(distMainPath, "#!/usr/bin/env node\n", "utf8");
   chmodSync(distMainPath, 0o755);
   symlinkSync(distMainPath, binaryPath);
+  symlinkSync(distMainPath, packagedBinaryPath);
 
   return {
     packageRoot,

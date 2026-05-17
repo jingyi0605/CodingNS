@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -15,12 +16,18 @@ const bundledSessionSyncRoot = path.join(
 );
 const bundledOpenAiRoot = path.join(packageRoot, "node_modules", "@openai");
 
-buildWorkspaceTargets();
-prepareOutputDirectory();
-bundleSessionSyncCore();
-removeLegacyBundledOpenAiPackages();
+if (isExecutedAsScript()) {
+  main();
+}
 
-console.info("[codingns] 独立构建完成");
+function main() {
+  buildWorkspaceTargets();
+  prepareOutputDirectory();
+  bundleSessionSyncCore();
+  removeLegacyBundledOpenAiPackages();
+
+  console.info("[codingns] 独立构建完成");
+}
 
 function buildWorkspaceTargets() {
   runPnpm(["--dir", path.join(workspaceRoot, "packages", "session-sync-core"), "build"]);
@@ -72,25 +79,39 @@ function runPnpm(args) {
   });
 }
 
-function resolvePnpmInvocation(args) {
-  const npmExecPath = process.env.npm_execpath;
-  if (npmExecPath && fs.existsSync(npmExecPath)) {
-    return {
-      file: process.execPath,
-      args: [npmExecPath, ...args]
-    };
+export function resolvePnpmInvocation(
+  args,
+  options = {}
+) {
+  const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const execPath = options.execPath ?? process.execPath;
+  const fileExists = options.fileExists ?? fs.existsSync;
+  const npmExecPath = env.npm_execpath;
+
+  if (looksLikePnpmExecPath(npmExecPath) && fileExists(npmExecPath)) {
+    const pnpmExecInvocation = resolvePnpmExecPathInvocation({
+      npmExecPath,
+      args,
+      platform,
+      execPath
+    });
+
+    if (pnpmExecInvocation) {
+      return pnpmExecInvocation;
+    }
   }
 
-  if (process.platform !== "win32") {
+  if (platform !== "win32") {
     return {
       file: "pnpm",
       args
     };
   }
 
-  if (process.env.PNPM_HOME) {
-    const pnpmCmdPath = path.join(process.env.PNPM_HOME, "pnpm.cmd");
-    if (fs.existsSync(pnpmCmdPath)) {
+  if (env.PNPM_HOME) {
+    const pnpmCmdPath = path.join(env.PNPM_HOME, "pnpm.cmd");
+    if (fileExists(pnpmCmdPath)) {
       return {
         file: "cmd.exe",
         args: ["/d", "/s", "/c", quoteWindowsCommand(pnpmCmdPath, args)]
@@ -102,6 +123,49 @@ function resolvePnpmInvocation(args) {
     file: "cmd.exe",
     args: ["/d", "/s", "/c", quoteWindowsCommand("pnpm", args)]
   };
+}
+
+function resolvePnpmExecPathInvocation(input) {
+  const extension = path.extname(input.npmExecPath).toLowerCase();
+
+  if (input.platform === "win32") {
+    if (extension === ".cmd" || extension === ".bat") {
+      return {
+        file: "cmd.exe",
+        args: ["/d", "/s", "/c", quoteWindowsCommand(input.npmExecPath, input.args)]
+      };
+    }
+
+    if (extension === ".exe") {
+      return {
+        file: input.npmExecPath,
+        args: input.args
+      };
+    }
+  }
+
+  return {
+    file: input.execPath,
+    args: [input.npmExecPath, ...input.args]
+  };
+}
+
+function looksLikePnpmExecPath(targetPath) {
+  if (typeof targetPath !== "string" || targetPath.trim().length === 0) {
+    return false;
+  }
+
+  return path.basename(targetPath).toLowerCase().includes("pnpm");
+}
+
+function isExecutedAsScript() {
+  const entryPath = process.argv[1];
+
+  if (!entryPath) {
+    return false;
+  }
+
+  return pathToFileURL(path.resolve(entryPath)).href === import.meta.url;
 }
 
 function quoteWindowsCommand(command, args) {

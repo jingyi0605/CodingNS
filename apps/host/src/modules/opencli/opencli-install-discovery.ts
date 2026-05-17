@@ -22,18 +22,27 @@ export interface OpenCliInstallDiscoveryResult {
 export interface OpenCliInstallDiscoveryOptions {
   env?: NodeJS.ProcessEnv;
   catalogRootCandidates?: readonly string[];
+  packagedInstallRootCandidates?: readonly string[];
 }
 
 export class OpenCliInstallDiscovery {
   private readonly env: NodeJS.ProcessEnv;
   private readonly catalogRootCandidates: readonly string[];
+  private readonly packagedInstallRootCandidates: readonly string[];
 
   constructor(options: OpenCliInstallDiscoveryOptions = {}) {
     this.env = options.env ?? process.env;
     this.catalogRootCandidates = options.catalogRootCandidates ?? [];
+    this.packagedInstallRootCandidates = options.packagedInstallRootCandidates ?? resolvePackagedOpenCliRootCandidates();
   }
 
   discover(): OpenCliInstallDiscoveryResult {
+    const packagedInstall = this.resolvePackagedInstall();
+
+    if (packagedInstall) {
+      return packagedInstall;
+    }
+
     const binaryPath = resolveExecutableFromPath("opencli", this.env.PATH ?? null);
 
     if (binaryPath) {
@@ -84,6 +93,35 @@ export class OpenCliInstallDiscovery {
       version: null,
       manifestSource: null
     };
+  }
+
+  private resolvePackagedInstall(): OpenCliInstallDiscoveryResult | null {
+    for (const candidateRoot of this.packagedInstallRootCandidates) {
+      const resolvedRoot = path.resolve(candidateRoot);
+
+      if (!looksLikeOpenCliRoot(resolvedRoot)) {
+        continue;
+      }
+
+      const binaryPath = resolveOpenCliBinaryFromInstallRoot(resolvedRoot);
+      const manifestPath = path.join(resolvedRoot, "cli-manifest.json");
+
+      return {
+        installState: "installed",
+        binaryPath,
+        installPath: resolvedRoot,
+        version: readPackageVersion(resolvedRoot),
+        manifestSource: fs.existsSync(manifestPath)
+          ? {
+              kind: "manifest",
+              rootPath: resolvedRoot,
+              manifestPath
+            }
+          : null
+      };
+    }
+
+    return null;
   }
 }
 
@@ -179,4 +217,32 @@ function readPackageVersion(rootPath: string): string | null {
   } catch {
     return null;
   }
+}
+
+function resolvePackagedOpenCliRootCandidates(): string[] {
+  const candidates = [
+    path.resolve(import.meta.dirname, "../../../../../packages/codingns/node_modules/@jackwener/opencli"),
+    path.resolve(import.meta.dirname, "../../../../../node_modules/@jackwener/opencli")
+  ];
+
+  return candidates.filter((candidate, index, values) => values.indexOf(candidate) === index);
+}
+
+function resolveOpenCliBinaryFromInstallRoot(rootPath: string): string | null {
+  const candidates =
+    process.platform === "win32"
+      ? [
+          path.join(rootPath, "bin", "opencli.cmd"),
+          path.join(rootPath, "bin", "opencli.exe"),
+          path.join(rootPath, "bin", "opencli.bat")
+        ]
+      : [path.join(rootPath, "bin", "opencli")];
+
+  for (const candidate of candidates) {
+    if (isExecutable(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
 }

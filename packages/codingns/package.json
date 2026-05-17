@@ -11,10 +11,12 @@
     "dist",
     "README.md",
     "scripts/postinstall.mjs",
-    "node_modules/@codingns/session-sync-core"
+    "node_modules/@codingns/session-sync-core",
+    "node_modules/@jackwener/opencli"
   ],
   "bundleDependencies": [
-    "@codingns/session-sync-core"
+    "@codingns/session-sync-core",
+    "@jackwener/opencli"
   ],
   "engines": {
     "node": ">=22.0.0"
@@ -33,6 +35,7 @@
   },
   "dependencies": {
     "@codingns/session-sync-core": "workspace:*",
+    "@jackwener/opencli": "1.7.7",
     "@openai/codex": "0.130.0",
     "@openai/codex-sdk": "0.130.0",
     "better-sqlite3": "^12.8.0",
