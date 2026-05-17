@@ -46,6 +46,12 @@ description: Use when running inside a CodingNS 工作区会话。This skill no 
 - 如果任务既像“网页操作”又像“本地前端调试”，先看目标 URL：
   - `localhost` / `127.0.0.1` / `::1`：优先 Codex Browser
   - 其他真实站点或内网地址：优先 `office.browser.*`
+- 如果当前会话同时还能看到 `$codingns-opencli`，不要被它里面的站点命令带偏：
+  - 公开页面、公开榜单、公开帖子、公开趋势数据：可以考虑 `codingns-opencli`
+  - 登录态、验证码、订单、购物车、个人账户、后台页面、表单提交、下载文件、点击页面控件、复用人工已登录 Chrome/Edge：一律不要直接运行 browser-dependent 的 OpenCLI 命令，必须走 `office.browser.*`
+- 就算 `codingns-opencli` 里存在 `taobao/*`、`jd/*` 这类 browser-dependent 命令，也不能把它们当成工作区真实站点任务的默认入口。
+- 如果是真实站点登录、验证码、二次确认弹窗、复杂前端交互、必须复用人工已登录 Chrome/Edge 登录态，创建浏览器任务时优先显式传 `executionBackend=opencli_bridge`。
+- 只有页面明显适合无头执行，或者用户明确要求无头链路时，才继续用默认 `playwright`。
 
 ## 默认工作流
 

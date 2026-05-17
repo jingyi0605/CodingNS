@@ -148,6 +148,7 @@ interface AssistantOfficeBrowserTaskBody {
   title?: string;
   profileId?: string;
   riskLevel?: "low" | "medium" | "high";
+  executionBackend?: "playwright" | "opencli_bridge";
   input?: unknown;
   execute?: boolean;
 }
@@ -1239,6 +1240,7 @@ export class AssistantCapabilityController {
       title: request.body.title?.trim() ?? "浏览器任务",
       profileId: requireNonEmptyText(request.body.profileId, "profileId", "创建浏览器任务必须提供 profileId"),
       riskLevel: request.body.riskLevel,
+      executionBackend: request.body.executionBackend,
       input: request.body.input,
       execute: typeof request.body.execute === "boolean" ? request.body.execute : undefined
     }));

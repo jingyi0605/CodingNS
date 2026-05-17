@@ -63,6 +63,8 @@ import { WechatClawRuntimeManager } from "../modules/channels/wechat-claw-runtim
 import { BrowserProfileService } from "../modules/browser-runtime/browser-profile-service.js";
 import { BrowserRuntimeController } from "../modules/browser-runtime/browser-runtime-controller.js";
 import { BrowserRuntimeService } from "../modules/browser-runtime/browser-runtime-service.js";
+import { OpenCliBridgeBrowserExecutor } from "../modules/browser-runtime/opencli-bridge-browser-executor.js";
+import { OpenCliBrowserBridgeService } from "../modules/browser-runtime/opencli-browser-bridge-service.js";
 import { PlaywrightBrowserExecutor } from "../modules/browser-runtime/playwright-browser-executor.js";
 import { DocumentRuntimeController } from "../modules/document-runtime/document-runtime-controller.js";
 import { DocumentExportExecutor } from "../modules/document-runtime/document-export-executor.js";
@@ -1324,11 +1326,25 @@ export function createServer(config: HostConfig) {
     repositories.officeReceiptRepository,
     repositories.officeAuditEventRepository
   );
+  const openCliBrowserBridgeService = new OpenCliBrowserBridgeService(openCliHealthService);
+  const openCliBridgeBrowserExecutor = new OpenCliBridgeBrowserExecutor(
+    config.databasePath,
+    repositories.officeTaskRepository,
+    repositories.officeTaskStepRepository,
+    repositories.officeArtifactRepository,
+    repositories.officeReceiptRepository,
+    repositories.officeAuditEventRepository,
+    openCliHealthService
+  );
   const browserRuntimeService = new BrowserRuntimeService(
     browserProfileService,
     officeService,
     repositories.officeTaskRepository,
-    playwrightBrowserExecutor,
+    [
+      playwrightBrowserExecutor,
+      openCliBridgeBrowserExecutor
+    ],
+    openCliBrowserBridgeService,
     taskManager
   );
   const browserRuntimeController = new BrowserRuntimeController(browserRuntimeService);

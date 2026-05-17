@@ -6,6 +6,7 @@ export async function registerBrowserRuntimeRoutes(
   app: FastifyInstance,
   browserRuntimeController: BrowserRuntimeController
 ): Promise<void> {
+  app.get("/api/office/browser/bridge-status", browserRuntimeController.getBridgeStatus);
   app.get("/api/office/browser/profiles", browserRuntimeController.listProfiles);
   app.post("/api/office/browser/profiles", browserRuntimeController.createProfile);
   app.get("/api/office/browser/profiles/:profileId", browserRuntimeController.getProfile);

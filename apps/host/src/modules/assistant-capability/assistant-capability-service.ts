@@ -500,6 +500,7 @@ interface CreateAssistantOfficeBrowserTaskInput {
   title: string;
   profileId: string;
   riskLevel?: "low" | "medium" | "high";
+  executionBackend?: "playwright" | "opencli_bridge";
   input?: unknown;
   execute?: boolean;
 }
@@ -1402,6 +1403,7 @@ export class AssistantCapabilityService {
       title: input.title,
       profileId: input.profileId,
       riskLevel: input.riskLevel,
+      executionBackend: input.executionBackend,
       input: input.input
     });
     const execution = input.execute === false

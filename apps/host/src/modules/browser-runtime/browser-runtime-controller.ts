@@ -3,6 +3,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import type { BrowserEngine, BrowserProfileMode, BrowserProfileOwnershipScope, OfficeRiskLevel } from "../../types/domain.js";
 import { requireUserId } from "../preferences/common.js";
 import { BrowserRuntimeService } from "./browser-runtime-service.js";
+import type { BrowserExecutionBackend } from "./browser-task-payload.js";
 
 interface BrowserProfileListQuery {
   workspaceId?: string;
@@ -26,6 +27,7 @@ interface CreateBrowserTaskBody {
   title?: string;
   profileId?: string;
   riskLevel?: OfficeRiskLevel;
+  executionBackend?: BrowserExecutionBackend;
   input?: unknown;
 }
 
@@ -80,6 +82,7 @@ export class BrowserRuntimeController {
         title: request.body.title?.trim() || "浏览器任务",
         profileId: request.body.profileId?.trim() || "",
         riskLevel: request.body.riskLevel,
+        executionBackend: request.body.executionBackend,
         input: request.body.input
       })
     );
@@ -161,6 +164,13 @@ export class BrowserRuntimeController {
         requireUserId(request)
       )
     });
+  };
+
+  readonly getBridgeStatus = async (
+    _request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.browserRuntimeService.getBridgeStatus());
   };
 
   readonly cancelExecution = async (

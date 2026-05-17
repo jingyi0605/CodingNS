@@ -5,25 +5,40 @@ import type { CreateOfficeTaskInput, OfficeService } from "../office/office-serv
 import type { TaskManager } from "../tasks/task-manager.js";
 import { HOST_TASK_TYPES, type TaskSnapshot } from "../tasks/task-types.js";
 import { BrowserProfileService } from "./browser-profile-service.js";
-import type { PlaywrightBrowserExecutor } from "./playwright-browser-executor.js";
+import type { BrowserTaskExecutor } from "./browser-task-executor.js";
+import { BrowserTaskExecutorRegistry } from "./browser-task-executor-registry.js";
+import {
+  normalizeBrowserExecutionBackend,
+  normalizeBrowserTaskActions,
+  normalizeBrowserTaskPayloadShape,
+  normalizeOptionalText,
+  parseBrowserTaskPayload,
+  type BrowserExecutionBackend
+} from "./browser-task-payload.js";
+import type { BrowserBridgeStatusDto, OpenCliBrowserBridgeService } from "./opencli-browser-bridge-service.js";
 
 export interface CreateBrowserTaskInput {
   userId: string;
   workspaceId?: string | null;
   title: string;
   profileId: string;
+  executionBackend?: BrowserExecutionBackend;
   input?: unknown;
   riskLevel?: CreateOfficeTaskInput["riskLevel"];
 }
 
 export class BrowserRuntimeService {
+  private readonly executorRegistry: BrowserTaskExecutorRegistry;
+
   constructor(
     private readonly browserProfileService: BrowserProfileService,
     private readonly officeService: OfficeService,
     private readonly officeTaskRepository: OfficeTaskRepository,
-    private readonly browserExecutor: PlaywrightBrowserExecutor,
+    browserExecutors: BrowserTaskExecutor[],
+    private readonly openCliBrowserBridgeService: OpenCliBrowserBridgeService,
     private readonly taskManager: TaskManager
   ) {
+    this.executorRegistry = new BrowserTaskExecutorRegistry(browserExecutors);
     this.registerBackgroundTask();
   }
 
@@ -92,6 +107,11 @@ export class BrowserRuntimeService {
       });
     }
 
+    const payload = normalizeBrowserTaskPayloadShape(input.input);
+    const executionBackend = normalizeBrowserExecutionBackend(
+      input.executionBackend ?? payload.executionBackend
+    );
+
     return this.officeService.createTask({
       userId: input.userId,
       workspaceId: input.workspaceId ?? profile.workspaceId,
@@ -104,16 +124,22 @@ export class BrowserRuntimeService {
         profileId: profile.id,
         engine: profile.engine,
         mode: profile.mode,
-        ...(isBrowserTaskPayload(input.input) ? input.input : {}),
-        actions: resolveBrowserTaskActions(input.input)
+        ...payload,
+        executionBackend,
+        startUrl: normalizeOptionalText(payload.startUrl),
+        actions: normalizeBrowserTaskActions(input.input)
       },
       riskLevel: input.riskLevel ?? "low"
     });
   }
 
+  async getBridgeStatus(): Promise<BrowserBridgeStatusDto> {
+    return await this.openCliBrowserBridgeService.getStatus();
+  }
+
   async executeBrowserTask(taskId: string, userId: string) {
     const task = this.requireExecutableTask(taskId, userId);
-    const handle = this.taskManager.enqueue<{ taskId: string; userId: string }, Awaited<ReturnType<PlaywrightBrowserExecutor["execute"]>>>(
+    const handle = this.taskManager.enqueue<{ taskId: string; userId: string }, Awaited<ReturnType<BrowserTaskExecutor["execute"]>>>(
       HOST_TASK_TYPES.officeBrowserTaskExecute,
       {
         key: task.id,
@@ -156,13 +182,17 @@ export class BrowserRuntimeService {
       return;
     }
 
-    this.taskManager.register<{ taskId: string; userId: string }, Awaited<ReturnType<PlaywrightBrowserExecutor["execute"]>>>({
+    this.taskManager.register<{ taskId: string; userId: string }, Awaited<ReturnType<BrowserTaskExecutor["execute"]>>>({
       taskType: HOST_TASK_TYPES.officeBrowserTaskExecute,
       executionLane: "host_background",
       timeoutMs: 180_000,
       concurrency: 1,
       run: async (input, context) => {
         const task = this.requireExecutableTask(input.taskId, input.userId);
+        const payload = parseBrowserTaskPayload(task.inputJson);
+        const executor = this.executorRegistry.get(
+          normalizeBrowserExecutionBackend(payload.executionBackend)
+        );
         const profile = this.browserProfileService.getProfile(task.targetRefId ?? "", input.userId);
         if (profile.status !== "active") {
           throw new AppError({
@@ -172,7 +202,7 @@ export class BrowserRuntimeService {
           });
         }
 
-        return await this.browserExecutor.execute({
+        return await executor.execute({
           task,
           profile,
           runContext: context
@@ -206,23 +236,4 @@ export class BrowserRuntimeService {
 
     return task;
   }
-}
-
-function isBrowserTaskPayload(input: unknown): input is {
-  startUrl?: string;
-  actions?: unknown;
-} {
-  return Boolean(input) && typeof input === "object" && !Array.isArray(input);
-}
-
-function resolveBrowserTaskActions(input: unknown): unknown[] {
-  if (Array.isArray(input)) {
-    return input;
-  }
-
-  if (isBrowserTaskPayload(input) && Array.isArray(input.actions)) {
-    return input.actions;
-  }
-
-  return [];
 }

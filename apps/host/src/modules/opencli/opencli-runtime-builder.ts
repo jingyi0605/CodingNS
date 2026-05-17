@@ -5,6 +5,7 @@ import { nowIso } from "../../shared/utils/time.js";
 import type { OpenCliRuntimeProfileRecord } from "../../types/domain.js";
 import type { OpenCliRuntimeProfileRepository } from "../../storage/repositories/opencli-runtime-profile-repository.js";
 import { createOpenCliRuntimeStagingRoot } from "./opencli-runtime-layout.js";
+import { CODINGNS_OPENCLI_BLOCK_BROWSER_DEPENDENT_COMMANDS_ENV } from "./opencli-runtime-guard.js";
 
 export interface OpenCliRuntimeBuilderOptions {
   now?: () => string;
@@ -258,6 +259,7 @@ function writeOpenCliShim(runtimeRootPath: string): void {
   fs.writeFileSync(
     scriptPath,
     `#!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -265,9 +267,13 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const runtimeRoot = path.resolve(path.dirname(__filename), "..");
 const mainScript = path.join(runtimeRoot, "dist", "src", "main.js");
+const manifestPath = path.join(runtimeRoot, "cli-manifest.json");
 const env = { ...process.env };
 const realHome = env.CODINGNS_OPENCLI_REAL_HOME?.trim();
 const realUserProfile = env.CODINGNS_OPENCLI_REAL_USERPROFILE?.trim();
+const blockBrowserDependentCommands = /^(1|true|yes)$/i.test(
+  (env.${CODINGNS_OPENCLI_BLOCK_BROWSER_DEPENDENT_COMMANDS_ENV} ?? "").trim()
+);
 
 if (realHome) {
   env.HOME = realHome;
@@ -275,6 +281,29 @@ if (realHome) {
 
 if (realUserProfile) {
   env.USERPROFILE = realUserProfile;
+}
+
+if (blockBrowserDependentCommands) {
+  const args = process.argv.slice(2);
+  const commandId = args.length >= 2 ? \`\${args[0]}/\${args[1]}\` : "";
+
+  if (commandId) {
+    try {
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      const matched = Array.isArray(manifest)
+        ? manifest.find((entry) => entry && typeof entry === "object" && \`\${entry.site ?? ""}/\${entry.name ?? ""}\` === commandId)
+        : null;
+
+      if (matched && matched.browser === true) {
+        process.stderr.write(
+          \`BROWSER_DEPENDENT_OPENCLI_COMMAND_BLOCKED:\${commandId}\\n真实站点浏览器任务必须走 office.browser.*；如需真实浏览器调试，请使用 executionBackend=opencli_bridge。\\n\`
+        );
+        process.exit(126);
+      }
+    } catch {
+      // manifest 读取失败时不要在 shim 层误伤，让下游真实命令自己报错。
+    }
+  }
 }
 
 const child = spawn(process.execPath, ["--preserve-symlinks-main", mainScript, ...process.argv.slice(2)], {

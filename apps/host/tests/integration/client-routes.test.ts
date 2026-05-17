@@ -1771,6 +1771,7 @@ printf 'doct generated docx' > "$output"
 
     expect(createTaskResponse.statusCode).toBe(200);
     const browserTaskId = createTaskResponse.json().task.id as string;
+    expect(createTaskResponse.json().task.inputJson).toContain("\"executionBackend\":\"playwright\"");
 
     const executeResponse = await hosted.app.inject({
       method: "POST",
@@ -1840,6 +1841,7 @@ printf 'doct generated docx' > "$output"
 
     expect(createTaskResponse.statusCode).toBe(200);
     const browserTaskId = createTaskResponse.json().task.id as string;
+    expect(createTaskResponse.json().task.inputJson).toContain("\"executionBackend\":\"playwright\"");
 
     const executeResponse = await hosted.app.inject({
       method: "POST",
@@ -2033,6 +2035,31 @@ printf 'doct generated docx' > "$output"
       })
     );
   }, SLOW_TEST_TIMEOUT_MS);
+
+  it("浏览器桥接状态接口会返回 opencli 状态", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const tokens = await bootstrapAndLogin(hosted);
+    const headers = {
+      authorization: `Bearer ${tokens.accessToken}`
+    };
+
+    const response = await hosted.app.inject({
+      method: "GET",
+      url: "/api/office/browser/bridge-status",
+      headers
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      provider: "opencli"
+    });
+  });
 });
 
 async function bootstrapAndLogin(hosted: ReturnType<typeof createTestApp>) {

@@ -56,6 +56,12 @@ codingns assistant office browser-task-create --profile-id <profileId> --execute
 codingns assistant office browser-task-get <taskId> [--token <token>]
 ```
 
+如果是登录、验证码、复杂真实站点、必须复用现有浏览器登录态，优先显式指定真实浏览器调试后端：
+
+```bash
+codingns assistant office browser-task-create --profile-id <profileId> --execution-backend opencli_bridge --execute true --input-json '{"startUrl":"https://target.example/login","actions":[{"type":"read_dom"},{"type":"screenshot","fullPage":true}]}' [--token <token>]
+```
+
 `browser-task-create --input-json` 的最小格式不要猜，直接按这个对象写：
 
 ```json
@@ -98,6 +104,12 @@ codingns assistant office browser-task-create --profile-id <profileId> --execute
 
 # 5. 填表单
 codingns assistant office browser-task-create --profile-id <profileId> --execute true --input-json '{"startUrl":"https://target.example/login","actions":[{"type":"fill","selector":"input[name=\\"username\\"]","value":"demo"},{"type":"fill","selector":"input[name=\\"password\\"]","value":"secret"},{"type":"screenshot"}]}' [--token <token>]
+
+# 6. 登录页 / 验证码 / 复杂真实站点：优先真实浏览器调试
+codingns assistant office browser-task-create --profile-id <profileId> --execution-backend opencli_bridge --execute true --input-json '{"startUrl":"https://target.example/login","actions":[{"type":"read_dom"},{"type":"wait","timeoutMs":3000},{"type":"screenshot","fullPage":true}]}' [--token <token>]
+
+# 7. 已登录浏览器里继续点按钮、截图、保留真人登录态
+codingns assistant office browser-task-create --profile-id <profileId> --execution-backend opencli_bridge --execute true --input-json '{"startUrl":"https://target.example/console","actions":[{"type":"click","selector":"button[data-testid=\\"next-step\\"]"},{"type":"wait","timeoutMs":1500},{"type":"screenshot","fullPage":true}]}' [--token <token>]
 ```
 
 遇到真实站点浏览器任务，先查这里或 `--help`，不要退回去扫描源码和编译产物找 API 路径。
@@ -105,6 +117,9 @@ codingns assistant office browser-task-create --profile-id <profileId> --execute
 浏览器意图分流规则：
 
 - 真实站点、企业后台、内网网页、网页控制台、需要沉淀截图/下载产物/回执：优先 `office.browser.*`
+- 其中只要涉及登录、验证码、复杂交互、必须复用当前 Chrome/Edge 登录态：优先在 `browser-task-create` 里显式传 `--execution-backend opencli_bridge`
+- 如果当前会话里同时存在 `$codingns-opencli`，只把它当成公开数据抓取兜底，不要拿它里面 browser-dependent 的站点命令替代 `office.browser.*`
+- 订单、购物车、个人账户、后台页面、表单提交、下载文件、点击页面控件这类任务，即使 `codingns-opencli` 里有 `taobao/*`、`jd/*` 之类命令，也一律不要直接调用
 - 本地预览、`localhost` / `127.0.0.1` / `::1` 页面检查、前端热更新验证：优先 Codex 自带 Browser
 - 如果用户明确要求当前 in-app browser，也按用户要求走 Codex Browser
 

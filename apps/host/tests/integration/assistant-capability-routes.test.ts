@@ -1246,6 +1246,7 @@ describe("assistant capability routes", () => {
         title: "  浏览器巡检  ",
         profileId: "  profile-1  ",
         riskLevel: "medium",
+        executionBackend: "opencli_bridge",
         execute: true,
         input: {
           startUrl: "https://example.invalid",
@@ -1260,6 +1261,7 @@ describe("assistant capability routes", () => {
       title: "浏览器巡检",
       profileId: "profile-1",
       riskLevel: "medium",
+      executionBackend: "opencli_bridge",
       input: {
         startUrl: "https://example.invalid",
         actions: [{ type: "read_dom" }]

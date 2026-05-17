@@ -770,13 +770,14 @@ async function runAssistantCommand(argv) {
         method: "POST",
         path: "/api/assistant/office/browser/tasks",
         argv: rest,
-        supportedOptions: ["workspace-id", "title", "profile-id", "risk-level", "execute", "input-json"],
+        supportedOptions: ["workspace-id", "title", "profile-id", "risk-level", "execution-backend", "execute", "input-json"],
         helpTopic: "office.browser-task-create"
       }, (options) => ({
         workspaceId: readOptionalTrimmedValue(options.values["workspace-id"]),
         title: readOptionalTrimmedValue(options.values.title),
         profileId: requireOptionValue(options.values["profile-id"], "profile-id"),
         riskLevel: readOptionalTrimmedValue(options.values["risk-level"]),
+        executionBackend: readOptionalTrimmedValue(options.values["execution-backend"]),
         execute: parseOptionalBooleanOption(options.values.execute, "execute"),
         input: parseJsonOption(options.values["input-json"], "input-json")
       })));
@@ -2445,11 +2446,17 @@ codingns assistant office browser-task-create
   创建并可选立即执行办公浏览器任务，工作区会话里调用浏览器能力就走这条链路。
 
 用法：
-  codingns assistant office browser-task-create --profile-id <profileId> [--workspace-id <id>] [--title <title>] [--risk-level low|medium|high] [--execute true|false] [--input-json <json>] --token <token>
+  codingns assistant office browser-task-create --profile-id <profileId> [--workspace-id <id>] [--title <title>] [--risk-level low|medium|high] [--execution-backend playwright|opencli_bridge] [--execute true|false] [--input-json <json>] --token <token>
 
 输入约定：
   --input-json 必须是一个 JSON 对象，最小结构如下：
   {"startUrl":"https://example.invalid","actions":[{"type":"read_dom"}]}
+
+后端选择：
+  - playwright：默认，无头浏览器执行
+  - opencli_bridge：复用 opencli 浏览器扩展，走真实浏览器调试
+  - 涉及登录、验证码、二次确认弹窗、复杂真实站点、必须复用现有 Chrome/Edge 登录态时，优先显式传 --execution-backend opencli_bridge
+  - 只有页面明显适合无头执行，或者用户明确要求无头链路时，才继续使用默认 playwright
 
 支持动作：
   - goto：打开指定 url，字段：type、url
@@ -2475,9 +2482,14 @@ codingns assistant office browser-task-create
      {"startUrl":"https://example.invalid","actions":[{"type":"click","selector":"button[type=\\"submit\\"]"},{"type":"screenshot"}]}
   5. 填表单后停留
      {"startUrl":"https://example.invalid/login","actions":[{"type":"fill","selector":"input[name=\\"username\\"]","value":"demo"},{"type":"fill","selector":"input[name=\\"password\\"]","value":"secret"},{"type":"screenshot"}]}
+  6. 登录页 / 验证码 / 复杂真实站点，优先真实浏览器调试
+     {"startUrl":"https://target.example/login","executionBackend":"opencli_bridge","actions":[{"type":"read_dom"},{"type":"wait","timeoutMs":3000},{"type":"screenshot","fullPage":true}]}
+  7. 已登录浏览器里继续操作，保留真人登录态
+     {"startUrl":"https://target.example/console","executionBackend":"opencli_bridge","actions":[{"type":"click","selector":"button[data-testid=\\"next-step\\"]"},{"type":"wait","timeoutMs":1500},{"type":"screenshot","fullPage":true}]}
 
 建议顺序：
   先 running \`browser-profile-list\` 看是否已有可复用 Profile；没有再创建 Profile。
+  遇到登录、验证码、复杂真实站点或必须复用现有浏览器登录态时，优先显式传 \`--execution-backend opencli_bridge\`。
   遇到真实站点网页任务，先查这里的示例，不要退回去翻源码或自己猜私有 HTTP body。
 `.trim();
     case "office.browser-task-get":

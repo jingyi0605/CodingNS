@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { CODINGNS_OPENCLI_BLOCK_BROWSER_DEPENDENT_COMMANDS_ENV } from "../../src/modules/opencli/opencli-runtime-guard.js";
 import { OpenCliRuntimeBuilder } from "../../src/modules/opencli/opencli-runtime-builder.js";
 import { OpenCliRuntimeProfileService } from "../../src/modules/opencli/opencli-runtime-profile-service.js";
 import { OpenCliCatalogEntryRepository } from "../../src/storage/repositories/opencli-catalog-entry-repository.js";
@@ -125,8 +126,7 @@ describe("OpenCLI 裁剪运行时构建器", () => {
         CODINGNS_OPENCLI_REAL_USERPROFILE: "/real/profile"
       }
     );
-
-    expect(JSON.parse(listResult.stdout)).toEqual([{ site: "hackernews", name: "top" }]);
+    expect(JSON.parse(listResult.stdout)).toEqual([{ site: "hackernews", name: "top", browser: false }]);
     expect(enabledResult.exitCode).toBe(0);
     expect(enabledResult.stdout).toContain("OK:hackernews/top");
     expect(disabledResult.exitCode).toBe(2);
@@ -135,6 +135,74 @@ describe("OpenCLI 裁剪运行时构建器", () => {
       home: "/real/home",
       userProfile: "/real/profile"
     });
+
+    database.close();
+  });
+
+  it("工作区会话开启硬门禁后，会阻断 browser-dependent 的 OpenCLI 命令", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-opencli-builder-blocked-"));
+    tempDirs.push(tempDir);
+    const sourceRoot = createFakeOpenCliPackage(tempDir);
+    const database = createDatabaseClient(":memory:");
+    const providerRepository = new OpenCliProviderRepository(database.db);
+    const catalogRepository = new OpenCliCatalogEntryRepository(database.db);
+    const runtimeRepository = new OpenCliRuntimeProfileRepository(database.db);
+    const profileService = new OpenCliRuntimeProfileService(
+      providerRepository,
+      catalogRepository,
+      runtimeRepository,
+      {
+        runtimeStorageRootPath: tempDir,
+        now: () => "2026-04-26T05:30:00.000Z"
+      }
+    );
+    const builder = new OpenCliRuntimeBuilder(runtimeRepository, {
+      now: () => "2026-04-26T05:31:00.000Z"
+    });
+
+    providerRepository.upsert({
+      providerId: "opencli",
+      enabled: true,
+      installState: "installed",
+      healthState: "binary_ready",
+      version: "1.7.7",
+      installPath: sourceRoot,
+      lastCheckedAt: "2026-04-26T05:00:00.000Z",
+      activeRuntimeId: null,
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      catalogRefreshedAt: "2026-04-26T05:00:00.000Z",
+      catalogSource: "manifest"
+    });
+    catalogRepository.replaceAll("opencli", [
+      {
+        providerId: "opencli",
+        commandId: "twitter/trending",
+        site: "twitter",
+        name: "trending",
+        description: "趋势",
+        strategy: "cookie",
+        browser: true,
+        modulePath: "twitter/trending.js",
+        sourceFile: "twitter/trending.js",
+        enabled: true,
+        sortOrder: 1
+      }
+    ]);
+
+    const desired = profileService.findOrCreateDesiredProfile();
+    const builtProfile = builder.buildProfile(desired.profile);
+    const blockedResult = await runNodeScript(
+      path.join(builtProfile.runtimeRootPath, "bin", "opencli"),
+      ["twitter", "trending"],
+      {
+        [CODINGNS_OPENCLI_BLOCK_BROWSER_DEPENDENT_COMMANDS_ENV]: "1"
+      }
+    );
+
+    expect(blockedResult.exitCode).toBe(126);
+    expect(blockedResult.stderr).toContain("BROWSER_DEPENDENT_OPENCLI_COMMAND_BLOCKED:twitter/trending");
+    expect(blockedResult.stderr).toContain("executionBackend=opencli_bridge");
 
     database.close();
   });
@@ -167,8 +235,8 @@ function createFakeOpenCliPackage(rootDir: string): string {
   writeFileSync(
     path.join(packageRoot, "cli-manifest.json"),
     `${JSON.stringify([
-      { site: "hackernews", name: "top" },
-      { site: "twitter", name: "trending" }
+      { site: "hackernews", name: "top", browser: false },
+      { site: "twitter", name: "trending", browser: true }
     ], null, 2)}\n`,
     "utf8"
   );

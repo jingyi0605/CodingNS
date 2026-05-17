@@ -56,6 +56,7 @@ const TOOL_DEFINITIONS = [
     workspaceId: optionalStringSchema("工作区 ID"),
     title: optionalStringSchema("任务标题"),
     riskLevel: optionalEnumSchema(["low", "medium", "high"], "风险等级"),
+    executionBackend: optionalEnumSchema(["playwright", "opencli_bridge"], "执行后端"),
     execute: optionalBooleanSchema("是否立即执行"),
     input: requiredObjectSchema("浏览器任务输入 JSON")
   }),
@@ -178,6 +179,7 @@ const TOOL_HANDLERS = {
       workspaceId: normalizeNullableString(argumentsObject.workspaceId),
       title: normalizeNullableString(argumentsObject.title),
       riskLevel: normalizeNullableString(argumentsObject.riskLevel),
+      executionBackend: normalizeNullableString(argumentsObject.executionBackend),
       execute: normalizeNullableBoolean(argumentsObject.execute),
       input: requireObjectField(argumentsObject, "input")
     })

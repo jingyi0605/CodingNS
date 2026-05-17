@@ -30,6 +30,8 @@ test("codingns assistant office browser-task-create help 会输出动作模板",
   assert.match(result.stdout, /read_dom/);
   assert.match(result.stdout, /screenshot/);
   assert.match(result.stdout, /https:\/\/www\.zhihu\.com\/signin/);
+  assert.match(result.stdout, /登录、验证码、二次确认弹窗、复杂真实站点/);
+  assert.match(result.stdout, /opencli_bridge/);
   assert.match(result.stdout, /不要退回去翻源码/);
 });
 
@@ -278,6 +280,8 @@ test("codingns assistant office browser-task-create 会调用 Host assistant API
       "profile-1",
       "--risk-level",
       "medium",
+      "--execution-backend",
+      "opencli_bridge",
       "--execute",
       "true",
       "--input-json",
@@ -290,6 +294,7 @@ test("codingns assistant office browser-task-create 会调用 Host assistant API
       title: null,
       profileId: "profile-1",
       riskLevel: "medium",
+      executionBackend: "opencli_bridge",
       execute: true,
       input: {
         startUrl: "https://example.invalid",

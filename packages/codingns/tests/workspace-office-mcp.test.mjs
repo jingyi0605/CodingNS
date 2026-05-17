@@ -81,6 +81,7 @@ test("workspace office mcp 会列出浏览器与运维工具，并能调用 host
       name: "office_browser_task_create",
       arguments: {
         profileId: "profile-1",
+        executionBackend: "opencli_bridge",
         execute: true,
         input: {
           startUrl: "https://www.zhihu.com/signin",
@@ -96,6 +97,7 @@ test("workspace office mcp 会列出浏览器与运维工具，并能调用 host
       workspaceId: null,
       title: null,
       riskLevel: null,
+      executionBackend: "opencli_bridge",
       execute: true,
       input: {
         startUrl: "https://www.zhihu.com/signin",

@@ -103,8 +103,13 @@ describe("OpenCliBridgeSkillService", () => {
     expect(skillMarkdown).toContain("opencli list -f json");
     expect(skillMarkdown).toContain("hackernews/top");
     expect(skillMarkdown).toContain("twitter/trending");
-    expect(skillMarkdown).toContain("依赖浏览器");
+    expect(skillMarkdown).toContain("browser-dependent 命令");
+    expect(skillMarkdown).toContain("不可替代 `office.browser.*`");
+    expect(skillMarkdown).toContain("登录态、个人账户、订单");
+    expect(skillMarkdown).toContain("当前默认可见命令");
     expect(agentPrompt).toContain("$codingns-opencli");
+    expect(agentPrompt).toContain("公开站点、公开页面、公开榜单、公开帖子或公开趋势数据");
+    expect(agentPrompt).toContain("executionBackend=opencli_bridge");
 
     service.removeRuntimeSkill("codex", tempDir);
     expect(() =>

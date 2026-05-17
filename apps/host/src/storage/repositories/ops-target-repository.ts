@@ -23,11 +23,11 @@ export class OpsTargetRepository {
            display_name,
            environment,
            config_json,
-           credential_ref,
-           status,
-           created_at,
-           updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         credential_ref,
+         status,
+         created_at,
+         updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         record.id,
