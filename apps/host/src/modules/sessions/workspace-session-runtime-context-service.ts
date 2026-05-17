@@ -2,14 +2,19 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { resolveBuiltinSkillDirectory } from "../skills/builtin-skill-service.js";
+import { CODINGNS_OPENCLI_BLOCK_BROWSER_DEPENDENT_COMMANDS_ENV } from "../opencli/opencli-runtime-guard.js";
 import type { SessionBinding } from "../../types/domain.js";
 import type { WorkspaceSessionAuthService } from "./workspace-session-auth-service.js";
+import {
+  buildWorkspaceOfficeMcpCommandArgs,
+  CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV,
+  CODINGNS_OFFICE_MCP_AUTH_FILE_ENV,
+  WORKSPACE_OFFICE_MCP_NAME
+} from "./workspace-office-mcp-config.js";
 
 const WORKSPACE_SESSION_ASSISTANT_FILE = "WORKSPACE_SESSION_ASSISTANT.md";
 const WORKSPACE_SESSION_SKILL_DIRECTORY = "codingns-workspace-session";
 const WORKSPACE_SESSION_COMPOSED_INSTRUCTION_FILE = "WORKSPACE_SESSION_COMPOSED.md";
-const WORKSPACE_OFFICE_MCP_NAME = "codingns-workspace-office";
-const REPO_ROOT_DIR = path.resolve(import.meta.dirname, "../../../../../");
 
 interface WorkspaceSessionRuntimeContextServiceOptions {
   codexHomeDir?: string;
@@ -75,13 +80,44 @@ export class WorkspaceSessionRuntimeContextService {
       authFilePath,
       instructionFilePath: instructionPath,
       runtimeHomeDir: input.runtimeHomeDir,
-      runtimeEnv: {
-        CODINGNS_AUTH_FILE: authFilePath,
-        BUTLER_AUTH_FILE: authFilePath,
-        WORKSPACE_SESSION_AUTH_FILE: authFilePath,
-        WORKSPACE_SESSION_ASSISTANT_FILE: instructionPath,
-        CODINGNS_OFFICE_MCP_AUTH_FILE: authFilePath
-      }
+      runtimeEnv: buildWorkspaceSessionRuntimeEnv(input.provider, authFilePath, instructionPath)
+    };
+  }
+
+  syncRuntimeOfficeMcpContext(input: {
+    sessionId: string;
+    userId: string;
+    workspaceId: string;
+    projectId?: string | null;
+    provider: SessionBinding["provider"];
+    runtimeHomeDir: string;
+  }): {
+    authFilePath: string;
+    runtimeHomeDir: string;
+  } {
+    const credential = this.workspaceSessionAuthService.ensureWorkspaceCredential({
+      runtimeHomeDir: input.runtimeHomeDir,
+      userId: input.userId,
+      workspaceId: input.workspaceId,
+      projectId: input.projectId ?? null,
+      sessionId: input.sessionId
+    });
+    const authFilePath = this.workspaceSessionAuthService.getCredentialFilePath(input.runtimeHomeDir);
+
+    fs.mkdirSync(input.runtimeHomeDir, { recursive: true });
+
+    // 这里只保留工作区 scoped auth 文件本身。
+    // Codex 的 office MCP 现在改成 helper 启动 `codex app-server` 时临时注入 `-c mcp_servers...`，
+    // 不再写入真实 home 的 config.toml，也不改 transcript/home 落盘语义。
+    fs.writeFileSync(authFilePath, `${JSON.stringify(credential, null, 2)}\n`, "utf8");
+    configureWorkspaceOfficeMcpRuntime(input.runtimeHomeDir, {
+      provider: input.provider,
+      authFilePath
+    });
+
+    return {
+      authFilePath,
+      runtimeHomeDir: input.runtimeHomeDir
     };
   }
 
@@ -144,13 +180,7 @@ export class WorkspaceSessionRuntimeContextService {
       authFilePath,
       instructionFilePath: composedInstructionPath,
       runtimeHomeDir,
-      runtimeEnv: {
-        CODINGNS_AUTH_FILE: authFilePath,
-        BUTLER_AUTH_FILE: authFilePath,
-        WORKSPACE_SESSION_AUTH_FILE: authFilePath,
-        WORKSPACE_SESSION_ASSISTANT_FILE: composedInstructionPath,
-        CODINGNS_OFFICE_MCP_AUTH_FILE: authFilePath
-      }
+      runtimeEnv: buildWorkspaceSessionRuntimeEnv(input.provider, authFilePath, composedInstructionPath)
     };
   }
 }
@@ -280,7 +310,6 @@ function configureWorkspaceOfficeMcpRuntime(
 ): void {
   switch (input.provider) {
     case "codex":
-      upsertCodexMcpConfig(runtimeHomeDir, input.authFilePath);
       return;
     case "claude-code":
       upsertClaudeMcpConfig(runtimeHomeDir, input.authFilePath);
@@ -293,47 +322,10 @@ function configureWorkspaceOfficeMcpRuntime(
   }
 }
 
-function upsertCodexMcpConfig(runtimeHomeDir: string, authFilePath: string): void {
-  const configPath = path.join(runtimeHomeDir, "config.toml");
-  const current = fs.existsSync(configPath) && fs.statSync(configPath).isFile()
-    ? fs.readFileSync(configPath, "utf8")
-    : "";
-  const lines = current.split(/\r?\n/);
-  const nextLines: string[] = [];
-  let skippingCurrentTable = false;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    if (trimmed === `[mcp_servers.${WORKSPACE_OFFICE_MCP_NAME}]`) {
-      skippingCurrentTable = true;
-      continue;
-    }
-
-    if (skippingCurrentTable && trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      skippingCurrentTable = false;
-    }
-
-    if (!skippingCurrentTable) {
-      nextLines.push(line);
-    }
-  }
-
-  const mcpCommandArgs = buildWorkspaceOfficeMcpCommandArgs(runtimeHomeDir, authFilePath);
-  nextLines.push(`[mcp_servers.${WORKSPACE_OFFICE_MCP_NAME}]`);
-  nextLines.push(`command = ${JSON.stringify(process.execPath)}`);
-  nextLines.push(
-    `args = [${mcpCommandArgs.map((entry) => JSON.stringify(entry)).join(", ")}]`
-  );
-  nextLines.push(`[mcp_servers.${WORKSPACE_OFFICE_MCP_NAME}.env]`);
-  nextLines.push(`CODINGNS_OFFICE_MCP_AUTH_FILE = ${JSON.stringify(authFilePath)}`);
-  fs.writeFileSync(configPath, `${nextLines.filter((line, index, list) => !(line.length === 0 && list[index - 1]?.length === 0)).join("\n")}\n`, "utf8");
-}
-
 function upsertClaudeMcpConfig(runtimeHomeDir: string, authFilePath: string): void {
   const configPath = path.join(runtimeHomeDir, ".claude.json");
   const parsed = readJsonObject(configPath);
-  const mcpCommandArgs = buildWorkspaceOfficeMcpCommandArgs(runtimeHomeDir, authFilePath);
+  const mcpCommandArgs = buildWorkspaceOfficeMcpCommandArgs(authFilePath);
   const next = {
     ...parsed,
     mcpServers: {
@@ -343,7 +335,7 @@ function upsertClaudeMcpConfig(runtimeHomeDir: string, authFilePath: string): vo
         command: process.execPath,
         args: mcpCommandArgs,
         env: {
-          CODINGNS_OFFICE_MCP_AUTH_FILE: authFilePath
+          [CODINGNS_OFFICE_MCP_AUTH_FILE_ENV]: authFilePath
         }
       }
     }
@@ -354,7 +346,7 @@ function upsertClaudeMcpConfig(runtimeHomeDir: string, authFilePath: string): vo
 function upsertOpenCodeMcpConfig(runtimeHomeDir: string, authFilePath: string): void {
   const configPath = path.join(runtimeHomeDir, "opencode.json");
   const parsed = readJsonObject(configPath);
-  const mcpCommandArgs = buildWorkspaceOfficeMcpCommandArgs(runtimeHomeDir, authFilePath);
+  const mcpCommandArgs = buildWorkspaceOfficeMcpCommandArgs(authFilePath);
   const next = {
     ...parsed,
     mcp: {
@@ -367,7 +359,7 @@ function upsertOpenCodeMcpConfig(runtimeHomeDir: string, authFilePath: string): 
           ...mcpCommandArgs
         ],
         environment: {
-          CODINGNS_OFFICE_MCP_AUTH_FILE: authFilePath
+          [CODINGNS_OFFICE_MCP_AUTH_FILE_ENV]: authFilePath
         }
       }
     }
@@ -392,20 +384,6 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function buildWorkspaceOfficeMcpCommandArgs(
-  _runtimeHomeDir: string,
-  authFilePath: string
-): string[] {
-  return [
-    path.join(REPO_ROOT_DIR, "packages", "codingns", "bin", "codingns.mjs"),
-    "mcp",
-    "workspace-office",
-    "serve",
-    "--auth-file",
-    authFilePath
-  ];
-}
-
 function buildWorkspaceAssistantInstructions(input: {
   workspaceId: string;
   projectId: string | null;
@@ -420,6 +398,10 @@ function buildWorkspaceAssistantInstructions(input: {
 - 浏览器操作优先走 \`assistant office.browser.*\`。
 - 当前工作区会话已经暴露正式浏览器入口命令：\`codingns assistant office browser-profile-list\`、\`codingns assistant office browser-profile-create\`、\`codingns assistant office browser-task-create\`、\`codingns assistant office browser-task-get\`。
 - 只要任务属于打开网页、登录网站、抓取页面、读取 DOM、截图、提交表单、下载文件这一类真实网页操作，默认先查 \`assistant office.browser.profile.list\` / \`assistant office.browser.task.create\`，不要先落到 Codex 自带 Browser。
+- 如果当前会话同时还能看到 \`$codingns-opencli\`，不要被它里面的站点命令带偏：公开页面、公开榜单、公开帖子、公开趋势数据才考虑它；登录态、验证码、订单、购物车、个人账户、后台页面、表单提交、下载文件、点击页面控件、复用人工已登录 Chrome/Edge 这类任务必须走 \`office.browser.*\`。
+- 就算 \`codingns-opencli\` 里存在 \`taobao/*\`、\`jd/*\` 这类 browser-dependent 命令，也不能把它们当成工作区真实站点任务的默认入口。
+- 涉及登录、验证码、二次确认弹窗、复杂前端站点、必须复用现有 Chrome/Edge 登录态这几类任务时，创建浏览器任务优先显式传 \`executionBackend=opencli_bridge\`，不要继续默认无头浏览器。
+- 只有任务本身明显适合无头执行，或者用户明确要求无头链路时，才继续使用默认 \`playwright\`。
 - \`browser-task-create --input-json\` 必须传 JSON 对象，不要猜私有 body。最小模板直接照抄：\`{"startUrl":"https://example.invalid","actions":[{"type":"read_dom"}]}\`。
 - 浏览器动作类型当前只支持：\`goto\`、\`click\`、\`fill\`、\`press\`、\`select\`、\`upload\`、\`download\`、\`wait\`、\`read_dom\`、\`extract_text\`、\`screenshot\`。
 - 常见模板：打开页面读 DOM 用 \`{"startUrl":"https://target.example","actions":[{"type":"read_dom"}]}\`；打开页面截图用 \`{"startUrl":"https://target.example","actions":[{"type":"screenshot","fullPage":true}]}\`；等待后再读用 \`{"startUrl":"https://target.example","actions":[{"type":"wait","timeoutMs":3000},{"type":"read_dom"}]}\`。
@@ -456,4 +438,26 @@ function composeWorkspaceInstructionDocument(input: {
 ${input.workspaceInstruction.trim()}`);
 
   return `${sections.join("\n\n")}\n`;
+}
+
+function buildWorkspaceSessionRuntimeEnv(
+  provider: SessionBinding["provider"],
+  authFilePath: string,
+  instructionFilePath: string
+): Record<string, string> {
+  const runtimeEnv: Record<string, string> = {
+    CODINGNS_AUTH_FILE: authFilePath,
+    BUTLER_AUTH_FILE: authFilePath,
+    WORKSPACE_SESSION_AUTH_FILE: authFilePath,
+    WORKSPACE_SESSION_ASSISTANT_FILE: instructionFilePath,
+    [CODINGNS_OFFICE_MCP_AUTH_FILE_ENV]: authFilePath
+  };
+
+  if (provider === "codex") {
+    runtimeEnv[CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV] = "1";
+  }
+
+  runtimeEnv[CODINGNS_OPENCLI_BLOCK_BROWSER_DEPENDENT_COMMANDS_ENV] = "1";
+
+  return runtimeEnv;
 }

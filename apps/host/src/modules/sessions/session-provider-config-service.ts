@@ -852,7 +852,11 @@ export class SessionProviderConfigService {
         providerPresetId: parsed.providerPresetId,
         runtimeEnv: normalizeRuntimeEnv({
           env: parsed.runtimeEnv
-        })
+        }),
+        workspaceSessionInstructionFilePath:
+          typeof parsed.workspaceSessionInstructionFilePath === "string"
+            ? parsed.workspaceSessionInstructionFilePath
+            : null
       };
     } catch {
       throw new AppError({
@@ -885,7 +889,6 @@ export class SessionProviderConfigService {
     const runtimeResolution = this.openCliRuntimeResolver?.resolveSessionRuntime();
     return runtimeResolution?.availability === "ready";
   }
-
   private refreshOpenCliBridgeSkill(
     binding: Pick<SessionBinding, "provider" | "runtimeHomeDir">,
     openCliResolution: OpenCliSessionRuntimeResolution | undefined

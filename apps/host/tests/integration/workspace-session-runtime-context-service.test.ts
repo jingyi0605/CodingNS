@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceSessionRuntimeContextService } from "../../src/modules/sessions/workspace-session-runtime-context-service.js";
+import { CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV } from "../../src/modules/sessions/workspace-office-mcp-config.js";
 
 const tempDirs: string[] = [];
 
@@ -76,7 +77,8 @@ describe("WorkspaceSessionRuntimeContextService", () => {
       CODINGNS_AUTH_FILE: result.authFilePath,
       WORKSPACE_SESSION_AUTH_FILE: result.authFilePath,
       WORKSPACE_SESSION_ASSISTANT_FILE: result.instructionFilePath,
-      CODINGNS_OFFICE_MCP_AUTH_FILE: result.authFilePath
+      CODINGNS_OFFICE_MCP_AUTH_FILE: result.authFilePath,
+      [CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV]: "1"
     });
     expect(existsSync(result.authFilePath)).toBe(true);
     expect(existsSync(result.instructionFilePath)).toBe(true);
@@ -95,11 +97,12 @@ describe("WorkspaceSessionRuntimeContextService", () => {
     expect(instructionContent).toContain("不要退回去翻源码");
     expect(instructionContent).toContain("不要回答“当前环境没有浏览器能力”");
     expect(instructionContent).toContain("localhost");
+    expect(instructionContent).toContain("不要被它里面的站点命令带偏");
+    expect(instructionContent).toContain("taobao/*");
+    expect(instructionContent).toContain("必须走 `office.browser.*`");
     const codexConfigPath = path.join(result.runtimeHomeDir, "config.toml");
     const codexConfig = readFileSync(codexConfigPath, "utf8");
     expect(readFileSync(path.join(result.runtimeHomeDir, "auth.json"), "utf8")).toContain("\"openai\": true");
-    expect(codexConfig).toContain("[mcp_servers.codingns-workspace-office]");
-    expect(codexConfig).toContain("workspace-office");
     expect(codexConfig).toContain("model_instructions_file");
     expect(codexConfig).toContain("model = \"gpt-5-codex\"");
     expect(
@@ -169,5 +172,46 @@ describe("WorkspaceSessionRuntimeContextService", () => {
     expect(openCodeConfig.mcp?.["codingns-workspace-office"]?.environment).toMatchObject({
       CODINGNS_OFFICE_MCP_AUTH_FILE: result.authFilePath
     });
+  });
+
+  it("syncRuntimeOfficeMcpContext 只会同步 scoped auth，不会改 Codex 配置文件", () => {
+    const codexHomeDir = mkdtempSync(path.join(tmpdir(), "codingns-workspace-session-codex-home-"));
+    tempDirs.push(codexHomeDir);
+    writeFileSync(path.join(codexHomeDir, "config.toml"), "model = \"gpt-5-codex\"\n", "utf8");
+
+    const service = new WorkspaceSessionRuntimeContextService({
+      ensureWorkspaceCredential: vi.fn(() => ({
+        apiBaseUrl: "http://127.0.0.1:3002",
+        accessToken: "workspace-token",
+        issuedAt: "2026-05-16T10:00:00.000Z",
+        expiresAt: "2026-05-23T10:00:00.000Z",
+        userId: "user-1",
+        workspaceId: "workspace-1",
+        projectId: null,
+        sessionId: "session-codex-shared",
+        callerKind: "workspace_session" as const,
+        capabilityProfile: "workspace-scoped" as const
+      })),
+      getCredentialFilePath: vi.fn((runtimeHomeDir: string) =>
+        path.join(runtimeHomeDir, "WORKSPACE_SESSION_AUTH.json")
+      )
+    }, {
+      codexHomeDir
+    });
+
+    const result = service.syncRuntimeOfficeMcpContext({
+      sessionId: "session-codex-shared",
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      projectId: null,
+      provider: "codex",
+      runtimeHomeDir: codexHomeDir
+    });
+
+    expect(result.authFilePath).toBe(path.join(codexHomeDir, "WORKSPACE_SESSION_AUTH.json"));
+    expect(readFileSync(result.authFilePath, "utf8")).toContain("\"workspaceId\": \"workspace-1\"");
+    const codexConfig = readFileSync(path.join(codexHomeDir, "config.toml"), "utf8");
+    expect(codexConfig).not.toContain("model_instructions_file");
+    expect(codexConfig).toContain("model = \"gpt-5-codex\"");
   });
 });

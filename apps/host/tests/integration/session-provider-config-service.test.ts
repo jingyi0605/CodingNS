@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { resolveHostConfig } from "../../src/config/env.js";
 import { OpenCliBridgeSkillService } from "../../src/modules/opencli/opencli-bridge-skill-service.js";
@@ -11,6 +11,8 @@ import { OpenCliProviderRepository } from "../../src/storage/repositories/opencl
 import { createDatabaseClient } from "../../src/storage/sqlite/client.js";
 import type { ModelPresetRuntimeConfigDto } from "../../src/modules/model-switch/cc-switch-adapter.js";
 import { SessionProviderConfigService } from "../../src/modules/sessions/session-provider-config-service.js";
+import { WorkspaceSessionRuntimeContextService } from "../../src/modules/sessions/workspace-session-runtime-context-service.js";
+import { CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV } from "../../src/modules/sessions/workspace-office-mcp-config.js";
 import {
   appendSessionProviderErrorContext,
   mapSessionProviderError
@@ -263,11 +265,74 @@ describe("SessionProviderConfigService", () => {
     expect(
       existsSync(path.join(codexHomeDir, "skills", "codingns-opencli", "SKILL.md"))
     ).toBe(true);
-    expect(
-      readFileSync(path.join(codexHomeDir, "skills", "codingns-opencli", "SKILL.md"), "utf8")
-    ).toContain("hackernews/top");
+    const skillMarkdown = readFileSync(
+      path.join(codexHomeDir, "skills", "codingns-opencli", "SKILL.md"),
+      "utf8"
+    );
+    expect(skillMarkdown).toContain("hackernews/top");
+    expect(skillMarkdown).toMatch(/^description: ".*managed runtime: check.*"$/m);
+    expect(skillMarkdown).toContain("当前默认可见命令");
+    expect(skillMarkdown).toContain("browser-dependent 命令");
+    expect(skillMarkdown).toContain("office.browser.*");
 
     database.close();
+  });
+
+  it("Codex 全局默认工作区会话不会再改真实 Codex home，而是等运行时注入", () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "codingns-session-provider-codex-workspace-office-"));
+    tempDirs.push(rootDir);
+
+    const codexHomeDir = path.join(rootDir, ".codex");
+    mkdirSync(codexHomeDir, { recursive: true });
+    writeFileSync(path.join(codexHomeDir, "config.toml"), "model = \"gpt-5.4\"\n", "utf8");
+    writeFileSync(path.join(codexHomeDir, "auth.json"), "{\n  \"openai\": true\n}\n", "utf8");
+
+    const config = resolveHostConfig({
+      databasePath: path.join(rootDir, "host.sqlite"),
+      codexHomeDir
+    });
+    const workspaceSessionRuntimeContextService = new WorkspaceSessionRuntimeContextService({
+      ensureWorkspaceCredential: vi.fn(({ runtimeHomeDir }: { runtimeHomeDir: string }) => ({
+        apiBaseUrl: "http://127.0.0.1:3002",
+        accessToken: "workspace-token-codex-home",
+        issuedAt: "2026-05-17T14:10:00.000Z",
+        expiresAt: "2026-05-24T14:10:00.000Z",
+        userId: "user-1",
+        workspaceId: "workspace-1",
+        projectId: null,
+        sessionId: "session-codex-workspace",
+        callerKind: "workspace_session" as const,
+        capabilityProfile: "workspace-scoped" as const
+      })),
+      getCredentialFilePath: vi.fn((runtimeHomeDir: string) =>
+        path.join(runtimeHomeDir, "WORKSPACE_SESSION_AUTH.json")
+      )
+    }, {
+      codexHomeDir
+    });
+    const service = new SessionProviderConfigService(
+      config,
+      {
+        readPresetRuntimeConfig: () => null
+      } as never,
+      undefined,
+      undefined,
+      workspaceSessionRuntimeContextService
+    );
+
+    const binding = service.prepareSessionBinding({
+      sessionId: "session-codex-workspace",
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerConfigMode: "global-default"
+    });
+
+    expect(binding.runtimeHomeDir).toBeNull();
+    const codexConfig = readFileSync(path.join(codexHomeDir, "config.toml"), "utf8");
+    expect(codexConfig).not.toContain("model_instructions_file");
+    expect(codexConfig).not.toContain("[mcp_servers.codingns-workspace-office]");
+    expect(existsSync(path.join(codexHomeDir, "WORKSPACE_SESSION_AUTH.json"))).toBe(false);
   });
 
   it("Codex 旧的全局默认 runtime home 绑定会在继续会话前自动回落到原生 home", () => {
@@ -285,15 +350,39 @@ describe("SessionProviderConfigService", () => {
       databasePath: path.join(rootDir, "host.sqlite"),
       codexHomeDir
     });
+    const workspaceSessionRuntimeContextService = new WorkspaceSessionRuntimeContextService({
+      ensureWorkspaceCredential: vi.fn(({ runtimeHomeDir }: { runtimeHomeDir: string }) => ({
+        apiBaseUrl: "http://127.0.0.1:3002",
+        accessToken: "workspace-token-codex-reset",
+        issuedAt: "2026-05-17T14:20:00.000Z",
+        expiresAt: "2026-05-24T14:20:00.000Z",
+        userId: "user-1",
+        workspaceId: "workspace-1",
+        projectId: null,
+        sessionId: "session-old",
+        callerKind: "workspace_session" as const,
+        capabilityProfile: "workspace-scoped" as const
+      })),
+      getCredentialFilePath: vi.fn((runtimeHomeDir: string) =>
+        path.join(runtimeHomeDir, "WORKSPACE_SESSION_AUTH.json")
+      )
+    }, {
+      codexHomeDir
+    });
     const service = new SessionProviderConfigService(
       config,
       {
         readPresetRuntimeConfig: () => null
-      } as never
+      } as never,
+      undefined,
+      undefined,
+      workspaceSessionRuntimeContextService
     );
 
     const binding = service.resolveSessionBinding({
       sessionId: "session-old",
+      userId: "user-1",
+      workspaceId: "workspace-1",
       provider: "codex",
       existingBinding: {
         providerConfigMode: "global-default",
@@ -309,6 +398,87 @@ describe("SessionProviderConfigService", () => {
     expect(binding.providerConfigMode).toBe("global-default");
     expect(binding.providerPresetId).toBeNull();
     expect(binding.runtimeHomeDir).toBeNull();
+    expect(existsSync(path.join(codexHomeDir, "WORKSPACE_SESSION_AUTH.json"))).toBe(false);
+    expect(readFileSync(path.join(codexHomeDir, "config.toml"), "utf8")).not.toContain(
+      "[mcp_servers.codingns-workspace-office]"
+    );
+  });
+
+  it("Codex 会话级 runtime metadata 会保留工作区说明路径和 MCP 注入标记", () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "codingns-session-provider-codex-runtime-metadata-"));
+    tempDirs.push(rootDir);
+
+    const codexHomeDir = path.join(rootDir, ".codex");
+    mkdirSync(codexHomeDir, { recursive: true });
+    writeFileSync(path.join(codexHomeDir, "config.toml"), "model = \"gpt-5.4\"\n", "utf8");
+    writeFileSync(path.join(codexHomeDir, "auth.json"), "{\n  \"openai\": true\n}\n", "utf8");
+
+    const config = resolveHostConfig({
+      databasePath: path.join(rootDir, "host.sqlite"),
+      codexHomeDir
+    });
+    const workspaceSessionRuntimeContextService = new WorkspaceSessionRuntimeContextService({
+      ensureWorkspaceCredential: vi.fn(() => ({
+        apiBaseUrl: "http://127.0.0.1:3002",
+        accessToken: "workspace-token-runtime",
+        issuedAt: "2026-05-17T14:10:00.000Z",
+        expiresAt: "2026-05-24T14:10:00.000Z",
+        userId: "user-1",
+        workspaceId: "workspace-1",
+        projectId: null,
+        sessionId: "session-runtime",
+        callerKind: "workspace_session" as const,
+        capabilityProfile: "workspace-scoped" as const
+      })),
+      getCredentialFilePath: vi.fn((runtimeHomeDir: string) =>
+        path.join(runtimeHomeDir, "WORKSPACE_SESSION_AUTH.json")
+      )
+    }, {
+      codexHomeDir
+    });
+    const preset: ModelPresetRuntimeConfigDto = {
+      id: "preset-api",
+      name: "神风API",
+      app: "codex",
+      settingsConfig: {
+        auth: {
+          OPENAI_API_KEY: "sk-test-deepseek"
+        },
+        config: "model = \"gpt-5-codex\""
+      }
+    };
+    const service = new SessionProviderConfigService(
+      config,
+      {
+        readPresetRuntimeConfig: () => preset
+      } as never,
+      undefined,
+      undefined,
+      workspaceSessionRuntimeContextService
+    );
+
+    const binding = service.prepareSessionBinding({
+      sessionId: "session-runtime",
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerConfigMode: "cc-switch-preset",
+      providerPresetId: "preset-api"
+    });
+    const launchContext = service.resolveLaunchContext({
+      provider: "codex",
+      providerConfigMode: binding.providerConfigMode,
+      providerPresetId: binding.providerPresetId,
+      runtimeHomeDir: binding.runtimeHomeDir
+    });
+
+    expect(binding.runtimeHomeDir).toBeTruthy();
+    expect(launchContext.providerInstructionFilePath).toBeTruthy();
+    expect(launchContext.runtimeEnv).toMatchObject({
+      OPENAI_API_KEY: "sk-test-deepseek",
+      WORKSPACE_SESSION_AUTH_FILE: expect.stringContaining("WORKSPACE_SESSION_AUTH.json"),
+      [CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV]: "1"
+    });
   });
 
   it("Claude 会话在上一轮结束后切换 preset 时，会把 transcript 同步到新的 runtime home", () => {

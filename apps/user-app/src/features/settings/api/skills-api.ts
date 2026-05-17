@@ -82,7 +82,7 @@ export interface WorkspaceSessionMcpCliStatusDto {
   runtimeConfigFile: string;
   runtimeConfigExists: boolean;
   mcpConfigured: boolean;
-  callState: "ready" | "missing_runtime_config";
+  callState: "ready" | "runtime_injected" | "missing_runtime_config" | "missing_runtime_artifacts";
   callStateDetail: string;
 }
 

@@ -2322,7 +2322,9 @@ async function reloadPanelData(): Promise<void> {
                   key={item.cli}
                   label={item.label}
                   description={`${item.runtimeConfigFile} · ${item.callStateDetail}`}
-                  trailing={renderWorkspaceSessionMcpStateTag(item.mcpConfigured)}
+                  trailing={renderWorkspaceSessionMcpStateTag(
+                    item.callState === "ready" || item.callState === "runtime_injected"
+                  )}
                 />
               ))}
             </ModalList>

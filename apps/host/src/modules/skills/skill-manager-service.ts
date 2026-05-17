@@ -132,7 +132,7 @@ export interface WorkspaceSessionMcpCliStatus {
   runtimeConfigFile: string;
   runtimeConfigExists: boolean;
   mcpConfigured: boolean;
-  callState: "ready" | "missing_runtime_config";
+  callState: "ready" | "runtime_injected" | "missing_runtime_config" | "missing_runtime_artifacts";
   callStateDetail: string;
 }
 
@@ -330,11 +330,11 @@ export class SkillManagerService {
       runtimeHomeDir
     });
     const commands = buildWorkspaceSessionMcpCommandStatus();
-    const cliStatuses = buildWorkspaceSessionMcpCliStatuses(runtimeHomeDir);
+    const cliStatuses = buildWorkspaceSessionMcpCliStatuses(runtime, commands);
 
     return {
       summary: {
-        readyCliCount: cliStatuses.filter((item) => item.callState === "ready").length,
+        readyCliCount: cliStatuses.filter((item) => item.callState === "ready" || item.callState === "runtime_injected").length,
         configuredCliCount: cliStatuses.filter((item) => item.mcpConfigured).length,
         totalCliCount: cliStatuses.length
       },
@@ -1071,19 +1071,45 @@ function buildWorkspaceSessionMcpCommandStatus(): WorkspaceSessionMcpCommandStat
 }
 
 function buildWorkspaceSessionMcpCliStatuses(
-  runtimeHomeDir: string | null
+  runtime: WorkspaceSessionMcpRuntimeStatus,
+  commands: WorkspaceSessionMcpCommandStatus
 ): WorkspaceSessionMcpCliStatus[] {
   return [
-    buildWorkspaceSessionMcpCliStatus("codex", "Codex", runtimeHomeDir, "config.toml", (content) =>
-      content.includes("[mcp_servers.codingns-workspace-office]")
-    ),
-    buildWorkspaceSessionMcpCliStatus("claude-code", "Claude Code", runtimeHomeDir, ".claude.json", (content) =>
+    buildCodexWorkspaceSessionMcpCliStatus(runtime, commands),
+    buildWorkspaceSessionMcpCliStatus("claude-code", "Claude Code", runtime.runtimeHomeDir, ".claude.json", (content) =>
       content.includes("\"codingns-workspace-office\"")
     ),
-    buildWorkspaceSessionMcpCliStatus("opencode", "OpenCode", runtimeHomeDir, "opencode.json", (content) =>
+    buildWorkspaceSessionMcpCliStatus("opencode", "OpenCode", runtime.runtimeHomeDir, "opencode.json", (content) =>
       content.includes("\"codingns-workspace-office\"")
     )
   ];
+}
+
+function buildCodexWorkspaceSessionMcpCliStatus(
+  runtime: WorkspaceSessionMcpRuntimeStatus,
+  commands: WorkspaceSessionMcpCommandStatus
+): WorkspaceSessionMcpCliStatus {
+  const runtimeConfigFile = runtime.runtimeHomeDir
+    ? path.join(runtime.runtimeHomeDir, "config.toml")
+    : path.join("<runtime-home>", "config.toml");
+  const runtimeConfigExists = runtime.runtimeHomeDir ? isFilePath(runtimeConfigFile) : false;
+  const runtimeReady = runtime.runtimeHomeExists
+    && runtime.scopedAuthFileExists
+    && runtime.composedInstructionExists
+    && runtime.skillDirectoryExists;
+  const mcpConfigured = runtimeReady && commands.repoCodingnsSupportsWorkspaceMcp;
+
+  return {
+    cli: "codex",
+    label: "Codex",
+    runtimeConfigFile,
+    runtimeConfigExists,
+    mcpConfigured,
+    callState: mcpConfigured ? "runtime_injected" : "missing_runtime_artifacts",
+    callStateDetail: mcpConfigured
+      ? "当前会话会在启动 codex app-server 时临时注入 office MCP，不要求把 codingns-workspace-office 写进 config.toml。"
+      : "当前会话还缺少 Codex 运行时注入 office MCP 所需的 runtime 资产，或者仓库内 codingns workspace-office MCP 命令还不可用。"
+  };
 }
 
 function buildWorkspaceSessionMcpCliStatus(

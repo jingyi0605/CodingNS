@@ -731,7 +731,7 @@ describe("SkillManagementPanel", () => {
     expect(within(statusDialog).getByText("/opt/homebrew/bin/codingns")).toBeInTheDocument();
     expect(within(statusDialog).getByText(t("settings.skillWorkspaceSessionMcpGlobalStandaloneMissing"))).toBeInTheDocument();
     expect(within(statusDialog).getByText("codingns mcp workspace-office serve --help 可正常输出帮助")).toBeInTheDocument();
-    expect(within(statusDialog).getByText("/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/config.toml · 当前工作区会话 runtime 里已经写入 Codex MCP 配置，可以直接调用。")).toBeInTheDocument();
+    expect(within(statusDialog).getByText("/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/config.toml · 当前会话会在启动 codex app-server 时临时注入 office MCP，不要求把 codingns-workspace-office 写进 config.toml。")).toBeInTheDocument();
     expect(within(statusDialog).getByText("/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/.claude.json · 当前工作区会话 runtime 里还没有这个 CLI 的 MCP 配置文件。")).toBeInTheDocument();
     expect(within(statusDialog).getByText("/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/opencode.json · 当前工作区会话 runtime 里还没有这个 CLI 的 MCP 配置文件。")).toBeInTheDocument();
     expect(within(statusDialog).getByRole("button", { name: t("settings.skillWorkspaceSessionMcpRefreshAction") })).toBeInTheDocument();
@@ -1347,8 +1347,8 @@ function createWorkspaceSessionMcpStatusResponse() {
         runtimeConfigFile: "/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/config.toml",
         runtimeConfigExists: true,
         mcpConfigured: true,
-        callState: "ready",
-        callStateDetail: "当前工作区会话 runtime 里已经写入 Codex MCP 配置，可以直接调用。"
+        callState: "runtime_injected",
+        callStateDetail: "当前会话会在启动 codex app-server 时临时注入 office MCP，不要求把 codingns-workspace-office 写进 config.toml。"
       },
       {
         cli: "claude-code",

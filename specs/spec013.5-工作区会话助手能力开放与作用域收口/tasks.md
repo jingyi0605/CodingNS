@@ -218,3 +218,4 @@
 - [x] 已修工作区会话专用 runtime 漏同步 Codex/Claude 基础运行时的问题，避免切到专用 home 后丢失认证导致 `401 Unauthorized`
 - [x] 已修工作区会话 MCP 状态里仓库内 `codingns.mjs` 的路径探测，不再误拼到 `apps/host/packages/...`
 - [x] 已把工作区会话 runtime/MCP 资产从“工作区目录内 `.codingns` 落盘”收口为“CodingNS 全局数据目录统一管理”，避免污染每个项目目录
+- [x] 已把 Codex 工作区会话的 office MCP 接入改成运行时 `codex app-server -c mcp_servers...` 注入：不切 `CODEX_HOME`，不改用户真实 `~/.codex/config.toml`，也不影响 transcript 落盘位置，只在当前会话 helper 进程里临时暴露 `office.browser.*`

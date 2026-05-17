@@ -3,6 +3,9 @@ import readline, { createInterface } from "node:readline";
 
 import type { ProviderRuntimeRunRequest, RuntimeSendOptions } from "@codingns/session-sync-core";
 import { resolveCommandLaunch } from "../../shared/utils/command-launch.js";
+import {
+  buildCodexAppServerArgsWithWorkspaceOfficeMcp
+} from "./workspace-office-mcp-config.js";
 
 type ParentToHelperMessage =
   | {
@@ -399,7 +402,7 @@ async function handleTransportRequest(message: Extract<ParentToHelperMessage, { 
 }
 
 function createTransportRecord(commandPath: string): TransportRecord {
-  const launch = resolveCommandLaunch(commandPath, ["app-server"]);
+  const launch = resolveCommandLaunch(commandPath, buildCodexAppServerArgsWithWorkspaceOfficeMcp(process.env));
   const child = spawn(launch.command, launch.args, {
     env: process.env,
     stdio: ["pipe", "pipe", "pipe"],
