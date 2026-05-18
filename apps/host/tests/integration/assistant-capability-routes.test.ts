@@ -1262,6 +1262,7 @@ describe("assistant capability routes", () => {
       profileId: "profile-1",
       riskLevel: "medium",
       executionBackend: "opencli_bridge",
+      sessionRequirement: undefined,
       input: {
         startUrl: "https://example.invalid",
         actions: [{ type: "read_dom" }]
@@ -1291,6 +1292,7 @@ describe("assistant capability routes", () => {
       profileId: null,
       riskLevel: undefined,
       executionBackend: "opencli_bridge",
+      sessionRequirement: undefined,
       input: {
         startUrl: "https://example.invalid/bridge",
         actions: [{ type: "read_dom" }]
@@ -1307,6 +1309,36 @@ describe("assistant capability routes", () => {
       "task-browser-1",
       "user-1"
     );
+
+    const createLoggedInTaskResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/office/browser/tasks",
+      payload: {
+        workspaceId: "workspace-1",
+        title: "淘宝待收货查看",
+        executionBackend: "opencli_bridge",
+        sessionRequirement: "reuse_current_logged_in_browser",
+        input: {
+          startUrl: "https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm?tabCode=waitConfirm",
+          actions: [{ type: "read_dom" }]
+        }
+      }
+    });
+    expect(createLoggedInTaskResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.createOfficeBrowserTask).toHaveBeenCalledWith({
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      title: "淘宝待收货查看",
+      profileId: null,
+      riskLevel: undefined,
+      executionBackend: "opencli_bridge",
+      sessionRequirement: "reuse_current_logged_in_browser",
+      input: {
+        startUrl: "https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm?tabCode=waitConfirm",
+        actions: [{ type: "read_dom" }]
+      },
+      execute: undefined
+    });
   });
 
   it("办公运维路由会把 target 与 task 参数清洗后传给服务", async () => {

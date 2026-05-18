@@ -501,6 +501,7 @@ interface CreateAssistantOfficeBrowserTaskInput {
   profileId?: string | null;
   riskLevel?: "low" | "medium" | "high";
   executionBackend?: "playwright" | "opencli_bridge";
+  sessionRequirement?: "none" | "reuse_current_logged_in_browser";
   input?: unknown;
   execute?: boolean;
 }
@@ -1405,6 +1406,7 @@ export class AssistantCapabilityService {
       profileId: normalizeAssistantText(input.profileId) ?? undefined,
       riskLevel: input.riskLevel,
       executionBackend: input.executionBackend,
+      sessionRequirement: input.sessionRequirement,
       input: input.input
     });
     const execution = input.execute === false

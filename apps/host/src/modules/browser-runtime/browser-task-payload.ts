@@ -1,6 +1,7 @@
 import { AppError } from "../../shared/errors/app-error.js";
 
 export type BrowserExecutionBackend = "playwright" | "opencli_bridge";
+export type BrowserSessionRequirement = "none" | "reuse_current_logged_in_browser";
 
 export interface BrowserTaskAction {
   type: string;
@@ -21,6 +22,7 @@ export interface BrowserTaskPayload {
   startUrl?: string;
   actions?: BrowserTaskAction[];
   executionBackend?: BrowserExecutionBackend;
+  sessionRequirement?: BrowserSessionRequirement;
 }
 
 export interface BrowserTaskPayloadSummary {

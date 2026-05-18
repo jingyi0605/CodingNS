@@ -3,7 +3,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import type { BrowserEngine, BrowserProfileMode, BrowserProfileOwnershipScope, OfficeRiskLevel } from "../../types/domain.js";
 import { requireUserId } from "../preferences/common.js";
 import { BrowserRuntimeService } from "./browser-runtime-service.js";
-import type { BrowserExecutionBackend } from "./browser-task-payload.js";
+import type { BrowserExecutionBackend, BrowserSessionRequirement } from "./browser-task-payload.js";
 
 interface BrowserProfileListQuery {
   workspaceId?: string;
@@ -28,6 +28,7 @@ interface CreateBrowserTaskBody {
   profileId?: string;
   riskLevel?: OfficeRiskLevel;
   executionBackend?: BrowserExecutionBackend;
+  sessionRequirement?: BrowserSessionRequirement;
   input?: unknown;
 }
 
@@ -83,6 +84,7 @@ export class BrowserRuntimeController {
         profileId: request.body.profileId?.trim() || "",
         riskLevel: request.body.riskLevel,
         executionBackend: request.body.executionBackend,
+        sessionRequirement: request.body.sessionRequirement,
         input: request.body.input
       })
     );

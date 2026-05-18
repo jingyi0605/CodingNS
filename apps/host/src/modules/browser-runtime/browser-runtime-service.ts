@@ -13,7 +13,8 @@ import {
   normalizeBrowserTaskPayloadShape,
   normalizeOptionalText,
   parseBrowserTaskPayload,
-  type BrowserExecutionBackend
+  type BrowserExecutionBackend,
+  type BrowserSessionRequirement
 } from "./browser-task-payload.js";
 import type { BrowserBridgeStatusDto, OpenCliBrowserBridgeService } from "./opencli-browser-bridge-service.js";
 
@@ -23,6 +24,7 @@ export interface CreateBrowserTaskInput {
   title: string;
   profileId?: string | null;
   executionBackend?: BrowserExecutionBackend;
+  sessionRequirement?: BrowserSessionRequirement;
   input?: unknown;
   riskLevel?: CreateOfficeTaskInput["riskLevel"];
 }
@@ -99,11 +101,14 @@ export class BrowserRuntimeService {
 
   createBrowserTask(input: CreateBrowserTaskInput) {
     const payload = normalizeBrowserTaskPayloadShape(input.input);
+    const sessionRequirement = this.resolveSessionRequirement(input, payload);
     const executionBackend = normalizeBrowserExecutionBackend(
       input.executionBackend ?? payload.executionBackend
     );
+    this.assertSessionRequirementCompatible(sessionRequirement, executionBackend);
     const taskInput = {
       ...payload,
+      sessionRequirement,
       executionBackend,
       startUrl: normalizeOptionalText(payload.startUrl),
       actions: normalizeBrowserTaskActions(input.input)
@@ -140,6 +145,57 @@ export class BrowserRuntimeService {
         ...taskInput
       },
       riskLevel: input.riskLevel ?? "low"
+    });
+  }
+
+  private resolveSessionRequirement(
+    input: CreateBrowserTaskInput,
+    payload: ReturnType<typeof normalizeBrowserTaskPayloadShape>
+  ): BrowserSessionRequirement {
+    if (input.sessionRequirement === "reuse_current_logged_in_browser") {
+      return "reuse_current_logged_in_browser";
+    }
+
+    if (payload.sessionRequirement === "reuse_current_logged_in_browser") {
+      return "reuse_current_logged_in_browser";
+    }
+
+    const combinedText = [
+      input.title,
+      normalizeOptionalText(payload.startUrl) ?? "",
+      ...normalizeBrowserTaskActions(input.input).flatMap((action) => [
+        normalizeOptionalText(action.url) ?? "",
+        normalizeOptionalText(action.selector) ?? "",
+        normalizeOptionalText(action.value) ?? "",
+        normalizeOptionalText(action.key) ?? ""
+      ])
+    ]
+      .join("\n")
+      .toLowerCase();
+
+    if (/(淘宝|京东|订单|购物车|待收货|待付款|个人账户|登录态|已登录|验证码|后台|管理后台|商家后台|edge|chrome)/i.test(combinedText)) {
+      return "reuse_current_logged_in_browser";
+    }
+
+    return "none";
+  }
+
+  private assertSessionRequirementCompatible(
+    sessionRequirement: BrowserSessionRequirement,
+    executionBackend: BrowserExecutionBackend
+  ): void {
+    if (sessionRequirement !== "reuse_current_logged_in_browser") {
+      return;
+    }
+
+    if (executionBackend === "opencli_bridge") {
+      return;
+    }
+
+    throw new AppError({
+      statusCode: 409,
+      errorCode: "BROWSER_SESSION_REQUIREMENT_CONFLICT",
+      detail: "当前任务要求复用已登录浏览器会话，必须使用 opencli_bridge，不能降级到 playwright"
     });
   }
 

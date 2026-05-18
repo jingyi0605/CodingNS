@@ -149,6 +149,7 @@ interface AssistantOfficeBrowserTaskBody {
   profileId?: string;
   riskLevel?: "low" | "medium" | "high";
   executionBackend?: "playwright" | "opencli_bridge";
+  sessionRequirement?: "none" | "reuse_current_logged_in_browser";
   input?: unknown;
   execute?: boolean;
 }
@@ -1242,6 +1243,7 @@ export class AssistantCapabilityController {
       profileId: normalizeNullableText(request.body.profileId),
       riskLevel: request.body.riskLevel,
       executionBackend: request.body.executionBackend,
+      sessionRequirement: request.body.sessionRequirement,
       input: request.body.input,
       execute: typeof request.body.execute === "boolean" ? request.body.execute : undefined
     }));

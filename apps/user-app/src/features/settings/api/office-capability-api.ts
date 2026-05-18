@@ -332,6 +332,7 @@ export async function createBrowserTask(input: {
   profileId: string;
   riskLevel?: OfficeRiskLevel;
   executionBackend?: BrowserExecutionBackend;
+  sessionRequirement?: "none" | "reuse_current_logged_in_browser";
   input?: unknown;
 }): Promise<OfficeTaskDto> {
   return await httpClient.request<OfficeTaskDto>("/api/office/browser/tasks", {

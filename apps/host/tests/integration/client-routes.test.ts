@@ -1998,6 +1998,54 @@ printf 'doct generated docx' > "$output"
     expect(createdTask.inputJson).not.toContain("\"profileId\":");
   });
 
+  it("要求复用已登录浏览器会话时，如果走 playwright 会被后端直接拒绝", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const tokens = await bootstrapAndLogin(hosted);
+    const headers = {
+      authorization: `Bearer ${tokens.accessToken}`
+    };
+
+    const createProfileResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/office/browser/profiles",
+      headers,
+      payload: {
+        engine: "edge",
+        mode: "persistent",
+        displayName: "Edge 登录态 Profile"
+      }
+    });
+    expect(createProfileResponse.statusCode).toBe(200);
+    const profileId = createProfileResponse.json().id as string;
+
+    const createTaskResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/office/browser/tasks",
+      headers,
+      payload: {
+        title: "淘宝待收货查看",
+        profileId,
+        executionBackend: "playwright",
+        sessionRequirement: "reuse_current_logged_in_browser",
+        input: {
+          startUrl: "https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm?tabCode=waitConfirm",
+          actions: [{ type: "read_dom" }]
+        }
+      }
+    });
+
+    expect(createTaskResponse.statusCode).toBe(409);
+    expect(createTaskResponse.json()).toMatchObject({
+      error_code: "BROWSER_SESSION_REQUIREMENT_CONFLICT"
+    });
+  });
+
   it("可以创建并执行 SSH 运维任务，产出 stdout/stderr 与回执", async () => {
     const fixture = createEmptyFixture();
     activeFixtures.push(fixture);
