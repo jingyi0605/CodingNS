@@ -171,6 +171,15 @@ importers:
       ignore:
         specifier: ^7.0.5
         version: 7.0.5
+      playwright-core:
+        specifier: ^1.54.2
+        version: 1.60.0
+      pptxgenjs:
+        specifier: ^4.0.1
+        version: 4.0.1
+      qrcode:
+        specifier: ^1.5.4
+        version: 1.5.4
       ws:
         specifier: ^8.20.0
         version: 8.20.0

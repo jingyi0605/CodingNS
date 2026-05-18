@@ -12,11 +12,7 @@
     "README.md",
     "scripts/postinstall.mjs",
     "node_modules/@codingns/session-sync-core",
-    "node_modules/@jackwener/opencli"
-  ],
-  "bundleDependencies": [
-    "@codingns/session-sync-core",
-    "@jackwener/opencli"
+    "vendor"
   ],
   "engines": {
     "node": ">=22.0.0"
@@ -27,7 +23,8 @@
   },
   "scripts": {
     "build": "node ./scripts/build.mjs",
-    "prepack": "node ./scripts/build.mjs",
+    "prepack": "node ./scripts/prepack.mjs",
+    "postpack": "node ./scripts/postpack.mjs",
     "postinstall": "node ./scripts/postinstall.mjs"
   },
   "publishConfig": {
@@ -42,6 +39,9 @@
     "chokidar": "^5.0.0",
     "fastify": "^5.8.2",
     "ignore": "^7.0.5",
+    "playwright-core": "^1.54.2",
+    "pptxgenjs": "^4.0.1",
+    "qrcode": "^1.5.4",
     "ws": "^8.20.0"
   },
   "optionalDependencies": {

@@ -30,6 +30,10 @@ function main() {
 }
 
 function buildWorkspaceTargets() {
+  fs.rmSync(path.join(workspaceRoot, "packages", "session-sync-core", "dist"), {
+    recursive: true,
+    force: true
+  });
   runPnpm(["--dir", path.join(workspaceRoot, "packages", "session-sync-core"), "build"]);
   runPnpm(["--dir", path.join(workspaceRoot, "apps", "user-app"), "build"]);
   runPnpm(["--dir", path.join(workspaceRoot, "apps", "host"), "build"]);
