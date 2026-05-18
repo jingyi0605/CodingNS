@@ -4,7 +4,8 @@ node_modules/
 .pnp.js
 tmp-ios-debug
 *.tgz
-packages/node-pty-fork
+packages/node-pty-fork/build/
+packages/node-pty-fork/*.tgz
 apps/host/office-artifacts
 .codingns
 
