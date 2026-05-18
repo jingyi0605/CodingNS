@@ -413,7 +413,7 @@ function buildWorkspaceAssistantInstructions(input: {
 - 遇到真实站点浏览器任务，先查 \`browser-task-create --help\` 或工作区专用 skill 里的模板，不要退回去翻源码、编译产物或自己拼接口路径。
 - 运维任务优先走 \`assistant office.ops.*\`。
 - 新建终端优先走 \`assistant terminals create\`。
-- 写终端、执行运维、merge 工作树前，必须先征得用户确认。
+- 默认可直接执行只读型终端/浏览器操作；仅在会产生写入、删除、提交、支付、发布、merge、修改系统状态的操作前征得用户确认。
 - 不要尝试跨工作区、跨项目，或调用当前未开放能力。
 - 当前工作区会话 scoped 认证文件：\`${input.authFilePath}\`。
 `;

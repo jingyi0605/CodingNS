@@ -18,7 +18,7 @@ description: Use when running inside a CodingNS 工作区会话。This skill no 
 - 当前会话只能在当前 `workspaceId`，以及可选的当前 `projectId` 范围内行动。
 - 不要尝试跨工作区、跨项目调用能力。
 - 能力是否可用，以当前 runtime 已暴露的 MCP 工具或 `codingns assistant capabilities list` 的真实返回为准。
-- 写终端、执行运维、merge 工作树前，必须先征得用户确认。
+- 默认可直接执行只读型终端/浏览器操作；仅在会产生写入、删除、提交、支付、发布、merge、修改系统状态的操作前征得用户确认。
 
 ## 办公能力路由
 
@@ -60,7 +60,7 @@ description: Use when running inside a CodingNS 工作区会话。This skill no 
 3. 命中真实网页类意图时，优先 `office.browser.*`。
 4. 命中远程运维类意图时，优先 `office.ops.*`。
 5. 只有本地 `localhost` / `127.0.0.1` / `::1` 页面调试，才优先 Codex 自带 Browser。
-6. 需要本地命令执行时，先新建终端，再在用户确认后写入命令。
+6. 需要本地命令执行时，先新建终端；只读命令可直接执行，只有会产生写入、删除、提交、支付、发布、merge、修改系统状态的命令才先征得用户确认。
 
 ## 资源
 
