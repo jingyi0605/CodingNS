@@ -2386,6 +2386,39 @@ describe("FileViewerModal", () => {
     });
   });
 
+  it("桌面端内置 HTML 预览也使用当前 Host 连接地址，而不是后端返回的 127 预览地址", async () => {
+    clientConfigStore.hydrate(createRuntimeConfigSnapshot("http://10.10.1.8:4100"));
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "site/index.html",
+        kind: "html",
+        content: "<!doctype html><html><body>preview</body></html>",
+        version: "html-v1",
+        previewPath: "/preview/files/preview-token/site/index.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/site/index.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="site/index.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    const previewFrame = await screen.findByTestId("file-viewer-html-preview");
+    expect(previewFrame).toHaveAttribute(
+      "src",
+      expect.stringContaining("http://10.10.1.8:4100/preview/files/preview-token/site/index.html?_preview=0")
+    );
+  });
+
   it("桌面端外部打开使用当前 Host 连接地址，而不是后端返回的 127 预览地址", async () => {
     const user = userEvent.setup();
     clientConfigStore.hydrate(createRuntimeConfigSnapshot("http://10.10.1.8:4100"));
@@ -2418,6 +2451,86 @@ describe("FileViewerModal", () => {
 
     expect(platformMock.openExternal).toHaveBeenCalledWith(
       "http://10.10.1.8:4100/preview/files/preview-token/site/index.html"
+    );
+  });
+
+  it("桌面端内置图片预览使用当前 Host 连接地址，而不是后端返回的 127 预览地址", async () => {
+    clientConfigStore.hydrate(createRuntimeConfigSnapshot("http://10.10.1.8:4100"));
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "assets/diagram.png",
+        kind: "image",
+        content: null,
+        version: null,
+        previewPath: "/preview/files/preview-token/assets/diagram.png",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/assets/diagram.png",
+        capabilities: {
+          canEdit: false,
+          canRefresh: true,
+          canResize: true,
+          canZoom: true,
+          canPaginate: false
+        }
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="assets/diagram.png"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    const previewImage = await screen.findByTestId("file-viewer-image-preview");
+    expect(previewImage).toHaveAttribute(
+      "src",
+      expect.stringContaining("http://10.10.1.8:4100/preview/files/preview-token/assets/diagram.png?_preview=0")
+    );
+  });
+
+  it("桌面端内置 PDF 预览使用当前 Host 连接地址，而不是后端返回的 127 预览地址", async () => {
+    clientConfigStore.hydrate(createRuntimeConfigSnapshot("http://10.10.1.8:4100"));
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "docs/spec.pdf",
+        kind: "pdf",
+        content: null,
+        version: null,
+        previewPath: "/preview/files/preview-token/docs/spec.pdf",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/docs/spec.pdf",
+        capabilities: {
+          canEdit: false,
+          canRefresh: true,
+          canResize: true,
+          canZoom: true,
+          canPaginate: true
+        }
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="docs/spec.pdf"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    const previewFrame = await screen.findByTestId("file-viewer-pdf-preview");
+    expect(previewFrame).toHaveAttribute(
+      "src",
+      expect.stringContaining("http://10.10.1.8:4100/preview/files/preview-token/docs/spec.pdf?_preview=0#page=1&zoom=page-width")
     );
   });
 

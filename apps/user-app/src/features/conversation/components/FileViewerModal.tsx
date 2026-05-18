@@ -1147,8 +1147,18 @@ function resolvePreviewAccessUrl(
     return null;
   }
 
-  if (!isDesktop && preview.previewPath && typeof window !== "undefined" && window.location?.origin) {
-    return new URL(preview.previewPath, window.location.origin).toString();
+  if (preview.previewPath) {
+    if (!isDesktop && typeof window !== "undefined" && window.location?.origin) {
+      return new URL(preview.previewPath, window.location.origin).toString();
+    }
+
+    if (isDesktop) {
+      const desktopPreviewUrl = buildDesktopPreviewUrl(preview.previewPath);
+
+      if (desktopPreviewUrl) {
+        return desktopPreviewUrl;
+      }
+    }
   }
 
   return preview.previewUrl ?? null;
