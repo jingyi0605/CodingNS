@@ -236,6 +236,12 @@ run_npm_pack_and_resolve_filename() {
   echo "$tgz_name"
 }
 
+verify_published_tarball() {
+  local tarball_path="$1"
+
+  node "$PACKAGE_DIR/scripts/verify-publish-tarball.mjs" "$tarball_path"
+}
+
 execute_publish_flow() {
   local target_root="$1"
   local output_package_dir="$2"
@@ -273,6 +279,7 @@ execute_publish_flow() {
       echo ""
       echo "==> 执行 npm pack"
       tgz="$(run_npm_pack_and_resolve_filename "$STAGING_DIR")"
+      verify_published_tarball "$STAGING_DIR/$tgz"
       output_tgz_path="$(resolve_output_tgz_path "$output_package_dir" "$tgz" "$commit_suffix")"
       mv "$STAGING_DIR/$tgz" "$output_tgz_path"
       echo "已生成：$output_tgz_path"
@@ -282,6 +289,9 @@ execute_publish_flow() {
 
       echo "==> 校验 npm 打包清单"
       (cd "$STAGING_DIR" && npm pack --dry-run --ignore-scripts >/dev/null)
+      tgz="$(run_npm_pack_and_resolve_filename "$STAGING_DIR")"
+      verify_published_tarball "$STAGING_DIR/$tgz"
+      rm -f "$STAGING_DIR/$tgz"
 
       publish_cmd=(npm publish --access public --tag "$target_publish_tag")
 

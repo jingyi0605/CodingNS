@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { resolvePnpmInvocation } from "../scripts/build.mjs";
+import {
+  collectWorkspacePackageVersions,
+  rewritePackageJsonForPublish,
+  stripPackLifecycleScripts
+} from "../scripts/publish-package-utils.mjs";
 
 test("resolvePnpmInvocation 遇到 npm_execpath 指向 npm 时会回退到 pnpm 命令", () => {
   const command = resolvePnpmInvocation(["--dir", "/tmp/project", "build"], {
@@ -37,5 +45,38 @@ test("resolvePnpmInvocation 遇到 pnpm 的 npm_execpath 时会复用当前入�
       "/tmp/project",
       "build"
     ]
+  });
+});
+
+test("rewritePackageJsonForPublish 会改写 workspace 依赖并补齐 bundle 设置", () => {
+  const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const originalPackageJson = JSON.parse(
+    fs.readFileSync(path.join(workspaceRoot, "codingns", "package.json"), "utf8")
+  );
+  const rewritten = rewritePackageJsonForPublish(
+    originalPackageJson,
+    collectWorkspacePackageVersions(path.resolve(workspaceRoot, ".."))
+  );
+
+  assert.equal(rewritten.dependencies["@codingns/session-sync-core"], "0.1.0");
+  assert.deepEqual(rewritten.bundleDependencies, ["@codingns/session-sync-core"]);
+  assert.equal(rewritten.optionalDependencies["@codingns/node-pty"], "file:vendor/node-pty-fork");
+});
+
+test("stripPackLifecycleScripts 会移除 prepack 和 postpack，避免 staging 再跑一遍打包脚本", () => {
+  const packageJson = {
+    scripts: {
+      prepack: "node prepack.mjs",
+      postpack: "node postpack.mjs",
+      postinstall: "node postinstall.mjs"
+    }
+  };
+
+  stripPackLifecycleScripts(packageJson);
+
+  assert.deepEqual(packageJson, {
+    scripts: {
+      postinstall: "node postinstall.mjs"
+    }
   });
 });
