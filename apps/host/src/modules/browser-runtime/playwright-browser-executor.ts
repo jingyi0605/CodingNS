@@ -54,18 +54,19 @@ export class PlaywrightBrowserExecutor implements BrowserTaskExecutor {
     let browser: Browser | null = null;
 
     try {
+      const profile = requireBrowserProfile(input.profile);
       const payload = parseBrowserTaskPayload(input.task.inputJson);
 
-      if (input.profile.mode === "persistent") {
-        const executablePath = requireBrowserExecutablePath(this.config, input.profile.engine);
-        context = await chromium.launchPersistentContext(input.profile.userDataDir ?? "", {
+      if (profile.mode === "persistent") {
+        const executablePath = requireBrowserExecutablePath(this.config, profile.engine);
+        context = await chromium.launchPersistentContext(profile.userDataDir ?? "", {
           channel: undefined,
           executablePath,
           acceptDownloads: true,
           headless: true
         });
       } else {
-        browser = await chromium.connectOverCDP(input.profile.cdpEndpoint ?? "");
+        browser = await chromium.connectOverCDP(profile.cdpEndpoint ?? "");
         context = browser.contexts()[0] ?? await browser.newContext({ acceptDownloads: true });
       }
 
@@ -305,6 +306,18 @@ async function ensurePage(context: BrowserContext, startUrl?: string): Promise<P
   }
 
   return page;
+}
+
+function requireBrowserProfile(profile: ExecuteBrowserTaskInput["profile"]): BrowserProfile {
+  if (!profile) {
+    throw new AppError({
+      statusCode: 500,
+      errorCode: "BROWSER_PROFILE_REQUIRED",
+      detail: "playwright 执行器缺少浏览器 Profile"
+    });
+  }
+
+  return profile;
 }
 
 function requireBrowserExecutablePath(config: HostConfig, engine: BrowserProfile["engine"]): string {

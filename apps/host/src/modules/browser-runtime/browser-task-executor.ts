@@ -4,7 +4,7 @@ import type { BrowserExecutionBackend, BrowserTaskAction } from "./browser-task-
 
 export interface ExecuteBrowserTaskInput {
   task: OfficeTask;
-  profile: BrowserProfile;
+  profile?: BrowserProfile;
   runContext?: TaskRunContext;
 }
 
