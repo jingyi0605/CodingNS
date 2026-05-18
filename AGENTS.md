@@ -103,3 +103,11 @@
 1. 如果需要打包 Android 应用程序，先阅读：[docs/使用说明/20260331-Android应用打包说明.md](/Users/jackson/Code/CodingNS/docs/使用说明/20260331-Android应用打包说明.md)
 2. 日常 Android release 打包统一走 `bash scripts/build-android.sh release`，不要直接把 `tauri android build` 当成稳定入口
 3. 发布给用户前，先确认产物是 `app-universal-release.apk`，不要把 `debug` 或 `unsigned` 包当成正式包
+
+
+## 执行与确认规则
+
+- 仅当需求明显含糊、存在高风险破坏性操作、或任务范围跨多步且不清晰时，先用一句话确认。
+- 其余情况直接开始执行，不要先复述需求，不要额外询问是否开始。
+- 默认可直接执行只读型终端/浏览器操作。
+- 仅在会产生写入、删除、提交、支付、发布、merge、修改系统状态的操作前征得用户确认。
