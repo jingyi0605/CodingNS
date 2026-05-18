@@ -139,6 +139,7 @@ export function SkillManagementPanel({
   const [workspaceSessionMcpModalOpen, setWorkspaceSessionMcpModalOpen] = useState(false);
   const [workspaceSessionMcpStatus, setWorkspaceSessionMcpStatus] = useState<WorkspaceSessionMcpStatusDto | null>(null);
   const [workspaceSessionMcpLoading, setWorkspaceSessionMcpLoading] = useState(false);
+  const workspaceSessionMcpSimplified = workspaceSessionMcpStatus?.simplified ?? null;
   const [uploadDraft, setUploadDraft] = useState<SkillUploadDraft | null>(null);
   const [uploadSourceMode, setUploadSourceMode] = useState<SkillUploadSourceMode>("file");
   const [uploadScope, setUploadScope] = useState<SkillScope>("workspace");
@@ -2242,38 +2243,45 @@ async function reloadPanelData(): Promise<void> {
             <div className="settings-skill-entry-list">
               <div className="settings-skill-summary-grid">
                 <SummaryCard
-                  label={t("settings.skillWorkspaceSessionMcpReadyCliCount")}
-                  value={String(workspaceSessionMcpStatus.summary.readyCliCount)}
+                  label={t("settings.skillWorkspaceSessionMcpOverallLabel")}
+                  value={workspaceSessionMcpSimplified?.overallState === "ready"
+                    ? t("settings.skillWorkspaceSessionMcpStateReady")
+                    : workspaceSessionMcpSimplified?.overallState === "partial"
+                      ? t("settings.skillWorkspaceSessionMcpStatePartial")
+                      : t("settings.skillWorkspaceSessionMcpStateMissing")}
                 />
                 <SummaryCard
-                  label={t("settings.skillWorkspaceSessionMcpConfiguredCliCount")}
-                  value={String(workspaceSessionMcpStatus.summary.configuredCliCount)}
+                  label={t("settings.skillWorkspaceSessionMcpCurrentSessionLabel")}
+                  value={workspaceSessionMcpSimplified?.currentSessionReady
+                    ? t("settings.skillWorkspaceSessionMcpStateReady")
+                    : t("settings.skillWorkspaceSessionMcpStateMissing")}
                 />
                 <SummaryCard
-                  label={t("settings.skillWorkspaceSessionMcpTotalCliCount")}
-                  value={String(workspaceSessionMcpStatus.summary.totalCliCount)}
+                  label={t("settings.skillWorkspaceSessionMcpCodexLabel")}
+                  value={workspaceSessionMcpSimplified?.codexState === "ready"
+                    ? t("settings.skillWorkspaceSessionMcpStateReady")
+                    : workspaceSessionMcpSimplified?.codexState === "partial"
+                      ? t("settings.skillWorkspaceSessionMcpStatePartial")
+                      : t("settings.skillWorkspaceSessionMcpStateMissing")}
                 />
               </div>
               <ModalList>
                 <ModalListItem
-                  label={t("settings.skillWorkspaceSessionMcpRuntimeHomeLabel")}
-                  description={workspaceSessionMcpStatus.runtime.runtimeHomeDir ?? t("settings.skillWorkspaceSessionMcpValueMissing")}
-                  trailing={renderWorkspaceSessionMcpStateTag(workspaceSessionMcpStatus.runtime.runtimeHomeExists)}
+                  label={t("settings.skillWorkspaceSessionMcpRuntimeTitle")}
+                  description={workspaceSessionMcpSimplified?.currentSessionDetail ?? t("settings.skillWorkspaceSessionMcpValueMissing")}
+                  trailing={renderWorkspaceSessionMcpStateTag(
+                    workspaceSessionMcpSimplified?.currentSessionReady ? "ready" : "missing"
+                  )}
                 />
                 <ModalListItem
-                  label={t("settings.skillWorkspaceSessionMcpAuthFileLabel")}
-                  description={workspaceSessionMcpStatus.runtime.scopedAuthFilePath ?? t("settings.skillWorkspaceSessionMcpValueMissing")}
-                  trailing={renderWorkspaceSessionMcpStateTag(workspaceSessionMcpStatus.runtime.scopedAuthFileExists)}
+                  label="Codex"
+                  description={workspaceSessionMcpSimplified?.codexDetail ?? t("settings.skillWorkspaceSessionMcpValueMissing")}
+                  trailing={renderWorkspaceSessionMcpStateTag(workspaceSessionMcpSimplified?.codexState ?? "missing")}
                 />
                 <ModalListItem
-                  label={t("settings.skillWorkspaceSessionMcpInstructionFileLabel")}
-                  description={workspaceSessionMcpStatus.runtime.composedInstructionPath ?? t("settings.skillWorkspaceSessionMcpValueMissing")}
-                  trailing={renderWorkspaceSessionMcpStateTag(workspaceSessionMcpStatus.runtime.composedInstructionExists)}
-                />
-                <ModalListItem
-                  label={t("settings.skillWorkspaceSessionMcpSkillDirLabel")}
-                  description={workspaceSessionMcpStatus.runtime.skillDirectoryPath ?? t("settings.skillWorkspaceSessionMcpValueMissing")}
-                  trailing={renderWorkspaceSessionMcpStateTag(workspaceSessionMcpStatus.runtime.skillDirectoryExists)}
+                  label={t("settings.skillWorkspaceSessionMcpGlobalCodingnsLabel")}
+                  description={workspaceSessionMcpSimplified?.globalCodingnsDetail ?? t("settings.skillWorkspaceSessionMcpValueMissing")}
+                  trailing={renderWorkspaceSessionMcpStateTag(workspaceSessionMcpSimplified?.globalCodingnsState ?? "missing")}
                 />
               </ModalList>
             </div>
@@ -2293,57 +2301,33 @@ async function reloadPanelData(): Promise<void> {
           {workspaceSessionMcpStatus ? (
             <ModalList>
               <ModalListItem
-                label={t("settings.skillWorkspaceSessionMcpGlobalCodingnsLabel")}
-                description={workspaceSessionMcpStatus.commands.globalCodingnsPath ?? workspaceSessionMcpStatus.commands.globalCodingnsWorkspaceMcpDetail}
-                trailing={renderWorkspaceSessionMcpStateTag(workspaceSessionMcpStatus.commands.globalCodingnsSupportsWorkspaceMcp)}
+                label={t("settings.skillWorkspaceSessionMcpBrowserBridgeLabel")}
+                description={t("settings.skillWorkspaceSessionMcpBrowserBridgeDetail")}
+                trailing={renderWorkspaceSessionMcpStateTag("ready")}
               />
               <ModalListItem
-                label={t("settings.skillWorkspaceSessionMcpGlobalStandaloneLabel")}
-                description={workspaceSessionMcpStatus.commands.globalWorkspaceOfficeMcpPath ?? t("settings.skillWorkspaceSessionMcpGlobalStandaloneMissing")}
-                trailing={renderWorkspaceSessionMcpStateTag(workspaceSessionMcpStatus.commands.globalWorkspaceOfficeMcpInstalled)}
-              />
-              <ModalListItem
-                label={t("settings.skillWorkspaceSessionMcpRepoCodingnsLabel")}
-                description={workspaceSessionMcpStatus.commands.repoCodingnsWorkspaceMcpDetail}
-                trailing={renderWorkspaceSessionMcpStateTag(workspaceSessionMcpStatus.commands.repoCodingnsSupportsWorkspaceMcp)}
+                label={t("settings.skillWorkspaceSessionMcpRecommendedPathLabel")}
+                description={workspaceSessionMcpSimplified?.recommendedPath ?? t("settings.skillWorkspaceSessionMcpValueMissing")}
+                trailing={renderWorkspaceSessionMcpStateTag("ready")}
               />
             </ModalList>
           ) : null}
         </ModalSection>
 
-        <ModalSection
-          heading={t("settings.skillWorkspaceSessionMcpCliTitle")}
-          description={t("settings.skillWorkspaceSessionMcpCliDescription")}
-        >
-          {workspaceSessionMcpStatus ? (
-            <ModalList>
-              {workspaceSessionMcpStatus.cliStatuses.map((item) => (
-                <ModalListItem
-                  key={item.cli}
-                  label={item.label}
-                  description={`${item.runtimeConfigFile} · ${item.callStateDetail}`}
-                  trailing={renderWorkspaceSessionMcpStateTag(
-                    item.callState === "ready" || item.callState === "runtime_injected"
-                  )}
-                />
-              ))}
-            </ModalList>
-          ) : null}
-          <ModalActions>
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={!workspaceId?.trim() || workspaceSessionMcpLoading}
-              onClick={() => {
-                void handleOpenWorkspaceSessionMcpStatus();
-              }}
-            >
-              {workspaceSessionMcpLoading
-                ? t("common.loading")
-                : t("settings.skillWorkspaceSessionMcpRefreshAction")}
-            </button>
-          </ModalActions>
-        </ModalSection>
+        <ModalActions>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={!workspaceId?.trim() || workspaceSessionMcpLoading}
+            onClick={() => {
+              void handleOpenWorkspaceSessionMcpStatus();
+            }}
+          >
+            {workspaceSessionMcpLoading
+              ? t("common.loading")
+              : t("settings.skillWorkspaceSessionMcpRefreshAction")}
+          </button>
+        </ModalActions>
       </WorkbenchModal>
 
       <WorkbenchModal
@@ -2925,10 +2909,17 @@ function buildOpsTargetSummary(target: OpsTargetDto): string {
     .join(" · ");
 }
 
-function renderWorkspaceSessionMcpStateTag(ready: boolean) {
+function renderWorkspaceSessionMcpStateTag(state: "ready" | "partial" | "missing") {
+  const status = state === "ready" ? "synced" : state === "partial" ? "pending" : "failed";
+  const label = state === "ready"
+    ? t("settings.skillWorkspaceSessionMcpStateReady")
+    : state === "partial"
+      ? t("settings.skillWorkspaceSessionMcpStatePartial")
+      : t("settings.skillWorkspaceSessionMcpStateMissing");
+
   return (
-    <span className="settings-skill-tag" data-status={ready ? "synced" : "failed"}>
-      {ready ? t("settings.skillWorkspaceSessionMcpStateReady") : t("settings.skillWorkspaceSessionMcpStateMissing")}
+    <span className="settings-skill-tag" data-status={status}>
+      {label}
     </span>
   );
 }

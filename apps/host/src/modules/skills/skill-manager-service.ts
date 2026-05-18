@@ -167,6 +167,17 @@ export interface WorkspaceSessionMcpStatusResult {
     configuredCliCount: number;
     totalCliCount: number;
   };
+  simplified: {
+    overallState: "ready" | "partial" | "missing";
+    overallDetail: string;
+    currentSessionReady: boolean;
+    currentSessionDetail: string;
+    codexState: "ready" | "partial" | "missing";
+    codexDetail: string;
+    globalCodingnsState: "ready" | "partial" | "missing";
+    globalCodingnsDetail: string;
+    recommendedPath: string;
+  };
   runtime: WorkspaceSessionMcpRuntimeStatus;
   commands: WorkspaceSessionMcpCommandStatus;
   cliStatuses: WorkspaceSessionMcpCliStatus[];
@@ -338,6 +349,7 @@ export class SkillManagerService {
         configuredCliCount: cliStatuses.filter((item) => item.mcpConfigured).length,
         totalCliCount: cliStatuses.length
       },
+      simplified: buildSimplifiedWorkspaceSessionMcpStatus(runtime, commands, cliStatuses),
       runtime,
       commands,
       cliStatuses
@@ -1135,7 +1147,57 @@ function buildWorkspaceSessionMcpCliStatus(
     callState: mcpConfigured ? "ready" : "missing_runtime_config",
     callStateDetail: mcpConfigured
       ? "当前工作区会话 runtime 已写入 office MCP 配置。"
-      : "当前工作区会话 runtime 里还没有这个 CLI 的 MCP 配置文件，或者文件里未包含 codingns-workspace-office。"
+      : "当前工作区会话 runtime 里还没有这个 CLI 的 MCP 配置文件，或者文件里未包含 codingns-workspace-office；Codex 例外，它现在走启动时临时注入。"
+  };
+}
+
+function buildSimplifiedWorkspaceSessionMcpStatus(
+  runtime: WorkspaceSessionMcpRuntimeStatus,
+  commands: WorkspaceSessionMcpCommandStatus,
+  cliStatuses: WorkspaceSessionMcpCliStatus[]
+): WorkspaceSessionMcpStatusResult["simplified"] {
+  const currentSessionReady = runtime.runtimeHomeExists
+    && runtime.scopedAuthFileExists
+    && runtime.composedInstructionExists
+    && runtime.skillDirectoryExists;
+  const codexStatus = cliStatuses.find((item) => item.cli === "codex");
+  const codexReady = codexStatus?.callState === "ready" || codexStatus?.callState === "runtime_injected";
+  const globalCodingnsReady = commands.globalCodingnsInstalled && commands.globalCodingnsSupportsWorkspaceMcp;
+  const readyCount = [currentSessionReady, Boolean(codexReady), globalCodingnsReady].filter(Boolean).length;
+  const overallState =
+    readyCount === 3
+      ? "ready"
+      : readyCount > 0
+        ? "partial"
+        : "missing";
+
+  return {
+    overallState,
+    overallDetail:
+      overallState === "ready"
+        ? "当前工作区会话已经具备正式 office MCP 调用条件。"
+        : overallState === "partial"
+          ? "当前链路只完成了一部分，模型可能能用，但稳定性还不够。"
+          : "当前工作区会话还不具备正式 office MCP 调用条件。",
+    currentSessionReady,
+    currentSessionDetail: currentSessionReady
+      ? "当前会话 runtime 资产已经落齐。"
+      : "当前会话 runtime 资产还没落齐，先看 scoped 认证、组合说明文件和工作区 skill 是否存在。",
+    codexState: codexReady ? "ready" : currentSessionReady ? "partial" : "missing",
+    codexDetail: codexReady
+      ? "Codex 会通过运行时注入方式挂上 workspace office MCP。"
+      : "Codex 这条链路还没完全打通；即使不改全局配置，也要保证当前会话 runtime 和仓库内 codingns.mjs 可用。",
+    globalCodingnsState: globalCodingnsReady
+      ? "ready"
+      : commands.globalCodingnsInstalled
+        ? "partial"
+        : "missing",
+    globalCodingnsDetail: globalCodingnsReady
+      ? "你机器上的全局 codingns 已支持 workspace office MCP。"
+      : commands.globalCodingnsInstalled
+        ? "你机器上有全局 codingns，但版本偏旧，help 里还看不到完整 workspace office 能力。"
+        : "当前机器还没有可直接调用的全局 codingns，模型如果走 PATH 很容易查到旧能力或查不到能力。",
+    recommendedPath: "登录态、验证码、复杂真实站点优先用 browser.opencli_bridge；它不是 profile 型任务，不需要先查/建浏览器 Profile。"
   };
 }
 

@@ -727,13 +727,10 @@ describe("SkillManagementPanel", () => {
       name: t("settings.skillWorkspaceSessionMcpModalTitle")
     });
 
-    expect(within(statusDialog).getByText("/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1")).toBeInTheDocument();
-    expect(within(statusDialog).getByText("/opt/homebrew/bin/codingns")).toBeInTheDocument();
-    expect(within(statusDialog).getByText(t("settings.skillWorkspaceSessionMcpGlobalStandaloneMissing"))).toBeInTheDocument();
-    expect(within(statusDialog).getByText("codingns mcp workspace-office serve --help 可正常输出帮助")).toBeInTheDocument();
-    expect(within(statusDialog).getByText("/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/config.toml · 当前会话会在启动 codex app-server 时临时注入 office MCP，不要求把 codingns-workspace-office 写进 config.toml。")).toBeInTheDocument();
-    expect(within(statusDialog).getByText("/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/.claude.json · 当前工作区会话 runtime 里还没有这个 CLI 的 MCP 配置文件。")).toBeInTheDocument();
-    expect(within(statusDialog).getByText("/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/opencode.json · 当前工作区会话 runtime 里还没有这个 CLI 的 MCP 配置文件。")).toBeInTheDocument();
+    expect(within(statusDialog).getByText("当前会话 runtime 资产已经落齐。")).toBeInTheDocument();
+    expect(within(statusDialog).getByText("Codex 会通过运行时注入方式挂上 workspace office MCP。")).toBeInTheDocument();
+    expect(within(statusDialog).getByText("你机器上有全局 codingns，但版本偏旧，help 里还看不到完整 workspace office 能力。")).toBeInTheDocument();
+    expect(within(statusDialog).getByText("登录态、验证码、复杂真实站点优先用 browser.opencli_bridge；它不是 profile 型任务，不需要先查/建浏览器 Profile。")).toBeInTheDocument();
     expect(within(statusDialog).getByRole("button", { name: t("settings.skillWorkspaceSessionMcpRefreshAction") })).toBeInTheDocument();
 
     expect(fetchMock.mock.calls.some(([input, requestInit]) => {
@@ -1316,6 +1313,17 @@ function createWorkspaceSessionMcpStatusResponse() {
       readyCliCount: 1,
       configuredCliCount: 1,
       totalCliCount: 3
+    },
+    simplified: {
+      overallState: "partial",
+      overallDetail: "当前链路只完成了一部分，模型可能能用，但稳定性还不够。",
+      currentSessionReady: true,
+      currentSessionDetail: "当前会话 runtime 资产已经落齐。",
+      codexState: "ready",
+      codexDetail: "Codex 会通过运行时注入方式挂上 workspace office MCP。",
+      globalCodingnsState: "partial",
+      globalCodingnsDetail: "你机器上有全局 codingns，但版本偏旧，help 里还看不到完整 workspace office 能力。",
+      recommendedPath: "登录态、验证码、复杂真实站点优先用 browser.opencli_bridge；它不是 profile 型任务，不需要先查/建浏览器 Profile。"
     },
     runtime: {
       workspaceId: "workspace-1",

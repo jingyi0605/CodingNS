@@ -117,6 +117,17 @@ export interface WorkspaceSessionMcpStatusDto {
     configuredCliCount: number;
     totalCliCount: number;
   };
+  simplified: {
+    overallState: "ready" | "partial" | "missing";
+    overallDetail: string;
+    currentSessionReady: boolean;
+    currentSessionDetail: string;
+    codexState: "ready" | "partial" | "missing";
+    codexDetail: string;
+    globalCodingnsState: "ready" | "partial" | "missing";
+    globalCodingnsDetail: string;
+    recommendedPath: string;
+  };
   runtime: WorkspaceSessionMcpRuntimeStatusDto;
   commands: WorkspaceSessionMcpCommandStatusDto;
   cliStatuses: WorkspaceSessionMcpCliStatusDto[];
