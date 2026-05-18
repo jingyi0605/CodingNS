@@ -17484,22 +17484,48 @@ textarea:focus-visible {
   min-height: 100vh;
 }
 
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-layer[data-fullscreen="true"] {
+  align-items: stretch;
+  justify-content: stretch;
+  padding: calc(var(--desktop-macos-titlebar-height, 28px) + 14px) 8px 8px;
+}
+
 body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-card.file-viewer-modal[data-size="full"] {
-  width: calc(100% - 24px);
-  max-width: calc(100% - 24px);
-  height: calc(100vh - 24px);
-  min-height: calc(100vh - 24px);
-  max-height: calc(100vh - 24px);
-  margin-top: 12px;
-  padding-top: calc(var(--desktop-macos-titlebar-height, 28px) + 26px);
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  margin: 0;
+  padding: 14px 14px 12px;
+  gap: 10px;
+  border-radius: 24px;
 }
 
 body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-card.file-viewer-modal[data-size="full"] .workbench-modal-header {
-  min-height: calc(var(--desktop-macos-titlebar-height, 28px) + 8px);
-  padding-left: calc(var(--desktop-macos-traffic-light-leading-inset, 78px) + 10px);
-  padding-right: 8px;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
 }
 
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-card.file-viewer-modal[data-size="full"] .workbench-modal-title-wrap h2 {
+  font-size: 15px;
+  line-height: 1.15;
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-card.file-viewer-modal[data-size="full"] .file-viewer-toolbar {
+  gap: 8px;
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-card.file-viewer-modal[data-size="full"] .file-viewer-body {
+  gap: 0;
+}
+
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-card.file-viewer-modal[data-size="full"] .file-viewer-html-frame-shell,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-card.file-viewer-modal[data-size="full"] .file-viewer-media-shell,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-modal-card.file-viewer-modal[data-size="full"] .file-viewer-pdf-shell {
+  padding: 4px;
+}
 
 .file-viewer-modal.is-resizable {
   min-width: min(780px, 96vw);
