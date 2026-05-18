@@ -174,6 +174,49 @@ describe("WorkspaceSessionRuntimeContextService", () => {
     });
   });
 
+  it("命中临时 overlay 时会把浏览器任务规则追加到组合说明文件", () => {
+    const workspacePath = mkdtempSync(path.join(tmpdir(), "codingns-workspace-session-runtime-"));
+    const runtimeStorageRootDir = mkdtempSync(path.join(tmpdir(), "codingns-workspace-session-global-runtime-"));
+    tempDirs.push(workspacePath);
+    tempDirs.push(runtimeStorageRootDir);
+    writeFileSync(path.join(workspacePath, "AGENTS.md"), "# 项目规则\n", "utf8");
+
+    const service = new WorkspaceSessionRuntimeContextService({
+      ensureWorkspaceCredential: vi.fn(() => ({
+        apiBaseUrl: "http://127.0.0.1:3002",
+        accessToken: "workspace-token",
+        issuedAt: "2026-05-16T10:00:00.000Z",
+        expiresAt: "2026-05-23T10:00:00.000Z",
+        userId: "user-1",
+        workspaceId: "workspace-1",
+        projectId: null,
+        sessionId: "session-overlay",
+        callerKind: "workspace_session" as const,
+        capabilityProfile: "workspace-scoped" as const
+      })),
+      getCredentialFilePath: vi.fn((runtimeHomeDir: string) =>
+        path.join(runtimeHomeDir, "WORKSPACE_SESSION_AUTH.json")
+      )
+    }, {
+      runtimeStorageRootDir
+    });
+
+    const result = service.prepareWorkspaceInstructionBundle({
+      sessionId: "session-overlay",
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      workspacePath,
+      provider: "codex",
+      projectId: null,
+      instructionOverlay: "## 浏览器任务临时规则（本轮生效）\n\n- 必须使用 `executionBackend=opencli_bridge`。"
+    });
+
+    const instructionContent = readFileSync(result.instructionFilePath, "utf8");
+    expect(instructionContent).toContain("工作区会话临时规则");
+    expect(instructionContent).toContain("浏览器任务临时规则（本轮生效）");
+    expect(instructionContent).toContain("必须使用 `executionBackend=opencli_bridge`");
+  });
+
   it("syncRuntimeOfficeMcpContext 只会同步 scoped auth，不会改 Codex 配置文件", () => {
     const codexHomeDir = mkdtempSync(path.join(tmpdir(), "codingns-workspace-session-codex-home-"));
     tempDirs.push(codexHomeDir);

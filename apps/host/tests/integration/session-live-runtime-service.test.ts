@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -1568,14 +1568,17 @@ describe("SessionLiveRuntimeService", () => {
       clientRequestId: null
     });
 
-    expect(workspaceSessionRuntimeContextService.prepareWorkspaceInstructionBundle).toHaveBeenCalledWith({
-      sessionId: expect.any(String),
-      userId: "user-1",
-      workspaceId: "workspace-1",
-      workspacePath: workspaceRoot,
-      projectId: null,
-      provider: "codex"
-    });
+    expect(workspaceSessionRuntimeContextService.prepareWorkspaceInstructionBundle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: expect.any(String),
+        userId: "user-1",
+        workspaceId: "workspace-1",
+        workspacePath: workspaceRoot,
+        projectId: null,
+        provider: "codex",
+        instructionOverlay: null
+      })
+    );
     expect(providerRuntimeService.startSession).toHaveBeenCalledWith(
       expect.objectContaining({
         runtimeEnv: expect.objectContaining({
@@ -1799,14 +1802,17 @@ describe("SessionLiveRuntimeService", () => {
       clientRequestId: null
     });
 
-    expect(workspaceSessionRuntimeContextService.prepareWorkspaceInstructionBundle).toHaveBeenCalledWith({
-      sessionId: "session-1",
-      userId: "user-1",
-      workspaceId: "workspace-1",
-      workspacePath: workspaceRoot,
-      projectId: null,
-      provider: "codex"
-    });
+    expect(workspaceSessionRuntimeContextService.prepareWorkspaceInstructionBundle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "session-1",
+        userId: "user-1",
+        workspaceId: "workspace-1",
+        workspacePath: workspaceRoot,
+        projectId: null,
+        provider: "codex",
+        instructionOverlay: null
+      })
+    );
     expect(continueSession).toHaveBeenCalledWith(
       expect.objectContaining({
         runtimeEnv: expect.objectContaining({
@@ -1819,6 +1825,266 @@ describe("SessionLiveRuntimeService", () => {
         options: expect.objectContaining({
           providerInstructionFilePath: workspaceInstructionFilePath
         })
+      })
+    );
+  });
+
+  it("命中登录态浏览器任务时，会额外注入本轮浏览器临时规则", async () => {
+    const workspaceRoot = mkdtempSync(path.join(tmpdir(), "codingns-workspace-browser-overlay-"));
+    const workspaceInstructionFilePath = path.join(
+      workspaceRoot,
+      ".codingns",
+      "workspace-session-runtime",
+      "session-1",
+      "WORKSPACE_SESSION_COMPOSED.md"
+    );
+    const workspaceAuthFilePath = path.join(
+      workspaceRoot,
+      ".codingns",
+      "workspace-session-runtime",
+      "session-1",
+      "WORKSPACE_SESSION_AUTH.json"
+    );
+    tempDirs.push(workspaceRoot);
+    mkdirSync(path.dirname(workspaceInstructionFilePath), { recursive: true });
+    const workspaceSessionRuntimeContextService = {
+      prepareWorkspaceInstructionBundle: vi.fn((input?: { instructionOverlay?: string | null }) => {
+        const overlay = input?.instructionOverlay?.trim() ?? "";
+        const content = [
+          "# workspace instruction",
+          overlay ? `\n# 工作区会话临时规则\n\n${overlay}` : ""
+        ].join("\n");
+        writeFileSync(workspaceInstructionFilePath, `${content}\n`, "utf8");
+        return {
+          instructionFilePath: workspaceInstructionFilePath,
+          authFilePath: workspaceAuthFilePath,
+          runtimeHomeDir: path.dirname(workspaceInstructionFilePath),
+          runtimeEnv: {
+            CODINGNS_AUTH_FILE: workspaceAuthFilePath,
+            WORKSPACE_SESSION_AUTH_FILE: workspaceAuthFilePath,
+            CODINGNS_OFFICE_MCP_AUTH_FILE: workspaceAuthFilePath,
+            [CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV]: "1"
+          }
+        };
+      })
+    };
+    const {
+      service,
+      sessionHistoryService,
+      sessionMessageAttachmentService,
+      workspaceService
+    } = createService({}, null, workspaceSessionRuntimeContextService);
+    const continueSession = vi.fn(async () => ({
+      getSnapshot: vi.fn(() => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "thread-1",
+        rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+        runningState: "running",
+        attachedClients: 1,
+        startedAt: "2026-04-25T13:48:12.000Z",
+        lastEventAt: "2026-04-25T13:48:12.000Z",
+        completedAt: null,
+        detail: null,
+        errorCode: null,
+        supportsInterrupt: true
+      })),
+      attach: vi.fn()
+    }));
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: {
+        isRunHealthy: vi.fn(() => true),
+        getSnapshot: vi.fn(() => null),
+        continueSession
+      },
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+      messageCount: 8
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: false,
+      supportsCheckpoint: false,
+      limitations: []
+    });
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: workspaceRoot
+    });
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+    sessionMessageAttachmentService.bindClientRequestToMessage.mockReturnValue([]);
+    sessionHistoryService.getBindingOrThrow.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null
+    });
+    sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
+
+    await service.sendLiveMessage({
+      sessionId: "session-1",
+      userId: "user-1",
+      content: "请用 Edge 当前已登录窗口打开淘宝待收货页面并截图",
+      clientRequestId: null
+    });
+
+    expect(workspaceSessionRuntimeContextService.prepareWorkspaceInstructionBundle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instructionOverlay: expect.stringContaining("浏览器任务临时规则（本轮生效）")
+      })
+    );
+    const injectedInstruction = readFileSync(workspaceInstructionFilePath, "utf8");
+    expect(injectedInstruction).toContain("浏览器任务临时规则（本轮生效）");
+    expect(injectedInstruction).toContain("executionBackend=opencli_bridge");
+    expect(injectedInstruction).toContain("不要自动切到 `playwright`");
+    expect(continueSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({
+          providerInstructionFilePath: workspaceInstructionFilePath
+        })
+      })
+    );
+  });
+
+  it("普通非浏览器消息不会注入本轮浏览器临时规则", async () => {
+    const workspaceRoot = mkdtempSync(path.join(tmpdir(), "codingns-workspace-browser-overlay-none-"));
+    const workspaceInstructionFilePath = path.join(
+      workspaceRoot,
+      ".codingns",
+      "workspace-session-runtime",
+      "session-1",
+      "WORKSPACE_SESSION_COMPOSED.md"
+    );
+    const workspaceAuthFilePath = path.join(
+      workspaceRoot,
+      ".codingns",
+      "workspace-session-runtime",
+      "session-1",
+      "WORKSPACE_SESSION_AUTH.json"
+    );
+    tempDirs.push(workspaceRoot);
+    mkdirSync(path.dirname(workspaceInstructionFilePath), { recursive: true });
+    const workspaceSessionRuntimeContextService = {
+      prepareWorkspaceInstructionBundle: vi.fn((input?: { instructionOverlay?: string | null }) => {
+        writeFileSync(workspaceInstructionFilePath, "# workspace instruction\n", "utf8");
+        return {
+          instructionFilePath: workspaceInstructionFilePath,
+          authFilePath: workspaceAuthFilePath,
+          runtimeHomeDir: path.dirname(workspaceInstructionFilePath),
+          runtimeEnv: {
+            CODINGNS_AUTH_FILE: workspaceAuthFilePath,
+            WORKSPACE_SESSION_AUTH_FILE: workspaceAuthFilePath,
+            CODINGNS_OFFICE_MCP_AUTH_FILE: workspaceAuthFilePath,
+            [CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV]: "1"
+          }
+        };
+      })
+    };
+    const {
+      service,
+      sessionHistoryService,
+      sessionMessageAttachmentService,
+      workspaceService
+    } = createService({}, null, workspaceSessionRuntimeContextService);
+    const continueSession = vi.fn(async () => ({
+      getSnapshot: vi.fn(() => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "thread-1",
+        rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+        runningState: "running",
+        attachedClients: 1,
+        startedAt: "2026-04-25T13:48:12.000Z",
+        lastEventAt: "2026-04-25T13:48:12.000Z",
+        completedAt: null,
+        detail: null,
+        errorCode: null,
+        supportsInterrupt: true
+      })),
+      attach: vi.fn()
+    }));
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: {
+        isRunHealthy: vi.fn(() => true),
+        getSnapshot: vi.fn(() => null),
+        continueSession
+      },
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+      messageCount: 8
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: false,
+      supportsCheckpoint: false,
+      limitations: []
+    });
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: workspaceRoot
+    });
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+    sessionMessageAttachmentService.bindClientRequestToMessage.mockReturnValue([]);
+    sessionHistoryService.getBindingOrThrow.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null
+    });
+    sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
+
+    await service.sendLiveMessage({
+      sessionId: "session-1",
+      userId: "user-1",
+      content: "请继续整理这次 spec 的任务拆分",
+      clientRequestId: null
+    });
+
+    expect(workspaceSessionRuntimeContextService.prepareWorkspaceInstructionBundle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instructionOverlay: null
       })
     );
   });

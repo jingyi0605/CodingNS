@@ -129,6 +129,7 @@ export class WorkspaceSessionRuntimeContextService {
     workspacePath: string;
     projectId?: string | null;
     provider: SessionBinding["provider"];
+    instructionOverlay?: string | null;
   }): {
     authFilePath: string;
     instructionFilePath: string;
@@ -163,7 +164,8 @@ export class WorkspaceSessionRuntimeContextService {
     const composedInstructionPath = path.join(runtimeHomeDir, WORKSPACE_SESSION_COMPOSED_INSTRUCTION_FILE);
     const composedInstruction = composeWorkspaceInstructionDocument({
       workspaceAgentsPath,
-      workspaceInstruction: baseInstruction
+      workspaceInstruction: baseInstruction,
+      instructionOverlay: input.instructionOverlay ?? null
     });
 
     fs.writeFileSync(authFilePath, `${JSON.stringify(credential, null, 2)}\n`, "utf8");
@@ -422,6 +424,7 @@ function buildWorkspaceAssistantInstructions(input: {
 function composeWorkspaceInstructionDocument(input: {
   workspaceAgentsPath: string;
   workspaceInstruction: string;
+  instructionOverlay?: string | null;
 }): string {
   const sections: string[] = [];
 
@@ -438,6 +441,16 @@ function composeWorkspaceInstructionDocument(input: {
 下面这段规则由 Host 在工作区会话启动时显式注入，只对当前工作区会话生效。
 
 ${input.workspaceInstruction.trim()}`);
+
+  const normalizedOverlay = input.instructionOverlay?.trim() ?? "";
+
+  if (normalizedOverlay.length > 0) {
+    sections.push(`# 工作区会话临时规则
+
+下面这段规则只针对当前这次用户消息生效，用来约束命中的任务类型，不改项目里的 AGENTS.md。
+
+${normalizedOverlay}`);
+  }
 
   return `${sections.join("\n\n")}\n`;
 }
