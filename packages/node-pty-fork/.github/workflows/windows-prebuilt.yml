@@ -1,0 +1,60 @@
+name: windows-prebuilt
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/node-pty-fork/**"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: packages/node-pty-fork
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Fetch upstream snapshot
+        run: npm run fetch:upstream
+
+      - name: Sync upstream source
+        run: npm run sync:upstream
+
+      - name: Install deps without install script
+        run: npm install --ignore-scripts
+
+      - name: Build native artifacts
+        run: npm run build:native
+
+      - name: Verify runtime
+        run: npm run verify:runtime
+
+      - name: Pack tarball
+        run: npm pack
+
+      - name: Verify tarball
+        run: npm run verify:tarball
+
+      - name: Install smoke test
+        run: npm run smoke:install
+
+      - name: Upload tarball artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codingns-node-pty-tarball
+          path: packages/node-pty-fork/*.tgz
+
+      - name: Upload release snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: codingns-node-pty-build-release
+          path: packages/node-pty-fork/build/Release/**
