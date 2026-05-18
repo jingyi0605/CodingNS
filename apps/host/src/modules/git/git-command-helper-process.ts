@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import readline from "node:readline";
 
-const GIT_COMMAND_SLOW_THRESHOLD_MS = 3_000;
 const GIT_COMMAND_SPAWN_RETRY_LIMIT = 1;
 const GIT_COMMAND_SPAWN_RETRY_DELAY_MS = 50;
 
@@ -243,24 +242,6 @@ async function runGitCommand(
     child.on("close", (exitCode) => {
       finish(() => {
         const code = exitCode ?? 1;
-        const durationMs = Date.now() - startedAt;
-
-        if (durationMs >= GIT_COMMAND_SLOW_THRESHOLD_MS) {
-          logHelperWarn("git-command-slow", {
-            workspaceId: options.workspaceId ?? null,
-            operation: options.operation ?? null,
-            repoRoot,
-            args,
-            command: `git ${args.join(" ")}`,
-            timeoutMs,
-            slowThresholdMs: GIT_COMMAND_SLOW_THRESHOLD_MS,
-            durationMs,
-            exitCode: code,
-            pid: child.pid ?? null,
-            stdoutLength: stdout.length,
-            stderrLength: stderr.length
-          });
-        }
 
         if (code !== 0 && !options.allowNonZeroExit) {
           reject({

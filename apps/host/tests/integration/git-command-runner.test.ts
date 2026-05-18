@@ -88,7 +88,7 @@ describe("GitCommandRunner", () => {
     );
   });
 
-  it("Git 慢命令在未超时时会输出告警日志", async () => {
+  it("Git 慢命令在未超时时不再输出 slow 日志", async () => {
     vi.useFakeTimers();
     const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const child = new MockChildProcess();
@@ -110,19 +110,7 @@ describe("GitCommandRunner", () => {
       stderr: "",
       exitCode: 0
     });
-    expect(consoleWarnSpy).toHaveBeenCalledWith(
-      "[git-command-slow]",
-      expect.objectContaining({
-        workspaceId: "workspace-1",
-        operation: "gitRead.getStatus",
-        repoRoot: "/repo",
-        args: ["status", "--porcelain=1"],
-        command: "git status --porcelain=1",
-        slowThresholdMs: 3000,
-        durationMs: 3100,
-        exitCode: 0
-      })
-    );
+    expect(consoleWarnSpy).not.toHaveBeenCalled();
   });
 
   it("spawn 返回 EBADF 时会自动重试一次", async () => {

@@ -95,6 +95,48 @@ describe("setErrorHandler", () => {
       })
     );
   });
+
+  it("附件不存在只记简化 warning，不输出整段 host-error", () => {
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const reply = createReply();
+    const request = createRequest(
+      "/api/sessions/session-1/attachments/attachment-1/content",
+      {},
+      {
+        sessionId: "session-1",
+        attachmentId: "attachment-1"
+      }
+    );
+    const error = new AppError({
+      statusCode: 404,
+      errorCode: "ATTACHMENT_NOT_FOUND",
+      detail: "未找到对应的附件",
+      field: "attachmentId"
+    });
+
+    setErrorHandler(error, request, reply);
+
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      "[host-warning]",
+      expect.objectContaining({
+        method: "GET",
+        url: "/api/sessions/session-1/attachments/attachment-1/content",
+        statusCode: 404,
+        errorCode: "ATTACHMENT_NOT_FOUND",
+        sessionId: "session-1",
+        attachmentId: "attachment-1"
+      })
+    );
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    expect(request.log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorCode: "ATTACHMENT_NOT_FOUND",
+        sessionId: "session-1",
+        attachmentId: "attachment-1"
+      })
+    );
+  });
 });
 
 function createReply() {
@@ -107,11 +149,16 @@ function createReply() {
   };
 }
 
-function createRequest(url: string, headers: Record<string, string> = {}) {
+function createRequest(
+  url: string,
+  headers: Record<string, string> = {},
+  params: Record<string, string> = {}
+) {
   return {
     method: "GET",
     url,
     headers,
+    params,
     log: {
       warn: vi.fn(),
       error: vi.fn()

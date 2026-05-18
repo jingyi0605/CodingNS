@@ -45,20 +45,8 @@ export function setErrorHandler(
   };
 
   if (isAppError(error)) {
-    if (shouldLogAsExpectedRequestWarning(error)) {
-      if (shouldEmitExpectedRequestWarning(error, request)) {
-        console.warn("[host-warning]", {
-          ...requestContext,
-          statusCode: error.statusCode,
-          errorCode: error.errorCode
-        });
-        request.log.warn({
-          err: error,
-          ...requestContext,
-          statusCode: error.statusCode,
-          errorCode: error.errorCode
-        });
-      }
+    if (shouldLogAsCompactRequestWarning(error)) {
+      logCompactRequestWarning(error, request, requestContext);
 
       return sendError(reply, error.statusCode, error.errorCode, error.message, error.field, error.data);
     }
@@ -86,15 +74,15 @@ function shouldLogAsExpectedRequestWarning(error: AppError): boolean {
   );
 }
 
+function shouldLogAsCompactRequestWarning(error: AppError): boolean {
+  return shouldLogAsExpectedRequestWarning(error) || isAttachmentNotFoundError(error);
+}
+
 function shouldEmitExpectedRequestWarning(error: AppError, request: FastifyRequest): boolean {
   pruneExpiredExpectedRequestWarnings();
 
   const now = Date.now();
-  const warningKey = [
-    error.statusCode,
-    error.errorCode,
-    readAuthorizationFingerprint(request)
-  ].join(":");
+  const warningKey = buildCompactRequestWarningKey(error, request);
   const lastLoggedAt = expectedRequestWarningLogAtByKey.get(warningKey);
 
   expectedRequestWarningLogAtByKey.set(warningKey, now);
@@ -120,4 +108,76 @@ function readAuthorizationFingerprint(request: FastifyRequest): string {
   }
 
   return createHash("sha1").update(authorization).digest("hex").slice(0, 12);
+}
+
+function buildCompactRequestWarningKey(error: AppError, request: FastifyRequest): string {
+  if (shouldLogAsExpectedRequestWarning(error)) {
+    return [
+      error.statusCode,
+      error.errorCode,
+      readAuthorizationFingerprint(request)
+    ].join(":");
+  }
+
+  const attachmentParams = readAttachmentRequestParams(request);
+
+  return [
+    error.statusCode,
+    error.errorCode,
+    request.method,
+    request.url,
+    attachmentParams.sessionId ?? "unknown-session",
+    attachmentParams.attachmentId ?? "unknown-attachment"
+  ].join(":");
+}
+
+function logCompactRequestWarning(
+  error: AppError,
+  request: FastifyRequest,
+  requestContext: {
+    method: string;
+    url: string;
+    errorName: string;
+    errorMessage: string;
+  }
+): void {
+  if (!shouldEmitExpectedRequestWarning(error, request)) {
+    return;
+  }
+
+  const payload = {
+    ...requestContext,
+    statusCode: error.statusCode,
+    errorCode: error.errorCode,
+    ...(isAttachmentNotFoundError(error) ? readAttachmentRequestParams(request) : {})
+  };
+
+  console.warn("[host-warning]", payload);
+  request.log.warn(payload);
+}
+
+function isAttachmentNotFoundError(error: AppError): boolean {
+  return error.statusCode === 404 && error.errorCode === "ATTACHMENT_NOT_FOUND";
+}
+
+function readAttachmentRequestParams(
+  request: FastifyRequest
+): {
+  sessionId?: string;
+  attachmentId?: string;
+} {
+  const params = request.params;
+
+  if (!params || typeof params !== "object") {
+    return {};
+  }
+
+  const candidate = params as Record<string, unknown>;
+  const sessionId = typeof candidate.sessionId === "string" ? candidate.sessionId : undefined;
+  const attachmentId = typeof candidate.attachmentId === "string" ? candidate.attachmentId : undefined;
+
+  return {
+    sessionId,
+    attachmentId
+  };
 }
