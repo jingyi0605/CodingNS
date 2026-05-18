@@ -18,10 +18,23 @@ If you want a stable default model or permission preference, keep it here instea
 
 When you need to switch Hosts, confirm the current connection, or revisit access-related settings, this area is the main entry.
 
+## Browser Profiles and Task Panels
+
+This is one of the biggest settings-area additions in `v0.8.0`.
+
+If you use `office.browser`, this is where you check:
+
+- browser profiles;
+- browser task history and current state;
+- whether the bridge path is healthy;
+- whether you are using the default headless path or an explicit real-browser bridge path.
+
+So the settings area is no longer only about appearance. It also starts carrying real browser-task configuration and status.
+
 ## Remote Access
 
 Both Tailscale and tunnel access are managed from settings, not from a separate admin product.
 
 ## Updates
 
-If the current client or service exposes update checks and install actions, they are also grouped here so you do not have to manage several update paths.
+If the current client or service exposes update checks, install actions, or version details, they are also grouped here so you do not have to manage several update paths.

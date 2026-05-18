@@ -5,7 +5,7 @@ titleTemplate: CodingNS Docs
 hero:
   name: CodingNS Docs
   text: "Bring your AI coding workspace to every device"
-  tagline: "CodingNS keeps the same Host, workspace, and ongoing session available across desktop, mobile, and browser access so work can continue on any device."
+  tagline: "CodingNS keeps the same Host, workspace, and ongoing session available across desktop, mobile, and browser access. In `v0.8.0`, the biggest additions are workspace-scoped assistant office capabilities, a real-browser bridge for `office.browser`, and static HTML presentation editing."
   actions:
     - theme: brand
       text: Quick Start
@@ -43,6 +43,14 @@ features:
     link: /en/community/community-overview
 ---
 
+## What changed in v0.8.0
+
+The biggest product changes in this release are not cosmetic:
+
+- regular workspace sessions can now call controlled assistant entry points for browser, document, terminal, and related office actions;
+- `office.browser` can now switch to a real-browser bridge backend when an existing Chrome or Edge login state matters;
+- slide-style static HTML files can now open in a presentation editor instead of staying a passive preview.
+
 ## Quick Links
 
 - Want to judge whether CodingNS fits your workflow: open [Docs Map](/en/overview/docs-overview) and [Product Overview](/en/overview/product-overview)
@@ -54,6 +62,8 @@ features:
 ## What CodingNS is
 
 CodingNS is a remote AI coding workbench built around a persistent Host, real project workspaces, ongoing AI conversations, and integrated tools such as files, Git, and terminal access.
+
+It is also moving beyond a chat shell: controlled assistant entry points, browser tasks, and static HTML presentation editing are now part of the same workspace experience.
 
 ## Quick Start
 

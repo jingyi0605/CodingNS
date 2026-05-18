@@ -8,6 +8,8 @@ AI coding tools become much less useful once your workflow breaks across devices
 
 CodingNS is not just a web terminal and not just a chat shell around AI tools. It is closer to a remote development workbench centered on ongoing AI coding sessions.
 
+Starting in `v0.8.0`, it is also moving beyond passive viewing: controlled assistant entry points, browser tasks, and static HTML presentation editing now belong to the same workspace experience.
+
 ## Core ideas you will see in the product
 
 ### Host
@@ -31,3 +33,14 @@ Files, Git, terminal, and related tools stay tied to the current workspace so th
 - Developers who already rely on AI coding tools as part of daily work
 - People who move between devices
 - People who want the same project context available outside the original machine
+- People who also want browser tasks, document actions, and presentation editing close to the same workspace flow
+
+## Current public capability focus
+
+- continue ongoing AI coding sessions across clients;
+- keep files, Git, terminal, and workspace context together;
+- allow regular workspace sessions to call controlled assistant entry points;
+- launch browser tasks through `office.browser`, including a real-browser bridge when needed;
+- edit slide-style static HTML presentations directly;
+- support multi-host access and cross-device continuation;
+- manage remote access, theme, language, models, browser tasks, and updates from settings.

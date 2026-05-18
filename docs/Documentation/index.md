@@ -5,7 +5,7 @@ titleTemplate: CodingNS 官方文档
 hero:
   name: CodingNS 官方文档
   text: 把 AI 编程工作台带到每一台设备
-  tagline: CodingNS 让同一台 Host、同一个工作区和同一条会话在桌面端、移动端和浏览器之间保持连贯，方便你在不同设备上继续处理同一个项目。
+  tagline: CodingNS 让同一台 Host、同一个工作区和同一条会话在桌面端、移动端和浏览器之间保持连贯。`v0.8.0` 这一轮重点补上了工作区受控助手办公能力、真实浏览器桥接和静态 HTML 演示编辑。
   actions:
     - theme: brand
       text: 快速开始
@@ -40,6 +40,14 @@ features:
     link: /community/community-overview
 ---
 
+## 当前版本重点
+
+`v0.8.0` 这轮最值得先看的不是零碎按钮，而是三条主线：
+
+- 工作区普通会话现在能走受控助手入口，调用文档、浏览器、终端和部分运维能力。
+- `office.browser` 现在除了无头链路，还支持显式切到真实浏览器桥接，适合复用 Chrome / Edge 登录态。
+- 静态 HTML 演示稿现在不只是预览文件，而是可以直接进演示视图继续编辑和调整布局。
+
 ## 快速入口
 
 - 想先判断这产品适不适合你：看 [文档地图](/overview/docs-overview) 和 [产品概览](/overview/product-overview)。
@@ -51,6 +59,8 @@ features:
 ## CodingNS 是什么
 
 CodingNS 是一套围绕 AI 编程会话构建的远程工作台。它把 Host 服务、工作区、对话、文件、Git、终端和远程访问组织在一起，让你可以在不同设备上继续同一个开发过程，而不是每换一台设备就重新开一个新环境。
+
+现在它也开始把一部分真正会落到“做事”层的能力收进来，比如受控助手入口、浏览器任务和静态 HTML 演示编辑，而不是只做一个聊天外壳。
 
 ## 快速开始
 
@@ -64,4 +74,4 @@ CodingNS 是一套围绕 AI 编程会话构建的远程工作台。它把 Host �
 - 想把会话、工作区和上下文理顺：看 [工作区与会话](/user-guide/workspaces-and-sessions)。
 - 想知道对话页怎么高效配合使用：看 [对话工作台](/user-guide/conversation-workbench)。
 - 想把文件、Git 和终端一起用顺：看 [文件、Git 与终端](/user-guide/files-git-and-terminal)。
-- 想管理主题、语言、默认偏好和远程入口：看 [设置与更新](/user-guide/settings-and-updates)。
+- 想管理主题、语言、默认偏好、浏览器任务配置和远程入口：看 [设置与更新](/user-guide/settings-and-updates)。

@@ -30,11 +30,11 @@ Consistent experience across H5, Windows, and macOS.
 
 ![alt text](img/image.png)
 
-The iOS app is now live on the App Store, and the Android app is already supported. Version `0.3.0` adds multi-host switching, richer file preview/editing, Git version drill-down, settings-based Skill management, and built-in instance-level Tailscale management.
+The iOS app is now live on the App Store, and the Android app is already supported. Version `0.8.0` adds workspace-scoped assistant office capabilities, `office.browser` real-browser bridge support, static HTML presentation editing with layout tools, and a more stable packaging and runtime chain.
 
 ### ✨ Core Features
 
-> Current status: the iOS app has been released on the App Store, the Android app is already supported, and version `0.3.0` adds multi-host switching, richer file preview/editing, Git version drill-down, settings-based Skill management, and built-in instance-level Tailscale management.
+> Current status: the iOS app has been released on the App Store, the Android app is already supported, and version `0.8.0` adds workspace-scoped assistant office capabilities, `office.browser` real-browser bridge support, static HTML presentation editing with layout tools, and a more stable packaging and runtime chain.
 
 #### 🔄 Multi-Provider Session Sync
 - **Seamless CLI Session Continuation**: Support for Claude Code, Codex, OpenCode and other mainstream AI programming tools
@@ -60,6 +60,13 @@ The iOS app is now live on the App Store, and the Android app is already support
 - **Demo Mode**: Start a controlled demo environment with `codingns start --demo`, including an auto-created demo account
 - **Capability-Driven**: Dynamically adjust available features based on provider capabilities
 
+#### 🧭 Workspace Assistant & Office Capabilities
+- **Scoped Assistant Entry Points**: Workspace sessions can call controlled assistant capabilities for documents, browser tasks, terminals, and ops without turning into an unrestricted control plane
+- **Office Browser Tasks**: Use a unified `office.browser` entry for DOM reading, screenshots, form actions, downloads, and task artifacts
+- **Real Browser Bridge**: Add `opencli_bridge` as an explicit backend when you need a real Chrome or Edge profile and existing login state
+- **Browser Profiles & Task Panel**: Manage browser profiles, task history, and bridge health from the settings area
+- **Controlled Preview Flow**: Keep office screenshots and local images inside the same controlled preview pipeline
+
 #### 📁 File Management
 - **File Tree Browser**: Visualize project file structure
 - **File Context Mounting**: Quickly add file contents to session context
@@ -67,6 +74,7 @@ The iOS app is now live on the App Store, and the Android app is already support
 - **Change-focused Views**: Git status badges, change filters, and diff preview
 - **Path Linking & Cleaner Trees**: Jump from chat paths to files and hide system files by default when needed
 - **Richer Preview & Editing**: Support text editing plus HTML/PDF preview, refresh, and fullscreen
+- **Static HTML Presentation Editing**: Open slide-style HTML files in a presentation view, edit text and layout, and export while keeping the visual result stable
 
 #### 🔀 Git Integration
 - **Git Status Display**: Real-time view of file change status
@@ -83,6 +91,12 @@ The iOS app is now live on the App Store, and the Android app is already support
 - **Replay Stability Improvements**: Fix timing and scrolling issues between history replay and live output
 - **Windows Terminal Recovery**: Restore persisted terminals and choose the shell before creation
 - **Reconnection**: Automatic terminal session recovery after network interruption
+
+#### 🔧 Runtime & Delivery Stability
+- **Windows Install Hardening**: Tighten native dependency checks and keep the Windows installation path more predictable
+- **Package Runtime Fixes**: Fix `codingns` npm packaging and runtime dependency discovery
+- **Session Runtime Corrections**: Fix workspace Codex runtime home scoping and reduce stale-session surprises
+- **Refresh & File Tree Fixes**: Improve file tree recovery, session counters, and workspace refresh stability
 
 #### ☁️ Account Preference Sync
 - **Account-level Settings Sync**: Language, theme, and default permission mode follow your account across clients
@@ -372,6 +386,9 @@ Detailed feature specifications and design documents are located in the [`specs/
 | Git commit drill-down, change explanation, and full history | Completed | 🟢 Completed |
 | Settings-based Skill management and Butler Skill sync | Completed | 🟢 Completed |
 | Built-in Tailscale for one-click NAT traversal | Completed | 🟢 Completed |
+| Workspace-scoped assistant office capabilities | Completed | 🟢 Completed |
+| `office.browser` real-browser bridge backend | Completed | 🟢 Completed |
+| Static HTML presentation editing and layout tools | Completed | 🟢 Completed |
 | Code Butler — manage multiple projects and sessions across workspaces, provide dev suggestions and act on behalf of the user | Completed  | 🟢 Completed  |
 | Code Butler with real-time voice conversation | In development | 🟡 In Progress |
 
@@ -399,11 +416,11 @@ CodingNS 致力于提供一整套闭环的 AI 编程工作流程，让你能够�
 
 ![alt text](img/image.png)
 
-iOS App 已经上架，Android App 也已支持。`0.3.0` 版本新增了多 Host 切换、更完整的文件预览与编辑、Git 版本详情查看、设置页 Skill 管理，以及实例级 Tailscale 管理。
+iOS App 已经上架，Android App 也已支持。`0.8.0` 版本新增了工作区受控助手办公能力、`office.browser` 真实浏览器桥接、静态 HTML 演示文档编辑与布局调整，并补强了打包与运行时稳定性。
 
 ### ✨ 核心特性
 
-> 当前状态：iOS App 已完成并已上架 App Store，Android App 也已支持。`0.3.0` 版本新增了多 Host 切换、更完整的文件预览与编辑、Git 版本详情查看、设置页 Skill 管理，以及实例级 Tailscale 管理。
+> 当前状态：iOS App 已完成并已上架 App Store，Android App 也已支持。`0.8.0` 版本新增了工作区受控助手办公能力、`office.browser` 真实浏览器桥接、静态 HTML 演示文档编辑与布局调整，并补强了打包与运行时稳定性。
 
 #### 🔄 多 Provider 会话同步
 - **无缝续接原生 CLI 会话**：支持 Claude Code、Codex、OpenCode 等主流 AI 编程工具
@@ -429,6 +446,13 @@ iOS App 已经上架，Android App 也已支持。`0.3.0` 版本新增了多 Hos
 - **演示模式**：支持通过 `codingns start --demo` 启动演示环境，自动创建 demo 账号并提供受控体验
 - **Capability 驱动**：根据 Provider 能力动态调整可用功能
 
+#### 🧭 工作区助手与办公能力
+- **工作区受控助手入口**：普通工作区会话也能调用文档、浏览器、终端和运维等正式助手能力，但作用域会被严格收口
+- **统一浏览器任务入口**：通过 `office.browser` 统一发起读 DOM、截图、表单操作、下载和任务产物查看
+- **真实浏览器桥接**：需要复用真实 Chrome / Edge 登录态时，可以显式切到 `opencli_bridge` 后端
+- **浏览器 Profile 与任务面板**：在设置页直接管理浏览器 Profile、任务历史和桥接状态
+- **受控预览链路**：办公截图和本地图片走同一套受控预览链路，减少打开方式混乱
+
 #### 📁 文件管理能力
 - **文件树浏览**：可视化项目文件结构
 - **文件上下文挂载**：将文件内容快速添加到会话上下文
@@ -436,6 +460,7 @@ iOS App 已经上架，Android App 也已支持。`0.3.0` 版本新增了多 Hos
 - **变更视图增强**：支持 Git 状态标记、变更筛选与 Diff 预览
 - **路径联动与清爽视图**：支持从聊天内容定位文件，并可默认隐藏系统文件
 - **更完整的预览与编辑**：支持文本文件编辑，以及 HTML / PDF 预览、刷新与全屏
+- **静态 HTML 演示编辑**：可把演示稿式 HTML 直接作为演示文档打开，支持文本与布局调整，并尽量稳定导出结果
 
 #### 🔀 Git 集成
 - **Git 状态展示**：实时查看文件变更状态
@@ -452,6 +477,12 @@ iOS App 已经上架，Android App 也已支持。`0.3.0` 版本新增了多 Hos
 - **回放体验优化**：修复历史回放与实时输出衔接时的滚动和时序问题
 - **Windows 终端恢复**：支持终端持久化恢复，并在创建前选择 Shell
 - **断线重连**：网络中断后自动恢复终端会话
+
+#### 🔧 运行时与交付稳定性
+- **Windows 安装链路补强**：补齐原生依赖检查，让 Windows 安装路径更可控
+- **npm 包运行时修复**：修复 `codingns` npm 包打包与运行时依赖发现问题
+- **会话运行时修正**：修复工作区 Codex 会话误用私有 runtime home，减少 stale session 引发的错乱
+- **刷新与文件树修复**：改善文件树回退、会话计数和工作区刷新稳定性
 
 #### ☁️ 账户偏好同步
 - **账户级配置同步**：语言、主题、默认权限模式可在多客户端之间同步
@@ -751,6 +782,9 @@ pnpm test:user-app
 | Git 版本详情、改动解释与全量历史查看 | 已完成 | 🟢 已完成 |
 | 设置页 Skill 管理与 Butler Skill 同步 | 已完成 | 🟢 已完成 |
 | 内置 Tailscale 支持一键穿透内网 | 已完成 | 🟢 已完成 |
+| 工作区受控助手办公能力开放 | 已完成 | 🟢 已完成 |
+| `office.browser` 真实浏览器桥接后端 | 已完成 | 🟢 已完成 |
+| 静态 HTML 演示编辑与布局工具 | 已完成 | 🟢 已完成 |
 | 代码助手功能，支持跨工作区管理多个项目及会话，并为用户提供项目开发的建议和代替用户进行项目开发的控制 | 已完成 | 🟢 已完成 |
 | 代码助手支持实时语音对话 | 开发中 | 🟡 开发中 |
 
