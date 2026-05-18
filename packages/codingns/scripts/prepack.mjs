@@ -24,7 +24,7 @@ function main() {
   const workspacePackageVersions = collectWorkspacePackageVersions(workspaceRoot);
 
   writeBackupFile(originalPackageJson);
-  cleanupVendorRoot();
+  cleanupVendorRoot(vendorRoot);
   runBuild();
   copyWorkspaceDependency({
     packageDir: path.join(workspaceRoot, "packages", "node-pty-fork"),
