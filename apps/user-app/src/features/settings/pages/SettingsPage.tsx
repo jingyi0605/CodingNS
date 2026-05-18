@@ -558,14 +558,13 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
               </div>
             </div>
 
-            <div className="settings-row">
-              <div className="settings-row-label">
-                <span className="settings-row-title">{t("settings.modelManagementSectionTitle")}</span>
-                <span className="settings-row-description">
-                  {t("settings.modelManagementSectionSummary")}
+            <div className="settings-row settings-row-stacked">
+              <div className="settings-row-label settings-row-label-single-line">
+                <span className="settings-row-title settings-row-title-strong">
+                  {t("settings.modelManagementSectionTitle")}
                 </span>
               </div>
-              <div className="settings-row-control settings-row-control-stretch">
+              <div className="settings-row-control settings-row-control-stretch settings-row-control-full-width">
                 <ModelManagementPanel />
               </div>
             </div>
@@ -1365,10 +1364,9 @@ function MobileAbilityManagementSection() {
           <ProviderManagementPanel />
         </div>
         <div className="settings-mobile-panel-shell settings-mobile-model-shell">
-          <div className="settings-mobile-row-copy settings-mobile-ability-copy">
-            <span className="settings-mobile-row-title">{t("settings.modelManagementSectionTitle")}</span>
-            <span className="settings-mobile-row-description">
-              {t("settings.modelManagementSectionSummary")}
+          <div className="settings-mobile-row-copy settings-mobile-ability-copy settings-mobile-row-copy-single-line">
+            <span className="settings-mobile-row-title settings-mobile-row-title-strong">
+              {t("settings.modelManagementSectionTitle")}
             </span>
           </div>
           <ModelManagementPanel />

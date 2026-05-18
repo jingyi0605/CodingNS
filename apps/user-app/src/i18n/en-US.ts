@@ -102,8 +102,6 @@ export const enUS = {
       "Manage which CLI providers stay available and switch model profile presets from one place.",
     abilityManagementNavValue: "Providers / Profiles",
     modelManagement: "Model Management",
-    modelManagementSectionSummary:
-      "Read cc-switch presets and quickly switch models for Codex, Claude Code, Gemini, and OpenCode.",
     modelManagementNavValue: "Quick switch",
     modelManagementSectionTitle: "Model Profile Management",
     providerManagement: "CLI Providers",

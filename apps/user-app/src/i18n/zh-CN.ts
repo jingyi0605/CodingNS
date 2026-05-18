@@ -96,7 +96,6 @@ export const zhCN = {
     abilityManagementSectionSummary: "统一管理 CLI 提供方的启用状态，以及模型配置文件的快速切换入口。",
     abilityManagementNavValue: "提供方 / 配置文件",
     modelManagement: "模型管理",
-    modelManagementSectionSummary: "快速切换模型配置文件",
     modelManagementNavValue: "快速切换",
     modelManagementSectionTitle: "模型配置文件管理",
     providerManagement: "CLI 提供方",

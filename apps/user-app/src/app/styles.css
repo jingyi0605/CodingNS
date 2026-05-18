@@ -21158,6 +21158,12 @@ textarea:focus-visible {
   gap: 10px;
 }
 
+.settings-row-stacked {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 12px;
+}
+
 @media (max-width: 640px) {
   .settings-row {
     flex-direction: column;
@@ -21174,10 +21180,19 @@ textarea:focus-visible {
   min-width: 0;
 }
 
+.settings-row-label-single-line {
+  width: 100%;
+}
+
 .settings-row-title {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.settings-row-title-strong {
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .settings-row-description {
@@ -21191,6 +21206,11 @@ textarea:focus-visible {
   align-items: center;
   justify-content: flex-end;
   flex-shrink: 0;
+}
+
+.settings-row-control-full-width {
+  width: 100%;
+  justify-content: stretch;
 }
 
 .settings-row-control-stretch {
@@ -24912,6 +24932,15 @@ textarea:focus-visible {
   font-weight: 590;
   color: var(--text-primary);
   letter-spacing: -0.015em;
+}
+
+.settings-mobile-row-copy-single-line {
+  margin-bottom: 10px;
+}
+
+.settings-mobile-row-title-strong {
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .settings-mobile-nav-description,

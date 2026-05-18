@@ -107,6 +107,7 @@ describe("SettingsPage", () => {
     expect(screen.queryByText(t("settings.skillManagerDescription"))).not.toBeInTheDocument();
     expect(screen.queryByText(t("settings.skills"))).not.toBeInTheDocument();
     expect(screen.getByTestId("model-management-panel")).toBeInTheDocument();
+    expect(screen.queryByText(t("settings.modelManagementSectionSummary"))).not.toBeInTheDocument();
     expect(screen.getByTestId("provider-management-panel")).toBeInTheDocument();
     expect(screen.queryByTestId("relay-tunnel-panel")).not.toBeInTheDocument();
     expect(screen.queryByTestId("tailscale-panel")).not.toBeInTheDocument();
