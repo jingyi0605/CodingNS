@@ -17922,12 +17922,10 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   width: 100%;
   padding: 6px 8px;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background:
-    linear-gradient(180deg, rgba(50, 50, 52, 0.96), rgba(35, 35, 37, 0.98));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    0 12px 28px rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--modal-control-border);
+  background: var(--modal-control-surface);
+  color: var(--text-primary);
+  box-shadow: var(--modal-control-shadow);
 }
 
 .static-html-presentation-toolbar-button {
@@ -17939,7 +17937,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   align-items: center;
   justify-content: center;
   min-height: 100%;
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--text-secondary);
 }
 
 .static-html-presentation-mode-switch {
@@ -17949,8 +17947,8 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   width: fit-content;
   padding: 2px;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--modal-control-border);
+  background: color-mix(in srgb, var(--modal-control-surface) 90%, transparent);
 }
 
 .static-html-presentation-mode-button {
@@ -17959,7 +17957,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   border: none;
   border-radius: 7px;
   background: transparent;
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--text-secondary);
   font-size: 12px;
   font-weight: 700;
   box-shadow: none;
@@ -17967,9 +17965,9 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 
 .static-html-presentation-mode-button[data-active="true"] {
   border: none;
-  border-color: rgba(76, 163, 255, 0.76);
-  background: rgba(76, 163, 255, 0.24);
-  color: #ffffff;
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--modal-control-border));
+  background: var(--modal-pill-active-surface);
+  color: var(--modal-pill-active-color);
 }
 
 .static-html-presentation-layout-toolbar {
@@ -17992,8 +17990,8 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   min-height: 26px;
   padding: 0 9px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #f5f7fb;
+  background: var(--modal-pill-surface);
+  color: var(--text-primary);
   font-size: 12px;
   font-weight: 700;
 }
@@ -18014,7 +18012,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   flex-direction: column;
   gap: 4px;
   min-width: 84px;
-  color: rgba(255, 255, 255, 0.78);
+  color: var(--text-secondary);
   font-size: 11px;
   line-height: 1.4;
 }
@@ -18022,16 +18020,17 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .static-html-presentation-layout-field input {
   height: 28px;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.05);
-  color: #f5f7fb;
+  border: 1px solid var(--modal-control-border);
+  background: var(--modal-control-surface);
+  color: var(--text-primary);
   padding: 0 9px;
   font-size: 12px;
+  box-shadow: var(--modal-control-shadow);
 }
 
 .static-html-presentation-layout-hint {
   margin: 0;
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--text-secondary);
   font-size: 11px;
   line-height: 1.5;
 }
@@ -18325,7 +18324,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .static-html-presentation-inspector-warning {
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--text-secondary);
 }
 
 .static-html-presentation-textarea {
@@ -18333,10 +18332,10 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   min-height: 52px;
   padding: 7px 10px;
   border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.06);
-  color: #f5f7fb;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--modal-control-border);
+  background: var(--modal-control-surface);
+  color: var(--text-primary);
+  box-shadow: var(--modal-control-shadow);
   font: inherit;
   font-size: 13px;
   line-height: 1.45;
@@ -18345,10 +18344,8 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 
 .static-html-presentation-textarea:focus {
   outline: none;
-  border-color: rgba(76, 163, 255, 0.72);
-  box-shadow:
-    0 0 0 3px rgba(76, 163, 255, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  border-color: var(--modal-control-border-focus);
+  box-shadow: var(--modal-control-focus-ring);
 }
 
 .static-html-presentation-inspector-controls {
@@ -18406,19 +18403,19 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .static-html-presentation-text-toolbar-select {
   height: 28px;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.05);
-  color: #f5f7fb;
+  border: 1px solid var(--modal-control-border);
+  background: var(--modal-control-surface);
+  color: var(--text-primary);
   padding: 0 9px;
   font-size: 12px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  box-shadow: var(--modal-control-shadow);
   min-width: 0;
 }
 
 .static-html-presentation-text-toolbar-select:focus {
   outline: none;
-  border-color: rgba(76, 163, 255, 0.72);
-  box-shadow: 0 0 0 3px rgba(76, 163, 255, 0.18);
+  border-color: var(--modal-control-border-focus);
+  box-shadow: var(--modal-control-focus-ring);
 }
 
 .static-html-presentation-text-toolbar-font {
@@ -18441,21 +18438,21 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   height: 28px;
   padding: 0;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.05);
-  color: #f5f7fb;
+  border: 1px solid var(--modal-control-border);
+  background: var(--modal-control-surface);
+  color: var(--text-primary);
   font-size: 12px;
   font-weight: 700;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  box-shadow: var(--modal-control-shadow);
   flex: 0 0 auto;
   line-height: 1;
 }
 
 .static-html-presentation-text-toolbar-button:hover:not(:disabled),
 .static-html-presentation-text-toolbar-button[data-active="true"] {
-  border-color: rgba(76, 163, 255, 0.76);
-  background: rgba(76, 163, 255, 0.22);
-  color: #ffffff;
+  border-color: var(--modal-pill-active-border);
+  background: var(--modal-pill-active-surface);
+  color: var(--modal-pill-active-color);
 }
 
 .static-html-presentation-text-toolbar-button-italic {
@@ -18478,10 +18475,11 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   height: 28px;
   padding: 0;
   border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 84%, transparent);
-  background: color-mix(in srgb, var(--bg-hover) 72%, transparent);
+  border: 1px solid var(--modal-control-border);
+  background: var(--modal-control-surface);
   cursor: pointer;
   flex: 0 0 auto;
+  box-shadow: var(--modal-control-shadow);
 }
 
 .static-html-presentation-text-toolbar-color-label {

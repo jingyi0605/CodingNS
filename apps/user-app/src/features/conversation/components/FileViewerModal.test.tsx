@@ -752,6 +752,49 @@ describe("FileViewerModal", () => {
     expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("line-height: 1.8"));
   });
 
+  it("演示文稿编辑工具栏在默认亮色主题下会跟随主题变量显示", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "slides/editable.html",
+        kind: "html",
+        content: readFixtureHtml("editable-presentation.html"),
+        version: "presentation-v1",
+        previewPath: "/preview/files/preview-token/slides/editable.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/editable.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="slides/editable.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
+    const nodeChip = await screen.findByRole("button", { name: /原始标题/ });
+    await user.click(nodeChip);
+
+    const toolbar = document.querySelector(".static-html-presentation-toolbar");
+    const select = document.querySelector<HTMLSelectElement>(".static-html-presentation-text-toolbar-select");
+    const button = document.querySelector<HTMLButtonElement>(".static-html-presentation-text-toolbar-button");
+
+    expect(toolbar).not.toBeNull();
+    expect(select).not.toBeNull();
+    expect(button).not.toBeNull();
+
+    expect(getComputedStyle(toolbar as Element).color).toBe("rgb(26, 26, 26)");
+    expect(getComputedStyle(select as Element).color).toBe("rgb(26, 26, 26)");
+    expect(getComputedStyle(button as Element).color).toBe("rgb(26, 26, 26)");
+  });
+
   it("演示文档视图点击画布里的 HTML 组件时，不会联动顶部编辑区", async () => {
     const user = userEvent.setup();
 
