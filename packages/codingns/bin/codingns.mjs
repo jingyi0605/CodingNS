@@ -775,7 +775,7 @@ async function runAssistantCommand(argv) {
       }, (options) => ({
         workspaceId: readOptionalTrimmedValue(options.values["workspace-id"]),
         title: readOptionalTrimmedValue(options.values.title),
-        profileId: requireOptionValue(options.values["profile-id"], "profile-id"),
+        profileId: readOptionalTrimmedValue(options.values["profile-id"]),
         riskLevel: readOptionalTrimmedValue(options.values["risk-level"]),
         executionBackend: readOptionalTrimmedValue(options.values["execution-backend"]),
         execute: parseOptionalBooleanOption(options.values.execute, "execute"),
@@ -878,13 +878,14 @@ async function runAssistantCommand(argv) {
         method: "POST",
         path: "/api/assistant/office/ops/browser-tasks",
         argv: rest,
-        supportedOptions: ["title", "target-id", "profile-id", "risk-level", "input-json"],
+        supportedOptions: ["title", "target-id", "profile-id", "execution-backend", "risk-level", "input-json"],
         supportedFlags: ["confirm"],
         helpTopic: "office.ops-browser-task-create"
       }, (options) => ({
         title: readOptionalTrimmedValue(options.values.title),
         targetId: requireOptionValue(options.values["target-id"], "target-id"),
-        profileId: requireOptionValue(options.values["profile-id"], "profile-id"),
+        profileId: readOptionalTrimmedValue(options.values["profile-id"]),
+        executionBackend: readOptionalTrimmedValue(options.values["execution-backend"]),
         riskLevel: readOptionalTrimmedValue(options.values["risk-level"]),
         input: parseJsonOption(options.values["input-json"], "input-json"),
         confirm: options.flags.confirm === true
@@ -2197,7 +2198,7 @@ assistant 例子：
   codingns assistant projects list --status active --token <token>
   codingns assistant office browser-profile-list --token <token>
   codingns assistant office browser-profile-create --engine chrome --mode persistent --display-name "办公 Chrome" --token <token>
-  codingns assistant office browser-task-create --profile-id <profileId> --input-json '{"startUrl":"https://example.invalid","actions":[{"type":"read_dom"}]}' --token <token>
+  codingns assistant office browser-task-create --execution-backend opencli_bridge --input-json '{"startUrl":"https://example.invalid","actions":[{"type":"read_dom"}]}' --token <token>
   codingns assistant office ops-target-create --kind ssh_host --display-name "生产 SSH" --config-json '{"host":"10.0.0.8","username":"root"}' --token <token>
   codingns assistant office document-create --title "周报" --template-key team.doct.weekly --content-json '{"sections":[]}' --token <token>
   codingns assistant workspaces list --token <token>
@@ -2360,7 +2361,7 @@ codingns assistant office
 
 示例：
   codingns assistant office browser-profile-create --engine chrome --mode persistent --display-name "办公 Chrome" --token <token>
-  codingns assistant office browser-task-create --profile-id <profileId> --input-json '{"startUrl":"https://example.invalid","actions":[{"type":"read_dom"}]}' --token <token>
+  codingns assistant office browser-task-create --execution-backend opencli_bridge --input-json '{"startUrl":"https://example.invalid","actions":[{"type":"read_dom"}]}' --token <token>
   codingns assistant office ops-target-create --kind ssh_host --display-name "生产 SSH" --config-json '{"host":"10.0.0.8","username":"root"}' --token <token>
   codingns assistant office document-create --title "周报" --template-key team.doct.weekly --content-json '{"sections":[]}' --token <token>
 `.trim();
@@ -2446,7 +2447,7 @@ codingns assistant office browser-task-create
   创建并可选立即执行办公浏览器任务，工作区会话里调用浏览器能力就走这条链路。
 
 用法：
-  codingns assistant office browser-task-create --profile-id <profileId> [--workspace-id <id>] [--title <title>] [--risk-level low|medium|high] [--execution-backend playwright|opencli_bridge] [--execute true|false] [--input-json <json>] --token <token>
+  codingns assistant office browser-task-create [--profile-id <profileId>] [--workspace-id <id>] [--title <title>] [--risk-level low|medium|high] [--execution-backend playwright|opencli_bridge] [--execute true|false] [--input-json <json>] --token <token>
 
 输入约定：
   --input-json 必须是一个 JSON 对象，最小结构如下：
@@ -2454,7 +2455,9 @@ codingns assistant office browser-task-create
 
 后端选择：
   - playwright：默认，无头浏览器执行
+  - playwright 仍然要求显式传 --profile-id
   - opencli_bridge：复用 opencli 浏览器扩展，走真实浏览器调试
+  - opencli_bridge 是无感桥接入口，通常不需要也不建议传 --profile-id
   - 涉及登录、验证码、二次确认弹窗、复杂真实站点、必须复用现有 Chrome/Edge 登录态时，优先显式传 --execution-backend opencli_bridge
   - 只有页面明显适合无头执行，或者用户明确要求无头链路时，才继续使用默认 playwright
 
@@ -2488,8 +2491,8 @@ codingns assistant office browser-task-create
      {"startUrl":"https://target.example/console","executionBackend":"opencli_bridge","actions":[{"type":"click","selector":"button[data-testid=\\"next-step\\"]"},{"type":"wait","timeoutMs":1500},{"type":"screenshot","fullPage":true}]}
 
 建议顺序：
-  先 running \`browser-profile-list\` 看是否已有可复用 Profile；没有再创建 Profile。
-  遇到登录、验证码、复杂真实站点或必须复用现有浏览器登录态时，优先显式传 \`--execution-backend opencli_bridge\`。
+  无头 playwright 任务先 running \`browser-profile-list\` 看是否已有可复用 Profile；没有再创建 Profile。
+  遇到登录、验证码、复杂真实站点或必须复用现有浏览器登录态时，优先显式传 \`--execution-backend opencli_bridge\`；通常不需要先手动查/建 Profile，也不需要传 \`--profile-id\`。
   遇到真实站点网页任务，先查这里的示例，不要退回去翻源码或自己猜私有 HTTP body。
 `.trim();
     case "office.browser-task-get":
@@ -2567,10 +2570,14 @@ codingns assistant office task-approval-reply
 codingns assistant office ops-browser-task-create
 
 用途：
-  创建基于真实 Chrome/Edge Profile 的浏览器运维任务。
+  创建浏览器运维任务；登录态、控制台、真实站点优先走 opencli_bridge 无感桥接。
 
 用法：
-  codingns assistant office ops-browser-task-create --target-id <targetId> --profile-id <profileId> [--title <title>] [--risk-level low|medium|high] [--input-json <json>] [--confirm] --token <token>
+  codingns assistant office ops-browser-task-create --target-id <targetId> [--profile-id <profileId>] [--execution-backend playwright|opencli_bridge] [--title <title>] [--risk-level low|medium|high] [--input-json <json>] [--confirm] --token <token>
+
+说明：
+  - opencli_bridge：默认推荐。通常不需要传 --profile-id。
+  - playwright：仍然需要显式传 --profile-id。
 `.trim();
     case "office.ops-task-get":
       return `
@@ -3372,7 +3379,7 @@ codingns assistant 用法：
   codingns assistant office browser-profiles [--workspace-id <id>] [--base-url ...] --token <token>
   codingns assistant office browser-profile-create [--workspace-id <id>] [--engine chrome|edge] [--mode persistent|cdp_attached] [--display-name <name>] [--ownership-scope user|workspace] [--cdp-endpoint <url>] [--base-url ...] --token <token>
   codingns assistant office browser-profile-get <profileId> [--base-url ...] --token <token>
-  codingns assistant office browser-task-create --profile-id <profileId> [--workspace-id <id>] [--title <title>] [--risk-level low|medium|high] [--execute true|false] [--input-json <json>] [--base-url ...] --token <token>
+  codingns assistant office browser-task-create [--profile-id <profileId>] [--workspace-id <id>] [--title <title>] [--risk-level low|medium|high] [--execution-backend playwright|opencli_bridge] [--execute true|false] [--input-json <json>] [--base-url ...] --token <token>
   codingns assistant office browser-task-get <taskId> [--base-url ...] --token <token>
   codingns assistant office ops-targets [--workspace-id <id>] [--kind ssh_host|web_console] [--status active|disabled|error] [--base-url ...] --token <token>
   codingns assistant office ops-target-create --workspace-id <id> --display-name <name> [--kind ssh_host|web_console] [--environment <name>] [--credential-ref <ref>] [--config-json <json>] [--base-url ...] --token <token>
@@ -3380,7 +3387,7 @@ codingns assistant 用法：
   codingns assistant office ops-ssh-task-create --target-id <targetId> [--title <title>] [--risk-level low|medium|high] [--execute true|false] [--input-json <json>] [--base-url ...] --token <token>
   codingns assistant office ops-task-execute <taskId> [--confirm] [--base-url ...] --token <token>
   codingns assistant office task-approval-reply <approvalId> [--status approved|rejected] [--decision-note <text>] [--base-url ...] --token <token>
-  codingns assistant office ops-browser-task-create --target-id <targetId> --profile-id <profileId> [--title <title>] [--risk-level low|medium|high] [--input-json <json>] [--confirm] [--base-url ...] --token <token>
+  codingns assistant office ops-browser-task-create --target-id <targetId> [--profile-id <profileId>] [--execution-backend playwright|opencli_bridge] [--title <title>] [--risk-level low|medium|high] [--input-json <json>] [--confirm] [--base-url ...] --token <token>
   codingns assistant office ops-task-get <taskId> [--base-url ...] --token <token>
   codingns assistant debug-targets compatibility-matrix [--base-url ...] --token <token>
   codingns assistant debug-targets analyze --workspace-id <id> --root-path <path> [--command-hint <command>] [--command-hint <command>] [--confirm] [--base-url ...] --token <token>

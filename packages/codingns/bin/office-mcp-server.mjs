@@ -52,7 +52,7 @@ const TOOL_DEFINITIONS = [
     profileId: requiredStringSchema("Profile ID")
   }),
   defineTool("office_browser_task_create", "创建浏览器任务", {
-    profileId: requiredStringSchema("Profile ID"),
+    profileId: optionalStringSchema("Profile ID。playwright 必填；opencli_bridge 一般不需要传。"),
     workspaceId: optionalStringSchema("工作区 ID"),
     title: optionalStringSchema("任务标题"),
     riskLevel: optionalEnumSchema(["low", "medium", "high"], "风险等级"),
@@ -89,7 +89,8 @@ const TOOL_DEFINITIONS = [
   }),
   defineTool("office_ops_browser_task_create", "创建浏览器运维任务", {
     targetId: requiredStringSchema("目标 ID"),
-    profileId: requiredStringSchema("浏览器 Profile ID"),
+    profileId: optionalStringSchema("浏览器 Profile ID。playwright 必填；opencli_bridge 一般不需要传。"),
+    executionBackend: optionalEnumSchema(["playwright", "opencli_bridge"], "执行后端"),
     title: optionalStringSchema("任务标题"),
     riskLevel: optionalEnumSchema(["low", "medium", "high"], "风险等级"),
     input: optionalObjectSchema("浏览器运维任务输入 JSON"),
@@ -175,7 +176,7 @@ const TOOL_HANDLERS = {
     method: "POST",
     path: "/api/assistant/office/browser/tasks",
     buildBody: (argumentsObject) => ({
-      profileId: requireStringField(argumentsObject, "profileId"),
+      profileId: normalizeNullableString(argumentsObject.profileId),
       workspaceId: normalizeNullableString(argumentsObject.workspaceId),
       title: normalizeNullableString(argumentsObject.title),
       riskLevel: normalizeNullableString(argumentsObject.riskLevel),
@@ -232,7 +233,8 @@ const TOOL_HANDLERS = {
     path: "/api/assistant/office/ops/browser-tasks",
     buildBody: (argumentsObject) => ({
       targetId: requireStringField(argumentsObject, "targetId"),
-      profileId: requireStringField(argumentsObject, "profileId"),
+      profileId: normalizeNullableString(argumentsObject.profileId),
+      executionBackend: normalizeNullableString(argumentsObject.executionBackend),
       title: normalizeNullableString(argumentsObject.title),
       riskLevel: normalizeNullableString(argumentsObject.riskLevel),
       input: normalizeNullableObject(argumentsObject.input),

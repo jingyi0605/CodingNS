@@ -1269,6 +1269,35 @@ describe("assistant capability routes", () => {
       execute: true
     });
 
+    const createBridgeTaskWithoutProfileResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/office/browser/tasks",
+      payload: {
+        workspaceId: "workspace-1",
+        title: "真实浏览器巡检",
+        executionBackend: "opencli_bridge",
+        execute: true,
+        input: {
+          startUrl: "https://example.invalid/bridge",
+          actions: [{ type: "read_dom" }]
+        }
+      }
+    });
+    expect(createBridgeTaskWithoutProfileResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.createOfficeBrowserTask).toHaveBeenCalledWith({
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      title: "真实浏览器巡检",
+      profileId: null,
+      riskLevel: undefined,
+      executionBackend: "opencli_bridge",
+      input: {
+        startUrl: "https://example.invalid/bridge",
+        actions: [{ type: "read_dom" }]
+      },
+      execute: true
+    });
+
     const getTaskResponse = await app.inject({
       method: "GET",
       url: "/api/assistant/office/browser/tasks/task-browser-1"
@@ -1479,9 +1508,35 @@ describe("assistant capability routes", () => {
       title: "控制台巡检",
       targetId: "target-2",
       profileId: "profile-9",
+      executionBackend: undefined,
       riskLevel: "high",
       input: {
         actions: [{ type: "click", selector: "#refresh" }]
+      }
+    });
+
+    const createBridgeBrowserTaskResponse = await app.inject({
+      method: "POST",
+      url: "/api/assistant/office/ops/browser-tasks",
+      payload: {
+        title: "控制台桥接巡检",
+        targetId: "target-2",
+        executionBackend: "opencli_bridge",
+        input: {
+          actions: [{ type: "read_dom" }]
+        }
+      }
+    });
+    expect(createBridgeBrowserTaskResponse.statusCode).toBe(200);
+    expect(assistantCapabilityService.createOfficeOpsBrowserTask).toHaveBeenCalledWith({
+      userId: "user-1",
+      title: "控制台桥接巡检",
+      targetId: "target-2",
+      profileId: null,
+      executionBackend: "opencli_bridge",
+      riskLevel: undefined,
+      input: {
+        actions: [{ type: "read_dom" }]
       }
     });
 

@@ -1680,6 +1680,18 @@ function ensureDefaultOfficeConnectors(
       status: "active"
     },
     {
+      connectorKey: "browser.opencli_bridge",
+      kind: "browser",
+      displayName: "OpenCLI Bridge Browser",
+      capabilityJson: JSON.stringify({
+        supportedTaskTypes: ["browser"],
+        supportedActions: ["goto", "click", "fill", "upload", "download", "read_dom", "screenshot"],
+        supportedArtifacts: ["screenshot", "downloaded_file", "dom_snapshot"],
+        supportsSubscription: false
+      }),
+      status: "active"
+    },
+    {
       connectorKey: "document.doct",
       kind: "document",
       displayName: "doct Document Runtime",

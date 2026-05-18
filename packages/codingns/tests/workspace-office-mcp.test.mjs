@@ -11,12 +11,13 @@ const serverPath = path.join(packageRoot, "bin", "office-mcp-server.mjs");
 test("workspace office mcp 会列出浏览器与运维工具，并能调用 host API", async () => {
   let receivedAuthorization = null;
   let receivedPath = null;
-  let receivedPayload = null;
+  let receivedBrowserPayload = null;
+  let receivedOpsBrowserPayload = null;
   const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && request.url === "/api/assistant/office/browser/tasks") {
       receivedAuthorization = request.headers.authorization ?? null;
       receivedPath = request.url;
-      receivedPayload = await readJsonBody(request);
+      receivedBrowserPayload = await readJsonBody(request);
       response.writeHead(200, {
         "Content-Type": "application/json",
         "Connection": "close"
@@ -33,6 +34,32 @@ test("workspace office mcp 会列出浏览器与运维工具，并能调用 host
         payload: {
           task: {
             id: "browser-task-1"
+          }
+        }
+      }));
+      return;
+    }
+
+    if (request.method === "POST" && request.url === "/api/assistant/office/ops/browser-tasks") {
+      receivedAuthorization = request.headers.authorization ?? null;
+      receivedPath = request.url;
+      receivedOpsBrowserPayload = await readJsonBody(request);
+      response.writeHead(200, {
+        "Content-Type": "application/json",
+        "Connection": "close"
+      });
+      response.end(JSON.stringify({
+        ok: true,
+        capability: "office.ops.browser-task.create",
+        auditId: "audit-ops-browser-1",
+        timestamp: "2026-05-16T12:10:00.000Z",
+        targetRef: {
+          kind: "workspace",
+          id: "workspace-1"
+        },
+        payload: {
+          task: {
+            id: "ops-browser-task-1"
           }
         }
       }));
@@ -92,7 +119,7 @@ test("workspace office mcp 会列出浏览器与运维工具，并能调用 host
 
     assert.equal(receivedAuthorization, "Bearer workspace-token");
     assert.equal(receivedPath, "/api/assistant/office/browser/tasks");
-    assert.deepEqual(receivedPayload, {
+    assert.deepEqual(receivedBrowserPayload, {
       profileId: "profile-1",
       workspaceId: null,
       title: null,
@@ -105,6 +132,57 @@ test("workspace office mcp 会列出浏览器与运维工具，并能调用 host
       }
     });
     assert.match(callResult.result.content[0].text, /office\.browser\.task\.create/);
+
+    const bridgeCallResult = await sendMcpRequest(child, 4, "tools/call", {
+      name: "office_browser_task_create",
+      arguments: {
+        executionBackend: "opencli_bridge",
+        execute: true,
+        input: {
+          startUrl: "https://www.zhihu.com/signin",
+          actions: [{ type: "read_dom" }]
+        }
+      }
+    });
+
+    assert.deepEqual(receivedBrowserPayload, {
+      profileId: null,
+      workspaceId: null,
+      title: null,
+      riskLevel: null,
+      executionBackend: "opencli_bridge",
+      execute: true,
+      input: {
+        startUrl: "https://www.zhihu.com/signin",
+        actions: [{ type: "read_dom" }]
+      }
+    });
+    assert.match(bridgeCallResult.result.content[0].text, /office\.browser\.task\.create/);
+
+    const opsBridgeCallResult = await sendMcpRequest(child, 5, "tools/call", {
+      name: "office_ops_browser_task_create",
+      arguments: {
+        targetId: "target-1",
+        executionBackend: "opencli_bridge",
+        input: {
+          actions: [{ type: "read_dom" }]
+        }
+      }
+    });
+
+    assert.equal(receivedPath, "/api/assistant/office/ops/browser-tasks");
+    assert.deepEqual(receivedOpsBrowserPayload, {
+      targetId: "target-1",
+      profileId: null,
+      executionBackend: "opencli_bridge",
+      title: null,
+      riskLevel: null,
+      input: {
+        actions: [{ type: "read_dom" }]
+      },
+      confirm: null
+    });
+    assert.match(opsBridgeCallResult.result.content[0].text, /office\.ops\.browser-task\.create/);
   } finally {
     child.kill("SIGTERM");
     server.closeIdleConnections?.();

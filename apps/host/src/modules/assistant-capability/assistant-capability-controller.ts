@@ -181,6 +181,7 @@ interface AssistantOfficeOpsBrowserTaskBody {
   title?: string;
   targetId?: string;
   profileId?: string;
+  executionBackend?: "playwright" | "opencli_bridge";
   riskLevel?: "low" | "medium" | "high";
   input?: unknown;
   confirm?: boolean;
@@ -1238,7 +1239,7 @@ export class AssistantCapabilityController {
       userId: requireUserId(request),
       workspaceId: normalizeNullableText(request.body.workspaceId),
       title: request.body.title?.trim() ?? "浏览器任务",
-      profileId: requireNonEmptyText(request.body.profileId, "profileId", "创建浏览器任务必须提供 profileId"),
+      profileId: normalizeNullableText(request.body.profileId),
       riskLevel: request.body.riskLevel,
       executionBackend: request.body.executionBackend,
       input: request.body.input,
@@ -1374,7 +1375,8 @@ export class AssistantCapabilityController {
       userId: requireUserId(request),
       title: request.body.title?.trim() ?? "浏览器运维任务",
       targetId: requireNonEmptyText(request.body.targetId, "targetId", "创建浏览器运维任务必须提供 targetId"),
-      profileId: requireNonEmptyText(request.body.profileId, "profileId", "创建浏览器运维任务必须提供 profileId"),
+      profileId: normalizeNullableText(request.body.profileId),
+      executionBackend: request.body.executionBackend,
       riskLevel: request.body.riskLevel,
       input: request.body.input
     }));

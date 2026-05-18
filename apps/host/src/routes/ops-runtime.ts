@@ -15,4 +15,5 @@ export async function registerOpsRuntimeRoutes(
   app.get("/api/office/ops/ssh/tasks/:taskId/execution", opsRuntimeController.getSshExecution);
   app.post("/api/office/ops/ssh/tasks/:taskId/execution/cancel", opsRuntimeController.cancelSshExecution);
   app.post("/api/office/ops/browser/tasks", opsRuntimeController.createBrowserTask);
+  app.post("/api/office/ops/browser-tasks", opsRuntimeController.createBrowserTask);
 }

@@ -44,7 +44,8 @@ export interface CreateOpsBrowserTaskInput {
   userId: string;
   title: string;
   targetId: string;
-  profileId: string;
+  profileId?: string | null;
+  executionBackend?: "playwright" | "opencli_bridge";
   riskLevel?: "low" | "medium" | "high";
   input?: unknown;
 }
@@ -163,7 +164,38 @@ export class OpsRuntimeService {
 
   createBrowserTask(input: CreateOpsBrowserTaskInput) {
     const target = this.requireActiveTarget(input.targetId, input.userId, "web_console");
-    const profile = this.browserProfileService.getProfile(input.profileId, input.userId);
+    const executionBackend = input.executionBackend ?? "opencli_bridge";
+
+    if (executionBackend === "opencli_bridge") {
+      return this.officeService.createTask({
+        userId: input.userId,
+        workspaceId: target.workspaceId,
+        taskType: "ops",
+        title: input.title.trim() || "浏览器运维任务",
+        connectorId: "ops.browser_console",
+        targetRefKind: "ops_target",
+        targetRefId: target.id,
+        input: {
+          targetId: target.id,
+          targetKind: target.kind,
+          executionBackend: "opencli_bridge",
+          config: JSON.parse(target.configJson),
+          actions: input.input ?? {}
+        },
+        riskLevel: input.riskLevel ?? "high"
+      });
+    }
+
+    const profileId = input.profileId?.trim() ?? "";
+    if (!profileId) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "BROWSER_PROFILE_REQUIRED",
+        detail: "playwright 运维浏览器任务必须提供 profileId"
+      });
+    }
+
+    const profile = this.browserProfileService.getProfile(profileId, input.userId);
     if (profile.status !== "active") {
       throw new AppError({
         statusCode: 409,
@@ -191,6 +223,7 @@ export class OpsRuntimeService {
       input: {
         targetId: target.id,
         targetKind: target.kind,
+        executionBackend: "playwright",
         profileId: profile.id,
         engine: profile.engine,
         mode: profile.mode,

@@ -39,6 +39,7 @@ interface CreateOpsBrowserTaskBody {
   title?: string;
   targetId?: string;
   profileId?: string;
+  executionBackend?: "playwright" | "opencli_bridge";
   riskLevel?: OfficeRiskLevel;
   input?: unknown;
 }
@@ -127,7 +128,8 @@ export class OpsRuntimeController {
         userId: requireUserId(request),
         title: request.body.title?.trim() ?? "浏览器运维任务",
         targetId: request.body.targetId?.trim() ?? "",
-        profileId: request.body.profileId?.trim() ?? "",
+        profileId: request.body.profileId?.trim() ?? null,
+        executionBackend: request.body.executionBackend,
         riskLevel: request.body.riskLevel,
         input: request.body.input
       })

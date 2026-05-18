@@ -21,7 +21,7 @@ export interface CreateBrowserTaskInput {
   userId: string;
   workspaceId?: string | null;
   title: string;
-  profileId: string;
+  profileId?: string | null;
   executionBackend?: BrowserExecutionBackend;
   input?: unknown;
   riskLevel?: CreateOfficeTaskInput["riskLevel"];
@@ -98,19 +98,32 @@ export class BrowserRuntimeService {
   }
 
   createBrowserTask(input: CreateBrowserTaskInput) {
-    const profile = this.browserProfileService.getProfile(input.profileId, input.userId);
-    if (profile.status !== "active") {
-      throw new AppError({
-        statusCode: 409,
-        errorCode: "BROWSER_PROFILE_NOT_ACTIVE",
-        detail: "当前浏览器 Profile 不可用"
-      });
-    }
-
     const payload = normalizeBrowserTaskPayloadShape(input.input);
     const executionBackend = normalizeBrowserExecutionBackend(
       input.executionBackend ?? payload.executionBackend
     );
+    const taskInput = {
+      ...payload,
+      executionBackend,
+      startUrl: normalizeOptionalText(payload.startUrl),
+      actions: normalizeBrowserTaskActions(input.input)
+    };
+
+    if (executionBackend === "opencli_bridge") {
+      return this.officeService.createTask({
+        userId: input.userId,
+        workspaceId: input.workspaceId ?? null,
+        taskType: "browser",
+        title: input.title,
+        connectorId: "browser.opencli_bridge",
+        targetRefKind: "browser_bridge",
+        targetRefId: null,
+        input: taskInput,
+        riskLevel: input.riskLevel ?? "low"
+      });
+    }
+
+    const profile = this.requirePlaywrightProfile(input.userId, input.profileId ?? null);
 
     return this.officeService.createTask({
       userId: input.userId,
@@ -124,13 +137,33 @@ export class BrowserRuntimeService {
         profileId: profile.id,
         engine: profile.engine,
         mode: profile.mode,
-        ...payload,
-        executionBackend,
-        startUrl: normalizeOptionalText(payload.startUrl),
-        actions: normalizeBrowserTaskActions(input.input)
+        ...taskInput
       },
       riskLevel: input.riskLevel ?? "low"
     });
+  }
+
+  private requirePlaywrightProfile(userId: string, requestedProfileId: string | null): BrowserProfile {
+    const profileId = requestedProfileId?.trim() ?? "";
+
+    if (profileId.length === 0) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "BROWSER_PROFILE_REQUIRED",
+        detail: "playwright 浏览器任务必须提供 profileId"
+      });
+    }
+
+    const profile = this.browserProfileService.getProfile(profileId, userId);
+    if (profile.status !== "active") {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "BROWSER_PROFILE_NOT_ACTIVE",
+        detail: "当前浏览器 Profile 不可用"
+      });
+    }
+
+    return profile;
   }
 
   async getBridgeStatus(): Promise<BrowserBridgeStatusDto> {
@@ -190,17 +223,11 @@ export class BrowserRuntimeService {
       run: async (input, context) => {
         const task = this.requireExecutableTask(input.taskId, input.userId);
         const payload = parseBrowserTaskPayload(task.inputJson);
-        const executor = this.executorRegistry.get(
-          normalizeBrowserExecutionBackend(payload.executionBackend)
-        );
-        const profile = this.browserProfileService.getProfile(task.targetRefId ?? "", input.userId);
-        if (profile.status !== "active") {
-          throw new AppError({
-            statusCode: 409,
-            errorCode: "BROWSER_PROFILE_NOT_ACTIVE",
-            detail: "当前浏览器 Profile 不可用"
-          });
-        }
+        const executionBackend = normalizeBrowserExecutionBackend(payload.executionBackend);
+        const executor = this.executorRegistry.get(executionBackend);
+        const profile = executionBackend === "playwright"
+          ? this.requirePlaywrightExecutionProfile(task, input.userId)
+          : undefined;
 
         return await executor.execute({
           task,
@@ -222,6 +249,19 @@ export class BrowserRuntimeService {
     }
 
     return task;
+  }
+
+  private requirePlaywrightExecutionProfile(task: ReturnType<BrowserRuntimeService["requireOwnedBrowserTask"]>, userId: string): BrowserProfile {
+    const profile = this.browserProfileService.getProfile(task.targetRefId ?? "", userId);
+    if (profile.status !== "active") {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "BROWSER_PROFILE_NOT_ACTIVE",
+        detail: "当前浏览器 Profile 不可用"
+      });
+    }
+
+    return profile;
   }
 
   private requireOwnedBrowserTask(taskId: string, userId: string) {

@@ -1953,6 +1953,51 @@ printf 'doct generated docx' > "$output"
     expect(Buffer.from(previewContentResponse.body).toString("utf8")).toBe("mock png");
   }, SLOW_TEST_TIMEOUT_MS);
 
+  it("opencli_bridge 未传 profileId 时会直接创建无感桥接任务，不再绑定 browser profile", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const tokens = await bootstrapAndLogin(hosted);
+    const headers = {
+      authorization: `Bearer ${tokens.accessToken}`
+    };
+
+    const createTaskResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/office/browser/tasks",
+      headers,
+      payload: {
+        title: "无感桥接任务",
+        executionBackend: "opencli_bridge",
+        input: {
+          startUrl: "https://example.invalid/bridge-default",
+          actions: [
+            {
+              type: "read_dom"
+            }
+          ]
+        }
+      }
+    });
+
+    expect(createTaskResponse.statusCode).toBe(200);
+    const createdTask = createTaskResponse.json().task as {
+      targetRefKind: string | null;
+      targetRefId: string | null;
+      inputJson: string;
+      connectorId: string;
+    };
+    expect(createdTask.connectorId).toBe("browser.opencli_bridge");
+    expect(createdTask.targetRefKind).toBe("browser_bridge");
+    expect(createdTask.targetRefId).toBeNull();
+    expect(createdTask.inputJson).toContain("\"executionBackend\":\"opencli_bridge\"");
+    expect(createdTask.inputJson).not.toContain("\"profileId\":");
+  });
+
   it("可以创建并执行 SSH 运维任务，产出 stdout/stderr 与回执", async () => {
     const fixture = createEmptyFixture();
     activeFixtures.push(fixture);
@@ -2035,6 +2080,63 @@ printf 'doct generated docx' > "$output"
       })
     );
   }, SLOW_TEST_TIMEOUT_MS);
+
+  it("ops-browser-task-create 在 opencli_bridge 下可不绑定 browser profile", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const tokens = await bootstrapAndLogin(hosted);
+    const headers = {
+      authorization: `Bearer ${tokens.accessToken}`
+    };
+
+    const createTargetResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/office/ops/targets",
+      headers,
+      payload: {
+        kind: "web_console",
+        displayName: "生产控制台",
+        config: {
+          baseUrl: "https://example.invalid/console"
+        }
+      }
+    });
+
+    expect(createTargetResponse.statusCode).toBe(200);
+    const targetId = createTargetResponse.json().id as string;
+
+    const createTaskResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/office/ops/browser-tasks",
+      headers,
+      payload: {
+        title: "控制台桥接任务",
+        targetId,
+        executionBackend: "opencli_bridge",
+        input: {
+          actions: [{ type: "read_dom" }]
+        }
+      }
+    });
+
+    expect(createTaskResponse.statusCode).toBe(200);
+    const task = createTaskResponse.json().task as {
+      connectorId: string;
+      targetRefKind: string | null;
+      targetRefId: string | null;
+      inputJson: string;
+    };
+    expect(task.connectorId).toBe("ops.browser_console");
+    expect(task.targetRefKind).toBe("ops_target");
+    expect(task.targetRefId).toBe(targetId);
+    expect(task.inputJson).toContain("\"executionBackend\":\"opencli_bridge\"");
+    expect(task.inputJson).not.toContain("\"profileId\":");
+  });
 
   it("浏览器桥接状态接口会返回 opencli 状态", async () => {
     const fixture = createEmptyFixture();

@@ -498,7 +498,7 @@ interface CreateAssistantOfficeBrowserTaskInput {
   userId: string;
   workspaceId?: string | null;
   title: string;
-  profileId: string;
+  profileId?: string | null;
   riskLevel?: "low" | "medium" | "high";
   executionBackend?: "playwright" | "opencli_bridge";
   input?: unknown;
@@ -528,7 +528,8 @@ interface CreateAssistantOfficeOpsBrowserTaskInput {
   userId: string;
   title: string;
   targetId: string;
-  profileId: string;
+  profileId?: string | null;
+  executionBackend?: "playwright" | "opencli_bridge";
   riskLevel?: "low" | "medium" | "high";
   input?: unknown;
 }
@@ -1401,7 +1402,7 @@ export class AssistantCapabilityService {
       userId: input.userId,
       workspaceId: normalizeAssistantText(input.workspaceId) ?? undefined,
       title: input.title,
-      profileId: input.profileId,
+      profileId: normalizeAssistantText(input.profileId) ?? undefined,
       riskLevel: input.riskLevel,
       executionBackend: input.executionBackend,
       input: input.input
@@ -1602,7 +1603,8 @@ export class AssistantCapabilityService {
       userId: input.userId,
       title: input.title,
       targetId: input.targetId,
-      profileId: input.profileId,
+      profileId: normalizeAssistantText(input.profileId) ?? undefined,
+      executionBackend: input.executionBackend,
       riskLevel: input.riskLevel,
       input: input.input
     });

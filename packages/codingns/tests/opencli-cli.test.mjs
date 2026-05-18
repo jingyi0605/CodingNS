@@ -321,6 +321,97 @@ test("codingns assistant office browser-task-create 会调用 Host assistant API
   }
 });
 
+test("codingns assistant office browser-task-create 在 opencli_bridge 下可省略 profile-id", async () => {
+  let receivedPayload = null;
+  const server = http.createServer(async (request, response) => {
+    if (request.method === "POST" && request.url === "/api/assistant/office/browser/tasks") {
+      receivedPayload = await readJsonBody(request);
+      response.writeHead(200, {
+        "Content-Type": "application/json",
+        "Connection": "close"
+      });
+      response.end(JSON.stringify({
+        ok: true,
+        capability: "office.browser.task.create",
+        auditId: "audit-browser-task-bridge-default",
+        timestamp: "2026-05-18T01:00:00.000Z",
+        targetRef: {
+          kind: "workspace",
+          id: "workspace-1"
+        },
+        payload: {
+          task: {
+            id: "browser-task-bridge-default"
+          },
+          execution: null
+        }
+      }));
+      return;
+    }
+
+    response.writeHead(404, {
+      "Content-Type": "application/json",
+      "Connection": "close"
+    });
+    response.end(JSON.stringify({ detail: "not found" }));
+  });
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const result = await runCli([
+      cliPath,
+      "assistant",
+      "office",
+      "browser-task-create",
+      "--base-url",
+      baseUrl,
+      "--token",
+      "token-1",
+      "--execution-backend",
+      "opencli_bridge",
+      "--execute",
+      "true",
+      "--input-json",
+      "{\"startUrl\":\"https://example.invalid/bridge\",\"actions\":[{\"type\":\"read_dom\"}]}"
+    ]);
+
+    assert.equal(result.status, 0);
+    assert.deepEqual(receivedPayload, {
+      workspaceId: null,
+      title: null,
+      profileId: null,
+      riskLevel: null,
+      executionBackend: "opencli_bridge",
+      execute: true,
+      input: {
+        startUrl: "https://example.invalid/bridge",
+        actions: [
+          {
+            type: "read_dom"
+          }
+        ]
+      }
+    });
+    assert.match(result.stdout, /"capability": "office.browser.task.create"/);
+  } finally {
+    server.closeIdleConnections?.();
+    server.closeAllConnections?.();
+    await new Promise((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+});
+
 test("codingns assistant office browser-profile-list 会调用 Host assistant API", async () => {
   const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/api/assistant/office/browser/profiles?workspaceId=workspace-1") {
@@ -378,6 +469,95 @@ test("codingns assistant office browser-profile-list 会调用 Host assistant AP
     assert.equal(result.status, 0);
     assert.match(result.stdout, /"capability": "office.browser.profile.list"/);
     assert.match(result.stdout, /"displayName": "办公 Chrome"/);
+  } finally {
+    server.closeIdleConnections?.();
+    server.closeAllConnections?.();
+    await new Promise((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+});
+
+test("codingns assistant office ops-browser-task-create 在 opencli_bridge 下可省略 profile-id", async () => {
+  let receivedPayload = null;
+  const server = http.createServer(async (request, response) => {
+    if (request.method === "POST" && request.url === "/api/assistant/office/ops/browser-tasks") {
+      receivedPayload = await readJsonBody(request);
+      response.writeHead(200, {
+        "Content-Type": "application/json",
+        "Connection": "close"
+      });
+      response.end(JSON.stringify({
+        ok: true,
+        capability: "office.ops.browser-task.create",
+        auditId: "audit-ops-browser-task-1",
+        timestamp: "2026-05-18T01:10:00.000Z",
+        targetRef: {
+          kind: "workspace",
+          id: "workspace-1"
+        },
+        payload: {
+          task: {
+            id: "ops-browser-task-1"
+          }
+        }
+      }));
+      return;
+    }
+
+    response.writeHead(404, {
+      "Content-Type": "application/json",
+      "Connection": "close"
+    });
+    response.end(JSON.stringify({ detail: "not found" }));
+  });
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const result = await runCli([
+      cliPath,
+      "assistant",
+      "office",
+      "ops-browser-task-create",
+      "--base-url",
+      baseUrl,
+      "--token",
+      "token-1",
+      "--target-id",
+      "target-1",
+      "--execution-backend",
+      "opencli_bridge",
+      "--input-json",
+      "{\"actions\":[{\"type\":\"read_dom\"}]}"
+    ]);
+
+    assert.equal(result.status, 0);
+    assert.deepEqual(receivedPayload, {
+      targetId: "target-1",
+      profileId: null,
+      executionBackend: "opencli_bridge",
+      title: null,
+      riskLevel: null,
+      input: {
+        actions: [
+          {
+            type: "read_dom"
+          }
+        ]
+      },
+      confirm: false
+    });
+    assert.match(result.stdout, /"capability": "office.ops.browser-task.create"/);
   } finally {
     server.closeIdleConnections?.();
     server.closeAllConnections?.();
