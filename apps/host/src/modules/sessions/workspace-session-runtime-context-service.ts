@@ -110,6 +110,7 @@ export class WorkspaceSessionRuntimeContextService {
     // Codex 的 office MCP 现在改成 helper 启动 `codex app-server` 时临时注入 `-c mcp_servers...`，
     // 不再写入真实 home 的 config.toml，也不改 transcript/home 落盘语义。
     fs.writeFileSync(authFilePath, `${JSON.stringify(credential, null, 2)}\n`, "utf8");
+    syncWorkspaceSessionSkill(input.runtimeHomeDir);
     configureWorkspaceOfficeMcpRuntime(input.runtimeHomeDir, {
       provider: input.provider,
       authFilePath
@@ -397,17 +398,18 @@ function buildWorkspaceAssistantInstructions(input: {
 - 文档操作优先走 \`assistant office.document.*\`。
 - 浏览器操作优先走 \`assistant office.browser.*\`。
 - 当前工作区会话已经暴露正式浏览器入口命令：\`codingns assistant office browser-profile-list\`、\`codingns assistant office browser-profile-create\`、\`codingns assistant office browser-task-create\`、\`codingns assistant office browser-task-get\`。
-- 只要任务属于打开网页、登录网站、抓取页面、读取 DOM、截图、提交表单、下载文件这一类真实网页操作，默认先查 \`assistant office.browser.profile.list\` / \`assistant office.browser.task.create\`，不要先落到 Codex 自带 Browser。
+- 只要任务属于打开网页、登录网站、抓取页面、读取 DOM、截图、提交表单、下载文件这一类真实网页操作，默认先用 \`assistant office.browser.task.create\`，不要先落到 Codex 自带 Browser。
 - 如果当前会话同时还能看到 \`$codingns-opencli\`，不要被它里面的站点命令带偏：公开页面、公开榜单、公开帖子、公开趋势数据才考虑它；登录态、验证码、订单、购物车、个人账户、后台页面、表单提交、下载文件、点击页面控件、复用人工已登录 Chrome/Edge 这类任务必须走 \`office.browser.*\`。
 - 就算 \`codingns-opencli\` 里存在 \`taobao/*\`、\`jd/*\` 这类 browser-dependent 命令，也不能把它们当成工作区真实站点任务的默认入口。
 - 涉及登录、验证码、二次确认弹窗、复杂前端站点、必须复用现有 Chrome/Edge 登录态这几类任务时，创建浏览器任务优先显式传 \`executionBackend=opencli_bridge\`，不要继续默认无头浏览器。
+- 当 \`executionBackend=opencli_bridge\` 时，\`browser-task-create\` 可以不传 \`profileId\`；这条链路会直接走无感浏览器桥接，不再依赖 Profile。
 - 只有任务本身明显适合无头执行，或者用户明确要求无头链路时，才继续使用默认 \`playwright\`。
 - \`browser-task-create --input-json\` 必须传 JSON 对象，不要猜私有 body。最小模板直接照抄：\`{"startUrl":"https://example.invalid","actions":[{"type":"read_dom"}]}\`。
 - 浏览器动作类型当前只支持：\`goto\`、\`click\`、\`fill\`、\`press\`、\`select\`、\`upload\`、\`download\`、\`wait\`、\`read_dom\`、\`extract_text\`、\`screenshot\`。
 - 常见模板：打开页面读 DOM 用 \`{"startUrl":"https://target.example","actions":[{"type":"read_dom"}]}\`；打开页面截图用 \`{"startUrl":"https://target.example","actions":[{"type":"screenshot","fullPage":true}]}\`；等待后再读用 \`{"startUrl":"https://target.example","actions":[{"type":"wait","timeoutMs":3000},{"type":"read_dom"}]}\`。
 - 不要回答“当前环境没有浏览器能力”或“没有暴露浏览器能力”；对真实站点任务，先查上面这组 \`codingns assistant office ...\` 命令的 \`--help\` 或直接调用它们。
 - 只有本地预览、开发调试 \`localhost\` / \`127.0.0.1\` / \`::1\`，或用户明确要求当前 in-app browser 时，才优先使用 Codex 自带 Browser。
-- 真实浏览器任务的最小顺序是：先看 \`assistant office.browser.profile.list\`，没有可复用 Profile 再 \`assistant office.browser.profile.create\`，随后用 \`assistant office.browser.task.create\`，需要继续看结果时再用 \`assistant office.browser.task.get\`。
+- 真实浏览器任务的最小顺序是：优先直接用 \`assistant office.browser.task.create\` 并显式传 \`executionBackend=opencli_bridge\`；只有用户明确要求无头 \`playwright\`，或者要手工管理独立浏览器资料目录时，再先查/建 Profile。
 - 遇到真实站点浏览器任务，先查 \`browser-task-create --help\` 或工作区专用 skill 里的模板，不要退回去翻源码、编译产物或自己拼接口路径。
 - 运维任务优先走 \`assistant office.ops.*\`。
 - 新建终端优先走 \`assistant terminals create\`。

@@ -77,7 +77,8 @@ describe("OpenCliInstallDiscovery", () => {
       env: {
         PATH: ""
       },
-      catalogRootCandidates: [localRoot]
+      catalogRootCandidates: [localRoot],
+      packagedInstallRootCandidates: []
     });
 
     expect(discovery.discover()).toEqual({
@@ -119,12 +120,42 @@ describe("OpenCliInstallDiscovery", () => {
     expect(result.installState).toBe("installed");
     expect(result.version).toBe("1.7.7");
     expect(result.installPath).toBe(expectedInstallPath);
-    expect(result.binaryPath).toBe(path.join(expectedInstallPath, "bin", "opencli"));
+    expect(result.binaryPath).toBe(path.join(expectedInstallPath, "dist", "src", "main.js"));
     expect(result.manifestSource).toEqual({
       kind: "manifest",
       rootPath: expectedInstallPath,
       manifestPath: path.join(expectedInstallPath, "cli-manifest.json")
     });
+  });
+
+  it("项目自带安装缺少 bin/opencli 时也能从 package.json 的 bin 字段解析真实入口", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-opencli-discovery-package-bin-"));
+    tempDirs.push(tempDir);
+    const fixture = createFakeOpenCliInstall(tempDir, [
+      {
+        site: "hackernews",
+        name: "top",
+        description: "读取热门内容",
+        strategy: "public",
+        browser: false,
+        modulePath: "hackernews/top.js",
+        sourceFile: "hackernews/top.js"
+      }
+    ], {
+      omitPackagedBinShim: true
+    });
+    const discovery = new OpenCliInstallDiscovery({
+      env: {
+        PATH: ""
+      },
+      packagedInstallRootCandidates: [fixture.packageRoot]
+    });
+    const result = discovery.discover();
+    const expectedInstallPath = path.resolve(fixture.packageRoot);
+
+    expect(result.installState).toBe("installed");
+    expect(result.installPath).toBe(expectedInstallPath);
+    expect(result.binaryPath).toBe(path.join(expectedInstallPath, "dist", "src", "main.js"));
   });
 });
 
@@ -439,7 +470,10 @@ function createFakeOpenCliInstall(
     browser: boolean;
     modulePath: string;
     sourceFile: string;
-  }>
+  }>,
+  options: {
+    omitPackagedBinShim?: boolean;
+  } = {}
 ): {
   packageRoot: string;
   binDir: string;
@@ -471,7 +505,9 @@ function createFakeOpenCliInstall(
   writeFileSync(distMainPath, "#!/usr/bin/env node\n", "utf8");
   chmodSync(distMainPath, 0o755);
   symlinkSync(distMainPath, binaryPath);
-  symlinkSync(distMainPath, packagedBinaryPath);
+  if (!options.omitPackagedBinShim) {
+    symlinkSync(distMainPath, packagedBinaryPath);
+  }
 
   return {
     packageRoot,

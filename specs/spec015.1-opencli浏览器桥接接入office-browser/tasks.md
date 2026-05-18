@@ -223,3 +223,37 @@
     3. 相关 skill 生成测试通过
   - 对应需求：`requirements.md` 需求 1、3、5、8
   - 对应设计：`design.md` §5、§7、§9
+
+- [x] 4.4 把 `opencli_bridge` 从“像 Profile 一样用”改成真正的无感桥接
+  - 状态：DONE
+  - 这一步到底做什么：让办公浏览器任务和运维浏览器任务在选择 `opencli_bridge` 时，不再要求先查 Profile、建 Profile、再把 `profileId` 传进去。
+  - 做完以后能看到什么结果：`browser.opencli_bridge` 会作为单独桥接入口出现，任务记录里能明确看出它不是 profile 型任务。
+  - 先依赖什么：3.1、4.2
+  - 主要改哪里：
+    - `apps/host/src/modules/browser-runtime/*`
+    - `apps/host/src/modules/ops-runtime/*`
+    - `packages/codingns/*`
+  - 这一步明确不做什么：不删除 `playwright` 的 Profile 能力，也不改现有 Profile / 实例数据结构。
+  - 怎么验证：
+    1. `office.browser.task.create` 在 `opencli_bridge` 下可不传 `profileId`
+    2. `office.ops.browser-task.create` 在 `opencli_bridge` 下可不传 `profileId`
+    3. 任务详情里 `opencli_bridge` 不再绑定 browser profile
+  - 对应需求：`requirements.md` 需求 1、2、3、6、8
+  - 对应设计：`design.md` §4、§5、§7
+
+- [x] 4.5 把 MCP / 状态面板改成人能看懂的精简版
+  - 状态：DONE
+  - 这一步到底做什么：把原来那堆路径、配置文件、CLI 探测细节收起来，改成“总体状态、当前会话、Codex、全局 codingns、推荐调用链路”这种人话摘要。
+  - 做完以后能看到什么结果：用户一眼就能看懂当前工作区会话有没有真正暴露 `office.browser.*`，以及真实浏览器调试该走 `browser.opencli_bridge`，它不是 profile 型任务。
+  - 先依赖什么：2.2、4.4
+  - 主要改哪里：
+    - `apps/host/src/modules/skills/skill-manager-service.ts`
+    - `apps/user-app/src/settings/SkillManagementPanel.tsx`
+    - `apps/user-app/src/shared/i18n/index.ts`
+  - 这一步明确不做什么：不把排障底层数据删掉，后端原始状态仍然保留给接口和测试使用。
+  - 怎么验证：
+    1. 面板能直接显示 `browser.opencli_bridge`
+    2. 面板文案明确写出“不是 profile 型任务”
+    3. 前端测试和接口测试通过
+  - 对应需求：`requirements.md` 需求 5、6、8
+  - 对应设计：`design.md` §6、§7、§9

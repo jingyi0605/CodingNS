@@ -23,6 +23,7 @@ export function buildWorkspaceOfficeMcpCommandArgs(
 
 export function buildCodexWorkspaceOfficeMcpConfigOverrides(input: {
   authFilePath: string;
+  instructionFilePath?: string | null;
   nodePath?: string;
   repoRootDir?: string;
   startupTimeoutSec?: number;
@@ -36,12 +37,20 @@ export function buildCodexWorkspaceOfficeMcpConfigOverrides(input: {
     Math.trunc(input.startupTimeoutSec ?? DEFAULT_CODEX_WORKSPACE_OFFICE_MCP_STARTUP_TIMEOUT_SEC)
   );
 
-  return [
+  const overrides = [
     `mcp_servers.${WORKSPACE_OFFICE_MCP_NAME}.command=${JSON.stringify(input.nodePath ?? process.execPath)}`,
     `mcp_servers.${WORKSPACE_OFFICE_MCP_NAME}.args=${JSON.stringify(mcpCommandArgs)}`,
     `mcp_servers.${WORKSPACE_OFFICE_MCP_NAME}.env.${CODINGNS_OFFICE_MCP_AUTH_FILE_ENV}=${JSON.stringify(input.authFilePath)}`,
     `mcp_servers.${WORKSPACE_OFFICE_MCP_NAME}.startup_timeout_sec=${startupTimeoutSec}`
   ];
+
+  const instructionFilePath = input.instructionFilePath?.trim() ?? "";
+
+  if (instructionFilePath) {
+    overrides.push(`model_instructions_file=${JSON.stringify(instructionFilePath)}`);
+  }
+
+  return overrides;
 }
 
 export function shouldEnableCodexWorkspaceOfficeMcp(env: NodeJS.ProcessEnv): boolean {
@@ -58,13 +67,15 @@ export function buildCodexAppServerArgsWithWorkspaceOfficeMcp(
   }
 
   const authFilePath = (env[CODINGNS_OFFICE_MCP_AUTH_FILE_ENV] ?? "").trim();
+  const instructionFilePath = (env.WORKSPACE_SESSION_ASSISTANT_FILE ?? "").trim();
 
   if (!authFilePath) {
     return baseArgs;
   }
 
   const overrides = buildCodexWorkspaceOfficeMcpConfigOverrides({
-    authFilePath
+    authFilePath,
+    instructionFilePath: instructionFilePath || null
   });
 
   for (const override of overrides) {

@@ -29,18 +29,22 @@ export class OpenCliInstallDiscovery {
   private readonly env: NodeJS.ProcessEnv;
   private readonly catalogRootCandidates: readonly string[];
   private readonly packagedInstallRootCandidates: readonly string[];
+  private readonly hasExplicitPackagedInstallCandidates: boolean;
 
   constructor(options: OpenCliInstallDiscoveryOptions = {}) {
     this.env = options.env ?? process.env;
     this.catalogRootCandidates = options.catalogRootCandidates ?? [];
+    this.hasExplicitPackagedInstallCandidates = Array.isArray(options.packagedInstallRootCandidates);
     this.packagedInstallRootCandidates = options.packagedInstallRootCandidates ?? resolvePackagedOpenCliRootCandidates();
   }
 
   discover(): OpenCliInstallDiscoveryResult {
-    const packagedInstall = this.resolvePackagedInstall();
+    if (this.hasExplicitPackagedInstallCandidates) {
+      const packagedInstall = this.resolvePackagedInstall();
 
-    if (packagedInstall) {
-      return packagedInstall;
+      if (packagedInstall) {
+        return packagedInstall;
+      }
     }
 
     const binaryPath = resolveExecutableFromPath("opencli", this.env.PATH ?? null);
@@ -63,6 +67,14 @@ export class OpenCliInstallDiscovery {
               }
             : null
       };
+    }
+
+    if (!this.hasExplicitPackagedInstallCandidates) {
+      const packagedInstall = this.resolvePackagedInstall();
+
+      if (packagedInstall) {
+        return packagedInstall;
+      }
     }
 
     for (const candidateRoot of this.catalogRootCandidates) {
@@ -229,14 +241,23 @@ function resolvePackagedOpenCliRootCandidates(): string[] {
 }
 
 function resolveOpenCliBinaryFromInstallRoot(rootPath: string): string | null {
-  const candidates =
+  const packageBinCandidates = readPackageBinCandidates(rootPath);
+  const fallbackCandidates =
     process.platform === "win32"
       ? [
           path.join(rootPath, "bin", "opencli.cmd"),
           path.join(rootPath, "bin", "opencli.exe"),
-          path.join(rootPath, "bin", "opencli.bat")
+          path.join(rootPath, "bin", "opencli.bat"),
+          path.join(rootPath, "node_modules", ".bin", "opencli.cmd"),
+          path.join(rootPath, "node_modules", ".bin", "opencli.exe"),
+          path.join(rootPath, "node_modules", ".bin", "opencli.bat")
         ]
-      : [path.join(rootPath, "bin", "opencli")];
+      : [
+          path.join(rootPath, "bin", "opencli"),
+          path.join(rootPath, "node_modules", ".bin", "opencli")
+        ];
+  const candidates = [...packageBinCandidates, ...fallbackCandidates]
+    .filter((candidate, index, values) => values.indexOf(candidate) === index);
 
   for (const candidate of candidates) {
     if (isExecutable(candidate)) {
@@ -245,4 +266,35 @@ function resolveOpenCliBinaryFromInstallRoot(rootPath: string): string | null {
   }
 
   return null;
+}
+
+function readPackageBinCandidates(rootPath: string): string[] {
+  const packageJsonPath = path.join(rootPath, "package.json");
+
+  if (!fs.existsSync(packageJsonPath)) {
+    return [];
+  }
+
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")) as {
+      bin?: unknown;
+    };
+    const packageBin = packageJson.bin;
+
+    if (typeof packageBin === "string" && packageBin.trim().length > 0) {
+      return [path.resolve(rootPath, packageBin.trim())];
+    }
+
+    if (typeof packageBin === "object" && packageBin !== null) {
+      const opencliBin = (packageBin as Record<string, unknown>).opencli;
+
+      if (typeof opencliBin === "string" && opencliBin.trim().length > 0) {
+        return [path.resolve(rootPath, opencliBin.trim())];
+      }
+    }
+  } catch {
+    return [];
+  }
+
+  return [];
 }

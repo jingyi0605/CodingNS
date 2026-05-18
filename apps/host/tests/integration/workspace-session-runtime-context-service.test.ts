@@ -210,6 +210,9 @@ describe("WorkspaceSessionRuntimeContextService", () => {
 
     expect(result.authFilePath).toBe(path.join(codexHomeDir, "WORKSPACE_SESSION_AUTH.json"));
     expect(readFileSync(result.authFilePath, "utf8")).toContain("\"workspaceId\": \"workspace-1\"");
+    expect(
+      existsSync(path.join(codexHomeDir, "skills", "codingns-workspace-session", "SKILL.md"))
+    ).toBe(true);
     const codexConfig = readFileSync(path.join(codexHomeDir, "config.toml"), "utf8");
     expect(codexConfig).not.toContain("model_instructions_file");
     expect(codexConfig).toContain("model = \"gpt-5-codex\"");

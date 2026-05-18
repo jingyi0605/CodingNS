@@ -385,7 +385,7 @@ export CODINGNS_ACCESS_TOKEN="$(jq -r '.accessToken' "${authFilePath}")"
 ## 办公能力调用顺序
 
 1. 需要正式文档产物时，先 \`codingns assistant office document-create\`，再 \`document-update\`，最后 \`document-export --execute true\`，并用 \`document-task\` 看真实导出结果。
-2. 需要真实 Chrome/Edge 自动化时，先 \`codingns assistant office browser-profile-list\`，没有可复用 Profile 再 \`browser-profile-create\`，随后 \`browser-task-create --execute true\`，最后 \`browser-task-get\` 看截图、DOM、下载产物和回执。
+2. 需要真实 Chrome/Edge 自动化时，优先直接 \`codingns assistant office browser-task-create --execution-backend opencli_bridge --execute true\`，最后 \`browser-task-get\` 看截图、DOM、下载产物和回执。只有明确要走无头 playwright，或者要手工管理独立 Profile 时，再先 \`browser-profile-list\` / \`browser-profile-create\`。
 3. 需要 SSH 运维时，先 \`codingns assistant office ops-target-create\`，再 \`ops-ssh-task-create\`。如果状态是 \`pending_approval\`，先 \`task-approval-reply\`，再 \`ops-task-execute\`，最后 \`ops-task-get\` 看 stdout、stderr 和回执。
 4. 能用 \`office\` 的地方，不要绕回私有 HTTP、裸 \`ssh\` 或单次临时脚本。这样状态、审批、回执和产物才不会散掉。
 
@@ -427,9 +427,9 @@ codingns assistant terminals send --help
 - \`codingns assistant terminals send <terminalId> --input "npm test\\n"\`：向终端发送输入。
 - \`codingns assistant office document-create --title "周报" --template-key team.doct.weekly --content-json '{"sections":[]}'\`：创建办公文档。
 - \`codingns assistant office document-export <documentId> --format docx --execute true\`：按 doct 模板导出真实生产文档。
-- \`codingns assistant office browser-profile-list\`：列出当前工作区可复用的真实浏览器 Profile。
-- \`codingns assistant office browser-profile-create --engine chrome --mode persistent --display-name "办公 Chrome"\`：创建真实浏览器 Profile。
-- \`codingns assistant office browser-task-create --profile-id <profileId> --execute true --input-json '{"startUrl":"https://example.invalid","actions":[{"type":"read_dom"},{"type":"screenshot"}]}'\`：执行浏览器自动化任务。
+- \`codingns assistant office browser-profile-list\`：列出当前工作区可复用的无头/手工管理浏览器 Profile。
+- \`codingns assistant office browser-profile-create --engine chrome --mode persistent --display-name "办公 Chrome"\`：创建手工管理的真实浏览器 Profile。
+- \`codingns assistant office browser-task-create --execution-backend opencli_bridge --execute true --input-json '{"startUrl":"https://example.invalid","actions":[{"type":"read_dom"},{"type":"screenshot"}]}'\`：执行真实浏览器桥接任务，通常不需要传 \`--profile-id\`。
 - \`codingns assistant office ops-target-create --kind ssh_host --display-name "生产 SSH" --config-json '{"host":"10.0.0.8","username":"root"}'\`：创建 SSH 运维目标。
 - \`codingns assistant office ops-ssh-task-create --target-id <targetId> --execute false --input-json '{"command":"df -h","timeoutMs":60000}'\`：创建 SSH 运维任务。
 - \`codingns assistant office task-approval-reply <approvalId> --status approved\`：批准高风险办公任务。
