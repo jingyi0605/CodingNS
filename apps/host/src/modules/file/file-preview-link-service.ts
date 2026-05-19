@@ -4,7 +4,7 @@ import { AppError } from "../../shared/errors/app-error.js";
 import type { FileAccessGuard } from "./file-access-guard.js";
 import { detectPreviewKind, resolvePreviewContentType } from "./file-preview-types.js";
 
-const FILE_PREVIEW_TOKEN_TTL_MS = 5 * 60 * 1000;
+const FILE_PREVIEW_TOKEN_TTL_MS = 2 * 60 * 60 * 1000;
 
 interface FilePreviewTokenPayload {
   workspaceId: string;
