@@ -110,6 +110,12 @@ export interface DesktopBridgeResult<T = void> {
   detail?: string;
 }
 
+export interface DesktopPlatformInfo {
+  platform: "macos" | "windows" | "linux" | "unknown";
+  isDesktop: boolean;
+  fileManager: "finder" | "explorer" | "file-manager" | "unknown";
+}
+
 export interface MacOsTitlebarMetrics {
   overlay: boolean;
   trafficLightCenterY: number;

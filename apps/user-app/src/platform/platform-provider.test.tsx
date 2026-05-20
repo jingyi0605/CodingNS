@@ -2,6 +2,7 @@ import { render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { getSharedWindowRegistryStore } from "./desktop/window-registry";
+import { resetCodingNSDesktopBridgeForTest } from "./desktop/codingns-desktop-bridge";
 import { DESKTOP_WINDOW_LIFECYCLE_EVENT } from "./desktop/window-events";
 import { PlatformProvider } from "./platform-provider";
 
@@ -69,6 +70,7 @@ describe("PlatformProvider", () => {
     clearTitlebarVariables();
     windowRegistry.clear();
     tauriEventBridge.handler = null;
+    resetCodingNSDesktopBridgeForTest();
 
     if (userAgentDescriptor) {
       Object.defineProperty(window.navigator, "userAgent", userAgentDescriptor);
@@ -241,6 +243,36 @@ describe("PlatformProvider", () => {
     await waitFor(() => {
       expect(windowRegistry.isWindowOpen("files-workspace-1")).toBe(false);
       expect(windowRegistry.getDescriptor("files-workspace-1")?.bounds.x).toBe(28);
+    });
+  });
+
+  it("会安装全局 CodingNSDesktop bridge", async () => {
+    mockNavigator(
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+      "MacIntel"
+    );
+    const invoke: NonNullable<Window["__TAURI_INTERNALS__"]>["invoke"] = async <T,>() => {
+      return {
+        version: "0.1.2",
+        appDataDir: null,
+        windowChrome: {
+          macosTitlebar: null
+        }
+      } as T;
+    };
+    window.__TAURI_INTERNALS__ = {
+      invoke
+    };
+
+    render(
+      <PlatformProvider>
+        <div>platform-provider</div>
+      </PlatformProvider>
+    );
+
+    await waitFor(() => {
+      expect(window.CodingNSDesktop).toBeDefined();
+      expect(window.CodingNSDesktop?.runtime.isAvailable()).toBe(true);
     });
   });
 });

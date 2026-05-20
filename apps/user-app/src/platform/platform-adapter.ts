@@ -6,6 +6,7 @@ import type {
   ClientRuntimeConfigPatch,
   DesktopLocalHostProcessHit,
   DesktopBridgeResult,
+  DesktopPlatformInfo,
   DesktopReleaseState,
   DesktopRuntimeInfo,
   DesktopUpdateInstallResult,
@@ -57,6 +58,9 @@ export interface NativeSidebarLayout {
 export interface DesktopShellBridge {
   readonly supported: boolean;
   openExternal(url: string): Promise<DesktopBridgeResult>;
+  openLocalFile(path: string): Promise<DesktopBridgeResult>;
+  revealInFileManager(path: string): Promise<DesktopBridgeResult>;
+  getPlatformInfo(): Promise<DesktopBridgeResult<DesktopPlatformInfo>>;
   showNotification(title: string, body: string): Promise<DesktopBridgeResult>;
   writeClipboardText(text: string): Promise<DesktopBridgeResult>;
   setWindowState(state: DesktopWindowState): Promise<DesktopBridgeResult>;
@@ -213,6 +217,23 @@ function unsupportedResult<T = void>(detail: string): DesktopBridgeResult<T> {
   };
 }
 
+function resolveDesktopBridgeError(error: unknown): Pick<DesktopBridgeResult, "errorCode" | "detail"> {
+  const message = error instanceof Error ? error.message : "桌面壳调用失败。";
+  const matched = message.match(/^([A-Z0-9_]+):\s*(.+)$/);
+
+  if (!matched) {
+    return {
+      errorCode: "SHELL_BRIDGE_ERROR",
+      detail: message
+    };
+  }
+
+  return {
+    errorCode: matched[1],
+    detail: matched[2]
+  };
+}
+
 async function invokeDesktopCommand<T>(
   command: string,
   args?: Record<string, unknown>
@@ -237,8 +258,7 @@ async function invokeTauriCommand<T>(
   } catch (error) {
     return {
       ok: false,
-      errorCode: "SHELL_BRIDGE_ERROR",
-      detail: error instanceof Error ? error.message : "桌面壳调用失败。"
+      ...resolveDesktopBridgeError(error)
     };
   }
 }
@@ -318,6 +338,18 @@ class WebDesktopShellBridge implements DesktopShellBridge {
 
     window.open(url, "_blank", "noopener,noreferrer");
     return Promise.resolve({ ok: true });
+  }
+
+  openLocalFile(): Promise<DesktopBridgeResult> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  revealInFileManager(): Promise<DesktopBridgeResult> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  getPlatformInfo(): Promise<DesktopBridgeResult<DesktopPlatformInfo>> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
   }
 
   showNotification(title: string, body: string): Promise<DesktopBridgeResult> {
@@ -430,6 +462,18 @@ class TauriDesktopShellBridge implements DesktopShellBridge {
 
   openExternal(url: string): Promise<DesktopBridgeResult> {
     return invokeDesktopCommand("open_external", { url });
+  }
+
+  openLocalFile(path: string): Promise<DesktopBridgeResult> {
+    return invokeDesktopCommand("open_local_file", { path });
+  }
+
+  revealInFileManager(path: string): Promise<DesktopBridgeResult> {
+    return invokeDesktopCommand("reveal_in_file_manager", { path });
+  }
+
+  getPlatformInfo(): Promise<DesktopBridgeResult<DesktopPlatformInfo>> {
+    return invokeDesktopCommand("get_platform_info");
   }
 
   async showNotification(title: string, body: string): Promise<DesktopBridgeResult> {
@@ -569,6 +613,18 @@ class TauriMobileShellBridge implements DesktopShellBridge {
 
     window.open(url, "_blank", "noopener,noreferrer");
     return Promise.resolve({ ok: true });
+  }
+
+  openLocalFile(): Promise<DesktopBridgeResult> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  revealInFileManager(): Promise<DesktopBridgeResult> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  getPlatformInfo(): Promise<DesktopBridgeResult<DesktopPlatformInfo>> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
   }
 
   showNotification(title: string, body: string): Promise<DesktopBridgeResult> {

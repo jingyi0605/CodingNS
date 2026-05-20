@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import type { MacOsTitlebarMetrics } from "../config/client-config-types";
+import { installCodingNSDesktopBridge } from "./desktop/codingns-desktop-bridge";
 import {
   DESKTOP_WINDOW_LIFECYCLE_EVENT,
   type DesktopWindowLifecycleEventPayload
@@ -92,6 +93,10 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
     () => createPlatformAdapter({ viewportWidth }),
     [viewportWidth]
   );
+
+  useEffect(() => {
+    installCodingNSDesktopBridge();
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {

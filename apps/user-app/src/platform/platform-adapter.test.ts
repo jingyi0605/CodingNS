@@ -273,6 +273,51 @@ describe("platform-adapter", () => {
     });
   });
 
+  it("桌面端文件 bridge 会把命令和错误码透给前端", async () => {
+    const invoke = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("FILE_NOT_FOUND: 目标路径不存在：/Users/jackson/missing.pdf"))
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({
+        platform: "macos",
+        isDesktop: true,
+        fileManager: "finder"
+      });
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+      platform: "MacIntel"
+    });
+    window.__TAURI_INTERNALS__ = { invoke };
+
+    const adapter = createPlatformAdapter({ viewportWidth: 1280 });
+    const openResult = await adapter.bridge.openLocalFile("/Users/jackson/missing.pdf");
+    const revealResult = await adapter.bridge.revealInFileManager("/Users/jackson/demo.pdf");
+    const platformResult = await adapter.bridge.getPlatformInfo();
+
+    expect(openResult).toEqual({
+      ok: false,
+      errorCode: "FILE_NOT_FOUND",
+      detail: "目标路径不存在：/Users/jackson/missing.pdf"
+    });
+    expect(revealResult).toEqual({ ok: true, value: undefined });
+    expect(platformResult).toEqual({
+      ok: true,
+      value: {
+        platform: "macos",
+        isDesktop: true,
+        fileManager: "finder"
+      }
+    });
+    expect(invoke).toHaveBeenNthCalledWith(1, "open_local_file", {
+      path: "/Users/jackson/missing.pdf"
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "reveal_in_file_manager", {
+      path: "/Users/jackson/demo.pdf"
+    });
+    expect(invoke).toHaveBeenNthCalledWith(3, "get_platform_info", undefined);
+  });
+
   it("getWindowDescriptor 未传 windowId 时会读取当前窗口 descriptor", async () => {
     const invoke = vi.fn().mockResolvedValue(undefined);
     mockNavigator({
