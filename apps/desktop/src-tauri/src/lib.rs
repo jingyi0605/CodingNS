@@ -1,10 +1,13 @@
 mod config;
+mod desktop_bridge_plugin;
+mod file_system;
 mod host_discovery;
 mod rollback;
 mod updater;
 mod window_manager;
 
 use config::DesktopRuntimeConfig;
+use file_system::PlatformInfo;
 use host_discovery::DesktopLocalHostProcessHit;
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
@@ -219,6 +222,21 @@ fn rollback_to_previous_version(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
     updater::open_external(&url)
+}
+
+#[tauri::command]
+fn open_local_file(path: String) -> Result<(), String> {
+    file_system::open_local_file(path)
+}
+
+#[tauri::command]
+fn reveal_in_file_manager(path: String) -> Result<(), String> {
+    file_system::reveal_in_file_manager(path)
+}
+
+#[tauri::command]
+fn get_platform_info() -> PlatformInfo {
+    file_system::get_platform_info()
 }
 
 #[tauri::command]
@@ -1085,6 +1103,7 @@ fn configure_macos_window_chrome(app: &tauri::App) -> tauri::Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
+        .plugin(desktop_bridge_plugin::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
@@ -1120,6 +1139,9 @@ pub fn run() {
             restart_application,
             rollback_to_previous_version,
             open_external,
+            open_local_file,
+            reveal_in_file_manager,
+            get_platform_info,
             show_notification,
             copy_text,
             pick_directory,
