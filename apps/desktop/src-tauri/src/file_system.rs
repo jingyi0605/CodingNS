@@ -5,6 +5,16 @@ use std::{
 };
 #[cfg(target_os = "linux")]
 use std::path::Path;
+#[cfg(target_os = "windows")]
+use std::os::windows::ffi::OsStrExt;
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::{
+    Foundation::HWND,
+    UI::{
+        Shell::ShellExecuteW,
+        WindowsAndMessaging::SW_SHOWNORMAL,
+    },
+};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -30,14 +40,7 @@ pub fn open_local_file(path: String) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
-        let mut command = Command::new("cmd");
-        command.args(["/C", "start", ""]);
-        command.arg(format!("\"{}\"", path.display()));
-        return run_command(
-            command,
-            "OPEN_FAILED",
-            format!("系统打开文件失败：{}", path.display()),
-        );
+        return open_local_file_windows(&path);
     }
 
     #[cfg(target_os = "linux")]
@@ -254,6 +257,47 @@ fn desktop_file_error(code: &str, detail: impl Into<String>) -> String {
     format!("{code}: {}", detail.into())
 }
 
+#[cfg(target_os = "windows")]
+fn open_local_file_windows(path: &PathBuf) -> Result<(), String> {
+    let operation = to_wide_null("open");
+    let file = to_wide_path(path);
+    let result = unsafe {
+        ShellExecuteW(
+            0 as HWND,
+            operation.as_ptr(),
+            file.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    } as isize;
+
+    if result > 32 {
+        return Ok(());
+    }
+
+    Err(desktop_file_error(
+        "OPEN_FAILED",
+        format!(
+            "系统打开文件失败：{}，ShellExecuteW 返回码：{result}",
+            path.display()
+        ),
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn to_wide_null(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(target_os = "windows")]
+fn to_wide_path(path: &PathBuf) -> Vec<u16> {
+    path.as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{get_platform_info, is_probably_url_or_scheme, open_local_file, reveal_in_file_manager};
@@ -313,6 +357,16 @@ mod tests {
         assert!(is_probably_url_or_scheme("file:/tmp/demo.pdf"));
         assert!(is_probably_url_or_scheme("custom-scheme:demo"));
         assert!(!is_probably_url_or_scheme("C:\\Users\\jackson\\demo.pdf"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_shell_execute_path_encoding_keeps_spaces_and_chinese() {
+        let path = PathBuf::from(r#"X:\售前文档\G-歌尔声学\中文 空格 文件.docx"#);
+        let encoded = super::to_wide_path(&path);
+        assert_eq!(encoded.last().copied(), Some(0));
+        let restored = String::from_utf16_lossy(&encoded[..encoded.len() - 1]);
+        assert_eq!(restored, path.display().to_string());
     }
 
     #[test]

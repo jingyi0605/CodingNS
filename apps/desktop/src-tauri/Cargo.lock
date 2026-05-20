@@ -563,6 +563,7 @@ dependencies = [
  "tauri-plugin-clipboard-manager",
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
