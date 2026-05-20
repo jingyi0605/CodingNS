@@ -66,6 +66,7 @@ npm run smoke:install
 
 - `verify:tarball` 会把最新的 `.tgz` 解包到临时目录，直接检查发布包内容
 - `smoke:install` 会在临时目录里安装 tarball，并阻断任何 `node-gyp rebuild`
+- workspace 源码目录执行 `pnpm install` / `npm install` 时，`install` 脚本会主动跳过；因为源码目录默认不是正式发布包，真正的 Windows 运行时验收要显式执行 `npm run verify:runtime`
 
 ## 发布阻断条件
 

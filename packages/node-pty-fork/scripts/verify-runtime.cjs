@@ -2,6 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { isWorkspaceSourceInstall } = require("./runtime-install-context.cjs");
 
 const packageRoot = path.resolve(__dirname, "..");
 const releaseDir = path.join(packageRoot, "build", "Release");
@@ -28,6 +29,13 @@ if (process.platform !== "win32") {
 if (process.arch !== "x64") {
   console.error("[codingns-node-pty] 当前仅支持 x64。");
   process.exit(1);
+}
+
+if (isWorkspaceSourceInstall(packageRoot)) {
+  console.log(
+    "[codingns-node-pty] 检测到源码工作区安装，跳过 install 阶段运行时校验；正式验收请显式执行 npm run verify:runtime。"
+  );
+  process.exit(0);
 }
 
 const nodeMajor = Number((process.versions.node || "").split(".")[0]);
