@@ -320,7 +320,6 @@ export function FileViewerModal({
     [previewUrl, resourceRefreshVersion]
   );
   const currentContent = preview?.content ?? "";
-  const deferredEditorContent = useDeferredValue(editorContent);
   const presentationSavedContent = useMemo(() => {
     if (previewKind !== "html" || !presentationProject) {
       return null;
@@ -347,7 +346,6 @@ export function FileViewerModal({
   const canShowCodeTab = canUseCodeMode(previewKind);
   const canShowSeparateCodeTab = canShowCodeTab && previewKind !== "html";
   const canShowEditTab = canUseEditMode(previewKind) && canEdit;
-  const canUseInlineRenderedEditor = canUseInlineRenderedEditorMode(previewKind, detectedLanguage);
   const isMobileViewer = platform.isMobile;
   const isPresentationMode = mode === "presentation" && previewKind === "html";
   const useForcedFullSize = !isMobileViewer && previewKind === "html";
@@ -777,10 +775,7 @@ export function FileViewerModal({
         ) : mode === "edit" ? (
           <EditModeLayout
             content={editorContent}
-            deferredContent={deferredEditorContent}
-            previewKind={previewKind}
             language={detectedLanguage}
-            useInlineRenderedEditor={canUseInlineRenderedEditor}
             onContentChange={setEditorContent}
           />
         ) : mode === "preview" && previewKind === "html" ? (
@@ -909,13 +904,6 @@ function canUseMode(mode: ViewerMode, previewKind: FilePreviewDto["kind"] | null
   }
 
   return canUseEditMode(previewKind);
-}
-
-function canUseInlineRenderedEditorMode(
-  previewKind: FilePreviewDto["kind"] | null,
-  language: string
-): boolean {
-  return previewKind === "text" && isConfigTextLanguage(language);
 }
 
 function buildViewerTabs(input: {
@@ -1346,116 +1334,18 @@ function resolvePreviewDiffKind(markers: FileOverviewMarker[]): FileOverviewMark
 
 function EditModeLayout(input: {
   content: string;
-  deferredContent: string;
-  previewKind: FilePreviewDto["kind"] | null;
   language: string;
-  useInlineRenderedEditor: boolean;
   onContentChange: (content: string) => void;
 }) {
-  if (input.previewKind === "html") {
-    return (
-      <CodePreview
-        content={input.content}
-        language={input.language}
-        overviewMarkers={[]}
-        overviewTotalLines={Math.max(1, input.content.split(/\r?\n/).length)}
-        editable
-        onContentChange={input.onContentChange}
-      />
-    );
-  }
-
-  if (!input.useInlineRenderedEditor) {
-    return (
-      <textarea
-        className="file-viewer-editor"
-        data-testid="file-viewer-editor"
-        value={input.content}
-        onChange={(event) => input.onContentChange(event.target.value)}
-        spellCheck={false}
-      />
-    );
-  }
-
   return (
-    <InlineRenderedEditor
+    <CodePreview
       content={input.content}
-      deferredContent={input.deferredContent}
       language={input.language}
+      overviewMarkers={[]}
+      overviewTotalLines={Math.max(1, input.content.split(/\r?\n/).length)}
+      editable
       onContentChange={input.onContentChange}
     />
-  );
-}
-
-function InlineRenderedEditor(input: {
-  content: string;
-  deferredContent: string;
-  language: string;
-  onContentChange: (content: string) => void;
-}) {
-  const renderRef = useRef<HTMLDivElement | null>(null);
-
-  function handleScroll(event: React.UIEvent<HTMLTextAreaElement>) {
-    const renderElement = renderRef.current;
-
-    if (!renderElement) {
-      return;
-    }
-
-    renderElement.scrollTop = event.currentTarget.scrollTop;
-    renderElement.scrollLeft = event.currentTarget.scrollLeft;
-  }
-
-  return (
-    <div className="file-viewer-inline-editor-shell">
-      <div
-        ref={renderRef}
-        className="file-viewer-inline-editor-render"
-        data-testid="file-viewer-inline-render"
-        aria-hidden="true"
-      >
-        <InlineRenderedCode content={input.deferredContent} language={input.language} />
-      </div>
-      <textarea
-        className="file-viewer-editor file-viewer-editor-input"
-        data-testid="file-viewer-editor"
-        value={input.content}
-        onChange={(event) => input.onContentChange(event.target.value)}
-        onScroll={handleScroll}
-        spellCheck={false}
-      />
-    </div>
-  );
-}
-
-function InlineRenderedCode({ content, language }: { content: string; language: string }) {
-  const lines = content.split(/\r?\n/);
-
-  return (
-    <div className="file-viewer-inline-editor-content">
-      {lines.map((line, index) => {
-        const tokens = tokenizeLine(line, language);
-
-        return (
-          <div key={`${index}-${line}`} className="file-viewer-inline-editor-line">
-            <code className="file-viewer-inline-editor-code">
-              {tokens.length ? (
-                tokens.map((token, tokenIndex) => (
-                  <span
-                    key={`${index}-${tokenIndex}-${token.text}`}
-                    className={`code-token ${token.kind}`}
-                  >
-                    {token.text}
-                  </span>
-                ))
-              ) : (
-                <span className="code-token plain"> </span>
-              )}
-            </code>
-          </div>
-        );
-      })}
-    </div>
   );
 }
 
@@ -3005,21 +2895,6 @@ function normalizeLanguage(language: string): string {
     default:
       return lowerLanguage;
   }
-}
-
-function isConfigTextLanguage(language: string): boolean {
-  const normalizedLanguage = normalizeLanguage(language);
-
-  return normalizedLanguage === "json"
-    || normalizedLanguage === "yaml"
-    || normalizedLanguage === "toml"
-    || normalizedLanguage === "ini"
-    || normalizedLanguage === "env"
-    || normalizedLanguage === "properties"
-    || normalizedLanguage === "conf"
-    || normalizedLanguage === "editorconfig"
-    || normalizedLanguage === "dockerfile"
-    || normalizedLanguage === "gitignore";
 }
 
 function formatLanguageLabel(language: string): string {

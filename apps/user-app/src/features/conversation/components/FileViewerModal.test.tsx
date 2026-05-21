@@ -298,7 +298,7 @@ describe("FileViewerModal", () => {
     }
   });
 
-  it("配置文件在编辑态保持单栏，并跟随输入实时更新渲染", async () => {
+  it("配置文件在编辑态显示带行号的高亮编辑区，并跟随输入实时更新", async () => {
     const user = userEvent.setup();
 
     fileApiMock.getFilePreview.mockResolvedValue(
@@ -326,7 +326,7 @@ describe("FileViewerModal", () => {
 
     const editor = await screen.findByTestId("file-viewer-editor");
     const liveRender = await screen.findByTestId("file-viewer-inline-render");
-    expect(screen.queryByTestId("file-viewer-live-render")).not.toBeInTheDocument();
+    expect(document.querySelectorAll(".file-viewer-code-gutter").length).toBeGreaterThan(0);
     expect(liveRender).toHaveTextContent("NODE_ENV");
     expect(liveRender).toHaveTextContent("3000");
 
@@ -339,7 +339,7 @@ describe("FileViewerModal", () => {
     });
   });
 
-  it("Markdown 在编辑态保持原来的纯文本输入，不启用实时渲染层", async () => {
+  it("Markdown 在编辑态也使用带行号的高亮编辑区，并实时更新内容", async () => {
     const user = userEvent.setup();
 
     fileApiMock.getFilePreview.mockResolvedValue(
@@ -366,8 +366,20 @@ describe("FileViewerModal", () => {
     await screen.findByText("标题");
     await user.click(screen.getByRole("tab", { name: t("conversation.fileViewerEdit") }));
 
-    expect(await screen.findByTestId("file-viewer-editor")).toHaveValue("# 标题\n\n内容\n");
-    expect(screen.queryByTestId("file-viewer-inline-render")).not.toBeInTheDocument();
+    const editor = await screen.findByTestId("file-viewer-editor");
+    const liveRender = await screen.findByTestId("file-viewer-inline-render");
+    expect(editor).toHaveValue("# 标题\n\n内容\n");
+    expect(document.querySelectorAll(".file-viewer-code-gutter").length).toBeGreaterThan(0);
+    expect(liveRender).toHaveTextContent("# 标题");
+    expect(liveRender).toHaveTextContent("内容");
+
+    await user.clear(editor);
+    await user.type(editor, "# 新标题\n\n新内容\n");
+
+    await waitFor(() => {
+      expect(liveRender).toHaveTextContent("# 新标题");
+      expect(liveRender).toHaveTextContent("新内容");
+    });
   });
 
   it("Markdown 预览里的纯文本块和无语言代码块都提供复制按钮", async () => {
