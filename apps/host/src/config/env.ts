@@ -14,6 +14,7 @@ export interface HostConfig {
   webUiDir: string | null;
   webUiPort: number;
   databasePath: string;
+  pluginRootDir: string;
   filePreviewTokenSecret: string;
   gitCredentialSecret: string;
   geminiHomeDir: string;
@@ -72,6 +73,10 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     process.env.CODINGNS_DB_PATH ??
     path.join(appRootDir, "data", "host", "host.sqlite");
   const hostDataDir = path.dirname(databasePath);
+  const pluginRootDir =
+    overrides.pluginRootDir ??
+    process.env.CODINGNS_PLUGIN_ROOT_DIR ??
+    path.join(hostDataDir, "plugins");
   const opencodeDbPath =
     overrides.opencodeDbPath ??
     process.env.CODINGNS_OPENCODE_DB_PATH ??
@@ -130,6 +135,7 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
       hasEmbeddedWebUi: Boolean(webUiDir)
     }),
     databasePath,
+    pluginRootDir,
     filePreviewTokenSecret:
       overrides.filePreviewTokenSecret ??
       process.env.CODINGNS_FILE_PREVIEW_TOKEN_SECRET ??

@@ -267,6 +267,85 @@ CREATE INDEX IF NOT EXISTS idx_browser_profiles_user_id ON browser_profiles(user
 CREATE INDEX IF NOT EXISTS idx_browser_profiles_workspace_id ON browser_profiles(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_browser_profiles_status ON browser_profiles(status);
 
+CREATE TABLE IF NOT EXISTS plugin_definitions (
+  id TEXT PRIMARY KEY,
+  version TEXT NOT NULL,
+  name TEXT NOT NULL,
+  install_root TEXT NOT NULL,
+  manifest_json TEXT NOT NULL,
+  has_frontend INTEGER NOT NULL DEFAULT 0 CHECK (has_frontend IN (0, 1)),
+  has_backend INTEGER NOT NULL DEFAULT 0 CHECK (has_backend IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_plugin_definitions_name ON plugin_definitions(name);
+CREATE INDEX IF NOT EXISTS idx_plugin_definitions_updated_at ON plugin_definitions(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS plugin_enablements (
+  plugin_id TEXT PRIMARY KEY,
+  enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+  enabled_by_user_id TEXT,
+  enabled_at TEXT,
+  disabled_by_user_id TEXT,
+  disabled_at TEXT,
+  reason TEXT,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (plugin_id) REFERENCES plugin_definitions(id) ON DELETE CASCADE,
+  FOREIGN KEY (enabled_by_user_id) REFERENCES auth_users(id),
+  FOREIGN KEY (disabled_by_user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_plugin_enablements_enabled ON plugin_enablements(enabled);
+
+CREATE TABLE IF NOT EXISTS plugin_audit_events (
+  id TEXT PRIMARY KEY,
+  plugin_id TEXT NOT NULL,
+  workspace_id TEXT,
+  event_type TEXT NOT NULL CHECK (
+    event_type IN (
+      'plugin.registered',
+      'plugin.registration_failed',
+      'plugin.enabled',
+      'plugin.disabled',
+      'plugin.action_invoked',
+      'plugin.action_rejected',
+      'plugin.schedule_triggered',
+      'plugin.schedule_retry_scheduled',
+      'plugin.schedule_skipped',
+      'plugin.frontend_loaded',
+      'plugin.scope_rejected',
+      'plugin.desktop_call'
+    )
+  ),
+  actor_user_id TEXT,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+  FOREIGN KEY (actor_user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_plugin_audit_events_plugin_id ON plugin_audit_events(plugin_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS plugin_runs (
+  id TEXT PRIMARY KEY,
+  plugin_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  trigger_kind TEXT NOT NULL CHECK (trigger_kind IN ('frontend', 'cli', 'schedule', 'assistant')),
+  action_id TEXT,
+  status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'rejected', 'cancelled')),
+  input_summary_json TEXT,
+  output_summary_json TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  started_at TEXT,
+  finished_at TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_plugin_runs_plugin_id ON plugin_runs(plugin_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS document_templates (
   id TEXT PRIMARY KEY,
   template_key TEXT NOT NULL,

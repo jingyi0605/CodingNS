@@ -1,0 +1,289 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import { resolveHostConfig } from "../../src/config/env.js";
+import { hashPassword, hashToken } from "../../src/shared/utils/hash.js";
+import { createId } from "../../src/shared/utils/id.js";
+import { createServer } from "../../src/server/create-server.js";
+
+const startedServers: Array<ReturnType<typeof createServer>> = [];
+
+function createTestServer() {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "codingns-plugin-routes-"));
+  const pluginRootDir = path.join(tempDir, "plugins");
+  fs.mkdirSync(pluginRootDir, { recursive: true });
+  const pluginInstallRoot = path.join(pluginRootDir, "demo-plugin");
+  fs.mkdirSync(pluginInstallRoot, { recursive: true });
+  fs.writeFileSync(path.join(pluginInstallRoot, "index.html"), "<html><body>demo<script src=\"/preview/plugins/runtime-sdk.js\"></script></body></html>", "utf8");
+  fs.writeFileSync(path.join(pluginInstallRoot, "action.js"), "export async function run(payload){ return { ok: true, workspaceId: payload.workspaceId, echoed: payload.input ?? null }; }", "utf8");
+  fs.writeFileSync(path.join(pluginInstallRoot, "plugin.json"), JSON.stringify({
+    id: "demo.plugin",
+    name: "演示插件",
+    version: "1.0.0",
+    frontend: {
+      entry: "index.html"
+    },
+    backend: {
+      runtime: "node",
+      actions: [
+        {
+          id: "run-report",
+          title: "运行报表",
+          entry: "action.js",
+          timeoutMs: 3000
+        }
+      ]
+    },
+    permissions: {
+      workspaceRead: true,
+      desktop: ["open_file", "reveal_in_file_manager"]
+    }
+  }, null, 2), "utf8");
+
+  const workspaceRoot = path.join(tempDir, "workspace-a");
+  fs.mkdirSync(workspaceRoot, { recursive: true });
+  fs.writeFileSync(path.join(workspaceRoot, "report.txt"), "hello", "utf8");
+
+  const config = resolveHostConfig({
+    databasePath: path.join(tempDir, "host.sqlite"),
+    pluginRootDir,
+    webUiDir: null,
+    demoMode: false
+  });
+  const server = createServer(config);
+  startedServers.push(server);
+
+  const userId = createId();
+  const workspaceId = createId();
+  const now = new Date().toISOString();
+  server.services.repositories.authUserRepository.create({
+    id: userId,
+    username: "admin",
+    passwordHash: hashPassword("password123"),
+    role: "admin",
+    createdAt: now,
+    updatedAt: now
+  });
+  server.services.repositories.bootstrapStateRepository.markInitialized(now, userId);
+  server.services.repositories.workspaceRepository.create({
+    id: workspaceId,
+    name: "测试工作区",
+    path: workspaceRoot,
+    repoRoot: workspaceRoot,
+    favorite: false,
+    createdAt: now,
+    updatedAt: now,
+    removedAt: null
+  });
+
+  return {
+    server,
+    workspaceId,
+    accessToken: issueInteractiveAccessToken(server, userId)
+  };
+}
+
+function issueInteractiveAccessToken(server: ReturnType<typeof createServer>, userId: string): string {
+  const tokenId = createId();
+  const token = `token-${tokenId}`;
+  const now = new Date().toISOString();
+  server.services.repositories.authTokenRepository.create({
+    id: tokenId,
+    userId,
+    tokenType: "access",
+    tokenHash: hashToken(token),
+    deviceSessionId: null,
+    callerKind: "interactive_user",
+    capabilityProfile: null,
+    workspaceId: null,
+    projectId: null,
+    sessionId: null,
+    expiresAt: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+    revokedAt: null,
+    createdAt: now
+  });
+  return token;
+}
+
+afterEach(async () => {
+  while (startedServers.length > 0) {
+    const item = startedServers.pop();
+    if (!item) {
+      continue;
+    }
+    await item.app.close();
+  }
+});
+
+describe("plugin routes", () => {
+  it("能列出和切换插件状态", async () => {
+    const { server, accessToken } = createTestServer();
+
+    const listResponse = await server.app.inject({
+      method: "GET",
+      url: "/api/plugins",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(listResponse.statusCode).toBe(200);
+    const listPayload = listResponse.json() as { items: Array<{ id: string; enabled: boolean }> };
+    expect(listPayload.items[0]?.id).toBe("demo.plugin");
+    expect(listPayload.items[0]?.enabled).toBe(false);
+
+    const enableResponse = await server.app.inject({
+      method: "POST",
+      url: "/api/plugins/demo.plugin/enable",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(enableResponse.statusCode).toBe(200);
+
+    const getResponse = await server.app.inject({
+      method: "GET",
+      url: "/api/plugins/demo.plugin",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(getResponse.statusCode).toBe(200);
+    const getPayload = getResponse.json() as {
+      enablement: { enabled: boolean };
+      frontend: { entryUrl: string } | null;
+    };
+    expect(getPayload.enablement.enabled).toBe(true);
+    expect(getPayload.frontend?.entryUrl).toContain("/preview/plugins/demo.plugin/frontend/index.html");
+  }, 20000);
+
+  it("能执行插件动作并记录运行结果", async () => {
+    const { server, accessToken, workspaceId } = createTestServer();
+
+    await server.app.inject({
+      method: "POST",
+      url: "/api/plugins/demo.plugin/enable",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    const actionResponse = await server.app.inject({
+      method: "POST",
+      url: "/api/plugins/demo.plugin/actions/run-report",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceId,
+        input: {
+          range: "today"
+        }
+      }
+    });
+
+    expect(actionResponse.statusCode).toBe(200);
+    const actionPayload = actionResponse.json() as {
+      run: { status: string; workspaceId: string };
+      output: { ok: boolean; workspaceId: string; echoed: { range: string } };
+    };
+    expect(actionPayload.run.status).toBe("succeeded");
+    expect(actionPayload.output.ok).toBe(true);
+    expect(actionPayload.output.workspaceId).toBe(workspaceId);
+
+    const runsResponse = await server.app.inject({
+      method: "GET",
+      url: "/api/plugins/demo.plugin/runs",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(runsResponse.statusCode).toBe(200);
+    const runsPayload = runsResponse.json() as { items: Array<{ actionId: string; status: string }> };
+    expect(runsPayload.items[0]?.actionId).toBe("run-report");
+    expect(runsPayload.items[0]?.status).toBe("succeeded");
+  }, 20000);
+
+  it("插件桌面动作会先做工作区内路径校验", async () => {
+    const { server, accessToken, workspaceId } = createTestServer();
+
+    await server.app.inject({
+      method: "POST",
+      url: "/api/plugins/demo.plugin/enable",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    const okResponse = await server.app.inject({
+      method: "POST",
+      url: "/api/plugins/demo.plugin/desktop/open-file",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceId,
+        path: "report.txt"
+      }
+    });
+    expect(okResponse.statusCode).toBe(200);
+    const okPayload = okResponse.json() as { relativePath: string; absolutePath: string };
+    expect(okPayload.relativePath).toBe("report.txt");
+    expect(okPayload.absolutePath).toContain("report.txt");
+
+    const rejectResponse = await server.app.inject({
+      method: "POST",
+      url: "/api/plugins/demo.plugin/desktop/open-file",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceId,
+        path: "../outside.txt"
+      }
+    });
+    expect(rejectResponse.statusCode).toBe(400);
+  }, 20000);
+
+  it("插件静态资源走独立链路，禁用后不可访问", async () => {
+    const { server, accessToken } = createTestServer();
+
+    await server.app.inject({
+      method: "POST",
+      url: "/api/plugins/demo.plugin/enable",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    const assetResponse = await server.app.inject({
+      method: "GET",
+      url: "/preview/plugins/demo.plugin/frontend/index.html"
+    });
+    expect(assetResponse.statusCode).toBe(200);
+    expect(assetResponse.headers["content-security-policy"]).toContain("default-src 'none'");
+
+    const sdkResponse = await server.app.inject({
+      method: "GET",
+      url: "/preview/plugins/runtime-sdk.js"
+    });
+    expect(sdkResponse.statusCode).toBe(200);
+    expect(sdkResponse.body).toContain("window.CodingNSPlugin");
+
+    await server.app.inject({
+      method: "POST",
+      url: "/api/plugins/demo.plugin/disable",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    const disabledResponse = await server.app.inject({
+      method: "GET",
+      url: "/preview/plugins/demo.plugin/frontend/index.html"
+    });
+    expect(disabledResponse.statusCode).toBe(403);
+  }, 20000);
+});

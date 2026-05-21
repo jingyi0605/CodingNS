@@ -187,6 +187,8 @@ import { registerOfficeRoutes } from "../routes/office.js";
 import { registerOpenCliRoutes } from "../routes/opencli.js";
 import { registerObservabilityRoutes } from "../routes/observability.js";
 import { registerParallelGroupRoutes } from "../routes/parallel-groups.js";
+import { registerPluginRoutes } from "../routes/plugins.js";
+import { registerPluginPublicRoutes } from "../routes/plugins-public.js";
 import { registerPresentationRoutes } from "../routes/presentation.js";
 import { registerPreferenceRoutes } from "../routes/preferences.js";
 import { registerProviderRoutes } from "../routes/providers.js";
@@ -245,6 +247,7 @@ import { DebugTargetRepository } from "../storage/repositories/debug-target-repo
 import { OfficeApprovalRepository } from "../storage/repositories/office-approval-repository.js";
 import { OfficeArtifactRepository } from "../storage/repositories/office-artifact-repository.js";
 import { OfficeAuditEventRepository } from "../storage/repositories/office-audit-event-repository.js";
+import { PluginAuditEventRepository } from "../storage/repositories/plugin-audit-event-repository.js";
 import { OfficeConnectorRepository } from "../storage/repositories/office-connector-repository.js";
 import { OfficeReceiptRepository } from "../storage/repositories/office-receipt-repository.js";
 import { OfficeRollbackRecordRepository } from "../storage/repositories/office-rollback-record-repository.js";
@@ -258,6 +261,9 @@ import { ManagedSkillRepository } from "../storage/repositories/managed-skill-re
 import { OpenCliCatalogEntryRepository } from "../storage/repositories/opencli-catalog-entry-repository.js";
 import { OpenCliProviderRepository } from "../storage/repositories/opencli-provider-repository.js";
 import { OpenCliRuntimeProfileRepository } from "../storage/repositories/opencli-runtime-profile-repository.js";
+import { PluginDefinitionRepository } from "../storage/repositories/plugin-definition-repository.js";
+import { PluginEnablementRepository } from "../storage/repositories/plugin-enablement-repository.js";
+import { PluginRunRepository } from "../storage/repositories/plugin-run-repository.js";
 import { PortLeaseRepository } from "../storage/repositories/port-lease-repository.js";
 import { ParallelSessionGroupRepository } from "../storage/repositories/parallel-session-group-repository.js";
 import { ParallelSessionMemberRepository } from "../storage/repositories/parallel-session-member-repository.js";
@@ -298,6 +304,13 @@ import { WsAuthGuard } from "../ws/ws-auth-guard.js";
 import { registerStaticWebRoutes } from "./static-web.js";
 import { registerWorkbenchRuntimeTerminalSync } from "./workbench-runtime-terminal-sync.js";
 import type { OfficeConnector, TerminalInstance } from "../types/domain.js";
+import { PluginRegistryService } from "../modules/plugins/plugin-registry-service.js";
+import { PluginController } from "../modules/plugins/plugin-controller.js";
+import { PluginPermissionService } from "../modules/plugins/plugin-permission-service.js";
+import { PluginStaticService } from "../modules/plugins/plugin-static-service.js";
+import { PluginProcessRunner } from "../modules/plugins/plugin-process-runner.js";
+import { PluginRuntimeService } from "../modules/plugins/plugin-runtime-service.js";
+import { PluginSchedulerService } from "../modules/plugins/plugin-scheduler-service.js";
 
 export function createServer(config: HostConfig) {
   // Demo 模式下覆盖 token TTL 为 15 分钟
@@ -344,6 +357,10 @@ export function createServer(config: HostConfig) {
     officeAuditEventRepository: new OfficeAuditEventRepository(database.db),
     officeRollbackRecordRepository: new OfficeRollbackRecordRepository(database.db),
     browserProfileRepository: new BrowserProfileRepository(database.db),
+    pluginDefinitionRepository: new PluginDefinitionRepository(database.db),
+    pluginEnablementRepository: new PluginEnablementRepository(database.db),
+    pluginAuditEventRepository: new PluginAuditEventRepository(database.db),
+    pluginRunRepository: new PluginRunRepository(database.db),
     documentTemplateRepository: new DocumentTemplateRepository(database.db),
     documentRepository: new DocumentRepository(database.db),
     documentRevisionRepository: new DocumentRevisionRepository(database.db),
@@ -481,6 +498,35 @@ export function createServer(config: HostConfig) {
   const filePreviewLinkService = new FilePreviewLinkService(
     fileAccessGuard,
     config.filePreviewTokenSecret
+  );
+  const pluginRegistryService = new PluginRegistryService(
+    repositories.pluginDefinitionRepository,
+    repositories.pluginEnablementRepository,
+    repositories.pluginAuditEventRepository,
+    config.pluginRootDir,
+    app.log
+  );
+  pluginRegistryService.syncPluginsFromDisk();
+  const pluginPermissionService = new PluginPermissionService();
+  const pluginStaticService = new PluginStaticService(pluginRegistryService);
+  const pluginProcessRunner = new PluginProcessRunner();
+  const pluginRuntimeService = new PluginRuntimeService(
+    pluginRegistryService,
+    repositories.pluginRunRepository,
+    repositories.pluginAuditEventRepository,
+    workspaceService,
+    fileAccessGuard,
+    pluginPermissionService,
+    pluginProcessRunner,
+    taskManager
+  );
+  const pluginSchedulerService = new PluginSchedulerService(
+    pluginRegistryService,
+    pluginRuntimeService,
+    repositories.pluginAuditEventRepository,
+    workspaceService,
+    taskManager,
+    schedulerMetrics
   );
   const presentationPdfExportService = new PresentationPdfExportService(config);
   const presentationPptxExportService = new PresentationPptxExportService(config);
@@ -1314,6 +1360,11 @@ export function createServer(config: HostConfig) {
     config.filePreviewTokenSecret
   );
   const officeController = new OfficeController(officeService, officePreviewLinkService);
+  const pluginController = new PluginController(
+    pluginRegistryService,
+    pluginRuntimeService,
+    pluginStaticService
+  );
   const browserProfileService = new BrowserProfileService(
     repositories.browserProfileRepository,
     config.databasePath
@@ -1516,6 +1567,7 @@ export function createServer(config: HostConfig) {
   }
 
   void registerPublicRoutes(app, bootstrapController, channelGatewayController);
+  void registerPluginPublicRoutes(app, pluginController);
   void registerProxyRoutes(app, templateReverseProxyService);
   void registerAuthRoutes(app, authController);
   void registerAssistantCapabilityRoutes(app, assistantCapabilityController);
@@ -1534,6 +1586,7 @@ export function createServer(config: HostConfig) {
   void registerSessionRoutes(app, sessionController);
   void registerParallelGroupRoutes(app, parallelSessionController);
   void registerPresentationRoutes(app, presentationController);
+  void registerPluginRoutes(app, pluginController);
   void registerPreferenceRoutes(app, quickPhraseController, profileController);
   void registerSkillRoutes(app, skillController);
   void registerOpenCliRoutes(app, openCliController);
@@ -1550,6 +1603,7 @@ export function createServer(config: HostConfig) {
   butlerControlTimerScheduler.start();
   channelPollingScheduler.start();
   debugRuntimeReconciliationScheduler.start();
+  pluginSchedulerService.start();
 
   if (config.webUiDir) {
     registerStaticWebRoutes(app, config.webUiDir);
@@ -1567,6 +1621,7 @@ export function createServer(config: HostConfig) {
     await butlerControlTimerScheduler.dispose();
     await channelPollingScheduler.dispose();
     await debugRuntimeReconciliationScheduler.dispose();
+    await pluginSchedulerService.dispose();
     terminalService.off("exit", handleDebugTargetTerminalExit);
     await terminalService.dispose();
     await butlerFollowUpSessionLiveRuntimeService.dispose();
@@ -1646,6 +1701,9 @@ export function createServer(config: HostConfig) {
         modelSwitchService,
         officeService,
         browserProfileService,
+        pluginRegistryService,
+        pluginRuntimeService,
+        pluginSchedulerService,
         documentRuntimeService,
         opsRuntimeService,
         runtimeObservabilityService,

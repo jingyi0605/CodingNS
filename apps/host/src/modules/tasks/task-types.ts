@@ -21,6 +21,8 @@ export const HOST_TASK_TYPES = {
   officeBrowserTaskExecute: "office.browser_task.execute",
   officeDocumentExportExecute: "office.document_export.execute",
   officeOpsSshTaskExecute: "office.ops_ssh_task.execute",
+  pluginScheduleTrigger: "plugin.schedule.trigger",
+  pluginActionExecute: "plugin.action.execute",
   presentationExportPdf: "presentation.export_pdf",
   presentationExportPptx: "presentation.export_pptx"
 } as const;

@@ -296,6 +296,29 @@ export type BrowserEngine = "chrome" | "edge";
 export type BrowserProfileMode = "persistent" | "cdp_attached";
 export type BrowserProfileOwnershipScope = "user" | "workspace" | "target";
 export type BrowserProfileStatus = "active" | "locked" | "archived" | "error";
+export type PluginBackendMode = "on_demand" | "daemon";
+export type PluginDesktopPermission = "open_file" | "reveal_in_file_manager";
+export type PluginRunTriggerKind = "frontend" | "cli" | "schedule" | "assistant";
+export type PluginRunStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "rejected"
+  | "cancelled";
+export type PluginAuditEventType =
+  | "plugin.registered"
+  | "plugin.registration_failed"
+  | "plugin.enabled"
+  | "plugin.disabled"
+  | "plugin.action_invoked"
+  | "plugin.action_rejected"
+  | "plugin.schedule_triggered"
+  | "plugin.schedule_retry_scheduled"
+  | "plugin.schedule_skipped"
+  | "plugin.frontend_loaded"
+  | "plugin.scope_rejected"
+  | "plugin.desktop_call";
 export type DocumentTemplateEngine = "doct";
 export type DocumentTemplateStatus = "active" | "deprecated";
 export type OfficeDocumentStatus = "draft" | "reviewing" | "published" | "archived";
@@ -428,6 +451,102 @@ export interface BrowserProfile {
   status: BrowserProfileStatus;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface PluginActionDefinition {
+  id: string;
+  title: string;
+  entry: string;
+  timeoutMs?: number;
+  inputSchemaJson?: string;
+  outputSchemaJson?: string;
+}
+
+export interface PluginPermissionManifest {
+  workspaceRead?: boolean;
+  workspaceWrite?: boolean;
+  network?: boolean;
+  desktop?: PluginDesktopPermission[];
+  hostApis?: string[];
+}
+
+export interface PluginScheduleDefinition {
+  id: string;
+  cron?: string;
+  everySeconds?: number;
+  actionId: string;
+  inputJson?: string;
+}
+
+export interface PluginManifestFrontend {
+  entry: string;
+  mode?: "static_html";
+}
+
+export interface PluginManifestBackend {
+  runtime: "node";
+  mode?: PluginBackendMode;
+  actions: PluginActionDefinition[];
+}
+
+export interface PluginManifest {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  frontend?: PluginManifestFrontend;
+  backend?: PluginManifestBackend;
+  permissions: PluginPermissionManifest;
+  schedules?: PluginScheduleDefinition[];
+}
+
+export interface PluginDefinition {
+  id: string;
+  version: string;
+  name: string;
+  installRoot: string;
+  manifestJson: string;
+  hasFrontend: boolean;
+  hasBackend: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PluginEnablement {
+  pluginId: string;
+  enabled: boolean;
+  enabledByUserId: string | null;
+  enabledAt: string | null;
+  disabledByUserId: string | null;
+  disabledAt: string | null;
+  reason: string | null;
+  updatedAt: string;
+}
+
+export interface PluginRun {
+  id: string;
+  pluginId: string;
+  workspaceId: string;
+  triggerKind: PluginRunTriggerKind;
+  actionId: string | null;
+  status: PluginRunStatus;
+  inputSummaryJson: string | null;
+  outputSummaryJson: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+}
+
+export interface PluginAuditEvent {
+  id: string;
+  pluginId: string;
+  workspaceId: string | null;
+  eventType: PluginAuditEventType;
+  actorUserId: string | null;
+  payloadJson: string;
+  createdAt: string;
 }
 
 export interface DocumentTemplate {
