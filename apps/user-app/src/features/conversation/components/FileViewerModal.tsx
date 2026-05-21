@@ -18,6 +18,7 @@ import {
 import { getHostBaseUrl, getHostRequestUrl } from "../../../config/env";
 import { resolveHostTransportTarget } from "../../../network/host-transport-registry";
 import { usePlatform } from "../../../platform/platform-provider";
+import { createHtmlPreviewWorkspaceBridge } from "../../../platform/preview/html-preview-workspace-bridge";
 import {
   createPresentationExportTask,
   getPresentationExportTask,
@@ -783,6 +784,7 @@ export function FileViewerModal({
         ) : mode === "preview" && previewKind === "html" ? (
           <HtmlPreview
             src={htmlPreviewUrl}
+            workspaceId={safeWorkspaceId}
             filePath={filePath}
             overviewMarkers={overviewMarkers}
             overviewTotalLines={overviewTotalLines}
@@ -1245,16 +1247,41 @@ function roundScale(value: number): number {
 
 function HtmlPreview({
   src,
+  workspaceId,
   filePath,
   overviewMarkers,
   overviewTotalLines
 }: {
   src: string | null;
+  workspaceId: string | null | undefined;
   filePath: string;
   overviewMarkers: FileOverviewMarker[];
   overviewTotalLines: number;
 }) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const frameRef = useRef<HTMLIFrameElement | null>(null);
+
+  useEffect(() => {
+    if (!src || !workspaceId) {
+      return;
+    }
+
+    const bridge = createHtmlPreviewWorkspaceBridge({
+      iframe: frameRef.current,
+      workspaceId
+    });
+
+    function handleMessage(event: MessageEvent) {
+      void bridge.onMessage(event);
+    }
+
+    window.addEventListener("message", handleMessage);
+
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      bridge.dispose();
+    };
+  }, [src, workspaceId]);
 
   if (!src) {
     return <p className="status-text">{t("conversation.fileViewerHtmlPreviewUnavailable")}</p>;
@@ -1270,6 +1297,7 @@ function HtmlPreview({
     >
       <div className="file-viewer-html-frame-shell" ref={scrollContainerRef}>
         <iframe
+          ref={frameRef}
           key={src}
           className="file-viewer-html-frame"
           data-testid="file-viewer-html-preview"
