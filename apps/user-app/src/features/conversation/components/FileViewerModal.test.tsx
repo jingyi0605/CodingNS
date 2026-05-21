@@ -536,11 +536,14 @@ describe("FileViewerModal", () => {
     expect(dialog).toHaveAttribute("data-size", "full");
     expect(screen.getByRole("tab", { name: t("conversation.fileViewerPreview") })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("conversation.fileViewerRefreshPreview") })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: t("conversation.filePanelSave") })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("conversation.filePanelSave") })).not.toBeInTheDocument();
     expect(screen.queryByText(/当前以 .* 模式打开/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("conversation.fileViewerSizeDefault") })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("conversation.fileViewerSizeFull") })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("conversation.fileViewerOpenExternal") })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: t("conversation.fileViewerEdit") }));
+    expect(screen.getByRole("button", { name: t("conversation.filePanelSave") })).toBeInTheDocument();
   });
 
   it("HTML 文件默认铺满视图，且支持刷新预览与外部打开", async () => {
@@ -580,6 +583,7 @@ describe("FileViewerModal", () => {
       "allow-forms allow-modals allow-scripts allow-same-origin"
     );
     expect(dialog).toHaveAttribute("data-size", "full");
+    expect(screen.queryByRole("tab", { name: t("conversation.fileViewerCode") })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("conversation.fileViewerSizeDefault") })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("conversation.fileViewerSizeFull") })).not.toBeInTheDocument();
 
@@ -600,6 +604,49 @@ describe("FileViewerModal", () => {
     expect(platformMock.openExternal).toHaveBeenCalledWith(
       "http://127.0.0.1:3002/preview/files/preview-token/site/index.html"
     );
+  });
+
+  it("HTML 编辑视图会显示带行号的代码高亮编辑区，并实时更新高亮内容", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "site/index.html",
+        kind: "html",
+        content: "<!doctype html>\n<html><body><h1>old</h1></body></html>",
+        version: "html-edit-v1",
+        previewPath: "/preview/files/preview-token/site/index.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/site/index.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="site/index.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await screen.findByTestId("file-viewer-html-preview");
+    await user.click(screen.getByRole("tab", { name: t("conversation.fileViewerEdit") }));
+
+    expect(screen.getByRole("button", { name: t("conversation.filePanelSave") })).toBeInTheDocument();
+    expect(screen.getByTestId("file-viewer-inline-render")).toBeInTheDocument();
+    expect(document.querySelectorAll(".file-viewer-code-gutter").length).toBeGreaterThan(0);
+    expect(screen.getByTestId("file-viewer-inline-render")).toHaveTextContent("old");
+
+    const editor = await screen.findByTestId("file-viewer-editor");
+    await user.clear(editor);
+    await user.type(editor, "<!doctype html>\n<html><body><h1>new</h1></body></html>");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("file-viewer-inline-render")).toHaveTextContent("new");
+    });
   });
 
   it("静态 HTML PPT 会显示演示文档标签，并支持逐页切换", async () => {
@@ -759,7 +806,28 @@ describe("FileViewerModal", () => {
       createPreviewResponse({
         path: "slides/editable.html",
         kind: "html",
-        content: readFixtureHtml("editable-presentation.html"),
+        content: `
+          <!doctype html>
+          <html>
+            <head>
+              <style>
+                :root { --deck-width: 1600px; --deck-height: 900px; }
+                body { color: rgb(26, 26, 26); }
+              </style>
+            </head>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell">
+                    <div class="hero-card">
+                      <h1 style="font-size: 32px; color: #111111;">原始标题</h1>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
         version: "presentation-v1",
         previewPath: "/preview/files/preview-token/slides/editable.html",
         previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/editable.html"

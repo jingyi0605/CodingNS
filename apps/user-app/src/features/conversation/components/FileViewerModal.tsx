@@ -299,7 +299,6 @@ export function FileViewerModal({
   const previewKind = preview?.kind ?? null;
   const canEdit = Boolean(preview?.capabilities?.canEdit);
   const canRefresh = Boolean(preview?.capabilities?.canRefresh);
-  const viewerLabel = resolveViewerLabel(previewKind, detectedLanguage);
   const previewUrl = useMemo(
     () => resolvePreviewAccessUrl(preview, platform.isDesktop),
     [platform.isDesktop, preview]
@@ -346,6 +345,8 @@ export function FileViewerModal({
   const canShowPresentationTab = Boolean(presentationProbe?.supported);
   const canShowPreviewTab = canUsePreviewMode(previewKind);
   const canShowCodeTab = canUseCodeMode(previewKind);
+  const canShowSeparateCodeTab = canShowCodeTab && previewKind !== "html";
+  const canShowEditTab = canUseEditMode(previewKind) && canEdit;
   const canUseInlineRenderedEditor = canUseInlineRenderedEditorMode(previewKind, detectedLanguage);
   const isMobileViewer = platform.isMobile;
   const isPresentationMode = mode === "presentation" && previewKind === "html";
@@ -617,8 +618,8 @@ export function FileViewerModal({
   const viewerTabs = buildViewerTabs({
     canShowPresentationTab,
     canShowPreviewTab,
-    canShowCodeTab,
-    canEdit
+    canShowCodeTab: canShowSeparateCodeTab,
+    canShowEditTab
   });
   const formatActions = buildFormatActions({
     preview,
@@ -644,6 +645,106 @@ export function FileViewerModal({
     setPdfFitWidth
   });
   const visibleFormatActions = isMobileViewer ? formatActions.filter(isRefreshAction) : formatActions;
+  const showHeaderSaveAction = canEdit && mode === "edit" && !isPresentationMode;
+  const viewerControls = (
+    <>
+      <div className="file-viewer-header-tabs" role="tablist" aria-label={t("conversation.fileViewerModeLabel")}>
+        {viewerTabs.includes("presentation") ? (
+          <button
+            type="button"
+            className="file-viewer-tab"
+            data-active={mode === "presentation"}
+            role="tab"
+            aria-selected={mode === "presentation"}
+            onClick={() => setMode("presentation")}
+          >
+            {t("conversation.fileViewerPresentation")}
+          </button>
+        ) : null}
+        {viewerTabs.includes("preview") ? (
+          <button
+            type="button"
+            className="file-viewer-tab"
+            data-active={mode === "preview"}
+            role="tab"
+            aria-selected={mode === "preview"}
+            onClick={() => setMode("preview")}
+          >
+            {t("conversation.fileViewerPreview")}
+          </button>
+        ) : null}
+        {viewerTabs.includes("code") ? (
+          <button
+            type="button"
+            className="file-viewer-tab"
+            data-active={mode === "code"}
+            role="tab"
+            aria-selected={mode === "code"}
+            onClick={() => setMode("code")}
+          >
+            {t("conversation.fileViewerCode")}
+          </button>
+        ) : null}
+        {viewerTabs.includes("edit") ? (
+          <button
+            type="button"
+            className="file-viewer-tab"
+            data-active={mode === "edit"}
+            role="tab"
+            aria-selected={mode === "edit"}
+            onClick={() => setMode("edit")}
+            disabled={!canEdit}
+          >
+            {t("conversation.fileViewerEdit")}
+          </button>
+        ) : null}
+      </div>
+      {!isMobileViewer && !useForcedFullSize ? (
+        <div className="file-viewer-size-group" role="group" aria-label={t("conversation.fileViewerSizeLabel")}>
+          <button
+            type="button"
+            className="secondary-button file-viewer-action-button"
+            data-active={modalSizePreset === "regular"}
+            onClick={() => setModalSizePreset("regular")}
+          >
+            {t("conversation.fileViewerSizeDefault")}
+          </button>
+          <button
+            type="button"
+            className="secondary-button file-viewer-action-button"
+            data-active={modalSizePreset === "full"}
+            onClick={() => setModalSizePreset("full")}
+          >
+            {t("conversation.fileViewerSizeFull")}
+          </button>
+        </div>
+      ) : null}
+      <div className="file-viewer-header-action-buttons">
+        {visibleFormatActions.map((action) => (
+          <button
+            key={action.id}
+            type="button"
+            className="secondary-button file-viewer-action-button"
+            data-active={action.active ? "true" : undefined}
+            onClick={() => void action.onClick()}
+            disabled={action.disabled}
+          >
+            {action.label}
+          </button>
+        ))}
+        {showHeaderSaveAction ? (
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => void handleSave()}
+            disabled={!isDirty || saving}
+          >
+            {saving ? t("conversation.filePanelSaving") : t("conversation.filePanelSave")}
+          </button>
+        ) : null}
+      </div>
+    </>
+  );
 
   return (
     <DesktopModal
@@ -653,110 +754,10 @@ export function FileViewerModal({
       layout="viewer"
       className={`file-viewer-modal${platform.isDesktop && activeModalSizePreset !== "full" ? " is-resizable" : ""}`}
       bodyClassName="file-viewer-modal-body"
+      headerActions={!isMobileViewer ? <div className="file-viewer-header-controls">{viewerControls}</div> : undefined}
       onClose={onClose}
     >
-      <div className="file-viewer-toolbar">
-        <div className="file-viewer-toolbar-start">
-          <div className="file-viewer-tabs" role="tablist" aria-label={t("conversation.fileViewerModeLabel")}>
-            {viewerTabs.includes("presentation") ? (
-              <button
-                type="button"
-                className="file-viewer-tab"
-                data-active={mode === "presentation"}
-                role="tab"
-                aria-selected={mode === "presentation"}
-                onClick={() => setMode("presentation")}
-              >
-                {t("conversation.fileViewerPresentation")}
-              </button>
-            ) : null}
-            {viewerTabs.includes("preview") ? (
-              <button
-                type="button"
-                className="file-viewer-tab"
-                data-active={mode === "preview"}
-                role="tab"
-                aria-selected={mode === "preview"}
-                onClick={() => setMode("preview")}
-              >
-                {t("conversation.fileViewerPreview")}
-              </button>
-            ) : null}
-            {viewerTabs.includes("code") ? (
-              <button
-                type="button"
-                className="file-viewer-tab"
-                data-active={mode === "code"}
-                role="tab"
-                aria-selected={mode === "code"}
-                onClick={() => setMode("code")}
-              >
-                {t("conversation.fileViewerCode")}
-              </button>
-            ) : null}
-            {viewerTabs.includes("edit") ? (
-              <button
-                type="button"
-                className="file-viewer-tab"
-                data-active={mode === "edit"}
-                role="tab"
-                aria-selected={mode === "edit"}
-                onClick={() => setMode("edit")}
-                disabled={!canEdit}
-              >
-                {t("conversation.fileViewerEdit")}
-              </button>
-            ) : null}
-          </div>
-          {!isMobileViewer ? <span className="file-viewer-language">{viewerLabel}</span> : null}
-        </div>
-        <div className="file-viewer-toolbar-end">
-          {!isMobileViewer && !useForcedFullSize ? (
-            <div className="file-viewer-size-group" role="group" aria-label={t("conversation.fileViewerSizeLabel")}>
-              <button
-                type="button"
-                className="secondary-button file-viewer-action-button"
-                data-active={modalSizePreset === "regular"}
-                onClick={() => setModalSizePreset("regular")}
-              >
-                {t("conversation.fileViewerSizeDefault")}
-              </button>
-              <button
-                type="button"
-                className="secondary-button file-viewer-action-button"
-                data-active={modalSizePreset === "full"}
-                onClick={() => setModalSizePreset("full")}
-              >
-                {t("conversation.fileViewerSizeFull")}
-              </button>
-            </div>
-          ) : null}
-          <div className="file-viewer-actions">
-            {visibleFormatActions.map((action) => (
-              <button
-                key={action.id}
-                type="button"
-                className="secondary-button file-viewer-action-button"
-                data-active={action.active ? "true" : undefined}
-                onClick={() => void action.onClick()}
-                disabled={action.disabled}
-              >
-                {action.label}
-              </button>
-            ))}
-          </div>
-          {canEdit && !isPresentationMode ? (
-            <button
-              type="button"
-              className="primary-button"
-              onClick={() => void handleSave()}
-              disabled={!isDirty || saving}
-            >
-              {saving ? t("conversation.filePanelSaving") : t("conversation.filePanelSave")}
-            </button>
-          ) : null}
-        </div>
-      </div>
+      {isMobileViewer ? <div className="file-viewer-toolbar">{viewerControls}</div> : null}
 
       <div className="file-viewer-body">
         {loading ? (
@@ -777,6 +778,7 @@ export function FileViewerModal({
           <EditModeLayout
             content={editorContent}
             deferredContent={deferredEditorContent}
+            previewKind={previewKind}
             language={detectedLanguage}
             useInlineRenderedEditor={canUseInlineRenderedEditor}
             onContentChange={setEditorContent}
@@ -889,6 +891,10 @@ function canUseCodeMode(previewKind: FilePreviewDto["kind"] | null): boolean {
   return previewKind === "text" || previewKind === "markdown" || previewKind === "html";
 }
 
+function canUseEditMode(previewKind: FilePreviewDto["kind"] | null): boolean {
+  return previewKind === "text" || previewKind === "markdown" || previewKind === "html";
+}
+
 function canUseMode(mode: ViewerMode, previewKind: FilePreviewDto["kind"] | null): boolean {
   if (mode === "presentation") {
     return previewKind === "html";
@@ -902,7 +908,7 @@ function canUseMode(mode: ViewerMode, previewKind: FilePreviewDto["kind"] | null
     return canUseCodeMode(previewKind);
   }
 
-  return canUseCodeMode(previewKind);
+  return canUseEditMode(previewKind);
 }
 
 function canUseInlineRenderedEditorMode(
@@ -916,7 +922,7 @@ function buildViewerTabs(input: {
   canShowPresentationTab: boolean;
   canShowPreviewTab: boolean;
   canShowCodeTab: boolean;
-  canEdit: boolean;
+  canShowEditTab: boolean;
 }): ViewerMode[] {
   const tabs: ViewerMode[] = [];
 
@@ -930,8 +936,9 @@ function buildViewerTabs(input: {
 
   if (input.canShowCodeTab) {
     tabs.push("code");
-    tabs.push("edit");
-  } else if (input.canEdit) {
+  }
+
+  if (input.canShowEditTab) {
     tabs.push("edit");
   }
 
@@ -1110,24 +1117,6 @@ function isRefreshAction(action: ViewerToolbarAction): boolean {
     || action.id === "text-refresh"
     || action.id === "presentation-export-pdf"
     || action.id === "presentation-export-pptx";
-}
-
-function resolveViewerLabel(
-  previewKind: FilePreviewDto["kind"] | null,
-  detectedLanguage: string
-): string {
-  switch (previewKind) {
-    case "image":
-      return t("conversation.fileViewerImage");
-    case "pdf":
-      return t("conversation.fileViewerPdf");
-    case "html":
-      return t("conversation.fileViewerHtml");
-    case "markdown":
-      return "Markdown";
-    default:
-      return formatLanguageLabel(detectedLanguage);
-  }
 }
 
 function buildResourcePreviewUrl(baseUrl: string | null, refreshVersion: number): string | null {
@@ -1358,10 +1347,24 @@ function resolvePreviewDiffKind(markers: FileOverviewMarker[]): FileOverviewMark
 function EditModeLayout(input: {
   content: string;
   deferredContent: string;
+  previewKind: FilePreviewDto["kind"] | null;
   language: string;
   useInlineRenderedEditor: boolean;
   onContentChange: (content: string) => void;
 }) {
+  if (input.previewKind === "html") {
+    return (
+      <CodePreview
+        content={input.content}
+        language={input.language}
+        overviewMarkers={[]}
+        overviewTotalLines={Math.max(1, input.content.split(/\r?\n/).length)}
+        editable
+        onContentChange={input.onContentChange}
+      />
+    );
+  }
+
   if (!input.useInlineRenderedEditor) {
     return (
       <textarea
@@ -1741,12 +1744,16 @@ function CodePreview({
   content,
   language,
   overviewMarkers = [],
-  overviewTotalLines
+  overviewTotalLines,
+  editable = false,
+  onContentChange
 }: {
   content: string;
   language: string;
   overviewMarkers?: FileOverviewMarker[];
   overviewTotalLines: number;
+  editable?: boolean;
+  onContentChange?: (content: string) => void;
 }) {
   const lines = content.split(/\r?\n/);
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -1768,41 +1775,151 @@ function CodePreview({
         <CopyBlockButton content={content} />
       </div>
       <div className="file-viewer-scroll-shell">
-        <div className="file-viewer-code-body" ref={bodyRef}>
-          {lines.map((line, index) => {
-            const tokens = tokenizeLine(line, language);
-            const lineNo = index + 1;
-            const changeKind = lineChangeMap.get(lineNo);
+        <div className="file-viewer-code-body" data-editable={editable ? "true" : undefined} ref={bodyRef}>
+          {editable ? (
+            <EditableCodeContent
+              content={content}
+              language={language}
+              onContentChange={onContentChange}
+              lineChangeMap={lineChangeMap}
+            />
+          ) : (
+            lines.map((line, index) => {
+              const tokens = tokenizeLine(line, language);
+              const lineNo = index + 1;
+              const changeKind = lineChangeMap.get(lineNo);
 
-            return (
-              <div
-                key={`${index}-${line}`}
-                className={`file-viewer-code-line${changeKind ? ` diff-line-${changeKind}` : ""}`}
-              >
-                <span className="file-viewer-code-gutter">{lineNo}</span>
-                <code className="file-viewer-code-content">
-                  {tokens.length ? (
-                    tokens.map((token, tokenIndex) => (
-                      <span
-                        key={`${index}-${tokenIndex}-${token.text}`}
-                        className={`code-token ${token.kind}`}
-                      >
-                        {token.text}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="code-token plain"> </span>
-                  )}
-                </code>
-              </div>
-            );
-          })}
+              return (
+                <div
+                  key={`${index}-${line}`}
+                  className={`file-viewer-code-line${changeKind ? ` diff-line-${changeKind}` : ""}`}
+                >
+                  <span className="file-viewer-code-gutter">{lineNo}</span>
+                  <code className="file-viewer-code-content">
+                    {tokens.length ? (
+                      tokens.map((token, tokenIndex) => (
+                        <span
+                          key={`${index}-${tokenIndex}-${token.text}`}
+                          className={`code-token ${token.kind}`}
+                        >
+                          {token.text}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="code-token plain"> </span>
+                    )}
+                  </code>
+                </div>
+              );
+            })
+          )}
         </div>
         <OverviewRuler
           markers={overviewMarkers}
           totalLines={overviewTotalLines}
           scrollContainerRef={bodyRef}
         />
+      </div>
+    </div>
+  );
+}
+
+function EditableCodeContent({
+  content,
+  language,
+  onContentChange,
+  lineChangeMap
+}: {
+  content: string;
+  language: string;
+  onContentChange?: (content: string) => void;
+  lineChangeMap: Map<number, "add" | "modify">;
+}) {
+  const renderRef = useRef<HTMLDivElement | null>(null);
+  const gutterRef = useRef<HTMLDivElement | null>(null);
+
+  function handleScroll(event: React.UIEvent<HTMLTextAreaElement>) {
+    const renderElement = renderRef.current;
+    const gutterElement = gutterRef.current;
+
+    if (!renderElement) {
+      return;
+    }
+
+    renderElement.scrollTop = event.currentTarget.scrollTop;
+    renderElement.scrollLeft = event.currentTarget.scrollLeft;
+
+    if (gutterElement) {
+      gutterElement.scrollTop = event.currentTarget.scrollTop;
+    }
+  }
+
+  const lines = content.split(/\r?\n/);
+
+  return (
+    <div className="file-viewer-code-editor-shell">
+      <div
+        ref={gutterRef}
+        className="file-viewer-code-editor-gutter"
+        aria-hidden="true"
+      >
+        {lines.map((line, index) => {
+          const lineNo = index + 1;
+          const changeKind = lineChangeMap.get(lineNo);
+
+          return (
+            <div
+              key={`gutter-${index}-${line}`}
+              className={`file-viewer-code-editor-gutter-line${changeKind ? ` diff-line-${changeKind}` : ""}`}
+            >
+              <span className="file-viewer-code-gutter">{lineNo}</span>
+            </div>
+          );
+        })}
+      </div>
+      <div className="file-viewer-code-editor-pane">
+      <div
+        ref={renderRef}
+        className="file-viewer-code-editor-render"
+        data-testid="file-viewer-inline-render"
+        aria-hidden="true"
+      >
+        {lines.map((line, index) => {
+          const tokens = tokenizeLine(line, language);
+          const lineNo = index + 1;
+          const changeKind = lineChangeMap.get(lineNo);
+
+          return (
+            <div
+              key={`${index}-${line}`}
+              className={`file-viewer-code-editor-line${changeKind ? ` diff-line-${changeKind}` : ""}`}
+            >
+              <code className="file-viewer-code-content">
+                {tokens.length ? (
+                  tokens.map((token, tokenIndex) => (
+                    <span
+                      key={`${index}-${tokenIndex}-${token.text}`}
+                      className={`code-token ${token.kind}`}
+                    >
+                      {token.text}
+                    </span>
+                  ))
+                ) : (
+                  <span className="code-token plain"> </span>
+                )}
+              </code>
+            </div>
+          );
+        })}
+      </div>
+      <textarea
+        className="file-viewer-editor file-viewer-code-editor-input"
+        data-testid="file-viewer-editor"
+        value={content}
+        onChange={(event) => onContentChange?.(event.target.value)}
+        onScroll={handleScroll}
+        spellCheck={false}
+      />
       </div>
     </div>
   );
