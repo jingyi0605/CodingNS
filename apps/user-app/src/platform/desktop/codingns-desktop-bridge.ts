@@ -62,7 +62,13 @@ export function installCodingNSDesktopBridge() {
     return;
   }
 
+  if (window.self !== window.top) {
+    return;
+  }
+
   const bridge = getCodingNSDesktopBridge();
+  (window as Window & { __CODINGNS_DESKTOP_BRIDGE_INSTALLED__?: boolean }).__CODINGNS_DESKTOP_BRIDGE_INSTALLED__ =
+    true;
   Object.defineProperty(window, "CodingNSDesktop", {
     configurable: true,
     writable: false,

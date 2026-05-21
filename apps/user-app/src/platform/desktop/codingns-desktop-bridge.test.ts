@@ -5,6 +5,8 @@ import { installCodingNSDesktopBridge, resetCodingNSDesktopBridgeForTest } from 
 const originalTauriInternals = window.__TAURI_INTERNALS__;
 const userAgentDescriptor = Object.getOwnPropertyDescriptor(window.navigator, "userAgent");
 const platformDescriptor = Object.getOwnPropertyDescriptor(window.navigator, "platform");
+const topDescriptor = Object.getOwnPropertyDescriptor(window, "top");
+const selfDescriptor = Object.getOwnPropertyDescriptor(window, "self");
 
 function mockNavigator(userAgent: string, platform: string) {
   Object.defineProperty(window.navigator, "userAgent", {
@@ -30,6 +32,14 @@ describe("CodingNSDesktop bridge", () => {
       Object.defineProperty(window.navigator, "platform", platformDescriptor);
     }
 
+    if (topDescriptor) {
+      Object.defineProperty(window, "top", topDescriptor);
+    }
+
+    if (selfDescriptor) {
+      Object.defineProperty(window, "self", selfDescriptor);
+    }
+
     if (originalTauriInternals) {
       window.__TAURI_INTERNALS__ = originalTauriInternals;
     } else {
@@ -43,6 +53,23 @@ describe("CodingNSDesktop bridge", () => {
 
     expect(window.CodingNSDesktop).toBeDefined();
     expect(window.CodingNSDesktop?.runtime.isAvailable()).toBe(false);
+  });
+
+  it("iframe 环境不会给插件 frame 挂桌面桥", () => {
+    delete window.__TAURI_INTERNALS__;
+    const fakeTop = {} as Window;
+    Object.defineProperty(window, "top", {
+      configurable: true,
+      value: fakeTop
+    });
+    Object.defineProperty(window, "self", {
+      configurable: true,
+      value: window
+    });
+
+    installCodingNSDesktopBridge();
+
+    expect(window.CodingNSDesktop).toBeUndefined();
   });
 
   it("非桌面环境会优雅失败", async () => {

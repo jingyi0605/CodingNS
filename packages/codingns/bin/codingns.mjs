@@ -28,6 +28,9 @@ switch (command) {
   case "start":
     await runStartCommand(argv);
     break;
+  case "plugins":
+    await runPluginsCommand(argv);
+    break;
   case "assistant":
     await runAssistantCommand(argv);
     break;
@@ -1206,6 +1209,75 @@ async function runAssistantCommand(argv) {
   }
 }
 
+async function runPluginsCommand(argv) {
+  const [action, ...rest] = argv;
+
+  if (!action || action === "help" || action === "--help" || action === "-h") {
+    printPluginsHelp(0);
+  }
+
+  switch (action) {
+    case "list":
+      await printAssistantResponse(await requestPlugins({
+        method: "GET",
+        path: "/api/plugins",
+        argv: rest,
+        helpTopic: "plugins"
+      }));
+      return;
+    case "get": {
+      const [pluginId, ...tail] = rest;
+      await printAssistantResponse(await requestPlugins({
+        method: "GET",
+        path: `/api/plugins/${requirePositional(pluginId, "pluginId")}`,
+        argv: tail,
+        helpTopic: "plugins"
+      }));
+      return;
+    }
+    case "enable": {
+      const [pluginId, ...tail] = rest;
+      await printAssistantResponse(await requestPlugins({
+        method: "POST",
+        path: `/api/plugins/${requirePositional(pluginId, "pluginId")}/enable`,
+        argv: tail,
+        helpTopic: "plugins"
+      }));
+      return;
+    }
+    case "disable": {
+      const [pluginId, ...tail] = rest;
+      await printAssistantResponse(await requestPlugins({
+        method: "POST",
+        path: `/api/plugins/${requirePositional(pluginId, "pluginId")}/disable`,
+        argv: tail,
+        supportedOptions: ["reason"],
+        helpTopic: "plugins"
+      }, (options) => ({
+        reason: readOptionalTrimmedValue(options.values.reason)
+      })));
+      return;
+    }
+    case "call": {
+      const [pluginId, actionId, ...tail] = rest;
+      await printAssistantResponse(await requestPlugins({
+        method: "POST",
+        path: `/api/plugins/${requirePositional(pluginId, "pluginId")}/actions/${requirePositional(actionId, "actionId")}`,
+        argv: tail,
+        supportedOptions: ["workspace-id", "input-json"],
+        helpTopic: "plugins"
+      }, (options) => ({
+        workspaceId: readOptionalTrimmedValue(options.values["workspace-id"]),
+        input: parseJsonOption(options.values["input-json"], "input-json") ?? null
+      })));
+      return;
+    }
+    default:
+      console.error(`[codingns] 不支持的 plugins 子命令：${action}`);
+      printPluginsHelp(1);
+  }
+}
+
 async function runMcpCommand(argv) {
   const [target, action, ...rest] = argv;
 
@@ -1768,6 +1840,81 @@ async function requestOpenCli(command, buildPayload) {
   return responseBody ?? rawBody;
 }
 
+async function requestPlugins(command, buildPayload) {
+  const options = parseArgs(command.argv, {
+    supportedOptions: [
+      "base-url",
+      "token",
+      ...(command.supportedOptions ?? [])
+    ]
+  });
+
+  if (options.help) {
+    printPluginsHelp(0);
+  }
+
+  if (options.errors.length > 0) {
+    for (const error of options.errors) {
+      console.error(`[codingns] ${error}`);
+    }
+    printPluginsHelp(1);
+  }
+
+  const baseUrl = resolveAssistantBaseUrl(options.values["base-url"]);
+  const accessToken = resolveAssistantAccessToken(options.values.token);
+  const url = new URL(command.path, appendTrailingSlash(baseUrl));
+  const payload = buildPayload ? buildPayload(options) : null;
+
+  if (command.method === "GET" && payload) {
+    for (const [key, value] of Object.entries(payload)) {
+      if (typeof value === "string" && value.length > 0) {
+        url.searchParams.set(key, value);
+      }
+    }
+  }
+
+  let response;
+
+  try {
+    const usesJsonBody = command.method === "POST" || command.method === "PUT" || command.method === "DELETE";
+    response = await fetch(url, {
+      method: command.method,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Connection: "close",
+        ...(usesJsonBody ? { "Content-Type": "application/json" } : {})
+      },
+      body: usesJsonBody ? JSON.stringify(payload ?? {}) : undefined
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "未知网络错误";
+    console.error(JSON.stringify({
+      ok: false,
+      detail: `插件管理请求失败：${message}`,
+      target: url.toString()
+    }, null, 2));
+    process.exit(1);
+  }
+
+  const rawBody = await response.text();
+  const responseBody = tryParseJson(rawBody);
+
+  if (!response.ok) {
+    const detail = typeof responseBody?.detail === "string"
+      ? responseBody.detail
+      : `HTTP ${response.status}`;
+    console.error(JSON.stringify({
+      ok: false,
+      status: response.status,
+      detail,
+      body: responseBody ?? rawBody
+    }, null, 2));
+    process.exit(1);
+  }
+
+  return responseBody ?? rawBody;
+}
+
 async function printAssistantResponse(payload) {
   if (typeof payload === "string") {
     console.log(payload);
@@ -2179,6 +2326,7 @@ codingns 用法：
 
   codingns start [--host 0.0.0.0] [--port 3002] [--data-dir ~/.codingns] [--demo]
   codingns assistant <group> <action> [options]
+  codingns plugins <action> [options]
   codingns mcp workspace-office serve [--auth-file <path> | --base-url <url> --token <token>]
   codingns provider-sessions <action> [options]
   codingns skills <action> [options]
@@ -2222,6 +2370,13 @@ opencli 例子：
   codingns opencli check --token <token>
   codingns opencli config --enabled true --command-id hackernews/top --token <token>
 
+plugins 例子：
+
+  codingns plugins list --token <token>
+  codingns plugins get <pluginId> --token <token>
+  codingns plugins enable <pluginId> --token <token>
+  codingns plugins disable <pluginId> --reason "暂时停用" --token <token>
+
 mcp 例子：
 
   codingns mcp workspace-office serve --auth-file ~/.codingns/host/workspace-session-runtime/<workspaceId>/<sessionId>/WORKSPACE_SESSION_AUTH.json
@@ -2250,6 +2405,31 @@ codingns mcp 用法：
 
   workspace-office 会启动工作区专用 office MCP server。
   它只暴露当前工作区允许的 office.document.* / office.browser.* / office.ops.*。
+`.trim();
+
+  if (exitCode === 0) {
+    console.log(output);
+  } else {
+    console.error(output);
+  }
+
+  process.exit(exitCode);
+}
+
+function printPluginsHelp(exitCode) {
+  const output = `
+codingns plugins 用法：
+
+  codingns plugins list --token <token>
+  codingns plugins get <pluginId> --token <token>
+  codingns plugins enable <pluginId> --token <token>
+  codingns plugins disable <pluginId> [--reason <text>] --token <token>
+  codingns plugins call <pluginId> <actionId> --workspace-id <workspaceId> [--input-json <json>] --token <token>
+
+说明：
+
+  插件管理统一走 Host 的固定 /api/plugins 入口。
+  动作执行也走统一网关，不为每个插件热插命令树。
 `.trim();
 
   if (exitCode === 0) {
