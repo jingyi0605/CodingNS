@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { resolveHostConfig } from "../../src/config/env.js";
 import { hashPassword } from "../../src/shared/utils/hash.js";
+import { createId } from "../../src/shared/utils/id.js";
 import { createServer } from "../../src/server/create-server.js";
 
 const startedServers: Array<ReturnType<typeof createServer>> = [];
@@ -110,6 +111,24 @@ function createSchedulerTestServer(options?: {
   return server;
 }
 
+function grantWorkspaceReadPermission(server: ReturnType<typeof createServer>, workspaceId = "workspace-1") {
+  const now = new Date().toISOString();
+  server.services.repositories.pluginPermissionGrantRepository.create({
+    id: createId(),
+    pluginId: "demo.plugin",
+    workspaceId,
+    permissionKey: "workspace.read_file",
+    scopeType: "workspace",
+    scopePath: null,
+    grantMode: "persistent",
+    grantedByUserId: "system-user",
+    runtimeSessionId: null,
+    createdAt: now,
+    expiresAt: null,
+    revokedAt: null
+  });
+}
+
 async function runSingleTick(server: ReturnType<typeof createServer>) {
   const scheduler = server.services.modules.pluginSchedulerService as unknown as {
     tick: () => Promise<void>;
@@ -142,6 +161,7 @@ afterEach(async () => {
 describe("plugin-scheduler-service", () => {
   it("调度触发会创建运行记录并写审计", async () => {
     const server = createSchedulerTestServer();
+    grantWorkspaceReadPermission(server);
 
     await runSingleTick(server);
     await waitFor(() => {
@@ -178,6 +198,7 @@ export async function run() {
 }
 `
     });
+    grantWorkspaceReadPermission(server);
 
     await runSingleTick(server);
     await waitFor(() =>

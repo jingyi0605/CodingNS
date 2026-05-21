@@ -18,7 +18,7 @@ function createTestServer() {
   const pluginInstallRoot = path.join(pluginRootDir, "demo-plugin");
   fs.mkdirSync(pluginInstallRoot, { recursive: true });
   fs.writeFileSync(path.join(pluginInstallRoot, "index.html"), "<html><body>demo<script src=\"/preview/plugins/runtime-sdk.js\"></script></body></html>", "utf8");
-  fs.writeFileSync(path.join(pluginInstallRoot, "action.js"), "export async function run(payload){ return { ok: true, workspaceId: payload.workspaceId, echoed: payload.input ?? null }; }", "utf8");
+  fs.writeFileSync(path.join(pluginInstallRoot, "action.js"), "export async function run(payload){ return { ok: true, workspaceId: payload.workspaceId, runtimeSessionId: payload.runtimeSessionId ?? null, echoed: payload.input ?? null }; }", "utf8");
   fs.writeFileSync(path.join(pluginInstallRoot, "plugin.json"), JSON.stringify({
     id: "demo.plugin",
     name: "演示插件",
@@ -239,12 +239,13 @@ describe("plugin routes", () => {
     expect(actionResponse.statusCode).toBe(200);
     const actionPayload = actionResponse.json() as {
       run: { status: string; workspaceId: string };
-      output: { ok: boolean; workspaceId: string; echoed: { range: string } };
+      output: { ok: boolean; workspaceId: string; runtimeSessionId: string | null; echoed: { range: string } };
     };
     expect(actionPayload.run.status).toBe("succeeded");
     expect(actionPayload.run.runtimeSessionId).toBe(createSessionPayload.runtimeSessionId);
     expect(actionPayload.output.ok).toBe(true);
     expect(actionPayload.output.workspaceId).toBe(workspaceId);
+    expect(actionPayload.output.runtimeSessionId).toBe(createSessionPayload.runtimeSessionId);
 
     const closeSessionResponse = await server.app.inject({
       method: "POST",

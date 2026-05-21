@@ -57,6 +57,7 @@ interface PluginTaskInput {
   pluginId: string;
   actionId: string;
   workspaceId: string;
+  runtimeSessionId: string | null;
   input: unknown;
 }
 
@@ -119,6 +120,7 @@ export class PluginRuntimeService {
             pluginId: input.pluginId,
             actionId: action.id,
             workspaceId,
+            runtimeSessionId: input.runtimeSessionId ?? null,
             input: input.input
           }
         }
@@ -284,6 +286,7 @@ export class PluginRuntimeService {
             pluginId: input.pluginId,
             actionId: action.id,
             workspaceId: input.workspaceId,
+            runtimeSessionId: input.runtimeSessionId,
             input: input.input
           },
           timeoutMs: action.timeoutMs ?? 30_000,

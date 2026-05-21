@@ -17,6 +17,7 @@ export interface RunPluginNodeScriptInput {
     pluginId: string;
     actionId: string;
     workspaceId: string;
+    runtimeSessionId: string | null;
     input: unknown;
   };
   timeoutMs: number;
