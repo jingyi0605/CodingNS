@@ -29,9 +29,11 @@ import { ChannelsManagementPanel } from "../../../settings/ChannelsManagementPan
 import { AuthDeviceManagementPanel } from "../../../settings/AuthDeviceManagementPanel";
 import { ServiceUpdatePanel } from "../../../settings/ServiceUpdatePanel";
 import { RemoteAccessManagerModal } from "../../../settings/RemoteAccessManagerModal";
+import { PluginManagementModal } from "../../../settings/PluginManagementModal";
 import { authStore } from "../../auth/store/auth-store";
 import { MobilePageHeader } from "../../mobile-shell/components/MobilePageHeader";
 import type { DebugPortPoolConfig } from "../../../preferences/types";
+import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 
 const DEFAULT_DEBUG_PORT_POOLS: DebugPortPoolConfig = {
   start: 43000,
@@ -373,6 +375,8 @@ export function SettingsPage() {
 function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; appVersion: string }) {
   const [showParallelTaskDebug, setShowParallelTaskDebug] = useState(false);
   const [remoteAccessModalOpen, setRemoteAccessModalOpen] = useState(false);
+  const [pluginManagementModalOpen, setPluginManagementModalOpen] = useState(false);
+  const { currentWorkspaceId, navigationGroups } = useWorkbenchShell();
   const {
     theme,
     selectedTheme,
@@ -406,6 +410,7 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
     updateNotifyOnSessionFailed,
     updateDebugPortPools
   } = model;
+  const pluginManagementWorkspaceId = currentWorkspaceId ?? navigationGroups[0]?.workspace.id ?? null;
 
   return (
     <div className="settings-page">
@@ -546,6 +551,24 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
         <section className="settings-section">
           <h2 className="settings-section-title">{t("settings.abilityManagement")}</h2>
           <div className="settings-card">
+            <div className="settings-row">
+              <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.pluginManagement")}</span>
+                <span className="settings-row-description">
+                  {t("settings.pluginManagementDescription")}
+                </span>
+              </div>
+              <div className="settings-row-control">
+                <button
+                  className="settings-button"
+                  type="button"
+                  onClick={() => setPluginManagementModalOpen(true)}
+                >
+                  {t("settings.pluginManagementAction")}
+                </button>
+              </div>
+            </div>
+
             <div className="settings-row">
               <div className="settings-row-label">
                 <span className="settings-row-title">{t("settings.providerManagement")}</span>
@@ -807,6 +830,12 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
         open={remoteAccessModalOpen}
         mobile={false}
         onClose={() => setRemoteAccessModalOpen(false)}
+      />
+      <PluginManagementModal
+        open={pluginManagementModalOpen}
+        mobile={false}
+        workspaceId={pluginManagementWorkspaceId}
+        onClose={() => setPluginManagementModalOpen(false)}
       />
     </div>
   );
@@ -1349,30 +1378,60 @@ function MobileRemoteAccessSection({ model }: { model: SettingsPageModel }) {
 }
 
 function MobileAbilityManagementSection() {
+  const [pluginManagementModalOpen, setPluginManagementModalOpen] = useState(false);
+  const { currentWorkspaceId, navigationGroups } = useWorkbenchShell();
+  const pluginManagementWorkspaceId = currentWorkspaceId ?? navigationGroups[0]?.workspace.id ?? null;
+
   return (
-    <section className="settings-mobile-group-section">
-      <h2 className="settings-mobile-group-title">{t("settings.abilityManagement")}</h2>
-      <p className="settings-mobile-group-note">{t("settings.abilityManagementSectionSummary")}</p>
-      <div className="settings-mobile-ability-stack">
-        <div className="settings-mobile-panel-shell settings-mobile-provider-shell">
-          <div className="settings-mobile-row-copy settings-mobile-ability-copy">
-            <span className="settings-mobile-row-title">{t("settings.providerManagement")}</span>
-            <span className="settings-mobile-row-description">
-              {t("settings.providerManagementDescription")}
-            </span>
+    <>
+      <section className="settings-mobile-group-section">
+        <h2 className="settings-mobile-group-title">{t("settings.abilityManagement")}</h2>
+        <p className="settings-mobile-group-note">{t("settings.abilityManagementSectionSummary")}</p>
+        <div className="settings-mobile-list">
+          <div className="settings-mobile-form-row">
+            <div className="settings-mobile-row-copy">
+              <span className="settings-mobile-row-title">{t("settings.pluginManagement")}</span>
+              <span className="settings-mobile-row-description">
+                {t("settings.pluginManagementDescription")}
+              </span>
+            </div>
+            <button
+              className="settings-mobile-primary-button"
+              type="button"
+              onClick={() => setPluginManagementModalOpen(true)}
+            >
+              {t("settings.pluginManagementAction")}
+            </button>
           </div>
-          <ProviderManagementPanel />
         </div>
-        <div className="settings-mobile-panel-shell settings-mobile-model-shell">
-          <div className="settings-mobile-row-copy settings-mobile-ability-copy settings-mobile-row-copy-single-line">
-            <span className="settings-mobile-row-title settings-mobile-row-title-strong">
-              {t("settings.modelManagementSectionTitle")}
-            </span>
+        <div className="settings-mobile-ability-stack">
+          <div className="settings-mobile-panel-shell settings-mobile-provider-shell">
+            <div className="settings-mobile-row-copy settings-mobile-ability-copy">
+              <span className="settings-mobile-row-title">{t("settings.providerManagement")}</span>
+              <span className="settings-mobile-row-description">
+                {t("settings.providerManagementDescription")}
+              </span>
+            </div>
+            <ProviderManagementPanel />
           </div>
-          <ModelManagementPanel />
+          <div className="settings-mobile-panel-shell settings-mobile-model-shell">
+            <div className="settings-mobile-row-copy settings-mobile-ability-copy settings-mobile-row-copy-single-line">
+              <span className="settings-mobile-row-title settings-mobile-row-title-strong">
+                {t("settings.modelManagementSectionTitle")}
+              </span>
+            </div>
+            <ModelManagementPanel />
+          </div>
         </div>
-      </div>
-    </section>
+      </section>
+
+      <PluginManagementModal
+        open={pluginManagementModalOpen}
+        mobile
+        workspaceId={pluginManagementWorkspaceId}
+        onClose={() => setPluginManagementModalOpen(false)}
+      />
+    </>
   );
 }
 

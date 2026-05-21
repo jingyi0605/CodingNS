@@ -225,6 +225,27 @@ const appRoutes = [
             )
           },
           {
+            path: "workspaces/:workspaceId/plugins",
+            lazy: lazyRouteComponent(
+              () => import("../features/plugins/pages/PluginsListPage"),
+              "PluginsListPage"
+            )
+          },
+          {
+            path: "workspaces/:workspaceId/plugins/:pluginId",
+            lazy: lazyRouteComponent(
+              () => import("../features/plugins/pages/PluginDetailPage"),
+              "PluginDetailPage"
+            )
+          },
+          {
+            path: "workspaces/:workspaceId/plugins/:pluginId/run",
+            lazy: lazyRouteComponent(
+              () => import("../features/plugins/pages/PluginContainerPage"),
+              "PluginContainerPage"
+            )
+          },
+          {
             path: "workspaces/:workspaceId/butler",
             lazy: lazyRouteComponent(
               () => import("../features/butler/pages/AdaptiveButlerPage"),

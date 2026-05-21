@@ -33285,3 +33285,148 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
     page-break-inside: avoid;
   }
 }
+
+.plugins-page {
+  padding: 20px;
+}
+
+.plugins-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+}
+
+.plugins-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.plugins-page-header h1 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.plugins-page-header p,
+.plugins-hint-text {
+  margin: 0;
+  color: var(--text-secondary, rgba(0, 0, 0, 0.62));
+}
+
+.plugins-list-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.plugins-list-item {
+  width: 100%;
+  text-align: left;
+}
+
+.plugins-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.plugins-container-panel {
+  min-height: calc(100vh - 120px);
+}
+
+.plugins-runtime-shell {
+  flex: 1;
+  min-height: 60vh;
+  border: 1px solid var(--modal-list-item-border);
+  border-radius: 16px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--surface-card-bg, #fff) 82%, transparent);
+}
+
+.plugins-runtime-frame {
+  width: 100%;
+  min-height: 60vh;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+
+.settings-plugin-modal-body {
+  padding-top: 4px;
+}
+
+.settings-plugin-manager-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.92fr) minmax(0, 1.28fr);
+  gap: 18px;
+  min-height: 0;
+}
+
+.settings-plugin-modal-section,
+.settings-plugin-modal-detail-section {
+  min-height: 0;
+}
+
+.settings-plugin-modal-list {
+  max-height: min(62vh, 720px);
+  overflow: auto;
+}
+
+.settings-plugin-modal-detail-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.settings-plugin-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+}
+
+.settings-plugin-modal-header strong {
+  display: block;
+  font-size: 16px;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+
+.settings-plugin-modal-header p,
+.settings-plugin-modal-workspace-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.settings-plugin-modal-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.settings-plugin-modal-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 960px) {
+  .settings-plugin-manager-layout {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .settings-plugin-modal-list {
+    max-height: none;
+  }
+}

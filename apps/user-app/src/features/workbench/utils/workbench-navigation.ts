@@ -66,6 +66,18 @@ export function buildWorkspaceToolProcessesPath(workspaceId: string): string {
   return `${buildWorkspaceDetailPath(workspaceId)}/tools/processes`;
 }
 
+
+export function buildWorkspacePluginsPath(workspaceId: string): string {
+  return `${buildWorkspaceDetailPath(workspaceId)}/plugins`;
+}
+
+export function buildWorkspacePluginDetailPath(workspaceId: string, pluginId: string): string {
+  return `${buildWorkspacePluginsPath(workspaceId)}/${encodeURIComponent(pluginId)}`;
+}
+
+export function buildWorkspacePluginContainerPath(workspaceId: string, pluginId: string): string {
+  return `${buildWorkspacePluginDetailPath(workspaceId, pluginId)}/run`;
+}
 export function buildWorkspaceTerminalsPath(workspaceId: string): string {
   return `${buildWorkspaceDetailPath(workspaceId)}/terminals`;
 }
