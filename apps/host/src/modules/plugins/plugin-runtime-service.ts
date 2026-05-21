@@ -40,6 +40,7 @@ export interface PluginActionInvokeResult {
 export interface PluginDesktopActionInput {
   pluginId: string;
   workspaceId: string;
+  runtimeSessionId?: string | null;
   requestedPath: string;
   permission: PluginDesktopPermission;
   actorUserId: string | null;
@@ -84,7 +85,10 @@ export class PluginRuntimeService {
 
     const workspaceId = this.pluginPermissionService.assertWorkspaceScopedContext(input.workspaceId);
     this.workspaceService.getWorkspaceOrThrow(workspaceId);
-    this.pluginPermissionService.assertWorkspaceRead(detail.manifest);
+    this.pluginPermissionService.assertWorkspaceRead(detail.manifest, {
+      pluginId: input.pluginId,
+      workspaceId
+    });
     const action = requirePluginAction(detail.manifest, input.actionId);
 
     const run = this.pluginRunRepository.create({
@@ -193,8 +197,16 @@ export class PluginRuntimeService {
     this.assertEnabled(detail.enablement.enabled);
     const workspaceId = this.pluginPermissionService.assertWorkspaceScopedContext(input.workspaceId);
     this.workspaceService.getWorkspaceOrThrow(workspaceId);
-    this.pluginPermissionService.assertWorkspaceRead(detail.manifest);
-    this.pluginPermissionService.assertDesktopPermission(detail.manifest, input.permission);
+    this.pluginPermissionService.assertDesktopPermission(
+      detail.manifest,
+      {
+        pluginId: input.pluginId,
+        workspaceId
+      },
+      input.permission,
+      input.requestedPath,
+      input.runtimeSessionId ?? null
+    );
     const resolved = this.resolveWorkspaceRelativePath(workspaceId, input.requestedPath);
 
     this.pluginAuditEventRepository.create({

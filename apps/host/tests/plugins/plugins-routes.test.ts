@@ -81,9 +81,36 @@ function createTestServer() {
 
   return {
     server,
+    userId,
     workspaceId,
     accessToken: issueInteractiveAccessToken(server, userId)
   };
+}
+
+async function grantPluginPermission(server: ReturnType<typeof createServer>, input: {
+  pluginId: string;
+  workspaceId: string;
+  permissionKey: "workspace.read_file" | "desktop.open_file";
+  grantedByUserId: string;
+  runtimeSessionId?: string | null;
+  scopeType?: "workspace" | "directory" | "file";
+  scopePath?: string | null;
+}) {
+  const timestamp = new Date().toISOString();
+  server.services.repositories.pluginPermissionGrantRepository.create({
+    id: createId(),
+    pluginId: input.pluginId,
+    workspaceId: input.workspaceId,
+    permissionKey: input.permissionKey,
+    scopeType: input.scopeType ?? (input.scopePath ? "file" : "workspace"),
+    scopePath: input.scopePath ?? null,
+    grantMode: input.runtimeSessionId ? "session" : "persistent",
+    grantedByUserId: input.grantedByUserId,
+    runtimeSessionId: input.runtimeSessionId ?? null,
+    createdAt: timestamp,
+    expiresAt: null,
+    revokedAt: null
+  });
 }
 
 function issueInteractiveAccessToken(server: ReturnType<typeof createServer>, userId: string): string {
@@ -160,7 +187,7 @@ describe("plugin routes", () => {
   }, 20000);
 
   it("能创建运行实例、执行动作，并在关闭后拒绝继续调用", async () => {
-    const { server, accessToken, workspaceId } = createTestServer();
+    const { server, accessToken, workspaceId, userId } = createTestServer();
 
     await server.app.inject({
       method: "POST",
@@ -187,6 +214,13 @@ describe("plugin routes", () => {
     };
     expect(createSessionPayload.session.workspaceId).toBe(workspaceId);
     expect(createSessionPayload.session.status).toBe("active");
+
+    await grantPluginPermission(server, {
+      pluginId: "demo.plugin",
+      workspaceId,
+      permissionKey: "workspace.read_file",
+      grantedByUserId: userId
+    });
 
     const actionResponse = await server.app.inject({
       method: "POST",
@@ -250,7 +284,7 @@ describe("plugin routes", () => {
   }, 20000);
 
   it("插件桌面动作会先做工作区内路径校验", async () => {
-    const { server, accessToken, workspaceId } = createTestServer();
+    const { server, accessToken, workspaceId, userId } = createTestServer();
 
     await server.app.inject({
       method: "POST",
@@ -271,6 +305,16 @@ describe("plugin routes", () => {
       }
     });
     const createSessionPayload = createSessionResponse.json() as { runtimeSessionId: string };
+
+    await grantPluginPermission(server, {
+      pluginId: "demo.plugin",
+      workspaceId,
+      permissionKey: "desktop.open_file",
+      grantedByUserId: userId,
+      runtimeSessionId: createSessionPayload.runtimeSessionId,
+      scopeType: "workspace",
+      scopePath: null
+    });
 
     const okResponse = await server.app.inject({
       method: "POST",

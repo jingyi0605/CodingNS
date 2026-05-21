@@ -263,6 +263,7 @@ import { OpenCliProviderRepository } from "../storage/repositories/opencli-provi
 import { OpenCliRuntimeProfileRepository } from "../storage/repositories/opencli-runtime-profile-repository.js";
 import { PluginDefinitionRepository } from "../storage/repositories/plugin-definition-repository.js";
 import { PluginEnablementRepository } from "../storage/repositories/plugin-enablement-repository.js";
+import { PluginPermissionGrantRepository } from "../storage/repositories/plugin-permission-grant-repository.js";
 import { PluginRuntimeSessionRepository } from "../storage/repositories/plugin-runtime-session-repository.js";
 import { PluginRunRepository } from "../storage/repositories/plugin-run-repository.js";
 import { PortLeaseRepository } from "../storage/repositories/port-lease-repository.js";
@@ -362,6 +363,7 @@ export function createServer(config: HostConfig) {
     pluginDefinitionRepository: new PluginDefinitionRepository(database.db),
     pluginEnablementRepository: new PluginEnablementRepository(database.db),
     pluginAuditEventRepository: new PluginAuditEventRepository(database.db),
+    pluginPermissionGrantRepository: new PluginPermissionGrantRepository(database.db),
     pluginRuntimeSessionRepository: new PluginRuntimeSessionRepository(database.db),
     pluginRunRepository: new PluginRunRepository(database.db),
     documentTemplateRepository: new DocumentTemplateRepository(database.db),
@@ -510,7 +512,9 @@ export function createServer(config: HostConfig) {
     app.log
   );
   pluginRegistryService.syncPluginsFromDisk();
-  const pluginPermissionService = new PluginPermissionService();
+  const pluginPermissionService = new PluginPermissionService(
+    repositories.pluginPermissionGrantRepository
+  );
   const pluginRuntimeSessionService = new PluginRuntimeSessionService(
     pluginRegistryService,
     repositories.pluginRuntimeSessionRepository,

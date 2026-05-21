@@ -201,6 +201,7 @@ export class PluginController {
       this.pluginRuntimeService.prepareDesktopAction({
         pluginId: request.params.pluginId,
         workspaceId: runtimeSession.workspaceId,
+        runtimeSessionId,
         requestedPath: requirePluginPath(request.body?.path),
         permission: "open_file",
         actorUserId: requireUserId(request)
@@ -223,6 +224,7 @@ export class PluginController {
       this.pluginRuntimeService.prepareDesktopAction({
         pluginId: request.params.pluginId,
         workspaceId: runtimeSession.workspaceId,
+        runtimeSessionId,
         requestedPath: requirePluginPath(request.body?.path),
         permission: "reveal_in_file_manager",
         actorUserId: requireUserId(request)

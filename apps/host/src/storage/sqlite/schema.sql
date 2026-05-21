@@ -320,6 +320,40 @@ CREATE INDEX IF NOT EXISTS idx_plugin_runtime_sessions_workspace_id
 CREATE INDEX IF NOT EXISTS idx_plugin_runtime_sessions_status
   ON plugin_runtime_sessions(status, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS plugin_permission_grants (
+  id TEXT PRIMARY KEY,
+  plugin_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  permission_key TEXT NOT NULL CHECK (
+    permission_key IN (
+      'workspace.read_file',
+      'workspace.list_dir',
+      'workspace.write_file',
+      'desktop.open_file',
+      'desktop.reveal_in_file_manager'
+    )
+  ),
+  scope_type TEXT NOT NULL CHECK (scope_type IN ('workspace', 'directory', 'file')),
+  scope_path TEXT,
+  grant_mode TEXT NOT NULL CHECK (grant_mode IN ('once', 'session', 'persistent')),
+  granted_by_user_id TEXT NOT NULL,
+  runtime_session_id TEXT,
+  created_at TEXT NOT NULL,
+  expires_at TEXT,
+  revoked_at TEXT,
+  FOREIGN KEY (plugin_id) REFERENCES plugin_definitions(id) ON DELETE CASCADE,
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+  FOREIGN KEY (granted_by_user_id) REFERENCES auth_users(id),
+  FOREIGN KEY (runtime_session_id) REFERENCES plugin_runtime_sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_plugin_permission_grants_plugin_workspace
+  ON plugin_permission_grants(plugin_id, workspace_id, permission_key, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_plugin_permission_grants_runtime_session
+  ON plugin_permission_grants(runtime_session_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_plugin_permission_grants_active
+  ON plugin_permission_grants(plugin_id, workspace_id, revoked_at, expires_at);
+
 CREATE TABLE IF NOT EXISTS plugin_audit_events (
   id TEXT PRIMARY KEY,
   plugin_id TEXT NOT NULL,

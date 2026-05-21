@@ -300,6 +300,14 @@ export type PluginBackendMode = "on_demand" | "daemon";
 export type PluginDesktopPermission = "open_file" | "reveal_in_file_manager";
 export type PluginRuntimeSessionSource = "frontend" | "assistant" | "cli";
 export type PluginRuntimeSessionStatus = "active" | "closed";
+export type PluginPermissionKey =
+  | "workspace.read_file"
+  | "workspace.list_dir"
+  | "workspace.write_file"
+  | "desktop.open_file"
+  | "desktop.reveal_in_file_manager";
+export type PluginPermissionScopeType = "workspace" | "directory" | "file";
+export type PluginPermissionGrantMode = "once" | "session" | "persistent";
 export type PluginRunTriggerKind = "frontend" | "cli" | "schedule" | "assistant";
 export type PluginRunStatus =
   | "queued"
@@ -535,6 +543,21 @@ export interface PluginRuntimeSession {
   createdAt: string;
   updatedAt: string;
   closedAt: string | null;
+}
+
+export interface PluginPermissionGrant {
+  id: string;
+  pluginId: string;
+  workspaceId: string;
+  permissionKey: PluginPermissionKey;
+  scopeType: PluginPermissionScopeType;
+  scopePath: string | null;
+  grantMode: PluginPermissionGrantMode;
+  grantedByUserId: string;
+  runtimeSessionId: string | null;
+  createdAt: string;
+  expiresAt: string | null;
+  revokedAt: string | null;
 }
 
 export interface PluginRun {
