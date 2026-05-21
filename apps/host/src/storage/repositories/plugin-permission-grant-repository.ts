@@ -95,6 +95,33 @@ export class PluginPermissionGrantRepository {
       .map((row) => mapPluginPermissionGrantRow(row as PluginPermissionGrantRow));
   }
 
+  listActiveByPluginAndWorkspace(pluginId: string, workspaceId: string, referenceAt: string): PluginPermissionGrant[] {
+    return this.db
+      .prepare(
+        `SELECT
+           id,
+           plugin_id,
+           workspace_id,
+           permission_key,
+           scope_type,
+           scope_path,
+           grant_mode,
+           granted_by_user_id,
+           runtime_session_id,
+           created_at,
+           expires_at,
+           revoked_at
+         FROM plugin_permission_grants
+         WHERE plugin_id = ?
+           AND workspace_id = ?
+           AND revoked_at IS NULL
+           AND (expires_at IS NULL OR expires_at > ?)
+         ORDER BY created_at DESC`
+      )
+      .all(pluginId, workspaceId, referenceAt)
+      .map((row) => mapPluginPermissionGrantRow(row as PluginPermissionGrantRow));
+  }
+
   listActiveByPluginWorkspaceAndPermission(
     pluginId: string,
     workspaceId: string,

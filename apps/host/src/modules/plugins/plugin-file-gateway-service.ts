@@ -38,10 +38,15 @@ export class PluginFileGatewayService {
 
   readFile(input: PluginFileGatewayReadInput): FileSnapshot {
     const detail = this.pluginRegistryService.getPlugin(input.pluginId);
-    this.pluginPermissionService.assertWorkspaceRead(detail.manifest, {
-      pluginId: input.pluginId,
-      workspaceId: input.workspaceId
-    });
+    try {
+      this.pluginPermissionService.assertWorkspaceRead(detail.manifest, {
+        pluginId: input.pluginId,
+        workspaceId: input.workspaceId
+      });
+    } catch (error) {
+      this.recordPermissionAudit(input, "workspace.read_file", error);
+      throw error;
+    }
 
     const resolved = this.fileAccessGuard.resolvePath(input.workspaceId, input.requestedPath, {
       mustExist: true,
@@ -71,10 +76,15 @@ export class PluginFileGatewayService {
 
   writeFile(input: PluginFileGatewayWriteInput): { path: string; size: number; updatedAt: string } {
     const detail = this.pluginRegistryService.getPlugin(input.pluginId);
-    this.pluginPermissionService.assertWorkspaceWrite(detail.manifest, {
-      pluginId: input.pluginId,
-      workspaceId: input.workspaceId
-    }, input.requestedPath);
+    try {
+      this.pluginPermissionService.assertWorkspaceWrite(detail.manifest, {
+        pluginId: input.pluginId,
+        workspaceId: input.workspaceId
+      }, input.requestedPath);
+    } catch (error) {
+      this.recordPermissionAudit(input, "workspace.write_file", error);
+      throw error;
+    }
 
     const resolved = this.fileAccessGuard.resolvePath(input.workspaceId, input.requestedPath, {
       mustExist: false,
@@ -99,14 +109,19 @@ export class PluginFileGatewayService {
 
   listDirectory(input: PluginFileGatewayListInput): FileNode[] {
     const detail = this.pluginRegistryService.getPlugin(input.pluginId);
-    this.pluginPermissionService.requirePermissionGrant({
-      manifest: detail.manifest,
-      pluginId: input.pluginId,
-      workspaceId: input.workspaceId,
-      permissionKey: "workspace.list_dir",
-      scopePath: input.requestedPath ?? null,
-      runtimeSessionId: input.runtimeSessionId
-    });
+    try {
+      this.pluginPermissionService.requirePermissionGrant({
+        manifest: detail.manifest,
+        pluginId: input.pluginId,
+        workspaceId: input.workspaceId,
+        permissionKey: "workspace.list_dir",
+        scopePath: input.requestedPath ?? null,
+        runtimeSessionId: input.runtimeSessionId
+      });
+    } catch (error) {
+      this.recordPermissionAudit(input, "workspace.list_dir", error);
+      throw error;
+    }
 
     const resolved = this.fileAccessGuard.resolvePath(input.workspaceId, input.requestedPath ?? "", {
       allowRoot: true,
@@ -167,6 +182,43 @@ export class PluginFileGatewayService {
       }),
       createdAt: nowIso()
     });
+  }
+
+  private recordPermissionAudit(
+    input: PluginFileGatewayReadInput | PluginFileGatewayWriteInput | PluginFileGatewayListInput,
+    permissionKey: "workspace.read_file" | "workspace.write_file" | "workspace.list_dir",
+    error: unknown
+  ): void {
+    if (!(error instanceof Error) || !("errorCode" in error)) {
+      return;
+    }
+
+    const errorCode = String((error as { errorCode?: unknown }).errorCode ?? "");
+    if (errorCode === "PLUGIN_PERMISSION_DECLARATION_MISSING") {
+      this.pluginPermissionService.recordPermissionDenied({
+        pluginId: input.pluginId,
+        workspaceId: input.workspaceId,
+        actorUserId: input.actorUserId,
+        permissionKey,
+        scopePath: "requestedPath" in input ? input.requestedPath ?? null : null,
+        runtimeSessionId: input.runtimeSessionId,
+        reason: "declaration_missing"
+      });
+      return;
+    }
+
+    if (errorCode === "PLUGIN_PERMISSION_GRANT_REQUIRED") {
+      this.pluginPermissionService.recordPermissionDenied({
+        pluginId: input.pluginId,
+        workspaceId: input.workspaceId,
+        actorUserId: input.actorUserId,
+        permissionKey,
+        scopePath: "requestedPath" in input ? input.requestedPath ?? null : null,
+        runtimeSessionId: input.runtimeSessionId,
+        reason: "grant_required"
+      });
+      return;
+    }
   }
 }
 

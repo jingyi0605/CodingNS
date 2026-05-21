@@ -151,6 +151,58 @@ export interface PluginDesktopActionDto {
   absolutePath: string;
 }
 
+export interface PluginPermissionGrantDto {
+  id: string;
+  pluginId: string;
+  workspaceId: string;
+  permissionKey:
+    | "workspace.read_file"
+    | "workspace.list_dir"
+    | "workspace.write_file"
+    | "desktop.open_file"
+    | "desktop.reveal_in_file_manager";
+  scopeType: "workspace" | "directory" | "file";
+  scopePath: string | null;
+  grantMode: "once" | "session" | "persistent";
+  grantedByUserId: string;
+  runtimeSessionId: string | null;
+  createdAt: string;
+  expiresAt: string | null;
+  revokedAt: string | null;
+}
+
+export interface PluginFileNodeDto {
+  path: string;
+  name: string;
+  kind: "file" | "directory";
+  size: number | null;
+  updatedAt: string | null;
+}
+
+export interface PluginFileSnapshotDto {
+  workspaceId: string;
+  path: string;
+  content: string;
+  encoding: "utf-8";
+  version: string;
+  size: number;
+  updatedAt: string;
+}
+
+export interface PluginFileWriteResultDto {
+  path: string;
+  size: number;
+  updatedAt: string;
+}
+
+export interface CreatePluginPermissionGrantInput {
+  runtimeSessionId: string;
+  permissionKey: PluginPermissionGrantDto["permissionKey"];
+  scopeType: PluginPermissionGrantDto["scopeType"];
+  scopePath: string | null;
+  grantMode: PluginPermissionGrantDto["grantMode"];
+}
+
 export function listPlugins() {
   return httpClient.request<{ items: PluginSummaryDto[] }>("/api/plugins");
 }
@@ -230,4 +282,75 @@ export function revealPluginFile(pluginId: string, runtimeSessionId: string, pat
       path
     })
   });
+}
+
+export function readPluginFile(pluginId: string, runtimeSessionId: string, path: string) {
+  return httpClient.request<PluginFileSnapshotDto>(`/api/plugins/${encodeURIComponent(pluginId)}/files/read`, {
+    method: "POST",
+    body: JSON.stringify({
+      runtimeSessionId,
+      path
+    })
+  });
+}
+
+export function writePluginFile(
+  pluginId: string,
+  runtimeSessionId: string,
+  path: string,
+  content: string
+) {
+  return httpClient.request<PluginFileWriteResultDto>(`/api/plugins/${encodeURIComponent(pluginId)}/files/write`, {
+    method: "POST",
+    body: JSON.stringify({
+      runtimeSessionId,
+      path,
+      content
+    })
+  });
+}
+
+export function listPluginDirectory(pluginId: string, runtimeSessionId: string, path?: string) {
+  return httpClient.request<{ items: PluginFileNodeDto[] }>(
+    `/api/plugins/${encodeURIComponent(pluginId)}/files/list`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        runtimeSessionId,
+        path: path?.trim() || undefined
+      })
+    }
+  );
+}
+
+export function listPluginPermissionGrants(pluginId: string, workspaceId: string) {
+  const search = new URLSearchParams({
+    workspaceId
+  });
+
+  return httpClient.request<{ items: PluginPermissionGrantDto[] }>(
+    `/api/plugins/${encodeURIComponent(pluginId)}/permissions/grants?${search.toString()}`
+  );
+}
+
+export function createPluginPermissionGrant(pluginId: string, input: CreatePluginPermissionGrantInput) {
+  return httpClient.request<PluginPermissionGrantDto>(
+    `/api/plugins/${encodeURIComponent(pluginId)}/permissions/grants`,
+    {
+      method: "POST",
+      body: JSON.stringify(input)
+    }
+  );
+}
+
+export function revokePluginPermissionGrant(pluginId: string, grantId: string, workspaceId: string) {
+  return httpClient.request<PluginPermissionGrantDto>(
+    `/api/plugins/${encodeURIComponent(pluginId)}/permissions/grants/${encodeURIComponent(grantId)}/revoke`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        workspaceId
+      })
+    }
+  );
 }

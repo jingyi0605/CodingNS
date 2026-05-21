@@ -7,6 +7,7 @@ import type { PluginRuntimeService } from "./plugin-runtime-service.js";
 import type { PluginRuntimeSessionService } from "./plugin-runtime-session-service.js";
 import type { PluginStaticService } from "./plugin-static-service.js";
 import type { PluginFileGatewayService } from "./plugin-file-gateway-service.js";
+import type { PluginPermissionService } from "./plugin-permission-service.js";
 
 interface PluginParams {
   pluginId: string;
@@ -56,13 +57,27 @@ interface PluginFileWriteBody extends PluginFileReadBody {
 
 interface PluginFileListBody extends PluginFileReadBody {}
 
+interface PluginGrantBody {
+  runtimeSessionId?: string;
+  workspaceId?: string;
+  permissionKey?: string;
+  scopeType?: "workspace" | "directory" | "file";
+  scopePath?: string | null;
+  grantMode?: "once" | "session" | "persistent";
+}
+
+interface PluginGrantParams extends PluginParams {
+  grantId: string;
+}
+
 export class PluginController {
   constructor(
     private readonly pluginRegistryService: PluginRegistryService,
     private readonly pluginRuntimeService: PluginRuntimeService,
     private readonly pluginStaticService: PluginStaticService,
     private readonly pluginRuntimeSessionService: PluginRuntimeSessionService,
-    private readonly pluginFileGatewayService: PluginFileGatewayService
+    private readonly pluginFileGatewayService: PluginFileGatewayService,
+    private readonly pluginPermissionService: PluginPermissionService
   ) {}
 
   readonly list = async (_request: FastifyRequest, reply: FastifyReply): Promise<void> => {
@@ -198,6 +213,71 @@ export class PluginController {
     reply.send({
       items: this.pluginRuntimeService.listRuns(request.params.pluginId)
     });
+  };
+
+  readonly listPermissionGrants = async (
+    request: FastifyRequest<{ Params: PluginParams; Querystring: { workspaceId?: string } }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const workspaceId = resolveWorkspaceId(
+      request.query?.workspaceId,
+      request.auth?.workspaceId
+    );
+    this.pluginRegistryService.getPlugin(request.params.pluginId);
+
+    reply.send({
+      items: this.pluginPermissionService.listWorkspaceGrants(
+        request.params.pluginId,
+        workspaceId
+      )
+    });
+  };
+
+  readonly createPermissionGrant = async (
+    request: FastifyRequest<{ Params: PluginParams; Body: PluginGrantBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const runtimeSessionId = requireRuntimeSessionId(request.body?.runtimeSessionId);
+    const runtimeSession = this.pluginRuntimeSessionService.getActiveSessionForPluginOrThrow(
+      request.params.pluginId,
+      runtimeSessionId
+    );
+    assertNoMismatchedWorkspaceId(request.body?.workspaceId, runtimeSession.workspaceId);
+    const detail = this.pluginRegistryService.getPlugin(request.params.pluginId);
+
+    reply.send(
+      this.pluginPermissionService.createGrant({
+        manifest: detail.manifest,
+        pluginId: request.params.pluginId,
+        workspaceId: runtimeSession.workspaceId,
+        permissionKey: requirePermissionKey(request.body?.permissionKey),
+        scopeType: request.body?.scopeType ?? "workspace",
+        scopePath: normalizeOptionalScopePath(request.body?.scopePath),
+        grantMode: request.body?.grantMode ?? "session",
+        runtimeSessionId,
+        grantedByUserId: requireUserId(request)
+      })
+    );
+  };
+
+  readonly revokePermissionGrant = async (
+    request: FastifyRequest<{ Params: PluginGrantParams; Body: { workspaceId?: string } }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const workspaceId = resolveWorkspaceId(
+      request.body?.workspaceId,
+      request.auth?.workspaceId
+    );
+    this.pluginRegistryService.getPlugin(request.params.pluginId);
+
+    reply.send(
+      this.pluginPermissionService.revokeGrant(
+        request.params.pluginId,
+        workspaceId,
+        request.params.grantId,
+        requireUserId(request)
+      )
+    );
   };
 
   readonly desktopOpenFile = async (
@@ -394,4 +474,28 @@ function requirePluginPath(value: string | null | undefined): string {
   }
 
   return normalized;
+}
+
+function requirePermissionKey(value: string | null | undefined) {
+  const normalized = value?.trim() ?? "";
+  if (
+    normalized === "workspace.read_file"
+    || normalized === "workspace.list_dir"
+    || normalized === "workspace.write_file"
+    || normalized === "desktop.open_file"
+    || normalized === "desktop.reveal_in_file_manager"
+  ) {
+    return normalized;
+  }
+
+  throw new AppError({
+    statusCode: 400,
+    errorCode: "PLUGIN_PERMISSION_SCOPE_INVALID",
+    detail: "插件授权请求里的 permissionKey 不合法"
+  });
+}
+
+function normalizeOptionalScopePath(value: string | null | undefined): string | null {
+  const normalized = value?.trim() ?? "";
+  return normalized || null;
 }

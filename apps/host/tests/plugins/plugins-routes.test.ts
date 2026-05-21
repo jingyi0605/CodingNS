@@ -346,6 +346,153 @@ describe("plugin routes", () => {
     expect(rejectResponse.statusCode).toBe(400);
   }, 20000);
 
+  it("能创建、列出并撤销当前工作区的插件授权", async () => {
+    const { server, accessToken, workspaceId } = createTestServer();
+
+    await server.app.inject({
+      method: "POST",
+      url: "/api/plugins/demo.plugin/enable",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    const createSessionResponse = await server.app.inject({
+      method: "POST",
+      url: "/api/plugins/demo.plugin/runtime-sessions",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceId
+      }
+    });
+    const createSessionPayload = createSessionResponse.json() as { runtimeSessionId: string };
+
+    const createGrantResponse = await server.app.inject({
+      method: "POST",
+      url: "/api/plugins/demo.plugin/permissions/grants",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        runtimeSessionId: createSessionPayload.runtimeSessionId,
+        permissionKey: "desktop.open_file",
+        scopeType: "directory",
+        scopePath: "reports",
+        grantMode: "persistent"
+      }
+    });
+    expect(createGrantResponse.statusCode).toBe(200);
+    const createGrantPayload = createGrantResponse.json() as {
+      id: string;
+      permissionKey: string;
+      scopeType: string;
+      scopePath: string | null;
+      grantMode: string;
+      runtimeSessionId: string | null;
+      revokedAt: string | null;
+    };
+    expect(createGrantPayload).toMatchObject({
+      permissionKey: "desktop.open_file",
+      scopeType: "directory",
+      scopePath: "reports",
+      grantMode: "persistent",
+      runtimeSessionId: null,
+      revokedAt: null
+    });
+
+    const listResponse = await server.app.inject({
+      method: "GET",
+      url: `/api/plugins/demo.plugin/permissions/grants?workspaceId=${encodeURIComponent(workspaceId)}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(listResponse.statusCode).toBe(200);
+    const listPayload = listResponse.json() as {
+      items: Array<{ id: string; permissionKey: string; scopePath: string | null }>;
+    };
+    expect(listPayload.items).toContainEqual(expect.objectContaining({
+      id: createGrantPayload.id,
+      permissionKey: "desktop.open_file",
+      scopePath: "reports"
+    }));
+
+    const revokeResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/plugins/demo.plugin/permissions/grants/${encodeURIComponent(createGrantPayload.id)}/revoke`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceId
+      }
+    });
+    expect(revokeResponse.statusCode).toBe(200);
+    const revokePayload = revokeResponse.json() as { id: string; revokedAt: string | null };
+    expect(revokePayload.id).toBe(createGrantPayload.id);
+    expect(revokePayload.revokedAt).toBeTruthy();
+
+    const listAfterRevokeResponse = await server.app.inject({
+      method: "GET",
+      url: `/api/plugins/demo.plugin/permissions/grants?workspaceId=${encodeURIComponent(workspaceId)}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(listAfterRevokeResponse.statusCode).toBe(200);
+    const listAfterRevokePayload = listAfterRevokeResponse.json() as {
+      items: Array<{ id: string }>;
+    };
+    expect(listAfterRevokePayload.items.some((item) => item.id === createGrantPayload.id)).toBe(false);
+  }, 20000);
+
+  it("插件桌面动作已声明但未授权时返回正式可提示错误", async () => {
+    const { server, accessToken, workspaceId } = createTestServer();
+
+    await server.app.inject({
+      method: "POST",
+      url: "/api/plugins/demo.plugin/enable",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    const createSessionResponse = await server.app.inject({
+      method: "POST",
+      url: "/api/plugins/demo.plugin/runtime-sessions",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceId
+      }
+    });
+    const createSessionPayload = createSessionResponse.json() as { runtimeSessionId: string };
+
+    const response = await server.app.inject({
+      method: "POST",
+      url: "/api/plugins/demo.plugin/desktop/open-file",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        runtimeSessionId: createSessionPayload.runtimeSessionId,
+        path: "report.txt"
+      }
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({
+      error_code: "PLUGIN_PERMISSION_GRANT_REQUIRED",
+      data: {
+        permissionKey: "desktop.open_file",
+        scopePath: "report.txt"
+      }
+    });
+  }, 20000);
+
   it("插件静态资源走独立链路，禁用后不可访问", async () => {
     const { server, accessToken } = createTestServer();
 

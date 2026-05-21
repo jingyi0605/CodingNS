@@ -332,6 +332,9 @@ function ensurePluginRegistrySchema(db: Database.Database): void {
           'plugin.registration_failed',
           'plugin.enabled',
           'plugin.disabled',
+          'plugin.permission_granted',
+          'plugin.permission_revoked',
+          'plugin.permission_denied',
           'plugin.action_invoked',
           'plugin.action_rejected',
           'plugin.schedule_triggered',
@@ -374,6 +377,9 @@ function ensurePluginAuditEventForeignKeyCompatibility(db: Database.Database): v
 
   if (!definition.includes("REFERENCES plugin_definitions")) {
     const supportsNewEvents =
+      definition.includes("'plugin.permission_granted'") &&
+      definition.includes("'plugin.permission_revoked'") &&
+      definition.includes("'plugin.permission_denied'") &&
       definition.includes("'plugin.schedule_triggered'") &&
       definition.includes("'plugin.schedule_retry_scheduled'") &&
       definition.includes("'plugin.schedule_skipped'");
@@ -396,6 +402,9 @@ function ensurePluginAuditEventForeignKeyCompatibility(db: Database.Database): v
           'plugin.registration_failed',
           'plugin.enabled',
           'plugin.disabled',
+          'plugin.permission_granted',
+          'plugin.permission_revoked',
+          'plugin.permission_denied',
           'plugin.action_invoked',
           'plugin.action_rejected',
           'plugin.schedule_triggered',

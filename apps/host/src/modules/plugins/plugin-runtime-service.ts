@@ -197,16 +197,35 @@ export class PluginRuntimeService {
     this.assertEnabled(detail.enablement.enabled);
     const workspaceId = this.pluginPermissionService.assertWorkspaceScopedContext(input.workspaceId);
     this.workspaceService.getWorkspaceOrThrow(workspaceId);
-    this.pluginPermissionService.assertDesktopPermission(
-      detail.manifest,
-      {
-        pluginId: input.pluginId,
-        workspaceId
-      },
-      input.permission,
-      input.requestedPath,
-      input.runtimeSessionId ?? null
-    );
+    try {
+      this.pluginPermissionService.assertDesktopPermission(
+        detail.manifest,
+        {
+          pluginId: input.pluginId,
+          workspaceId
+        },
+        input.permission,
+        input.requestedPath,
+        input.runtimeSessionId ?? null
+      );
+    } catch (error) {
+      const permissionKey = input.permission === "open_file"
+        ? "desktop.open_file"
+        : "desktop.reveal_in_file_manager";
+      const errorCode = error instanceof AppError ? error.errorCode : "";
+      if (errorCode === "PLUGIN_PERMISSION_DECLARATION_MISSING" || errorCode === "PLUGIN_PERMISSION_GRANT_REQUIRED") {
+        this.pluginPermissionService.recordPermissionDenied({
+          pluginId: input.pluginId,
+          workspaceId,
+          actorUserId: input.actorUserId,
+          permissionKey,
+          scopePath: input.requestedPath,
+          runtimeSessionId: input.runtimeSessionId ?? null,
+          reason: errorCode === "PLUGIN_PERMISSION_DECLARATION_MISSING" ? "declaration_missing" : "grant_required"
+        });
+      }
+      throw error;
+    }
     const resolved = this.resolveWorkspaceRelativePath(workspaceId, input.requestedPath);
 
     this.pluginAuditEventRepository.create({

@@ -17,9 +17,11 @@ import { PlatformProvider } from "../../../platform/platform-provider";
 import { resetDesktopUpdateState } from "../../../platform/desktop/desktop-update-store";
 import { I18nProvider, t } from "../../../shared/i18n";
 import { ThemeProvider } from "../../../shared/theme";
+import { ToastProvider } from "../../../shared/toast";
 import { AppVersionProvider } from "../../../shared/version/app-version";
 import { SettingsPage } from "./SettingsPage";
 
+const mockUseWorkbenchShell = vi.fn();
 const originalTauriInternals = window.__TAURI_INTERNALS__;
 const originalFetch = global.fetch;
 const originalMatchMedia = window.matchMedia;
@@ -45,6 +47,10 @@ vi.mock("../../../settings/ProviderManagementPanel", () => ({
 
 vi.mock("../../../settings/AuthDeviceManagementPanel", () => ({
   AuthDeviceManagementPanel: () => <div data-testid="auth-device-management-panel">auth-device-management-panel</div>
+}));
+
+vi.mock("../../conversation/components/WorkbenchLayout", () => ({
+  useWorkbenchShell: () => mockUseWorkbenchShell()
 }));
 
 vi.mock("../../plugins/api/plugins-api", async () => {
@@ -120,6 +126,38 @@ vi.mock("../../plugins/api/plugins-api", async () => {
         entryUrl: "/preview/plugins/demo.plugin/frontend/index.html"
       }
     })),
+    listPluginPermissionGrants: vi.fn(async () => ({
+      items: [
+        {
+          id: "grant-1",
+          pluginId: "demo.plugin",
+          workspaceId: "workspace-1",
+          permissionKey: "workspace.write_file",
+          scopeType: "directory",
+          scopePath: "reports",
+          grantMode: "persistent",
+          grantedByUserId: "user-1",
+          runtimeSessionId: null,
+          createdAt: "2026-05-21T00:00:00.000Z",
+          expiresAt: null,
+          revokedAt: null
+        }
+      ]
+    })),
+    revokePluginPermissionGrant: vi.fn(async () => ({
+      id: "grant-1",
+      pluginId: "demo.plugin",
+      workspaceId: "workspace-1",
+      permissionKey: "workspace.write_file",
+      scopeType: "directory",
+      scopePath: "reports",
+      grantMode: "persistent",
+      grantedByUserId: "user-1",
+      runtimeSessionId: null,
+      createdAt: "2026-05-21T00:00:00.000Z",
+      expiresAt: null,
+      revokedAt: "2026-05-21T00:05:00.000Z"
+    })),
     listPluginRuns: vi.fn(async () => ({
       items: [
         {
@@ -164,6 +202,16 @@ vi.mock("../../plugins/api/plugins-api", async () => {
 
 describe("SettingsPage", () => {
   beforeEach(() => {
+    mockUseWorkbenchShell.mockReturnValue({
+      currentWorkspaceId: "workspace-1",
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1"
+          }
+        }
+      ]
+    });
     resetDesktopUpdateState();
     window.localStorage.clear();
     localUiPreferenceStore.setSessionDisplaySortMode("createdAt");
@@ -334,6 +382,8 @@ describe("SettingsPage", () => {
     expect(within(dialog).getByText(t("settings.pluginManagementModalListTitle"))).toBeInTheDocument();
     expect(within(dialog).getAllByText("演示插件").length).toBeGreaterThan(0);
     expect(within(dialog).getByText(t("plugins.runHistoryTitle"))).toBeInTheDocument();
+    expect(within(dialog).getByText(t("plugins.grantedPermissionTitle"))).toBeInTheDocument();
+    expect(within(dialog).getByText(t("plugins.permissionAuditTitle"))).toBeInTheDocument();
   });
 
   it("移动设置页可以打开插件管理弹层", async () => {
@@ -345,6 +395,17 @@ describe("SettingsPage", () => {
 
     const dialog = await screen.findByRole("dialog", { name: t("settings.pluginManagementModalTitle") });
     expect(within(dialog).getAllByText("演示插件").length).toBeGreaterThan(0);
+  });
+
+  it("插件管理弹窗里可以撤销当前工作区授权", async () => {
+    renderSettingsPage();
+
+    await userEvent.click(screen.getByRole("button", { name: t("settings.pluginManagementAction") }));
+
+    const dialog = await screen.findByRole("dialog", { name: t("settings.pluginManagementModalTitle") });
+    await userEvent.click(await within(dialog).findByRole("button", { name: t("plugins.revokeGrantAction") }));
+
+    expect(await screen.findByText(t("plugins.revokeGrantSuccess"))).toBeInTheDocument();
   });
 
   it("旧的模型和 provider 路由别名会落到能力管理页", async () => {
@@ -924,12 +985,14 @@ function renderSettingsPage(initialEntry = "/settings") {
       <AppVersionProvider>
         <I18nProvider language={clientConfigStore.getState().language}>
           <ThemeProvider>
-            <MemoryRouter initialEntries={[initialEntry]}>
-              <Routes>
-                <Route path="/settings" element={<SettingsPage />} />
-                <Route path="/settings/:section" element={<SettingsPage />} />
-              </Routes>
-            </MemoryRouter>
+            <ToastProvider>
+              <MemoryRouter initialEntries={[initialEntry]}>
+                <Routes>
+                  <Route path="/settings" element={<SettingsPage />} />
+                  <Route path="/settings/:section" element={<SettingsPage />} />
+                </Routes>
+              </MemoryRouter>
+            </ToastProvider>
           </ThemeProvider>
         </I18nProvider>
       </AppVersionProvider>

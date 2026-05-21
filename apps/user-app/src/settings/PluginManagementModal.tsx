@@ -8,15 +8,19 @@ import {
   disablePlugin,
   enablePlugin,
   getPlugin,
+  listPluginPermissionGrants,
   listPluginRuns,
   listPlugins,
+  revokePluginPermissionGrant,
   type PluginDetailDto,
+  type PluginPermissionGrantDto,
   type PluginRunDto,
   type PluginSummaryDto
 } from "../features/plugins/api/plugins-api";
 import { buildWorkspacePluginContainerPath } from "../features/workbench/utils/workbench-navigation";
 import { t } from "../shared/i18n";
 import { useToast } from "../shared/toast";
+import { PluginAccessOverview } from "../features/plugins/components/PluginAccessOverview";
 
 interface PluginManagementModalProps {
   readonly open: boolean;
@@ -37,9 +41,12 @@ export function PluginManagementModal({
   const [selectedPluginId, setSelectedPluginId] = useState("");
   const [detail, setDetail] = useState<PluginDetailDto | null>(null);
   const [runs, setRuns] = useState<PluginRunDto[]>([]);
+  const [grants, setGrants] = useState<PluginPermissionGrantDto[]>([]);
   const [loadingList, setLoadingList] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [loadingGrants, setLoadingGrants] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [revokingGrantId, setRevokingGrantId] = useState<string | null>(null);
 
   async function loadList(preferredPluginId?: string) {
     setLoadingList(true);
@@ -92,6 +99,28 @@ export function PluginManagementModal({
     }
   }
 
+  async function loadGrants(pluginId: string) {
+    const normalizedWorkspaceId = workspaceId?.trim() ?? "";
+    if (!pluginId || !normalizedWorkspaceId) {
+      setGrants([]);
+      return;
+    }
+
+    setLoadingGrants(true);
+    try {
+      const payload = await listPluginPermissionGrants(pluginId, normalizedWorkspaceId);
+      setGrants(payload.items);
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("plugins.permissionGrantLoadFailed"),
+        tone: "error"
+      });
+      setGrants([]);
+    } finally {
+      setLoadingGrants(false);
+    }
+  }
+
   useEffect(() => {
     if (!open) {
       return;
@@ -106,6 +135,7 @@ export function PluginManagementModal({
     }
 
     void loadDetail(selectedPluginId);
+    void loadGrants(selectedPluginId);
   }, [open, selectedPluginId]);
 
   const desktopPermissions = useMemo(
@@ -139,6 +169,33 @@ export function PluginManagementModal({
       });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleRevokeGrant(grant: PluginPermissionGrantDto) {
+    const normalizedWorkspaceId = workspaceId?.trim() ?? "";
+    if (!detail || !normalizedWorkspaceId || revokingGrantId) {
+      return;
+    }
+
+    setRevokingGrantId(grant.id);
+    try {
+      await revokePluginPermissionGrant(detail.definition.id, grant.id, normalizedWorkspaceId);
+      await Promise.all([
+        loadDetail(detail.definition.id),
+        loadGrants(detail.definition.id)
+      ]);
+      showToast({
+        title: t("plugins.revokeGrantSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("plugins.revokeGrantFailed"),
+        tone: "error"
+      });
+    } finally {
+      setRevokingGrantId(null);
     }
   }
 
@@ -256,6 +313,16 @@ export function PluginManagementModal({
                   : <ModalTag>{t("plugins.noDesktopPermission")}</ModalTag>}
               </div>
             </ModalSection>
+
+            <PluginAccessOverview
+              grants={grants}
+              auditEvents={detail.auditEvents}
+              loading={loadingGrants}
+              revokingGrantId={revokingGrantId}
+              onRevokeGrant={(grant) => {
+                void handleRevokeGrant(grant);
+              }}
+            />
 
             {detail.manifest.backend?.actions?.length ? (
               <ModalSection heading={t("plugins.actionTitle")} description={t("plugins.actionDescription")}>

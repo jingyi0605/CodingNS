@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { attachPluginBridge } from "./plugin-bridge";
+import { attachPluginBridge, setPluginPermissionPromptHandlerForTesting } from "./plugin-bridge";
 import * as pluginsApi from "../api/plugins-api";
 import * as desktopBridge from "../../../platform/desktop/codingns-desktop-bridge";
+import { ApiError } from "../../../shared/network/api-error";
 
 function createIframeWindowStub() {
   return {
@@ -13,6 +14,7 @@ function createIframeWindowStub() {
 describe("plugin bridge", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    setPluginPermissionPromptHandlerForTesting(null);
   });
 
   it("只接受来自目标 iframe + 正确 origin 的消息，并能转发动作", async () => {
@@ -99,8 +101,7 @@ describe("plugin bridge", () => {
       }
     }));
 
-    await Promise.resolve();
-    await Promise.resolve();
+    await flushBridgeTasks();
 
     expect(pluginsApi.callPluginAction).toHaveBeenCalledWith("demo.plugin", "run-report", "runtime-session-1", {
       range: "today"
@@ -161,6 +162,14 @@ describe("plugin bridge", () => {
       origin: "http://127.0.0.1:3002",
       source: iframeWindow,
       data: {
+        type: "codingns-plugin:ready"
+      }
+    }));
+
+    window.dispatchEvent(new MessageEvent("message", {
+      origin: "http://127.0.0.1:3002",
+      source: iframeWindow,
+      data: {
         type: "codingns-plugin:request",
         requestId: "req-2",
         action: "openFile",
@@ -176,4 +185,177 @@ describe("plugin bridge", () => {
     expect(pluginsApi.openPluginFile).toHaveBeenCalledWith("demo.plugin", "runtime-session-1", "report.txt");
     dispose();
   });
+
+  it("文件桥会转发 readFile/writeFile/listDir，并保留统一错误结构", async () => {
+    const iframeWindow = createIframeWindowStub();
+    const iframe = {
+      contentWindow: iframeWindow
+    } as HTMLIFrameElement;
+
+    vi.spyOn(pluginsApi, "readPluginFile").mockResolvedValue({
+      workspaceId: "workspace-1",
+      path: "reports/today.txt",
+      content: "hello",
+      encoding: "utf-8",
+      version: "v1",
+      size: 5,
+      updatedAt: "2026-05-21T00:00:00.000Z"
+    });
+    vi.spyOn(pluginsApi, "createPluginPermissionGrant").mockResolvedValue({
+      id: "grant-1",
+      pluginId: "demo.plugin",
+      workspaceId: "workspace-1",
+      permissionKey: "workspace.write_file",
+      scopeType: "file",
+      scopePath: "reports/output.txt",
+      grantMode: "session",
+      grantedByUserId: "user-1",
+      runtimeSessionId: "runtime-session-1",
+      createdAt: "2026-05-21T00:00:00.000Z",
+      expiresAt: null,
+      revokedAt: null
+    });
+    vi.spyOn(pluginsApi, "writePluginFile")
+      .mockRejectedValueOnce(new ApiError(403, {
+        error_code: "PLUGIN_PERMISSION_GRANT_REQUIRED",
+        detail: "插件权限尚未授权：workspace.write_file",
+        data: {
+          permissionKey: "workspace.write_file",
+          scopeType: "file",
+          scopePath: "reports/output.txt",
+          grantOptions: ["once", "session", "persistent"]
+        }
+      }))
+      .mockResolvedValue({
+        path: "reports/output.txt",
+        size: 9,
+        updatedAt: "2026-05-21T00:00:01.000Z"
+      });
+    vi.spyOn(pluginsApi, "listPluginDirectory").mockResolvedValue({
+      items: [
+        {
+          path: "reports/today.txt",
+          name: "today.txt",
+          kind: "file",
+          size: 5,
+          updatedAt: "2026-05-21T00:00:00.000Z"
+        }
+      ]
+    });
+    setPluginPermissionPromptHandlerForTesting(async (request) => {
+      await pluginsApi.createPluginPermissionGrant(request.pluginId, {
+        runtimeSessionId: request.runtimeSessionId,
+        permissionKey: request.permissionKey,
+        scopeType: "file",
+        scopePath: request.scopePath,
+        grantMode: "session"
+      });
+      return true;
+    });
+
+    const dispose = attachPluginBridge({
+      iframe,
+      pluginId: "demo.plugin",
+      hostOrigin: "http://127.0.0.1:3002",
+      context: {
+        pluginId: "demo.plugin",
+        workspaceId: "workspace-1",
+        runtimeSessionId: "runtime-session-1",
+        pluginName: "演示插件",
+        pluginVersion: "1.0.0",
+        frontendEntryUrl: "/preview/plugins/demo.plugin/frontend/index.html",
+        hostOrigin: "http://127.0.0.1:3002"
+      }
+    });
+
+    window.dispatchEvent(new MessageEvent("message", {
+      origin: "http://127.0.0.1:3002",
+      source: iframeWindow,
+      data: {
+        type: "codingns-plugin:request",
+        requestId: "req-read",
+        action: "readFile",
+        payload: {
+          path: "reports/today.txt"
+        }
+      }
+    }));
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(pluginsApi.readPluginFile).toHaveBeenCalledWith("demo.plugin", "runtime-session-1", "reports/today.txt");
+    window.dispatchEvent(new MessageEvent("message", {
+      origin: "http://127.0.0.1:3002",
+      source: iframeWindow,
+      data: {
+        type: "codingns-plugin:request",
+        requestId: "req-write",
+        action: "writeFile",
+        payload: {
+          path: "reports/output.txt",
+          content: "generated"
+        }
+      }
+    }));
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await flushBridgeTasks();
+
+    expect(pluginsApi.writePluginFile).toHaveBeenCalledWith("demo.plugin", "runtime-session-1", "reports/output.txt", "generated");
+    expect(pluginsApi.createPluginPermissionGrant).toHaveBeenCalled();
+    expect((iframeWindow.postMessage as unknown as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith({
+      type: "codingns-plugin:response",
+      requestId: "req-write",
+      ok: true,
+      result: {
+        path: "reports/output.txt",
+        size: 9,
+        updatedAt: "2026-05-21T00:00:01.000Z"
+      }
+    }, "http://127.0.0.1:3002");
+
+    window.dispatchEvent(new MessageEvent("message", {
+      origin: "http://127.0.0.1:3002",
+      source: iframeWindow,
+      data: {
+        type: "codingns-plugin:request",
+        requestId: "req-list",
+        action: "listDir",
+        payload: {
+          path: "reports"
+        }
+      }
+    }));
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await flushBridgeTasks();
+
+    expect(pluginsApi.listPluginDirectory).toHaveBeenCalledWith("demo.plugin", "runtime-session-1", "reports");
+    expect((iframeWindow.postMessage as unknown as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith({
+      type: "codingns-plugin:response",
+      requestId: "req-list",
+      ok: true,
+      result: {
+        items: [
+          expect.objectContaining({
+            path: "reports/today.txt"
+          })
+        ]
+      }
+    }, "http://127.0.0.1:3002");
+
+    dispose();
+  });
 });
+
+async function flushBridgeTasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await Promise.resolve();
+}

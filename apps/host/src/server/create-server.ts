@@ -83,6 +83,8 @@ import { FileSearchService } from "../modules/file/file-search-service.js";
 import { FileTreeService } from "../modules/file/file-tree-service.js";
 import { FileVersionChecker } from "../modules/file/file-version-checker.js";
 import { RecentFileService } from "../modules/file/recent-file-service.js";
+import { WorkspaceFileBridgeService } from "../modules/file/workspace-file-bridge-service.js";
+import { WorkspaceFileBridgeWatchService } from "../modules/file/workspace-file-bridge-watch-service.js";
 import { CommitDraftService } from "../modules/git/commit-draft-service.js";
 import { CommitOrchestrator } from "../modules/git/commit-orchestrator.js";
 import { CommitRuleEngine } from "../modules/git/commit-rule-engine.js";
@@ -501,6 +503,16 @@ export function createServer(config: HostConfig) {
     fileContentService,
     recentFileService
   );
+  const workspaceFileBridgeWatchService = new WorkspaceFileBridgeWatchService(
+    fileAccessGuard,
+    app.log
+  );
+  const workspaceFileBridgeService = new WorkspaceFileBridgeService(
+    workspaceService,
+    fileAccessGuard,
+    app.log,
+    workspaceFileBridgeWatchService
+  );
   const filePreviewLinkService = new FilePreviewLinkService(
     fileAccessGuard,
     config.filePreviewTokenSecret
@@ -514,7 +526,8 @@ export function createServer(config: HostConfig) {
   );
   pluginRegistryService.syncPluginsFromDisk();
   const pluginPermissionService = new PluginPermissionService(
-    repositories.pluginPermissionGrantRepository
+    repositories.pluginPermissionGrantRepository,
+    repositories.pluginAuditEventRepository
   );
   const pluginRuntimeSessionService = new PluginRuntimeSessionService(
     pluginRegistryService,
@@ -1384,7 +1397,8 @@ export function createServer(config: HostConfig) {
     pluginRuntimeService,
     pluginStaticService,
     pluginRuntimeSessionService,
-    pluginFileGatewayService
+    pluginFileGatewayService,
+    pluginPermissionService
   );
   const browserProfileService = new BrowserProfileService(
     repositories.browserProfileRepository,
@@ -1490,7 +1504,8 @@ export function createServer(config: HostConfig) {
     fileSearchService,
     recentFileService,
     filePreviewService,
-    filePreviewLinkService
+    filePreviewLinkService,
+    workspaceFileBridgeService
   );
   const fileContextController = new FileContextController(
     fileContentService,
@@ -1653,6 +1668,7 @@ export function createServer(config: HostConfig) {
     await wsHandle.close();
     codexArchiveWatcher.dispose();
     fileWatcher.dispose();
+    workspaceFileBridgeWatchService.dispose();
     config.opencodeBaseUrlResolver?.dispose?.();
     gitCommandRunner.dispose();
     tailscaleHelperClient.dispose();
