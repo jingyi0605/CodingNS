@@ -13,6 +13,9 @@ export async function registerPluginRoutes(
   app.post("/api/plugins/:pluginId/enable", pluginController.enable);
   app.post("/api/plugins/:pluginId/disable", pluginController.disable);
   app.post("/api/plugins/:pluginId/actions/:actionId", pluginController.callAction);
+  app.post("/api/plugins/:pluginId/files/read", pluginController.readFile);
+  app.post("/api/plugins/:pluginId/files/write", pluginController.writeFile);
+  app.post("/api/plugins/:pluginId/files/list", pluginController.listDirectory);
   app.get("/api/plugins/:pluginId/runs", pluginController.listRuns);
   app.post("/api/plugins/:pluginId/desktop/open-file", pluginController.desktopOpenFile);
   app.post("/api/plugins/:pluginId/desktop/reveal-in-file-manager", pluginController.desktopRevealInFileManager);

@@ -6,6 +6,7 @@ import type { PluginRegistryService } from "./plugin-registry-service.js";
 import type { PluginRuntimeService } from "./plugin-runtime-service.js";
 import type { PluginRuntimeSessionService } from "./plugin-runtime-session-service.js";
 import type { PluginStaticService } from "./plugin-static-service.js";
+import type { PluginFileGatewayService } from "./plugin-file-gateway-service.js";
 
 interface PluginParams {
   pluginId: string;
@@ -43,12 +44,25 @@ interface PluginDesktopActionBody {
   path?: string;
 }
 
+interface PluginFileReadBody {
+  runtimeSessionId?: string;
+  workspaceId?: string;
+  path?: string;
+}
+
+interface PluginFileWriteBody extends PluginFileReadBody {
+  content?: string;
+}
+
+interface PluginFileListBody extends PluginFileReadBody {}
+
 export class PluginController {
   constructor(
     private readonly pluginRegistryService: PluginRegistryService,
     private readonly pluginRuntimeService: PluginRuntimeService,
     private readonly pluginStaticService: PluginStaticService,
-    private readonly pluginRuntimeSessionService: PluginRuntimeSessionService
+    private readonly pluginRuntimeSessionService: PluginRuntimeSessionService,
+    private readonly pluginFileGatewayService: PluginFileGatewayService
   ) {}
 
   readonly list = async (_request: FastifyRequest, reply: FastifyReply): Promise<void> => {
@@ -207,6 +221,73 @@ export class PluginController {
         actorUserId: requireUserId(request)
       })
     );
+  };
+
+  readonly readFile = async (
+    request: FastifyRequest<{ Params: PluginParams; Body: PluginFileReadBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const runtimeSessionId = requireRuntimeSessionId(request.body?.runtimeSessionId);
+    const runtimeSession = this.pluginRuntimeSessionService.getActiveSessionForPluginOrThrow(
+      request.params.pluginId,
+      runtimeSessionId
+    );
+    assertNoMismatchedWorkspaceId(request.body?.workspaceId, runtimeSession.workspaceId);
+
+    reply.send(
+      this.pluginFileGatewayService.readFile({
+        pluginId: request.params.pluginId,
+        workspaceId: runtimeSession.workspaceId,
+        runtimeSessionId,
+        requestedPath: requirePluginPath(request.body?.path),
+        actorUserId: requireUserId(request)
+      })
+    );
+  };
+
+  readonly writeFile = async (
+    request: FastifyRequest<{ Params: PluginParams; Body: PluginFileWriteBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const runtimeSessionId = requireRuntimeSessionId(request.body?.runtimeSessionId);
+    const runtimeSession = this.pluginRuntimeSessionService.getActiveSessionForPluginOrThrow(
+      request.params.pluginId,
+      runtimeSessionId
+    );
+    assertNoMismatchedWorkspaceId(request.body?.workspaceId, runtimeSession.workspaceId);
+
+    reply.send(
+      this.pluginFileGatewayService.writeFile({
+        pluginId: request.params.pluginId,
+        workspaceId: runtimeSession.workspaceId,
+        runtimeSessionId,
+        requestedPath: requirePluginPath(request.body?.path),
+        content: typeof request.body?.content === "string" ? request.body.content : "",
+        actorUserId: requireUserId(request)
+      })
+    );
+  };
+
+  readonly listDirectory = async (
+    request: FastifyRequest<{ Params: PluginParams; Body: PluginFileListBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const runtimeSessionId = requireRuntimeSessionId(request.body?.runtimeSessionId);
+    const runtimeSession = this.pluginRuntimeSessionService.getActiveSessionForPluginOrThrow(
+      request.params.pluginId,
+      runtimeSessionId
+    );
+    assertNoMismatchedWorkspaceId(request.body?.workspaceId, runtimeSession.workspaceId);
+
+    reply.send({
+      items: this.pluginFileGatewayService.listDirectory({
+        pluginId: request.params.pluginId,
+        workspaceId: runtimeSession.workspaceId,
+        runtimeSessionId,
+        requestedPath: request.body?.path?.trim() ?? "",
+        actorUserId: requireUserId(request)
+      })
+    });
   };
 
   readonly desktopRevealInFileManager = async (

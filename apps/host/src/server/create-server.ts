@@ -311,6 +311,7 @@ import { PluginController } from "../modules/plugins/plugin-controller.js";
 import { PluginPermissionService } from "../modules/plugins/plugin-permission-service.js";
 import { PluginRuntimeSessionService } from "../modules/plugins/plugin-runtime-session-service.js";
 import { PluginStaticService } from "../modules/plugins/plugin-static-service.js";
+import { PluginFileGatewayService } from "../modules/plugins/plugin-file-gateway-service.js";
 import { PluginProcessRunner } from "../modules/plugins/plugin-process-runner.js";
 import { PluginRuntimeService } from "../modules/plugins/plugin-runtime-service.js";
 import { PluginSchedulerService } from "../modules/plugins/plugin-scheduler-service.js";
@@ -521,6 +522,12 @@ export function createServer(config: HostConfig) {
     workspaceService
   );
   const pluginStaticService = new PluginStaticService(pluginRegistryService);
+  const pluginFileGatewayService = new PluginFileGatewayService(
+    pluginRegistryService,
+    fileAccessGuard,
+    pluginPermissionService,
+    repositories.pluginAuditEventRepository
+  );
   const pluginProcessRunner = new PluginProcessRunner();
   const pluginRuntimeService = new PluginRuntimeService(
     pluginRegistryService,
@@ -1376,7 +1383,8 @@ export function createServer(config: HostConfig) {
     pluginRegistryService,
     pluginRuntimeService,
     pluginStaticService,
-    pluginRuntimeSessionService
+    pluginRuntimeSessionService,
+    pluginFileGatewayService
   );
   const browserProfileService = new BrowserProfileService(
     repositories.browserProfileRepository,
