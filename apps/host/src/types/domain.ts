@@ -298,6 +298,8 @@ export type BrowserProfileOwnershipScope = "user" | "workspace" | "target";
 export type BrowserProfileStatus = "active" | "locked" | "archived" | "error";
 export type PluginBackendMode = "on_demand" | "daemon";
 export type PluginDesktopPermission = "open_file" | "reveal_in_file_manager";
+export type PluginRuntimeSessionSource = "frontend" | "assistant" | "cli";
+export type PluginRuntimeSessionStatus = "active" | "closed";
 export type PluginRunTriggerKind = "frontend" | "cli" | "schedule" | "assistant";
 export type PluginRunStatus =
   | "queued"
@@ -523,10 +525,23 @@ export interface PluginEnablement {
   updatedAt: string;
 }
 
+export interface PluginRuntimeSession {
+  id: string;
+  pluginId: string;
+  workspaceId: string;
+  openedByUserId: string;
+  source: PluginRuntimeSessionSource;
+  status: PluginRuntimeSessionStatus;
+  createdAt: string;
+  updatedAt: string;
+  closedAt: string | null;
+}
+
 export interface PluginRun {
   id: string;
   pluginId: string;
   workspaceId: string;
+  runtimeSessionId: string | null;
   triggerKind: PluginRunTriggerKind;
   actionId: string | null;
   status: PluginRunStatus;

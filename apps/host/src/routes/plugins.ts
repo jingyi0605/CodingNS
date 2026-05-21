@@ -8,6 +8,8 @@ export async function registerPluginRoutes(
 ): Promise<void> {
   app.get("/api/plugins", pluginController.list);
   app.get("/api/plugins/:pluginId", pluginController.get);
+  app.post("/api/plugins/:pluginId/runtime-sessions", pluginController.createRuntimeSession);
+  app.post("/api/plugins/:pluginId/runtime-sessions/:runtimeSessionId/close", pluginController.closeRuntimeSession);
   app.post("/api/plugins/:pluginId/enable", pluginController.enable);
   app.post("/api/plugins/:pluginId/disable", pluginController.disable);
   app.post("/api/plugins/:pluginId/actions/:actionId", pluginController.callAction);

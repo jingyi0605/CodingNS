@@ -12,6 +12,7 @@ export class PluginRunRepository {
            id,
            plugin_id,
            workspace_id,
+           runtime_session_id,
            trigger_kind,
            action_id,
            status,
@@ -22,12 +23,13 @@ export class PluginRunRepository {
            started_at,
            finished_at,
            created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         record.id,
         record.pluginId,
         record.workspaceId,
+        record.runtimeSessionId,
         record.triggerKind,
         record.actionId,
         record.status,
@@ -49,6 +51,7 @@ export class PluginRunRepository {
         `UPDATE plugin_runs
          SET plugin_id = ?,
              workspace_id = ?,
+             runtime_session_id = ?,
              trigger_kind = ?,
              action_id = ?,
              status = ?,
@@ -63,6 +66,7 @@ export class PluginRunRepository {
       .run(
         record.pluginId,
         record.workspaceId,
+        record.runtimeSessionId,
         record.triggerKind,
         record.actionId,
         record.status,
@@ -85,6 +89,7 @@ export class PluginRunRepository {
            id,
            plugin_id,
            workspace_id,
+           runtime_session_id,
            trigger_kind,
            action_id,
            status,
@@ -110,6 +115,7 @@ export class PluginRunRepository {
            id,
            plugin_id,
            workspace_id,
+           runtime_session_id,
            trigger_kind,
            action_id,
            status,
@@ -134,6 +140,7 @@ interface PluginRunRow {
   id: string;
   plugin_id: string;
   workspace_id: string;
+  runtime_session_id: string | null;
   trigger_kind: PluginRunTriggerKind;
   action_id: string | null;
   status: PluginRunStatus;
@@ -151,6 +158,7 @@ function mapPluginRunRow(row: PluginRunRow): PluginRun {
     id: row.id,
     pluginId: row.plugin_id,
     workspaceId: row.workspace_id,
+    runtimeSessionId: row.runtime_session_id,
     triggerKind: row.trigger_kind,
     actionId: row.action_id,
     status: row.status,

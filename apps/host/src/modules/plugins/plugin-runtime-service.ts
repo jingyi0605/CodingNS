@@ -26,6 +26,7 @@ export interface PluginActionInvokeInput {
   pluginId: string;
   actionId: string;
   workspaceId: string;
+  runtimeSessionId?: string | null;
   input: unknown;
   triggerKind: PluginRun["triggerKind"];
   actorUserId: string | null;
@@ -91,6 +92,7 @@ export class PluginRuntimeService {
       pluginId: input.pluginId,
       workspaceId,
       triggerKind: input.triggerKind,
+      runtimeSessionId: input.runtimeSessionId ?? null,
       actionId: action.id,
       status: "running",
       inputSummaryJson: JSON.stringify(summarizeForAudit(input.input)),

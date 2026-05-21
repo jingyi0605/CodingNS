@@ -263,6 +263,7 @@ import { OpenCliProviderRepository } from "../storage/repositories/opencli-provi
 import { OpenCliRuntimeProfileRepository } from "../storage/repositories/opencli-runtime-profile-repository.js";
 import { PluginDefinitionRepository } from "../storage/repositories/plugin-definition-repository.js";
 import { PluginEnablementRepository } from "../storage/repositories/plugin-enablement-repository.js";
+import { PluginRuntimeSessionRepository } from "../storage/repositories/plugin-runtime-session-repository.js";
 import { PluginRunRepository } from "../storage/repositories/plugin-run-repository.js";
 import { PortLeaseRepository } from "../storage/repositories/port-lease-repository.js";
 import { ParallelSessionGroupRepository } from "../storage/repositories/parallel-session-group-repository.js";
@@ -307,6 +308,7 @@ import type { OfficeConnector, TerminalInstance } from "../types/domain.js";
 import { PluginRegistryService } from "../modules/plugins/plugin-registry-service.js";
 import { PluginController } from "../modules/plugins/plugin-controller.js";
 import { PluginPermissionService } from "../modules/plugins/plugin-permission-service.js";
+import { PluginRuntimeSessionService } from "../modules/plugins/plugin-runtime-session-service.js";
 import { PluginStaticService } from "../modules/plugins/plugin-static-service.js";
 import { PluginProcessRunner } from "../modules/plugins/plugin-process-runner.js";
 import { PluginRuntimeService } from "../modules/plugins/plugin-runtime-service.js";
@@ -360,6 +362,7 @@ export function createServer(config: HostConfig) {
     pluginDefinitionRepository: new PluginDefinitionRepository(database.db),
     pluginEnablementRepository: new PluginEnablementRepository(database.db),
     pluginAuditEventRepository: new PluginAuditEventRepository(database.db),
+    pluginRuntimeSessionRepository: new PluginRuntimeSessionRepository(database.db),
     pluginRunRepository: new PluginRunRepository(database.db),
     documentTemplateRepository: new DocumentTemplateRepository(database.db),
     documentRepository: new DocumentRepository(database.db),
@@ -508,6 +511,11 @@ export function createServer(config: HostConfig) {
   );
   pluginRegistryService.syncPluginsFromDisk();
   const pluginPermissionService = new PluginPermissionService();
+  const pluginRuntimeSessionService = new PluginRuntimeSessionService(
+    pluginRegistryService,
+    repositories.pluginRuntimeSessionRepository,
+    workspaceService
+  );
   const pluginStaticService = new PluginStaticService(pluginRegistryService);
   const pluginProcessRunner = new PluginProcessRunner();
   const pluginRuntimeService = new PluginRuntimeService(
@@ -1363,7 +1371,8 @@ export function createServer(config: HostConfig) {
   const pluginController = new PluginController(
     pluginRegistryService,
     pluginRuntimeService,
-    pluginStaticService
+    pluginStaticService,
+    pluginRuntimeSessionService
   );
   const browserProfileService = new BrowserProfileService(
     repositories.browserProfileRepository,
@@ -1702,6 +1711,7 @@ export function createServer(config: HostConfig) {
         officeService,
         browserProfileService,
         pluginRegistryService,
+        pluginRuntimeSessionService,
         pluginRuntimeService,
         pluginSchedulerService,
         documentRuntimeService,

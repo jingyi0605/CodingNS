@@ -60,10 +60,23 @@ export interface PluginEnablementDto {
   updatedAt: string;
 }
 
+export interface PluginRuntimeSessionDto {
+  id: string;
+  pluginId: string;
+  workspaceId: string;
+  openedByUserId: string;
+  source: "frontend" | "assistant" | "cli";
+  status: "active" | "closed";
+  createdAt: string;
+  updatedAt: string;
+  closedAt: string | null;
+}
+
 export interface PluginRunDto {
   id: string;
   pluginId: string;
   workspaceId: string;
+  runtimeSessionId: string | null;
   triggerKind: "frontend" | "cli" | "schedule" | "assistant";
   actionId: string | null;
   status: "queued" | "running" | "succeeded" | "failed" | "rejected" | "cancelled";
@@ -107,6 +120,26 @@ export interface PluginDetailDto {
   } | null;
 }
 
+export interface PluginRuntimeContextDto {
+  pluginId: string;
+  workspaceId: string;
+  runtimeSessionId: string;
+  pluginName: string;
+  pluginVersion: string;
+  frontendEntryUrl: string | null;
+  hostOrigin: string | null;
+}
+
+export interface CreatePluginRuntimeSessionDto {
+  runtimeSessionId: string;
+  session: PluginRuntimeSessionDto;
+  frontend: {
+    basePath: string;
+    entryUrl: string;
+  } | null;
+  context: PluginRuntimeContextDto;
+}
+
 export interface PluginActionResultDto {
   run: PluginRunDto;
   output: unknown;
@@ -126,6 +159,27 @@ export function getPlugin(pluginId: string) {
   return httpClient.request<PluginDetailDto>(`/api/plugins/${encodeURIComponent(pluginId)}`);
 }
 
+export function createPluginRuntimeSession(pluginId: string, workspaceId: string) {
+  return httpClient.request<CreatePluginRuntimeSessionDto>(
+    `/api/plugins/${encodeURIComponent(pluginId)}/runtime-sessions`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        workspaceId
+      })
+    }
+  );
+}
+
+export function closePluginRuntimeSession(pluginId: string, runtimeSessionId: string) {
+  return httpClient.request<PluginRuntimeSessionDto>(
+    `/api/plugins/${encodeURIComponent(pluginId)}/runtime-sessions/${encodeURIComponent(runtimeSessionId)}/close`,
+    {
+      method: "POST"
+    }
+  );
+}
+
 export function enablePlugin(pluginId: string) {
   return httpClient.request<PluginEnablementDto>(`/api/plugins/${encodeURIComponent(pluginId)}/enable`, {
     method: "POST"
@@ -141,13 +195,13 @@ export function disablePlugin(pluginId: string, reason?: string | null) {
   });
 }
 
-export function callPluginAction(pluginId: string, actionId: string, workspaceId: string, input?: unknown) {
+export function callPluginAction(pluginId: string, actionId: string, runtimeSessionId: string, input?: unknown) {
   return httpClient.request<PluginActionResultDto>(
     `/api/plugins/${encodeURIComponent(pluginId)}/actions/${encodeURIComponent(actionId)}`,
     {
       method: "POST",
       body: JSON.stringify({
-        workspaceId,
+        runtimeSessionId,
         input: input === undefined ? null : input
       })
     }
@@ -158,21 +212,21 @@ export function listPluginRuns(pluginId: string) {
   return httpClient.request<{ items: PluginRunDto[] }>(`/api/plugins/${encodeURIComponent(pluginId)}/runs`);
 }
 
-export function openPluginFile(pluginId: string, workspaceId: string, path: string) {
+export function openPluginFile(pluginId: string, runtimeSessionId: string, path: string) {
   return httpClient.request<PluginDesktopActionDto>(`/api/plugins/${encodeURIComponent(pluginId)}/desktop/open-file`, {
     method: "POST",
     body: JSON.stringify({
-      workspaceId,
+      runtimeSessionId,
       path
     })
   });
 }
 
-export function revealPluginFile(pluginId: string, workspaceId: string, path: string) {
+export function revealPluginFile(pluginId: string, runtimeSessionId: string, path: string) {
   return httpClient.request<PluginDesktopActionDto>(`/api/plugins/${encodeURIComponent(pluginId)}/desktop/reveal-in-file-manager`, {
     method: "POST",
     body: JSON.stringify({
-      workspaceId,
+      runtimeSessionId,
       path
     })
   });

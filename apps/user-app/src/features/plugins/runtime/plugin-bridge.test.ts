@@ -26,6 +26,7 @@ describe("plugin bridge", () => {
         id: "run-1",
         pluginId: "demo.plugin",
         workspaceId: "workspace-1",
+        runtimeSessionId: "runtime-session-1",
         triggerKind: "frontend",
         actionId: "run-report",
         status: "succeeded",
@@ -45,11 +46,11 @@ describe("plugin bridge", () => {
     const dispose = attachPluginBridge({
       iframe,
       pluginId: "demo.plugin",
-      workspaceId: "workspace-1",
       hostOrigin: "http://127.0.0.1:3002",
       context: {
         pluginId: "demo.plugin",
         workspaceId: "workspace-1",
+        runtimeSessionId: "runtime-session-1",
         pluginName: "演示插件",
         pluginVersion: "1.0.0",
         frontendEntryUrl: "/preview/plugins/demo.plugin/frontend/index.html",
@@ -77,7 +78,8 @@ describe("plugin bridge", () => {
       type: "codingns-plugin:init",
       context: expect.objectContaining({
         pluginId: "demo.plugin",
-        workspaceId: "workspace-1"
+        workspaceId: "workspace-1",
+        runtimeSessionId: "runtime-session-1"
       })
     }, "http://127.0.0.1:3002");
 
@@ -100,7 +102,7 @@ describe("plugin bridge", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(pluginsApi.callPluginAction).toHaveBeenCalledWith("demo.plugin", "run-report", "workspace-1", {
+    expect(pluginsApi.callPluginAction).toHaveBeenCalledWith("demo.plugin", "run-report", "runtime-session-1", {
       range: "today"
     });
     expect((iframeWindow.postMessage as unknown as ReturnType<typeof vi.fn>)).toHaveBeenLastCalledWith({
@@ -143,11 +145,11 @@ describe("plugin bridge", () => {
     const dispose = attachPluginBridge({
       iframe,
       pluginId: "demo.plugin",
-      workspaceId: "workspace-1",
       hostOrigin: "http://127.0.0.1:3002",
       context: {
         pluginId: "demo.plugin",
         workspaceId: "workspace-1",
+        runtimeSessionId: "runtime-session-1",
         pluginName: "演示插件",
         pluginVersion: "1.0.0",
         frontendEntryUrl: "/preview/plugins/demo.plugin/frontend/index.html",
@@ -171,7 +173,7 @@ describe("plugin bridge", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(pluginsApi.openPluginFile).toHaveBeenCalledWith("demo.plugin", "workspace-1", "report.txt");
+    expect(pluginsApi.openPluginFile).toHaveBeenCalledWith("demo.plugin", "runtime-session-1", "report.txt");
     dispose();
   });
 });

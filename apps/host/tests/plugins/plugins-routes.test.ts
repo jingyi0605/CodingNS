@@ -159,7 +159,7 @@ describe("plugin routes", () => {
     expect(getPayload.frontend?.entryUrl).toContain("/preview/plugins/demo.plugin/frontend/index.html");
   }, 20000);
 
-  it("能执行插件动作并记录运行结果", async () => {
+  it("能创建运行实例、执行动作，并在关闭后拒绝继续调用", async () => {
     const { server, accessToken, workspaceId } = createTestServer();
 
     await server.app.inject({
@@ -170,6 +170,24 @@ describe("plugin routes", () => {
       }
     });
 
+    const createSessionResponse = await server.app.inject({
+      method: "POST",
+      url: "/api/plugins/demo.plugin/runtime-sessions",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceId
+      }
+    });
+    expect(createSessionResponse.statusCode).toBe(200);
+    const createSessionPayload = createSessionResponse.json() as {
+      runtimeSessionId: string;
+      session: { workspaceId: string; status: string };
+    };
+    expect(createSessionPayload.session.workspaceId).toBe(workspaceId);
+    expect(createSessionPayload.session.status).toBe("active");
+
     const actionResponse = await server.app.inject({
       method: "POST",
       url: "/api/plugins/demo.plugin/actions/run-report",
@@ -177,7 +195,7 @@ describe("plugin routes", () => {
         authorization: `Bearer ${accessToken}`
       },
       payload: {
-        workspaceId,
+        runtimeSessionId: createSessionPayload.runtimeSessionId,
         input: {
           range: "today"
         }
@@ -190,8 +208,33 @@ describe("plugin routes", () => {
       output: { ok: boolean; workspaceId: string; echoed: { range: string } };
     };
     expect(actionPayload.run.status).toBe("succeeded");
+    expect(actionPayload.run.runtimeSessionId).toBe(createSessionPayload.runtimeSessionId);
     expect(actionPayload.output.ok).toBe(true);
     expect(actionPayload.output.workspaceId).toBe(workspaceId);
+
+    const closeSessionResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/plugins/demo.plugin/runtime-sessions/${createSessionPayload.runtimeSessionId}/close`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(closeSessionResponse.statusCode).toBe(200);
+
+    const closedActionResponse = await server.app.inject({
+      method: "POST",
+      url: "/api/plugins/demo.plugin/actions/run-report",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        runtimeSessionId: createSessionPayload.runtimeSessionId,
+        input: {
+          range: "tomorrow"
+        }
+      }
+    });
+    expect(closedActionResponse.statusCode).toBe(409);
 
     const runsResponse = await server.app.inject({
       method: "GET",
@@ -217,6 +260,18 @@ describe("plugin routes", () => {
       }
     });
 
+    const createSessionResponse = await server.app.inject({
+      method: "POST",
+      url: "/api/plugins/demo.plugin/runtime-sessions",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceId
+      }
+    });
+    const createSessionPayload = createSessionResponse.json() as { runtimeSessionId: string };
+
     const okResponse = await server.app.inject({
       method: "POST",
       url: "/api/plugins/demo.plugin/desktop/open-file",
@@ -224,7 +279,7 @@ describe("plugin routes", () => {
         authorization: `Bearer ${accessToken}`
       },
       payload: {
-        workspaceId,
+        runtimeSessionId: createSessionPayload.runtimeSessionId,
         path: "report.txt"
       }
     });
@@ -240,7 +295,7 @@ describe("plugin routes", () => {
         authorization: `Bearer ${accessToken}`
       },
       payload: {
-        workspaceId,
+        runtimeSessionId: createSessionPayload.runtimeSessionId,
         path: "../outside.txt"
       }
     });

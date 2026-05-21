@@ -1,10 +1,18 @@
 import { ApiError } from "../../../shared/network/api-error";
-import { getPlugin, callPluginAction, openPluginFile, revealPluginFile } from "../api/plugins-api";
+import {
+  callPluginAction,
+  closePluginRuntimeSession,
+  createPluginRuntimeSession,
+  openPluginFile,
+  revealPluginFile,
+  type PluginRuntimeContextDto
+} from "../api/plugins-api";
 import { getCodingNSDesktopBridge } from "../../../platform/desktop/codingns-desktop-bridge";
 
 export interface PluginHostBridgeContext {
   pluginId: string;
   workspaceId: string;
+  runtimeSessionId: string;
   pluginName: string;
   pluginVersion: string;
   frontendEntryUrl: string;
@@ -32,33 +40,24 @@ export async function buildPluginHostBridgeContext(
   workspaceId: string,
   hostOrigin: string
 ): Promise<PluginHostBridgeContext> {
-  const detail = await getPlugin(pluginId);
+  const runtime = await createPluginRuntimeSession(pluginId, workspaceId);
+  return mapPluginRuntimeContext(runtime.context, hostOrigin);
+}
 
-  if (!detail.frontend?.entryUrl) {
-    throw new ApiError(404, {
-      error_code: "PLUGIN_FRONTEND_NOT_FOUND",
-      detail: "当前插件没有可运行的前端入口"
-    });
-  }
-
-  return {
-    pluginId,
-    workspaceId,
-    pluginName: detail.manifest.name,
-    pluginVersion: detail.manifest.version,
-    frontendEntryUrl: detail.frontend.entryUrl,
-    hostOrigin
-  };
+export async function closePluginHostBridgeContext(
+  pluginId: string,
+  runtimeSessionId: string
+): Promise<void> {
+  await closePluginRuntimeSession(pluginId, runtimeSessionId);
 }
 
 export function attachPluginBridge(options: {
   iframe: HTMLIFrameElement;
   pluginId: string;
-  workspaceId: string;
   hostOrigin: string;
   context: PluginHostBridgeContext;
 }) {
-  const { iframe, pluginId, workspaceId, hostOrigin, context } = options;
+  const { iframe, pluginId, hostOrigin, context } = options;
 
   function handleMessage(event: MessageEvent) {
     if (event.source !== iframe.contentWindow) {
@@ -89,7 +88,7 @@ export function attachPluginBridge(options: {
 
     void resolvePluginRequest({
       pluginId,
-      workspaceId,
+      runtimeSessionId: context.runtimeSessionId,
       request
     }).then((result) => {
       iframe.contentWindow?.postMessage({
@@ -116,10 +115,10 @@ export function attachPluginBridge(options: {
 
 async function resolvePluginRequest(input: {
   pluginId: string;
-  workspaceId: string;
+  runtimeSessionId: string;
   request: PluginRequestMessage;
 }) {
-  const { pluginId, workspaceId, request } = input;
+  const { pluginId, runtimeSessionId, request } = input;
   if (request.action === "callAction") {
     const actionId = typeof request.payload?.actionId === "string" ? request.payload.actionId.trim() : "";
     if (!actionId) {
@@ -129,7 +128,7 @@ async function resolvePluginRequest(input: {
       });
     }
 
-    return await callPluginAction(pluginId, actionId, workspaceId, request.payload?.input);
+    return await callPluginAction(pluginId, actionId, runtimeSessionId, request.payload?.input);
   }
 
   const targetPath = typeof request.payload?.path === "string" ? request.payload.path.trim() : "";
@@ -141,7 +140,7 @@ async function resolvePluginRequest(input: {
   }
 
   if (request.action === "openFile") {
-    const prepared = await openPluginFile(pluginId, workspaceId, targetPath);
+    const prepared = await openPluginFile(pluginId, runtimeSessionId, targetPath);
     const bridge = getCodingNSDesktopBridge();
     const result = await bridge.fs.openFile(prepared.absolutePath);
     if (!result.ok) {
@@ -154,7 +153,7 @@ async function resolvePluginRequest(input: {
   }
 
   if (request.action === "revealInFileManager") {
-    const prepared = await revealPluginFile(pluginId, workspaceId, targetPath);
+    const prepared = await revealPluginFile(pluginId, runtimeSessionId, targetPath);
     const bridge = getCodingNSDesktopBridge();
     const result = await bridge.fs.revealInFileManager(prepared.absolutePath);
     if (!result.ok) {
@@ -170,6 +169,28 @@ async function resolvePluginRequest(input: {
     error_code: "PLUGIN_BRIDGE_ACTION_UNKNOWN",
     detail: `未知插件桥动作：${request.action}`
   });
+}
+
+function mapPluginRuntimeContext(
+  context: PluginRuntimeContextDto,
+  hostOrigin: string
+): PluginHostBridgeContext {
+  if (!context.frontendEntryUrl) {
+    throw new ApiError(404, {
+      error_code: "PLUGIN_FRONTEND_NOT_FOUND",
+      detail: "当前插件没有可运行的前端入口"
+    });
+  }
+
+  return {
+    pluginId: context.pluginId,
+    workspaceId: context.workspaceId,
+    runtimeSessionId: context.runtimeSessionId,
+    pluginName: context.pluginName,
+    pluginVersion: context.pluginVersion,
+    frontendEntryUrl: context.frontendEntryUrl,
+    hostOrigin
+  };
 }
 
 function normalizePluginBridgeError(error: unknown): { code: string; detail: string } {

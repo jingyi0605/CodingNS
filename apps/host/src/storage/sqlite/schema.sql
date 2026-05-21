@@ -298,6 +298,28 @@ CREATE TABLE IF NOT EXISTS plugin_enablements (
 
 CREATE INDEX IF NOT EXISTS idx_plugin_enablements_enabled ON plugin_enablements(enabled);
 
+CREATE TABLE IF NOT EXISTS plugin_runtime_sessions (
+  id TEXT PRIMARY KEY,
+  plugin_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  opened_by_user_id TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('frontend', 'assistant', 'cli')),
+  status TEXT NOT NULL CHECK (status IN ('active', 'closed')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  closed_at TEXT,
+  FOREIGN KEY (plugin_id) REFERENCES plugin_definitions(id) ON DELETE CASCADE,
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+  FOREIGN KEY (opened_by_user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_plugin_runtime_sessions_plugin_id
+  ON plugin_runtime_sessions(plugin_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_plugin_runtime_sessions_workspace_id
+  ON plugin_runtime_sessions(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_plugin_runtime_sessions_status
+  ON plugin_runtime_sessions(status, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS plugin_audit_events (
   id TEXT PRIMARY KEY,
   plugin_id TEXT NOT NULL,
@@ -331,6 +353,7 @@ CREATE TABLE IF NOT EXISTS plugin_runs (
   id TEXT PRIMARY KEY,
   plugin_id TEXT NOT NULL,
   workspace_id TEXT NOT NULL,
+  runtime_session_id TEXT,
   trigger_kind TEXT NOT NULL CHECK (trigger_kind IN ('frontend', 'cli', 'schedule', 'assistant')),
   action_id TEXT,
   status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'rejected', 'cancelled')),
@@ -341,7 +364,8 @@ CREATE TABLE IF NOT EXISTS plugin_runs (
   started_at TEXT,
   finished_at TEXT,
   created_at TEXT NOT NULL,
-  FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+  FOREIGN KEY (runtime_session_id) REFERENCES plugin_runtime_sessions(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_plugin_runs_plugin_id ON plugin_runs(plugin_id, created_at DESC);

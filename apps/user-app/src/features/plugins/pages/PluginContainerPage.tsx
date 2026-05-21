@@ -8,6 +8,7 @@ import { useToast } from "../../../shared/toast";
 import {
   attachPluginBridge,
   buildPluginHostBridgeContext,
+  closePluginHostBridgeContext,
   type PluginHostBridgeContext
 } from "../runtime/plugin-bridge";
 import { buildWorkspacePluginDetailPath } from "../../workbench/utils/workbench-navigation";
@@ -33,13 +34,17 @@ export function PluginContainerPage() {
 
   useEffect(() => {
     let cancelled = false;
+    let createdContext: PluginHostBridgeContext | null = null;
     setLoading(true);
+    setContext(null);
 
     void buildPluginHostBridgeContext(pluginId, workspaceId, hostOrigin)
       .then((nextContext) => {
         if (cancelled) {
+          void closePluginHostBridgeContext(pluginId, nextContext.runtimeSessionId).catch(() => undefined);
           return;
         }
+        createdContext = nextContext;
         setContext(nextContext);
       })
       .catch((error) => {
@@ -59,6 +64,9 @@ export function PluginContainerPage() {
 
     return () => {
       cancelled = true;
+      if (createdContext?.runtimeSessionId) {
+        void closePluginHostBridgeContext(pluginId, createdContext.runtimeSessionId).catch(() => undefined);
+      }
     };
   }, [hostOrigin, pluginId, showToast, workspaceId]);
 
@@ -70,11 +78,10 @@ export function PluginContainerPage() {
     return attachPluginBridge({
       iframe: iframeRef.current,
       pluginId,
-      workspaceId,
       hostOrigin,
       context
     });
-  }, [context, hostOrigin, pluginId, workspaceId]);
+  }, [context, hostOrigin, pluginId]);
 
   if (loading) {
     return (
