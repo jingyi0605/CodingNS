@@ -37,12 +37,7 @@ export function setErrorHandler(
   request: FastifyRequest,
   reply: FastifyReply
 ): FastifyReply {
-  const requestContext = {
-    method: request.method,
-    url: request.url,
-    errorName: error.name,
-    errorMessage: error.message
-  };
+  const requestContext = buildHostLogContext(error, request);
 
   if (isAppError(error)) {
     if (shouldLogAsCompactRequestWarning(error)) {
@@ -60,6 +55,25 @@ export function setErrorHandler(
   console.error("[host-error]", requestContext, error);
   request.log.error(error);
   return sendError(reply, 500, "INTERNAL_ERROR", "服务内部错误");
+}
+
+function buildHostLogContext(
+  error: Error,
+  request: FastifyRequest
+): {
+  timestamp: string;
+  method: string;
+  url: string;
+  errorName: string;
+  errorMessage: string;
+} {
+  return {
+    timestamp: new Date().toISOString(),
+    method: request.method,
+    url: request.url,
+    errorName: error.name,
+    errorMessage: error.message
+  };
 }
 
 function shouldLogAsExpectedRequestWarning(error: AppError): boolean {

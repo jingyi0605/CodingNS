@@ -22,6 +22,7 @@ describe("setErrorHandler", () => {
     expect(consoleWarnSpy).toHaveBeenCalledWith(
       "[host-warning]",
       expect.objectContaining({
+        timestamp: expect.any(String),
         method: "GET",
         url: "/api/client/runtime-config?platform=desktop",
         statusCode: 401,
@@ -80,6 +81,7 @@ describe("setErrorHandler", () => {
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       "[host-error]",
       expect.objectContaining({
+        timestamp: expect.any(String),
         method: "GET",
         url: "/api/demo",
         errorName: "Error",
@@ -120,6 +122,7 @@ describe("setErrorHandler", () => {
     expect(consoleWarnSpy).toHaveBeenCalledWith(
       "[host-warning]",
       expect.objectContaining({
+        timestamp: expect.any(String),
         method: "GET",
         url: "/api/sessions/session-1/attachments/attachment-1/content",
         statusCode: 404,
