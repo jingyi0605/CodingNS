@@ -48,6 +48,16 @@ export interface HtmlPreviewWorkspaceBridgeOptions {
 export function createHtmlPreviewWorkspaceBridge(options: HtmlPreviewWorkspaceBridgeOptions) {
   const watchPollers = new Map<string, { stopped: boolean; cursor: number }>();
   let iframeOrigin: string | null = null;
+  const debugState = {
+    lastEventOrigin: null as string | null,
+    lastEventMatchedSource: false,
+    lastEventRequestId: null as string | null,
+    lastEventAction: null as string | null,
+    lastResponseId: null as string | null,
+    lastResponseOrigin: null as string | null,
+    lastHandledRequestId: null as string | null,
+    currentIframeWindowMatches: false
+  };
 
   function postError(event: MessageEvent, request: HtmlPreviewBridgeRequest, code: string, message: string, path?: string) {
     postResponse(event, {
@@ -69,6 +79,8 @@ export function createHtmlPreviewWorkspaceBridge(options: HtmlPreviewWorkspaceBr
       return;
     }
 
+    debugState.lastResponseId = response.id;
+    debugState.lastResponseOrigin = event.origin;
     targetWindow.postMessage(response, event.origin);
   }
 
@@ -84,6 +96,12 @@ export function createHtmlPreviewWorkspaceBridge(options: HtmlPreviewWorkspaceBr
   async function handleRequest(event: MessageEvent, request: HtmlPreviewBridgeRequest): Promise<void> {
     const iframeWindow = options.iframe?.contentWindow;
     const workspaceId = options.workspaceId?.trim() ?? "";
+
+    debugState.lastEventOrigin = event.origin;
+    debugState.lastEventMatchedSource = Boolean(iframeWindow && event.source === iframeWindow);
+    debugState.lastEventRequestId = request.id;
+    debugState.lastEventAction = request.action;
+    debugState.currentIframeWindowMatches = Boolean(iframeWindow && event.source === iframeWindow);
 
     if (!iframeWindow || event.source !== iframeWindow) {
       return;
@@ -215,6 +233,7 @@ export function createHtmlPreviewWorkspaceBridge(options: HtmlPreviewWorkspaceBr
         ok: true,
         payload
       });
+      debugState.lastHandledRequestId = request.id;
     } catch (error) {
       const detail = readApiError(error);
       postError(event, request, detail.code, detail.message, detail.path);
@@ -229,6 +248,7 @@ export function createHtmlPreviewWorkspaceBridge(options: HtmlPreviewWorkspaceBr
 
       await handleRequest(event, event.data);
     },
+    debug: debugState,
     dispose(): void {
       for (const watchId of [...watchPollers.keys()]) {
         stopWatchPolling(watchId);

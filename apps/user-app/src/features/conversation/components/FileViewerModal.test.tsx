@@ -618,6 +618,56 @@ describe("FileViewerModal", () => {
     );
   });
 
+  it("Tools 目录下的 HTML 工具页即使含有 slide 结构，也只走普通预览链路", async () => {
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "Tools/会员管理.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <head>
+              <style>:root { --deck-width: 1600px; --deck-height: 900px; }</style>
+            </head>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="会员管理">
+                  <div class="slide-shell">
+                    <h1>会员管理</h1>
+                    <p>这里是工具页，不是演示文档。</p>
+                  </div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "tool-html-v1",
+        previewPath: "/preview/files/preview-token/Tools/%E4%BC%9A%E5%91%98%E7%AE%A1%E7%90%86.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/Tools/%E4%BC%9A%E5%91%98%E7%AE%A1%E7%90%86.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="Tools/会员管理.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    const previewFrame = await screen.findByTestId("file-viewer-html-preview");
+    expect(previewFrame).toHaveAttribute(
+      "src",
+      expect.stringContaining("/preview/files/preview-token/Tools/%E4%BC%9A%E5%91%98%E7%AE%A1%E7%90%86.html?_preview=0")
+    );
+    expect(screen.queryByRole("tab", { name: t("conversation.fileViewerPresentation") })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("static-html-presentation-view")).not.toBeInTheDocument();
+  });
+
   it("HTML 编辑视图会显示带行号的代码高亮编辑区，并实时更新高亮内容", async () => {
     const user = userEvent.setup();
 
@@ -724,6 +774,55 @@ describe("FileViewerModal", () => {
       "title",
       "方案页"
     );
+  });
+
+  it("显式带 presentation 标记的 HTML 即使不在 slides 目录，也会显示演示文档模式", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "tmp/opt-in-presentation.html",
+        kind: "html",
+        content: `
+          <!doctype html>
+          <html>
+            <head>
+              <meta name="codingns-preview-mode" content="presentation" />
+            </head>
+            <body>
+              <div class="deck">
+                <section class="slide" data-title="封面">
+                  <div class="slide-shell"><h1>显式开启演示模式</h1></div>
+                </section>
+              </div>
+            </body>
+          </html>
+        `,
+        version: "opt-in-presentation-v1",
+        previewPath: "/preview/files/preview-token/tmp/opt-in-presentation.html",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/tmp/opt-in-presentation.html"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="tmp/opt-in-presentation.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    const presentationTab = await screen.findByRole("tab", {
+      name: t("conversation.fileViewerPresentation")
+    });
+    expect(presentationTab).toBeInTheDocument();
+
+    await user.click(presentationTab);
+    expect(await screen.findByTestId("static-html-presentation-view")).toBeInTheDocument();
   });
 
   it("演示文档视图支持通过顶部文字工具栏修改文本与样式", async () => {

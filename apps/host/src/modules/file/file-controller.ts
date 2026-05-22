@@ -486,7 +486,12 @@ export class FileController {
     if (previewFile.contentType.startsWith("text/html")) {
       reply.send(
         injectWorkspaceBridgeRuntime(
-          readFileSync(previewFile.absolutePath, "utf8")
+          readFileSync(previewFile.absolutePath, "utf8"),
+          {
+            workspaceId: previewFile.workspaceId,
+            hostOrigin: resolveRequestOrigin(request),
+            parentOrigin: resolveWorkspaceBridgeParentOrigin(request)
+          }
         )
       );
       return;
@@ -575,6 +580,10 @@ function resolveRequestHost(request: FastifyRequest): string {
   );
 }
 
+function resolveRequestOrigin(request: FastifyRequest): string {
+  return `${resolveRequestProtocol(request)}://${resolveRequestHost(request)}`;
+}
+
 function requireWorkspaceId(workspaceId: string | undefined): string {
   const safeWorkspaceId = workspaceId?.trim();
 
@@ -604,16 +613,36 @@ function requireUserId(request: FastifyRequest): string {
   return userId;
 }
 
-function injectWorkspaceBridgeRuntime(html: string): string {
+function injectWorkspaceBridgeRuntime(
+  html: string,
+  bootstrap: {
+    workspaceId: string;
+    hostOrigin: string;
+    parentOrigin: string | null;
+  }
+): string {
+  const bootstrapScript = JSON.stringify({
+    runtimeScriptPath: "/preview/runtime/codingns-workspace-bridge.js",
+    workspaceId: bootstrap.workspaceId,
+    hostOrigin: bootstrap.hostOrigin,
+    parentOrigin: bootstrap.parentOrigin ?? ""
+  });
+  const workspaceIdAttr = escapeHtmlAttribute(bootstrap.workspaceId);
+  const hostOriginAttr = escapeHtmlAttribute(bootstrap.hostOrigin);
+  const parentOriginAttr = escapeHtmlAttribute(bootstrap.parentOrigin ?? "");
   const runtimeSnippet = [
     "<script>",
-    "window.__CODINGNS_WORKSPACE_BRIDGE_BOOTSTRAP__ = { runtimeScriptPath: '/preview/runtime/codingns-workspace-bridge.js' };",
+    `window.__CODINGNS_WORKSPACE_BRIDGE_BOOTSTRAP__ = ${bootstrapScript};`,
     "</script>",
-    "<script src=\"/preview/runtime/codingns-workspace-bridge.js\"></script>"
+    `<script src="/preview/runtime/codingns-workspace-bridge.js" data-codingns-workspace-id="${workspaceIdAttr}" data-codingns-host-origin="${hostOriginAttr}" data-codingns-parent-origin="${parentOriginAttr}"></script>`
   ].join("");
 
   if (html.includes("/preview/runtime/codingns-workspace-bridge.js")) {
     return html;
+  }
+
+  if (/<head[^>]*>/i.test(html)) {
+    return html.replace(/<head([^>]*)>/i, `<head$1>${runtimeSnippet}`);
   }
 
   if (/<\/head>/i.test(html)) {
@@ -629,4 +658,44 @@ function injectWorkspaceBridgeRuntime(html: string): string {
 
 function resolveWorkspaceBridgeRuntimePath(): string {
   return fileURLToPath(new URL("./runtime/codingns-workspace-bridge.js", import.meta.url));
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function resolveWorkspaceBridgeParentOrigin(request: FastifyRequest): string | null {
+  const fromQuery = readOriginFromPreviewQuery(request, "_cns_parent_origin");
+  if (fromQuery) {
+    return fromQuery;
+  }
+
+  const refererHeader = request.headers.referer ?? request.headers.referrer;
+  if (typeof refererHeader !== "string" || !refererHeader.trim()) {
+    return null;
+  }
+
+  try {
+    return new URL(refererHeader).origin;
+  } catch {
+    return null;
+  }
+}
+
+function readOriginFromPreviewQuery(request: FastifyRequest, key: string): string | null {
+  try {
+    const requestUrl = new URL(request.raw.url ?? "/", "http://127.0.0.1");
+    const candidate = requestUrl.searchParams.get(key)?.trim();
+    if (!candidate) {
+      return null;
+    }
+    return new URL(candidate).origin;
+  } catch {
+    return null;
+  }
 }

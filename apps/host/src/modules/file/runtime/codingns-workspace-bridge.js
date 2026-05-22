@@ -12,12 +12,59 @@
   var RESPONSE_TYPE = "codingns.workspace.response";
   var REQUEST_TYPE = "codingns.workspace.request";
   var EVENT_TYPE = "codingns.workspace.event";
+  var bootstrapConfig = readBootstrapConfig();
   var parentOrigin = null;
   var pendingRequests = Object.create(null);
   var watchListeners = Object.create(null);
   var activeWatchPollers = Object.create(null);
   var requestSeq = 0;
+  var debugState = createDebugState();
   var iframeHostBridge = createIframeHostBridge();
+
+  function readBootstrapConfig() {
+    var raw = window.__CODINGNS_WORKSPACE_BRIDGE_BOOTSTRAP__;
+    if (raw && typeof raw === "object") {
+      return raw;
+    }
+
+    var script = document.currentScript;
+    if (!script || typeof script.getAttribute !== "function") {
+      return {};
+    }
+
+    var workspaceId = script.getAttribute("data-codingns-workspace-id") || "";
+    var hostOrigin = script.getAttribute("data-codingns-host-origin") || "";
+    var parentOrigin = script.getAttribute("data-codingns-parent-origin") || "";
+    return {
+      workspaceId: workspaceId,
+      hostOrigin: hostOrigin,
+      parentOrigin: parentOrigin,
+      runtimeScriptPath: script.getAttribute("src") || ""
+    };
+  }
+
+  function createDebugState() {
+    return {
+      initializedAt: Date.now(),
+      runtimeUrl: window.location.href,
+      referrer: document.referrer || "",
+      bootstrapParentOrigin: typeof bootstrapConfig.parentOrigin === "string" ? bootstrapConfig.parentOrigin : "",
+      bootstrapHostOrigin: typeof bootstrapConfig.hostOrigin === "string" ? bootstrapConfig.hostOrigin : "",
+      isIframe: isIframe(),
+      lastRequestId: null,
+      lastRequestAction: null,
+      lastRequestTargetOrigin: null,
+      lastResponseId: null,
+      lastResponseOrigin: null,
+      lastResponseAccepted: false,
+      lastEventType: null,
+      pendingRequestCount: 0
+    };
+  }
+
+  function updatePendingRequestCount() {
+    debugState.pendingRequestCount = Object.keys(pendingRequests).length;
+  }
 
   function isIframe() {
     return window.parent && window.parent !== window;
@@ -25,6 +72,16 @@
 
   function ensureParentOrigin() {
     if (parentOrigin) {
+      return parentOrigin;
+    }
+
+    if (typeof bootstrapConfig.parentOrigin === "string" && bootstrapConfig.parentOrigin) {
+      parentOrigin = bootstrapConfig.parentOrigin;
+      return parentOrigin;
+    }
+
+    if (typeof bootstrapConfig.hostOrigin === "string" && bootstrapConfig.hostOrigin) {
+      parentOrigin = bootstrapConfig.hostOrigin;
       return parentOrigin;
     }
 
@@ -50,7 +107,9 @@
       currentUrl = null;
     }
 
-    var workspaceId = currentUrl ? currentUrl.searchParams.get("workspaceId") : null;
+    var workspaceId = typeof bootstrapConfig.workspaceId === "string" && bootstrapConfig.workspaceId
+      ? bootstrapConfig.workspaceId
+      : currentUrl ? currentUrl.searchParams.get("workspaceId") : null;
     var previewPath = currentUrl ? currentUrl.pathname : "";
     var previewToken = "";
 
@@ -248,6 +307,12 @@
     }
 
     window.addEventListener("message", function (event) {
+      var payload = event.data;
+      debugState.lastEventType = payload && typeof payload === "object" && typeof payload.type === "string"
+        ? payload.type
+        : null;
+      debugState.lastResponseOrigin = event.origin || null;
+
       if (event.source !== window.parent) {
         return;
       }
@@ -256,7 +321,6 @@
         return;
       }
 
-      var payload = event.data;
       if (!payload || typeof payload !== "object") {
         return;
       }
@@ -276,7 +340,10 @@
       }
 
       delete pendingRequests[payload.id];
+      updatePendingRequestCount();
       window.clearTimeout(pending.timer);
+      debugState.lastResponseId = payload.id;
+      debugState.lastResponseAccepted = true;
 
       if (payload.ok === false) {
         var bridgeError = new Error(payload.error && payload.error.message ? payload.error.message : "宿主桥调用失败");
@@ -294,23 +361,29 @@
         return new Promise(function (resolve, reject) {
           requestSeq += 1;
           var requestId = "workspace-bridge-" + String(Date.now()) + "-" + String(requestSeq);
+          var targetOrigin = ensureParentOrigin();
           pendingRequests[requestId] = {
             resolve: resolve,
             reject: reject,
             timer: window.setTimeout(function () {
               delete pendingRequests[requestId];
+              updatePendingRequestCount();
               var timeoutError = new Error("等待宿主 workspace bridge 响应超时");
               timeoutError.code = "INTERNAL_ERROR";
               reject(timeoutError);
             }, REQUEST_TIMEOUT_MS)
           };
+          updatePendingRequestCount();
+          debugState.lastRequestId = requestId;
+          debugState.lastRequestAction = action;
+          debugState.lastRequestTargetOrigin = targetOrigin;
 
           window.parent.postMessage({
             type: REQUEST_TYPE,
             id: requestId,
             action: action,
             payload: payload || {}
-          }, ensureParentOrigin());
+          }, targetOrigin);
         });
       }
     };
@@ -609,7 +682,8 @@
       responseType: RESPONSE_TYPE,
       eventType: EVENT_TYPE,
       parentOrigin: isIframe() ? ensureParentOrigin() : null
-    }
+    },
+    debug: debugState
   };
 
   Object.defineProperty(window, "CodingNSWorkspace", {

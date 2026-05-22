@@ -11,6 +11,8 @@ const sourceBuiltinSkillRoot = path.join(appPath, "src", "modules", "skills", "b
 const outputBuiltinSkillRoot = path.join(appPath, ".build", "src", "modules", "skills", "builtin-skills");
 const sourceDocumentRuntimeRoot = path.join(appPath, "src", "modules", "document-runtime");
 const outputDocumentRuntimeRoot = path.join(appPath, ".build", "src", "modules", "document-runtime");
+const sourceFileRuntimeRoot = path.join(appPath, "src", "modules", "file", "runtime");
+const outputFileRuntimeRoot = path.join(appPath, ".build", "src", "modules", "file", "runtime");
 const require = createRequire(import.meta.url);
 const tscEntry = require.resolve("typescript/bin/tsc", {
   paths: [appPath]
@@ -50,4 +52,19 @@ const outputDocxFallbackRendererPath = path.join(
 if (fs.existsSync(sourceDocxFallbackRendererPath)) {
   fs.mkdirSync(path.dirname(outputDocxFallbackRendererPath), { recursive: true });
   fs.copyFileSync(sourceDocxFallbackRendererPath, outputDocxFallbackRendererPath);
+}
+
+if (fs.existsSync(sourceFileRuntimeRoot)) {
+  fs.rmSync(outputFileRuntimeRoot, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(outputFileRuntimeRoot), { recursive: true });
+  fs.cpSync(sourceFileRuntimeRoot, outputFileRuntimeRoot, { recursive: true });
+}
+
+const workspaceBridgeRuntimePath = path.join(
+  outputFileRuntimeRoot,
+  "codingns-workspace-bridge.js"
+);
+
+if (!fs.existsSync(workspaceBridgeRuntimePath)) {
+  throw new Error(`缺少工作区文件桥 runtime：${workspaceBridgeRuntimePath}`);
 }

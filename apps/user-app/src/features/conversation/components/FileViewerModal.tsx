@@ -341,7 +341,13 @@ export function FileViewerModal({
 
     return inspectStaticHtmlPresentation(currentContent, filePath ?? "document.html");
   }, [currentContent, filePath, previewKind]);
-  const canShowPresentationTab = Boolean(presentationProbe?.supported);
+  const canShowPresentationTab = useMemo(() => {
+    return shouldEnableHtmlPresentationMode({
+      filePath,
+      html: currentContent,
+      probe: presentationProbe
+    });
+  }, [currentContent, filePath, presentationProbe]);
   const canShowPreviewTab = canUsePreviewMode(previewKind);
   const canShowCodeTab = canUseCodeMode(previewKind);
   const canShowSeparateCodeTab = canShowCodeTab && previewKind !== "html";
@@ -821,6 +827,81 @@ export function FileViewerModal({
   );
 }
 
+interface HtmlPresentationModeInput {
+  filePath: string | null;
+  html: string;
+  probe: ReturnType<typeof inspectStaticHtmlPresentation> | null;
+}
+
+const PRESENTATION_DIRECTORY_SEGMENTS = new Set([
+  "slides",
+  "slide",
+  "presentations",
+  "presentation",
+  "deck",
+  "decks",
+  "ppt",
+  "pptx"
+]);
+
+const TOOL_DIRECTORY_SEGMENTS = new Set([
+  "tools",
+  "tool"
+]);
+
+function shouldEnableHtmlPresentationMode(input: HtmlPresentationModeInput): boolean {
+  const { filePath, html, probe } = input;
+
+  if (!probe?.supported || !html.trim()) {
+    return false;
+  }
+
+  const normalizedSegments = splitNormalizedPathSegments(filePath);
+
+  if (normalizedSegments.some((segment) => TOOL_DIRECTORY_SEGMENTS.has(segment))) {
+    return false;
+  }
+
+  if (hasExplicitPresentationOptIn(html)) {
+    return true;
+  }
+
+  if (normalizedSegments.some((segment) => PRESENTATION_DIRECTORY_SEGMENTS.has(segment))) {
+    return true;
+  }
+
+  if (probe.strategy === "deck-direct-child") {
+    return false;
+  }
+
+  return hasStrongPresentationSignals(html);
+}
+
+function splitNormalizedPathSegments(filePath: string | null): string[] {
+  if (!filePath) {
+    return [];
+  }
+
+  return filePath
+    .split(/[\\/]+/)
+    .map((segment) => segment.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function hasExplicitPresentationOptIn(html: string): boolean {
+  return /<meta[^>]+name=["'](?:codingns-preview-mode|codingns-presentation|cns-preview-mode|cns-presentation)["'][^>]+content=["']presentation["'][^>]*>/i.test(html)
+    || /\bdata-(?:codingns|cns)-(?:preview-mode|presentation)\s*=\s*["']presentation["']/i.test(html);
+}
+
+function hasStrongPresentationSignals(html: string): boolean {
+  const hasDeckContainer = /\bclass\s*=\s*["'][^"']*\bdeck\b[^"']*["']/i.test(html);
+  const hasSlideClass = /\bclass\s*=\s*["'][^"']*\bslide\b[^"']*["']/i.test(html);
+  const hasSlideMetadata = /\bdata-(?:slide|title)\s*=\s*["'][^"']+["']/i.test(html);
+  const hasDeckViewport = /--deck-width\s*:|--deck-height\s*:|aspect-ratio\s*:\s*16\s*\/\s*9/i.test(html);
+
+  return hasSlideClass && (hasDeckContainer || hasSlideMetadata || hasDeckViewport);
+}
+
 function resolveInitialViewerMode(filePath: string | null, previewKind: FilePreviewDto["kind"] | null): ViewerMode {
   if (previewKind === "markdown" || previewKind === "html" || previewKind === "image" || previewKind === "pdf") {
     return "preview";
@@ -1114,6 +1195,7 @@ function buildResourcePreviewUrl(baseUrl: string | null, refreshVersion: number)
 
   const nextUrl = new URL(baseUrl, window.location.origin);
   nextUrl.searchParams.set("_preview", String(refreshVersion));
+  nextUrl.searchParams.set("_cns_parent_origin", window.location.origin);
   nextUrl.hash = "";
   return nextUrl.toString();
 }

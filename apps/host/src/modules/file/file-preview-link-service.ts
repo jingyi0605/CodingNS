@@ -18,6 +18,7 @@ export interface FilePreviewLinkResult {
 }
 
 export interface PublicFilePreviewResult {
+  workspaceId: string;
   absolutePath: string;
   relativePath: string;
   contentType: string;
@@ -77,6 +78,7 @@ export class FilePreviewLinkService {
     }
 
     return {
+      workspaceId: payload.workspaceId,
       absolutePath: resolved.absolutePath,
       relativePath: resolved.relativePath,
       contentType

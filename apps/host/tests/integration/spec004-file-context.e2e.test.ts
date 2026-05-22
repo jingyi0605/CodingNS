@@ -347,12 +347,19 @@ describe("spec004 文件管理能力", () => {
 
     const previewHtml = await hosted.app.inject({
       method: "GET",
-      url: previewLink.json().previewPath
+      url: `${previewLink.json().previewPath}?_cns_parent_origin=${encodeURIComponent("http://localhost:3000")}`
     });
     expect(previewHtml.statusCode).toBe(200);
     expect(previewHtml.headers["content-type"]).toContain("text/html");
     expect(previewHtml.body).toContain("<title>Spec004 Preview</title>");
     expect(previewHtml.body).toContain("/preview/runtime/codingns-workspace-bridge.js");
+    expect(previewHtml.body).toContain(`"workspaceId":"${workspaceId}"`);
+    expect(previewHtml.body).toContain(`data-codingns-workspace-id="${workspaceId}"`);
+    expect(previewHtml.body).toContain(`"parentOrigin":"http://localhost:3000"`);
+    expect(previewHtml.body).toContain(`data-codingns-parent-origin="http://localhost:3000"`);
+    expect(previewHtml.body.indexOf("/preview/runtime/codingns-workspace-bridge.js")).toBeLessThan(
+      previewHtml.body.indexOf("<link rel=\"stylesheet\" href=\"./site.css\" />")
+    );
 
     const previewCssPath = new URL(
       "./site.css",
