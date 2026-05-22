@@ -120,17 +120,22 @@ async function ensureBetterSqliteRuntimeDependency() {
     }
 
     logInfo(`[codingns] 正在补装 SQLite 运行时依赖：${installSpec}`);
-    const installResult = runNpmInstall([
-      "install",
-      "--no-save",
-      "--package-lock=false",
-      "--install-strategy=nested",
-      isWindowsManagedBetterSqliteInstallSpec(installSpec) ? "--ignore-scripts" : null,
-      installSpec
-    ].filter(Boolean));
+    if (isWindowsManagedBetterSqliteInstallSpec(installSpec)) {
+      if (!copyManagedBetterSqliteRuntime(installSpec)) {
+        return false;
+      }
+    } else {
+      const installResult = runNpmInstall([
+        "install",
+        "--no-save",
+        "--package-lock=false",
+        "--install-strategy=nested",
+        installSpec
+      ]);
 
-    if (installResult.status !== 0) {
-      return false;
+      if (installResult.status !== 0) {
+        return false;
+      }
     }
 
     packageJsonPath = resolveModuleExportFile("better-sqlite3", "package.json");
@@ -470,6 +475,36 @@ function isWindowsManagedBetterSqliteInstallSpec(installSpec) {
     typeof installSpec === "string" &&
     installSpec.startsWith("file:")
   );
+}
+
+function copyManagedBetterSqliteRuntime(installSpec) {
+  const sourceDirectory = resolveFileInstallSpecPath(installSpec);
+  if (!sourceDirectory || !fs.existsSync(path.join(sourceDirectory, "package.json"))) {
+    console.error(`[codingns] Windows SQLite 受控包不存在：${installSpec}`);
+    return false;
+  }
+
+  const sourceBinaryPath = path.join(sourceDirectory, "build", "Release", "better_sqlite3.node");
+  if (!fs.existsSync(sourceBinaryPath)) {
+    console.error(`[codingns] Windows SQLite 受控包缺少预编译产物：${sourceBinaryPath}`);
+    return false;
+  }
+
+  const targetDirectory = path.join(packageRoot, "node_modules", "better-sqlite3");
+  fs.rmSync(targetDirectory, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(targetDirectory), { recursive: true });
+  fs.cpSync(sourceDirectory, targetDirectory, { recursive: true });
+  logInfo(`[codingns] SQLite 运行时依赖已复制到：${targetDirectory}`);
+  return true;
+}
+
+function resolveFileInstallSpecPath(installSpec) {
+  if (typeof installSpec !== "string" || !installSpec.startsWith("file:")) {
+    return null;
+  }
+
+  const filePath = installSpec.slice("file:".length);
+  return path.resolve(packageRoot, filePath);
 }
 
 function resolveRequiredPtyPackageName() {
