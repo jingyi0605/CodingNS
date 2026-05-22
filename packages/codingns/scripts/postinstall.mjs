@@ -59,11 +59,10 @@ cleanupBrokenCodexPackages();
 const repairResult = runNpmInstall([
   "install",
   "--no-save",
-  "--include=optional",
+  "--omit=optional",
   "--package-lock=false",
-  cliVersionRange ? `@openai/codex@${cliVersionRange}` : null,
-  `@openai/codex-sdk@${sdkVersionRange}`
-].filter(Boolean));
+  ...resolveCodexRepairInstallSpecs()
+]);
 
 if (repairResult.status !== 0) {
   process.exit(repairResult.status ?? 1);
@@ -218,6 +217,41 @@ async function verifyCodexRuntime() {
     console.error(`[codingns] Codex 运行时校验失败：${detail}`);
     return false;
   }
+}
+
+
+function resolveCodexRepairInstallSpecs() {
+  const specs = [
+    cliVersionRange ? `@openai/codex@${cliVersionRange}` : null,
+    `@openai/codex-sdk@${sdkVersionRange}`,
+    resolveCodexPlatformInstallSpec()
+  ];
+
+  return specs.filter(Boolean);
+}
+
+function resolveCodexPlatformInstallSpec() {
+  const platformPackage = resolveCodexPlatformPackageName();
+  const platformVersion = resolveCodexPlatformPackageVersion();
+
+  if (!platformPackage || !platformVersion) {
+    return null;
+  }
+
+  return `${platformPackage}@npm:@openai/codex@${platformVersion}`;
+}
+
+function resolveCodexPlatformPackageVersion() {
+  if (typeof cliVersionRange !== "string") {
+    return null;
+  }
+
+  const exactVersionMatch = cliVersionRange.match(/^(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z-.]+)?)$/u);
+  if (!exactVersionMatch) {
+    return null;
+  }
+
+  return `${exactVersionMatch[1]}-${process.platform}-${process.arch}`;
 }
 
 function cleanupBrokenCodexPackages() {
