@@ -148,8 +148,10 @@ async function ensureBetterSqliteRuntimeDependency() {
     return false;
   }
 
-  const packageVersion = readPackageVersion(packageJsonPath);
-  const actualPackageName = readPackageName(packageJsonPath) || "better-sqlite3";
+  const sqlitePackageRoot = findPackageRoot(packageJsonPath) ?? path.dirname(packageJsonPath);
+  const sqlitePackageJsonPath = path.join(sqlitePackageRoot, "package.json");
+  const packageVersion = readPackageVersion(sqlitePackageJsonPath);
+  const actualPackageName = readPackageName(sqlitePackageJsonPath) || "better-sqlite3";
   const packageSummary = packageVersion
     ? `${actualPackageName}@${packageVersion}`
     : actualPackageName;
@@ -161,7 +163,7 @@ async function ensureBetterSqliteRuntimeDependency() {
     return false;
   }
 
-  const nativeBindingPath = path.join(path.dirname(packageJsonPath), "build", "Release", "better_sqlite3.node");
+  const nativeBindingPath = path.join(sqlitePackageRoot, "build", "Release", "better_sqlite3.node");
   if (!fs.existsSync(nativeBindingPath)) {
     console.error(`[codingns] SQLite 运行时缺少预编译产物：${actualPackageName}`);
     return false;
