@@ -27,7 +27,7 @@ const installOutput = installOutputLogPath && fs.existsSync(installOutputLogPath
 assertEqual(installState.packageName, "@jingyi0605/codingns", "正式包名不对");
 assertEqual(installState.ptyPackageName, "@codingns/node-pty", "PTY 包名不对");
 assertEqual(installState.ptyPackageVersion, "1.0.0-cns.1", "PTY 包版本不对");
-assertEqual(installState.betterSqlitePackageName, "@codingns/better-sqlite3-win32-x64-node22", "SQLite 包名不对");
+assertEqual(installState.betterSqlitePackageName, "better-sqlite3", "SQLite 包名不对");
 assertEqual(installState.betterSqlitePackageVersion, "12.8.0-cns.1", "SQLite 包版本不对");
 
 if (!String(installState.nodeVersion || "").startsWith("22.")) {
@@ -157,10 +157,10 @@ function verifyInstallOutput(installOutput) {
 
   assertTextContains(installOutput, "Windows 正式安装将使用 CodingNS 私有 Node.js 22.16.0 运行时", "安装输出缺少私有 Node 提示");
   assertTextContains(installOutput, "PTY 运行时依赖已就绪：@codingns/node-pty", "安装输出缺少 PTY 命中结果");
-  assertTextContains(installOutput, "SQLite 运行时依赖已就绪：@codingns/better-sqlite3-win32-x64-node22@12.8.0-cns.1", "安装输出缺少 SQLite 命中结果");
+  assertTextContains(installOutput, "SQLite 运行时依赖已就绪：better-sqlite3@12.8.0-cns.1", "安装输出缺少 SQLite 命中结果");
   assertTextContains(installOutput, "实际运行时 Node.js：v22.16.0", "安装输出缺少最终运行时 Node");
   assertTextContains(installOutput, "实际 PTY 依赖：@codingns/node-pty@1.0.0-cns.1", "安装输出缺少最终 PTY 依赖");
-  assertTextContains(installOutput, "实际 SQLite 依赖：@codingns/better-sqlite3-win32-x64-node22@12.8.0-cns.1", "安装输出缺少最终 SQLite 依赖");
+  assertTextContains(installOutput, "实际 SQLite 依赖：better-sqlite3@12.8.0-cns.1", "安装输出缺少最终 SQLite 依赖");
 }
 
 function formatSpawnFailure(result) {

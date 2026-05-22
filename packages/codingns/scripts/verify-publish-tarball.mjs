@@ -32,12 +32,12 @@ if (packageJson.dependencies?.["better-sqlite3"]) {
   problems.push("发布包 package.json 仍然保留了 dependencies.better-sqlite3");
 }
 
-if (packageJson.optionalDependencies?.["better-sqlite3"] !== "^12.8.0") {
-  problems.push("发布包 package.json 没保留 better-sqlite3 的默认平台依赖");
+if (packageJson.codingnsRuntimeDependencies?.betterSqlite3 !== "^12.8.0") {
+  problems.push("发布包 package.json 没保留 better-sqlite3 的默认上游版本元信息");
 }
 
-if (packageJson.optionalDependencies?.["@codingns/better-sqlite3-win32-x64-node22"] !== "file:vendor/better-sqlite3-win32-x64-node22") {
-  problems.push("发布包 package.json 没把 Windows 专用 better-sqlite3 固定到 vendor/better-sqlite3-win32-x64-node22");
+if (packageJson.codingnsWindowsRuntimePackages?.betterSqlite3 !== "file:vendor/better-sqlite3-win32-x64-node22") {
+  problems.push("发布包 package.json 没记录 Windows 专用 better-sqlite3 受控包路径");
 }
 
 if (!tarEntries.includes(bundledSessionSyncPath)) {

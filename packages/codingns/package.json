@@ -46,7 +46,12 @@
   },
   "optionalDependencies": {
     "@codingns/node-pty": "workspace:*",
-    "node-pty": "^1.0.0",
-    "better-sqlite3": "^12.8.0"
+    "node-pty": "^1.0.0"
+  },
+  "codingnsRuntimeDependencies": {
+    "betterSqlite3": "^12.8.0"
+  },
+  "codingnsWindowsRuntimePackages": {
+    "betterSqlite3": "file:vendor/better-sqlite3-win32-x64-node22"
   }
 }

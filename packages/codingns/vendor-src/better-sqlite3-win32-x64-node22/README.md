@@ -1,10 +1,11 @@
-# `@codingns/better-sqlite3-win32-x64-node22`
+# `better-sqlite3`（CodingNS Windows 受控包）
 
-CodingNS 自维护的 `better-sqlite3` Windows 运行时包。
+这是 CodingNS 自维护的 `better-sqlite3` Windows 运行时包。
 
 目标很窄：
 
 - 只支持 `win32 + x64 + Node 22`
+- 包名保持 `better-sqlite3`，这样 npm 安装时不会再把“依赖名”和“真实包名”装成两套
 - 只给 `@jingyi0605/codingns` 的正式安装使用
 - 不接受安装阶段再回退到本机 `node-gyp rebuild`
 

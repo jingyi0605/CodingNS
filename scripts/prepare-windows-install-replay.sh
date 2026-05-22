@@ -63,8 +63,7 @@ const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
 
 packageJson.optionalDependencies = {
   ...packageJson.optionalDependencies,
-  "@codingns/node-pty": `file:../${nodePtyTarballName}`,
-  "better-sqlite3": "file:../better-sqlite3-win32-x64-node22"
+  "@codingns/node-pty": `file:../${nodePtyTarballName}`
 };
 
 fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);

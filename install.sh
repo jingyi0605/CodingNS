@@ -16,7 +16,6 @@ WINDOWS_PRIVATE_NODE_VERSION="${CODINGNS_WINDOWS_NODE_VERSION:-22.16.0}"
 WINDOWS_PRIVATE_NODE_DIST_BASE="${CODINGNS_WINDOWS_NODE_DIST_BASE:-https://nodejs.org/dist}"
 WINDOWS_NODE_PTY_PACKAGE_NAME="${CODINGNS_WINDOWS_NODE_PTY_PACKAGE_NAME:-@codingns/node-pty}"
 WINDOWS_BETTER_SQLITE_PACKAGE_NAME="${CODINGNS_WINDOWS_BETTER_SQLITE_PACKAGE_NAME:-better-sqlite3}"
-WINDOWS_BETTER_SQLITE_VENDOR_PACKAGE_NAME="${CODINGNS_WINDOWS_BETTER_SQLITE_VENDOR_PACKAGE_NAME:-@codingns/better-sqlite3-win32-x64-node22}"
 
 SUPPORTED_CLIS=(
   "claude-code|Claude Code|claude"
@@ -764,19 +763,6 @@ EOF
 }
 
 resolve_required_better_sqlite_package_name() {
-  if ! is_windows_environment; then
-    printf 'better-sqlite3\n'
-    return
-  fi
-
-  local target_major=""
-  target_major="$(read_major_version "${TARGET_NODE_VERSION:-}")"
-
-  if [[ "$target_major" == "22" ]] && [[ "$(uname -m)" == "x86_64" || "$(uname -m)" == "amd64" ]]; then
-    printf '%s\n' "$WINDOWS_BETTER_SQLITE_VENDOR_PACKAGE_NAME"
-    return
-  fi
-
   printf 'better-sqlite3\n'
 }
 

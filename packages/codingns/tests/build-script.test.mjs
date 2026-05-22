@@ -63,13 +63,14 @@ test("rewritePackageJsonForPublish 会改写 workspace 依赖并补齐 bundle �
   assert.equal(rewritten.optionalDependencies["@codingns/node-pty"], "file:vendor/node-pty-fork");
   assert.equal(
     rewritten.optionalDependencies["better-sqlite3"],
-    originalPackageJson.optionalDependencies["better-sqlite3"]
-  );
-  assert.equal(
-    rewritten.optionalDependencies["@codingns/better-sqlite3-win32-x64-node22"],
-    "file:vendor/better-sqlite3-win32-x64-node22"
+    undefined
   );
   assert.equal(rewritten.dependencies["better-sqlite3"], undefined);
+  assert.equal(rewritten.codingnsRuntimeDependencies.betterSqlite3, "^12.8.0");
+  assert.equal(
+    rewritten.codingnsWindowsRuntimePackages.betterSqlite3,
+    "file:vendor/better-sqlite3-win32-x64-node22"
+  );
 });
 
 test("stripPackLifecycleScripts 会移除 prepack 和 postpack，避免 staging 再跑一遍打包脚本", () => {

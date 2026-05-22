@@ -1,5 +1,5 @@
 {
-  "name": "@codingns/better-sqlite3-win32-x64-node22",
+  "name": "better-sqlite3",
   "version": "12.8.0-cns.1",
   "description": "CodingNS-maintained better-sqlite3 runtime bundle for Windows x64 + Node 22",
   "license": "MIT",
