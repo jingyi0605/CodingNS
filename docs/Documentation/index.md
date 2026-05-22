@@ -14,6 +14,9 @@ hero:
       text: 产品概览
       link: /overview/docs-overview
     - theme: alt
+      text: 开发者接入
+      link: /developer-guide/
+    - theme: alt
       text: 使用手册
       link: /user-guide/workspaces-and-sessions
     - theme: alt
@@ -29,6 +32,9 @@ features:
   - title: 日常使用
     details: 工作区、会话、文件、Git、终端和设置的使用说明集中在这里。
     link: /user-guide/workspaces-and-sessions
+  - title: 开发者接入
+    details: 想接静态 HTML 工具页、插件前端能力或工作区文件桥，从开发者手册开始。
+    link: /developer-guide/
   - title: 远程访问
     details: 远程访问、Tailscale、CodingNS Connect 和连接建议都在这里。
     link: /remote-access/remote-access-overview
@@ -51,6 +57,7 @@ features:
 ## 快速入口
 
 - 想先判断这产品适不适合你：看 [文档地图](/overview/docs-overview) 和 [产品概览](/overview/product-overview)。
+- 想接静态 HTML 工具页、插件前端或工作区文件桥：去 [开发者手册](/developer-guide/)。
 - 想完成首次安装和登录：从 [安装路径选择](/quick-install/installation-paths) 开始，继续阅读 [首次登录与开始使用](/quick-install/first-login)。
 - Host 已经运行，想了解主要页面和操作方式：进入 [工作区与会话](/user-guide/workspaces-and-sessions)。
 - 想从公司外、家里或手机继续访问：去 [远程访问概览](/remote-access/remote-access-overview)。

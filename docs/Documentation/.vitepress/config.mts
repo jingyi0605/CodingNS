@@ -77,6 +77,14 @@ const zhSidebar = [
     ]
   },
   {
+    text: "开发者手册",
+    items: [
+      { text: "开发者手册总览", link: "/developer-guide/" },
+      { text: "工作区文件桥与桌面包装", link: "/developer-guide/workspace-file-bridge-and-desktop-wrapper" },
+      { text: "插件前端接入工作区文件桥", link: "/developer-guide/plugin-frontend-workspace-file-bridge" }
+    ]
+  },
+  {
     text: "安装与接入",
     items: [
       { text: "安装路径选择", link: "/quick-install/installation-paths" },
@@ -124,6 +132,14 @@ const enSidebar = [
     ]
   },
   {
+    text: "Developer Guide",
+    items: [
+      { text: "Developer Guide Overview", link: "/en/developer-guide/" },
+      { text: "Workspace File Bridge & Desktop Wrapper", link: "/en/developer-guide/workspace-file-bridge-and-desktop-wrapper" },
+      { text: "Plugin Frontend Workspace File Bridge", link: "/en/developer-guide/plugin-frontend-workspace-file-bridge" }
+    ]
+  },
+  {
     text: "Install & Connect",
     items: [
       { text: "Choose an Install Path", link: "/en/quick-install/installation-paths" },
@@ -164,6 +180,7 @@ const zhThemeConfig = createThemeConfig({
   nav: [
     { text: "文档首页", link: "/" },
     { text: "开始使用", link: "/quick-install/installation-paths" },
+    { text: "开发者手册", link: "/developer-guide/" },
     { text: "功能使用", link: "/user-guide/workspaces-and-sessions" },
     { text: "连接与访问", link: "/remote-access/remote-access-overview" },
     { text: "支持与反馈", link: "/community/feedback-and-support" }
@@ -189,6 +206,7 @@ const enThemeConfig = createThemeConfig({
   nav: [
     { text: "Home", link: "/en/" },
     { text: "Get Started", link: "/en/quick-install/installation-paths" },
+    { text: "Developer Guide", link: "/en/developer-guide/" },
     { text: "Use the Product", link: "/en/user-guide/workspaces-and-sessions" },
     { text: "Access & Connect", link: "/en/remote-access/remote-access-overview" },
     { text: "Support", link: "/en/community/feedback-and-support" }
