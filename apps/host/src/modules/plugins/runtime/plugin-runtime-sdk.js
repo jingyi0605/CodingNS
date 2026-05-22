@@ -164,6 +164,22 @@
         path: relativePath
       });
     },
+    readFile: function (relativePath) {
+      return callHost("readFile", {
+        path: relativePath
+      });
+    },
+    writeFile: function (relativePath, content) {
+      return callHost("writeFile", {
+        path: relativePath,
+        content: typeof content === "string" ? content : ""
+      });
+    },
+    listDir: function (relativePath) {
+      return callHost("listDir", {
+        path: typeof relativePath === "string" ? relativePath : ""
+      });
+    },
     revealInFileManager: function (relativePath) {
       return callHost("revealInFileManager", {
         path: relativePath
