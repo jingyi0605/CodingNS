@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import Database from "better-sqlite3";
+import type { BetterSqliteDatabase } from "../../../shared/runtime/better-sqlite3.js";
+import Database from "../../../shared/runtime/better-sqlite3.js";
 
 import { nowIso } from "../../../shared/utils/time.js";
 import type {
@@ -14,7 +15,7 @@ import type {
 } from "./types.js";
 
 export class WechatClawRuntimeStateStore {
-  private readonly db: Database.Database;
+  private readonly db: BetterSqliteDatabase;
 
   constructor(runtimeRootDir: string) {
     fs.mkdirSync(runtimeRootDir, { recursive: true });

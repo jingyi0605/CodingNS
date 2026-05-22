@@ -3,9 +3,8 @@ import { appendFileSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 
-import Database from "better-sqlite3";
-
 import { parseCliArgs, readRequiredCliArg } from "./conpty-runtime-shared.js";
+import Database from "../../../shared/runtime/better-sqlite3.js";
 
 interface PersistRequest {
   type: "persist";

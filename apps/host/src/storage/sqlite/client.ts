@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import Database from "better-sqlite3";
+import type { BetterSqliteDatabase } from "../../shared/runtime/better-sqlite3.js";
+import Database from "../../shared/runtime/better-sqlite3.js";
 
 export interface DatabaseClient {
-  db: Database.Database;
+  db: BetterSqliteDatabase;
   close: () => void;
 }
 
@@ -76,7 +77,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   };
 }
 
-function ensurePreSchemaCompatibility(db: Database.Database): void {
+function ensurePreSchemaCompatibility(db: BetterSqliteDatabase): void {
   // 旧库还没有这些列时，schema.sql 里的索引会先炸掉，所以必须先补齐。
   ensureAuthTokenDeviceColumns(db);
   ensureOpsTargetWorkspaceSchema(db);
@@ -84,7 +85,7 @@ function ensurePreSchemaCompatibility(db: Database.Database): void {
   ensureAuthTokenCallerKindSchema(db);
 }
 
-function ensureAuthTokenDeviceColumns(db: Database.Database): void {
+function ensureAuthTokenDeviceColumns(db: BetterSqliteDatabase): void {
   if (!tableExists(db, "auth_tokens")) {
     return;
   }
@@ -125,7 +126,7 @@ function ensureAuthTokenDeviceColumns(db: Database.Database): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_auth_tokens_session_id ON auth_tokens(session_id)");
 }
 
-function ensureAuthTokenCallerKindSchema(db: Database.Database): void {
+function ensureAuthTokenCallerKindSchema(db: BetterSqliteDatabase): void {
   if (!tableExists(db, "auth_tokens")) {
     return;
   }
@@ -209,7 +210,7 @@ function ensureAuthTokenCallerKindSchema(db: Database.Database): void {
   `);
 }
 
-function tableExists(db: Database.Database, tableName: string): boolean {
+function tableExists(db: BetterSqliteDatabase, tableName: string): boolean {
   const row = db
     .prepare(
       `SELECT name
@@ -221,7 +222,7 @@ function tableExists(db: Database.Database, tableName: string): boolean {
   return row?.name === tableName;
 }
 
-function ensureAuthDeviceSchema(db: Database.Database): void {
+function ensureAuthDeviceSchema(db: BetterSqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS auth_devices (
       id TEXT PRIMARY KEY,
@@ -286,7 +287,7 @@ function ensureAuthDeviceSchema(db: Database.Database): void {
   }
 }
 
-function ensurePluginRegistrySchema(db: Database.Database): void {
+function ensurePluginRegistrySchema(db: BetterSqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS plugin_definitions (
       id TEXT PRIMARY KEY,
@@ -359,7 +360,7 @@ function ensurePluginRegistrySchema(db: Database.Database): void {
   ensurePluginAuditEventForeignKeyCompatibility(db);
 }
 
-function ensurePluginAuditEventForeignKeyCompatibility(db: Database.Database): void {
+function ensurePluginAuditEventForeignKeyCompatibility(db: BetterSqliteDatabase): void {
   if (!tableExists(db, "plugin_audit_events")) {
     return;
   }
@@ -448,7 +449,7 @@ function ensurePluginAuditEventForeignKeyCompatibility(db: Database.Database): v
   `);
 }
 
-function ensurePluginRuntimeSessionSchema(db: Database.Database): void {
+function ensurePluginRuntimeSessionSchema(db: BetterSqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS plugin_runtime_sessions (
       id TEXT PRIMARY KEY,
@@ -474,7 +475,7 @@ function ensurePluginRuntimeSessionSchema(db: Database.Database): void {
   `);
 }
 
-function ensurePluginPermissionGrantSchema(db: Database.Database): void {
+function ensurePluginPermissionGrantSchema(db: BetterSqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS plugin_permission_grants (
       id TEXT PRIMARY KEY,
@@ -512,7 +513,7 @@ function ensurePluginPermissionGrantSchema(db: Database.Database): void {
   `);
 }
 
-function ensurePluginRunSchema(db: Database.Database): void {
+function ensurePluginRunSchema(db: BetterSqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS plugin_runs (
       id TEXT PRIMARY KEY,
@@ -546,7 +547,7 @@ function ensurePluginRunSchema(db: Database.Database): void {
   }
 }
 
-function ensureAuthLoginAttemptSchema(db: Database.Database): void {
+function ensureAuthLoginAttemptSchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(auth_login_attempts)")
     .all() as Array<{ name: string }>;
@@ -571,7 +572,7 @@ function ensureAuthLoginAttemptSchema(db: Database.Database): void {
   `);
 }
 
-function ensureWorkspaceRemovalColumn(db: Database.Database): void {
+function ensureWorkspaceRemovalColumn(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(workspaces)")
     .all() as Array<{ name: string }>;
@@ -583,7 +584,7 @@ function ensureWorkspaceRemovalColumn(db: Database.Database): void {
   db.exec("ALTER TABLE workspaces ADD COLUMN removed_at TEXT");
 }
 
-function ensureWorkspaceSortOrderColumn(db: Database.Database): void {
+function ensureWorkspaceSortOrderColumn(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(workspaces)")
     .all() as Array<{ name: string }>;
@@ -630,7 +631,7 @@ function ensureWorkspaceSortOrderColumn(db: Database.Database): void {
   runInTransaction(workspaces);
 }
 
-function ensureWorkspaceNavigationBackgroundColorColumn(db: Database.Database): void {
+function ensureWorkspaceNavigationBackgroundColorColumn(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(workspace_navigation_states)")
     .all() as Array<{ name: string }>;
@@ -642,7 +643,7 @@ function ensureWorkspaceNavigationBackgroundColorColumn(db: Database.Database): 
   db.exec("ALTER TABLE workspace_navigation_states ADD COLUMN background_color TEXT");
 }
 
-function ensureSessionAttachmentSchema(db: Database.Database): void {
+function ensureSessionAttachmentSchema(db: BetterSqliteDatabase): void {
   const table = db
     .prepare(
       `SELECT sql
@@ -713,7 +714,7 @@ function ensureSessionAttachmentSchema(db: Database.Database): void {
   `);
 }
 
-function ensureButlerProfileSchema(db: Database.Database): void {
+function ensureButlerProfileSchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(butler_profiles)")
     .all() as Array<{ name: string }>;
@@ -725,7 +726,7 @@ function ensureButlerProfileSchema(db: Database.Database): void {
   db.exec("ALTER TABLE butler_profiles ADD COLUMN display_name TEXT NOT NULL DEFAULT '代码助手'");
 }
 
-function ensureUserPreferenceProfileSchema(db: Database.Database): void {
+function ensureUserPreferenceProfileSchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(user_preference_profiles)")
     .all() as Array<{ name: string }>;
@@ -746,7 +747,7 @@ function ensureUserPreferenceProfileSchema(db: Database.Database): void {
   }
 }
 
-function ensureManagedSkillScopeSchema(db: Database.Database): void {
+function ensureManagedSkillScopeSchema(db: BetterSqliteDatabase): void {
   if (!tableExists(db, "managed_skills")) {
     return;
   }
@@ -835,7 +836,7 @@ function ensureManagedSkillScopeSchema(db: Database.Database): void {
   `);
 }
 
-function ensureOpenCliProviderSchema(db: Database.Database): void {
+function ensureOpenCliProviderSchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(opencli_providers)")
     .all() as Array<{ name: string }>;
@@ -857,7 +858,7 @@ function ensureOpenCliProviderSchema(db: Database.Database): void {
   }
 }
 
-function ensureOpenCliCatalogSchema(db: Database.Database): void {
+function ensureOpenCliCatalogSchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(opencli_catalog_entries)")
     .all() as Array<{ name: string }>;
@@ -886,7 +887,7 @@ function ensureOpenCliCatalogSchema(db: Database.Database): void {
   `);
 }
 
-function ensureOpenCliRuntimeProfileSchema(db: Database.Database): void {
+function ensureOpenCliRuntimeProfileSchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(opencli_runtime_profiles)")
     .all() as Array<{ name: string }>;
@@ -901,7 +902,7 @@ function ensureOpenCliRuntimeProfileSchema(db: Database.Database): void {
   `);
 }
 
-function ensureButlerControlSessionSchema(db: Database.Database): void {
+function ensureButlerControlSessionSchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(butler_control_sessions)")
     .all() as Array<{ name: string }>;
@@ -936,7 +937,7 @@ function ensureButlerControlSessionSchema(db: Database.Database): void {
   }
 }
 
-function ensureButlerControlTimerSchema(db: Database.Database): void {
+function ensureButlerControlTimerSchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(butler_control_timers)")
     .all() as Array<{ name: string }>;
@@ -974,7 +975,7 @@ function ensureButlerControlTimerSchema(db: Database.Database): void {
   `);
 }
 
-function ensureAssistantAutomationSchema(db: Database.Database): void {
+function ensureAssistantAutomationSchema(db: BetterSqliteDatabase): void {
   const taskColumns = db
     .prepare("PRAGMA table_info(assistant_automation_tasks)")
     .all() as Array<{ name: string }>;
@@ -1039,7 +1040,7 @@ function ensureAssistantAutomationSchema(db: Database.Database): void {
   `);
 }
 
-function ensureAssistantSandboxSchema(db: Database.Database): void {
+function ensureAssistantSandboxSchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(assistant_sandboxes)")
     .all() as Array<{ name: string }>;
@@ -1167,7 +1168,7 @@ function ensureAssistantSandboxSchema(db: Database.Database): void {
   `);
 }
 
-function ensureVerificationRunSchema(db: Database.Database): void {
+function ensureVerificationRunSchema(db: BetterSqliteDatabase): void {
   const verificationRunSql = readTableSql(db, "verification_runs");
 
   if (!verificationRunSql.includes("status IN ('queued', 'running', 'passed', 'failed', 'skipped')")) {
@@ -1245,7 +1246,7 @@ function ensureVerificationRunSchema(db: Database.Database): void {
   `);
 }
 
-function ensureDocumentTemplateSchema(db: Database.Database): void {
+function ensureDocumentTemplateSchema(db: BetterSqliteDatabase): void {
   if (!tableExists(db, "document_templates")) {
     return;
   }
@@ -1264,7 +1265,7 @@ function ensureDocumentTemplateSchema(db: Database.Database): void {
   }
 }
 
-function ensureOpsTargetWorkspaceSchema(db: Database.Database): void {
+function ensureOpsTargetWorkspaceSchema(db: BetterSqliteDatabase): void {
   if (!tableExists(db, "ops_targets")) {
     return;
   }
@@ -1281,7 +1282,7 @@ function ensureOpsTargetWorkspaceSchema(db: Database.Database): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_ops_targets_workspace_id ON ops_targets(workspace_id)");
 }
 
-function ensureButlerInboxSchema(db: Database.Database): void {
+function ensureButlerInboxSchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(butler_inbox_items)")
     .all() as Array<{ name: string }>;
@@ -1293,7 +1294,7 @@ function ensureButlerInboxSchema(db: Database.Database): void {
   db.exec("ALTER TABLE butler_inbox_items ADD COLUMN assistant_state_json TEXT NOT NULL DEFAULT '{}'");
 }
 
-function ensureButlerFollowUpTaskSchema(db: Database.Database): void {
+function ensureButlerFollowUpTaskSchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(butler_follow_up_tasks)")
     .all() as Array<{ name: string }>;
@@ -1328,7 +1329,7 @@ function ensureButlerFollowUpTaskSchema(db: Database.Database): void {
   }
 }
 
-function ensureButlerSessionSummarySchema(db: Database.Database): void {
+function ensureButlerSessionSummarySchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(butler_session_summary_states)")
     .all() as Array<{ name: string }>;
@@ -1340,7 +1341,7 @@ function ensureButlerSessionSummarySchema(db: Database.Database): void {
   db.exec("ALTER TABLE butler_session_summary_states ADD COLUMN last_summarized_sequence INTEGER");
 }
 
-function ensureInstanceTailscaleStatusSchema(db: Database.Database): void {
+function ensureInstanceTailscaleStatusSchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(instance_tailscale_status)")
     .all() as Array<{ name: string }>;
@@ -1352,7 +1353,7 @@ function ensureInstanceTailscaleStatusSchema(db: Database.Database): void {
   db.exec("ALTER TABLE instance_tailscale_status ADD COLUMN account_name TEXT");
 }
 
-function ensureInstanceTailscaleConfigSchema(db: Database.Database): void {
+function ensureInstanceTailscaleConfigSchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(instance_tailscale_config)")
     .all() as Array<{ name: string }>;
@@ -1365,7 +1366,7 @@ function ensureInstanceTailscaleConfigSchema(db: Database.Database): void {
   db.exec("UPDATE instance_tailscale_config SET activated = enabled");
 }
 
-function ensureInstanceRelayTunnelConfigSchema(db: Database.Database): void {
+function ensureInstanceRelayTunnelConfigSchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(instance_relay_tunnel_config)")
     .all() as Array<{ name: string }>;
@@ -1398,7 +1399,7 @@ function ensureInstanceRelayTunnelConfigSchema(db: Database.Database): void {
   }
 }
 
-function ensureSessionProviderSchema(db: Database.Database): void {
+function ensureSessionProviderSchema(db: BetterSqliteDatabase): void {
   const bindingSql = readTableSql(db, "session_bindings");
   const indexSql = readTableSql(db, "session_indices");
   const requiresBindingMigration = bindingSql.includes("CHECK (provider IN ('claude-code', 'codex'))");
@@ -1495,7 +1496,7 @@ function ensureSessionProviderSchema(db: Database.Database): void {
   `);
 }
 
-function ensureSessionBindingPresetSchema(db: Database.Database): void {
+function ensureSessionBindingPresetSchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(session_bindings)")
     .all() as Array<{ name: string }>;
@@ -1520,7 +1521,7 @@ function ensureSessionBindingPresetSchema(db: Database.Database): void {
   }
 }
 
-function ensureSessionStateSchema(db: Database.Database): void {
+function ensureSessionStateSchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(session_states)")
     .all() as Array<{ name: string }>;
@@ -1602,7 +1603,7 @@ function ensureSessionStateSchema(db: Database.Database): void {
   `);
 }
 
-function ensureSessionForkSchema(db: Database.Database): void {
+function ensureSessionForkSchema(db: BetterSqliteDatabase): void {
   const tableSql = db
     .prepare(
       `SELECT sql
@@ -1709,7 +1710,7 @@ function ensureSessionForkSchema(db: Database.Database): void {
   `);
 }
 
-function ensureSessionIndexArchiveColumn(db: Database.Database): void {
+function ensureSessionIndexArchiveColumn(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(session_indices)")
     .all() as Array<{ name: string }>;
@@ -1724,7 +1725,7 @@ function ensureSessionIndexArchiveColumn(db: Database.Database): void {
   `);
 }
 
-function ensureSessionRelationColumns(db: Database.Database): void {
+function ensureSessionRelationColumns(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(session_indices)")
     .all() as Array<{ name: string }>;
@@ -1759,7 +1760,7 @@ function ensureSessionRelationColumns(db: Database.Database): void {
   }
 }
 
-function ensureSessionChangedFileTables(db: Database.Database): void {
+function ensureSessionChangedFileTables(db: BetterSqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS session_changed_files (
       session_id TEXT NOT NULL,
@@ -1785,7 +1786,7 @@ function ensureSessionChangedFileTables(db: Database.Database): void {
   `);
 }
 
-function ensureTerminalCommandTemplatePortColumn(db: Database.Database): void {
+function ensureTerminalCommandTemplatePortColumn(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(terminal_command_templates)")
     .all() as Array<{ name: string }>;
@@ -1797,7 +1798,7 @@ function ensureTerminalCommandTemplatePortColumn(db: Database.Database): void {
   db.exec("ALTER TABLE terminal_command_templates ADD COLUMN port INTEGER");
 }
 
-function ensureTerminalCommandTemplateRuntimeTypeColumn(db: Database.Database): void {
+function ensureTerminalCommandTemplateRuntimeTypeColumn(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(terminal_command_templates)")
     .all() as Array<{ name: string }>;
@@ -1809,7 +1810,7 @@ function ensureTerminalCommandTemplateRuntimeTypeColumn(db: Database.Database): 
   db.exec("ALTER TABLE terminal_command_templates ADD COLUMN runtime_type TEXT");
 }
 
-function ensureTerminalCommandTemplateProxySchema(db: Database.Database): void {
+function ensureTerminalCommandTemplateProxySchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(terminal_command_templates)")
     .all() as Array<{ name: string }>;
@@ -1841,7 +1842,7 @@ function ensureTerminalCommandTemplateProxySchema(db: Database.Database): void {
   `);
 }
 
-function ensureTerminalInstanceProcessIdColumn(db: Database.Database): void {
+function ensureTerminalInstanceProcessIdColumn(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(terminal_instances)")
     .all() as Array<{ name: string }>;
@@ -1853,7 +1854,7 @@ function ensureTerminalInstanceProcessIdColumn(db: Database.Database): void {
   db.exec("ALTER TABLE terminal_instances ADD COLUMN process_id INTEGER");
 }
 
-function ensureTerminalRuntimeSchema(db: Database.Database): void {
+function ensureTerminalRuntimeSchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(terminal_instances)")
     .all() as Array<{ name: string }>;
@@ -1968,7 +1969,7 @@ function ensureTerminalRuntimeSchema(db: Database.Database): void {
   `);
 }
 
-function ensureTerminalLogSchema(db: Database.Database): void {
+function ensureTerminalLogSchema(db: BetterSqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS terminal_log_files (
       id TEXT PRIMARY KEY,
@@ -2011,7 +2012,7 @@ function ensureTerminalLogSchema(db: Database.Database): void {
   `);
 }
 
-function ensureDebugTargetSchema(db: Database.Database): void {
+function ensureDebugTargetSchema(db: BetterSqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS debug_targets (
       id TEXT PRIMARY KEY,
@@ -2057,7 +2058,7 @@ function ensureDebugTargetSchema(db: Database.Database): void {
   `);
 }
 
-function ensureFrameworkAnalysisSchema(db: Database.Database): void {
+function ensureFrameworkAnalysisSchema(db: BetterSqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS framework_analysis_results (
       id TEXT PRIMARY KEY,
@@ -2093,7 +2094,7 @@ function ensureFrameworkAnalysisSchema(db: Database.Database): void {
   `);
 }
 
-function ensureDebugRuntimeSchema(db: Database.Database): void {
+function ensureDebugRuntimeSchema(db: BetterSqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS debug_runtime_sessions (
       id TEXT PRIMARY KEY,
@@ -2112,7 +2113,7 @@ function ensureDebugRuntimeSchema(db: Database.Database): void {
   `);
 }
 
-function ensurePortLeaseSchema(db: Database.Database): void {
+function ensurePortLeaseSchema(db: BetterSqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS port_leases (
       id TEXT PRIMARY KEY,
@@ -2137,7 +2138,7 @@ function ensurePortLeaseSchema(db: Database.Database): void {
   `);
 }
 
-function ensureRuntimeBindingSchema(db: Database.Database): void {
+function ensureRuntimeBindingSchema(db: BetterSqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS runtime_bindings (
       id TEXT PRIMARY KEY,
@@ -2159,7 +2160,7 @@ function ensureRuntimeBindingSchema(db: Database.Database): void {
   `);
 }
 
-function ensureAiFallbackEditSchema(db: Database.Database): void {
+function ensureAiFallbackEditSchema(db: BetterSqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS ai_fallback_edits (
       id TEXT PRIMARY KEY,
@@ -2181,7 +2182,7 @@ function ensureAiFallbackEditSchema(db: Database.Database): void {
   `);
 }
 
-function ensureTerminalCommandTemplateDebugSchema(db: Database.Database): void {
+function ensureTerminalCommandTemplateDebugSchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(terminal_command_templates)")
     .all() as Array<{ name: string }>;
@@ -2235,7 +2236,7 @@ function ensureTerminalCommandTemplateDebugSchema(db: Database.Database): void {
   `);
 }
 
-function ensureTerminalInstanceDebugSchema(db: Database.Database): void {
+function ensureTerminalInstanceDebugSchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(terminal_instances)")
     .all() as Array<{ name: string }>;
@@ -2290,7 +2291,7 @@ function ensureTerminalInstanceDebugSchema(db: Database.Database): void {
   `);
 }
 
-function readTableSql(db: Database.Database, tableName: string): string {
+function readTableSql(db: BetterSqliteDatabase, tableName: string): string {
   const row = db
     .prepare(
       `
