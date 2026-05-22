@@ -125,8 +125,9 @@ async function ensureBetterSqliteRuntimeDependency() {
       "--no-save",
       "--package-lock=false",
       "--install-strategy=nested",
+      isWindowsManagedBetterSqliteInstallSpec(installSpec) ? "--ignore-scripts" : null,
       installSpec
-    ]);
+    ].filter(Boolean));
 
     if (installResult.status !== 0) {
       return false;
@@ -459,6 +460,16 @@ function resolveBetterSqliteInstallSpec() {
   }
 
   return "better-sqlite3";
+}
+
+function isWindowsManagedBetterSqliteInstallSpec(installSpec) {
+  return (
+    process.platform === "win32" &&
+    process.arch === "x64" &&
+    Number((process.versions.node || "").split(".")[0]) === 22 &&
+    typeof installSpec === "string" &&
+    installSpec.startsWith("file:")
+  );
 }
 
 function resolveRequiredPtyPackageName() {
