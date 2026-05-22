@@ -12,7 +12,8 @@
     "README.md",
     "scripts/postinstall.mjs",
     "node_modules/@codingns/session-sync-core",
-    "vendor"
+    "vendor",
+    "vendor-src/better-sqlite3-win32-x64-node22/README.md"
   ],
   "engines": {
     "node": ">=22.0.0"
@@ -35,7 +36,6 @@
     "@jackwener/opencli": "1.7.7",
     "@openai/codex": "0.130.0",
     "@openai/codex-sdk": "0.130.0",
-    "better-sqlite3": "^12.8.0",
     "chokidar": "^5.0.0",
     "fastify": "^5.8.2",
     "ignore": "^7.0.5",
@@ -46,6 +46,7 @@
   },
   "optionalDependencies": {
     "@codingns/node-pty": "workspace:*",
-    "node-pty": "^1.0.0"
+    "node-pty": "^1.0.0",
+    "better-sqlite3": "^12.8.0"
   }
 }

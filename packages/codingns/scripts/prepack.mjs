@@ -31,6 +31,11 @@ function main() {
     targetDir: path.join(vendorRoot, "node-pty-fork"),
     includeBuildScript: false
   });
+  copyWorkspaceDependency({
+    packageDir: path.join(workspaceRoot, "packages", "codingns", "vendor-src", "better-sqlite3-win32-x64-node22"),
+    targetDir: path.join(vendorRoot, "better-sqlite3-win32-x64-node22"),
+    includeBuildScript: true
+  });
   writeJson(
     packageJsonPath,
     rewritePackageJsonForPublish(originalPackageJson, workspacePackageVersions)

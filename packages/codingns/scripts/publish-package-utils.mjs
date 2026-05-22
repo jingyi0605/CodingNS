@@ -4,6 +4,9 @@ import path from "node:path";
 export const SESSION_SYNC_CORE_PACKAGE_NAME = "@codingns/session-sync-core";
 export const NODE_PTY_PACKAGE_NAME = "@codingns/node-pty";
 export const NODE_PTY_VENDOR_RELATIVE_PATH = "vendor/node-pty-fork";
+export const BETTER_SQLITE_PACKAGE_NAME = "better-sqlite3";
+export const BETTER_SQLITE_VENDOR_PACKAGE_NAME = "@codingns/better-sqlite3-win32-x64-node22";
+export const BETTER_SQLITE_VENDOR_RELATIVE_PATH = "vendor/better-sqlite3-win32-x64-node22";
 
 export function readJson(targetPath) {
   return JSON.parse(fs.readFileSync(targetPath, "utf8"));
@@ -98,6 +101,7 @@ function resolveWorkspaceRange(dependencyName, versionRange, workspacePackageVer
 
 export function rewritePackageJsonForPublish(originalPackageJson, workspacePackageVersions) {
   const publishPackageJson = structuredClone(originalPackageJson);
+  const originalBetterSqliteRange = publishPackageJson.optionalDependencies?.[BETTER_SQLITE_PACKAGE_NAME];
 
   rewriteWorkspaceDependencies(publishPackageJson, workspacePackageVersions);
 
@@ -110,9 +114,17 @@ export function rewritePackageJsonForPublish(originalPackageJson, workspacePacka
     SESSION_SYNC_CORE_PACKAGE_NAME
   ]));
 
+  publishPackageJson.dependencies = {
+    ...publishPackageJson.dependencies
+  };
+
+  delete publishPackageJson.dependencies[BETTER_SQLITE_PACKAGE_NAME];
+
   publishPackageJson.optionalDependencies = {
     ...publishPackageJson.optionalDependencies,
-    [NODE_PTY_PACKAGE_NAME]: `file:${NODE_PTY_VENDOR_RELATIVE_PATH}`
+    [NODE_PTY_PACKAGE_NAME]: `file:${NODE_PTY_VENDOR_RELATIVE_PATH}`,
+    [BETTER_SQLITE_PACKAGE_NAME]: originalBetterSqliteRange ?? publishPackageJson.optionalDependencies?.[BETTER_SQLITE_PACKAGE_NAME],
+    [BETTER_SQLITE_VENDOR_PACKAGE_NAME]: `file:${BETTER_SQLITE_VENDOR_RELATIVE_PATH}`
   };
 
   return publishPackageJson;

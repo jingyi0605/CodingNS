@@ -61,6 +61,15 @@ test("rewritePackageJsonForPublish 会改写 workspace 依赖并补齐 bundle �
   assert.equal(rewritten.dependencies["@codingns/session-sync-core"], "0.1.0");
   assert.deepEqual(rewritten.bundleDependencies, ["@codingns/session-sync-core"]);
   assert.equal(rewritten.optionalDependencies["@codingns/node-pty"], "file:vendor/node-pty-fork");
+  assert.equal(
+    rewritten.optionalDependencies["better-sqlite3"],
+    originalPackageJson.optionalDependencies["better-sqlite3"]
+  );
+  assert.equal(
+    rewritten.optionalDependencies["@codingns/better-sqlite3-win32-x64-node22"],
+    "file:vendor/better-sqlite3-win32-x64-node22"
+  );
+  assert.equal(rewritten.dependencies["better-sqlite3"], undefined);
 });
 
 test("stripPackLifecycleScripts 会移除 prepack 和 postpack，避免 staging 再跑一遍打包脚本", () => {
@@ -79,4 +88,21 @@ test("stripPackLifecycleScripts 会移除 prepack 和 postpack，避免 staging 
       postinstall: "node postinstall.mjs"
     }
   });
+});
+
+
+test("vendor 里的 better-sqlite3 Windows 受控包在非 Windows 平台会跳过 install 校验", async () => {
+  const verifyRuntime = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "vendor-src",
+    "better-sqlite3-win32-x64-node22",
+    "scripts",
+    "verify-runtime.cjs"
+  );
+  const { spawnSync } = await import("node:child_process");
+  const result = spawnSync(process.execPath, [verifyRuntime], { encoding: "utf8" });
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /非 win32 环境，跳过运行时校验/);
 });

@@ -16,6 +16,7 @@ WINDOWS_PRIVATE_NODE_VERSION="${CODINGNS_WINDOWS_NODE_VERSION:-22.16.0}"
 WINDOWS_PRIVATE_NODE_DIST_BASE="${CODINGNS_WINDOWS_NODE_DIST_BASE:-https://nodejs.org/dist}"
 WINDOWS_NODE_PTY_PACKAGE_NAME="${CODINGNS_WINDOWS_NODE_PTY_PACKAGE_NAME:-@codingns/node-pty}"
 WINDOWS_BETTER_SQLITE_PACKAGE_NAME="${CODINGNS_WINDOWS_BETTER_SQLITE_PACKAGE_NAME:-better-sqlite3}"
+WINDOWS_BETTER_SQLITE_VENDOR_PACKAGE_NAME="${CODINGNS_WINDOWS_BETTER_SQLITE_VENDOR_PACKAGE_NAME:-@codingns/better-sqlite3-win32-x64-node22}"
 
 SUPPORTED_CLIS=(
   "claude-code|Claude Code|claude"
@@ -83,6 +84,8 @@ CODINGNS_PACKAGE_NAME=""
 CODINGNS_PACKAGE_VERSION=""
 CODINGNS_PTY_PACKAGE_NAME=""
 CODINGNS_PTY_PACKAGE_VERSION=""
+CODINGNS_BETTER_SQLITE_PACKAGE_NAME=""
+CODINGNS_BETTER_SQLITE_PACKAGE_VERSION=""
 
 msg() {
   local key="$1"
@@ -260,6 +263,8 @@ msg() {
     en:warn_windows_using_private_node) printf 'Windows installation will use the private CodingNS Node.js %s runtime. The system Node.js is used for diagnostics only.' "$@";;
     zh:warn_windows_target_runtime_fallback_build) printf '目标私有运行时下，以下原生依赖仍可能回退本机编译：%s' "$@";;
     en:warn_windows_target_runtime_fallback_build) printf 'Under the target private runtime, these native dependencies may still fall back to local compilation: %s' "$@";;
+    zh:info_runtime_better_sqlite) printf '实际 SQLite 依赖：%s' "$@";;
+    en:info_runtime_better_sqlite) printf 'Runtime SQLite dependency: %s' "$@";;
     zh:warn_windows_system_node_diagnostics) printf '检测到系统 Node.js：%s（ABI %s）' "$@";;
     en:warn_windows_system_node_diagnostics) printf 'Detected system Node.js: %s (ABI %s)' "$@";;
     zh:info_windows_target_runtime_summary) printf '目标私有运行时：Windows x64 + Node.js %s（ABI %s）' "$@";;
@@ -758,6 +763,61 @@ try {
 EOF
 }
 
+resolve_required_better_sqlite_package_name() {
+  if ! is_windows_environment; then
+    printf 'better-sqlite3\n'
+    return
+  fi
+
+  local target_major=""
+  target_major="$(read_major_version "${TARGET_NODE_VERSION:-}")"
+
+  if [[ "$target_major" == "22" ]] && [[ "$(uname -m)" == "x86_64" || "$(uname -m)" == "amd64" ]]; then
+    printf '%s\n' "$WINDOWS_BETTER_SQLITE_VENDOR_PACKAGE_NAME"
+    return
+  fi
+
+  printf 'better-sqlite3\n'
+}
+
+resolve_codingns_better_sqlite_dependency_metadata() {
+  CODINGNS_BETTER_SQLITE_PACKAGE_NAME=""
+  CODINGNS_BETTER_SQLITE_PACKAGE_VERSION=""
+
+  if [[ -z "$CODINGNS_PACKAGE_ROOT" ]]; then
+    return 0
+  fi
+
+  local required_package_name=""
+  local dependency_package_root=""
+  local dependency_package_json=""
+
+  required_package_name="$(resolve_required_better_sqlite_package_name)"
+  dependency_package_root="$(resolve_package_root_from_dependency "$CODINGNS_PACKAGE_ROOT" "$required_package_name" 2>/dev/null || true)"
+
+  if [[ -z "$dependency_package_root" && "$required_package_name" != "better-sqlite3" ]]; then
+    dependency_package_root="$(resolve_package_root_from_dependency "$CODINGNS_PACKAGE_ROOT" "better-sqlite3" 2>/dev/null || true)"
+    if [[ -n "$dependency_package_root" ]]; then
+      required_package_name="better-sqlite3"
+    fi
+  fi
+
+  if [[ -z "$dependency_package_root" ]]; then
+    return 0
+  fi
+
+  dependency_package_json="$dependency_package_root/package.json"
+  if [[ ! -f "$dependency_package_json" ]]; then
+    return 0
+  fi
+
+  CODINGNS_BETTER_SQLITE_PACKAGE_NAME="$(read_package_json_field "$dependency_package_json" "name" || true)"
+  CODINGNS_BETTER_SQLITE_PACKAGE_VERSION="$(read_package_json_field "$dependency_package_json" "version" || true)"
+
+  [[ -n "$CODINGNS_BETTER_SQLITE_PACKAGE_NAME" ]] || CODINGNS_BETTER_SQLITE_PACKAGE_NAME="$required_package_name"
+  return 0
+}
+
 resolve_required_pty_package_name() {
   if ! is_windows_environment; then
     printf 'node-pty\n'
@@ -1094,7 +1154,7 @@ collect_target_runtime_native_support() {
   target_major="$(read_major_version "$TARGET_NODE_VERSION")"
 
   TARGET_RUNTIME_MANAGED_PACKAGE_SUMMARY+=("${WINDOWS_NODE_PTY_PACKAGE_NAME}: 目标是 win32 + x64 + Node 22，预期使用随包预编译，不接受本机编译")
-  TARGET_RUNTIME_MANAGED_PACKAGE_SUMMARY+=("${WINDOWS_BETTER_SQLITE_PACKAGE_NAME}: 优先使用上游预编译，若未命中仍可能回退本机编译")
+  TARGET_RUNTIME_MANAGED_PACKAGE_SUMMARY+=("${WINDOWS_BETTER_SQLITE_PACKAGE_NAME}: 目标是 win32 + x64 + Node 22，预期使用随包预编译，不接受本机编译")
 
   if [[ "$target_major" != "22" ]]; then
     TARGET_RUNTIME_UNSUPPORTED_PACKAGES+=("${WINDOWS_NODE_PTY_PACKAGE_NAME}: requires Node 22")
@@ -1104,7 +1164,6 @@ collect_target_runtime_native_support() {
     TARGET_RUNTIME_UNSUPPORTED_PACKAGES+=("${WINDOWS_NODE_PTY_PACKAGE_NAME}: requires x64")
   fi
 
-  TARGET_RUNTIME_FALLBACK_PACKAGES+=("${WINDOWS_BETTER_SQLITE_PACKAGE_NAME}")
 }
 
 ensure_windows_target_runtime_supported() {
@@ -1124,9 +1183,6 @@ ensure_windows_target_runtime_supported() {
     die error_windows_target_runtime_unsupported "$(IFS=', '; printf '%s' "${TARGET_RUNTIME_UNSUPPORTED_PACKAGES[*]}")"
   fi
 
-  if (( ${#TARGET_RUNTIME_FALLBACK_PACKAGES[@]} > 0 )); then
-    say_warn warn_windows_target_runtime_fallback_build "$(IFS=', '; printf '%s' "${TARGET_RUNTIME_FALLBACK_PACKAGES[*]}")"
-  fi
 }
 
 build_private_install_env() {
@@ -2011,6 +2067,8 @@ write_private_runtime_state() {
   CODINGNS_STATE_PACKAGE_VERSION="${CODINGNS_PACKAGE_VERSION}" \
   CODINGNS_STATE_PTY_PACKAGE_NAME="${CODINGNS_PTY_PACKAGE_NAME}" \
   CODINGNS_STATE_PTY_PACKAGE_VERSION="${CODINGNS_PTY_PACKAGE_VERSION}" \
+  CODINGNS_STATE_BETTER_SQLITE_PACKAGE_NAME="${CODINGNS_BETTER_SQLITE_PACKAGE_NAME}" \
+  CODINGNS_STATE_BETTER_SQLITE_PACKAGE_VERSION="${CODINGNS_BETTER_SQLITE_PACKAGE_VERSION}" \
   CODINGNS_STATE_PACKAGE_SPEC="${PACKAGE_SPEC}" \
   CODINGNS_STATE_REGISTRY="${ACTIVE_NPM_REGISTRY}" \
   CODINGNS_STATE_NODE_VERSION="$(normalize_version_text "${TARGET_NODE_VERSION:-$WINDOWS_PRIVATE_NODE_VERSION}")" \
@@ -2034,6 +2092,8 @@ const payload = {
   packageVersion: process.env.CODINGNS_STATE_PACKAGE_VERSION ?? "",
   ptyPackageName: process.env.CODINGNS_STATE_PTY_PACKAGE_NAME ?? "",
   ptyPackageVersion: process.env.CODINGNS_STATE_PTY_PACKAGE_VERSION ?? "",
+  betterSqlitePackageName: process.env.CODINGNS_STATE_BETTER_SQLITE_PACKAGE_NAME ?? "",
+  betterSqlitePackageVersion: process.env.CODINGNS_STATE_BETTER_SQLITE_PACKAGE_VERSION ?? "",
   packageSpec: process.env.CODINGNS_STATE_PACKAGE_SPEC ?? "",
   registry: process.env.CODINGNS_STATE_REGISTRY ?? "",
   nodeVersion: process.env.CODINGNS_STATE_NODE_VERSION ?? "",
@@ -2211,6 +2271,7 @@ install_or_resolve_codingns() {
 
   [[ -n "$CODINGNS_PACKAGE_NAME" ]] || CODINGNS_PACKAGE_NAME="$(extract_package_name_from_spec "$PACKAGE_SPEC")"
   resolve_codingns_pty_dependency_metadata
+  resolve_codingns_better_sqlite_dependency_metadata
 }
 
 install_or_resolve_pm2() {
@@ -2370,6 +2431,14 @@ print_success_summary() {
         runtime_pty_summary="${runtime_pty_summary}@${CODINGNS_PTY_PACKAGE_VERSION}"
       fi
       printf -- '- %s\n' "$(msg info_runtime_pty "$runtime_pty_summary")"
+    fi
+
+    if [[ -n "$CODINGNS_BETTER_SQLITE_PACKAGE_NAME" ]]; then
+      local runtime_better_sqlite_summary="$CODINGNS_BETTER_SQLITE_PACKAGE_NAME"
+      if [[ -n "$CODINGNS_BETTER_SQLITE_PACKAGE_VERSION" ]]; then
+        runtime_better_sqlite_summary="${runtime_better_sqlite_summary}@${CODINGNS_BETTER_SQLITE_PACKAGE_VERSION}"
+      fi
+      printf -- '- %s\n' "$(msg info_runtime_better_sqlite "$runtime_better_sqlite_summary")"
     fi
   fi
 

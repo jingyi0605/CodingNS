@@ -7,6 +7,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 OUTPUT_DIR="${1:-${RUNNER_TEMP:-$REPO_DIR/.tmp}/windows-install-replay}"
 PACKAGE_STAGE_DIR="$OUTPUT_DIR/codingns-package"
+BETTER_SQLITE_VENDOR_STAGE_DIR="$OUTPUT_DIR/better-sqlite3-win32-x64-node22"
 
 log_info() {
   printf '[windows-replay] %s\n' "$1"
@@ -61,7 +62,9 @@ const packageJsonPath = path.join(stageDir, "package.json");
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
 
 packageJson.optionalDependencies = {
-  "@codingns/node-pty": `file:../${nodePtyTarballName}`
+  ...packageJson.optionalDependencies,
+  "@codingns/node-pty": `file:../${nodePtyTarballName}`,
+  "better-sqlite3": "file:../better-sqlite3-win32-x64-node22"
 };
 
 fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);
@@ -81,7 +84,8 @@ const manifest = {
   schemaVersion: 1,
   preparedAt: new Date().toISOString(),
   codingnsPackageDir: "codingns-package",
-  nodePtyTarball: nodePtyTarballName
+  nodePtyTarball: nodePtyTarballName,
+  betterSqliteDir: "better-sqlite3-win32-x64-node22"
 };
 
 fs.writeFileSync(
@@ -141,6 +145,11 @@ main() {
   local node_pty_tgz_name=""
   node_pty_tgz_name="$(resolve_npm_pack_filename "$REPO_DIR/packages/node-pty-fork")"
   mv "$REPO_DIR/packages/node-pty-fork/$node_pty_tgz_name" "$OUTPUT_DIR/$node_pty_tgz_name"
+
+  log_info "准备 better-sqlite3 Windows Node 22 受控包"
+  rm -rf "$BETTER_SQLITE_VENDOR_STAGE_DIR"
+  mkdir -p "$OUTPUT_DIR"
+  cp -R "$REPO_DIR/packages/codingns/vendor-src/better-sqlite3-win32-x64-node22" "$BETTER_SQLITE_VENDOR_STAGE_DIR"
 
   log_info "构建 CodingNS 独立服务包"
   pnpm --dir "$REPO_DIR" run build:standalone

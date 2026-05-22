@@ -28,6 +28,18 @@ if (packageJson.optionalDependencies?.["@codingns/node-pty"] !== "file:vendor/no
   problems.push("发布包 package.json 没把 @codingns/node-pty 固定到 vendor/node-pty-fork");
 }
 
+if (packageJson.dependencies?.["better-sqlite3"]) {
+  problems.push("发布包 package.json 仍然保留了 dependencies.better-sqlite3");
+}
+
+if (packageJson.optionalDependencies?.["better-sqlite3"] !== "^12.8.0") {
+  problems.push("发布包 package.json 没保留 better-sqlite3 的默认平台依赖");
+}
+
+if (packageJson.optionalDependencies?.["@codingns/better-sqlite3-win32-x64-node22"] !== "file:vendor/better-sqlite3-win32-x64-node22") {
+  problems.push("发布包 package.json 没把 Windows 专用 better-sqlite3 固定到 vendor/better-sqlite3-win32-x64-node22");
+}
+
 if (!tarEntries.includes(bundledSessionSyncPath)) {
   problems.push("发布包缺少打进去的 @codingns/session-sync-core 实体目录");
 } else if (
@@ -39,6 +51,14 @@ if (!tarEntries.includes(bundledSessionSyncPath)) {
 
 if (!tarEntries.includes("package/vendor/node-pty-fork/package.json")) {
   problems.push("发布包缺少 vendor/node-pty-fork");
+}
+
+if (!tarEntries.includes("package/vendor/better-sqlite3-win32-x64-node22/package.json")) {
+  problems.push("发布包缺少 vendor/better-sqlite3-win32-x64-node22");
+}
+
+if (!tarEntries.includes("package/vendor/better-sqlite3-win32-x64-node22/build/Release/better_sqlite3.node")) {
+  problems.push("发布包缺少 better-sqlite3 Windows Node 22 预编译产物");
 }
 
 if (problems.length > 0) {

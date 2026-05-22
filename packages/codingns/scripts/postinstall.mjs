@@ -12,6 +12,7 @@ const cliVersionRange = packageJson.dependencies?.["@openai/codex"];
 const sdkVersionRange = packageJson.dependencies?.["@openai/codex-sdk"];
 const sessionSyncCoreRange = packageJson.dependencies?.["@codingns/session-sync-core"];
 const windowsNodePtyRange = packageJson.optionalDependencies?.["@codingns/node-pty"];
+const betterSqliteRange = packageJson.optionalDependencies?.["better-sqlite3"] ?? packageJson.dependencies?.["better-sqlite3"];
 
 if (!sdkVersionRange) {
   logInfo("[codingns] 未声明 @openai/codex-sdk，跳过 Codex 安装校验");
@@ -31,6 +32,10 @@ if (process.env.CODINGNS_SKIP_CODEX_POSTINSTALL === "1") {
 logInfo(`[codingns] 正在校验运行时依赖（${process.platform}/${process.arch}）...`);
 
 if (!verifyPtyRuntimeDependency()) {
+  process.exit(1);
+}
+
+if (!verifyBetterSqliteRuntimeDependency()) {
   process.exit(1);
 }
 
@@ -88,6 +93,48 @@ function verifyPtyRuntimeDependency() {
     : requiredPackageName;
 
   logInfo(`[codingns] PTY 运行时依赖已就绪：${packageSummary}`);
+  return true;
+}
+
+
+function verifyBetterSqliteRuntimeDependency() {
+  const requiredPackageName = resolveRequiredBetterSqlitePackageName();
+  const packageJsonPath = resolveModuleExportFile(requiredPackageName, "package.json");
+
+  if (!packageJsonPath) {
+    if (requiredPackageName !== "better-sqlite3") {
+      console.error(
+        `[codingns] 当前 Windows Node 22 运行时需要 ${requiredPackageName}${betterSqliteRange ? `（对外暴露依赖名 better-sqlite3@${betterSqliteRange}）` : ""}，但安装结果里没有找到它`
+      );
+      return false;
+    }
+
+    logInfo("[codingns] 当前平台未单独校验 better-sqlite3 受控运行时包，继续使用上游默认安装结果");
+    return true;
+  }
+
+  const packageVersion = readPackageVersion(packageJsonPath);
+  const actualPackageName = readPackageName(packageJsonPath) || requiredPackageName;
+  const packageSummary = packageVersion
+    ? `${actualPackageName}@${packageVersion}`
+    : actualPackageName;
+
+  if (requiredPackageName === "better-sqlite3" && actualPackageName !== "better-sqlite3") {
+    console.error(
+      `[codingns] 当前平台需要 better-sqlite3，但实际解析到了 ${actualPackageName}，说明安装结果混入了错误的平台包`
+    );
+    return false;
+  }
+
+  if (requiredPackageName !== "better-sqlite3") {
+    const nativeBindingPath = findNodeModulesFile(path.dirname(packageJsonPath), ["build", "Release", "better_sqlite3.node"]);
+    if (!nativeBindingPath || !fs.existsSync(nativeBindingPath)) {
+      console.error(`[codingns] SQLite 运行时缺少预编译产物：${actualPackageName}`);
+      return false;
+    }
+  }
+
+  logInfo(`[codingns] SQLite 运行时依赖已就绪：${packageSummary}`);
   return true;
 }
 
@@ -360,6 +407,27 @@ function readPackageVersion(packageJsonPath) {
   } catch {
     return "";
   }
+}
+
+function readPackageName(packageJsonPath) {
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+    return typeof packageJson?.name === "string" ? packageJson.name : "";
+  } catch {
+    return "";
+  }
+}
+
+function resolveRequiredBetterSqlitePackageName() {
+  if (
+    process.platform === "win32" &&
+    process.arch === "x64" &&
+    Number((process.versions.node || "").split(".")[0]) === 22
+  ) {
+    return "@codingns/better-sqlite3-win32-x64-node22";
+  }
+
+  return "better-sqlite3";
 }
 
 function resolveRequiredPtyPackageName() {
