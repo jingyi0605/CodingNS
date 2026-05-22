@@ -56,13 +56,7 @@ if (process.env.CODINGNS_SKIP_POSTINSTALL_REENTRY === "1") {
 logInfo("[codingns] 正在修复 Codex SDK 与当前平台二进制，请稍候...");
 cleanupBrokenCodexPackages();
 
-const repairResult = runNpmInstall([
-  "install",
-  "--no-save",
-  "--omit=optional",
-  "--package-lock=false",
-  ...resolveCodexRepairInstallSpecs()
-]);
+const repairResult = repairCodexRuntime();
 
 if (repairResult.status !== 0) {
   process.exit(repairResult.status ?? 1);
@@ -220,6 +214,66 @@ async function verifyCodexRuntime() {
 }
 
 
+
+function repairCodexRuntime() {
+  const installRoot = fs.mkdtempSync(path.join(packageRoot, ".codingns-codex-repair-"));
+
+  try {
+    const result = runNpmInstall([
+      "install",
+      "--no-save",
+      "--omit=optional",
+      "--package-lock=false",
+      ...resolveCodexRepairInstallSpecs()
+    ], {
+      prefix: installRoot,
+      cwd: installRoot
+    });
+
+    if (result.status !== 0) {
+      return result;
+    }
+
+    copyRepairedCodexPackages(installRoot);
+    return result;
+  } finally {
+    fs.rmSync(installRoot, { recursive: true, force: true });
+  }
+}
+
+function copyRepairedCodexPackages(installRoot) {
+  const sourceOpenAiRoot = path.join(installRoot, "node_modules", "@openai");
+  const targetNodeModulesRoot = path.join(packageRoot, "node_modules");
+  const targetOpenAiRoot = path.join(targetNodeModulesRoot, "@openai");
+  const targetBinRoot = path.join(targetNodeModulesRoot, ".bin");
+
+  if (!fs.existsSync(sourceOpenAiRoot)) {
+    throw new Error(`[codingns] Codex 修复结果缺少 @openai 包目录：${sourceOpenAiRoot}`);
+  }
+
+  fs.rmSync(targetOpenAiRoot, { recursive: true, force: true });
+  fs.mkdirSync(targetNodeModulesRoot, { recursive: true });
+  fs.cpSync(sourceOpenAiRoot, targetOpenAiRoot, { recursive: true });
+
+  copyRepairedCodexBin(installRoot, targetBinRoot);
+  logInfo(`[codingns] Codex 运行时依赖已复制到：${targetOpenAiRoot}`);
+}
+
+function copyRepairedCodexBin(installRoot, targetBinRoot) {
+  const sourceBinRoot = path.join(installRoot, "node_modules", ".bin");
+
+  fs.mkdirSync(targetBinRoot, { recursive: true });
+  for (const fileName of ["codex", "codex.cmd", "codex.ps1"]) {
+    const sourcePath = path.join(sourceBinRoot, fileName);
+    const targetPath = path.join(targetBinRoot, fileName);
+
+    fs.rmSync(targetPath, { force: true });
+    if (fs.existsSync(sourcePath)) {
+      fs.cpSync(sourcePath, targetPath);
+    }
+  }
+}
+
 function resolveCodexRepairInstallSpecs() {
   const specs = [
     cliVersionRange ? `@openai/codex@${cliVersionRange}` : null,
@@ -264,7 +318,7 @@ function cleanupBrokenCodexPackages() {
   fs.rmSync(path.join(binRoot, "codex.ps1"), { force: true });
 }
 
-function runNpmInstall(args) {
+function runNpmInstall(args, options = {}) {
   const env = {
     ...process.env,
     CODINGNS_SKIP_POSTINSTALL_REENTRY: "1",
@@ -274,11 +328,13 @@ function runNpmInstall(args) {
   delete env.npm_config_prefix;
   delete env.npm_command;
 
+  const installPrefix = options.prefix ?? packageRoot;
+  const installCwd = options.cwd ?? packageRoot;
   const installArgs = [
     ...args,
     "--global=false",
     "--prefix",
-    packageRoot,
+    installPrefix,
     "--install-strategy=nested"
   ];
 
@@ -288,7 +344,7 @@ function runNpmInstall(args) {
   );
 
   const result = spawnSync(command.file, command.args, {
-    cwd: packageRoot,
+    cwd: installCwd,
     env,
     stdio: "inherit"
   });
