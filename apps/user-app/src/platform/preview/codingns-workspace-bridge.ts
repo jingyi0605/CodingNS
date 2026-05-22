@@ -75,6 +75,12 @@ export interface WorkspaceBridgeExistsDto {
   exists: boolean;
 }
 
+export interface WorkspaceBridgeDesktopTargetDto {
+  workspaceId: string;
+  relativePath: string;
+  absolutePath: string;
+}
+
 export interface WorkspaceBridgeWatchDirOptionsDto {
   recursive?: boolean;
   includeHidden?: boolean;
@@ -171,6 +177,26 @@ export function statWorkspaceBridgePath(workspaceId: string, path: string) {
 export function existsWorkspaceBridgePath(workspaceId: string, path: string) {
   const search = new URLSearchParams({ workspaceId, path });
   return httpClient.request<WorkspaceBridgeExistsDto>(`/api/files/workspace-bridge/exists?${search.toString()}`);
+}
+
+export function prepareWorkspaceBridgeOpenFile(workspaceId: string, path: string) {
+  return httpClient.request<WorkspaceBridgeDesktopTargetDto>(
+    "/api/files/workspace-bridge/open-file",
+    {
+      method: "POST",
+      body: JSON.stringify({ workspaceId, path })
+    }
+  );
+}
+
+export function prepareWorkspaceBridgeRevealFile(workspaceId: string, path: string) {
+  return httpClient.request<WorkspaceBridgeDesktopTargetDto>(
+    "/api/files/workspace-bridge/reveal-in-file-manager",
+    {
+      method: "POST",
+      body: JSON.stringify({ workspaceId, path })
+    }
+  );
 }
 
 export function watchWorkspaceBridgeDir(

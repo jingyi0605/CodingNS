@@ -14,6 +14,7 @@ interface ResolvePathOptions {
   allowRoot?: boolean;
   mustExist?: boolean;
   kind?: "file" | "directory" | "any";
+  allowMissingParentChain?: boolean;
 }
 
 export interface ResolvedWorkspacePath {
@@ -75,9 +76,21 @@ export class FileAccessGuard {
         });
       }
 
-      const parentPath = path.dirname(absolutePath);
+      const parentPath = this.findNearestExistingAncestor(path.dirname(absolutePath));
 
-      if (!fs.existsSync(parentPath)) {
+      if (!parentPath) {
+        throw new AppError({
+          statusCode: 400,
+          errorCode: "PARENT_DIRECTORY_NOT_FOUND",
+          detail: "目标目录不存在",
+          field: "path"
+        });
+      }
+
+      if (
+        !options.allowMissingParentChain
+        && parentPath !== path.dirname(absolutePath)
+      ) {
         throw new AppError({
           statusCode: 400,
           errorCode: "PARENT_DIRECTORY_NOT_FOUND",
@@ -142,6 +155,24 @@ export class FileAccessGuard {
         detail: "文件路径超出工作区边界",
         field: "path"
       });
+    }
+  }
+
+  private findNearestExistingAncestor(inputPath: string): string | null {
+    let currentPath = path.resolve(inputPath);
+
+    while (true) {
+      if (fs.existsSync(currentPath)) {
+        return currentPath;
+      }
+
+      const parentPath = path.dirname(currentPath);
+
+      if (parentPath === currentPath) {
+        return null;
+      }
+
+      currentPath = parentPath;
     }
   }
 }

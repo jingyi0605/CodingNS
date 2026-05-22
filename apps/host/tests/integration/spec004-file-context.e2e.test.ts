@@ -352,6 +352,7 @@ describe("spec004 文件管理能力", () => {
     expect(previewHtml.statusCode).toBe(200);
     expect(previewHtml.headers["content-type"]).toContain("text/html");
     expect(previewHtml.body).toContain("<title>Spec004 Preview</title>");
+    expect(previewHtml.body).toContain("/preview/runtime/codingns-workspace-bridge.js");
 
     const previewCssPath = new URL(
       "./site.css",
@@ -482,7 +483,262 @@ describe("spec004 文件管理能力", () => {
       }
     });
     expect(deletedRead.statusCode).toBe(404);
-  });
+  }, 60_000);
+
+  it("给静态 HTML 预览提供 workspace 文件桥 MVP 接口", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+    seedWorkspaceFiles(fixture.workspaceDir);
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, fixture.workspaceDir);
+    const authHeaders = {
+      authorization: `Bearer ${accessToken}`
+    };
+
+    const capabilities = await hosted.app.inject({
+      method: "GET",
+      url: `/api/files/workspace-bridge/capabilities?workspaceId=${workspaceId}`,
+      headers: authHeaders
+    });
+    expect(capabilities.statusCode).toBe(200);
+    expect(capabilities.json()).toMatchObject({
+      read: true,
+      write: true,
+      delete: true,
+      watch: true,
+      batchRead: true,
+      batchWrite: false,
+      workspaceRootAccessible: true
+    });
+
+    const listDir = await hosted.app.inject({
+      method: "POST",
+      url: "/api/files/workspace-bridge/list-dir",
+      headers: authHeaders,
+      payload: {
+        workspaceId,
+        path: "化工行业AI培训",
+        options: {
+          includeHidden: true
+        }
+      }
+    });
+    expect(listDir.statusCode).toBe(200);
+    expect(listDir.json()).toMatchObject({
+      path: "化工行业AI培训"
+    });
+    expect(listDir.json().items.map((item: { path: string }) => item.path)).toEqual(
+      expect.arrayContaining(["化工行业AI培训/index.html", "化工行业AI培训/讲义.md"])
+    );
+
+    const readText = await hosted.app.inject({
+      method: "POST",
+      url: "/api/files/workspace-bridge/read-text",
+      headers: authHeaders,
+      payload: {
+        workspaceId,
+        path: "化工行业AI培训/讲义.md"
+      }
+    });
+    expect(readText.statusCode).toBe(200);
+    expect(readText.json().content).toContain("化工行业培训要点");
+    expect(typeof readText.json().mtime).toBe("number");
+
+    const readTexts = await hosted.app.inject({
+      method: "POST",
+      url: "/api/files/workspace-bridge/read-texts",
+      headers: authHeaders,
+      payload: {
+        workspaceId,
+        paths: [
+          "化工行业AI培训/讲义.md",
+          "missing/none.md"
+        ]
+      }
+    });
+    expect(readTexts.statusCode).toBe(200);
+    expect(readTexts.json().items).toHaveLength(2);
+    expect(readTexts.json().items[0].content).toContain("化工行业培训要点");
+    expect(readTexts.json().items[1].error.code).toBe("FILE_NOT_FOUND");
+
+    const writeText = await hosted.app.inject({
+      method: "POST",
+      url: "/api/files/workspace-bridge/write-text",
+      headers: authHeaders,
+      payload: {
+        workspaceId,
+        path: "重要信息/会员信息/新会员.md",
+        content: "# 新会员\n\n名称：新会员\n",
+        options: {
+          createIfMissing: true,
+          overwrite: true,
+          ensureParentDir: true
+        }
+      }
+    });
+    expect(writeText.statusCode).toBe(200);
+    expect(writeText.json().ok).toBe(true);
+    expect(readFileSync(path.join(fixture.workspaceDir, "重要信息", "会员信息", "新会员.md"), "utf8")).toContain(
+      "名称：新会员"
+    );
+
+    const statExisting = await hosted.app.inject({
+      method: "GET",
+      url: `/api/files/workspace-bridge/stat?workspaceId=${workspaceId}&path=${encodeURIComponent("重要信息/会员信息/新会员.md")}`,
+      headers: authHeaders
+    });
+    expect(statExisting.statusCode).toBe(200);
+    expect(statExisting.json()).toMatchObject({
+      exists: true,
+      kind: "file",
+      path: "重要信息/会员信息/新会员.md"
+    });
+
+    const existsMissing = await hosted.app.inject({
+      method: "GET",
+      url: `/api/files/workspace-bridge/exists?workspaceId=${workspaceId}&path=${encodeURIComponent("重要信息/会员信息/不存在.md")}`,
+      headers: authHeaders
+    });
+    expect(existsMissing.statusCode).toBe(200);
+    expect(existsMissing.json()).toEqual({
+      path: "重要信息/会员信息/不存在.md",
+      exists: false
+    });
+
+    const openWorkspaceFile = await hosted.app.inject({
+      method: "POST",
+      url: "/api/files/workspace-bridge/open-file",
+      headers: authHeaders,
+      payload: {
+        workspaceId,
+        path: "化工行业AI培训/讲义.md"
+      }
+    });
+    expect(openWorkspaceFile.statusCode).toBe(200);
+    expect(openWorkspaceFile.json()).toEqual({
+      workspaceId,
+      relativePath: "化工行业AI培训/讲义.md",
+      absolutePath: path.join(fixture.workspaceDir, "化工行业AI培训", "讲义.md")
+    });
+
+    const revealWorkspaceFile = await hosted.app.inject({
+      method: "POST",
+      url: "/api/files/workspace-bridge/reveal-in-file-manager",
+      headers: authHeaders,
+      payload: {
+        workspaceId,
+        path: "化工行业AI培训/讲义.md"
+      }
+    });
+    expect(revealWorkspaceFile.statusCode).toBe(200);
+    expect(revealWorkspaceFile.json()).toEqual({
+      workspaceId,
+      relativePath: "化工行业AI培训/讲义.md",
+      absolutePath: path.join(fixture.workspaceDir, "化工行业AI培训", "讲义.md")
+    });
+
+    const deleteFile = await hosted.app.inject({
+      method: "POST",
+      url: "/api/files/workspace-bridge/delete-file",
+      headers: authHeaders,
+      payload: {
+        workspaceId,
+        path: "重要信息/会员信息/新会员.md"
+      }
+    });
+    expect(deleteFile.statusCode).toBe(200);
+    expect(deleteFile.json()).toEqual({
+      ok: true,
+      path: "重要信息/会员信息/新会员.md"
+    });
+
+    const watchDir = await hosted.app.inject({
+      method: "POST",
+      url: "/api/files/workspace-bridge/watch-dir",
+      headers: authHeaders,
+      payload: {
+        workspaceId,
+        path: "重要信息/会员信息"
+      }
+    });
+    expect(watchDir.statusCode).toBe(200);
+    expect(typeof watchDir.json().watchId).toBe("string");
+
+    writeFileSync(
+      path.join(fixture.workspaceDir, "重要信息", "会员信息", "外部修改.md"),
+      "# 外部修改\n\n名称：外部修改\n",
+      "utf8"
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 700));
+
+    const watchEvents = await hosted.app.inject({
+      method: "GET",
+      url: `/api/files/workspace-bridge/watch-events?watchId=${encodeURIComponent(watchDir.json().watchId)}`,
+      headers: authHeaders
+    });
+    expect(watchEvents.statusCode).toBe(200);
+    expect(watchEvents.json().events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "created",
+          path: "重要信息/会员信息/外部修改.md",
+          kind: "file"
+        })
+      ])
+    );
+
+    const unwatch = await hosted.app.inject({
+      method: "POST",
+      url: "/api/files/workspace-bridge/unwatch",
+      headers: authHeaders,
+      payload: {
+        watchId: watchDir.json().watchId
+      }
+    });
+    expect(unwatch.statusCode).toBe(200);
+    expect(unwatch.json()).toEqual({
+      ok: true,
+      watchId: watchDir.json().watchId
+    });
+
+    const watchEventsAfterUnwatch = await hosted.app.inject({
+      method: "GET",
+      url: `/api/files/workspace-bridge/watch-events?watchId=${encodeURIComponent(watchDir.json().watchId)}`,
+      headers: authHeaders
+    });
+    expect(watchEventsAfterUnwatch.statusCode).toBe(404);
+    expect(watchEventsAfterUnwatch.json().error_code).toBe("WATCH_NOT_FOUND");
+
+    const openDirectoryRejected = await hosted.app.inject({
+      method: "POST",
+      url: "/api/files/workspace-bridge/open-file",
+      headers: authHeaders,
+      payload: {
+        workspaceId,
+        path: "重要信息/会员信息"
+      }
+    });
+    expect(openDirectoryRejected.statusCode).toBe(400);
+    expect(openDirectoryRejected.json().error_code).toBe("NOT_A_FILE");
+
+    const traversalRejected = await hosted.app.inject({
+      method: "POST",
+      url: "/api/files/workspace-bridge/read-text",
+      headers: authHeaders,
+      payload: {
+        workspaceId,
+        path: "../secret.txt"
+      }
+    });
+    expect(traversalRejected.statusCode).toBe(400);
+    expect(traversalRejected.json().error_code).toBe("PATH_TRAVERSAL_BLOCKED");
+  }, 60_000);
 
   it("打通文件管理挂载、查询、解绑，并保持只存元数据", async () => {
     const fixture = createEmptyFixture();
@@ -558,7 +814,7 @@ describe("spec004 文件管理能力", () => {
     });
     expect(listAfterDetach.statusCode).toBe(200);
     expect(listAfterDetach.json().items).toHaveLength(0);
-  });
+  }, 60_000);
 });
 
 function seedWorkspaceFiles(workspaceDir: string): void {
@@ -566,6 +822,7 @@ function seedWorkspaceFiles(workspaceDir: string): void {
   mkdirSync(path.join(workspaceDir, "docs"), { recursive: true });
   mkdirSync(path.join(workspaceDir, "site"), { recursive: true });
   mkdirSync(path.join(workspaceDir, "src"), { recursive: true });
+  mkdirSync(path.join(workspaceDir, "重要信息", "会员信息"), { recursive: true });
 
   writeFileSync(
     path.join(workspaceDir, "docs", "readme.md"),
@@ -666,6 +923,28 @@ function seedWorkspaceFiles(workspaceDir: string): void {
     "<!doctype html><html><body>中文路径预览</body></html>",
     "utf8"
   );
+  writeFileSync(
+    path.join(workspaceDir, "化工行业AI培训", "讲义.md"),
+    "# 化工行业培训要点\n\n- 会员资料以 Markdown 为真源\n",
+    "utf8"
+  );
+  writeFileSync(
+    path.join(workspaceDir, "重要信息", "会员信息", "91飞机场.md"),
+    "# 91飞机场\n\n名称：91飞机场\n",
+    "utf8"
+  );
+  writeFileSync(
+    path.join(workspaceDir, "重要信息", "会员信息", ".会员索引.json"),
+    JSON.stringify({
+      items: [
+        {
+          path: "重要信息/会员信息/91飞机场.md",
+          name: "91飞机场"
+        }
+      ]
+    }, null, 2),
+    "utf8"
+  );
   writeFileSync(path.join(workspaceDir, "binary.bin"), Buffer.from([0, 1, 2, 3]));
 }
 
@@ -721,6 +1000,9 @@ function createSession(hosted: ReturnType<typeof createTestApp>, workspaceId: st
     provider: "codex",
     providerSessionId: `provider-${sessionId}`,
     rawStoreRef: `codex://${sessionId}`,
+    providerConfigMode: "global-default",
+    providerPresetId: null,
+    runtimeHomeDir: null,
     createdAt: timestamp,
     updatedAt: timestamp
   });

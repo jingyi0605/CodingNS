@@ -4,6 +4,8 @@ import {
   getWorkspaceBridgeCapabilities,
   listWorkspaceBridgeDir,
   pollWorkspaceBridgeWatchEvents,
+  prepareWorkspaceBridgeOpenFile,
+  prepareWorkspaceBridgeRevealFile,
   readWorkspaceBridgeText,
   readWorkspaceBridgeTexts,
   statWorkspaceBridgePath,
@@ -11,6 +13,7 @@ import {
   watchWorkspaceBridgeDir,
   writeWorkspaceBridgeText
 } from "./codingns-workspace-bridge";
+import { getCodingNSDesktopBridge } from "../desktop/codingns-desktop-bridge";
 
 interface HtmlPreviewBridgeRequest {
   type: "codingns.workspace.request";
@@ -149,6 +152,38 @@ export function createHtmlPreviewWorkspaceBridge(options: HtmlPreviewWorkspaceBr
             typeof rawPayload.path === "string" ? rawPayload.path : ""
           );
           break;
+        case "openWorkspaceFile": {
+          const prepared = await prepareWorkspaceBridgeOpenFile(
+            workspaceId,
+            typeof rawPayload.path === "string" ? rawPayload.path : ""
+          );
+          const result = await getCodingNSDesktopBridge().fs.openFile(prepared.absolutePath);
+          if (!result.ok) {
+            throw {
+              code: result.errorCode ?? "DESKTOP_OPEN_FAILED",
+              message: result.detail ?? "打开文件失败",
+              path: prepared.relativePath
+            };
+          }
+          payload = prepared;
+          break;
+        }
+        case "revealWorkspaceFile": {
+          const prepared = await prepareWorkspaceBridgeRevealFile(
+            workspaceId,
+            typeof rawPayload.path === "string" ? rawPayload.path : ""
+          );
+          const result = await getCodingNSDesktopBridge().fs.revealInFileManager(prepared.absolutePath);
+          if (!result.ok) {
+            throw {
+              code: result.errorCode ?? "DESKTOP_REVEAL_FAILED",
+              message: result.detail ?? "打开所在目录失败",
+              path: prepared.relativePath
+            };
+          }
+          payload = prepared;
+          break;
+        }
         case "watchDir": {
           const created = await watchWorkspaceBridgeDir(
             workspaceId,

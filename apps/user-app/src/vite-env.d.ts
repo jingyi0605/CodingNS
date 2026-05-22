@@ -5,6 +5,7 @@ interface Window {
     invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
   };
   CodingNSDesktop?: import("./platform/desktop/codingns-desktop-bridge").CodingNSDesktopBridge;
+  CodingNSWorkspace?: import("./platform/preview/codingns-workspace-runtime").CodingNSWorkspaceBridge;
   __CODINGNS_DESKTOP_BRIDGE_INSTALLED__?: boolean;
 }
 
