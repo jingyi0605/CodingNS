@@ -26,7 +26,8 @@ const platformMock = vi.hoisted(() => ({
   bridge: {
     supported: true,
     getWindowDescriptor: getWindowDescriptorMock,
-    isWindowOpen: vi.fn()
+    isWindowOpen: vi.fn(),
+    setWindowState: vi.fn()
   },
   windows: {
     registerDescriptor: registerDescriptorMock,
@@ -35,6 +36,7 @@ const platformMock = vi.hoisted(() => ({
   }
 }));
 const fileContextPanelMock = vi.hoisted(() => vi.fn());
+const fileViewerPanelMock = vi.hoisted(() => vi.fn());
 const gitSidebarMock = vi.hoisted(() => vi.fn());
 const terminalManagerPanelMock = vi.hoisted(() => vi.fn());
 const terminalPageMock = vi.hoisted(() => vi.fn());
@@ -63,6 +65,22 @@ vi.mock("../conversation/components/FileContextPanel", () => ({
         {props.workspaceId}:{props.sessionId ?? "null"}:
         {props.externalWindowMode ? "external" : "embedded"}:
         {props.workbenchShellOverrides?.navigationGroups?.length ?? 0}
+      </div>
+    );
+  }
+}));
+
+vi.mock("../conversation/components/FileViewerModal", () => ({
+  FileViewerPanel: (props: {
+    workspaceId: string | null | undefined;
+    filePath: string | null;
+    chrome?: string;
+    windowTitle?: string | null;
+  }) => {
+    fileViewerPanelMock(props);
+    return (
+      <div data-testid="desktop-file-preview-window">
+        {props.workspaceId}:{props.filePath}:{props.chrome}:{props.windowTitle ?? "null"}
       </div>
     );
   }
@@ -214,7 +232,8 @@ describe("DesktopWindowPage", () => {
           minWidth: 720,
           minHeight: 480
         },
-        focusOwner: "file-context-panel"
+        focusOwner: "file-context-panel",
+        payload: { filePath: null }
       }
     });
 
@@ -235,6 +254,51 @@ describe("DesktopWindowPage", () => {
     expect(realtimeStartMock).toHaveBeenCalledTimes(1);
   });
 
+  it("会根据 descriptor 渲染单文件预览外部窗口", async () => {
+    getWindowDescriptorMock.mockResolvedValue({
+      ok: true,
+      value: {
+        windowId: "file-preview-workspace-1-docs_2Freadme_md",
+        kind: "file-preview",
+        workspaceId: "workspace-1",
+        workspaceName: "项目一",
+        sessionId: "session-1",
+        mode: "external",
+        bounds: {
+          x: null,
+          y: null,
+          width: 1120,
+          height: 760,
+          minWidth: 720,
+          minHeight: 480
+        },
+        focusOwner: "file-preview-window",
+        payload: {
+          filePath: "docs/readme.md"
+        }
+      }
+    });
+
+    renderPage("/desktop-window/file-preview-workspace-1-docs_2Freadme_md");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("desktop-file-preview-window")).toHaveTextContent(
+        "workspace-1:docs/readme.md:window:readme.md"
+      );
+    });
+    expect(fileViewerPanelMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        filePath: "docs/readme.md",
+        chrome: "window",
+        windowTitle: "readme.md"
+      })
+    );
+    expect(setTitleMock).toHaveBeenLastCalledWith(
+      "readme.md（项目一）"
+    );
+  });
+
   it("会根据 descriptor 渲染 Git 外部窗口壳", async () => {
     getWindowDescriptorMock.mockResolvedValue({
       ok: true,
@@ -252,7 +316,8 @@ describe("DesktopWindowPage", () => {
           minWidth: 720,
           minHeight: 480
         },
-        focusOwner: null
+        focusOwner: null,
+        payload: { filePath: null }
       }
     });
 
@@ -286,7 +351,8 @@ describe("DesktopWindowPage", () => {
           minWidth: 720,
           minHeight: 480
         },
-        focusOwner: "terminal-manager-panel"
+        focusOwner: "terminal-manager-panel",
+        payload: { filePath: null }
       }
     });
 
@@ -326,7 +392,8 @@ describe("DesktopWindowPage", () => {
           minWidth: 720,
           minHeight: 480
         },
-        focusOwner: "terminal-page"
+        focusOwner: "terminal-page",
+        payload: { filePath: null }
       }
     });
 
@@ -363,7 +430,8 @@ describe("DesktopWindowPage", () => {
           minWidth: 720,
           minHeight: 480
         },
-        focusOwner: null
+        focusOwner: null,
+        payload: { filePath: null }
       }
     });
 
@@ -394,7 +462,8 @@ describe("DesktopWindowPage", () => {
         minWidth: 720,
         minHeight: 480
       },
-      focusOwner: null
+      focusOwner: null,
+      payload: { filePath: null }
     });
 
     renderPage();

@@ -986,6 +986,10 @@ fn sync_descriptor_bounds_from_window(
 }
 
 fn window_title_for_descriptor(descriptor: &WindowDescriptor) -> String {
+    if descriptor.kind == WindowKind::FilePreview {
+        return file_preview_window_title_for_descriptor(descriptor);
+    }
+
     let section_title = window_kind_label(&descriptor.kind);
 
     match descriptor.workspace_name.as_deref() {
@@ -996,10 +1000,42 @@ fn window_title_for_descriptor(descriptor: &WindowDescriptor) -> String {
     }
 }
 
+fn file_preview_window_title_for_descriptor(descriptor: &WindowDescriptor) -> String {
+    let file_title = descriptor
+        .payload
+        .file_path
+        .as_deref()
+        .and_then(file_name_from_workspace_path)
+        .unwrap_or_else(|| window_kind_label(&descriptor.kind).to_string());
+
+    match descriptor.workspace_name.as_deref() {
+        Some(workspace_name) if !workspace_name.trim().is_empty() => {
+            format!("{}（{}）", file_title, workspace_name.trim())
+        }
+        _ => file_title,
+    }
+}
+
+fn file_name_from_workspace_path(file_path: &str) -> Option<String> {
+    let normalized_path = file_path.trim().replace('\\', "/");
+
+    if normalized_path.is_empty() {
+        return None;
+    }
+
+    normalized_path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .last()
+        .map(|segment| segment.to_string())
+        .or(Some(normalized_path))
+}
+
 fn window_kind_label(kind: &WindowKind) -> &'static str {
     match kind {
         WindowKind::Chat => "聊天",
         WindowKind::Files => "文件",
+        WindowKind::FilePreview => "文件预览",
         WindowKind::Git => "Git",
         WindowKind::Processes => "进程管理",
         WindowKind::Terminals => "终端",
@@ -1027,6 +1063,7 @@ mod tests {
     #[test]
     fn window_kind_label_stays_human_readable() {
         assert_eq!(window_kind_label(&WindowKind::Files), "文件");
+        assert_eq!(window_kind_label(&WindowKind::FilePreview), "文件预览");
         assert_eq!(window_kind_label(&WindowKind::Processes), "进程管理");
         assert_eq!(window_kind_label(&WindowKind::Terminals), "终端");
     }
@@ -1049,9 +1086,36 @@ mod tests {
                 min_height: 480,
             },
             focus_owner: Some("terminal-page".to_string()),
+            payload: Default::default(),
         };
 
         assert_eq!(window_title_for_descriptor(&descriptor), "CodingNS - 终端（项目一）");
+    }
+
+    #[test]
+    fn file_preview_window_title_uses_file_name_and_workspace_name() {
+        let descriptor = WindowDescriptor {
+            window_id: "file-preview-workspace-1-docs-readme".to_string(),
+            kind: WindowKind::FilePreview,
+            workspace_id: Some("workspace-1".to_string()),
+            workspace_name: Some("项目一".to_string()),
+            session_id: None,
+            mode: WindowMode::External,
+            bounds: WindowBounds {
+                x: None,
+                y: None,
+                width: 1120,
+                height: 760,
+                min_width: 720,
+                min_height: 480,
+            },
+            focus_owner: Some("file-preview-window".to_string()),
+            payload: crate::window_manager::WindowDescriptorPayload {
+                file_path: Some("docs/README.md".to_string()),
+            },
+        };
+
+        assert_eq!(window_title_for_descriptor(&descriptor), "README.md（项目一）");
     }
 
     #[test]

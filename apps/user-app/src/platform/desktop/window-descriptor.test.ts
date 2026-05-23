@@ -42,6 +42,7 @@ describe("window-descriptor", () => {
       windowId: "window-chat-1",
       kind: "chat",
       workspaceId: null,
+      workspaceName: null,
       sessionId: null,
       mode: "docked",
       bounds: {
@@ -52,7 +53,10 @@ describe("window-descriptor", () => {
         minWidth: 720,
         minHeight: 480
       },
-      focusOwner: null
+      focusOwner: null,
+      payload: {
+        filePath: null
+      }
     });
   });
 
@@ -68,12 +72,16 @@ describe("window-descriptor", () => {
           width: 1440,
           height: 900
         },
-        focusOwner: "window-files-1"
+        focusOwner: "window-files-1",
+        payload: {
+          filePath: "docs/readme.md"
+        }
       })
     ).toEqual({
       windowId: "window-files-1",
       kind: "files",
       workspaceId: "workspace-1",
+      workspaceName: null,
       sessionId: "session-1",
       mode: "external",
       bounds: {
@@ -84,7 +92,10 @@ describe("window-descriptor", () => {
         minWidth: 720,
         minHeight: 480
       },
-      focusOwner: "window-files-1"
+      focusOwner: "window-files-1",
+      payload: {
+        filePath: "docs/readme.md"
+      }
     });
   });
 });

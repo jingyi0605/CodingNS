@@ -24,6 +24,14 @@ pub struct WindowDescriptor {
     pub mode: WindowMode,
     pub bounds: WindowBounds,
     pub focus_owner: Option<String>,
+    #[serde(default)]
+    pub payload: WindowDescriptorPayload,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowDescriptorPayload {
+    pub file_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -31,6 +39,8 @@ pub struct WindowDescriptor {
 pub enum WindowKind {
     Chat,
     Files,
+    #[serde(rename = "file-preview")]
+    FilePreview,
     Git,
     Processes,
     Terminals,
@@ -123,7 +133,11 @@ impl WindowDescriptor {
         self.mode != WindowMode::External
             || matches!(
                 self.kind,
-                WindowKind::Files | WindowKind::Git | WindowKind::Processes | WindowKind::Terminals
+                WindowKind::Files
+                    | WindowKind::FilePreview
+                    | WindowKind::Git
+                    | WindowKind::Processes
+                    | WindowKind::Terminals
             )
     }
 }
@@ -153,6 +167,7 @@ mod tests {
                 min_height: 480,
             },
             focus_owner: None,
+            payload: Default::default(),
         }
     }
 
@@ -166,6 +181,11 @@ mod tests {
         assert_eq!(listed.len(), 2);
         assert_eq!(listed[0].window_id, "window-a");
         assert_eq!(listed[1].window_id, "window-b");
+    }
+
+    #[test]
+    fn file_preview_supports_external_window() {
+        assert!(create_descriptor("window-file-preview", WindowKind::FilePreview).supports_external_window());
     }
 
     #[test]

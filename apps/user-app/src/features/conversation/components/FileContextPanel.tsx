@@ -22,6 +22,7 @@ import {
 } from "../api/file-context-api";
 import { getGitDiff, type GitChangeItemDto } from "../api/git-api";
 import { usePlatform } from "../../../platform/platform-provider";
+import { openFilePreviewExternalWindow } from "../../../platform/desktop/window-openers";
 import {
   showDesktopContextMenu,
   type DesktopContextMenuActionItem
@@ -131,6 +132,26 @@ const FILE_TREE_SNAPSHOT_TIMEOUT_MS = 1600;
 const FILE_TREE_HTTP_FALLBACK_DELAY_MS = 220;
 const SIDEBAR_TREE_ROOT_PADDING_PX = 20;
 const SIDEBAR_TREE_DEPTH_STEP_PX = 16;
+
+function readCurrentFileViewerModalBounds() {
+  if (typeof document === "undefined") {
+    return undefined;
+  }
+
+  const modalElement = document.querySelector<HTMLElement>(".workbench-modal-card.file-viewer-modal");
+  const rect = modalElement?.getBoundingClientRect();
+
+  if (!rect || rect.width <= 0 || rect.height <= 0) {
+    return undefined;
+  }
+
+  return {
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+    minWidth: 720,
+    minHeight: 480
+  };
+}
 
 interface FilePanelWorkspaceSnapshot {
   treeCache: FileTreeCache;
@@ -1184,7 +1205,10 @@ export function FileContextPanel({
     viewerDiffRequestIdRef.current += 1;
 
     void selectFile(filePath);
+    await loadViewerDiffContent(filePath);
+  }
 
+  async function loadViewerDiffContent(filePath: string) {
     // 预览视图始终先打开，diff 只作为滚动标尺数据源，不能反过来接管整个查看器。
     const requestId = viewerDiffRequestIdRef.current;
     const normalizedPath = filePath.replace(/\\/g, "/");
@@ -1202,6 +1226,33 @@ export function FileContextPanel({
         }
       }
     }
+  }
+
+  async function openViewerInExternalWindow(filePath: string) {
+    if (!workspaceId) {
+      return;
+    }
+
+    const modalBounds = readCurrentFileViewerModalBounds();
+    const result = await openFilePreviewExternalWindow(platform, {
+      workspaceId,
+      workspaceName: currentWorkspace?.name ?? null,
+      sessionId: sessionId ?? null,
+      filePath,
+      bounds: modalBounds
+    });
+
+    if (!result.ok) {
+      showToast({
+        title: result.detail ?? t("conversation.fileViewerOpenInWindowFailed"),
+        tone: "error"
+      });
+      return;
+    }
+
+    viewerDiffRequestIdRef.current += 1;
+    setViewerFilePath(null);
+    setViewerDiffContent(null);
   }
 
   function shouldOpenViewerByRepeatClick(filePath: string): boolean {
@@ -2249,6 +2300,12 @@ export function FileContextPanel({
               setSessionRefreshVersion((current) => current + 1);
             }}
             diffContent={viewerDiffContent}
+            showDetachAction={platform.isDesktop && platform.bridge.supported}
+            onDetach={() => {
+              if (viewerFilePath) {
+                void openViewerInExternalWindow(viewerFilePath);
+              }
+            }}
           />
           {hideHeading ? null : (
             <div className="file-panel-heading-row">

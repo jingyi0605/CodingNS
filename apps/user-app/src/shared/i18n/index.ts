@@ -2241,7 +2241,8 @@ const extensionZhCN = {
   desktopWindow: {
     invalidWindowId: "\u7f3a\u5c11\u7a97\u53e3 ID\uff0c\u65e0\u6cd5\u52a0\u8f7d\u5916\u90e8\u7a97\u53e3\u3002",
     loadDescriptorFailed: "\u8bfb\u53d6\u7a97\u53e3\u63cf\u8ff0\u5931\u8d25\u3002",
-    unsupportedKind: "\u6682\u4e0d\u652f\u6301\u6e32\u67d3 {kind} \u7a97\u53e3\u3002"
+    unsupportedKind: "\u6682\u4e0d\u652f\u6301\u6e32\u67d3 {kind} \u7a97\u53e3\u3002",
+    invalidFilePreviewTarget: "\u7f3a\u5c11\u8981\u9884\u89c8\u7684\u6587\u4ef6\uff0c\u65e0\u6cd5\u6253\u5f00\u6587\u4ef6\u9884\u89c8\u7a97\u53e3\u3002"
   },
   git: {
     recentVersionsTitle: "\u6700\u8fd1\u7248\u672c",
@@ -4541,7 +4542,8 @@ const extensionEnUS = {
   desktopWindow: {
     invalidWindowId: "The external window is missing a window id.",
     loadDescriptorFailed: "Failed to load the window descriptor.",
-    unsupportedKind: "Rendering the {kind} window is not supported yet."
+    unsupportedKind: "Rendering the {kind} window is not supported yet.",
+    invalidFilePreviewTarget: "The file preview window is missing its file target."
   },
   git: {
     recentVersionsTitle: "Recent Versions",

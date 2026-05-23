@@ -1,5 +1,5 @@
 // 多窗口类型在这里统一收口，后续新增类型只改这里即可。
-export const WINDOW_KINDS = ["chat", "files", "git", "processes", "terminals"] as const;
+export const WINDOW_KINDS = ["chat", "files", "file-preview", "git", "processes", "terminals"] as const;
 export const WINDOW_MODES = ["docked", "floating", "external"] as const;
 
 export type WindowKind = (typeof WINDOW_KINDS)[number];
@@ -14,6 +14,11 @@ export interface WindowBounds {
   minHeight: number;
 }
 
+export interface WindowDescriptorPayload {
+  // 单文件预览窗口使用 workspace 相对路径。后续新增窗口上下文字段也统一放这里。
+  filePath?: string | null;
+}
+
 export interface WindowDescriptor {
   // 作为前端窗口主键，同时预留给桌面壳作为窗口 label 使用。
   windowId: string;
@@ -24,6 +29,7 @@ export interface WindowDescriptor {
   mode: WindowMode;
   bounds: WindowBounds;
   focusOwner: string | null;
+  payload: WindowDescriptorPayload;
 }
 
 export interface CreateWindowDescriptorInput {
@@ -35,6 +41,15 @@ export interface CreateWindowDescriptorInput {
   mode?: WindowMode;
   bounds?: Partial<WindowBounds>;
   focusOwner?: string | null;
+  payload?: WindowDescriptorPayload | null;
+}
+
+function normalizeWindowDescriptorPayload(
+  payload: WindowDescriptorPayload | null | undefined
+): WindowDescriptorPayload {
+  return {
+    filePath: payload?.filePath ?? null
+  };
 }
 
 export function createWindowBounds(bounds: Partial<WindowBounds> = {}): WindowBounds {
@@ -59,6 +74,7 @@ export function createWindowDescriptor(input: CreateWindowDescriptorInput): Wind
     sessionId: input.sessionId ?? null,
     mode: input.mode ?? "docked",
     bounds: createWindowBounds(input.bounds),
-    focusOwner: input.focusOwner ?? null
+    focusOwner: input.focusOwner ?? null,
+    payload: normalizeWindowDescriptorPayload(input.payload)
   };
 }

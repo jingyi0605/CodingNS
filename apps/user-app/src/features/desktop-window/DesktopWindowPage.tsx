@@ -10,6 +10,7 @@ import {
   FileContextPanel,
   type FileContextPanelWorkbenchShellOverrides
 } from "../conversation/components/FileContextPanel";
+import { FileViewerPanel } from "../conversation/components/FileViewerModal";
 import {
   GitSidebar,
   type GitSidebarWorkbenchShellOverrides
@@ -76,6 +77,10 @@ function createEmptyTerminalWorkbenchShellOverrides(
 }
 
 function resolveDesktopWindowTitle(descriptor: WindowDescriptor): string {
+  if (descriptor.kind === "file-preview") {
+    return t("conversation.fileViewerWindowTitle");
+  }
+
   if (descriptor.kind === "files") {
     return t("shell.filesEntry");
   }
@@ -109,11 +114,26 @@ function resolveDesktopWindowWorkspaceName(
   );
 }
 
+function resolveFileNameFromPath(filePath: string | null | undefined): string | null {
+  const normalizedPath = filePath?.trim().replace(/\\/g, "/") ?? "";
+  if (!normalizedPath) {
+    return null;
+  }
+
+  return normalizedPath.split("/").filter(Boolean).at(-1) ?? normalizedPath;
+}
+
 function resolveDesktopWindowNativeTitle(
   descriptor: WindowDescriptor,
   navigationGroups: WorkspaceSessionGroup[]
 ): string {
   const workspaceName = resolveDesktopWindowWorkspaceName(descriptor, navigationGroups);
+
+  if (descriptor.kind === "file-preview") {
+    const fileName = resolveFileNameFromPath(descriptor.payload.filePath) ?? resolveDesktopWindowTitle(descriptor);
+    return workspaceName ? `${fileName}（${workspaceName}）` : fileName;
+  }
+
   const sectionTitle = resolveDesktopWindowTitle(descriptor);
 
   if (!workspaceName) {
@@ -346,7 +366,24 @@ export function DesktopWindowPage() {
 
   let content: JSX.Element | null = null;
 
-  if (descriptor.kind === "files") {
+  if (descriptor.kind === "file-preview") {
+    const previewFilePath = descriptor.payload.filePath?.trim() ?? "";
+
+    const workspaceName = resolveDesktopWindowWorkspaceName(descriptor, navigationGroups);
+    content = previewFilePath ? (
+      <FileViewerPanel
+        workspaceId={descriptor.workspaceId}
+        filePath={previewFilePath}
+        open
+        chrome="window"
+        windowTitle={resolveFileNameFromPath(previewFilePath) ?? previewFilePath}
+        onClose={() => void platform.bridge.setWindowState("close")}
+        onSaved={() => undefined}
+      />
+    ) : (
+      <p className="status-text">{t("desktopWindow.invalidFilePreviewTarget")}</p>
+    );
+  } else if (descriptor.kind === "files") {
     content = (
       <FileContextPanel
         sessionId={descriptor.sessionId}

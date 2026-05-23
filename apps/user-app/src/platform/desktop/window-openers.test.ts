@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import { createWindowRegistryStore } from "./window-registry";
 import {
   buildExternalWorkspaceWindowId,
+  buildFilePreviewExternalWindowId,
+  openFilePreviewExternalWindow,
   openFilesExternalWindow,
   openGitExternalWindow,
   openProcessesExternalWindow,
@@ -15,6 +17,9 @@ describe("window-openers", () => {
     expect(buildExternalWorkspaceWindowId("git", "workspace-1")).toBe("git-workspace-1");
     expect(buildExternalWorkspaceWindowId("processes", "workspace-1")).toBe("processes-workspace-1");
     expect(buildExternalWorkspaceWindowId("terminals", "workspace-1")).toBe("terminals-workspace-1");
+    expect(buildFilePreviewExternalWindowId("workspace-1", "docs/read me.md")).toBe(
+      "file-preview-workspace-1-docs_2Fread_20me_md"
+    );
   });
 
   it("openFilesExternalWindow 会注册 descriptor 并调用桌面开窗命令", async () => {
@@ -53,6 +58,68 @@ describe("window-openers", () => {
       mode: "external"
     });
     expect(windows.isWindowOpen("files-workspace-1")).toBe(true);
+  });
+
+  it("openFilePreviewExternalWindow 会把文件路径和弹窗尺寸放进 descriptor", async () => {
+    const windows = createWindowRegistryStore();
+    const createWindow = vi.fn().mockResolvedValue({ ok: true });
+
+    const result = await openFilePreviewExternalWindow(
+      {
+        isDesktop: true,
+        bridge: {
+          supported: true,
+          createWindow
+        },
+        windows
+      } as never,
+      {
+        workspaceId: "workspace-1",
+        workspaceName: "项目一",
+        sessionId: "session-1",
+        filePath: "docs/readme.md",
+        bounds: {
+          width: 980,
+          height: 640,
+          minWidth: 720,
+          minHeight: 480
+        }
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(createWindow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        windowId: "file-preview-workspace-1-docs_2Freadme_md",
+        kind: "file-preview",
+        workspaceId: "workspace-1",
+        workspaceName: "项目一",
+        sessionId: "session-1",
+        focusOwner: "file-preview-window",
+        bounds: expect.objectContaining({
+          width: 980,
+          height: 640
+        }),
+        payload: {
+          filePath: "docs/readme.md"
+        }
+      })
+    );
+    expect(windows.getDescriptor("file-preview-workspace-1-docs_2Freadme_md")).toMatchObject({
+      kind: "file-preview",
+      mode: "external",
+      bounds: {
+        x: null,
+        y: null,
+        width: 980,
+        height: 640,
+        minWidth: 720,
+        minHeight: 480
+      },
+      payload: {
+        filePath: "docs/readme.md"
+      }
+    });
   });
 
   it("openGitExternalWindow 会复用已登记窗口的 bounds", async () => {

@@ -20,6 +20,7 @@ interface DesktopModalProps {
   readonly className?: string;
   readonly bodyClassName?: string;
   readonly headerActions?: ReactNode;
+  readonly beforeCloseButton?: ReactNode;
   readonly footer?: ReactNode;
   readonly showCloseButton?: boolean;
   readonly onClose: () => void;
@@ -39,6 +40,7 @@ export function DesktopModal({
   className,
   bodyClassName,
   headerActions,
+  beforeCloseButton,
   footer,
   showCloseButton = true,
   onClose,
@@ -108,6 +110,7 @@ export function DesktopModal({
             {headerActions || showCloseButton ? (
               <div className="workbench-modal-header-actions">
                 {headerActions}
+                {beforeCloseButton}
                 {showCloseButton ? (
                   <ModalCloseButton
                     disabled={closeButtonDisabled}

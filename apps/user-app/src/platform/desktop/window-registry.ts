@@ -17,8 +17,9 @@ export interface WindowRegistryWindowRecord {
   isOpen: boolean;
 }
 
-export type WindowDescriptorPatch = Partial<Omit<WindowDescriptor, "windowId" | "bounds">> & {
+export type WindowDescriptorPatch = Partial<Omit<WindowDescriptor, "windowId" | "bounds" | "payload">> & {
   bounds?: Partial<WindowBounds>;
+  payload?: Partial<WindowDescriptor["payload"]>;
 };
 
 type WindowRegistryListener = () => void;
@@ -29,6 +30,9 @@ function cloneDescriptor(descriptor: WindowDescriptor): WindowDescriptor {
     ...descriptor,
     bounds: {
       ...descriptor.bounds
+    },
+    payload: {
+      ...descriptor.payload
     }
   };
 }
@@ -62,7 +66,11 @@ function mergeDescriptor(current: WindowDescriptor, patch: WindowDescriptorPatch
     bounds: createWindowBounds({
       ...current.bounds,
       ...patch.bounds
-    })
+    }),
+    payload: {
+      ...current.payload,
+      ...patch.payload
+    }
   };
 }
 

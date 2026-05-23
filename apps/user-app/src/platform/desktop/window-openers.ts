@@ -2,17 +2,24 @@ import type { DesktopBridgeResult } from "../../config/client-config-types";
 import type { PlatformAdapter } from "../platform-adapter";
 import {
   createWindowDescriptor,
+  type WindowBounds,
   type WindowDescriptor,
   type WindowKind
 } from "./window-descriptor";
 
 type ExternalWindowKind = Extract<WindowKind, "files" | "git" | "processes" | "terminals">;
+type FilePreviewWindowKind = Extract<WindowKind, "file-preview">;
 
 export interface OpenExternalWorkspaceWindowInput {
   workspaceId: string;
   workspaceName?: string | null;
   sessionId?: string | null;
   focusOwner?: string | null;
+}
+
+export interface OpenFilePreviewExternalWindowInput extends OpenExternalWorkspaceWindowInput {
+  filePath: string;
+  bounds?: Partial<WindowBounds>;
 }
 
 interface WindowKindConfig {
@@ -49,6 +56,9 @@ function cloneDescriptor(descriptor: WindowDescriptor): WindowDescriptor {
     ...descriptor,
     bounds: {
       ...descriptor.bounds
+    },
+    payload: {
+      ...descriptor.payload
     }
   };
 }
@@ -80,6 +90,20 @@ export function buildExternalWorkspaceWindowId(
   workspaceId: string
 ): string {
   return `${kind}-${workspaceId}`;
+}
+
+function normalizeFilePreviewWindowPath(filePath: string): string {
+  return filePath.trim().replace(/\\/g, "/");
+}
+
+function encodeFilePreviewWindowSegment(value: string): string {
+  return encodeURIComponent(value).replace(/%/g, "_").replace(/\./g, "_");
+}
+
+export function buildFilePreviewExternalWindowId(workspaceId: string, filePath: string): string {
+  const normalizedWorkspaceId = workspaceId.trim();
+  const normalizedPath = normalizeFilePreviewWindowPath(filePath);
+  return `file-preview-${encodeFilePreviewWindowSegment(normalizedWorkspaceId)}-${encodeFilePreviewWindowSegment(normalizedPath)}`;
 }
 
 async function openExternalWorkspaceWindow(
@@ -119,6 +143,86 @@ async function openExternalWorkspaceWindow(
     mode: "external",
     bounds: previousDescriptorSnapshot?.bounds,
     focusOwner: input.focusOwner ?? kindConfig.defaultFocusOwner
+  });
+
+  platform.windows.registerDescriptor(descriptor);
+
+  const result = await platform.bridge.createWindow(descriptor);
+
+  if (!result.ok) {
+    if (previousDescriptorSnapshot) {
+      restorePreviousDescriptorState(platform, previousDescriptorSnapshot, wasOpen);
+    } else {
+      platform.windows.removeWindow(windowId);
+    }
+
+    return {
+      ok: false,
+      errorCode: result.errorCode,
+      detail: result.detail
+    };
+  }
+
+  platform.windows.markWindowOpen(windowId);
+  return {
+    ok: true,
+    value: descriptor
+  };
+}
+
+async function openFilePreviewWorkspaceWindow(
+  platform: Pick<PlatformAdapter, "isDesktop" | "bridge" | "windows">,
+  kind: FilePreviewWindowKind,
+  input: OpenFilePreviewExternalWindowInput
+): Promise<DesktopBridgeResult<WindowDescriptor>> {
+  const workspaceId = input.workspaceId.trim();
+  const filePath = normalizeFilePreviewWindowPath(input.filePath);
+
+  if (!platform.isDesktop || !platform.bridge.supported) {
+    return {
+      ok: false,
+      errorCode: "PLATFORM_NOT_SUPPORTED",
+      detail: "当前运行环境不支持桌面外部窗口。"
+    };
+  }
+
+  if (!workspaceId) {
+    return {
+      ok: false,
+      errorCode: "WINDOW_WORKSPACE_REQUIRED",
+      detail: "文件预览外部窗口必须绑定工作区。"
+    };
+  }
+
+  if (!filePath) {
+    return {
+      ok: false,
+      errorCode: "WINDOW_FILE_REQUIRED",
+      detail: "文件预览外部窗口必须指定文件。"
+    };
+  }
+
+  const windowId = buildFilePreviewExternalWindowId(workspaceId, filePath);
+  const previousDescriptor = platform.windows.getDescriptor(windowId);
+  const previousDescriptorSnapshot = previousDescriptor ? cloneDescriptor(previousDescriptor) : null;
+  const wasOpen = platform.windows.isWindowOpen(windowId);
+  const descriptor = createWindowDescriptor({
+    windowId,
+    kind,
+    workspaceId,
+    workspaceName: input.workspaceName ?? previousDescriptorSnapshot?.workspaceName ?? null,
+    sessionId: input.sessionId ?? previousDescriptorSnapshot?.sessionId ?? null,
+    mode: "external",
+    bounds: input.bounds ?? previousDescriptorSnapshot?.bounds ?? {
+      width: 1120,
+      height: 760,
+      minWidth: 720,
+      minHeight: 480
+    },
+    focusOwner: input.focusOwner ?? "file-preview-window",
+    payload: {
+      filePath
+    }
   });
 
   platform.windows.registerDescriptor(descriptor);
@@ -188,4 +292,11 @@ export function openTerminalsExternalWindow(
   input: OpenExternalWorkspaceWindowInput
 ): Promise<DesktopBridgeResult<WindowDescriptor>> {
   return openExternalWorkspaceWindow(platform, "terminals", input);
+}
+
+export function openFilePreviewExternalWindow(
+  platform: Pick<PlatformAdapter, "isDesktop" | "bridge" | "windows">,
+  input: OpenFilePreviewExternalWindowInput
+): Promise<DesktopBridgeResult<WindowDescriptor>> {
+  return openFilePreviewWorkspaceWindow(platform, "file-preview", input);
 }

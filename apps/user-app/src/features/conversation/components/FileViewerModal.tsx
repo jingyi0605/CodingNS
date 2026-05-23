@@ -2,6 +2,7 @@ import {
   isValidElement,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -15,6 +16,7 @@ import {
   DesktopModal,
   type DesktopModalSizePreset
 } from "../../../components/DesktopModal";
+import { ModalCloseButton } from "../../../components/ModalCloseButton";
 import { getHostBaseUrl, getHostRequestUrl } from "../../../config/env";
 import { resolveHostTransportTarget } from "../../../network/host-transport-registry";
 import { usePlatform } from "../../../platform/platform-provider";
@@ -40,13 +42,28 @@ import {
   type FilePreviewDto
 } from "../api/file-context-api";
 
-interface FileViewerModalProps {
+export interface FileViewerModalProps {
   workspaceId: string | null | undefined;
   filePath: string | null;
   open: boolean;
   onClose: () => void;
   onSaved: (filePath: string) => Promise<void> | void;
   diffContent?: string | null;
+  showDetachAction?: boolean;
+  onDetach?: () => void | Promise<void>;
+}
+
+export interface FileViewerPanelProps {
+  workspaceId: string | null | undefined;
+  filePath: string | null;
+  open: boolean;
+  onClose: () => void;
+  onSaved: (filePath: string) => Promise<void> | void;
+  diffContent?: string | null;
+  chrome?: "modal" | "window";
+  windowTitle?: string | null;
+  showDetachAction?: boolean;
+  onDetach?: () => void | Promise<void>;
 }
 
 type ViewerMode = "preview" | "presentation" | "code" | "edit";
@@ -263,14 +280,22 @@ const LOG_LEVELS = new Set([
   "fatal"
 ]);
 
-export function FileViewerModal({
+export function FileViewerModal(props: FileViewerModalProps) {
+  return <FileViewerPanel {...props} chrome="modal" />;
+}
+
+export function FileViewerPanel({
   workspaceId,
   filePath,
   open,
   onClose,
   onSaved,
-  diffContent
-}: FileViewerModalProps) {
+  diffContent,
+  chrome = "modal",
+  windowTitle = null,
+  showDetachAction = false,
+  onDetach
+}: FileViewerPanelProps) {
   const [preview, setPreview] = useState<FilePreviewDto | null>(null);
   const [editorContent, setEditorContent] = useState("");
   const [presentationProject, setPresentationProject] = useState<DocumentProject | null>(null);
@@ -354,8 +379,10 @@ export function FileViewerModal({
   const canShowSeparateCodeTab = canShowCodeTab && previewKind !== "html";
   const canShowEditTab = canUseEditMode(previewKind) && canEdit;
   const isMobileViewer = platform.isMobile;
+  const isWindowViewer = chrome === "window";
+  const shouldRenderModalChrome = chrome === "modal";
   const isPresentationMode = mode === "presentation" && previewKind === "html";
-  const useForcedFullSize = !isMobileViewer && previewKind === "html";
+  const useForcedFullSize = !isWindowViewer && !isMobileViewer && previewKind === "html";
   const activeModalSizePreset = isMobileViewer || useForcedFullSize ? "full" : modalSizePreset;
 
   useEffect(() => {
@@ -707,7 +734,7 @@ export function FileViewerModal({
           </button>
         ) : null}
       </div>
-      {!isMobileViewer && !useForcedFullSize ? (
+      {!isWindowViewer && !isMobileViewer && !useForcedFullSize ? (
         <div className="file-viewer-size-group" role="group" aria-label={t("conversation.fileViewerSizeLabel")}>
           <button
             type="button"
@@ -754,18 +781,30 @@ export function FileViewerModal({
     </>
   );
 
-  return (
-    <DesktopModal
-      open={open}
-      title={filePath}
-      size={activeModalSizePreset}
-      layout="viewer"
-      className={`file-viewer-modal${platform.isDesktop && activeModalSizePreset !== "full" ? " is-resizable" : ""}`}
-      bodyClassName="file-viewer-modal-body"
-      headerActions={!isMobileViewer ? <div className="file-viewer-header-controls">{viewerControls}</div> : undefined}
-      onClose={onClose}
+  const detachControl = showDetachAction && onDetach ? (
+    <button
+      type="button"
+      className="workbench-modal-close file-viewer-detach-button"
+      aria-label={t("conversation.fileViewerOpenInWindow")}
+      title={t("conversation.fileViewerOpenInWindow")}
+      onClick={() => void onDetach()}
     >
-      {isMobileViewer ? <div className="file-viewer-toolbar">{viewerControls}</div> : null}
+      <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+        <path
+          d="M5 3.5h7.5V11M12.5 3.5 7.8 8.2M3.5 6.5v6h6"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </button>
+  ) : null;
+
+  const viewerBody = (
+    <>
+      {isMobileViewer && shouldRenderModalChrome ? <div className="file-viewer-toolbar">{viewerControls}</div> : null}
 
       <div className="file-viewer-body">
         {loading ? (
@@ -827,6 +866,39 @@ export function FileViewerModal({
           />
         )}
       </div>
+    </>
+  );
+
+  if (isWindowViewer) {
+    return (
+      <section className="file-viewer-window-panel" aria-label={windowTitle ?? filePath}>
+        <header className="file-viewer-window-header" data-tauri-drag-region="">
+          <div className="file-viewer-window-title-wrap" data-tauri-drag-region="">
+            <h1 data-tauri-drag-region="">{windowTitle ?? filePath}</h1>
+          </div>
+          <div className="file-viewer-header-controls file-viewer-window-controls" data-window-drag="ignore">
+            {viewerControls}
+            <ModalCloseButton onClick={onClose} />
+          </div>
+        </header>
+        <div className="file-viewer-modal-body file-viewer-window-body">{viewerBody}</div>
+      </section>
+    );
+  }
+
+  return (
+    <DesktopModal
+      open={open}
+      title={filePath}
+      size={activeModalSizePreset}
+      layout="viewer"
+      className={`file-viewer-modal${platform.isDesktop && activeModalSizePreset !== "full" ? " is-resizable" : ""}`}
+      bodyClassName="file-viewer-modal-body"
+      headerActions={!isMobileViewer ? <div className="file-viewer-header-controls">{viewerControls}</div> : undefined}
+      beforeCloseButton={detachControl}
+      onClose={onClose}
+    >
+      {viewerBody}
     </DesktopModal>
   );
 }
@@ -1813,6 +1885,56 @@ function EditableCodeContent({
 }) {
   const renderRef = useRef<HTMLDivElement | null>(null);
   const gutterRef = useRef<HTMLDivElement | null>(null);
+  const [lineHeights, setLineHeights] = useState<number[]>([]);
+
+  useLayoutEffect(() => {
+    const renderElement = renderRef.current;
+
+    if (!renderElement) {
+      return;
+    }
+
+    let frameId = 0;
+
+    const measureTarget = renderElement;
+
+    function measureLineHeights() {
+      const nextHeights = Array.from(
+        measureTarget.querySelectorAll<HTMLElement>("[data-editor-line-index]")
+      ).map((lineElement) => Math.max(24, Math.ceil(lineElement.getBoundingClientRect().height)));
+
+      setLineHeights((previousHeights) => {
+        if (previousHeights.length === nextHeights.length
+          && previousHeights.every((height, index) => height === nextHeights[index])) {
+          return previousHeights;
+        }
+
+        return nextHeights;
+      });
+    }
+
+    const animationFrame = globalThis.window;
+
+    function requestMeasure() {
+      if (!animationFrame) {
+        measureLineHeights();
+        return;
+      }
+
+      animationFrame.cancelAnimationFrame(frameId);
+      frameId = animationFrame.requestAnimationFrame(measureLineHeights);
+    }
+
+    requestMeasure();
+
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(requestMeasure);
+    resizeObserver?.observe(measureTarget);
+
+    return () => {
+      animationFrame?.cancelAnimationFrame(frameId);
+      resizeObserver?.disconnect();
+    };
+  }, [content, language]);
 
   function handleScroll(event: React.UIEvent<HTMLTextAreaElement>) {
     const renderElement = renderRef.current;
@@ -1847,6 +1969,7 @@ function EditableCodeContent({
             <div
               key={`gutter-${index}-${line}`}
               className={`file-viewer-code-editor-gutter-line${changeKind ? ` diff-line-${changeKind}` : ""}`}
+              style={lineHeights[index] ? { height: `${lineHeights[index]}px` } : undefined}
             >
               <span className="file-viewer-code-gutter">{lineNo}</span>
             </div>
@@ -1869,6 +1992,7 @@ function EditableCodeContent({
             <div
               key={`${index}-${line}`}
               className={`file-viewer-code-editor-line${changeKind ? ` diff-line-${changeKind}` : ""}`}
+              data-editor-line-index={index}
             >
               <code className="file-viewer-code-content">
                 {tokens.length ? (
