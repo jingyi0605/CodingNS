@@ -9,15 +9,29 @@ If you only need to install CodingNS, sign in, open a workspace, use the file pa
 This section is for people who:
 
 - build static HTML tools inside CodingNS
+- need static HTML preview pages to read and write current-workspace files
 - connect workspace file capabilities inside plugin frontends
 - need to understand the boundary between `CodingNSWorkspace` and `CodingNSDesktop`
 - will maintain the bridge layer later
 
 ## Where to start
 
-### 1. You want the capability boundary first
+### 1. You want static HTML preview pages to read and write workspace files
 
 Start here:
+
+- [Static HTML Preview File Service: Preview HTTP Bridge](/en/developer-guide/static-html-preview-http-bridge)
+
+This page explains:
+
+- the difference between the Preview HTTP Bridge and the Tauri Bridge
+- why `/preview/files/<token>/...` pages should prefer HTTP first
+- how static HTML uses the preview token to access current-workspace files
+- why Markdown files should be the source of truth and index JSON files should stay cache
+
+### 2. You want the capability boundary first
+
+Then read:
 
 - [Workspace File Bridge & Desktop Wrapper](/en/developer-guide/workspace-file-bridge-and-desktop-wrapper)
 
@@ -28,7 +42,7 @@ This page explains:
 - why the page side only passes workspace-relative paths
 - why opening or revealing a file still has to pass Host validation first
 
-### 2. You want the plugin frontend integration path
+### 3. You want the plugin frontend integration path
 
 Then continue here:
 
@@ -55,6 +69,7 @@ Those topics are covered better in the user-facing docs.
 - Docs overview: [/en/overview/docs-overview](/en/overview/docs-overview)
 - Workspaces & Sessions: [/en/user-guide/workspaces-and-sessions](/en/user-guide/workspaces-and-sessions)
 - Files, Git & Terminal: [/en/user-guide/files-git-and-terminal](/en/user-guide/files-git-and-terminal)
+- Static HTML Preview File Service: [/en/developer-guide/static-html-preview-http-bridge](/en/developer-guide/static-html-preview-http-bridge)
 
 ## One-sentence summary
 

@@ -80,6 +80,7 @@ const zhSidebar = [
     text: "开发者手册",
     items: [
       { text: "开发者手册总览", link: "/developer-guide/" },
+      { text: "静态 HTML 预览文件服务", link: "/developer-guide/static-html-preview-http-bridge" },
       { text: "工作区文件桥与桌面包装", link: "/developer-guide/workspace-file-bridge-and-desktop-wrapper" },
       { text: "插件前端接入工作区文件桥", link: "/developer-guide/plugin-frontend-workspace-file-bridge" }
     ]
@@ -135,6 +136,7 @@ const enSidebar = [
     text: "Developer Guide",
     items: [
       { text: "Developer Guide Overview", link: "/en/developer-guide/" },
+      { text: "Static HTML Preview File Service", link: "/en/developer-guide/static-html-preview-http-bridge" },
       { text: "Workspace File Bridge & Desktop Wrapper", link: "/en/developer-guide/workspace-file-bridge-and-desktop-wrapper" },
       { text: "Plugin Frontend Workspace File Bridge", link: "/en/developer-guide/plugin-frontend-workspace-file-bridge" }
     ]

@@ -15,6 +15,24 @@ This is not a backdoor into the host machine file system. It is still a workspac
 
 ---
 
+## Relationship between Preview HTTP Bridge and Tauri Bridge
+
+`CodingNSWorkspace` is the unified page-side object, but its underlying transport can be one of two paths:
+
+- **Preview HTTP Bridge**: a static HTML preview page under `/preview/files/<token>/...` directly calls `/preview/workspace-bridge/*?token=...` to access current-workspace files.
+- **Tauri / Desktop Bridge**: the preview iframe sends `postMessage` requests to the desktop preview host page. This is for desktop-native actions and host-page coordination.
+
+The rule is simple:
+
+```text
+Use the Preview HTTP Bridge first for current-workspace file read/write from static HTML previews.
+Use the Tauri / Desktop Bridge for desktop-native actions such as open, reveal, or pick directory.
+```
+
+Do not make static HTML file access wait for a Tauri `postMessage` timeout before falling back to HTTP. A `/preview/files/<token>/...` page already has a preview token, so it should use the HTTP file service directly. See [Static HTML Preview File Service: Preview HTTP Bridge](/en/developer-guide/static-html-preview-http-bridge) for the API.
+
+---
+
 ## The boundary between `CodingNSWorkspace` and `CodingNSDesktop`
 
 These two objects are not the same thing.

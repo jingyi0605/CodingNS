@@ -15,6 +15,24 @@
 
 ---
 
+## Preview HTTP Bridge 和 Tauri Bridge 的关系
+
+`CodingNSWorkspace` 是页面侧面对的统一对象，但底层可以有两种 transport：
+
+- **Preview HTTP Bridge**：`/preview/files/<token>/...` 静态 HTML 预览页直接通过 `/preview/workspace-bridge/*?token=...` 访问当前 workspace 文件。
+- **Tauri / Desktop Bridge**：预览 iframe 通过 `postMessage` 请求桌面宿主页，适合桌面原生动作和宿主页协调能力。
+
+规则很简单：
+
+```text
+静态 HTML 预览页读写当前 workspace 文件：Preview HTTP Bridge 优先。
+打开、定位、选择目录等桌面原生动作：Tauri / Desktop Bridge。
+```
+
+不要让静态 HTML 文件服务先等 Tauri `postMessage` 超时再回退 HTTP。`/preview/files/<token>/...` 已经有 preview token，应该直接走 HTTP 文件服务。详细 API 见 [静态 HTML 预览文件服务：Preview HTTP Bridge](/developer-guide/static-html-preview-http-bridge)。
+
+---
+
 ## `CodingNSWorkspace` 和 `CodingNSDesktop` 的边界
 
 这两个东西不是一回事。

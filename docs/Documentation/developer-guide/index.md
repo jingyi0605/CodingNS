@@ -11,18 +11,32 @@
 - 在 CodingNS 里接静态 HTML 工具页的人
 - 在插件前端里接工作区文件能力的人
 - 需要搞清 `CodingNSWorkspace` 和 `CodingNSDesktop` 边界的人
+- 需要在静态 HTML 中读写当前 workspace 文件的人
 - 需要在静态 HTML 中打开客户端本地镜像文件的人
 - 后面要继续维护这套桥接能力的人
 
 ## 先看什么
 
-### 1. 想先搞清整套能力边界
+### 1. 想接静态 HTML 预览页读写 workspace 文件
 
 先看：
 
-- [工作区文件桥与桌面包装](/developer-guide/workspace-file-bridge-and-desktop-wrapper)
+- [静态 HTML 预览文件服务：Preview HTTP Bridge](/developer-guide/static-html-preview-http-bridge)
 
 这篇会先讲清：
+
+- Preview HTTP Bridge 和 Tauri Bridge 的区别
+- 为什么 `/preview/files/<token>/...` 页面应该 HTTP 优先
+- 静态 HTML 如何用 preview token 读写当前 workspace 文件
+- 为什么 Markdown 文档库里 MD 是事实源、索引 JSON 只是缓存
+
+### 2. 想先搞清整套能力边界
+
+再看：
+
+- [工作区文件桥与桌面包装](/developer-guide/workspace-file-bridge-and-desktop-wrapper)
+
+这篇会讲清：
 
 - `CodingNSWorkspace` 是干什么的
 - `CodingNSDesktop` 是干什么的
@@ -30,7 +44,7 @@
 - 为什么当前 workspace 文件打开 / 定位要先过 Host 校验
 - 为什么客户端本地镜像文件应直接走 `CodingNSDesktop`
 
-### 2. 想接桌面壳能力或客户端本地镜像文件
+### 3. 想接桌面壳能力或客户端本地镜像文件
 
 看：
 
@@ -42,7 +56,7 @@
 - 预览 iframe 里的 `_cns_parent_origin` 中继规则
 - 客户端本地镜像根目录应该保存在客户端侧，不是 Host 配置
 
-### 3. 想在插件前端里落地接入
+### 4. 想在插件前端里落地接入
 
 再看：
 
@@ -70,6 +84,7 @@
 - 用户向导总览：[/overview/docs-overview](/overview/docs-overview)
 - 工作区与会话：[/user-guide/workspaces-and-sessions](/user-guide/workspaces-and-sessions)
 - 文件、Git 与终端：[/user-guide/files-git-and-terminal](/user-guide/files-git-and-terminal)
+- 静态 HTML 预览文件服务：[/developer-guide/static-html-preview-http-bridge](/developer-guide/static-html-preview-http-bridge)
 
 ## 一句话说明
 
