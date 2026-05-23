@@ -17,16 +17,32 @@ const CODINGNS_DESKTOP_INIT_SCRIPT: &str = r#"
       return !!(window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === "function");
     }
 
-    function canRelayToParent() {
-      return window.parent && window.parent !== window && !!document.referrer;
+    function readParentOriginFromQuery() {
+      try {
+        var currentUrl = new URL(window.location.href);
+        return currentUrl.searchParams.get("_cns_parent_origin") || "";
+      } catch (_error) {
+        return "";
+      }
     }
 
     function resolveParentOrigin() {
-      try {
-        return document.referrer ? new URL(document.referrer).origin : window.location.origin;
-      } catch (_error) {
-        return window.location.origin;
+      var fromQuery = readParentOriginFromQuery();
+      if (fromQuery) {
+        return fromQuery;
       }
+
+      try {
+        if (document.referrer) {
+          return new URL(document.referrer).origin;
+        }
+      } catch (_error) {}
+
+      return window.location.origin;
+    }
+
+    function canRelayToParent() {
+      return window.parent && window.parent !== window && !!resolveParentOrigin();
     }
 
     function unsupported(detail) {
@@ -133,7 +149,18 @@ const CODINGNS_DESKTOP_INIT_SCRIPT: &str = r#"
         return;
       }
 
-      if (event.origin !== resolveParentOrigin()) {
+      var parentOrigin = resolveParentOrigin();
+      var eventOrigin = event.origin || "";
+      var currentOrigin = window.location.origin || "";
+      var isExpectedParentOrigin = eventOrigin === parentOrigin;
+      var isPreviewChildToDesktopParent = !!(
+        payload.type === REQUEST_EVENT
+        && hasDirectInvoke()
+        && currentOrigin.indexOf("tauri://") === 0
+        && eventOrigin.indexOf("http") === 0
+      );
+
+      if (!isExpectedParentOrigin && !isPreviewChildToDesktopParent) {
         return;
       }
 
@@ -164,17 +191,13 @@ const CODINGNS_DESKTOP_INIT_SCRIPT: &str = r#"
       }
 
       invokeDirect(payload.command, payload.args || {}).then(function (result) {
-        if (event.origin !== resolveParentOrigin()) {
-          return;
-        }
-
         source.postMessage(
           {
             type: RESPONSE_EVENT,
             requestId: payload.requestId,
             result: result
           },
-          resolveParentOrigin()
+          eventOrigin || currentOrigin || parentOrigin
         );
       });
     });
