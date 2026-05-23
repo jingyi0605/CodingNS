@@ -30,6 +30,64 @@ export interface PresentationPageImage {
   dataUrl: string;
 }
 
+export interface PresentationEditablePage {
+  index: number;
+  backgroundColor: string;
+  elements: PresentationEditableElement[];
+}
+
+export type PresentationEditableElement =
+  | PresentationEditableShapeElement
+  | PresentationEditableImageElement
+  | PresentationEditableTextElement;
+
+export interface PresentationEditableBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface PresentationEditableShapeElement {
+  type: "shape";
+  box: PresentationEditableBox;
+  style: {
+    backgroundColor: string;
+    backgroundImage: string;
+    borderColor: string;
+    borderWidth: number;
+    borderRadius: number;
+    opacity: number;
+  };
+}
+
+export interface PresentationEditableImageElement {
+  type: "image";
+  box: PresentationEditableBox;
+  dataUrl: string;
+  alt: string;
+  style: {
+    opacity: number;
+    borderRadius: number;
+  };
+}
+
+export interface PresentationEditableTextElement {
+  type: "text";
+  box: PresentationEditableBox;
+  text: string;
+  style: {
+    color: string;
+    fontFamily: string;
+    fontSize: number;
+    fontWeight: string;
+    fontStyle: string;
+    lineHeight: number;
+    textAlign: string;
+    opacity: number;
+  };
+}
+
 export interface PresentationRenderResult {
   pageCount: number;
   pageSize: {
@@ -38,6 +96,7 @@ export interface PresentationRenderResult {
   };
   renderPdf(outputFilePath: string): Promise<void>;
   renderPageImages(): Promise<PresentationPageImage[]>;
+  renderEditablePages(): Promise<PresentationEditablePage[]>;
   close(): Promise<void>;
 }
 
@@ -248,9 +307,9 @@ export async function renderPresentationDocument(
       renderPdf: async (outputFilePath: string) => {
         input.signal.throwIfAborted();
         fs.mkdirSync(path.dirname(outputFilePath), { recursive: true });
-        const pageImages = await capturePageImages(page, layout.pageCount, input.signal);
+        const editablePages = await extractEditablePages(page, layout.pageCount, input.signal);
         await page.setContent(
-          buildImagePdfDocument(pageImages, layout.width, layout.height),
+          buildEditablePdfDocument(editablePages, layout.width, layout.height),
           {
             waitUntil: "load",
             timeout: 20_000
@@ -273,6 +332,10 @@ export async function renderPresentationDocument(
       renderPageImages: async () => {
         input.signal.throwIfAborted();
         return await capturePageImages(page, layout.pageCount, input.signal);
+      },
+      renderEditablePages: async () => {
+        input.signal.throwIfAborted();
+        return await extractEditablePages(page, layout.pageCount, input.signal);
       },
       close: async () => {
         input.signal.removeEventListener("abort", closeBrowserOnAbort);
@@ -485,6 +548,255 @@ async function setActiveExportPage(page: Page, index: number): Promise<void> {
         element.removeAttribute("data-cns-export-active");
       });
   }, index);
+}
+
+async function extractEditablePages(
+  page: Page,
+  pageCount: number,
+  signal: AbortSignal
+): Promise<PresentationEditablePage[]> {
+  const pages: PresentationEditablePage[] = [];
+
+  for (let index = 0; index < pageCount; index += 1) {
+    signal.throwIfAborted();
+    await setActiveExportPage(page, index);
+    await waitForPresentationImages(page).catch(() => undefined);
+    await page.waitForTimeout(50).catch(() => undefined);
+    pages.push(await extractActiveEditablePage(page, index));
+  }
+
+  return pages;
+}
+
+async function extractActiveEditablePage(page: Page, index: number): Promise<PresentationEditablePage> {
+  const script = `(() => {
+    const root = document.querySelector('[data-cns-export-page-index="${index}"]');
+    if (!root) {
+      return { index: ${index}, backgroundColor: 'rgb(255, 255, 255)', elements: [] };
+    }
+    const rootRect = root.getBoundingClientRect();
+    const rootStyle = getComputedStyle(root);
+    const elements = [];
+    const walk = Array.from(root.querySelectorAll('*'));
+    const roundNumber = (value) => Number(value.toFixed(3));
+    const parseCssPixels = (value) => {
+      const parsed = Number.parseFloat(value || '0');
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    const parseLineHeight = (value, fontSize) => {
+      if (!value || value === 'normal') return fontSize * 1.2;
+      return parseCssPixels(value) || fontSize * 1.2;
+    };
+    const hasVisiblePaint = (value) => {
+      if (!value || value === 'transparent') return false;
+      const rgba = value.match(/rgba?\\(([^)]+)\\)/i);
+      if (!rgba) return true;
+      const parts = (rgba[1] || '').split(',').map((part) => part.trim());
+      const alpha = parts.length >= 4 ? Number.parseFloat(parts[3] || '1') : 1;
+      return !Number.isFinite(alpha) || alpha > 0.01;
+    };
+    const normalizeFontFamily = (value) => {
+      const first = (value.split(',')[0] || '').trim() || 'Arial';
+      return first.replace(/^['\"]|['\"]$/g, '');
+    };
+    const toBox = (rect) => ({
+      x: roundNumber(rect.left - rootRect.left),
+      y: roundNumber(rect.top - rootRect.top),
+      width: roundNumber(rect.width),
+      height: roundNumber(rect.height)
+    });
+    const isVisible = (style, rect) => {
+      return rect.width > 1
+        && rect.height > 1
+        && style.display !== 'none'
+        && style.visibility !== 'hidden'
+        && Number(style.opacity || '1') > 0.01;
+    };
+    const readDirectText = (element) => {
+      const text = Array.from(element.childNodes || [])
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .map((node) => node.textContent || '')
+        .join(' ')
+        .replace(/\\s+/g, ' ')
+        .trim();
+      if (text) return text;
+      if ((element.children?.length || 0) === 0) {
+        return (element.textContent || '').replace(/\\s+/g, ' ').trim();
+      }
+      return '';
+    };
+
+    for (const element of walk) {
+      const tagName = String(element.tagName || '').toLowerCase();
+      if (['script', 'style', 'noscript', 'template'].includes(tagName)) continue;
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      if (!isVisible(style, rect)) continue;
+      const box = toBox(rect);
+      const borderWidth = parseCssPixels(style.borderTopWidth);
+      const backgroundColor = style.backgroundColor;
+      const backgroundImage = style.backgroundImage === 'none' ? '' : style.backgroundImage;
+      const borderColor = style.borderTopColor;
+      const borderRadius = parseCssPixels(style.borderTopLeftRadius);
+      const opacity = Number(style.opacity || '1');
+      const hasFill = hasVisiblePaint(backgroundColor) || backgroundImage.length > 0;
+      const hasBorder = borderWidth > 0.2 && hasVisiblePaint(borderColor);
+      if ((hasFill || hasBorder) && box.width > 2 && box.height > 2) {
+        elements.push({
+          type: 'shape',
+          box,
+          style: {
+            backgroundColor,
+            backgroundImage,
+            borderColor,
+            borderWidth: roundNumber(borderWidth),
+            borderRadius: roundNumber(borderRadius),
+            opacity: roundNumber(opacity)
+          }
+        });
+      }
+      if (tagName === 'img') {
+        const dataUrl = element.currentSrc || element.src || element.getAttribute('src') || '';
+        if (dataUrl) {
+          elements.push({
+            type: 'image',
+            box,
+            dataUrl,
+            alt: element.alt || '',
+            style: {
+              opacity: roundNumber(opacity),
+              borderRadius: roundNumber(borderRadius)
+            }
+          });
+        }
+      }
+      const directText = readDirectText(element);
+      if (directText) {
+        const fontSize = parseCssPixels(style.fontSize);
+        elements.push({
+          type: 'text',
+          box,
+          text: directText,
+          style: {
+            color: style.color,
+            fontFamily: normalizeFontFamily(style.fontFamily),
+            fontSize: roundNumber(fontSize),
+            fontWeight: style.fontWeight,
+            fontStyle: style.fontStyle,
+            lineHeight: roundNumber(parseLineHeight(style.lineHeight, fontSize)),
+            textAlign: style.textAlign,
+            opacity: roundNumber(opacity)
+          }
+        });
+      }
+    }
+    return {
+      index: ${index},
+      backgroundColor: rootStyle.backgroundColor || 'rgb(255, 255, 255)',
+      elements
+    };
+  })()`;
+
+  return await page.evaluate(script) as PresentationEditablePage;
+}
+
+function buildEditablePdfDocument(
+  pages: PresentationEditablePage[] | unknown,
+  width: number,
+  height: number
+): string {
+  const normalizedPages = normalizeEditablePages(pages);
+  const pageHtml = normalizedPages
+    .map((presentationPage) => {
+      const elements = (presentationPage.elements ?? [])
+        .map((element) => buildEditablePdfElement(element))
+        .join("");
+
+      return `<section class="cns-export-page" style="background:${escapeHtmlAttribute(presentationPage.backgroundColor || "#fff")}">${elements}</section>`;
+    })
+    .join("");
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    @page {
+      size: ${width}px ${height}px;
+      margin: 0;
+    }
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    .cns-export-page {
+      position: relative;
+      width: ${width}px;
+      height: ${height}px;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      break-after: page;
+      page-break-after: always;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .cns-export-page:last-child {
+      break-after: auto;
+      page-break-after: auto;
+    }
+    .cns-export-el {
+      position: absolute;
+      overflow: hidden;
+    }
+    .cns-export-text {
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
+    }
+    .cns-export-image {
+      object-fit: fill;
+    }
+  </style>
+</head>
+<body>${pageHtml}</body>
+</html>`;
+}
+
+function normalizeEditablePages(pages: PresentationEditablePage[] | unknown): PresentationEditablePage[] {
+  return Array.isArray(pages) ? pages as PresentationEditablePage[] : [];
+}
+
+function buildEditablePdfElement(element: PresentationEditableElement): string {
+  const boxStyle = `left:${element.box.x}px;top:${element.box.y}px;width:${element.box.width}px;height:${element.box.height}px;`;
+
+  if (element.type === "shape") {
+    const backgroundStyle = element.style.backgroundImage
+      ? `background-image:${element.style.backgroundImage};background-color:${element.style.backgroundColor};`
+      : `background:${element.style.backgroundColor};`;
+    const borderStyle = element.style.borderWidth > 0
+      ? `border:${element.style.borderWidth}px solid ${element.style.borderColor};`
+      : "border:0;";
+
+    return `<div class="cns-export-el" style="${boxStyle}${backgroundStyle}${borderStyle}border-radius:${element.style.borderRadius}px;opacity:${element.style.opacity};"></div>`;
+  }
+
+  if (element.type === "image") {
+    return `<img class="cns-export-el cns-export-image" src="${escapeHtmlAttribute(element.dataUrl)}" alt="${escapeHtmlAttribute(element.alt)}" style="${boxStyle}opacity:${element.style.opacity};border-radius:${element.style.borderRadius}px;">`;
+  }
+
+  return `<div class="cns-export-el cns-export-text" style="${boxStyle}color:${element.style.color};font-family:${escapeHtmlAttribute(element.style.fontFamily)};font-size:${element.style.fontSize}px;font-weight:${element.style.fontWeight};font-style:${element.style.fontStyle};line-height:${element.style.lineHeight}px;text-align:${element.style.textAlign};opacity:${element.style.opacity};">${escapeHtmlText(element.text)}</div>`;
+}
+
+function escapeHtmlText(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 function buildImagePdfDocument(

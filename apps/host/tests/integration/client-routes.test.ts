@@ -1434,9 +1434,7 @@ describe("client routes", () => {
       status: "succeeded",
       outputPath: expect.stringContaining("slides-pptx.pptx")
     });
-    expect(pptxAddImageMock).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.stringContaining("data:image/png;base64,")
-    }));
+    expect(pptxAddImageMock).not.toHaveBeenCalled();
 
     const downloadResponse = await hosted.app.inject({
       method: "GET",
