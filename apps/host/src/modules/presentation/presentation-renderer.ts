@@ -578,6 +578,7 @@ async function extractActiveEditablePage(page: Page, index: number): Promise<Pre
     const rootStyle = getComputedStyle(root);
     const elements = [];
     const walk = Array.from(root.querySelectorAll('*'));
+    const TEXT_BOX_SAFETY_PX = 4;
     const roundNumber = (value) => Number(value.toFixed(3));
     const parseCssPixels = (value) => {
       const parsed = Number.parseFloat(value || '0');
@@ -611,6 +612,18 @@ async function extractActiveEditablePage(page: Page, index: number): Promise<Pre
         && style.display !== 'none'
         && style.visibility !== 'hidden'
         && Number(style.opacity || '1') > 0.01;
+    };
+    const toContentBox = (box, style) => {
+      const paddingLeft = parseCssPixels(style.paddingLeft);
+      const paddingRight = parseCssPixels(style.paddingRight);
+      const paddingTop = parseCssPixels(style.paddingTop);
+      const paddingBottom = parseCssPixels(style.paddingBottom);
+      return {
+        x: roundNumber(box.x + paddingLeft),
+        y: roundNumber(box.y + paddingTop),
+        width: roundNumber(Math.max(1, box.width - paddingLeft - paddingRight + TEXT_BOX_SAFETY_PX)),
+        height: roundNumber(Math.max(1, box.height - paddingTop - paddingBottom + TEXT_BOX_SAFETY_PX))
+      };
     };
     const readDirectText = (element) => {
       const text = Array.from(element.childNodes || [])
@@ -675,7 +688,7 @@ async function extractActiveEditablePage(page: Page, index: number): Promise<Pre
         const fontSize = parseCssPixels(style.fontSize);
         elements.push({
           type: 'text',
-          box,
+          box: toContentBox(box, style),
           text: directText,
           style: {
             color: style.color,

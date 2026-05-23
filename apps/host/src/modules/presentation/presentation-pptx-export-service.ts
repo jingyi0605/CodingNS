@@ -53,8 +53,9 @@ export class PresentationPptxExportService {
       pptx.title = path.basename(input.sourceFilePath);
       pptx.lang = "zh-CN";
 
-      const slideWidthInches = pixelsToInches(rendered.pageSize.width);
-      const slideHeightInches = pixelsToInches(rendered.pageSize.height);
+      const slideWidthInches = 13.3333;
+      const slideHeightInches = Number((slideWidthInches * rendered.pageSize.height / rendered.pageSize.width).toFixed(4));
+      const scaleContext = buildPptxScaleContext(rendered.pageSize.width, slideWidthInches);
       pptx.defineLayout({
         name: "CODINGNS_PRESENTATION",
         width: slideWidthInches,
@@ -66,7 +67,7 @@ export class PresentationPptxExportService {
         input.signal.throwIfAborted();
         const slide = pptx.addSlide();
         slide.background = { color: toHexColor(editablePage.backgroundColor) ?? "FFFFFF" };
-        addEditablePageToSlide(slide, editablePage);
+        addEditablePageToSlide(slide, editablePage, scaleContext);
       }
 
       if (editablePages.length === 0) {
@@ -91,36 +92,53 @@ export class PresentationPptxExportService {
   }
 }
 
-function pixelsToInches(value: number): number {
-  return Number((value / 96).toFixed(4));
+function buildPptxScaleContext(sourceWidthPx: number, slideWidthInches: number): PptxScaleContext {
+  const inchPerPixel = slideWidthInches / Math.max(1, sourceWidthPx);
+
+  return {
+    inchPerPixel,
+    ptPerPixel: inchPerPixel * 72
+  };
 }
 
-function addEditablePageToSlide(slide: PptxSlide, editablePage: PresentationEditablePage): void {
+function addEditablePageToSlide(
+  slide: PptxSlide,
+  editablePage: PresentationEditablePage,
+  scaleContext: PptxScaleContext
+): void {
   for (const element of editablePage.elements ?? []) {
-    addEditableElementToSlide(slide, element);
+    addEditableElementToSlide(slide, element, scaleContext);
   }
 }
 
-function addEditableElementToSlide(slide: PptxSlide, element: PresentationEditableElement): void {
+function addEditableElementToSlide(
+  slide: PptxSlide,
+  element: PresentationEditableElement,
+  scaleContext: PptxScaleContext
+): void {
   if (element.type === "shape") {
-    addShapeElementToSlide(slide, element);
+    addShapeElementToSlide(slide, element, scaleContext);
     return;
   }
 
   if (element.type === "image") {
-    addImageElementToSlide(slide, element);
+    addImageElementToSlide(slide, element, scaleContext);
     return;
   }
 
-  addTextElementToSlide(slide, element);
+  addTextElementToSlide(slide, element, scaleContext);
 }
 
-function addShapeElementToSlide(slide: PptxSlide, element: PresentationEditableShapeElement): void {
+function addShapeElementToSlide(
+  slide: PptxSlide,
+  element: PresentationEditableShapeElement,
+  scaleContext: PptxScaleContext
+): void {
   const fillColor = toHexColor(element.style.backgroundColor);
   const borderColor = toHexColor(element.style.borderColor);
 
   slide.addShape("roundRect", {
-    ...toPptxBox(element.box),
+    ...toPptxBox(element.box, scaleContext),
     fill: fillColor
       ? { color: fillColor, transparency: toTransparency(element.style.opacity) }
       : { color: "FFFFFF", transparency: 100 },
@@ -128,33 +146,41 @@ function addShapeElementToSlide(slide: PptxSlide, element: PresentationEditableS
       ? {
         color: borderColor,
         transparency: toTransparency(element.style.opacity),
-        width: pxToPt(element.style.borderWidth)
+        width: pxToPt(element.style.borderWidth, scaleContext)
       }
       : { color: "FFFFFF", transparency: 100 },
-    radius: pxToInches(Math.min(element.style.borderRadius, element.box.width / 2, element.box.height / 2))
+    radius: pxToInches(Math.min(element.style.borderRadius, element.box.width / 2, element.box.height / 2), scaleContext)
   });
 }
 
-function addImageElementToSlide(slide: PptxSlide, element: PresentationEditableImageElement): void {
+function addImageElementToSlide(
+  slide: PptxSlide,
+  element: PresentationEditableImageElement,
+  scaleContext: PptxScaleContext
+): void {
   if (!element.dataUrl) {
     return;
   }
 
   slide.addImage({
     data: element.dataUrl,
-    ...toPptxBox(element.box),
+    ...toPptxBox(element.box, scaleContext),
     transparency: toTransparency(element.style.opacity ?? 1)
   });
 }
 
-function addTextElementToSlide(slide: PptxSlide, element: PresentationEditableTextElement): void {
+function addTextElementToSlide(
+  slide: PptxSlide,
+  element: PresentationEditableTextElement,
+  scaleContext: PptxScaleContext
+): void {
   const color = toHexColor(element.style.color) ?? "222222";
 
   slide.addText(element.text, {
-    ...toPptxBox(element.box),
+    ...toPptxTextBox(element.box, scaleContext),
     color,
     fontFace: element.style.fontFamily || "Arial",
-    fontSize: pxToPt(element.style.fontSize || 16),
+    fontSize: pxToPt((element.style.fontSize || 16) * 0.92, scaleContext),
     bold: isBoldFontWeight(element.style.fontWeight),
     italic: element.style.fontStyle === "italic" || element.style.fontStyle === "oblique",
     align: toPptxTextAlign(element.style.textAlign),
@@ -167,26 +193,47 @@ function addTextElementToSlide(slide: PptxSlide, element: PresentationEditableTe
   });
 }
 
-function toPptxBox(box: { x: number; y: number; width: number; height: number }): {
+function toPptxBox(
+  box: { x: number; y: number; width: number; height: number },
+  scaleContext: PptxScaleContext
+): {
   x: number;
   y: number;
   w: number;
   h: number;
 } {
   return {
-    x: pxToInches(box.x),
-    y: pxToInches(box.y),
-    w: pxToInches(box.width),
-    h: pxToInches(box.height)
+    x: pxToInches(box.x, scaleContext),
+    y: pxToInches(box.y, scaleContext),
+    w: pxToInches(box.width, scaleContext),
+    h: pxToInches(box.height, scaleContext)
   };
 }
 
-function pxToInches(value: number): number {
-  return Number((value / 96).toFixed(4));
+function toPptxTextBox(
+  box: { x: number; y: number; width: number; height: number },
+  scaleContext: PptxScaleContext
+): {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+} {
+  const safePaddingPx = 2;
+  return {
+    x: pxToInches(Math.max(0, box.x - safePaddingPx), scaleContext),
+    y: pxToInches(Math.max(0, box.y - safePaddingPx), scaleContext),
+    w: pxToInches(box.width + safePaddingPx * 2, scaleContext),
+    h: pxToInches(box.height + safePaddingPx * 2, scaleContext)
+  };
 }
 
-function pxToPt(value: number): number {
-  return Number((value * 0.75).toFixed(2));
+function pxToInches(value: number, scaleContext: PptxScaleContext): number {
+  return Number((value * scaleContext.inchPerPixel).toFixed(4));
+}
+
+function pxToPt(value: number, scaleContext: PptxScaleContext): number {
+  return Number((value * scaleContext.ptPerPixel).toFixed(2));
 }
 
 function toHexColor(value: string | undefined | null): string | null {
@@ -312,6 +359,11 @@ function readOptionalExport(
   } catch {
     return undefined;
   }
+}
+
+interface PptxScaleContext {
+  inchPerPixel: number;
+  ptPerPixel: number;
 }
 
 interface PptxGenJsInstance {
