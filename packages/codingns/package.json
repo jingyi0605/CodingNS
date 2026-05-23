@@ -1,6 +1,6 @@
 {
   "name": "@jingyi0605/codingns",
-  "version": "0.8.1",
+  "version": "0.8.5",
   "type": "module",
   "bin": {
     "codingns": "./bin/codingns.mjs",

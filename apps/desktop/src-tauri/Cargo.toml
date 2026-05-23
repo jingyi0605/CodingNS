@@ -1,6 +1,6 @@
 [package]
 name = "codingns-desktop"
-version = "0.8.1"
+version = "0.8.5"
 description = "CodingNS desktop shell"
 authors = ["CodingNS"]
 edition = "2021"
