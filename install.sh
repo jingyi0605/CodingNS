@@ -71,6 +71,7 @@ PRIVATE_INSTALL_LOG_DIR=""
 PRIVATE_PM2_HOME=""
 PRIVATE_SERVICE_STATE_DIR=""
 PRIVATE_NPM_USERCONFIG=""
+PRIVATE_PM2_START_SCRIPT=""
 PRIVATE_NODE_SOURCE_URL=""
 PRIVATE_NODE_ARCHIVE_SHA256=""
 PRIVATE_NPM_CMD=""
@@ -494,6 +495,15 @@ to_native_windows_path() {
   local target_path="$1"
   if is_windows_environment && command_exists cygpath; then
     cygpath -w "$target_path"
+    return
+  fi
+  printf '%s\n' "$target_path"
+}
+
+native_path_for_node_runtime() {
+  local target_path="$1"
+  if is_windows_environment; then
+    to_native_windows_path "$target_path"
     return
   fi
   printf '%s\n' "$target_path"
@@ -1950,20 +1960,36 @@ die_custom() {
   exit 1
 }
 
+resolve_private_installed_binary() {
+  local command_name="$1"
+
+  [[ -n "$NPM_GLOBAL_PREFIX" ]] || return 1
+
+  if is_windows_environment && [[ -f "$NPM_GLOBAL_PREFIX/${command_name}.cmd" ]]; then
+    printf '%s\n' "$NPM_GLOBAL_PREFIX/${command_name}.cmd"
+    return 0
+  fi
+
+  if [[ -x "$NPM_GLOBAL_PREFIX/$command_name" || -f "$NPM_GLOBAL_PREFIX/$command_name" ]]; then
+    printf '%s\n' "$NPM_GLOBAL_PREFIX/$command_name"
+    return 0
+  fi
+
+  if [[ -x "$NPM_GLOBAL_PREFIX/bin/$command_name" || -f "$NPM_GLOBAL_PREFIX/bin/$command_name" ]]; then
+    printf '%s\n' "$NPM_GLOBAL_PREFIX/bin/$command_name"
+    return 0
+  fi
+
+  return 1
+}
+
 resolve_installed_binary() {
   local command_name="$1"
   local candidate=""
 
   if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
-    if is_windows_environment && [[ -f "$NPM_GLOBAL_PREFIX/${command_name}.cmd" ]]; then
-      printf '%s\n' "$NPM_GLOBAL_PREFIX/${command_name}.cmd"
-      return
-    fi
-
-    if [[ -x "$NPM_GLOBAL_PREFIX/$command_name" || -f "$NPM_GLOBAL_PREFIX/$command_name" ]]; then
-      printf '%s\n' "$NPM_GLOBAL_PREFIX/$command_name"
-      return
-    fi
+    resolve_private_installed_binary "$command_name" || printf '\n'
+    return
   fi
 
   candidate="$(command -v "$command_name" 2>/dev/null || true)"
@@ -2272,13 +2298,76 @@ install_or_resolve_pm2() {
     return
   fi
 
-  if [[ "$INSTALL_PM2" == "1" ]]; then
+  if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" || "$INSTALL_PM2" == "1" ]]; then
     say_info info_installing_pm2_missing
     install_global_package "$PM2_PACKAGE_SPEC" "PM2"
   fi
 
   PM2_BIN="$(resolve_installed_binary "pm2")"
   [[ -n "$PM2_BIN" ]] || die error_no_pm2_after_install
+}
+
+write_private_pm2_start_script() {
+  if [[ "$PRIVATE_INSTALL_CONTEXT" != "1" ]]; then
+    return
+  fi
+
+  [[ -n "$NODE_BIN" ]] || die error_no_node
+  [[ -n "$CODINGNS_SCRIPT" ]] || die error_no_codingns_after_install
+
+  PRIVATE_PM2_START_SCRIPT="$PRIVATE_SERVICE_STATE_DIR/start-codingns.mjs"
+  mkdir -p "$PRIVATE_SERVICE_STATE_DIR"
+
+  local native_pm2_start_script=""
+  local native_codingns_script=""
+  local native_data_dir=""
+  native_pm2_start_script="$(native_path_for_node_runtime "$PRIVATE_PM2_START_SCRIPT")"
+  native_codingns_script="$(native_path_for_node_runtime "$CODINGNS_SCRIPT")"
+  native_data_dir="$(native_path_for_node_runtime "$SELECTED_DATA_DIR")"
+
+  CODINGNS_PM2_TARGET_SCRIPT="$native_codingns_script" \
+  CODINGNS_PM2_TARGET_PORT="$SELECTED_PORT" \
+  CODINGNS_PM2_TARGET_DATA_DIR="$native_data_dir" \
+    "$NODE_BIN" - "$native_pm2_start_script" <<'EOF'
+const fs = require("node:fs");
+
+const outputPath = process.argv[2];
+const targetScript = process.env.CODINGNS_PM2_TARGET_SCRIPT ?? "";
+const targetPort = process.env.CODINGNS_PM2_TARGET_PORT ?? "";
+const targetDataDir = process.env.CODINGNS_PM2_TARGET_DATA_DIR ?? "";
+
+const script = `import { spawn } from "node:child_process";
+
+const child = spawn(process.execPath, [
+  ${JSON.stringify(targetScript)},
+  "start",
+  "--host",
+  "0.0.0.0",
+  "--port",
+  ${JSON.stringify(targetPort)},
+  "--data-dir",
+  ${JSON.stringify(targetDataDir)}
+], {
+  stdio: "inherit",
+  windowsHide: true
+});
+
+child.on("exit", (code, signal) => {
+  if (signal) {
+    process.kill(process.pid, signal);
+    return;
+  }
+  process.exit(code ?? 0);
+});
+
+child.on("error", (error) => {
+  console.error("[codingns-pm2] 启动失败：" + (error?.message || error));
+  process.exit(1);
+});
+`;
+
+fs.writeFileSync(outputPath, script);
+EOF
 }
 
 start_pm2_service() {
@@ -2292,7 +2381,7 @@ start_pm2_service() {
   if [[ "$DRY_RUN" == "1" ]]; then
     if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
       say_info_custom "env ${INSTALL_ENV_ARGS[*]} \"$PM2_BIN\" delete $PROCESS_NAME"
-      say_info_custom "env ${INSTALL_ENV_ARGS[*]} \"$PM2_BIN\" start $NODE_BIN --name $PROCESS_NAME --cwd $SELECTED_DATA_DIR --interpreter none -- $CODINGNS_SCRIPT start --host 0.0.0.0 --port $SELECTED_PORT --data-dir $SELECTED_DATA_DIR"
+      say_info_custom "env ${INSTALL_ENV_ARGS[*]} \"$PM2_BIN\" start $PRIVATE_SERVICE_STATE_DIR/start-codingns.mjs --name $PROCESS_NAME --cwd $SELECTED_DATA_DIR --interpreter $NODE_BIN"
       say_info_custom "env ${INSTALL_ENV_ARGS[*]} \"$PM2_BIN\" save"
     else
       say_info_custom "pm2 delete $PROCESS_NAME"
@@ -2303,13 +2392,21 @@ start_pm2_service() {
   fi
 
   if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
+    write_private_pm2_start_script
+
     if env "${INSTALL_ENV_ARGS[@]}" "$PM2_BIN" describe "$PROCESS_NAME" >/dev/null 2>&1; then
       say_info info_existing_pm2_process "$PROCESS_NAME"
       env "${INSTALL_ENV_ARGS[@]}" "$PM2_BIN" delete "$PROCESS_NAME" >/dev/null 2>&1 || true
     fi
 
-    env "${INSTALL_ENV_ARGS[@]}" "$PM2_BIN" start "$NODE_BIN" --name "$PROCESS_NAME" --cwd "$SELECTED_DATA_DIR" --interpreter none -- \
-      "$CODINGNS_SCRIPT" start --host 0.0.0.0 --port "$SELECTED_PORT" --data-dir "$SELECTED_DATA_DIR"
+    local native_pm2_start_script=""
+    local native_service_cwd=""
+    local native_node_bin=""
+    native_pm2_start_script="$(native_path_for_node_runtime "$PRIVATE_PM2_START_SCRIPT")"
+    native_service_cwd="$(native_path_for_node_runtime "$SELECTED_DATA_DIR")"
+    native_node_bin="$(native_path_for_node_runtime "$NODE_BIN")"
+
+    env "${INSTALL_ENV_ARGS[@]}" "$PM2_BIN" start "$native_pm2_start_script" --name "$PROCESS_NAME" --cwd "$native_service_cwd" --interpreter "$native_node_bin"
 
     env "${INSTALL_ENV_ARGS[@]}" "$PM2_BIN" save >/dev/null
     return
@@ -2457,7 +2554,7 @@ print_success_summary() {
     fi
     if [[ "$START_PM2_SERVICE" != "1" ]]; then
       if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
-        printf -- '- env PM2_HOME=%s %s start %s --name %s --cwd %s --interpreter none -- %s start --host 0.0.0.0 --port %s --data-dir %s\n' "$PRIVATE_PM2_HOME" "$PM2_BIN" "$NODE_BIN" "$PROCESS_NAME" "$SELECTED_DATA_DIR" "$CODINGNS_SCRIPT" "$SELECTED_PORT" "$SELECTED_DATA_DIR"
+        printf -- '- env PM2_HOME=%s %s start %s --name %s --cwd %s --interpreter %s\n' "$PRIVATE_PM2_HOME" "$PM2_BIN" "$PRIVATE_SERVICE_STATE_DIR/start-codingns.mjs" "$PROCESS_NAME" "$SELECTED_DATA_DIR" "$NODE_BIN"
       else
         printf -- '- pm2 start %s --name %s --cwd %s --interpreter none -- %s start --host 0.0.0.0 --port %s --data-dir %s\n' "$NODE_BIN" "$PROCESS_NAME" "$HOME" "$CODINGNS_SCRIPT" "$SELECTED_PORT" "$SELECTED_DATA_DIR"
       fi
@@ -2498,6 +2595,7 @@ main() {
   ensure_registry_if_needed
   install_or_resolve_codingns
   install_or_resolve_pm2
+  write_private_pm2_start_script
   write_private_runtime_state
   start_pm2_service
   configure_startup

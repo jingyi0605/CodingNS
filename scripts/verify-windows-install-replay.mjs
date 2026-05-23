@@ -37,6 +37,10 @@ if (!String(installState.nodeVersion || "").startsWith("22.")) {
 assertPathContains(installState.nodeExe, `${path.sep}runtime${path.sep}node-22${path.sep}`, "nodeExe 没有落在私有运行时目录");
 assertPathContains(installState.npmPrefix, `${path.sep}runtime${path.sep}npm-global`, "npmPrefix 没有落在私有前缀目录");
 assertPathContains(installState.pm2Home, `${path.sep}runtime${path.sep}pm2`, "pm2Home 没有落在私有目录");
+assertPathContains(installState.pm2Command, `${path.sep}runtime${path.sep}npm-global`, "pm2Command 没有落在私有 npm 前缀");
+
+const pm2Process = verifyPm2Process(installState.pm2Command, installState.pm2Home, installState.processName);
+verifyWindowsPm2LaunchMode(pm2Process, installState);
 
 assertTextContains(launchEnv.PATH, "runtime", "launch-env PATH 缺少私有运行时");
 assertTextContains(launchEnv.PATH, "npm-global", "launch-env PATH 缺少私有 npm 前缀");
@@ -46,7 +50,6 @@ assertExists(installState.codingnsCommand, "codingns 命令");
 assertExists(installState.pm2Command, "pm2 命令");
 
 verifyPrivateNodeExecutable(installState.nodeExe);
-verifyPm2Process(installState.pm2Command, installState.pm2Home, installState.processName);
 verifyInstallLogs(logsRoot);
 verifyInstallOutput(installOutput);
 
@@ -121,6 +124,18 @@ function verifyPm2Process(pm2Command, pm2Home, processName) {
   if (matchedProcess.pm2_env?.status !== "online") {
     throw new Error(`PM2 进程状态不对：${matchedProcess.pm2_env?.status || "unknown"}`);
   }
+
+  return matchedProcess;
+}
+
+function verifyWindowsPm2LaunchMode(matchedProcess, installState) {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  const pm2Env = matchedProcess?.pm2_env ?? {};
+  assertPathContains(pm2Env.pm_exec_path, `${path.sep}runtime${path.sep}service${path.sep}start-codingns.mjs`, "PM2 没有启动受控包装脚本");
+  assertEqual(path.normalize(pm2Env.exec_interpreter || ""), path.normalize(installState.nodeExe || ""), "PM2 interpreter 没有使用私有 node.exe");
 }
 
 function verifyInstallLogs(logsRoot) {
