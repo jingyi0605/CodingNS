@@ -504,7 +504,10 @@ export class FileController {
     _request: FastifyRequest,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.header("Cache-Control", "no-cache");
+    reply.header("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    reply.header("Pragma", "no-cache");
+    reply.header("Expires", "0");
+    reply.header("Surrogate-Control", "no-store");
     reply.header("X-Content-Type-Options", "nosniff");
     reply.type("text/javascript; charset=utf-8");
     reply.send(readFileSync(resolveWorkspaceBridgeRuntimePath(), "utf8"));
@@ -621,8 +624,11 @@ function injectWorkspaceBridgeRuntime(
     parentOrigin: string | null;
   }
 ): string {
+  const runtimeVersion = "20260523-workspace-bridge-debug-v2";
+  const runtimeScriptPath = `/preview/runtime/codingns-workspace-bridge.js?v=${runtimeVersion}`;
   const bootstrapScript = JSON.stringify({
-    runtimeScriptPath: "/preview/runtime/codingns-workspace-bridge.js",
+    runtimeScriptPath,
+    runtimeVersion,
     workspaceId: bootstrap.workspaceId,
     hostOrigin: bootstrap.hostOrigin,
     parentOrigin: bootstrap.parentOrigin ?? ""
@@ -630,11 +636,12 @@ function injectWorkspaceBridgeRuntime(
   const workspaceIdAttr = escapeHtmlAttribute(bootstrap.workspaceId);
   const hostOriginAttr = escapeHtmlAttribute(bootstrap.hostOrigin);
   const parentOriginAttr = escapeHtmlAttribute(bootstrap.parentOrigin ?? "");
+  const runtimeVersionAttr = escapeHtmlAttribute(runtimeVersion);
   const runtimeSnippet = [
     "<script>",
     `window.__CODINGNS_WORKSPACE_BRIDGE_BOOTSTRAP__ = ${bootstrapScript};`,
     "</script>",
-    `<script src="/preview/runtime/codingns-workspace-bridge.js" data-codingns-workspace-id="${workspaceIdAttr}" data-codingns-host-origin="${hostOriginAttr}" data-codingns-parent-origin="${parentOriginAttr}"></script>`
+    `<script src="${runtimeScriptPath}" data-codingns-workspace-id="${workspaceIdAttr}" data-codingns-host-origin="${hostOriginAttr}" data-codingns-parent-origin="${parentOriginAttr}" data-codingns-runtime-version="${runtimeVersionAttr}"></script>`
   ].join("");
 
   if (html.includes("/preview/runtime/codingns-workspace-bridge.js")) {

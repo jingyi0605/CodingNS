@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createHtmlPreviewWorkspaceBridge } from "./html-preview-workspace-bridge";
 
@@ -31,6 +31,10 @@ vi.mock("../desktop/codingns-desktop-bridge", () => ({
 }));
 
 describe("createHtmlPreviewWorkspaceBridge", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("只接受当前 iframe 发来的请求，并通过父页鉴权上下文代理 readText", async () => {
     const iframe = document.createElement("iframe");
     document.body.appendChild(iframe);
@@ -73,11 +77,10 @@ describe("createHtmlPreviewWorkspaceBridge", () => {
     iframe.remove();
   });
 
-  it("来源窗口不匹配当前 iframe 时会忽略请求并保留诊断状态", async () => {
+  it("来源不能 postMessage 时会忽略请求并保留诊断状态", async () => {
     const iframe = document.createElement("iframe");
     document.body.appendChild(iframe);
-    const otherFrame = document.createElement("iframe");
-    document.body.appendChild(otherFrame);
+    const foreignSource = {};
 
     const bridge = createHtmlPreviewWorkspaceBridge({
       iframe,
@@ -85,7 +88,7 @@ describe("createHtmlPreviewWorkspaceBridge", () => {
     });
 
     await bridge.onMessage({
-      source: otherFrame.contentWindow,
+      source: foreignSource,
       origin: "http://localhost:3000",
       data: {
         type: "codingns.workspace.request",
@@ -102,7 +105,57 @@ describe("createHtmlPreviewWorkspaceBridge", () => {
     expect(bridge.debug.lastEventMatchedSource).toBe(false);
     expect(bridge.debug.currentIframeWindowMatches).toBe(false);
 
-    otherFrame.remove();
+    iframe.remove();
+  });
+
+  it("来源可 postMessage 但不等于当前 iframe.contentWindow 时仍会处理请求", async () => {
+    const iframe = document.createElement("iframe");
+    document.body.appendChild(iframe);
+    const foreignWindow = {
+      postMessage: vi.fn()
+    };
+
+    bridgeApiMock.readWorkspaceBridgeText.mockResolvedValue({
+      path: "重要信息/会员信息/91飞机场.md",
+      content: "# 会员",
+      mtime: 1,
+      size: 4
+    });
+
+    const bridge = createHtmlPreviewWorkspaceBridge({
+      iframe,
+      workspaceId: "workspace-1"
+    });
+
+    await bridge.onMessage({
+      source: foreignWindow,
+      origin: "http://localhost:3000",
+      data: {
+        type: "codingns.workspace.request",
+        id: "req-foreign-window",
+        action: "readText",
+        payload: {
+          path: "重要信息/会员信息/91飞机场.md"
+        }
+      }
+    } as unknown as MessageEvent);
+
+    expect(bridgeApiMock.readWorkspaceBridgeText).toHaveBeenCalledWith(
+      "workspace-1",
+      "重要信息/会员信息/91飞机场.md"
+    );
+    expect(bridge.debug.lastEventMatchedSource).toBe(false);
+    expect(bridge.debug.lastHandledRequestId).toBe("req-foreign-window");
+    expect(bridge.debug.lastResponseId).toBe("req-foreign-window");
+    expect(foreignWindow.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "req-foreign-window",
+        ok: true,
+        type: "codingns.workspace.response"
+      }),
+      "http://localhost:3000"
+    );
+
     iframe.remove();
   });
 });

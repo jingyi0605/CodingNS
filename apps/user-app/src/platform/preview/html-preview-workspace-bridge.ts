@@ -59,7 +59,51 @@ export function createHtmlPreviewWorkspaceBridge(options: HtmlPreviewWorkspaceBr
     currentIframeWindowMatches: false
   };
 
+  debugLog("create", {
+    hasIframe: Boolean(options.iframe),
+    hasContentWindow: Boolean(options.iframe?.contentWindow),
+    workspaceId: options.workspaceId ?? null
+  });
+
+  function debugLog(stage: string, payload?: Record<string, unknown>): void {
+    const detail = {
+      at: new Date().toISOString(),
+      source: "html-preview-host",
+      stage,
+      payload: payload ?? {}
+    };
+
+    if (typeof console !== "undefined" && typeof console.debug === "function") {
+      console.debug(`[html-preview-bridge] ${stage}`, payload ?? {});
+    }
+
+    postHostDebugEvent(detail);
+  }
+
+  function postHostDebugEvent(detail: Record<string, unknown>): void {
+    const iframeWindow = options.iframe?.contentWindow;
+    if (!iframeWindow || typeof iframeWindow.postMessage !== "function") {
+      return;
+    }
+
+    iframeWindow.postMessage(
+      {
+        type: "codingns.workspace.debug",
+        payload: detail
+      },
+      iframeOrigin ?? "*"
+    );
+  }
+
   function postError(event: MessageEvent, request: HtmlPreviewBridgeRequest, code: string, message: string, path?: string) {
+    debugLog("post-error", {
+      id: request.id,
+      action: request.action,
+      code,
+      message,
+      path,
+      origin: event.origin
+    });
     postResponse(event, {
       type: "codingns.workspace.response",
       id: request.id,
@@ -74,39 +118,79 @@ export function createHtmlPreviewWorkspaceBridge(options: HtmlPreviewWorkspaceBr
 
   function postResponse(event: MessageEvent, response: HtmlPreviewBridgeResponse) {
     const targetWindow = event.source;
+    debugState.lastResponseId = response.id;
+    debugState.lastResponseOrigin = event.origin;
+    debugLog("post-response", {
+      id: response.id,
+      ok: response.ok,
+      origin: event.origin,
+      targetCanPostMessage: canPostMessage(targetWindow)
+    });
 
-    if (!(targetWindow instanceof Window)) {
+    if (!canPostMessage(targetWindow)) {
+      debugLog("drop-response", {
+        id: response.id,
+        reason: "event.source cannot postMessage",
+        origin: event.origin
+      });
       return;
     }
 
-    debugState.lastResponseId = response.id;
-    debugState.lastResponseOrigin = event.origin;
     targetWindow.postMessage(response, event.origin);
   }
 
   function postWatchEvent(payload: HtmlPreviewBridgeEvent) {
     const iframeWindow = options.iframe?.contentWindow;
     if (!iframeWindow || !iframeOrigin) {
+      debugLog("drop-watch-event", {
+        watchId: payload.watchId,
+        hasIframeWindow: Boolean(iframeWindow),
+        iframeOrigin
+      });
       return;
     }
 
+    debugLog("post-watch-event", {
+      watchId: payload.watchId,
+      iframeOrigin
+    });
     iframeWindow.postMessage(payload, iframeOrigin);
   }
 
   async function handleRequest(event: MessageEvent, request: HtmlPreviewBridgeRequest): Promise<void> {
     const iframeWindow = options.iframe?.contentWindow;
     const workspaceId = options.workspaceId?.trim() ?? "";
+    const sourceCanPostMessage = canPostMessage(event.source);
+    const sourceMatchesCurrentIframe = Boolean(iframeWindow && event.source === iframeWindow);
 
     debugState.lastEventOrigin = event.origin;
-    debugState.lastEventMatchedSource = Boolean(iframeWindow && event.source === iframeWindow);
+    debugState.lastEventMatchedSource = sourceMatchesCurrentIframe;
     debugState.lastEventRequestId = request.id;
     debugState.lastEventAction = request.action;
-    debugState.currentIframeWindowMatches = Boolean(iframeWindow && event.source === iframeWindow);
+    debugState.currentIframeWindowMatches = sourceMatchesCurrentIframe;
 
-    if (!iframeWindow || event.source !== iframeWindow) {
+    debugLog("handle-request", {
+      id: request.id,
+      action: request.action,
+      origin: event.origin,
+      hasIframeWindow: Boolean(iframeWindow),
+      sourceCanPostMessage,
+      sourceMatchesCurrentIframe,
+      workspaceId: workspaceId || null
+    });
+
+    if (!iframeWindow || !sourceCanPostMessage) {
+      debugLog("drop-request", {
+        id: request.id,
+        action: request.action,
+        reason: !iframeWindow ? "missing iframe.contentWindow" : "event.source cannot postMessage",
+        origin: event.origin
+      });
       return;
     }
 
+    // 桌面端/WebView 下 Window proxy 身份不一定稳定，不能再把 event.source === iframe.contentWindow
+    // 当成唯一真相，否则合法请求会被父页静默吞掉，子页最终只会超时。
     iframeOrigin = event.origin;
 
     if (!workspaceId) {
@@ -227,6 +311,11 @@ export function createHtmlPreviewWorkspaceBridge(options: HtmlPreviewWorkspaceBr
           return;
       }
 
+      debugLog("handle-success", {
+        id: request.id,
+        action: request.action,
+        origin: event.origin
+      });
       postResponse(event, {
         type: "codingns.workspace.response",
         id: request.id,
@@ -236,6 +325,13 @@ export function createHtmlPreviewWorkspaceBridge(options: HtmlPreviewWorkspaceBr
       debugState.lastHandledRequestId = request.id;
     } catch (error) {
       const detail = readApiError(error);
+      debugLog("handle-error", {
+        id: request.id,
+        action: request.action,
+        code: detail.code,
+        message: detail.message,
+        path: detail.path
+      });
       postError(event, request, detail.code, detail.message, detail.path);
     }
   }
@@ -243,13 +339,31 @@ export function createHtmlPreviewWorkspaceBridge(options: HtmlPreviewWorkspaceBr
   return {
     async onMessage(event: MessageEvent): Promise<void> {
       if (!isWorkspaceBridgeRequest(event.data)) {
+        const data = event.data as { type?: unknown } | null;
+        if (data && typeof data === "object" && typeof data.type === "string" && data.type.startsWith("codingns.")) {
+          debugLog("ignore-message", {
+            origin: event.origin,
+            type: data.type,
+            reason: "not workspace bridge request"
+          });
+        }
         return;
       }
 
+      debugLog("incoming-message", {
+        origin: event.origin,
+        id: event.data.id,
+        action: event.data.action
+      });
       await handleRequest(event, event.data);
     },
     debug: debugState,
     dispose(): void {
+      debugLog("dispose", {
+        activeWatchCount: watchPollers.size,
+        lastEventRequestId: debugState.lastEventRequestId,
+        lastHandledRequestId: debugState.lastHandledRequestId
+      });
       for (const watchId of [...watchPollers.keys()]) {
         stopWatchPolling(watchId);
         void unwatchWorkspaceBridgeDir(watchId).catch(() => undefined);
@@ -307,6 +421,12 @@ export function createHtmlPreviewWorkspaceBridge(options: HtmlPreviewWorkspaceBr
       await delay(700);
     }
   }
+}
+
+function canPostMessage(value: unknown): value is { postMessage: (message: unknown, targetOrigin: string) => void } {
+  return Boolean(value)
+    && typeof value === "object"
+    && typeof (value as { postMessage?: unknown }).postMessage === "function";
 }
 
 function isWorkspaceBridgeRequest(value: unknown): value is HtmlPreviewBridgeRequest {
