@@ -18,6 +18,10 @@ const { spawnMock } = vi.hoisted(() => ({
   spawnMock: vi.fn()
 }));
 
+const { pptxAddImageMock } = vi.hoisted(() => ({
+  pptxAddImageMock: vi.fn()
+}));
+
 vi.mock("node:child_process", async () => {
   const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
 
@@ -67,11 +71,68 @@ vi.mock("playwright-core", () => {
     })
   }));
   const waitForTimeoutMock = vi.fn(async () => undefined);
-  const evaluateMock = vi.fn(async () => ({
-    width: 1600,
-    height: 900,
-    pageCount: 2
-  }));
+  const evaluateMock = vi.fn(async (_callback: unknown, selectors?: unknown) => {
+    if (selectors) {
+      return {
+        width: 1600,
+        height: 900,
+        pageCount: 2
+      };
+    }
+
+    return [
+      {
+        index: 0,
+        backgroundColor: "rgb(255, 255, 255)",
+        elements: [
+          {
+            type: "text",
+            box: {
+              x: 120,
+              y: 100,
+              width: 600,
+              height: 120
+            },
+            text: "封面",
+            style: {
+              fontFamily: "Arial",
+              fontSizePx: 48,
+              fontWeight: "700",
+              fontStyle: "normal",
+              color: "rgb(17, 17, 17)",
+              textAlign: "center",
+              backgroundColor: null
+            }
+          }
+        ]
+      },
+      {
+        index: 1,
+        backgroundColor: "rgb(255, 255, 255)",
+        elements: [
+          {
+            type: "text",
+            box: {
+              x: 120,
+              y: 100,
+              width: 600,
+              height: 120
+            },
+            text: "第二页",
+            style: {
+              fontFamily: "Arial",
+              fontSizePx: 36,
+              fontWeight: "400",
+              fontStyle: "normal",
+              color: "rgb(17, 17, 17)",
+              textAlign: "left",
+              backgroundColor: null
+            }
+          }
+        ]
+      }
+    ];
+  });
   const waitForLoadStateMock = vi.fn(async () => undefined);
   const emulateMediaMock = vi.fn(async () => undefined);
   const setContentMock = vi.fn(async () => undefined);
@@ -144,7 +205,7 @@ vi.mock("pptxgenjs", () => {
     addSlide() {
       return {
         background: undefined as { color: string } | undefined,
-        addImage: vi.fn()
+        addImage: pptxAddImageMock
       };
     }
 
@@ -164,6 +225,8 @@ const originalFetch = globalThis.fetch;
 const SLOW_TEST_TIMEOUT_MS = 15_000;
 
 beforeEach(() => {
+  pptxAddImageMock.mockClear();
+
   vi.spyOn(os, "networkInterfaces").mockReturnValue({
     lo0: [
       {
@@ -1288,6 +1351,18 @@ describe("client routes", () => {
       status: "succeeded",
       outputPath: expect.stringContaining("slides.pdf")
     });
+
+    const downloadResponse = await hosted.app.inject({
+      method: "GET",
+      url: `/api/presentation-exports/${createdTask.taskId}/download`,
+      headers: {
+        authorization: `Bearer ${tokens.accessToken}`
+      }
+    });
+
+    expect(downloadResponse.statusCode).toBe(200);
+    expect(downloadResponse.headers["content-disposition"]).toContain("attachment");
+    expect(downloadResponse.headers["content-disposition"]).toContain("slides.pdf");
   }, SLOW_TEST_TIMEOUT_MS);
 
   it("可以创建并查询静态 HTML 演示文档 PPTX 导出任务", async () => {
@@ -1359,6 +1434,21 @@ describe("client routes", () => {
       status: "succeeded",
       outputPath: expect.stringContaining("slides-pptx.pptx")
     });
+    expect(pptxAddImageMock).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.stringContaining("data:image/png;base64,")
+    }));
+
+    const downloadResponse = await hosted.app.inject({
+      method: "GET",
+      url: `/api/presentation-exports/${createdTask.taskId}/download`,
+      headers: {
+        authorization: `Bearer ${tokens.accessToken}`
+      }
+    });
+
+    expect(downloadResponse.statusCode).toBe(200);
+    expect(downloadResponse.headers["content-disposition"]).toContain("attachment");
+    expect(downloadResponse.headers["content-disposition"]).toContain("slides-pptx.pptx");
   }, SLOW_TEST_TIMEOUT_MS);
 
   it("在没有 doct 时仍然可以导出真实 docx 文档", async () => {

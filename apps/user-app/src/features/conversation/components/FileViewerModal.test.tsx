@@ -16,8 +16,10 @@ const fileApiMock = vi.hoisted(() => ({
 }));
 const presentationExportApiMock = vi.hoisted(() => ({
   createPresentationExportTask: vi.fn(),
+  downloadPresentationExportTask: vi.fn(),
   getPresentationExportTask: vi.fn()
 }));
+const downloadAnchorClickMock = vi.hoisted(() => vi.fn());
 const clipboardWriteTextMock = vi.hoisted(() => vi.fn());
 const platformMock = vi.hoisted(() => ({
   openExternal: vi.fn(),
@@ -60,6 +62,7 @@ vi.mock("../api/file-context-api", () => ({
 
 vi.mock("../../../platform/server/presentation-export-manager", () => ({
   createPresentationExportTask: presentationExportApiMock.createPresentationExportTask,
+  downloadPresentationExportTask: presentationExportApiMock.downloadPresentationExportTask,
   getPresentationExportTask: presentationExportApiMock.getPresentationExportTask
 }));
 
@@ -82,7 +85,24 @@ describe("FileViewerModal", () => {
     fileApiMock.getFilePreview.mockResolvedValue(createPreviewResponse());
     fileApiMock.saveFileContent.mockReset();
     presentationExportApiMock.createPresentationExportTask.mockReset();
+    presentationExportApiMock.downloadPresentationExportTask.mockReset();
+    presentationExportApiMock.downloadPresentationExportTask.mockResolvedValue({
+      fileName: "export.pdf",
+      blob: new Blob(["mock export"], {
+        type: "application/octet-stream"
+      })
+    });
     presentationExportApiMock.getPresentationExportTask.mockReset();
+    downloadAnchorClickMock.mockReset();
+    Object.defineProperty(window.URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn(() => "blob:mock-export")
+    });
+    Object.defineProperty(window.URL, "revokeObjectURL", {
+      configurable: true,
+      value: vi.fn()
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(downloadAnchorClickMock);
     platformMock.openExternal.mockReset();
     platformMock.openExternal.mockResolvedValue({ ok: true });
     platformMock.writeClipboardText.mockReset();
@@ -2462,6 +2482,12 @@ describe("FileViewerModal", () => {
         "presentation-export-task-1"
       );
     });
+    await waitFor(() => {
+      expect(presentationExportApiMock.downloadPresentationExportTask).toHaveBeenCalledWith(
+        "presentation-export-task-1"
+      );
+    });
+    expect(downloadAnchorClickMock).toHaveBeenCalled();
   });
 
   it("演示文档视图支持导出 PPTX", async () => {
@@ -2534,77 +2560,10 @@ describe("FileViewerModal", () => {
         htmlContent: expect.stringContaining("导出到 PPTX")
       });
     });
-  });
-
-  it("演示文档视图支持导出 PPTX", async () => {
-    const user = userEvent.setup();
-
-    fileApiMock.getFilePreview.mockResolvedValue(
-      createPreviewResponse({
-        path: "slides/export-presentation-pptx.html",
-        kind: "html",
-        content: `
-          <!doctype html>
-          <html>
-            <body>
-              <div class="deck">
-                <section class="slide" data-title="封面">
-                  <h1>导出到 PPTX</h1>
-                </section>
-              </div>
-            </body>
-          </html>
-        `,
-        version: "ppt-export-pptx-v1",
-        previewPath: "/preview/files/preview-token/slides/export-presentation-pptx.html",
-        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/slides/export-presentation-pptx.html"
-      })
-    );
-    presentationExportApiMock.createPresentationExportTask.mockResolvedValue({
-      taskId: "presentation-export-task-pptx-1",
-      workspaceId: "workspace-1",
-      sourcePath: "slides/export-presentation-pptx.html",
-      format: "pptx",
-      status: "queued",
-      startedAt: null,
-      finishedAt: null,
-      errorMessage: null,
-      outputPath: "/tmp/export-presentation-pptx.pptx"
-    });
-    presentationExportApiMock.getPresentationExportTask.mockResolvedValueOnce({
-      taskId: "presentation-export-task-pptx-1",
-      workspaceId: "workspace-1",
-      sourcePath: "slides/export-presentation-pptx.html",
-      format: "pptx",
-      status: "succeeded",
-      startedAt: "2026-05-15T10:00:00.000Z",
-      finishedAt: "2026-05-15T10:00:01.000Z",
-      errorMessage: null,
-      outputPath: "/tmp/export-presentation-pptx.pptx"
-    });
-
-    render(
-      <ToastProvider>
-        <FileViewerModal
-          workspaceId="workspace-1"
-          filePath="slides/export-presentation-pptx.html"
-          open
-          onClose={vi.fn()}
-          onSaved={vi.fn()}
-        />
-      </ToastProvider>
-    );
-
-    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerPresentation") }));
-    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerExportPptx") }));
-
     await waitFor(() => {
-      expect(presentationExportApiMock.createPresentationExportTask).toHaveBeenCalledWith({
-        workspaceId: "workspace-1",
-        path: "slides/export-presentation-pptx.html",
-        format: "pptx",
-        htmlContent: expect.stringContaining("导出到 PPTX")
-      });
+      expect(presentationExportApiMock.downloadPresentationExportTask).toHaveBeenCalledWith(
+        "presentation-export-task-pptx-1"
+      );
     });
   });
 

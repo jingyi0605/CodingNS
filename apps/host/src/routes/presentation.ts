@@ -8,4 +8,5 @@ export async function registerPresentationRoutes(
 ): Promise<void> {
   app.post("/api/presentation-exports", presentationController.createExportTask);
   app.get("/api/presentation-exports/:taskId", presentationController.getExportTask);
+  app.get("/api/presentation-exports/:taskId/download", presentationController.downloadExportTask);
 }

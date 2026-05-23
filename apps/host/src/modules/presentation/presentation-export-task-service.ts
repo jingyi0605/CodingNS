@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { AppError } from "../../shared/errors/app-error.js";
@@ -31,8 +33,15 @@ interface PresentationPdfExportTaskRecord {
   workspaceId: string;
   sourcePath: string;
   outputPath: string;
+  fileName: string;
   key: string;
   format: "pdf" | "pptx";
+}
+
+export interface PresentationExportDownload {
+  fileName: string;
+  contentType: string;
+  absolutePath: string;
 }
 
 export class PresentationExportTaskService {
@@ -64,10 +73,8 @@ export class PresentationExportTaskService {
     const sourceResolved = this.fileAccessGuard.resolvePath(input.workspaceId, input.path, {
       kind: "file"
     });
-    const outputRelativePath = buildOutputRelativePath(sourceResolved.relativePath, input.format);
-    const outputResolved = this.fileAccessGuard.resolvePath(input.workspaceId, outputRelativePath, {
-      mustExist: false
-    });
+    const outputFileName = buildOutputFileName(sourceResolved.relativePath, input.format);
+    const outputAbsolutePath = buildTemporaryOutputPath(handleSafeWorkspaceId(input.workspaceId), outputFileName);
     const key = `${input.workspaceId}:${sourceResolved.relativePath}:${input.format}`;
     const taskType = input.format === "pptx"
       ? HOST_TASK_TYPES.presentationExportPptx
@@ -83,7 +90,7 @@ export class PresentationExportTaskService {
         input: {
           htmlContent,
           sourceFilePath: sourceResolved.absolutePath,
-          outputFilePath: outputResolved.absolutePath
+          outputFilePath: outputAbsolutePath
         }
       }
     );
@@ -91,7 +98,8 @@ export class PresentationExportTaskService {
     this.taskRecordById.set(handle.taskId, {
       workspaceId: input.workspaceId,
       sourcePath: sourceResolved.relativePath,
-      outputPath: outputResolved.absolutePath,
+      outputPath: outputAbsolutePath,
+      fileName: outputFileName,
       key,
       format: input.format
     });
@@ -128,6 +136,41 @@ export class PresentationExportTaskService {
     }
 
     return this.toTaskDto(record, snapshot);
+  }
+
+  getDownload(taskId: string): PresentationExportDownload {
+    const task = this.getTask(taskId);
+    const record = this.taskRecordById.get(taskId);
+
+    if (!record) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "PRESENTATION_EXPORT_TASK_NOT_FOUND",
+        detail: `未找到导出任务 ${taskId}`
+      });
+    }
+
+    if (task.status !== "succeeded") {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "PRESENTATION_EXPORT_NOT_READY",
+        detail: "导出文件还没有生成完成"
+      });
+    }
+
+    if (!fs.existsSync(record.outputPath)) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "PRESENTATION_EXPORT_FILE_NOT_FOUND",
+        detail: "导出文件不存在，请重新导出"
+      });
+    }
+
+    return {
+      fileName: record.fileName,
+      contentType: resolveExportContentType(record.format),
+      absolutePath: record.outputPath
+    };
   }
 
   private registerTask(): void {
@@ -190,9 +233,25 @@ export class PresentationExportTaskService {
   }
 }
 
-function buildOutputRelativePath(sourceRelativePath: string, format: "pdf" | "pptx"): string {
+function buildOutputFileName(sourceRelativePath: string, format: "pdf" | "pptx"): string {
   const parsed = path.parse(sourceRelativePath);
-  return path.join(parsed.dir, `${parsed.name}.${format}`);
+  return `${parsed.name || "presentation"}.${format}`;
+}
+
+function buildTemporaryOutputPath(workspaceId: string, fileName: string): string {
+  const exportDir = path.join(os.tmpdir(), "codingns-presentation-exports", workspaceId);
+  fs.mkdirSync(exportDir, { recursive: true });
+  return path.join(exportDir, `${Date.now()}-${fileName}`);
+}
+
+function handleSafeWorkspaceId(workspaceId: string): string {
+  return workspaceId.replace(/[^a-zA-Z0-9_-]/g, "_") || "workspace";
+}
+
+function resolveExportContentType(format: "pdf" | "pptx"): string {
+  return format === "pdf"
+    ? "application/pdf"
+    : "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 }
 
 function toIsoTime(timestamp: number | null): string | null {

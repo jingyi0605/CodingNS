@@ -34,6 +34,10 @@ class HttpClient {
     return response.blob();
   }
 
+  async requestRaw(path: string, options: RequestOptions = {}): Promise<Response> {
+    return await this.performRequest(path, options);
+  }
+
   private async performRequest(path: string, options: RequestOptions): Promise<Response> {
     const headers = new Headers(options.headers);
     const hasRequestBody = options.body !== undefined && options.body !== null;

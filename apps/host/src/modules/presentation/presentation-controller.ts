@@ -1,4 +1,5 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { readFileSync } from "node:fs";
 
 import { AppError } from "../../shared/errors/app-error.js";
 import type { PresentationExportTaskService } from "./presentation-export-task-service.js";
@@ -69,6 +70,22 @@ export class PresentationController {
   ): Promise<void> => {
     ensureAuthenticated(request);
     reply.send(this.presentationExportTaskService.getTask(request.params.taskId));
+  };
+
+  readonly downloadExportTask = async (
+    request: FastifyRequest<{ Params: PresentationExportTaskParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    ensureAuthenticated(request);
+
+    const download = this.presentationExportTaskService.getDownload(request.params.taskId);
+
+    reply
+      .header("Cache-Control", "private, max-age=300")
+      .header("X-Content-Type-Options", "nosniff")
+      .header("Content-Disposition", `attachment; filename="${encodeURIComponent(download.fileName)}"`)
+      .type(download.contentType)
+      .send(readFileSync(download.absolutePath));
   };
 }
 

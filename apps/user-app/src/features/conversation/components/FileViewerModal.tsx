@@ -21,6 +21,7 @@ import { usePlatform } from "../../../platform/platform-provider";
 import { createHtmlPreviewWorkspaceBridge } from "../../../platform/preview/html-preview-workspace-bridge";
 import {
   createPresentationExportTask,
+  downloadPresentationExportTask,
   getPresentationExportTask,
   type PresentationExportTaskInfo
 } from "../../../platform/server/presentation-export-manager";
@@ -590,13 +591,16 @@ export function FileViewerModal({
         });
       }
 
+      const download = await downloadPresentationExportTask(finishedTask.taskId);
+      downloadBlob(download.fileName, download.blob);
+
       showToast({
         title: format === "pdf"
           ? t("conversation.fileViewerExportPdfSuccess", {
-            path: finishedTask.outputPath ?? safeFilePath.replace(/\.[^.]+$/, ".pdf")
+            path: download.fileName
           })
           : t("conversation.fileViewerExportPptxSuccess", {
-            path: finishedTask.outputPath ?? safeFilePath.replace(/\.[^.]+$/, ".pptx")
+            path: download.fileName
           }),
         tone: "success"
       });
@@ -3340,4 +3344,19 @@ function OverviewRuler({
       ) : null}
     </div>
   );
+}
+
+function downloadBlob(fileName: string, blob: Blob): void {
+  if (typeof document === "undefined") {
+    throw new Error(t("conversation.filePanelDownloadFailed"));
+  }
+
+  const objectUrl = window.URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = fileName;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(objectUrl);
 }
