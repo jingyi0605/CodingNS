@@ -178,7 +178,7 @@ CodingNS/
 
 #### Install From npm
 
-`@jingyi0605/codingns` includes native dependencies such as `better-sqlite3` and `node-pty`. If npm cannot fetch a prebuilt binary, it falls back to local compilation, so the required prerequisites differ by platform.
+`@jingyi0605/codingns` includes native dependencies such as `better-sqlite3` and `node-pty`, so platform handling matters.
 
 On Linux, install the native build tools first:
 
@@ -187,7 +187,9 @@ apt-get update
 apt-get install -y build-essential python3
 ```
 
-On Windows, prefer Node.js `22 LTS` and install Visual Studio Build Tools 2022 with the `Desktop development with C++` workload before running `npm install -g`.
+On Windows, the recommended path is the one-click installer below. It uses a CodingNS-managed Node.js 22 runtime and managed Windows native packages for `node-pty` and `better-sqlite3`, so normal installation no longer requires you to manually install Visual Studio Build Tools or switch your system Node.js version.
+
+If you bypass the installer and run `npm install -g` directly on Windows, use Node.js 22 on x64. Build tools are only needed for unsupported platforms or when npm is forced to fall back to local native compilation.
 
 ```bash
 # Install globally
@@ -222,7 +224,7 @@ The script will:
 
 - Check Node.js, npm, and the required build tools first
 - On supported macOS/Linux environments, offer to install missing prerequisites automatically
-- On Windows, warn about Visual Studio Build Tools when native modules may need local compilation
+- On Windows, use a private Node.js 22 runtime and managed native packages, avoiding local `node-gyp` compilation in the normal path
 - Ask for the service port, default `3002`
 - Ask for the data directory, default `~/.codingns`
 - Detect supported CLI tools and print a short summary
@@ -564,7 +566,7 @@ CodingNS/
 
 #### 通过 NPM 包快速安装
 
-`@jingyi0605/codingns` 依赖 `better-sqlite3`、`node-pty` 这类原生模块。拿不到预编译包时会自动回退到本机编译，所以不同系统的前置条件不一样。
+`@jingyi0605/codingns` 依赖 `better-sqlite3`、`node-pty` 这类原生模块，所以不同平台的安装链路不一样。
 
 如果你在 Linux 上手工安装，先把编译工具准备好：
 
@@ -573,10 +575,9 @@ apt-get update
 apt-get install -y build-essential python3
 ```
 
-如果你在 Windows 上手工安装，建议先做两件事：
+Windows 推荐使用下面的“一键安装脚本”。脚本会使用 CodingNS 私有 Node.js 22 运行时，并为 `node-pty`、`better-sqlite3` 使用受控的 Windows 原生依赖包。正常安装路径下，已经不再需要你手动安装 Visual Studio Build Tools，也不需要手动切换系统 Node.js 版本。
 
-- 优先使用 Node.js `22 LTS`
-- 安装 Visual Studio Build Tools 2022，并勾选 `Desktop development with C++`
+如果你绕过安装脚本，直接在 Windows 上执行 `npm install -g`，请使用 x64 的 Node.js 22。只有在不受支持的平台、架构或 npm 被迫回退到本机原生编译时，才需要额外准备 C++ 构建工具。
 
 ```bash
 # 全局安装
@@ -611,7 +612,7 @@ bash install.sh
 
 - 先检查 Node.js、npm 和必需的编译工具
 - 在支持的 macOS / Linux 环境下，缺什么就先询问是否自动安装
-- 在 Windows 环境下，提前提示 Visual Studio Build Tools 相关要求
+- 在 Windows 环境下，使用私有 Node.js 22 运行时和受控原生依赖，正常路径不会触发本机 `node-gyp` 编译
 - 询问服务端口，默认 `3002`
 - 询问数据目录，默认 `~/.codingns`
 - 检测当前机器上已安装的受支持 CLI，并输出简报
