@@ -46,7 +46,7 @@
 - 在 Finder / Explorer 里定位文件
 - 选择本地目录
 
-它接收的是桌面侧要执行的参数，典型就是绝对路径。
+它接收的是桌面侧要执行的参数，典型就是**当前客户端本地绝对路径**。
 
 ### 两者怎么配合
 
@@ -62,7 +62,9 @@
 3. Host 返回已校验的绝对路径
 4. 预览宿主页再调用 `CodingNSDesktop`
 
-这样做的好处是：**业务侧始终只面对工作区路径，桌面壳细节被收口到平台层。**
+这样做的好处是：**当前 workspace 文件的业务侧始终只面对工作区路径，桌面壳细节被收口到平台层。**
+
+但这只适用于“当前 workspace 文件”。如果页面的业务模型是“用户自己选择客户端本地镜像根目录，然后打开镜像目录里的相对路径文件”，那它不是 Host workspace 文件桥问题，应直接使用 `CodingNSDesktop.fs.pickDirectory()` / `openFile()` / `revealInFileManager()`。
 
 ---
 
@@ -81,6 +83,7 @@
 
 - 不是跨 workspace 文件访问接口
 - 不是任意绝对路径访问接口
+- 不是客户端本地镜像根目录配置接口
 - 不是系统级文件对话框替代品
 - 不是把 `.json` 缓存当数据库的借口
 
@@ -422,7 +425,7 @@ await CodingNSWorkspace.revealWorkspaceFile("content/articles/demo.md")
 
 ### 打开 / 定位文件前必须先过 Host
 
-页面不能自己拼绝对路径然后直接调桌面壳。
+对于当前 workspace 文件，页面不能自己拼绝对路径然后直接调桌面壳。
 
 正确做法是：
 
@@ -435,6 +438,8 @@ await CodingNSWorkspace.openWorkspaceFile("docs/readme.md")
 ```js
 await window.CodingNSDesktop.fs.openFile("/Users/xxx/secret.txt")
 ```
+
+但如果这个绝对路径来自用户在当前客户端选择的本地镜像根目录，并且相对路径经过页面自己的安全校验，那它属于客户端本地镜像场景，不属于 `CodingNSWorkspace`。这时应查看 [CodingNSDesktop 桌面壳能力接口规范](/developer-guide/desktop-shell-bridge)。
 
 ### iframe 桥接不会用 `targetOrigin="*"`
 
@@ -556,8 +561,9 @@ async function stopWatch() {
 
 这次接口故意没做下面这些事：
 
-- 不接受绝对路径作为页面输入
+- 不接受绝对路径作为当前 workspace 文件输入
 - 不提供跨 workspace 文件访问
+- 不保存客户端本地镜像根目录
 - 不把 `pickDirectory()` 塞进 `CodingNSWorkspace`
 - 不把 `.json` 缓存提升为真数据源
 - 不承诺 `writeTexts()` 已可用
@@ -591,4 +597,4 @@ async function stopWatch() {
 
 ## 一句话总结
 
-`CodingNSWorkspace` 现在既能管工作区文件读写监听，也能用 **workspace 相对路径** 包一层“打开本地文件 / 在文件管理器里定位文件”的标准入口，但最终的安全边界仍然在 Host，而不是交给 HTML 页面自己乱来。
+`CodingNSWorkspace` 管当前 workspace 文件，并用 **workspace 相对路径** 包一层“打开本地文件 / 在文件管理器里定位文件”的标准入口；`CodingNSDesktop` 管当前客户端桌面动作。客户端本地镜像文件不要塞进 Host 工作区桥，直接按镜像根目录解析成本地绝对路径后调用 `CodingNSDesktop`。

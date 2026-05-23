@@ -11,11 +11,13 @@
 
 正确做法不是二选一，而是按边界用：
 
-- **工作区文件相关**：优先走 `CodingNSWorkspace`
-- **打开文件、在系统里定位文件**：优先走 `CodingNSWorkspace` 的包装方法
-- **选择本地目录这种系统级动作**：才直接走 `CodingNSDesktop`
+- **当前 workspace 文件相关**：优先走 `CodingNSWorkspace`
+- **打开/定位当前 workspace 文件**：优先走 `CodingNSWorkspace` 的包装方法
+- **客户端本地镜像目录、任意用户选择的本地目录、纯桌面动作**：直接走 `CodingNSDesktop`
 
-别在插件里手写绝对路径，别拼私有 HTTP，别复制一套 Host 校验逻辑。那都是烂路子。
+别在插件里给 **当前 workspace 文件** 手写绝对路径，别拼私有 HTTP，别复制一套 Host 校验逻辑。那都是烂路子。
+
+但别把“客户端本地镜像文件”误判成 workspace 文件。用户明确选择了客户端本地镜像根目录后，页面基于安全相对路径拼出的绝对路径，就是 `CodingNSDesktop` 该处理的输入。
 
 ---
 
@@ -45,7 +47,8 @@
 - 直接打开一个已经拿到的绝对路径
 - 在文件管理器里定位一个已经拿到的绝对路径
 
-但插件前端通常**不该自己去拿绝对路径**。所以大多数文件场景都应该先走 `CodingNSWorkspace`。
+但插件前端只有在处理 **当前 workspace 文件** 时才不该自己拿绝对路径。  
+如果业务模型本来就是“用户在当前客户端选择一个本地镜像根目录，然后打开这个镜像目录下的文件”，那它不是 Host workspace 文件桥问题，应该由页面保存客户端本地镜像根目录，并调用 `CodingNSDesktop` 执行桌面动作。
 
 ---
 
@@ -101,7 +104,9 @@ const picked = await window.CodingNSDesktop?.fs.pickDirectory()
 | 监听当前 workspace 目录 | `CodingNSWorkspace.watchDir` |
 | 打开当前 workspace 文件 | `CodingNSWorkspace.openWorkspaceFile` |
 | 在文件管理器中定位当前 workspace 文件 | `CodingNSWorkspace.revealWorkspaceFile` |
-| 让用户挑一个本地目录 | `CodingNSDesktop.fs.pickDirectory` |
+| 让用户挑一个客户端本地目录 | `CodingNSDesktop.fs.pickDirectory` |
+| 打开客户端本地镜像文件 | `CodingNSDesktop.fs.openFile` |
+| 在文件管理器中定位客户端本地镜像文件 | `CodingNSDesktop.fs.revealInFileManager` |
 
 ---
 
@@ -250,6 +255,7 @@ fetch("/api/some-private-endpoint", { ... })
 ### 文件桥文档
 
 - [CodingNSWorkspace 工作区文件桥与桌面包装接口](/developer-guide/workspace-file-bridge-and-desktop-wrapper)
+- [CodingNSDesktop 桌面壳能力接口规范](/developer-guide/desktop-shell-bridge)
 
 ### 相关代码
 
@@ -262,4 +268,4 @@ fetch("/api/some-private-endpoint", { ... })
 
 ## 一句话结论
 
-插件前端里，凡是“当前 workspace 文件”的事，优先走 `CodingNSWorkspace`；凡是“系统桌面动作”的事，才直接碰 `CodingNSDesktop`。打开和定位工作区文件也一样，走 `CodingNSWorkspace` 的包装接口，不要自己拼绝对路径。
+插件前端里，凡是“当前 workspace 文件”的事，优先走 `CodingNSWorkspace`；凡是“系统桌面动作”或“用户选择的客户端本地镜像文件”的事，直接碰 `CodingNSDesktop`。打开和定位工作区文件走 `CodingNSWorkspace`；打开客户端本地镜像文件走 `CodingNSDesktop`。
