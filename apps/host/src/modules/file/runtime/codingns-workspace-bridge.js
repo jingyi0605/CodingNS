@@ -7,7 +7,7 @@
     return;
   }
 
-  var REQUEST_TIMEOUT_MS = 15000;
+  var REQUEST_TIMEOUT_MS = 3000;
   var WATCH_POLL_INTERVAL_MS = 700;
   var RESPONSE_TYPE = "codingns.workspace.response";
   var REQUEST_TYPE = "codingns.workspace.request";
@@ -22,6 +22,7 @@
   var debugEvents = [];
   var debugState = createDebugState();
   var iframeHostBridge = createIframeHostBridge();
+  var iframeBridgeUnavailable = false;
   debugLog("init", {
     href: window.location.href,
     referrer: document.referrer || "",
@@ -75,6 +76,10 @@
       lastTimeoutTargetOrigin: null,
       pendingRequestCount: 0,
       pendingRequestIds: [],
+      iframeBridgeUnavailable: false,
+      lastHttpFallbackAction: null,
+      lastHttpRequestAction: null,
+      lastHttpRequestUrl: null,
       debugEventCount: 0
     };
   }
@@ -229,97 +234,151 @@
   }
 
   function requestHost(action, payload) {
-    if (iframeHostBridge) {
-      return iframeHostBridge.request(action, payload);
+    var context = readWorkspaceContext();
+
+    // 预览 token 已经能安全限定 workspace。静态 HTML 预览页直接走同源 HTTP，
+    // 不再先撞 Tauri postMessage 这条在 macOS WebView 中可能沉默超时的链路。
+    if (context.previewToken) {
+      debugLog("preview-token-http-first", {
+        action: action,
+        payload: payload || {}
+      });
+      return requestHttp(action, payload);
+    }
+
+    if (iframeHostBridge && !iframeBridgeUnavailable) {
+      return iframeHostBridge.request(action, payload).catch(function (error) {
+        if (!shouldFallbackToHttp(error)) {
+          debugLog("iframe-request-error-no-fallback", {
+            action: action,
+            message: error && error.message ? error.message : String(error || ""),
+            code: error && error.code ? error.code : null
+          });
+          throw error;
+        }
+
+        iframeBridgeUnavailable = true;
+        debugState.iframeBridgeUnavailable = true;
+        debugState.lastHttpFallbackAction = action;
+        debugLog("iframe-timeout-fallback-http", {
+          action: action,
+          payload: payload || {},
+          message: error.message || ""
+        });
+        return requestHttp(action, payload);
+      });
+    }
+
+    if (iframeHostBridge && iframeBridgeUnavailable) {
+      debugLog("iframe-skipped-http-fallback", {
+        action: action,
+        payload: payload || {}
+      });
     }
 
     return requestHttp(action, payload);
   }
 
+  function shouldFallbackToHttp(error) {
+    var message = error && typeof error.message === "string" ? error.message : "";
+    return message.indexOf("等待宿主 workspace bridge 响应超时") >= 0;
+  }
+
   function requestHttp(action, payload) {
     var context = readWorkspaceContext();
     var workspaceId = ensureWorkspaceId(context);
-    var requestBody = Object.assign({ workspaceId: workspaceId }, payload || {});
+    var usePreviewBridge = Boolean(context.previewToken);
+    var requestBody = usePreviewBridge
+      ? Object.assign({}, payload || {})
+      : Object.assign({ workspaceId: workspaceId }, payload || {});
     var requestConfig;
+
+    function bridgeUrl(pathname, params) {
+      if (usePreviewBridge) {
+        return buildApiUrl("/preview/workspace-bridge" + pathname, Object.assign({
+          token: context.previewToken
+        }, params || {}));
+      }
+
+      return buildApiUrl("/api/files/workspace-bridge" + pathname, Object.assign({
+        workspaceId: workspaceId
+      }, params || {}));
+    }
+
+    function bridgePost(pathname, body) {
+      var url = bridgeUrl(pathname);
+      debugState.lastHttpRequestAction = action;
+      debugState.lastHttpRequestUrl = url;
+      debugLog("http-request", {
+        action: action,
+        url: url,
+        previewTokenMode: usePreviewBridge
+      });
+      return fetchJson(url, {
+        method: "POST",
+        body: JSON.stringify(body)
+      });
+    }
+
+    function bridgeGet(pathname, params) {
+      var url = bridgeUrl(pathname, params);
+      debugState.lastHttpRequestAction = action;
+      debugState.lastHttpRequestUrl = url;
+      debugLog("http-request", {
+        action: action,
+        url: url,
+        previewTokenMode: usePreviewBridge
+      });
+      return fetchJson(url);
+    }
 
     switch (action) {
       case "capabilities":
-        return fetchJson(buildApiUrl("/api/files/workspace-bridge/capabilities", {
-          workspaceId: workspaceId
-        }));
+        return bridgeGet("/capabilities");
       case "listDir":
-        requestConfig = {
-          method: "POST",
-          body: JSON.stringify(requestBody)
-        };
-        return fetchJson("/api/files/workspace-bridge/list-dir", requestConfig);
+        requestConfig = requestBody;
+        return bridgePost("/list-dir", requestConfig);
       case "readText":
-        requestConfig = {
-          method: "POST",
-          body: JSON.stringify(requestBody)
-        };
-        return fetchJson("/api/files/workspace-bridge/read-text", requestConfig);
+        requestConfig = requestBody;
+        return bridgePost("/read-text", requestConfig);
       case "readTexts":
-        requestConfig = {
-          method: "POST",
-          body: JSON.stringify(requestBody)
-        };
-        return fetchJson("/api/files/workspace-bridge/read-texts", requestConfig);
+        requestConfig = requestBody;
+        return bridgePost("/read-texts", requestConfig);
       case "writeText":
-        requestConfig = {
-          method: "POST",
-          body: JSON.stringify(requestBody)
-        };
-        return fetchJson("/api/files/workspace-bridge/write-text", requestConfig);
+        requestConfig = requestBody;
+        return bridgePost("/write-text", requestConfig);
       case "deleteFile":
-        requestConfig = {
-          method: "POST",
-          body: JSON.stringify(requestBody)
-        };
-        return fetchJson("/api/files/workspace-bridge/delete-file", requestConfig);
+        requestConfig = requestBody;
+        return bridgePost("/delete-file", requestConfig);
       case "stat":
-        return fetchJson(buildApiUrl("/api/files/workspace-bridge/stat", {
-          workspaceId: workspaceId,
+        return bridgeGet("/stat", {
           path: payload && payload.path ? payload.path : ""
-        }));
+        });
       case "exists":
-        return fetchJson(buildApiUrl("/api/files/workspace-bridge/exists", {
-          workspaceId: workspaceId,
+        return bridgeGet("/exists", {
           path: payload && payload.path ? payload.path : ""
-        }));
+        });
       case "openWorkspaceFile":
-        requestConfig = {
-          method: "POST",
-          body: JSON.stringify(requestBody)
-        };
-        return fetchJson("/api/files/workspace-bridge/open-file", requestConfig).then(function (prepared) {
+        requestConfig = requestBody;
+        return bridgePost("/open-file", requestConfig).then(function (prepared) {
           return runDesktopAction("openFile", prepared, "DESKTOP_OPEN_UNAVAILABLE", "当前环境不支持打开本地文件");
         });
       case "revealWorkspaceFile":
-        requestConfig = {
-          method: "POST",
-          body: JSON.stringify(requestBody)
-        };
-        return fetchJson("/api/files/workspace-bridge/reveal-in-file-manager", requestConfig).then(function (prepared) {
+        requestConfig = requestBody;
+        return bridgePost("/reveal-in-file-manager", requestConfig).then(function (prepared) {
           return runDesktopAction("revealInFileManager", prepared, "DESKTOP_REVEAL_UNAVAILABLE", "当前环境不支持在文件管理器中定位文件");
         });
       case "watchDir":
-        requestConfig = {
-          method: "POST",
-          body: JSON.stringify(requestBody)
-        };
-        return fetchJson("/api/files/workspace-bridge/watch-dir", requestConfig);
+        requestConfig = requestBody;
+        return bridgePost("/watch-dir", requestConfig);
       case "unwatch":
-        requestConfig = {
-          method: "POST",
-          body: JSON.stringify(payload || {})
-        };
-        return fetchJson("/api/files/workspace-bridge/unwatch", requestConfig);
+        requestConfig = payload || {};
+        return bridgePost("/unwatch", requestConfig);
       case "watchPoll":
-        return fetchJson(buildApiUrl("/api/files/workspace-bridge/watch-events", {
+        return bridgeGet("/watch-events", {
           watchId: payload && payload.watchId ? payload.watchId : "",
           cursor: payload && typeof payload.cursor === "number" ? payload.cursor : ""
-        }));
+        });
       default:
         return Promise.reject(new Error("不支持的 workspace bridge 动作: " + action));
     }
@@ -332,12 +391,48 @@
         "content-type": "application/json"
       }
     }, init || {})).then(function (response) {
-      return response.json().then(function (body) {
+      return response.text().then(function (text) {
+        var body = null;
+
+        if (text) {
+          try {
+            body = JSON.parse(text);
+          } catch (parseError) {
+            debugLog("http-response-parse-error", {
+              url: typeof input === "string" ? input : "",
+              status: response.status,
+              statusText: response.statusText,
+              bodyPreview: text.slice(0, 500),
+              message: parseError && parseError.message ? parseError.message : String(parseError || "")
+            });
+          }
+        }
+
+        debugLog("http-response", {
+          url: typeof input === "string" ? input : "",
+          ok: response.ok,
+          status: response.status,
+          statusText: response.statusText,
+          errorCode: body && body.error_code ? body.error_code : null,
+          detail: body && body.detail ? body.detail : null,
+          bodyPreview: body ? null : text.slice(0, 500)
+        });
+
         if (!response.ok) {
-          var error = new Error(body && body.detail ? body.detail : "请求失败");
-          error.code = body && body.error_code ? body.error_code : "INTERNAL_ERROR";
+          var error = new Error(body && body.detail ? body.detail : "请求失败 HTTP " + String(response.status));
+          error.code = body && body.error_code ? body.error_code : "HTTP_" + String(response.status);
+          error.status = response.status;
           error.path = body && body.data && typeof body.data.path === "string" ? body.data.path : undefined;
+          error.bodyPreview = body ? undefined : text.slice(0, 500);
           throw error;
+        }
+
+        if (!body) {
+          var invalidJsonError = new Error("响应不是有效 JSON");
+          invalidJsonError.code = "INVALID_JSON_RESPONSE";
+          invalidJsonError.status = response.status;
+          invalidJsonError.bodyPreview = text.slice(0, 500);
+          throw invalidJsonError;
         }
 
         return body;

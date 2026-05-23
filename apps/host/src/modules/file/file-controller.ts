@@ -53,6 +53,14 @@ interface PublicFilePreviewParams {
   "*": string;
 }
 
+interface PublicWorkspaceBridgeParams {
+  token?: string;
+}
+
+interface PublicWorkspaceBridgeQuery extends WorkspaceBridgeQuery {
+  token?: string;
+}
+
 interface WorkspaceBridgeQuery extends FileWorkspaceQuery {}
 
 interface WorkspaceBridgeListDirBody {
@@ -430,7 +438,184 @@ export class FileController {
     request: FastifyRequest<{ Body: WorkspaceBridgeUnwatchBody }>,
     reply: FastifyReply
   ): Promise<void> => {
-    const watchId = request.body.watchId?.trim() ?? "";
+    this.sendWorkspaceBridgeUnwatch(request.body, reply);
+  };
+
+  readonly workspaceBridgePollWatch = async (
+    request: FastifyRequest<{ Querystring: WorkspaceBridgePollWatchQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    this.sendWorkspaceBridgePollWatch(request.query, reply);
+  };
+
+  readonly previewWorkspaceBridgeCapabilities = async (
+    request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    this.resolvePreviewRequestWorkspaceId(request);
+    reply.send(this.workspaceFileBridgeService.getCapabilities());
+  };
+
+  readonly previewWorkspaceBridgeListDir = async (
+    request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery; Body: WorkspaceBridgeListDirBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      this.workspaceFileBridgeService.listDir(
+        this.resolvePreviewRequestWorkspaceId(request),
+        request.body.path,
+        request.body.options
+      )
+    );
+  };
+
+  readonly previewWorkspaceBridgeReadText = async (
+    request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery; Body: WorkspaceBridgeReadTextBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      this.workspaceFileBridgeService.readText(
+        this.resolvePreviewRequestWorkspaceId(request),
+        request.body.path?.trim() ?? ""
+      )
+    );
+  };
+
+  readonly previewWorkspaceBridgeReadTexts = async (
+    request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery; Body: WorkspaceBridgeReadTextsBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      this.workspaceFileBridgeService.readTexts(
+        this.resolvePreviewRequestWorkspaceId(request),
+        Array.isArray(request.body.paths) ? request.body.paths : []
+      )
+    );
+  };
+
+  readonly previewWorkspaceBridgeWriteText = async (
+    request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery; Body: WorkspaceBridgeWriteTextBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      this.workspaceFileBridgeService.writeText(
+        this.resolvePreviewRequestWorkspaceId(request),
+        request.body.path?.trim() ?? "",
+        typeof request.body.content === "string" ? request.body.content : "",
+        request.body.options
+      )
+    );
+  };
+
+  readonly previewWorkspaceBridgeDeleteFile = async (
+    request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery; Body: WorkspaceBridgeDeleteFileBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      this.workspaceFileBridgeService.deleteFile(
+        this.resolvePreviewRequestWorkspaceId(request),
+        request.body.path?.trim() ?? "",
+        request.body.options
+      )
+    );
+  };
+
+  readonly previewWorkspaceBridgeStat = async (
+    request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      this.workspaceFileBridgeService.stat(
+        this.resolvePreviewRequestWorkspaceId(request),
+        request.query.path
+      )
+    );
+  };
+
+  readonly previewWorkspaceBridgeExists = async (
+    request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      this.workspaceFileBridgeService.exists(
+        this.resolvePreviewRequestWorkspaceId(request),
+        request.query.path
+      )
+    );
+  };
+
+  readonly previewWorkspaceBridgeOpenFile = async (
+    request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery; Body: WorkspaceBridgeDesktopActionBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      this.workspaceFileBridgeService.prepareOpenWorkspaceFile(
+        this.resolvePreviewRequestWorkspaceId(request),
+        request.body.path?.trim() ?? ""
+      )
+    );
+  };
+
+  readonly previewWorkspaceBridgeRevealInFileManager = async (
+    request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery; Body: WorkspaceBridgeDesktopActionBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      this.workspaceFileBridgeService.prepareRevealWorkspaceFile(
+        this.resolvePreviewRequestWorkspaceId(request),
+        request.body.path?.trim() ?? ""
+      )
+    );
+  };
+
+  readonly previewWorkspaceBridgeWatchDir = async (
+    request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery; Body: WorkspaceBridgeWatchDirBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      await this.workspaceFileBridgeService.watchDir(
+        this.resolvePreviewRequestWorkspaceId(request),
+        request.body.path,
+        request.body.options
+      )
+    );
+  };
+
+  readonly previewWorkspaceBridgeUnwatch = async (
+    request: FastifyRequest<{ Body: WorkspaceBridgeUnwatchBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    this.sendWorkspaceBridgeUnwatch(request.body, reply);
+  };
+
+  readonly previewWorkspaceBridgePollWatch = async (
+    request: FastifyRequest<{ Querystring: WorkspaceBridgePollWatchQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    this.sendWorkspaceBridgePollWatch(request.query, reply);
+  };
+
+  private resolvePreviewRequestWorkspaceId(
+    request: FastifyRequest<{ Params?: PublicWorkspaceBridgeParams; Querystring?: PublicWorkspaceBridgeQuery }>
+  ): string {
+    const safeToken = (request.query?.token ?? request.params?.token ?? "").trim();
+
+    if (!safeToken) {
+      throw new AppError({
+        statusCode: 401,
+        errorCode: "FILE_PREVIEW_TOKEN_INVALID",
+        detail: "预览链接无效，请重新打开文件预览"
+      });
+    }
+
+    return this.filePreviewLinkService.resolveWorkspaceId(safeToken);
+  }
+
+  private sendWorkspaceBridgeUnwatch(
+    body: WorkspaceBridgeUnwatchBody,
+    reply: FastifyReply
+  ): void {
+    const watchId = body.watchId?.trim() ?? "";
 
     if (!watchId) {
       throw new AppError({
@@ -442,13 +627,13 @@ export class FileController {
     }
 
     reply.send(this.workspaceFileBridgeService.unwatch(watchId));
-  };
+  }
 
-  readonly workspaceBridgePollWatch = async (
-    request: FastifyRequest<{ Querystring: WorkspaceBridgePollWatchQuery }>,
+  private sendWorkspaceBridgePollWatch(
+    query: WorkspaceBridgePollWatchQuery,
     reply: FastifyReply
-  ): Promise<void> => {
-    const watchId = request.query.watchId?.trim() ?? "";
+  ): void {
+    const watchId = query.watchId?.trim() ?? "";
 
     if (!watchId) {
       throw new AppError({
@@ -459,7 +644,7 @@ export class FileController {
       });
     }
 
-    const rawCursor = request.query.cursor?.trim() ?? "";
+    const rawCursor = query.cursor?.trim() ?? "";
     const cursor = rawCursor ? Number(rawCursor) : undefined;
 
     reply.send(
@@ -468,7 +653,7 @@ export class FileController {
         typeof cursor === "number" && Number.isFinite(cursor) ? cursor : undefined
       )
     );
-  };
+  }
 
   readonly publicPreview = async (
     request: FastifyRequest<{ Params: PublicFilePreviewParams }>,
@@ -624,7 +809,7 @@ function injectWorkspaceBridgeRuntime(
     parentOrigin: string | null;
   }
 ): string {
-  const runtimeVersion = "20260523-workspace-bridge-debug-v2";
+  const runtimeVersion = "20260523-workspace-bridge-http-first-v3";
   const runtimeScriptPath = `/preview/runtime/codingns-workspace-bridge.js?v=${runtimeVersion}`;
   const bootstrapScript = JSON.stringify({
     runtimeScriptPath,

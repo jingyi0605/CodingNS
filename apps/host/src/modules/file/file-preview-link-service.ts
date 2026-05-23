@@ -60,6 +60,10 @@ export class FilePreviewLinkService {
     };
   }
 
+  resolveWorkspaceId(token: string): string {
+    return this.verifyToken(token).workspaceId;
+  }
+
   resolvePublicFile(token: string, requestedPath: string): PublicFilePreviewResult {
     const payload = this.verifyToken(token);
     const resolved = this.fileAccessGuard.resolvePath(payload.workspaceId, requestedPath, {
