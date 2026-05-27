@@ -11,6 +11,7 @@ import { isResourcePreviewKind } from "./file-preview-types.js";
 import type { FileSearchService } from "./file-search-service.js";
 import type { FileTreeService } from "./file-tree-service.js";
 import type { RecentFileService } from "./recent-file-service.js";
+import type { RecentModifiedFileService } from "./recent-modified-file-service.js";
 import type {
   WorkspaceFileBridgeListDirOptions,
   WorkspaceFileBridgeService,
@@ -118,6 +119,7 @@ export class FileController {
     private readonly fileContentService: FileContentService,
     private readonly fileSearchService: FileSearchService,
     private readonly recentFileService: RecentFileService,
+    private readonly recentModifiedFileService: RecentModifiedFileService,
     private readonly filePreviewService: FilePreviewService,
     private readonly filePreviewLinkService: FilePreviewLinkService,
     private readonly workspaceFileBridgeService: WorkspaceFileBridgeService
@@ -256,6 +258,21 @@ export class FileController {
         requireWorkspaceId(request.query.workspaceId),
         requireUserId(request),
         Number(request.query.limit ?? "10")
+      )
+    });
+  };
+
+  readonly getRecentModified = async (
+    request: FastifyRequest<{ Querystring: FileWorkspaceQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      items: this.recentModifiedFileService.list(
+        requireWorkspaceId(request.query.workspaceId),
+        {
+          limit: Number(request.query.limit ?? "10"),
+          keyword: request.query.keyword?.trim() ?? null
+        }
       )
     });
   };

@@ -60,6 +60,13 @@ export interface RecentFileRecordDto {
   pinned: boolean;
 }
 
+export interface RecentModifiedFileRecordDto {
+  path: string;
+  name: string;
+  updatedAt: string;
+  size: number;
+}
+
 export type FilePreviewKind =
   | "text"
   | "markdown"
@@ -229,6 +236,27 @@ export function getRecentFiles(workspaceId: string, limit = 10) {
   });
 
   return httpClient.request<{ items: RecentFileRecordDto[] }>(`/api/files/recent?${search.toString()}`);
+}
+
+export function getRecentModifiedFiles(
+  workspaceId: string,
+  input?: {
+    limit?: number;
+    keyword?: string;
+  }
+) {
+  const search = new URLSearchParams({
+    workspaceId,
+    limit: String(input?.limit ?? 10)
+  });
+
+  if (input?.keyword?.trim()) {
+    search.set("keyword", input.keyword.trim());
+  }
+
+  return httpClient.request<{ items: RecentModifiedFileRecordDto[] }>(
+    `/api/files/recent-modified?${search.toString()}`
+  );
 }
 
 export function getFilePreview(workspaceId: string, filePath: string) {

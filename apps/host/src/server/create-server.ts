@@ -79,6 +79,7 @@ import { FileContextService } from "../modules/file/file-context-service.js";
 import { FileController } from "../modules/file/file-controller.js";
 import { FilePreviewLinkService } from "../modules/file/file-preview-link-service.js";
 import { FilePreviewService } from "../modules/file/file-preview-service.js";
+import { RecentModifiedFileService } from "../modules/file/recent-modified-file-service.js";
 import { FileSearchService } from "../modules/file/file-search-service.js";
 import { FileTreeService } from "../modules/file/file-tree-service.js";
 import { FileVersionChecker } from "../modules/file/file-version-checker.js";
@@ -489,6 +490,7 @@ export function createServer(config: HostConfig) {
   );
   const fileAccessGuard = new FileAccessGuard(workspaceService, app.log);
   const recentFileService = new RecentFileService(repositories.recentFileRepository);
+  const recentModifiedFileService = new RecentModifiedFileService(fileAccessGuard);
   const fileVersionChecker = new FileVersionChecker();
   const fileTreeService = new FileTreeService(fileAccessGuard);
   const fileSearchService = new FileSearchService(fileAccessGuard);
@@ -1503,6 +1505,7 @@ export function createServer(config: HostConfig) {
     fileContentService,
     fileSearchService,
     recentFileService,
+    recentModifiedFileService,
     filePreviewService,
     filePreviewLinkService,
     workspaceFileBridgeService
