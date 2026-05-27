@@ -7,6 +7,8 @@ import type { ProviderCapabilitiesDto } from "../api/conversation-api";
 import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
 import { ComposerPanel, resolveComposerMacSelectPopoverWidth } from "./ComposerPanel";
 
+const mockSearchComposerMentionItems = vi.fn();
+const mockRevealWorkspaceFile = vi.fn();
 const platformMock = vi.hoisted(() => ({
   platform: "web",
   isDesktop: false,
@@ -135,8 +137,18 @@ vi.mock("../api/conversation-api", async () => {
   };
 });
 
+vi.mock("../api/composer-mention-api", () => ({
+  searchComposerMentionItems: (...args: unknown[]) => mockSearchComposerMentionItems(...args)
+}));
+
 vi.mock("../../../platform/platform-provider", () => ({
   usePlatform: () => platformMock
+}));
+
+vi.mock("./WorkbenchLayout", () => ({
+  useWorkbenchShell: () => ({
+    revealWorkspaceFile: (...args: unknown[]) => mockRevealWorkspaceFile(...args)
+  })
 }));
 
 vi.mock("../../../preferences/preferences-store", () => ({
@@ -288,6 +300,8 @@ describe("ComposerPanel", () => {
     mockReplaceQuickPhrases.mockReset();
     mockGetProviderCapabilities.mockReset();
     mockListProviderCatalog.mockReset();
+    mockSearchComposerMentionItems.mockReset();
+    mockRevealWorkspaceFile.mockReset();
     mockListQuickPhrases.mockResolvedValue({
       items: [
         {
@@ -318,6 +332,11 @@ describe("ComposerPanel", () => {
       { provider: "kimi", displayName: "Kimi", enabled: false }
     ]);
     mockGetProviderCapabilities.mockResolvedValue(createCapabilities());
+    mockSearchComposerMentionItems.mockResolvedValue({
+      skills: [],
+      files: []
+    });
+    mockRevealWorkspaceFile.mockReturnValue(true);
     Object.defineProperty(URL, "createObjectURL", {
       writable: true,
       value: vi.fn(() => "blob:preview")
@@ -1768,6 +1787,315 @@ describe("ComposerPanel", () => {
     });
     await waitFor(() => {
       expect(localStorage.getItem(draftStorageKey)).toBeNull();
+    });
+  });
+
+  it("@ 时会显示技能和最近修改文件，并支持点击插入", async () => {
+    mockSearchComposerMentionItems.mockResolvedValue({
+      skills: [
+        {
+          id: "skill-1",
+          name: "office-browser-opencli-bridge",
+          source: "managed",
+          targetCli: ["codex", "claude-code"],
+          description: "适用于 codex、claude-code"
+        }
+      ],
+      files: [
+        {
+          path: "apps/user-app/src/features/conversation/components/ComposerPanel.tsx",
+          name: "ComposerPanel.tsx",
+          updatedAt: "2026-05-27T12:00:00.000Z",
+          size: 1234
+        }
+      ]
+    });
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ provider: "codex" })}
+        workspaceId="workspace-1"
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    fireEvent.change(textarea, {
+      target: {
+        value: "@"
+      }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("listbox", { name: t("conversation.mentionMenuTitle") })).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("office-browser-opencli-bridge")).toBeInTheDocument();
+    expect(screen.getByText("apps/user-app/src/features/conversation/components/ComposerPanel.tsx")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("office-browser-opencli-bridge"));
+
+    await waitFor(() => {
+      expect(textarea.value).toBe("");
+    });
+    expect(screen.getByLabelText(t("conversation.mentionSelectedListLabel"))).toBeInTheDocument();
+    expect(screen.getByText("office-browser-opencli-bridge").closest(".composer-selected-mention-chip")).not.toBeNull();
+  });
+
+  it("@ 过滤结果为空时会显示空态", async () => {
+    mockSearchComposerMentionItems.mockResolvedValue({
+      skills: [],
+      files: []
+    });
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ provider: "claude-code" })}
+        workspaceId="workspace-1"
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: {
+        value: "@not-found"
+      }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(t("conversation.mentionEmpty"))).toBeInTheDocument();
+    });
+  });
+
+  it("@ 候选支持上下键切换，并用回车应用当前高亮项", async () => {
+    mockSearchComposerMentionItems.mockResolvedValue({
+      skills: [
+        {
+          id: "skill-1",
+          name: "first-skill",
+          source: "managed",
+          targetCli: ["codex"],
+          description: "适用于 codex"
+        },
+        {
+          id: "skill-2",
+          name: "second-skill",
+          source: "managed",
+          targetCli: ["codex"],
+          description: "适用于 codex"
+        }
+      ],
+      files: []
+    });
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ provider: "codex" })}
+        workspaceId="workspace-1"
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    fireEvent.change(textarea, {
+      target: {
+        value: "@"
+      }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("first-skill")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(textarea, { key: "ArrowDown" });
+
+    await waitFor(() => {
+      expect(screen.getByText("second-skill").closest(".composer-mention-item")).toHaveClass("is-active");
+      expect(screen.getByText("second-skill").closest(".composer-mention-item")).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByText("first-skill").closest(".composer-mention-item")).toHaveAttribute("aria-selected", "false");
+    });
+
+    fireEvent.keyDown(textarea, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(textarea.value).toBe("");
+    });
+    expect(screen.getByText("second-skill").closest(".composer-selected-mention-chip")).not.toBeNull();
+  });
+
+  it("@ 候选用键盘切换到可视区外项目时，会自动滚动到当前高亮项", async () => {
+    mockSearchComposerMentionItems.mockResolvedValue({
+      skills: Array.from({ length: 6 }, (_, index) => ({
+        id: `skill-${index + 1}`,
+        name: `skill-${index + 1}`,
+        source: "managed",
+        targetCli: ["codex"],
+        description: "适用于 codex"
+      })),
+      files: []
+    });
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ provider: "codex" })}
+        workspaceId="workspace-1"
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const textarea = screen.getByRole("textbox");
+    fireEvent.change(textarea, {
+      target: {
+        value: "@"
+      }
+    });
+
+    const menu = await screen.findByRole("listbox", { name: t("conversation.mentionMenuTitle") });
+    Object.defineProperty(menu, "clientHeight", {
+      configurable: true,
+      value: 120
+    });
+
+    const items = await screen.findAllByRole("button");
+    const mentionItems = items.filter((item) => item.className.includes("composer-mention-item"));
+
+    mentionItems.forEach((item, index) => {
+      Object.defineProperty(item, "offsetTop", {
+        configurable: true,
+        value: index * 44
+      });
+      Object.defineProperty(item, "offsetHeight", {
+        configurable: true,
+        value: 44
+      });
+    });
+
+    for (let index = 0; index < 4; index += 1) {
+      fireEvent.keyDown(textarea, { key: "ArrowDown" });
+    }
+
+    await waitFor(() => {
+      expect((menu as HTMLDivElement).scrollTop).toBeGreaterThan(0);
+      expect(screen.getByText("skill-5").closest(".composer-mention-item")).toHaveClass("is-active");
+    });
+  });
+
+  it("文件 mention 应该渲染成文件元素，而不是裸文本", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ provider: "codex" })}
+        workspaceId="workspace-1"
+        isSubmitting={false}
+        onSend={onSend}
+      />
+    );
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: {
+        value: "@file:docs/spec.md"
+      }
+    });
+
+    await waitFor(() => {
+      const chip = screen.getByText("docs/spec.md").closest(".composer-selected-mention-chip");
+      expect(chip).not.toBeNull();
+      expect(chip).toHaveAttribute("data-kind", "file");
+    });
+  });
+
+  it("删除 chip 时会同步删掉底层 token，并通过关闭按钮操作", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ provider: "codex" })}
+        workspaceId="workspace-1"
+        isSubmitting={false}
+        onSend={onSend}
+      />
+    );
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: {
+        value: "@file:docs/spec.md"
+      }
+    });
+
+    const removeButton = await screen.findByLabelText("删除文件：docs/spec.md");
+    fireEvent.click(removeButton);
+
+    await waitFor(() => {
+      expect(screen.queryByText("docs/spec.md")).not.toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: {
+        value: "继续处理"
+      }
+    });
+    fireEvent.submit(document.querySelector(".composer-form")!);
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledTimes(1);
+      expect(onSend.mock.calls[0]?.[0]).toBe("继续处理");
+    });
+  });
+
+  it("点击 skill chip 会把名称回显到输入框", async () => {
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ provider: "codex" })}
+        workspaceId="workspace-1"
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: {
+        value: "@skill:demo-skill"
+      }
+    });
+
+    const chipButton = await screen.findByRole("button", { name: "回显 skill：demo-skill" });
+    fireEvent.click(chipButton);
+
+    await waitFor(() => {
+      expect(screen.getByRole("textbox")).toHaveValue("demo-skill");
+    });
+  });
+
+  it("点击 file chip 会触发文件面板定位", async () => {
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ provider: "codex" })}
+        workspaceId="workspace-1"
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: {
+        value: "@file:docs/spec.md"
+      }
+    });
+
+    const chipButton = await screen.findByRole("button", { name: "定位文件：docs/spec.md" });
+    fireEvent.click(chipButton);
+
+    await waitFor(() => {
+      expect(mockRevealWorkspaceFile).toHaveBeenCalledWith({
+        workspaceId: "workspace-1",
+        filePath: "docs/spec.md",
+        openViewer: false
+      });
     });
   });
 });

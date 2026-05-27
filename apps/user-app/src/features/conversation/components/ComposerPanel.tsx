@@ -69,6 +69,12 @@ import {
   type QuickPhraseRecord,
   type StoredComposerDraftAttachment
 } from "./composer-local-storage";
+import { useWorkbenchShell } from "./WorkbenchLayout";
+import {
+  searchComposerMentionItems,
+  type ComposerMentionFileItemDto,
+  type ComposerMentionSkillItemDto
+} from "../api/composer-mention-api";
 
 export { resolveMacSelectPopoverWidth as resolveComposerMacSelectPopoverWidth } from "./MacSelect";
 
@@ -139,6 +145,41 @@ interface ComposerPanelProps {
     }
   ) => Promise<void>;
 }
+
+type ComposerMentionItem =
+  | {
+      id: string;
+      type: "skill";
+      name: string;
+      subtitle: string;
+      insertText: string;
+    }
+  | {
+      id: string;
+      type: "file";
+      name: string;
+      subtitle: string;
+      insertText: string;
+    };
+
+type ComposerMentionSelection =
+  | {
+      id: string;
+      type: "skill";
+      label: string;
+      token: string;
+    }
+  | {
+      id: string;
+      type: "file";
+      label: string;
+      token: string;
+    };
+
+type ParsedMentionDraft = {
+  selections: ComposerMentionSelection[];
+  plainText: string;
+};
 
 type ModelOption = {
   id: string;
@@ -311,6 +352,93 @@ function buildForkDraftPreview(content: string): string {
   return normalized.length > 140 ? `${normalized.slice(0, 140)}…` : normalized;
 }
 
+function extractMentionKeyword(content: string): string | null {
+  const match = content.match(/(?:^|\s)@([^\s@]*)$/);
+
+  if (!match) {
+    return null;
+  }
+
+  return match[1] ?? "";
+}
+
+function replaceActiveMentionToken(content: string, insertText: string): string {
+  return content.replace(/@([^\s@]*)$/, `${insertText} `);
+}
+
+function mapMentionSkillItem(item: ComposerMentionSkillItemDto): ComposerMentionItem {
+  return {
+    id: `skill:${item.id}`,
+    type: "skill",
+    name: item.name,
+    subtitle: item.description,
+    insertText: `@skill:${item.name}`
+  };
+}
+
+function mapMentionFileItem(item: ComposerMentionFileItemDto): ComposerMentionItem {
+  return {
+    id: `file:${item.path}`,
+    type: "file",
+    name: item.name,
+    subtitle: item.path,
+    insertText: `@file:${item.path}`
+  };
+}
+
+function parseMentionSelections(content: string): ComposerMentionSelection[] {
+  const matches = Array.from(content.matchAll(/@(skill|file):([^\s]+)/g));
+
+  return matches.map((match, index) => {
+    const type = match[1] === "skill" ? "skill" : "file";
+    const label = match[2] ?? "";
+    const token = match[0] ?? "";
+
+    return {
+      id: `${type}:${label}:${index}`,
+      type,
+      label,
+      token
+    };
+  });
+}
+
+function parseMentionDraft(content: string): ParsedMentionDraft {
+  const selections = parseMentionSelections(content).map((item) => ({
+    ...item,
+    id: createMentionSelectionId(item.type, item.label)
+  }));
+  const plainText = content
+    .replace(/@(skill|file):([^\s]+)/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+
+  return {
+    selections,
+    plainText
+  };
+}
+
+function buildRawComposerContent(
+  selections: ComposerMentionSelection[],
+  plainText: string
+): string {
+  const tokenSegment = selections.map((item) => item.token).join(" ").trim();
+  const textSegment = plainText.trim();
+
+  if (tokenSegment && textSegment) {
+    return `${tokenSegment}\n${textSegment}`;
+  }
+
+  return tokenSegment || textSegment;
+}
+
+function createMentionSelectionId(type: "skill" | "file", label: string): string {
+  return `${type}:${label}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+}
+
 function resolveForkProviderDisabledReason(
   sourceProvider: ProviderId,
   candidateProvider: ProviderId
@@ -441,6 +569,7 @@ export function ComposerPanel({
   const libraryInputId = useId();
   const cameraInputId = useId();
   const [content, setContent] = useState("");
+  const [mentionSelections, setMentionSelections] = useState<ComposerMentionSelection[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [reasoningLevel, setReasoningLevel] = useState<ReasoningLevel>("medium");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
@@ -452,6 +581,10 @@ export function ComposerPanel({
   const [quickPhraseDraft, setQuickPhraseDraft] = useState("");
   const [quickPhraseSaving, setQuickPhraseSaving] = useState(false);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
+  const [mentionMenuOpen, setMentionMenuOpen] = useState(false);
+  const [mentionItems, setMentionItems] = useState<ComposerMentionItem[]>([]);
+  const [mentionLoading, setMentionLoading] = useState(false);
+  const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
   const [interrupting, setInterrupting] = useState(false);
   const [localSubmitting, setLocalSubmitting] = useState(false);
   const [deploymentSnapshot, setDeploymentSnapshot] = useState<ModelManagementAppSnapshotDto | null>(null);
@@ -483,6 +616,7 @@ export function ComposerPanel({
   >({});
   const [pendingCrossProvider, setPendingCrossProvider] = useState<ProviderId | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const mentionMenuRef = useRef<HTMLDivElement>(null);
   const libraryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const submitLockRef = useRef(false);
@@ -493,8 +627,10 @@ export function ComposerPanel({
   const attachmentDraftCacheRef = useRef(new Map<string, StoredComposerDraftAttachment>());
   const quickPhraseMutationVersionRef = useRef(0);
   const appliedInitialModelKeyRef = useRef<string | null>(null);
+  const mentionRequestIdRef = useRef(0);
   const { showToast } = useToast();
   const haptics = useHaptics();
+  const { revealWorkspaceFile } = useWorkbenchShell();
 
   const clearCompositionCommitLock = useCallback(() => {
     if (compositionCommitUnlockTimerRef.current !== null) {
@@ -822,6 +958,7 @@ export function ComposerPanel({
     ],
     []
   );
+  const providerForMention = capabilities?.provider ?? taskProvider ?? null;
   const inRunInputMode = capabilities?.inRunInputMode ?? "none";
   const hasForkDraft = Boolean(forkDraft);
   const { visibleProviders: visibleCatalogForkProviders } = useEnabledProviderCatalog(
@@ -1178,6 +1315,126 @@ export function ComposerPanel({
     openFileInput(libraryInputRef.current);
   }, [attachmentDecision.allowed, haptics, inRunSendBlocked, platform.isNativeMobile]);
 
+  const closeMentionMenu = useCallback(() => {
+    setMentionMenuOpen(false);
+    setMentionLoading(false);
+    setMentionActiveIndex(0);
+  }, []);
+
+  const loadMentionItems = useCallback(async (rawKeyword: string) => {
+    const requestId = mentionRequestIdRef.current + 1;
+    mentionRequestIdRef.current = requestId;
+    setMentionLoading(true);
+
+    try {
+      const result = await searchComposerMentionItems({
+        workspaceId,
+        provider: providerForMention,
+        keyword: rawKeyword,
+        limit: 5
+      });
+
+      if (mentionRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      const mappedSkills = result.skills.map((item) => mapMentionSkillItem(item));
+      const mappedFiles = result.files.map((item) => mapMentionFileItem(item));
+      setMentionItems([...mappedSkills, ...mappedFiles]);
+      setMentionActiveIndex(0);
+      setMentionMenuOpen(true);
+    } catch {
+      if (mentionRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      setMentionItems([]);
+      setMentionActiveIndex(0);
+      setMentionMenuOpen(true);
+    } finally {
+      if (mentionRequestIdRef.current === requestId) {
+        setMentionLoading(false);
+      }
+    }
+  }, [providerForMention, workspaceId]);
+
+  const applyMentionItem = useCallback((item: ComposerMentionItem) => {
+    setMentionSelections((current) => [
+      ...current,
+      {
+        id: createMentionSelectionId(item.type, item.name),
+        type: item.type,
+        label: item.name,
+        token: item.insertText
+      }
+    ]);
+    setContent((current) => replaceActiveMentionToken(current, "").trimStart());
+    closeMentionMenu();
+    globalThis.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
+  }, [closeMentionMenu]);
+
+  useEffect(() => {
+    const mentionKeyword = extractMentionKeyword(content);
+
+    if (mentionKeyword === null) {
+      closeMentionMenu();
+      setMentionItems([]);
+      return;
+    }
+
+    if (!workspaceId?.trim() && mentionKeyword.length > 0) {
+      setMentionItems([]);
+      setMentionMenuOpen(true);
+      setMentionLoading(false);
+      return;
+    }
+
+    void loadMentionItems(mentionKeyword);
+  }, [closeMentionMenu, content, loadMentionItems, workspaceId]);
+
+  useEffect(() => {
+    if (mentionItems.length === 0) {
+      setMentionActiveIndex(0);
+      return;
+    }
+
+    setMentionActiveIndex((current) => Math.min(current, mentionItems.length - 1));
+  }, [mentionItems]);
+
+  useEffect(() => {
+    if (!mentionMenuOpen || mentionItems.length === 0) {
+      return;
+    }
+
+    const menuElement = mentionMenuRef.current;
+
+    if (!menuElement) {
+      return;
+    }
+
+    const activeElement = menuElement.querySelector<HTMLElement>(".composer-mention-item.is-active");
+
+    if (!activeElement) {
+      return;
+    }
+
+    const menuTop = menuElement.scrollTop;
+    const menuBottom = menuTop + menuElement.clientHeight;
+    const itemTop = activeElement.offsetTop;
+    const itemBottom = itemTop + activeElement.offsetHeight;
+
+    if (itemTop < menuTop) {
+      menuElement.scrollTop = itemTop;
+      return;
+    }
+
+    if (itemBottom > menuBottom) {
+      menuElement.scrollTop = itemBottom - menuElement.clientHeight;
+    }
+  }, [mentionActiveIndex, mentionItems, mentionMenuOpen]);
+
   const handleSlashCommand = useCallback(() => {
     setShowSlashMenu((current) => !current);
   }, []);
@@ -1274,17 +1531,56 @@ export function ComposerPanel({
     textareaRef.current?.focus();
   }, []);
 
+  const removeMentionSelection = useCallback((selectionId: string) => {
+    setMentionSelections((current) => current.filter((item) => item.id !== selectionId));
+    globalThis.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
+  }, []);
+
+  const handleMentionChipClick = useCallback((selection: ComposerMentionSelection) => {
+    if (selection.type === "file") {
+      revealWorkspaceFile({
+        workspaceId,
+        filePath: selection.label,
+        openViewer: false
+      });
+      return;
+    }
+
+    setContent((current) => {
+      const normalized = current.trim();
+      return normalized.length > 0 ? `${normalized} ${selection.label}` : selection.label;
+    });
+    globalThis.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
+  }, [revealWorkspaceFile, workspaceId]);
+
   const restoreDraftState = useCallback((storageId?: string) => {
     const storedDraft = storageId ? readComposerDraftRecord(storageId) : null;
     const restoredAttachments = storedDraft?.attachments.map((attachment) => restoreDraftAttachment(attachment)) ?? [];
+    const parsedDraft = parseMentionDraft(storedDraft?.content ?? "");
 
     attachmentDraftCacheRef.current = new Map(
       (storedDraft?.attachments ?? []).map((attachment) => [attachment.id, attachment])
     );
     replaceAttachments(restoredAttachments);
-    setContent(storedDraft?.content ?? "");
+    setMentionSelections(parsedDraft.selections);
+    setContent(parsedDraft.plainText);
     setShowSlashMenu(false);
   }, [replaceAttachments]);
+
+  useEffect(() => {
+    const parsedDraft = parseMentionDraft(content);
+
+    if (parsedDraft.selections.length === 0) {
+      return;
+    }
+
+    setMentionSelections((current) => [...current, ...parsedDraft.selections]);
+    setContent(parsedDraft.plainText);
+  }, [content]);
 
   useEffect(() => {
     if (!availableModels.length) {
@@ -1424,7 +1720,7 @@ export function ComposerPanel({
     let disposed = false;
 
     async function persistDraft() {
-      if (content.length === 0 && attachments.length === 0) {
+      if (content.length === 0 && attachments.length === 0 && mentionSelections.length === 0) {
         clearComposerDraftRecord(storageId);
         return;
       }
@@ -1462,7 +1758,7 @@ export function ComposerPanel({
         storedAttachments.map((attachment) => [attachment.id, attachment])
       );
       persistComposerDraftRecord(storageId, {
-        content,
+        content: buildRawComposerContent(mentionSelections, content),
         attachments: storedAttachments
       });
     }
@@ -1472,7 +1768,7 @@ export function ComposerPanel({
     return () => {
       disposed = true;
     };
-  }, [attachments, content, draftStorageId]);
+  }, [attachments, content, draftStorageId, mentionSelections]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -1732,10 +2028,12 @@ export function ComposerPanel({
     }
 
     const nextContent = content.trim();
+    const nextMentionSelections = mentionSelections;
+    const rawNextContent = buildRawComposerContent(nextMentionSelections, nextContent);
     const nextAttachments = attachments;
 
     if (
-      (nextContent.length === 0 && nextAttachments.length === 0)
+      (rawNextContent.length === 0 && nextAttachments.length === 0)
       || !sendDecision.allowed
       || inRunSendBlocked
       || forkSendBlocked
@@ -1753,6 +2051,7 @@ export function ComposerPanel({
     void haptics.trigger(mode === "queue" ? "selection" : "action");
     setLocalSubmitting(true);
     setContent("");
+    setMentionSelections([]);
     setAttachments([]);
     setAttachmentSheetOpen(false);
     setDragActive(false);
@@ -1779,7 +2078,7 @@ export function ComposerPanel({
           ? onQueueSend
           : onSend;
 
-      await sendHandler(nextContent, {
+      await sendHandler(rawNextContent, {
         model:
           hasForkDraft
             ? undefined
@@ -1818,6 +2117,7 @@ export function ComposerPanel({
       });
     } catch (error) {
       setContent(nextContent);
+      setMentionSelections(nextMentionSelections);
       setAttachments(nextAttachments);
       showToast({
         title:
@@ -2039,6 +2339,51 @@ export function ComposerPanel({
           ) : null}
 
           <div className="composer-input-wrapper">
+            {mentionSelections.length > 0 ? (
+              <div className="composer-selected-mentions" aria-label={t("conversation.mentionSelectedListLabel")}>
+                {mentionSelections.map((item) => (
+                  <span
+                    key={item.id}
+                    className="composer-selected-mention-chip"
+                    data-kind={item.type}
+                  >
+                    <button
+                      type="button"
+                      className="composer-selected-mention-chip-main"
+                      onClick={() => handleMentionChipClick(item)}
+                      aria-label={
+                        item.type === "skill"
+                          ? t("conversation.mentionActivateSkill").replace("{name}", item.label)
+                          : t("conversation.mentionActivateFile").replace("{name}", item.label)
+                      }
+                    >
+                      <span className="composer-selected-mention-chip-tag">
+                        {item.type === "skill" ? t("conversation.mentionSkillTag") : t("conversation.mentionFileTag")}
+                      </span>
+                      <span className="composer-selected-mention-chip-label" title={item.label}>
+                        {item.label}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="composer-selected-mention-chip-remove"
+                      aria-label={
+                        item.type === "skill"
+                          ? t("conversation.mentionRemoveSkill").replace("{name}", item.label)
+                          : t("conversation.mentionRemoveFile").replace("{name}", item.label)
+                      }
+                      title={t("common.close")}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        removeMentionSelection(item.id);
+                      }}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
             <textarea
               ref={textareaRef}
               className="composer-input"
@@ -2086,9 +2431,30 @@ export function ComposerPanel({
               onKeyDown={(event) => {
                 if (event.key === "Escape") {
                   setShowSlashMenu(false);
+                  closeMentionMenu();
+                }
+
+                if (mentionMenuOpen && mentionItems.length > 0) {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    setMentionActiveIndex((current) => (current + 1) % mentionItems.length);
+                    return;
+                  }
+
+                  if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setMentionActiveIndex((current) => (current - 1 + mentionItems.length) % mentionItems.length);
+                    return;
+                  }
                 }
 
                 if (event.key === "Enter" && !event.shiftKey) {
+                  if (mentionMenuOpen && mentionItems.length > 0) {
+                    event.preventDefault();
+                    applyMentionItem(mentionItems[mentionActiveIndex] ?? mentionItems[0]);
+                    return;
+                  }
+
                   if (
                     isComposerImeConfirming(
                       event,
@@ -2158,6 +2524,46 @@ export function ComposerPanel({
                   <span className="composer-slash-label">{item.label}</span>
                 </button>
               ))}
+            </div>
+          ) : null}
+
+          {mentionMenuOpen ? (
+            <div
+              ref={mentionMenuRef}
+              className="composer-mention-menu"
+              role="listbox"
+              aria-label={t("conversation.mentionMenuTitle")}
+            >
+              {mentionLoading ? (
+                <div className="composer-mention-empty">{t("conversation.mentionLoading")}</div>
+              ) : mentionItems.length > 0 ? (
+                mentionItems.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={mentionItems[mentionActiveIndex]?.id === item.id ? "composer-mention-item is-active" : "composer-mention-item"}
+                    aria-selected={mentionItems[mentionActiveIndex]?.id === item.id}
+                    onClick={() => applyMentionItem(item)}
+                    onMouseEnter={() => {
+                      const nextIndex = mentionItems.findIndex((candidate) => candidate.id === item.id);
+
+                      if (nextIndex >= 0) {
+                        setMentionActiveIndex(nextIndex);
+                      }
+                    }}
+                  >
+                    <span className="composer-mention-item-main">
+                      <span className="composer-mention-item-title">{item.name}</span>
+                      <span className="composer-mention-item-subtitle">{item.subtitle}</span>
+                    </span>
+                    <span className="composer-mention-item-tag">
+                      {item.type === "skill" ? t("conversation.mentionSkillTag") : t("conversation.mentionFileTag")}
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <div className="composer-mention-empty">{t("conversation.mentionEmpty")}</div>
+              )}
             </div>
           ) : null}
 
