@@ -306,6 +306,9 @@ export function createHtmlPreviewWorkspaceBridge(options: HtmlPreviewWorkspaceBr
           payload = await unwatchWorkspaceBridgeDir(watchId);
           break;
         }
+        case "applyIndexConfig":
+          postError(event, request, "INTERNAL_ERROR", "当前预览宿主页暂未代理 applyIndexConfig，请优先走 Preview HTTP Bridge。");
+          return;
         default:
           postError(event, request, "INTERNAL_ERROR", `不支持的 workspace bridge 动作：${request.action}`);
           return;

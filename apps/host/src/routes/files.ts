@@ -38,6 +38,7 @@ export async function registerFileRoutes(
   app.post("/api/files/workspace-bridge/watch-dir", fileController.workspaceBridgeWatchDir);
   app.post("/api/files/workspace-bridge/unwatch", fileController.workspaceBridgeUnwatch);
   app.get("/api/files/workspace-bridge/watch-events", fileController.workspaceBridgePollWatch);
+  app.post("/api/files/workspace-bridge/apply-index-config", fileController.workspaceBridgeApplyIndexConfig);
   app.get("/preview/runtime/codingns-workspace-bridge.js", fileController.workspaceBridgeRuntime);
   app.get("/preview/workspace-bridge/capabilities", fileController.previewWorkspaceBridgeCapabilities);
   app.post("/preview/workspace-bridge/list-dir", fileController.previewWorkspaceBridgeListDir);
@@ -52,6 +53,7 @@ export async function registerFileRoutes(
   app.post("/preview/workspace-bridge/watch-dir", fileController.previewWorkspaceBridgeWatchDir);
   app.post("/preview/workspace-bridge/unwatch", fileController.previewWorkspaceBridgeUnwatch);
   app.get("/preview/workspace-bridge/watch-events", fileController.previewWorkspaceBridgePollWatch);
+  app.post("/preview/workspace-bridge/apply-index-config", fileController.previewWorkspaceBridgeApplyIndexConfig);
   app.get("/preview/workspace-bridge/:token/capabilities", fileController.previewWorkspaceBridgeCapabilities);
   app.post("/preview/workspace-bridge/:token/list-dir", fileController.previewWorkspaceBridgeListDir);
   app.post("/preview/workspace-bridge/:token/read-text", fileController.previewWorkspaceBridgeReadText);
@@ -65,5 +67,6 @@ export async function registerFileRoutes(
   app.post("/preview/workspace-bridge/:token/watch-dir", fileController.previewWorkspaceBridgeWatchDir);
   app.post("/preview/workspace-bridge/:token/unwatch", fileController.previewWorkspaceBridgeUnwatch);
   app.get("/preview/workspace-bridge/:token/watch-events", fileController.previewWorkspaceBridgePollWatch);
+  app.post("/preview/workspace-bridge/:token/apply-index-config", fileController.previewWorkspaceBridgeApplyIndexConfig);
   app.get("/preview/files/*", fileController.publicPreview);
 }

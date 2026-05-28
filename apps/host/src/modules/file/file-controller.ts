@@ -10,6 +10,7 @@ import type { FilePreviewService } from "./file-preview-service.js";
 import { isResourcePreviewKind } from "./file-preview-types.js";
 import type { FileSearchService } from "./file-search-service.js";
 import type { FileTreeService } from "./file-tree-service.js";
+import type { WorkspaceIndexApplyService } from "./workspace-index-apply-service.js";
 import type { RecentFileService } from "./recent-file-service.js";
 import type { RecentModifiedFileService } from "./recent-modified-file-service.js";
 import type {
@@ -113,6 +114,10 @@ interface WorkspaceBridgePollWatchQuery {
   cursor?: string;
 }
 
+interface WorkspaceBridgeApplyIndexConfigBody {
+  workspaceId?: string;
+}
+
 export class FileController {
   constructor(
     private readonly fileTreeService: FileTreeService,
@@ -122,7 +127,8 @@ export class FileController {
     private readonly recentModifiedFileService: RecentModifiedFileService,
     private readonly filePreviewService: FilePreviewService,
     private readonly filePreviewLinkService: FilePreviewLinkService,
-    private readonly workspaceFileBridgeService: WorkspaceFileBridgeService
+    private readonly workspaceFileBridgeService: WorkspaceFileBridgeService,
+    private readonly workspaceIndexApplyService: WorkspaceIndexApplyService
   ) {}
 
   readonly getTree = async (
@@ -610,6 +616,31 @@ export class FileController {
     reply: FastifyReply
   ): Promise<void> => {
     this.sendWorkspaceBridgePollWatch(request.query, reply);
+  };
+
+  readonly workspaceBridgeApplyIndexConfig = async (
+    request: FastifyRequest<{ Body: WorkspaceBridgeApplyIndexConfigBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      await this.workspaceIndexApplyService.applyConfig(
+        requireWorkspaceId(request.body.workspaceId)
+      )
+    );
+  };
+
+  readonly previewWorkspaceBridgeApplyIndexConfig = async (
+    request: FastifyRequest<{
+      Params: PublicWorkspaceBridgeParams;
+      Querystring: PublicWorkspaceBridgeQuery;
+    }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      await this.workspaceIndexApplyService.applyConfig(
+        this.resolvePreviewRequestWorkspaceId(request)
+      )
+    );
   };
 
   private resolvePreviewRequestWorkspaceId(

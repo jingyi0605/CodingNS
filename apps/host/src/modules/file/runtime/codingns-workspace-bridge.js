@@ -379,6 +379,9 @@
           watchId: payload && payload.watchId ? payload.watchId : "",
           cursor: payload && typeof payload.cursor === "number" ? payload.cursor : ""
         });
+      case "applyIndexConfig":
+        requestConfig = requestBody;
+        return bridgePost("/apply-index-config", requestConfig);
       default:
         return Promise.reject(new Error("不支持的 workspace bridge 动作: " + action));
     }
@@ -890,6 +893,9 @@
         }
         throw error;
       });
+    },
+    applyIndexConfig: function () {
+      return requestHost("applyIndexConfig", {});
     },
     bridgeProtocol: {
       requestType: REQUEST_TYPE,

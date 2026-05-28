@@ -85,6 +85,19 @@ export interface CodingNSWorkspaceBridge {
   }>;
   openWorkspaceFile(relativePath: string): Promise<WorkspaceBridgeDesktopTargetDto>;
   revealWorkspaceFile(relativePath: string): Promise<WorkspaceBridgeDesktopTargetDto>;
+  applyIndexConfig(): Promise<{
+    ok: true;
+    workspaceId: string;
+    workspacePath: string;
+    toolRoot: string;
+    entryFile: string;
+    command: string[];
+    exitCode: number;
+    signal: string | null;
+    durationMs: number;
+    stdout: string;
+    stderr: string;
+  }>;
   bridgeProtocol: CodingNSWorkspaceBridgeProtocol;
 }
 

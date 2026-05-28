@@ -77,6 +77,7 @@ import { FileContentService } from "../modules/file/file-content-service.js";
 import { FileContextController } from "../modules/file/file-context-controller.js";
 import { FileContextService } from "../modules/file/file-context-service.js";
 import { FileController } from "../modules/file/file-controller.js";
+import { WorkspaceIndexApplyService } from "../modules/file/workspace-index-apply-service.js";
 import { FilePreviewLinkService } from "../modules/file/file-preview-link-service.js";
 import { FilePreviewService } from "../modules/file/file-preview-service.js";
 import { RecentModifiedFileService } from "../modules/file/recent-modified-file-service.js";
@@ -514,6 +515,10 @@ export function createServer(config: HostConfig) {
     fileAccessGuard,
     app.log,
     workspaceFileBridgeWatchService
+  );
+  const workspaceIndexApplyService = new WorkspaceIndexApplyService(
+    workspaceService,
+    app.log
   );
   const filePreviewLinkService = new FilePreviewLinkService(
     fileAccessGuard,
@@ -1508,7 +1513,8 @@ export function createServer(config: HostConfig) {
     recentModifiedFileService,
     filePreviewService,
     filePreviewLinkService,
-    workspaceFileBridgeService
+    workspaceFileBridgeService,
+    workspaceIndexApplyService
   );
   const fileContextController = new FileContextController(
     fileContentService,
