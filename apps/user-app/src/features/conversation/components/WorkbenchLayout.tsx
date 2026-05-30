@@ -151,6 +151,7 @@ import { buildSessionTitlePresentation } from "../session-title";
 import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
 import {
   buildDraftSessionPath,
+  buildWorkspaceAffairsPath,
   buildWorkspaceDebugPath,
   buildWorkspaceHomePath,
   buildWorkspaceDetailPath,
@@ -217,6 +218,19 @@ import {
   SessionProviderPicker
 } from "./SessionProviderPicker";
 import { WorkbenchHostSwitcher } from "../../workbench/components/WorkbenchHostSwitcher";
+import { AffairsAuxiliaryPanel, AffairsSectionMenu, AffairsSidebarPanel, AffairsWorkbenchProvider, AffairsWorkbenchView } from "../../workbench/components/AffairsWorkbenchView";
+import { CodeWorkbenchView } from "../../workbench/components/CodeWorkbenchView";
+import {
+  createDefaultAffairsViewState,
+  readAffairsViewState,
+  readWorkbenchModeLastPath,
+  readWorkspaceWorkbenchMode,
+  resolveWorkbenchModeFromPath,
+  writeAffairsViewState,
+  writeWorkbenchModeLastPath,
+  writeWorkspaceWorkbenchMode
+} from "../../workbench/utils/workbench-mode";
+import type { AffairsViewState, WorkbenchMode } from "../../workbench/types/workbench-mode";
 import { WorkbenchModal as SidebarModal } from "./WorkbenchModal";
 import { WorkspaceCloneModal } from "./WorkspaceCloneModal";
 import { WorkspaceInboxPanel } from "./WorkspaceInboxModal";
@@ -751,6 +765,7 @@ function formatWorkbenchNotificationTime(value: string): string {
 function resolveRouteWorkspaceId(pathname: string, search: string): string | null {
   const workspaceRoutePatterns = [
     "/workspaces/:workspaceId",
+    "/workspaces/:workspaceId/affairs",
     "/workspaces/:workspaceId/sessions",
     "/workspaces/:workspaceId/sessions/:sessionId",
     "/workspaces/:workspaceId/tools",
@@ -1150,6 +1165,8 @@ interface WorktreeBaseRefOptionGroup {
 type CenterTab = "conversation" | "terminals" | "butler";
 type InfoTab = "files" | "git" | "terminals";
 type SearchMode = "sessions" | "code";
+
+const WORKBENCH_MODE_DEFAULT: WorkbenchMode = "code";
 
 const WorkbenchShellContext = createContext<WorkbenchShellContextValue | null>(null);
 
@@ -2952,27 +2969,28 @@ function PlusIcon() {
 
 function SearchIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="11" cy="11" r="7" />
-      <line x1="20" y1="20" x2="16.65" y2="16.65" />
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
+      <circle cx="10.5" cy="10.5" r="5.75" />
+      <path d="m15 15 4 4" strokeLinecap="round" />
     </svg>
   );
 }
 
+
 function ConversationIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
-      <path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85">
+      <path d="M7 6.5h10a3 3 0 0 1 3 3v5a3 3 0 0 1-3 3H11l-4.5 3v-3H7a3 3 0 0 1-3-3v-5a3 3 0 0 1 3-3Z" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
 function TerminalIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
-      <rect x="3" y="4" width="18" height="16" rx="2" />
-      <path d="M7 9l3 3-3 3" />
-      <path d="M13 15h4" />
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85">
+      <rect x="3.5" y="5" width="17" height="14" rx="2.5" />
+      <path d="m8 10 2.5 2.5L8 15" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M13.5 15h3.5" strokeLinecap="round" />
     </svg>
   );
 }
@@ -2991,9 +3009,10 @@ function ButlerIcon() {
 
 function SkillIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
-      <path d="M12 4.5 13.6 8l3.9.4-2.9 2.7.8 3.9L12 13.2 8.6 15l.8-3.9-2.9-2.7L10.4 8 12 4.5Z" />
-      <path d="m18.5 4.5.5 1.3 1.3.5-1.3.5-.5 1.3-.5-1.3-1.3-.5 1.3-.5.5-1.3Z" />
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85">
+      <path d="M12 5.5 13.5 10l4.5 1.5-4.5 1.5-1.5 4.5-1.5-4.5L6 11.5 10.5 10 12 5.5Z" strokeLinejoin="round" />
+      <path d="M18.5 5.5v3" strokeLinecap="round" />
+      <path d="M17 7h3" strokeLinecap="round" />
     </svg>
   );
 }
@@ -4435,6 +4454,7 @@ function SidebarContent({
   favoriteSessions,
   favoriteSessionIds,
   activeWorkspaceId,
+  activeWorkbenchMode,
   isConversationActive,
   isTerminalActive,
   isButlerActive,
@@ -4445,6 +4465,7 @@ function SidebarContent({
   onRefreshNavigation,
   onSessionUpdated,
   onNavigateConversation,
+  onSelectWorkbenchMode,
   onNavigateTerminals,
   onNavigateButler,
   onOpenSearch,
@@ -4468,7 +4489,9 @@ function SidebarContent({
   notificationPanelOpen,
   onToggleNotificationPanel,
   onClose,
-  onToggleCollapse
+  onToggleCollapse,
+  affairsMenuSlot,
+  affairsContentSlot
 }: {
   workspaceGroups: WorkspaceSidebarGroup[];
   workspaceVisualContextMap: Record<string, WorkspaceVisualContext>;
@@ -4476,6 +4499,7 @@ function SidebarContent({
   favoriteSessions: NavigationSessionEntry[];
   favoriteSessionIds: ReadonlySet<string>;
   activeWorkspaceId: string | null;
+  activeWorkbenchMode: WorkbenchMode;
   isConversationActive: boolean;
   isTerminalActive: boolean;
   isButlerActive: boolean;
@@ -4486,6 +4510,7 @@ function SidebarContent({
   onRefreshNavigation: () => Promise<void>;
   onSessionUpdated: (session: SessionSummaryDto) => void;
   onNavigateConversation: () => void;
+  onSelectWorkbenchMode: (mode: WorkbenchMode) => void;
   onNavigateTerminals: () => void;
   onNavigateButler: () => void;
   onOpenSearch: () => void;
@@ -4514,6 +4539,8 @@ function SidebarContent({
   onToggleNotificationPanel: () => void;
   onClose?: () => void;
   onToggleCollapse?: () => void;
+  affairsMenuSlot?: ReactNode;
+  affairsContentSlot?: ReactNode;
 }) {
   const navigate = useNavigate();
   const platform = usePlatform();
@@ -6902,6 +6929,18 @@ function SidebarContent({
             open={notificationPanelOpen}
             onToggle={onToggleNotificationPanel}
           />
+          <button
+            type="button"
+            className="workbench-nav-toolbar-button"
+            data-open={isSearchOpen}
+            aria-label={t("shell.searchEntry")}
+            title={t("shell.searchEntry")}
+            aria-haspopup="dialog"
+            aria-expanded={isSearchOpen}
+            onClick={onOpenSearch}
+          >
+            <SearchIcon />
+          </button>
         </div>
       </div>
 
@@ -6911,74 +6950,89 @@ function SidebarContent({
         data-scrollbar-autohide="true"
       >
         <div className="workbench-nav-segment">
-          <div className="workbench-nav-segment-tabs" role="tablist" aria-label={t("shell.centerTabsLabel")}>
-            <div className="workbench-nav-segment-pair">
+          <div className="workbench-nav-segment-tabs" role="tablist" aria-label={t("shell.workbenchModeTabsLabel")}>
+            <div className="workbench-nav-segment-pair" data-variant="mode">
               <button
                 type="button"
                 className={
-                  isConversationActive
+                  activeWorkbenchMode === "code"
                     ? "workbench-nav-segment-button active"
                     : "workbench-nav-segment-button"
                 }
                 data-layout="paired"
+                data-variant="mode"
                 role="tab"
-                aria-selected={isConversationActive}
-                onClick={onNavigateConversation}
+                aria-selected={activeWorkbenchMode === "code"}
+                onClick={() => onSelectWorkbenchMode("code")}
               >
-                <ConversationIcon />
-                <span>{t("shell.conversationEntry")}</span>
+                <span>{t("shell.workbenchModeCode")}</span>
               </button>
               <button
                 type="button"
                 className={
-                  isButlerActive
+                  activeWorkbenchMode === "affairs"
                     ? "workbench-nav-segment-button active"
                     : "workbench-nav-segment-button"
                 }
                 data-layout="paired"
+                data-variant="mode"
                 role="tab"
-                aria-selected={isButlerActive}
-                onClick={onNavigateButler}
+                aria-selected={activeWorkbenchMode === "affairs"}
+                onClick={() => onSelectWorkbenchMode("affairs")}
               >
-                <ButlerIcon />
-                <span>{t("shell.butlerEntry")}</span>
+                <span>{t("shell.workbenchModeAffairs")}</span>
               </button>
             </div>
-            <button
-              type="button"
-              className={
-                isTerminalActive
-                  ? "workbench-nav-segment-button active"
-                  : "workbench-nav-segment-button"
-              }
-              role="tab"
-              aria-selected={isTerminalActive}
-              onClick={onNavigateTerminals}
-            >
-              <TerminalIcon />
-              <span>{t("shell.terminalsEntry")}</span>
-            </button>
+            {activeWorkbenchMode === "code" ? (
+              <div className="workbench-nav-code-entries">
+                <button
+                  type="button"
+                  className={
+                    isConversationActive
+                      ? "workbench-nav-segment-button active"
+                      : "workbench-nav-segment-button"
+                  }
+                  role="tab"
+                  aria-selected={isConversationActive}
+                  onClick={onNavigateConversation}
+                >
+                  <ConversationIcon />
+                  <span>{t("shell.conversationEntry")}</span>
+                </button>
+                <button
+                  type="button"
+                  className={
+                    isTerminalActive
+                      ? "workbench-nav-segment-button active"
+                      : "workbench-nav-segment-button"
+                  }
+                  role="tab"
+                  aria-selected={isTerminalActive}
+                  onClick={onNavigateTerminals}
+                >
+                  <TerminalIcon />
+                  <span>{t("shell.terminalsEntry")}</span>
+                </button>
+              </div>
+            ) : null}
           </div>
-          <SkillManagementPanel
-            triggerClassName="workbench-nav-segment-button"
-            triggerLabel={t("shell.skillsEntry")}
-            triggerLeading={<SkillIcon />}
-            workspaceId={activeWorkspaceId}
-            sessionId={activeSessionId}
-          />
-          <button
-            type="button"
-            className="workbench-nav-segment-button"
-            data-open={isSearchOpen}
-            aria-haspopup="dialog"
-            aria-expanded={isSearchOpen}
-            onClick={onOpenSearch}
-          >
-            <SearchIcon />
-            <span>{t("shell.searchEntry")}</span>
-          </button>
+          {activeWorkbenchMode === "code" ? (
+            <SkillManagementPanel
+              triggerClassName="workbench-nav-segment-button"
+              triggerLabel={t("shell.skillsEntry")}
+              triggerLeading={<SkillIcon />}
+              workspaceId={activeWorkspaceId}
+              sessionId={activeSessionId}
+            />
+          ) : activeWorkbenchMode === "affairs" ? (
+            affairsMenuSlot ?? <div className="affairs-sidebar-empty">{t("common.loading")}</div>
+          ) : null}
         </div>
 
+        {activeWorkbenchMode === "affairs" ? (
+          affairsContentSlot ?? null
+        ) : (
+          <>
         {navigationError ? (
           <div className="workbench-status-row">
             <p className="status-text" data-tone="error">
@@ -7174,6 +7228,8 @@ function SidebarContent({
           );
         })}
         </section>
+          </>
+        )}
       </div>
 
       <div className="workbench-nav-footer minimal">
@@ -8987,6 +9043,7 @@ export function WorkbenchLayout({
   );
   const [infoPanelReady, setInfoPanelReady] = useState(false);
   const [activeInfoTab, setActiveInfoTab] = useState<InfoTab>("files");
+  const [affairsViewState, setAffairsViewState] = useState<AffairsViewState | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileInfoOpen, setMobileInfoOpen] = useState(false);
   const [customAuxiliaryPanel, setCustomAuxiliaryPanel] = useState<ReactNode | null>(null);
@@ -10632,6 +10689,10 @@ export function WorkbenchLayout({
     : isButlerRoute(location.pathname)
       ? "butler"
       : "conversation";
+  const routeWorkbenchMode = resolveWorkbenchModeFromPath(location.pathname);
+  const activeWorkbenchMode: WorkbenchMode = routeWorkbenchMode
+    ?? (currentWorkspaceId ? readWorkspaceWorkbenchMode(currentWorkspaceId) : null)
+    ?? WORKBENCH_MODE_DEFAULT;
   const isMobileShell = shellMode === "mobile";
   const workbenchHomePath = resolveWorkbenchHomePath(shellMode);
 
@@ -10794,6 +10855,8 @@ export function WorkbenchLayout({
   );
   const mobileActiveEntry: MobileWorkbenchEntry = location.pathname.startsWith("/settings")
     ? "settings"
+    : activeWorkbenchMode === "affairs"
+      ? "workspaces"
     : isButlerRoute(location.pathname)
       ? "terminals"
     : isTerminalsRoute(location.pathname)
@@ -10870,6 +10933,32 @@ export function WorkbenchLayout({
       writeStoredValue(LAST_SESSION_PATH_KEY, `${location.pathname}${location.search}`);
     }
   }, [currentSessionId, isDraftSession, location.pathname, location.search, sessionWorkspaceId]);
+
+  useEffect(() => {
+    if (!currentWorkspaceId) {
+      return;
+    }
+
+    writeWorkspaceWorkbenchMode(currentWorkspaceId, activeWorkbenchMode);
+    writeWorkbenchModeLastPath(currentWorkspaceId, activeWorkbenchMode, `${location.pathname}${location.search}`);
+  }, [activeWorkbenchMode, currentWorkspaceId, location.pathname, location.search]);
+
+  useEffect(() => {
+    if (!currentWorkspaceId) {
+      setAffairsViewState(null);
+      return;
+    }
+
+    setAffairsViewState(readAffairsViewState(currentWorkspaceId) ?? createDefaultAffairsViewState(currentWorkspaceId));
+  }, [currentWorkspaceId]);
+
+  useEffect(() => {
+    if (!affairsViewState) {
+      return;
+    }
+
+    writeAffairsViewState(affairsViewState);
+  }, [affairsViewState]);
 
   useEffect(() => {
     if (currentSessionId && isDraftSession) {
@@ -10960,6 +11049,15 @@ export function WorkbenchLayout({
   function handleSelectWorkspace(workspaceId: string) {
     setSelectedWorkspaceId(workspaceId);
     ensureInfoPanelReady();
+
+    if (activeWorkbenchMode === "affairs") {
+      const targetPath = buildWorkspaceAffairsPath(workspaceId);
+
+      if (location.pathname !== targetPath) {
+        navigate(targetPath);
+      }
+      return;
+    }
 
     if (isTerminalsRoute(location.pathname)) {
       const targetPath = buildWorkspaceTerminalsPath(workspaceId);
@@ -11205,7 +11303,27 @@ export function WorkbenchLayout({
     document.addEventListener("mouseup", stopResize);
   }
 
+  function handleSelectWorkbenchMode(nextMode: WorkbenchMode) {
+    if (!currentWorkspaceId || nextMode === activeWorkbenchMode) {
+      return;
+    }
+
+    writeWorkspaceWorkbenchMode(currentWorkspaceId, nextMode);
+    const targetPath = readWorkbenchModeLastPath(currentWorkspaceId, nextMode)
+      ?? (nextMode === "affairs"
+        ? buildWorkspaceAffairsPath(currentWorkspaceId)
+        : readWorkbenchModeLastPath(currentWorkspaceId, "code")
+          ?? buildWorkspaceSessionIndexPath(currentWorkspaceId));
+
+    navigate(targetPath);
+  }
+
   function goToConversationTab() {
+    if (activeWorkbenchMode === "affairs" && currentWorkspaceId) {
+      navigate(buildWorkspaceAffairsPath(currentWorkspaceId));
+      return;
+    }
+
     if (navigateToRememberedConversation()) {
       return;
     }
@@ -11487,7 +11605,7 @@ export function WorkbenchLayout({
         onCleanupWorktree={applyWorktreeCleanup}
       />
     );
-  const shouldShowAuxiliaryPanel = auxiliaryPanelContent !== null;
+  const shouldShowAuxiliaryPanel = activeWorkbenchMode === "affairs" ? true : auxiliaryPanelContent !== null;
   const effectiveRightCollapsed = rightCollapsed || isParallelConversationActive;
   const shouldKeepParallelAuxiliaryMounted =
     isParallelConversationActive
@@ -11858,6 +11976,7 @@ export function WorkbenchLayout({
       favoriteSessions={favoriteSessions}
       favoriteSessionIds={favoriteSessionIdSet}
       activeWorkspaceId={currentWorkspaceId}
+      activeWorkbenchMode={activeWorkbenchMode}
       isConversationActive={activeCenterTab === "conversation"}
       isTerminalActive={activeCenterTab === "terminals"}
       isButlerActive={activeCenterTab === "butler"}
@@ -11868,6 +11987,7 @@ export function WorkbenchLayout({
       onRefreshNavigation={refreshNavigation}
       onSessionUpdated={upsertNavigationSession}
       onNavigateConversation={goToConversationTab}
+      onSelectWorkbenchMode={handleSelectWorkbenchMode}
       onNavigateTerminals={() => {
         setMobileNavOpen(false);
         navigate(
@@ -12025,173 +12145,416 @@ export function WorkbenchLayout({
           data-overlay-titlebar={platform.ui.prefersOverlayTitlebar}
         >
           <div className="workbench-body-shell">
-            <aside className="workbench-nav surface-card" data-collapsed={leftCollapsed}>
-                <SidebarContent
-                  workspaceGroups={workspaceSidebarGroups}
-                  workspaceVisualContextMap={workspaceVisualContextMap}
-                  sessionDisplaySortMode={sessionDisplaySortMode}
-                  favoriteSessions={favoriteSessions}
-                favoriteSessionIds={favoriteSessionIdSet}
-                activeWorkspaceId={currentWorkspaceId}
-                isConversationActive={activeCenterTab === "conversation"}
-                isTerminalActive={activeCenterTab === "terminals"}
-                isButlerActive={activeCenterTab === "butler"}
-                isSearchOpen={searchModalOpen}
-                navigationLoading={navigationLoading}
-                navigationError={navigationError}
-                activeSessionId={currentSessionId}
-                onRefreshNavigation={refreshNavigation}
-                onSessionUpdated={upsertNavigationSession}
-                onNavigateConversation={goToConversationTab}
-                onNavigateTerminals={() =>
-                  navigate(
-                    currentWorkspaceId
-                      ? buildWorkspaceTerminalsPath(currentWorkspaceId)
-                      : buildWorkspaceHomePath()
-                  )
-                }
-                onNavigateButler={() =>
-                  navigate(
-                    currentWorkspaceId
-                      ? buildWorkspaceButlerPath(currentWorkspaceId)
-                      : buildWorkspaceHomePath()
-                  )
-                }
-                onOpenSearch={() => openSearchModal()}
-                onOpenSettings={() => navigate("/settings")}
-                onSelectWorkspace={handleSelectWorkspace}
-                onToggleWorkspaceCollapse={handleToggleWorkspaceCollapse}
-                onStartWorkspaceReorder={handleStartWorkspaceReorder}
-                onPreviewWorkspaceReorder={handlePreviewWorkspaceReorder}
-                onCommitWorkspaceReorder={handleCommitWorkspaceReorder}
-                allowWorkspaceReorder
-                subscribeGitSnapshot={subscribeGitSnapshot}
-                requestGitRefresh={requestGitRefresh}
-                subscribeWorkspaceManagementSnapshot={subscribeWorkspaceManagementSnapshot}
-                requestWorkspaceManagementRefresh={requestWorkspaceManagementRefresh}
-                onToggleFavoriteSession={toggleFavoriteSession}
-                onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
-                onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
-                workspaceManagementStateById={workspaceManagementStateById}
-                setWorkspaceManagementStateById={setWorkspaceManagementStateById}
-                unreadNotificationCount={unreadNotificationCount}
-                notificationPanelOpen={notificationPanelOpen}
-                onToggleNotificationPanel={() => {
-                  setNotificationPanelOpen((current) => !current);
-                }}
-                onToggleCollapse={() => setLeftCollapsed(true)}
-              />
-            </aside>
-            <div
-              className="workbench-side-resizer"
-              data-side="left"
-              data-collapsed={leftCollapsed}
-              role="separator"
-              aria-label={t("shell.leftResizerLabel")}
-              onMouseDown={
-                leftCollapsed
-                  ? undefined
-                  : (event) => beginResize("left", event)
-              }
-            />
-
-            <div className="workbench-main-shell">
-              <div className="workbench-collapsed-rail" aria-hidden={!leftCollapsed && !rightCollapsed}>
-                <div
-                  className="workbench-collapsed-controls left"
-                  data-visible={leftCollapsed}
-                >
-                  <SidebarDockButton
-                    className="workbench-nav-toolbar-button workbench-collapsed-button"
-                    ariaLabel={t("shell.showSessionSidebar")}
-                    side="left"
-                    collapsed={true}
-                    onClick={openLeftPanel}
-                  />
-                  <WorkbenchHostSwitcher collapsed />
-                  <WorkbenchNotificationButton
-                    unreadCount={unreadNotificationCount}
-                    open={notificationPanelOpen}
-                    onToggle={() => {
+            {activeWorkbenchMode === "affairs" && currentWorkspaceId && affairsViewState ? (
+              <AffairsWorkbenchProvider
+                workspaceId={currentWorkspaceId}
+                workspaceName={currentWorkspaceEntity?.name ?? null}
+                navigationGroups={navigationGroups}
+                state={affairsViewState}
+                onStateChange={setAffairsViewState}
+              >
+                <aside className="workbench-nav surface-card" data-collapsed={leftCollapsed}>
+                  <SidebarContent
+                    workspaceGroups={workspaceSidebarGroups}
+                    workspaceVisualContextMap={workspaceVisualContextMap}
+                    sessionDisplaySortMode={sessionDisplaySortMode}
+                    favoriteSessions={favoriteSessions}
+                    favoriteSessionIds={favoriteSessionIdSet}
+                    activeWorkspaceId={currentWorkspaceId}
+                    activeWorkbenchMode={activeWorkbenchMode}
+                    isConversationActive={activeCenterTab === "conversation"}
+                    isTerminalActive={activeCenterTab === "terminals"}
+                    isButlerActive={activeCenterTab === "butler"}
+                    isSearchOpen={searchModalOpen}
+                    navigationLoading={navigationLoading}
+                    navigationError={navigationError}
+                    activeSessionId={currentSessionId}
+                    onRefreshNavigation={refreshNavigation}
+                    onSessionUpdated={upsertNavigationSession}
+                    onNavigateConversation={goToConversationTab}
+                    onSelectWorkbenchMode={handleSelectWorkbenchMode}
+                    onNavigateTerminals={() =>
+                      navigate(
+                        currentWorkspaceId
+                          ? buildWorkspaceTerminalsPath(currentWorkspaceId)
+                          : buildWorkspaceHomePath()
+                      )
+                    }
+                    onNavigateButler={() =>
+                      navigate(
+                        currentWorkspaceId
+                          ? buildWorkspaceButlerPath(currentWorkspaceId)
+                          : buildWorkspaceHomePath()
+                      )
+                    }
+                    onOpenSearch={() => openSearchModal()}
+                    onOpenSettings={() => navigate("/settings")}
+                    onSelectWorkspace={handleSelectWorkspace}
+                    onToggleWorkspaceCollapse={handleToggleWorkspaceCollapse}
+                    onStartWorkspaceReorder={handleStartWorkspaceReorder}
+                    onPreviewWorkspaceReorder={handlePreviewWorkspaceReorder}
+                    onCommitWorkspaceReorder={handleCommitWorkspaceReorder}
+                    allowWorkspaceReorder
+                    subscribeGitSnapshot={subscribeGitSnapshot}
+                    requestGitRefresh={requestGitRefresh}
+                    subscribeWorkspaceManagementSnapshot={subscribeWorkspaceManagementSnapshot}
+                    requestWorkspaceManagementRefresh={requestWorkspaceManagementRefresh}
+                    onToggleFavoriteSession={toggleFavoriteSession}
+                    onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
+                    onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
+                    workspaceManagementStateById={workspaceManagementStateById}
+                    setWorkspaceManagementStateById={setWorkspaceManagementStateById}
+                    unreadNotificationCount={unreadNotificationCount}
+                    notificationPanelOpen={notificationPanelOpen}
+                    onToggleNotificationPanel={() => {
                       setNotificationPanelOpen((current) => !current);
                     }}
-                    collapsed
+                    onToggleCollapse={() => setLeftCollapsed(true)}
+                    affairsMenuSlot={<AffairsSectionMenu />}
+                    affairsContentSlot={<AffairsSidebarPanel />}
                   />
-                </div>
-
-                {shouldShowAuxiliaryPanel && !isParallelConversationActive ? (
-                  <div
-                    className="workbench-collapsed-controls right"
-                    data-visible={rightCollapsed}
-                  >
-                    <SidebarDockButton
-                      className="workbench-nav-toolbar-button workbench-collapsed-button"
-                      ariaLabel={t("shell.showInfoSidebar")}
-                      side="right"
-                      collapsed={true}
-                      onClick={openRightPanel}
-                    />
-                  </div>
-                ) : null}
-              </div>
-
-              <Outlet />
-            </div>
-
-            {shouldShowAuxiliaryPanel ? (
-              <>
+                </aside>
                 <div
                   className="workbench-side-resizer"
-                  data-side="right"
-                  data-collapsed={effectiveRightCollapsed}
-                  data-auto-hidden={isParallelConversationActive ? "true" : undefined}
+                  data-side="left"
+                  data-collapsed={leftCollapsed}
                   role="separator"
-                  aria-label={t("shell.rightResizerLabel")}
+                  aria-label={t("shell.leftResizerLabel")}
                   onMouseDown={
-                    effectiveRightCollapsed
+                    leftCollapsed
                       ? undefined
-                      : (event) => beginResize("right", event)
+                      : (event) => beginResize("left", event)
                   }
                 />
-                <aside
-                  className="workbench-auxiliary surface-card"
-                  data-workspace-tone={currentAuxiliaryWorkspaceContext?.tone ?? "root"}
-                  data-worktree-depth={currentAuxiliaryWorkspaceContext?.depth ?? 0}
-                  data-collapsed={effectiveRightCollapsed}
-                  data-auto-hidden={isParallelConversationActive ? "true" : undefined}
-                  data-custom-panel={activeCenterTab === "butler"}
-                  data-parallel-transition={shouldKeepParallelAuxiliaryMounted ? "true" : undefined}
-                  aria-hidden={effectiveRightCollapsed && !shouldKeepParallelAuxiliaryMounted}
-                  style={createWorkspaceToneStyle(currentAuxiliaryWorkspaceContext)}
-                >
-                  {isParallelConversationActive && !shouldKeepParallelAuxiliaryMounted ? null : activeCenterTab === "butler" ? (
-                    <div className="workbench-auxiliary-custom-panel">
-                      {customAuxiliaryPanel}
+
+                <div className="workbench-main-shell">
+                  <div className="workbench-collapsed-rail" aria-hidden={!leftCollapsed && !rightCollapsed}>
+                    <div
+                      className="workbench-collapsed-controls left"
+                      data-visible={leftCollapsed}
+                    >
+                      <SidebarDockButton
+                        className="workbench-nav-toolbar-button workbench-collapsed-button"
+                        ariaLabel={t("shell.showSessionSidebar")}
+                        side="left"
+                        collapsed={true}
+                        onClick={openLeftPanel}
+                      />
+                      <WorkbenchHostSwitcher collapsed />
+                      <WorkbenchNotificationButton
+                        unreadCount={unreadNotificationCount}
+                        open={notificationPanelOpen}
+                        onToggle={() => {
+                          setNotificationPanelOpen((current) => !current);
+                        }}
+                        collapsed
+                      />
+                      <button
+                        type="button"
+                        className="workbench-nav-toolbar-button workbench-collapsed-button"
+                        data-open={searchModalOpen}
+                        aria-label={t("shell.searchEntry")}
+                        title={t("shell.searchEntry")}
+                        aria-haspopup="dialog"
+                        aria-expanded={searchModalOpen}
+                        onClick={() => openSearchModal()}
+                      >
+                        <SearchIcon />
+                      </button>
                     </div>
+
+                    {shouldShowAuxiliaryPanel && !isParallelConversationActive ? (
+                      <div
+                        className="workbench-collapsed-controls right"
+                        data-visible={rightCollapsed}
+                      >
+                        <SidebarDockButton
+                          className="workbench-nav-toolbar-button workbench-collapsed-button"
+                          ariaLabel={t("shell.showInfoSidebar")}
+                          side="right"
+                          collapsed={true}
+                          onClick={openRightPanel}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {activeWorkbenchMode === "affairs" && currentWorkspaceId && affairsViewState ? (
+                    <AffairsWorkbenchView workspaceId={currentWorkspaceId} />
                   ) : (
-                    <WorkbenchInfoPanel
-                      panelReady={infoPanelReady}
-                      activeTab={activeInfoTab}
-                      fileRevealRequest={fileRevealRequest}
-                      onTabChange={(tab) => {
-                        ensureInfoPanelReady();
-                        setActiveInfoTab(tab);
-                      }}
-                      onToggleCollapse={() => setRightCollapsed(true)}
-                      currentSessionId={isDraftSession ? null : currentSessionId}
-                      activeWorkspaceId={currentAuxiliaryWorkspaceId}
-                      navigationGroups={navigationGroups}
-                      workspaceContext={currentAuxiliaryWorkspaceContext}
-                      worktreeMeta={currentWorktreeMeta}
-                      worktreeMergeState={currentWorktreeMergeState}
-                      onRefreshWorktreeMergePreview={loadWorktreeMergePreview}
-                      onApplyWorktreeMerge={applyWorktreeMerge}
-                      onCleanupWorktree={requestWorktreeCleanup}
-                    />
+                    <CodeWorkbenchView>
+                      <Outlet />
+                    </CodeWorkbenchView>
                   )}
+                </div>
+
+                {activeWorkbenchMode === "affairs" && currentWorkspaceId && affairsViewState ? (
+                  <>
+                    <div
+                      className="workbench-side-resizer"
+                      data-side="right"
+                      data-collapsed={effectiveRightCollapsed}
+                      role="separator"
+                      aria-label={t("shell.rightResizerLabel")}
+                      onMouseDown={
+                        effectiveRightCollapsed
+                          ? undefined
+                          : (event) => beginResize("right", event)
+                      }
+                    />
+                    <aside
+                      className="workbench-auxiliary surface-card"
+                      data-collapsed={effectiveRightCollapsed}
+                      aria-hidden={effectiveRightCollapsed}
+                    >
+                      <AffairsAuxiliaryPanel
+                        workspaceId={currentWorkspaceId}
+                        onToggleCollapse={() => setRightCollapsed(true)}
+                      />
+                    </aside>
+                  </>
+                ) : shouldShowAuxiliaryPanel ? (
+                  <>
+                    <div
+                      className="workbench-side-resizer"
+                      data-side="right"
+                      data-collapsed={effectiveRightCollapsed}
+                      data-auto-hidden={isParallelConversationActive ? "true" : undefined}
+                      role="separator"
+                      aria-label={t("shell.rightResizerLabel")}
+                      onMouseDown={
+                        effectiveRightCollapsed
+                          ? undefined
+                          : (event) => beginResize("right", event)
+                      }
+                    />
+                    <aside
+                      className="workbench-auxiliary surface-card"
+                      data-workspace-tone={currentAuxiliaryWorkspaceContext?.tone ?? "root"}
+                      data-worktree-depth={currentAuxiliaryWorkspaceContext?.depth ?? 0}
+                      data-collapsed={effectiveRightCollapsed}
+                      data-auto-hidden={isParallelConversationActive ? "true" : undefined}
+                      data-custom-panel={activeCenterTab === "butler"}
+                      data-parallel-transition={shouldKeepParallelAuxiliaryMounted ? "true" : undefined}
+                      aria-hidden={effectiveRightCollapsed && !shouldKeepParallelAuxiliaryMounted}
+                      style={createWorkspaceToneStyle(currentAuxiliaryWorkspaceContext)}
+                    >
+                      {isParallelConversationActive && !shouldKeepParallelAuxiliaryMounted ? null : activeCenterTab === "butler" ? (
+                        <div className="workbench-auxiliary-custom-panel">
+                          {customAuxiliaryPanel}
+                        </div>
+                      ) : (
+                        <WorkbenchInfoPanel
+                          panelReady={infoPanelReady}
+                          activeTab={activeInfoTab}
+                          fileRevealRequest={fileRevealRequest}
+                          onTabChange={(tab) => {
+                            ensureInfoPanelReady();
+                            setActiveInfoTab(tab);
+                          }}
+                          onToggleCollapse={() => setRightCollapsed(true)}
+                          currentSessionId={isDraftSession ? null : currentSessionId}
+                          activeWorkspaceId={currentAuxiliaryWorkspaceId}
+                          navigationGroups={navigationGroups}
+                          workspaceContext={currentAuxiliaryWorkspaceContext}
+                          worktreeMeta={currentWorktreeMeta}
+                          worktreeMergeState={currentWorktreeMergeState}
+                          onRefreshWorktreeMergePreview={loadWorktreeMergePreview}
+                          onApplyWorktreeMerge={applyWorktreeMerge}
+                          onCleanupWorktree={requestWorktreeCleanup}
+                        />
+                      )}
+                    </aside>
+                  </>
+                ) : null}
+              </AffairsWorkbenchProvider>
+            ) : (
+              <>
+                <aside className="workbench-nav surface-card" data-collapsed={leftCollapsed}>
+                  <SidebarContent
+                    workspaceGroups={workspaceSidebarGroups}
+                    workspaceVisualContextMap={workspaceVisualContextMap}
+                    sessionDisplaySortMode={sessionDisplaySortMode}
+                    favoriteSessions={favoriteSessions}
+                    favoriteSessionIds={favoriteSessionIdSet}
+                    activeWorkspaceId={currentWorkspaceId}
+                    activeWorkbenchMode={activeWorkbenchMode}
+                    isConversationActive={activeCenterTab === "conversation"}
+                    isTerminalActive={activeCenterTab === "terminals"}
+                    isButlerActive={activeCenterTab === "butler"}
+                    isSearchOpen={searchModalOpen}
+                    navigationLoading={navigationLoading}
+                    navigationError={navigationError}
+                    activeSessionId={currentSessionId}
+                    onRefreshNavigation={refreshNavigation}
+                    onSessionUpdated={upsertNavigationSession}
+                    onNavigateConversation={goToConversationTab}
+                    onSelectWorkbenchMode={handleSelectWorkbenchMode}
+                    onNavigateTerminals={() =>
+                      navigate(
+                        currentWorkspaceId
+                          ? buildWorkspaceTerminalsPath(currentWorkspaceId)
+                          : buildWorkspaceHomePath()
+                      )
+                    }
+                    onNavigateButler={() =>
+                      navigate(
+                        currentWorkspaceId
+                          ? buildWorkspaceButlerPath(currentWorkspaceId)
+                          : buildWorkspaceHomePath()
+                      )
+                    }
+                    onOpenSearch={() => openSearchModal()}
+                    onOpenSettings={() => navigate("/settings")}
+                    onSelectWorkspace={handleSelectWorkspace}
+                    onToggleWorkspaceCollapse={handleToggleWorkspaceCollapse}
+                    onStartWorkspaceReorder={handleStartWorkspaceReorder}
+                    onPreviewWorkspaceReorder={handlePreviewWorkspaceReorder}
+                    onCommitWorkspaceReorder={handleCommitWorkspaceReorder}
+                    allowWorkspaceReorder
+                    subscribeGitSnapshot={subscribeGitSnapshot}
+                    requestGitRefresh={requestGitRefresh}
+                    subscribeWorkspaceManagementSnapshot={subscribeWorkspaceManagementSnapshot}
+                    requestWorkspaceManagementRefresh={requestWorkspaceManagementRefresh}
+                    onToggleFavoriteSession={toggleFavoriteSession}
+                    onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
+                    onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
+                    workspaceManagementStateById={workspaceManagementStateById}
+                    setWorkspaceManagementStateById={setWorkspaceManagementStateById}
+                    unreadNotificationCount={unreadNotificationCount}
+                    notificationPanelOpen={notificationPanelOpen}
+                    onToggleNotificationPanel={() => {
+                      setNotificationPanelOpen((current) => !current);
+                    }}
+                    onToggleCollapse={() => setLeftCollapsed(true)}
+                  />
                 </aside>
+                <div
+                  className="workbench-side-resizer"
+                  data-side="left"
+                  data-collapsed={leftCollapsed}
+                  role="separator"
+                  aria-label={t("shell.leftResizerLabel")}
+                  onMouseDown={
+                    leftCollapsed
+                      ? undefined
+                      : (event) => beginResize("left", event)
+                  }
+                />
+
+                <div className="workbench-main-shell">
+                  <div className="workbench-collapsed-rail" aria-hidden={!leftCollapsed && !rightCollapsed}>
+                    <div
+                      className="workbench-collapsed-controls left"
+                      data-visible={leftCollapsed}
+                    >
+                      <SidebarDockButton
+                        className="workbench-nav-toolbar-button workbench-collapsed-button"
+                        ariaLabel={t("shell.showSessionSidebar")}
+                        side="left"
+                        collapsed={true}
+                        onClick={openLeftPanel}
+                      />
+                      <WorkbenchHostSwitcher collapsed />
+                      <WorkbenchNotificationButton
+                        unreadCount={unreadNotificationCount}
+                        open={notificationPanelOpen}
+                        onToggle={() => {
+                          setNotificationPanelOpen((current) => !current);
+                        }}
+                        collapsed
+                      />
+                      <button
+                        type="button"
+                        className="workbench-nav-toolbar-button workbench-collapsed-button"
+                        data-open={searchModalOpen}
+                        aria-label={t("shell.searchEntry")}
+                        title={t("shell.searchEntry")}
+                        aria-haspopup="dialog"
+                        aria-expanded={searchModalOpen}
+                        onClick={() => openSearchModal()}
+                      >
+                        <SearchIcon />
+                      </button>
+                    </div>
+
+                    {shouldShowAuxiliaryPanel && !isParallelConversationActive ? (
+                      <div
+                        className="workbench-collapsed-controls right"
+                        data-visible={rightCollapsed}
+                      >
+                        <SidebarDockButton
+                          className="workbench-nav-toolbar-button workbench-collapsed-button"
+                          ariaLabel={t("shell.showInfoSidebar")}
+                          side="right"
+                          collapsed={true}
+                          onClick={openRightPanel}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <CodeWorkbenchView>
+                    <Outlet />
+                  </CodeWorkbenchView>
+                </div>
+
+                {shouldShowAuxiliaryPanel ? (
+                  <>
+                    <div
+                      className="workbench-side-resizer"
+                      data-side="right"
+                      data-collapsed={effectiveRightCollapsed}
+                      data-auto-hidden={isParallelConversationActive ? "true" : undefined}
+                      role="separator"
+                      aria-label={t("shell.rightResizerLabel")}
+                      onMouseDown={
+                        effectiveRightCollapsed
+                          ? undefined
+                          : (event) => beginResize("right", event)
+                      }
+                    />
+                    <aside
+                      className="workbench-auxiliary surface-card"
+                      data-workspace-tone={currentAuxiliaryWorkspaceContext?.tone ?? "root"}
+                      data-worktree-depth={currentAuxiliaryWorkspaceContext?.depth ?? 0}
+                      data-collapsed={effectiveRightCollapsed}
+                      data-auto-hidden={isParallelConversationActive ? "true" : undefined}
+                      data-custom-panel={activeCenterTab === "butler"}
+                      data-parallel-transition={shouldKeepParallelAuxiliaryMounted ? "true" : undefined}
+                      aria-hidden={effectiveRightCollapsed && !shouldKeepParallelAuxiliaryMounted}
+                      style={createWorkspaceToneStyle(currentAuxiliaryWorkspaceContext)}
+                    >
+                      {isParallelConversationActive && !shouldKeepParallelAuxiliaryMounted ? null : activeCenterTab === "butler" ? (
+                        <div className="workbench-auxiliary-custom-panel">
+                          {customAuxiliaryPanel}
+                        </div>
+                      ) : (
+                        <WorkbenchInfoPanel
+                          panelReady={infoPanelReady}
+                          activeTab={activeInfoTab}
+                          fileRevealRequest={fileRevealRequest}
+                          onTabChange={(tab) => {
+                            ensureInfoPanelReady();
+                            setActiveInfoTab(tab);
+                          }}
+                          onToggleCollapse={() => setRightCollapsed(true)}
+                          currentSessionId={isDraftSession ? null : currentSessionId}
+                          activeWorkspaceId={currentAuxiliaryWorkspaceId}
+                          navigationGroups={navigationGroups}
+                          workspaceContext={currentAuxiliaryWorkspaceContext}
+                          worktreeMeta={currentWorktreeMeta}
+                          worktreeMergeState={currentWorktreeMergeState}
+                          onRefreshWorktreeMergePreview={loadWorktreeMergePreview}
+                          onApplyWorktreeMerge={applyWorktreeMerge}
+                          onCleanupWorktree={requestWorktreeCleanup}
+                        />
+                      )}
+                    </aside>
+                  </>
+                ) : null}
               </>
-            ) : null}
+            )}
           </div>
         </div>
       )}

@@ -41,6 +41,10 @@ export function buildWorkspaceSessionPath(workspaceId: string, sessionId: string
   return `${buildWorkspaceSessionIndexPath(workspaceId)}/${encodeURIComponent(sessionId)}`;
 }
 
+export function buildWorkspaceAffairsPath(workspaceId: string): string {
+  return `${buildWorkspaceDetailPath(workspaceId)}/affairs`;
+}
+
 export function buildWorkspaceToolsPath(workspaceId: string, tab?: "files" | "git"): string {
   const basePath = `${buildWorkspaceDetailPath(workspaceId)}/tools`;
 

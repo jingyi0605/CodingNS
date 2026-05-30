@@ -176,6 +176,13 @@ const appRoutes = [
             )
           },
           {
+            path: "workspaces/:workspaceId/affairs",
+            lazy: lazyRouteComponent(
+              () => import("../features/conversation/pages/ConversationPage"),
+              "ConversationPage"
+            )
+          },
+          {
             path: "workspaces/:workspaceId/sessions",
             lazy: lazyRouteComponent(
               () => import("../features/mobile-sessions/pages/SessionIndexPage"),

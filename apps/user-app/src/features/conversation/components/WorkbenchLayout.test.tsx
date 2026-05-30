@@ -315,10 +315,11 @@ describe("WorkbenchLayout", () => {
       button.getAttribute("aria-label") ?? ""
     );
 
-    expect(orderedLabels.slice(0, 3)).toEqual([
+    expect(orderedLabels.slice(0, 4)).toEqual([
       t("shell.hideSessionSidebar"),
       t("shell.hostSwitcherAriaLabel"),
-      t("shell.globalNotificationsAction")
+      t("shell.globalNotificationsAction"),
+      t("shell.searchEntry")
     ]);
   });
 
@@ -338,10 +339,11 @@ describe("WorkbenchLayout", () => {
       button.getAttribute("aria-label") ?? ""
     );
 
-    expect(orderedLabels.slice(0, 3)).toEqual([
+    expect(orderedLabels.slice(0, 4)).toEqual([
       t("shell.showSessionSidebar"),
       t("shell.hostSwitcherAriaLabel"),
-      t("shell.globalNotificationsAction")
+      t("shell.globalNotificationsAction"),
+      t("shell.searchEntry")
     ]);
   });
 
@@ -3606,7 +3608,7 @@ describe("WorkbenchLayout", () => {
     expect(screen.getByText("src/components/SearchPanel.tsx")).toBeInTheDocument();
   });
 
-  it("桌面侧栏会按对话、助手、终端、技能、搜索顺序显示顶部入口，并支持跳转", async () => {
+  it("桌面侧栏会按代码、事务、对话、终端、技能顺序显示顶部入口，并支持跳转", async () => {
     const currentSnapshot = createWorkbenchSnapshot([
       {
         workspace: createWorkspace("workspace-1", "项目一"),
@@ -3644,17 +3646,17 @@ describe("WorkbenchLayout", () => {
       button.textContent?.trim()
     );
     expect(navLabels).toEqual([
+      t("shell.workbenchModeCode"),
+      t("shell.workbenchModeAffairs"),
       t("shell.conversationEntry"),
-      t("shell.butlerEntry"),
       t("shell.terminalsEntry"),
-      t("shell.skillsEntry"),
-      t("shell.searchEntry")
+      t("shell.skillsEntry")
     ]);
 
-    await user.click(screen.getByRole("tab", { name: t("shell.butlerEntry") }));
+    await user.click(screen.getByRole("tab", { name: t("shell.terminalsEntry") }));
 
     await waitFor(() => {
-      expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-1/butler");
+      expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-1/terminals");
     });
   });
 
@@ -8265,6 +8267,24 @@ describe("WorkbenchLayout", () => {
     const badge = await screen.findByText(t("shell.parallelGroupBadge", { count: 3 }));
     expect(badge).toHaveClass("session-parallel-badge");
   });
+  it("顶层模式切到事务后会进入 affairs 路由，并保留切回代码能力", async () => {
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+
+    await userEvent.click(await screen.findByRole("tab", { name: t("shell.workbenchModeAffairs") }));
+    expect(await screen.findByTestId("current-path")).toHaveTextContent("/workspaces/workspace-1/affairs");
+
+    await userEvent.click(screen.getByRole("tab", { name: t("shell.workbenchModeCode") }));
+    expect(await screen.findByTestId("current-path")).toHaveTextContent("/workspaces/workspace-1/sessions/session-1");
+  });
+
+  it("打开 affairs 路由时会直接激活事务模式", async () => {
+    renderWorkbenchRoute("/workspaces/workspace-1/affairs");
+
+    expect(await screen.findByRole("tab", { name: t("shell.workbenchModeAffairs") })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText(t("shell.affairsLibraryTitle"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsAssistantTitle"))).toBeInTheDocument();
+  });
+
 });
 
 function renderWorkbenchRoute(
@@ -8290,6 +8310,7 @@ function renderWorkbenchRoute(
               path="/workspaces/:workspaceId/sessions/:sessionId"
               element={<CurrentLocationProbe />}
             />
+            <Route path="/workspaces/:workspaceId/affairs" element={<CurrentLocationProbe />} />
             <Route path="/workspaces/:workspaceId/terminals" element={<CurrentLocationProbe />} />
             <Route path="/workspaces/:workspaceId/butler" element={<CurrentLocationProbe />} />
             <Route path="/sessions/:sessionId" element={<CurrentLocationProbe />} />
