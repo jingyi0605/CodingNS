@@ -15,12 +15,6 @@ export interface TagInferenceResult {
   derivedTags: TagAssignment[];
 }
 
-interface TopicRule {
-  tagPath: string;
-  keywords: string[];
-  minScore: number;
-}
-
 const EXTENSION_TYPE_TAGS = new Map<string, string>([
   [".md", "类型/文本/Markdown"],
   [".mdx", "类型/文本/Markdown"],
@@ -38,13 +32,6 @@ const EXTENSION_TYPE_TAGS = new Map<string, string>([
   [".xlsx", "类型/办公/Excel"],
   [".csv", "类型/表格/CSV"],
 ]);
-
-const TOPIC_RULES: TopicRule[] = [
-  { keywords: ["node", "typescript", "javascript", "npm"], tagPath: "主题/Node开发", minScore: 0.45 },
-  { keywords: ["邮件", "exchange", "lync"], tagPath: "主题/邮件系统", minScore: 0.55 },
-  { keywords: ["备份", "容灾", "恢复", "veeam"], tagPath: "主题/备份恢复", minScore: 0.55 },
-  { keywords: ["文件服务器", "共享", "ftp"], tagPath: "主题/文件服务器", minScore: 0.75 },
-];
 
 function setTag(target: Map<string, TagAssignment>, assignment: TagAssignment): void {
   const current = target.get(assignment.tagPath);
@@ -129,8 +116,6 @@ export class SimpleTagInferenceEngine {
     const direct = new Map<string, TagAssignment>();
     const derived = new Map<string, TagAssignment>();
     const relativePath = file.relativePath;
-    const pathParts = relativePath.split("/").filter(Boolean);
-    const rootName = pathParts[0] ?? "未分类";
     const pathText = relativePath.toLowerCase();
     const titleText = parsed.title.toLowerCase();
     const summaryText = parsed.summary.toLowerCase();
@@ -142,13 +127,6 @@ export class SimpleTagInferenceEngine {
       body: bodyText,
     };
 
-    setTag(direct, {
-      tagPath: `来源/目录/${rootName}`,
-      confidence: 0.95,
-      source: "path_rule",
-      evidence: `根目录命中: ${rootName}`,
-    });
-
     const typeTag = EXTENSION_TYPE_TAGS.get(file.extension);
     if (typeTag) {
       setTag(direct, {
@@ -156,45 +134,6 @@ export class SimpleTagInferenceEngine {
         confidence: 0.92,
         source: "extension_rule",
         evidence: `扩展名命中: ${file.extension}`,
-      });
-    }
-
-    for (const rule of TOPIC_RULES) {
-      const pathMatches = uniqueMatchedKeywords(pathText, rule.keywords);
-      const titleMatches = uniqueMatchedKeywords(titleText, rule.keywords);
-      const summaryMatches = uniqueMatchedKeywords(summaryText, rule.keywords);
-      const bodyMatches = uniqueMatchedKeywords(bodyText, rule.keywords);
-      const matched = [...new Set([...pathMatches, ...titleMatches, ...summaryMatches, ...bodyMatches])];
-
-      if (matched.length === 0) {
-        continue;
-      }
-
-      let score = 0;
-      if (pathMatches.length > 0) {
-        score += 0.5;
-      }
-      if (titleMatches.length > 0) {
-        score += 0.4;
-      }
-      if (summaryMatches.length > 0) {
-        score += 0.25;
-      }
-      score += Math.min(0.2, bodyMatches.length * 0.08);
-
-      if (matched.length >= 2) {
-        score += 0.12;
-      }
-
-      if (score < rule.minScore) {
-        continue;
-      }
-
-      setTag(direct, {
-        tagPath: rule.tagPath,
-        confidence: Math.min(0.95, 0.6 + score * 0.3),
-        source: "keyword_rule",
-        evidence: `主题关键词命中: ${matched.slice(0, 3).join(", ")}`,
       });
     }
 
@@ -245,31 +184,12 @@ export class SimpleTagInferenceEngine {
           source: "derived_time_window",
           evidence: "最近3天有修改",
         });
-        setTag(derived, {
-          tagPath: "状态/近期活跃",
-          confidence: 1,
-          source: "derived_status",
-          evidence: "最近3天有修改",
-        });
       } else if (days <= 30) {
         setTag(derived, {
           tagPath: "时间/最近30天",
           confidence: 1,
           source: "derived_time_window",
           evidence: "最近30天有修改",
-        });
-        setTag(derived, {
-          tagPath: "状态/近期活跃",
-          confidence: 0.8,
-          source: "derived_status",
-          evidence: "最近30天有修改",
-        });
-      } else {
-        setTag(derived, {
-          tagPath: "状态/长期未更新",
-          confidence: 1,
-          source: "derived_status",
-          evidence: "超过30天未更新",
         });
       }
     }
