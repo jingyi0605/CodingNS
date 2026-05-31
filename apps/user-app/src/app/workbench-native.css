@@ -8236,7 +8236,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .affairs-sidebar-group-plain .affairs-sidebar-item-button {
-  padding: 7px 9px;
+  padding: 5px 8px;
   border-radius: 10px;
 }
 
@@ -8247,12 +8247,6 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .affairs-sidebar-group-plain .affairs-sidebar-item-title {
   font-size: 12px;
   font-weight: 600;
-  line-height: 1.35;
-}
-
-.affairs-sidebar-group-plain .affairs-sidebar-item-summary {
-  margin-top: 1px;
-  font-size: 10px;
   line-height: 1.35;
 }
 
@@ -8321,13 +8315,13 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .affairs-tag-tree-children {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
 }
 
 .affairs-tag-tree-row {
   display: flex;
   align-items: stretch;
-  gap: 4px;
+  gap: 2px;
 }
 
 .affairs-tag-tree-toggle {

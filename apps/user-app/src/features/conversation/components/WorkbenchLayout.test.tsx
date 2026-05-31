@@ -8306,6 +8306,7 @@ describe("WorkbenchLayout", () => {
     expect(badge).toHaveClass("session-parallel-badge");
   });
   it("顶层模式切到事务后会进入 affairs 路由，并保留切回代码能力", async () => {
+    mockAffairsLibraryFetch();
     MockWebSocket.workbenchSnapshot = createWorkbenchSnapshot([
       {
         workspace: createWorkspace("workspace-1", "项目一"),
@@ -8322,7 +8323,9 @@ describe("WorkbenchLayout", () => {
 
     await userEvent.click(await screen.findByRole("tab", { name: t("shell.workbenchModeAffairs") }));
     expect(await screen.findByRole("tab", { name: t("shell.workbenchModeAffairs") })).toHaveAttribute("aria-selected", "true");
-    expect(await screen.findByRole("button", { name: t("shell.affairsLibrarySettingsAction") })).toBeInTheDocument();
+    expect(await screen.findByText(t("shell.affairsSectionGroupFavorites"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsLibraryTagTreeTitle"))).toBeInTheDocument();
+    expect(screen.queryByTestId("current-path")).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("tab", { name: t("shell.workbenchModeCode") }));
     expect(await screen.findByTestId("current-path")).toHaveTextContent("/workspaces/workspace-1/sessions/session-1");
@@ -8330,6 +8333,7 @@ describe("WorkbenchLayout", () => {
 
   it("事务模式入口不会复用错误写入的设置页路径", async () => {
     writeViewSnapshot("workbench.mode.affairs.last-path.workspace-1", "/settings");
+    mockAffairsLibraryFetch();
     MockWebSocket.workbenchSnapshot = createWorkbenchSnapshot([
       {
         workspace: createWorkspace("workspace-1", "项目一"),
@@ -8347,7 +8351,9 @@ describe("WorkbenchLayout", () => {
 
     await userEvent.click(await screen.findByRole("tab", { name: t("shell.workbenchModeAffairs") }));
     expect(await screen.findByRole("tab", { name: t("shell.workbenchModeAffairs") })).toHaveAttribute("aria-selected", "true");
-    expect(await screen.findByRole("button", { name: t("shell.affairsLibrarySettingsAction") })).toBeInTheDocument();
+    expect(await screen.findByText(t("shell.affairsSectionGroupFavorites"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsLibraryTagTreeTitle"))).toBeInTheDocument();
+    expect(screen.queryByTestId("current-path")).not.toBeInTheDocument();
   });
 
   it("打开 affairs 路由时会直接激活事务模式", async () => {
@@ -8371,6 +8377,7 @@ describe("WorkbenchLayout", () => {
     expect(screen.getByRole("tab", { name: t("shell.affairsAssistantTitle") })).toBeInTheDocument();
     expect(await screen.findByText(t("shell.affairsSectionGroupFavorites"))).toBeInTheDocument();
     expect(screen.getByText(t("shell.affairsLibraryTagTreeTitle"))).toBeInTheDocument();
+    expect(screen.queryByTestId("current-path")).not.toBeInTheDocument();
   });
 
 });

@@ -329,13 +329,56 @@ export function AffairsWorkbenchProvider({
   const [automations, setAutomations] = useState<AssistantAutomationTaskDto[]>([]);
   const [automationRuns, setAutomationRuns] = useState<AssistantAutomationRunDto[]>([]);
   const { showToast } = useToast();
+  const binding = librarySnapshot?.binding ?? null;
+  const indexStatus = librarySnapshot?.status ?? null;
+  const activeSection = normalizeSection(state.primarySection);
   const recentFileActivationRef = useRef<{ path: string; timestamp: number } | null>(null);
   const librarySnapshotRef = useRef<AffairsLibrarySnapshotDto | null>(initialLibrarySnapshot);
-  const lazyRefreshKeyRef = useRef<string | null>(null);
+  const directoryHintKeyRef = useRef<string | null>(null);
+  const directoryHintBootstrappedRef = useRef(false);
 
   useEffect(() => {
     librarySnapshotRef.current = librarySnapshot;
   }, [librarySnapshot]);
+
+  useEffect(() => {
+    if (activeSection !== "library" || !binding?.enabled) {
+      return;
+    }
+
+    const nextDirectoryHintKey = buildDirectoryHintKey(
+      activeSection,
+      state.browseMode,
+      state.selectedFolderPath,
+      state.selectedTagPath
+    );
+    if (directoryHintKeyRef.current === nextDirectoryHintKey) {
+      return;
+    }
+
+    if (!directoryHintBootstrappedRef.current) {
+      directoryHintBootstrappedRef.current = true;
+      directoryHintKeyRef.current = nextDirectoryHintKey;
+      return;
+    }
+
+    directoryHintKeyRef.current = nextDirectoryHintKey;
+    void Promise.resolve(requestAffairsLibraryRefresh(workspaceId, {
+      reason: "directory_hint",
+      targetPath: state.browseMode === "tag"
+        ? state.selectedTagPath?.trim() || null
+        : state.selectedFolderPath?.trim() || null
+    })).catch(() => {
+      // 目录 hint 刷新失败不影响当前快照展示，后面还有轮询和手动刷新兜底。
+    });
+  }, [
+    activeSection,
+    binding?.enabled,
+    state.browseMode,
+    state.selectedFolderPath,
+    state.selectedTagPath,
+    workspaceId
+  ]);
 
   useEffect(() => {
     let disposed = false;
@@ -497,9 +540,6 @@ export function AffairsWorkbenchProvider({
     };
   }, [workspaceId, workspaceSessionIdSet, workspaceSessionIdSignature]);
 
-  const binding = librarySnapshot?.binding ?? null;
-  const indexStatus = librarySnapshot?.status ?? null;
-  const activeSection = normalizeSection(state.primarySection);
   const libraryDocumentItems = libraryDocumentPage?.items ?? [];
   const documentRecords = useMemo(
     () => buildDocumentRecordsFromSnapshot(libraryDocumentItems, binding?.rootDir ?? null),
@@ -509,46 +549,16 @@ export function AffairsWorkbenchProvider({
     () => documentRecords.filter((record) => record.isFavorite),
     [documentRecords]
   );
-  const tagRecords = useMemo(() => buildTagRecordsFromSnapshot(librarySnapshot?.tags ?? []), [librarySnapshot?.tags]);
+  const tagRecords = useMemo(
+    () => buildTagRecordsFromSnapshot(librarySnapshot?.tags ?? []).filter(isVisibleTagRecord),
+    [librarySnapshot?.tags]
+  );
   const folderRecords = useMemo(() => buildFolderRecordsFromSnapshot(librarySnapshot?.folders ?? []), [librarySnapshot?.folders]);
   const favoriteEntries = useMemo(() => librarySnapshot?.favorites ?? [], [librarySnapshot?.favorites]);
   const favoriteFolderPathSet = useMemo(
     () => new Set(favoriteEntries.filter((item) => item.kind === "folder").map((item) => item.path)),
     [favoriteEntries]
   );
-
-  useEffect(() => {
-    if (activeSection !== "library" || !binding?.enabled || libraryLoading || libraryRefreshPending) {
-      return;
-    }
-
-    const lazyRefreshKey = buildLazyRefreshKey(workspaceId, indexStatus);
-    if (!shouldRunLazyLibraryRefresh(indexStatus) || lazyRefreshKeyRef.current === lazyRefreshKey) {
-      return;
-    }
-
-    lazyRefreshKeyRef.current = lazyRefreshKey;
-    void (async () => {
-      try {
-        setLibraryRefreshPending(true);
-        await requestAffairsLibraryRefresh(workspaceId, { reason: "view_lazy_check" });
-        const snapshot = await getAffairsLibrarySnapshot(workspaceId);
-        setLibrarySnapshot((previous) => areLibrarySnapshotsEqual(previous, snapshot) ? previous : snapshot);
-        writeCachedLibrarySnapshot(workspaceId, snapshot);
-      } catch {
-        // 懒检查失败时静默降级，交给轮询和手动刷新兜底。
-      } finally {
-        setLibraryRefreshPending(false);
-      }
-    })();
-  }, [
-    activeSection,
-    binding?.enabled,
-    indexStatus,
-    libraryLoading,
-    libraryRefreshPending,
-    workspaceId
-  ]);
 
   const filteredDocuments = useMemo(() => {
     if (activeSection !== "library" || !binding) {
@@ -1234,7 +1244,7 @@ export function AffairsSidebarPanel() {
   }
 
   const favoriteFolderItems = favoriteEntries.filter((item) => item.kind === "folder");
-  const favoriteTagItems = favoriteEntries.filter((item) => item.kind === "tag");
+  const favoriteTagItems = favoriteEntries.filter((item) => item.kind === "tag" && isVisibleTagPath(item.path));
   const tagTree = buildTagTree(tagRecords);
   const [expandedTagPaths, setExpandedTagPaths] = useState<string[]>([]);
   const [visibleTagRootCount, setVisibleTagRootCount] = useState(TAG_TREE_ROOT_BATCH_SIZE);
@@ -1260,6 +1270,16 @@ export function AffairsSidebarPanel() {
     const requiredRoots = tagTree.filter((node) => isTagNodeVisibleBySelection(node, state, favoriteEntries)).length;
     setVisibleTagRootCount((current) => Math.max(TAG_TREE_ROOT_BATCH_SIZE, current, requiredRoots));
   }, [favoriteEntries, state, tagTree]);
+
+  useEffect(() => {
+    if (state.browseMode !== "tag" || !state.selectedTagPath?.trim()) {
+      return;
+    }
+    if (tagRecords.some((tag) => tag.path === state.selectedTagPath)) {
+      return;
+    }
+    selectSidebarNode("library:tag-root");
+  }, [selectSidebarNode, state.browseMode, state.selectedTagPath, tagRecords]);
 
   const visibleTagRoots = useMemo(
     () => tagTree.slice(0, visibleTagRootCount),
@@ -1296,7 +1316,6 @@ export function AffairsSidebarPanel() {
                               {renderFavoriteToggle(nodeId, favorite.label, toggleFavorite)}
                             </div>
                           </div>
-                          <span className="affairs-sidebar-item-summary">{favorite.path}</span>
                         </button>
                       </div>
                     );
@@ -1317,7 +1336,6 @@ export function AffairsSidebarPanel() {
                               {renderFavoriteToggle(nodeId, favorite.label, toggleFavorite)}
                             </div>
                           </div>
-                          <span className="affairs-sidebar-item-summary">{favorite.path}</span>
                         </button>
                       </div>
                     );
@@ -2074,14 +2092,13 @@ function AffairsTagTreeNode({
             <span className="affairs-tag-tree-toggle placeholder" aria-hidden="true" />
           )}
           <button type="button" className="affairs-sidebar-item-button" onClick={() => onSelect(nodeId)}>
-          <div className="affairs-sidebar-item-row">
-            <span className="affairs-sidebar-item-title">{node.label}</span>
-            <div className="affairs-sidebar-item-actions">
-              <span className="affairs-sidebar-item-badge">{node.count}</span>
-              {renderFavoriteToggle(nodeId, node.label, onToggleFavorite)}
+            <div className="affairs-sidebar-item-row">
+              <span className="affairs-sidebar-item-title">{node.label}</span>
+              <div className="affairs-sidebar-item-actions">
+                <span className="affairs-sidebar-item-badge">{node.count}</span>
+                {renderFavoriteToggle(nodeId, node.label, onToggleFavorite)}
+              </div>
             </div>
-          </div>
-          <span className="affairs-sidebar-item-summary">{node.path}</span>
           </button>
         </div>
       </div>
@@ -3251,6 +3268,18 @@ function buildTagRecordsFromSnapshot(tags: AffairsLibraryTagNodeDto[]): TagRecor
     }));
 }
 
+function isVisibleTagRecord(tag: TagRecord): boolean {
+  const rootType = tag.rootType.trim().toLowerCase();
+  if (rootType === "类型" || rootType === "time" || rootType === "时间" || rootType === "type") {
+    return true;
+  }
+  return isVisibleTagPath(tag.path);
+}
+
+function isVisibleTagPath(tagPath: string): boolean {
+  return tagPath.startsWith("类型/") || tagPath === "类型" || tagPath.startsWith("时间/") || tagPath === "时间";
+}
+
 function buildFolderRecordsFromSnapshot(folders: AffairsLibraryFolderNodeDto[]): FolderRecord[] {
   return [...folders]
     .sort((left, right) => left.path.localeCompare(right.path, "zh-CN"))
@@ -3397,39 +3426,6 @@ function writeCachedLibraryDocumentPage(
   writeViewSnapshot(buildAffairsLibraryDocumentPageCacheKey(workspaceId, state), page);
 }
 
-function buildLazyRefreshKey(
-  workspaceId: string,
-  status: AffairsLibraryIndexStatusDto | null
-): string {
-  return [
-    workspaceId,
-    status?.state ?? "unknown",
-    status?.lastCompletedAt ?? "none",
-    status?.lastFailedAt ?? "none"
-  ].join("|");
-}
-
-function shouldRunLazyLibraryRefresh(status: AffairsLibraryIndexStatusDto | null): boolean {
-  if (!status) {
-    return true;
-  }
-
-  if (status.state === "running" || status.state === "cooldown") {
-    return false;
-  }
-
-  if (status.state === "stale" || status.state === "failed") {
-    return true;
-  }
-
-  const completedAt = status.lastCompletedAt ? Date.parse(status.lastCompletedAt) : Number.NaN;
-  if (!Number.isFinite(completedAt)) {
-    return true;
-  }
-
-  return Date.now() - completedAt >= AFFAIRS_LIBRARY_CACHE_MAX_AGE_MS;
-}
-
 function mergeDocumentPageItems(
   previous: AffairsLibraryDocumentRecordDto[],
   incoming: AffairsLibraryDocumentRecordDto[]
@@ -3474,6 +3470,20 @@ function mergePagedLibraryDocumentPage(
     limit: Math.max(previous?.limit ?? 0, response.limit),
     items: mergeDocumentPageItems(previous?.items ?? [], response.items)
   };
+}
+
+function buildDirectoryHintKey(
+  activeSection: string,
+  browseMode: "folder" | "tag",
+  selectedFolderPath: string | null,
+  selectedTagPath: string | null
+): string {
+  return [
+    activeSection,
+    browseMode,
+    selectedFolderPath?.trim() || ".",
+    selectedTagPath?.trim() || "."
+  ].join("|");
 }
 
 function areLibraryDocumentPagesEqual(

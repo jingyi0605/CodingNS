@@ -1351,11 +1351,12 @@ export function getAffairsLibraryPreview(workspaceId: string, filePath: string) 
 
 export function requestAffairsLibraryRefresh(
   workspaceId: string,
-  payload: { reason?: string } = {}
+  payload: { reason?: string; targetPath?: string | null } = {}
 ) {
   return httpClient.request<{
-    taskId: string;
-    deduped: boolean;
+    scheduled?: boolean;
+    taskId?: string;
+    deduped?: boolean;
     status: AffairsLibraryIndexStatusDto;
   }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-refresh`, {
     method: "POST",

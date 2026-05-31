@@ -12,6 +12,8 @@ import { AffairsLibraryService } from "../../../src/modules/workspace/affairs-li
 import { HOST_TASK_TYPES, type TaskSnapshot } from "../../../src/modules/tasks/task-types.js";
 import type { WorkspaceNavigationStateRecord, Workspace } from "../../../src/types/domain.js";
 
+const SNAPSHOT_CACHE_FILE_NAME = "codingns-affairs-snapshot-cache.json";
+
 function createWorkspace(workspacePath: string): Workspace {
   return {
     id: "workspace-1",
@@ -40,6 +42,31 @@ function createIndexerResult(command: "apply-config" | "index" | "recompute-tags
       ? { changed: false, addedExtensions: [], removedExtensions: [] }
       : { scannedCount: 1, indexedCount: 1, failedCount: 0, deletedCount: 0 }
   };
+}
+
+function seedExistingArtifacts(rootDir: string): void {
+  const exportDir = path.join(rootDir, ".ai-index", "exports");
+  fs.mkdirSync(exportDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(exportDir, "status.json"),
+    JSON.stringify({
+      version: 2,
+      format: "static-v2",
+      exported_at: "2026-05-31T06:00:00.000Z",
+      document_count: 1
+    })
+  );
+  fs.writeFileSync(
+    path.join(exportDir, "manifest.json"),
+    JSON.stringify({
+      generated_at: "2026-05-31T06:00:00.000Z",
+      entries: {
+        taxonomy: "taxonomy.json",
+        bootstrap: "bootstrap.json"
+      },
+      meta_shards: []
+    })
+  );
 }
 
 function createService(options: {
@@ -150,7 +177,7 @@ describe("AffairsLibraryService auto tasks", () => {
         input: expect.objectContaining({
           workspaceId: "workspace-1",
           rootDir,
-          reason: "startup_resume"
+          reason: expect.stringContaining("startup_resume")
         })
       })
     );
@@ -171,6 +198,17 @@ describe("AffairsLibraryService auto tasks", () => {
         format: "static-v2",
         exported_at: new Date().toISOString(),
         document_count: 1
+      })
+    );
+    fs.writeFileSync(
+      path.join(exportDir, "manifest.json"),
+      JSON.stringify({
+        generated_at: new Date().toISOString(),
+        entries: {
+          taxonomy: "taxonomy.json",
+          bootstrap: "bootstrap.json"
+        },
+        meta_shards: []
       })
     );
 
@@ -209,9 +247,80 @@ describe("AffairsLibraryService auto tasks", () => {
     fs.rmSync(rootDir, { recursive: true, force: true });
   });
 
+  it("发现索引产物缺失时会强制走全量重建，不再沿用 targeted refresh", async () => {
+    vi.useFakeTimers();
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-missing-artifact-"));
+    const enqueue = vi.fn(() => ({
+      taskId: "task-1",
+      taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+      key: "workspace-1",
+      executionLane: "helper_process",
+      deduped: false,
+      promise: Promise.resolve(createIndexerResult("index")),
+      cancel: vi.fn()
+    }));
+
+    const service = createService({ rootDir, enqueue });
+    service.scheduleAutoRefresh("workspace-1", "watch:index_changed:notes/demo.md", "notes/demo.md");
+
+    await vi.advanceTimersByTimeAsync(810);
+
+    expect(enqueue).toHaveBeenCalledWith(
+      HOST_TASK_TYPES.affairsLibraryIndex,
+      expect.objectContaining({
+        input: expect.objectContaining({
+          workspaceId: "workspace-1",
+          rootDir
+        })
+      })
+    );
+    expect(enqueue.mock.calls[0]?.[1]?.input).not.toHaveProperty("targetPath");
+    expect(String(enqueue.mock.calls[0]?.[1]?.input?.reason ?? "")).toContain("missing_index_artifact");
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("周期兜底在产物齐全时走全库增量刷新，不直接全量重建", async () => {
+    vi.useFakeTimers();
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-periodic-"));
+    seedExistingArtifacts(rootDir);
+    const enqueue = vi.fn(() => ({
+      taskId: "task-1",
+      taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+      key: "workspace-1",
+      executionLane: "helper_process",
+      deduped: false,
+      promise: Promise.resolve(createIndexerResult("index")),
+      cancel: vi.fn()
+    }));
+
+    const service = createService({ rootDir, enqueue });
+    service.scheduleAutoRefresh("workspace-1", "periodic_refresh");
+
+    await vi.advanceTimersByTimeAsync(810);
+
+    expect(enqueue).toHaveBeenCalledWith(
+      HOST_TASK_TYPES.affairsLibraryIndex,
+      expect.objectContaining({
+        input: expect.objectContaining({
+          workspaceId: "workspace-1",
+          rootDir,
+          reason: "periodic_refresh",
+          commandMode: "incremental"
+        })
+      })
+    );
+    expect(enqueue.mock.calls[0]?.[1]?.input).not.toHaveProperty("targetPath");
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
   it("config 变更会先排 apply-config，再补跑文件增量索引", async () => {
     vi.useFakeTimers();
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-"));
+    seedExistingArtifacts(rootDir);
     let callCount = 0;
     const enqueue = vi.fn((taskType: string) => {
       callCount += 1;
@@ -269,6 +378,7 @@ describe("AffairsLibraryService auto tasks", () => {
     vi.useFakeTimers();
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-touch-"));
     fs.mkdirSync(path.join(rootDir, "notes"), { recursive: true });
+    seedExistingArtifacts(rootDir);
     const enqueue = vi.fn((taskType: string) => ({
       taskId: `task-${taskType}`,
       taskType,
@@ -336,6 +446,77 @@ describe("AffairsLibraryService auto tasks", () => {
         })
       })
     );
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("索引产物缺失时会保留最近一次可读快照", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-cache-"));
+    const exportDir = path.join(rootDir, ".ai-index", "exports");
+    fs.mkdirSync(exportDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(exportDir, "status.json"),
+      JSON.stringify({
+        version: 2,
+        format: "static-v2",
+        exported_at: "2026-05-31T08:00:00.000Z",
+        document_count: 1
+      })
+    );
+    fs.writeFileSync(
+      path.join(exportDir, SNAPSHOT_CACHE_FILE_NAME),
+      JSON.stringify({
+        signature: "stale-cache",
+        generatedAt: "2026-05-31T08:00:00.000Z",
+        documents: [
+          {
+            documentId: "doc-1",
+            path: "notes/demo.md",
+            title: "demo",
+            summary: "cached",
+            updatedAt: "2026-05-31T08:00:00.000Z",
+            tags: ["项目/演示"],
+            derivedTags: [],
+            isFavorite: false
+          }
+        ],
+        tags: [
+          {
+            path: "项目/演示",
+            name: "演示",
+            rootType: "project",
+            parentPath: "项目",
+            depth: 1,
+            documentCount: 1
+          }
+        ],
+        folders: [
+          {
+            path: "notes",
+            name: "notes",
+            parentPath: null,
+            directDocumentCount: 1,
+            documentCount: 1
+          }
+        ]
+      })
+    );
+
+    const service = createService({ rootDir });
+    const snapshot = service.getSnapshot("workspace-1", "user-1");
+    const documentList = service.listDocuments("workspace-1", "user-1", {
+      browseMode: "folder",
+      selectedFolderPath: "notes"
+    });
+
+    expect(snapshot.status.state).toBe("stale");
+    expect(snapshot.status.dirtyReasons).toContain("missing_export_manifest");
+    expect(snapshot.status.lastCompletedAt).toBe("2026-05-31T08:00:00.000Z");
+    expect(snapshot.documentCount).toBe(1);
+    expect(snapshot.tags).toHaveLength(1);
+    expect(documentList.total).toBe(1);
+    expect(documentList.items[0]?.path).toBe("notes/demo.md");
 
     service.dispose();
     fs.rmSync(rootDir, { recursive: true, force: true });
@@ -443,6 +624,58 @@ describe("AffairsLibraryDirtyWatchService", () => {
     fs.rmSync(rootDir, { recursive: true, force: true });
   });
 
+  it("目录级模糊事件会补扫并归并到真实目标路径", async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-watch-dir-"));
+    fs.mkdirSync(path.join(rootDir, "notes"), { recursive: true });
+    fs.writeFileSync(path.join(rootDir, "notes", "real.md"), "real\n");
+    fs.writeFileSync(path.join(rootDir, "notes", "~$real.md"), "temp\n");
+
+    const events: AffairsLibraryWatchDirtyEvent[] = [];
+    const service = new AffairsLibraryDirtyWatchService(
+      {
+        listEnabledAffairsLibraries: vi.fn(() => []),
+        findAnyEnabledAffairsLibraryByWorkspaceId: vi.fn(() => ({
+          workspaceId: "workspace-1",
+          userId: "user-1",
+          collapsed: false,
+          backgroundColor: null,
+          affairsLibraryRootPath: rootDir,
+          affairsLibraryEnabled: true,
+          affairsLibraryFavoritesJson: "[]",
+          updatedAt: "2026-05-31T06:00:00.000Z"
+        }))
+      } as never,
+      (_workspaceId, event) => {
+        events.push(event);
+      },
+      {
+        info: vi.fn(),
+        warn: vi.fn()
+      }
+    );
+
+    (service as unknown as {
+      handleFsWatchEvent: (
+        workspaceId: string,
+        rootDir: string,
+        eventType: string,
+        fileName: string
+      ) => void;
+    }).handleFsWatchEvent("workspace-1", rootDir, "rename", "notes");
+
+    await sleep(1300);
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: "index",
+        targetPath: "notes/real.md"
+      })
+    );
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
   it("会按低频周期补一轮外部刷新兜底", async () => {
     vi.useFakeTimers();
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-watch-periodic-"));
@@ -477,6 +710,54 @@ describe("AffairsLibraryDirtyWatchService", () => {
       expect.objectContaining({
         kind: "index",
         reason: "periodic_refresh"
+      })
+    );
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("删掉 .ai-index 后会提交重建脏标记", async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-watch-missing-index-"));
+    const exportDir = path.join(rootDir, ".ai-index", "exports");
+    fs.mkdirSync(exportDir, { recursive: true });
+    fs.writeFileSync(path.join(exportDir, "status.json"), "{}\n");
+    fs.writeFileSync(path.join(exportDir, "manifest.json"), "{}\n");
+
+    const events: AffairsLibraryWatchDirtyEvent[] = [];
+    const service = new AffairsLibraryDirtyWatchService(
+      {
+        listEnabledAffairsLibraries: vi.fn(() => []),
+        findAnyEnabledAffairsLibraryByWorkspaceId: vi.fn(() => ({
+          workspaceId: "workspace-1",
+          userId: "user-1",
+          collapsed: false,
+          backgroundColor: null,
+          affairsLibraryRootPath: rootDir,
+          affairsLibraryEnabled: true,
+          affairsLibraryFavoritesJson: "[]",
+          updatedAt: "2026-05-31T06:00:00.000Z"
+        }))
+      } as never,
+      (_workspaceId, event) => {
+        events.push(event);
+      },
+      {
+        info: vi.fn(),
+        warn: vi.fn()
+      }
+    );
+
+    service.syncWorkspace("workspace-1");
+    await sleep(300);
+    fs.rmSync(path.join(rootDir, ".ai-index"), { recursive: true, force: true });
+
+    await sleep(1300);
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: "index",
+        reason: expect.stringContaining("missing_index_artifact")
       })
     );
 

@@ -25,6 +25,10 @@ import {
 
 const DEFAULT_CONFIG_RELATIVE_PATH = ".ai-index/doc-semantic-index.config.json";
 const TAG_RULES_RELATIVE_PATH = ".ai-index/tag-rules.json";
+const INDEX_DIR_RELATIVE_PATH = ".ai-index";
+const EXPORT_DIR_RELATIVE_PATH = ".ai-index/exports";
+const EXPORT_STATUS_RELATIVE_PATH = ".ai-index/exports/status.json";
+const EXPORT_MANIFEST_RELATIVE_PATH = ".ai-index/exports/manifest.json";
 const DEFAULT_EXPORT_MODE = "v2" as const;
 const INDEX_TASK_TIMEOUT_MS = 15 * 60 * 1000;
 const INDEX_TASK_COOLDOWN_MS = 15_000;
@@ -481,10 +485,8 @@ export class AffairsLibraryService {
       };
     }
 
-    const exportRoot = path.join(binding.rootDir, ".ai-index", "exports");
-    const manifestPath = path.join(exportRoot, "manifest.json");
-
-    if (!fs.existsSync(manifestPath)) {
+    const exportData = this.readAvailableExportData(binding.rootDir);
+    if (!exportData) {
       return {
         binding,
         status: status.state === "fresh"
@@ -501,8 +503,6 @@ export class AffairsLibraryService {
         lastError: "当前还没有可读取的文档库导出结果，先运行一次索引刷新。"
       };
     }
-
-    const exportData = this.readExportData(binding.rootDir);
 
     return {
       binding,
@@ -534,7 +534,15 @@ export class AffairsLibraryService {
     }
 
     const favorites = this.readFavorites(workspaceId, userId);
-    const exportData = this.readExportData(binding.rootDir);
+    const exportData = this.readAvailableExportData(binding.rootDir);
+    if (!exportData) {
+      return {
+        total: 0,
+        offset: 0,
+        limit: normalizePositiveInt(input.limit, 120, 400),
+        items: []
+      };
+    }
     const browseMode = input.browseMode === "tag" ? "tag" : "folder";
     const offset = Math.max(0, normalizePositiveInt(input.offset, 0, Number.MAX_SAFE_INTEGER));
     const limit = normalizePositiveInt(input.limit, 120, 400);
@@ -798,6 +806,27 @@ export class AffairsLibraryService {
     };
   }
 
+  requestRefreshHint(
+    workspaceId: string,
+    userId: string,
+    reason: string,
+    targetPath?: string | null
+  ): { scheduled: boolean; status: AffairsLibraryIndexStatusDto } {
+    const binding = this.requireBinding(workspaceId, userId);
+    this.ensureLibraryEnabled(binding);
+
+    this.scheduleAutoRefresh(
+      workspaceId,
+      reason.trim() || "directory_hint",
+      normalizeHintTargetPath(targetPath)
+    );
+
+    return {
+      scheduled: true,
+      status: this.readIndexStatus(workspaceId, binding)
+    };
+  }
+
   notifyWorkspaceFileMutation(
     workspaceId: string,
     input: {
@@ -988,23 +1017,25 @@ export class AffairsLibraryService {
       };
     }
 
-    const exportRoot = path.join(binding.rootDir, ".ai-index", "exports");
-    const statusPath = path.join(exportRoot, "status.json");
-    if (!fs.existsSync(statusPath)) {
+    const cachedExportData = this.readLastUsableExportData(binding.rootDir);
+    const missingArtifact = detectMissingIndexArtifact(binding.rootDir);
+    if (missingArtifact) {
       return {
         state: "stale",
-        dirtyReasons: ["missing_export"],
+        dirtyReasons: [missingArtifact.reason],
         lastRequestedAt: null,
         lastStartedAt: null,
-        lastCompletedAt: null,
+        lastCompletedAt: cachedExportData?.generatedAt ?? null,
         lastFailedAt: null,
         nextAllowedAt: null,
         runningTaskId: null,
-        errorSummary: null
+        errorSummary: missingArtifact.errorSummary
       };
     }
 
-    const statusFile = readJsonFile<IndexStatusFilePayload>(statusPath);
+    const statusFile = readJsonFile<IndexStatusFilePayload>(
+      path.join(binding.rootDir, EXPORT_STATUS_RELATIVE_PATH)
+    );
     const lastCompletedAt = statusFile.exported_at?.trim() ?? null;
     const lastCompletedAtMs = lastCompletedAt ? Date.parse(lastCompletedAt) : Number.NaN;
     const nextAllowedAtMs = Number.isFinite(lastCompletedAtMs)
@@ -1040,7 +1071,13 @@ export class AffairsLibraryService {
     }
 
     if (!this.taskManager.has(HOST_TASK_TYPES.affairsLibraryIndex)) {
-      this.taskManager.register<{ workspaceId: string; rootDir: string; reason: string; targetPath?: string }, AffairsIndexerCommandResult>({
+      this.taskManager.register<{
+        workspaceId: string;
+        rootDir: string;
+        reason: string;
+        targetPath?: string;
+        commandMode?: "incremental" | "full";
+      }, AffairsIndexerCommandResult>({
         taskType: HOST_TASK_TYPES.affairsLibraryIndex,
         executionLane: "helper_process",
         helperProcessHandler: "affairs.library_index",
@@ -1048,7 +1085,7 @@ export class AffairsLibraryService {
         run: async (input) =>
           await this.runInternalCommand(
             input.rootDir,
-            input.targetPath ? "watch-touch" : "index",
+            input.commandMode === "incremental" || input.targetPath ? "watch-touch" : "index",
             {
               targetPath: input.targetPath,
               reason: input.reason
@@ -1166,6 +1203,12 @@ export class AffairsLibraryService {
       return;
     }
 
+    const missingArtifact = detectMissingIndexArtifact(rootDir);
+    if (missingArtifact) {
+      state.indexReasons.add(missingArtifact.reason);
+      state.indexTargets.clear();
+    }
+
     const blockingTask = this.findBlockingAutoTask(workspaceId);
     if (blockingTask) {
       this.logger.info(
@@ -1228,14 +1271,21 @@ export class AffairsLibraryService {
     }
 
     if (state.indexReasons.size > 0 || state.indexTargets.size > 0) {
-      const targetPath = pickNarrowestTargetPath([...state.indexTargets]);
+      const forceFullRebuild = [...state.indexReasons].some((reason) => shouldForceFullRebuild(reason));
+      const targetPath = forceFullRebuild ? undefined : pickNarrowestTargetPath([...state.indexTargets]);
       const reason = joinAutoTaskReasons(
         state.indexReasons,
         targetPath ? `watch:${targetPath}` : "watch:auto_refresh"
       );
       state.indexReasons.clear();
       state.indexTargets.clear();
-      const handle = this.taskManager.enqueue<{ workspaceId: string; rootDir: string; reason: string; targetPath?: string }, AffairsIndexerCommandResult>(
+      const handle = this.taskManager.enqueue<{
+        workspaceId: string;
+        rootDir: string;
+        reason: string;
+        targetPath?: string;
+        commandMode?: "incremental" | "full";
+      }, AffairsIndexerCommandResult>(
         HOST_TASK_TYPES.affairsLibraryIndex,
         {
           key: workspaceId,
@@ -1244,6 +1294,7 @@ export class AffairsLibraryService {
             workspaceId,
             rootDir,
             reason,
+            ...(targetPath ? {} : { commandMode: forceFullRebuild ? "full" : "incremental" }),
             ...(targetPath ? { targetPath } : {})
           }
         }
@@ -1385,8 +1436,8 @@ export class AffairsLibraryService {
   }
 
   private readExportData(rootDir: string): AffairsLibraryExportData {
-    const exportRoot = path.join(rootDir, ".ai-index", "exports");
-    const manifestPath = path.join(exportRoot, "manifest.json");
+    const exportRoot = path.join(rootDir, EXPORT_DIR_RELATIVE_PATH);
+    const manifestPath = path.join(rootDir, EXPORT_MANIFEST_RELATIVE_PATH);
     const signature = this.buildExportSignature(exportRoot, manifestPath);
     const cached = this.exportCache.get(rootDir);
     if (cached && cached.signature === signature) {
@@ -1524,6 +1575,45 @@ export class AffairsLibraryService {
         version: input.version
       })
     };
+  }
+
+  private readAvailableExportData(rootDir: string): AffairsLibraryExportData | null {
+    try {
+      return this.readExportData(rootDir);
+    } catch {
+      return this.readLastUsableExportData(rootDir);
+    }
+  }
+
+  private readLastUsableExportData(rootDir: string): AffairsLibraryExportData | null {
+    const cached = this.exportCache.get(rootDir);
+    if (cached) {
+      return {
+        documents: cached.documents,
+        tags: cached.tags,
+        folders: cached.folders,
+        generatedAt: cached.generatedAt
+      };
+    }
+
+    const exportRoot = path.join(rootDir, EXPORT_DIR_RELATIVE_PATH);
+    const cachePath = path.join(exportRoot, SNAPSHOT_CACHE_FILE_NAME);
+    if (!fs.existsSync(cachePath)) {
+      return null;
+    }
+
+    try {
+      const payload = readJsonFile<AffairsLibraryExportCachePayload>(cachePath);
+      this.exportCache.set(rootDir, payload);
+      return {
+        documents: payload.documents,
+        tags: payload.tags,
+        folders: payload.folders,
+        generatedAt: payload.generatedAt
+      };
+    } catch {
+      return null;
+    }
   }
 
   private readConfig(rootDir: string): {
@@ -1685,6 +1775,58 @@ function resolveAffairsLibraryRelativePath(rootDir: string, absolutePath: string
 function normalizeMutationRefreshTarget(relativePath: string): string | null {
   const normalizedPath = relativePath.trim().replace(/^\.\/+/, "").replace(/\/+$/, "");
   return normalizedPath || null;
+}
+
+function normalizeHintTargetPath(targetPath: string | null | undefined): string | undefined {
+  const normalized = targetPath?.trim().replace(/^\.\/+/, "").replace(/\/+$/, "") ?? "";
+  return normalized || undefined;
+}
+
+function detectMissingIndexArtifact(rootDir: string): {
+  reason: string;
+  errorSummary: string;
+} | null {
+  const checks = [
+    {
+      relativePath: INDEX_DIR_RELATIVE_PATH,
+      reason: "missing_index_artifact",
+      errorSummary: "文档库索引目录缺失，系统会自动补跑一次全量重建。"
+    },
+    {
+      relativePath: EXPORT_DIR_RELATIVE_PATH,
+      reason: "missing_export_dir",
+      errorSummary: "文档库导出目录缺失，系统会自动补跑一次全量重建。"
+    },
+    {
+      relativePath: EXPORT_STATUS_RELATIVE_PATH,
+      reason: "missing_export_status",
+      errorSummary: "文档库导出状态文件缺失，系统会自动补跑一次全量重建。"
+    },
+    {
+      relativePath: EXPORT_MANIFEST_RELATIVE_PATH,
+      reason: "missing_export_manifest",
+      errorSummary: "文档库导出清单缺失，系统会自动补跑一次全量重建。"
+    }
+  ] as const;
+
+  for (const check of checks) {
+    if (!fs.existsSync(path.join(rootDir, check.relativePath))) {
+      return {
+        reason: check.reason,
+        errorSummary: check.errorSummary
+      };
+    }
+  }
+
+  return null;
+}
+
+function shouldForceFullRebuild(reason: string): boolean {
+  const normalizedReason = reason.trim();
+  return normalizedReason.includes("missing_index_artifact")
+    || normalizedReason.includes("missing_export_dir")
+    || normalizedReason.includes("missing_export_status")
+    || normalizedReason.includes("missing_export_manifest");
 }
 
 function matchesFavorite(

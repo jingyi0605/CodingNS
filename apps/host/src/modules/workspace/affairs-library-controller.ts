@@ -23,6 +23,7 @@ interface SetAffairsLibraryEnabledBody {
 
 interface RequestAffairsLibraryRefreshBody {
   reason?: string;
+  targetPath?: string;
 }
 
 interface UpdateAffairsLibraryFavoritesBody {
@@ -118,6 +119,19 @@ export class AffairsLibraryController {
     request: FastifyRequest<{ Params: WorkspaceParams; Body: RequestAffairsLibraryRefreshBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    const targetPath = request.body.targetPath?.trim() ?? "";
+    if (targetPath) {
+      reply.send(
+        this.affairsLibraryService.requestRefreshHint(
+          request.params.workspaceId,
+          requireUserId(request),
+          request.body.reason?.trim() ?? "directory_hint",
+          targetPath
+        )
+      );
+      return;
+    }
+
     reply.send(
       this.affairsLibraryService.requestRefresh(
         request.params.workspaceId,

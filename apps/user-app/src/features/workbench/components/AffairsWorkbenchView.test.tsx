@@ -205,19 +205,43 @@ describe("AffairsWorkbenchView", () => {
       },
       tags: [
         {
-          path: "来源",
-          name: "来源",
+          path: "类型",
+          name: "类型",
           parentPath: null,
           depth: 0,
-          rootType: "来源",
+          rootType: "类型",
           documentCount: 1
         },
         {
-          path: "来源/目录",
-          name: "目录",
-          parentPath: "来源",
+          path: "类型/文本",
+          name: "文本",
+          parentPath: "类型",
           depth: 1,
-          rootType: "来源",
+          rootType: "类型",
+          documentCount: 1
+        },
+        {
+          path: "类型/文本/纯文本",
+          name: "纯文本",
+          parentPath: "类型/文本",
+          depth: 2,
+          rootType: "类型",
+          documentCount: 1
+        },
+        {
+          path: "时间",
+          name: "时间",
+          parentPath: null,
+          depth: 0,
+          rootType: "时间",
+          documentCount: 1
+        },
+        {
+          path: "时间/2026/05",
+          name: "05",
+          parentPath: "时间",
+          depth: 2,
+          rootType: "时间",
           documentCount: 1
         }
       ],
@@ -460,12 +484,8 @@ describe("AffairsWorkbenchView", () => {
     renderWorkbench();
     const user = userEvent.setup();
 
-    const sourceText = await screen.findAllByText("来源");
-    const sourceTagButton = sourceText
-      .map((node) => node.closest("button"))
-      .find((node) => node?.classList.contains("affairs-sidebar-item-button"));
-    expect(sourceTagButton).not.toBeNull();
-    await user.click(sourceTagButton!);
+    const typeTagButton = await screen.findByRole("button", { name: /类型/ });
+    await user.click(typeTagButton);
     expect(await screen.findByRole("button", { name: "/" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "/" }));
@@ -486,28 +506,36 @@ describe("AffairsWorkbenchView", () => {
     renderWorkbench();
     const user = userEvent.setup();
 
-    const sourceText = await screen.findAllByText("来源");
-    const sourceTagButton = sourceText
-      .map((node) => node.closest("button"))
-      .find((node) => node?.classList.contains("affairs-sidebar-item-button"));
-    expect(sourceTagButton).not.toBeNull();
+    const typeLabel = await screen.findByText("类型");
+    const typeNode = typeLabel.closest(".affairs-tag-tree-node");
+    expect(typeNode).not.toBeNull();
+    const expandButton = typeNode?.querySelector<HTMLButtonElement>(".affairs-tag-tree-toggle");
+    expect(expandButton).not.toBeNull();
+    await user.click(expandButton!);
+    await user.click(typeNode?.querySelector<HTMLButtonElement>(".affairs-sidebar-item-button")!);
 
-    await user.click(screen.getByRole("button", { name: /Expand/ }));
-    await user.click(sourceTagButton!);
-
-    const directoryText = await screen.findAllByText("目录");
-    const directoryTagButton = directoryText
-      .map((node) => node.closest("button"))
-      .find((node) => node?.classList.contains("affairs-sidebar-item-button"));
-    expect(directoryTagButton).not.toBeNull();
-    await user.click(directoryTagButton!);
+    await user.click(await screen.findByRole("button", { name: /文本/ }));
 
     const rootButton = await screen.findByRole("button", { name: "/" });
     const breadcrumb = rootButton.closest(".affairs-stage-breadcrumb");
     expect(rootButton).toBeInTheDocument();
     expect(breadcrumb).not.toBeNull();
-    expect(breadcrumb).toHaveTextContent("来源");
-    expect(breadcrumb).toHaveTextContent("目录");
+    expect(breadcrumb).toHaveTextContent("类型");
+    expect(breadcrumb).toHaveTextContent("文本");
+  });
+
+  it("标签树只显示类型和时间根标签，并且不再显示说明文本", async () => {
+    renderWorkbench();
+
+    await screen.findByText("类型");
+
+    expect(screen.getByText("类型")).toBeInTheDocument();
+    expect(screen.getByText("时间")).toBeInTheDocument();
+    expect(screen.queryByText("来源")).not.toBeInTheDocument();
+    expect(screen.queryByText("主题")).not.toBeInTheDocument();
+    expect(screen.queryByText("状态")).not.toBeInTheDocument();
+    expect(screen.queryByText("类型/文本")).not.toBeInTheDocument();
+    expect(screen.queryByText("时间/2026/05")).not.toBeInTheDocument();
   });
 
   it("进入事务视图时，如果索引结果太旧，会做一次懒检查刷新", async () => {

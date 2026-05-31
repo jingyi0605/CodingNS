@@ -30,6 +30,9 @@ interface PendingWorkspaceDirtyState {
 
 const CONFIG_RELATIVE_PATH = ".ai-index/doc-semantic-index.config.json";
 const TAG_RULES_RELATIVE_PATH = ".ai-index/tag-rules.json";
+const INDEX_EXPORTS_RELATIVE_PATH = ".ai-index/exports";
+const INDEX_EXPORT_STATUS_RELATIVE_PATH = ".ai-index/exports/status.json";
+const INDEX_EXPORT_MANIFEST_RELATIVE_PATH = ".ai-index/exports/manifest.json";
 const AUTO_REFRESH_QUIET_WINDOW_MS = 800;
 const PERIODIC_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const INDEX_DIR_NAME = ".ai-index";
@@ -262,6 +265,25 @@ export class AffairsLibraryDirtyWatchService {
     }
 
     const dirtyState = this.getOrCreatePendingDirtyState(workspaceId);
+    const missingIndexArtifactReason = this.detectMissingIndexArtifactReason(rootDir, relativePath);
+    if (missingIndexArtifactReason) {
+      dirtyState.indexChanged = true;
+      dirtyState.reasons.add(missingIndexArtifactReason);
+      this.logger.info(
+        {
+          workspaceId,
+          rootDir,
+          eventType,
+          relativePath,
+          reason: missingIndexArtifactReason,
+          source: "affairs_library.watch"
+        },
+        "事务文档库外部刷新监听发现索引产物缺失，已提交重建脏标记"
+      );
+      this.scheduleWorkspaceRefresh(workspaceId);
+      return;
+    }
+
     const effectiveTargetPath = this.resolveEffectiveTargetPath(rootDir, relativePath);
     if (!effectiveTargetPath) {
       return;
@@ -362,6 +384,35 @@ export class AffairsLibraryDirtyWatchService {
 
     const baseName = path.posix.basename(relativePath);
     return TEMPORARY_FILE_PATTERNS.some((pattern) => pattern.test(baseName));
+  }
+
+  private detectMissingIndexArtifactReason(rootDir: string, relativePath: string): string | null {
+    if (relativePath === CONFIG_RELATIVE_PATH || relativePath === TAG_RULES_RELATIVE_PATH) {
+      return null;
+    }
+    if (relativePath !== INDEX_DIR_NAME && !relativePath.startsWith(`${INDEX_DIR_NAME}/`)) {
+      return null;
+    }
+
+    const indexDirPath = path.join(rootDir, INDEX_DIR_NAME);
+    if (!fs.existsSync(indexDirPath)) {
+      return "watch:missing_index_artifact:.ai-index";
+    }
+
+    const exportDirPath = path.join(rootDir, INDEX_EXPORTS_RELATIVE_PATH);
+    if (!fs.existsSync(exportDirPath)) {
+      return "watch:missing_index_artifact:.ai-index/exports";
+    }
+
+    if (!fs.existsSync(path.join(rootDir, INDEX_EXPORT_STATUS_RELATIVE_PATH))) {
+      return `watch:missing_index_artifact:${INDEX_EXPORT_STATUS_RELATIVE_PATH}`;
+    }
+
+    if (!fs.existsSync(path.join(rootDir, INDEX_EXPORT_MANIFEST_RELATIVE_PATH))) {
+      return `watch:missing_index_artifact:${INDEX_EXPORT_MANIFEST_RELATIVE_PATH}`;
+    }
+
+    return null;
   }
 
   private resolveEffectiveTargetPath(rootDir: string, relativePath: string): string | null {
