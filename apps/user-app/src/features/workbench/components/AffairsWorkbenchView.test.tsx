@@ -29,6 +29,7 @@ const conversationApiMock = vi.hoisted(() => ({
   requestAffairsLibraryRefresh: vi.fn(),
   saveAffairsLibraryBinding: vi.fn(),
   saveAffairsLibraryConfig: vi.fn(),
+  setAffairsLibraryEnabled: vi.fn(),
   updateAffairsLibraryFavorites: vi.fn()
 }));
 
@@ -43,6 +44,7 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     requestAffairsLibraryRefresh: conversationApiMock.requestAffairsLibraryRefresh,
     saveAffairsLibraryBinding: conversationApiMock.saveAffairsLibraryBinding,
     saveAffairsLibraryConfig: conversationApiMock.saveAffairsLibraryConfig,
+    setAffairsLibraryEnabled: conversationApiMock.setAffairsLibraryEnabled,
     updateAffairsLibraryFavorites: conversationApiMock.updateAffairsLibraryFavorites
   };
 });
@@ -162,6 +164,7 @@ describe("AffairsWorkbenchView", () => {
     conversationApiMock.requestAffairsLibraryRefresh.mockReset();
     conversationApiMock.saveAffairsLibraryBinding.mockReset();
     conversationApiMock.saveAffairsLibraryConfig.mockReset();
+    conversationApiMock.setAffairsLibraryEnabled.mockReset();
     conversationApiMock.updateAffairsLibraryFavorites.mockReset();
 
     desktopBridgeMock.fs.openFile.mockClear();
@@ -172,6 +175,7 @@ describe("AffairsWorkbenchView", () => {
       binding: {
         workspaceId: "workspace-1",
         rootDir: "/Users/jackson/WorkFile",
+        enabled: true,
         configRelativePath: ".ai-index/doc-semantic-index.config.json",
         exportMode: "v2",
         updatedAt: "2026-05-31T08:00:00.000Z"
@@ -194,10 +198,22 @@ describe("AffairsWorkbenchView", () => {
       lastError: null
     });
 
+    conversationApiMock.setAffairsLibraryEnabled.mockImplementation(async (_workspaceId, payload) => ({
+      workspaceId: "workspace-1",
+      rootDir: "/Users/jackson/WorkFile",
+      enabled: payload.enabled,
+      mirrorRoot: "/Users/jackson/SynologyDrive",
+      allowedExtensions: [".docx", ".md", ".pdf"],
+      configRelativePath: ".ai-index/doc-semantic-index.config.json",
+      exportMode: "v2",
+      updatedAt: "2026-05-31T08:00:00.000Z"
+    }));
+
     conversationApiMock.getAffairsLibraryConfig.mockResolvedValue({
       binding: {
         workspaceId: "workspace-1",
         rootDir: "/Users/jackson/WorkFile",
+        enabled: true,
         mirrorRoot: "/Users/jackson/SynologyDrive",
         allowedExtensions: [".docx", ".md", ".pdf"],
         configRelativePath: ".ai-index/doc-semantic-index.config.json",
@@ -253,6 +269,7 @@ describe("AffairsWorkbenchView", () => {
       binding: {
         workspaceId: "workspace-1",
         rootDir: "/Users/jackson/WorkFile",
+        enabled: true,
         mirrorRoot: "/Users/jackson/SynologyDrive",
         allowedExtensions: [".docx", ".md", ".pdf"],
         configRelativePath: ".ai-index/doc-semantic-index.config.json",
@@ -310,6 +327,46 @@ describe("AffairsWorkbenchView", () => {
     expect(screen.getByRole("button", { name: ".docx" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: ".md" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: ".pdf" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("可以切换文档库启用状态", async () => {
+    renderWorkbench();
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibrarySettingsAction") }));
+
+    const toggleButton = await screen.findByRole("button", { name: t("shell.affairsLibraryDisableAction") });
+    await userEvent.click(toggleButton);
+
+    await waitFor(() => {
+      expect(conversationApiMock.setAffairsLibraryEnabled).toHaveBeenCalledWith("workspace-1", {
+        enabled: false
+      });
+    });
+  });
+
+
+  it("索引状态指示灯悬浮后会显示索引器状态详情", async () => {
+    renderWorkbench();
+
+    const indicator = await screen.findByRole("button", {
+      name: t("shell.affairsLibraryStatusIndicatorAction", { status: t("shell.affairsLibraryStatusFresh") })
+    });
+
+    expect(screen.queryByText(t("shell.affairsLibraryStatusFresh"))).not.toBeInTheDocument();
+
+    await userEvent.hover(indicator);
+
+    expect(await screen.findByText(t("shell.affairsLibraryStatusPopoverTitle"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsLibraryStatusCurrentLabel"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsLibraryStatusLastCompletedAtLabel"))).toBeInTheDocument();
+    const completedAtLabel = new Intl.DateTimeFormat("zh-CN", {
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    }).format(new Date("2026-05-31T08:00:00.000Z"));
+    expect(screen.getByText(completedAtLabel)).toBeInTheDocument();
   });
 
   it("点击预设后缀会切换选中状态", async () => {
@@ -377,5 +434,17 @@ describe("AffairsWorkbenchView", () => {
 
     expect(screen.getByRole("button", { name: ".pages Custom" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText(t("shell.affairsLibraryCustomExtensionBadge"))).toBeInTheDocument();
+  });
+
+  it("保存接口返回空值时会回退重新读取配置", async () => {
+    conversationApiMock.saveAffairsLibraryConfig.mockResolvedValueOnce(undefined);
+    renderWorkbench();
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibrarySettingsAction") }));
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsLibraryConfigSaveAction") }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.getAffairsLibraryConfig).toHaveBeenCalledTimes(2);
+    });
   });
 });

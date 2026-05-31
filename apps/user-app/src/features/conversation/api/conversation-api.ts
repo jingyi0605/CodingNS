@@ -125,6 +125,7 @@ export type AffairsLibraryIndexStateDto = "fresh" | "stale" | "running" | "coold
 export interface AffairsLibraryBindingDto {
   workspaceId: string;
   rootDir: string;
+  enabled: boolean;
   mirrorRoot: string | null;
   allowedExtensions: string[];
   configRelativePath: string;
@@ -1260,6 +1261,16 @@ export function getAffairsLibraryBinding(workspaceId: string) {
 export function saveAffairsLibraryBinding(workspaceId: string, payload: { rootDir: string }) {
   return httpClient.request<AffairsLibraryBindingDto>(
     `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-binding`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
+export function setAffairsLibraryEnabled(workspaceId: string, payload: { enabled: boolean }) {
+  return httpClient.request<AffairsLibraryBindingDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-enabled`,
     {
       method: "PUT",
       body: JSON.stringify(payload)

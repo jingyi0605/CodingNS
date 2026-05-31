@@ -7567,7 +7567,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   gap: 8px;
   min-height: 44px;
   margin-bottom: 0;
-  padding: 7px 14px;
+  padding: 7px clamp(28px, 10%, 120px);
   box-sizing: border-box;
 }
 
@@ -7683,6 +7683,31 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   color: color-mix(in srgb, var(--accent) 68%, var(--text-primary));
 }
 
+.affairs-stage-status-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--affairs-surface-ghost);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.affairs-stage-status-trigger:hover,
+.affairs-stage-status-trigger:focus-visible {
+  background: color-mix(in srgb, var(--panel-bg-strong) 72%, var(--affairs-surface-ghost));
+  color: var(--text-primary);
+}
+
+.affairs-stage-status-trigger:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  outline-offset: 0;
+}
+
 .affairs-stage-status-dot {
   width: 8px;
   height: 8px;
@@ -7695,9 +7720,56 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .affairs-stage-status-dot.state-cooldown { background: var(--affairs-status-cooldown); }
 .affairs-stage-status-dot.state-failed { background: var(--affairs-status-failed); }
 
-.affairs-stage-status-label {
-  font-size: 11px;
+.affairs-index-status-popover {
+  z-index: 2501;
+}
+
+.affairs-index-status-popover-card {
+  overflow: hidden;
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  background: var(--panel-bg-strong);
+  box-shadow: var(--panel-shadow);
+  backdrop-filter: blur(18px);
+}
+
+.affairs-index-status-popover-header {
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--panel-separator);
+  font-size: 12px;
   color: var(--text-secondary);
+}
+
+.affairs-index-status-popover-grid {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 14px 12px;
+}
+
+.affairs-index-status-popover-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 0;
+}
+
+.affairs-index-status-popover-row + .affairs-index-status-popover-row {
+  border-top: 1px solid color-mix(in srgb, var(--panel-separator) 84%, transparent);
+}
+
+.affairs-index-status-popover-label {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.affairs-index-status-popover-value {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.affairs-index-status-popover-value[data-multiline="true"] {
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .affairs-stage-toolbar-select {
@@ -8026,6 +8098,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   background: var(--surface-panel);
   color: var(--text-primary);
   cursor: pointer;
+  box-shadow: none;
   transition:
     border-color var(--transition-fast),
     background var(--transition-fast),
@@ -8050,18 +8123,22 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   background: color-mix(in srgb, var(--accent) 8%, var(--surface-panel));
 }
 
-.affairs-extension-chip:active:not(:disabled) {
-  transform: scale(0.98);
+.affairs-extension-chip.active:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--border-default));
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-panel));
 }
 
-.affairs-extension-chip-check {
-  font-size: 11px;
-  line-height: 1;
+.affairs-extension-chip:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 .affairs-extension-chip-badge {
   font-size: 11px;
   color: var(--text-secondary);
+}
+
+.affairs-extension-chip.active .affairs-extension-chip-badge {
+  color: color-mix(in srgb, var(--accent) 54%, var(--text-secondary));
 }
 
 .affairs-extension-manual-row {
@@ -8271,12 +8348,12 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .affairs-doc-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(134px, 1fr));
-  gap: 10px 8px;
+  gap: 8px 6px;
   align-content: start;
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 0 2px 8px;
+  padding: 0 0 8px;
 }
 
 .affairs-doc-grid-scroll,
@@ -8287,7 +8364,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .affairs-doc-grid-scroll {
-  padding: 8px 14px 10px;
+  padding: 8px clamp(28px, 10%, 120px) 10px;
   box-sizing: border-box;
 }
 
@@ -8335,20 +8412,20 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 
 .affairs-doc-item.grid {
   position: relative;
-  padding: 12px 8px 9px;
-  min-height: 122px;
-  height: 122px;
+  padding: 10px 6px 8px;
+  min-height: 112px;
+  height: 112px;
   display: grid;
-  grid-template-rows: 52px minmax(32px, auto) auto;
+  grid-template-rows: 46px minmax(30px, auto) auto;
   align-items: start;
   justify-items: center;
   text-align: center;
-  gap: 6px;
+  gap: 5px;
 }
 
 .affairs-doc-icon {
-  width: 48px;
-  height: 48px;
+  width: 42px;
+  height: 42px;
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -8357,11 +8434,11 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 
 .affairs-doc-title {
   width: 100%;
-  max-width: 112px;
+  max-width: 104px;
   margin: 0 auto;
   font-size: 11px;
   font-weight: 700;
-  line-height: 1.28;
+  line-height: 1.22;
   letter-spacing: 0.01em;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -8374,7 +8451,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   display: flex;
   justify-content: center;
   width: 100%;
-  gap: 6px;
+  gap: 4px;
   flex-wrap: wrap;
 }
 
@@ -8508,7 +8585,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 8px 14px 10px;
+  padding: 8px clamp(28px, 10%, 120px) 10px;
   box-sizing: border-box;
 }
 
@@ -8579,7 +8656,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .affairs-stage-skeleton-card {
-  height: 122px;
+  height: 112px;
 }
 
 .affairs-stage-skeleton-row {

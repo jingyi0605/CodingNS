@@ -29,6 +29,7 @@ import {
   listButlerInboxItems,
   listRecentAssistantAutomationRuns
 } from "../../butler/api/butler-api";
+import { ButlerAnchoredPopover } from "../../butler/components/ButlerAnchoredPopover";
 import { ButlerRuntimeStore, useButlerRuntimeStore } from "../../butler/runtime/butler-runtime-store";
 import type {
   AffairsLibraryBindingDto,
@@ -49,6 +50,7 @@ import {
   requestAffairsLibraryRefresh,
   saveAffairsLibraryBinding,
   saveAffairsLibraryConfig,
+  setAffairsLibraryEnabled,
   updateAffairsLibraryFavorites
 } from "../../conversation/api/conversation-api";
 import { ComposerPanel } from "../../conversation/components/ComposerPanel";
@@ -89,8 +91,8 @@ const LIBRARY_STAGE_PAGE_SIZE = 120;
 const DETAIL_VIEWER_MOUNT_DELAY_MS = 220;
 const FILE_REPEAT_ACTIVATION_MS = 450;
 const TAG_TREE_ROOT_BATCH_SIZE = 12;
-const GRID_ITEM_HEIGHT = 132;
-const GRID_GAP_Y = 10;
+const GRID_ITEM_HEIGHT = 120;
+const GRID_GAP_Y = 8;
 const LIST_ITEM_HEIGHT = 40;
 const VIRTUAL_OVERSCAN_ROWS = 2;
 const AFFAIRS_LIBRARY_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
@@ -255,6 +257,7 @@ interface AffairsWorkbenchContextValue {
   toggleDetailViewerCollapsed: () => void;
   toggleToolbarExpanded: () => void;
   saveLibraryBinding: (rootDir: string) => Promise<void>;
+  setLibraryEnabled: (enabled: boolean) => Promise<void>;
   saveLibraryConfig: (input: { mirrorRoot: string | null; allowedExtensions: string[] }) => Promise<AffairsLibraryConfigDto>;
   refreshLibrary: () => Promise<void>;
   toggleFavorite: (favorite: AffairsLibraryFavoriteRecordDto) => Promise<void>;
@@ -903,8 +906,20 @@ export function AffairsWorkbenchProvider({
       writeCachedLibrarySnapshot(workspaceId, snapshot);
       writeCachedLibraryConfig(workspaceId, config);
     },
+    setLibraryEnabled: async (enabled) => {
+      await setAffairsLibraryEnabled(workspaceId, { enabled });
+      const [snapshot, config] = await Promise.all([
+        getAffairsLibrarySnapshot(workspaceId),
+        getAffairsLibraryConfig(workspaceId)
+      ]);
+      setLibrarySnapshot((previous) => areLibrarySnapshotsEqual(previous, snapshot) ? previous : snapshot);
+      setLibraryConfig((previous) => areLibraryConfigsEqual(previous, config) ? previous : config);
+      writeCachedLibrarySnapshot(workspaceId, snapshot);
+      writeCachedLibraryConfig(workspaceId, config);
+    },
     saveLibraryConfig: async (input) => {
-      const config = await saveAffairsLibraryConfig(workspaceId, input);
+      const savedConfig = await saveAffairsLibraryConfig(workspaceId, input);
+      const config = savedConfig ?? await getAffairsLibraryConfig(workspaceId);
       setLibraryConfig((previous) => areLibraryConfigsEqual(previous, config) ? previous : config);
       writeCachedLibraryConfig(workspaceId, config);
       const snapshot = await getAffairsLibrarySnapshot(workspaceId);
@@ -2086,7 +2101,11 @@ function AffairsLibraryStageToolbar({
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const rightToolsRef = useRef<HTMLDivElement | null>(null);
   const measureRefs = useRef(new Map<string, HTMLSpanElement>());
+  const statusTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const statusPopoverRef = useRef<HTMLDivElement | null>(null);
+  const statusCloseTimerRef = useRef<number | null>(null);
   const [availableBreadcrumbWidth, setAvailableBreadcrumbWidth] = useState(0);
+  const [statusPopoverOpen, setStatusPopoverOpen] = useState(false);
   const rawBreadcrumbItems = useMemo(
     () => buildToolbarBreadcrumbItemsRaw(browseMode, folderBreadcrumbs, selectedTagPath),
     [browseMode, folderBreadcrumbs, selectedTagPath]
@@ -2095,6 +2114,9 @@ function AffairsLibraryStageToolbar({
     () => collapseToolbarBreadcrumbItems(rawBreadcrumbItems, measureRefs.current, availableBreadcrumbWidth),
     [availableBreadcrumbWidth, rawBreadcrumbItems]
   );
+  const indexStatusLabel = resolveIndexStatusLabel(indexStatus);
+  const indexStatusSummaryLabel = t("shell.affairsLibraryStatusIndicatorAction", { status: indexStatusLabel });
+  const indexStatusDetails = useMemo(() => buildIndexStatusDetails(indexStatus), [indexStatus]);
 
   useEffect(() => {
     const toolbar = toolbarRef.current;
@@ -2112,6 +2134,66 @@ function AffairsLibraryStageToolbar({
     observer.observe(rightTools);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (!statusPopoverOpen) {
+      if (statusCloseTimerRef.current !== null) {
+        window.clearTimeout(statusCloseTimerRef.current);
+        statusCloseTimerRef.current = null;
+      }
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!(event.target instanceof Node)) {
+        return;
+      }
+
+      if (
+        !statusTriggerRef.current?.contains(event.target)
+        && !statusPopoverRef.current?.contains(event.target)
+      ) {
+        setStatusPopoverOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setStatusPopoverOpen(false);
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [statusPopoverOpen]);
+
+  useEffect(() => () => {
+    if (statusCloseTimerRef.current !== null) {
+      window.clearTimeout(statusCloseTimerRef.current);
+    }
+  }, []);
+
+  function openStatusPopover() {
+    if (statusCloseTimerRef.current !== null) {
+      window.clearTimeout(statusCloseTimerRef.current);
+      statusCloseTimerRef.current = null;
+    }
+    setStatusPopoverOpen(true);
+  }
+
+  function scheduleCloseStatusPopover() {
+    if (statusCloseTimerRef.current !== null) {
+      window.clearTimeout(statusCloseTimerRef.current);
+    }
+    statusCloseTimerRef.current = window.setTimeout(() => {
+      setStatusPopoverOpen(false);
+      statusCloseTimerRef.current = null;
+    }, 120);
+  }
 
   return (
     <div ref={toolbarRef} className="affairs-stage-toolbar">
@@ -2190,8 +2272,52 @@ function AffairsLibraryStageToolbar({
           </select>
         </div>
         <div className="affairs-stage-toolbar-group">
-          <span className={`affairs-stage-status-dot state-${indexStatus?.state ?? "stale"}`} />
-          <span className="affairs-stage-status-label">{resolveIndexStatusLabel(indexStatus)}</span>
+          <button
+            ref={statusTriggerRef}
+            type="button"
+            className="affairs-stage-status-trigger"
+            aria-label={indexStatusSummaryLabel}
+            title={indexStatusSummaryLabel}
+            aria-haspopup="dialog"
+            aria-expanded={statusPopoverOpen}
+            onClick={() => setStatusPopoverOpen((current) => !current)}
+            onMouseEnter={openStatusPopover}
+            onMouseLeave={scheduleCloseStatusPopover}
+            onFocus={openStatusPopover}
+            onBlur={scheduleCloseStatusPopover}
+          >
+            <span className={`affairs-stage-status-dot state-${indexStatus?.state ?? "stale"}`} />
+          </button>
+          <ButlerAnchoredPopover
+            open={statusPopoverOpen && statusTriggerRef.current !== null}
+            className="affairs-index-status-popover"
+            anchorRef={statusTriggerRef}
+            popoverRef={statusPopoverRef}
+            role="dialog"
+            labelledBy="affairs-index-status-popover-title"
+            maxWidth={320}
+            gap={8}
+          >
+            <div
+              className="affairs-index-status-popover-card"
+              onMouseEnter={openStatusPopover}
+              onMouseLeave={scheduleCloseStatusPopover}
+            >
+              <div className="affairs-index-status-popover-header">
+                <strong id="affairs-index-status-popover-title">{t("shell.affairsLibraryStatusPopoverTitle")}</strong>
+              </div>
+              <div className="affairs-index-status-popover-grid">
+                {indexStatusDetails.map((item) => (
+                  <div key={item.label} className="affairs-index-status-popover-row">
+                    <span className="affairs-index-status-popover-label">{item.label}</span>
+                    <span className="affairs-index-status-popover-value" data-multiline={item.multiline ? "true" : undefined}>
+                      {item.value}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </ButlerAnchoredPopover>
         </div>
         <div className="affairs-stage-toolbar-group">
           <button
@@ -2283,7 +2409,7 @@ function renderDocumentShape(mode: "grid" | "row" = "grid") {
 }
 
 function AffairsLibraryBindingPanel() {
-  const { binding, saveLibraryBinding } = useAffairsWorkbenchInternal();
+  const { binding, saveLibraryBinding, setLibraryEnabled } = useAffairsWorkbenchInternal();
   const [browserOpen, setBrowserOpen] = useState(false);
   const [value, setValue] = useState(binding?.rootDir ?? "");
   const [submitting, setSubmitting] = useState(false);
@@ -2334,6 +2460,35 @@ function AffairsLibraryBindingPanel() {
             {submitting ? t("common.loading") : t("shell.affairsLibraryBindingSubmitAction")}
           </button>
         </div>
+        {binding ? (
+          <div className="affairs-library-config-section">
+            <strong>{t("shell.affairsLibraryEnableLabel")}</strong>
+            <p>{t("shell.affairsLibraryEnableHint")}</p>
+            <div className="affairs-binding-actions">
+              <span className="affairs-inline-pill">{binding.enabled ? t("shell.affairsLibraryEnabledState") : t("shell.affairsLibraryDisabledState")}</span>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={submitting}
+                onClick={async () => {
+                  setSubmitting(true);
+                  setError(null);
+                  try {
+                    await setLibraryEnabled(!binding.enabled);
+                  } catch (requestError) {
+                    setError(requestError instanceof Error ? requestError.message : t("shell.affairsLibraryEnableSaveFailed"));
+                  } finally {
+                    setSubmitting(false);
+                  }
+                }}
+              >
+                {submitting
+                  ? t("common.loading")
+                  : (binding.enabled ? t("shell.affairsLibraryDisableAction") : t("shell.affairsLibraryEnableAction"))}
+              </button>
+            </div>
+          </div>
+        ) : null}
         {error ? <span className="affairs-binding-error">{error}</span> : null}
       </div>
       <WorkspaceImportBrowserModal
@@ -2413,7 +2568,7 @@ function AffairsLibraryConfigForm({
   onCancel: () => void;
   onSaved: () => void;
 }) {
-  const { binding, libraryConfig, saveLibraryConfig } = useAffairsWorkbenchInternal();
+  const { binding, libraryConfig, saveLibraryConfig, setLibraryEnabled } = useAffairsWorkbenchInternal();
   const platform = usePlatform();
   const { showToast } = useToast();
   const mirrorRootInputId = useId();
@@ -2435,6 +2590,36 @@ function AffairsLibraryConfigForm({
 
   return (
     <div className="affairs-library-settings-form">
+      <div className="affairs-library-config-section">
+        <strong>{t("shell.affairsLibraryEnableLabel")}</strong>
+        <p>{t("shell.affairsLibraryEnableHint")}</p>
+        <div className="affairs-library-settings-inline-actions">
+          <span className="affairs-inline-pill">{binding.enabled ? t("shell.affairsLibraryEnabledState") : t("shell.affairsLibraryDisabledState")}</span>
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={submitting}
+            onClick={async () => {
+              setSubmitting(true);
+              setError(null);
+              try {
+                await setLibraryEnabled(!binding.enabled);
+              } catch (requestError) {
+                setError(requestError instanceof Error ? requestError.message : t("shell.affairsLibraryEnableSaveFailed"));
+              } finally {
+                setSubmitting(false);
+              }
+            }}
+          >
+            {submitting
+              ? t("common.loading")
+              : (binding.enabled ? t("shell.affairsLibraryDisableAction") : t("shell.affairsLibraryEnableAction"))}
+          </button>
+        </div>
+      </div>
+      {!binding.enabled ? (
+        <div className="affairs-binding-hint">{t("shell.affairsLibraryDisabledSummary")}</div>
+      ) : null}
       <ModalField
         label={t("shell.affairsLibraryMirrorRootLabel")}
         htmlFor={mirrorRootInputId}
@@ -2481,8 +2666,8 @@ function AffairsLibraryConfigForm({
                 key={extension}
                 type="button"
                 className={selected
-                  ? (preset ? "secondary-button affairs-extension-chip active" : "secondary-button affairs-extension-chip active custom")
-                  : (preset ? "secondary-button affairs-extension-chip" : "secondary-button affairs-extension-chip custom")
+                  ? (preset ? "affairs-extension-chip active" : "affairs-extension-chip active custom")
+                  : (preset ? "affairs-extension-chip" : "affairs-extension-chip custom")
                 }
                 aria-pressed={selected}
                 data-selected={selected ? "true" : "false"}
@@ -2492,7 +2677,6 @@ function AffairsLibraryConfigForm({
                     : sortAllowedExtensions([...current, extension]));
                 }}
               >
-                {selected ? <span className="affairs-extension-chip-check" aria-hidden="true">✓</span> : null}
                 <span>{extension}</span>
                 {!preset ? <span className="affairs-extension-chip-badge">{t("shell.affairsLibraryCustomExtensionBadge")}</span> : null}
               </button>
@@ -2552,10 +2736,11 @@ function AffairsLibraryConfigForm({
                 mirrorRoot: normalizedMirrorRoot,
                 allowedExtensions: normalizedExtensions
               });
+              const applyStatus = result?.applyConfigStatus;
               showToast({
                 title: t("shell.affairsLibraryConfigSaved"),
-                description: resolveLibraryConfigSaveToastDescription(result.applyConfigStatus),
-                tone: result.applyConfigStatus?.state === "failed" ? "warning" : "success"
+                description: resolveLibraryConfigSaveToastDescription(applyStatus),
+                tone: applyStatus?.state === "failed" ? "warning" : "success"
               });
               onSaved();
             } catch (requestError) {
@@ -3202,7 +3387,7 @@ function computeVirtualGridMetrics(
   viewportHeight: number,
   scrollTop: number
 ) {
-  const columnWidth = 142;
+  const columnWidth = 126;
   const columns = Math.max(1, Math.floor(Math.max(viewportWidth, columnWidth) / columnWidth));
   const rowHeight = GRID_ITEM_HEIGHT + GRID_GAP_Y;
   const totalRows = Math.ceil(itemCount / columns);
@@ -3810,6 +3995,20 @@ function formatRelativeMeta(value: string) {
   }).format(new Date(value));
 }
 
+function formatIndexStatusDateTime(value: string) {
+  if (!value) {
+    return t("common.unknown");
+  }
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  }).format(new Date(value));
+}
+
 function buildFavoriteNodeId(favorite: AffairsLibraryFavoriteRecordDto) {
   return `library:favorite:${favorite.kind}:${favorite.path}`;
 }
@@ -3954,6 +4153,66 @@ function resolveIndexStatusLabel(status: AffairsLibraryIndexStatusDto | null) {
     default:
       return t("shell.affairsLibraryStatusFresh");
   }
+}
+
+function buildIndexStatusDetails(status: AffairsLibraryIndexStatusDto | null) {
+  const details: Array<{ label: string; value: string; multiline?: boolean }> = [
+    {
+      label: t("shell.affairsLibraryStatusCurrentLabel"),
+      value: resolveIndexStatusLabel(status)
+    }
+  ];
+
+  if (!status) {
+    return details;
+  }
+
+  pushIndexStatusDetail(details, t("shell.affairsLibraryStatusLastRequestedAtLabel"), status.lastRequestedAt);
+  pushIndexStatusDetail(details, t("shell.affairsLibraryStatusLastStartedAtLabel"), status.lastStartedAt);
+  pushIndexStatusDetail(details, t("shell.affairsLibraryStatusLastCompletedAtLabel"), status.lastCompletedAt);
+  pushIndexStatusDetail(details, t("shell.affairsLibraryStatusLastFailedAtLabel"), status.lastFailedAt);
+  pushIndexStatusDetail(details, t("shell.affairsLibraryStatusNextAllowedAtLabel"), status.nextAllowedAt);
+
+  if (status.runningTaskId?.trim()) {
+    details.push({
+      label: t("shell.affairsLibraryStatusRunningTaskIdLabel"),
+      value: status.runningTaskId.trim(),
+      multiline: true
+    });
+  }
+
+  if (status.dirtyReasons.length > 0) {
+    details.push({
+      label: t("shell.affairsLibraryStatusDirtyReasonsLabel"),
+      value: status.dirtyReasons.join("、"),
+      multiline: true
+    });
+  }
+
+  if (status.errorSummary?.trim()) {
+    details.push({
+      label: t("shell.affairsLibraryStatusErrorSummaryLabel"),
+      value: status.errorSummary.trim(),
+      multiline: true
+    });
+  }
+
+  return details;
+}
+
+function pushIndexStatusDetail(
+  details: Array<{ label: string; value: string; multiline?: boolean }>,
+  label: string,
+  value: string | null
+) {
+  if (!value) {
+    return;
+  }
+
+  details.push({
+    label,
+    value: formatIndexStatusDateTime(value)
+  });
 }
 
 function resolveLibraryEmptyText(status: AffairsLibraryIndexStatusDto | null) {
