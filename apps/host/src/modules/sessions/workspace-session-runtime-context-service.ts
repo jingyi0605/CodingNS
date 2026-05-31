@@ -15,6 +15,8 @@ import {
 const WORKSPACE_SESSION_ASSISTANT_FILE = "WORKSPACE_SESSION_ASSISTANT.md";
 const WORKSPACE_SESSION_SKILL_DIRECTORY = "codingns-workspace-session";
 const WORKSPACE_SESSION_COMPOSED_INSTRUCTION_FILE = "WORKSPACE_SESSION_COMPOSED.md";
+const WORKSPACE_SESSION_ADDITIONAL_RULES_SECTION = `# 工作区会话附加规则\n\n下面这段规则由 Host 在工作区会话启动时显式注入，只对当前工作区会话生效。\n\n`;
+const WORKSPACE_SESSION_TEMP_RULES_SECTION = `# 工作区会话临时规则\n\n下面这段规则只针对当前这次用户消息生效，用来约束命中的任务类型，不改项目里的 AGENTS.md。\n\n`;
 
 interface WorkspaceSessionRuntimeContextServiceOptions {
   codexHomeDir?: string;
@@ -184,6 +186,41 @@ export class WorkspaceSessionRuntimeContextService {
       instructionFilePath: composedInstructionPath,
       runtimeHomeDir,
       runtimeEnv: buildWorkspaceSessionRuntimeEnv(input.provider, authFilePath, composedInstructionPath)
+    };
+  }
+
+  refreshWorkspaceInstructionBundle(input: {
+    workspacePath: string;
+    runtimeHomeDir: string;
+  }): { instructionFilePath: string; refreshed: boolean } {
+    const workspaceAgentsPath = path.join(input.workspacePath, "AGENTS.md");
+    const instructionFilePath = path.join(input.runtimeHomeDir, WORKSPACE_SESSION_COMPOSED_INSTRUCTION_FILE);
+
+    if (!fs.existsSync(instructionFilePath) || !fs.statSync(instructionFilePath).isFile()) {
+      return {
+        instructionFilePath,
+        refreshed: false
+      };
+    }
+
+    const currentContent = fs.readFileSync(instructionFilePath, "utf8");
+    const nextContent = composeWorkspaceInstructionDocument({
+      workspaceAgentsPath,
+      workspaceInstruction: extractWorkspaceInstructionSuffix(currentContent),
+      instructionOverlay: extractWorkspaceInstructionOverlay(currentContent)
+    });
+
+    if (currentContent === nextContent) {
+      return {
+        instructionFilePath,
+        refreshed: false
+      };
+    }
+
+    fs.writeFileSync(instructionFilePath, nextContent, "utf8");
+    return {
+      instructionFilePath,
+      refreshed: true
     };
   }
 }
@@ -436,23 +473,35 @@ function composeWorkspaceInstructionDocument(input: {
     }
   }
 
-  sections.push(`# 工作区会话附加规则
-
-下面这段规则由 Host 在工作区会话启动时显式注入，只对当前工作区会话生效。
-
-${input.workspaceInstruction.trim()}`);
+  sections.push(`${WORKSPACE_SESSION_ADDITIONAL_RULES_SECTION}${input.workspaceInstruction.trim()}`);
 
   const normalizedOverlay = input.instructionOverlay?.trim() ?? "";
 
   if (normalizedOverlay.length > 0) {
-    sections.push(`# 工作区会话临时规则
-
-下面这段规则只针对当前这次用户消息生效，用来约束命中的任务类型，不改项目里的 AGENTS.md。
-
-${normalizedOverlay}`);
+    sections.push(`${WORKSPACE_SESSION_TEMP_RULES_SECTION}${normalizedOverlay}`);
   }
 
   return `${sections.join("\n\n")}\n`;
+}
+
+function extractWorkspaceInstructionSuffix(content: string): string {
+  const markerIndex = content.indexOf(WORKSPACE_SESSION_ADDITIONAL_RULES_SECTION);
+
+  if (markerIndex >= 0) {
+    return content.slice(markerIndex);
+  }
+
+  return `${WORKSPACE_SESSION_ADDITIONAL_RULES_SECTION.trimEnd()}\n`;
+}
+
+function extractWorkspaceInstructionOverlay(content: string): string | null {
+  const overlayIndex = content.indexOf(WORKSPACE_SESSION_TEMP_RULES_SECTION);
+
+  if (overlayIndex < 0) {
+    return null;
+  }
+
+  return content.slice(overlayIndex + WORKSPACE_SESSION_TEMP_RULES_SECTION.length).trimEnd();
 }
 
 function buildWorkspaceSessionRuntimeEnv(
