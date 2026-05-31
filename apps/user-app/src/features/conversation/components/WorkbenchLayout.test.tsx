@@ -48,6 +48,7 @@ vi.mock("../../../platform/desktop/desktop-context-menu", () => ({
 }));
 
 vi.mock("../../butler/api/butler-api", () => ({
+  listAssistantAutomations: vi.fn().mockResolvedValue({ items: [] }),
   createButlerInboxItem: vi.fn(),
   deleteButlerInboxItem: vi.fn(),
   getButlerProfile: vi.fn(),
@@ -56,6 +57,7 @@ vi.mock("../../butler/api/butler-api", () => ({
   listButlerInboxItems: vi.fn(),
   listButlerNotificationArchives: vi.fn(),
   listButlerProjects: vi.fn(),
+  listRecentAssistantAutomationRuns: vi.fn().mockResolvedValue({ items: [] }),
   updateButlerNotificationArchive: vi.fn(),
   updateButlerInboxItem: vi.fn()
 }));
@@ -536,6 +538,42 @@ describe("WorkbenchLayout", () => {
 
     expect(within(settingsButton).getByText(t("settings.title"))).toBeInTheDocument();
     expect(within(settingsButton).queryByText("本地 Host")).not.toBeInTheDocument();
+  });
+
+  it("事务视图点击底部设置按钮后会切到设置路由，并保留事务侧栏态", async () => {
+    mockAffairsLibraryFetch();
+    MockWebSocket.workbenchSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话一",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+    const user = userEvent.setup();
+    const view = renderWorkbenchRoute("/workspaces/workspace-1/affairs");
+    await screen.findByText(t("shell.affairsSectionGroupFavorites"));
+    const settingsButton = view.container.querySelector(".workbench-nav-settings-button");
+
+    if (!(settingsButton instanceof HTMLElement)) {
+      throw new Error("未找到设置按钮");
+    }
+
+    await user.click(settingsButton);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path").textContent).toBe("/settings");
+    });
+    expect(screen.getByRole("tab", { name: t("shell.workbenchModeCode") })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("tab", { name: t("shell.workbenchModeAffairs") })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: t("shell.affairsLibraryNav") })).toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsSectionGroupFavorites"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsLibraryTagTreeTitle"))).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: t("shell.conversationEntry") })).not.toBeInTheDocument();
   });
 
   it("会把缺失 children 的侧栏树节点当作空数组处理", () => {
@@ -8268,21 +8306,71 @@ describe("WorkbenchLayout", () => {
     expect(badge).toHaveClass("session-parallel-badge");
   });
   it("顶层模式切到事务后会进入 affairs 路由，并保留切回代码能力", async () => {
+    MockWebSocket.workbenchSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话一",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
     renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
 
     await userEvent.click(await screen.findByRole("tab", { name: t("shell.workbenchModeAffairs") }));
-    expect(await screen.findByTestId("current-path")).toHaveTextContent("/workspaces/workspace-1/affairs");
+    expect(await screen.findByRole("tab", { name: t("shell.workbenchModeAffairs") })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("button", { name: t("shell.affairsLibrarySettingsAction") })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("tab", { name: t("shell.workbenchModeCode") }));
     expect(await screen.findByTestId("current-path")).toHaveTextContent("/workspaces/workspace-1/sessions/session-1");
   });
 
+  it("事务模式入口不会复用错误写入的设置页路径", async () => {
+    writeViewSnapshot("workbench.mode.affairs.last-path.workspace-1", "/settings");
+    MockWebSocket.workbenchSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话一",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+
+    await userEvent.click(await screen.findByRole("tab", { name: t("shell.workbenchModeAffairs") }));
+    expect(await screen.findByRole("tab", { name: t("shell.workbenchModeAffairs") })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("button", { name: t("shell.affairsLibrarySettingsAction") })).toBeInTheDocument();
+  });
+
   it("打开 affairs 路由时会直接激活事务模式", async () => {
+    mockAffairsLibraryFetch();
+    MockWebSocket.workbenchSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话一",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
     renderWorkbenchRoute("/workspaces/workspace-1/affairs");
 
     expect(await screen.findByRole("tab", { name: t("shell.workbenchModeAffairs") })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText(t("shell.affairsLibraryTitle"))).toBeInTheDocument();
-    expect(screen.getByText(t("shell.affairsAssistantTitle"))).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: t("shell.affairsLibraryNav") })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: t("shell.affairsAssistantTitle") })).toBeInTheDocument();
+    expect(await screen.findByText(t("shell.affairsSectionGroupFavorites"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsLibraryTagTreeTitle"))).toBeInTheDocument();
   });
 
 });
@@ -8313,6 +8401,7 @@ function renderWorkbenchRoute(
             <Route path="/workspaces/:workspaceId/affairs" element={<CurrentLocationProbe />} />
             <Route path="/workspaces/:workspaceId/terminals" element={<CurrentLocationProbe />} />
             <Route path="/workspaces/:workspaceId/butler" element={<CurrentLocationProbe />} />
+            <Route path="/settings" element={<CurrentLocationProbe />} />
             <Route path="/sessions/:sessionId" element={<CurrentLocationProbe />} />
             <Route path="/terminals" element={<CurrentLocationProbe />} />
           </Route>
@@ -8723,6 +8812,113 @@ function createJsonResponse(payload: unknown, status = 200): Response {
       "Content-Type": "application/json"
     }
   });
+}
+
+function mockAffairsLibraryFetch() {
+  global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+    const url = String(rawInput);
+
+    if (url.includes("/api/workspaces/workspace-1/affairs/library-snapshot")) {
+      return createJsonResponse({
+        binding: {
+          workspaceId: "workspace-1",
+          rootDir: "/Users/jackson/WorkFile",
+          enabled: true,
+          configRelativePath: ".ai-index/doc-semantic-index.config.json",
+          exportMode: "v2",
+          updatedAt: "2026-05-31T08:00:00.000Z"
+        },
+        status: {
+          state: "fresh",
+          dirtyReasons: [],
+          lastRequestedAt: null,
+          lastStartedAt: null,
+          lastCompletedAt: "2026-05-31T08:00:00.000Z",
+          lastFailedAt: null,
+          nextAllowedAt: null,
+          runningTaskId: null,
+          errorSummary: null
+        },
+        tags: [
+          {
+            path: "客户/重要",
+            name: "重要",
+            rootType: "manual",
+            parentPath: "客户",
+            depth: 1,
+            documentCount: 3
+          },
+          {
+            path: "客户",
+            name: "客户",
+            rootType: "manual",
+            parentPath: null,
+            depth: 0,
+            documentCount: 3
+          }
+        ],
+        favorites: [
+          {
+            kind: "folder",
+            path: "客户资料",
+            label: "客户资料"
+          }
+        ],
+        folders: [
+          {
+            path: "客户资料",
+            name: "客户资料",
+            parentPath: null,
+            documentCount: 3,
+            directDocumentCount: 1
+          }
+        ],
+        documentCount: 1,
+        lastError: null
+      });
+    }
+
+    if (url.includes("/api/workspaces/workspace-1/affairs/library-documents")) {
+      return createJsonResponse({
+        total: 1,
+        offset: 0,
+        limit: 120,
+        items: [
+          {
+            documentId: "doc-1",
+            path: "客户资料/跟进记录.md",
+            title: "跟进记录",
+            summary: "事务文档摘要",
+            updatedAt: "2026-05-31T08:00:00.000Z",
+            tags: ["客户/重要"],
+            derivedTags: [],
+            isFavorite: false
+          }
+        ]
+      });
+    }
+
+    if (url.includes("/api/workspaces/workspace-1/affairs/library-config")) {
+      return createJsonResponse({
+        binding: {
+          workspaceId: "workspace-1",
+          rootDir: "/Users/jackson/WorkFile",
+          enabled: true,
+          mirrorRoot: "/Users/jackson/SynologyDrive",
+          allowedExtensions: [".docx", ".md", ".pdf"],
+          configRelativePath: ".ai-index/doc-semantic-index.config.json",
+          exportMode: "v2",
+          updatedAt: "2026-05-31T08:00:00.000Z"
+        },
+        mirrorRoot: "/Users/jackson/SynologyDrive",
+        allowedExtensions: [".docx", ".md", ".pdf"],
+        configRelativePath: ".ai-index/doc-semantic-index.config.json",
+        canWrite: true
+      });
+    }
+
+    return createJsonResponse({});
+  }) as typeof fetch;
 }
 
 function createSkillOverviewResponse() {

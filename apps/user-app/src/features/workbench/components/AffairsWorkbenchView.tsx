@@ -62,6 +62,10 @@ import { buildConversationTimelineSourceItems } from "../../conversation/timelin
 import { getCodingNSDesktopBridge } from "../../../platform/desktop/codingns-desktop-bridge";
 import { usePlatform } from "../../../platform/platform-provider";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
+import {
+  computeVirtualGridMetrics,
+  shouldVirtualizeAffairsGrid
+} from "../utils/affairs-grid";
 import type {
   AffairsAuxiliaryTab,
   AffairsObjectContext,
@@ -91,10 +95,10 @@ const LIBRARY_STAGE_PAGE_SIZE = 120;
 const DETAIL_VIEWER_MOUNT_DELAY_MS = 220;
 const FILE_REPEAT_ACTIVATION_MS = 450;
 const TAG_TREE_ROOT_BATCH_SIZE = 12;
-const GRID_ITEM_HEIGHT = 104;
-const GRID_GAP_Y = 12;
 const LIST_ITEM_HEIGHT = 40;
-const VIRTUAL_OVERSCAN_ROWS = 2;
+const LIST_VIRTUAL_OVERSCAN_ROWS = 2;
+const AFFAIRS_LIBRARY_STATUS_POLL_ACTIVE_MS = 3_000;
+const AFFAIRS_LIBRARY_STATUS_POLL_IDLE_MS = 12_000;
 const AFFAIRS_LIBRARY_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 const AFFAIRS_LIBRARY_PRESET_EXTENSIONS = [
   ".md", ".mdx", ".txt", ".rtf", ".html", ".htm", ".xml", ".json", ".yaml", ".yml", ".tsv",
@@ -224,6 +228,7 @@ interface AffairsWorkbenchContextValue {
   error: string | null;
   libraryLoading: boolean;
   libraryDocumentsLoading: boolean;
+  libraryRefreshPending: boolean;
   libraryDocumentTotal: number;
   libraryDocumentHasMore: boolean;
   binding: AffairsLibraryBindingDto | null;
@@ -317,6 +322,7 @@ export function AffairsWorkbenchProvider({
   const [libraryConfig, setLibraryConfig] = useState<AffairsLibraryConfigDto | null>(initialLibraryConfig);
   const [libraryDocumentPage, setLibraryDocumentPage] = useState<AffairsLibraryDocumentListDto | null>(initialLibraryDocumentPage);
   const [libraryDocumentsLoading, setLibraryDocumentsLoading] = useState(false);
+  const [libraryRefreshPending, setLibraryRefreshPending] = useState(false);
   const [viewerState, setViewerState] = useState<AffairsLibraryViewerState>(null);
   const [inboxItems, setInboxItems] = useState<ButlerInboxItemDto[]>([]);
   const [followUpTasks, setFollowUpTasks] = useState<ButlerFollowUpTaskDto[]>([]);
@@ -324,6 +330,12 @@ export function AffairsWorkbenchProvider({
   const [automationRuns, setAutomationRuns] = useState<AssistantAutomationRunDto[]>([]);
   const { showToast } = useToast();
   const recentFileActivationRef = useRef<{ path: string; timestamp: number } | null>(null);
+  const librarySnapshotRef = useRef<AffairsLibrarySnapshotDto | null>(initialLibrarySnapshot);
+  const lazyRefreshKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    librarySnapshotRef.current = librarySnapshot;
+  }, [librarySnapshot]);
 
   useEffect(() => {
     let disposed = false;
@@ -371,6 +383,55 @@ export function AffairsWorkbenchProvider({
       disposed = true;
     };
   }, [workspaceId]);
+
+  useEffect(() => {
+    if (!librarySnapshot?.binding?.enabled) {
+      return;
+    }
+
+    const pollIntervalMs = librarySnapshot.status.state === "fresh"
+      ? AFFAIRS_LIBRARY_STATUS_POLL_IDLE_MS
+      : AFFAIRS_LIBRARY_STATUS_POLL_ACTIVE_MS;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleNext = () => {
+      timer = setTimeout(() => {
+        void pollSnapshot();
+      }, pollIntervalMs);
+    };
+
+    const pollSnapshot = async () => {
+      try {
+        const snapshot = await getAffairsLibrarySnapshot(workspaceId);
+        if (disposed) {
+          return;
+        }
+        setLibrarySnapshot((previous) => areLibrarySnapshotsEqual(previous, snapshot) ? previous : snapshot);
+        writeCachedLibrarySnapshot(workspaceId, snapshot);
+      } catch {
+        if (disposed) {
+          return;
+        }
+      }
+
+      if (!disposed) {
+        scheduleNext();
+      }
+    };
+
+    scheduleNext();
+    return () => {
+      disposed = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+  }, [
+    librarySnapshot?.binding?.enabled,
+    librarySnapshot?.status.state,
+    workspaceId
+  ]);
 
   useEffect(() => {
     let disposed = false;
@@ -456,6 +517,39 @@ export function AffairsWorkbenchProvider({
     [favoriteEntries]
   );
 
+  useEffect(() => {
+    if (activeSection !== "library" || !binding?.enabled || libraryLoading || libraryRefreshPending) {
+      return;
+    }
+
+    const lazyRefreshKey = buildLazyRefreshKey(workspaceId, indexStatus);
+    if (!shouldRunLazyLibraryRefresh(indexStatus) || lazyRefreshKeyRef.current === lazyRefreshKey) {
+      return;
+    }
+
+    lazyRefreshKeyRef.current = lazyRefreshKey;
+    void (async () => {
+      try {
+        setLibraryRefreshPending(true);
+        await requestAffairsLibraryRefresh(workspaceId, { reason: "view_lazy_check" });
+        const snapshot = await getAffairsLibrarySnapshot(workspaceId);
+        setLibrarySnapshot((previous) => areLibrarySnapshotsEqual(previous, snapshot) ? previous : snapshot);
+        writeCachedLibrarySnapshot(workspaceId, snapshot);
+      } catch {
+        // 懒检查失败时静默降级，交给轮询和手动刷新兜底。
+      } finally {
+        setLibraryRefreshPending(false);
+      }
+    })();
+  }, [
+    activeSection,
+    binding?.enabled,
+    indexStatus,
+    libraryLoading,
+    libraryRefreshPending,
+    workspaceId
+  ]);
+
   const filteredDocuments = useMemo(() => {
     if (activeSection !== "library" || !binding) {
       return [];
@@ -521,6 +615,7 @@ export function AffairsWorkbenchProvider({
   }, [
     activeSection,
     binding,
+    librarySnapshot?.status.lastCompletedAt,
     state.browseMode,
     state.selectedFavoriteId,
     state.selectedFolderPath,
@@ -731,6 +826,7 @@ export function AffairsWorkbenchProvider({
     error,
     libraryLoading,
     libraryDocumentsLoading,
+    libraryRefreshPending,
     libraryDocumentTotal: libraryDocumentPage?.total ?? 0,
     libraryDocumentHasMore: (libraryDocumentPage?.items.length ?? 0) < (libraryDocumentPage?.total ?? 0),
     binding,
@@ -928,10 +1024,27 @@ export function AffairsWorkbenchProvider({
       return config;
     },
     refreshLibrary: async () => {
-      await requestAffairsLibraryRefresh(workspaceId, { reason: "manual_refresh" });
-      const snapshot = await getAffairsLibrarySnapshot(workspaceId);
-      setLibrarySnapshot((previous) => areLibrarySnapshotsEqual(previous, snapshot) ? previous : snapshot);
-      writeCachedLibrarySnapshot(workspaceId, snapshot);
+      setLibraryRefreshPending(true);
+      try {
+        await requestAffairsLibraryRefresh(workspaceId, { reason: "manual_refresh" });
+        const snapshot = await getAffairsLibrarySnapshot(workspaceId);
+        setLibrarySnapshot((previous) => areLibrarySnapshotsEqual(previous, snapshot) ? previous : snapshot);
+        writeCachedLibrarySnapshot(workspaceId, snapshot);
+        showToast({
+          title: t("shell.affairsLibraryRefreshQueued"),
+          description: t("shell.affairsLibraryRefreshQueuedDescription"),
+          tone: "success"
+        });
+      } catch (requestError) {
+        showToast({
+          title: t("shell.affairsLibraryRefreshFailed"),
+          description: requestError instanceof Error ? requestError.message : t("shell.affairsLibraryRefreshFailed"),
+          tone: "error"
+        });
+        throw requestError;
+      } finally {
+        setLibraryRefreshPending(false);
+      }
     },
     toggleFavorite: async (favorite) => {
       const currentFavorites = librarySnapshot?.favorites ?? [];
@@ -973,6 +1086,9 @@ export function AffairsWorkbenchProvider({
     folderRecords,
     indexStatus,
     libraryDocumentPage,
+    libraryDocumentsLoading,
+    libraryLoading,
+    libraryRefreshPending,
     librarySnapshot,
     loadMoreLibraryDocuments,
     loading,
@@ -1054,7 +1170,6 @@ export function AffairsSidebarPanel() {
     todoRecords,
     automationRecords,
     selectSidebarNode,
-    setLibraryBrowseMode,
     loading,
     error
   } = useAffairsWorkbenchInternal();
@@ -1153,51 +1268,18 @@ export function AffairsSidebarPanel() {
 
   return (
     <section className="workbench-section-block affairs-sidebar-block">
-      <div className="affairs-sidebar-block-header">
-        <div>
-          <h2>{resolveSectionSidebarTitle(activeSection)}</h2>
-          <p>{resolveSectionSidebarDescription(activeSection, {
-            documentCount: documentRecords.length,
-            favoriteCount: favoriteEntries.length,
-            tagCount: tagRecords.length,
-            todoCount: todoRecords.length,
-            automationCount: automationRecords.length
-          })}</p>
-        </div>
-        {binding ? <span className="affairs-inline-pill">{resolveIndexStatusLabel(indexStatus)}</span> : null}
-      </div>
-      <div className="affairs-sidebar-mode-toggle" role="tablist" aria-label={t("shell.affairsLibraryBrowseModeLabel")}>
-        <button
-          type="button"
-          className={state.browseMode === "folder" ? "workbench-nav-segment-button active" : "workbench-nav-segment-button"}
-          role="tab"
-          aria-selected={state.browseMode === "folder"}
-          onClick={() => setLibraryBrowseMode("folder")}
-        >
-          {t("shell.affairsLibraryBrowseModeFolder")}
-        </button>
-        <button
-          type="button"
-          className={state.browseMode === "tag" ? "workbench-nav-segment-button active" : "workbench-nav-segment-button"}
-          role="tab"
-          aria-selected={state.browseMode === "tag"}
-          onClick={() => setLibraryBrowseMode("tag")}
-        >
-          {t("shell.affairsLibraryBrowseModeTag")}
-        </button>
-      </div>
       {loading ? <div className="affairs-sidebar-empty compact">{t("common.loading")}</div> : null}
       {error ? <div className="affairs-sidebar-empty">{error}</div> : null}
       {!loading && !error ? (
         <div className="affairs-sidebar-groups affairs-library-sidebar-groups">
-          <section className="affairs-sidebar-group affairs-favorites-panel">
+          <section className="affairs-sidebar-group affairs-sidebar-group-plain affairs-favorites-panel">
             <header className="affairs-sidebar-group-header">
               <span>{t("shell.affairsSectionGroupFavorites")}</span>
               <span>{favoriteEntries.length}</span>
             </header>
-            <div className="affairs-sidebar-list" role="list">
+            <div className="affairs-sidebar-list affairs-sidebar-list-plain" role="list">
               {favoriteEntries.length === 0 ? (
-                <div className="affairs-sidebar-empty compact">{t("shell.affairsFavoritesEmpty")}</div>
+                <div className="affairs-sidebar-empty affairs-sidebar-empty-plain compact">{t("shell.affairsFavoritesEmpty")}</div>
               ) : (
                 <>
                   {favoriteFolderItems.length > 0 ? <div className="affairs-sidebar-subtitle">{t("shell.affairsLibraryBrowseModeFolder")}</div> : null}
@@ -1247,13 +1329,13 @@ export function AffairsSidebarPanel() {
             </div>
           </section>
 
-          <section className="affairs-sidebar-group affairs-tag-tree-panel">
+          <section className="affairs-sidebar-group affairs-sidebar-group-plain affairs-tag-tree-panel">
             <header className="affairs-sidebar-group-header">
               <span>{t("shell.affairsLibraryTagTreeTitle")}</span>
               <span>{tagRecords.length}</span>
             </header>
             {tagTree.length === 0 ? (
-              <div className="affairs-sidebar-empty compact">{resolveLibraryEmptyText(indexStatus)}</div>
+              <div className="affairs-sidebar-empty affairs-sidebar-empty-plain compact">{resolveLibraryEmptyText(indexStatus)}</div>
             ) : (
               <div className="affairs-tag-tree-list" role="tree" aria-label={t("shell.affairsLibraryTagTreeTitle")}>
                 {visibleTagRoots.map((node) => (
@@ -1284,7 +1366,7 @@ export function AffairsSidebarPanel() {
             )}
           </section>
           {binding && folderRecords.length === 0 && tagRecords.length === 0 ? (
-            <div className="affairs-sidebar-empty">{resolveLibraryEmptyText(indexStatus)}</div>
+            <div className="affairs-sidebar-empty affairs-sidebar-empty-plain">{resolveLibraryEmptyText(indexStatus)}</div>
           ) : null}
         </div>
       ) : null}
@@ -1302,6 +1384,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     filteredTodoRecords,
     automationRecords,
     folderRecords,
+    tagRecords,
     indexStatus,
     loading,
     openLibraryViewer,
@@ -1312,8 +1395,10 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     navigateLibraryFolder,
     navigateLibraryTag,
     libraryDocumentsLoading,
+    libraryRefreshPending,
     libraryDocumentHasMore,
     loadMoreLibraryDocuments,
+    refreshLibrary,
     setLibraryViewMode
   } = useAffairsWorkbenchInternal();
   const stageScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1369,8 +1454,11 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     () => sortedLibraryEntries.slice(listMetrics.startIndex, listMetrics.endIndex),
     [sortedLibraryEntries, listMetrics.endIndex, listMetrics.startIndex]
   );
-  const gridMetricsReady = state.viewMode !== "grid"
-    || (stageViewportWidth >= 280 && stageViewportHeight >= GRID_ITEM_HEIGHT);
+  const shouldVirtualizeGrid = shouldVirtualizeAffairsGrid(
+    sortedLibraryEntries.length,
+    stageViewportWidth,
+    stageViewportHeight
+  );
   const folderBreadcrumbs = useMemo(
     () => buildFolderBreadcrumbs(state.selectedFolderPath),
     [state.selectedFolderPath]
@@ -1383,7 +1471,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     }
     const sync = () => {
       setStageViewportHeight(element.clientHeight);
-      setStageViewportWidth(element.clientWidth);
+      setStageViewportWidth(measureStageScrollContentWidth(element));
     };
     sync();
     if (typeof ResizeObserver === "undefined") {
@@ -1403,7 +1491,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     let timeoutId = 0;
     const sync = () => {
       setStageViewportHeight(element.clientHeight);
-      setStageViewportWidth(element.clientWidth);
+      setStageViewportWidth(measureStageScrollContentWidth(element));
     };
     frameId = window.requestAnimationFrame(sync);
     timeoutId = window.setTimeout(sync, 80);
@@ -1449,16 +1537,18 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                 <AffairsLibraryStageToolbar
                   browseMode={state.browseMode}
                   folderBreadcrumbs={folderBreadcrumbs}
+                  tagRecords={tagRecords}
                   indexStatus={indexStatus}
-                  selectedFolderPath={state.selectedFolderPath}
                   selectedTagPath={state.selectedTagPath}
                   sortMode={sortMode}
                   viewMode={state.viewMode}
                   onNavigateFolder={navigateLibraryFolder}
                   onNavigateTag={navigateLibraryTag}
                   onOpenSettings={() => setSettingsOpen(true)}
+                  onRefresh={refreshLibrary}
                   onSetSortMode={setSortMode}
                   onSetViewMode={setLibraryViewMode}
+                  refreshPending={libraryRefreshPending}
                 />
                 {libraryEntries.length === 0 ? (
                   libraryDocumentsLoading ? <AffairsStageSkeleton viewMode={state.viewMode} /> : <div className="affairs-stage-empty">{resolveLibraryEmptyText(indexStatus)}</div>
@@ -1466,7 +1556,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                   <>
                 <div ref={stageScrollRef} className="affairs-doc-grid-scroll">
                 <div className="affairs-doc-grid-viewport">
-                  {gridMetricsReady ? (
+                  {shouldVirtualizeGrid ? (
                     <div className="affairs-doc-grid-spacer" style={{ height: `${gridMetrics.totalHeight}px` }}>
                       <div
                         className="affairs-doc-grid affairs-doc-grid-virtual"
@@ -2074,29 +2164,33 @@ function AffairsStageSkeleton({ viewMode }: { viewMode: "grid" | "list" }) {
 function AffairsLibraryStageToolbar({
   browseMode,
   folderBreadcrumbs,
+  tagRecords,
   indexStatus,
-  selectedFolderPath,
   selectedTagPath,
   sortMode,
   viewMode,
   onNavigateFolder,
   onNavigateTag,
   onOpenSettings,
+  onRefresh,
   onSetSortMode,
-  onSetViewMode
+  onSetViewMode,
+  refreshPending
 }: {
   browseMode: "folder" | "tag";
   folderBreadcrumbs: Array<{ label: string; path: string }>;
+  tagRecords: TagRecord[];
   indexStatus: AffairsLibraryIndexStatusDto | null;
-  selectedFolderPath: string | null;
   selectedTagPath: string | null;
   sortMode: LibrarySortMode;
   viewMode: "grid" | "list";
   onNavigateFolder: (path: string | null) => void;
   onNavigateTag: (path: string | null) => void;
   onOpenSettings: () => void;
+  onRefresh: () => Promise<void>;
   onSetSortMode: (mode: LibrarySortMode) => void;
   onSetViewMode: (mode: "grid" | "list") => void;
+  refreshPending: boolean;
 }) {
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const rightToolsRef = useRef<HTMLDivElement | null>(null);
@@ -2107,8 +2201,8 @@ function AffairsLibraryStageToolbar({
   const [availableBreadcrumbWidth, setAvailableBreadcrumbWidth] = useState(0);
   const [statusPopoverOpen, setStatusPopoverOpen] = useState(false);
   const rawBreadcrumbItems = useMemo(
-    () => buildToolbarBreadcrumbItemsRaw(browseMode, folderBreadcrumbs, selectedTagPath),
-    [browseMode, folderBreadcrumbs, selectedTagPath]
+    () => buildToolbarBreadcrumbItemsRaw(browseMode, folderBreadcrumbs, tagRecords, selectedTagPath),
+    [browseMode, folderBreadcrumbs, selectedTagPath, tagRecords]
   );
   const breadcrumbItems = useMemo(
     () => collapseToolbarBreadcrumbItems(rawBreadcrumbItems, measureRefs.current, availableBreadcrumbWidth),
@@ -2199,8 +2293,8 @@ function AffairsLibraryStageToolbar({
     <div ref={toolbarRef} className="affairs-stage-toolbar">
       <div className="affairs-stage-toolbar-left">
         <div className="affairs-stage-breadcrumb" aria-label={t("shell.affairsLibraryBindingFieldLabel")}>
-          <button type="button" className="affairs-stage-breadcrumb-button root" onClick={() => browseMode === "folder" ? onNavigateFolder(null) : onNavigateTag(null)}>
-            /
+          <button type="button" className="affairs-stage-breadcrumb-button root" onClick={() => onNavigateFolder(null)}>
+            {" / "}
           </button>
           {breadcrumbItems.map((item, index) => (
             <Fragment key={item.key}>
@@ -2270,6 +2364,20 @@ function AffairsLibraryStageToolbar({
             <option value="name">{t("shell.affairsLibrarySortName")}</option>
             <option value="type">{t("shell.affairsLibrarySortType")}</option>
           </select>
+        </div>
+        <div className="affairs-stage-toolbar-group">
+          <button
+            type="button"
+            className="affairs-stage-toolbar-icon"
+            disabled={refreshPending}
+            aria-label={t("shell.affairsLibraryRefreshAction")}
+            title={t("shell.affairsLibraryRefreshAction")}
+            onClick={() => {
+              void onRefresh();
+            }}
+          >
+            <RefreshLibraryIcon />
+          </button>
         </div>
         <div className="affairs-stage-toolbar-group">
           <button
@@ -3082,6 +3190,17 @@ function ListViewIcon() {
   );
 }
 
+function RefreshLibraryIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path d="M20 5v5h-5" />
+      <path d="M4 19v-5h5" />
+      <path d="M6.8 9A7 7 0 0 1 18 6.4L20 10" />
+      <path d="M17.2 15A7 7 0 0 1 6 17.6L4 14" />
+    </svg>
+  );
+}
+
 function AffairsSettingsIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
@@ -3280,6 +3399,39 @@ function writeCachedLibraryDocumentPage(
   writeViewSnapshot(buildAffairsLibraryDocumentPageCacheKey(workspaceId, state), page);
 }
 
+function buildLazyRefreshKey(
+  workspaceId: string,
+  status: AffairsLibraryIndexStatusDto | null
+): string {
+  return [
+    workspaceId,
+    status?.state ?? "unknown",
+    status?.lastCompletedAt ?? "none",
+    status?.lastFailedAt ?? "none"
+  ].join("|");
+}
+
+function shouldRunLazyLibraryRefresh(status: AffairsLibraryIndexStatusDto | null): boolean {
+  if (!status) {
+    return true;
+  }
+
+  if (status.state === "running" || status.state === "cooldown") {
+    return false;
+  }
+
+  if (status.state === "stale" || status.state === "failed") {
+    return true;
+  }
+
+  const completedAt = status.lastCompletedAt ? Date.parse(status.lastCompletedAt) : Number.NaN;
+  if (!Number.isFinite(completedAt)) {
+    return true;
+  }
+
+  return Date.now() - completedAt >= AFFAIRS_LIBRARY_CACHE_MAX_AGE_MS;
+}
+
 function mergeDocumentPageItems(
   previous: AffairsLibraryDocumentRecordDto[],
   incoming: AffairsLibraryDocumentRecordDto[]
@@ -3381,42 +3533,27 @@ function areLibraryConfigsEqual(
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function computeVirtualGridMetrics(
-  itemCount: number,
-  viewportWidth: number,
-  viewportHeight: number,
-  scrollTop: number
-) {
-  const columnWidth = 126;
-  const columns = Math.max(1, Math.floor(Math.max(viewportWidth, columnWidth) / columnWidth));
-  const rowHeight = GRID_ITEM_HEIGHT + GRID_GAP_Y;
-  const totalRows = Math.ceil(itemCount / columns);
-  const visibleRows = Math.max(1, Math.ceil(Math.max(viewportHeight, rowHeight) / rowHeight));
-  const startRow = Math.max(0, Math.floor(scrollTop / rowHeight) - VIRTUAL_OVERSCAN_ROWS);
-  const endRow = Math.min(totalRows, startRow + visibleRows + VIRTUAL_OVERSCAN_ROWS * 2);
-  return {
-    columns,
-    startIndex: startRow * columns,
-    endIndex: Math.min(itemCount, endRow * columns),
-    offsetTop: startRow * rowHeight,
-    totalHeight: totalRows * rowHeight
-  };
-}
-
 function computeVirtualListMetrics(
   itemCount: number,
   viewportHeight: number,
   scrollTop: number
 ) {
   const visibleRows = Math.max(1, Math.ceil(Math.max(viewportHeight, LIST_ITEM_HEIGHT) / LIST_ITEM_HEIGHT));
-  const startRow = Math.max(0, Math.floor(scrollTop / LIST_ITEM_HEIGHT) - VIRTUAL_OVERSCAN_ROWS);
-  const endRow = Math.min(itemCount, startRow + visibleRows + VIRTUAL_OVERSCAN_ROWS * 2);
+  const startRow = Math.max(0, Math.floor(scrollTop / LIST_ITEM_HEIGHT) - LIST_VIRTUAL_OVERSCAN_ROWS);
+  const endRow = Math.min(itemCount, startRow + visibleRows + LIST_VIRTUAL_OVERSCAN_ROWS * 2);
   return {
     startIndex: startRow,
     endIndex: endRow,
     offsetTop: startRow * LIST_ITEM_HEIGHT,
     totalHeight: itemCount * LIST_ITEM_HEIGHT
   };
+}
+
+function measureStageScrollContentWidth(element: HTMLElement) {
+  const styles = window.getComputedStyle(element);
+  const paddingLeft = Number.parseFloat(styles.paddingLeft || "0");
+  const paddingRight = Number.parseFloat(styles.paddingRight || "0");
+  return Math.max(0, element.clientWidth - paddingLeft - paddingRight);
 }
 
 function sortLibraryEntries(entries: LibraryEntry[], sortMode: LibrarySortMode): LibraryEntry[] {
@@ -3459,28 +3596,13 @@ function resolveDocumentType(filePath: string): string {
 function buildToolbarBreadcrumbItems(
   browseMode: "folder" | "tag",
   folderBreadcrumbs: Array<{ label: string; path: string }>,
+  tagRecords: TagRecord[],
   selectedTagPath: string | null
 ): Array<
   | { key: string; kind: "item"; label: string; value: string; mode: "folder" | "tag" }
   | { key: string; kind: "collapsed" }
 > {
-  const rawItems = browseMode === "folder"
-    ? folderBreadcrumbs.map((item) => ({
-      key: item.path,
-      kind: "item" as const,
-      label: item.label,
-      value: item.path,
-      mode: "folder" as const
-    }))
-    : (selectedTagPath?.trim()
-      ? selectedTagPath.trim().split("/").map((segment, index, segments) => ({
-        key: segments.slice(0, index + 1).join("/"),
-        kind: "item" as const,
-        label: segment,
-        value: segments.slice(0, index + 1).join("/"),
-        mode: "tag" as const
-      }))
-      : []);
+  const rawItems = buildToolbarBreadcrumbItemsRaw(browseMode, folderBreadcrumbs, tagRecords, selectedTagPath);
 
   if (rawItems.length <= 3) {
     return rawItems;
@@ -3496,25 +3618,20 @@ function buildToolbarBreadcrumbItems(
 function buildToolbarBreadcrumbItemsRaw(
   browseMode: "folder" | "tag",
   folderBreadcrumbs: Array<{ label: string; path: string }>,
+  tagRecords: TagRecord[],
   selectedTagPath: string | null
 ) {
-  return browseMode === "folder"
-    ? folderBreadcrumbs.map((item) => ({
+  if (browseMode === "folder") {
+    return folderBreadcrumbs.map((item) => ({
       key: item.path,
       kind: "item" as const,
       label: item.label,
       value: item.path,
       mode: "folder" as const
-    }))
-    : (selectedTagPath?.trim()
-      ? selectedTagPath.trim().split("/").map((segment, index, segments) => ({
-        key: segments.slice(0, index + 1).join("/"),
-        kind: "item" as const,
-        label: segment,
-        value: segments.slice(0, index + 1).join("/"),
-        mode: "tag" as const
-      }))
-      : []);
+    }));
+  }
+
+  return buildTagBreadcrumbItems(tagRecords, selectedTagPath);
 }
 
 function collapseToolbarBreadcrumbItems(
@@ -3687,6 +3804,45 @@ function buildFolderBreadcrumbs(path: string | null) {
     label: segment,
     path: segments.slice(0, index + 1).join("/")
   }));
+}
+
+function buildTagBreadcrumbItems(tags: TagRecord[], path: string | null) {
+  const normalized = path?.trim() ?? "";
+  if (!normalized) {
+    return [];
+  }
+
+  const tagByPath = new Map(tags.map((tag) => [tag.path, tag]));
+  const breadcrumbItems: Array<{ key: string; kind: "item"; label: string; value: string; mode: "tag" }> = [];
+  let cursor = normalized;
+  const visited = new Set<string>();
+
+  while (cursor && !visited.has(cursor)) {
+    visited.add(cursor);
+    const tag = tagByPath.get(cursor);
+    if (tag) {
+      breadcrumbItems.unshift({
+        key: tag.path,
+        kind: "item",
+        label: tag.label,
+        value: tag.path,
+        mode: "tag"
+      });
+      cursor = tag.parentPath?.trim() || "";
+      continue;
+    }
+
+    const segments = normalized.split("/");
+    return segments.map((segment, index) => ({
+      key: segments.slice(0, index + 1).join("/"),
+      kind: "item" as const,
+      label: segment,
+      value: segments.slice(0, index + 1).join("/"),
+      mode: "tag" as const
+    }));
+  }
+
+  return breadcrumbItems;
 }
 
 function buildTodoRecords(inboxItems: ButlerInboxItemDto[], followUpTasks: ButlerFollowUpTaskDto[]): TodoRecord[] {

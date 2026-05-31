@@ -799,6 +799,35 @@ function resolveRouteWorkspaceId(pathname: string, search: string): string | nul
   return draftWorkspaceId || null;
 }
 
+function resolveValidWorkbenchModeLastPath(
+  workspaceId: string,
+  mode: WorkbenchMode
+): string | null {
+  const candidate = readWorkbenchModeLastPath(workspaceId, mode)?.trim();
+
+  if (!candidate) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(candidate, "https://codingns.local");
+    const pathname = parsed.pathname;
+    const search = parsed.search;
+
+    if (resolveWorkbenchModeFromPath(pathname) !== mode) {
+      return null;
+    }
+
+    if (resolveRouteWorkspaceId(pathname, search) !== workspaceId) {
+      return null;
+    }
+
+    return `${pathname}${search}`;
+  } catch {
+    return null;
+  }
+}
+
 function shouldRedirectMobileToWorkspaceHome(pathname: string) {
   return (
     pathname.startsWith("/sessions")
@@ -10693,6 +10722,15 @@ export function WorkbenchLayout({
   const activeWorkbenchMode: WorkbenchMode = routeWorkbenchMode
     ?? (currentWorkspaceId ? readWorkspaceWorkbenchMode(currentWorkspaceId) : null)
     ?? WORKBENCH_MODE_DEFAULT;
+  const effectiveAffairsViewState = currentWorkspaceId
+    ? affairsViewState ?? createDefaultAffairsViewState(currentWorkspaceId)
+    : null;
+  const shouldUseAffairsShell =
+    activeWorkbenchMode === "affairs"
+    && Boolean(currentWorkspaceId && effectiveAffairsViewState);
+  const shouldRenderAffairsWorkbench =
+    routeWorkbenchMode === "affairs"
+    && shouldUseAffairsShell;
   const isMobileShell = shellMode === "mobile";
   const workbenchHomePath = resolveWorkbenchHomePath(shellMode);
 
@@ -10935,13 +10973,13 @@ export function WorkbenchLayout({
   }, [currentSessionId, isDraftSession, location.pathname, location.search, sessionWorkspaceId]);
 
   useEffect(() => {
-    if (!currentWorkspaceId) {
+    if (!currentWorkspaceId || routeWorkbenchMode === null) {
       return;
     }
 
     writeWorkspaceWorkbenchMode(currentWorkspaceId, activeWorkbenchMode);
     writeWorkbenchModeLastPath(currentWorkspaceId, activeWorkbenchMode, `${location.pathname}${location.search}`);
-  }, [activeWorkbenchMode, currentWorkspaceId, location.pathname, location.search]);
+  }, [activeWorkbenchMode, currentWorkspaceId, location.pathname, location.search, routeWorkbenchMode]);
 
   useEffect(() => {
     if (!currentWorkspaceId) {
@@ -11304,15 +11342,15 @@ export function WorkbenchLayout({
   }
 
   function handleSelectWorkbenchMode(nextMode: WorkbenchMode) {
-    if (!currentWorkspaceId || nextMode === activeWorkbenchMode) {
+    if (!currentWorkspaceId || routeWorkbenchMode === nextMode) {
       return;
     }
 
     writeWorkspaceWorkbenchMode(currentWorkspaceId, nextMode);
-    const targetPath = readWorkbenchModeLastPath(currentWorkspaceId, nextMode)
+    const targetPath = resolveValidWorkbenchModeLastPath(currentWorkspaceId, nextMode)
       ?? (nextMode === "affairs"
         ? buildWorkspaceAffairsPath(currentWorkspaceId)
-        : readWorkbenchModeLastPath(currentWorkspaceId, "code")
+        : resolveValidWorkbenchModeLastPath(currentWorkspaceId, "code")
           ?? buildWorkspaceSessionIndexPath(currentWorkspaceId));
 
     navigate(targetPath);
@@ -12145,12 +12183,12 @@ export function WorkbenchLayout({
           data-overlay-titlebar={platform.ui.prefersOverlayTitlebar}
         >
           <div className="workbench-body-shell">
-            {activeWorkbenchMode === "affairs" && currentWorkspaceId && affairsViewState ? (
+            {shouldUseAffairsShell ? (
               <AffairsWorkbenchProvider
-                workspaceId={currentWorkspaceId}
+                workspaceId={currentWorkspaceId!}
                 workspaceName={currentWorkspaceEntity?.name ?? null}
                 navigationGroups={navigationGroups}
-                state={affairsViewState}
+                state={effectiveAffairsViewState!}
                 onStateChange={setAffairsViewState}
               >
                 <aside className="workbench-nav surface-card" data-collapsed={leftCollapsed}>
@@ -12263,7 +12301,7 @@ export function WorkbenchLayout({
                       </button>
                     </div>
 
-                    {shouldShowAuxiliaryPanel && !isParallelConversationActive ? (
+                    {shouldRenderAffairsWorkbench && !isParallelConversationActive ? (
                       <div
                         className="workbench-collapsed-controls right"
                         data-visible={rightCollapsed}
@@ -12279,8 +12317,8 @@ export function WorkbenchLayout({
                     ) : null}
                   </div>
 
-                  {activeWorkbenchMode === "affairs" && currentWorkspaceId && affairsViewState ? (
-                    <AffairsWorkbenchView workspaceId={currentWorkspaceId} />
+                  {shouldRenderAffairsWorkbench ? (
+                    <AffairsWorkbenchView workspaceId={currentWorkspaceId!} />
                   ) : (
                     <CodeWorkbenchView>
                       <Outlet />
@@ -12288,7 +12326,7 @@ export function WorkbenchLayout({
                   )}
                 </div>
 
-                {activeWorkbenchMode === "affairs" && currentWorkspaceId && affairsViewState ? (
+                {shouldRenderAffairsWorkbench ? (
                   <>
                     <div
                       className="workbench-side-resizer"
@@ -12308,62 +12346,9 @@ export function WorkbenchLayout({
                       aria-hidden={effectiveRightCollapsed}
                     >
                       <AffairsAuxiliaryPanel
-                        workspaceId={currentWorkspaceId}
+                        workspaceId={currentWorkspaceId!}
                         onToggleCollapse={() => setRightCollapsed(true)}
                       />
-                    </aside>
-                  </>
-                ) : shouldShowAuxiliaryPanel ? (
-                  <>
-                    <div
-                      className="workbench-side-resizer"
-                      data-side="right"
-                      data-collapsed={effectiveRightCollapsed}
-                      data-auto-hidden={isParallelConversationActive ? "true" : undefined}
-                      role="separator"
-                      aria-label={t("shell.rightResizerLabel")}
-                      onMouseDown={
-                        effectiveRightCollapsed
-                          ? undefined
-                          : (event) => beginResize("right", event)
-                      }
-                    />
-                    <aside
-                      className="workbench-auxiliary surface-card"
-                      data-workspace-tone={currentAuxiliaryWorkspaceContext?.tone ?? "root"}
-                      data-worktree-depth={currentAuxiliaryWorkspaceContext?.depth ?? 0}
-                      data-collapsed={effectiveRightCollapsed}
-                      data-auto-hidden={isParallelConversationActive ? "true" : undefined}
-                      data-custom-panel={activeCenterTab === "butler"}
-                      data-parallel-transition={shouldKeepParallelAuxiliaryMounted ? "true" : undefined}
-                      aria-hidden={effectiveRightCollapsed && !shouldKeepParallelAuxiliaryMounted}
-                      style={createWorkspaceToneStyle(currentAuxiliaryWorkspaceContext)}
-                    >
-                      {isParallelConversationActive && !shouldKeepParallelAuxiliaryMounted ? null : activeCenterTab === "butler" ? (
-                        <div className="workbench-auxiliary-custom-panel">
-                          {customAuxiliaryPanel}
-                        </div>
-                      ) : (
-                        <WorkbenchInfoPanel
-                          panelReady={infoPanelReady}
-                          activeTab={activeInfoTab}
-                          fileRevealRequest={fileRevealRequest}
-                          onTabChange={(tab) => {
-                            ensureInfoPanelReady();
-                            setActiveInfoTab(tab);
-                          }}
-                          onToggleCollapse={() => setRightCollapsed(true)}
-                          currentSessionId={isDraftSession ? null : currentSessionId}
-                          activeWorkspaceId={currentAuxiliaryWorkspaceId}
-                          navigationGroups={navigationGroups}
-                          workspaceContext={currentAuxiliaryWorkspaceContext}
-                          worktreeMeta={currentWorktreeMeta}
-                          worktreeMergeState={currentWorktreeMergeState}
-                          onRefreshWorktreeMergePreview={loadWorktreeMergePreview}
-                          onApplyWorktreeMerge={applyWorktreeMerge}
-                          onCleanupWorktree={requestWorktreeCleanup}
-                        />
-                      )}
                     </aside>
                   </>
                 ) : null}

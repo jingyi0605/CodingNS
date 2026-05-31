@@ -1,13 +1,15 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { useState, type ReactElement } from "react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
+import { clearViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
 import { getCodingNSDesktopBridge } from "../../../platform/desktop/codingns-desktop-bridge";
 import {
   AffairsAuxiliaryPanel,
+  AffairsSidebarPanel,
   AffairsWorkbenchProvider,
   AffairsWorkbenchView
 } from "./AffairsWorkbenchView";
@@ -145,6 +147,7 @@ function renderWorkbench() {
         onStateChange={setState}
       >
         <div style={{ display: "flex" }}>
+          <AffairsSidebarPanel />
           <AffairsWorkbenchView workspaceId="workspace-1" />
           <AffairsAuxiliaryPanel workspaceId="workspace-1" />
         </div>
@@ -156,7 +159,16 @@ function renderWorkbench() {
 }
 
 describe("AffairsWorkbenchView", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
+    clearViewSnapshot("affairs.library.snapshot.workspace-1");
+    clearViewSnapshot("affairs.library.config.workspace-1");
+    clearViewSnapshot("affairs.library.documents::workspace-1::folder::.::.::.");
+    window.sessionStorage.clear();
+
     conversationApiMock.getAffairsLibrarySnapshot.mockReset();
     conversationApiMock.listAffairsLibraryDocuments.mockReset();
     conversationApiMock.getAffairsLibraryPreview.mockReset();
@@ -191,9 +203,35 @@ describe("AffairsWorkbenchView", () => {
         runningTaskId: null,
         errorSummary: null
       },
-      tags: [],
+      tags: [
+        {
+          path: "来源",
+          name: "来源",
+          parentPath: null,
+          depth: 0,
+          rootType: "来源",
+          documentCount: 1
+        },
+        {
+          path: "来源/目录",
+          name: "目录",
+          parentPath: "来源",
+          depth: 1,
+          rootType: "来源",
+          documentCount: 1
+        }
+      ],
       favorites: [],
-      folders: [],
+      folders: [
+        {
+          path: "AGENTS",
+          name: "AGENTS",
+          parentPath: null,
+          depth: 0,
+          directDocumentCount: 1,
+          documentCount: 1
+        }
+      ],
       documentCount: 1,
       lastError: null
     });
@@ -329,6 +367,16 @@ describe("AffairsWorkbenchView", () => {
     expect(screen.getByRole("button", { name: ".pdf" })).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("文档库左侧栏不再显示旧的说明头和浏览模式切换", async () => {
+    renderWorkbench();
+
+    expect(await screen.findByText(t("shell.affairsSectionGroupFavorites"))).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: t("shell.affairsLibrarySidebarTitle") })).not.toBeInTheDocument();
+    expect(screen.queryByText(t("shell.affairsLibrarySummary"))).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: t("shell.affairsLibraryBrowseModeFolder") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: t("shell.affairsLibraryBrowseModeTag") })).not.toBeInTheDocument();
+  });
+
   it("可以切换文档库启用状态", async () => {
     renderWorkbench();
 
@@ -368,6 +416,213 @@ describe("AffairsWorkbenchView", () => {
     }).format(new Date("2026-05-31T08:00:00.000Z"));
     expect(screen.getByText(completedAtLabel)).toBeInTheDocument();
   });
+
+  it("点击刷新按钮会手动请求文档库刷新", async () => {
+    conversationApiMock.requestAffairsLibraryRefresh.mockResolvedValue({
+      taskId: "task-refresh-1",
+      deduped: false,
+      status: {
+        state: "running",
+        dirtyReasons: ["manual_refresh"],
+        lastRequestedAt: "2026-05-31T08:00:00.000Z",
+        lastStartedAt: "2026-05-31T08:00:00.000Z",
+        lastCompletedAt: null,
+        lastFailedAt: null,
+        nextAllowedAt: null,
+        runningTaskId: "task-refresh-1",
+        errorSummary: null
+      }
+    });
+
+    renderWorkbench();
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibraryRefreshAction") }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.requestAffairsLibraryRefresh).toHaveBeenCalledWith("workspace-1", {
+        reason: "manual_refresh"
+      });
+    });
+  });
+
+
+  it("点击根路径按钮时会切回文件夹根目录", async () => {
+    renderWorkbench();
+    const user = userEvent.setup();
+
+    const sourceText = await screen.findAllByText("来源");
+    const sourceTagButton = sourceText
+      .map((node) => node.closest("button"))
+      .find((node) => node?.classList.contains("affairs-sidebar-item-button"));
+    expect(sourceTagButton).not.toBeNull();
+    await user.click(sourceTagButton!);
+    expect(await screen.findByRole("button", { name: "/" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "/" }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.listAffairsLibraryDocuments).toHaveBeenLastCalledWith("workspace-1", {
+        browseMode: "folder",
+        selectedFolderPath: null,
+        selectedTagPath: null,
+        selectedFavoriteId: null,
+        offset: 0,
+        limit: 120
+      });
+    });
+  });
+
+  it("标签树路径会在面包屑里显示每一级标签名称", async () => {
+    renderWorkbench();
+    const user = userEvent.setup();
+
+    const sourceText = await screen.findAllByText("来源");
+    const sourceTagButton = sourceText
+      .map((node) => node.closest("button"))
+      .find((node) => node?.classList.contains("affairs-sidebar-item-button"));
+    expect(sourceTagButton).not.toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /Expand/ }));
+    await user.click(sourceTagButton!);
+    await user.click(await screen.findByRole("button", { name: "目录" }));
+
+    const rootButton = await screen.findByRole("button", { name: "/" });
+    const breadcrumb = rootButton.closest(".affairs-stage-breadcrumb");
+    expect(rootButton).toBeInTheDocument();
+    expect(breadcrumb).not.toBeNull();
+    expect(breadcrumb).toHaveTextContent("来源");
+    expect(breadcrumb).toHaveTextContent("目录");
+  });
+
+  it("进入事务视图时，如果索引结果太旧，会做一次懒检查刷新", async () => {
+    const oldCompletedAt = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    conversationApiMock.getAffairsLibrarySnapshot.mockReset();
+    conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue({
+      binding: {
+        workspaceId: "workspace-1",
+        rootDir: "/Users/jackson/WorkFile",
+        enabled: true,
+        configRelativePath: ".ai-index/doc-semantic-index.config.json",
+        exportMode: "v2",
+        updatedAt: "2026-05-31T08:00:00.000Z"
+      },
+      status: {
+        state: "fresh",
+        dirtyReasons: [],
+        lastRequestedAt: null,
+        lastStartedAt: null,
+        lastCompletedAt: oldCompletedAt,
+        lastFailedAt: null,
+        nextAllowedAt: null,
+        runningTaskId: null,
+        errorSummary: null
+      },
+      tags: [],
+      favorites: [],
+      folders: [],
+      documentCount: 1,
+      lastError: null
+    });
+    conversationApiMock.requestAffairsLibraryRefresh.mockResolvedValue({
+      taskId: "task-refresh-lazy",
+      deduped: false,
+      status: {
+        state: "running",
+        dirtyReasons: ["view_lazy_check"],
+        lastRequestedAt: oldCompletedAt,
+        lastStartedAt: oldCompletedAt,
+        lastCompletedAt: null,
+        lastFailedAt: null,
+        nextAllowedAt: null,
+        runningTaskId: "task-refresh-lazy",
+        errorSummary: null
+      }
+    });
+
+    renderWorkbench();
+
+    await waitFor(() => {
+      expect(conversationApiMock.requestAffairsLibraryRefresh).toHaveBeenCalledWith("workspace-1", {
+        reason: "view_lazy_check"
+      });
+    });
+  });
+
+  it("索引运行中会自动轮询状态并在完成后刷新显示", async () => {
+    conversationApiMock.getAffairsLibrarySnapshot.mockReset();
+    conversationApiMock.getAffairsLibrarySnapshot
+      .mockResolvedValueOnce({
+        binding: {
+          workspaceId: "workspace-1",
+          rootDir: "/Users/jackson/WorkFile",
+          enabled: true,
+          configRelativePath: ".ai-index/doc-semantic-index.config.json",
+          exportMode: "v2",
+          updatedAt: "2026-05-31T08:00:00.000Z"
+        },
+        status: {
+          state: "running",
+          dirtyReasons: ["refresh_requested"],
+          lastRequestedAt: "2026-05-31T08:00:00.000Z",
+          lastStartedAt: "2026-05-31T08:00:00.000Z",
+          lastCompletedAt: null,
+          lastFailedAt: null,
+          nextAllowedAt: null,
+          runningTaskId: "task-1",
+          errorSummary: null
+        },
+        tags: [],
+        favorites: [],
+        folders: [],
+        documentCount: 1,
+        lastError: null
+      })
+      .mockResolvedValue({
+        binding: {
+          workspaceId: "workspace-1",
+          rootDir: "/Users/jackson/WorkFile",
+          enabled: true,
+          configRelativePath: ".ai-index/doc-semantic-index.config.json",
+          exportMode: "v2",
+          updatedAt: "2026-05-31T08:00:00.000Z"
+        },
+        status: {
+          state: "fresh",
+          dirtyReasons: [],
+          lastRequestedAt: "2026-05-31T08:00:00.000Z",
+          lastStartedAt: "2026-05-31T08:00:00.000Z",
+          lastCompletedAt: "2026-05-31T08:00:03.000Z",
+          lastFailedAt: null,
+          nextAllowedAt: null,
+          runningTaskId: null,
+          errorSummary: null
+        },
+        tags: [],
+        favorites: [],
+        folders: [],
+        documentCount: 1,
+        lastError: null
+      });
+
+    renderWorkbench();
+
+    await waitFor(() => {
+      expect(conversationApiMock.getAffairsLibrarySnapshot).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByRole("button", {
+      name: t("shell.affairsLibraryStatusIndicatorAction", { status: t("shell.affairsLibraryStatusRunning") })
+    })).toBeInTheDocument();
+
+    await new Promise((resolve) => setTimeout(resolve, 3_300));
+
+    await waitFor(() => {
+      expect(conversationApiMock.getAffairsLibrarySnapshot.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    expect(await screen.findByRole("button", {
+      name: t("shell.affairsLibraryStatusIndicatorAction", { status: t("shell.affairsLibraryStatusFresh") })
+    })).toBeInTheDocument();
+  }, 10_000);
 
   it("点击预设后缀会切换选中状态", async () => {
     renderWorkbench();
