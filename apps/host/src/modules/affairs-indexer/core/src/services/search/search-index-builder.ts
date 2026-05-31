@@ -6,6 +6,10 @@ import {
   CatalogRepository,
   type ExportDocumentRecord,
 } from "../../repositories/catalog-repository.js";
+import {
+  iterateNdjsonFileSync,
+} from "../../utils/file-streaming.js";
+import { logAffairsIndexerRss } from "../../utils/rss-log.js";
 
 export interface SearchIndexBuildOptions {
   dirtyScope?: DirtyScope;
@@ -121,6 +125,46 @@ function mergePosting(
   termMap.set(term, postings);
 }
 
+function writeSearchBucketFile(
+  filePath: string,
+  exportedAt: string,
+  bucket: string,
+  documents: SearchDocumentEntry[],
+  terms: Array<{
+    term: string;
+    document_count: number;
+    document_ids: string[];
+  }>
+): void {
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(
+    filePath,
+    `{\n  "version": 1,\n  "format": "search-bucket-v1",\n  "generated_at": ${JSON.stringify(exportedAt)},\n  "bucket": ${JSON.stringify(bucket)},\n  "documents": [`,
+    "utf-8"
+  );
+  let isFirst = true;
+  for (const document of documents) {
+    fs.appendFileSync(
+      filePath,
+      `${isFirst ? "" : ","}\n${JSON.stringify(document, null, 2)}`,
+      "utf-8"
+    );
+    isFirst = false;
+  }
+  fs.appendFileSync(filePath, `${isFirst ? "" : "\n"}  ],\n  "terms": [`, "utf-8");
+
+  isFirst = true;
+  for (const term of terms) {
+    fs.appendFileSync(
+      filePath,
+      `${isFirst ? "" : ","}\n${JSON.stringify(term, null, 2)}`,
+      "utf-8"
+    );
+    isFirst = false;
+  }
+  fs.appendFileSync(filePath, `${isFirst ? "" : "\n"}  ]\n}\n`, "utf-8");
+}
+
 /**
  * 离线关键词倒排构建器。
  * 改成两阶段流式：第一阶段按 bucket 写临时 NDJSON，第二阶段逐 bucket 汇总为静态 JSON，
@@ -132,7 +176,7 @@ export class SearchIndexBuilder {
   build(_options: SearchIndexBuildOptions = {}): SearchIndexBuildResult {
     const exportedAt = new Date().toISOString();
     const repository = new CatalogRepository(this.config.dbPath);
-    const outputDir = path.join(this.config.exportV2Dir, "search");
+    const outputDir = path.join(this.config.exportDir, "search");
     const tempDir = path.join(outputDir, ".tmp");
     ensureDir(outputDir);
     ensureDir(tempDir);
@@ -183,36 +227,28 @@ export class SearchIndexBuilder {
       const documentMap = new Map<string, SearchDocumentEntry>();
       const termMap = new Map<string, string[]>();
 
-      const documentLines = fs.readFileSync(documentTempPath, "utf-8").split("\n").filter(Boolean);
-      for (const line of documentLines) {
-        const document = JSON.parse(line) as SearchDocumentEntry;
+      iterateNdjsonFileSync<SearchDocumentEntry>(documentTempPath, (document) => {
         documentMap.set(document.document_id, document);
-      }
+      });
 
-      const termLines = fs.readFileSync(termTempPath, "utf-8").split("\n").filter(Boolean);
-      for (const line of termLines) {
-        const record = JSON.parse(line) as { term: string; document_id: string };
+      iterateNdjsonFileSync<{ term: string; document_id: string }>(termTempPath, (record) => {
         mergePosting(termMap, record.term, record.document_id);
-      }
+      });
 
-      const payload = {
-        version: 1,
-        format: "search-bucket-v1",
-        generated_at: exportedAt,
+      const filePath = path.join(outputDir, `${bucket}.json`);
+      writeSearchBucketFile(
+        filePath,
+        exportedAt,
         bucket,
-        documents: [...documentMap.values()]
-          .sort((a, b) => a.path.localeCompare(b.path, "zh-Hans-CN")),
-        terms: [...termMap.entries()]
+        [...documentMap.values()].sort((a, b) => a.path.localeCompare(b.path, "zh-Hans-CN")),
+        [...termMap.entries()]
           .sort((a, b) => a[0].localeCompare(b[0], "zh-Hans-CN"))
           .map(([term, documentIds]) => ({
             term,
             document_count: documentIds.length,
             document_ids: documentIds,
-          })),
-      };
-
-      const filePath = path.join(outputDir, `${bucket}.json`);
-      writeJson(filePath, payload);
+          }))
+      );
       filesWritten.push(filePath);
       manifestBuckets.push({
         bucket,
@@ -236,6 +272,11 @@ export class SearchIndexBuilder {
       buckets: manifestBuckets,
     } satisfies SearchManifest);
     filesWritten.push(manifestPath);
+    logAffairsIndexerRss("search.complete", {
+      rootDir: this.config.rootDir,
+      bucketCount: manifestBuckets.length,
+      fileCount: filesWritten.length
+    });
 
     return {
       outputDir,

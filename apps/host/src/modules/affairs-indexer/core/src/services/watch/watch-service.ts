@@ -4,7 +4,6 @@ import { AppError, APP_ERROR_CODES, type RuntimeConfig } from "../../../../contr
 import { loadRuntimeConfig } from "../../config/load-runtime-config.js";
 import { CatalogWriteRepository } from "../../repositories/catalog-write-repository.js";
 import { ExportBuilder } from "../export/export-builder.js";
-import { ExportV2Builder } from "../export/export-v2-builder.js";
 import { AllowedExtensionsDiffService, type AllowedExtensionsDiffApplyResult } from "../indexer/allowed-extensions-diff-service.js";
 import { TextIndexer, type TextIndexResult } from "../indexer/text-indexer.js";
 import { TagRecomputeService, type TagRecomputeResult } from "../tagging/tag-recompute-service.js";
@@ -36,13 +35,6 @@ export interface WatchCycleResult {
   configApply: AllowedExtensionsDiffApplyResult | null;
   tagRecompute: TagRecomputeResult | null;
   export: {
-    documentCount: number;
-    taxonomyNodeCount: number;
-    relationCount: number;
-    exportedAt: string;
-    filesDeleted: string[];
-  } | null;
-  exportV2: {
     metaShardCount: number;
     detailShardCount: number;
     tagShardCount: number;
@@ -100,7 +92,7 @@ function isIgnoredWatchPath(relativePath: string | null): boolean {
 
 /**
  * 最小 watch 服务。
- * 第二阶段补上 Dirty Scope 透传与 export v2 构建。
+ * 第二阶段补上 Dirty Scope 透传与静态导出构建。
  */
 export class WatchService {
   constructor(private readonly config: RuntimeConfig) {}
@@ -108,12 +100,7 @@ export class WatchService {
   private async runCycleAsync(targetPath?: string): Promise<WatchCycleResult> {
     const indexer = new TextIndexer(this.config);
     const indexResult = await indexer.index(targetPath);
-    const exportResult = this.config.exportMode === "v2"
-      ? null
-      : new ExportBuilder(this.config).build({ dirtyScope: indexResult.dirtyScope });
-    const exportV2Result = this.config.exportMode === "legacy"
-      ? null
-      : new ExportV2Builder(this.config).build({ dirtyScope: indexResult.dirtyScope });
+    const exportResult = new ExportBuilder(this.config).build({ dirtyScope: indexResult.dirtyScope });
 
     return {
       scopePath: targetPath,
@@ -121,23 +108,12 @@ export class WatchService {
       index: indexResult,
       configApply: null,
       tagRecompute: null,
-      export: exportResult
-        ? {
-          documentCount: exportResult.documentCount,
-          taxonomyNodeCount: exportResult.taxonomyNodeCount,
-          relationCount: exportResult.relationCount,
-          exportedAt: exportResult.exportedAt,
-          filesDeleted: exportResult.filesDeleted,
-        }
-        : null,
-      exportV2: exportV2Result
-        ? {
-          metaShardCount: exportV2Result.metaShardCount,
-          detailShardCount: exportV2Result.detailShardCount,
-          tagShardCount: exportV2Result.tagShardCount,
-          exportedAt: exportV2Result.exportedAt,
-        }
-        : null,
+      export: {
+        metaShardCount: exportResult.metaShardCount,
+        detailShardCount: exportResult.detailShardCount,
+        tagShardCount: exportResult.tagShardCount,
+        exportedAt: exportResult.exportedAt,
+      },
     };
   }
 
@@ -156,7 +132,6 @@ export class WatchService {
       configApply: result,
       tagRecompute: null,
       export: result.exportResult,
-      exportV2: result.exportV2Result,
     };
   }
 
@@ -169,7 +144,6 @@ export class WatchService {
       configApply: null,
       tagRecompute: result,
       export: result.exportResult,
-      exportV2: result.exportV2Result,
     };
   }
 
@@ -199,35 +173,19 @@ export class WatchService {
     }
 
     const writer = new CatalogWriteRepository(this.config.dbPath);
-    const manifest = readJsonFile<{ detail_shards?: unknown[] }>(path.join(this.config.exportV2Dir, "manifest.json"));
+    const manifest = readJsonFile<{ detail_shards?: unknown[] }>(path.join(this.config.exportDir, "manifest.json"));
     const indexedDocumentCount = writer.countActiveIndexedDocuments();
     const exportedDocumentCount = Array.isArray(manifest?.detail_shards) ? manifest.detail_shards.length : 0;
-    const exportIsStale = this.config.exportMode !== "legacy" && exportedDocumentCount < indexedDocumentCount;
+    const exportIsStale = exportedDocumentCount < indexedDocumentCount;
     if (!options.targetPath && exportIsStale) {
-      const exportResult = this.config.exportMode === "v2"
-        ? null
-        : new ExportBuilder(this.config).build();
-      const exportV2Result = this.config.exportMode === "legacy"
-        ? null
-        : new ExportV2Builder(this.config).build({ light: true });
+      const exportResult = new ExportBuilder(this.config).build({ light: true });
       writer.setSchemaMeta(WATCHER_READY_META_KEY, new Date().toISOString());
-      initialCycle.export = exportResult
-        ? {
-          documentCount: exportResult.documentCount,
-          taxonomyNodeCount: exportResult.taxonomyNodeCount,
-          relationCount: exportResult.relationCount,
-          exportedAt: exportResult.exportedAt,
-          filesDeleted: exportResult.filesDeleted,
-        }
-        : null;
-      initialCycle.exportV2 = exportV2Result
-        ? {
-          metaShardCount: exportV2Result.metaShardCount,
-          detailShardCount: exportV2Result.detailShardCount,
-          tagShardCount: exportV2Result.tagShardCount,
-          exportedAt: exportV2Result.exportedAt,
-        }
-        : null;
+      initialCycle.export = {
+        metaShardCount: exportResult.metaShardCount,
+        detailShardCount: exportResult.detailShardCount,
+        tagShardCount: exportResult.tagShardCount,
+        exportedAt: exportResult.exportedAt,
+      };
     }
 
     if (!fs.existsSync(watchRoot)) {

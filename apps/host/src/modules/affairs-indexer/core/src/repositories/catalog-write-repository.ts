@@ -48,6 +48,18 @@ export interface SkippedDocumentEntry {
   message: string;
 }
 
+export interface IndexedDocumentWritePayload {
+  title: string;
+  summary: string;
+}
+
+export interface IndexedDocumentBatchEntry {
+  file: FileScanResult;
+  document: IndexedDocumentWritePayload;
+  tags: TagAssignment[];
+  derivedTags: TagAssignment[];
+}
+
 /**
  * 最小写入仓库。
  * 第二阶段补上 prepared statement 复用与批量连接内执行，减少大批量索引时的重复 prepare 与全表清理成本。
@@ -332,7 +344,7 @@ export class CatalogWriteRepository {
     statements: PreparedStatements,
     tagCache: Map<string, string>,
     file: FileScanResult,
-    parsed: ParsedDocument,
+    document: IndexedDocumentWritePayload,
     tags: TagAssignment[] = [],
     derivedTags: TagAssignment[] = [],
     observedAt = new Date().toISOString(),
@@ -356,8 +368,8 @@ export class CatalogWriteRepository {
     statements.upsertDocument.run(
       documentId,
       fileId,
-      parsed.title,
-      parsed.summary,
+      document.title,
+      document.summary,
       "parsed",
       null,
       "indexed",
@@ -559,12 +571,7 @@ export class CatalogWriteRepository {
   }
 
   batchUpsertDocuments(
-    entries: Array<{
-      file: FileScanResult;
-      parsed: ParsedDocument;
-      tags: TagAssignment[];
-      derivedTags: TagAssignment[];
-    }>,
+    entries: IndexedDocumentBatchEntry[],
     observedAt?: string,
   ): Array<{ fileId: string; documentId: string }> {
     if (entries.length === 0) {
@@ -580,7 +587,7 @@ export class CatalogWriteRepository {
           statements,
           tagCache,
           entry.file,
-          entry.parsed,
+          entry.document,
           entry.tags,
           entry.derivedTags,
           observedAt,

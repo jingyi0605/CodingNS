@@ -21,7 +21,6 @@ export * from "./scanner/file-scanner.js";
 export * from "./parser/plain-text-parser.js";
 export * from "./services/dirty/dirty-scope-resolver.js";
 export * from "./services/export/export-builder.js";
-export * from "./services/export/export-v2-builder.js";
 export * from "./services/indexer/allowed-extensions-diff-service.js";
 export * from "./services/indexer/text-indexer.js";
 export * from "./services/tagging/tag-recompute-service.js";

@@ -3,7 +3,6 @@ import path from "node:path";
 import {
   AppError,
   APP_ERROR_CODES,
-  type ExportMode,
   type LogLevel,
   type RuntimeConfig,
 } from "../../../contracts/src/index.js";
@@ -20,8 +19,6 @@ interface RuntimeConfigFilePayload {
   indexDir?: string;
   dbPath?: string;
   exportDir?: string;
-  exportV2Dir?: string;
-  exportMode?: ExportMode;
   watchDebounceMs?: number;
   parserTimeoutMs?: number;
   disabledParserExtensions?: string[];
@@ -57,10 +54,6 @@ function readPositiveNumber(value: unknown): number | undefined {
     }
   }
   return undefined;
-}
-
-function readMode(value: unknown): ExportMode | undefined {
-  return value === "legacy" || value === "v2" || value === "dual" ? value : undefined;
 }
 
 function readLogLevel(value: unknown): LogLevel | undefined {
@@ -198,21 +191,6 @@ export function loadRuntimeConfig(cwd: string, options: LoadRuntimeConfigOptions
       ?? path.join(path.relative(rootDir, indexDir) || ".ai-index", "exports"),
   );
 
-  const exportV2Dir = resolveMaybeRelative(
-    rootDir,
-    readString(args, "exportV2Dir", "export-v2-dir")
-      ?? env.DOC_SEMANTIC_INDEX_EXPORT_V2_DIR
-      ?? configFile.exportV2Dir
-      ?? path.join(path.relative(rootDir, indexDir) || ".ai-index", "exports-v2"),
-  );
-
-  const exportMode = readMode(
-    readString(args, "exportMode", "export-mode")
-      ?? env.DOC_SEMANTIC_INDEX_EXPORT_MODE
-      ?? configFile.exportMode
-      ?? "dual",
-  );
-
   const logLevel = readLogLevel(
     readString(args, "logLevel", "log-level")
       ?? env.DOC_SEMANTIC_INDEX_LOG_LEVEL
@@ -268,16 +246,15 @@ export function loadRuntimeConfig(cwd: string, options: LoadRuntimeConfigOptions
       ?? args["write-batch-size"]
       ?? env.DOC_SEMANTIC_INDEX_WRITE_BATCH_SIZE
       ?? configFile.writeBatchSize
-      ?? 2000,
+      ?? 200,
   );
 
-  if (!exportMode || !logLevel || watchDebounceMs === undefined || parserTimeoutMs === undefined || writeBatchSize === undefined) {
+  if (!logLevel || watchDebounceMs === undefined || parserTimeoutMs === undefined || writeBatchSize === undefined) {
     throw new AppError(
-      "运行时配置中存在非法值，请检查 exportMode / logLevel / watchDebounceMs / parserTimeoutMs / writeBatchSize。",
+      "运行时配置中存在非法值，请检查 logLevel / watchDebounceMs / parserTimeoutMs / writeBatchSize。",
       APP_ERROR_CODES.CONFIG_INVALID_VALUE,
       {
         details: {
-          exportMode,
           logLevel,
           watchDebounceMs,
           parserTimeoutMs,
@@ -293,9 +270,7 @@ export function loadRuntimeConfig(cwd: string, options: LoadRuntimeConfigOptions
     indexDir,
     dbPath,
     exportDir,
-    exportV2Dir,
     configFilePath,
-    exportMode,
     watchDebounceMs,
     parserTimeoutMs,
     disabledParserExtensions,

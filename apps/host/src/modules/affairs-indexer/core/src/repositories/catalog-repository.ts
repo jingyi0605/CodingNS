@@ -76,6 +76,14 @@ export interface ExportTagPostingRow {
   derived: boolean;
 }
 
+function compareTagPostingRows(left: ExportTagPostingRow, right: ExportTagPostingRow): number {
+  return left.rootType.localeCompare(right.rootType, "zh-Hans-CN")
+    || left.tagPath.localeCompare(right.tagPath, "zh-Hans-CN")
+    || left.path.localeCompare(right.path, "zh-Hans-CN")
+    || left.documentId.localeCompare(right.documentId, "zh-Hans-CN")
+    || Number(left.derived) - Number(right.derived);
+}
+
 function attachTags(
   documentRows: Array<Record<string, unknown>>,
   directTagRows: Array<{ document_id: string; tag_path: string }>,
@@ -638,56 +646,60 @@ export class CatalogRepository {
   }
 
   *iterateTagPostingRows(batchSize = 5000): Generator<ExportTagPostingRow[]> {
-    const db = openDatabase(this.dbPath);
-    try {
-      let offset = 0;
-      while (true) {
-        const rows = db.prepare(`
-          SELECT *
-          FROM (
-            SELECT t.root_type, t.path AS tag_path, dt.document_id, f.path, COALESCE(d.title, f.name) AS title, 0 AS derived
-            FROM document_tags dt
-            JOIN tags t ON t.id = dt.tag_id
-            JOIN documents d ON d.id = dt.document_id
-            JOIN files f ON f.id = d.file_id
-            WHERE f.status = 'active'
-              AND d.index_status = 'indexed'
-            UNION ALL
-            SELECT t.root_type, t.path AS tag_path, ddt.document_id, f.path, COALESCE(d.title, f.name) AS title, 1 AS derived
-            FROM derived_document_tags ddt
-            JOIN tags t ON t.id = ddt.tag_id
-            JOIN documents d ON d.id = ddt.document_id
-            JOIN files f ON f.id = d.file_id
-            WHERE f.status = 'active'
-              AND d.index_status = 'indexed'
-          )
-          ORDER BY root_type, tag_path, path
-          LIMIT ? OFFSET ?
-        `).all(batchSize, offset) as Array<Record<string, unknown>>;
+    const directIterator = this.iterateDirectTagPostingRows(batchSize);
+    const derivedIterator = this.iterateDerivedTagPostingRows(batchSize);
+    let directState = directIterator.next();
+    let derivedState = derivedIterator.next();
+    let directIndex = 0;
+    let derivedIndex = 0;
 
-        if (rows.length === 0) {
-          return;
+    while (!directState.done || !derivedState.done) {
+      const mergedBatch: ExportTagPostingRow[] = [];
+
+      while (mergedBatch.length < batchSize && (!directState.done || !derivedState.done)) {
+        if (directState.done) {
+          mergedBatch.push(derivedState.value[derivedIndex]!);
+          derivedIndex += 1;
+        } else if (derivedState.done) {
+          mergedBatch.push(directState.value[directIndex]!);
+          directIndex += 1;
+        } else {
+          const directRow = directState.value[directIndex]!;
+          const derivedRow = derivedState.value[derivedIndex]!;
+          if (compareTagPostingRows(directRow, derivedRow) <= 0) {
+            mergedBatch.push(directRow);
+            directIndex += 1;
+          } else {
+            mergedBatch.push(derivedRow);
+            derivedIndex += 1;
+          }
         }
 
-        yield rows.map(row => ({
-          rootType: String(row.root_type),
-          tagPath: String(row.tag_path),
-          documentId: String(row.document_id),
-          path: String(row.path),
-          title: String(row.title),
-          derived: Number(row.derived) === 1,
-        }));
-        offset += rows.length;
+        if (!directState.done && directIndex >= directState.value.length) {
+          directState = directIterator.next();
+          directIndex = 0;
+        }
+        if (!derivedState.done && derivedIndex >= derivedState.value.length) {
+          derivedState = derivedIterator.next();
+          derivedIndex = 0;
+        }
       }
-    } finally {
-      db.close();
+
+      if (mergedBatch.length === 0) {
+        return;
+      }
+
+      yield mergedBatch;
     }
   }
 
   *iterateDirectTagPostingRows(batchSize = 5000): Generator<ExportTagPostingRow[]> {
     const db = openDatabase(this.dbPath);
     try {
-      let offset = 0;
+      let lastRootType = "";
+      let lastTagPath = "";
+      let lastPath = "";
+      let lastDocumentId = "";
       while (true) {
         const rows = db.prepare(`
           SELECT t.root_type, t.path AS tag_path, dt.document_id, f.path, COALESCE(d.title, f.name) AS title, 0 AS derived
@@ -697,15 +709,27 @@ export class CatalogRepository {
           JOIN files f ON f.id = d.file_id
           WHERE f.status = 'active'
             AND d.index_status = 'indexed'
-          ORDER BY t.path, f.path
-          LIMIT ? OFFSET ?
-        `).all(batchSize, offset) as Array<Record<string, unknown>>;
+            AND (
+              t.root_type > ?
+              OR (t.root_type = ? AND t.path > ?)
+              OR (t.root_type = ? AND t.path = ? AND f.path > ?)
+              OR (t.root_type = ? AND t.path = ? AND f.path = ? AND dt.document_id > ?)
+            )
+          ORDER BY t.root_type, t.path, f.path, dt.document_id
+          LIMIT ?
+        `).all(
+          lastRootType,
+          lastRootType, lastTagPath,
+          lastRootType, lastTagPath, lastPath,
+          lastRootType, lastTagPath, lastPath, lastDocumentId,
+          batchSize
+        ) as Array<Record<string, unknown>>;
 
         if (rows.length === 0) {
           return;
         }
 
-        yield rows.map(row => ({
+        const mapped = rows.map(row => ({
           rootType: String(row.root_type),
           tagPath: String(row.tag_path),
           documentId: String(row.document_id),
@@ -713,7 +737,68 @@ export class CatalogRepository {
           title: String(row.title),
           derived: false,
         }));
-        offset += rows.length;
+        yield mapped;
+        const lastRow = mapped[mapped.length - 1];
+        lastRootType = lastRow?.rootType ?? lastRootType;
+        lastTagPath = lastRow?.tagPath ?? lastTagPath;
+        lastPath = lastRow?.path ?? lastPath;
+        lastDocumentId = lastRow?.documentId ?? lastDocumentId;
+      }
+    } finally {
+      db.close();
+    }
+  }
+
+  *iterateDerivedTagPostingRows(batchSize = 5000): Generator<ExportTagPostingRow[]> {
+    const db = openDatabase(this.dbPath);
+    try {
+      let lastRootType = "";
+      let lastTagPath = "";
+      let lastPath = "";
+      let lastDocumentId = "";
+      while (true) {
+        const rows = db.prepare(`
+          SELECT t.root_type, t.path AS tag_path, ddt.document_id, f.path, COALESCE(d.title, f.name) AS title, 1 AS derived
+          FROM derived_document_tags ddt
+          JOIN tags t ON t.id = ddt.tag_id
+          JOIN documents d ON d.id = ddt.document_id
+          JOIN files f ON f.id = d.file_id
+          WHERE f.status = 'active'
+            AND d.index_status = 'indexed'
+            AND (
+              t.root_type > ?
+              OR (t.root_type = ? AND t.path > ?)
+              OR (t.root_type = ? AND t.path = ? AND f.path > ?)
+              OR (t.root_type = ? AND t.path = ? AND f.path = ? AND ddt.document_id > ?)
+            )
+          ORDER BY t.root_type, t.path, f.path, ddt.document_id
+          LIMIT ?
+        `).all(
+          lastRootType,
+          lastRootType, lastTagPath,
+          lastRootType, lastTagPath, lastPath,
+          lastRootType, lastTagPath, lastPath, lastDocumentId,
+          batchSize
+        ) as Array<Record<string, unknown>>;
+
+        if (rows.length === 0) {
+          return;
+        }
+
+        const mapped = rows.map(row => ({
+          rootType: String(row.root_type),
+          tagPath: String(row.tag_path),
+          documentId: String(row.document_id),
+          path: String(row.path),
+          title: String(row.title),
+          derived: true,
+        }));
+        yield mapped;
+        const lastRow = mapped[mapped.length - 1];
+        lastRootType = lastRow?.rootType ?? lastRootType;
+        lastTagPath = lastRow?.tagPath ?? lastTagPath;
+        lastPath = lastRow?.path ?? lastPath;
+        lastDocumentId = lastRow?.documentId ?? lastDocumentId;
       }
     } finally {
       db.close();

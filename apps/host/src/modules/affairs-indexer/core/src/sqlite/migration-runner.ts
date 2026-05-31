@@ -207,7 +207,6 @@ function readCurrentSchemaVersion(db: ReturnType<typeof openDatabase>): number {
 export function runCatalogMigrations(config: RuntimeConfig): MigrationRunResult {
   fs.mkdirSync(config.indexDir, { recursive: true });
   fs.mkdirSync(config.exportDir, { recursive: true });
-  fs.mkdirSync(config.exportV2Dir, { recursive: true });
 
   const db = openDatabase(config.dbPath);
   const now = new Date().toISOString();

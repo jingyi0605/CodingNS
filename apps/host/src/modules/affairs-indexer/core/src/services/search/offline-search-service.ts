@@ -50,7 +50,7 @@ function bucketName(term: string): string {
 
 /**
  * 离线搜索服务。
- * 优先读取 export-v2/search bucket，找不到再由上层决定是否回退 SQLite。
+ * 优先读取静态导出的 search bucket，找不到再由上层决定是否回退 SQLite。
  */
 export class OfflineSearchService {
   constructor(private readonly config: RuntimeConfig) {}
@@ -61,13 +61,13 @@ export class OfflineSearchService {
       return [];
     }
 
-    const manifestPath = path.join(this.config.exportV2Dir, "search", "manifest.json");
+    const manifestPath = path.join(this.config.exportDir, "search", "manifest.json");
     if (!fs.existsSync(manifestPath)) {
       return [];
     }
 
     const bucket = bucketName(normalized);
-    const bucketPath = path.join(this.config.exportV2Dir, "search", `${bucket}.json`);
+    const bucketPath = path.join(this.config.exportDir, "search", `${bucket}.json`);
     if (!fs.existsSync(bucketPath)) {
       return [];
     }

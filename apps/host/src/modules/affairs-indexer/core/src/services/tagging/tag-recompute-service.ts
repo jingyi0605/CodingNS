@@ -7,7 +7,6 @@ import { SimpleTagInferenceEngine } from "../../tagging/simple-tag-inference.js"
 import type { FileScanResult } from "../../scanner/file-scanner.js";
 import type { ParsedDocument } from "../../parser/plain-text-parser.js";
 import { ExportBuilder } from "../export/export-builder.js";
-import { ExportV2Builder } from "../export/export-v2-builder.js";
 import type { DirtyScope } from "../dirty/dirty-scope-resolver.js";
 
 export interface TagRecomputeResult {
@@ -17,13 +16,6 @@ export interface TagRecomputeResult {
   derivedAssignedCount: number;
   dirtyScope: DirtyScope;
   exportResult: {
-    documentCount: number;
-    taxonomyNodeCount: number;
-    relationCount: number;
-    exportedAt: string;
-    filesDeleted: string[];
-  } | null;
-  exportV2Result: {
     metaShardCount: number;
     detailShardCount: number;
     tagShardCount: number;
@@ -128,12 +120,7 @@ export class TagRecomputeService {
       ...dirtyScope,
       trigger: "full",
     };
-    const exportResult = this.config.exportMode === "v2"
-      ? null
-      : new ExportBuilder(this.config).build({ dirtyScope: exportDirtyScope });
-    const exportV2Full = this.config.exportMode === "legacy"
-      ? null
-      : new ExportV2Builder(this.config).build({ dirtyScope: exportDirtyScope, light: true });
+    const exportResult = new ExportBuilder(this.config).build({ dirtyScope: exportDirtyScope, light: true });
     const exportMs = performance.now() - exportStartedAt;
 
     return {
@@ -142,23 +129,12 @@ export class TagRecomputeService {
       directAssignedCount,
       derivedAssignedCount,
       dirtyScope,
-      exportResult: exportResult
-        ? {
-          documentCount: exportResult.documentCount,
-          taxonomyNodeCount: exportResult.taxonomyNodeCount,
-          relationCount: exportResult.relationCount,
-          exportedAt: exportResult.exportedAt,
-          filesDeleted: exportResult.filesDeleted,
-        }
-        : null,
-      exportV2Result: exportV2Full
-        ? {
-          metaShardCount: exportV2Full.metaShardCount,
-          detailShardCount: exportV2Full.detailShardCount,
-          tagShardCount: exportV2Full.tagShardCount,
-          exportedAt: exportV2Full.exportedAt,
-        }
-        : null,
+      exportResult: {
+        metaShardCount: exportResult.metaShardCount,
+        detailShardCount: exportResult.detailShardCount,
+        tagShardCount: exportResult.tagShardCount,
+        exportedAt: exportResult.exportedAt,
+      },
       timingsMs: {
         infer: Number(inferMs.toFixed(2)),
         write: Number(writeMs.toFixed(2)),

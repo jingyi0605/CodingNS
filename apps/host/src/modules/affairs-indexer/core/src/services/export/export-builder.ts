@@ -1,41 +1,57 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import crypto from "node:crypto";
 import type { RuntimeConfig } from "../../../../contracts/src/index.js";
+import type { DirtyScope } from "../dirty/dirty-scope-resolver.js";
 import {
   CatalogRepository,
   type ExportDocumentRecord,
   type ExportTagRecord,
 } from "../../repositories/catalog-repository.js";
-import type { DirtyScope } from "../dirty/dirty-scope-resolver.js";
+import { SearchIndexBuilder } from "../search/search-index-builder.js";
+import {
+  createJsonArrayFileWriter,
+  iterateNdjsonFileSync,
+  type JsonArrayFileWriter,
+} from "../../utils/file-streaming.js";
+import { logAffairsIndexerRss } from "../../utils/rss-log.js";
 
 export interface ExportBuildOptions {
   dirtyScope?: DirtyScope;
+  light?: boolean;
 }
 
 export interface ExportBuildResult {
   outputDir: string;
-  documentCount: number;
-  taxonomyNodeCount: number;
-  relationCount: number;
+  manifestPath: string;
+  metaShardCount: number;
+  detailShardCount: number;
+  tagShardCount: number;
+  searchBucketCount: number;
+  relationGroupCount: number;
   filesWritten: string[];
-  filesDeleted: string[];
   exportedAt: string;
 }
 
-interface ExportTaxonomyNode {
-  path: string;
-  name: string;
-  root_type: string;
-  parent_path: string | null;
-  depth: number;
-  direct_document_count: number;
-  document_count: number;
-  has_children: boolean;
-  children?: ExportTaxonomyNode[];
+interface ManifestEntry {
+  version: number;
+  format: "static-v2";
+  generated_at: string;
+  entries: {
+    status: string;
+    taxonomy: string;
+    relations: string;
+    bootstrap?: string;
+    search_manifest: string;
+  };
+  meta_shards: Array<{ id: string; directory: string; directories?: string[]; path: string; document_count: number }>;
+  detail_shards: Array<{ id: string; document_id: string; document_path: string; path: string }>;
+  tag_shards: Array<{ id: string; root_type: string; path: string; node_count: number; posting_path: string }>;
+  relation_shards: Array<{ id: string; path: string; document_count: number }>;
+  search_buckets: Array<{ bucket: string; path: string; term_count: number }>;
 }
 
-interface ExportRelationRecord {
+interface RelationPair {
   document_id: string;
   related_document_id: string;
   relation_type: string;
@@ -43,38 +59,16 @@ interface ExportRelationRecord {
   shared_tags: string[];
 }
 
-interface DirectorySnapshotFileRecord {
-  file_id: string;
-  document_id: string;
+interface FolderBootstrapNode {
   path: string;
-  title: string;
-  summary: string;
-  mtime: string;
-  tags: string[];
-  derived_tags: string[];
-  confidence: Record<string, never>;
-  sources: Record<string, never>;
-  manual_override: boolean;
-}
-
-interface DirectorySnapshotTopTagRecord {
-  tag_path: string;
+  name: string;
+  parent_path: string | null;
+  direct_document_count: number;
   document_count: number;
 }
 
-interface DirectorySnapshotRecord {
-  version: number;
-  directory: string;
-  updated_at: string;
-  files: Record<string, DirectorySnapshotFileRecord>;
-  document_count: number;
-  top_tags: DirectorySnapshotTopTagRecord[];
-}
-
-interface SnapshotRegistry {
-  directories: string[];
-  updated_at: string;
-}
+const RELATION_MAX_POSTING = 128;
+const META_SHARD_TARGET_DOCUMENTS = 64;
 
 function ensureDir(dirPath: string): void {
   fs.mkdirSync(dirPath, { recursive: true });
@@ -92,8 +86,19 @@ function readJson<T>(filePath: string): T | null {
   return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
 }
 
-function makeStableId(prefix: string, value: string): string {
-  const digest = crypto.createHash("sha1").update(value).digest("hex");
+function appendNdjson(filePath: string, value: unknown): void {
+  ensureDir(path.dirname(filePath));
+  fs.appendFileSync(filePath, `${JSON.stringify(value)}\n`, "utf-8");
+}
+
+function safeUnlink(filePath: string): void {
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+  }
+}
+
+function makeId(prefix: string, value: string): string {
+  const digest = crypto.createHash("sha1").update(value).digest("hex").slice(0, 16);
   return `${prefix}_${digest}`;
 }
 
@@ -101,217 +106,130 @@ function uniqueSorted(values: Iterable<string>): string[] {
   return [...new Set(values)].sort((a, b) => a.localeCompare(b, "zh-Hans-CN"));
 }
 
-function cloneNodeForTree(node: ExportTaxonomyNode): ExportTaxonomyNode {
+function normalizeDirectory(filePath: string): string {
+  const value = path.posix.dirname(filePath);
+  return value && value !== "" ? value : ".";
+}
+
+function directoryName(directory: string): string {
+  if (!directory || directory === ".") {
+    return "资料库";
+  }
+  return path.posix.basename(directory);
+}
+
+function parentDirectory(directory: string): string | null {
+  if (!directory || directory === ".") {
+    return null;
+  }
+  const parent = path.posix.dirname(directory);
+  return parent && parent !== "" ? parent : ".";
+}
+
+function topLevelDirectory(directory: string): string {
+  if (!directory || directory === ".") {
+    return ".";
+  }
+  return directory.split("/").filter(Boolean)[0] ?? ".";
+}
+
+function commonDirectory(directoryPaths: string[]): string {
+  if (directoryPaths.length === 0) {
+    return ".";
+  }
+  const normalized = uniqueSorted(directoryPaths);
+  if (normalized.length === 1) {
+    return normalized[0] ?? ".";
+  }
+  const partsList = normalized.map(item => item === "." ? [] : item.split("/").filter(Boolean));
+  const minLength = Math.min(...partsList.map(parts => parts.length));
+  const shared: string[] = [];
+  for (let index = 0; index < minLength; index += 1) {
+    const current = partsList[0]?.[index];
+    if (!current || partsList.some(parts => parts[index] !== current)) {
+      break;
+    }
+    shared.push(current);
+  }
+  return shared.length ? shared.join("/") : ".";
+}
+
+function metaShardDirectories(shard: { directory: string; directories?: string[] }): string[] {
+  return uniqueSorted(shard.directories?.length ? shard.directories : [shard.directory]);
+}
+
+function ensureFolderBootstrapNode(
+  folderMap: Map<string, FolderBootstrapNode>,
+  directory: string,
+): FolderBootstrapNode {
+  const normalized = directory && directory !== "" ? directory : ".";
+  const existing = folderMap.get(normalized);
+  if (existing) {
+    return existing;
+  }
+  const node: FolderBootstrapNode = {
+    path: normalized,
+    name: directoryName(normalized),
+    parent_path: parentDirectory(normalized),
+    direct_document_count: 0,
+    document_count: 0,
+  };
+  folderMap.set(normalized, node);
+  return node;
+}
+
+function makeTagTree(tags: ExportTagRecord[]) {
+  const nodes = tags.map(tag => ({
+    path: tag.path,
+    name: tag.name,
+    root_type: tag.rootType,
+    parent_path: tag.parentPath,
+    depth: tag.depth,
+  }));
+  const byPath = new Map<string, Record<string, unknown>>();
+  for (const node of nodes) {
+    byPath.set(node.path, { ...node, children: [] as Record<string, unknown>[] });
+  }
+  const roots: Record<string, unknown>[] = [];
+  for (const node of byPath.values()) {
+    const parentPath = node.parent_path as string | null;
+    if (parentPath && byPath.has(parentPath)) {
+      (byPath.get(parentPath)?.children as Record<string, unknown>[]).push(node);
+    } else {
+      roots.push(node);
+    }
+  }
   return {
-    path: node.path,
-    name: node.name,
-    root_type: node.root_type,
-    parent_path: node.parent_path,
-    depth: node.depth,
-    direct_document_count: node.direct_document_count,
-    document_count: node.document_count,
-    has_children: node.has_children,
-    ...(node.children?.length
-      ? { children: node.children.map(child => cloneNodeForTree(child)) }
-      : {}),
+    root_types: uniqueSorted(tags.map(tag => tag.rootType)),
+    nodes,
+    tree: roots,
   };
 }
 
-function buildTaxonomy(
-  tags: ExportTagRecord[],
-  documents: ExportDocumentRecord[],
-): { rootTypes: string[]; nodes: ExportTaxonomyNode[]; tree: ExportTaxonomyNode[] } {
-  const nodeMap = new Map<string, ExportTaxonomyNode>();
-  const directDocumentSets = new Map<string, Set<string>>();
-  const subtreeDocumentSets = new Map<string, Set<string>>();
-
-  for (const tag of tags) {
-    nodeMap.set(tag.path, {
-      path: tag.path,
-      name: tag.name,
-      root_type: tag.rootType,
-      parent_path: tag.parentPath,
-      depth: tag.depth,
-      direct_document_count: 0,
-      document_count: 0,
-      has_children: false,
-      children: [],
-    });
-  }
-
-  for (const document of documents) {
-    const exactTags = uniqueSorted([...document.tags, ...document.derivedTags]);
-    for (const tagPath of exactTags) {
-      const exactSet = directDocumentSets.get(tagPath) ?? new Set<string>();
-      exactSet.add(document.documentId);
-      directDocumentSets.set(tagPath, exactSet);
-
-      const parts = tagPath.split("/");
-      for (let index = 1; index <= parts.length; index += 1) {
-        const ancestorPath = parts.slice(0, index).join("/");
-        const subtreeSet = subtreeDocumentSets.get(ancestorPath) ?? new Set<string>();
-        subtreeSet.add(document.documentId);
-        subtreeDocumentSets.set(ancestorPath, subtreeSet);
-      }
-    }
-  }
-
-  for (const node of nodeMap.values()) {
-    node.direct_document_count = directDocumentSets.get(node.path)?.size ?? 0;
-    node.document_count = subtreeDocumentSets.get(node.path)?.size ?? 0;
-  }
-
-  const roots: ExportTaxonomyNode[] = [];
-  for (const node of nodeMap.values()) {
-    if (node.parent_path) {
-      const parent = nodeMap.get(node.parent_path);
-      if (parent) {
-        parent.children = parent.children ?? [];
-        parent.children.push(node);
-        parent.has_children = true;
-        continue;
-      }
-    }
-    roots.push(node);
-  }
-
-  const sortNodes = (items: ExportTaxonomyNode[]): ExportTaxonomyNode[] => {
-    items.sort((a, b) => a.path.localeCompare(b.path, "zh-Hans-CN"));
-    for (const item of items) {
-      if (item.children?.length) {
-        sortNodes(item.children);
-      } else {
-        delete item.children;
-      }
-    }
-    return items;
-  };
-
-  const sortedRoots = sortNodes(roots);
-  const sortedNodes = [...nodeMap.values()]
-    .sort((a, b) => a.path.localeCompare(b.path, "zh-Hans-CN"))
-    .map(node => ({
-      path: node.path,
-      name: node.name,
-      root_type: node.root_type,
-      parent_path: node.parent_path,
-      depth: node.depth,
-      direct_document_count: node.direct_document_count,
-      document_count: node.document_count,
-      has_children: node.has_children,
-    }));
-  const rootTypes = uniqueSorted(sortedNodes.map(item => item.root_type));
-
-  return {
-    rootTypes,
-    nodes: sortedNodes,
-    tree: sortedRoots.map(root => cloneNodeForTree(root)),
-  };
+function buildRelationTempPath(tempDir: string, documentId: string): string {
+  return path.join(tempDir, `${documentId}.relations.ndjson`);
 }
 
-function buildRelations(documents: ExportDocumentRecord[]): ExportRelationRecord[] {
-  const relations: ExportRelationRecord[] = [];
-
-  for (let index = 0; index < documents.length; index += 1) {
-    const current = documents[index];
-    const currentTags = new Set(current.tags);
-    if (currentTags.size === 0) {
-      continue;
-    }
-
-    for (let otherIndex = index + 1; otherIndex < documents.length; otherIndex += 1) {
-      const other = documents[otherIndex];
-      const sharedTags = uniqueSorted(other.tags.filter(tagPath => currentTags.has(tagPath)));
-      if (sharedTags.length === 0) {
-        continue;
-      }
-
-      relations.push({
-        document_id: current.documentId,
-        related_document_id: other.documentId,
-        relation_type: "shared_tag",
-        score: Number((sharedTags.length / Math.max(currentTags.size, 1)).toFixed(3)),
-        shared_tags: sharedTags,
-      });
-    }
-  }
-
-  relations.sort((a, b) => {
-    if (b.score !== a.score) {
-      return b.score - a.score;
-    }
-    if (a.document_id !== b.document_id) {
-      return a.document_id.localeCompare(b.document_id, "zh-Hans-CN");
-    }
-    return a.related_document_id.localeCompare(b.related_document_id, "zh-Hans-CN");
-  });
-
-  return relations;
+function calculateScore(sharedTagCount: number, baseTagCount: number): number {
+  return Number((sharedTagCount / Math.max(baseTagCount, 1)).toFixed(3));
 }
 
-function buildDirectorySnapshots(
-  documents: ExportDocumentRecord[],
-  exportedAt: string,
-): Map<string, DirectorySnapshotRecord> {
-  const snapshots = new Map<string, DirectorySnapshotRecord>();
-
-  for (const document of documents) {
-    const directory = path.posix.dirname(document.path);
-    const fileName = path.posix.basename(document.path);
-    const snapshot = snapshots.get(directory) ?? {
-      version: 1,
-      directory,
-      updated_at: exportedAt,
-      files: {},
-      document_count: 0,
-      top_tags: [],
-    };
-
-    snapshot.document_count += 1;
-    snapshot.files[fileName] = {
-      file_id: makeStableId("file", document.path),
-      document_id: document.documentId,
-      path: document.path,
-      title: document.title,
-      summary: document.summary,
-      mtime: document.mtime,
-      tags: [...document.tags],
-      derived_tags: [...document.derivedTags],
-      confidence: {},
-      sources: {},
-      manual_override: false,
-    };
-    snapshots.set(directory, snapshot);
+function isRelationEligibleTag(tagPath: string): boolean {
+  if (!tagPath) {
+    return false;
   }
-
-  for (const snapshot of snapshots.values()) {
-    const tagCounter = new Map<string, number>();
-
-    for (const filePayload of Object.values(snapshot.files)) {
-      for (const tagPath of filePayload.tags) {
-        tagCounter.set(tagPath, (tagCounter.get(tagPath) ?? 0) + 1);
-      }
-    }
-
-    snapshot.top_tags = [...tagCounter.entries()]
-      .sort((a, b) => {
-        if (b[1] !== a[1]) {
-          return b[1] - a[1];
-        }
-        return a[0].localeCompare(b[0], "zh-Hans-CN");
-      })
-      .map(([tagPath, documentCount]) => ({
-        tag_path: tagPath,
-        document_count: documentCount,
-      }));
-  }
-
-  return snapshots;
+  return !(
+    tagPath.startsWith("来源/")
+    || tagPath.startsWith("类型/")
+    || tagPath.startsWith("时间/")
+    || tagPath.startsWith("状态/")
+  );
 }
 
 /**
- * 最小静态导出构建器。
- * 第二阶段补上目录快照清理与最小 Dirty Scope 感知，继续保持 legacy JSON 兼容。
+ * 静态导出构建器。
+ * 这一版把 meta / detail / tag posting / relation / search 改成分段式处理，
+ * 避免把 documents / relations / search 全量堆进内存。
  */
 export class ExportBuilder {
   constructor(private readonly config: RuntimeConfig) {}
@@ -319,132 +237,492 @@ export class ExportBuilder {
   build(options: ExportBuildOptions = {}): ExportBuildResult {
     const exportedAt = new Date().toISOString();
     const repository = new CatalogRepository(this.config.dbPath);
-    const documents = repository.listExportDocuments();
     const tags = repository.listExportTags();
-    const taxonomy = buildTaxonomy(tags, documents);
-    const relations = buildRelations(documents);
-    const directorySnapshots = buildDirectorySnapshots(documents, exportedAt);
-    const dirtyDirectories = new Set(options.dirtyScope?.dirtyDirectories ?? []);
-    const fullBuild = !options.dirtyScope || options.dirtyScope.trigger === "full";
+    const taxonomy = makeTagTree(tags);
 
     ensureDir(this.config.exportDir);
+    const metaDir = path.join(this.config.exportDir, "meta");
+    const detailDir = path.join(this.config.exportDir, "detail");
+    const tagDir = path.join(this.config.exportDir, "tags");
+    const relationDir = path.join(this.config.exportDir, "relations");
+    const tempDir = path.join(this.config.exportDir, ".tmp");
+    const relationTempDir = path.join(tempDir, "relations");
+    ensureDir(metaDir);
+    ensureDir(detailDir);
+    ensureDir(tagDir);
+    ensureDir(relationDir);
+    ensureDir(relationTempDir);
 
-    const documentsFile = path.join(this.config.exportDir, "documents.json");
-    const taxonomyFile = path.join(this.config.exportDir, "taxonomy.json");
-    const relationsFile = path.join(this.config.exportDir, "relations.json");
-    const statusFile = path.join(this.config.exportDir, "status.json");
-    const registryFile = path.join(this.config.exportDir, ".snapshot-registry.json");
+    const previousManifestPath = path.join(this.config.exportDir, "manifest.json");
+    const previousManifest = readJson<ManifestEntry>(previousManifestPath);
+    const dirtyDirectories = new Set(options.dirtyScope?.dirtyDirectories ?? []);
+    const dirtyTagPaths = new Set(options.dirtyScope?.dirtyTagPaths ?? []);
+    const changedPaths = new Set(options.dirtyScope?.changedPaths ?? []);
+    const dirtyRelationIds = new Set(options.dirtyScope?.dirtyRelations ?? []);
+    const fullBuild = !options.dirtyScope || options.dirtyScope.trigger === "full";
+    const lightBuild = options.light === true;
 
-    writeJson(documentsFile, {
-      version: 1,
-      generator: {
-        runtime: "node",
-        package: "doc-semantic-index",
-      },
-      documents: documents.map(item => ({
-        document_id: item.documentId,
-        path: item.path,
-        title: item.title,
-        summary: item.summary,
-        tags: item.tags,
-        derived_tags: item.derivedTags,
-        mtime: item.mtime,
-      })),
+    const filesWritten: string[] = [];
+    const metaShards: ManifestEntry["meta_shards"] = [];
+    const detailShards: ManifestEntry["detail_shards"] = [];
+    const tagShards: ManifestEntry["tag_shards"] = [];
+    const relationShards: ManifestEntry["relation_shards"] = [];
+    const detailDocumentPaths = new Set<string>();
+    const folderBootstrapMap = new Map<string, FolderBootstrapNode>();
+    ensureFolderBootstrapNode(folderBootstrapMap, ".");
+
+    let currentMetaRoot: string | null = null;
+    let currentMetaDocuments: Array<Record<string, unknown>> = [];
+    let currentMetaDirectories: string[] = [];
+    let currentMetaDirectorySet = new Set<string>();
+    const metaShardCounters = new Map<string, number>();
+    const flushMetaShard = (): void => {
+      if (!currentMetaRoot || currentMetaDocuments.length === 0) {
+        return;
+      }
+      const shardDirectories = uniqueSorted(currentMetaDirectories);
+      const shardDirectory = commonDirectory(shardDirectories);
+      const shardIndex = metaShardCounters.get(currentMetaRoot) ?? 0;
+      metaShardCounters.set(currentMetaRoot, shardIndex + 1);
+      const shardId = makeId("meta", `${currentMetaRoot}::${shardIndex}`);
+      const relativePath = path.posix.join("meta", `${shardId}.json`);
+      metaShards.push({
+        id: shardId,
+        directory: shardDirectory,
+        directories: shardDirectories,
+        path: relativePath,
+        document_count: currentMetaDocuments.length,
+      });
+      if (fullBuild || shardDirectories.some(directory => dirtyDirectories.has(directory))) {
+        const absolutePath = path.join(this.config.exportDir, relativePath);
+        writeJson(absolutePath, {
+          version: 2,
+          shard_type: "meta",
+          directory: shardDirectory,
+          directories: shardDirectories,
+          exported_at: exportedAt,
+          documents: currentMetaDocuments,
+        });
+        filesWritten.push(absolutePath);
+      }
+      currentMetaRoot = null;
+      currentMetaDocuments = [];
+      currentMetaDirectories = [];
+      currentMetaDirectorySet = new Set<string>();
+    };
+
+    for (const batch of repository.iterateExportDocumentRecords(2000)) {
+      for (const document of batch) {
+        const directory = normalizeDirectory(document.path);
+        ensureFolderBootstrapNode(folderBootstrapMap, directory).direct_document_count += 1;
+        let currentBootstrapDirectory: string | null = directory;
+        while (currentBootstrapDirectory) {
+          ensureFolderBootstrapNode(folderBootstrapMap, currentBootstrapDirectory).document_count += 1;
+          currentBootstrapDirectory = parentDirectory(currentBootstrapDirectory);
+        }
+        const metaRoot = topLevelDirectory(directory);
+        const shouldFlushForRoot = currentMetaRoot !== null && currentMetaRoot !== metaRoot;
+        const shouldFlushForSize = currentMetaDocuments.length >= META_SHARD_TARGET_DOCUMENTS
+          && !currentMetaDirectorySet.has(directory);
+        if (shouldFlushForRoot || shouldFlushForSize) {
+          flushMetaShard();
+        }
+        if (!currentMetaRoot) {
+          currentMetaRoot = metaRoot;
+        }
+        if (!currentMetaDirectorySet.has(directory)) {
+          currentMetaDirectorySet.add(directory);
+          currentMetaDirectories.push(directory);
+        }
+
+        currentMetaDocuments.push({
+          document_id: document.documentId,
+          path: document.path,
+          title: document.title,
+          summary: document.summary,
+          mtime: document.mtime,
+          direct_tags: document.tags,
+          derived_tags: document.derivedTags,
+          detail_ref: `detail/${document.documentId}.json`,
+        });
+
+        const detailRelativePath = path.posix.join("detail", `${document.documentId}.json`);
+        detailShards.push({
+          id: makeId("detail", document.path),
+          document_id: document.documentId,
+          document_path: document.path,
+          path: detailRelativePath,
+        });
+        detailDocumentPaths.add(document.path);
+
+        if (fullBuild || changedPaths.has(document.path) || dirtyDirectories.has(directory)) {
+          const absoluteDetailPath = path.join(this.config.exportDir, detailRelativePath);
+          writeJson(absoluteDetailPath, {
+            version: 2,
+            shard_type: "detail",
+            exported_at: exportedAt,
+            document: {
+              document_id: document.documentId,
+              path: document.path,
+              title: document.title,
+              summary: document.summary,
+              direct_tags: document.tags,
+              derived_tags: document.derivedTags,
+              mtime: document.mtime,
+              directory,
+            },
+          });
+          filesWritten.push(absoluteDetailPath);
+        }
+      }
+    }
+    flushMetaShard();
+    logAffairsIndexerRss("export.meta_detail_complete", {
+      rootDir: this.config.rootDir,
+      fullBuild,
+      lightBuild,
+      metaShardCount: metaShards.length,
+      detailShardCount: detailShards.length,
+      dirtyDirectoryCount: dirtyDirectories.size,
+      changedPathCount: changedPaths.size
     });
 
-    writeJson(taxonomyFile, {
-      version: 1,
-      generator: {
-        runtime: "node",
-        package: "doc-semantic-index",
-      },
-      root_types: taxonomy.rootTypes,
-      nodes: taxonomy.nodes,
-      tree: taxonomy.tree,
+    const tagsByRoot = new Map<string, ExportTagRecord[]>();
+    for (const tag of tags) {
+      const current = tagsByRoot.get(tag.rootType) ?? [];
+      current.push(tag);
+      tagsByRoot.set(tag.rootType, current);
+    }
+
+    let currentRootType: string | null = null;
+    let currentPostingWriter: JsonArrayFileWriter | null = null;
+    let currentPostingOutputPath: string | null = null;
+    let currentTagPath: string | null = null;
+    let currentTagDocuments: Array<{ document_id: string; path: string; title: string; derived: boolean }> = [];
+    const flushCurrentTag = (): void => {
+      if (!currentTagPath) {
+        return;
+      }
+      if (currentPostingWriter) {
+        currentPostingWriter.append({
+          tag_path: currentTagPath,
+          document_count: currentTagDocuments.length,
+          documents: currentTagDocuments,
+        });
+      }
+      currentTagPath = null;
+      currentTagDocuments = [];
+    };
+    const flushCurrentRoot = (): void => {
+      if (!currentRootType) {
+        return;
+      }
+      flushCurrentTag();
+      const shardId = makeId("tag", currentRootType);
+      const relativePath = path.posix.join("tags", `${shardId}.json`);
+      const postingPath = path.posix.join("tags", `${shardId}.posting.json`);
+      tagShards.push({
+        id: shardId,
+        root_type: currentRootType,
+        path: relativePath,
+        node_count: (tagsByRoot.get(currentRootType) ?? []).length,
+        posting_path: postingPath,
+      });
+
+      const dirtyRoot = [...dirtyTagPaths].some(tagPath => tagPath.startsWith(`${currentRootType}/`) || tagPath === currentRootType);
+      if (fullBuild || dirtyRoot) {
+        const absolutePath = path.join(this.config.exportDir, relativePath);
+        writeJson(absolutePath, {
+          version: 2,
+          shard_type: "tag",
+          root_type: currentRootType,
+          exported_at: exportedAt,
+          nodes: tagsByRoot.get(currentRootType) ?? [],
+        });
+        filesWritten.push(absolutePath);
+      }
+
+      currentPostingWriter?.close();
+      if (currentPostingOutputPath) {
+        filesWritten.push(currentPostingOutputPath);
+      }
+
+      currentRootType = null;
+      currentPostingWriter = null;
+      currentPostingOutputPath = null;
+      currentTagPath = null;
+      currentTagDocuments = [];
+    };
+
+    for (const batch of repository.iterateTagPostingRows(10000)) {
+      for (const row of batch) {
+        if (currentRootType !== row.rootType) {
+          flushCurrentRoot();
+          currentRootType = row.rootType;
+          const shardId = makeId("tag", currentRootType);
+          const postingPath = path.posix.join("tags", `${shardId}.posting.json`);
+          const dirtyRoot = fullBuild
+            || [...dirtyTagPaths].some(tagPath => tagPath.startsWith(`${currentRootType}/`) || tagPath === currentRootType);
+          if (dirtyRoot) {
+            currentPostingOutputPath = path.join(this.config.exportDir, postingPath);
+            currentPostingWriter = createJsonArrayFileWriter(currentPostingOutputPath, {
+              prefix: `{\n  "version": 2,\n  "shard_type": "tag_posting",\n  "root_type": ${JSON.stringify(currentRootType)},\n  "exported_at": ${JSON.stringify(exportedAt)},\n  "postings": [`,
+              suffix: "\n  ]\n}\n",
+            });
+          } else {
+            currentPostingOutputPath = null;
+            currentPostingWriter = null;
+          }
+        }
+        if (currentTagPath !== row.tagPath) {
+          flushCurrentTag();
+          currentTagPath = row.tagPath;
+        }
+        currentTagDocuments.push({
+          document_id: row.documentId,
+          path: row.path,
+          title: row.title,
+          derived: row.derived,
+        });
+      }
+    }
+    flushCurrentRoot();
+    logAffairsIndexerRss("export.tag_complete", {
+      rootDir: this.config.rootDir,
+      tagShardCount: tagShards.length,
+      dirtyTagPathCount: dirtyTagPaths.size
     });
 
-    writeJson(relationsFile, {
-      version: 1,
-      generator: {
-        runtime: "node",
-        package: "doc-semantic-index",
-      },
-      relations,
+    let currentRelationTag: string | null = null;
+    let currentRelationPostings: Array<{ documentId: string; path: string; title: string }> = [];
+    const flushRelationTag = (): void => {
+      if (
+        !currentRelationTag
+        || !isRelationEligibleTag(currentRelationTag)
+        || currentRelationPostings.length < 2
+        || currentRelationPostings.length > RELATION_MAX_POSTING
+      ) {
+        currentRelationTag = null;
+        currentRelationPostings = [];
+        return;
+      }
+
+      const sharedTag = currentRelationTag;
+      for (let index = 0; index < currentRelationPostings.length; index += 1) {
+        for (let otherIndex = index + 1; otherIndex < currentRelationPostings.length; otherIndex += 1) {
+          const left = currentRelationPostings[index];
+          const right = currentRelationPostings[otherIndex];
+          const pair: RelationPair = {
+            document_id: left.documentId,
+            related_document_id: right.documentId,
+            relation_type: "shared_tag",
+            score: calculateScore(1, 1),
+            shared_tags: [sharedTag],
+          };
+          appendNdjson(buildRelationTempPath(relationTempDir, left.documentId), pair);
+          appendNdjson(buildRelationTempPath(relationTempDir, right.documentId), {
+            ...pair,
+            document_id: right.documentId,
+            related_document_id: left.documentId,
+          });
+        }
+      }
+
+      currentRelationTag = null;
+      currentRelationPostings = [];
+    };
+
+    if (!lightBuild) {
+      for (const batch of repository.iterateDirectTagPostingRows(10000)) {
+        for (const row of batch) {
+          if (currentRelationTag !== row.tagPath) {
+            flushRelationTag();
+            currentRelationTag = row.tagPath;
+          }
+          currentRelationPostings.push({
+            documentId: row.documentId,
+            path: row.path,
+            title: row.title,
+          });
+        }
+      }
+    }
+    flushRelationTag();
+
+    const relationTempFiles = fs.existsSync(relationTempDir)
+      ? fs.readdirSync(relationTempDir).filter(name => name.endsWith(".relations.ndjson"))
+      : [];
+    for (const fileName of relationTempFiles) {
+      const documentId = fileName.replace(/\.relations\.ndjson$/, "");
+      const merged = new Map<string, RelationPair>();
+      iterateNdjsonFileSync<RelationPair>(path.join(relationTempDir, fileName), (record) => {
+        const key = `${record.document_id}::${record.related_document_id}`;
+        const existing = merged.get(key);
+        if (existing) {
+          existing.shared_tags = uniqueSorted([...existing.shared_tags, ...record.shared_tags]);
+          existing.score = calculateScore(existing.shared_tags.length, existing.shared_tags.length);
+          return;
+        }
+        merged.set(key, {
+          ...record,
+          shared_tags: uniqueSorted(record.shared_tags),
+        });
+      });
+      const relations = [...merged.values()].sort((a, b) => a.related_document_id.localeCompare(b.related_document_id, "zh-Hans-CN"));
+      relationShards.push({
+        id: makeId("relation", documentId),
+        path: `relations/${documentId}.json`,
+        document_count: relations.length,
+      });
+
+      if (fullBuild || dirtyRelationIds.has(documentId)) {
+        const absolutePath = path.join(this.config.exportDir, "relations", `${documentId}.json`);
+        writeJson(absolutePath, {
+          version: 2,
+          shard_type: "relation",
+          exported_at: exportedAt,
+          document_id: documentId,
+          relations,
+        });
+        filesWritten.push(absolutePath);
+      }
+      safeUnlink(path.join(relationTempDir, fileName));
+    }
+    if (fs.existsSync(relationTempDir) && fs.readdirSync(relationTempDir).length === 0) {
+      fs.rmdirSync(relationTempDir);
+    }
+    if (fs.existsSync(tempDir) && fs.readdirSync(tempDir).length === 0) {
+      fs.rmdirSync(tempDir);
+    }
+    logAffairsIndexerRss("export.relation_complete", {
+      rootDir: this.config.rootDir,
+      relationGroupCount: relationShards.length,
+      dirtyRelationCount: dirtyRelationIds.size,
+      lightBuild
     });
 
-    writeJson(statusFile, {
-      version: 1,
-      generator: {
-        runtime: "node",
-        package: "doc-semantic-index",
-        exported_at: exportedAt,
-      },
-      watcher: {
-        status: "idle",
-        last_job: {
-          job_type: "export",
-          target_path: ".",
-          status: "done",
-          updated_at: exportedAt,
-        },
-      },
-      queue: {
-        queued: 0,
-        running: 0,
-        failed: 0,
-      },
-      vector_store: {
-        mode: "disabled",
-      },
-      last_full_scan_at: exportedAt,
-      document_count: documents.length,
-      taxonomy_node_count: taxonomy.nodes.length,
-      relation_count: relations.length,
+    const statusPath = path.join(this.config.exportDir, "status.json");
+    const taxonomyPath = path.join(this.config.exportDir, "taxonomy.json");
+    const relationsPath = path.join(this.config.exportDir, "relations.json");
+    const bootstrapPath = path.join(this.config.exportDir, "bootstrap.json");
+
+    const searchIndexResult = lightBuild
+      ? { bucketCount: 0, filesWritten: [] as string[], manifestPath: path.join(this.config.exportDir, "search", "manifest.json") }
+      : new SearchIndexBuilder(this.config).build({ dirtyScope: options.dirtyScope });
+    logAffairsIndexerRss("export.search_complete", {
+      rootDir: this.config.rootDir,
+      searchBucketCount: searchIndexResult.bucketCount,
+      searchFilesWritten: searchIndexResult.filesWritten.length
+    });
+
+    writeJson(statusPath, {
+      version: 2,
+      format: "static-v2",
+      exported_at: exportedAt,
+      document_count: detailShards.length,
+      meta_shard_count: metaShards.length,
+      detail_shard_count: detailShards.length,
+      tag_shard_count: tagShards.length,
+      relation_group_count: relationShards.length,
+      search_bucket_count: searchIndexResult.bucketCount,
       dirty_scope: options.dirtyScope ?? null,
     });
-
-    const previousRegistry = readJson<SnapshotRegistry>(registryFile);
-    const previousDirectories = new Set(previousRegistry?.directories ?? []);
-    const currentDirectories = new Set(directorySnapshots.keys());
-    const filesWritten: string[] = [documentsFile, taxonomyFile, relationsFile, statusFile];
-    const filesDeleted: string[] = [];
-
-    for (const [directory, snapshot] of directorySnapshots.entries()) {
-      if (!fullBuild && !dirtyDirectories.has(directory)) {
-        continue;
-      }
-      const targetDirectory = path.join(this.config.rootDir, directory);
-      ensureDir(targetDirectory);
-      const snapshotFile = path.join(targetDirectory, ".supertags.json");
-      writeJson(snapshotFile, snapshot);
-      filesWritten.push(snapshotFile);
-    }
-
-    const staleDirectories = fullBuild
-      ? [...previousDirectories].filter(directory => !currentDirectories.has(directory))
-      : [...dirtyDirectories].filter(directory => !currentDirectories.has(directory));
-
-    for (const directory of staleDirectories) {
-      const snapshotFile = path.join(this.config.rootDir, directory, ".supertags.json");
-      if (fs.existsSync(snapshotFile)) {
-        fs.unlinkSync(snapshotFile);
-        filesDeleted.push(snapshotFile);
-      }
-    }
-
-    writeJson(registryFile, {
-      directories: uniqueSorted(currentDirectories),
-      updated_at: exportedAt,
+    writeJson(taxonomyPath, {
+      version: 2,
+      format: "static-v2",
+      exported_at: exportedAt,
+      ...taxonomy,
     });
-    filesWritten.push(registryFile);
+    writeJson(relationsPath, {
+      version: 2,
+      format: "static-v2",
+      exported_at: exportedAt,
+      groups: relationShards,
+    });
+    writeJson(bootstrapPath, {
+      version: 2,
+      format: "static-v2-bootstrap",
+      exported_at: exportedAt,
+      folders: [...folderBootstrapMap.values()]
+        .sort((a, b) => a.path.localeCompare(b.path, "zh-Hans-CN")),
+    });
+
+    filesWritten.push(statusPath, taxonomyPath, relationsPath, bootstrapPath, ...searchIndexResult.filesWritten);
+
+    const searchManifest = lightBuild
+      ? { buckets: previousManifest?.search_buckets ?? [] }
+      : readJson<{ buckets?: ManifestEntry["search_buckets"] }>(searchIndexResult.manifestPath);
+    const manifest: ManifestEntry = {
+      version: 2,
+      format: "static-v2",
+      generated_at: exportedAt,
+      entries: {
+        status: "status.json",
+        taxonomy: "taxonomy.json",
+        relations: "relations.json",
+        bootstrap: "bootstrap.json",
+        search_manifest: "search/manifest.json",
+      },
+      meta_shards: metaShards,
+      detail_shards: detailShards,
+      tag_shards: tagShards,
+      relation_shards: relationShards,
+      search_buckets: searchManifest?.buckets ?? [],
+    };
+
+    const manifestPath = path.join(this.config.exportDir, "manifest.json");
+    writeJson(manifestPath, manifest);
+    filesWritten.push(manifestPath);
+    logAffairsIndexerRss("export.complete", {
+      rootDir: this.config.rootDir,
+      manifestPath,
+      metaShardCount: metaShards.length,
+      detailShardCount: detailShards.length,
+      tagShardCount: tagShards.length,
+      relationGroupCount: relationShards.length,
+      searchBucketCount: searchIndexResult.bucketCount
+    });
+
+    if (previousManifest) {
+      const activeMetaPaths = new Set(metaShards.map(item => item.path));
+      const activeDetailPaths = new Set(detailShards.map(item => item.path));
+      const activeRelationPaths = new Set(relationShards.map(item => item.path));
+
+      for (const shard of previousManifest.meta_shards ?? []) {
+        const shardDirectories = metaShardDirectories(shard);
+        if (
+          !activeMetaPaths.has(shard.path)
+          && (fullBuild || shardDirectories.some(directory => dirtyDirectories.has(directory)))
+        ) {
+          const absolutePath = path.join(this.config.exportDir, shard.path);
+          if (fs.existsSync(absolutePath)) fs.unlinkSync(absolutePath);
+        }
+      }
+
+      for (const shard of previousManifest.detail_shards ?? []) {
+        if (!activeDetailPaths.has(shard.path) || (changedPaths.has(shard.document_path) && !detailDocumentPaths.has(shard.document_path))) {
+          const absolutePath = path.join(this.config.exportDir, shard.path);
+          if (fs.existsSync(absolutePath)) fs.unlinkSync(absolutePath);
+        }
+      }
+
+      for (const shard of previousManifest.relation_shards ?? []) {
+        if (!activeRelationPaths.has(shard.path)) {
+          const absolutePath = path.join(this.config.exportDir, shard.path);
+          if (fs.existsSync(absolutePath)) fs.unlinkSync(absolutePath);
+        }
+      }
+    }
 
     return {
       outputDir: this.config.exportDir,
-      documentCount: documents.length,
-      taxonomyNodeCount: taxonomy.nodes.length,
-      relationCount: relations.length,
+      manifestPath,
+      metaShardCount: metaShards.length,
+      detailShardCount: detailShards.length,
+      tagShardCount: tagShards.length,
+      searchBucketCount: searchIndexResult.bucketCount,
+      relationGroupCount: relationShards.length,
       filesWritten: uniqueSorted(filesWritten),
-      filesDeleted: uniqueSorted(filesDeleted),
       exportedAt,
     };
   }

@@ -5,13 +5,17 @@ import { performance } from "node:perf_hooks";
 import { DocumentParser } from "../../parser/document-parser.js";
 import { ParserSkipRepository } from "../../parser/parser-skip-repository.js";
 import { CatalogRepository } from "../../repositories/catalog-repository.js";
-import { CatalogWriteRepository } from "../../repositories/catalog-write-repository.js";
+import {
+  CatalogWriteRepository,
+  type IndexedDocumentBatchEntry,
+} from "../../repositories/catalog-write-repository.js";
 import { FileScanner, type FileScanResult } from "../../scanner/file-scanner.js";
 import { SimpleTagInferenceEngine } from "../../tagging/simple-tag-inference.js";
 import type { ReconcileScope } from "../../repositories/catalog-write-repository.js";
 import type { ParsedDocument } from "../../parser/plain-text-parser.js";
 import type { TagAssignment } from "../../tagging/simple-tag-inference.js";
 import { DirtyScopeResolver, type DirtyScope } from "../dirty/dirty-scope-resolver.js";
+import { logAffairsIndexerRss } from "../../utils/rss-log.js";
 
 export interface TextIndexResult {
   scannedCount: number;
@@ -62,6 +66,9 @@ export interface TextIndexResult {
     skipCatalogRecords: number;
   };
 }
+
+const RSS_PROGRESS_DOCUMENT_INTERVAL = 2000;
+const RSS_PROGRESS_BATCH_INTERVAL = 10;
 
 function normalizeRelativePath(relativePath: string): string {
   return relativePath.split(path.sep).join("/");
@@ -130,12 +137,7 @@ export class TextIndexer {
       errorCode: string;
       message: string;
     }> = [];
-    const successEntries: Array<{
-      file: FileScanResult;
-      parsed: ParsedDocument;
-      tags: TagAssignment[];
-      derivedTags: TagAssignment[];
-    }> = [];
+    const successEntries: IndexedDocumentBatchEntry[] = [];
     const skippedEntries: Array<{
       file: FileScanResult;
       adapter: string;
@@ -167,6 +169,42 @@ export class TextIndexer {
     const skippedByExtension = new Map<string, number>();
     const skipCatalogKeys = new Set<string>();
 
+    const maybeLogParseProgress = (): void => {
+      if (scannedCount === 0 || scannedCount % RSS_PROGRESS_DOCUMENT_INTERVAL !== 0) {
+        return;
+      }
+
+      logAffairsIndexerRss("index.parse_progress", {
+        rootDir: this.config.rootDir,
+        scannedCount,
+        indexedCount,
+        skippedCount,
+        failedCount,
+        pendingSuccessEntries: successEntries.length,
+        pendingSkippedEntries: skippedEntries.length,
+        pendingFailureEntries: failureEntries.length
+      });
+    };
+
+    const maybeLogWriteProgress = (kind: "success" | "skip" | "failure"): void => {
+      const batchCount = successBatchCount + skipBatchCount + failureBatchCount;
+      if (batchCount === 0 || batchCount % RSS_PROGRESS_BATCH_INTERVAL !== 0) {
+        return;
+      }
+
+      logAffairsIndexerRss("index.write_progress", {
+        rootDir: this.config.rootDir,
+        kind,
+        scannedCount,
+        indexedCount,
+        skippedCount,
+        failedCount,
+        successBatchCount,
+        skipBatchCount,
+        failureBatchCount
+      });
+    };
+
     const flushSuccess = (): void => {
       if (successEntries.length === 0) {
         return;
@@ -176,6 +214,7 @@ export class TextIndexer {
       writeIndexedMs += performance.now() - t0;
       successBatchCount += 1;
       successEntries.length = 0;
+      maybeLogWriteProgress("success");
     };
 
     const flushFailures = (): void => {
@@ -187,6 +226,7 @@ export class TextIndexer {
       writeFailureMs += performance.now() - t0;
       failureBatchCount += 1;
       failureEntries.length = 0;
+      maybeLogWriteProgress("failure");
     };
 
     const flushSkipped = (): void => {
@@ -198,6 +238,7 @@ export class TextIndexer {
       writeSkippedMs += performance.now() - t0;
       skipBatchCount += 1;
       skippedEntries.length = 0;
+      maybeLogWriteProgress("skip");
     };
 
     const scanStartedAt = performance.now();
@@ -214,6 +255,7 @@ export class TextIndexer {
         }
         const file = next.value;
         scannedCount += 1;
+        maybeLogParseProgress();
         try {
           const parseStartedAt = performance.now();
           const parseResult = await parser.parseWithOutcome(file.fullPath);
@@ -254,7 +296,10 @@ export class TextIndexer {
           derivedAssignedCount += inferred.derivedTags.length;
           successEntries.push({
             file,
-            parsed,
+            document: {
+              title: parsed.title,
+              summary: parsed.summary,
+            },
             tags: inferred.tags,
             derivedTags: inferred.derivedTags,
           });
@@ -309,6 +354,16 @@ export class TextIndexer {
     }
     cleanupMs = 0;
     const scanAndParseMs = performance.now() - scanStartedAt;
+    logAffairsIndexerRss("index.parse_complete", {
+      rootDir: this.config.rootDir,
+      scannedCount,
+      indexedCount,
+      skippedCount,
+      failedCount,
+      successBatchCount,
+      skipBatchCount,
+      failureBatchCount
+    });
 
     let reconcile = { deletedCount: 0, deletedPaths: [] as string[] };
     let reconcileMs = 0;
@@ -333,6 +388,17 @@ export class TextIndexer {
     const dirtyScopeMs = performance.now() - dirtyScopeStartedAt;
     const scanLoopMs = performance.now() - scanStartedAt - cleanupMs - reconcileMs - dirtyScopeMs;
     const writeSuccessMs = writeIndexedMs + writeSkippedMs;
+    logAffairsIndexerRss("index.write_complete", {
+      rootDir: this.config.rootDir,
+      scannedCount,
+      indexedCount,
+      skippedCount,
+      failedCount,
+      deletedCount: reconcile.deletedCount,
+      successBatchCount,
+      skipBatchCount,
+      failureBatchCount
+    });
 
     return {
       scannedCount,

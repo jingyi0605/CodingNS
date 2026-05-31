@@ -4,7 +4,6 @@ import { CatalogRepository } from "../../repositories/catalog-repository.js";
 import { CatalogWriteRepository } from "../../repositories/catalog-write-repository.js";
 import { SUPPORTED_INDEX_EXTENSION_LIST } from "../../scanner/file-scanner.js";
 import { ExportBuilder } from "../export/export-builder.js";
-import { ExportV2Builder } from "../export/export-v2-builder.js";
 import { DirtyScopeResolver, type DirtyScope } from "../dirty/dirty-scope-resolver.js";
 import { TextIndexer } from "./text-indexer.js";
 
@@ -34,27 +33,15 @@ function uniqueDocuments(documents: ExportDocumentRecord[]): ExportDocumentRecor
 
 function createExportSummary(
   dirtyScope: DirtyScope,
-  exportResult: ReturnType<ExportBuilder["build"]> | null,
-  exportV2Result: ReturnType<ExportV2Builder["build"]> | null,
+  exportResult: ReturnType<ExportBuilder["build"]>,
 ) {
   return {
-    exportResult: exportResult
-      ? {
-        documentCount: exportResult.documentCount,
-        taxonomyNodeCount: exportResult.taxonomyNodeCount,
-        relationCount: exportResult.relationCount,
-        exportedAt: exportResult.exportedAt,
-        filesDeleted: exportResult.filesDeleted,
-      }
-      : null,
-    exportV2Result: exportV2Result
-      ? {
-        metaShardCount: exportV2Result.metaShardCount,
-        detailShardCount: exportV2Result.detailShardCount,
-        tagShardCount: exportV2Result.tagShardCount,
-        exportedAt: exportV2Result.exportedAt,
-      }
-      : null,
+    exportResult: {
+      metaShardCount: exportResult.metaShardCount,
+      detailShardCount: exportResult.detailShardCount,
+      tagShardCount: exportResult.tagShardCount,
+      exportedAt: exportResult.exportedAt,
+    },
     dirtyScope,
   };
 }
@@ -63,13 +50,8 @@ function buildConfiguredExports(
   config: RuntimeConfig,
   dirtyScope: DirtyScope,
 ) {
-  const exportResult = config.exportMode === "v2"
-    ? null
-    : new ExportBuilder(config).build({ dirtyScope });
-  const exportV2Result = config.exportMode === "legacy"
-    ? null
-    : new ExportV2Builder(config).build({ dirtyScope });
-  return createExportSummary(dirtyScope, exportResult, exportV2Result);
+  const exportResult = new ExportBuilder(config).build({ dirtyScope });
+  return createExportSummary(dirtyScope, exportResult);
 }
 
 function createEmptyIncrementalIndexResult(dirtyScope: DirtyScope) {
@@ -127,7 +109,6 @@ export interface AllowedExtensionsDiffApplyResult {
   dirtyScope: DirtyScope;
   indexResult: ReturnType<typeof createEmptyIncrementalIndexResult>;
   exportResult: ReturnType<typeof createExportSummary>["exportResult"] | null;
-  exportV2Result: ReturnType<typeof createExportSummary>["exportV2Result"] | null;
 }
 
 export class AllowedExtensionsDiffService {
@@ -201,7 +182,6 @@ export class AllowedExtensionsDiffService {
         dirtyScope: emptyDirtyScope,
         indexResult: createEmptyIncrementalIndexResult(emptyDirtyScope),
         exportResult: exportSummary.exportResult,
-        exportV2Result: exportSummary.exportV2Result,
       };
     }
 
@@ -251,7 +231,6 @@ export class AllowedExtensionsDiffService {
         dirtyScope,
       },
       exportResult: exportSummary.exportResult,
-      exportV2Result: exportSummary.exportV2Result,
     };
   }
 }
