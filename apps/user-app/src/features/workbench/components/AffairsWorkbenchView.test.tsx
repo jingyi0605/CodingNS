@@ -312,6 +312,21 @@ describe("AffairsWorkbenchView", () => {
     expect(screen.getByRole("button", { name: ".pdf" })).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("点击预设后缀会切换选中状态", async () => {
+    renderWorkbench();
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibrarySettingsAction") }));
+
+    const txtChip = screen.getByRole("button", { name: ".txt" });
+    expect(txtChip).toHaveAttribute("aria-pressed", "false");
+
+    await userEvent.click(txtChip);
+    expect(txtChip).toHaveAttribute("aria-pressed", "true");
+
+    await userEvent.click(txtChip);
+    expect(txtChip).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("详情区会提供打开本地镜像文件按钮", async () => {
     renderWorkbench();
 
