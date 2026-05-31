@@ -385,6 +385,8 @@ export function ParallelTaskDebugModal({ isOpen, onClose }: ParallelTaskDebugMod
                           <span>{getExecutionLaneLabel(task.executionLane)}</span>
                         </div>
                         <div className="parallel-task-debug-panel-body">
+                          <span>{t("settings.parallelTaskDebugTaskCategory")}: {getTaskCategoryLabel(task.taskType)}</span>
+                          <span>{t("settings.parallelTaskDebugTaskRuntime")}: {getTaskRuntimeLabel(task.executionLane, task.taskType)}</span>
                           <span>{t("settings.parallelTaskDebugTaskTimeout")}: {formatMs(task.timeoutMs)}</span>
                           <span>{t("settings.parallelTaskDebugTaskConcurrency")}: {task.concurrency ?? t("common.none")}</span>
                           <span>{t("settings.parallelTaskDebugTaskRetry")}: {task.retryMaxAttempts ?? t("common.none")}</span>
@@ -412,6 +414,8 @@ export function ParallelTaskDebugModal({ isOpen, onClose }: ParallelTaskDebugMod
                           <span>{getExecutionLaneLabel(metrics.executionLane)}</span>
                         </div>
                         <div className="parallel-task-debug-panel-body">
+                          <span>{t("settings.parallelTaskDebugTaskCategory")}: {getTaskCategoryLabel(taskType)}</span>
+                          <span>{t("settings.parallelTaskDebugTaskRuntime")}: {getTaskRuntimeLabel(metrics.executionLane, taskType)}</span>
                           <span>{t("settings.parallelTaskDebugWaitAvg")}: {formatMs(metrics.waitMs.avg)}</span>
                           <span>{t("settings.parallelTaskDebugRunAvg")}: {formatMs(metrics.runMs.avg)}</span>
                           <span>{t("settings.parallelTaskDebugRunMax")}: {formatMs(metrics.runMs.max)}</span>
@@ -582,6 +586,42 @@ function formatDuration(value: number | null): string {
   }
 
   return `${Math.round(value / 1000)} s`;
+}
+
+const AFFAIRS_LIBRARY_TASK_TYPES = new Set([
+  "affairs.library_apply_config",
+  "affairs.library_index",
+  "affairs.library_recompute_tags",
+  "affairs.library_export"
+]);
+
+function isAffairsLibraryTaskType(taskType: string): boolean {
+  return AFFAIRS_LIBRARY_TASK_TYPES.has(taskType);
+}
+
+function getTaskCategoryLabel(taskType: string): string {
+  if (isAffairsLibraryTaskType(taskType)) {
+    return t("settings.parallelTaskDebugTaskCategoryBuiltinIndexer");
+  }
+
+  return t("settings.parallelTaskDebugTaskCategoryGeneric");
+}
+
+function getTaskRuntimeLabel(lane: TaskExecutionLane, taskType: string): string {
+  if (lane === "helper_process" && isAffairsLibraryTaskType(taskType)) {
+    return t("settings.parallelTaskDebugTaskRuntimeBuiltinHelper");
+  }
+
+  switch (lane) {
+    case "host_background":
+      return t("settings.parallelTaskDebugTaskRuntimeHostBackground");
+    case "helper_process":
+      return t("settings.parallelTaskDebugTaskRuntimeHelperProcess");
+    case "external_process":
+      return t("settings.parallelTaskDebugTaskRuntimeExternalProcess");
+    default:
+      return t("settings.parallelTaskDebugTaskRuntimeMainThread");
+  }
 }
 
 function getCounterLabel(metricName: string): string {

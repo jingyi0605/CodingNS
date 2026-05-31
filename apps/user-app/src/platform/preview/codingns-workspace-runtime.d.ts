@@ -89,14 +89,10 @@ export interface CodingNSWorkspaceBridge {
     ok: true;
     workspaceId: string;
     workspacePath: string;
-    toolRoot: string;
-    entryFile: string;
-    command: string[];
-    exitCode: number;
-    signal: string | null;
     durationMs: number;
-    stdout: string;
-    stderr: string;
+    command: string[];
+    result: unknown;
+    message: string;
   }>;
   bridgeProtocol: CodingNSWorkspaceBridgeProtocol;
 }

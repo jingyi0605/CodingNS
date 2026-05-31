@@ -889,11 +889,11 @@ describe("SettingsPage", () => {
           registeredTasks: [
             {
               taskType: "affairs.library_apply_config",
-              executionLane: "external_process",
+              executionLane: "helper_process",
               timeoutMs: 900000,
               concurrency: null,
               retryMaxAttempts: null,
-              helperProcessHandler: null
+              helperProcessHandler: "affairs.library_apply_config"
             },
             {
               taskType: "workspace.discovery",
@@ -980,6 +980,12 @@ describe("SettingsPage", () => {
     expect(dialog).toBeInTheDocument();
     expect(screen.getByText(t("settings.parallelTaskDebugRegisteredTasksTitle"))).toBeInTheDocument();
     expect(screen.getByText("affairs.library_apply_config")).toBeInTheDocument();
+    expect(
+      within(dialog).getAllByText((_, element) => element?.textContent?.includes(t("settings.parallelTaskDebugTaskCategoryBuiltinIndexer")) ?? false).length
+    ).toBeGreaterThan(0);
+    expect(
+      within(dialog).getAllByText((_, element) => element?.textContent?.includes(t("settings.parallelTaskDebugTaskRuntimeBuiltinHelper")) ?? false).length
+    ).toBeGreaterThan(0);
     expect((await screen.findAllByText("workspace.discovery")).length).toBeGreaterThan(0);
     expect(screen.getAllByText((_, element) => element?.textContent?.includes(t("settings.parallelTaskDebugTaskTimeout")) ?? false).length).toBeGreaterThan(0);
     expect(screen.getByText(t("settings.parallelTaskDebugEventLoopTitle"))).toBeInTheDocument();
