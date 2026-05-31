@@ -668,6 +668,65 @@ describe("AffairsWorkbenchView", () => {
     })).toBeInTheDocument();
   }, 10_000);
 
+  it("配置里没写 allowedExtensions 时，会把默认支持后缀显示成已启用状态", async () => {
+    conversationApiMock.getAffairsLibraryConfig.mockResolvedValueOnce({
+      binding: {
+        workspaceId: "workspace-1",
+        rootDir: "/Users/jackson/WorkFile",
+        enabled: true,
+        mirrorRoot: "/Users/jackson/SynologyDrive",
+        allowedExtensions: [],
+        configRelativePath: ".ai-index/doc-semantic-index.config.json",
+        exportMode: "v2",
+        updatedAt: "2026-05-31T08:00:00.000Z"
+      },
+      mirrorRoot: "/Users/jackson/SynologyDrive",
+      allowedExtensions: [],
+      configRelativePath: ".ai-index/doc-semantic-index.config.json",
+      canWrite: true
+    });
+
+    renderWorkbench();
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibrarySettingsAction") }));
+
+    expect(screen.getByRole("button", { name: ".docx" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: ".md" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: ".pdf" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: ".txt" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("默认支持后缀保持原样保存时，仍然提交空白名单让索引器走默认支持范围", async () => {
+    conversationApiMock.getAffairsLibraryConfig.mockResolvedValueOnce({
+      binding: {
+        workspaceId: "workspace-1",
+        rootDir: "/Users/jackson/WorkFile",
+        enabled: true,
+        mirrorRoot: "/Users/jackson/SynologyDrive",
+        allowedExtensions: [],
+        configRelativePath: ".ai-index/doc-semantic-index.config.json",
+        exportMode: "v2",
+        updatedAt: "2026-05-31T08:00:00.000Z"
+      },
+      mirrorRoot: "/Users/jackson/SynologyDrive",
+      allowedExtensions: [],
+      configRelativePath: ".ai-index/doc-semantic-index.config.json",
+      canWrite: true
+    });
+
+    renderWorkbench();
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibrarySettingsAction") }));
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsLibraryConfigSaveAction") }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.saveAffairsLibraryConfig).toHaveBeenCalledWith("workspace-1", {
+        mirrorRoot: "/Users/jackson/SynologyDrive",
+        allowedExtensions: []
+      });
+    });
+  });
+
   it("点击预设后缀会切换选中状态", async () => {
     renderWorkbench();
 

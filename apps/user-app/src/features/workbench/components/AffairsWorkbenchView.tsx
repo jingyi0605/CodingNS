@@ -2695,17 +2695,24 @@ function AffairsLibraryConfigForm({
   const platform = usePlatform();
   const { showToast } = useToast();
   const mirrorRootInputId = useId();
+  const persistedAllowedExtensions = useMemo(
+    () => sortAllowedExtensions(libraryConfig?.allowedExtensions ?? []),
+    [libraryConfig?.allowedExtensions]
+  );
+  const persistedAllowedExtensionsSignature = persistedAllowedExtensions.join("|");
   const [mirrorRoot, setMirrorRoot] = useState(libraryConfig?.mirrorRoot ?? "");
-  const [selectedExtensions, setSelectedExtensions] = useState<string[]>(libraryConfig?.allowedExtensions ?? []);
+  const [selectedExtensions, setSelectedExtensions] = useState<string[]>(
+    () => resolveEditableAllowedExtensions(libraryConfig?.allowedExtensions ?? [])
+  );
   const [manualExtension, setManualExtension] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setMirrorRoot(libraryConfig?.mirrorRoot ?? "");
-    setSelectedExtensions(libraryConfig?.allowedExtensions ?? []);
+    setSelectedExtensions(resolveEditableAllowedExtensions(persistedAllowedExtensions));
     setManualExtension("");
-  }, [libraryConfig?.allowedExtensions, libraryConfig?.mirrorRoot]);
+  }, [persistedAllowedExtensions, persistedAllowedExtensionsSignature, libraryConfig?.mirrorRoot]);
 
   if (!binding) {
     return null;
@@ -2854,7 +2861,13 @@ function AffairsLibraryConfigForm({
             setError(null);
             try {
               const normalizedMirrorRoot = mirrorRoot.trim() || null;
-              const normalizedExtensions = sortAllowedExtensions(selectedExtensions);
+              const normalizedSelectedExtensions = sortAllowedExtensions(selectedExtensions);
+              const normalizedExtensions = shouldPersistImplicitAllowedExtensions(
+                persistedAllowedExtensions,
+                normalizedSelectedExtensions
+              )
+                ? []
+                : normalizedSelectedExtensions;
               const result = await saveLibraryConfig({
                 mirrorRoot: normalizedMirrorRoot,
                 allowedExtensions: normalizedExtensions
@@ -4284,6 +4297,28 @@ function normalizeExtensionToken(value: string): string {
   return /^.[a-z0-9]+(?:[._-][a-z0-9]+)*$/i.test(withDot) ? withDot : "";
 }
 
+function resolveEditableAllowedExtensions(input: readonly string[]): string[] {
+  const normalized = sortAllowedExtensions(input);
+  if (normalized.length > 0) {
+    return normalized;
+  }
+  return [...AFFAIRS_LIBRARY_PRESET_EXTENSIONS];
+}
+
+function shouldPersistImplicitAllowedExtensions(
+  configuredExtensions: readonly string[],
+  selectedExtensions: readonly string[]
+): boolean {
+  const normalizedConfigured = sortAllowedExtensions(configuredExtensions);
+  if (normalizedConfigured.length > 0) {
+    return false;
+  }
+  return areSortedStringListsEqual(
+    sortAllowedExtensions(AFFAIRS_LIBRARY_PRESET_EXTENSIONS),
+    sortAllowedExtensions(selectedExtensions)
+  );
+}
+
 function buildAllowedExtensionOptions(selectedExtensions: readonly string[]): string[] {
   return sortAllowedExtensions([
     ...AFFAIRS_LIBRARY_PRESET_EXTENSIONS,
@@ -4297,6 +4332,13 @@ function sortAllowedExtensions(input: readonly string[]): string[] {
       .map((item) => normalizeExtensionToken(item))
       .filter(Boolean)
   )).sort((left, right) => left.localeCompare(right, "zh-Hans-CN"));
+}
+
+function areSortedStringListsEqual(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((item, index) => item === right[index]);
 }
 
 function resolveIndexStatusLabel(status: AffairsLibraryIndexStatusDto | null) {
