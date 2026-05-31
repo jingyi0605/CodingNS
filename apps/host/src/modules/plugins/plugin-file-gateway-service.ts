@@ -28,13 +28,30 @@ export interface PluginFileGatewayListInput {
   actorUserId: string | null;
 }
 
+type PluginFileMutationKind = "upsert";
+
+interface PluginFileMutationEvent {
+  workspaceId: string;
+  absolutePath: string;
+  relativePath: string;
+  kind: PluginFileMutationKind;
+}
+
+type PluginFileMutationHook = (event: PluginFileMutationEvent) => void;
+
 export class PluginFileGatewayService {
+  private mutationHook: PluginFileMutationHook | null = null;
+
   constructor(
     private readonly pluginRegistryService: PluginRegistryService,
     private readonly fileAccessGuard: FileAccessGuard,
     private readonly pluginPermissionService: PluginPermissionService,
     private readonly pluginAuditEventRepository: PluginAuditEventRepository
   ) {}
+
+  setMutationHook(hook: PluginFileMutationHook | null): void {
+    this.mutationHook = hook;
+  }
 
   readFile(input: PluginFileGatewayReadInput): FileSnapshot {
     const detail = this.pluginRegistryService.getPlugin(input.pluginId);
@@ -93,6 +110,13 @@ export class PluginFileGatewayService {
     const buffer = Buffer.from(input.content, "utf8");
     fs.writeFileSync(resolved.absolutePath, buffer);
     const stats = fs.statSync(resolved.absolutePath);
+
+    this.reportMutation({
+      workspaceId: input.workspaceId,
+      absolutePath: resolved.absolutePath,
+      relativePath: resolved.relativePath,
+      kind: "upsert"
+    });
 
     this.recordAuditEvent(input.pluginId, input.workspaceId, input.actorUserId, "plugin.file_write", {
       runtimeSessionId: input.runtimeSessionId,
@@ -219,6 +243,10 @@ export class PluginFileGatewayService {
       });
       return;
     }
+  }
+
+  private reportMutation(event: PluginFileMutationEvent): void {
+    this.mutationHook?.(event);
   }
 }
 

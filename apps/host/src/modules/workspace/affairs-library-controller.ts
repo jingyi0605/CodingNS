@@ -45,7 +45,8 @@ interface AffairsLibraryPreviewQuery {
 export class AffairsLibraryController {
   constructor(
     private readonly affairsLibraryService: AffairsLibraryService,
-    private readonly affairsLibraryPreviewLinkService: AffairsLibraryPreviewLinkService
+    private readonly affairsLibraryPreviewLinkService: AffairsLibraryPreviewLinkService,
+    private readonly onBindingChanged?: (workspaceId: string) => void
   ) {}
 
   readonly getBinding = async (
@@ -61,26 +62,26 @@ export class AffairsLibraryController {
     request: FastifyRequest<{ Params: WorkspaceParams; Body: SaveAffairsLibraryBindingBody }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(
-      this.affairsLibraryService.saveBinding(
+    const binding = this.affairsLibraryService.saveBinding(
         request.params.workspaceId,
         requireUserId(request),
         request.body.rootDir?.trim() ?? ""
-      )
-    );
+      );
+    this.onBindingChanged?.(request.params.workspaceId);
+    reply.send(binding);
   };
 
   readonly setEnabled = async (
     request: FastifyRequest<{ Params: WorkspaceParams; Body: SetAffairsLibraryEnabledBody }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(
-      this.affairsLibraryService.setEnabled(
+    const binding = this.affairsLibraryService.setEnabled(
         request.params.workspaceId,
         requireUserId(request),
         request.body.enabled === true
-      )
-    );
+      );
+    this.onBindingChanged?.(request.params.workspaceId);
+    reply.send(binding);
   };
 
   readonly getSnapshot = async (

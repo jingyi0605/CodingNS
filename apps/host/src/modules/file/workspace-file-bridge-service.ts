@@ -87,13 +87,30 @@ export interface WorkspaceFileBridgeDesktopTarget {
   absolutePath: string;
 }
 
+type WorkspaceBridgeMutationKind = "upsert" | "delete";
+
+interface WorkspaceBridgeMutationEvent {
+  workspaceId: string;
+  absolutePath: string;
+  relativePath: string;
+  kind: WorkspaceBridgeMutationKind;
+}
+
+type WorkspaceBridgeMutationHook = (event: WorkspaceBridgeMutationEvent) => void;
+
 export class WorkspaceFileBridgeService {
+  private mutationHook: WorkspaceBridgeMutationHook | null = null;
+
   constructor(
     private readonly workspaceService: WorkspaceService,
     private readonly fileAccessGuard: FileAccessGuard,
     private readonly logger: WorkspaceBridgeLogger,
     private readonly watchService: WorkspaceFileBridgeWatchService
   ) {}
+
+  setMutationHook(hook: WorkspaceBridgeMutationHook | null): void {
+    this.mutationHook = hook;
+  }
 
   getCapabilities(): WorkspaceFileBridgeCapabilities {
     return {
@@ -328,6 +345,13 @@ export class WorkspaceFileBridgeService {
       "静态 HTML 预览通过桥接写入工作区文件"
     );
 
+    this.reportMutation({
+      workspaceId,
+      absolutePath: target.absolutePath,
+      relativePath: target.relativePath,
+      kind: "upsert"
+    });
+
     return {
       ok: true,
       path: target.relativePath,
@@ -379,6 +403,13 @@ export class WorkspaceFileBridgeService {
       },
       "静态 HTML 预览通过桥接删除工作区文件"
     );
+
+    this.reportMutation({
+      workspaceId,
+      absolutePath: resolved.absolutePath,
+      relativePath: resolved.relativePath,
+      kind: "delete"
+    });
 
     return {
       ok: true,
@@ -576,6 +607,10 @@ export class WorkspaceFileBridgeService {
       errorCode: "DIRECTORY_NOT_FOUND",
       detail: requestedPath ? "目标目录不存在" : "工作区根目录不存在"
     });
+  }
+
+  private reportMutation(event: WorkspaceBridgeMutationEvent): void {
+    this.mutationHook?.(event);
   }
 }
 

@@ -5,6 +5,35 @@ import type { WorkspaceNavigationStateRecord } from "../../types/domain.js";
 export class WorkspaceNavigationStateRepository {
   constructor(private readonly db: Database.Database) {}
 
+  listEnabledAffairsLibraries(): WorkspaceNavigationStateRecord[] {
+    return this.db
+      .prepare(
+        `SELECT workspace_id, user_id, collapsed, background_color, affairs_library_root_path, affairs_library_enabled, affairs_library_favorites_json, updated_at
+         FROM workspace_navigation_states
+         WHERE affairs_library_enabled = 1
+           AND affairs_library_root_path IS NOT NULL
+           AND TRIM(affairs_library_root_path) <> ''`
+      )
+      .all()
+      .map((row) => mapWorkspaceNavigationStateRow(row as WorkspaceNavigationStateRow));
+  }
+
+  findAnyEnabledAffairsLibraryByWorkspaceId(workspaceId: string): WorkspaceNavigationStateRecord | null {
+    const row = this.db
+      .prepare(
+        `SELECT workspace_id, user_id, collapsed, background_color, affairs_library_root_path, affairs_library_enabled, affairs_library_favorites_json, updated_at
+         FROM workspace_navigation_states
+         WHERE workspace_id = ?
+           AND affairs_library_enabled = 1
+           AND affairs_library_root_path IS NOT NULL
+           AND TRIM(affairs_library_root_path) <> ''
+         LIMIT 1`
+      )
+      .get(workspaceId) as WorkspaceNavigationStateRow | undefined;
+
+    return row ? mapWorkspaceNavigationStateRow(row) : null;
+  }
+
   listByUserId(userId: string): WorkspaceNavigationStateRecord[] {
     return this.db
       .prepare(

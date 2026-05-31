@@ -177,6 +177,7 @@ import { WorktreeManager } from "../modules/worktree/worktree-manager.js";
 import { WorktreeSyncService } from "../modules/worktree/worktree-sync-service.js";
 import { WorkspaceController } from "../modules/workspace/workspace-controller.js";
 import { AffairsLibraryController } from "../modules/workspace/affairs-library-controller.js";
+import { AffairsLibraryDirtyWatchService } from "../modules/workspace/affairs-library-dirty-watch-service.js";
 import { AffairsLibraryPreviewLinkService } from "../modules/workspace/affairs-library-preview-link-service.js";
 import { AffairsLibraryService } from "../modules/workspace/affairs-library-service.js";
 import { WorkspaceService } from "../modules/workspace/workspace-service.js";
@@ -1331,6 +1332,40 @@ export function createServer(config: HostConfig) {
     taskManager,
     app.log
   );
+  fileContentService.setFileMutationHook((event) => {
+    affairsLibraryService.notifyWorkspaceFileMutation(event.workspaceId, {
+      absolutePath: event.absolutePath,
+      kind: event.kind
+    });
+  });
+  workspaceFileBridgeService.setMutationHook((event) => {
+    affairsLibraryService.notifyWorkspaceFileMutation(event.workspaceId, {
+      absolutePath: event.absolutePath,
+      kind: event.kind
+    });
+  });
+  pluginFileGatewayService.setMutationHook((event) => {
+    affairsLibraryService.notifyWorkspaceFileMutation(event.workspaceId, {
+      absolutePath: event.absolutePath,
+      kind: event.kind
+    });
+  });
+  const affairsLibraryDirtyWatchService = new AffairsLibraryDirtyWatchService(
+    repositories.workspaceNavigationStateRepository,
+    (workspaceId, event) => {
+      if (event.kind === "config") {
+        affairsLibraryService.scheduleAutoApplyConfig(workspaceId, event.reason);
+        return;
+      }
+      if (event.kind === "tag-rules") {
+        affairsLibraryService.scheduleAutoRecomputeTags(workspaceId, event.reason);
+        return;
+      }
+      affairsLibraryService.scheduleAutoRefresh(workspaceId, event.reason, event.targetPath);
+    },
+    app.log
+  );
+  affairsLibraryDirtyWatchService.syncAll();
   const affairsLibraryPreviewLinkService = new AffairsLibraryPreviewLinkService(
     affairsLibraryService,
     config.filePreviewTokenSecret
@@ -1352,7 +1387,10 @@ export function createServer(config: HostConfig) {
   const workspaceController = new WorkspaceController(workspaceService);
   const affairsLibraryController = new AffairsLibraryController(
     affairsLibraryService,
-    affairsLibraryPreviewLinkService
+    affairsLibraryPreviewLinkService,
+    (workspaceId) => {
+      affairsLibraryDirtyWatchService.syncWorkspace(workspaceId);
+    }
   );
   const worktreeController = new WorktreeController(
     worktreeManager,
@@ -1692,6 +1730,8 @@ export function createServer(config: HostConfig) {
     await butlerSummarySessionLiveRuntimeService.dispose();
     await butlerSessionLiveRuntimeService.dispose();
     await sessionLiveRuntimeService.dispose();
+    affairsLibraryDirtyWatchService.dispose();
+    affairsLibraryService.dispose();
     workbenchRuntimeTerminalSync.close();
     await wsHandle.close();
     codexArchiveWatcher.dispose();

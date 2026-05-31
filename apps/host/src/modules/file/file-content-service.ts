@@ -53,13 +53,30 @@ interface FileOperationInput {
   content?: string;
 }
 
+type FileMutationKind = "upsert" | "delete";
+
+interface FileMutationEvent {
+  workspaceId: string;
+  absolutePath: string;
+  relativePath: string;
+  kind: FileMutationKind;
+}
+
+type FileMutationHook = (event: FileMutationEvent) => void;
+
 export class FileContentService {
+  private fileMutationHook: FileMutationHook | null = null;
+
   constructor(
     private readonly fileAccessGuard: FileAccessGuard,
     private readonly recentFileService: RecentFileService,
     private readonly fileContextBindingRepository: FileContextBindingRepository,
     private readonly fileVersionChecker: FileVersionChecker
   ) {}
+
+  setFileMutationHook(hook: FileMutationHook | null): void {
+    this.fileMutationHook = hook;
+  }
 
   readFile(
     workspaceId: string,
@@ -102,6 +119,13 @@ export class FileContentService {
       })
     );
 
+    this.reportFileMutation({
+      workspaceId: input.workspaceId,
+      absolutePath: resolved.absolutePath,
+      relativePath: resolved.relativePath,
+      kind: "upsert"
+    });
+
     this.recentFileService.recordOpened(input.workspaceId, input.userId, snapshot.path);
 
     return snapshot;
@@ -130,6 +154,12 @@ export class FileContentService {
     fs.writeFileSync(resolved.absolutePath, buffer);
 
     const stats = fs.statSync(resolved.absolutePath);
+    this.reportFileMutation({
+      workspaceId: input.workspaceId,
+      absolutePath: resolved.absolutePath,
+      relativePath: resolved.relativePath,
+      kind: "upsert"
+    });
     this.recentFileService.recordOpened(input.workspaceId, input.userId, resolved.relativePath);
 
     return {
@@ -210,6 +240,12 @@ export class FileContentService {
     const buffer = Buffer.from(content, "utf8");
     this.ensureWritableContent(buffer);
     fs.writeFileSync(resolved.absolutePath, buffer);
+    this.reportFileMutation({
+      workspaceId,
+      absolutePath: resolved.absolutePath,
+      relativePath: resolved.relativePath,
+      kind: "upsert"
+    });
   }
 
   private createDirectory(workspaceId: string, targetPath: string | undefined): void {
@@ -227,6 +263,12 @@ export class FileContentService {
     }
 
     fs.mkdirSync(resolved.absolutePath);
+    this.reportFileMutation({
+      workspaceId,
+      absolutePath: resolved.absolutePath,
+      relativePath: resolved.relativePath,
+      kind: "upsert"
+    });
   }
 
   private deletePath(workspaceId: string, sourcePath: string | undefined): void {
@@ -240,6 +282,13 @@ export class FileContentService {
     } else {
       fs.rmSync(resolved.absolutePath, { force: false });
     }
+
+    this.reportFileMutation({
+      workspaceId,
+      absolutePath: resolved.absolutePath,
+      relativePath: resolved.relativePath,
+      kind: "delete"
+    });
 
     this.recentFileService.deleteByPath(workspaceId, resolved.relativePath);
     this.fileContextBindingRepository.deleteByPath(workspaceId, resolved.relativePath);
@@ -287,6 +336,18 @@ export class FileContentService {
     }
 
     fs.renameSync(source.absolutePath, target.absolutePath);
+    this.reportFileMutation({
+      workspaceId,
+      absolutePath: source.absolutePath,
+      relativePath: source.relativePath,
+      kind: "delete"
+    });
+    this.reportFileMutation({
+      workspaceId,
+      absolutePath: target.absolutePath,
+      relativePath: target.relativePath,
+      kind: "upsert"
+    });
 
     try {
       this.recentFileService.renamePath(workspaceId, source.relativePath, target.relativePath);
@@ -347,6 +408,12 @@ export class FileContentService {
       errorOnExist: true,
       force: false
     });
+    this.reportFileMutation({
+      workspaceId,
+      absolutePath: target.absolutePath,
+      relativePath: target.relativePath,
+      kind: "upsert"
+    });
   }
 
   private readSnapshot(resolved: ResolvedWorkspacePath): FileSnapshot {
@@ -396,6 +463,10 @@ export class FileContentService {
         field: "content"
       });
     }
+  }
+
+  private reportFileMutation(event: FileMutationEvent): void {
+    this.fileMutationHook?.(event);
   }
 }
 

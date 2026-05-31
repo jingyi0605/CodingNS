@@ -29,15 +29,15 @@ interface TaskHelperProcessHandlerMap {
     signal?: AbortSignal
   ) => ProviderSessionDiscovery | Promise<ProviderSessionDiscovery>;
   "affairs.library_apply_config": (
-    input: { rootDir: string },
+    input: { rootDir: string; reason?: string },
     signal?: AbortSignal
   ) => AffairsIndexerCommandResult | Promise<AffairsIndexerCommandResult>;
   "affairs.library_index": (
-    input: { rootDir: string },
+    input: { rootDir: string; targetPath?: string; reason?: string },
     signal?: AbortSignal
   ) => AffairsIndexerCommandResult | Promise<AffairsIndexerCommandResult>;
   "affairs.library_recompute_tags": (
-    input: { rootDir: string },
+    input: { rootDir: string; reason?: string },
     signal?: AbortSignal
   ) => AffairsIndexerCommandResult | Promise<AffairsIndexerCommandResult>;
   "affairs.library_export": (
@@ -53,12 +53,31 @@ const TASK_HELPER_PROCESS_HANDLERS: TaskHelperProcessHandlerMap = {
     discoverTemplateRuntimeStatuses(items, signal),
   "session.workspace_discovery": ({ config, workspacePath, knownSessions, enabledProviders }, signal) =>
     discoverWorkspaceSessionsInRuntime(config, workspacePath, knownSessions, enabledProviders, signal),
-  "affairs.library_apply_config": ({ rootDir }) =>
-    runAffairsIndexerCommand(rootDir, "apply-config" satisfies AffairsIndexerCommandName),
-  "affairs.library_index": ({ rootDir }) =>
-    runAffairsIndexerCommand(rootDir, "index" satisfies AffairsIndexerCommandName),
-  "affairs.library_recompute_tags": ({ rootDir }) =>
-    runAffairsIndexerCommand(rootDir, "recompute-tags" satisfies AffairsIndexerCommandName),
+  "affairs.library_apply_config": ({ rootDir, reason }) =>
+    runAffairsIndexerCommand(
+      rootDir,
+      "apply-config" satisfies AffairsIndexerCommandName,
+      {
+        reason
+      }
+    ),
+  "affairs.library_index": ({ rootDir, targetPath, reason }) =>
+    runAffairsIndexerCommand(
+      rootDir,
+      targetPath ? ("watch-touch" satisfies AffairsIndexerCommandName) : ("index" satisfies AffairsIndexerCommandName),
+      {
+        targetPath,
+        reason
+      }
+    ),
+  "affairs.library_recompute_tags": ({ rootDir, reason }) =>
+    runAffairsIndexerCommand(
+      rootDir,
+      "recompute-tags" satisfies AffairsIndexerCommandName,
+      {
+        reason
+      }
+    ),
   "affairs.library_export": ({ rootDir }) =>
     runAffairsIndexerCommand(rootDir, "export" satisfies AffairsIndexerCommandName)
 };

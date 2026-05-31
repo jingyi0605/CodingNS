@@ -11,6 +11,10 @@ interface PendingRequest<TResult> {
   child: ChildProcessWithoutNullStreams;
 }
 
+type HelperTransportError = Error & {
+  __codingnsFailedHelperChild?: ChildProcessWithoutNullStreams;
+};
+
 type HelperResponse =
   | {
       type: "result";
@@ -32,6 +36,7 @@ let sharedTaskHelperProcessClient: TaskHelperProcessClient | null = null;
 export class TaskHelperProcessClient {
   private child: ChildProcessWithoutNullStreams | null = null;
   private stdoutReader: readline.Interface | null = null;
+  private stdoutReaderChild: ChildProcessWithoutNullStreams | null = null;
   private readonly pendingRequests = new Map<string, PendingRequest<unknown>>();
   private nextRequestId = 1;
   private disposed = false;
@@ -61,11 +66,24 @@ export class TaskHelperProcessClient {
         }
 
         attempt += 1;
-        this.handleChildTermination(
-          error instanceof Error
-            ? error
-            : new Error("task helper pipe 已断开")
-        );
+        const normalizedError = normalizeHelperTransportError(error, "task helper pipe 已断开");
+        const failedChild = getFailedHelperChild(normalizedError);
+
+        if (failedChild) {
+          this.handleChildTermination(failedChild, normalizedError);
+          continue;
+        }
+
+        if (
+          this.child &&
+          (
+            this.child.killed ||
+            this.child.stdin.destroyed ||
+            this.child.stdout.destroyed
+          )
+        ) {
+          this.handleChildTermination(this.child, normalizedError);
+        }
       }
     }
   }
@@ -141,7 +159,10 @@ export class TaskHelperProcessClient {
           }
 
           this.pendingRequests.delete(id);
-          reject(error);
+          reject(attachFailedHelperChild(
+            normalizeHelperTransportError(error, "task helper stdin 已断开"),
+            child
+          ));
         }
       );
     });
@@ -162,6 +183,7 @@ export class TaskHelperProcessClient {
     this.rejectAll(new Error("task helper 已关闭"));
     this.child = null;
     this.stdoutReader = null;
+    this.stdoutReaderChild = null;
   }
 
   private handleResponseLine(line: string): void {
@@ -253,13 +275,17 @@ export class TaskHelperProcessClient {
     stdoutReader.on("close", () => {
       if (this.stdoutReader === stdoutReader) {
         this.stdoutReader = null;
+        this.stdoutReaderChild = null;
       }
 
       if (this.child === child) {
         this.child = null;
       }
 
-      this.rejectPendingForChild(child, new Error("task helper stdout 已关闭"));
+      this.rejectPendingForChild(
+        child,
+        attachFailedHelperChild(new Error("task helper stdout 已关闭"), child)
+      );
     });
     child.stderr.on("data", (chunk) => {
       const content = String(chunk).trim();
@@ -271,25 +297,33 @@ export class TaskHelperProcessClient {
     child.stdin.on("error", (error) => {
       this.handleChildTermination(
         child,
-        error instanceof Error
-          ? error
-          : new Error("task helper stdin 已断开")
+        attachFailedHelperChild(
+          normalizeHelperTransportError(error, "task helper stdin 已断开"),
+          child
+        )
       );
     });
     child.on("error", (error) => {
-      this.handleChildTermination(child, error);
+      this.handleChildTermination(
+        child,
+        attachFailedHelperChild(normalizeHelperTransportError(error, "task helper pipe 已断开"), child)
+      );
     });
     child.on("exit", (code, signal) => {
       this.handleChildTermination(
         child,
-        new Error(
-          `task helper 已退出：code=${code ?? "null"} signal=${signal ?? "null"}`
+        attachFailedHelperChild(
+          new Error(
+            `task helper 已退出：code=${code ?? "null"} signal=${signal ?? "null"}`
+          ),
+          child
         )
       );
     });
 
     this.child = child;
     this.stdoutReader = stdoutReader;
+    this.stdoutReaderChild = child;
     return child;
   }
 
@@ -313,9 +347,10 @@ export class TaskHelperProcessClient {
       this.child = null;
     }
 
-    if (this.stdoutReader) {
+    if (this.stdoutReader && this.stdoutReaderChild === child) {
       this.stdoutReader.close();
       this.stdoutReader = null;
+      this.stdoutReaderChild = null;
     }
 
     if (!child.killed && typeof child.kill === "function") {
@@ -347,6 +382,26 @@ export class TaskHelperProcessClient {
   }
 }
 
+function normalizeHelperTransportError(error: unknown, fallbackMessage: string): HelperTransportError {
+  return error instanceof Error ? error as HelperTransportError : new Error(fallbackMessage);
+}
+
+function attachFailedHelperChild(
+  error: Error,
+  child: ChildProcessWithoutNullStreams
+): HelperTransportError {
+  (error as HelperTransportError).__codingnsFailedHelperChild = child;
+  return error as HelperTransportError;
+}
+
+function getFailedHelperChild(error: unknown): ChildProcessWithoutNullStreams | null {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  return (error as HelperTransportError).__codingnsFailedHelperChild ?? null;
+}
+
 function isRetryableHelperClientError(error: unknown): boolean {
   if (!error || typeof error !== "object") {
     return false;
@@ -359,7 +414,10 @@ function isRetryableHelperClientError(error: unknown): boolean {
   }
 
   const message = "message" in error ? String(error.message ?? "") : "";
-  return message.includes("task helper 已退出");
+  return message.includes("task helper 已退出")
+    || message.includes("task helper stdout 已关闭")
+    || message.includes("task helper stdin 已断开")
+    || message.includes("task helper pipe 已断开");
 }
 
 export function getSharedTaskHelperProcessClient(): TaskHelperProcessClient {

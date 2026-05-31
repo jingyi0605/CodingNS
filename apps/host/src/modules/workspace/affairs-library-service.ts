@@ -24,9 +24,12 @@ import {
 } from "../affairs-indexer/internal-command-runner.js";
 
 const DEFAULT_CONFIG_RELATIVE_PATH = ".ai-index/doc-semantic-index.config.json";
+const TAG_RULES_RELATIVE_PATH = ".ai-index/tag-rules.json";
 const DEFAULT_EXPORT_MODE = "v2" as const;
 const INDEX_TASK_TIMEOUT_MS = 15 * 60 * 1000;
 const INDEX_TASK_COOLDOWN_MS = 15_000;
+const AUTO_TASK_QUIET_WINDOW_MS = 800;
+const AUTO_TASK_RETRY_WINDOW_MS = 1_000;
 const SNAPSHOT_CACHE_FILE_NAME = "codingns-affairs-snapshot-cache.json";
 
 export type AffairsLibraryFavoriteKind = "folder" | "tag";
@@ -127,6 +130,7 @@ export interface AffairsLibraryResolvedPreviewFile {
 
 interface AffairsLibraryLogger {
   info(bindings: Record<string, unknown>, message: string): void;
+  warn?(bindings: Record<string, unknown>, message: string): void;
 }
 
 interface WorkspaceNavigationStateLike {
@@ -143,7 +147,6 @@ interface WorkspaceNavigationStateLike {
 interface AffairsLibraryConfigPayload {
   allowedExtensions?: string[];
   mirrorRoot?: string;
-  exportMode?: string;
 }
 
 interface IndexStatusFilePayload {
@@ -212,8 +215,17 @@ interface AffairsLibraryExportCachePayload {
   folders: AffairsLibraryFolderNodeDto[];
 }
 
+interface AffairsLibraryAutoTaskState {
+  timer: NodeJS.Timeout | null;
+  applyConfigReasons: Set<string>;
+  recomputeTagReasons: Set<string>;
+  indexReasons: Set<string>;
+  indexTargets: Set<string>;
+}
+
 export class AffairsLibraryService {
   private readonly exportCache = new Map<string, AffairsLibraryExportCachePayload>();
+  private readonly autoTaskStateByWorkspace = new Map<string, AffairsLibraryAutoTaskState>();
 
   constructor(
     private readonly workspaceService: WorkspaceService,
@@ -222,6 +234,7 @@ export class AffairsLibraryService {
     private readonly logger: AffairsLibraryLogger
   ) {
     this.registerBackgroundTasks();
+    this.resumeEnabledBindings();
   }
 
   getBinding(workspaceId: string, userId: string): AffairsLibraryBindingDto | null {
@@ -290,6 +303,7 @@ export class AffairsLibraryService {
       updatedAt: nowIso()
     };
     this.workspaceNavigationStateRepository.upsert(nextRecord);
+    this.scheduleAutoRefresh(workspaceId, "binding_saved");
 
     const config = this.readConfig(normalizedRootDir);
     return {
@@ -332,6 +346,9 @@ export class AffairsLibraryService {
       updatedAt: nowIso()
     };
     this.workspaceNavigationStateRepository.upsert(nextRecord);
+    if (enabled) {
+      this.scheduleAutoRefresh(workspaceId, "library_enabled");
+    }
 
     const config = this.readConfig(rootDir);
     return {
@@ -398,12 +415,7 @@ export class AffairsLibraryService {
     const mirrorRoot = normalizeOptionalAbsolutePath(input.mirrorRoot);
     const allowedExtensions = normalizeAllowedExtensions(input.allowedExtensions ?? current.allowedExtensions ?? []);
     const nextPayload: AffairsLibraryConfigPayload = {
-      ...current,
       allowedExtensions,
-      exportMode:
-        typeof current.exportMode === "string" && current.exportMode.trim()
-          ? current.exportMode.trim()
-          : DEFAULT_EXPORT_MODE
     };
 
     if (mirrorRoot) {
@@ -469,7 +481,7 @@ export class AffairsLibraryService {
       };
     }
 
-    const exportRoot = path.join(binding.rootDir, ".ai-index", "exports-v2");
+    const exportRoot = path.join(binding.rootDir, ".ai-index", "exports");
     const manifestPath = path.join(exportRoot, "manifest.json");
 
     if (!fs.existsSync(manifestPath)) {
@@ -766,7 +778,7 @@ export class AffairsLibraryService {
     const binding = this.requireBinding(workspaceId, userId);
     this.ensureLibraryEnabled(binding);
 
-    const handle = this.taskManager.enqueue<{ workspaceId: string; rootDir: string; reason: string }, AffairsIndexerCommandResult>(
+    const handle = this.taskManager.enqueue<{ workspaceId: string; rootDir: string; reason: string; targetPath?: string }, AffairsIndexerCommandResult>(
       HOST_TASK_TYPES.affairsLibraryIndex,
       {
         key: workspaceId,
@@ -784,6 +796,101 @@ export class AffairsLibraryService {
       deduped: handle.deduped,
       status: this.readIndexStatus(workspaceId, binding)
     };
+  }
+
+  notifyWorkspaceFileMutation(
+    workspaceId: string,
+    input: {
+      absolutePath: string;
+      kind: "upsert" | "delete";
+    }
+  ): void {
+    const normalizedWorkspaceId = workspaceId.trim();
+    const absolutePath = input.absolutePath.trim();
+    if (!normalizedWorkspaceId || !absolutePath) {
+      return;
+    }
+
+    const binding = this.workspaceNavigationStateRepository.findAnyEnabledAffairsLibraryByWorkspaceId(normalizedWorkspaceId);
+    const rootDir = binding?.affairsLibraryRootPath?.trim() ?? "";
+    if (!rootDir || binding?.affairsLibraryEnabled !== true) {
+      return;
+    }
+
+    const relativePath = resolveAffairsLibraryRelativePath(rootDir, absolutePath);
+    if (!relativePath) {
+      return;
+    }
+
+    if (relativePath === DEFAULT_CONFIG_RELATIVE_PATH) {
+      this.scheduleAutoApplyConfig(normalizedWorkspaceId, `app_write:${relativePath}`);
+      return;
+    }
+
+    if (relativePath === TAG_RULES_RELATIVE_PATH) {
+      this.scheduleAutoRecomputeTags(normalizedWorkspaceId, `app_write:${relativePath}`);
+      return;
+    }
+
+    if (relativePath === ".ai-index" || relativePath.startsWith(".ai-index/")) {
+      return;
+    }
+
+    const targetPath = normalizeMutationRefreshTarget(relativePath);
+    if (!targetPath) {
+      return;
+    }
+
+    this.scheduleAutoRefresh(
+      normalizedWorkspaceId,
+      `app_${input.kind}:${targetPath}`,
+      targetPath
+    );
+  }
+
+  scheduleAutoRefresh(workspaceId: string, reason: string, targetPath?: string): void {
+    const normalizedWorkspaceId = workspaceId.trim();
+    if (!normalizedWorkspaceId) {
+      return;
+    }
+
+    const state = this.getOrCreateAutoTaskState(normalizedWorkspaceId);
+    state.indexReasons.add(reason.trim() || "auto_refresh");
+    if (targetPath?.trim()) {
+      state.indexTargets.add(targetPath.trim().replace(/^\.\//, ""));
+    }
+    this.armAutoTaskTimer(normalizedWorkspaceId, AUTO_TASK_QUIET_WINDOW_MS);
+  }
+
+  scheduleAutoApplyConfig(workspaceId: string, reason: string): void {
+    const normalizedWorkspaceId = workspaceId.trim();
+    if (!normalizedWorkspaceId) {
+      return;
+    }
+
+    const state = this.getOrCreateAutoTaskState(normalizedWorkspaceId);
+    state.applyConfigReasons.add(reason.trim() || `watch:${DEFAULT_CONFIG_RELATIVE_PATH}`);
+    this.armAutoTaskTimer(normalizedWorkspaceId, AUTO_TASK_QUIET_WINDOW_MS);
+  }
+
+  scheduleAutoRecomputeTags(workspaceId: string, reason: string): void {
+    const normalizedWorkspaceId = workspaceId.trim();
+    if (!normalizedWorkspaceId) {
+      return;
+    }
+
+    const state = this.getOrCreateAutoTaskState(normalizedWorkspaceId);
+    state.recomputeTagReasons.add(reason.trim() || `watch:${TAG_RULES_RELATIVE_PATH}`);
+    this.armAutoTaskTimer(normalizedWorkspaceId, AUTO_TASK_QUIET_WINDOW_MS);
+  }
+
+  dispose(): void {
+    for (const state of this.autoTaskStateByWorkspace.values()) {
+      if (state.timer) {
+        clearTimeout(state.timer);
+      }
+    }
+    this.autoTaskStateByWorkspace.clear();
   }
 
   getRefreshTaskSnapshot(workspaceId: string): TaskSnapshot | null {
@@ -881,7 +988,7 @@ export class AffairsLibraryService {
       };
     }
 
-    const exportRoot = path.join(binding.rootDir, ".ai-index", "exports-v2");
+    const exportRoot = path.join(binding.rootDir, ".ai-index", "exports");
     const statusPath = path.join(exportRoot, "status.json");
     if (!fs.existsSync(statusPath)) {
       return {
@@ -920,32 +1027,46 @@ export class AffairsLibraryService {
 
   private registerBackgroundTasks(): void {
     if (!this.taskManager.has(HOST_TASK_TYPES.affairsLibraryApplyConfig)) {
-      this.taskManager.register<{ workspaceId: string; rootDir: string }, AffairsIndexerCommandResult>({
+      this.taskManager.register<{ workspaceId: string; rootDir: string; reason?: string }, AffairsIndexerCommandResult>({
         taskType: HOST_TASK_TYPES.affairsLibraryApplyConfig,
         executionLane: "helper_process",
         helperProcessHandler: "affairs.library_apply_config",
         timeoutMs: INDEX_TASK_TIMEOUT_MS,
-        run: async (input) => await this.runInternalCommand(input.rootDir, "apply-config")
+        run: async (input) =>
+          await this.runInternalCommand(input.rootDir, "apply-config", {
+            reason: input.reason
+          })
       });
     }
 
     if (!this.taskManager.has(HOST_TASK_TYPES.affairsLibraryIndex)) {
-      this.taskManager.register<{ workspaceId: string; rootDir: string; reason: string }, AffairsIndexerCommandResult>({
+      this.taskManager.register<{ workspaceId: string; rootDir: string; reason: string; targetPath?: string }, AffairsIndexerCommandResult>({
         taskType: HOST_TASK_TYPES.affairsLibraryIndex,
         executionLane: "helper_process",
         helperProcessHandler: "affairs.library_index",
         timeoutMs: INDEX_TASK_TIMEOUT_MS,
-        run: async (input) => await this.runInternalCommand(input.rootDir, "index")
+        run: async (input) =>
+          await this.runInternalCommand(
+            input.rootDir,
+            input.targetPath ? "watch-touch" : "index",
+            {
+              targetPath: input.targetPath,
+              reason: input.reason
+            }
+          )
       });
     }
 
     if (!this.taskManager.has(HOST_TASK_TYPES.affairsLibraryRecomputeTags)) {
-      this.taskManager.register<{ workspaceId: string; rootDir: string }, AffairsIndexerCommandResult>({
+      this.taskManager.register<{ workspaceId: string; rootDir: string; reason?: string }, AffairsIndexerCommandResult>({
         taskType: HOST_TASK_TYPES.affairsLibraryRecomputeTags,
         executionLane: "helper_process",
         helperProcessHandler: "affairs.library_recompute_tags",
         timeoutMs: INDEX_TASK_TIMEOUT_MS,
-        run: async (input) => await this.runInternalCommand(input.rootDir, "recompute-tags")
+        run: async (input) =>
+          await this.runInternalCommand(input.rootDir, "recompute-tags", {
+            reason: input.reason
+          })
       });
     }
 
@@ -960,21 +1081,311 @@ export class AffairsLibraryService {
     }
   }
 
-  private async runInternalCommand(rootDir: string, commandName: "apply-config" | "index" | "recompute-tags" | "export"): Promise<AffairsIndexerCommandResult> {
+  private async runInternalCommand(
+    rootDir: string,
+    commandName: "apply-config" | "index" | "recompute-tags" | "export" | "watch-touch",
+    options: {
+      targetPath?: string;
+      reason?: string;
+    } = {}
+  ): Promise<AffairsIndexerCommandResult> {
     this.logger.info(
       {
         rootDir,
         commandName,
+        targetPath: options.targetPath ?? null,
+        reason: options.reason ?? null,
         executionMode: "internal_helper"
       },
       "开始执行内置事务视图文档库索引命令"
     );
 
-    return await runAffairsIndexerCommand(rootDir, commandName);
+    return await runAffairsIndexerCommand(rootDir, commandName, options);
+  }
+
+  private resumeEnabledBindings(): void {
+    for (const state of this.workspaceNavigationStateRepository.listEnabledAffairsLibraries()) {
+      const binding = this.getBinding(state.workspaceId, state.userId);
+      const status = this.readIndexStatus(state.workspaceId, binding);
+      if (status.state === "fresh" || status.state === "cooldown" || status.state === "running") {
+        this.logger.info(
+          {
+            workspaceId: state.workspaceId,
+            rootDir: binding?.rootDir ?? state.affairsLibraryRootPath ?? null,
+            status: status.state,
+            source: "affairs_library.startup_resume"
+          },
+          "事务文档库启动恢复已跳过，当前索引状态无需补跑"
+        );
+        continue;
+      }
+
+      this.scheduleAutoRefresh(state.workspaceId, "startup_resume");
+    }
+  }
+
+  private async flushAutoTasks(workspaceId: string): Promise<void> {
+    const state = this.autoTaskStateByWorkspace.get(workspaceId);
+    if (!state) {
+      return;
+    }
+
+    state.timer = null;
+    if (!hasPendingAutoTasks(state)) {
+      this.autoTaskStateByWorkspace.delete(workspaceId);
+      return;
+    }
+
+    const binding = this.workspaceNavigationStateRepository.findAnyEnabledAffairsLibraryByWorkspaceId(workspaceId);
+    const rootDir = binding?.affairsLibraryRootPath?.trim() ?? "";
+
+    if (!rootDir) {
+      this.logger.info(
+        {
+          workspaceId,
+          skipped: "binding_missing",
+          source: "affairs_library.auto_task"
+        },
+        "事务文档库自动任务已跳过，当前工作区没有启用的文档库绑定"
+      );
+      this.autoTaskStateByWorkspace.delete(workspaceId);
+      return;
+    }
+
+    if (!fs.existsSync(rootDir) || !fs.statSync(rootDir).isDirectory()) {
+      this.logger.info(
+        {
+          workspaceId,
+          rootDir,
+          skipped: "root_dir_invalid",
+          source: "affairs_library.auto_task"
+        },
+        "事务文档库自动任务已跳过，当前根目录不可用"
+      );
+      this.autoTaskStateByWorkspace.delete(workspaceId);
+      return;
+    }
+
+    const blockingTask = this.findBlockingAutoTask(workspaceId);
+    if (blockingTask) {
+      this.logger.info(
+        {
+          workspaceId,
+          blockingTaskType: blockingTask.taskType,
+          blockingTaskStatus: blockingTask.status,
+          source: "affairs_library.auto_task"
+        },
+        "事务文档库已有后台任务在跑，当前脏标记会等下一轮补跑"
+      );
+      this.armAutoTaskTimer(workspaceId, AUTO_TASK_RETRY_WINDOW_MS);
+      return;
+    }
+
+    if (state.applyConfigReasons.size > 0) {
+      const reason = joinAutoTaskReasons(state.applyConfigReasons, `watch:${DEFAULT_CONFIG_RELATIVE_PATH}`);
+      state.applyConfigReasons.clear();
+      const handle = this.taskManager.enqueue<{ workspaceId: string; rootDir: string; reason?: string }, AffairsIndexerCommandResult>(
+        HOST_TASK_TYPES.affairsLibraryApplyConfig,
+        {
+          key: workspaceId,
+          source: "affairs_library.watch_apply_config",
+          input: {
+            workspaceId,
+            rootDir,
+            reason
+          }
+        }
+      );
+      this.attachAutoTaskFollowUp(workspaceId, handle, {
+        rootDir,
+        reason,
+        source: "affairs_library.watch_apply_config"
+      });
+      return;
+    }
+
+    if (state.recomputeTagReasons.size > 0) {
+      const reason = joinAutoTaskReasons(state.recomputeTagReasons, `watch:${TAG_RULES_RELATIVE_PATH}`);
+      state.recomputeTagReasons.clear();
+      const handle = this.taskManager.enqueue<{ workspaceId: string; rootDir: string; reason?: string }, AffairsIndexerCommandResult>(
+        HOST_TASK_TYPES.affairsLibraryRecomputeTags,
+        {
+          key: workspaceId,
+          source: "affairs_library.watch_recompute_tags",
+          input: {
+            workspaceId,
+            rootDir,
+            reason
+          }
+        }
+      );
+      this.attachAutoTaskFollowUp(workspaceId, handle, {
+        rootDir,
+        reason,
+        source: "affairs_library.watch_recompute_tags"
+      });
+      return;
+    }
+
+    if (state.indexReasons.size > 0 || state.indexTargets.size > 0) {
+      const targetPath = pickNarrowestTargetPath([...state.indexTargets]);
+      const reason = joinAutoTaskReasons(
+        state.indexReasons,
+        targetPath ? `watch:${targetPath}` : "watch:auto_refresh"
+      );
+      state.indexReasons.clear();
+      state.indexTargets.clear();
+      const handle = this.taskManager.enqueue<{ workspaceId: string; rootDir: string; reason: string; targetPath?: string }, AffairsIndexerCommandResult>(
+        HOST_TASK_TYPES.affairsLibraryIndex,
+        {
+          key: workspaceId,
+          source: "affairs_library.auto_refresh",
+          input: {
+            workspaceId,
+            rootDir,
+            reason,
+            ...(targetPath ? { targetPath } : {})
+          }
+        }
+      );
+      this.attachAutoTaskFollowUp(workspaceId, handle, {
+        rootDir,
+        reason,
+        targetPath,
+        source: "affairs_library.auto_refresh"
+      });
+      return;
+    }
+
+    this.autoTaskStateByWorkspace.delete(workspaceId);
+  }
+
+  private getOrCreateAutoTaskState(workspaceId: string): AffairsLibraryAutoTaskState {
+    const current = this.autoTaskStateByWorkspace.get(workspaceId);
+    if (current) {
+      return current;
+    }
+
+    const next: AffairsLibraryAutoTaskState = {
+      timer: null,
+      applyConfigReasons: new Set<string>(),
+      recomputeTagReasons: new Set<string>(),
+      indexReasons: new Set<string>(),
+      indexTargets: new Set<string>()
+    };
+    this.autoTaskStateByWorkspace.set(workspaceId, next);
+    return next;
+  }
+
+  private armAutoTaskTimer(workspaceId: string, delayMs: number): void {
+    const state = this.getOrCreateAutoTaskState(workspaceId);
+    if (state.timer) {
+      clearTimeout(state.timer);
+    }
+    state.timer = setTimeout(() => {
+      void this.flushAutoTasks(workspaceId);
+    }, delayMs);
+  }
+
+  private findBlockingAutoTask(workspaceId: string): TaskSnapshot | null {
+    const taskTypes = [
+      HOST_TASK_TYPES.affairsLibraryApplyConfig,
+      HOST_TASK_TYPES.affairsLibraryIndex,
+      HOST_TASK_TYPES.affairsLibraryRecomputeTags,
+      HOST_TASK_TYPES.affairsLibraryExport
+    ];
+
+    for (const taskType of taskTypes) {
+      const snapshot = this.taskManager.peek(taskType, workspaceId);
+      if (snapshot && (snapshot.status === "queued" || snapshot.status === "running")) {
+        return snapshot;
+      }
+    }
+
+    return null;
+  }
+
+  private attachAutoTaskFollowUp(
+    workspaceId: string,
+    handle: {
+      taskId: string;
+      taskType: string;
+      deduped: boolean;
+      promise: Promise<AffairsIndexerCommandResult>;
+    },
+    meta: {
+      rootDir: string;
+      reason: string;
+      source: string;
+      targetPath?: string | null;
+    }
+  ): void {
+    this.logger.info(
+      {
+        workspaceId,
+        rootDir: meta.rootDir,
+        reason: meta.reason,
+        targetPath: meta.targetPath ?? null,
+        taskType: handle.taskType,
+        taskId: handle.taskId,
+        deduped: handle.deduped,
+        source: meta.source
+      },
+      "事务文档库自动任务已入队"
+    );
+
+    void handle.promise.then(
+      (result) => {
+        this.logger.info(
+          {
+            workspaceId,
+            rootDir: meta.rootDir,
+            reason: meta.reason,
+            targetPath: meta.targetPath ?? null,
+            taskType: handle.taskType,
+            taskId: handle.taskId,
+            command: result.command,
+            durationMs: result.durationMs,
+            resultSummary: summarizeIndexerCommandResult(result.result),
+            source: meta.source
+          },
+          "事务文档库自动任务执行完成"
+        );
+      },
+      (error) => {
+        this.logger.info(
+          {
+            workspaceId,
+            rootDir: meta.rootDir,
+            reason: meta.reason,
+            targetPath: meta.targetPath ?? null,
+            taskType: handle.taskType,
+            taskId: handle.taskId,
+            error: error instanceof Error ? error.message : String(error),
+            source: meta.source
+          },
+          "事务文档库自动任务执行失败"
+        );
+      }
+    ).finally(() => {
+      const state = this.autoTaskStateByWorkspace.get(workspaceId);
+      if (!state) {
+        return;
+      }
+
+      if (!hasPendingAutoTasks(state)) {
+        if (!state.timer) {
+          this.autoTaskStateByWorkspace.delete(workspaceId);
+        }
+        return;
+      }
+
+      this.armAutoTaskTimer(workspaceId, 50);
+    });
   }
 
   private readExportData(rootDir: string): AffairsLibraryExportData {
-    const exportRoot = path.join(rootDir, ".ai-index", "exports-v2");
+    const exportRoot = path.join(rootDir, ".ai-index", "exports");
     const manifestPath = path.join(exportRoot, "manifest.json");
     const signature = this.buildExportSignature(exportRoot, manifestPath);
     const cached = this.exportCache.get(rootDir);
@@ -1173,11 +1584,107 @@ export class AffairsLibraryService {
   }
 }
 
+function hasPendingAutoTasks(state: AffairsLibraryAutoTaskState): boolean {
+  return state.applyConfigReasons.size > 0
+    || state.recomputeTagReasons.size > 0
+    || state.indexReasons.size > 0
+    || state.indexTargets.size > 0;
+}
+
+function joinAutoTaskReasons(reasons: Set<string>, fallback: string): string {
+  const items = [...reasons]
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, "zh-CN"));
+  return items.length > 0 ? items.join(" | ") : fallback;
+}
+
+function pickNarrowestTargetPath(targets: string[]): string | undefined {
+  if (targets.length === 0) {
+    return undefined;
+  }
+
+  let selected = targets[0]?.trim() || undefined;
+  for (const target of targets) {
+    const normalizedTarget = target.trim();
+    if (!normalizedTarget) {
+      continue;
+    }
+    if (!selected || selected.startsWith(`${normalizedTarget}/`)) {
+      selected = normalizedTarget;
+    }
+  }
+
+  return selected || undefined;
+}
+
+function summarizeIndexerCommandResult(result: unknown): Record<string, unknown> | null {
+  if (!result || typeof result !== "object") {
+    return null;
+  }
+
+  const payload = result as Record<string, unknown>;
+  const indexResult = payload.indexResult;
+  if (indexResult && typeof indexResult === "object") {
+    const indexPayload = indexResult as Record<string, unknown>;
+    return {
+      scannedCount: indexPayload.scannedCount ?? null,
+      indexedCount: indexPayload.indexedCount ?? null,
+      skippedCount: indexPayload.skippedCount ?? null,
+      failedCount: indexPayload.failedCount ?? null,
+      deletedCount: indexPayload.deletedCount ?? null,
+      dirtyScope: indexPayload.dirtyScope ?? null
+    };
+  }
+
+  if ("scannedCount" in payload || "indexedCount" in payload || "failedCount" in payload) {
+    return {
+      scannedCount: payload.scannedCount ?? null,
+      indexedCount: payload.indexedCount ?? null,
+      skippedCount: payload.skipStats && typeof payload.skipStats === "object"
+        ? (payload.skipStats as Record<string, unknown>).skippedCount ?? null
+        : null,
+      failedCount: payload.failedCount ?? null,
+      deletedCount: payload.deletedCount ?? null
+    };
+  }
+
+  if ("changed" in payload || "addedExtensions" in payload || "removedExtensions" in payload) {
+    return {
+      changed: payload.changed ?? null,
+      addedExtensions: payload.addedExtensions ?? null,
+      removedExtensions: payload.removedExtensions ?? null
+    };
+  }
+
+  if ("documentCount" in payload || "exportedAt" in payload) {
+    return {
+      documentCount: payload.documentCount ?? null,
+      exportedAt: payload.exportedAt ?? null
+    };
+  }
+
+  return null;
+}
+
 function countDocumentsForTag(documents: AffairsLibraryDocumentRecordDto[], tagPath: string): number {
   if (!tagPath) {
     return 0;
   }
   return documents.filter((document) => [...document.tags, ...document.derivedTags].some((tag) => tag === tagPath || tag.startsWith(`${tagPath}/`))).length;
+}
+
+function resolveAffairsLibraryRelativePath(rootDir: string, absolutePath: string): string | null {
+  const relativePath = path.relative(path.resolve(rootDir), path.resolve(absolutePath)).replace(/\\/g, "/");
+  if (!relativePath || relativePath === "." || relativePath.startsWith("../")) {
+    return null;
+  }
+  return relativePath;
+}
+
+function normalizeMutationRefreshTarget(relativePath: string): string | null {
+  const normalizedPath = relativePath.trim().replace(/^\.\/+/, "").replace(/\/+$/, "");
+  return normalizedPath || null;
 }
 
 function matchesFavorite(
