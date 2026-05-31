@@ -2481,16 +2481,18 @@ function AffairsLibraryConfigForm({
                 key={extension}
                 type="button"
                 className={selected
-                  ? (preset ? "affairs-extension-chip active" : "affairs-extension-chip active custom")
-                  : (preset ? "affairs-extension-chip" : "affairs-extension-chip custom")
+                  ? (preset ? "secondary-button affairs-extension-chip active" : "secondary-button affairs-extension-chip active custom")
+                  : (preset ? "secondary-button affairs-extension-chip" : "secondary-button affairs-extension-chip custom")
                 }
                 aria-pressed={selected}
+                data-selected={selected ? "true" : "false"}
                 onClick={() => {
                   setSelectedExtensions((current) => current.includes(extension)
                     ? current.filter((item) => item !== extension)
                     : sortAllowedExtensions([...current, extension]));
                 }}
               >
+                {selected ? <span className="affairs-extension-chip-check" aria-hidden="true">✓</span> : null}
                 <span>{extension}</span>
                 {!preset ? <span className="affairs-extension-chip-badge">{t("shell.affairsLibraryCustomExtensionBadge")}</span> : null}
               </button>
