@@ -17,6 +17,7 @@ export async function registerWorkspaceRoutes(
   app.put("/api/workspaces/:workspaceId/navigation-state", workspaceController.updateNavigationState);
   app.get("/api/workspaces/:workspaceId/affairs/library-binding", affairsLibraryController.getBinding);
   app.put("/api/workspaces/:workspaceId/affairs/library-binding", affairsLibraryController.saveBinding);
+  app.put("/api/workspaces/:workspaceId/affairs/library-enabled", affairsLibraryController.setEnabled);
   app.get("/api/workspaces/:workspaceId/affairs/library-config", affairsLibraryController.getConfig);
   app.put("/api/workspaces/:workspaceId/affairs/library-config", affairsLibraryController.saveConfig);
   app.get("/api/workspaces/:workspaceId/affairs/library-snapshot", affairsLibraryController.getSnapshot);

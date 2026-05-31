@@ -239,6 +239,7 @@ export interface WorkspaceNavigationStateRecord {
   collapsed: boolean;
   backgroundColor: string | null;
   affairsLibraryRootPath?: string | null;
+  affairsLibraryEnabled?: boolean;
   affairsLibraryFavoritesJson?: string | null;
   updatedAt: string;
 }

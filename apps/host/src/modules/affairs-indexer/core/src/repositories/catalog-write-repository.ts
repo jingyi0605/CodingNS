@@ -1,0 +1,793 @@
+import crypto from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
+import path from "node:path";
+import { openDatabase } from "../sqlite/open-database.js";
+import type { FileScanResult } from "../scanner/file-scanner.js";
+import type { ParsedDocument } from "../parser/plain-text-parser.js";
+import type { TagAssignment } from "../tagging/simple-tag-inference.js";
+
+function makeStableId(prefix: string, value: string): string {
+  const digest = crypto.createHash("sha1").update(value).digest("hex");
+  return `${prefix}_${digest}`;
+}
+
+export interface ReconcileScope {
+  kind: "all" | "prefix" | "exact";
+  value?: string;
+}
+
+interface PreparedStatements {
+  upsertFile: ReturnType<DatabaseSync["prepare"]>;
+  upsertDocument: ReturnType<DatabaseSync["prepare"]>;
+  insertTag: ReturnType<DatabaseSync["prepare"]>;
+  deleteDocumentTagByPair: ReturnType<DatabaseSync["prepare"]>;
+  deleteDerivedDocumentTagByPair: ReturnType<DatabaseSync["prepare"]>;
+  insertDocumentTag: ReturnType<DatabaseSync["prepare"]>;
+  insertDerivedTag: ReturnType<DatabaseSync["prepare"]>;
+  upsertDocumentTag: ReturnType<DatabaseSync["prepare"]>;
+  upsertDerivedTag: ReturnType<DatabaseSync["prepare"]>;
+  selectFileByPath: ReturnType<DatabaseSync["prepare"]>;
+  selectDocumentByFileId: ReturnType<DatabaseSync["prepare"]>;
+  selectDocumentTagIds: ReturnType<DatabaseSync["prepare"]>;
+  selectDerivedTagIds: ReturnType<DatabaseSync["prepare"]>;
+  deleteDocumentTags: ReturnType<DatabaseSync["prepare"]>;
+  deleteDerivedDocumentTags: ReturnType<DatabaseSync["prepare"]>;
+  deleteChunksByDocumentId: ReturnType<DatabaseSync["prepare"]>;
+  deleteDocumentById: ReturnType<DatabaseSync["prepare"]>;
+  markFileDeleted: ReturnType<DatabaseSync["prepare"]>;
+  listActiveFilesAll: ReturnType<DatabaseSync["prepare"]>;
+  listActiveFilesExact: ReturnType<DatabaseSync["prepare"]>;
+  listActiveFilesPrefix: ReturnType<DatabaseSync["prepare"]>;
+  countActiveIndexedDocuments: ReturnType<DatabaseSync["prepare"]>;
+}
+
+export interface SkippedDocumentEntry {
+  file: FileScanResult;
+  adapter: string;
+  reasonCode: string;
+  message: string;
+}
+
+/**
+ * 最小写入仓库。
+ * 第二阶段补上 prepared statement 复用与批量连接内执行，减少大批量索引时的重复 prepare 与全表清理成本。
+ */
+export class CatalogWriteRepository {
+  private readonly tagIdCache = new Map<string, string>();
+  private activeDb: DatabaseSync | null = null;
+  private activeStatements: PreparedStatements | null = null;
+  private activeBootstrapSession = false;
+
+  constructor(private readonly dbPath: string) {}
+
+  beginSession(): void {
+    if (this.activeDb) {
+      return;
+    }
+    this.activeDb = openDatabase(this.dbPath);
+    this.activeStatements = this.prepareStatements(this.activeDb);
+    this.activeBootstrapSession = this.detectBootstrapSession(this.activeDb);
+  }
+
+  endSession(): void {
+    if (!this.activeDb) {
+      return;
+    }
+    this.activeDb.close();
+    this.activeDb = null;
+    this.activeStatements = null;
+    this.activeBootstrapSession = false;
+  }
+
+  private withConnection<T>(handler: (db: DatabaseSync, statements: PreparedStatements) => T): T {
+    if (this.activeDb && this.activeStatements) {
+      return handler(this.activeDb, this.activeStatements);
+    }
+
+    const db = openDatabase(this.dbPath);
+    const statements = this.prepareStatements(db);
+    try {
+      return handler(db, statements);
+    } finally {
+      db.close();
+    }
+  }
+
+  private normalizeRelativePath(relativePath: string): string {
+    return relativePath.split(path.sep).join("/");
+  }
+
+  getSchemaMeta(key: string): string | null {
+    return this.withConnection(db => {
+      const row = db.prepare(`SELECT value FROM schema_meta WHERE key = ?`).get(key) as { value?: string } | undefined;
+      return typeof row?.value === "string" ? row.value : null;
+    });
+  }
+
+  setSchemaMeta(key: string, value: string, updatedAt = new Date().toISOString()): void {
+    this.withConnection(db => {
+      const updated = db.prepare(`
+        UPDATE schema_meta
+        SET value = ?, updated_at = ?
+        WHERE key = ?
+      `).run(value, updatedAt, key);
+      if ((updated.changes || 0) > 0) {
+        return;
+      }
+      db.prepare(`
+        INSERT INTO schema_meta(key, value, updated_at)
+        VALUES(?, ?, ?)
+      `).run(key, value, updatedAt);
+    });
+  }
+
+  countActiveIndexedDocuments(): number {
+    return this.withConnection(db => {
+      const row = db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM documents d
+        JOIN files f ON f.id = d.file_id
+        WHERE f.status = 'active'
+          AND d.index_status = 'indexed'
+      `).get() as { count?: number } | undefined;
+      return Number(row?.count ?? 0);
+    });
+  }
+
+  private detectBootstrapSession(db: DatabaseSync): boolean {
+    const row = db.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM documents) AS document_count,
+        (SELECT COUNT(*) FROM document_tags) AS document_tag_count,
+        (SELECT COUNT(*) FROM derived_document_tags) AS derived_tag_count
+    `).get() as {
+      document_count?: number;
+      document_tag_count?: number;
+      derived_tag_count?: number;
+    } | undefined;
+
+    return Number(row?.document_count ?? 0) === 0
+      && Number(row?.document_tag_count ?? 0) === 0
+      && Number(row?.derived_tag_count ?? 0) === 0;
+  }
+
+  private prepareStatements(db: DatabaseSync): PreparedStatements {
+    return {
+      upsertFile: db.prepare(`
+        INSERT INTO files(id, path, dir_path, name, extension, size, mtime, ctime, content_hash, status, last_seen_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+        ON CONFLICT(path) DO UPDATE SET
+          dir_path = excluded.dir_path,
+          name = excluded.name,
+          extension = excluded.extension,
+          size = excluded.size,
+          mtime = excluded.mtime,
+          ctime = excluded.ctime,
+          content_hash = excluded.content_hash,
+          status = 'active',
+          last_seen_at = excluded.last_seen_at
+      `),
+      upsertDocument: db.prepare(`
+        INSERT INTO documents(id, file_id, title, summary, language, parse_status, parse_error, index_status, chunk_count, last_indexed_at)
+        VALUES(?, ?, ?, ?, 'zh', ?, ?, ?, 0, ?)
+        ON CONFLICT(file_id) DO UPDATE SET
+          id = excluded.id,
+          title = excluded.title,
+          summary = excluded.summary,
+          parse_status = excluded.parse_status,
+          parse_error = excluded.parse_error,
+          index_status = excluded.index_status,
+          chunk_count = excluded.chunk_count,
+          last_indexed_at = excluded.last_indexed_at
+      `),
+      insertTag: db.prepare(`
+        INSERT OR IGNORE INTO tags(id, root_type, path, name, parent_id, canonical_name, description, status, created_by, created_at)
+        VALUES(?, ?, ?, ?, ?, ?, '', 'active', ?, ?)
+      `),
+      deleteDocumentTagByPair: db.prepare(`DELETE FROM document_tags WHERE document_id = ? AND tag_id = ?`),
+      deleteDerivedDocumentTagByPair: db.prepare(`DELETE FROM derived_document_tags WHERE document_id = ? AND tag_id = ?`),
+      insertDocumentTag: db.prepare(`
+        INSERT INTO document_tags(id, document_id, tag_id, confidence, source, evidence, manual_override, updated_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+      `),
+      insertDerivedTag: db.prepare(`
+        INSERT INTO derived_document_tags(id, document_id, tag_id, rule_name, computed_at, expires_at)
+        VALUES(?, ?, ?, ?, ?, NULL)
+      `),
+      upsertDocumentTag: db.prepare(`
+        INSERT INTO document_tags(id, document_id, tag_id, confidence, source, evidence, manual_override, updated_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(document_id, tag_id) DO UPDATE SET
+          confidence = excluded.confidence,
+          source = excluded.source,
+          evidence = excluded.evidence,
+          manual_override = excluded.manual_override,
+          updated_at = excluded.updated_at
+      `),
+      upsertDerivedTag: db.prepare(`
+        INSERT INTO derived_document_tags(id, document_id, tag_id, rule_name, computed_at, expires_at)
+        VALUES(?, ?, ?, ?, ?, NULL)
+        ON CONFLICT(document_id, tag_id) DO UPDATE SET
+          rule_name = excluded.rule_name,
+          computed_at = excluded.computed_at,
+          expires_at = excluded.expires_at
+      `),
+      selectFileByPath: db.prepare(`SELECT id FROM files WHERE path = ?`),
+      selectDocumentByFileId: db.prepare(`SELECT id FROM documents WHERE file_id = ?`),
+      selectDocumentTagIds: db.prepare(`SELECT tag_id FROM document_tags WHERE document_id = ?`),
+      selectDerivedTagIds: db.prepare(`SELECT tag_id FROM derived_document_tags WHERE document_id = ?`),
+      deleteDocumentTags: db.prepare(`DELETE FROM document_tags WHERE document_id = ?`),
+      deleteDerivedDocumentTags: db.prepare(`DELETE FROM derived_document_tags WHERE document_id = ?`),
+      deleteChunksByDocumentId: db.prepare(`DELETE FROM chunks WHERE document_id = ?`),
+      deleteDocumentById: db.prepare(`DELETE FROM documents WHERE id = ?`),
+      markFileDeleted: db.prepare(`
+        UPDATE files
+        SET status = 'deleted',
+            last_seen_at = ?
+        WHERE id = ?
+      `),
+      listActiveFilesAll: db.prepare(`SELECT path, last_seen_at FROM files WHERE status = 'active'`),
+      listActiveFilesExact: db.prepare(`SELECT path, last_seen_at FROM files WHERE status = 'active' AND path = ?`),
+      listActiveFilesPrefix: db.prepare(`SELECT path, last_seen_at FROM files WHERE status = 'active' AND (path = ? OR path LIKE ?)`),
+      countActiveIndexedDocuments: db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM documents d
+        JOIN files f ON f.id = d.file_id
+        WHERE f.status = 'active'
+          AND d.index_status = 'indexed'
+      `),
+    };
+  }
+
+  private ensureTagInConnection(
+    db: DatabaseSync,
+    statements: PreparedStatements,
+    tagCache: Map<string, string>,
+    tagPath: string,
+    createdBy: string,
+  ): string {
+    const cached = tagCache.get(tagPath);
+    if (cached) {
+      return cached;
+    }
+
+    const segments = tagPath.split("/").filter(Boolean);
+    const rootType = segments[0] ?? "未分类";
+    const parentPath = segments.length > 1 ? segments.slice(0, -1).join("/") : null;
+    const parentId = parentPath ? this.ensureTagInConnection(db, statements, tagCache, parentPath, createdBy) : null;
+    const name = segments[segments.length - 1] ?? rootType;
+    const tagId = makeStableId("tag", tagPath);
+
+    statements.insertTag.run(
+      tagId,
+      rootType,
+      tagPath,
+      name,
+      parentId,
+      name,
+      createdBy,
+      new Date().toISOString(),
+    );
+
+    tagCache.set(tagPath, tagId);
+    this.tagIdCache.set(tagPath, tagId);
+    return tagId;
+  }
+
+  private cleanupOrphanTagsInConnection(db: DatabaseSync): void {
+    const selectOrphans = db.prepare(`
+      SELECT t.id
+      FROM tags t
+      WHERE NOT EXISTS (
+        SELECT 1 FROM tags child WHERE child.parent_id = t.id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM document_tags dt WHERE dt.tag_id = t.id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM derived_document_tags ddt WHERE ddt.tag_id = t.id
+      )
+    `);
+    const deleteTag = db.prepare(`DELETE FROM tags WHERE id = ?`);
+
+    while (true) {
+      const orphanRows = selectOrphans.all() as Array<{ id: string }>;
+
+      if (orphanRows.length === 0) {
+        return;
+      }
+
+      for (const row of orphanRows) {
+        deleteTag.run(row.id);
+      }
+    }
+  }
+
+  private deleteDocumentInConnection(
+    db: DatabaseSync,
+    statements: PreparedStatements,
+    relativePath: string,
+    deletedAt: string,
+  ): boolean {
+    const normalizedPath = this.normalizeRelativePath(relativePath);
+    const fileRow = statements.selectFileByPath.get(normalizedPath) as { id?: string } | undefined;
+    if (!fileRow?.id) {
+      return false;
+    }
+
+    const documentRow = statements.selectDocumentByFileId.get(fileRow.id) as { id?: string } | undefined;
+    if (documentRow?.id) {
+      statements.deleteChunksByDocumentId.run(documentRow.id);
+      statements.deleteDocumentTags.run(documentRow.id);
+      statements.deleteDerivedDocumentTags.run(documentRow.id);
+      statements.deleteDocumentById.run(documentRow.id);
+    }
+
+    statements.markFileDeleted.run(deletedAt, fileRow.id);
+    return true;
+  }
+
+  private upsertDocumentInConnection(
+    db: DatabaseSync,
+    statements: PreparedStatements,
+    tagCache: Map<string, string>,
+    file: FileScanResult,
+    parsed: ParsedDocument,
+    tags: TagAssignment[] = [],
+    derivedTags: TagAssignment[] = [],
+    observedAt = new Date().toISOString(),
+  ): { fileId: string; documentId: string } {
+    const fileId = makeStableId("file", file.relativePath);
+    const documentId = makeStableId("doc", file.relativePath);
+
+    statements.upsertFile.run(
+      fileId,
+      file.relativePath,
+      file.relativePath.includes("/") ? file.relativePath.slice(0, file.relativePath.lastIndexOf("/")) : ".",
+      file.name,
+      file.extension,
+      file.size,
+      file.mtime,
+      file.ctime,
+      null,
+      observedAt,
+    );
+
+    statements.upsertDocument.run(
+      documentId,
+      fileId,
+      parsed.title,
+      parsed.summary,
+      "parsed",
+      null,
+      "indexed",
+      observedAt,
+    );
+
+    if (this.activeBootstrapSession) {
+      for (const tag of tags) {
+        const tagId = this.ensureTagInConnection(db, statements, tagCache, tag.tagPath, tag.source.split("+")[0] || "rule");
+        statements.insertDocumentTag.run(
+          makeStableId("doc_tag", `${documentId}:${tagId}`),
+          documentId,
+          tagId,
+          tag.confidence,
+          tag.source,
+          tag.evidence,
+          tag.manualOverride ? 1 : 0,
+          observedAt,
+        );
+      }
+
+      for (const tag of derivedTags) {
+        const tagId = this.ensureTagInConnection(db, statements, tagCache, tag.tagPath, tag.source);
+        statements.insertDerivedTag.run(
+          makeStableId("derived_tag", `${documentId}:${tagId}`),
+          documentId,
+          tagId,
+          tag.source,
+          observedAt,
+        );
+      }
+
+      return { fileId, documentId };
+    }
+
+    const existingDirectTagRows = statements.selectDocumentTagIds.all(documentId) as Array<{ tag_id: string }>;
+    const existingDirectTagIds = new Set(existingDirectTagRows.map(row => String(row.tag_id)));
+    const nextDirectTagIds = new Set<string>();
+
+    for (const tag of tags) {
+      const tagId = this.ensureTagInConnection(db, statements, tagCache, tag.tagPath, tag.source.split("+")[0] || "rule");
+      nextDirectTagIds.add(tagId);
+      statements.upsertDocumentTag.run(
+        makeStableId("doc_tag", `${documentId}:${tagId}`),
+        documentId,
+        tagId,
+        tag.confidence,
+        tag.source,
+        tag.evidence,
+        tag.manualOverride ? 1 : 0,
+        observedAt,
+      );
+    }
+
+    for (const tagId of existingDirectTagIds) {
+      if (!nextDirectTagIds.has(tagId)) {
+        statements.deleteDocumentTagByPair.run(documentId, tagId);
+      }
+    }
+
+    const existingDerivedTagRows = statements.selectDerivedTagIds.all(documentId) as Array<{ tag_id: string }>;
+    const existingDerivedTagIds = new Set(existingDerivedTagRows.map(row => String(row.tag_id)));
+    const nextDerivedTagIds = new Set<string>();
+
+    for (const tag of derivedTags) {
+      const tagId = this.ensureTagInConnection(db, statements, tagCache, tag.tagPath, tag.source);
+      nextDerivedTagIds.add(tagId);
+      statements.upsertDerivedTag.run(
+        makeStableId("derived_tag", `${documentId}:${tagId}`),
+        documentId,
+        tagId,
+        tag.source,
+        observedAt,
+      );
+    }
+
+    for (const tagId of existingDerivedTagIds) {
+      if (!nextDerivedTagIds.has(tagId)) {
+        statements.deleteDerivedDocumentTagByPair.run(documentId, tagId);
+      }
+    }
+
+    return { fileId, documentId };
+  }
+
+  private upsertParseFailureInConnection(
+    db: DatabaseSync,
+    statements: PreparedStatements,
+    file: FileScanResult,
+    error: Error,
+    observedAt = new Date().toISOString(),
+  ): { fileId: string; documentId: string } {
+    const fileId = makeStableId("file", file.relativePath);
+    const documentId = makeStableId("doc", file.relativePath);
+
+    statements.upsertFile.run(
+      fileId,
+      file.relativePath,
+      file.relativePath.includes("/") ? file.relativePath.slice(0, file.relativePath.lastIndexOf("/")) : ".",
+      file.name,
+      file.extension,
+      file.size,
+      file.mtime,
+      file.ctime,
+      null,
+      observedAt,
+    );
+
+    statements.upsertDocument.run(
+      documentId,
+      fileId,
+      file.name,
+      "",
+      "failed",
+      error.message,
+      "failed",
+      observedAt,
+    );
+
+    statements.deleteDocumentTags.run(documentId);
+    statements.deleteDerivedDocumentTags.run(documentId);
+    return { fileId, documentId };
+  }
+
+  private markSkippedDocumentInConnection(
+    db: DatabaseSync,
+    statements: PreparedStatements,
+    entry: SkippedDocumentEntry,
+    observedAt = new Date().toISOString(),
+  ): { fileId: string; documentId: string } {
+    const { file, adapter, reasonCode, message } = entry;
+    const fileId = makeStableId("file", file.relativePath);
+    const documentId = makeStableId("doc", file.relativePath);
+
+    statements.upsertFile.run(
+      fileId,
+      file.relativePath,
+      file.relativePath.includes("/") ? file.relativePath.slice(0, file.relativePath.lastIndexOf("/")) : ".",
+      file.name,
+      file.extension,
+      file.size,
+      file.mtime,
+      file.ctime,
+      null,
+      observedAt,
+    );
+
+    statements.upsertDocument.run(
+      documentId,
+      fileId,
+      file.name,
+      "",
+      "skipped",
+      `${reasonCode}: ${adapter}${message ? ` - ${message}` : ""}`,
+      "skipped",
+      observedAt,
+    );
+
+    statements.deleteDocumentTags.run(documentId);
+    statements.deleteDerivedDocumentTags.run(documentId);
+    statements.deleteChunksByDocumentId.run(documentId);
+    return { fileId, documentId };
+  }
+
+  upsertTextDocument(
+    file: FileScanResult,
+    parsed: ParsedDocument,
+    tags: TagAssignment[] = [],
+    derivedTags: TagAssignment[] = [],
+    observedAt?: string,
+  ): { fileId: string; documentId: string } {
+    return this.withConnection((db, statements) => {
+      const tagCache = new Map(this.tagIdCache);
+      try {
+        db.exec("BEGIN");
+        const result = this.upsertDocumentInConnection(db, statements, tagCache, file, parsed, tags, derivedTags, observedAt);
+        db.exec("COMMIT");
+        return result;
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  upsertParseFailure(file: FileScanResult, error: Error, observedAt?: string): { fileId: string; documentId: string } {
+    return this.withConnection((db, statements) => {
+      try {
+        db.exec("BEGIN");
+        const result = this.upsertParseFailureInConnection(db, statements, file, error, observedAt);
+        this.cleanupOrphanTagsInConnection(db);
+        db.exec("COMMIT");
+        return result;
+      } catch (failure) {
+        db.exec("ROLLBACK");
+        throw failure;
+      }
+    });
+  }
+
+  batchUpsertDocuments(
+    entries: Array<{
+      file: FileScanResult;
+      parsed: ParsedDocument;
+      tags: TagAssignment[];
+      derivedTags: TagAssignment[];
+    }>,
+    observedAt?: string,
+  ): Array<{ fileId: string; documentId: string }> {
+    if (entries.length === 0) {
+      return [];
+    }
+
+    return this.withConnection((db, statements) => {
+      const tagCache = new Map(this.tagIdCache);
+      try {
+        db.exec("BEGIN IMMEDIATE");
+        const results = entries.map(entry => this.upsertDocumentInConnection(
+          db,
+          statements,
+          tagCache,
+          entry.file,
+          entry.parsed,
+          entry.tags,
+          entry.derivedTags,
+          observedAt,
+        ));
+        db.exec("COMMIT");
+        return results;
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  batchUpsertParseFailures(
+    entries: Array<{ file: FileScanResult; error: Error }>,
+    observedAt?: string,
+  ): Array<{ fileId: string; documentId: string }> {
+    if (entries.length === 0) {
+      return [];
+    }
+
+    return this.withConnection((db, statements) => {
+      try {
+        db.exec("BEGIN IMMEDIATE");
+        const results = entries.map(entry => this.upsertParseFailureInConnection(db, statements, entry.file, entry.error, observedAt));
+        db.exec("COMMIT");
+        return results;
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  batchMarkSkippedDocuments(
+    entries: SkippedDocumentEntry[],
+    observedAt?: string,
+  ): Array<{ fileId: string; documentId: string }> {
+    if (entries.length === 0) {
+      return [];
+    }
+
+    return this.withConnection((db, statements) => {
+      try {
+        db.exec("BEGIN IMMEDIATE");
+        const results = entries.map(entry => this.markSkippedDocumentInConnection(db, statements, entry, observedAt));
+        db.exec("COMMIT");
+        return results;
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  cleanupOrphanTags(): void {
+    this.withConnection(db => {
+      try {
+        db.exec("BEGIN IMMEDIATE");
+        this.cleanupOrphanTagsInConnection(db);
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  reconcileScope(scope: ReconcileScope, observedAt: string): { deletedCount: number; deletedPaths: string[] } {
+    return this.withConnection((db, statements) => {
+      const now = new Date().toISOString();
+
+      try {
+        db.exec("BEGIN IMMEDIATE");
+
+        let rows: Array<{ path: string; last_seen_at: string | null }> = [];
+        if (scope.kind === "exact" && scope.value) {
+          rows = statements.listActiveFilesExact.all(this.normalizeRelativePath(scope.value)) as Array<{ path: string; last_seen_at: string | null }>;
+        } else if (scope.kind === "prefix" && scope.value) {
+          const normalizedPrefix = this.normalizeRelativePath(scope.value).replace(/\/+$/, "");
+          rows = statements.listActiveFilesPrefix.all(normalizedPrefix, `${normalizedPrefix}/%`) as Array<{ path: string; last_seen_at: string | null }>;
+        } else {
+          rows = statements.listActiveFilesAll.all() as Array<{ path: string; last_seen_at: string | null }>;
+        }
+
+        const deletedPaths: string[] = [];
+        for (const row of rows) {
+          if (row.last_seen_at === observedAt) {
+            continue;
+          }
+          if (this.deleteDocumentInConnection(db, statements, row.path, now)) {
+            deletedPaths.push(row.path);
+          }
+        }
+
+        this.cleanupOrphanTagsInConnection(db);
+        db.exec("COMMIT");
+        return {
+          deletedCount: deletedPaths.length,
+          deletedPaths,
+        };
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  deleteActiveFilesByExtensions(extensions: string[], deletedAt = new Date().toISOString()): { deletedCount: number; deletedPaths: string[] } {
+    const normalizedExtensions = [...new Set(
+      extensions
+        .map(item => item.trim().toLowerCase())
+        .filter(Boolean)
+        .map(item => item.startsWith(".") ? item : `.${item}`),
+    )];
+    if (normalizedExtensions.length === 0) {
+      return {
+        deletedCount: 0,
+        deletedPaths: [],
+      };
+    }
+
+    return this.withConnection((db, statements) => {
+      try {
+        db.exec("BEGIN IMMEDIATE");
+        const placeholders = normalizedExtensions.map(() => "?").join(", ");
+        const rows = db.prepare(`
+          SELECT path
+          FROM files
+          WHERE status = 'active'
+            AND extension IN (${placeholders})
+          ORDER BY path
+        `).all(...normalizedExtensions) as Array<{ path: string }>;
+
+        const deletedPaths: string[] = [];
+        for (const row of rows) {
+          if (this.deleteDocumentInConnection(db, statements, row.path, deletedAt)) {
+            deletedPaths.push(String(row.path));
+          }
+        }
+
+        this.cleanupOrphanTagsInConnection(db);
+        db.exec("COMMIT");
+        return {
+          deletedCount: deletedPaths.length,
+          deletedPaths,
+        };
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  recomputeDocumentTags(
+    entries: Array<{
+      documentId: string;
+      tags: TagAssignment[];
+      derivedTags: TagAssignment[];
+    }>,
+    observedAt = new Date().toISOString(),
+  ): { updatedCount: number } {
+    if (entries.length === 0) {
+      return { updatedCount: 0 };
+    }
+
+    return this.withConnection((db, statements) => {
+      const tagCache = new Map(this.tagIdCache);
+      try {
+        db.exec("BEGIN IMMEDIATE");
+        for (const entry of entries) {
+          statements.deleteDocumentTags.run(entry.documentId);
+          statements.deleteDerivedDocumentTags.run(entry.documentId);
+
+          for (const tag of entry.tags) {
+            const tagId = this.ensureTagInConnection(db, statements, tagCache, tag.tagPath, tag.source.split("+")[0] || "rule");
+            statements.upsertDocumentTag.run(
+              makeStableId("doc_tag", `${entry.documentId}:${tagId}`),
+              entry.documentId,
+              tagId,
+              tag.confidence,
+              tag.source,
+              tag.evidence,
+              tag.manualOverride ? 1 : 0,
+              observedAt,
+            );
+          }
+
+          for (const tag of entry.derivedTags) {
+            const tagId = this.ensureTagInConnection(db, statements, tagCache, tag.tagPath, tag.source);
+            statements.upsertDerivedTag.run(
+              makeStableId("derived_tag", `${entry.documentId}:${tagId}`),
+              entry.documentId,
+              tagId,
+              tag.source,
+              observedAt,
+            );
+          }
+        }
+
+        this.cleanupOrphanTagsInConnection(db);
+        db.exec("COMMIT");
+        return { updatedCount: entries.length };
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+}

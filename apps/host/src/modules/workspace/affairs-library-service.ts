@@ -1,6 +1,4 @@
-import { spawn } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { AppError } from "../../shared/errors/app-error.js";
@@ -17,15 +15,14 @@ import {
   isResourcePreviewKind
 } from "../file/file-preview-types.js";
 import { normalizeRelativePath } from "../file/path-normalizer.js";
-import type { WorkspaceService } from "./workspace-service.js";
 import type { TaskManager } from "../tasks/task-manager.js";
 import { HOST_TASK_TYPES, type TaskSnapshot } from "../tasks/task-types.js";
+import type { WorkspaceService } from "./workspace-service.js";
+import {
+  runAffairsIndexerCommand,
+  type AffairsIndexerCommandResult
+} from "../affairs-indexer/internal-command-runner.js";
 
-const TOOL_ENV_KEY = "CODINGNS_AFFAIRS_LIBRARY_TOOL_ROOT";
-const TOOL_DIST_ENTRY_CANDIDATES = [
-  "dist/bin/index.js",
-  "packages/cli/dist/bin/index.js"
-];
 const DEFAULT_CONFIG_RELATIVE_PATH = ".ai-index/doc-semantic-index.config.json";
 const DEFAULT_EXPORT_MODE = "v2" as const;
 const INDEX_TASK_TIMEOUT_MS = 15 * 60 * 1000;
@@ -43,6 +40,7 @@ export interface AffairsLibraryFavoriteRecord {
 export interface AffairsLibraryBindingDto {
   workspaceId: string;
   rootDir: string;
+  enabled: boolean;
   mirrorRoot: string | null;
   allowedExtensions: string[];
   configRelativePath: string;
@@ -137,6 +135,7 @@ interface WorkspaceNavigationStateLike {
   collapsed: boolean;
   backgroundColor: string | null;
   affairsLibraryRootPath?: string | null;
+  affairsLibraryEnabled?: boolean;
   affairsLibraryFavoritesJson?: string | null;
   updatedAt: string;
 }
@@ -213,19 +212,6 @@ interface AffairsLibraryExportCachePayload {
   folders: AffairsLibraryFolderNodeDto[];
 }
 
-interface CommandExecutionResult {
-  ok: true;
-  exitCode: number;
-  signal: string | null;
-  stdout: string;
-  stderr: string;
-}
-
-interface AffairsLibraryToolRuntime {
-  toolRoot: string;
-  entryFile: string;
-}
-
 export class AffairsLibraryService {
   private readonly exportCache = new Map<string, AffairsLibraryExportCachePayload>();
 
@@ -246,11 +232,15 @@ export class AffairsLibraryService {
       return null;
     }
 
+    const enabled = state?.affairsLibraryEnabled === true;
+    const config = this.readConfig(rootDir);
+
     return {
       workspaceId,
       rootDir,
-      mirrorRoot: this.readConfig(rootDir).mirrorRoot,
-      allowedExtensions: this.readConfig(rootDir).allowedExtensions,
+      enabled,
+      mirrorRoot: config.mirrorRoot,
+      allowedExtensions: config.allowedExtensions,
       configRelativePath: DEFAULT_CONFIG_RELATIVE_PATH,
       exportMode: DEFAULT_EXPORT_MODE,
       updatedAt: state?.updatedAt ?? nowIso()
@@ -295,16 +285,61 @@ export class AffairsLibraryService {
       collapsed: currentState?.collapsed ?? false,
       backgroundColor: currentState?.backgroundColor ?? workspace.backgroundColor ?? null,
       affairsLibraryRootPath: normalizedRootDir,
+      affairsLibraryEnabled: true,
       affairsLibraryFavoritesJson: currentState?.affairsLibraryFavoritesJson ?? "[]",
       updatedAt: nowIso()
     };
     this.workspaceNavigationStateRepository.upsert(nextRecord);
 
+    const config = this.readConfig(normalizedRootDir);
     return {
       workspaceId,
       rootDir: normalizedRootDir,
-      mirrorRoot: this.readConfig(normalizedRootDir).mirrorRoot,
-      allowedExtensions: this.readConfig(normalizedRootDir).allowedExtensions,
+      enabled: true,
+      mirrorRoot: config.mirrorRoot,
+      allowedExtensions: config.allowedExtensions,
+      configRelativePath: DEFAULT_CONFIG_RELATIVE_PATH,
+      exportMode: DEFAULT_EXPORT_MODE,
+      updatedAt: nextRecord.updatedAt
+    };
+  }
+
+  setEnabled(workspaceId: string, userId: string, enabled: boolean): AffairsLibraryBindingDto {
+    const workspace = this.workspaceService.getWorkspaceOrThrow(workspaceId);
+    const currentState = this.workspaceNavigationStateRepository.findByWorkspaceIdAndUserId(workspaceId, userId);
+    const rootDir = currentState?.affairsLibraryRootPath?.trim() ?? "";
+
+    if (!rootDir) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "AFFAIRS_LIBRARY_BINDING_REQUIRED",
+        detail: "当前工作区还没有绑定文档库路径"
+      });
+    }
+
+    if (enabled) {
+      this.assertLibraryRootDir(rootDir);
+    }
+
+    const nextRecord: WorkspaceNavigationStateLike = {
+      workspaceId,
+      userId,
+      collapsed: currentState?.collapsed ?? false,
+      backgroundColor: currentState?.backgroundColor ?? workspace.backgroundColor ?? null,
+      affairsLibraryRootPath: rootDir,
+      affairsLibraryEnabled: enabled,
+      affairsLibraryFavoritesJson: currentState?.affairsLibraryFavoritesJson ?? "[]",
+      updatedAt: nowIso()
+    };
+    this.workspaceNavigationStateRepository.upsert(nextRecord);
+
+    const config = this.readConfig(rootDir);
+    return {
+      workspaceId,
+      rootDir,
+      enabled,
+      mirrorRoot: config.mirrorRoot,
+      allowedExtensions: config.allowedExtensions,
       configRelativePath: DEFAULT_CONFIG_RELATIVE_PATH,
       exportMode: DEFAULT_EXPORT_MODE,
       updatedAt: nextRecord.updatedAt
@@ -355,14 +390,8 @@ export class AffairsLibraryService {
     applyConfigTaskId: string;
     applyConfigStatus: AffairsLibraryIndexStatusDto;
   }> {
-    const binding = this.getBinding(workspaceId, userId);
-    if (!binding) {
-      throw new AppError({
-        statusCode: 409,
-        errorCode: "AFFAIRS_LIBRARY_BINDING_REQUIRED",
-        detail: "当前工作区还没有绑定文档库路径"
-      });
-    }
+    const binding = this.requireBinding(workspaceId, userId);
+    this.ensureLibraryEnabled(binding);
 
     const configPath = path.join(binding.rootDir, DEFAULT_CONFIG_RELATIVE_PATH);
     const current = this.readRawConfigFile(configPath);
@@ -386,7 +415,7 @@ export class AffairsLibraryService {
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(configPath, `${JSON.stringify(nextPayload, null, 2)}\n`, "utf8");
 
-    const handle = this.taskManager.enqueue<{ workspaceId: string; rootDir: string }, CommandExecutionResult>(
+    const handle = this.taskManager.enqueue<{ workspaceId: string; rootDir: string }, AffairsIndexerCommandResult>(
       HOST_TASK_TYPES.affairsLibraryApplyConfig,
       {
         key: workspaceId,
@@ -398,7 +427,7 @@ export class AffairsLibraryService {
       }
     );
     await handle.promise;
-    const nextBinding = this.getBinding(workspaceId, userId)!;
+    const nextBinding = this.requireBinding(workspaceId, userId);
 
     return {
       binding: nextBinding,
@@ -425,6 +454,18 @@ export class AffairsLibraryService {
         folders: [],
         documentCount: 0,
         lastError: null
+      };
+    }
+
+    if (!binding.enabled) {
+      return {
+        binding,
+        status,
+        tags: [],
+        favorites,
+        folders: [],
+        documentCount: 0,
+        lastError: status.errorSummary
       };
     }
 
@@ -471,7 +512,7 @@ export class AffairsLibraryService {
     input: ListAffairsLibraryDocumentsInput
   ): AffairsLibraryDocumentListDto {
     const binding = this.getBinding(workspaceId, userId);
-    if (!binding) {
+    if (!binding || !binding.enabled) {
       return {
         total: 0,
         offset: 0,
@@ -539,6 +580,7 @@ export class AffairsLibraryService {
       collapsed: currentState?.collapsed ?? false,
       backgroundColor: currentState?.backgroundColor ?? workspace.backgroundColor ?? null,
       affairsLibraryRootPath: currentState?.affairsLibraryRootPath ?? null,
+      affairsLibraryEnabled: currentState?.affairsLibraryEnabled ?? false,
       affairsLibraryFavoritesJson: JSON.stringify(normalizedFavorites),
       updatedAt: nowIso()
     });
@@ -634,25 +676,9 @@ export class AffairsLibraryService {
       kind?: "file" | "directory" | "any";
     } = {}
   ): AffairsLibraryResolvedPreviewFile {
-    const binding = this.getBinding(workspaceId, userId);
-
-    if (!binding) {
-      throw new AppError({
-        statusCode: 400,
-        errorCode: "AFFAIRS_LIBRARY_BINDING_REQUIRED",
-        detail: "当前工作区还没有绑定事务资料库",
-        field: "workspaceId"
-      });
-    }
-
-    if (!fs.existsSync(binding.rootDir) || !fs.statSync(binding.rootDir).isDirectory()) {
-      throw new AppError({
-        statusCode: 400,
-        errorCode: "AFFAIRS_LIBRARY_ROOT_INVALID",
-        detail: "事务资料库路径不存在，或者不是文件夹",
-        field: "path"
-      });
-    }
+    const binding = this.requireBinding(workspaceId, userId);
+    this.ensureLibraryEnabled(binding);
+    this.assertLibraryRootDir(binding.rootDir);
 
     const rootRealPath = fs.realpathSync.native(binding.rootDir);
     const relativePath = normalizeRelativePath(requestedPath, false);
@@ -737,16 +763,10 @@ export class AffairsLibraryService {
     userId: string,
     reason: string
   ): { taskId: string; deduped: boolean; status: AffairsLibraryIndexStatusDto } {
-    const binding = this.getBinding(workspaceId, userId);
-    if (!binding) {
-      throw new AppError({
-        statusCode: 409,
-        errorCode: "AFFAIRS_LIBRARY_BINDING_REQUIRED",
-        detail: "当前工作区还没有绑定文档库路径"
-      });
-    }
+    const binding = this.requireBinding(workspaceId, userId);
+    this.ensureLibraryEnabled(binding);
 
-    const handle = this.taskManager.enqueue<{ workspaceId: string; rootDir: string; reason: string }, CommandExecutionResult>(
+    const handle = this.taskManager.enqueue<{ workspaceId: string; rootDir: string; reason: string }, AffairsIndexerCommandResult>(
       HOST_TASK_TYPES.affairsLibraryIndex,
       {
         key: workspaceId,
@@ -847,6 +867,20 @@ export class AffairsLibraryService {
       };
     }
 
+    if (!binding.enabled) {
+      return {
+        state: "stale",
+        dirtyReasons: ["library_disabled"],
+        lastRequestedAt: null,
+        lastStartedAt: null,
+        lastCompletedAt: null,
+        lastFailedAt: null,
+        nextAllowedAt: null,
+        runningTaskId: null,
+        errorSummary: "文档库功能已关闭，启用后才会启动内置索引服务。"
+      };
+    }
+
     const exportRoot = path.join(binding.rootDir, ".ai-index", "exports-v2");
     const statusPath = path.join(exportRoot, "status.json");
     if (!fs.existsSync(statusPath)) {
@@ -886,66 +920,57 @@ export class AffairsLibraryService {
 
   private registerBackgroundTasks(): void {
     if (!this.taskManager.has(HOST_TASK_TYPES.affairsLibraryApplyConfig)) {
-      this.taskManager.register<{ workspaceId: string; rootDir: string }, CommandExecutionResult>({
+      this.taskManager.register<{ workspaceId: string; rootDir: string }, AffairsIndexerCommandResult>({
         taskType: HOST_TASK_TYPES.affairsLibraryApplyConfig,
-        executionLane: "external_process",
+        executionLane: "helper_process",
+        helperProcessHandler: "affairs.library_apply_config",
         timeoutMs: INDEX_TASK_TIMEOUT_MS,
-        run: async (input) => await this.runCliCommand(input.rootDir, "apply-config")
+        run: async (input) => await this.runInternalCommand(input.rootDir, "apply-config")
       });
     }
 
     if (!this.taskManager.has(HOST_TASK_TYPES.affairsLibraryIndex)) {
-      this.taskManager.register<{ workspaceId: string; rootDir: string; reason: string }, CommandExecutionResult>({
+      this.taskManager.register<{ workspaceId: string; rootDir: string; reason: string }, AffairsIndexerCommandResult>({
         taskType: HOST_TASK_TYPES.affairsLibraryIndex,
-        executionLane: "external_process",
+        executionLane: "helper_process",
+        helperProcessHandler: "affairs.library_index",
         timeoutMs: INDEX_TASK_TIMEOUT_MS,
-        run: async (input) => await this.runCliCommand(input.rootDir, "index")
+        run: async (input) => await this.runInternalCommand(input.rootDir, "index")
       });
     }
 
     if (!this.taskManager.has(HOST_TASK_TYPES.affairsLibraryRecomputeTags)) {
-      this.taskManager.register<{ workspaceId: string; rootDir: string }, CommandExecutionResult>({
+      this.taskManager.register<{ workspaceId: string; rootDir: string }, AffairsIndexerCommandResult>({
         taskType: HOST_TASK_TYPES.affairsLibraryRecomputeTags,
-        executionLane: "external_process",
+        executionLane: "helper_process",
+        helperProcessHandler: "affairs.library_recompute_tags",
         timeoutMs: INDEX_TASK_TIMEOUT_MS,
-        run: async (input) => await this.runCliCommand(input.rootDir, "recompute-tags")
+        run: async (input) => await this.runInternalCommand(input.rootDir, "recompute-tags")
       });
     }
 
     if (!this.taskManager.has(HOST_TASK_TYPES.affairsLibraryExport)) {
-      this.taskManager.register<{ workspaceId: string; rootDir: string }, CommandExecutionResult>({
+      this.taskManager.register<{ workspaceId: string; rootDir: string }, AffairsIndexerCommandResult>({
         taskType: HOST_TASK_TYPES.affairsLibraryExport,
-        executionLane: "external_process",
+        executionLane: "helper_process",
+        helperProcessHandler: "affairs.library_export",
         timeoutMs: INDEX_TASK_TIMEOUT_MS,
-        run: async (input) => await this.runCliCommand(input.rootDir, "export")
+        run: async (input) => await this.runInternalCommand(input.rootDir, "export")
       });
     }
   }
 
-  private async runCliCommand(rootDir: string, commandName: "apply-config" | "index" | "recompute-tags" | "export"): Promise<CommandExecutionResult> {
-    const runtime = resolveAffairsLibraryToolRuntime(rootDir);
-
-    const command = [
-      process.execPath,
-      runtime.entryFile,
-      commandName,
-      "--root-dir",
-      rootDir,
-      "--export-mode",
-      DEFAULT_EXPORT_MODE
-    ];
-
+  private async runInternalCommand(rootDir: string, commandName: "apply-config" | "index" | "recompute-tags" | "export"): Promise<AffairsIndexerCommandResult> {
     this.logger.info(
       {
         rootDir,
         commandName,
-        toolRoot: runtime.toolRoot,
-        entryFile: runtime.entryFile
+        executionMode: "internal_helper"
       },
-      "开始执行事务视图文档库索引命令"
+      "开始执行内置事务视图文档库索引命令"
     );
 
-    return await runSpawnCommand(command, runtime.toolRoot);
+    return await runAffairsIndexerCommand(rootDir, commandName);
   }
 
   private readExportData(rootDir: string): AffairsLibraryExportData {
@@ -1112,6 +1137,40 @@ export class AffairsLibraryService {
       return {};
     }
   }
+
+  private requireBinding(workspaceId: string, userId: string): AffairsLibraryBindingDto {
+    const binding = this.getBinding(workspaceId, userId);
+    if (!binding) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "AFFAIRS_LIBRARY_BINDING_REQUIRED",
+        detail: "当前工作区还没有绑定文档库路径"
+      });
+    }
+    return binding;
+  }
+
+  private ensureLibraryEnabled(binding: AffairsLibraryBindingDto): void {
+    if (binding.enabled) {
+      return;
+    }
+    throw new AppError({
+      statusCode: 409,
+      errorCode: "AFFAIRS_LIBRARY_DISABLED",
+      detail: "文档库功能还没有启用，启用后才会启动内置索引服务。"
+    });
+  }
+
+  private assertLibraryRootDir(rootDir: string): void {
+    if (!fs.existsSync(rootDir) || !fs.statSync(rootDir).isDirectory()) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "AFFAIRS_LIBRARY_ROOT_INVALID",
+        detail: "事务资料库路径不存在，或者不是文件夹",
+        field: "path"
+      });
+    }
+  }
 }
 
 function countDocumentsForTag(documents: AffairsLibraryDocumentRecordDto[], tagPath: string): number {
@@ -1128,7 +1187,7 @@ function matchesFavorite(
   derivedTags: readonly string[]
 ): boolean {
   if (favorite.kind === "folder") {
-    const normalizedPath = favorite.path === "." ? "" : favorite.path.replace(/\/+$/, "");
+    const normalizedPath = favorite.path === "." ? "" : favorite.path.replace(/\/+$/g, "");
     return !normalizedPath || documentPath === normalizedPath || documentPath.startsWith(`${normalizedPath}/`);
   }
 
@@ -1191,111 +1250,6 @@ function normalizeAllowedExtensions(input: readonly string[]): string[] {
     result.add(normalized);
   }
   return [...result].sort((left, right) => left.localeCompare(right, "zh-Hans-CN"));
-}
-
-function resolveToolEntryFile(toolRoot: string): string {
-  for (const relativePath of TOOL_DIST_ENTRY_CANDIDATES) {
-    const absolutePath = path.join(toolRoot, relativePath);
-    if (fs.existsSync(absolutePath)) {
-      return absolutePath;
-    }
-  }
-  return "";
-}
-
-function resolveAffairsLibraryToolRuntime(rootDir: string): AffairsLibraryToolRuntime {
-  const candidateRoots = [
-    process.env[TOOL_ENV_KEY]?.trim() ?? "",
-    path.join(rootDir, "Code", "doc-semantic-index-node"),
-    path.join(path.dirname(rootDir), "Code", "doc-semantic-index-node"),
-    path.join(os.homedir(), "SynologyDrive", "Code", "doc-semantic-index-node")
-  ]
-    .map((item) => item.trim())
-    .filter(Boolean);
-
-  for (const candidateRoot of candidateRoots) {
-    if (!fs.existsSync(candidateRoot) || !fs.statSync(candidateRoot).isDirectory()) {
-      continue;
-    }
-
-    const entryFile = resolveToolEntryFile(candidateRoot);
-    if (entryFile) {
-      return {
-        toolRoot: candidateRoot,
-        entryFile
-      };
-    }
-  }
-
-  const configuredToolRoot = process.env[TOOL_ENV_KEY]?.trim();
-  if (configuredToolRoot) {
-    throw new AppError({
-      statusCode: 409,
-      errorCode: "AFFAIRS_LIBRARY_TOOL_BUILD_MISSING",
-      detail: `文档索引工具目录已找到，但缺少 CLI 构建产物：${configuredToolRoot}`
-    });
-  }
-
-  throw new AppError({
-    statusCode: 404,
-    errorCode: "AFFAIRS_LIBRARY_TOOL_NOT_FOUND",
-    detail: `未找到文档索引工具目录。可通过环境变量 ${TOOL_ENV_KEY} 显式指定。`
-  });
-}
-
-async function runSpawnCommand(command: string[], cwd: string): Promise<CommandExecutionResult> {
-  return await new Promise<CommandExecutionResult>((resolve, reject) => {
-    const child = spawn(command[0]!, command.slice(1), {
-      cwd,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-
-    let stdout = "";
-    let stderr = "";
-
-    child.stdout?.on("data", (chunk: Buffer | string) => {
-      stdout += chunk.toString();
-    });
-    child.stderr?.on("data", (chunk: Buffer | string) => {
-      stderr += chunk.toString();
-    });
-
-    child.once("error", (error) => {
-      reject(new AppError({
-        statusCode: 500,
-        errorCode: "AFFAIRS_LIBRARY_COMMAND_FAILED",
-        detail: error.message || "索引命令启动失败"
-      }));
-    });
-
-    child.once("close", (exitCode, signal) => {
-      if (typeof exitCode === "number" && exitCode !== 0) {
-        reject(new AppError({
-          statusCode: 500,
-          errorCode: "AFFAIRS_LIBRARY_COMMAND_FAILED",
-          detail: readTail(stderr || stdout, 600) || `索引命令执行失败（exit ${exitCode}）`
-        }));
-        return;
-      }
-
-      resolve({
-        ok: true,
-        exitCode: typeof exitCode === "number" ? exitCode : 0,
-        signal,
-        stdout,
-        stderr
-      });
-    });
-  });
-}
-
-function readTail(input: string, maxChars: number): string {
-  const text = input.trim();
-  if (!text) {
-    return "";
-  }
-  return text.length <= maxChars ? text : text.slice(-maxChars);
 }
 
 function toIso(timestamp: number | null): string | null {

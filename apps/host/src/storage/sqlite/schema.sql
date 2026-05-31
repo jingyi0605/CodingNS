@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS workspace_navigation_states (
   collapsed INTEGER NOT NULL DEFAULT 0 CHECK (collapsed IN (0, 1)),
   background_color TEXT,
   affairs_library_root_path TEXT,
+  affairs_library_enabled INTEGER NOT NULL DEFAULT 0 CHECK (affairs_library_enabled IN (0, 1)),
   affairs_library_favorites_json TEXT,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (workspace_id, user_id),

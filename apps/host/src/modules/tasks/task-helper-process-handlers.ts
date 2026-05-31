@@ -2,6 +2,7 @@ import type { ProviderSessionDiscovery, ProviderSessionSummary } from "@codingns
 
 import type { ProviderSessionDiscoveryHelperConfig } from "../provider/provider-discovery-helper-client.js";
 import { discoverWorkspaceSessionsInRuntime } from "../provider/provider-discovery-runtime.js";
+import { runAffairsIndexerCommand, type AffairsIndexerCommandName, type AffairsIndexerCommandResult } from "../affairs-indexer/internal-command-runner.js";
 import type { TerminalTemplateRuntimeStatus } from "../../types/domain.js";
 import { discoverTemplateRuntimeStatuses } from "../terminal/template-port-runtime.js";
 import {
@@ -27,6 +28,22 @@ interface TaskHelperProcessHandlerMap {
     },
     signal?: AbortSignal
   ) => ProviderSessionDiscovery | Promise<ProviderSessionDiscovery>;
+  "affairs.library_apply_config": (
+    input: { rootDir: string },
+    signal?: AbortSignal
+  ) => AffairsIndexerCommandResult | Promise<AffairsIndexerCommandResult>;
+  "affairs.library_index": (
+    input: { rootDir: string },
+    signal?: AbortSignal
+  ) => AffairsIndexerCommandResult | Promise<AffairsIndexerCommandResult>;
+  "affairs.library_recompute_tags": (
+    input: { rootDir: string },
+    signal?: AbortSignal
+  ) => AffairsIndexerCommandResult | Promise<AffairsIndexerCommandResult>;
+  "affairs.library_export": (
+    input: { rootDir: string },
+    signal?: AbortSignal
+  ) => AffairsIndexerCommandResult | Promise<AffairsIndexerCommandResult>;
 }
 
 const TASK_HELPER_PROCESS_HANDLERS: TaskHelperProcessHandlerMap = {
@@ -35,7 +52,15 @@ const TASK_HELPER_PROCESS_HANDLERS: TaskHelperProcessHandlerMap = {
   "terminal.template_runtime_status_discovery": ({ items }, signal) =>
     discoverTemplateRuntimeStatuses(items, signal),
   "session.workspace_discovery": ({ config, workspacePath, knownSessions, enabledProviders }, signal) =>
-    discoverWorkspaceSessionsInRuntime(config, workspacePath, knownSessions, enabledProviders, signal)
+    discoverWorkspaceSessionsInRuntime(config, workspacePath, knownSessions, enabledProviders, signal),
+  "affairs.library_apply_config": ({ rootDir }) =>
+    runAffairsIndexerCommand(rootDir, "apply-config" satisfies AffairsIndexerCommandName),
+  "affairs.library_index": ({ rootDir }) =>
+    runAffairsIndexerCommand(rootDir, "index" satisfies AffairsIndexerCommandName),
+  "affairs.library_recompute_tags": ({ rootDir }) =>
+    runAffairsIndexerCommand(rootDir, "recompute-tags" satisfies AffairsIndexerCommandName),
+  "affairs.library_export": ({ rootDir }) =>
+    runAffairsIndexerCommand(rootDir, "export" satisfies AffairsIndexerCommandName)
 };
 
 export type TaskHelperProcessHandlerName = keyof TaskHelperProcessHandlerMap;

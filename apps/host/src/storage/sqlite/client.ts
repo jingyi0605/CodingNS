@@ -302,6 +302,10 @@ function ensureWorkspaceNavigationAffairsLibraryColumns(db: BetterSqliteDatabase
     db.exec("ALTER TABLE workspace_navigation_states ADD COLUMN affairs_library_root_path TEXT");
   }
 
+  if (!columnNames.has("affairs_library_enabled")) {
+    db.exec("ALTER TABLE workspace_navigation_states ADD COLUMN affairs_library_enabled INTEGER NOT NULL DEFAULT 0 CHECK (affairs_library_enabled IN (0, 1))");
+  }
+
   if (!columnNames.has("affairs_library_favorites_json")) {
     db.exec("ALTER TABLE workspace_navigation_states ADD COLUMN affairs_library_favorites_json TEXT");
   }

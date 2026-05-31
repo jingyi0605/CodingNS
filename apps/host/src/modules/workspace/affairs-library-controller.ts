@@ -17,6 +17,10 @@ interface SaveAffairsLibraryConfigBody {
   allowedExtensions?: string[];
 }
 
+interface SetAffairsLibraryEnabledBody {
+  enabled?: boolean;
+}
+
 interface RequestAffairsLibraryRefreshBody {
   reason?: string;
 }
@@ -62,6 +66,19 @@ export class AffairsLibraryController {
         request.params.workspaceId,
         requireUserId(request),
         request.body.rootDir?.trim() ?? ""
+      )
+    );
+  };
+
+  readonly setEnabled = async (
+    request: FastifyRequest<{ Params: WorkspaceParams; Body: SetAffairsLibraryEnabledBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      this.affairsLibraryService.setEnabled(
+        request.params.workspaceId,
+        requireUserId(request),
+        request.body.enabled === true
       )
     );
   };

@@ -1,0 +1,248 @@
+import fs from "node:fs";
+import path from "node:path";
+import type { RuntimeConfig } from "../../../../contracts/src/index.js";
+import type { DirtyScope } from "../dirty/dirty-scope-resolver.js";
+import {
+  CatalogRepository,
+  type ExportDocumentRecord,
+} from "../../repositories/catalog-repository.js";
+
+export interface SearchIndexBuildOptions {
+  dirtyScope?: DirtyScope;
+}
+
+export interface SearchIndexBuildResult {
+  outputDir: string;
+  bucketCount: number;
+  manifestPath: string;
+  filesWritten: string[];
+  exportedAt: string;
+}
+
+interface SearchManifest {
+  version: number;
+  format: "search-v1";
+  generated_at: string;
+  buckets: Array<{
+    bucket: string;
+    path: string;
+    term_count: number;
+  }>;
+}
+
+interface SearchDocumentEntry {
+  document_id: string;
+  path: string;
+  title: string;
+  summary: string;
+  mtime: string;
+  tags: string[];
+}
+
+function ensureDir(dirPath: string): void {
+  fs.mkdirSync(dirPath, { recursive: true });
+}
+
+function writeJson(filePath: string, value: unknown): void {
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
+}
+
+function appendNdjson(filePath: string, value: unknown): void {
+  ensureDir(path.dirname(filePath));
+  fs.appendFileSync(filePath, `${JSON.stringify(value)}\n`, "utf-8");
+}
+
+function safeUnlink(filePath: string): void {
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+  }
+}
+
+function normalizeText(value: string): string {
+  return value.toLowerCase();
+}
+
+function tokenize(value: string): string[] {
+  const terms = new Set<string>();
+  const normalized = normalizeText(value);
+  const wordMatches = normalized.match(/[a-z0-9][a-z0-9._-]*/g) ?? [];
+  for (const word of wordMatches) {
+    if (word.length >= 2) {
+      terms.add(word);
+    }
+  }
+
+  const compact = normalized.replace(/\s+/g, "");
+  const hanMatches = compact.match(/[\u4e00-\u9fff]{2,}/g) ?? [];
+  for (const block of hanMatches) {
+    if (block.length <= 4) {
+      terms.add(block);
+      continue;
+    }
+    for (let size = 2; size <= 4; size += 1) {
+      for (let index = 0; index <= block.length - size; index += 1) {
+        terms.add(block.slice(index, index + size));
+      }
+    }
+  }
+
+  return [...terms];
+}
+
+function buildBucketName(term: string): string {
+  const first = term[0] ?? "_";
+  if (/[a-z0-9]/.test(first)) {
+    return first;
+  }
+  return "han";
+}
+
+function buildDocumentEntry(document: ExportDocumentRecord): SearchDocumentEntry {
+  return {
+    document_id: document.documentId,
+    path: document.path,
+    title: document.title,
+    summary: document.summary,
+    mtime: document.mtime,
+    tags: [...document.tags, ...document.derivedTags],
+  };
+}
+
+function mergePosting(
+  termMap: Map<string, string[]>,
+  term: string,
+  documentId: string,
+): void {
+  const postings = termMap.get(term) ?? [];
+  if (postings[postings.length - 1] !== documentId) {
+    postings.push(documentId);
+  }
+  termMap.set(term, postings);
+}
+
+/**
+ * 离线关键词倒排构建器。
+ * 改成两阶段流式：第一阶段按 bucket 写临时 NDJSON，第二阶段逐 bucket 汇总为静态 JSON，
+ * 避免把全部 documents / terms 一次性挂在内存里。
+ */
+export class SearchIndexBuilder {
+  constructor(private readonly config: RuntimeConfig) {}
+
+  build(_options: SearchIndexBuildOptions = {}): SearchIndexBuildResult {
+    const exportedAt = new Date().toISOString();
+    const repository = new CatalogRepository(this.config.dbPath);
+    const outputDir = path.join(this.config.exportV2Dir, "search");
+    const tempDir = path.join(outputDir, ".tmp");
+    ensureDir(outputDir);
+    ensureDir(tempDir);
+
+    const filesWritten: string[] = [];
+    const manifestBuckets: SearchManifest["buckets"] = [];
+    const documentTempPaths = new Map<string, string>();
+    const termTempPaths = new Map<string, string>();
+
+    for (const batch of repository.iterateExportDocumentRecords(2000)) {
+      for (const document of batch) {
+        const entry = buildDocumentEntry(document);
+        const sourceText = [
+          document.path,
+          document.title,
+          document.summary,
+          ...document.tags,
+          ...document.derivedTags,
+        ].join("\n");
+        const bucketTerms = new Map<string, string[]>();
+
+        for (const term of tokenize(sourceText)) {
+          const bucket = buildBucketName(term);
+          const current = bucketTerms.get(bucket) ?? [];
+          current.push(term);
+          bucketTerms.set(bucket, current);
+        }
+
+        for (const [bucket, terms] of bucketTerms.entries()) {
+          const documentTempPath = documentTempPaths.get(bucket) ?? path.join(tempDir, `${bucket}.documents.ndjson`);
+          const termTempPath = termTempPaths.get(bucket) ?? path.join(tempDir, `${bucket}.terms.ndjson`);
+          documentTempPaths.set(bucket, documentTempPath);
+          termTempPaths.set(bucket, termTempPath);
+          appendNdjson(documentTempPath, entry);
+          for (const term of new Set(terms)) {
+            appendNdjson(termTempPath, {
+              term,
+              document_id: entry.document_id,
+            });
+          }
+        }
+      }
+    }
+
+    for (const bucket of [...documentTempPaths.keys()].sort((a, b) => a.localeCompare(b, "zh-Hans-CN"))) {
+      const documentTempPath = documentTempPaths.get(bucket)!;
+      const termTempPath = termTempPaths.get(bucket)!;
+      const documentMap = new Map<string, SearchDocumentEntry>();
+      const termMap = new Map<string, string[]>();
+
+      const documentLines = fs.readFileSync(documentTempPath, "utf-8").split("\n").filter(Boolean);
+      for (const line of documentLines) {
+        const document = JSON.parse(line) as SearchDocumentEntry;
+        documentMap.set(document.document_id, document);
+      }
+
+      const termLines = fs.readFileSync(termTempPath, "utf-8").split("\n").filter(Boolean);
+      for (const line of termLines) {
+        const record = JSON.parse(line) as { term: string; document_id: string };
+        mergePosting(termMap, record.term, record.document_id);
+      }
+
+      const payload = {
+        version: 1,
+        format: "search-bucket-v1",
+        generated_at: exportedAt,
+        bucket,
+        documents: [...documentMap.values()]
+          .sort((a, b) => a.path.localeCompare(b.path, "zh-Hans-CN")),
+        terms: [...termMap.entries()]
+          .sort((a, b) => a[0].localeCompare(b[0], "zh-Hans-CN"))
+          .map(([term, documentIds]) => ({
+            term,
+            document_count: documentIds.length,
+            document_ids: documentIds,
+          })),
+      };
+
+      const filePath = path.join(outputDir, `${bucket}.json`);
+      writeJson(filePath, payload);
+      filesWritten.push(filePath);
+      manifestBuckets.push({
+        bucket,
+        path: `search/${bucket}.json`,
+        term_count: termMap.size,
+      });
+
+      safeUnlink(documentTempPath);
+      safeUnlink(termTempPath);
+    }
+
+    if (fs.existsSync(tempDir) && fs.readdirSync(tempDir).length === 0) {
+      fs.rmdirSync(tempDir);
+    }
+
+    const manifestPath = path.join(outputDir, "manifest.json");
+    writeJson(manifestPath, {
+      version: 1,
+      format: "search-v1",
+      generated_at: exportedAt,
+      buckets: manifestBuckets,
+    } satisfies SearchManifest);
+    filesWritten.push(manifestPath);
+
+    return {
+      outputDir,
+      bucketCount: manifestBuckets.length,
+      manifestPath,
+      filesWritten,
+      exportedAt,
+    };
+  }
+}
