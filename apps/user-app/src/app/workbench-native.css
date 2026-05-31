@@ -7567,7 +7567,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   gap: 8px;
   min-height: 44px;
   margin-bottom: 0;
-  padding: 7px clamp(28px, 10%, 120px);
+  padding: 7px clamp(20px, 5%, 72px);
   box-sizing: border-box;
 }
 
@@ -8348,12 +8348,12 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .affairs-doc-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(134px, 1fr));
-  gap: 8px 6px;
+  gap: 12px 10px;
   align-content: start;
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 0 0 8px;
+  padding: 4px 0 10px;
 }
 
 .affairs-doc-grid-scroll,
@@ -8364,7 +8364,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .affairs-doc-grid-scroll {
-  padding: 8px clamp(28px, 10%, 120px) 10px;
+  padding: 6px clamp(20px, 5%, 72px) 10px;
   box-sizing: border-box;
 }
 
@@ -8412,20 +8412,25 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 
 .affairs-doc-item.grid {
   position: relative;
-  padding: 10px 6px 8px;
-  min-height: 112px;
-  height: 112px;
+  width: 104px;
+  min-width: 104px;
+  max-width: 104px;
+  padding: 8px 4px 7px;
+  min-height: 104px;
+  height: 104px;
   display: grid;
-  grid-template-rows: 46px minmax(30px, auto) auto;
+  grid-template-rows: 40px minmax(28px, auto) auto;
   align-items: start;
   justify-items: center;
+  justify-self: center;
   text-align: center;
-  gap: 5px;
+  gap: 4px;
+  overflow: visible;
 }
 
 .affairs-doc-icon {
-  width: 42px;
-  height: 42px;
+  width: 36px;
+  height: 36px;
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -8434,11 +8439,11 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 
 .affairs-doc-title {
   width: 100%;
-  max-width: 104px;
+  max-width: 96px;
   margin: 0 auto;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
-  line-height: 1.22;
+  line-height: 1.18;
   letter-spacing: 0.01em;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -8456,14 +8461,14 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .affairs-doc-muted {
-  font-size: 10px;
+  font-size: 9px;
   color: var(--text-tertiary);
 }
 
 .affairs-folder-shape {
   position: relative;
-  width: 78%;
-  height: 72%;
+  width: 82%;
+  height: 76%;
   display: block;
 }
 
@@ -8525,9 +8530,9 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 
 .affairs-document-sheet {
   position: relative;
-  width: 76%;
-  height: 86%;
-  border-radius: 9px;
+  width: 78%;
+  height: 88%;
+  border-radius: 8px;
   background: var(--affairs-document-bg);
   border: 1px solid var(--affairs-document-border);
   box-shadow: var(--affairs-document-shadow);
@@ -8585,7 +8590,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 8px clamp(28px, 10%, 120px) 10px;
+  padding: 8px clamp(20px, 5%, 72px) 10px;
   box-sizing: border-box;
 }
 
@@ -8656,7 +8661,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .affairs-stage-skeleton-card {
-  height: 112px;
+  height: 104px;
 }
 
 .affairs-stage-skeleton-row {
