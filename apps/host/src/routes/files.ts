@@ -69,4 +69,5 @@ export async function registerFileRoutes(
   app.get("/preview/workspace-bridge/:token/watch-events", fileController.previewWorkspaceBridgePollWatch);
   app.post("/preview/workspace-bridge/:token/apply-index-config", fileController.previewWorkspaceBridgeApplyIndexConfig);
   app.get("/preview/files/*", fileController.publicPreview);
+  app.get("/preview/affairs-files/*", fileController.publicAffairsPreview);
 }

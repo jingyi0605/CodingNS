@@ -26,4 +26,8 @@ export class TaskRegistry {
 
     return definition as TaskDefinition<TInput, TResult>;
   }
+
+  list(): TaskDefinition<unknown, unknown>[] {
+    return [...this.definitions.values()].map((definition) => ({ ...definition }));
+  }
 }

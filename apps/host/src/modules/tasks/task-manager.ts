@@ -51,6 +51,10 @@ export class TaskManager {
   observe(): TaskMetricsSnapshot {
     return this.metrics.observe();
   }
+
+  listDefinitions(): TaskDefinition<unknown, unknown>[] {
+    return this.registry.list();
+  }
 }
 
 export function createTaskManager(

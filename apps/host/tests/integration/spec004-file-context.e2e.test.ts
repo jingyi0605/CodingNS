@@ -822,6 +822,116 @@ describe("spec004 文件管理能力", () => {
     expect(listAfterDetach.statusCode).toBe(200);
     expect(listAfterDetach.json().items).toHaveLength(0);
   }, 60_000);
+
+  it("事务文档库预览会按 binding.rootDir 解析，而不是按工作区根目录解析", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+    seedWorkspaceFiles(fixture.workspaceDir);
+
+    const affairsRootDir = path.join(fixture.rootDir, "affairs-library");
+    mkdirSync(path.join(affairsRootDir, "我的应用", "Exchange"), { recursive: true });
+    writeFileSync(
+      path.join(affairsRootDir, "我的应用", "Exchange", "分层通讯簿.txt"),
+      "事务资料库里的文档内容\n",
+      "utf8"
+    );
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, fixture.workspaceDir);
+
+    const saveBinding = await hosted.app.inject({
+      method: "PUT",
+      url: `/api/workspaces/${workspaceId}/affairs/library-binding`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        rootDir: affairsRootDir
+      }
+    });
+    expect(saveBinding.statusCode).toBe(200);
+
+    const preview = await hosted.app.inject({
+      method: "GET",
+      url: `/api/workspaces/${workspaceId}/affairs/library-preview?path=${encodeURIComponent("我的应用/Exchange/分层通讯簿.txt")}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(preview.statusCode).toBe(200);
+    expect(preview.json()).toMatchObject({
+      workspaceId,
+      path: "我的应用/Exchange/分层通讯簿.txt",
+      supported: true,
+      kind: "text",
+      content: "事务资料库里的文档内容\n"
+    });
+
+    const workspacePreview = await hosted.app.inject({
+      method: "GET",
+      url: `/api/files/preview?workspaceId=${workspaceId}&path=${encodeURIComponent("我的应用/Exchange/分层通讯簿.txt")}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(workspacePreview.statusCode).toBe(404);
+    expect(workspacePreview.json().error_code).toBe("FILE_NOT_FOUND");
+  });
+
+  it("事务文档库的 HTML 预览会生成受控 preview 链接", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+    seedWorkspaceFiles(fixture.workspaceDir);
+
+    const affairsRootDir = path.join(fixture.rootDir, "affairs-library-html");
+    mkdirSync(path.join(affairsRootDir, "我的应用", "Plex"), { recursive: true });
+    writeFileSync(
+      path.join(affairsRootDir, "我的应用", "Plex", "命令行.html"),
+      "<!doctype html><html><head><title>事务预览</title></head><body>Affairs HTML</body></html>",
+      "utf8"
+    );
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, fixture.workspaceDir);
+
+    await hosted.app.inject({
+      method: "PUT",
+      url: `/api/workspaces/${workspaceId}/affairs/library-binding`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        rootDir: affairsRootDir
+      }
+    });
+
+    const preview = await hosted.app.inject({
+      method: "GET",
+      url: `/api/workspaces/${workspaceId}/affairs/library-preview?path=${encodeURIComponent("我的应用/Plex/命令行.html")}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(preview.statusCode).toBe(200);
+    expect(preview.json().previewUrl).toContain("/preview/affairs-files/");
+
+    const publicPreview = await hosted.app.inject({
+      method: "GET",
+      url: `${preview.json().previewPath}?_cns_parent_origin=${encodeURIComponent("http://localhost:3000")}`
+    });
+    expect(publicPreview.statusCode).toBe(200);
+    expect(publicPreview.headers["content-type"]).toContain("text/html");
+    expect(publicPreview.body).toContain("<title>事务预览</title>");
+    expect(publicPreview.body).toContain(`"workspaceId":"${workspaceId}"`);
+  });
 });
 
 function seedWorkspaceFiles(workspaceDir: string): void {

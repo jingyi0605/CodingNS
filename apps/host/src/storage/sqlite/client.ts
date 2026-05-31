@@ -26,6 +26,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureWorkspaceRemovalColumn(db);
   ensureWorkspaceSortOrderColumn(db);
   ensureWorkspaceNavigationBackgroundColorColumn(db);
+  ensureWorkspaceNavigationAffairsLibraryColumns(db);
   ensureOpenCliProviderSchema(db);
   ensureOpenCliCatalogSchema(db);
   ensureOpenCliRuntimeProfileSchema(db);
@@ -284,6 +285,25 @@ function ensureAuthDeviceSchema(db: BetterSqliteDatabase): void {
 
   if (!authDeviceColumns.some((column) => column.name === "user_agent")) {
     db.exec("ALTER TABLE auth_devices ADD COLUMN user_agent TEXT");
+  }
+}
+
+function ensureWorkspaceNavigationAffairsLibraryColumns(db: BetterSqliteDatabase): void {
+  if (!tableExists(db, "workspace_navigation_states")) {
+    return;
+  }
+
+  const columns = db
+    .prepare("PRAGMA table_info(workspace_navigation_states)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("affairs_library_root_path")) {
+    db.exec("ALTER TABLE workspace_navigation_states ADD COLUMN affairs_library_root_path TEXT");
+  }
+
+  if (!columnNames.has("affairs_library_favorites_json")) {
+    db.exec("ALTER TABLE workspace_navigation_states ADD COLUMN affairs_library_favorites_json TEXT");
   }
 }
 

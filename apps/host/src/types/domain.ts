@@ -238,6 +238,8 @@ export interface WorkspaceNavigationStateRecord {
   userId: string;
   collapsed: boolean;
   backgroundColor: string | null;
+  affairsLibraryRootPath?: string | null;
+  affairsLibraryFavoritesJson?: string | null;
   updatedAt: string;
 }
 

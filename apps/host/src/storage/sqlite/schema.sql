@@ -123,6 +123,8 @@ CREATE TABLE IF NOT EXISTS workspace_navigation_states (
   user_id TEXT NOT NULL,
   collapsed INTEGER NOT NULL DEFAULT 0 CHECK (collapsed IN (0, 1)),
   background_color TEXT,
+  affairs_library_root_path TEXT,
+  affairs_library_favorites_json TEXT,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (workspace_id, user_id),
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id),

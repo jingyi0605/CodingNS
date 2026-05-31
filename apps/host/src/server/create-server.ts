@@ -176,6 +176,9 @@ import { WorktreeMergeService } from "../modules/worktree/worktree-merge-service
 import { WorktreeManager } from "../modules/worktree/worktree-manager.js";
 import { WorktreeSyncService } from "../modules/worktree/worktree-sync-service.js";
 import { WorkspaceController } from "../modules/workspace/workspace-controller.js";
+import { AffairsLibraryController } from "../modules/workspace/affairs-library-controller.js";
+import { AffairsLibraryPreviewLinkService } from "../modules/workspace/affairs-library-preview-link-service.js";
+import { AffairsLibraryService } from "../modules/workspace/affairs-library-service.js";
 import { WorkspaceService } from "../modules/workspace/workspace-service.js";
 import { registerAuthRoutes } from "../routes/auth.js";
 import { registerAssistantCapabilityRoutes } from "../routes/assistant.js";
@@ -800,6 +803,7 @@ export function createServer(config: HostConfig) {
   );
   runtimeObservabilityService = new RuntimeObservabilityService(
     () => sessionHistoryService.observeBackgroundTaskMetrics(),
+    () => taskManager.listDefinitions(),
     () => schedulerMetrics.observe(),
     eventLoopMonitor,
     taskActivityLog
@@ -1321,6 +1325,16 @@ export function createServer(config: HostConfig) {
   );
   const fileWatcher = new WorkspaceFileWatcher(workspaceService);
   const codexArchiveWatcher = new CodexArchiveWatcher(config.codexHomeDir);
+  const affairsLibraryService = new AffairsLibraryService(
+    workspaceService,
+    repositories.workspaceNavigationStateRepository,
+    taskManager,
+    app.log
+  );
+  const affairsLibraryPreviewLinkService = new AffairsLibraryPreviewLinkService(
+    affairsLibraryService,
+    config.filePreviewTokenSecret
+  );
 
   const bootstrapController = new BootstrapController(bootstrapService);
   const clientController = new ClientController(clientService);
@@ -1336,6 +1350,10 @@ export function createServer(config: HostConfig) {
   terminalService.on("exit", handleDebugTargetTerminalExit);
   const authController = new AuthController(authService);
   const workspaceController = new WorkspaceController(workspaceService);
+  const affairsLibraryController = new AffairsLibraryController(
+    affairsLibraryService,
+    affairsLibraryPreviewLinkService
+  );
   const worktreeController = new WorktreeController(
     worktreeManager,
     worktreeSyncService,
@@ -1513,6 +1531,7 @@ export function createServer(config: HostConfig) {
     recentModifiedFileService,
     filePreviewService,
     filePreviewLinkService,
+    affairsLibraryPreviewLinkService,
     workspaceFileBridgeService,
     workspaceIndexApplyService
   );
@@ -1624,7 +1643,7 @@ export function createServer(config: HostConfig) {
   void registerBrowserRuntimeRoutes(app, browserRuntimeController);
   void registerDocumentRuntimeRoutes(app, documentRuntimeController);
   void registerOpsRuntimeRoutes(app, opsRuntimeController);
-  void registerWorkspaceRoutes(app, workspaceController);
+  void registerWorkspaceRoutes(app, workspaceController, affairsLibraryController);
   void registerWorktreeRoutes(app, worktreeController);
   void registerWorkbenchRoutes(app, workbenchController);
   void registerButlerRoutes(app, butlerController);

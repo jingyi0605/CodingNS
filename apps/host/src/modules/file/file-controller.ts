@@ -13,6 +13,7 @@ import type { FileTreeService } from "./file-tree-service.js";
 import type { WorkspaceIndexApplyService } from "./workspace-index-apply-service.js";
 import type { RecentFileService } from "./recent-file-service.js";
 import type { RecentModifiedFileService } from "./recent-modified-file-service.js";
+import type { AffairsLibraryPreviewLinkService } from "../workspace/affairs-library-preview-link-service.js";
 import type {
   WorkspaceFileBridgeListDirOptions,
   WorkspaceFileBridgeService,
@@ -127,6 +128,7 @@ export class FileController {
     private readonly recentModifiedFileService: RecentModifiedFileService,
     private readonly filePreviewService: FilePreviewService,
     private readonly filePreviewLinkService: FilePreviewLinkService,
+    private readonly affairsLibraryPreviewLinkService: AffairsLibraryPreviewLinkService,
     private readonly workspaceFileBridgeService: WorkspaceFileBridgeService,
     private readonly workspaceIndexApplyService: WorkspaceIndexApplyService
   ) {}
@@ -712,6 +714,33 @@ export class FileController {
       token,
       filePath
     );
+
+    reply.header("Cache-Control", "no-store");
+    reply.header("X-Content-Type-Options", "nosniff");
+    reply.type(previewFile.contentType);
+    if (previewFile.contentType.startsWith("text/html")) {
+      reply.send(
+        injectWorkspaceBridgeRuntime(
+          readFileSync(previewFile.absolutePath, "utf8"),
+          {
+            workspaceId: previewFile.workspaceId,
+            hostOrigin: resolveRequestOrigin(request),
+            parentOrigin: resolveWorkspaceBridgeParentOrigin(request)
+          }
+        )
+      );
+      return;
+    }
+
+    reply.send(readFileSync(previewFile.absolutePath));
+  };
+
+  readonly publicAffairsPreview = async (
+    request: FastifyRequest<{ Params: PublicFilePreviewParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const { token, filePath } = parsePublicPreviewPath(request.params["*"] ?? "");
+    const previewFile = this.affairsLibraryPreviewLinkService.resolvePublicFile(token, filePath);
 
     reply.header("Cache-Control", "no-store");
     reply.header("X-Content-Type-Options", "nosniff");

@@ -1,7 +1,7 @@
 import { createId } from "../../shared/utils/id.js";
 import { nowIso } from "../../shared/utils/time.js";
 import { AppError } from "../../shared/errors/app-error.js";
-import type { TaskMetricsSnapshot } from "./task-types.js";
+import type { TaskDefinition, TaskMetricsSnapshot } from "./task-types.js";
 import type { SchedulerMetricsSnapshot } from "./scheduler-metrics.js";
 import type { EventLoopDelaySnapshot, EventLoopMonitor } from "./event-loop-monitor.js";
 import type { TaskActivityLog, TaskActivityRecord } from "./task-activity-log.js";
@@ -20,9 +20,20 @@ export interface RuntimeObservabilitySnapshot {
   readonly observedAt: string;
   readonly session: RuntimeObservabilitySessionLease;
   readonly backgroundTasks: TaskMetricsSnapshot;
+  readonly registeredTasks: RuntimeObservabilityRegisteredTaskSummary[];
   readonly recentTaskActivities: TaskActivityRecord[];
   readonly schedulers: SchedulerMetricsSnapshot;
   readonly eventLoop: EventLoopDelaySnapshot;
+}
+
+
+export interface RuntimeObservabilityRegisteredTaskSummary {
+  readonly taskType: string;
+  readonly executionLane: TaskDefinition["executionLane"];
+  readonly timeoutMs: number | null;
+  readonly concurrency: number | null;
+  readonly retryMaxAttempts: number | null;
+  readonly helperProcessHandler: string | null;
 }
 
 interface ObservabilitySessionState {
@@ -35,6 +46,7 @@ export class RuntimeObservabilityService {
 
   constructor(
     private readonly getTaskMetrics: () => TaskMetricsSnapshot,
+    private readonly getRegisteredTaskDefinitions: () => TaskDefinition<unknown, unknown>[],
     private readonly getSchedulerMetrics: () => SchedulerMetricsSnapshot,
     private readonly eventLoopMonitor: EventLoopMonitor,
     private readonly taskActivityLog: TaskActivityLog
@@ -94,6 +106,16 @@ export class RuntimeObservabilityService {
       observedAt: nowIso(),
       session,
       backgroundTasks: this.getTaskMetrics(),
+      registeredTasks: this.getRegisteredTaskDefinitions()
+        .map((definition) => ({
+          taskType: definition.taskType,
+          executionLane: definition.executionLane,
+          timeoutMs: typeof definition.timeoutMs === "number" ? definition.timeoutMs : null,
+          concurrency: typeof definition.concurrency === "number" ? definition.concurrency : null,
+          retryMaxAttempts: definition.retryPolicy?.maxAttempts ?? null,
+          helperProcessHandler: definition.helperProcessHandler ?? null
+        }))
+        .sort((left, right) => left.taskType.localeCompare(right.taskType)),
       recentTaskActivities: this.taskActivityLog.list(activityLimit),
       schedulers: this.getSchedulerMetrics(),
       eventLoop: this.eventLoopMonitor.observe()
