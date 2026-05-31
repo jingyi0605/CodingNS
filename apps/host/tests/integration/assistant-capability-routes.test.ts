@@ -265,6 +265,40 @@ describe("assistant capability routes", () => {
     expect(assistantCapabilityService.listCapabilities).toHaveBeenCalledTimes(1);
   });
 
+  it("缺少 Bearer token 时会直接返回 401，不会继续执行助手路由", async () => {
+    const assistantCapabilityService = {
+      listCapabilities: vi.fn(() => ({
+        ok: true,
+        capability: "capabilities.list",
+        auditId: "should-not-run",
+        timestamp: "2026-05-31T06:30:00.000Z",
+        targetRef: {
+          kind: "none",
+          id: null
+        },
+        payload: {
+          version: "2026-05-31",
+          items: []
+        }
+      }))
+    };
+
+    const app = await createAssistantAppWithAuthGuard({
+      assistantCapabilityService
+    });
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/assistant/capabilities"
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({
+      error_code: "UNAUTHORIZED",
+      field: "authorization"
+    });
+    expect(assistantCapabilityService.listCapabilities).not.toHaveBeenCalled();
+  });
+
   it("普通登录态直接读取助手能力面时会被放行", async () => {
     const assistantCapabilityService = {
       listCapabilities: vi.fn(() => ({

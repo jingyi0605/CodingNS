@@ -84,8 +84,7 @@ export function createAuthGuard(authService: AuthService) {
     const authorization = request.headers.authorization;
 
     if (!authorization?.startsWith("Bearer ")) {
-      sendError(reply, 401, "UNAUTHORIZED", "缺少有效的 Bearer token", "authorization");
-      return;
+      return sendError(reply, 401, "UNAUTHORIZED", "缺少有效的 Bearer token", "authorization");
     }
 
     const accessToken = authorization.slice("Bearer ".length).trim();
@@ -95,7 +94,7 @@ export function createAuthGuard(authService: AuthService) {
       const requestSource = readAssistantRequestSource(request);
 
       if (!isAllowedAssistantCaller(authContext.callerKind, requestSource, request.method)) {
-        sendError(
+        return sendError(
           reply,
           403,
           "ASSISTANT_CALLER_NOT_ALLOWED",
@@ -106,7 +105,6 @@ export function createAuthGuard(authService: AuthService) {
             requestSource
           }
         );
-        return;
       }
 
       reply.header(ASSISTANT_CALLER_KIND_HEADER, authContext.callerKind);
