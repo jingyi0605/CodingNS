@@ -370,11 +370,21 @@ describe("AffairsWorkbenchView", () => {
   it("文档库左侧栏不再显示旧的说明头和浏览模式切换", async () => {
     renderWorkbench();
 
-    expect(await screen.findByText(t("shell.affairsSectionGroupFavorites"))).toBeInTheDocument();
+    await screen.findByText("Exchange 分层通讯簿");
+
     expect(screen.queryByRole("heading", { name: t("shell.affairsLibrarySidebarTitle") })).not.toBeInTheDocument();
     expect(screen.queryByText(t("shell.affairsLibrarySummary"))).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: t("shell.affairsLibraryBrowseModeFolder") })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: t("shell.affairsLibraryBrowseModeTag") })).not.toBeInTheDocument();
+  });
+
+  it("没有收藏内容时会自动隐藏收藏夹分组", async () => {
+    renderWorkbench();
+
+    await screen.findByText("Exchange 分层通讯簿");
+
+    expect(screen.queryByText(t("shell.affairsSectionGroupFavorites"))).not.toBeInTheDocument();
+    expect(screen.queryByText(t("shell.affairsFavoritesEmpty"))).not.toBeInTheDocument();
   });
 
   it("可以切换文档库启用状态", async () => {

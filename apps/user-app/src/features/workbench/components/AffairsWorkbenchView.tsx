@@ -1272,15 +1272,13 @@ export function AffairsSidebarPanel() {
       {error ? <div className="affairs-sidebar-empty">{error}</div> : null}
       {!loading && !error ? (
         <div className="affairs-sidebar-groups affairs-library-sidebar-groups">
-          <section className="affairs-sidebar-group affairs-sidebar-group-plain affairs-favorites-panel">
-            <header className="affairs-sidebar-group-header">
-              <span>{t("shell.affairsSectionGroupFavorites")}</span>
-              <span>{favoriteEntries.length}</span>
-            </header>
-            <div className="affairs-sidebar-list affairs-sidebar-list-plain" role="list">
-              {favoriteEntries.length === 0 ? (
-                <div className="affairs-sidebar-empty affairs-sidebar-empty-plain compact">{t("shell.affairsFavoritesEmpty")}</div>
-              ) : (
+          {favoriteEntries.length > 0 ? (
+            <section className="affairs-sidebar-group affairs-sidebar-group-plain affairs-favorites-panel">
+              <header className="affairs-sidebar-group-header">
+                <span>{t("shell.affairsSectionGroupFavorites")}</span>
+                <span>{favoriteEntries.length}</span>
+              </header>
+              <div className="affairs-sidebar-list affairs-sidebar-list-plain" role="list">
                 <>
                   {favoriteFolderItems.length > 0 ? <div className="affairs-sidebar-subtitle">{t("shell.affairsLibraryBrowseModeFolder")}</div> : null}
                   {favoriteFolderItems.map((favorite) => {
@@ -1325,9 +1323,9 @@ export function AffairsSidebarPanel() {
                     );
                   })}
                 </>
-              )}
-            </div>
-          </section>
+              </div>
+            </section>
+          ) : null}
 
           <section className="affairs-sidebar-group affairs-sidebar-group-plain affairs-tag-tree-panel">
             <header className="affairs-sidebar-group-header">
