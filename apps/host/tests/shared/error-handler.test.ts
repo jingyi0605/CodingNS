@@ -98,6 +98,35 @@ describe("setErrorHandler", () => {
     );
   });
 
+  it("响应已经发出时不会再次写 header", () => {
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const reply = createReply({
+      sent: true,
+      raw: {
+        headersSent: true
+      }
+    });
+    const request = createRequest("/api/demo");
+    const error = new Error("boom-after-send");
+
+    setErrorHandler(error, request, reply);
+
+    expect(consoleWarnSpy).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    expect(request.log.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "响应已发送，跳过重复错误回写",
+        method: "GET",
+        url: "/api/demo",
+        errorName: "Error",
+        errorMessage: "boom-after-send"
+      })
+    );
+    expect(reply.status).not.toHaveBeenCalled();
+    expect(reply.send).not.toHaveBeenCalled();
+  });
+
   it("附件不存在只记简化 warning，不输出整段 host-error", () => {
     const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -142,11 +171,25 @@ describe("setErrorHandler", () => {
   });
 });
 
-function createReply() {
+function createReply(overrides: Partial<{
+  sent: boolean;
+  raw: {
+    headersSent: boolean;
+  };
+}> = {}) {
   return {
+    sent: false,
+    raw: {
+      headersSent: false
+    },
     status: vi.fn().mockReturnThis(),
-    send: vi.fn().mockReturnThis()
+    send: vi.fn().mockReturnThis(),
+    ...overrides
   } as unknown as {
+    sent: boolean;
+    raw: {
+      headersSent: boolean;
+    };
     status: ReturnType<typeof vi.fn>;
     send: ReturnType<typeof vi.fn>;
   };

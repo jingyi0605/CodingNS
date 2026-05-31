@@ -37,6 +37,17 @@ export function setErrorHandler(
   request: FastifyRequest,
   reply: FastifyReply
 ): FastifyReply {
+  if (reply.sent || reply.raw.headersSent) {
+    request.log.error({
+      message: "响应已发送，跳过重复错误回写",
+      method: request.method,
+      url: request.url,
+      errorName: error.name,
+      errorMessage: error.message
+    });
+    return reply;
+  }
+
   const requestContext = buildHostLogContext(error, request);
 
   if (isAppError(error)) {
