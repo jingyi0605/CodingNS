@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -215,6 +215,135 @@ describe("WorkspaceSessionRuntimeContextService", () => {
     expect(instructionContent).toContain("工作区会话临时规则");
     expect(instructionContent).toContain("浏览器任务临时规则（本轮生效）");
     expect(instructionContent).toContain("必须使用 `executionBackend=opencli_bridge`");
+  });
+
+  it("AGENTS.md 更新后会重写已有的组合说明文件，并保留附加规则和临时 overlay", () => {
+    const workspacePath = mkdtempSync(path.join(tmpdir(), "codingns-workspace-session-runtime-"));
+    const runtimeStorageRootDir = mkdtempSync(path.join(tmpdir(), "codingns-workspace-session-global-runtime-"));
+    tempDirs.push(workspacePath);
+    tempDirs.push(runtimeStorageRootDir);
+    writeFileSync(path.join(workspacePath, "AGENTS.md"), "# 项目规则\n\n- 第一版规则\n", "utf8");
+
+    const service = new WorkspaceSessionRuntimeContextService({
+      ensureWorkspaceCredential: vi.fn(() => ({
+        apiBaseUrl: "http://127.0.0.1:3002",
+        accessToken: "workspace-token",
+        issuedAt: "2026-05-16T10:00:00.000Z",
+        expiresAt: "2026-05-23T10:00:00.000Z",
+        userId: "user-1",
+        workspaceId: "workspace-1",
+        projectId: null,
+        sessionId: "session-refresh",
+        callerKind: "workspace_session" as const,
+        capabilityProfile: "workspace-scoped" as const
+      })),
+      getCredentialFilePath: vi.fn((runtimeHomeDir: string) =>
+        path.join(runtimeHomeDir, "WORKSPACE_SESSION_AUTH.json")
+      )
+    }, {
+      runtimeStorageRootDir
+    });
+
+    const prepared = service.prepareWorkspaceInstructionBundle({
+      sessionId: "session-refresh",
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      workspacePath,
+      provider: "codex",
+      projectId: null,
+      instructionOverlay: "## 临时规则\n\n- 只在当前消息生效。"
+    });
+
+    writeFileSync(path.join(workspacePath, "AGENTS.md"), "# 项目规则\n\n- 第二版规则\n", "utf8");
+
+    const refreshed = service.refreshWorkspaceInstructionBundle({
+      workspacePath,
+      runtimeHomeDir: prepared.runtimeHomeDir
+    });
+
+    expect(refreshed.refreshed).toBe(true);
+    const instructionContent = readFileSync(prepared.instructionFilePath, "utf8");
+    expect(instructionContent).toContain("第二版规则");
+    expect(instructionContent).not.toContain("第一版规则");
+    expect(instructionContent).toContain("工作区会话附加规则");
+    expect(instructionContent).toContain("assistant office.browser.*");
+    expect(instructionContent).toContain("工作区会话临时规则");
+    expect(instructionContent).toContain("只在当前消息生效");
+  });
+
+  it("会批量扫描当前工作区的 runtime 目录并重写命中的组合说明文件", () => {
+    const workspacePath = mkdtempSync(path.join(tmpdir(), "codingns-workspace-session-runtime-"));
+    const runtimeStorageRootDir = mkdtempSync(path.join(tmpdir(), "codingns-workspace-session-global-runtime-"));
+    tempDirs.push(workspacePath);
+    tempDirs.push(runtimeStorageRootDir);
+    writeFileSync(path.join(workspacePath, "AGENTS.md"), "# 项目规则\n\n- 初始规则\n", "utf8");
+
+    const localService = new WorkspaceSessionRuntimeContextService({
+      ensureWorkspaceCredential: vi.fn(({ sessionId }: { sessionId: string }) => ({
+        apiBaseUrl: "http://127.0.0.1:3002",
+        accessToken: "workspace-token",
+        issuedAt: "2026-05-16T10:00:00.000Z",
+        expiresAt: "2026-05-23T10:00:00.000Z",
+        userId: "user-1",
+        workspaceId: "workspace-1",
+        projectId: null,
+        sessionId,
+        callerKind: "workspace_session" as const,
+        capabilityProfile: "workspace-scoped" as const
+      })),
+      getCredentialFilePath: vi.fn((runtimeHomeDir: string) =>
+        path.join(runtimeHomeDir, "WORKSPACE_SESSION_AUTH.json")
+      )
+    });
+    const globalService = new WorkspaceSessionRuntimeContextService({
+      ensureWorkspaceCredential: vi.fn(({ sessionId }: { sessionId: string }) => ({
+        apiBaseUrl: "http://127.0.0.1:3002",
+        accessToken: "workspace-token",
+        issuedAt: "2026-05-16T10:00:00.000Z",
+        expiresAt: "2026-05-23T10:00:00.000Z",
+        userId: "user-1",
+        workspaceId: "workspace-1",
+        projectId: null,
+        sessionId,
+        callerKind: "workspace_session" as const,
+        capabilityProfile: "workspace-scoped" as const
+      })),
+      getCredentialFilePath: vi.fn((runtimeHomeDir: string) =>
+        path.join(runtimeHomeDir, "WORKSPACE_SESSION_AUTH.json")
+      )
+    }, {
+      runtimeStorageRootDir
+    });
+
+    const localPrepared = localService.prepareWorkspaceInstructionBundle({
+      sessionId: "session-local",
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      workspacePath,
+      provider: "codex",
+      projectId: null
+    });
+
+    const globalPrepared = globalService.prepareWorkspaceInstructionBundle({
+      sessionId: "session-global",
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      workspacePath,
+      provider: "opencode",
+      projectId: null
+    });
+
+    writeFileSync(path.join(workspacePath, "AGENTS.md"), "# 项目规则\n\n- 最新规则\n", "utf8");
+
+    const result = globalService.refreshWorkspaceInstructionBundlesForWorkspace({
+      workspaceId: "workspace-1",
+      workspacePath
+    });
+
+    expect(result.refreshedCount).toBe(2);
+    expect(result.scannedRuntimeHomeDirs).toHaveLength(2);
+    expect(readFileSync(localPrepared.instructionFilePath, "utf8")).toContain("最新规则");
+    expect(readFileSync(globalPrepared.instructionFilePath, "utf8")).toContain("最新规则");
   });
 
   it("syncRuntimeOfficeMcpContext 只会同步 scoped auth，不会改 Codex 配置文件", () => {

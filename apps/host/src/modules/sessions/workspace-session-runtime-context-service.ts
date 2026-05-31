@@ -206,7 +206,7 @@ export class WorkspaceSessionRuntimeContextService {
     const currentContent = fs.readFileSync(instructionFilePath, "utf8");
     const nextContent = composeWorkspaceInstructionDocument({
       workspaceAgentsPath,
-      workspaceInstruction: extractWorkspaceInstructionSuffix(currentContent),
+      workspaceInstruction: extractWorkspaceInstructionBody(currentContent),
       instructionOverlay: extractWorkspaceInstructionOverlay(currentContent)
     });
 
@@ -221,6 +221,41 @@ export class WorkspaceSessionRuntimeContextService {
     return {
       instructionFilePath,
       refreshed: true
+    };
+  }
+
+  refreshWorkspaceInstructionBundlesForWorkspace(input: {
+    workspaceId: string;
+    workspacePath: string;
+  }): {
+    refreshedCount: number;
+    scannedRuntimeHomeDirs: string[];
+    updatedInstructionFiles: string[];
+  } {
+    const runtimeHomeDirs = collectWorkspaceSessionRuntimeHomeDirs({
+      workspaceId: input.workspaceId,
+      workspacePath: input.workspacePath,
+      runtimeStorageRootDir: this.options.runtimeStorageRootDir
+    });
+    const scannedRuntimeHomeDirs: string[] = [];
+    const updatedInstructionFiles: string[] = [];
+
+    for (const runtimeHomeDir of runtimeHomeDirs) {
+      scannedRuntimeHomeDirs.push(runtimeHomeDir);
+      const result = this.refreshWorkspaceInstructionBundle({
+        workspacePath: input.workspacePath,
+        runtimeHomeDir
+      });
+
+      if (result.refreshed) {
+        updatedInstructionFiles.push(result.instructionFilePath);
+      }
+    }
+
+    return {
+      refreshedCount: updatedInstructionFiles.length,
+      scannedRuntimeHomeDirs,
+      updatedInstructionFiles
     };
   }
 }
@@ -484,14 +519,18 @@ function composeWorkspaceInstructionDocument(input: {
   return `${sections.join("\n\n")}\n`;
 }
 
-function extractWorkspaceInstructionSuffix(content: string): string {
+function extractWorkspaceInstructionBody(content: string): string {
   const markerIndex = content.indexOf(WORKSPACE_SESSION_ADDITIONAL_RULES_SECTION);
 
-  if (markerIndex >= 0) {
-    return content.slice(markerIndex);
+  if (markerIndex < 0) {
+    return "";
   }
 
-  return `${WORKSPACE_SESSION_ADDITIONAL_RULES_SECTION.trimEnd()}\n`;
+  const bodyStartIndex = markerIndex + WORKSPACE_SESSION_ADDITIONAL_RULES_SECTION.length;
+  const overlayIndex = content.indexOf(WORKSPACE_SESSION_TEMP_RULES_SECTION, bodyStartIndex);
+  const bodyEndIndex = overlayIndex >= 0 ? overlayIndex : content.length;
+
+  return content.slice(bodyStartIndex, bodyEndIndex).trim();
 }
 
 function extractWorkspaceInstructionOverlay(content: string): string | null {
@@ -524,4 +563,39 @@ function buildWorkspaceSessionRuntimeEnv(
   runtimeEnv[CODINGNS_OPENCLI_BLOCK_BROWSER_DEPENDENT_COMMANDS_ENV] = "1";
 
   return runtimeEnv;
+}
+
+function collectWorkspaceSessionRuntimeHomeDirs(input: {
+  workspaceId: string;
+  workspacePath: string;
+  runtimeStorageRootDir?: string;
+}): string[] {
+  const runtimeHomeDirs = new Set<string>();
+  const localRuntimeRootDir = path.join(input.workspacePath, ".codingns", "workspace-session-runtime");
+
+  collectDirectChildDirectories(localRuntimeRootDir, runtimeHomeDirs);
+
+  const globalRuntimeRootDir = input.runtimeStorageRootDir?.trim() ?? "";
+  if (globalRuntimeRootDir) {
+    collectDirectChildDirectories(
+      path.join(globalRuntimeRootDir, "workspace-session-runtime", input.workspaceId),
+      runtimeHomeDirs
+    );
+  }
+
+  return [...runtimeHomeDirs];
+}
+
+function collectDirectChildDirectories(rootDir: string, target: Set<string>): void {
+  if (!fs.existsSync(rootDir) || !fs.statSync(rootDir).isDirectory()) {
+    return;
+  }
+
+  for (const entry of fs.readdirSync(rootDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.isSymbolicLink()) {
+      continue;
+    }
+
+    target.add(path.join(rootDir, entry.name));
+  }
 }

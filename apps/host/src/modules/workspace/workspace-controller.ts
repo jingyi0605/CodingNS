@@ -53,7 +53,10 @@ interface UpdateWorkspaceNavigationStateBody {
 }
 
 export class WorkspaceController {
-  constructor(private readonly workspaceService: WorkspaceService) {}
+  constructor(
+    private readonly workspaceService: WorkspaceService,
+    private readonly onWorkspaceChanged?: (workspaceId: string) => void
+  ) {}
 
   readonly list = async (_request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     reply.send({
@@ -88,6 +91,7 @@ export class WorkspaceController {
       request.body.path?.trim() || "",
       request.body.name?.trim()
     );
+    this.onWorkspaceChanged?.(workspace.id);
 
     reply.status(201).send(workspace);
   };
@@ -103,6 +107,7 @@ export class WorkspaceController {
       name: request.body.name?.trim() || undefined,
       auth: request.body.auth
     });
+    this.onWorkspaceChanged?.(workspace.id);
 
     reply.status(201).send(workspace);
   };
@@ -118,7 +123,9 @@ export class WorkspaceController {
     request: FastifyRequest<{ Params: WorkspaceParams }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(this.workspaceService.removeWorkspace(request.params.workspaceId));
+    const workspace = this.workspaceService.removeWorkspace(request.params.workspaceId);
+    this.onWorkspaceChanged?.(workspace.id);
+    reply.send(workspace);
   };
 
   readonly reorder = async (

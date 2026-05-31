@@ -151,6 +151,7 @@ import { SessionLiveRuntimeService } from "../modules/sessions/session-live-runt
 import { SessionProviderConfigService } from "../modules/sessions/session-provider-config-service.js";
 import { SessionProviderUsageLimitGuardService } from "../modules/sessions/session-provider-usage-guard-service.js";
 import { SessionMessageAttachmentService } from "../modules/sessions/session-message-attachment-service.js";
+import { WorkspaceSessionInstructionWatchService } from "../modules/sessions/workspace-session-instruction-watch-service.js";
 import { WorkspaceSessionAuthService } from "../modules/sessions/workspace-session-auth-service.js";
 import { WorkspaceSessionRuntimeContextService } from "../modules/sessions/workspace-session-runtime-context-service.js";
 import { EventLoopMonitor } from "../modules/tasks/event-loop-monitor.js";
@@ -710,6 +711,29 @@ export function createServer(config: HostConfig) {
       runtimeStorageRootDir: path.dirname(config.databasePath)
     }
   );
+  const workspaceSessionInstructionWatchService = new WorkspaceSessionInstructionWatchService(
+    workspaceService,
+    ({ workspaceId, workspacePath, reason }) => {
+      const result = workspaceSessionRuntimeContextService.refreshWorkspaceInstructionBundlesForWorkspace({
+        workspaceId,
+        workspacePath
+      });
+      app.log.info(
+        {
+          workspaceId,
+          workspacePath,
+          reason,
+          refreshedCount: result.refreshedCount,
+          scannedRuntimeHomeDirs: result.scannedRuntimeHomeDirs,
+          updatedInstructionFiles: result.updatedInstructionFiles,
+          source: "workspace_session.agents_watch"
+        },
+        "工作区会话 instruction bundle 已按最新 AGENTS.md 重写"
+      );
+    },
+    app.log
+  );
+  workspaceSessionInstructionWatchService.syncAll();
   const sessionProviderConfigService = new SessionProviderConfigService(
     config,
     ccSwitchAdapter,
@@ -1384,12 +1408,18 @@ export function createServer(config: HostConfig) {
   };
   terminalService.on("exit", handleDebugTargetTerminalExit);
   const authController = new AuthController(authService);
-  const workspaceController = new WorkspaceController(workspaceService);
+  const workspaceController = new WorkspaceController(
+    workspaceService,
+    (workspaceId) => {
+      workspaceSessionInstructionWatchService.syncWorkspace(workspaceId);
+    }
+  );
   const affairsLibraryController = new AffairsLibraryController(
     affairsLibraryService,
     affairsLibraryPreviewLinkService,
     (workspaceId) => {
       affairsLibraryDirtyWatchService.syncWorkspace(workspaceId);
+      workspaceSessionInstructionWatchService.syncWorkspace(workspaceId);
     }
   );
   const worktreeController = new WorktreeController(
@@ -1730,6 +1760,7 @@ export function createServer(config: HostConfig) {
     await butlerSummarySessionLiveRuntimeService.dispose();
     await butlerSessionLiveRuntimeService.dispose();
     await sessionLiveRuntimeService.dispose();
+    workspaceSessionInstructionWatchService.dispose();
     affairsLibraryDirtyWatchService.dispose();
     affairsLibraryService.dispose();
     workbenchRuntimeTerminalSync.close();
