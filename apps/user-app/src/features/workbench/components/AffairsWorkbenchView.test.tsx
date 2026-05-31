@@ -484,7 +484,13 @@ describe("AffairsWorkbenchView", () => {
 
     await user.click(screen.getByRole("button", { name: /Expand/ }));
     await user.click(sourceTagButton!);
-    await user.click(await screen.findByRole("button", { name: "目录" }));
+
+    const directoryText = await screen.findAllByText("目录");
+    const directoryTagButton = directoryText
+      .map((node) => node.closest("button"))
+      .find((node) => node?.classList.contains("affairs-sidebar-item-button"));
+    expect(directoryTagButton).not.toBeNull();
+    await user.click(directoryTagButton!);
 
     const rootButton = await screen.findByRole("button", { name: "/" });
     const breadcrumb = rootButton.closest(".affairs-stage-breadcrumb");
