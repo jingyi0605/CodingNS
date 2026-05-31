@@ -886,6 +886,24 @@ describe("SettingsPage", () => {
               }
             }
           },
+          registeredTasks: [
+            {
+              taskType: "affairs.library_apply_config",
+              executionLane: "external_process",
+              timeoutMs: 900000,
+              concurrency: null,
+              retryMaxAttempts: null,
+              helperProcessHandler: null
+            },
+            {
+              taskType: "workspace.discovery",
+              executionLane: "helper_process",
+              timeoutMs: 30000,
+              concurrency: null,
+              retryMaxAttempts: null,
+              helperProcessHandler: null
+            }
+          ],
           recentTaskActivities: [
             {
               eventId: "evt-1",
@@ -960,7 +978,10 @@ describe("SettingsPage", () => {
 
     const dialog = await screen.findByRole("dialog", { name: t("settings.parallelTaskDebugModalTitle") });
     expect(dialog).toBeInTheDocument();
+    expect(screen.getByText(t("settings.parallelTaskDebugRegisteredTasksTitle"))).toBeInTheDocument();
+    expect(screen.getByText("affairs.library_apply_config")).toBeInTheDocument();
     expect((await screen.findAllByText("workspace.discovery")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText((_, element) => element?.textContent?.includes(t("settings.parallelTaskDebugTaskTimeout")) ?? false).length).toBeGreaterThan(0);
     expect(screen.getByText(t("settings.parallelTaskDebugEventLoopTitle"))).toBeInTheDocument();
     expect(screen.getByText(t("settings.parallelTaskDebugMetricEnqueue"))).toBeInTheDocument();
 

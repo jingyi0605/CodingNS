@@ -17742,7 +17742,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: var(--app-bg, var(--surface-base, #08111f));
+  background: var(--app-bg, var(--bg-primary));
 }
 
 .file-viewer-window-header {
@@ -17751,8 +17751,8 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   gap: 14px;
   min-height: 56px;
   padding: 8px 14px;
-  border-bottom: 1px solid var(--surface-border, rgba(255, 255, 255, 0.12));
-  background: var(--surface-elevated, rgba(10, 18, 40, 0.9));
+  border-bottom: 1px solid var(--panel-separator, var(--border-primary));
+  background: var(--panel-bg-strong, var(--bg-surface));
   user-select: none;
   flex: 0 0 auto;
   -webkit-app-region: drag;
@@ -17774,7 +17774,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   white-space: nowrap;
   font-size: 15px;
   line-height: 1.2;
-  color: var(--text-primary, rgba(244, 248, 255, 0.94));
+  color: var(--text-primary);
 }
 
 .file-viewer-window-controls {
@@ -17793,6 +17793,32 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .file-viewer-window-panel .file-viewer-body,
 .file-viewer-window-panel .file-viewer-preview-overview-shell {
   height: 100%;
+  min-height: 0;
+}
+
+.file-viewer-inline-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+.file-viewer-inline-panel .file-viewer-body,
+.file-viewer-inline-panel .file-viewer-preview-overview-shell {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+}
+
+.file-viewer-inline-panel .file-viewer-markdown,
+.file-viewer-inline-panel .file-viewer-html-frame-shell,
+.file-viewer-inline-panel .file-viewer-media-shell,
+.file-viewer-inline-panel .file-viewer-pdf-shell {
+  flex: 1 1 auto;
   min-height: 0;
 }
 
@@ -19189,9 +19215,13 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   flex: 1 1 auto;
   min-height: 0;
   height: 100%;
-  padding: 6px 2px 18px;
+  padding: 0 2px 18px;
   overflow: auto;
   overflow-y: auto;
+}
+
+.file-viewer-markdown > :first-child {
+  margin-top: 0;
 }
 
 .file-viewer-markdown .markdown-diff-block {

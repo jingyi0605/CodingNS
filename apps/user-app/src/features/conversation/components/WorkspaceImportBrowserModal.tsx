@@ -15,12 +15,24 @@ interface WorkspaceImportBrowserModalProps {
   readonly open: boolean;
   readonly onClose: () => void;
   readonly onImported?: (workspace: WorkspaceDto) => Promise<void> | void;
+  readonly mode?: "import" | "select-directory";
+  readonly title?: string;
+  readonly description?: string;
+  readonly submitLabel?: string;
+  readonly initialPath?: string | null;
+  readonly onSelectedPath?: (path: string) => Promise<void> | void;
 }
 
 export function WorkspaceImportBrowserModal({
   open,
   onClose,
-  onImported
+  onImported,
+  mode = "import",
+  title,
+  description,
+  submitLabel,
+  initialPath,
+  onSelectedPath
 }: WorkspaceImportBrowserModalProps) {
   const { showToast } = useToast();
   const [loading, setLoading] = useState(false);
@@ -66,8 +78,8 @@ export function WorkspaceImportBrowserModal({
       return;
     }
 
-    void loadDirectoryBrowser(currentPath || undefined);
-  }, [loadDirectoryBrowser, open]);
+    void loadDirectoryBrowser(initialPath?.trim() || currentPath || undefined);
+  }, [currentPath, initialPath, loadDirectoryBrowser, open]);
 
   function handleClose() {
     if (busy) {
@@ -153,6 +165,20 @@ export function WorkspaceImportBrowserModal({
     setError(null);
 
     try {
+      if (mode === "select-directory") {
+        onClose();
+        void Promise.resolve(onSelectedPath?.(targetPath)).catch((selectedError) => {
+          showToast({
+            title:
+              selectedError instanceof Error
+                ? selectedError.message
+                : t("shell.importBrowserSelectDirectoryFailed"),
+            tone: "error"
+          });
+        });
+        return;
+      }
+
       const workspace = await importWorkspace({
         path: targetPath
       });
@@ -187,8 +213,8 @@ export function WorkspaceImportBrowserModal({
     <>
       <WorkbenchModal
         open={open}
-        title={t("shell.importBrowserTitle")}
-        description={t("shell.importBrowserDescription")}
+        title={title ?? (mode === "select-directory" ? t("shell.importBrowserSelectDirectoryTitle") : t("shell.importBrowserTitle"))}
+        description={description ?? (mode === "select-directory" ? t("shell.importBrowserSelectDirectoryDescription") : t("shell.importBrowserDescription"))}
         onClose={handleClose}
       >
         <form className="workbench-directory-browser-form" onSubmit={handleBrowseSubmit}>
@@ -292,7 +318,9 @@ export function WorkspaceImportBrowserModal({
               void handleImportCurrentDirectory();
             }}
           >
-            {importing ? t("shell.importSubmitting") : t("shell.importBrowserSubmit")}
+            {importing
+              ? t("shell.importSubmitting")
+              : (submitLabel ?? (mode === "select-directory" ? t("shell.importBrowserSelectDirectorySubmit") : t("shell.importBrowserSubmit")))}
           </button>
         </div>
       </WorkbenchModal>

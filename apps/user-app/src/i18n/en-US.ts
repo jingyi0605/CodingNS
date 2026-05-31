@@ -1505,6 +1505,8 @@ export const enUS = {
     fileViewerOpenInWindow: "Separate Window",
     fileViewerOpenInWindowFailed: "Failed to open the separate window.",
     fileViewerWindowTitle: "File Preview",
+    fileViewerCollapse: "Collapse Preview",
+    fileViewerExpand: "Expand Preview",
     fileViewerZoomIn: "Zoom In",
     fileViewerZoomOut: "Zoom Out",
     fileViewerFit: "Fit",

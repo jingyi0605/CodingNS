@@ -119,6 +119,124 @@ export interface WorkspaceManagementSummaryDto {
   codeComposition: WorkspaceCodeCompositionDto;
 }
 
+export type AffairsLibraryFavoriteKindDto = "folder" | "tag";
+export type AffairsLibraryIndexStateDto = "fresh" | "stale" | "running" | "cooldown" | "failed";
+
+export interface AffairsLibraryBindingDto {
+  workspaceId: string;
+  rootDir: string;
+  mirrorRoot: string | null;
+  allowedExtensions: string[];
+  configRelativePath: string;
+  exportMode: "v2";
+  updatedAt: string;
+}
+
+export interface AffairsLibraryConfigDto {
+  binding: AffairsLibraryBindingDto | null;
+  mirrorRoot: string | null;
+  allowedExtensions: string[];
+  configRelativePath: string;
+  canWrite: boolean;
+  applyConfigTaskId?: string;
+  applyConfigStatus?: AffairsLibraryIndexStatusDto;
+}
+
+export interface AffairsLibraryIndexStatusDto {
+  state: AffairsLibraryIndexStateDto;
+  dirtyReasons: string[];
+  lastRequestedAt: string | null;
+  lastStartedAt: string | null;
+  lastCompletedAt: string | null;
+  lastFailedAt: string | null;
+  nextAllowedAt: string | null;
+  runningTaskId: string | null;
+  errorSummary: string | null;
+}
+
+export interface AffairsLibraryFavoriteRecordDto {
+  kind: AffairsLibraryFavoriteKindDto;
+  path: string;
+  label: string;
+}
+
+export interface AffairsLibraryDocumentRecordDto {
+  documentId: string;
+  path: string;
+  title: string;
+  summary: string;
+  updatedAt: string;
+  tags: string[];
+  derivedTags: string[];
+  isFavorite: boolean;
+}
+
+export interface AffairsLibraryTagNodeDto {
+  path: string;
+  name: string;
+  rootType: string;
+  parentPath: string | null;
+  depth: number;
+  documentCount: number;
+}
+
+export interface AffairsLibraryFolderNodeDto {
+  path: string;
+  name: string;
+  parentPath: string | null;
+  directDocumentCount: number;
+  documentCount: number;
+}
+
+export interface AffairsLibrarySnapshotDto {
+  binding: AffairsLibraryBindingDto | null;
+  status: AffairsLibraryIndexStatusDto;
+  tags: AffairsLibraryTagNodeDto[];
+  favorites: AffairsLibraryFavoriteRecordDto[];
+  folders: AffairsLibraryFolderNodeDto[];
+  documentCount: number;
+  lastError: string | null;
+}
+
+export interface AffairsLibraryDocumentListDto {
+  total: number;
+  offset: number;
+  limit: number;
+  items: AffairsLibraryDocumentRecordDto[];
+}
+
+export type AffairsLibraryPreviewKindDto =
+  | "text"
+  | "markdown"
+  | "html"
+  | "image"
+  | "pdf"
+  | "binary"
+  | "unsupported";
+
+export interface AffairsLibraryPreviewCapabilitiesDto {
+  canEdit: boolean;
+  canRefresh: boolean;
+  canResize: boolean;
+  canZoom: boolean;
+  canPaginate: boolean;
+}
+
+export interface AffairsLibraryPreviewDto {
+  workspaceId: string;
+  path: string;
+  supported: boolean;
+  kind: AffairsLibraryPreviewKindDto;
+  reason: string | null;
+  content: string | null;
+  version: string | null;
+  size: number;
+  updatedAt: string | null;
+  previewPath: string | null;
+  previewUrl: string | null;
+  capabilities: AffairsLibraryPreviewCapabilitiesDto;
+}
+
 export type DebugServiceRoleDto = "frontend" | "backend" | "worker" | "mock" | "custom";
 export type FrameworkAnalysisConfidenceDto = "high" | "medium" | "low";
 export type FrameworkCompatibilityLevelDto = "supported" | "conditional" | "unsupported" | "unknown";
@@ -1126,6 +1244,120 @@ export function updateWorkspaceNavigationState(
 ) {
   return httpClient.request<WorkspaceNavigationStateDto>(
     `/api/workspaces/${encodeURIComponent(workspaceId)}/navigation-state`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
+export function getAffairsLibraryBinding(workspaceId: string) {
+  return httpClient.request<AffairsLibraryBindingDto | null>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-binding`
+  );
+}
+
+export function saveAffairsLibraryBinding(workspaceId: string, payload: { rootDir: string }) {
+  return httpClient.request<AffairsLibraryBindingDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-binding`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
+export function getAffairsLibrarySnapshot(workspaceId: string) {
+  return httpClient.request<AffairsLibrarySnapshotDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-snapshot`
+  );
+}
+
+export function getAffairsLibraryConfig(workspaceId: string) {
+  return httpClient.request<AffairsLibraryConfigDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-config`
+  );
+}
+
+export function saveAffairsLibraryConfig(
+  workspaceId: string,
+  payload: {
+    mirrorRoot?: string | null;
+    allowedExtensions?: string[];
+  }
+) {
+  return httpClient.request<AffairsLibraryConfigDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-config`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
+export function listAffairsLibraryDocuments(
+  workspaceId: string,
+  query: {
+    browseMode: "folder" | "tag";
+    selectedFolderPath?: string | null;
+    selectedTagPath?: string | null;
+    selectedFavoriteId?: string | null;
+    offset?: number;
+    limit?: number;
+  }
+) {
+  const search = new URLSearchParams();
+  search.set("browseMode", query.browseMode);
+  if (query.selectedFolderPath?.trim()) {
+    search.set("selectedFolderPath", query.selectedFolderPath.trim());
+  }
+  if (query.selectedTagPath?.trim()) {
+    search.set("selectedTagPath", query.selectedTagPath.trim());
+  }
+  if (query.selectedFavoriteId?.trim()) {
+    search.set("selectedFavoriteId", query.selectedFavoriteId.trim());
+  }
+  if (typeof query.offset === "number") {
+    search.set("offset", String(query.offset));
+  }
+  if (typeof query.limit === "number") {
+    search.set("limit", String(query.limit));
+  }
+  return httpClient.request<AffairsLibraryDocumentListDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-documents?${search.toString()}`
+  );
+}
+
+export function getAffairsLibraryPreview(workspaceId: string, filePath: string) {
+  const search = new URLSearchParams({
+    path: filePath
+  });
+
+  return httpClient.request<AffairsLibraryPreviewDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-preview?${search.toString()}`
+  );
+}
+
+export function requestAffairsLibraryRefresh(
+  workspaceId: string,
+  payload: { reason?: string } = {}
+) {
+  return httpClient.request<{
+    taskId: string;
+    deduped: boolean;
+    status: AffairsLibraryIndexStatusDto;
+  }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-refresh`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateAffairsLibraryFavorites(
+  workspaceId: string,
+  payload: { favorites: AffairsLibraryFavoriteRecordDto[] }
+) {
+  return httpClient.request<{ items: AffairsLibraryFavoriteRecordDto[] }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-favorites`,
     {
       method: "PUT",
       body: JSON.stringify(payload)

@@ -1325,6 +1325,8 @@ export const zhCN = {
     fileViewerOpenInWindow: "独立窗口",
     fileViewerOpenInWindowFailed: "独立窗口打开失败。",
     fileViewerWindowTitle: "文件预览",
+    fileViewerCollapse: "收起预览",
+    fileViewerExpand: "展开预览",
     fileViewerZoomIn: "放大",
     fileViewerZoomOut: "缩小",
     fileViewerFit: "适配",

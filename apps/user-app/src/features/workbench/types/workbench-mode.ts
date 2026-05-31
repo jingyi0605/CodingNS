@@ -16,7 +16,14 @@ export interface AffairsViewState {
   selectedNodeId: string | null;
   selectedObjectId: string | null;
   toolbarExpanded: boolean;
+  detailViewerCollapsed: boolean;
   auxiliaryTab: AffairsAuxiliaryTab;
+  browseMode: "folder" | "tag";
+  viewMode: "grid" | "list";
+  selectedFolderPath: string | null;
+  selectedTagPath: string | null;
+  selectedDocumentId: string | null;
+  selectedFavoriteId: string | null;
 }
 
 export interface AffairsObjectContext {

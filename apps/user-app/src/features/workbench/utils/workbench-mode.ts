@@ -18,7 +18,14 @@ const DEFAULT_AFFAIRS_STATE: Omit<AffairsViewState, "workspaceId"> = {
   selectedNodeId: "library",
   selectedObjectId: null,
   toolbarExpanded: false,
-  auxiliaryTab: "detail"
+  detailViewerCollapsed: false,
+  auxiliaryTab: "detail",
+  browseMode: "folder",
+  viewMode: "grid",
+  selectedFolderPath: null,
+  selectedTagPath: null,
+  selectedDocumentId: null,
+  selectedFavoriteId: null
 };
 
 function buildModeSnapshotKey(workspaceId: string) {
@@ -128,7 +135,14 @@ export function readAffairsViewState(workspaceId: string | null | undefined): Af
     selectedNodeId: snapshot.selectedNodeId ?? DEFAULT_AFFAIRS_STATE.selectedNodeId,
     selectedObjectId: snapshot.selectedObjectId ?? DEFAULT_AFFAIRS_STATE.selectedObjectId,
     toolbarExpanded: snapshot.toolbarExpanded ?? DEFAULT_AFFAIRS_STATE.toolbarExpanded,
-    auxiliaryTab: snapshot.auxiliaryTab ?? DEFAULT_AFFAIRS_STATE.auxiliaryTab
+    detailViewerCollapsed: snapshot.detailViewerCollapsed ?? DEFAULT_AFFAIRS_STATE.detailViewerCollapsed,
+    auxiliaryTab: snapshot.auxiliaryTab ?? DEFAULT_AFFAIRS_STATE.auxiliaryTab,
+    browseMode: snapshot.browseMode ?? DEFAULT_AFFAIRS_STATE.browseMode,
+    viewMode: snapshot.viewMode ?? DEFAULT_AFFAIRS_STATE.viewMode,
+    selectedFolderPath: snapshot.selectedFolderPath ?? DEFAULT_AFFAIRS_STATE.selectedFolderPath,
+    selectedTagPath: snapshot.selectedTagPath ?? DEFAULT_AFFAIRS_STATE.selectedTagPath,
+    selectedDocumentId: snapshot.selectedDocumentId ?? DEFAULT_AFFAIRS_STATE.selectedDocumentId,
+    selectedFavoriteId: snapshot.selectedFavoriteId ?? DEFAULT_AFFAIRS_STATE.selectedFavoriteId
   };
 }
 
@@ -143,6 +157,13 @@ export function createDefaultAffairsViewState(workspaceId: string): AffairsViewS
     selectedNodeId: DEFAULT_AFFAIRS_STATE.selectedNodeId,
     selectedObjectId: DEFAULT_AFFAIRS_STATE.selectedObjectId,
     toolbarExpanded: DEFAULT_AFFAIRS_STATE.toolbarExpanded,
-    auxiliaryTab: DEFAULT_AFFAIRS_STATE.auxiliaryTab
+    detailViewerCollapsed: DEFAULT_AFFAIRS_STATE.detailViewerCollapsed,
+    auxiliaryTab: DEFAULT_AFFAIRS_STATE.auxiliaryTab,
+    browseMode: DEFAULT_AFFAIRS_STATE.browseMode,
+    viewMode: DEFAULT_AFFAIRS_STATE.viewMode,
+    selectedFolderPath: DEFAULT_AFFAIRS_STATE.selectedFolderPath,
+    selectedTagPath: DEFAULT_AFFAIRS_STATE.selectedTagPath,
+    selectedDocumentId: DEFAULT_AFFAIRS_STATE.selectedDocumentId,
+    selectedFavoriteId: DEFAULT_AFFAIRS_STATE.selectedFavoriteId
   };
 }

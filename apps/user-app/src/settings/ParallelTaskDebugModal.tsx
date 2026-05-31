@@ -70,6 +70,15 @@ interface TaskActivityRecord {
   readonly errorMessage: string | null;
 }
 
+interface RegisteredTaskSummary {
+  readonly taskType: string;
+  readonly executionLane: TaskExecutionLane;
+  readonly timeoutMs: number | null;
+  readonly concurrency: number | null;
+  readonly retryMaxAttempts: number | null;
+  readonly helperProcessHandler: string | null;
+}
+
 interface RuntimeObservabilitySnapshot {
   readonly observedAt: string;
   readonly session: RuntimeObservabilitySessionLease;
@@ -77,6 +86,7 @@ interface RuntimeObservabilitySnapshot {
     readonly totals: Record<string, number>;
     readonly taskTypes: Record<string, TaskMetricGroupSnapshot>;
   };
+  readonly registeredTasks: RegisteredTaskSummary[];
   readonly recentTaskActivities: TaskActivityRecord[];
   readonly schedulers: {
     readonly schedulers: Record<string, {
@@ -276,6 +286,7 @@ export function ParallelTaskDebugModal({ isOpen, onClose }: ParallelTaskDebugMod
   }
 
   const taskTypeEntries = Object.entries(snapshot?.backgroundTasks.taskTypes ?? {});
+  const registeredTaskEntries = snapshot?.registeredTasks ?? [];
   const schedulerEntries = Object.entries(snapshot?.schedulers.schedulers ?? {});
   const counterEntries = Object.entries(snapshot?.backgroundTasks.totals ?? {});
 
@@ -362,6 +373,33 @@ export function ParallelTaskDebugModal({ isOpen, onClose }: ParallelTaskDebugMod
 
               <section className="parallel-task-debug-section">
                 <div className="parallel-task-debug-section-header">
+                  <h3>{t("settings.parallelTaskDebugRegisteredTasksTitle")}</h3>
+                  <span>{registeredTaskEntries.length}</span>
+                </div>
+                {registeredTaskEntries.length > 0 ? (
+                  <div className="parallel-task-debug-grid">
+                    {registeredTaskEntries.map((task) => (
+                      <article className="parallel-task-debug-panel" key={task.taskType}>
+                        <div className="parallel-task-debug-panel-header">
+                          <strong>{task.taskType}</strong>
+                          <span>{getExecutionLaneLabel(task.executionLane)}</span>
+                        </div>
+                        <div className="parallel-task-debug-panel-body">
+                          <span>{t("settings.parallelTaskDebugTaskTimeout")}: {formatMs(task.timeoutMs)}</span>
+                          <span>{t("settings.parallelTaskDebugTaskConcurrency")}: {task.concurrency ?? t("common.none")}</span>
+                          <span>{t("settings.parallelTaskDebugTaskRetry")}: {task.retryMaxAttempts ?? t("common.none")}</span>
+                          <span>{t("settings.parallelTaskDebugTaskHelper")}: {task.helperProcessHandler ?? t("common.none")}</span>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="parallel-task-debug-empty">{t("settings.parallelTaskDebugRegisteredTasksEmpty")}</div>
+                )}
+              </section>
+
+              <section className="parallel-task-debug-section">
+                <div className="parallel-task-debug-section-header">
                   <h3>{t("settings.parallelTaskDebugTaskMetricsTitle")}</h3>
                   <span>{taskTypeEntries.length}</span>
                 </div>
@@ -386,7 +424,7 @@ export function ParallelTaskDebugModal({ isOpen, onClose }: ParallelTaskDebugMod
                     ))}
                   </div>
                 ) : (
-                  <div className="parallel-task-debug-empty">{t("settings.parallelTaskDebugEmpty")}</div>
+                  <div className="parallel-task-debug-empty">{t("settings.parallelTaskDebugActiveTaskMetricsEmpty")}</div>
                 )}
               </section>
 

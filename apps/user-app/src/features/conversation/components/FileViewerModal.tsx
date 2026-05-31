@@ -60,10 +60,12 @@ export interface FileViewerPanelProps {
   onClose: () => void;
   onSaved: (filePath: string) => Promise<void> | void;
   diffContent?: string | null;
-  chrome?: "modal" | "window";
+  chrome?: "modal" | "window" | "inline";
   windowTitle?: string | null;
   showDetachAction?: boolean;
   onDetach?: () => void | Promise<void>;
+  previewLoader?: (workspaceId: string, filePath: string) => Promise<FilePreviewDto>;
+  saveDisabledReason?: string | null;
 }
 
 type ViewerMode = "preview" | "presentation" | "code" | "edit";
@@ -294,7 +296,9 @@ export function FileViewerPanel({
   chrome = "modal",
   windowTitle = null,
   showDetachAction = false,
-  onDetach
+  onDetach,
+  previewLoader = getFilePreview,
+  saveDisabledReason = null
 }: FileViewerPanelProps) {
   const [preview, setPreview] = useState<FilePreviewDto | null>(null);
   const [editorContent, setEditorContent] = useState("");
@@ -377,13 +381,16 @@ export function FileViewerPanel({
   const canShowPreviewTab = canUsePreviewMode(previewKind);
   const canShowCodeTab = canUseCodeMode(previewKind);
   const canShowSeparateCodeTab = canShowCodeTab && previewKind !== "html";
-  const canShowEditTab = canUseEditMode(previewKind) && canEdit;
+  const canShowEditTab = canUseEditMode(previewKind) && canEdit && !saveDisabledReason;
   const isMobileViewer = platform.isMobile;
   const isWindowViewer = chrome === "window";
+  const isInlineViewer = chrome === "inline";
   const shouldRenderModalChrome = chrome === "modal";
   const isPresentationMode = mode === "presentation" && previewKind === "html";
   const useForcedFullSize = !isWindowViewer && !isMobileViewer && previewKind === "html";
   const activeModalSizePreset = isMobileViewer || useForcedFullSize ? "full" : modalSizePreset;
+  const effectiveMode: ViewerMode = isInlineViewer && canShowPreviewTab ? "preview" : mode;
+  const resolvedWindowAriaLabel = windowTitle ?? filePath ?? t("conversation.fileViewerWindowTitle");
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -427,7 +434,7 @@ export function FileViewerPanel({
       setLoading(true);
 
       try {
-        const nextPreview = await getFilePreview(safeWorkspaceId, safeFilePath);
+        const nextPreview = await previewLoader(safeWorkspaceId, safeFilePath);
 
         if (!cancelled) {
           applyPreviewState(nextPreview, safeFilePath, {
@@ -486,7 +493,7 @@ export function FileViewerPanel({
         : editorContent;
 
       await saveFileContent(safeWorkspaceId, safeFilePath, nextContent, preview.version);
-      const nextPreview = await getFilePreview(safeWorkspaceId, safeFilePath);
+      const nextPreview = await previewLoader(safeWorkspaceId, safeFilePath);
       applyPreviewState(nextPreview, safeFilePath, {
         preserveMode: false,
         setPreview,
@@ -523,7 +530,7 @@ export function FileViewerPanel({
     setLoading(true);
 
     try {
-      const nextPreview = await getFilePreview(safeWorkspaceId, safeFilePath);
+      const nextPreview = await previewLoader(safeWorkspaceId, safeFilePath);
       applyPreviewState(nextPreview, safeFilePath, {
         preserveMode: true,
         setPreview,
@@ -680,7 +687,7 @@ export function FileViewerPanel({
     setPdfFitWidth
   });
   const visibleFormatActions = isMobileViewer ? formatActions.filter(isRefreshAction) : formatActions;
-  const showHeaderSaveAction = canEdit && mode === "edit" && !isPresentationMode;
+  const showHeaderSaveAction = !isInlineViewer && canEdit && effectiveMode === "edit" && !isPresentationMode;
   const viewerControls = (
     <>
       <div className="file-viewer-header-tabs" role="tablist" aria-label={t("conversation.fileViewerModeLabel")}>
@@ -811,7 +818,7 @@ export function FileViewerPanel({
           <p className="status-text">{t("common.loading")}</p>
         ) : preview?.supported === false ? (
           <p className="status-text">{preview.reason ?? t("conversation.filePanelUnsupported")}</p>
-        ) : mode === "presentation" && previewKind === "html" ? (
+        ) : effectiveMode === "presentation" && previewKind === "html" ? (
           <StaticHtmlPresentationView
             filePath={filePath}
             html={editorContent}
@@ -821,13 +828,13 @@ export function FileViewerPanel({
             canSave={isDirty}
             saving={saving}
           />
-        ) : mode === "edit" ? (
+        ) : effectiveMode === "edit" ? (
           <EditModeLayout
             content={editorContent}
             language={detectedLanguage}
             onContentChange={setEditorContent}
           />
-        ) : mode === "preview" && previewKind === "html" ? (
+        ) : effectiveMode === "preview" && previewKind === "html" ? (
           <HtmlPreview
             src={htmlPreviewUrl}
             workspaceId={safeWorkspaceId}
@@ -835,7 +842,7 @@ export function FileViewerPanel({
             overviewMarkers={overviewMarkers}
             overviewTotalLines={overviewTotalLines}
           />
-        ) : mode === "preview" && previewKind === "image" ? (
+        ) : effectiveMode === "preview" && previewKind === "image" ? (
           <ImagePreview
             src={imagePreviewUrl}
             filePath={filePath}
@@ -844,14 +851,14 @@ export function FileViewerPanel({
             overviewMarkers={overviewMarkers}
             overviewTotalLines={overviewTotalLines}
           />
-        ) : mode === "preview" && previewKind === "pdf" ? (
+        ) : effectiveMode === "preview" && previewKind === "pdf" ? (
           <PdfPreview
             src={pdfPreviewUrl}
             filePath={filePath}
             overviewMarkers={overviewMarkers}
             overviewTotalLines={overviewTotalLines}
           />
-        ) : mode === "preview" && previewKind === "markdown" ? (
+        ) : effectiveMode === "preview" && previewKind === "markdown" ? (
           <MarkdownPreview
             content={editorContent}
             overviewMarkers={overviewMarkers}
@@ -871,7 +878,7 @@ export function FileViewerPanel({
 
   if (isWindowViewer) {
     return (
-      <section className="file-viewer-window-panel" aria-label={windowTitle ?? filePath}>
+      <section className="file-viewer-window-panel" aria-label={resolvedWindowAriaLabel}>
         <header className="file-viewer-window-header" data-tauri-drag-region="">
           <div className="file-viewer-window-title-wrap" data-tauri-drag-region="">
             <h1 data-tauri-drag-region="">{windowTitle ?? filePath}</h1>
@@ -882,6 +889,14 @@ export function FileViewerPanel({
           </div>
         </header>
         <div className="file-viewer-modal-body file-viewer-window-body">{viewerBody}</div>
+      </section>
+    );
+  }
+
+  if (isInlineViewer) {
+    return (
+      <section className="file-viewer-inline-panel" aria-label={resolvedWindowAriaLabel}>
+        {viewerBody}
       </section>
     );
   }
