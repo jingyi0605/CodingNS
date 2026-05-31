@@ -1,6 +1,6 @@
 # 需求文档 - spec016.2-事务文档库外部变更感知与自动刷新
 
-状态：Draft
+状态：In Review
 
 ## 简介
 
@@ -95,16 +95,16 @@
 1. WHEN 为事务文档库开启外部变更监听 THEN System SHALL 让监听数量与资料库数量相关，而不是与子目录数量线性增长。
 2. WHEN watcher 收到事件 THEN System SHALL 只做轻量路径处理和脏标记，不得在回调里直接做重扫描或重导出。
 3. WHEN 自动刷新需要跑索引任务 THEN System SHALL 继续复用 `TaskManager` 和 `helper_process` 链路，不得重新长私有 `timer`、私有 `inflight`、私有任务队列。
-4. WHEN Host 读取文档库快照 THEN System SHALL 继续只读最近结果和状态，不得因为自动刷新需求回退成读接口现算。
+4. WHEN Host 读取文档库快照 THEN System SHALL 继续只读最近结果和状态，不得因为自动刷新需求回退成读接口现算；WHEN 前端切换当前目录 THEN System MAY 异步提交当前目录增量刷新 hint，但 SHALL NOT 阻塞本次读取。
 
 ### 需求 5：系统必须在索引产物缺失时自动重建
 
-**用户故事：** 作为使用者，我希望就算 `.ai-index` 被删了，系统也能在下一次自动刷新或进入视图时补回来，而不是一直报旧状态。
+**用户故事：** 作为使用者，我希望就算 `.ai-index` 被删了，系统也能在下一次自动刷新链路里自己补回来，而不是一直报旧状态。
 
 #### 验收标准
 
 1. WHEN `.ai-index`、导出快照或状态文件缺失 THEN System SHALL 把当前状态标记为需要重建，而不是继续把旧缓存假装成最新结果。
-2. WHEN 工作区进入事务视图、触发周期刷新或收到外部变更时发现索引产物缺失 THEN System SHALL 自动入队重建任务。
+2. WHEN Host 启动恢复、触发周期刷新或收到外部变更时发现索引产物缺失 THEN System SHALL 自动入队重建任务。
 3. WHEN 自动重建成功 THEN System SHALL 生成新的索引产物，并更新最近完成时间和状态。
 4. WHEN 自动重建失败 THEN System SHALL 返回结构化错误，并保留最近一次仍可读的结果（如果存在）。
 
@@ -144,4 +144,3 @@
 - 临时文件不会再反复触发无意义刷新
 - `.ai-index` 被删掉后，系统能自动重建索引产物
 - 前端和日志都能清楚看到最近一次自动刷新状态
-
