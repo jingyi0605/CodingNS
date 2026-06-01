@@ -747,7 +747,54 @@ describe("AffairsWorkbenchView", () => {
     });
   });
 
+  it("列表视图点击表头可以切换排序", async () => {
+    conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
+      folders: [
+        {
+          path: "B项目",
+          name: "B项目",
+          parentPath: null,
+          depth: 1,
+          directDocumentCount: 1,
+          documentCount: 1,
+          createdAt: "2026-05-29T08:00:00.000Z",
+          updatedAt: "2026-05-31T08:00:00.000Z"
+        },
+        {
+          path: "A项目",
+          name: "A项目",
+          parentPath: null,
+          depth: 1,
+          directDocumentCount: 1,
+          documentCount: 1,
+          createdAt: "2026-05-30T08:00:00.000Z",
+          updatedAt: "2026-05-30T08:00:00.000Z"
+        }
+      ]
+    }));
+    conversationApiMock.listAffairsLibraryDocuments.mockResolvedValue({
+      total: 2,
+      offset: 0,
+      limit: 120,
+      items: []
+    });
 
+    renderWorkbench();
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibraryViewModeList") }));
+
+    await waitFor(() => {
+      expect(document.querySelectorAll(".affairs-finder-row").length).toBeGreaterThan(0);
+    });
+    const rowsBefore = Array.from(document.querySelectorAll(".affairs-finder-row")) as HTMLButtonElement[];
+    expect(rowsBefore[0]).toHaveTextContent("B项目");
+
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsFinderSortAction", { column: t("shell.affairsFinderColumnName") }) }));
+
+    await waitFor(() => {
+      const rowsAfter = Array.from(document.querySelectorAll(".affairs-finder-row")) as HTMLButtonElement[];
+      expect(rowsAfter[0]).toHaveTextContent("A项目");
+    });
+  });
 
   it("标签树路径会在面包屑里显示每一级标签名称", async () => {
     renderWorkbench();

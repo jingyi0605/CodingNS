@@ -8720,10 +8720,30 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 
 .affairs-finder-header-cell {
   position: relative;
-  display: flex;
-  align-items: center;
   min-width: 0;
   min-height: 30px;
+}
+
+.affairs-finder-header-sort-button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 0 18px 0 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.affairs-finder-header-sort-button:hover .affairs-finder-header-label,
+.affairs-finder-header-sort-button:focus-visible .affairs-finder-header-label {
+  color: var(--text-secondary);
 }
 
 .affairs-finder-header-label {
@@ -8731,6 +8751,13 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.affairs-finder-header-sort-indicator {
+  flex: 0 0 auto;
+  color: var(--text-quaternary);
+  font-size: 11px;
+  line-height: 1;
 }
 
 .affairs-finder-column-resizer {

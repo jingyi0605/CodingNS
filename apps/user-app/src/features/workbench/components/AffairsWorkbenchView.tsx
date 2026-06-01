@@ -112,8 +112,14 @@ const AFFAIRS_LIBRARY_PRESET_EXTENSIONS = [
   ".csv"
 ] as const;
 
-type LibrarySortMode = "recent" | "name" | "type";
+type LibrarySortMode = "recent" | "name" | "type" | "size" | "createdAt";
+type LibrarySortDirection = "asc" | "desc";
 type FinderColumnKey = "name" | "size" | "updatedAt" | "type" | "createdAt";
+
+type LibrarySortState = {
+  mode: LibrarySortMode;
+  direction: LibrarySortDirection;
+};
 
 const FINDER_COLUMN_MIN_WIDTHS: Record<FinderColumnKey, number> = {
   name: 240,
@@ -1521,7 +1527,10 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
   const [stageViewportHeight, setStageViewportHeight] = useState(0);
   const [stageViewportWidth, setStageViewportWidth] = useState(0);
   const [stageScrollTop, setStageScrollTop] = useState(0);
-  const [sortMode, setSortMode] = useState<LibrarySortMode>("recent");
+  const [sortState, setSortState] = useState<LibrarySortState>({
+    mode: "recent",
+    direction: "desc"
+  });
   const [finderColumnWidths, setFinderColumnWidths] = useState<Record<FinderColumnKey, number>>(DEFAULT_FINDER_COLUMN_WIDTHS);
   const finderResizeStateRef = useRef<{
     column: FinderColumnKey;
@@ -1557,8 +1566,8 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     [activeSection, childFolders, favoriteFolderPathSet, filteredDocuments, folderDocuments, state.browseMode]
   );
   const sortedLibraryEntries = useMemo(
-    () => sortLibraryEntries(libraryEntries, sortMode),
-    [libraryEntries, sortMode]
+    () => sortLibraryEntries(libraryEntries, sortState),
+    [libraryEntries, sortState]
   );
   const gridMetrics = useMemo(
     () => computeVirtualGridMetrics(sortedLibraryEntries.length, stageViewportWidth, stageViewportHeight, stageScrollTop),
@@ -1737,13 +1746,13 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                   tagRecords={tagRecords}
                   indexStatus={indexStatus}
                   selectedTagPath={state.selectedTagPath}
-                  sortMode={sortMode}
+                  sortState={sortState}
                   viewMode={state.viewMode}
                   onNavigateFolder={navigateLibraryFolder}
                   onNavigateTag={navigateLibraryTag}
                   onOpenSettings={() => setSettingsOpen(true)}
                   onRefresh={refreshLibrary}
-                  onSetSortMode={setSortMode}
+                  onSetSortState={setSortState}
                   onSetViewMode={setLibraryViewMode}
                   refreshPending={libraryRefreshPending}
                 />
@@ -1846,7 +1855,6 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                 <div className="affairs-finder-shell">
                 <div
                   className="affairs-finder-header"
-                  aria-hidden="true"
                   style={{ gridTemplateColumns: finderGridTemplateColumns }}
                 >
                   {finderColumns.map((column) => (
@@ -1855,7 +1863,17 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                       className="affairs-finder-header-cell affairs-finder-cell"
                       data-column={column.key}
                     >
-                      <span className="affairs-finder-header-label">{column.label}</span>
+                      <button
+                        type="button"
+                        className="affairs-finder-header-sort-button"
+                        onClick={() => setSortState((previous) => getNextSortState(previous, column.key))}
+                        aria-label={buildFinderSortButtonLabel(column.label, sortState, column.key)}
+                      >
+                        <span className="affairs-finder-header-label">{column.label}</span>
+                        <span className="affairs-finder-header-sort-indicator" aria-hidden="true">
+                          {renderFinderSortIndicator(sortState, column.key)}
+                        </span>
+                      </button>
                       {column.resizable ? (
                         <span
                           role="separator"
@@ -2407,13 +2425,13 @@ function AffairsLibraryStageToolbar({
   tagRecords,
   indexStatus,
   selectedTagPath,
-  sortMode,
+  sortState,
   viewMode,
   onNavigateFolder,
   onNavigateTag,
   onOpenSettings,
   onRefresh,
-  onSetSortMode,
+  onSetSortState,
   onSetViewMode,
   refreshPending
 }: {
@@ -2422,13 +2440,13 @@ function AffairsLibraryStageToolbar({
   tagRecords: TagRecord[];
   indexStatus: AffairsLibraryIndexStatusDto | null;
   selectedTagPath: string | null;
-  sortMode: LibrarySortMode;
+  sortState: LibrarySortState;
   viewMode: "grid" | "list";
   onNavigateFolder: (path: string | null) => void;
   onNavigateTag: (path: string | null) => void;
   onOpenSettings: () => void;
   onRefresh: () => Promise<void>;
-  onSetSortMode: (mode: LibrarySortMode) => void;
+  onSetSortState: (state: LibrarySortState) => void;
   onSetViewMode: (mode: "grid" | "list") => void;
   refreshPending: boolean;
 }) {
@@ -2595,14 +2613,16 @@ function AffairsLibraryStageToolbar({
         <div className="affairs-stage-toolbar-group">
           <select
             className="affairs-stage-toolbar-select"
-            value={sortMode}
-            onChange={(event) => onSetSortMode(event.target.value as LibrarySortMode)}
+            value={sortState.mode}
+            onChange={(event) => onSetSortState(getDefaultSortState(event.target.value as LibrarySortMode))}
             aria-label={t("shell.affairsLibrarySortLabel")}
             title={t("shell.affairsLibrarySortLabel")}
           >
             <option value="recent">{t("shell.affairsLibrarySortRecent")}</option>
             <option value="name">{t("shell.affairsLibrarySortName")}</option>
             <option value="type">{t("shell.affairsLibrarySortType")}</option>
+            <option value="size">{t("shell.affairsLibrarySortSize")}</option>
+            <option value="createdAt">{t("shell.affairsLibrarySortCreatedAt")}</option>
           </select>
         </div>
         <div className="affairs-stage-toolbar-group">
@@ -3987,32 +4007,103 @@ function measureStageScrollContentWidth(element: HTMLElement) {
   return Math.max(0, element.clientWidth - paddingLeft - paddingRight);
 }
 
-function sortLibraryEntries(entries: LibraryEntry[], sortMode: LibrarySortMode): LibraryEntry[] {
+function sortLibraryEntries(entries: LibraryEntry[], sortState: LibrarySortState): LibraryEntry[] {
   const next = [...entries];
   next.sort((left, right) => {
     if (left.kind !== right.kind) {
       return left.kind === "folder" ? -1 : 1;
     }
-    if (sortMode === "type") {
+    const direction = sortState.direction === "asc" ? 1 : -1;
+    if (sortState.mode === "type") {
       const leftType = left.kind === "folder" ? "folder" : resolveDocumentType(left.path);
       const rightType = right.kind === "folder" ? "folder" : resolveDocumentType(right.path);
-      const typeCompare = leftType.localeCompare(rightType, "zh-CN");
+      const typeCompare = leftType.localeCompare(rightType, "zh-CN") * direction;
       if (typeCompare !== 0) {
         return typeCompare;
       }
       return left.title.localeCompare(right.title, "zh-CN");
     }
-    if (sortMode === "name") {
+    if (sortState.mode === "name") {
+      return left.title.localeCompare(right.title, "zh-CN") * direction;
+    }
+    if (sortState.mode === "size") {
+      const leftSize = left.kind === "folder" ? -1 : left.sizeBytes ?? -1;
+      const rightSize = right.kind === "folder" ? -1 : right.sizeBytes ?? -1;
+      if (leftSize !== rightSize) {
+        return (leftSize - rightSize) * direction;
+      }
       return left.title.localeCompare(right.title, "zh-CN");
     }
-    const leftValue = left.kind === "folder" ? left.count : Date.parse(left.updatedAt || "") || 0;
-    const rightValue = right.kind === "folder" ? right.count : Date.parse(right.updatedAt || "") || 0;
-    if (rightValue !== leftValue) {
-      return rightValue - leftValue;
+    if (sortState.mode === "createdAt") {
+      const leftCreated = Date.parse(left.createdAt || "") || 0;
+      const rightCreated = Date.parse(right.createdAt || "") || 0;
+      if (leftCreated !== rightCreated) {
+        return (leftCreated - rightCreated) * direction;
+      }
+      return left.title.localeCompare(right.title, "zh-CN");
+    }
+    const leftValue = Date.parse(left.updatedAt || "") || 0;
+    const rightValue = Date.parse(right.updatedAt || "") || 0;
+    if (leftValue !== rightValue) {
+      return (leftValue - rightValue) * direction;
     }
     return left.title.localeCompare(right.title, "zh-CN");
   });
   return next;
+}
+
+function getDefaultSortState(mode: LibrarySortMode): LibrarySortState {
+  return {
+    mode,
+    direction: mode === "name" || mode === "type" ? "asc" : "desc"
+  };
+}
+
+function mapFinderColumnToSortMode(column: FinderColumnKey): LibrarySortMode {
+  switch (column) {
+    case "name":
+      return "name";
+    case "size":
+      return "size";
+    case "updatedAt":
+      return "recent";
+    case "type":
+      return "type";
+    case "createdAt":
+      return "createdAt";
+  }
+}
+
+function getNextSortState(current: LibrarySortState, column: FinderColumnKey): LibrarySortState {
+  const mode = mapFinderColumnToSortMode(column);
+  if (current.mode !== mode) {
+    return getDefaultSortState(mode);
+  }
+  return {
+    mode,
+    direction: current.direction === "asc" ? "desc" : "asc"
+  };
+}
+
+function renderFinderSortIndicator(sortState: LibrarySortState, column: FinderColumnKey) {
+  const mode = mapFinderColumnToSortMode(column);
+  if (sortState.mode !== mode) {
+    return "↕";
+  }
+  return sortState.direction === "asc" ? "↑" : "↓";
+}
+
+function buildFinderSortButtonLabel(label: string, sortState: LibrarySortState, column: FinderColumnKey) {
+  const mode = mapFinderColumnToSortMode(column);
+  if (sortState.mode !== mode) {
+    return t("shell.affairsFinderSortAction", { column: label });
+  }
+  return t("shell.affairsFinderSortCurrent", {
+    column: label,
+    direction: sortState.direction === "asc"
+      ? t("shell.affairsFinderSortDirectionAsc")
+      : t("shell.affairsFinderSortDirectionDesc")
+  });
 }
 
 function resolveDocumentType(filePath: string): string {
