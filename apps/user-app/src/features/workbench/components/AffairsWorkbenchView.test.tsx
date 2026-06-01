@@ -293,6 +293,7 @@ describe("AffairsWorkbenchView", () => {
   afterEach(() => {
     userPreferenceStore.hydrate(initialPreferenceState);
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   beforeEach(() => {
@@ -404,6 +405,19 @@ describe("AffairsWorkbenchView", () => {
         errorSummary: null
       }
     });
+
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {
+          return undefined;
+        }
+
+        disconnect() {
+          return undefined;
+        }
+      }
+    );
   });
 
   it("双击事务文档会复用文件预览工具并走事务预览接口", async () => {
@@ -443,7 +457,7 @@ describe("AffairsWorkbenchView", () => {
   it("文档库左侧栏不再显示旧的说明头和浏览模式切换", async () => {
     renderWorkbench();
 
-    await screen.findByText("Exchange 分层通讯簿");
+    await screen.findByText("Exchange 分层通讯簿.txt");
 
     expect(screen.queryByRole("heading", { name: t("shell.affairsLibrarySidebarTitle") })).not.toBeInTheDocument();
     expect(screen.queryByText(t("shell.affairsLibrarySummary"))).not.toBeInTheDocument();
@@ -454,7 +468,7 @@ describe("AffairsWorkbenchView", () => {
   it("没有收藏内容时会自动隐藏收藏夹分组", async () => {
     renderWorkbench();
 
-    await screen.findByText("Exchange 分层通讯簿");
+    await screen.findByText("Exchange 分层通讯簿.txt");
 
     expect(screen.queryByText(t("shell.affairsSectionGroupFavorites"))).not.toBeInTheDocument();
     expect(screen.queryByText(t("shell.affairsFavoritesEmpty"))).not.toBeInTheDocument();
@@ -598,6 +612,7 @@ describe("AffairsWorkbenchView", () => {
     const nameCell = row.querySelector(".affairs-finder-name");
     expect(nameCell).not.toBeNull();
     expect(nameCell).toHaveClass("affairs-finder-name");
+    expect(nameCell).toHaveAttribute("title", "Exchange 分层通讯簿.txt");
   });
 
   it("列表模式文件夹种类会显示更像 macOS 的文案", async () => {
@@ -614,6 +629,45 @@ describe("AffairsWorkbenchView", () => {
 
     const folderRow = await screen.findByRole("button", { name: /AGENTS/i });
     expect(within(folderRow).getByText(t("shell.affairsFinderKindFolder"))).toBeInTheDocument();
+    expect(folderRow.querySelector(".affairs-finder-name")).toHaveAttribute("title", "AGENTS");
+  });
+
+  it("文档名称显示真实文件名，不显示摘要标题", async () => {
+    conversationApiMock.listAffairsLibraryDocuments.mockResolvedValue(createDocumentListResponse([
+      {
+        documentId: "doc-actual-name",
+        path: "26.05.25 山东电力工程咨询院有限公司2026年统一云平台扩容采购招标文件V1.0.docx",
+        title: "中华人民共和国",
+        summary: "事务文档摘要",
+        updatedAt: "2026-05-31T08:00:00.000Z",
+        createdAt: "2026-05-30T08:00:00.000Z",
+        sizeBytes: 2048,
+        tags: [],
+        derivedTags: [],
+        isFavorite: false
+      }
+    ]));
+
+    renderWorkbench();
+
+    fireEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibraryViewModeList") }));
+
+    const fileName = "26.05.25 山东电力工程咨询院有限公司2026年统一云平台扩容采购招标文件V1.0.docx";
+    const documentRow = await screen.findByRole("button", { name: new RegExp(fileName.replace(/\./g, "\\."), "i") });
+    await waitFor(() => {
+      const nameCell = documentRow?.querySelector(".affairs-finder-name");
+      expect(nameCell?.textContent?.trim()).toBe(fileName);
+    });
+    const fileNameNode = documentRow?.querySelector(".affairs-finder-name");
+    const row = fileNameNode?.closest("button");
+    expect(row).toBeTruthy();
+    expect(fileNameNode?.textContent?.trim()).toBe(fileName);
+    expect(within(row as HTMLElement).queryByText("中华人民共和国")).not.toBeInTheDocument();
+
+    await userEvent.click(row as HTMLElement);
+    const detailPanel = document.querySelector(".affairs-detail-block");
+    expect(detailPanel).not.toBeNull();
+    expect(within(detailPanel as HTMLElement).getByRole("heading", { name: fileName })).toBeInTheDocument();
   });
 
   it("列表模式列宽支持拖拽调整", async () => {
@@ -643,6 +697,57 @@ describe("AffairsWorkbenchView", () => {
     expect(header?.style.gridTemplateColumns).toContain("420px");
     expect((resizedRow as HTMLButtonElement).style.gridTemplateColumns).toContain("420px");
   });
+
+  it("列表视图滚动后会继续显示后面的文件夹记录，不会只停在前几项", async () => {
+    conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
+      folders: Array.from({ length: 140 }, (_, index) => ({
+        path: `文件夹${String(index + 1).padStart(3, "0")}`,
+        name: `文件夹${String(index + 1).padStart(3, "0")}`,
+        parentPath: null,
+        depth: 1,
+        directDocumentCount: 1,
+        documentCount: 1,
+        createdAt: "2026-05-30T08:00:00.000Z",
+        updatedAt: "2026-05-31T08:00:00.000Z"
+      }))
+    }));
+    conversationApiMock.listAffairsLibraryDocuments.mockResolvedValue({
+      total: 0,
+      offset: 0,
+      limit: 120,
+      items: []
+    });
+
+    renderWorkbench();
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibraryViewModeList") }));
+
+    await waitFor(() => {
+      expect(document.querySelector(".affairs-finder-list")).not.toBeNull();
+    });
+    const listViewport = document.querySelector(".affairs-finder-list") as HTMLDivElement | null;
+    expect(listViewport).not.toBeNull();
+    if (!listViewport) {
+      return;
+    }
+
+    Object.defineProperty(listViewport, "clientHeight", {
+      configurable: true,
+      get: () => 400
+    });
+    Object.defineProperty(listViewport, "scrollHeight", {
+      configurable: true,
+      get: () => 5600
+    });
+
+    listViewport.scrollTop = 4200;
+    fireEvent.scroll(listViewport);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /文件夹110/i })).toBeInTheDocument();
+    });
+  });
+
+
 
   it("标签树路径会在面包屑里显示每一级标签名称", async () => {
     renderWorkbench();
@@ -819,7 +924,7 @@ describe("AffairsWorkbenchView", () => {
 
     renderWorkbench();
 
-    await screen.findByText("Exchange 分层通讯簿");
+    await screen.findByText("Exchange 分层通讯簿.txt");
     expect(conversationApiMock.requestAffairsLibraryRefresh).not.toHaveBeenCalled();
   });
 
@@ -976,7 +1081,7 @@ describe("AffairsWorkbenchView", () => {
   it("详情区会提供打开本地镜像文件按钮", async () => {
     renderWorkbench();
 
-    const button = await screen.findByText("Exchange 分层通讯簿");
+    const button = await screen.findByText("Exchange 分层通讯簿.txt");
     await userEvent.click(button);
 
     expect(await screen.findByRole("button", { name: t("shell.affairsLibraryOpenLocalFileAction") })).toBeInTheDocument();
@@ -1043,4 +1148,6 @@ describe("AffairsWorkbenchView", () => {
       expect(conversationApiMock.getAffairsLibraryConfig).toHaveBeenCalledTimes(2);
     });
   });
+
+
 });

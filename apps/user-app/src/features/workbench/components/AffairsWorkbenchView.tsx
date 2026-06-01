@@ -142,6 +142,7 @@ type AffairsSidebarNode = {
 type DocumentRecord = {
   id: string;
   title: string;
+  displayName: string;
   filePath: string;
   fullPath: string | null;
   summary: string;
@@ -788,7 +789,7 @@ export function AffairsWorkbenchProvider({
         ? {
             objectType: "document",
             objectId: record.id,
-            title: record.title,
+            title: record.displayName,
             summary: record.summary,
             sourceRef: record.fullPath ?? record.filePath,
             assistantScope: `workspace:${workspaceId}:document:${record.id}`
@@ -1033,7 +1034,7 @@ export function AffairsWorkbenchProvider({
     openLibraryViewer: (record) => {
       setViewerState({
         filePath: record.filePath,
-        title: record.title
+        title: record.displayName
       });
     },
     saveLibraryBinding: async (rootDir) => {
@@ -1527,6 +1528,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     startX: number;
     startWidth: number;
   } | null>(null);
+  const listScrollRef = useRef<HTMLDivElement | null>(null);
 
   const favoriteFolderPathSet = useMemo(
     () => new Set(favoriteEntries.filter((item) => item.kind === "folder").map((item) => item.path)),
@@ -1589,7 +1591,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
   );
 
   useLayoutEffect(() => {
-    const element = stageScrollRef.current;
+    const element = state.viewMode === "list" ? listScrollRef.current : stageScrollRef.current;
     if (!element) {
       return;
     }
@@ -1607,7 +1609,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
   }, [state.viewMode, activeSection]);
 
   useEffect(() => {
-    const element = stageScrollRef.current;
+    const element = state.viewMode === "list" ? listScrollRef.current : stageScrollRef.current;
     if (!element) {
       return;
     }
@@ -1626,7 +1628,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
   }, [activeSection, state.viewMode, sortedLibraryEntries.length]);
 
   useEffect(() => {
-    const container = stageScrollRef.current;
+    const container = state.viewMode === "list" ? listScrollRef.current : stageScrollRef.current;
     if (!container || activeSection !== "library") {
       return;
     }
@@ -1645,7 +1647,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     container.addEventListener("scroll", handleScroll, { passive: true });
     handleScroll();
     return () => container.removeEventListener("scroll", handleScroll);
-  }, [activeSection, libraryDocumentHasMore, libraryDocumentsLoading, loadMoreLibraryDocuments]);
+  }, [activeSection, libraryDocumentHasMore, libraryDocumentsLoading, loadMoreLibraryDocuments, state.viewMode]);
 
   useEffect(() => () => {
     document.documentElement.removeAttribute("data-workbench-finder-column-resizing");
@@ -1766,7 +1768,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                               onClick={() => navigateLibraryFolder(entry.path)}
                             >
                               <div className="affairs-doc-icon">{renderFolderShape()}</div>
-                              <div className="affairs-doc-title">{entry.title}</div>
+                              <div className="affairs-doc-title" title={entry.title}>{entry.title}</div>
                               <div className="affairs-doc-footer">
                                 <span className="affairs-doc-muted">{t("shell.affairsLibraryFolderCardCount", { count: entry.count })}</span>
                               </div>
@@ -1785,7 +1787,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                               }}
                             >
                               <div className="affairs-doc-icon">{renderDocumentShape()}</div>
-                              <div className="affairs-doc-title">{entry.title}</div>
+                              <div className="affairs-doc-title" title={entry.title}>{entry.title}</div>
                               <div className="affairs-doc-footer">
                                 <span className="affairs-doc-muted">{formatRelativeMeta(entry.updatedAt)}</span>
                               </div>
@@ -1805,7 +1807,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                             onClick={() => navigateLibraryFolder(entry.path)}
                           >
                             <div className="affairs-doc-icon">{renderFolderShape()}</div>
-                            <div className="affairs-doc-title">{entry.title}</div>
+                            <div className="affairs-doc-title" title={entry.title}>{entry.title}</div>
                             <div className="affairs-doc-footer">
                               <span className="affairs-doc-muted">{t("shell.affairsLibraryFolderCardCount", { count: entry.count })}</span>
                             </div>
@@ -1824,7 +1826,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                       }}
                     >
                             <div className="affairs-doc-icon">{renderDocumentShape()}</div>
-                            <div className="affairs-doc-title">{entry.title}</div>
+                            <div className="affairs-doc-title" title={entry.title}>{entry.title}</div>
                             <div className="affairs-doc-footer">
                               <span className="affairs-doc-muted">{formatRelativeMeta(entry.updatedAt)}</span>
                             </div>
@@ -1841,7 +1843,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                   </>
                 ) : (
                   <>
-                <div ref={stageScrollRef} className="affairs-finder-shell">
+                <div className="affairs-finder-shell">
                 <div
                   className="affairs-finder-header"
                   aria-hidden="true"
@@ -1867,7 +1869,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                     </span>
                   ))}
                 </div>
-                <div className="affairs-finder-list affairs-finder-viewport">
+                <div ref={listScrollRef} className="affairs-finder-list affairs-finder-viewport">
                   <div className="affairs-finder-spacer" style={{ height: `${listMetrics.totalHeight}px` }}>
                     <div className="affairs-finder-virtual" style={{ transform: `translateY(${listMetrics.offsetTop}px)` }}>
                       {visibleListEntries.map((entry) => (
@@ -1881,7 +1883,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                           >
                             <span className="affairs-finder-name-cell">
                               <span className="affairs-finder-icon">{renderFolderShape("row")}</span>
-                              <span className="affairs-finder-name">{entry.title}</span>
+                              <span className="affairs-finder-name" title={entry.title}>{entry.title}</span>
                             </span>
                             <span className="affairs-finder-cell">{formatLibrarySize(null)}</span>
                             <span className="affairs-finder-cell">{formatFinderDateTime(entry.updatedAt)}</span>
@@ -1904,7 +1906,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                       >
                             <span className="affairs-finder-name-cell">
                               <span className="affairs-finder-icon">{renderDocumentShape("row")}</span>
-                              <span className="affairs-finder-name">{entry.title}</span>
+                              <span className="affairs-finder-name" title={entry.title}>{entry.title}</span>
                             </span>
                             <span className="affairs-finder-cell">{formatLibrarySize(entry.sizeBytes)}</span>
                             <span className="affairs-finder-cell">{formatFinderDateTime(entry.updatedAt)}</span>
@@ -2087,7 +2089,7 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
                 <section className="workbench-section-block affairs-detail-block affairs-detail-hero-block">
                   <div className="affairs-detail-headline">
                     <div>
-                      <h2>{selectedObject.record.title}</h2>
+                      <h2>{selectedObject.record.displayName}</h2>
                       <p>{selectedObject.record.summary}</p>
                     </div>
                     <span className="affairs-inline-pill">{t("shell.affairsLibraryDocumentDetailTitle")}</span>
@@ -3480,6 +3482,7 @@ function buildDocumentRecordsFromSnapshot(
     .map((document) => ({
       id: document.documentId,
       title: document.title,
+      displayName: resolveDocumentDisplayName(document.path),
       filePath: document.path,
       fullPath: rootDir ? `${rootDir}/${document.path}` : null,
       summary: document.summary?.trim() || t("shell.affairsAssistantContextFallback"),
@@ -3883,6 +3886,15 @@ function mergePagedLibraryDocumentPage(
   };
 }
 
+function resolveDocumentDisplayName(filePath: string): string {
+  const normalized = filePath.trim().replace(/\/+$/g, "");
+  if (!normalized) {
+    return t("common.unknown");
+  }
+  const segments = normalized.split("/").filter(Boolean);
+  return segments[segments.length - 1] || normalized;
+}
+
 function buildDirectoryHintKey(
   activeSection: string,
   browseMode: "folder" | "tag",
@@ -4117,7 +4129,7 @@ function buildLibraryEntries({
     return documents.map((document) => ({
       id: `document:${document.id}`,
       kind: "document",
-      title: document.title,
+      title: document.displayName,
       path: document.filePath,
       updatedAt: document.updatedAt,
       createdAt: document.createdAt,
@@ -4141,7 +4153,7 @@ function buildLibraryEntries({
     ...documents.map<LibraryEntry>((document) => ({
       id: `document:${document.id}`,
       kind: "document",
-      title: document.title,
+      title: document.displayName,
       path: document.filePath,
       updatedAt: document.updatedAt,
       createdAt: document.createdAt,
@@ -4663,19 +4675,11 @@ function resolveFinderKindLabel(filePath: string) {
     case "png":
     case "gif":
     case "webp":
-    case "svg":
       return t("shell.affairsFinderKindImage");
-    case "json":
-    case "yaml":
-    case "yml":
-    case "xml":
-    case "csv":
-      return t("shell.affairsFinderKindData");
     default:
-      return extension.toUpperCase();
+      return t("shell.affairsFinderKindData");
   }
 }
-
 function buildFinderGridTemplateColumns(widths: Record<FinderColumnKey, number>) {
   const normalized = {
     name: Number.isFinite(widths.name) ? widths.name : DEFAULT_FINDER_COLUMN_WIDTHS.name,
