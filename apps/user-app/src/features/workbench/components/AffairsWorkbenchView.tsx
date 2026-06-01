@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode
 } from "react";
 
@@ -61,6 +62,7 @@ import { WorkspaceImportBrowserModal } from "../../conversation/components/Works
 import { buildConversationTimelineSourceItems } from "../../conversation/timeline-source-items";
 import { getCodingNSDesktopBridge } from "../../../platform/desktop/codingns-desktop-bridge";
 import { usePlatform } from "../../../platform/platform-provider";
+import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
 import {
   computeVirtualGridMetrics,
@@ -94,7 +96,9 @@ interface AffairsAuxiliaryPanelProps {
 const LIBRARY_STAGE_PAGE_SIZE = 120;
 const DETAIL_VIEWER_MOUNT_DELAY_MS = 220;
 const FILE_REPEAT_ACTIVATION_MS = 450;
-const TAG_TREE_ROOT_BATCH_SIZE = 12;
+const TAG_TREE_CHILDREN_VISIBLE_LIMIT = 5;
+const TAG_TREE_ROOT_OVERFLOW_KEY = "__root__";
+const AFFAIRS_TAG_TREE_STATE_STORAGE_KEY_PREFIX = "codingns.affairs.tag-tree.state.";
 const LIST_ITEM_HEIGHT = 40;
 const LIST_VIRTUAL_OVERSCAN_ROWS = 2;
 const AFFAIRS_LIBRARY_STATUS_POLL_ACTIVE_MS = 3_000;
@@ -109,6 +113,23 @@ const AFFAIRS_LIBRARY_PRESET_EXTENSIONS = [
 ] as const;
 
 type LibrarySortMode = "recent" | "name" | "type";
+type FinderColumnKey = "name" | "size" | "updatedAt" | "type" | "createdAt";
+
+const FINDER_COLUMN_MIN_WIDTHS: Record<FinderColumnKey, number> = {
+  name: 240,
+  size: 88,
+  updatedAt: 156,
+  type: 120,
+  createdAt: 156
+};
+
+const DEFAULT_FINDER_COLUMN_WIDTHS: Record<FinderColumnKey, number> = {
+  name: 320,
+  size: 96,
+  updatedAt: 176,
+  type: 132,
+  createdAt: 176
+};
 
 type AffairsSidebarNode = {
   id: string;
@@ -127,6 +148,8 @@ type DocumentRecord = {
   isFavorite: boolean;
   tags: string[];
   derivedTags: string[];
+  createdAt: string | null;
+  sizeBytes: number | null;
   updatedAt: string;
 };
 
@@ -150,6 +173,12 @@ type TagRecord = {
   count: number;
 };
 
+type StoredAffairsTagTreeState = {
+  expandedPaths?: string[];
+  expandedOverflowPaths?: string[];
+  accessCounts?: Record<string, number>;
+};
+
 type FolderRecord = {
   id: string;
   label: string;
@@ -158,6 +187,8 @@ type FolderRecord = {
   depth: number;
   directCount: number;
   count: number;
+  createdAt: string | null;
+  updatedAt: string | null;
 };
 
 type LibraryEntry =
@@ -168,6 +199,8 @@ type LibraryEntry =
       path: string;
       count: number;
       isFavorite: boolean;
+      createdAt: string | null;
+      updatedAt: string | null;
     }
   | {
       id: string;
@@ -175,6 +208,8 @@ type LibraryEntry =
       title: string;
       path: string;
       updatedAt: string;
+      createdAt: string | null;
+      sizeBytes: number | null;
       summary: string;
       isFavorite: boolean;
       documentId: string;
@@ -1245,9 +1280,15 @@ export function AffairsSidebarPanel() {
 
   const favoriteFolderItems = favoriteEntries.filter((item) => item.kind === "folder");
   const favoriteTagItems = favoriteEntries.filter((item) => item.kind === "tag" && isVisibleTagPath(item.path));
-  const tagTree = buildTagTree(tagRecords);
-  const [expandedTagPaths, setExpandedTagPaths] = useState<string[]>([]);
-  const [visibleTagRootCount, setVisibleTagRootCount] = useState(TAG_TREE_ROOT_BATCH_SIZE);
+  const [tagTreeState, setTagTreeState] = useState<StoredAffairsTagTreeState>(() => readStoredAffairsTagTreeState(state.workspaceId));
+  const expandedTagPaths = tagTreeState.expandedPaths ?? [];
+  const expandedOverflowPaths = tagTreeState.expandedOverflowPaths ?? [];
+  const tagAccessCounts = tagTreeState.accessCounts ?? {};
+  const tagTree = useMemo(() => buildTagTree(tagRecords, tagAccessCounts), [tagAccessCounts, tagRecords]);
+
+  useEffect(() => {
+    setTagTreeState(readStoredAffairsTagTreeState(state.workspaceId));
+  }, [state.workspaceId]);
 
   useEffect(() => {
     if (state.browseMode !== "tag") {
@@ -1257,18 +1298,21 @@ export function AffairsSidebarPanel() {
     if (!selectedPath) {
       return;
     }
-    setExpandedTagPaths((current) => {
-      const next = new Set(current);
+    setTagTreeState((previous) => {
+      const nextExpandedPaths = new Set(previous.expandedPaths ?? []);
       for (const parentPath of buildAncestorPaths(selectedPath)) {
-        next.add(parentPath);
+        nextExpandedPaths.add(parentPath);
       }
-      return Array.from(next);
+      const nextPaths = Array.from(nextExpandedPaths);
+      const nextOverflowPaths = Array.from(new Set([...(previous.expandedOverflowPaths ?? []), ...collectOverflowPathsForSelection(tagTree, selectedPath)]));
+      if (
+        areStringArraysEqual(previous.expandedPaths ?? [], nextPaths)
+        && areStringArraysEqual(previous.expandedOverflowPaths ?? [], nextOverflowPaths)
+      ) {
+        return previous;
+      }
+      return { ...previous, expandedPaths: nextPaths, expandedOverflowPaths: nextOverflowPaths };
     });
-  }, [favoriteEntries, state]);
-
-  useEffect(() => {
-    const requiredRoots = tagTree.filter((node) => isTagNodeVisibleBySelection(node, state, favoriteEntries)).length;
-    setVisibleTagRootCount((current) => Math.max(TAG_TREE_ROOT_BATCH_SIZE, current, requiredRoots));
   }, [favoriteEntries, state, tagTree]);
 
   useEffect(() => {
@@ -1281,10 +1325,55 @@ export function AffairsSidebarPanel() {
     selectSidebarNode("library:tag-root");
   }, [selectSidebarNode, state.browseMode, state.selectedTagPath, tagRecords]);
 
+  useEffect(() => {
+    persistAffairsTagTreeState(state.workspaceId, tagTreeState);
+  }, [state.workspaceId, tagTreeState]);
+
+  useEffect(() => {
+    if (state.browseMode !== "tag" || !state.selectedTagPath?.trim()) {
+      return;
+    }
+    const tagPath = state.selectedTagPath.trim();
+    setTagTreeState((previous) => {
+      const accessCounts = previous.accessCounts ?? {};
+      return {
+        ...previous,
+        accessCounts: {
+          ...accessCounts,
+          [tagPath]: (accessCounts[tagPath] ?? 0) + 1
+        }
+      };
+    });
+  }, [state.browseMode, state.selectedTagPath]);
+
   const visibleTagRoots = useMemo(
-    () => tagTree.slice(0, visibleTagRootCount),
-    [tagTree, visibleTagRootCount]
+    () => resolveVisibleTagChildren(tagTree, TAG_TREE_ROOT_OVERFLOW_KEY, expandedOverflowPaths),
+    [expandedOverflowPaths, tagTree]
   );
+
+  const toggleExpandedTagPath = (path: string) => {
+    setTagTreeState((previous) => {
+      const current = previous.expandedPaths ?? [];
+      return {
+        ...previous,
+        expandedPaths: current.includes(path)
+          ? current.filter((item) => item !== path)
+          : [...current, path]
+      };
+    });
+  };
+
+  const toggleOverflowPath = (path: string) => {
+    setTagTreeState((previous) => {
+      const current = previous.expandedOverflowPaths ?? [];
+      return {
+        ...previous,
+        expandedOverflowPaths: current.includes(path)
+          ? current.filter((item) => item !== path)
+          : [...current, path]
+      };
+    });
+  };
 
   return (
     <section className="workbench-section-block affairs-sidebar-block">
@@ -1364,22 +1453,27 @@ export function AffairsSidebarPanel() {
                     node={node}
                     state={state}
                     expandedPaths={expandedTagPaths}
+                    expandedOverflowPaths={expandedOverflowPaths}
                     onSelect={selectSidebarNode}
-                    onToggleExpand={(path) => {
-                      setExpandedTagPaths((current) => current.includes(path)
-                        ? current.filter((item) => item !== path)
-                        : [...current, path]);
-                    }}
+                    onToggleExpand={toggleExpandedTagPath}
+                    onToggleOverflow={toggleOverflowPath}
                     onToggleFavorite={toggleFavorite}
                   />
                 ))}
-                {visibleTagRootCount < tagTree.length ? (
+                {tagTree.length > TAG_TREE_CHILDREN_VISIBLE_LIMIT ? (
                   <button
                     type="button"
-                    className="ghost-button affairs-tag-tree-more"
-                    onClick={() => setVisibleTagRootCount((current) => Math.min(current + TAG_TREE_ROOT_BATCH_SIZE, tagTree.length))}
+                    className="affairs-tag-tree-more"
+                    onClick={() => toggleOverflowPath(TAG_TREE_ROOT_OVERFLOW_KEY)}
                   >
-                    {t("shell.favoriteExpandMore")}
+                    <span className="affairs-tag-tree-more-icon" aria-hidden="true">
+                      {expandedOverflowPaths.includes(TAG_TREE_ROOT_OVERFLOW_KEY) ? "▴" : "▾"}
+                    </span>
+                    <span className="affairs-tag-tree-more-label">
+                    {expandedOverflowPaths.includes(TAG_TREE_ROOT_OVERFLOW_KEY)
+                      ? t("shell.affairsLibraryTagTreeShowLess")
+                      : t("shell.affairsLibraryTagTreeShowMore")}
+                    </span>
                   </button>
                 ) : null}
               </div>
@@ -1427,6 +1521,12 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
   const [stageViewportWidth, setStageViewportWidth] = useState(0);
   const [stageScrollTop, setStageScrollTop] = useState(0);
   const [sortMode, setSortMode] = useState<LibrarySortMode>("recent");
+  const [finderColumnWidths, setFinderColumnWidths] = useState<Record<FinderColumnKey, number>>(DEFAULT_FINDER_COLUMN_WIDTHS);
+  const finderResizeStateRef = useRef<{
+    column: FinderColumnKey;
+    startX: number;
+    startWidth: number;
+  } | null>(null);
 
   const favoriteFolderPathSet = useMemo(
     () => new Set(favoriteEntries.filter((item) => item.kind === "folder").map((item) => item.path)),
@@ -1482,6 +1582,10 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
   const folderBreadcrumbs = useMemo(
     () => buildFolderBreadcrumbs(state.selectedFolderPath),
     [state.selectedFolderPath]
+  );
+  const finderGridTemplateColumns = useMemo(
+    () => buildFinderGridTemplateColumns(finderColumnWidths),
+    [finderColumnWidths]
   );
 
   useLayoutEffect(() => {
@@ -1542,6 +1646,77 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     handleScroll();
     return () => container.removeEventListener("scroll", handleScroll);
   }, [activeSection, libraryDocumentHasMore, libraryDocumentsLoading, loadMoreLibraryDocuments]);
+
+  useEffect(() => () => {
+    document.documentElement.removeAttribute("data-workbench-finder-column-resizing");
+  }, []);
+
+  useEffect(() => {
+    if (state.viewMode !== "list") {
+      document.documentElement.removeAttribute("data-workbench-finder-column-resizing");
+    }
+  }, [state.viewMode]);
+
+  function handleFinderColumnResizeStart(column: FinderColumnKey, event: ReactPointerEvent<HTMLSpanElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    finderResizeStateRef.current = {
+      column,
+      startX: event.clientX,
+      startWidth: finderColumnWidths[column]
+    };
+    document.documentElement.setAttribute("data-workbench-finder-column-resizing", "true");
+
+    const target = event.currentTarget;
+    if (typeof target.setPointerCapture === "function") {
+      target.setPointerCapture(event.pointerId);
+    }
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const current = finderResizeStateRef.current;
+      if (!current || current.column !== column) {
+        return;
+      }
+      if (!Number.isFinite(moveEvent.clientX)) {
+        return;
+      }
+      const delta = moveEvent.clientX - current.startX;
+      const nextWidth = Math.max(FINDER_COLUMN_MIN_WIDTHS[column], Math.round(current.startWidth + delta));
+      setFinderColumnWidths((previous) => {
+        if (previous[column] === nextWidth) {
+          return previous;
+        }
+        return {
+          ...previous,
+          [column]: nextWidth
+        };
+      });
+    };
+
+    const finishResize = () => {
+      finderResizeStateRef.current = null;
+      document.documentElement.removeAttribute("data-workbench-finder-column-resizing");
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", finishResize);
+      window.removeEventListener("pointercancel", finishResize);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", finishResize);
+    window.addEventListener("pointercancel", finishResize);
+  }
+
+  const finderColumns: Array<{
+    key: FinderColumnKey;
+    label: string;
+    resizable: boolean;
+  }> = [
+    { key: "name", label: t("shell.affairsFinderColumnName"), resizable: true },
+    { key: "size", label: t("shell.affairsFinderColumnSize"), resizable: true },
+    { key: "updatedAt", label: t("shell.affairsFinderColumnUpdatedAt"), resizable: true },
+    { key: "type", label: t("shell.affairsFinderColumnType"), resizable: true },
+    { key: "createdAt", label: t("shell.affairsFinderColumnCreatedAt"), resizable: false }
+  ];
 
   return (
     <div className="affairs-main-panel">
@@ -1667,11 +1842,30 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                 ) : (
                   <>
                 <div ref={stageScrollRef} className="affairs-finder-shell">
-                <div className="affairs-finder-header" aria-hidden="true">
-                  <span className="affairs-finder-cell">{t("shell.affairsFinderColumnName")}</span>
-                  <span className="affairs-finder-cell">{t("shell.affairsFinderColumnType")}</span>
-                  <span className="affairs-finder-cell">{t("shell.affairsFinderColumnMeta")}</span>
-                  <span className="affairs-finder-cell">{t("shell.affairsFinderColumnPath")}</span>
+                <div
+                  className="affairs-finder-header"
+                  aria-hidden="true"
+                  style={{ gridTemplateColumns: finderGridTemplateColumns }}
+                >
+                  {finderColumns.map((column) => (
+                    <span
+                      key={column.key}
+                      className="affairs-finder-header-cell affairs-finder-cell"
+                      data-column={column.key}
+                    >
+                      <span className="affairs-finder-header-label">{column.label}</span>
+                      {column.resizable ? (
+                        <span
+                          role="separator"
+                          aria-orientation="vertical"
+                          aria-label={t("shell.affairsFinderResizeColumn", { column: column.label })}
+                          className="affairs-finder-column-resizer"
+                          data-column={column.key}
+                          onPointerDown={(event) => handleFinderColumnResizeStart(column.key, event)}
+                        />
+                      ) : null}
+                    </span>
+                  ))}
                 </div>
                 <div className="affairs-finder-list affairs-finder-viewport">
                   <div className="affairs-finder-spacer" style={{ height: `${listMetrics.totalHeight}px` }}>
@@ -1683,14 +1877,16 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                             type="button"
                             className={state.selectedFolderPath === entry.path ? "affairs-finder-row active" : "affairs-finder-row"}
                             onClick={() => navigateLibraryFolder(entry.path)}
+                            style={{ gridTemplateColumns: finderGridTemplateColumns }}
                           >
                             <span className="affairs-finder-name-cell">
                               <span className="affairs-finder-icon">{renderFolderShape("row")}</span>
                               <span className="affairs-finder-name">{entry.title}</span>
                             </span>
-                            <span className="affairs-finder-cell">{t("shell.affairsLibraryBrowseModeFolder")}</span>
-                            <span className="affairs-finder-cell">{t("shell.affairsLibraryFolderCardCount", { count: entry.count })}</span>
-                            <span className="affairs-finder-cell">{entry.path}</span>
+                            <span className="affairs-finder-cell">{formatLibrarySize(null)}</span>
+                            <span className="affairs-finder-cell">{formatFinderDateTime(entry.updatedAt)}</span>
+                            <span className="affairs-finder-cell">{t("shell.affairsFinderKindFolder")}</span>
+                            <span className="affairs-finder-cell">{formatFinderDateTime(entry.createdAt)}</span>
                           </button>
                         ) : (
                       <button
@@ -1698,6 +1894,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                         type="button"
                         className={selectedObject.section === "library" && selectedObject.record?.id === entry.documentId ? "affairs-finder-row active" : "affairs-finder-row"}
                         onClick={() => selectObject(entry.documentId)}
+                        style={{ gridTemplateColumns: finderGridTemplateColumns }}
                         onDoubleClick={() => {
                           const record = documentRecords.find((item) => item.id === entry.documentId);
                           if (record) {
@@ -1709,9 +1906,10 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                               <span className="affairs-finder-icon">{renderDocumentShape("row")}</span>
                               <span className="affairs-finder-name">{entry.title}</span>
                             </span>
-                            <span className="affairs-finder-cell">{t("shell.affairsLibraryDocumentDetailTitle")}</span>
-                            <span className="affairs-finder-cell">{formatRelativeMeta(entry.updatedAt)}</span>
-                            <span className="affairs-finder-cell">{entry.path}</span>
+                            <span className="affairs-finder-cell">{formatLibrarySize(entry.sizeBytes)}</span>
+                            <span className="affairs-finder-cell">{formatFinderDateTime(entry.updatedAt)}</span>
+                            <span className="affairs-finder-cell">{resolveFinderKindLabel(entry.path)}</span>
+                            <span className="affairs-finder-cell">{formatFinderDateTime(entry.createdAt)}</span>
                           </button>
                         )
                       ))}
@@ -2065,20 +2263,27 @@ function AffairsTagTreeNode({
   node,
   state,
   expandedPaths,
+  expandedOverflowPaths,
   onSelect,
   onToggleExpand,
+  onToggleOverflow,
   onToggleFavorite
 }: {
   node: TagTreeNodeRecord;
   state: AffairsViewState;
   expandedPaths: string[];
+  expandedOverflowPaths: string[];
   onSelect: (nodeId: string) => void;
   onToggleExpand: (path: string) => void;
+  onToggleOverflow: (path: string) => void;
   onToggleFavorite: (favorite: AffairsLibraryFavoriteRecordDto) => Promise<void>;
 }) {
   const nodeId = `library:tag:${node.path}`;
   const hasChildren = node.children.length > 0;
   const expanded = hasChildren && expandedPaths.includes(node.path);
+  const visibleChildren = resolveVisibleTagChildren(node.children, node.path, expandedOverflowPaths);
+  const hasOverflowChildren = node.children.length > TAG_TREE_CHILDREN_VISIBLE_LIMIT;
+  const overflowExpanded = expandedOverflowPaths.includes(node.path);
   return (
     <div className="affairs-tag-tree-node" role="treeitem" aria-expanded={hasChildren ? expanded : undefined}>
       <div className={nodeId === state.selectedNodeId ? "affairs-sidebar-item active" : "affairs-sidebar-item"} data-tone="tag">
@@ -2108,17 +2313,31 @@ function AffairsTagTreeNode({
       </div>
       {expanded ? (
         <div className="affairs-tag-tree-children" role="group">
-          {node.children.map((child) => (
+          {visibleChildren.map((child) => (
             <AffairsTagTreeNode
               key={child.path}
               node={child}
               state={state}
               expandedPaths={expandedPaths}
+              expandedOverflowPaths={expandedOverflowPaths}
               onSelect={onSelect}
               onToggleExpand={onToggleExpand}
+              onToggleOverflow={onToggleOverflow}
               onToggleFavorite={onToggleFavorite}
             />
           ))}
+          {hasOverflowChildren ? (
+            <button
+              type="button"
+              className="affairs-tag-tree-more"
+              onClick={() => onToggleOverflow(node.path)}
+            >
+              <span className="affairs-tag-tree-more-icon" aria-hidden="true">{overflowExpanded ? "▴" : "▾"}</span>
+              <span className="affairs-tag-tree-more-label">
+                {overflowExpanded ? t("shell.affairsLibraryTagTreeShowLess") : t("shell.affairsLibraryTagTreeShowMore")}
+              </span>
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -3267,6 +3486,8 @@ function buildDocumentRecordsFromSnapshot(
       isFavorite: document.isFavorite,
       tags: document.tags,
       derivedTags: document.derivedTags,
+      createdAt: document.createdAt ?? null,
+      sizeBytes: typeof document.sizeBytes === "number" ? document.sizeBytes : null,
       updatedAt: document.updatedAt
     }));
 }
@@ -3307,7 +3528,9 @@ function buildFolderRecordsFromSnapshot(folders: AffairsLibraryFolderNodeDto[]):
       parentPath: item.parentPath,
       depth: item.path ? item.path.split("/").length - 1 : 0,
       directCount: item.directDocumentCount,
-      count: item.documentCount
+      count: item.documentCount,
+      createdAt: item.createdAt ?? null,
+      updatedAt: item.updatedAt ?? null
     }));
 }
 
@@ -3327,7 +3550,7 @@ type TagDetailState = {
   nestedDocumentCount: number;
 } | null;
 
-function buildTagTree(tags: TagRecord[]): TagTreeNodeRecord[] {
+function buildTagTree(tags: TagRecord[], accessCounts: Record<string, number>): TagTreeNodeRecord[] {
   const nodeMap = new Map<string, TagTreeNodeRecord>();
   tags.forEach((tag) => {
     nodeMap.set(tag.path, { ...tag, children: [] });
@@ -3341,11 +3564,122 @@ function buildTagTree(tags: TagRecord[]): TagTreeNodeRecord[] {
     roots.push(node);
   });
   const sortNodes = (items: TagTreeNodeRecord[]) => {
-    items.sort((left, right) => left.path.localeCompare(right.path, "zh-CN"));
+    items.sort((left, right) => compareTagTreeNodes(left, right, accessCounts));
     items.forEach((item) => sortNodes(item.children));
   };
   sortNodes(roots);
   return roots;
+}
+
+function compareTagTreeNodes(left: TagTreeNodeRecord, right: TagTreeNodeRecord, accessCounts: Record<string, number>): number {
+  if (isTimeTagNode(left) || isTimeTagNode(right)) {
+    const timeComparison = compareTimeTagNode(left, right);
+    if (timeComparison !== 0) {
+      return timeComparison;
+    }
+  }
+  const accessComparison = (accessCounts[right.path] ?? 0) - (accessCounts[left.path] ?? 0);
+  if (accessComparison !== 0) {
+    return accessComparison;
+  }
+  const countComparison = right.count - left.count;
+  if (countComparison !== 0) {
+    return countComparison;
+  }
+  return left.label.localeCompare(right.label, "zh-CN");
+}
+
+function isTimeTagNode(node: TagTreeNodeRecord): boolean {
+  const rootType = node.rootType.trim().toLowerCase();
+  return rootType === "时间" || rootType === "time";
+}
+
+function compareTimeTagNode(left: TagTreeNodeRecord, right: TagTreeNodeRecord): number {
+  const leftRank = resolveTimeTagSortRank(left);
+  const rightRank = resolveTimeTagSortRank(right);
+  if (leftRank !== null || rightRank !== null) {
+    if (leftRank === null) {
+      return 1;
+    }
+    if (rightRank === null) {
+      return -1;
+    }
+    if (leftRank !== rightRank) {
+      return rightRank - leftRank;
+    }
+  }
+  return 0;
+}
+
+function resolveTimeTagSortRank(node: TagTreeNodeRecord): number | null {
+  const normalized = node.path.trim();
+  if (normalized === "时间") {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  const relativePath = normalized.startsWith("时间/") ? normalized.slice("时间/".length) : normalized;
+  if (relativePath === "最近3天") {
+    return Number.MAX_SAFE_INTEGER - 3;
+  }
+  if (relativePath === "最近7天") {
+    return Number.MAX_SAFE_INTEGER - 7;
+  }
+  if (relativePath === "最近30天") {
+    return Number.MAX_SAFE_INTEGER - 30;
+  }
+  const segments = relativePath.split("/").filter(Boolean);
+  if (segments.length === 0) {
+    return null;
+  }
+  const numbers = segments.map((segment) => Number.parseInt(segment, 10));
+  if (numbers.some((value) => !Number.isFinite(value))) {
+    return null;
+  }
+  if (numbers.length === 1) {
+    return numbers[0];
+  }
+  if (numbers.length === 2) {
+    return numbers[0] * 100 + numbers[1];
+  }
+  if (numbers.length === 3) {
+    return numbers[0] * 10_000 + numbers[1] * 100 + numbers[2];
+  }
+  return numbers.reduce((value, segment) => value * 100 + segment, 0);
+}
+
+function resolveVisibleTagChildren(
+  items: TagTreeNodeRecord[],
+  path: string,
+  expandedOverflowPaths: string[]
+): TagTreeNodeRecord[] {
+  if (items.length <= TAG_TREE_CHILDREN_VISIBLE_LIMIT || expandedOverflowPaths.includes(path)) {
+    return items;
+  }
+  return items.slice(0, TAG_TREE_CHILDREN_VISIBLE_LIMIT);
+}
+
+function collectOverflowPathsForSelection(nodes: TagTreeNodeRecord[], selectedPath: string): string[] {
+  const matchedPaths: string[] = [];
+  const visit = (items: TagTreeNodeRecord[], parentPath: string) => {
+    const hiddenChildren = items.slice(TAG_TREE_CHILDREN_VISIBLE_LIMIT);
+    const selectedInHidden = hiddenChildren.some((child) => selectedPath === child.path || selectedPath.startsWith(`${child.path}/`));
+    if (selectedInHidden) {
+      matchedPaths.push(parentPath);
+    }
+    items.forEach((child) => {
+      if (selectedPath === child.path || selectedPath.startsWith(`${child.path}/`)) {
+        visit(child.children, child.path);
+      }
+    });
+  };
+  visit(nodes, TAG_TREE_ROOT_OVERFLOW_KEY);
+  return matchedPaths;
+}
+
+function areStringArraysEqual(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((item, index) => item === right[index]);
 }
 
 function isTagNodeVisibleBySelection(
@@ -3385,6 +3719,46 @@ function buildAncestorPaths(pathValue: string): string[] {
     paths.push(segments.slice(0, index + 1).join("/"));
   }
   return paths;
+}
+
+function readStoredAffairsTagTreeState(workspaceId: string): StoredAffairsTagTreeState {
+  if (typeof window === "undefined") {
+    return {};
+  }
+  try {
+    const raw = window.localStorage.getItem(`${AFFAIRS_TAG_TREE_STATE_STORAGE_KEY_PREFIX}${workspaceId}`);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw) as StoredAffairsTagTreeState;
+    return {
+      expandedPaths: Array.isArray(parsed.expandedPaths) ? parsed.expandedPaths.filter((item): item is string => typeof item === "string") : [],
+      expandedOverflowPaths: Array.isArray(parsed.expandedOverflowPaths)
+        ? parsed.expandedOverflowPaths.filter((item): item is string => typeof item === "string")
+        : [],
+      accessCounts: parsed.accessCounts && typeof parsed.accessCounts === "object" ? parsed.accessCounts : {}
+    };
+  } catch {
+    return {};
+  }
+}
+
+function persistAffairsTagTreeState(workspaceId: string, state: StoredAffairsTagTreeState): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(
+      `${AFFAIRS_TAG_TREE_STATE_STORAGE_KEY_PREFIX}${workspaceId}`,
+      JSON.stringify({
+        expandedPaths: state.expandedPaths ?? [],
+        expandedOverflowPaths: state.expandedOverflowPaths ?? [],
+        accessCounts: state.accessCounts ?? {}
+      })
+    );
+  } catch {
+    // 忽略本地存储不可用。
+  }
 }
 
 function buildAffairsLibrarySnapshotCacheKey(workspaceId: string) {
@@ -3726,6 +4100,8 @@ function buildLibraryEntries({
       title: document.title,
       path: document.filePath,
       updatedAt: document.updatedAt,
+      createdAt: document.createdAt,
+      sizeBytes: document.sizeBytes,
       summary: document.summary,
       isFavorite: document.isFavorite,
       documentId: document.id
@@ -3738,7 +4114,9 @@ function buildLibraryEntries({
       title: folder.label,
       path: folder.path,
       count: folder.count,
-      isFavorite: favoriteFolderPathSet.has(folder.path)
+      isFavorite: favoriteFolderPathSet.has(folder.path),
+      createdAt: folder.createdAt,
+      updatedAt: folder.updatedAt
     })),
     ...documents.map<LibraryEntry>((document) => ({
       id: `document:${document.id}`,
@@ -3746,6 +4124,8 @@ function buildLibraryEntries({
       title: document.title,
       path: document.filePath,
       updatedAt: document.updatedAt,
+      createdAt: document.createdAt,
+      sizeBytes: document.sizeBytes,
       summary: document.summary,
       isFavorite: document.isFavorite,
       documentId: document.id
@@ -4174,6 +4554,123 @@ function formatRelativeMeta(value: string) {
     hour: "2-digit",
     minute: "2-digit"
   }).format(new Date(value));
+}
+
+function formatFinderDateTime(value: string | null | undefined) {
+  if (!value) {
+    return "—";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "—";
+  }
+  const language = userPreferenceStore.getState().profile.language ?? "zh-CN";
+  const isEnglish = language === "en-US";
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfTarget = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const dayDiff = Math.round((startOfToday.getTime() - startOfTarget.getTime()) / 86400000);
+  const timeLabel = new Intl.DateTimeFormat(language, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(date);
+
+  if (dayDiff === 0) {
+    return `${t("shell.affairsFinderDateToday")} ${timeLabel}`;
+  }
+  if (dayDiff === 1) {
+    return `${t("shell.affairsFinderDateYesterday")} ${timeLabel}`;
+  }
+
+  if (isEnglish) {
+    return new Intl.DateTimeFormat(language, {
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }).format(date);
+  }
+
+  return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()} ${timeLabel}`;
+}
+
+function formatLibrarySize(value: number | null | undefined) {
+  if (!Number.isFinite(value) || value === null || value === undefined || value < 0) {
+    return "—";
+  }
+  const normalized = Number(value);
+  if (normalized < 1024) {
+    return `${Math.round(normalized)} B`;
+  }
+  if (normalized < 1024 ** 2) {
+    return `${(normalized / 1024).toFixed(1)} KB`;
+  }
+  if (normalized < 1024 ** 3) {
+    return `${(normalized / 1024 ** 2).toFixed(1)} MB`;
+  }
+  return `${(normalized / 1024 ** 3).toFixed(2)} GB`;
+}
+
+function resolveFinderKindLabel(filePath: string) {
+  const extension = resolveDocumentType(filePath);
+  if (extension === "document") {
+    return t("shell.affairsFinderKindFile");
+  }
+
+  const normalized = extension.toLowerCase();
+  switch (normalized) {
+    case "md":
+    case "mdx":
+      return t("shell.affairsFinderKindMarkdown");
+    case "txt":
+      return t("shell.affairsFinderKindText");
+    case "pdf":
+      return t("shell.affairsFinderKindPdf");
+    case "doc":
+    case "docx":
+      return t("shell.affairsFinderKindWord");
+    case "xls":
+    case "xlsx":
+      return t("shell.affairsFinderKindExcel");
+    case "ppt":
+    case "pptx":
+      return t("shell.affairsFinderKindPowerPoint");
+    case "jpg":
+    case "jpeg":
+    case "png":
+    case "gif":
+    case "webp":
+    case "svg":
+      return t("shell.affairsFinderKindImage");
+    case "json":
+    case "yaml":
+    case "yml":
+    case "xml":
+    case "csv":
+      return t("shell.affairsFinderKindData");
+    default:
+      return extension.toUpperCase();
+  }
+}
+
+function buildFinderGridTemplateColumns(widths: Record<FinderColumnKey, number>) {
+  const normalized = {
+    name: Number.isFinite(widths.name) ? widths.name : DEFAULT_FINDER_COLUMN_WIDTHS.name,
+    size: Number.isFinite(widths.size) ? widths.size : DEFAULT_FINDER_COLUMN_WIDTHS.size,
+    updatedAt: Number.isFinite(widths.updatedAt) ? widths.updatedAt : DEFAULT_FINDER_COLUMN_WIDTHS.updatedAt,
+    type: Number.isFinite(widths.type) ? widths.type : DEFAULT_FINDER_COLUMN_WIDTHS.type,
+    createdAt: Number.isFinite(widths.createdAt) ? widths.createdAt : DEFAULT_FINDER_COLUMN_WIDTHS.createdAt
+  };
+  return [
+    `minmax(${FINDER_COLUMN_MIN_WIDTHS.name}px, ${Math.round(normalized.name)}px)`,
+    `minmax(${FINDER_COLUMN_MIN_WIDTHS.size}px, ${Math.round(normalized.size)}px)`,
+    `minmax(${FINDER_COLUMN_MIN_WIDTHS.updatedAt}px, ${Math.round(normalized.updatedAt)}px)`,
+    `minmax(${FINDER_COLUMN_MIN_WIDTHS.type}px, ${Math.round(normalized.type)}px)`,
+    `minmax(${FINDER_COLUMN_MIN_WIDTHS.createdAt}px, 1fr)`
+  ].join(" ");
 }
 
 function formatIndexStatusDateTime(value: string) {

@@ -8702,9 +8702,9 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .affairs-finder-header,
 .affairs-finder-row {
   display: grid;
-  grid-template-columns: minmax(240px, 2.4fr) minmax(120px, 1fr) 110px minmax(180px, 1.3fr);
   gap: 10px;
   align-items: center;
+  min-width: 0;
 }
 
 .affairs-finder-header {
@@ -8716,6 +8716,60 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   font-weight: 700;
   color: var(--text-tertiary);
   letter-spacing: 0.02em;
+}
+
+.affairs-finder-header-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 30px;
+}
+
+.affairs-finder-header-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.affairs-finder-column-resizer {
+  position: absolute;
+  top: 50%;
+  right: -8px;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 26px;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 2;
+}
+
+.affairs-finder-column-resizer::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 7px;
+  width: 1px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-separator) 76%, transparent);
+  transition: background 120ms ease;
+}
+
+.affairs-finder-column-resizer:hover::after {
+  background: color-mix(in srgb, var(--accent) 42%, var(--panel-separator));
+}
+
+html[data-workbench-finder-column-resizing],
+body[data-workbench-finder-column-resizing] {
+  cursor: col-resize !important;
+}
+
+html[data-workbench-finder-column-resizing] .workbench-shell,
+html[data-workbench-finder-column-resizing] .workbench-shell * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
 }
 
 .affairs-finder-list {
@@ -8789,7 +8843,42 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .affairs-tag-tree-more {
-  justify-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  margin: 4px 0 2px 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.affairs-tag-tree-more:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.affairs-tag-tree-more:focus-visible {
+  outline-offset: 2px;
+}
+
+.affairs-tag-tree-more-icon {
+  display: inline-flex;
+  width: 10px;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.affairs-tag-tree-more-label {
+  white-space: nowrap;
 }
 
 @keyframes affairs-skeleton-shimmer {

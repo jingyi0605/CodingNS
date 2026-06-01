@@ -1,10 +1,11 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState, type ReactElement } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
 import { clearViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
+import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
 import { getCodingNSDesktopBridge } from "../../../platform/desktop/codingns-desktop-bridge";
 import {
@@ -116,6 +117,7 @@ const navigationGroups: WorkspaceSessionGroup[] = [
     sessions: []
   }
 ];
+const initialPreferenceState = userPreferenceStore.getState();
 
 function createState(): AffairsViewState {
   return {
@@ -132,6 +134,121 @@ function createState(): AffairsViewState {
     selectedDocumentId: null,
     selectedFavoriteId: null
   };
+}
+
+function createLibrarySnapshot(overrides?: Partial<ReturnType<typeof baseLibrarySnapshot>>) {
+  return {
+    ...baseLibrarySnapshot(),
+    ...overrides
+  };
+}
+
+function baseLibrarySnapshot() {
+  return {
+    binding: {
+      workspaceId: "workspace-1",
+      rootDir: "/Users/jackson/WorkFile",
+      enabled: true,
+      configRelativePath: ".ai-index/doc-semantic-index.config.json",
+      exportMode: "v2",
+      updatedAt: "2026-05-31T08:00:00.000Z"
+    },
+    status: {
+      state: "fresh",
+      dirtyReasons: [],
+      lastRequestedAt: null,
+      lastStartedAt: null,
+      lastCompletedAt: "2026-05-31T08:00:00.000Z",
+      lastFailedAt: null,
+      nextAllowedAt: null,
+      runningTaskId: null,
+      errorSummary: null
+    },
+    tags: [
+      {
+        path: "类型",
+        name: "类型",
+        parentPath: null,
+        depth: 0,
+        rootType: "类型",
+        documentCount: 1
+      },
+      {
+        path: "类型/文本",
+        name: "文本",
+        parentPath: "类型",
+        depth: 1,
+        rootType: "类型",
+        documentCount: 1
+      },
+      {
+        path: "类型/文本/纯文本",
+        name: "纯文本",
+        parentPath: "类型/文本",
+        depth: 2,
+        rootType: "类型",
+        documentCount: 1
+      },
+      {
+        path: "时间",
+        name: "时间",
+        parentPath: null,
+        depth: 0,
+        rootType: "时间",
+        documentCount: 1
+      },
+      {
+        path: "时间/2026/05",
+        name: "05",
+        parentPath: "时间",
+        depth: 2,
+        rootType: "时间",
+        documentCount: 1
+      }
+    ],
+    favorites: [],
+    folders: [
+      {
+        path: "AGENTS",
+        name: "AGENTS",
+        parentPath: null,
+        depth: 0,
+        directDocumentCount: 1,
+        documentCount: 1,
+        createdAt: "2026-05-30T08:00:00.000Z",
+        updatedAt: "2026-05-31T08:00:00.000Z"
+      }
+    ],
+    documentCount: 1,
+    lastError: null
+  };
+}
+
+function createDocumentListResponse(items?: Array<Record<string, unknown>>) {
+  return {
+    total: items?.length ?? 1,
+    offset: 0,
+    limit: 120,
+    items: items ?? [
+      {
+        documentId: "doc-1",
+        path: "Exchange 分层通讯簿.txt",
+        title: "Exchange 分层通讯簿",
+        summary: "事务文档摘要",
+        updatedAt: "2026-05-31T08:00:00.000Z",
+        createdAt: "2026-05-30T08:00:00.000Z",
+        sizeBytes: 2048,
+        tags: [],
+        derivedTags: [],
+        isFavorite: false
+      }
+    ]
+  };
+}
+
+function createIsoForLocalDay(dayOffset: number, hour: number, minute: number) {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOffset, hour, minute, 0, 0).toISOString();
 }
 
 function renderWorkbench() {
@@ -158,15 +275,30 @@ function renderWorkbench() {
   return render(<TestHarness />);
 }
 
+function findTagTreeNode(label: string) {
+  const tree = screen.getByRole("tree", { name: t("shell.affairsLibraryTagTreeTitle") });
+  const labelNode = within(tree).getAllByText(label).find((node) => node.classList.contains("affairs-sidebar-item-title"));
+  return labelNode?.closest(".affairs-tag-tree-node") ?? null;
+}
+
 describe("AffairsWorkbenchView", () => {
   afterEach(() => {
+    userPreferenceStore.hydrate(initialPreferenceState);
     vi.useRealTimers();
   });
 
   beforeEach(() => {
+    userPreferenceStore.hydrate({
+      ...initialPreferenceState,
+      profile: {
+        ...initialPreferenceState.profile,
+        language: "zh-CN"
+      }
+    });
     clearViewSnapshot("affairs.library.snapshot.workspace-1");
     clearViewSnapshot("affairs.library.config.workspace-1");
     clearViewSnapshot("affairs.library.documents::workspace-1::folder::.::.::.");
+    window.localStorage.removeItem("codingns.affairs.tag-tree.state.workspace-1");
     window.sessionStorage.clear();
 
     conversationApiMock.getAffairsLibrarySnapshot.mockReset();
@@ -183,82 +315,7 @@ describe("AffairsWorkbenchView", () => {
     desktopBridgeMock.fs.revealInFileManager.mockClear();
     desktopBridgeMock.fs.pickDirectory.mockClear();
 
-    conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue({
-      binding: {
-        workspaceId: "workspace-1",
-        rootDir: "/Users/jackson/WorkFile",
-        enabled: true,
-        configRelativePath: ".ai-index/doc-semantic-index.config.json",
-        exportMode: "v2",
-        updatedAt: "2026-05-31T08:00:00.000Z"
-      },
-      status: {
-        state: "fresh",
-        dirtyReasons: [],
-        lastRequestedAt: null,
-        lastStartedAt: null,
-        lastCompletedAt: "2026-05-31T08:00:00.000Z",
-        lastFailedAt: null,
-        nextAllowedAt: null,
-        runningTaskId: null,
-        errorSummary: null
-      },
-      tags: [
-        {
-          path: "类型",
-          name: "类型",
-          parentPath: null,
-          depth: 0,
-          rootType: "类型",
-          documentCount: 1
-        },
-        {
-          path: "类型/文本",
-          name: "文本",
-          parentPath: "类型",
-          depth: 1,
-          rootType: "类型",
-          documentCount: 1
-        },
-        {
-          path: "类型/文本/纯文本",
-          name: "纯文本",
-          parentPath: "类型/文本",
-          depth: 2,
-          rootType: "类型",
-          documentCount: 1
-        },
-        {
-          path: "时间",
-          name: "时间",
-          parentPath: null,
-          depth: 0,
-          rootType: "时间",
-          documentCount: 1
-        },
-        {
-          path: "时间/2026/05",
-          name: "05",
-          parentPath: "时间",
-          depth: 2,
-          rootType: "时间",
-          documentCount: 1
-        }
-      ],
-      favorites: [],
-      folders: [
-        {
-          path: "AGENTS",
-          name: "AGENTS",
-          parentPath: null,
-          depth: 0,
-          directDocumentCount: 1,
-          documentCount: 1
-        }
-      ],
-      documentCount: 1,
-      lastError: null
-    });
+    conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot());
 
     conversationApiMock.setAffairsLibraryEnabled.mockImplementation(async (_workspaceId, payload) => ({
       workspaceId: "workspace-1",
@@ -288,23 +345,7 @@ describe("AffairsWorkbenchView", () => {
       canWrite: true
     });
 
-    conversationApiMock.listAffairsLibraryDocuments.mockResolvedValue({
-      total: 1,
-      offset: 0,
-      limit: 120,
-      items: [
-        {
-          documentId: "doc-1",
-          path: "Exchange 分层通讯簿.txt",
-          title: "Exchange 分层通讯簿",
-          summary: "事务文档摘要",
-          updatedAt: "2026-05-31T08:00:00.000Z",
-          tags: [],
-          derivedTags: [],
-          isFavorite: false
-        }
-      ]
-    });
+    conversationApiMock.listAffairsLibraryDocuments.mockResolvedValue(createDocumentListResponse());
 
     conversationApiMock.getAffairsLibraryPreview.mockResolvedValue({
       workspaceId: "workspace-1",
@@ -373,7 +414,7 @@ describe("AffairsWorkbenchView", () => {
     expect(
       await screen.findByRole("dialog", { name: "Exchange 分层通讯簿.txt" })
     ).toBeInTheDocument();
-    expect(await screen.findByText("Plain Text")).toBeInTheDocument();
+    expect(await screen.findByText(/纯文本|Plain Text/)).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: t("conversation.fileViewerEdit") })).not.toBeInTheDocument();
   });
 
@@ -502,11 +543,105 @@ describe("AffairsWorkbenchView", () => {
     });
   });
 
+  it("列表模式表头会显示文件名大小时间和种类", async () => {
+    userPreferenceStore.hydrate({
+      ...initialPreferenceState,
+      profile: {
+        ...initialPreferenceState.profile,
+        language: "zh-CN"
+      }
+    });
+    const todayAtEight = createIsoForLocalDay(0, 8, 0);
+    const yesterdayAtEight = createIsoForLocalDay(-1, 8, 0);
+    conversationApiMock.listAffairsLibraryDocuments.mockResolvedValueOnce(createDocumentListResponse([
+      {
+        documentId: "doc-1",
+        path: "Exchange 分层通讯簿.txt",
+        title: "Exchange 分层通讯簿",
+        summary: "事务文档摘要",
+        updatedAt: todayAtEight,
+        createdAt: yesterdayAtEight,
+        sizeBytes: 2048,
+        tags: [],
+        derivedTags: [],
+        isFavorite: false
+      }
+    ]));
+    renderWorkbench();
+
+    fireEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibraryViewModeList") }));
+
+    const header = document.querySelector(".affairs-finder-header");
+    expect(header).not.toBeNull();
+    const headerScope = within(header as HTMLElement);
+    expect(headerScope.getByText(t("shell.affairsFinderColumnName"))).toBeInTheDocument();
+    expect(headerScope.getByText(t("shell.affairsFinderColumnSize"))).toBeInTheDocument();
+    expect(headerScope.getByText(t("shell.affairsFinderColumnUpdatedAt"))).toBeInTheDocument();
+    expect(headerScope.getByText(t("shell.affairsFinderColumnType"))).toBeInTheDocument();
+    expect(headerScope.getByText(t("shell.affairsFinderColumnCreatedAt"))).toBeInTheDocument();
+
+    const row = await screen.findByRole("button", { name: /Exchange 分层通讯簿/i });
+    const rowScope = within(row);
+    expect(rowScope.getByText("2.0 KB")).toBeInTheDocument();
+    expect(rowScope.getByText(t("shell.affairsFinderKindText"))).toBeInTheDocument();
+    expect(rowScope.getByText("今天 08:00")).toBeInTheDocument();
+    expect(rowScope.getByText("昨天 08:00")).toBeInTheDocument();
+
+    const nameCell = row.querySelector(".affairs-finder-name");
+    expect(nameCell).not.toBeNull();
+    expect(nameCell).toHaveClass("affairs-finder-name");
+  });
+
+  it("列表模式文件夹种类会显示更像 macOS 的文案", async () => {
+    userPreferenceStore.hydrate({
+      ...initialPreferenceState,
+      profile: {
+        ...initialPreferenceState.profile,
+        language: "zh-CN"
+      }
+    });
+    renderWorkbench();
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibraryViewModeList") }));
+
+    const folderRow = await screen.findByRole("button", { name: /AGENTS/i });
+    expect(within(folderRow).getByText(t("shell.affairsFinderKindFolder"))).toBeInTheDocument();
+  });
+
+  it("列表模式列宽支持拖拽调整", async () => {
+    userPreferenceStore.hydrate({
+      ...initialPreferenceState,
+      profile: {
+        ...initialPreferenceState.profile,
+        language: "zh-CN"
+      }
+    });
+    renderWorkbench();
+
+    fireEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibraryViewModeList") }));
+
+    const header = document.querySelector(".affairs-finder-header") as HTMLElement | null;
+    expect(header).not.toBeNull();
+    expect(header?.style.gridTemplateColumns).toContain("320px");
+
+    const resizer = header?.querySelector(".affairs-finder-column-resizer") as HTMLElement | null;
+    expect(resizer).not.toBeNull();
+
+    resizer?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 320 }));
+    window.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, clientX: 420 }));
+    window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 420 }));
+
+    const resizedRow = await screen.findByRole("button", { name: /Exchange 分层通讯簿/i });
+    expect(header?.style.gridTemplateColumns).toContain("420px");
+    expect((resizedRow as HTMLButtonElement).style.gridTemplateColumns).toContain("420px");
+  });
+
   it("标签树路径会在面包屑里显示每一级标签名称", async () => {
     renderWorkbench();
     const user = userEvent.setup();
 
-    const typeLabel = await screen.findByText("类型");
+    const typeLabel = (await screen.findAllByText("类型")).find((node) => node.classList.contains("affairs-sidebar-item-title"));
+    expect(typeLabel).toBeTruthy();
     const typeNode = typeLabel.closest(".affairs-tag-tree-node");
     expect(typeNode).not.toBeNull();
     const expandButton = typeNode?.querySelector<HTMLButtonElement>(".affairs-tag-tree-toggle");
@@ -527,10 +662,10 @@ describe("AffairsWorkbenchView", () => {
   it("标签树只显示类型和时间根标签，并且不再显示说明文本", async () => {
     renderWorkbench();
 
-    await screen.findByText("类型");
+    await screen.findByRole("tree", { name: t("shell.affairsLibraryTagTreeTitle") });
 
-    expect(screen.getByText("类型")).toBeInTheDocument();
-    expect(screen.getByText("时间")).toBeInTheDocument();
+    expect(findTagTreeNode("类型")).not.toBeNull();
+    expect(findTagTreeNode("时间")).not.toBeNull();
     expect(screen.queryByText("来源")).not.toBeInTheDocument();
     expect(screen.queryByText("主题")).not.toBeInTheDocument();
     expect(screen.queryByText("状态")).not.toBeInTheDocument();
@@ -538,7 +673,84 @@ describe("AffairsWorkbenchView", () => {
     expect(screen.queryByText("时间/2026/05")).not.toBeInTheDocument();
   });
 
-  it("进入事务视图时，如果索引结果太旧，会做一次懒检查刷新", async () => {
+  it("时间标签按最新优先，其他标签按更常访问优先", async () => {
+    conversationApiMock.getAffairsLibrarySnapshot.mockReset();
+    conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
+      tags: [
+        { path: "类型", name: "类型", parentPath: null, depth: 0, rootType: "类型", documentCount: 9 },
+        { path: "类型/办公", name: "办公", parentPath: "类型", depth: 1, rootType: "类型", documentCount: 2 },
+        { path: "类型/表格", name: "表格", parentPath: "类型", depth: 1, rootType: "类型", documentCount: 4 },
+        { path: "类型/文本", name: "文本", parentPath: "类型", depth: 1, rootType: "类型", documentCount: 3 },
+        { path: "时间", name: "时间", parentPath: null, depth: 0, rootType: "时间", documentCount: 9 },
+        { path: "时间/2024", name: "2024", parentPath: "时间", depth: 1, rootType: "时间", documentCount: 2 },
+        { path: "时间/2026", name: "2026", parentPath: "时间", depth: 1, rootType: "时间", documentCount: 4 },
+        { path: "时间/最近30天", name: "最近30天", parentPath: "时间", depth: 1, rootType: "时间", documentCount: 3 }
+      ],
+      folders: []
+    }));
+
+    renderWorkbench();
+    const user = userEvent.setup();
+
+    await screen.findByRole("tree", { name: t("shell.affairsLibraryTagTreeTitle") });
+    const typeNode = findTagTreeNode("类型");
+    const timeNode = findTagTreeNode("时间");
+    await user.click(typeNode?.querySelector<HTMLButtonElement>(".affairs-tag-tree-toggle")!);
+    await user.click(timeNode?.querySelector<HTMLButtonElement>(".affairs-tag-tree-toggle")!);
+
+    const typeChildren = Array.from(typeNode?.querySelectorAll(":scope > .affairs-tag-tree-children > .affairs-tag-tree-node .affairs-sidebar-item-title") ?? [])
+      .map((element) => element.textContent?.trim())
+      .filter((value): value is string => Boolean(value));
+    expect(typeChildren.slice(0, 3)).toEqual(["表格", "文本", "办公"]);
+
+    const timeChildren = Array.from(timeNode?.querySelectorAll(":scope > .affairs-tag-tree-children > .affairs-tag-tree-node .affairs-sidebar-item-title") ?? [])
+      .map((element) => element.textContent?.trim())
+      .filter((value): value is string => Boolean(value));
+    expect(timeChildren.slice(0, 3)).toEqual(["最近30天", "2026", "2024"]);
+
+    await user.click(within(typeNode!).getByRole("button", { name: /办公/ }));
+    await user.click(screen.getByRole("button", { name: "/" }));
+    await user.click(within(typeNode!).getByRole("button", { name: /办公/ }));
+    expect(window.localStorage.getItem("codingns.affairs.tag-tree.state.workspace-1")).toContain("\"类型/办公\":2");
+  });
+
+  it("每层标签默认最多显示 5 个，并记住展开更多状态", async () => {
+    conversationApiMock.getAffairsLibrarySnapshot.mockReset();
+    conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
+      tags: [
+        { path: "类型", name: "类型", parentPath: null, depth: 0, rootType: "类型", documentCount: 6 },
+        { path: "类型/A", name: "A", parentPath: "类型", depth: 1, rootType: "类型", documentCount: 1 },
+        { path: "类型/B", name: "B", parentPath: "类型", depth: 1, rootType: "类型", documentCount: 1 },
+        { path: "类型/C", name: "C", parentPath: "类型", depth: 1, rootType: "类型", documentCount: 1 },
+        { path: "类型/D", name: "D", parentPath: "类型", depth: 1, rootType: "类型", documentCount: 1 },
+        { path: "类型/E", name: "E", parentPath: "类型", depth: 1, rootType: "类型", documentCount: 1 },
+        { path: "类型/F", name: "F", parentPath: "类型", depth: 1, rootType: "类型", documentCount: 1 }
+      ],
+      folders: []
+    }));
+
+    const user = userEvent.setup();
+    const view = renderWorkbench();
+
+    await screen.findByRole("tree", { name: t("shell.affairsLibraryTagTreeTitle") });
+    const typeNode = findTagTreeNode("类型");
+    await user.click(typeNode?.querySelector<HTMLButtonElement>(".affairs-tag-tree-toggle")!);
+
+    expect(Array.from(typeNode?.querySelectorAll(":scope > .affairs-tag-tree-children > .affairs-tag-tree-node") ?? [])).toHaveLength(5);
+    await user.click(within(typeNode!).getByRole("button", { name: /Show More Tags|显示更多标签/ }));
+    expect(Array.from(typeNode?.querySelectorAll(":scope > .affairs-tag-tree-children > .affairs-tag-tree-node") ?? [])).toHaveLength(6);
+    expect(window.localStorage.getItem("codingns.affairs.tag-tree.state.workspace-1")).toContain("\"expandedOverflowPaths\":[\"类型\"]");
+
+    view.unmount();
+    renderWorkbench();
+
+    await screen.findByRole("tree", { name: t("shell.affairsLibraryTagTreeTitle") });
+    const reloadedTypeNode = findTagTreeNode("类型");
+    expect(Array.from(reloadedTypeNode?.querySelectorAll(":scope > .affairs-tag-tree-children > .affairs-tag-tree-node") ?? [])).toHaveLength(6);
+    expect(within(reloadedTypeNode!).getByRole("button", { name: /Show Fewer Tags|收起其他标签/ })).toBeInTheDocument();
+  });
+
+  it("进入事务视图时，不会仅因为快照较旧就自动发起刷新", async () => {
     const oldCompletedAt = new Date(Date.now() - 10 * 60 * 1000).toISOString();
     conversationApiMock.getAffairsLibrarySnapshot.mockReset();
     conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue({
@@ -585,11 +797,8 @@ describe("AffairsWorkbenchView", () => {
 
     renderWorkbench();
 
-    await waitFor(() => {
-      expect(conversationApiMock.requestAffairsLibraryRefresh).toHaveBeenCalledWith("workspace-1", {
-        reason: "view_lazy_check"
-      });
-    });
+    await screen.findByText("Exchange 分层通讯簿");
+    expect(conversationApiMock.requestAffairsLibraryRefresh).not.toHaveBeenCalled();
   });
 
   it("索引运行中会自动轮询状态并在完成后刷新显示", async () => {
@@ -780,6 +989,13 @@ describe("AffairsWorkbenchView", () => {
   });
 
   it("可以手动添加自定义后缀", async () => {
+    userPreferenceStore.hydrate({
+      ...initialPreferenceState,
+      profile: {
+        ...initialPreferenceState.profile,
+        language: "zh-CN"
+      }
+    });
     renderWorkbench();
 
     await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibrarySettingsAction") }));
@@ -790,7 +1006,7 @@ describe("AffairsWorkbenchView", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsLibraryAllowedExtensionsCustomAddAction") }));
 
-    expect(screen.getByRole("button", { name: ".pages Custom" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /^\.pages (自定义|Custom)$/ })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText(t("shell.affairsLibraryCustomExtensionBadge"))).toBeInTheDocument();
   });
 
