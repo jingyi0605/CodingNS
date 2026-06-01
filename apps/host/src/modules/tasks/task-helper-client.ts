@@ -4,6 +4,7 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
 import type { TaskHelperProcessHandlerName } from "./task-helper-process-handlers.js";
+import { TaskTimeoutError } from "./task-types.js";
 
 interface PendingRequest<TResult> {
   resolve: (value: TResult) => void;
@@ -56,6 +57,11 @@ export class TaskHelperProcessClient {
       try {
         return await this.executeOnce<TResult>(handler, input, signal);
       } catch (error) {
+        if (isHelperTimeoutError(error, signal)) {
+          this.forceRecycleCurrentChild("task helper 请求超时");
+          throw error;
+        }
+
         if (
           attempt >= 1 ||
           this.disposed ||
@@ -327,6 +333,36 @@ export class TaskHelperProcessClient {
     return child;
   }
 
+  private forceRecycleCurrentChild(reason: string): void {
+    if (!this.child) {
+      return;
+    }
+
+    this.forceRecycleChild(this.child, reason);
+  }
+
+  private forceRecycleChild(child: ChildProcessWithoutNullStreams, reason: string): void {
+    if (this.child === child) {
+      this.child = null;
+    }
+
+    if (this.stdoutReader && this.stdoutReaderChild === child) {
+      this.stdoutReader.close();
+      this.stdoutReader = null;
+      this.stdoutReaderChild = null;
+    }
+
+    if (!child.killed && typeof child.kill === "function") {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // 强制回收失败也不能阻塞后续 reject。
+      }
+    }
+
+    this.rejectPendingForChild(child, new TaskTimeoutError(reason));
+  }
+
   private handleChildTermination(
     childOrError: ChildProcessWithoutNullStreams | Error,
     maybeError?: Error
@@ -418,6 +454,14 @@ function isRetryableHelperClientError(error: unknown): boolean {
     || message.includes("task helper stdout 已关闭")
     || message.includes("task helper stdin 已断开")
     || message.includes("task helper pipe 已断开");
+}
+
+function isHelperTimeoutError(error: unknown, signal?: AbortSignal): boolean {
+  if (error instanceof TaskTimeoutError) {
+    return true;
+  }
+
+  return signal?.reason instanceof TaskTimeoutError;
 }
 
 export function getSharedTaskHelperProcessClient(): TaskHelperProcessClient {

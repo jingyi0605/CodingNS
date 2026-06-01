@@ -4,6 +4,7 @@ import type * as readline from "node:readline";
 import { describe, expect, it, vi } from "vitest";
 
 import { TaskHelperProcessClient } from "../../../src/modules/tasks/task-helper-client.js";
+import { TaskTimeoutError } from "../../../src/modules/tasks/task-types.js";
 
 describe("TaskHelperProcessClient", () => {
   it("helper recycle 导致 stdout 关闭时会自动重试一次", async () => {
@@ -109,5 +110,52 @@ describe("TaskHelperProcessClient", () => {
     expect(close).not.toHaveBeenCalled();
     expect(client.child).toBe(newChild);
     expect(client.rejectPendingForChild).toHaveBeenCalledTimes(1);
+  });
+
+  it("helper 请求超时时会强制回收当前 child 并停止自动重试", async () => {
+    const kill = vi.fn();
+    const close = vi.fn();
+    const rejectPendingForChild = vi.fn();
+    const child = {
+      stdin: { destroyed: false },
+      stdout: { destroyed: false },
+      killed: false,
+      kill
+    } as unknown as ChildProcessWithoutNullStreams;
+    const timeoutError = new TaskTimeoutError("affairs.library_index:workspace-1 超过 1000ms 未完成");
+    const client = Object.create(TaskHelperProcessClient.prototype) as TaskHelperProcessClient & {
+      disposed: boolean;
+      child: ChildProcessWithoutNullStreams | null;
+      stdoutReader: readline.Interface | null;
+      stdoutReaderChild: ChildProcessWithoutNullStreams | null;
+      executeOnce: ReturnType<typeof vi.fn>;
+      rejectPendingForChild: ReturnType<typeof vi.fn>;
+    };
+
+    client.disposed = false;
+    client.child = child;
+    client.stdoutReader = { close } as unknown as readline.Interface;
+    client.stdoutReaderChild = child;
+    client.executeOnce = vi.fn(async () => {
+      throw timeoutError;
+    });
+    client.rejectPendingForChild = rejectPendingForChild;
+
+    await expect(TaskHelperProcessClient.prototype.execute.call(
+      client,
+      "affairs.library_index",
+      { rootDir: "/tmp/demo" },
+      undefined
+    )).rejects.toBe(timeoutError);
+
+    expect(client.executeOnce).toHaveBeenCalledTimes(1);
+    expect(kill).toHaveBeenCalledWith("SIGKILL");
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(client.child).toBeNull();
+    expect(client.stdoutReader).toBeNull();
+    expect(client.stdoutReaderChild).toBeNull();
+    expect(rejectPendingForChild).toHaveBeenCalledTimes(1);
+    expect(rejectPendingForChild.mock.calls[0]?.[0]).toBe(child);
+    expect(rejectPendingForChild.mock.calls[0]?.[1]).toBeInstanceOf(TaskTimeoutError);
   });
 });

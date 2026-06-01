@@ -10,6 +10,13 @@ import {
 } from "../workspace/workspace-code-composition.js";
 import type { WorkspaceCodeCompositionSummary } from "../workspace/workspace-service.js";
 
+interface HelperTaskMetaPayload {
+  taskId?: string;
+  taskType?: string;
+  key?: string;
+  attempt?: number;
+}
+
 interface TaskHelperProcessHandlerMap {
   "workspace.code_composition_scan": (
     input: { workspacePath: string },
@@ -29,19 +36,19 @@ interface TaskHelperProcessHandlerMap {
     signal?: AbortSignal
   ) => ProviderSessionDiscovery | Promise<ProviderSessionDiscovery>;
   "affairs.library_apply_config": (
-    input: { rootDir: string; reason?: string },
+    input: { rootDir: string; reason?: string; __taskMeta?: HelperTaskMetaPayload },
     signal?: AbortSignal
   ) => AffairsIndexerCommandResult | Promise<AffairsIndexerCommandResult>;
   "affairs.library_index": (
-    input: { rootDir: string; targetPath?: string; reason?: string },
+    input: { rootDir: string; targetPath?: string; reason?: string; __taskMeta?: HelperTaskMetaPayload },
     signal?: AbortSignal
   ) => AffairsIndexerCommandResult | Promise<AffairsIndexerCommandResult>;
   "affairs.library_recompute_tags": (
-    input: { rootDir: string; reason?: string },
+    input: { rootDir: string; reason?: string; __taskMeta?: HelperTaskMetaPayload },
     signal?: AbortSignal
   ) => AffairsIndexerCommandResult | Promise<AffairsIndexerCommandResult>;
   "affairs.library_export": (
-    input: { rootDir: string },
+    input: { rootDir: string; __taskMeta?: HelperTaskMetaPayload },
     signal?: AbortSignal
   ) => AffairsIndexerCommandResult | Promise<AffairsIndexerCommandResult>;
 }
@@ -53,33 +60,38 @@ const TASK_HELPER_PROCESS_HANDLERS: TaskHelperProcessHandlerMap = {
     discoverTemplateRuntimeStatuses(items, signal),
   "session.workspace_discovery": ({ config, workspacePath, knownSessions, enabledProviders }, signal) =>
     discoverWorkspaceSessionsInRuntime(config, workspacePath, knownSessions, enabledProviders, signal),
-  "affairs.library_apply_config": ({ rootDir, reason }) =>
+  "affairs.library_apply_config": ({ rootDir, reason, __taskMeta }) =>
     runAffairsIndexerCommand(
       rootDir,
       "apply-config" satisfies AffairsIndexerCommandName,
       {
-        reason
+        reason,
+        taskMeta: __taskMeta
       }
     ),
-  "affairs.library_index": ({ rootDir, targetPath, reason }) =>
+  "affairs.library_index": ({ rootDir, targetPath, reason, __taskMeta }) =>
     runAffairsIndexerCommand(
       rootDir,
       targetPath ? ("watch-touch" satisfies AffairsIndexerCommandName) : ("index" satisfies AffairsIndexerCommandName),
       {
         targetPath,
-        reason
+        reason,
+        taskMeta: __taskMeta
       }
     ),
-  "affairs.library_recompute_tags": ({ rootDir, reason }) =>
+  "affairs.library_recompute_tags": ({ rootDir, reason, __taskMeta }) =>
     runAffairsIndexerCommand(
       rootDir,
       "recompute-tags" satisfies AffairsIndexerCommandName,
       {
-        reason
+        reason,
+        taskMeta: __taskMeta
       }
     ),
-  "affairs.library_export": ({ rootDir }) =>
-    runAffairsIndexerCommand(rootDir, "export" satisfies AffairsIndexerCommandName)
+  "affairs.library_export": ({ rootDir, __taskMeta }) =>
+    runAffairsIndexerCommand(rootDir, "export" satisfies AffairsIndexerCommandName, {
+      taskMeta: __taskMeta
+    })
 };
 
 export type TaskHelperProcessHandlerName = keyof TaskHelperProcessHandlerMap;

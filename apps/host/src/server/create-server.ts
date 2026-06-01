@@ -178,6 +178,7 @@ import { WorktreeManager } from "../modules/worktree/worktree-manager.js";
 import { WorktreeSyncService } from "../modules/worktree/worktree-sync-service.js";
 import { WorkspaceController } from "../modules/workspace/workspace-controller.js";
 import { AffairsLibraryController } from "../modules/workspace/affairs-library-controller.js";
+import { getAffairsLibraryDebugLogPath } from "../modules/workspace/affairs-library-debug-log.js";
 import { AffairsLibraryDirtyWatchService } from "../modules/workspace/affairs-library-dirty-watch-service.js";
 import { AffairsLibraryPreviewLinkService } from "../modules/workspace/affairs-library-preview-link-service.js";
 import { AffairsLibraryService } from "../modules/workspace/affairs-library-service.js";
@@ -326,6 +327,10 @@ import { PluginRuntimeService } from "../modules/plugins/plugin-runtime-service.
 import { PluginSchedulerService } from "../modules/plugins/plugin-scheduler-service.js";
 
 export function createServer(config: HostConfig) {
+  const affairsLibraryDebugLogPath = getAffairsLibraryDebugLogPath();
+  if (affairsLibraryDebugLogPath) {
+    process.env.CODINGNS_AFFAIRS_DEBUG_LOG_DIR = path.dirname(affairsLibraryDebugLogPath);
+  }
   // Demo 模式下覆盖 token TTL 为 15 分钟
   const effectiveConfig: HostConfig = config.demoMode
     ? { ...config, accessTokenTtlSeconds: 900, refreshTokenTtlSeconds: 900 }

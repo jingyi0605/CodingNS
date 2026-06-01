@@ -13,7 +13,7 @@ export function createHostTaskLaneExecutors(): Partial<Record<TaskExecutionLane,
 
         return await helperProcessClient.execute(
           definition.helperProcessHandler as never,
-          input,
+          attachHelperTaskMeta(input, context),
           context.signal
         );
       }
@@ -23,4 +23,23 @@ export function createHostTaskLaneExecutors(): Partial<Record<TaskExecutionLane,
         await definition.run(input, context)
     }
   };
+}
+
+function attachHelperTaskMeta<TInput extends unknown>(
+  input: TInput,
+  context: { taskId: string; taskType: string; key: string; attempt: number }
+): TInput {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return input;
+  }
+
+  return {
+    ...(input as Record<string, unknown>),
+    __taskMeta: {
+      taskId: context.taskId,
+      taskType: context.taskType,
+      key: context.key,
+      attempt: context.attempt
+    }
+  } as TInput;
 }

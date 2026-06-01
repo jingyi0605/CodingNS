@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 import { AppError } from "../../shared/errors/app-error.js";
@@ -11,8 +13,17 @@ import { initCatalog } from "./core/src/sqlite/init-catalog.js";
 import { CatalogWriteRepository } from "./core/src/repositories/catalog-write-repository.js";
 import type { DirtyScope } from "./core/src/services/dirty/dirty-scope-resolver.js";
 import type { RuntimeConfig } from "./contracts/src/index.js";
+import { writeAffairsLibraryDebugLog } from "../workspace/affairs-library-debug-log.js";
 
 export type AffairsIndexerCommandName = "apply-config" | "index" | "recompute-tags" | "export" | "watch-touch";
+export type AffairsIndexerRuntimeStage = "init" | "index" | "export" | "sqlite" | "finished" | "failed";
+
+interface AffairsIndexerTaskMeta {
+  taskId?: string;
+  taskType?: string;
+  key?: string;
+  attempt?: number;
+}
 
 export interface AffairsIndexerCommandResult<TResult = unknown> {
   ok: true;
@@ -35,9 +46,11 @@ export async function runAffairsIndexerCommand(
   options: {
     targetPath?: string;
     reason?: string;
+    taskMeta?: AffairsIndexerTaskMeta;
   } = {}
 ): Promise<AffairsIndexerCommandResult> {
   const startedAt = performance.now();
+  const runtimeStageWriter = createRuntimeStageWriter(rootDir, command, options);
   writeAffairsIndexerHelperLog({
     phase: "start",
     command,
@@ -48,13 +61,30 @@ export async function runAffairsIndexerCommand(
 
   try {
     const config = createAffairsIndexerRuntimeConfig(rootDir);
+    runtimeStageWriter.write("running", "init");
     initCatalog(config);
+    writeAffairsLibraryDebugLog({
+      event: "helper_command_started",
+      processRole: "helper",
+      rootDir,
+      command,
+      reason: options.reason,
+      targetPath: options.targetPath,
+      status: "started",
+      details: {
+        indexDir: config.indexDir,
+        dbPath: config.dbPath,
+        exportDir: config.exportDir,
+        configFilePath: config.configFilePath
+      }
+    });
 
     let message = "";
     let result: unknown;
 
     switch (command) {
       case "apply-config": {
+        runtimeStageWriter.write("running", "index");
         const applyResult = await new AllowedExtensionsDiffService(config).applyIfNeeded();
         result = {
           changed: applyResult.changed,
@@ -79,11 +109,15 @@ export async function runAffairsIndexerCommand(
         break;
       }
       case "index": {
+        runtimeStageWriter.write("running", "index");
         const indexResult = await new TextIndexer(config).index(undefined, {
           collectChangedPaths: true,
           dirtyScopeTrigger: "full"
         });
+        runtimeStageWriter.write("running", "export");
         const exportResult = new ExportBuilder(config).build({ dirtyScope: indexResult.dirtyScope });
+        runtimeStageWriter.write("running", "sqlite");
+        writeIndexerCommandMeta(config, command, options);
         result = {
           indexResult: {
             scannedCount: indexResult.scannedCount,
@@ -107,6 +141,7 @@ export async function runAffairsIndexerCommand(
         break;
       }
       case "export": {
+        runtimeStageWriter.write("running", "export");
         const exportResult = new ExportBuilder(config).build();
         result = { exportResult };
         message = "静态导出完成。";
@@ -114,11 +149,14 @@ export async function runAffairsIndexerCommand(
       }
       case "watch-touch": {
         const targetPath = normalizeOptionalTargetPath(options.targetPath);
+        runtimeStageWriter.write("running", "index");
         const indexResult = await new TextIndexer(config).index(targetPath, {
           collectChangedPaths: true,
           dirtyScopeTrigger: "incremental"
         });
+        runtimeStageWriter.write("running", "export");
         const exportResult = new ExportBuilder(config).build({ dirtyScope: indexResult.dirtyScope });
+        runtimeStageWriter.write("running", "sqlite");
         new CatalogWriteRepository(config.dbPath).setSchemaMeta(
           "watcher.last_touch",
           JSON.stringify({
@@ -128,6 +166,7 @@ export async function runAffairsIndexerCommand(
             dirtyScope: summarizeDirtyScope(indexResult.dirtyScope)
           })
         );
+        writeIndexerCommandMeta(config, command, options);
         result = {
           targetPath: targetPath ?? null,
           reason: options.reason?.trim() || "watch_touch",
@@ -171,6 +210,7 @@ export async function runAffairsIndexerCommand(
       },
       result,
     };
+    runtimeStageWriter.write("finished", "finished");
     writeAffairsIndexerHelperLog({
       phase: "finish",
       command,
@@ -180,8 +220,24 @@ export async function runAffairsIndexerCommand(
       durationMs: commandResult.durationMs,
       resultSummary: summarizeCommandResult(result)
     });
+    writeAffairsLibraryDebugLog({
+      event: "helper_command_finished",
+      processRole: "helper",
+      rootDir,
+      command,
+      reason: options.reason,
+      targetPath: options.targetPath,
+      durationMs: commandResult.durationMs,
+      status: "finished",
+      resultSummary: summarizeCommandResult(result)
+    });
     return commandResult;
   } catch (error) {
+    runtimeStageWriter.write(
+      "failed",
+      "failed",
+      error instanceof Error ? error.message : String(error)
+    );
     writeAffairsIndexerHelperLog({
       phase: "error",
       command,
@@ -191,11 +247,22 @@ export async function runAffairsIndexerCommand(
       durationMs: Number((performance.now() - startedAt).toFixed(2)),
       error: error instanceof Error ? error.message : String(error)
     });
+    writeAffairsLibraryDebugLog({
+      event: "helper_command_failed",
+      processRole: "helper",
+      rootDir,
+      command,
+      reason: options.reason,
+      targetPath: options.targetPath,
+      durationMs: Number((performance.now() - startedAt).toFixed(2)),
+      status: "failed",
+      message: error instanceof Error ? error.message : String(error)
+    });
     throw normalizeAffairsIndexerError(error, command, rootDir);
   }
 }
 
-function createAffairsIndexerRuntimeConfig(rootDir: string): RuntimeConfig {
+export function createAffairsIndexerRuntimeConfig(rootDir: string): RuntimeConfig {
   return loadRuntimeConfig(rootDir, {
     args: {
       rootDir,
@@ -229,6 +296,67 @@ function summarizeDirtyScope(
     dirtyDirectories: dirtyScope.dirtyDirectories.length,
     dirtyTagPaths: dirtyScope.dirtyTagPaths.length,
     dirtyRelations: dirtyScope.dirtyRelations.length,
+  };
+}
+
+function writeIndexerCommandMeta(
+  config: RuntimeConfig,
+  command: AffairsIndexerCommandName,
+  options: {
+    targetPath?: string;
+    reason?: string;
+    taskMeta?: AffairsIndexerTaskMeta;
+  }
+): void {
+  new CatalogWriteRepository(config.dbPath).setSchemaMeta(
+    "runtime.last_command",
+    JSON.stringify({
+      command,
+      observedAt: new Date().toISOString(),
+      reason: options.reason?.trim() || null,
+      targetPath: normalizeOptionalTargetPath(options.targetPath) ?? null,
+      taskId: options.taskMeta?.taskId ?? null,
+      taskType: options.taskMeta?.taskType ?? null
+    })
+  );
+}
+
+function createRuntimeStageWriter(
+  rootDir: string,
+  command: AffairsIndexerCommandName,
+  options: {
+    targetPath?: string;
+    reason?: string;
+    taskMeta?: AffairsIndexerTaskMeta;
+  }
+) {
+  const runtimeStatusPath = path.join(rootDir, ".ai-index", "runtime-status.json");
+  return {
+    write: (
+      status: "running" | "finished" | "failed",
+      stage: AffairsIndexerRuntimeStage,
+      errorSummary: string | null = null
+    ) => {
+      fs.mkdirSync(path.dirname(runtimeStatusPath), { recursive: true });
+      fs.writeFileSync(
+        runtimeStatusPath,
+        `${JSON.stringify({
+          version: 1,
+          command,
+          status,
+          stage,
+          updatedAt: new Date().toISOString(),
+          reason: options.reason?.trim() || null,
+          targetPath: normalizeOptionalTargetPath(options.targetPath) ?? null,
+          taskId: options.taskMeta?.taskId ?? null,
+          taskType: options.taskMeta?.taskType ?? null,
+          taskKey: options.taskMeta?.key ?? null,
+          attempt: options.taskMeta?.attempt ?? null,
+          errorSummary
+        }, null, 2)}\n`,
+        "utf8"
+      );
+    }
   };
 }
 
@@ -312,7 +440,10 @@ function summarizeCommandResult(result: unknown): Record<string, unknown> | null
       skippedCount: indexPayload.skippedCount ?? null,
       failedCount: indexPayload.failedCount ?? null,
       deletedCount: indexPayload.deletedCount ?? null,
-      dirtyScope: indexPayload.dirtyScope ?? null
+      dirtyScope: indexPayload.dirtyScope ?? null,
+      indexedPathsSample: indexPayload.indexedPathsSample ?? null,
+      deletedPathsSample: indexPayload.deletedPathsSample ?? null,
+      failedPathsSample: indexPayload.failedPathsSample ?? null
     };
   }
 
@@ -322,7 +453,10 @@ function summarizeCommandResult(result: unknown): Record<string, unknown> | null
       indexedCount: payload.indexedCount ?? null,
       failedCount: payload.failedCount ?? null,
       deletedCount: payload.deletedCount ?? null,
-      dirtyScope: payload.dirtyScope ?? null
+      dirtyScope: payload.dirtyScope ?? null,
+      indexedPathsSample: payload.indexedPathsSample ?? null,
+      deletedPathsSample: payload.deletedPathsSample ?? null,
+      failedPathsSample: payload.failedPathsSample ?? null
     };
   }
 
