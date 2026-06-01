@@ -34,6 +34,7 @@ interface ListAffairsLibraryDocumentsQuery {
   browseMode?: string;
   selectedFolderPath?: string;
   selectedTagPath?: string;
+  selectedTagPaths?: string;
   selectedFavoriteId?: string;
   offset?: string;
   limit?: string;
@@ -166,6 +167,10 @@ export class AffairsLibraryController {
           browseMode: request.query.browseMode === "tag" ? "tag" : "folder",
           selectedFolderPath: request.query.selectedFolderPath?.trim() ?? null,
           selectedTagPath: request.query.selectedTagPath?.trim() ?? null,
+          selectedTagPaths: request.query.selectedTagPaths
+            ?.split(",")
+            .map((item) => item.trim())
+            .filter((item) => item.length > 0) ?? null,
           selectedFavoriteId: request.query.selectedFavoriteId?.trim() ?? null,
           offset: request.query.offset ? Number(request.query.offset) : undefined,
           limit: request.query.limit ? Number(request.query.limit) : undefined

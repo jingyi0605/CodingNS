@@ -22,6 +22,7 @@ export interface AffairsViewState {
   viewMode: "grid" | "list";
   selectedFolderPath: string | null;
   selectedTagPath: string | null;
+  selectedTagPaths: string[];
   selectedDocumentId: string | null;
   selectedFavoriteId: string | null;
 }

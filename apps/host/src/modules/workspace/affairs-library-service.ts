@@ -114,6 +114,7 @@ export interface ListAffairsLibraryDocumentsInput {
   browseMode: "folder" | "tag";
   selectedFolderPath?: string | null;
   selectedTagPath?: string | null;
+  selectedTagPaths?: string[] | null;
   selectedFavoriteId?: string | null;
   offset?: number;
   limit?: number;
@@ -124,6 +125,7 @@ export interface AffairsLibraryDocumentListDto {
   offset: number;
   limit: number;
   items: AffairsLibraryDocumentRecordDto[];
+  tagFacetCounts?: Record<string, number>;
 }
 
 export interface AffairsLibraryResolvedPreviewFile {
@@ -541,7 +543,8 @@ export class AffairsLibraryService {
         total: 0,
         offset: 0,
         limit: normalizePositiveInt(input.limit, 120, 400),
-        items: []
+        items: [],
+        tagFacetCounts: {}
       };
     }
 
@@ -552,7 +555,8 @@ export class AffairsLibraryService {
         total: 0,
         offset: 0,
         limit: normalizePositiveInt(input.limit, 120, 400),
-        items: []
+        items: [],
+        tagFacetCounts: {}
       };
     }
     const browseMode = input.browseMode === "tag" ? "tag" : "folder";
@@ -561,13 +565,16 @@ export class AffairsLibraryService {
     const selectedFavorite = favorites.find(
       (item) => buildFavoriteNodeId(item.kind, item.path) === (input.selectedFavoriteId?.trim() ?? "")
     ) ?? null;
+    const normalizedSelectedTagPaths = normalizeSelectedTagPaths(input.selectedTagPaths);
 
     const filtered = exportData.documents.filter((document) => {
       if (browseMode === "tag") {
-        const tagPath = selectedFavorite?.kind === "tag"
-          ? selectedFavorite.path
-          : (input.selectedTagPath?.trim() ?? "");
-        return !tagPath || matchesTagPath(document, tagPath);
+        const tagPaths = selectedFavorite?.kind === "tag"
+          ? [selectedFavorite.path]
+          : normalizedSelectedTagPaths.length > 0
+            ? normalizedSelectedTagPaths
+            : (input.selectedTagPath?.trim() ? [input.selectedTagPath.trim()] : []);
+        return tagPaths.length === 0 || tagPaths.every((tagPath) => matchesTagPath(document, tagPath));
       }
 
       const folderPath = selectedFavorite?.kind === "folder"
@@ -592,7 +599,10 @@ export class AffairsLibraryService {
       total: filtered.length,
       offset,
       limit,
-      items
+      items,
+      tagFacetCounts: browseMode === "tag"
+        ? buildTagFacetCounts(exportData.documents, normalizedSelectedTagPaths, selectedFavorite?.kind === "tag" ? selectedFavorite.path : null)
+        : {}
     };
   }
 
@@ -1805,6 +1815,69 @@ function countDocumentsForTag(documents: AffairsLibraryDocumentRecordDto[], tagP
     return 0;
   }
   return documents.filter((document) => matchesTagPath(document, tagPath)).length;
+}
+
+function normalizeSelectedTagPaths(tagPaths: string[] | null | undefined): string[] {
+  if (!Array.isArray(tagPaths)) {
+    return [];
+  }
+  const unique = new Set<string>();
+  tagPaths.forEach((item) => {
+    const normalized = item.trim();
+    if (normalized) {
+      unique.add(normalized);
+    }
+  });
+  return Array.from(unique);
+}
+
+function buildTagFacetCounts(
+  documents: AffairsLibraryDocumentRecordDto[],
+  selectedTagPaths: string[],
+  selectedFavoriteTagPath: string | null
+): Record<string, number> {
+  const activeTagPaths = selectedFavoriteTagPath?.trim()
+    ? [selectedFavoriteTagPath.trim()]
+    : selectedTagPaths;
+  const counts = new Map<string, number>();
+
+  for (const document of documents) {
+    const allTags = [...document.tags, ...document.derivedTags];
+    const uniqueTags = new Set<string>();
+    allTags
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0)
+      .forEach((tag) => {
+        uniqueTags.add(tag);
+        buildAncestorPaths(tag).forEach((ancestorPath) => {
+          uniqueTags.add(ancestorPath);
+        });
+      });
+    uniqueTags.forEach((tag) => {
+      const available = activeTagPaths
+        .filter((selectedPath) => selectedPath !== tag)
+        .every((selectedPath) => matchesTagPath(document, selectedPath));
+      if (!available) {
+        return;
+      }
+      counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    });
+  }
+
+  return Object.fromEntries(counts);
+}
+
+function buildAncestorPaths(tagPath: string): string[] {
+  const normalized = tagPath.trim();
+  if (!normalized) {
+    return [];
+  }
+  const segments = normalized.split("/");
+  const paths: string[] = [];
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    paths.push(segments.slice(0, index + 1).join("/"));
+  }
+  return paths;
 }
 
 function readAffairsLibraryStatsSafe(rootDir: string, relativePath: string): fs.Stats | null {

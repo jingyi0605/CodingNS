@@ -24,6 +24,7 @@ const DEFAULT_AFFAIRS_STATE: Omit<AffairsViewState, "workspaceId"> = {
   viewMode: "grid",
   selectedFolderPath: null,
   selectedTagPath: null,
+  selectedTagPaths: [],
   selectedDocumentId: null,
   selectedFavoriteId: null
 };
@@ -141,6 +142,9 @@ export function readAffairsViewState(workspaceId: string | null | undefined): Af
     viewMode: snapshot.viewMode ?? DEFAULT_AFFAIRS_STATE.viewMode,
     selectedFolderPath: snapshot.selectedFolderPath ?? DEFAULT_AFFAIRS_STATE.selectedFolderPath,
     selectedTagPath: snapshot.selectedTagPath ?? DEFAULT_AFFAIRS_STATE.selectedTagPath,
+    selectedTagPaths: Array.isArray(snapshot.selectedTagPaths)
+      ? snapshot.selectedTagPaths.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : (snapshot.selectedTagPath?.trim() ? [snapshot.selectedTagPath.trim()] : DEFAULT_AFFAIRS_STATE.selectedTagPaths),
     selectedDocumentId: snapshot.selectedDocumentId ?? DEFAULT_AFFAIRS_STATE.selectedDocumentId,
     selectedFavoriteId: snapshot.selectedFavoriteId ?? DEFAULT_AFFAIRS_STATE.selectedFavoriteId
   };
@@ -163,6 +167,7 @@ export function createDefaultAffairsViewState(workspaceId: string): AffairsViewS
     viewMode: DEFAULT_AFFAIRS_STATE.viewMode,
     selectedFolderPath: DEFAULT_AFFAIRS_STATE.selectedFolderPath,
     selectedTagPath: DEFAULT_AFFAIRS_STATE.selectedTagPath,
+    selectedTagPaths: DEFAULT_AFFAIRS_STATE.selectedTagPaths,
     selectedDocumentId: DEFAULT_AFFAIRS_STATE.selectedDocumentId,
     selectedFavoriteId: DEFAULT_AFFAIRS_STATE.selectedFavoriteId
   };

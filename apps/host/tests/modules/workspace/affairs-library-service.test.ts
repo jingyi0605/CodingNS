@@ -674,6 +674,14 @@ describe("AffairsLibraryService auto tasks", () => {
     expect(recent3.items.map((item) => item.path)).toEqual(["recent-3.txt"]);
     expect(recent7.total).toBe(2);
     expect(recent7.items.map((item) => item.path)).toEqual(["recent-3.txt", "recent-7.txt"]);
+    const recent3And7 = service.listDocuments("workspace-1", "user-1", {
+      browseMode: "tag",
+      selectedTagPaths: ["时间/最近3天", "时间/最近7天"]
+    });
+    expect(recent3And7.total).toBe(1);
+    expect(recent3And7.items.map((item) => item.path)).toEqual(["recent-3.txt"]);
+    expect(recent3And7.tagFacetCounts?.["时间"]).toBe(1);
+    expect(recent3And7.tagFacetCounts?.["时间/最近7天"]).toBe(1);
 
     service.dispose();
     fs.rmSync(rootDir, { recursive: true, force: true });

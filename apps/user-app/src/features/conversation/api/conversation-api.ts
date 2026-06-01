@@ -183,6 +183,100 @@ export interface AffairsLibraryTagNodeDto {
   documentCount: number;
 }
 
+export interface AffairsTagNodeDto {
+  id: string;
+  path: string;
+  name: string;
+  rootType: string;
+  parentId: string | null;
+  parentPath: string | null;
+  description: string | null;
+  status: "active" | "disabled";
+  ruleEnabled: boolean;
+  documentCount: number;
+  createdAt: string;
+  updatedAt: string;
+  disabledAt: string | null;
+}
+
+export interface AffairsTagRuleDto {
+  id: string;
+  enabled: boolean;
+  ruleType: string;
+  scope: string[];
+  matcher: Record<string, unknown>;
+  minScore: number | null;
+  priority: number;
+  source: string;
+  updatedAt: string;
+}
+
+export interface AffairsTagDetailDto extends AffairsTagNodeDto {
+  rules: AffairsTagRuleDto[];
+}
+
+export type AffairsResolvedTagSourceTypeDto =
+  | "manual_document"
+  | "folder_binding"
+  | "rule_match"
+  | "system_derived";
+
+export interface AffairsResolvedTagSourceDto {
+  path: string;
+  sourceType: AffairsResolvedTagSourceTypeDto;
+  sourceRef: string | null;
+  evidence: string | null;
+  confidence: number;
+  priority: number;
+}
+
+export interface AffairsDocumentTagDetailsDto {
+  documentId: string;
+  path: string;
+  title: string;
+  manualTagIds: string[];
+  effectiveFolderBindings: Array<{
+    id: string;
+    folderPath: string;
+    tagId: string;
+    tagPath: string;
+  }>;
+  resolvedTags: AffairsResolvedTagSourceDto[];
+}
+
+export interface AffairsFolderTagDetailsDto {
+  folderPath: string;
+  exists: boolean;
+  bindingTagIds: string[];
+  bindings: Array<{
+    id: string;
+    tagId: string;
+    tagPath: string;
+    applyMode: string;
+  }>;
+}
+
+export interface AffairsTagRecommendationItemDto {
+  id: string;
+  proposedPath: string;
+  proposedName: string;
+  proposedParentPath: string | null;
+  documentCount: number;
+  evidence: Record<string, unknown>;
+  selectedByDefault: boolean;
+  status: string;
+}
+
+export interface AffairsTagRecommendationBatchDto {
+  id: string;
+  status: string;
+  summary: string | null;
+  generatedAt: string;
+  updatedAt: string;
+  evidenceSnapshot: Record<string, unknown> | null;
+  items?: AffairsTagRecommendationItemDto[];
+}
+
 export interface AffairsLibraryFolderNodeDto {
   path: string;
   name: string;
@@ -208,6 +302,7 @@ export interface AffairsLibraryDocumentListDto {
   offset: number;
   limit: number;
   items: AffairsLibraryDocumentRecordDto[];
+  tagFacetCounts?: Record<string, number>;
 }
 
 export type AffairsLibraryPreviewKindDto =
@@ -1316,6 +1411,7 @@ export function listAffairsLibraryDocuments(
     browseMode: "folder" | "tag";
     selectedFolderPath?: string | null;
     selectedTagPath?: string | null;
+    selectedTagPaths?: string[] | null;
     selectedFavoriteId?: string | null;
     offset?: number;
     limit?: number;
@@ -1328,6 +1424,14 @@ export function listAffairsLibraryDocuments(
   }
   if (query.selectedTagPath?.trim()) {
     search.set("selectedTagPath", query.selectedTagPath.trim());
+  }
+  if (Array.isArray(query.selectedTagPaths)) {
+    const normalizedTagPaths = query.selectedTagPaths
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+    if (normalizedTagPaths.length > 0) {
+      search.set("selectedTagPaths", normalizedTagPaths.join(","));
+    }
   }
   if (query.selectedFavoriteId?.trim()) {
     search.set("selectedFavoriteId", query.selectedFavoriteId.trim());
@@ -1378,6 +1482,146 @@ export function updateAffairsLibraryFavorites(
       method: "PUT",
       body: JSON.stringify(payload)
     }
+  );
+}
+
+export function listAffairsTags(workspaceId: string, query?: { includeDisabled?: boolean }) {
+  const search = new URLSearchParams();
+  if (query?.includeDisabled === true) {
+    search.set("includeDisabled", "true");
+  }
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return httpClient.request<{
+    items: AffairsTagNodeDto[];
+    summary: {
+      totalActiveTags: number;
+      totalDisabledTags: number;
+      totalRuleEnabledTags: number;
+      totalBoundDocuments: number;
+    };
+    status: {
+      recomputeState: "idle" | "queued" | "running" | "succeeded" | "failed";
+      lastRecomputedAt: string | null;
+      lastError: string | null;
+    };
+  }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tags${suffix}`);
+}
+
+export function createAffairsTag(
+  workspaceId: string,
+  payload: { name: string; parentId?: string | null; description?: string | null; status?: "active" | "disabled" },
+) {
+  return httpClient.request<AffairsTagDetailDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tags`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function getAffairsTagDetail(workspaceId: string, tagId: string) {
+  return httpClient.request<AffairsTagDetailDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tags/${encodeURIComponent(tagId)}`
+  );
+}
+
+export function updateAffairsTag(
+  workspaceId: string,
+  tagId: string,
+  payload: { name: string; parentId?: string | null; description?: string | null; status?: "active" | "disabled" },
+) {
+  return httpClient.request<AffairsTagDetailDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tags/${encodeURIComponent(tagId)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function saveAffairsTagRules(
+  workspaceId: string,
+  tagId: string,
+  payload: { rules: Array<Partial<AffairsTagRuleDto> & { matcher?: Record<string, unknown> }> },
+) {
+  return httpClient.request<{
+    tag: AffairsTagDetailDto;
+    rules: AffairsTagRuleDto[];
+    recomputeTask: {
+      taskId: string;
+      deduped: boolean;
+      status: "queued" | "running";
+      affectedTagPaths: string[];
+    } | null;
+  }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tags/${encodeURIComponent(tagId)}/rules`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function getAffairsDocumentTagDetails(workspaceId: string, documentId: string) {
+  return httpClient.request<AffairsDocumentTagDetailsDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/documents/${encodeURIComponent(documentId)}/tag-details`
+  );
+}
+
+export function saveAffairsDocumentTags(workspaceId: string, documentId: string, payload: { tagIds: string[] }) {
+  return httpClient.request<{
+    target: { type: "document"; documentId: string };
+    items: AffairsResolvedTagSourceDto[];
+    refreshTask: { taskId: string; deduped: boolean; affectedPaths: string[] } | null;
+  }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/documents/${encodeURIComponent(documentId)}/tags`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function getAffairsFolderTagDetails(workspaceId: string, folderPath: string) {
+  const search = new URLSearchParams({ folderPath });
+  return httpClient.request<AffairsFolderTagDetailsDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/folders/tag-details?${search.toString()}`
+  );
+}
+
+export function saveAffairsFolderTags(workspaceId: string, payload: { folderPath: string; tagIds: string[] }) {
+  return httpClient.request<{
+    target: { type: "folder"; folderPath: string };
+    items: AffairsResolvedTagSourceDto[];
+    refreshTask: { taskId: string; deduped: boolean; affectedPaths: string[] } | null;
+  }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/folders/tags`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function createAffairsTagRecommendationBatch(workspaceId: string) {
+  return httpClient.request<{
+    batch: AffairsTagRecommendationBatchDto;
+    task: { taskId: string; deduped: boolean; status: "queued" };
+  }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tag-recommendations`, {
+    method: "POST",
+  });
+}
+
+export function listAffairsTagRecommendationBatches(workspaceId: string) {
+  return httpClient.request<{ items: AffairsTagRecommendationBatchDto[] }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tag-recommendations`
+  );
+}
+
+export function getAffairsTagRecommendationBatch(workspaceId: string, batchId: string) {
+  return httpClient.request<AffairsTagRecommendationBatchDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tag-recommendations/${encodeURIComponent(batchId)}`
   );
 }
 
