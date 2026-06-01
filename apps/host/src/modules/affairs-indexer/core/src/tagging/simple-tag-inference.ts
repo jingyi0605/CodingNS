@@ -97,6 +97,19 @@ function customerToRule(customer: CustomerRule): ConfigTagRule {
   };
 }
 
+function startOfLocalDay(value: Date): Date {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate(), 0, 0, 0, 0);
+}
+
+function resolveRecentDayDistance(now: Date, modifiedAt: Date): number | null {
+  const todayStart = startOfLocalDay(now).getTime();
+  const modifiedStart = startOfLocalDay(modifiedAt).getTime();
+  if (!Number.isFinite(todayStart) || !Number.isFinite(modifiedStart)) {
+    return null;
+  }
+  return Math.max(0, Math.floor((todayStart - modifiedStart) / 86400000));
+}
+
 /**
  * 最小规则标签推断器。
  * 当前阶段只做稳定、可解释的规则标签，避免一开始就做复杂语义裁决。
@@ -167,8 +180,7 @@ export class SimpleTagInferenceEngine {
     const modifiedAt = new Date(file.mtime);
     if (!Number.isNaN(modifiedAt.getTime())) {
       const now = new Date();
-      const diffMs = Math.max(0, now.getTime() - modifiedAt.getTime());
-      const days = Math.floor(diffMs / 86400000);
+      const recentDayDistance = resolveRecentDayDistance(now, modifiedAt);
 
       setTag(derived, {
         tagPath: `时间/${modifiedAt.getFullYear()}/${String(modifiedAt.getMonth() + 1).padStart(2, "0")}`,
@@ -177,19 +189,30 @@ export class SimpleTagInferenceEngine {
         evidence: "由修改时间推导的绝对时间标签",
       });
 
-      if (days <= 3) {
-        setTag(derived, {
-          tagPath: "时间/最近3天",
-          confidence: 1,
-          source: "derived_time_window",
-          evidence: "最近3天有修改",
-        });
-      } else if (days <= 30) {
+      if (recentDayDistance !== null && recentDayDistance <= 29) {
         setTag(derived, {
           tagPath: "时间/最近30天",
           confidence: 1,
           source: "derived_time_window",
           evidence: "最近30天有修改",
+        });
+      }
+
+      if (recentDayDistance !== null && recentDayDistance <= 6) {
+        setTag(derived, {
+          tagPath: "时间/最近7天",
+          confidence: 1,
+          source: "derived_time_window",
+          evidence: "最近7天有修改",
+        });
+      }
+
+      if (recentDayDistance !== null && recentDayDistance <= 2) {
+        setTag(derived, {
+          tagPath: "时间/最近3天",
+          confidence: 1,
+          source: "derived_time_window",
+          evidence: "最近3天有修改",
         });
       }
     }
