@@ -1309,14 +1309,16 @@ export function AffairsSidebarPanel() {
                         className={nodeId === state.selectedNodeId ? "affairs-sidebar-item active" : "affairs-sidebar-item"}
                         data-tone="favorite"
                       >
-                        <button type="button" className="affairs-sidebar-item-button" onClick={() => selectSidebarNode(nodeId)}>
-                          <div className="affairs-sidebar-item-row">
-                            <span className="affairs-sidebar-item-title">{favorite.label}</span>
-                            <div className="affairs-sidebar-item-actions">
-                              {renderFavoriteToggle(nodeId, favorite.label, toggleFavorite)}
+                        <div className="affairs-sidebar-item-button-shell">
+                          <button type="button" className="affairs-sidebar-item-button affairs-sidebar-item-button-content" onClick={() => selectSidebarNode(nodeId)}>
+                            <div className="affairs-sidebar-item-row">
+                              <span className="affairs-sidebar-item-title">{favorite.label}</span>
                             </div>
+                          </button>
+                          <div className="affairs-sidebar-item-actions">
+                            {renderFavoriteToggle(nodeId, favorite.label, toggleFavorite)}
                           </div>
-                        </button>
+                        </div>
                       </div>
                     );
                   })}
@@ -1329,14 +1331,16 @@ export function AffairsSidebarPanel() {
                         className={nodeId === state.selectedNodeId ? "affairs-sidebar-item active" : "affairs-sidebar-item"}
                         data-tone="favorite"
                       >
-                        <button type="button" className="affairs-sidebar-item-button" onClick={() => selectSidebarNode(nodeId)}>
-                          <div className="affairs-sidebar-item-row">
-                            <span className="affairs-sidebar-item-title">{favorite.label}</span>
-                            <div className="affairs-sidebar-item-actions">
-                              {renderFavoriteToggle(nodeId, favorite.label, toggleFavorite)}
+                        <div className="affairs-sidebar-item-button-shell">
+                          <button type="button" className="affairs-sidebar-item-button affairs-sidebar-item-button-content" onClick={() => selectSidebarNode(nodeId)}>
+                            <div className="affairs-sidebar-item-row">
+                              <span className="affairs-sidebar-item-title">{favorite.label}</span>
                             </div>
+                          </button>
+                          <div className="affairs-sidebar-item-actions">
+                            {renderFavoriteToggle(nodeId, favorite.label, toggleFavorite)}
                           </div>
-                        </button>
+                        </div>
                       </div>
                     );
                   })}
@@ -2091,15 +2095,15 @@ function AffairsTagTreeNode({
           ) : (
             <span className="affairs-tag-tree-toggle placeholder" aria-hidden="true" />
           )}
-          <button type="button" className="affairs-sidebar-item-button" onClick={() => onSelect(nodeId)}>
+          <button type="button" className="affairs-sidebar-item-button affairs-sidebar-item-button-content" onClick={() => onSelect(nodeId)}>
             <div className="affairs-sidebar-item-row">
               <span className="affairs-sidebar-item-title">{node.label}</span>
               <div className="affairs-sidebar-item-actions">
                 <span className="affairs-sidebar-item-badge">{node.count}</span>
-                {renderFavoriteToggle(nodeId, node.label, onToggleFavorite)}
               </div>
             </div>
           </button>
+          {renderFavoriteToggle(nodeId, node.label, onToggleFavorite)}
         </div>
       </div>
       {expanded ? (

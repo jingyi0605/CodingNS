@@ -8169,6 +8169,18 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   text-align: left;
 }
 
+.affairs-sidebar-item-button-shell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.affairs-sidebar-item-button-content {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .affairs-sidebar-item-actions {
   display: inline-flex;
   align-items: center;
@@ -8322,6 +8334,11 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   display: flex;
   align-items: stretch;
   gap: 2px;
+}
+
+.affairs-tag-tree-row > .affairs-favorite-toggle {
+  align-self: center;
+  flex: 0 0 auto;
 }
 
 .affairs-tag-tree-toggle {
