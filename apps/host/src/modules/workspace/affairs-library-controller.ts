@@ -1,8 +1,13 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { requireUserId } from "../preferences/common.js";
-import type { AffairsLibraryFavoriteRecord, AffairsLibraryService } from "./affairs-library-service.js";
+import type {
+  AffairsLibraryFavoriteRecord,
+  AffairsLibraryOperationType,
+  AffairsLibraryService
+} from "./affairs-library-service.js";
 import type { AffairsLibraryPreviewLinkService } from "./affairs-library-preview-link-service.js";
+import { writeAffairsLibraryDebugLog } from "./affairs-library-debug-log.js";
 
 interface WorkspaceParams {
   workspaceId: string;
@@ -15,6 +20,7 @@ interface SaveAffairsLibraryBindingBody {
 interface SaveAffairsLibraryConfigBody {
   mirrorRoot?: string | null;
   allowedExtensions?: string[];
+  includedHiddenPaths?: string[];
 }
 
 interface SetAffairsLibraryEnabledBody {
@@ -42,6 +48,12 @@ interface ListAffairsLibraryDocumentsQuery {
 
 interface AffairsLibraryPreviewQuery {
   path?: string;
+}
+
+interface AffairsLibraryOperationBody {
+  opType?: AffairsLibraryOperationType;
+  srcPath?: string;
+  dstPath?: string | null;
 }
 
 export class AffairsLibraryController {
@@ -111,7 +123,8 @@ export class AffairsLibraryController {
     reply.send(
       this.affairsLibraryService.saveConfig(request.params.workspaceId, requireUserId(request), {
         mirrorRoot: request.body.mirrorRoot ?? null,
-        allowedExtensions: Array.isArray(request.body.allowedExtensions) ? request.body.allowedExtensions : []
+        allowedExtensions: Array.isArray(request.body.allowedExtensions) ? request.body.allowedExtensions : [],
+        includedHiddenPaths: Array.isArray(request.body.includedHiddenPaths) ? request.body.includedHiddenPaths : []
       })
     );
   };
@@ -122,6 +135,15 @@ export class AffairsLibraryController {
   ): Promise<void> => {
     const targetPath = request.body.targetPath?.trim() ?? "";
     if (targetPath) {
+      writeAffairsLibraryDebugLog({
+        event: "directory_hint_requested",
+        processRole: "host",
+        workspaceId: request.params.workspaceId,
+        source: "affairs_library.controller",
+        reason: request.body.reason?.trim() ?? "directory_hint",
+        targetPath,
+        status: "received"
+      });
       reply.send(
         this.affairsLibraryService.requestRefreshHint(
           request.params.workspaceId,
@@ -133,6 +155,14 @@ export class AffairsLibraryController {
       return;
     }
 
+    writeAffairsLibraryDebugLog({
+      event: "manual_refresh_requested",
+      processRole: "host",
+      workspaceId: request.params.workspaceId,
+      source: "affairs_library.controller",
+      reason: request.body.reason?.trim() ?? "manual_refresh",
+      status: "received"
+    });
     reply.send(
       this.affairsLibraryService.requestRefresh(
         request.params.workspaceId,
@@ -203,6 +233,36 @@ export class AffairsLibraryController {
     }
 
     reply.send(preview);
+  };
+
+  readonly downloadFile = async (
+    request: FastifyRequest<{ Params: WorkspaceParams; Querystring: AffairsLibraryPreviewQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      this.affairsLibraryService.downloadFile(
+        request.params.workspaceId,
+        requireUserId(request),
+        request.query.path ?? ""
+      )
+    );
+  };
+
+  readonly operateFile = async (
+    request: FastifyRequest<{ Params: WorkspaceParams; Body: AffairsLibraryOperationBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      this.affairsLibraryService.operateFile(
+        request.params.workspaceId,
+        requireUserId(request),
+        {
+          opType: request.body.opType ?? "delete",
+          srcPath: request.body.srcPath?.trim(),
+          dstPath: request.body.dstPath?.trim() ?? null
+        }
+      )
+    );
   };
 }
 

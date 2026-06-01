@@ -375,6 +375,56 @@
   - 对应需求：`requirements.md` 需求 6
   - 对应设计：`design.md` §3.3、§5.3
 
+- [x] 4.4 把目录 hint 正式拆成独立轻任务和热目录缓存
+  - 状态：DONE
+  - 这一步到底做什么：把“当前目录快点变新”从全局 `affairs.library_index` 里拆出来，正式新增 `affairs.library_directory_hint` 轻任务，并在 Host 侧维护最近 2 到 3 个热目录缓存。
+  - 做完你能看到什么：就算全局索引还在跑，当前正在看的目录也能先刷新；目录结果不再完全被全局重任务堵死。
+  - 先依赖什么：4.3
+  - 开始前先看：
+    - `spec001.2-后端任务调度与主线程压力治理/20260412-后台任务接入规范.md`
+    - `apps/host/src/modules/tasks/task-types.ts`
+    - `apps/host/src/modules/workspace/affairs-library-service.ts`
+  - 主要改哪里：
+    - `apps/host/src/modules/tasks/task-types.ts`
+    - `apps/host/src/modules/workspace/affairs-library-service.ts`
+    - `apps/host/tests/modules/workspace/affairs-library-service.test.ts`
+  - 这一步先不做什么：不把目录 hint 变成第二套全局索引器，不写 `.ai-index`，不跟 export 抢重活。
+  - 怎么算完成：
+    1. `affairs.library_directory_hint` 已注册到 `TaskManager`
+    2. 每个目录只有一个 inflight
+    3. Host 有热目录缓存和目录状态
+    4. 当前目录读取优先消费热目录结果
+  - 怎么验证：
+    - Host 定向测试
+    - 人工查看结构化日志
+  - 对应需求：`requirements.md` 需求 1、需求 4、需求 6
+  - 对应设计：`design.md` §2.3.5、§3.1、§3.2.5、§3.2.6
+
+- [x] 4.5 前端增加目录级状态字段并按目录状态轮询
+  - 状态：DONE
+  - 这一步到底做什么：前端读取目录列表时一起拿到 `directoryStatus`，并优先按当前目录状态决定轮询，而不是只盯全局 `librarySnapshot.status.lastCompletedAt`。
+  - 做完你能看到什么：状态面板里不仅能看全局索引状态，还能看“当前目录最近有没有刷新”；目录列表刷新节奏也会跟着当前目录状态走。
+  - 先依赖什么：4.4
+  - 开始前先看：
+    - `docs/开发设计规范/20260419-前端页面与样式设计规范.md`
+    - `apps/user-app/src/features/conversation/api/conversation-api.ts`
+    - `apps/user-app/src/features/workbench/components/AffairsWorkbenchView.tsx`
+  - 主要改哪里：
+    - `apps/user-app/src/features/conversation/api/conversation-api.ts`
+    - `apps/user-app/src/features/workbench/components/AffairsWorkbenchView.tsx`
+    - `apps/user-app/src/features/workbench/components/AffairsWorkbenchView.test.tsx`
+    - `apps/user-app/src/shared/i18n/index.ts`
+  - 这一步先不做什么：不改页面整体布局，不新增新的弹窗。
+  - 怎么算完成：
+    1. `AffairsLibraryDocumentListDto` 带 `directoryStatus`
+    2. 当前目录轮询跟着目录状态走
+    3. 状态面板能看当前目录状态、来源和最近时间
+  - 怎么验证：
+    - 前端定向测试
+    - `tsc --noEmit`
+  - 对应需求：`requirements.md` 需求 1、需求 6
+  - 对应设计：`design.md` §2.3.5、§3.2.6、§3.3.5
+
 ---
 
 ## 阶段 5：AGENTS.md 变更后重写工作区 runtime instruction bundle

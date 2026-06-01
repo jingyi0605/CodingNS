@@ -274,8 +274,9 @@ describe("AffairsLibraryService auto tasks", () => {
         })
       })
     );
-    expect(enqueue.mock.calls[0]?.[1]?.input).not.toHaveProperty("targetPath");
-    expect(String(enqueue.mock.calls[0]?.[1]?.input?.reason ?? "")).toContain("missing_index_artifact");
+    const indexCall = enqueue.mock.calls.find((call) => call[0] === HOST_TASK_TYPES.affairsLibraryIndex);
+    expect(indexCall?.[1]?.input).not.toHaveProperty("targetPath");
+    expect(String(indexCall?.[1]?.input?.reason ?? "")).toContain("missing_index_artifact");
 
     service.dispose();
     fs.rmSync(rootDir, { recursive: true, force: true });
@@ -344,8 +345,7 @@ describe("AffairsLibraryService auto tasks", () => {
     service.scheduleAutoApplyConfig("workspace-1", "watch:config_changed");
 
     await vi.advanceTimersByTimeAsync(810);
-    expect(enqueue).toHaveBeenNthCalledWith(
-      1,
+    expect(enqueue).toHaveBeenCalledWith(
       HOST_TASK_TYPES.affairsLibraryApplyConfig,
       expect.objectContaining({
         input: expect.objectContaining({
@@ -357,8 +357,7 @@ describe("AffairsLibraryService auto tasks", () => {
     );
 
     await vi.advanceTimersByTimeAsync(60);
-    expect(enqueue).toHaveBeenNthCalledWith(
-      2,
+    expect(enqueue).toHaveBeenCalledWith(
       HOST_TASK_TYPES.affairsLibraryIndex,
       expect.objectContaining({
         input: expect.objectContaining({
@@ -593,6 +592,74 @@ describe("AffairsLibraryService auto tasks", () => {
     fs.rmSync(rootDir, { recursive: true, force: true });
   });
 
+  it("配置里放行的 hidden 文件会进入当前目录实时列表", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-hidden-live-"));
+    fs.mkdirSync(path.join(rootDir, "notes"), { recursive: true });
+    fs.mkdirSync(path.join(rootDir, ".ai-index"), { recursive: true });
+    fs.writeFileSync(
+      path.join(rootDir, ".ai-index", "doc-semantic-index.config.json"),
+      JSON.stringify({
+        includedHiddenPaths: ["notes/.draft.md"]
+      })
+    );
+    fs.writeFileSync(path.join(rootDir, "notes", ".draft.md"), "hello hidden");
+
+    const service = createService({ rootDir });
+    const documentList = service.listDocuments("workspace-1", "user-1", {
+      browseMode: "folder",
+      selectedFolderPath: "notes"
+    });
+
+    expect(documentList.items.some((item) => item.path === "notes/.draft.md")).toBe(true);
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("运行中的索引任务会优先显示 helper 正式上报的内部阶段", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-runtime-stage-"));
+    fs.mkdirSync(path.join(rootDir, ".ai-index"), { recursive: true });
+    fs.writeFileSync(
+      path.join(rootDir, ".ai-index", "runtime-status.json"),
+      JSON.stringify({
+        version: 1,
+        status: "running",
+        stage: "sqlite",
+        command: "index",
+        taskId: "task-1",
+        taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+        updatedAt: new Date().toISOString()
+      })
+    );
+    const now = Date.now();
+    const service = createService({
+      rootDir,
+      peek: (taskType, key) => taskType === HOST_TASK_TYPES.affairsLibraryIndex && key === "workspace-1"
+        ? ({
+            taskId: "task-1",
+            taskType,
+            key,
+            executionLane: "helper_process",
+            status: "running",
+            source: "affairs_library.auto_refresh",
+            attempt: 1,
+            enqueuedAt: now - 5_000,
+            startedAt: now - 4_500,
+            finishedAt: null,
+            timeoutMs: 15 * 60 * 1000
+          } satisfies TaskSnapshot)
+        : null
+    });
+
+    const snapshot = service.getSnapshot("workspace-1", "user-1");
+
+    expect(snapshot.status.state).toBe("running");
+    expect(snapshot.status.runningStage).toBe("sqlite");
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
   it("按时间窗口标签筛选时只返回该窗口命中的文档，计数也准确", () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-time-tags-"));
     const exportDir = path.join(rootDir, ".ai-index", "exports");
@@ -781,7 +848,7 @@ describe("AffairsLibraryService auto tasks", () => {
       selectedFolderPath: null
     });
     expect(firstList.total).toBe(2);
-    expect(firstList.items.map((item) => item.path)).toEqual(["AGENTS.md", "TEST.MD"]);
+    expect(firstList.items.map((item) => item.path)).toEqual(["TEST.MD", "AGENTS.md"]);
 
     writeExport({
       exportedAt: "2026-05-31T10:05:00.000Z",
@@ -827,6 +894,98 @@ describe("AffairsLibraryService auto tasks", () => {
       "index.html",
       "TEST.MD",
       "AGENTS.md"
+    ]);
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("索引卡住时，目录模式仍然能直接读到当前目录新增文件", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-live-folder-"));
+    const exportDir = path.join(rootDir, ".ai-index", "exports");
+    fs.mkdirSync(path.join(rootDir, "临时文件"), { recursive: true });
+    fs.mkdirSync(exportDir, { recursive: true });
+
+    fs.writeFileSync(
+      path.join(exportDir, "status.json"),
+      JSON.stringify({
+        version: 2,
+        format: "static-v2",
+        exported_at: "2026-05-31T10:00:00.000Z",
+        document_count: 1
+      })
+    );
+    fs.writeFileSync(
+      path.join(exportDir, "manifest.json"),
+      JSON.stringify({
+        generated_at: "2026-05-31T10:00:00.000Z",
+        entries: {
+          taxonomy: "taxonomy.json",
+          bootstrap: "bootstrap.json"
+        },
+        meta_shards: [{ path: "documents-0.json" }]
+      })
+    );
+    fs.writeFileSync(path.join(exportDir, "taxonomy.json"), JSON.stringify({ nodes: [] }));
+    fs.writeFileSync(
+      path.join(exportDir, "bootstrap.json"),
+      JSON.stringify({
+        folders: [
+          {
+            path: "临时文件",
+            name: "临时文件",
+            parent_path: null,
+            direct_document_count: 1,
+            document_count: 1
+          }
+        ]
+      })
+    );
+    fs.writeFileSync(
+      path.join(exportDir, "documents-0.json"),
+      JSON.stringify({
+        documents: [
+          {
+            document_id: "doc-old",
+            path: "临时文件/账号.txt",
+            title: "账号",
+            summary: "账号",
+            mtime: "2026-05-31T10:00:00.000Z",
+            direct_tags: [],
+            derived_tags: []
+          }
+        ]
+      })
+    );
+
+    fs.writeFileSync(path.join(rootDir, "临时文件", "账号.txt"), "old\n");
+    fs.writeFileSync(path.join(rootDir, "临时文件", "账号_副本.txt"), "new\n");
+
+    const service = createService({
+      rootDir,
+      peek: () => ({
+        taskId: "task-running",
+        taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+        key: "workspace-1",
+        executionLane: "helper_process",
+        status: "running",
+        source: "affairs_library.auto_refresh",
+        attempt: 1,
+        enqueuedAt: Date.now() - 60_000,
+        startedAt: Date.now() - 59_000,
+        finishedAt: null,
+        timeoutMs: 15 * 60 * 1000
+      })
+    });
+
+    const documentList = service.listDocuments("workspace-1", "user-1", {
+      browseMode: "folder",
+      selectedFolderPath: "临时文件"
+    });
+
+    expect(documentList.items.map((item) => item.path)).toEqual([
+      "临时文件/账号_副本.txt",
+      "临时文件/账号.txt"
     ]);
 
     service.dispose();
@@ -986,6 +1145,105 @@ describe("AffairsLibraryDirtyWatchService", () => {
     await sleep(1300);
 
     expect(events).toEqual([]);
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("普通隐藏文件和隐藏目录默认不会触发外部自动刷新", async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-watch-hidden-"));
+    fs.mkdirSync(path.join(rootDir, "notes"), { recursive: true });
+    fs.mkdirSync(path.join(rootDir, ".obsidian"), { recursive: true });
+
+    const events: AffairsLibraryWatchDirtyEvent[] = [];
+    const service = new AffairsLibraryDirtyWatchService(
+      {
+        listEnabledAffairsLibraries: vi.fn(() => []),
+        findAnyEnabledAffairsLibraryByWorkspaceId: vi.fn(() => ({
+          workspaceId: "workspace-1",
+          userId: "user-1",
+          collapsed: false,
+          backgroundColor: null,
+          affairsLibraryRootPath: rootDir,
+          affairsLibraryEnabled: true,
+          affairsLibraryFavoritesJson: "[]",
+          updatedAt: "2026-05-31T06:00:00.000Z"
+        }))
+      } as never,
+      (_workspaceId, event) => {
+        events.push(event);
+      },
+      {
+        info: vi.fn(),
+        warn: vi.fn()
+      }
+    );
+
+    service.syncWorkspace("workspace-1");
+    await sleep(300);
+
+    fs.writeFileSync(path.join(rootDir, ".env"), "SECRET=1\n");
+    fs.writeFileSync(path.join(rootDir, "notes", ".draft.md"), "hidden\n");
+    fs.writeFileSync(path.join(rootDir, ".obsidian", "workspace.json"), "{}\n");
+
+    await sleep(1300);
+
+    expect(events).toEqual([]);
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("配置里手动放行 hidden 路径后，watcher 会正常上报这些路径", async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-watch-hidden-include-"));
+    fs.mkdirSync(path.join(rootDir, "notes"), { recursive: true });
+    fs.mkdirSync(path.join(rootDir, ".obsidian"), { recursive: true });
+    fs.mkdirSync(path.join(rootDir, ".ai-index"), { recursive: true });
+    fs.writeFileSync(
+      path.join(rootDir, ".ai-index", "doc-semantic-index.config.json"),
+      JSON.stringify({
+        includedHiddenPaths: [".obsidian", "notes/.draft.md"]
+      })
+    );
+
+    const events: AffairsLibraryWatchDirtyEvent[] = [];
+    const service = new AffairsLibraryDirtyWatchService(
+      {
+        listEnabledAffairsLibraries: vi.fn(() => []),
+        findAnyEnabledAffairsLibraryByWorkspaceId: vi.fn(() => ({
+          workspaceId: "workspace-1",
+          userId: "user-1",
+          collapsed: false,
+          backgroundColor: null,
+          affairsLibraryRootPath: rootDir,
+          affairsLibraryEnabled: true,
+          affairsLibraryFavoritesJson: "[]",
+          updatedAt: "2026-05-31T06:00:00.000Z"
+        }))
+      } as never,
+      (_workspaceId, event) => {
+        events.push(event);
+      },
+      {
+        info: vi.fn(),
+        warn: vi.fn()
+      }
+    );
+
+    service.syncWorkspace("workspace-1");
+    await sleep(300);
+
+    fs.writeFileSync(path.join(rootDir, "notes", ".draft.md"), "hidden
+");
+    fs.writeFileSync(path.join(rootDir, ".obsidian", "workspace.json"), "{}
+");
+
+    await sleep(1300);
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "index", targetPath: "notes/.draft.md" }),
+      expect.objectContaining({ kind: "index", targetPath: ".obsidian/workspace.json" })
+    ]));
 
     service.dispose();
     fs.rmSync(rootDir, { recursive: true, force: true });

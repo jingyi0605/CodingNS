@@ -2,6 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { WorkspaceNavigationStateRepository } from "../../storage/repositories/workspace-navigation-state-repository.js";
+import {
+  isIncludedHiddenPath,
+  normalizeIncludedHiddenPaths
+} from "../affairs-indexer/core/src/scanner/file-scanner.js";
+import { writeAffairsLibraryDebugLog } from "./affairs-library-debug-log.js";
 
 export interface AffairsLibraryWatchDirtyEvent {
   kind: "index" | "config" | "tag-rules";
@@ -141,6 +146,15 @@ export class AffairsLibraryDirtyWatchService {
         },
         "事务文档库外部刷新监听已跳过，根目录当前不可用"
       );
+      writeAffairsLibraryDebugLog({
+        event: "watch_service_skipped",
+        processRole: "host",
+        workspaceId,
+        rootDir,
+        source: "affairs_library.watch",
+        status: "skipped",
+        message: "根目录当前不可用"
+      });
       return;
     }
 
@@ -211,6 +225,17 @@ export class AffairsLibraryDirtyWatchService {
         },
         "事务文档库外部刷新监听已启动"
       );
+      writeAffairsLibraryDebugLog({
+        event: "watch_service_started",
+        processRole: "host",
+        workspaceId,
+        rootDir,
+        source: "affairs_library.watch",
+        status: "running",
+        details: {
+          periodicRefreshIntervalMs: PERIODIC_REFRESH_INTERVAL_MS
+        }
+      });
     } catch (error) {
       this.logger.warn(
         {
@@ -221,6 +246,15 @@ export class AffairsLibraryDirtyWatchService {
         },
         "事务文档库外部刷新监听启动失败"
       );
+      writeAffairsLibraryDebugLog({
+        event: "watch_service_failed_to_start",
+        processRole: "host",
+        workspaceId,
+        rootDir,
+        source: "affairs_library.watch",
+        status: "failed",
+        message: error instanceof Error ? error.message : String(error)
+      });
       this.stopWorkspaceWatch(workspaceId);
     }
   }
@@ -251,6 +285,14 @@ export class AffairsLibraryDirtyWatchService {
       },
       "事务文档库外部刷新监听已停止"
     );
+    writeAffairsLibraryDebugLog({
+      event: "watch_service_stopped",
+      processRole: "host",
+      workspaceId,
+      rootDir: entry.rootDir,
+      source: "affairs_library.watch",
+      status: "stopped"
+    });
   }
 
   private handleFsWatchEvent(
@@ -280,6 +322,17 @@ export class AffairsLibraryDirtyWatchService {
         },
         "事务文档库外部刷新监听发现索引产物缺失，已提交重建脏标记"
       );
+      writeAffairsLibraryDebugLog({
+        event: "watch_missing_artifact_detected",
+        processRole: "host",
+        workspaceId,
+        rootDir,
+        source: "affairs_library.watch",
+        eventType,
+        targetPath: relativePath,
+        reason: missingIndexArtifactReason,
+        status: "dirty_marked"
+      });
       this.scheduleWorkspaceRefresh(workspaceId);
       return;
     }
@@ -310,6 +363,21 @@ export class AffairsLibraryDirtyWatchService {
       },
       "事务文档库外部刷新监听捕获到文件变动"
     );
+    writeAffairsLibraryDebugLog({
+      event: "watch_event_captured",
+      processRole: "host",
+      workspaceId,
+      rootDir,
+      source: "affairs_library.watch",
+      watchKind: effectiveTargetPath === CONFIG_RELATIVE_PATH
+        ? "config"
+        : effectiveTargetPath === TAG_RULES_RELATIVE_PATH
+          ? "tag-rules"
+          : "index",
+      eventType,
+      targetPath: effectiveTargetPath,
+      status: "captured"
+    });
     this.scheduleWorkspaceRefresh(workspaceId);
   }
 
@@ -348,6 +416,21 @@ export class AffairsLibraryDirtyWatchService {
       },
       "事务文档库外部刷新监听已提交脏标记"
     );
+    writeAffairsLibraryDebugLog({
+      event: "watch_dirty_state_flushed",
+      processRole: "host",
+      workspaceId,
+      source: "affairs_library.watch",
+      status: "flushed",
+      details: {
+        reasonCount: reasons.length,
+        configChanged: state.configChanged,
+        tagRulesChanged: state.tagRulesChanged,
+        indexChanged: state.indexChanged,
+        indexTargets: [...state.indexTargets].sort((a, b) => a.localeCompare(b, "zh-CN")),
+        reasons
+      }
+    });
 
     if (state.configChanged) {
       this.onWorkspaceDirty(workspaceId, {
@@ -373,9 +456,14 @@ export class AffairsLibraryDirtyWatchService {
     }
   }
 
-  private shouldIgnorePath(relativePath: string): boolean {
+  private shouldIgnorePath(rootDir: string, relativePath: string): boolean {
     if (relativePath === CONFIG_RELATIVE_PATH || relativePath === TAG_RULES_RELATIVE_PATH) {
       return false;
+    }
+
+    const includedHiddenPaths = this.readIncludedHiddenPaths(rootDir);
+    if (hasHiddenPathSegment(relativePath) && !isIncludedHiddenPath(relativePath, includedHiddenPaths)) {
+      return true;
     }
 
     if (relativePath === INDEX_DIR_NAME || relativePath.startsWith(`${INDEX_DIR_NAME}/`)) {
@@ -416,7 +504,7 @@ export class AffairsLibraryDirtyWatchService {
   }
 
   private resolveEffectiveTargetPath(rootDir: string, relativePath: string): string | null {
-    if (this.shouldIgnorePath(relativePath)) {
+    if (this.shouldIgnorePath(rootDir, relativePath)) {
       return null;
     }
 
@@ -440,7 +528,7 @@ export class AffairsLibraryDirtyWatchService {
       rootDir,
       relativePath,
       Date.now() - DIRECTORY_EVENT_RECENT_WINDOW_MS
-    ).filter((item) => !this.shouldIgnorePath(item));
+    ).filter((item) => !this.shouldIgnorePath(rootDir, item));
 
     if (candidates.length === 0) {
       return null;
@@ -470,6 +558,24 @@ export class AffairsLibraryDirtyWatchService {
     }
 
     return relativePath;
+  }
+
+  private readIncludedHiddenPaths(rootDir: string): string[] {
+    const configPath = path.join(rootDir, CONFIG_RELATIVE_PATH);
+    if (!fs.existsSync(configPath)) {
+      return [];
+    }
+
+    try {
+      const raw = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+        includedHiddenPaths?: string[];
+      };
+      return normalizeIncludedHiddenPaths(
+        Array.isArray(raw?.includedHiddenPaths) ? raw.includedHiddenPaths : []
+      );
+    } catch {
+      return [];
+    }
   }
 
   private getOrCreatePendingDirtyState(workspaceId: string): PendingWorkspaceDirtyState {
@@ -502,6 +608,14 @@ function normalizeFsWatchFileName(value: string | Buffer | null): string {
 
 function normalizeTargetPath(relativePath: string): string {
   return relativePath.trim().replace(/^\.\/+/, "").replace(/\/+$/, "");
+}
+
+function hasHiddenPathSegment(relativePath: string): boolean {
+  return relativePath
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .some((segment) => segment.startsWith("."));
 }
 
 function pickNarrowestTargetPath(targets: string[]): string | undefined {

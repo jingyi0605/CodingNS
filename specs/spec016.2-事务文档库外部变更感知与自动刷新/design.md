@@ -110,6 +110,16 @@
 5. 成功后重新生成状态文件和导出快照
 6. 失败则保留最近一次可读结果和错误摘要
 
+#### 2.3.5 热目录 hint -> 轻任务刷新当前目录结果
+
+1. 前端切到某个目录，或者 watcher 已经明确知道受影响文件在哪个目录
+2. Host 不再把这类“当前目录快点变新”的诉求直接塞进全局 `affairs.library_index`
+3. Host 先把目录记进热目录窗口，只保留最近 2 到 3 个目录
+4. 如果这个目录还没有新鲜结果，或者已经被标脏，就入队 `affairs.library_directory_hint`
+5. 这个轻任务只做一件事：重读当前目录真实文件列表，并尽量把导出快照里的标题、摘要、标签拼回来
+6. 轻任务完成后只更新内存里的热目录缓存和目录状态，不写 `.ai-index`，也不跟全局 export 抢同一把锁
+7. 前端读取当前目录时优先消费这份热目录结果，所以就算全局索引还在跑，当前目录也能先变新
+
 ### 2.4 借鉴策略落地优先级
 
 这里不把“借鉴开源网盘经验”写成空话，直接落成三层优先级。
@@ -155,6 +165,7 @@
 
 - `AffairsLibraryDirtyWatchService`：外部变更监听和脏标记入口
 - `AffairsLibraryService.scheduleAutoRefresh(...)`：统一自动刷新调度入口
+- `AffairsLibraryService.scheduleDirectoryHintRefresh(...)`：当前目录轻任务入口
 - `AffairsLibraryService.flushAutoTasks(...)`：把脏标记转成后台任务
 - `TaskManager.peek/enqueue`：用来判断 blocking task 和任务去重
 - `readIndexStatus(...)`：统一暴露索引状态、最近完成时间和错误摘要
@@ -203,6 +214,36 @@
 | `cooldown` | 刚刷新完，短时间内避免重复跑 |
 | `failed` | 最近一次自动或手动刷新失败 |
 
+#### 3.2.5 `HotDirectoryCacheEntry`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `workspaceId` | `string` | 属于哪个工作区 |
+| `directoryPath` | `string` | 当前缓存对应的目录，相对根目录 |
+| `items` | `AffairsLibraryDocumentRecordDto[]` | 当前目录直接文档列表 |
+| `source` | `"live" \| "snapshot" \| "mixed"` | 当前结果是纯目录实时读、纯快照，还是两者混合 |
+| `dirty` | `boolean` | 这个目录是否已经被标脏 |
+| `status` | `"idle" \| "queued" \| "running" \| "fresh" \| "failed"` | 当前目录轻任务状态 |
+| `lastRefreshRequestedAt` | `string \| null` | 最近一次请求目录刷新时间 |
+| `lastRefreshCompletedAt` | `string \| null` | 最近一次目录刷新完成时间 |
+| `lastRefreshFailedAt` | `string \| null` | 最近一次目录刷新失败时间 |
+| `lastError` | `string \| null` | 最近一次目录刷新错误摘要 |
+
+#### 3.2.6 `AffairsLibraryDirectoryStatusDto`
+
+这份状态专门回答“当前目录现在新不新鲜”，不跟全局索引状态混在一起。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `path` | `string` | 当前目录路径，根目录统一用 `.` |
+| `state` | `"idle" \| "queued" \| "running" \| "fresh" \| "failed"` | 当前目录刷新状态 |
+| `source` | `"live" \| "snapshot" \| "mixed"` | 当前目录结果来源 |
+| `lastRequestedAt` | `string \| null` | 最近一次目录刷新请求时间 |
+| `lastCompletedAt` | `string \| null` | 最近一次目录刷新完成时间 |
+| `lastFailedAt` | `string \| null` | 最近一次目录刷新失败时间 |
+| `runningTaskId` | `string \| null` | 当前目录轻任务 ID |
+| `errorSummary` | `string \| null` | 当前目录最近失败摘要 |
+
 ### 3.3 接口契约
 
 覆盖需求：1、2、4、5、6
@@ -225,7 +266,16 @@
 - 校验：必须先检查 binding、rootDir、blocking task
 - 错误：记录日志，保留后续重试机会
 
-#### 3.3.3 文档库状态读取接口
+#### 3.3.3 目录轻任务入口
+
+- 类型：Function / Service
+- 标识：`scheduleDirectoryHintRefresh(workspaceId, directoryPath, reason)`
+- 输入：工作区、目录路径、触发原因
+- 输出：无直接结果，必要时入队 `affairs.library_directory_hint`
+- 校验：目录路径归一化；每个目录只允许一个 inflight
+- 错误：只更新目录状态，不拖垮全局索引链路
+
+#### 3.3.4 文档库状态读取接口
 
 - 类型：HTTP
 - 路径或标识：`GET /api/workspaces/:workspaceId/affairs/library-snapshot`
@@ -234,7 +284,7 @@
 - 校验：工作区存在、权限通过
 - 错误：绑定缺失、索引产物缺失、最近任务失败
 
-#### 3.3.4 目录切换 hint 刷新入口
+#### 3.3.5 目录切换 hint 刷新入口
 
 - 类型：HTTP
 - 路径或标识：继续复用 `POST /api/workspaces/:workspaceId/affairs/library-refresh`
@@ -251,7 +301,8 @@
 2. **文档库绑定** 对应一个 **rootDir**
 3. **rootDir** 对应一个监听入口、一个周期 timer 和一组 pending dirty state
 4. **pending dirty state** 只负责表达“哪里可能脏了”
-5. **真正刷新结果** 仍然以 `.ai-index` 产物和任务状态为准
+5. **hot directory cache** 只负责当前活跃目录的直接结果和状态
+6. **真正全局刷新结果** 仍然以 `.ai-index` 产物和任务状态为准
 
 ### 4.2 状态流转
 

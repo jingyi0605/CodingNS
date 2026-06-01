@@ -22,6 +22,12 @@ import {
   runAffairsIndexerCommand,
   type AffairsIndexerCommandResult
 } from "../affairs-indexer/internal-command-runner.js";
+import {
+  isIncludedHiddenPath,
+  normalizeIncludedHiddenPaths,
+  SUPPORTED_INDEX_EXTENSION_LIST
+} from "../affairs-indexer/core/src/scanner/file-scanner.js";
+import { writeAffairsLibraryDebugLog } from "./affairs-library-debug-log.js";
 
 const DEFAULT_CONFIG_RELATIVE_PATH = ".ai-index/doc-semantic-index.config.json";
 const TAG_RULES_RELATIVE_PATH = ".ai-index/tag-rules.json";
@@ -29,13 +35,20 @@ const INDEX_DIR_RELATIVE_PATH = ".ai-index";
 const EXPORT_DIR_RELATIVE_PATH = ".ai-index/exports";
 const EXPORT_STATUS_RELATIVE_PATH = ".ai-index/exports/status.json";
 const EXPORT_MANIFEST_RELATIVE_PATH = ".ai-index/exports/manifest.json";
+const RUNTIME_STATUS_RELATIVE_PATH = ".ai-index/runtime-status.json";
 const DEFAULT_EXPORT_MODE = "v2" as const;
 const INDEX_TASK_TIMEOUT_MS = 15 * 60 * 1000;
+const DIRECTORY_HINT_TASK_TIMEOUT_MS = 8_000;
 const INDEX_TASK_COOLDOWN_MS = 15_000;
 const AUTO_TASK_QUIET_WINDOW_MS = 800;
 const AUTO_TASK_RETRY_WINDOW_MS = 1_000;
 const SNAPSHOT_CACHE_FILE_NAME = "codingns-affairs-snapshot-cache.json";
 const SNAPSHOT_CACHE_SCHEMA_VERSION = 2;
+const HOT_DIRECTORY_CACHE_TTL_MS = 10 * 60 * 1000;
+const HOT_DIRECTORY_MAX_PER_WORKSPACE = 3;
+
+export type AffairsLibraryDirectoryStateDto = "idle" | "queued" | "running" | "fresh" | "failed";
+export type AffairsLibraryDirectorySourceDto = "live" | "snapshot" | "mixed";
 
 export type AffairsLibraryFavoriteKind = "folder" | "tag";
 
@@ -51,6 +64,7 @@ export interface AffairsLibraryBindingDto {
   enabled: boolean;
   mirrorRoot: string | null;
   allowedExtensions: string[];
+  includedHiddenPaths?: string[];
   configRelativePath: string;
   exportMode: "v2";
   updatedAt: string;
@@ -64,6 +78,18 @@ export interface AffairsLibraryIndexStatusDto {
   lastCompletedAt: string | null;
   lastFailedAt: string | null;
   nextAllowedAt: string | null;
+  runningTaskId: string | null;
+  runningStage: string | null;
+  errorSummary: string | null;
+}
+
+export interface AffairsLibraryDirectoryStatusDto {
+  path: string;
+  state: AffairsLibraryDirectoryStateDto;
+  source: AffairsLibraryDirectorySourceDto;
+  lastRequestedAt: string | null;
+  lastCompletedAt: string | null;
+  lastFailedAt: string | null;
   runningTaskId: string | null;
   errorSummary: string | null;
 }
@@ -126,6 +152,25 @@ export interface AffairsLibraryDocumentListDto {
   limit: number;
   items: AffairsLibraryDocumentRecordDto[];
   tagFacetCounts?: Record<string, number>;
+  directoryStatus?: AffairsLibraryDirectoryStatusDto | null;
+}
+
+export type AffairsLibraryOperationType = "delete" | "move" | "copy";
+
+export interface AffairsLibraryDownloadDto {
+  workspaceId: string;
+  path: string;
+  fileName: string;
+  contentBase64: string;
+  size: number;
+  updatedAt: string;
+}
+
+export interface AffairsLibraryOperationResultDto {
+  success: true;
+  opType: AffairsLibraryOperationType;
+  sourcePath: string;
+  targetPath: string | null;
 }
 
 export interface AffairsLibraryResolvedPreviewFile {
@@ -158,6 +203,7 @@ interface WorkspaceNavigationStateLike {
 interface AffairsLibraryConfigPayload {
   allowedExtensions?: string[];
   mirrorRoot?: string;
+  includedHiddenPaths?: string[];
 }
 
 interface IndexStatusFilePayload {
@@ -171,6 +217,27 @@ interface ParsedIndexStatusFile {
   exportedAt: string | null;
   exportedAtMs: number;
   documentCount: number | null;
+}
+
+interface RuntimeStatusFilePayload {
+  status?: string;
+  stage?: string;
+  command?: string;
+  updatedAt?: string;
+  taskId?: string;
+  taskType?: string;
+  errorSummary?: string | null;
+}
+
+interface ParsedRuntimeStatusFile {
+  status: string | null;
+  stage: string | null;
+  command: string | null;
+  taskId: string | null;
+  taskType: string | null;
+  updatedAt: string | null;
+  updatedAtMs: number;
+  errorSummary: string | null;
 }
 
 interface IndexManifestPayload {
@@ -241,9 +308,35 @@ interface AffairsLibraryAutoTaskState {
   indexTargets: Set<string>;
 }
 
+interface AffairsLibraryDirectoryHintTaskResult {
+  directoryPath: string;
+  refreshedAt: string;
+  source: AffairsLibraryDirectorySourceDto;
+  itemCount: number;
+  changedPaths: string[];
+}
+
+interface AffairsLibraryHotDirectoryCacheEntry {
+  workspaceId: string;
+  rootDir: string;
+  directoryPath: string;
+  items: AffairsLibraryDocumentRecordDto[];
+  updatedAtMs: number;
+  source: AffairsLibraryDirectorySourceDto;
+  dirty: boolean;
+  pendingHintReasons: Set<string>;
+  lastHintAt: string | null;
+  lastRefreshRequestedAt: string | null;
+  lastRefreshCompletedAt: string | null;
+  lastRefreshFailedAt: string | null;
+  lastError: string | null;
+  status: AffairsLibraryDirectoryStateDto;
+}
+
 export class AffairsLibraryService {
   private readonly exportCache = new Map<string, AffairsLibraryExportCachePayload>();
   private readonly autoTaskStateByWorkspace = new Map<string, AffairsLibraryAutoTaskState>();
+  private readonly hotDirectoryCache = new Map<string, AffairsLibraryHotDirectoryCacheEntry>();
 
   constructor(
     private readonly workspaceService: WorkspaceService,
@@ -272,6 +365,7 @@ export class AffairsLibraryService {
       enabled,
       mirrorRoot: config.mirrorRoot,
       allowedExtensions: config.allowedExtensions,
+      includedHiddenPaths: config.includedHiddenPaths,
       configRelativePath: DEFAULT_CONFIG_RELATIVE_PATH,
       exportMode: DEFAULT_EXPORT_MODE,
       updatedAt: state?.updatedAt ?? nowIso()
@@ -330,6 +424,7 @@ export class AffairsLibraryService {
       enabled: true,
       mirrorRoot: config.mirrorRoot,
       allowedExtensions: config.allowedExtensions,
+      includedHiddenPaths: config.includedHiddenPaths,
       configRelativePath: DEFAULT_CONFIG_RELATIVE_PATH,
       exportMode: DEFAULT_EXPORT_MODE,
       updatedAt: nextRecord.updatedAt
@@ -375,6 +470,7 @@ export class AffairsLibraryService {
       enabled,
       mirrorRoot: config.mirrorRoot,
       allowedExtensions: config.allowedExtensions,
+      includedHiddenPaths: config.includedHiddenPaths,
       configRelativePath: DEFAULT_CONFIG_RELATIVE_PATH,
       exportMode: DEFAULT_EXPORT_MODE,
       updatedAt: nextRecord.updatedAt
@@ -385,6 +481,7 @@ export class AffairsLibraryService {
     binding: AffairsLibraryBindingDto | null;
     mirrorRoot: string | null;
     allowedExtensions: string[];
+    includedHiddenPaths?: string[];
     configRelativePath: string;
     canWrite: boolean;
   } {
@@ -394,6 +491,7 @@ export class AffairsLibraryService {
         binding: null,
         mirrorRoot: null,
         allowedExtensions: [],
+        includedHiddenPaths: [],
         configRelativePath: DEFAULT_CONFIG_RELATIVE_PATH,
         canWrite: false
       };
@@ -404,6 +502,7 @@ export class AffairsLibraryService {
       binding,
       mirrorRoot: config.mirrorRoot,
       allowedExtensions: config.allowedExtensions,
+      includedHiddenPaths: config.includedHiddenPaths,
       configRelativePath: DEFAULT_CONFIG_RELATIVE_PATH,
       canWrite: true
     };
@@ -415,11 +514,13 @@ export class AffairsLibraryService {
     input: {
       mirrorRoot?: string | null;
       allowedExtensions?: string[];
+      includedHiddenPaths?: string[];
     }
   ): Promise<{
     binding: AffairsLibraryBindingDto;
     mirrorRoot: string | null;
     allowedExtensions: string[];
+    includedHiddenPaths?: string[];
     configRelativePath: string;
     canWrite: boolean;
     applyConfigTaskId: string;
@@ -432,8 +533,12 @@ export class AffairsLibraryService {
     const current = this.readRawConfigFile(configPath);
     const mirrorRoot = normalizeOptionalAbsolutePath(input.mirrorRoot);
     const allowedExtensions = normalizeAllowedExtensions(input.allowedExtensions ?? current.allowedExtensions ?? []);
+    const includedHiddenPaths = normalizeIncludedHiddenPaths(
+      input.includedHiddenPaths ?? current.includedHiddenPaths ?? []
+    );
     const nextPayload: AffairsLibraryConfigPayload = {
       allowedExtensions,
+      includedHiddenPaths,
     };
 
     if (mirrorRoot) {
@@ -463,6 +568,7 @@ export class AffairsLibraryService {
       binding: nextBinding,
       mirrorRoot,
       allowedExtensions,
+      includedHiddenPaths,
       configRelativePath: DEFAULT_CONFIG_RELATIVE_PATH,
       canWrite: true,
       applyConfigTaskId: handle.taskId,
@@ -544,21 +650,13 @@ export class AffairsLibraryService {
         offset: 0,
         limit: normalizePositiveInt(input.limit, 120, 400),
         items: [],
-        tagFacetCounts: {}
+        tagFacetCounts: {},
+        directoryStatus: null
       };
     }
 
     const favorites = this.readFavorites(workspaceId, userId);
     const exportData = this.readAvailableExportData(binding.rootDir);
-    if (!exportData) {
-      return {
-        total: 0,
-        offset: 0,
-        limit: normalizePositiveInt(input.limit, 120, 400),
-        items: [],
-        tagFacetCounts: {}
-      };
-    }
     const browseMode = input.browseMode === "tag" ? "tag" : "folder";
     const offset = Math.max(0, normalizePositiveInt(input.offset, 0, Number.MAX_SAFE_INTEGER));
     const limit = normalizePositiveInt(input.limit, 120, 400);
@@ -566,6 +664,25 @@ export class AffairsLibraryService {
       (item) => buildFavoriteNodeId(item.kind, item.path) === (input.selectedFavoriteId?.trim() ?? "")
     ) ?? null;
     const normalizedSelectedTagPaths = normalizeSelectedTagPaths(input.selectedTagPaths);
+
+    if (browseMode === "folder") {
+      return this.listLiveFolderDocuments(workspaceId, binding.rootDir, favorites, exportData, selectedFavorite, {
+        selectedFolderPath: input.selectedFolderPath,
+        offset,
+        limit
+      });
+    }
+
+    if (!exportData) {
+      return {
+        total: 0,
+        offset,
+        limit,
+        items: [],
+        tagFacetCounts: {},
+        directoryStatus: null
+      };
+    }
 
     const filtered = exportData.documents.filter((document) => {
       if (browseMode === "tag") {
@@ -602,7 +719,167 @@ export class AffairsLibraryService {
       items,
       tagFacetCounts: browseMode === "tag"
         ? buildTagFacetCounts(exportData.documents, normalizedSelectedTagPaths, selectedFavorite?.kind === "tag" ? selectedFavorite.path : null)
-        : {}
+        : {},
+      directoryStatus: null
+    };
+  }
+
+  private listLiveFolderDocuments(
+    workspaceId: string,
+    rootDir: string,
+    favorites: AffairsLibraryFavoriteRecord[],
+    exportData: AffairsLibraryExportData | null,
+    selectedFavorite: AffairsLibraryFavoriteRecord | null,
+    input: {
+      selectedFolderPath?: string | null;
+      offset: number;
+      limit: number;
+    }
+  ): AffairsLibraryDocumentListDto {
+    const folderPath = selectedFavorite?.kind === "folder"
+      ? selectedFavorite.path
+      : (input.selectedFolderPath?.trim() ?? "");
+    const normalizedFolderPath = normalizeFolderPath(folderPath);
+    const normalizedDirectoryPath = normalizedFolderPath || ".";
+    const config = this.readConfig(rootDir);
+    const configuredExtensions = new Set(config.allowedExtensions.map((item) => item.toLowerCase()));
+    const supportedExtensions = new Set(SUPPORTED_INDEX_EXTENSION_LIST);
+    const liveResult = this.buildLiveDirectoryDocuments(
+      rootDir,
+      normalizedFolderPath,
+      exportData,
+      configuredExtensions,
+      supportedExtensions,
+      config.includedHiddenPaths
+    );
+    const itemsWithFavorites = liveResult.items.map((item) => ({
+      ...item,
+      isFavorite: favorites.some((favorite) =>
+        matchesFavorite(favorite, item.path, item.tags, item.derivedTags)
+      )
+    }));
+    const directoryStatus = this.readDirectoryStatus(workspaceId, rootDir, normalizedDirectoryPath, liveResult.source);
+    const items = [...itemsWithFavorites].sort((left, right) => {
+        const rightTime = Date.parse(right.updatedAt);
+        const leftTime = Date.parse(left.updatedAt);
+        if (Number.isFinite(rightTime) && Number.isFinite(leftTime) && rightTime !== leftTime) {
+          return rightTime - leftTime;
+        }
+        return left.path.localeCompare(right.path, "zh-Hans-CN");
+      });
+
+    this.updateHotDirectoryCache(workspaceId, rootDir, normalizedDirectoryPath, items, liveResult.source, {
+      preserveStatus: directoryStatus.state === "running" || directoryStatus.state === "queued"
+    });
+    this.ensureDirectoryWindow(workspaceId, rootDir, normalizedDirectoryPath);
+    if (directoryStatus.state !== "running" && directoryStatus.state !== "queued") {
+      this.scheduleDirectoryHintRefresh(workspaceId, normalizedDirectoryPath, "list_documents");
+    }
+
+    return {
+      total: items.length,
+      offset: input.offset,
+      limit: input.limit,
+      items: items.slice(input.offset, input.offset + input.limit),
+      tagFacetCounts: {},
+      directoryStatus: this.readDirectoryStatus(workspaceId, rootDir, normalizedDirectoryPath, liveResult.source)
+    };
+  }
+
+  private buildLiveDirectoryDocuments(
+    rootDir: string,
+    normalizedFolderPath: string,
+    exportData: AffairsLibraryExportData | null,
+    configuredExtensions: ReadonlySet<string>,
+    supportedExtensions: ReadonlySet<string>,
+    includedHiddenPaths: readonly string[]
+  ): {
+    items: AffairsLibraryDocumentRecordDto[];
+    source: AffairsLibraryDirectorySourceDto;
+  } {
+    const targetDir = normalizedFolderPath
+      ? path.resolve(rootDir, normalizedFolderPath)
+      : rootDir;
+    const documentMap = new Map<string, AffairsLibraryDocumentRecordDto>();
+    let hasSnapshotData = false;
+    let hasLiveData = false;
+
+    for (const document of exportData?.documents ?? []) {
+      if (!matchesDirectFolder(document.path, normalizedFolderPath)) {
+        continue;
+      }
+      const extension = path.extname(document.path).toLowerCase();
+      if (!supportedExtensions.has(extension)) {
+        continue;
+      }
+      if (configuredExtensions.size > 0 && !configuredExtensions.has(extension)) {
+        continue;
+      }
+      const stat = readAffairsLibraryStatsSafe(rootDir, document.path);
+      documentMap.set(document.path, {
+        ...document,
+        createdAt: document.createdAt ?? toIsoOrNull(stat?.birthtime),
+        sizeBytes: document.sizeBytes ?? stat?.size ?? null,
+        updatedAt: stat?.mtime.toISOString() ?? document.updatedAt,
+        isFavorite: false
+      });
+      hasSnapshotData = true;
+    }
+
+    if (fs.existsSync(targetDir)) {
+      let targetStats: fs.Stats | null = null;
+      try {
+        targetStats = fs.statSync(targetDir);
+      } catch {
+        targetStats = null;
+      }
+
+      if (targetStats?.isDirectory()) {
+        for (const entry of fs.readdirSync(targetDir, { withFileTypes: true })) {
+          const relativePath = normalizedFolderPath ? `${normalizedFolderPath}/${entry.name}` : entry.name;
+          if (
+            (entry.name.startsWith(".") || hasHiddenPathSegment(relativePath))
+            && !isIncludedHiddenPath(relativePath, includedHiddenPaths)
+          ) {
+            continue;
+          }
+          if (!entry.isFile()) {
+            continue;
+          }
+          const extension = path.extname(entry.name).toLowerCase();
+          if (!supportedExtensions.has(extension)) {
+            continue;
+          }
+          if (configuredExtensions.size > 0 && !configuredExtensions.has(extension)) {
+            continue;
+          }
+
+          const stat = readAffairsLibraryStatsSafe(rootDir, relativePath);
+          const exported = documentMap.get(relativePath);
+          documentMap.set(relativePath, {
+            documentId: exported?.documentId ?? relativePath,
+            path: relativePath,
+            title: exported?.title?.trim() || path.basename(entry.name, extension) || entry.name,
+            summary: exported?.summary ?? "",
+            updatedAt: stat?.mtime.toISOString() ?? exported?.updatedAt ?? "",
+            createdAt: toIsoOrNull(stat?.birthtime) ?? exported?.createdAt ?? null,
+            sizeBytes: stat?.size ?? exported?.sizeBytes ?? null,
+            tags: exported?.tags ?? [],
+            derivedTags: exported?.derivedTags ?? [],
+            isFavorite: false
+          });
+          hasLiveData = true;
+        }
+      }
+    }
+
+    return {
+      items: [...documentMap.values()],
+      source: hasLiveData && hasSnapshotData
+        ? "mixed"
+        : hasLiveData
+          ? "live"
+          : "snapshot"
     };
   }
 
@@ -714,6 +991,124 @@ export class AffairsLibraryService {
     });
   }
 
+  downloadFile(workspaceId: string, userId: string, requestedPath: string): AffairsLibraryDownloadDto {
+    const resolved = this.resolvePreviewFile(workspaceId, userId, requestedPath, {
+      mustExist: true,
+      kind: "file"
+    });
+    this.ensureUserContentPath(resolved.relativePath);
+
+    const buffer = fs.readFileSync(resolved.absolutePath);
+    const stats = resolved.stats ?? fs.statSync(resolved.absolutePath);
+
+    return {
+      workspaceId,
+      path: resolved.relativePath,
+      fileName: path.basename(resolved.relativePath) || resolved.relativePath,
+      contentBase64: buffer.toString("base64"),
+      size: buffer.byteLength,
+      updatedAt: stats.mtime.toISOString()
+    };
+  }
+
+  operateFile(
+    workspaceId: string,
+    userId: string,
+    input: {
+      opType: AffairsLibraryOperationType;
+      srcPath?: string;
+      dstPath?: string | null;
+    }
+  ): AffairsLibraryOperationResultDto {
+    const opType = input.opType;
+    if (opType !== "delete" && opType !== "move" && opType !== "copy") {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_FILE_OPERATION",
+        detail: "不支持的文档库文件操作",
+        field: "opType"
+      });
+    }
+
+    const source = this.resolvePreviewFile(workspaceId, userId, input.srcPath ?? "", {
+      mustExist: true,
+      kind: "any"
+    });
+    this.ensureUserContentPath(source.relativePath);
+
+    if (opType === "delete") {
+      if (source.stats?.isDirectory()) {
+        fs.rmSync(source.absolutePath, { recursive: true, force: false });
+      } else {
+        fs.rmSync(source.absolutePath, { force: false });
+      }
+      this.afterFileMutation(workspaceId, source.rootDir, `library_delete:${source.relativePath}`, source.relativePath);
+      return {
+        success: true,
+        opType,
+        sourcePath: source.relativePath,
+        targetPath: null
+      };
+    }
+
+    const target = this.resolvePreviewFile(workspaceId, userId, input.dstPath ?? "", {
+      mustExist: false,
+      kind: "any"
+    });
+    this.ensureUserContentPath(target.relativePath);
+
+    if (target.exists) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "FILE_ALREADY_EXISTS",
+        detail: "目标路径已存在",
+        field: "dstPath"
+      });
+    }
+
+    if (source.relativePath === target.relativePath) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_FILE_OPERATION",
+        detail: "源路径和目标路径不能相同",
+        field: "dstPath"
+      });
+    }
+
+    if (source.stats?.isDirectory() && isSameOrDescendantRelativePath(source.relativePath, target.relativePath)) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_FILE_OPERATION",
+        detail: opType === "move" ? "目录不能移动到自己内部" : "目录不能复制到自己内部",
+        field: "dstPath"
+      });
+    }
+
+    if (opType === "move") {
+      fs.renameSync(source.absolutePath, target.absolutePath);
+    } else {
+      fs.cpSync(source.absolutePath, target.absolutePath, {
+        recursive: source.stats?.isDirectory() ?? false,
+        errorOnExist: true,
+        force: false
+      });
+    }
+
+    this.afterFileMutation(
+      workspaceId,
+      source.rootDir,
+      `library_${opType}:${source.relativePath}->${target.relativePath}`,
+      target.relativePath
+    );
+
+    return {
+      success: true,
+      opType,
+      sourcePath: source.relativePath,
+      targetPath: target.relativePath
+    };
+  }
+
   resolvePreviewFile(
     workspaceId: string,
     userId: string,
@@ -805,6 +1200,27 @@ export class AffairsLibraryService {
     };
   }
 
+  private ensureUserContentPath(relativePath: string): void {
+    const normalized = relativePath.trim().replace(/^\.\/+/, "");
+    if (!normalized || normalized === ".ai-index" || normalized.startsWith(".ai-index/")) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_FILE_OPERATION",
+        detail: "文档库内部索引文件不能在这里操作",
+        field: "path"
+      });
+    }
+  }
+
+  private afterFileMutation(workspaceId: string, rootDir: string, reason: string, targetPath: string): void {
+    this.invalidateExportCache(rootDir);
+    this.scheduleAutoRefresh(
+      workspaceId,
+      reason,
+      normalizeMutationRefreshTarget(targetPath) ?? undefined
+    );
+  }
+
   requestRefresh(
     workspaceId: string,
     userId: string,
@@ -825,8 +1241,46 @@ export class AffairsLibraryService {
         }
       }
     );
-    void handle.promise.then(() => {
+    writeAffairsLibraryDebugLog({
+      event: "manual_refresh_enqueued",
+      processRole: "host",
+      workspaceId,
+      rootDir: binding.rootDir,
+      taskType: handle.taskType,
+      taskId: handle.taskId,
+      source: "affairs_library.refresh",
+      reason: reason.trim() || "manual_refresh",
+      deduped: handle.deduped,
+      status: "queued"
+    });
+    void handle.promise.then((result) => {
       this.invalidateExportCache(binding.rootDir);
+      writeAffairsLibraryDebugLog({
+        event: "manual_refresh_finished",
+        processRole: "host",
+        workspaceId,
+        rootDir: binding.rootDir,
+        taskType: handle.taskType,
+        taskId: handle.taskId,
+        source: "affairs_library.refresh",
+        reason: reason.trim() || "manual_refresh",
+        status: "finished",
+        durationMs: result.durationMs,
+        resultSummary: summarizeIndexerCommandResult(result.result)
+      });
+    }).catch((error) => {
+      writeAffairsLibraryDebugLog({
+        event: "manual_refresh_failed",
+        processRole: "host",
+        workspaceId,
+        rootDir: binding.rootDir,
+        taskType: handle.taskType,
+        taskId: handle.taskId,
+        source: "affairs_library.refresh",
+        reason: reason.trim() || "manual_refresh",
+        status: "failed",
+        message: error instanceof Error ? error.message : String(error)
+      });
     });
 
     return {
@@ -841,19 +1295,32 @@ export class AffairsLibraryService {
     userId: string,
     reason: string,
     targetPath?: string | null
-  ): { scheduled: boolean; status: AffairsLibraryIndexStatusDto } {
+  ): { scheduled: boolean; status: AffairsLibraryIndexStatusDto; directoryStatus: AffairsLibraryDirectoryStatusDto | null } {
     const binding = this.requireBinding(workspaceId, userId);
     this.ensureLibraryEnabled(binding);
+    const normalizedTargetPath = normalizeHintTargetPath(targetPath);
+    const directoryPath = normalizeFolderPath(normalizedTargetPath) || ".";
 
-    this.scheduleAutoRefresh(
+    this.scheduleDirectoryHintRefresh(
       workspaceId,
-      reason.trim() || "directory_hint",
-      normalizeHintTargetPath(targetPath)
+      directoryPath,
+      reason.trim() || "directory_hint"
     );
+    writeAffairsLibraryDebugLog({
+      event: "directory_hint_received",
+      processRole: "host",
+      workspaceId,
+      rootDir: binding.rootDir,
+      source: "affairs_library.directory_hint",
+      reason: reason.trim() || "directory_hint",
+      targetPath: directoryPath,
+      status: "scheduled"
+    });
 
     return {
       scheduled: true,
-      status: this.readIndexStatus(workspaceId, binding)
+      status: this.readIndexStatus(workspaceId, binding),
+      directoryStatus: this.readDirectoryStatus(workspaceId, binding.rootDir, directoryPath, "mixed")
     };
   }
 
@@ -912,11 +1379,36 @@ export class AffairsLibraryService {
     if (!normalizedWorkspaceId) {
       return;
     }
+    const normalizedTargetPath = targetPath?.trim().replace(/^\.\//, "") ?? undefined;
 
     const state = this.getOrCreateAutoTaskState(normalizedWorkspaceId);
     state.indexReasons.add(reason.trim() || "auto_refresh");
-    if (targetPath?.trim()) {
-      state.indexTargets.add(targetPath.trim().replace(/^\.\//, ""));
+    if (normalizedTargetPath) {
+      state.indexTargets.add(normalizedTargetPath);
+      this.markHotDirectoryCacheDirty(
+        normalizedWorkspaceId,
+        deriveDirectoryPathFromDocumentTarget(normalizedTargetPath),
+        reason.trim() || "auto_refresh"
+      );
+    }
+    writeAffairsLibraryDebugLog({
+      event: "auto_refresh_marked_dirty",
+      processRole: "host",
+      workspaceId: normalizedWorkspaceId,
+      source: "affairs_library.auto_refresh",
+      reason: reason.trim() || "auto_refresh",
+      targetPath: normalizedTargetPath ?? null,
+      details: {
+        pendingReasonCount: state.indexReasons.size,
+        pendingTargetCount: state.indexTargets.size
+      }
+    });
+    if (normalizedTargetPath) {
+      this.scheduleDirectoryHintRefresh(
+        normalizedWorkspaceId,
+        deriveDirectoryPathFromDocumentTarget(normalizedTargetPath),
+        `watch_hint:${normalizedTargetPath}`
+      );
     }
     this.armAutoTaskTimer(normalizedWorkspaceId, AUTO_TASK_QUIET_WINDOW_MS);
   }
@@ -929,6 +1421,16 @@ export class AffairsLibraryService {
 
     const state = this.getOrCreateAutoTaskState(normalizedWorkspaceId);
     state.applyConfigReasons.add(reason.trim() || `watch:${DEFAULT_CONFIG_RELATIVE_PATH}`);
+    writeAffairsLibraryDebugLog({
+      event: "auto_apply_config_marked_dirty",
+      processRole: "host",
+      workspaceId: normalizedWorkspaceId,
+      source: "affairs_library.auto_apply_config",
+      reason: reason.trim() || `watch:${DEFAULT_CONFIG_RELATIVE_PATH}`,
+      details: {
+        pendingReasonCount: state.applyConfigReasons.size
+      }
+    });
     this.armAutoTaskTimer(normalizedWorkspaceId, AUTO_TASK_QUIET_WINDOW_MS);
   }
 
@@ -940,6 +1442,16 @@ export class AffairsLibraryService {
 
     const state = this.getOrCreateAutoTaskState(normalizedWorkspaceId);
     state.recomputeTagReasons.add(reason.trim() || `watch:${TAG_RULES_RELATIVE_PATH}`);
+    writeAffairsLibraryDebugLog({
+      event: "auto_recompute_tags_marked_dirty",
+      processRole: "host",
+      workspaceId: normalizedWorkspaceId,
+      source: "affairs_library.auto_recompute_tags",
+      reason: reason.trim() || `watch:${TAG_RULES_RELATIVE_PATH}`,
+      details: {
+        pendingReasonCount: state.recomputeTagReasons.size
+      }
+    });
     this.armAutoTaskTimer(normalizedWorkspaceId, AUTO_TASK_QUIET_WINDOW_MS);
   }
 
@@ -950,10 +1462,328 @@ export class AffairsLibraryService {
       }
     }
     this.autoTaskStateByWorkspace.clear();
+    this.hotDirectoryCache.clear();
   }
 
   getRefreshTaskSnapshot(workspaceId: string): TaskSnapshot | null {
     return this.taskManager.peek(HOST_TASK_TYPES.affairsLibraryIndex, workspaceId);
+  }
+
+  private readDirectoryStatus(
+    workspaceId: string,
+    _rootDir: string,
+    directoryPath: string,
+    fallbackSource: AffairsLibraryDirectorySourceDto
+  ): AffairsLibraryDirectoryStatusDto {
+    const normalizedPath = normalizeFolderPath(directoryPath) || ".";
+    const cacheKey = buildHotDirectoryCacheKey(workspaceId, normalizedPath);
+    const entry = this.hotDirectoryCache.get(cacheKey);
+    const snapshot = this.taskManager.peek(HOST_TASK_TYPES.affairsLibraryDirectoryHint, cacheKey);
+    if (snapshot && (snapshot.status === "queued" || snapshot.status === "running")) {
+      return {
+        path: normalizedPath,
+        state: snapshot.status === "running" ? "running" : "queued",
+        source: entry?.source ?? fallbackSource,
+        lastRequestedAt: toIso(snapshot.enqueuedAt),
+        lastCompletedAt: entry?.lastRefreshCompletedAt ?? null,
+        lastFailedAt: entry?.lastRefreshFailedAt ?? null,
+        runningTaskId: snapshot.taskId,
+        errorSummary: entry?.lastError ?? null
+      };
+    }
+    return {
+      path: normalizedPath,
+      state: entry?.status ?? "idle",
+      source: entry?.source ?? fallbackSource,
+      lastRequestedAt: entry?.lastRefreshRequestedAt ?? null,
+      lastCompletedAt: entry?.lastRefreshCompletedAt ?? null,
+      lastFailedAt: entry?.lastRefreshFailedAt ?? null,
+      runningTaskId: null,
+      errorSummary: entry?.lastError ?? null
+    };
+  }
+
+  private getOrCreateHotDirectoryEntry(
+    workspaceId: string,
+    rootDir: string,
+    directoryPath: string
+  ): AffairsLibraryHotDirectoryCacheEntry {
+    const normalizedDirectoryPath = normalizeFolderPath(directoryPath) || ".";
+    const cacheKey = buildHotDirectoryCacheKey(workspaceId, normalizedDirectoryPath);
+    const existing = this.hotDirectoryCache.get(cacheKey);
+    if (existing) {
+      if (existing.rootDir !== rootDir) {
+        existing.rootDir = rootDir;
+      }
+      return existing;
+    }
+
+    const entry: AffairsLibraryHotDirectoryCacheEntry = {
+      workspaceId,
+      rootDir,
+      directoryPath: normalizedDirectoryPath,
+      items: [],
+      updatedAtMs: 0,
+      source: "snapshot",
+      dirty: true,
+      pendingHintReasons: new Set<string>(),
+      lastHintAt: null,
+      lastRefreshRequestedAt: null,
+      lastRefreshCompletedAt: null,
+      lastRefreshFailedAt: null,
+      lastError: null,
+      status: "idle"
+    };
+    this.hotDirectoryCache.set(cacheKey, entry);
+    return entry;
+  }
+
+  private updateHotDirectoryCache(
+    workspaceId: string,
+    rootDir: string,
+    directoryPath: string,
+    items: AffairsLibraryDocumentRecordDto[],
+    source: AffairsLibraryDirectorySourceDto,
+    options: {
+      preserveStatus?: boolean;
+      requestedAt?: string | null;
+      completedAt?: string | null;
+      failedAt?: string | null;
+      errorSummary?: string | null;
+    } = {}
+  ): AffairsLibraryHotDirectoryCacheEntry {
+    const entry = this.getOrCreateHotDirectoryEntry(workspaceId, rootDir, directoryPath);
+    entry.rootDir = rootDir;
+    entry.items = items;
+    entry.updatedAtMs = Date.now();
+    entry.source = source;
+    entry.lastRefreshRequestedAt = options.requestedAt ?? entry.lastRefreshRequestedAt;
+    entry.lastRefreshCompletedAt = options.completedAt ?? entry.lastRefreshCompletedAt;
+    entry.lastRefreshFailedAt = options.failedAt ?? entry.lastRefreshFailedAt;
+    entry.lastError = options.errorSummary ?? null;
+    entry.dirty = false;
+    if (!options.preserveStatus) {
+      entry.status = options.errorSummary ? "failed" : "fresh";
+    }
+    if (!options.preserveStatus) {
+      entry.pendingHintReasons.clear();
+    }
+    this.ensureDirectoryWindow(workspaceId, rootDir, directoryPath);
+    return entry;
+  }
+
+  private markHotDirectoryCacheDirty(workspaceId: string, directoryPath: string, reason: string): void {
+    const binding = this.workspaceNavigationStateRepository.findAnyEnabledAffairsLibraryByWorkspaceId(workspaceId);
+    const rootDir = binding?.affairsLibraryRootPath?.trim() ?? "";
+    if (!rootDir) {
+      return;
+    }
+    const entry = this.getOrCreateHotDirectoryEntry(workspaceId, rootDir, directoryPath);
+    entry.dirty = true;
+    entry.status = entry.status === "running" ? "running" : "idle";
+    entry.pendingHintReasons.add(reason);
+    entry.lastHintAt = nowIso();
+    this.ensureDirectoryWindow(workspaceId, rootDir, directoryPath);
+  }
+
+  private ensureDirectoryWindow(workspaceId: string, rootDir: string, directoryPath: string): void {
+    const entry = this.getOrCreateHotDirectoryEntry(workspaceId, rootDir, directoryPath);
+    entry.updatedAtMs = Math.max(entry.updatedAtMs, Date.now());
+    const workspaceEntries = [...this.hotDirectoryCache.entries()]
+      .filter(([, candidate]) => candidate.workspaceId === workspaceId)
+      .sort((left, right) => right[1].updatedAtMs - left[1].updatedAtMs);
+    const expireBefore = Date.now() - HOT_DIRECTORY_CACHE_TTL_MS;
+    for (let index = 0; index < workspaceEntries.length; index += 1) {
+      const [cacheKey, candidate] = workspaceEntries[index]!;
+      const expired = candidate.updatedAtMs > 0 && candidate.updatedAtMs < expireBefore;
+      const overflow = index >= HOT_DIRECTORY_MAX_PER_WORKSPACE;
+      if (expired || overflow) {
+        this.hotDirectoryCache.delete(cacheKey);
+      }
+    }
+  }
+
+  private scheduleDirectoryHintRefresh(workspaceId: string, directoryPath: string, reason: string): void {
+    const binding = this.workspaceNavigationStateRepository.findAnyEnabledAffairsLibraryByWorkspaceId(workspaceId);
+    const rootDir = binding?.affairsLibraryRootPath?.trim() ?? "";
+    if (!rootDir) {
+      return;
+    }
+    const normalizedDirectoryPath = normalizeFolderPath(directoryPath) || ".";
+    const entry = this.getOrCreateHotDirectoryEntry(workspaceId, rootDir, normalizedDirectoryPath);
+    const cacheKey = buildHotDirectoryCacheKey(workspaceId, normalizedDirectoryPath);
+    const now = Date.now();
+    const isFreshEnough = entry.status === "fresh"
+      && !entry.dirty
+      && entry.updatedAtMs > 0
+      && now - entry.updatedAtMs < HOT_DIRECTORY_CACHE_TTL_MS;
+    if (reason === "list_documents" && isFreshEnough) {
+      return;
+    }
+
+    entry.pendingHintReasons.add(reason);
+    entry.lastHintAt = nowIso();
+    entry.lastRefreshRequestedAt = nowIso();
+    entry.status = "queued";
+    this.ensureDirectoryWindow(workspaceId, rootDir, normalizedDirectoryPath);
+
+    const current = this.taskManager.peek(HOST_TASK_TYPES.affairsLibraryDirectoryHint, cacheKey);
+    if (current && (current.status === "queued" || current.status === "running")) {
+      writeAffairsLibraryDebugLog({
+        event: "directory_hint_task_deduped",
+        processRole: "host",
+        workspaceId,
+        rootDir,
+        taskType: current.taskType,
+        taskId: current.taskId,
+        source: "affairs_library.directory_hint",
+        reason,
+        targetPath: normalizedDirectoryPath,
+        status: current.status
+      });
+      return;
+    }
+
+    const handle = this.taskManager.enqueue<{
+      workspaceId: string;
+      rootDir: string;
+      directoryPath: string;
+      reason: string;
+    }, AffairsLibraryDirectoryHintTaskResult>(
+      HOST_TASK_TYPES.affairsLibraryDirectoryHint,
+      {
+        key: cacheKey,
+        source: "affairs_library.directory_hint",
+        input: {
+          workspaceId,
+          rootDir,
+          directoryPath: normalizedDirectoryPath,
+          reason
+        }
+      }
+    );
+    this.attachDirectoryHintTaskFollowUp(workspaceId, cacheKey, handle, {
+      rootDir,
+      directoryPath: normalizedDirectoryPath,
+      reason
+    });
+  }
+
+  private async runDirectoryHintTask(input: {
+    workspaceId: string;
+    rootDir: string;
+    directoryPath: string;
+    reason: string;
+  }): Promise<AffairsLibraryDirectoryHintTaskResult> {
+    const exportData = this.readAvailableExportData(input.rootDir);
+    const config = this.readConfig(input.rootDir);
+    const configuredExtensions = new Set(config.allowedExtensions.map((item) => item.toLowerCase()));
+    const supportedExtensions = new Set(SUPPORTED_INDEX_EXTENSION_LIST);
+    const previous = this.getOrCreateHotDirectoryEntry(input.workspaceId, input.rootDir, input.directoryPath).items;
+    const liveResult = this.buildLiveDirectoryDocuments(
+      input.rootDir,
+      normalizeFolderPath(input.directoryPath),
+      exportData,
+      configuredExtensions,
+      supportedExtensions,
+      config.includedHiddenPaths
+    );
+    const completedAt = nowIso();
+    const previousPathSet = new Set(previous.map((item) => item.path));
+    const nextPathSet = new Set(liveResult.items.map((item) => item.path));
+    const changedPaths = [
+      ...liveResult.items.map((item) => item.path).filter((item) => !previousPathSet.has(item)),
+      ...previous.map((item) => item.path).filter((item) => !nextPathSet.has(item))
+    ].sort((left, right) => left.localeCompare(right, "zh-CN"));
+    this.updateHotDirectoryCache(
+      input.workspaceId,
+      input.rootDir,
+      input.directoryPath,
+      liveResult.items,
+      liveResult.source,
+      {
+        requestedAt: this.getOrCreateHotDirectoryEntry(input.workspaceId, input.rootDir, input.directoryPath).lastRefreshRequestedAt,
+        completedAt,
+        errorSummary: null
+      }
+    );
+    return {
+      directoryPath: input.directoryPath,
+      refreshedAt: completedAt,
+      source: liveResult.source,
+      itemCount: liveResult.items.length,
+      changedPaths
+    };
+  }
+
+  private attachDirectoryHintTaskFollowUp(
+    workspaceId: string,
+    cacheKey: string,
+    handle: {
+      taskId: string;
+      taskType: string;
+      deduped: boolean;
+      promise: Promise<AffairsLibraryDirectoryHintTaskResult>;
+    },
+    meta: {
+      rootDir: string;
+      directoryPath: string;
+      reason: string;
+    }
+  ): void {
+    writeAffairsLibraryDebugLog({
+      event: "task_enqueued",
+      processRole: "host",
+      workspaceId,
+      rootDir: meta.rootDir,
+      taskType: handle.taskType,
+      taskId: handle.taskId,
+      source: "affairs_library.directory_hint",
+      reason: meta.reason,
+      targetPath: meta.directoryPath,
+      deduped: handle.deduped,
+      status: "queued"
+    });
+    void handle.promise.then((result) => {
+      writeAffairsLibraryDebugLog({
+        event: "task_finished",
+        processRole: "host",
+        workspaceId,
+        rootDir: meta.rootDir,
+        taskType: handle.taskType,
+        taskId: handle.taskId,
+        source: "affairs_library.directory_hint",
+        reason: meta.reason,
+        targetPath: meta.directoryPath,
+        status: "finished",
+        resultSummary: {
+          directoryPath: result.directoryPath,
+          source: result.source,
+          itemCount: result.itemCount,
+          changedPaths: result.changedPaths
+        }
+      });
+    }).catch((error) => {
+      const entry = this.hotDirectoryCache.get(cacheKey);
+      if (entry) {
+        entry.status = "failed";
+        entry.lastError = error instanceof Error ? error.message : String(error);
+        entry.lastRefreshFailedAt = nowIso();
+      }
+      writeAffairsLibraryDebugLog({
+        event: "task_failed",
+        processRole: "host",
+        workspaceId,
+        rootDir: meta.rootDir,
+        taskType: handle.taskType,
+        taskId: handle.taskId,
+        source: "affairs_library.directory_hint",
+        reason: meta.reason,
+        targetPath: meta.directoryPath,
+        status: "failed",
+        message: error instanceof Error ? error.message : String(error)
+      });
+    });
   }
 
   private readFavorites(workspaceId: string, userId: string): AffairsLibraryFavoriteRecord[] {
@@ -985,14 +1815,18 @@ export class AffairsLibraryService {
     workspaceId: string,
     binding: AffairsLibraryBindingDto | null
   ): AffairsLibraryIndexStatusDto {
-    const taskSnapshot = this.taskManager.peek(HOST_TASK_TYPES.affairsLibraryIndex, workspaceId);
+    const taskSnapshot = this.findRelevantIndexTaskSnapshot(workspaceId);
     const exportStatus = binding?.enabled ? readIndexStatusFileSafe(binding.rootDir) : null;
+    const runtimeStatus = binding?.enabled ? readRuntimeStatusFileSafe(binding.rootDir) : null;
     if (taskSnapshot && (taskSnapshot.status === "queued" || taskSnapshot.status === "running")) {
-      const reconciledStatus = buildCompletedStatusFromExport(
-        exportStatus,
-        taskSnapshot.enqueuedAt,
-        taskSnapshot.startedAt
-      );
+      const activeStartedAtMs = taskSnapshot.startedAt ?? taskSnapshot.enqueuedAt ?? null;
+      const reconciledStatus = hasExportCaughtUp(exportStatus, activeStartedAtMs)
+        ? buildCompletedStatusFromExport(
+          exportStatus,
+          taskSnapshot.enqueuedAt,
+          taskSnapshot.startedAt
+        )
+        : null;
       if (reconciledStatus) {
         return reconciledStatus;
       }
@@ -1006,11 +1840,32 @@ export class AffairsLibraryService {
         lastFailedAt: null,
         nextAllowedAt: null,
         runningTaskId: taskSnapshot.taskId,
+        runningStage: resolveAffairsLibraryRunningStage(workspaceId, taskSnapshot, runtimeStatus),
         errorSummary: null
       };
     }
 
     if (taskSnapshot?.status === "failed" || taskSnapshot?.status === "timeout" || taskSnapshot?.status === "cancelled") {
+      const failedReferenceMs = taskSnapshot.finishedAt ?? taskSnapshot.startedAt ?? taskSnapshot.enqueuedAt ?? null;
+      if (hasExportCaughtUp(exportStatus, failedReferenceMs)) {
+        return buildCompletedStatusFromExport(
+          exportStatus,
+          taskSnapshot.enqueuedAt,
+          taskSnapshot.startedAt
+        ) ?? {
+          state: "fresh",
+          dirtyReasons: [],
+          lastRequestedAt: toIso(taskSnapshot.enqueuedAt),
+          lastStartedAt: toIso(taskSnapshot.startedAt),
+          lastCompletedAt: exportStatus?.exportedAt ?? null,
+          lastFailedAt: null,
+          nextAllowedAt: null,
+          runningTaskId: null,
+          runningStage: null,
+          errorSummary: null
+        };
+      }
+
       const failedAt = toIso(taskSnapshot.finishedAt);
       const failedAtMs = taskSnapshot.finishedAt ?? Date.now();
       const nextAllowedAtMs = failedAtMs + INDEX_TASK_COOLDOWN_MS;
@@ -1025,6 +1880,7 @@ export class AffairsLibraryService {
         lastFailedAt: failedAt,
         nextAllowedAt: toIso(nextAllowedAtMs),
         runningTaskId: null,
+        runningStage: null,
         errorSummary: taskSnapshot.errorMessage ?? "最近一次文档库刷新失败"
       };
     }
@@ -1039,6 +1895,7 @@ export class AffairsLibraryService {
         lastFailedAt: null,
         nextAllowedAt: null,
         runningTaskId: null,
+        runningStage: null,
         errorSummary: null
       };
     }
@@ -1053,6 +1910,7 @@ export class AffairsLibraryService {
         lastFailedAt: null,
         nextAllowedAt: null,
         runningTaskId: null,
+        runningStage: null,
         errorSummary: "文档库功能已关闭，启用后才会启动内置索引服务。"
       };
     }
@@ -1069,6 +1927,7 @@ export class AffairsLibraryService {
         lastFailedAt: null,
         nextAllowedAt: null,
         runningTaskId: null,
+        runningStage: null,
         errorSummary: missingArtifact.errorSummary
       };
     }
@@ -1082,6 +1941,7 @@ export class AffairsLibraryService {
       lastFailedAt: null,
       nextAllowedAt: null,
       runningTaskId: null,
+      runningStage: null,
       errorSummary: "文档库导出状态文件缺失，系统会自动补跑一次全量重建。"
     };
   }
@@ -1097,6 +1957,20 @@ export class AffairsLibraryService {
           await this.runInternalCommand(input.rootDir, "apply-config", {
             reason: input.reason
           })
+      });
+    }
+
+    if (!this.taskManager.has(HOST_TASK_TYPES.affairsLibraryDirectoryHint)) {
+      this.taskManager.register<{
+        workspaceId: string;
+        rootDir: string;
+        directoryPath: string;
+        reason: string;
+      }, AffairsLibraryDirectoryHintTaskResult>({
+        taskType: HOST_TASK_TYPES.affairsLibraryDirectoryHint,
+        executionLane: "host_background",
+        timeoutMs: DIRECTORY_HINT_TASK_TIMEOUT_MS,
+        run: async (input) => await this.runDirectoryHintTask(input)
       });
     }
 
@@ -1200,6 +2074,14 @@ export class AffairsLibraryService {
     state.timer = null;
     if (!hasPendingAutoTasks(state)) {
       this.autoTaskStateByWorkspace.delete(workspaceId);
+      writeAffairsLibraryDebugLog({
+        event: "auto_task_skipped",
+        processRole: "host",
+        workspaceId,
+        source: "affairs_library.auto_task",
+        status: "skipped",
+        message: "当前工作区没有启用的文档库绑定"
+      });
       return;
     }
 
@@ -1216,6 +2098,15 @@ export class AffairsLibraryService {
         "事务文档库自动任务已跳过，当前工作区没有启用的文档库绑定"
       );
       this.autoTaskStateByWorkspace.delete(workspaceId);
+      writeAffairsLibraryDebugLog({
+        event: "auto_task_skipped",
+        processRole: "host",
+        workspaceId,
+        rootDir,
+        source: "affairs_library.auto_task",
+        status: "skipped",
+        message: "当前根目录不可用"
+      });
       return;
     }
 
@@ -1237,6 +2128,15 @@ export class AffairsLibraryService {
     if (missingArtifact) {
       state.indexReasons.add(missingArtifact.reason);
       state.indexTargets.clear();
+      writeAffairsLibraryDebugLog({
+        event: "auto_task_detected_missing_artifact",
+        processRole: "host",
+        workspaceId,
+        rootDir,
+        source: "affairs_library.auto_task",
+        reason: missingArtifact.reason,
+        message: missingArtifact.errorSummary
+      });
     }
 
     const blockingTask = this.findBlockingAutoTask(workspaceId);
@@ -1251,11 +2151,35 @@ export class AffairsLibraryService {
         "事务文档库已有后台任务在跑，当前脏标记会等下一轮补跑"
       );
       this.armAutoTaskTimer(workspaceId, AUTO_TASK_RETRY_WINDOW_MS);
+      writeAffairsLibraryDebugLog({
+        event: "auto_task_blocked_by_running_task",
+        processRole: "host",
+        workspaceId,
+        rootDir,
+        taskType: blockingTask.taskType,
+        taskId: blockingTask.taskId,
+        source: "affairs_library.auto_task",
+        status: blockingTask.status,
+        details: {
+          blockingTaskStatus: blockingTask.status
+        }
+      });
       return;
     }
 
     if (state.applyConfigReasons.size > 0) {
       const reason = joinAutoTaskReasons(state.applyConfigReasons, `watch:${DEFAULT_CONFIG_RELATIVE_PATH}`);
+      writeAffairsLibraryDebugLog({
+        event: "auto_task_flush_apply_config",
+        processRole: "host",
+        workspaceId,
+        rootDir,
+        source: "affairs_library.watch_apply_config",
+        reason,
+        details: {
+          pendingReasonCount: state.applyConfigReasons.size
+        }
+      });
       state.applyConfigReasons.clear();
       const handle = this.taskManager.enqueue<{ workspaceId: string; rootDir: string; reason?: string }, AffairsIndexerCommandResult>(
         HOST_TASK_TYPES.affairsLibraryApplyConfig,
@@ -1279,6 +2203,17 @@ export class AffairsLibraryService {
 
     if (state.recomputeTagReasons.size > 0) {
       const reason = joinAutoTaskReasons(state.recomputeTagReasons, `watch:${TAG_RULES_RELATIVE_PATH}`);
+      writeAffairsLibraryDebugLog({
+        event: "auto_task_flush_recompute_tags",
+        processRole: "host",
+        workspaceId,
+        rootDir,
+        source: "affairs_library.watch_recompute_tags",
+        reason,
+        details: {
+          pendingReasonCount: state.recomputeTagReasons.size
+        }
+      });
       state.recomputeTagReasons.clear();
       const handle = this.taskManager.enqueue<{ workspaceId: string; rootDir: string; reason?: string }, AffairsIndexerCommandResult>(
         HOST_TASK_TYPES.affairsLibraryRecomputeTags,
@@ -1307,6 +2242,21 @@ export class AffairsLibraryService {
         state.indexReasons,
         targetPath ? `watch:${targetPath}` : "watch:auto_refresh"
       );
+      writeAffairsLibraryDebugLog({
+        event: "auto_task_flush_index",
+        processRole: "host",
+        workspaceId,
+        rootDir,
+        source: "affairs_library.auto_refresh",
+        reason,
+        targetPath: targetPath ?? null,
+        details: {
+          forceFullRebuild,
+          pendingReasonCount: state.indexReasons.size,
+          pendingTargetCount: state.indexTargets.size,
+          pendingTargets: [...state.indexTargets].sort((a, b) => a.localeCompare(b, "zh-CN"))
+        }
+      });
       state.indexReasons.clear();
       state.indexTargets.clear();
       const handle = this.taskManager.enqueue<{
@@ -1386,6 +2336,38 @@ export class AffairsLibraryService {
     return null;
   }
 
+  private findRelevantIndexTaskSnapshot(workspaceId: string): TaskSnapshot | null {
+    const taskTypes = [
+      HOST_TASK_TYPES.affairsLibraryApplyConfig,
+      HOST_TASK_TYPES.affairsLibraryIndex,
+      HOST_TASK_TYPES.affairsLibraryRecomputeTags,
+      HOST_TASK_TYPES.affairsLibraryExport
+    ];
+    const snapshots = taskTypes
+      .map((taskType) => this.taskManager.peek(taskType, workspaceId))
+      .filter((snapshot): snapshot is TaskSnapshot => Boolean(snapshot));
+
+    const active = snapshots
+      .filter((snapshot) => snapshot.status === "queued" || snapshot.status === "running")
+      .sort((left, right) =>
+        (right.startedAt ?? right.enqueuedAt ?? 0) - (left.startedAt ?? left.enqueuedAt ?? 0)
+      );
+    if (active.length > 0) {
+      return active[0] ?? null;
+    }
+
+    const failed = snapshots
+      .filter((snapshot) =>
+        snapshot.status === "failed" || snapshot.status === "timeout" || snapshot.status === "cancelled"
+      )
+      .sort((left, right) =>
+        (right.finishedAt ?? right.startedAt ?? right.enqueuedAt ?? 0)
+        - (left.finishedAt ?? left.startedAt ?? left.enqueuedAt ?? 0)
+      );
+
+    return failed[0] ?? null;
+  }
+
   private attachAutoTaskFollowUp(
     workspaceId: string,
     handle: {
@@ -1414,10 +2396,39 @@ export class AffairsLibraryService {
       },
       "事务文档库自动任务已入队"
     );
+    writeAffairsLibraryDebugLog({
+      event: "task_enqueued",
+      processRole: "host",
+      workspaceId,
+      rootDir: meta.rootDir,
+      taskType: handle.taskType,
+      taskId: handle.taskId,
+      source: meta.source,
+      reason: meta.reason,
+      targetPath: meta.targetPath ?? null,
+      deduped: handle.deduped,
+      status: "queued"
+    });
 
     void handle.promise.then(
       (result) => {
         this.invalidateExportCache(meta.rootDir);
+        writeAffairsLibraryDebugLog({
+          event: "task_finished",
+          processRole: "host",
+          workspaceId,
+          rootDir: meta.rootDir,
+          taskType: handle.taskType,
+          taskId: handle.taskId,
+          command: result.command,
+          source: meta.source,
+          reason: meta.reason,
+          targetPath: meta.targetPath ?? null,
+          durationMs: result.durationMs,
+          status: "finished",
+          deduped: handle.deduped,
+          resultSummary: summarizeIndexerCommandResult(result.result)
+        });
         this.logger.info(
           {
             workspaceId,
@@ -1435,6 +2446,20 @@ export class AffairsLibraryService {
         );
       },
       (error) => {
+        writeAffairsLibraryDebugLog({
+          event: "task_failed",
+          processRole: "host",
+          workspaceId,
+          rootDir: meta.rootDir,
+          taskType: handle.taskType,
+          taskId: handle.taskId,
+          source: meta.source,
+          reason: meta.reason,
+          targetPath: meta.targetPath ?? null,
+          status: "failed",
+          deduped: handle.deduped,
+          message: error instanceof Error ? error.message : String(error)
+        });
         this.logger.info(
           {
             workspaceId,
@@ -1582,6 +2607,15 @@ export class AffairsLibraryService {
   private invalidateExportCache(rootDir: string): void {
     this.exportCache.delete(rootDir);
     const cachePath = path.join(rootDir, EXPORT_DIR_RELATIVE_PATH, SNAPSHOT_CACHE_FILE_NAME);
+    writeAffairsLibraryDebugLog({
+      event: "snapshot_cache_invalidated",
+      processRole: "host",
+      rootDir,
+      source: "affairs_library.export_cache",
+      details: {
+        cachePath
+      }
+    });
     try {
       fs.rmSync(cachePath, { force: true });
     } catch {
@@ -1672,12 +2706,14 @@ export class AffairsLibraryService {
   private readConfig(rootDir: string): {
     mirrorRoot: string | null;
     allowedExtensions: string[];
+    includedHiddenPaths: string[];
   } {
     const configPath = path.join(rootDir, DEFAULT_CONFIG_RELATIVE_PATH);
     const payload = this.readRawConfigFile(configPath);
     return {
       mirrorRoot: normalizeOptionalAbsolutePath(payload.mirrorRoot),
-      allowedExtensions: normalizeAllowedExtensions(payload.allowedExtensions ?? [])
+      allowedExtensions: normalizeAllowedExtensions(payload.allowedExtensions ?? []),
+      includedHiddenPaths: normalizeIncludedHiddenPaths(payload.includedHiddenPaths ?? [])
     };
   }
 
@@ -1921,6 +2957,23 @@ function normalizeHintTargetPath(targetPath: string | null | undefined): string 
   return normalized || undefined;
 }
 
+function normalizeDirectoryPathFromTargetPath(targetPath: string | null | undefined): string {
+  const normalized = normalizeHintTargetPath(targetPath);
+  if (!normalized) {
+    return ".";
+  }
+  const parentPath = getParentFolderPath(normalized);
+  return normalizeFolderPath(parentPath) || normalized;
+}
+
+function deriveDirectoryPathFromDocumentTarget(targetPath: string | null | undefined): string {
+  return normalizeDirectoryPathFromTargetPath(targetPath);
+}
+
+function buildHotDirectoryCacheKey(workspaceId: string, directoryPath: string): string {
+  return `${workspaceId}::${normalizeFolderPath(directoryPath) || "."}`;
+}
+
 function detectMissingIndexArtifact(rootDir: string): {
   reason: string;
   errorSummary: string;
@@ -2023,6 +3076,10 @@ function normalizePositiveInt(input: number | undefined, fallback: number, max: 
   return Math.max(0, Math.min(Math.trunc(input as number), max));
 }
 
+function isSameOrDescendantRelativePath(targetPath: string, candidatePath: string): boolean {
+  return candidatePath === targetPath || candidatePath.startsWith(`${targetPath}/`);
+}
+
 function readIndexStatusFileSafe(rootDir: string): ParsedIndexStatusFile | null {
   const filePath = path.join(rootDir, EXPORT_STATUS_RELATIVE_PATH);
   if (!fs.existsSync(filePath)) {
@@ -2042,6 +3099,31 @@ function readIndexStatusFileSafe(rootDir: string): ParsedIndexStatusFile | null 
       exportedAt,
       exportedAtMs,
       documentCount
+    };
+  } catch {
+    return null;
+  }
+}
+
+function readRuntimeStatusFileSafe(rootDir: string): ParsedRuntimeStatusFile | null {
+  const filePath = path.join(rootDir, RUNTIME_STATUS_RELATIVE_PATH);
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+
+  try {
+    const payload = readJsonFile<RuntimeStatusFilePayload>(filePath);
+    const updatedAt = payload.updatedAt?.trim() ?? null;
+    const updatedAtMs = updatedAt ? Date.parse(updatedAt) : Number.NaN;
+    return {
+      status: payload.status?.trim() ?? null,
+      stage: payload.stage?.trim() ?? null,
+      command: payload.command?.trim() ?? null,
+      taskId: payload.taskId?.trim() ?? null,
+      taskType: payload.taskType?.trim() ?? null,
+      updatedAt,
+      updatedAtMs,
+      errorSummary: payload.errorSummary?.trim() ?? null
     };
   } catch {
     return null;
@@ -2075,8 +3157,76 @@ function buildCompletedStatusFromExport(
     lastFailedAt: null,
     nextAllowedAt: toIso(nextAllowedAtMs),
     runningTaskId: null,
+    runningStage: null,
     errorSummary: null
   };
+}
+
+function hasExportCaughtUp(
+  exportStatus: ParsedIndexStatusFile | null,
+  referenceTimestampMs: number | null
+): boolean {
+  if (!exportStatus?.exportedAt || !Number.isFinite(exportStatus.exportedAtMs)) {
+    return false;
+  }
+
+  if (!referenceTimestampMs || !Number.isFinite(referenceTimestampMs)) {
+    return true;
+  }
+
+  return exportStatus.exportedAtMs >= referenceTimestampMs;
+}
+
+function resolveAffairsLibraryRunningStage(
+  workspaceId: string,
+  taskSnapshot: TaskSnapshot,
+  runtimeStatus: ParsedRuntimeStatusFile | null
+): string | null {
+  void workspaceId;
+  if (taskSnapshot.status === "queued") {
+    return "queued";
+  }
+
+  if (
+    runtimeStatus?.status === "running"
+    && runtimeStatus.stage
+    && doesRuntimeStatusMatchTask(taskSnapshot, runtimeStatus)
+  ) {
+    return runtimeStatus.stage;
+  }
+
+  switch (taskSnapshot.taskType) {
+    case HOST_TASK_TYPES.affairsLibraryApplyConfig:
+      return "apply_config";
+    case HOST_TASK_TYPES.affairsLibraryRecomputeTags:
+      return "recompute_tags";
+    case HOST_TASK_TYPES.affairsLibraryExport:
+      return "export";
+    case HOST_TASK_TYPES.affairsLibraryIndex:
+      return "index";
+    default:
+      return null;
+  }
+}
+
+function doesRuntimeStatusMatchTask(
+  taskSnapshot: TaskSnapshot,
+  runtimeStatus: ParsedRuntimeStatusFile
+): boolean {
+  if (runtimeStatus.taskId && runtimeStatus.taskId === taskSnapshot.taskId) {
+    return true;
+  }
+
+  if (runtimeStatus.taskType && runtimeStatus.taskType !== taskSnapshot.taskType) {
+    return false;
+  }
+
+  const referenceMs = taskSnapshot.startedAt ?? taskSnapshot.enqueuedAt ?? Number.NaN;
+  if (!Number.isFinite(referenceMs)) {
+    return true;
+  }
+
+  return Number.isFinite(runtimeStatus.updatedAtMs) && runtimeStatus.updatedAtMs >= referenceMs;
 }
 
 function readJsonFile<T>(filePath: string): T {
@@ -2109,4 +3259,12 @@ function toIso(timestamp: number | null): string | null {
     return null;
   }
   return new Date(timestamp).toISOString();
+}
+
+function hasHiddenPathSegment(relativePath: string): boolean {
+  return relativePath
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .some((segment) => segment.startsWith("."));
 }
