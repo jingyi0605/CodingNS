@@ -1804,7 +1804,7 @@ function countDocumentsForTag(documents: AffairsLibraryDocumentRecordDto[], tagP
   if (!tagPath) {
     return 0;
   }
-  return documents.filter((document) => [...document.tags, ...document.derivedTags].some((tag) => tag === tagPath || tag.startsWith(`${tagPath}/`))).length;
+  return documents.filter((document) => matchesTagPath(document, tagPath)).length;
 }
 
 function readAffairsLibraryStatsSafe(rootDir: string, relativePath: string): fs.Stats | null {
@@ -1914,7 +1914,15 @@ function buildFavoriteNodeId(kind: AffairsLibraryFavoriteKind, pathValue: string
 }
 
 function matchesTagPath(document: AffairsLibraryDocumentRecordDto, tagPath: string): boolean {
-  return [...document.tags, ...document.derivedTags].some((tag) => tag === tagPath || tag.startsWith(`${tagPath}/`));
+  const normalizedTagPath = tagPath.trim();
+  if (!normalizedTagPath) {
+    return true;
+  }
+  return [...document.tags, ...document.derivedTags].some((tag) => tag === normalizedTagPath || isTagTreeAncestor(normalizedTagPath, tag));
+}
+
+function isTagTreeAncestor(parentPath: string, childPath: string): boolean {
+  return childPath.startsWith(`${parentPath}/`);
 }
 
 function matchesDirectFolder(documentPath: string, folderPath: string | null | undefined): boolean {
