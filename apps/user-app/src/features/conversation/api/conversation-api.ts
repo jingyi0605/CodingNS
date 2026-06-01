@@ -167,6 +167,8 @@ export interface AffairsLibraryDocumentRecordDto {
   title: string;
   summary: string;
   updatedAt: string;
+  createdAt?: string | null;
+  sizeBytes?: number | null;
   tags: string[];
   derivedTags: string[];
   isFavorite: boolean;
@@ -187,6 +189,8 @@ export interface AffairsLibraryFolderNodeDto {
   parentPath: string | null;
   directDocumentCount: number;
   documentCount: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
 }
 
 export interface AffairsLibrarySnapshotDto {

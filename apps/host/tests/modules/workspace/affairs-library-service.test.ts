@@ -467,6 +467,7 @@ describe("AffairsLibraryService auto tasks", () => {
     fs.writeFileSync(
       path.join(exportDir, SNAPSHOT_CACHE_FILE_NAME),
       JSON.stringify({
+        schemaVersion: 2,
         signature: "stale-cache",
         generatedAt: "2026-05-31T08:00:00.000Z",
         documents: [
@@ -476,6 +477,8 @@ describe("AffairsLibraryService auto tasks", () => {
             title: "demo",
             summary: "cached",
             updatedAt: "2026-05-31T08:00:00.000Z",
+            createdAt: "2026-05-31T07:00:00.000Z",
+            sizeBytes: 128,
             tags: ["项目/演示"],
             derivedTags: [],
             isFavorite: false
@@ -497,7 +500,9 @@ describe("AffairsLibraryService auto tasks", () => {
             name: "notes",
             parentPath: null,
             directDocumentCount: 1,
-            documentCount: 1
+            documentCount: 1,
+            createdAt: "2026-05-31T06:00:00.000Z",
+            updatedAt: "2026-05-31T08:00:00.000Z"
           }
         ]
       })
@@ -517,6 +522,274 @@ describe("AffairsLibraryService auto tasks", () => {
     expect(snapshot.tags).toHaveLength(1);
     expect(documentList.total).toBe(1);
     expect(documentList.items[0]?.path).toBe("notes/demo.md");
+    expect(documentList.items[0]?.createdAt).toBe("2026-05-31T07:00:00.000Z");
+    expect(documentList.items[0]?.sizeBytes).toBe(128);
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("列文档时会补齐文件大小和创建时间", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-list-meta-"));
+    const exportDir = path.join(rootDir, ".ai-index", "exports");
+    fs.mkdirSync(path.join(rootDir, "notes"), { recursive: true });
+    fs.mkdirSync(exportDir, { recursive: true });
+
+    const filePath = path.join(rootDir, "notes", "demo.txt");
+    fs.writeFileSync(filePath, "hello affairs");
+    fs.writeFileSync(
+      path.join(exportDir, "manifest.json"),
+      JSON.stringify({
+        generated_at: "2026-05-31T06:00:00.000Z",
+        entries: {
+          taxonomy: "taxonomy.json",
+          bootstrap: "bootstrap.json"
+        },
+        meta_shards: [{ path: "documents-0.json" }]
+      })
+    );
+    fs.writeFileSync(path.join(exportDir, "taxonomy.json"), JSON.stringify({ nodes: [] }));
+    fs.writeFileSync(
+      path.join(exportDir, "bootstrap.json"),
+      JSON.stringify({
+        folders: [
+          {
+            path: "notes",
+            name: "notes",
+            parent_path: null,
+            direct_document_count: 1,
+            document_count: 1
+          }
+        ]
+      })
+    );
+    fs.writeFileSync(
+      path.join(exportDir, "documents-0.json"),
+      JSON.stringify({
+        documents: [
+          {
+            document_id: "doc-1",
+            path: "notes/demo.txt",
+            title: "demo",
+            summary: "hello",
+            mtime: "2026-05-31T08:00:00.000Z",
+            direct_tags: [],
+            derived_tags: []
+          }
+        ]
+      })
+    );
+
+    const service = createService({ rootDir });
+    const documentList = service.listDocuments("workspace-1", "user-1", {
+      browseMode: "folder",
+      selectedFolderPath: "notes"
+    });
+
+    expect(documentList.items[0]?.sizeBytes).toBe(Buffer.byteLength("hello affairs"));
+    expect(documentList.items[0]?.createdAt).toMatch(/^20/);
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("导出刷新后会丢掉旧快照缓存并读到新的根目录文档", async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-refresh-cache-"));
+    const exportDir = path.join(rootDir, ".ai-index", "exports");
+    fs.mkdirSync(exportDir, { recursive: true });
+
+    const writeExport = (input: {
+      exportedAt: string;
+      files: Array<{ id: string; path: string; title: string; mtime: string }>;
+    }) => {
+      fs.writeFileSync(
+        path.join(exportDir, "status.json"),
+        JSON.stringify({
+          version: 2,
+          format: "static-v2",
+          exported_at: input.exportedAt,
+          document_count: input.files.length
+        })
+      );
+      fs.writeFileSync(
+        path.join(exportDir, "manifest.json"),
+        JSON.stringify({
+          generated_at: input.exportedAt,
+          entries: {
+            taxonomy: "taxonomy.json",
+            bootstrap: "bootstrap.json"
+          },
+          meta_shards: [{ path: "documents-0.json" }]
+        })
+      );
+      fs.writeFileSync(path.join(exportDir, "taxonomy.json"), JSON.stringify({ nodes: [] }));
+      fs.writeFileSync(
+        path.join(exportDir, "bootstrap.json"),
+        JSON.stringify({
+          folders: [
+            {
+              path: ".",
+              name: "资料库",
+              parent_path: null,
+              direct_document_count: input.files.length,
+              document_count: input.files.length
+            }
+          ]
+        })
+      );
+      fs.writeFileSync(
+        path.join(exportDir, "documents-0.json"),
+        JSON.stringify({
+          documents: input.files.map((file) => ({
+            document_id: file.id,
+            path: file.path,
+            title: file.title,
+            summary: file.title,
+            mtime: file.mtime,
+            direct_tags: [],
+            derived_tags: []
+          }))
+        })
+      );
+    };
+
+    writeExport({
+      exportedAt: "2026-05-31T10:00:00.000Z",
+      files: [
+        {
+          id: "doc-agents",
+          path: "AGENTS.md",
+          title: "AGENTS",
+          mtime: "2026-05-31T10:00:00.000Z"
+        },
+        {
+          id: "doc-test",
+          path: "TEST.MD",
+          title: "TEST.MD",
+          mtime: "2026-05-31T10:00:01.000Z"
+        }
+      ]
+    });
+
+    const enqueue = vi.fn(() => ({
+      taskId: "task-1",
+      taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+      key: "workspace-1",
+      executionLane: "helper_process",
+      deduped: false,
+      promise: Promise.resolve(createIndexerResult("index")),
+      cancel: vi.fn()
+    }));
+    const service = createService({ rootDir, enqueue });
+
+    const firstList = service.listDocuments("workspace-1", "user-1", {
+      browseMode: "folder",
+      selectedFolderPath: null
+    });
+    expect(firstList.total).toBe(2);
+    expect(firstList.items.map((item) => item.path)).toEqual(["AGENTS.md", "TEST.MD"]);
+
+    writeExport({
+      exportedAt: "2026-05-31T10:05:00.000Z",
+      files: [
+        {
+          id: "doc-agents-copy",
+          path: "AGENTS_副本.md",
+          title: "AGENTS_副本",
+          mtime: "2026-05-31T10:05:03.000Z"
+        },
+        {
+          id: "doc-index",
+          path: "index.html",
+          title: "index",
+          mtime: "2026-05-31T10:05:02.000Z"
+        },
+        {
+          id: "doc-test",
+          path: "TEST.MD",
+          title: "TEST.MD",
+          mtime: "2026-05-31T10:05:01.000Z"
+        },
+        {
+          id: "doc-agents",
+          path: "AGENTS.md",
+          title: "AGENTS",
+          mtime: "2026-05-31T10:05:00.000Z"
+        }
+      ]
+    });
+
+    const refresh = service.requestRefresh("workspace-1", "user-1", "manual_refresh");
+    await enqueue.mock.results[0]?.value.promise;
+    expect(refresh.taskId).toBe("task-1");
+
+    const secondList = service.listDocuments("workspace-1", "user-1", {
+      browseMode: "folder",
+      selectedFolderPath: null
+    });
+    expect(secondList.total).toBe(4);
+    expect(secondList.items.map((item) => item.path)).toEqual([
+      "AGENTS_副本.md",
+      "index.html",
+      "TEST.MD",
+      "AGENTS.md"
+    ]);
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("任务快照还挂着 running，但导出时间已经更新后，状态会按完成显示", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-status-reconcile-"));
+    const exportDir = path.join(rootDir, ".ai-index", "exports");
+    fs.mkdirSync(exportDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(exportDir, "status.json"),
+      JSON.stringify({
+        version: 2,
+        format: "static-v2",
+        exported_at: new Date(Date.now() - 1_000).toISOString(),
+        document_count: 3
+      })
+    );
+    fs.writeFileSync(
+      path.join(exportDir, "manifest.json"),
+      JSON.stringify({
+        generated_at: new Date(Date.now() - 1_000).toISOString(),
+        entries: {
+          taxonomy: "taxonomy.json",
+          bootstrap: "bootstrap.json"
+        },
+        meta_shards: []
+      })
+    );
+    fs.writeFileSync(path.join(exportDir, "taxonomy.json"), JSON.stringify({ nodes: [] }));
+    fs.writeFileSync(path.join(exportDir, "bootstrap.json"), JSON.stringify({ folders: [] }));
+
+    const now = Date.now();
+    const service = createService({
+      rootDir,
+      peek: () => ({
+        taskId: "9ffe0f50-94a3-4522-a47c-d89b1dadff4f",
+        taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+        key: "workspace-1",
+        executionLane: "helper_process",
+        status: "running",
+        source: "affairs_library.auto_refresh",
+        attempt: 1,
+        enqueuedAt: now - 90_000,
+        startedAt: now - 89_000,
+        finishedAt: null,
+        timeoutMs: 15 * 60 * 1000
+      })
+    });
+
+    const snapshot = service.getSnapshot("workspace-1", "user-1");
+
+    expect(snapshot.status.state).toBe("cooldown");
+    expect(snapshot.status.runningTaskId).toBeNull();
+    expect(snapshot.status.lastCompletedAt).not.toBeNull();
+    expect(snapshot.status.dirtyReasons).toEqual([]);
 
     service.dispose();
     fs.rmSync(rootDir, { recursive: true, force: true });

@@ -35,6 +35,7 @@ const INDEX_TASK_COOLDOWN_MS = 15_000;
 const AUTO_TASK_QUIET_WINDOW_MS = 800;
 const AUTO_TASK_RETRY_WINDOW_MS = 1_000;
 const SNAPSHOT_CACHE_FILE_NAME = "codingns-affairs-snapshot-cache.json";
+const SNAPSHOT_CACHE_SCHEMA_VERSION = 2;
 
 export type AffairsLibraryFavoriteKind = "folder" | "tag";
 
@@ -73,6 +74,8 @@ export interface AffairsLibraryDocumentRecordDto {
   title: string;
   summary: string;
   updatedAt: string;
+  createdAt?: string | null;
+  sizeBytes?: number | null;
   tags: string[];
   derivedTags: string[];
   isFavorite: boolean;
@@ -93,6 +96,8 @@ export interface AffairsLibraryFolderNodeDto {
   parentPath: string | null;
   directDocumentCount: number;
   documentCount: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
 }
 
 export interface AffairsLibrarySnapshotDto {
@@ -160,6 +165,12 @@ interface IndexStatusFilePayload {
   document_count?: number;
 }
 
+interface ParsedIndexStatusFile {
+  exportedAt: string | null;
+  exportedAtMs: number;
+  documentCount: number | null;
+}
+
 interface IndexManifestPayload {
   generated_at?: string;
   entries?: {
@@ -212,6 +223,7 @@ interface AffairsLibraryExportData {
 }
 
 interface AffairsLibraryExportCachePayload {
+  schemaVersion: number;
   signature: string;
   generatedAt: string | null;
   documents: AffairsLibraryDocumentRecordDto[];
@@ -564,12 +576,17 @@ export class AffairsLibraryService {
       return matchesDirectFolder(document.path, folderPath);
     });
 
-    const items = filtered.slice(offset, offset + limit).map<AffairsLibraryDocumentRecordDto>((document) => ({
-      ...document,
-      isFavorite: favorites.some((favorite) =>
-        matchesFavorite(favorite, document.path, document.tags, document.derivedTags)
-      )
-    }));
+    const items = filtered.slice(offset, offset + limit).map<AffairsLibraryDocumentRecordDto>((document) => {
+      const fileStats = readAffairsLibraryStatsSafe(binding.rootDir, document.path);
+      return {
+        ...document,
+        createdAt: document.createdAt ?? toIsoOrNull(fileStats?.birthtime),
+        sizeBytes: document.sizeBytes ?? fileStats?.size ?? null,
+        isFavorite: favorites.some((favorite) =>
+          matchesFavorite(favorite, document.path, document.tags, document.derivedTags)
+        )
+      };
+    });
 
     return {
       total: filtered.length,
@@ -798,6 +815,9 @@ export class AffairsLibraryService {
         }
       }
     );
+    void handle.promise.then(() => {
+      this.invalidateExportCache(binding.rootDir);
+    });
 
     return {
       taskId: handle.taskId,
@@ -956,7 +976,17 @@ export class AffairsLibraryService {
     binding: AffairsLibraryBindingDto | null
   ): AffairsLibraryIndexStatusDto {
     const taskSnapshot = this.taskManager.peek(HOST_TASK_TYPES.affairsLibraryIndex, workspaceId);
+    const exportStatus = binding?.enabled ? readIndexStatusFileSafe(binding.rootDir) : null;
     if (taskSnapshot && (taskSnapshot.status === "queued" || taskSnapshot.status === "running")) {
+      const reconciledStatus = buildCompletedStatusFromExport(
+        exportStatus,
+        taskSnapshot.enqueuedAt,
+        taskSnapshot.startedAt
+      );
+      if (reconciledStatus) {
+        return reconciledStatus;
+      }
+
       return {
         state: "running",
         dirtyReasons: ["refresh_requested"],
@@ -1033,26 +1063,16 @@ export class AffairsLibraryService {
       };
     }
 
-    const statusFile = readJsonFile<IndexStatusFilePayload>(
-      path.join(binding.rootDir, EXPORT_STATUS_RELATIVE_PATH)
-    );
-    const lastCompletedAt = statusFile.exported_at?.trim() ?? null;
-    const lastCompletedAtMs = lastCompletedAt ? Date.parse(lastCompletedAt) : Number.NaN;
-    const nextAllowedAtMs = Number.isFinite(lastCompletedAtMs)
-      ? lastCompletedAtMs + INDEX_TASK_COOLDOWN_MS
-      : Number.NaN;
-    const now = Date.now();
-
-    return {
-      state: Number.isFinite(nextAllowedAtMs) && now < nextAllowedAtMs ? "cooldown" : "fresh",
-      dirtyReasons: [],
-      lastRequestedAt: lastCompletedAt,
-      lastStartedAt: lastCompletedAt,
-      lastCompletedAt,
+    return buildCompletedStatusFromExport(exportStatus, null, null) ?? {
+      state: "stale",
+      dirtyReasons: ["missing_export_status"],
+      lastRequestedAt: null,
+      lastStartedAt: null,
+      lastCompletedAt: null,
       lastFailedAt: null,
-      nextAllowedAt: Number.isFinite(nextAllowedAtMs) ? toIso(nextAllowedAtMs) : null,
+      nextAllowedAt: null,
       runningTaskId: null,
-      errorSummary: null
+      errorSummary: "文档库导出状态文件缺失，系统会自动补跑一次全量重建。"
     };
   }
 
@@ -1387,6 +1407,7 @@ export class AffairsLibraryService {
 
     void handle.promise.then(
       (result) => {
+        this.invalidateExportCache(meta.rootDir);
         this.logger.info(
           {
             workspaceId,
@@ -1460,8 +1481,9 @@ export class AffairsLibraryService {
       };
     }
 
-    const parsed = this.parseExportData(exportRoot, manifestPath);
+    const parsed = this.parseExportData(rootDir, exportRoot, manifestPath);
     const cachePayload: AffairsLibraryExportCachePayload = {
+      schemaVersion: SNAPSHOT_CACHE_SCHEMA_VERSION,
       signature,
       generatedAt: parsed.generatedAt,
       documents: parsed.documents,
@@ -1473,7 +1495,7 @@ export class AffairsLibraryService {
     return parsed;
   }
 
-  private parseExportData(exportRoot: string, manifestPath: string): AffairsLibraryExportData {
+  private parseExportData(rootDir: string, exportRoot: string, manifestPath: string): AffairsLibraryExportData {
     const manifest = readJsonFile<IndexManifestPayload>(manifestPath);
     const metaShardPaths = (manifest.meta_shards ?? [])
       .map((item) => item.path?.trim() ?? "")
@@ -1488,6 +1510,8 @@ export class AffairsLibraryService {
           title: document.title?.trim() || path.basename(safePath) || "未命名文档",
           summary: document.summary?.trim() ?? "",
           updatedAt: document.mtime?.trim() ?? "",
+          createdAt: null,
+          sizeBytes: null,
           tags: Array.isArray(document.direct_tags) ? document.direct_tags.filter(Boolean) : [],
           derivedTags: Array.isArray(document.derived_tags) ? document.derived_tags.filter(Boolean) : [],
           isFavorite: false
@@ -1508,13 +1532,19 @@ export class AffairsLibraryService {
 
     const bootstrapEntry = manifest.entries?.bootstrap?.trim() || "bootstrap.json";
     const bootstrap = readJsonFile<IndexBootstrapPayload>(path.join(exportRoot, bootstrapEntry));
-    const folders = (bootstrap.folders ?? []).map<AffairsLibraryFolderNodeDto>((folder) => ({
-      path: folder.path?.trim() ?? ".",
-      name: folder.name?.trim() || "资料库",
-      parentPath: folder.parent_path?.trim() || null,
-      directDocumentCount: Number(folder.direct_document_count ?? 0),
-      documentCount: Number(folder.document_count ?? 0)
-    }));
+    const folders = (bootstrap.folders ?? []).map<AffairsLibraryFolderNodeDto>((folder) => {
+      const normalizedPath = folder.path?.trim() ?? ".";
+      const folderStats = readAffairsLibraryStatsSafe(rootDir, normalizedPath);
+      return {
+        path: normalizedPath,
+        name: folder.name?.trim() || "资料库",
+        parentPath: folder.parent_path?.trim() || null,
+        directDocumentCount: Number(folder.direct_document_count ?? 0),
+        documentCount: Number(folder.document_count ?? 0),
+        createdAt: toIsoOrNull(folderStats?.birthtime),
+        updatedAt: toIsoOrNull(folderStats?.mtime)
+      };
+    });
 
     return {
       documents,
@@ -1528,12 +1558,25 @@ export class AffairsLibraryService {
     const manifestStat = fs.statSync(manifestPath);
     const statusPath = path.join(exportRoot, "status.json");
     const statusStat = fs.existsSync(statusPath) ? fs.statSync(statusPath) : null;
+    const statusPayload = statusStat ? readJsonFile<IndexStatusFilePayload>(statusPath) : null;
     return [
+      statusPayload?.exported_at?.trim() ?? "missing",
+      statusPayload?.document_count ?? "missing",
       manifestStat.mtimeMs,
       manifestStat.size,
       statusStat?.mtimeMs ?? "missing",
       statusStat?.size ?? "missing"
     ].join(":");
+  }
+
+  private invalidateExportCache(rootDir: string): void {
+    this.exportCache.delete(rootDir);
+    const cachePath = path.join(rootDir, EXPORT_DIR_RELATIVE_PATH, SNAPSHOT_CACHE_FILE_NAME);
+    try {
+      fs.rmSync(cachePath, { force: true });
+    } catch {
+      // 这里只是尽量删掉快照缓存，失败不影响主链路。
+    }
   }
 
   private readExportCacheFile(exportRoot: string, signature: string): AffairsLibraryExportCachePayload | null {
@@ -1544,7 +1587,7 @@ export class AffairsLibraryService {
 
     try {
       const payload = readJsonFile<AffairsLibraryExportCachePayload>(cachePath);
-      if (payload.signature !== signature) {
+      if (payload.schemaVersion !== SNAPSHOT_CACHE_SCHEMA_VERSION || payload.signature !== signature) {
         return null;
       }
       return payload;
@@ -1764,6 +1807,29 @@ function countDocumentsForTag(documents: AffairsLibraryDocumentRecordDto[], tagP
   return documents.filter((document) => [...document.tags, ...document.derivedTags].some((tag) => tag === tagPath || tag.startsWith(`${tagPath}/`))).length;
 }
 
+function readAffairsLibraryStatsSafe(rootDir: string, relativePath: string): fs.Stats | null {
+  const normalizedPath = relativePath.trim();
+  const targetPath = !normalizedPath || normalizedPath === "."
+    ? rootDir
+    : path.resolve(rootDir, normalizedPath);
+
+  try {
+    if (!fs.existsSync(targetPath)) {
+      return null;
+    }
+    return fs.statSync(targetPath);
+  } catch {
+    return null;
+  }
+}
+
+function toIsoOrNull(value: Date | null | undefined): string | null {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) {
+    return null;
+  }
+  return value.toISOString();
+}
+
 function resolveAffairsLibraryRelativePath(rootDir: string, absolutePath: string): string | null {
   const relativePath = path.relative(path.resolve(rootDir), path.resolve(absolutePath)).replace(/\\/g, "/");
   if (!relativePath || relativePath === "." || relativePath.startsWith("../")) {
@@ -1874,6 +1940,62 @@ function normalizePositiveInt(input: number | undefined, fallback: number, max: 
     return fallback;
   }
   return Math.max(0, Math.min(Math.trunc(input as number), max));
+}
+
+function readIndexStatusFileSafe(rootDir: string): ParsedIndexStatusFile | null {
+  const filePath = path.join(rootDir, EXPORT_STATUS_RELATIVE_PATH);
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+
+  try {
+    const payload = readJsonFile<IndexStatusFilePayload>(filePath);
+    const exportedAt = payload.exported_at?.trim() ?? null;
+    const exportedAtMs = exportedAt ? Date.parse(exportedAt) : Number.NaN;
+    const documentCount = typeof payload.document_count === "number"
+      ? payload.document_count
+      : Number.isFinite(Number(payload.document_count))
+        ? Number(payload.document_count)
+        : null;
+    return {
+      exportedAt,
+      exportedAtMs,
+      documentCount
+    };
+  } catch {
+    return null;
+  }
+}
+
+function buildCompletedStatusFromExport(
+  exportStatus: ParsedIndexStatusFile | null,
+  enqueuedAtMs: number | null,
+  startedAtMs: number | null
+): AffairsLibraryIndexStatusDto | null {
+  if (!exportStatus?.exportedAt || !Number.isFinite(exportStatus.exportedAtMs)) {
+    return null;
+  }
+
+  const nextAllowedAtMs = exportStatus.exportedAtMs + INDEX_TASK_COOLDOWN_MS;
+  const now = Date.now();
+  const lastRequestedAtMs = Number.isFinite(enqueuedAtMs ?? Number.NaN)
+    ? Math.max(exportStatus.exportedAtMs, enqueuedAtMs ?? Number.NaN)
+    : exportStatus.exportedAtMs;
+  const lastStartedAtMs = Number.isFinite(startedAtMs ?? Number.NaN)
+    ? Math.max(exportStatus.exportedAtMs, startedAtMs ?? Number.NaN)
+    : exportStatus.exportedAtMs;
+
+  return {
+    state: now < nextAllowedAtMs ? "cooldown" : "fresh",
+    dirtyReasons: [],
+    lastRequestedAt: toIso(lastRequestedAtMs),
+    lastStartedAt: toIso(lastStartedAtMs),
+    lastCompletedAt: exportStatus.exportedAt,
+    lastFailedAt: null,
+    nextAllowedAt: toIso(nextAllowedAtMs),
+    runningTaskId: null,
+    errorSummary: null
+  };
 }
 
 function readJsonFile<T>(filePath: string): T {
