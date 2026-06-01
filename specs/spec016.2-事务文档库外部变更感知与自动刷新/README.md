@@ -37,6 +37,7 @@
 - 索引产物缺失时的自动重建策略
 - Host 状态、日志和可观测性要求
 - 必要的前端状态提示和验证口径
+- 目录切换时的异步 directory hint refresh
 
 ## 这次明确不做什么
 
@@ -113,7 +114,8 @@
   - `spec016.1-事务视图文档库与索引HOST集成`
 - 直接影响：
   - `apps/host`
-  - `apps/user-app`（只涉及状态展示和提示时）
+- `apps/user-app`（只涉及状态展示和提示时）
+- `apps/host/src/modules/sessions`（只补工作区会话 instruction bundle 重写，不扩 provider 主链路）
 
 ## 硬边界先写死
 

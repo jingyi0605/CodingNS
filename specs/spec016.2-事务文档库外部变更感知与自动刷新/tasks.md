@@ -333,3 +333,93 @@
     - Host 定向测试
   - 对应需求：`requirements.md` 需求 1、需求 4、需求 6
   - 对应设计：`design.md` §2.3.1、§3.2、§4.2
+
+- [x] 4.2 刷新完成后丢掉旧导出快照缓存，避免根目录列表一直显示旧结果
+  - 状态：DONE
+  - 这一步到底做什么：修掉 Host 导出缓存只看 `manifest/status` 文件 mtime 的问题；刷新任务完成后主动清掉旧缓存，下一次读列表时强制重新读最新导出。
+  - 做完你能看到什么：像根目录新增 `AGENTS_副本.md` 这种文件，不会明明已经进索引了，界面还一直卡在旧列表。
+  - 先依赖什么：4.1
+  - 开始前先看：
+    - `apps/host/src/modules/workspace/affairs-library-service.ts`
+    - `apps/host/tests/modules/workspace/affairs-library-service.test.ts`
+  - 主要改哪里：
+    - `apps/host/src/modules/workspace/affairs-library-service.ts`
+    - `apps/host/tests/modules/workspace/affairs-library-service.test.ts`
+  - 这一步先不做什么：不改读接口同步现算，不改前端目录渲染排序。
+  - 怎么算完成：
+    1. 手动刷新或自动刷新完成后，Host 不再继续复用旧导出缓存
+    2. 下一次列目录时能读到新增或删除后的真实文档集
+  - 怎么验证：
+    - Host 定向测试：先读旧导出，再改导出内容，再触发刷新，确认根目录文档列表更新
+  - 对应需求：`requirements.md` 需求 1、需求 6
+  - 对应设计：`design.md` §3.2、§5.3
+
+- [x] 4.3 任务快照卡在 running 时，用导出完成时间反向纠正状态显示
+  - 状态：DONE
+  - 这一步到底做什么：修掉“任务快照还显示 running，但导出文件其实已经写完”的状态误判。只要 `status.json.exported_at` 已经晚于这次请求或启动时间，就把状态当成已完成处理，不再继续显示“刷新中”。
+  - 做完你能看到什么：像任务 `9ffe0f50-94a3-4522-a47c-d89b1dadff4f` 这种已经在 2026-06-01 08:16:56 完成的任务，不会继续在界面里挂成“刷新中”。
+  - 先依赖什么：4.2
+  - 开始前先看：
+    - `apps/host/src/modules/workspace/affairs-library-service.ts`
+    - `apps/host/tests/modules/workspace/affairs-library-service.test.ts`
+  - 主要改哪里：
+    - `apps/host/src/modules/workspace/affairs-library-service.ts`
+    - `apps/host/tests/modules/workspace/affairs-library-service.test.ts`
+  - 这一步先不做什么：不重做 TaskManager，不加新的状态存储表。
+  - 怎么算完成：
+    1. 导出状态文件已经更新时，Host 返回 `fresh/cooldown`，不再返回 `running`
+    2. `runningTaskId` 会清空，最近完成时间保持真实值
+  - 怎么验证：
+    - Host 定向测试：伪造 `peek()` 仍是 `running`，但导出状态已经更新，断言返回 `cooldown`
+    - 人工核对 `status.json.exported_at` 与界面状态一致
+  - 对应需求：`requirements.md` 需求 6
+  - 对应设计：`design.md` §3.3、§5.3
+
+---
+
+## 阶段 5：AGENTS.md 变更后重写工作区 runtime instruction bundle
+
+- [x] 5.1 让工作区会话的 instruction bundle 支持按现有 runtime 目录批量重写
+  - 状态：DONE
+  - 这一步到底做什么：给 Host 补一个“按工作区扫描现有 workspace-session-runtime 目录，并重写 `WORKSPACE_SESSION_COMPOSED.md`”的能力，避免 `AGENTS.md` 只在会话创建时读一次。
+  - 做完你能看到什么：同一个工作区里已经存在的会话 runtime，不用重开也能拿到最新的 `AGENTS.md` 规则。
+  - 先依赖什么：4.1
+  - 开始前先看：
+    - `apps/host/src/modules/sessions/workspace-session-runtime-context-service.ts`
+    - `apps/host/tests/integration/workspace-session-runtime-context-service.test.ts`
+  - 主要改哪里：
+    - `apps/host/src/modules/sessions/workspace-session-runtime-context-service.ts`
+    - `apps/host/tests/integration/workspace-session-runtime-context-service.test.ts`
+  - 这一步先不做什么：不改 provider transcript home，不重写 session 绑定模型。
+  - 怎么算完成：
+    1. 可以从已有 composed 文件里拆出 Host 注入规则和临时 overlay
+    2. 可以批量扫描本地 / 全局 runtime 目录并重写命中的 instruction bundle
+  - 怎么验证：
+    - Host 集成测试：改 `AGENTS.md` 后重写已有 composed 文件
+    - Host 集成测试：同时覆盖工作区本地 runtime 和全局 runtime
+  - 对应需求：补充问题说明“AGENTS.md 变更监听 → 重写 runtime instruction bundle”
+  - 对应设计：当前轮次实现补充
+
+- [x] 5.2 给 AGENTS.md 补真实监听，并在变更后触发 bundle 重写
+  - 状态：DONE
+  - 这一步到底做什么：每个工作区根目录额外监听 `AGENTS.md`，文件变化后只做轻量 debounce，再调用前面的 bundle 重写逻辑。
+  - 做完你能看到什么：工作区里复制、覆盖、保存 `AGENTS.md` 后，不用等两小时，也不用重开会话，runtime instruction bundle 会被重写。
+  - 先依赖什么：5.1
+  - 开始前先看：
+    - `apps/host/src/server/create-server.ts`
+    - `apps/host/src/modules/workspace/workspace-controller.ts`
+    - `apps/host/src/modules/sessions/workspace-session-instruction-watch-service.ts`
+  - 主要改哪里：
+    - `apps/host/src/modules/sessions/workspace-session-instruction-watch-service.ts`
+    - `apps/host/src/server/create-server.ts`
+    - `apps/host/src/modules/workspace/workspace-controller.ts`
+  - 这一步先不做什么：不把 AGENTS.md 监听塞进事务文档库 watcher，也不新长私有任务队列。
+  - 怎么算完成：
+    1. Host 启动后会为已存在工作区挂 AGENTS.md 监听
+    2. 工作区导入、克隆、移除和事务文档库绑定变更后，会同步 watcher 状态
+    3. AGENTS.md 变化后只重写 `WORKSPACE_SESSION_COMPOSED.md`，不改读链路和 TaskManager 规则
+  - 怎么验证：
+    - Host 定向测试
+    - 人工回放：复制 `AGENTS.md` 副本后，确认下次会话读取的是新 bundle
+  - 对应需求：补充问题说明“AGENTS.md 变更监听 → 重写 runtime instruction bundle”
+  - 对应设计：当前轮次实现补充

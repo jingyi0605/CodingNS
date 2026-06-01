@@ -118,6 +118,16 @@
 2. WHEN 前端读取文档库状态 THEN System SHALL 能看到最近一次自动刷新相关的时间、状态和必要错误摘要。
 3. WHEN 最近完成时间长时间没有更新 THEN System SHALL 能通过状态或日志看出是 watcher 停了、任务失败了，还是根本没有新事件。
 
+### 需求 7：工作区 AGENTS.md 变更后，现有 workspace session instruction bundle 必须能自动重写
+
+**用户故事：** 作为在工作区里直接改 `AGENTS.md` 的人，我希望规则文件改完后，现有工作区会话使用的 instruction bundle 也能跟着更新，而不是一直吃旧规则。
+
+#### 验收标准
+
+1. WHEN 工作区根目录下的 `AGENTS.md` 被新增、覆盖、修改或替换 THEN Host SHALL 重新生成当前工作区已有 runtime 目录中的 `WORKSPACE_SESSION_COMPOSED.md`。
+2. WHEN 重写 composed instruction 文件时 THEN Host SHALL 保留原先注入的工作区附加规则和临时 overlay，不得只剩下新的 `AGENTS.md` 正文。
+3. WHEN 当前工作区还没有任何 session runtime 目录 THEN Host MAY 只记录监听事件，不要求额外创建空 runtime 目录。
+
 ## 非功能需求
 
 ### 非功能需求 1：性能

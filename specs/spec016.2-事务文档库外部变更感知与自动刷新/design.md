@@ -234,6 +234,15 @@
 - 校验：工作区存在、权限通过
 - 错误：绑定缺失、索引产物缺失、最近任务失败
 
+#### 3.3.4 目录切换 hint 刷新入口
+
+- 类型：HTTP
+- 路径或标识：继续复用 `POST /api/workspaces/:workspaceId/affairs/library-refresh`
+- 输入：`reason=directory_hint` + 当前目录 `targetPath`
+- 输出：只返回 `scheduled/status`，不等待本轮刷新完成
+- 校验：`targetPath` 允许为空；为空时退化成普通自动刷新 hint
+- 错误：只影响 hint 本身，不影响当前快照读取
+
 ## 4. 数据与状态模型
 
 ### 4.1 数据关系
@@ -280,6 +289,24 @@
 2. helper 异常：任务状态转失败，保留最近一次可读结果
 3. 索引产物缺失：立即标 `stale` 并走重建调度
 4. 目录补扫失败：当前事件降级为更宽范围刷新，而不是静默丢弃
+
+## 5.4 AGENTS.md 变更后的 runtime instruction bundle 重写
+
+这部分不是事务文档库索引逻辑本身，但它跟这轮暴露出来的“外部文件明明改了却长期不生效”是同一类问题：**规则文件改了，运行时却还拿旧快照。**
+
+处理方式：
+
+1. Host 为每个工作区根目录单独监听 `AGENTS.md`
+2. 监听回调只做 debounce，不直接改 provider 运行态
+3. debounce 到期后，扫描当前工作区已有的 `workspace-session-runtime` 目录
+4. 找到已有 `WORKSPACE_SESSION_COMPOSED.md` 后，用最新 `AGENTS.md` 重新组合
+5. 原先的 Host 注入附加规则和临时 overlay 保持不丢
+
+边界：
+
+- 不新长私有任务队列
+- 不改 Codex/Claude transcript home 策略
+- 只重写 instruction bundle 文件本身
 
 ## 6. 正确性属性
 
