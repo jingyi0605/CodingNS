@@ -593,6 +593,92 @@ describe("AffairsLibraryService auto tasks", () => {
     fs.rmSync(rootDir, { recursive: true, force: true });
   });
 
+  it("按时间窗口标签筛选时只返回该窗口命中的文档，计数也准确", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-time-tags-"));
+    const exportDir = path.join(rootDir, ".ai-index", "exports");
+    fs.mkdirSync(exportDir, { recursive: true });
+
+    fs.writeFileSync(
+      path.join(exportDir, "manifest.json"),
+      JSON.stringify({
+        generated_at: "2026-05-31T06:00:00.000Z",
+        entries: {
+          taxonomy: "taxonomy.json",
+          bootstrap: "bootstrap.json"
+        },
+        meta_shards: [{ path: "documents-0.json" }]
+      })
+    );
+    fs.writeFileSync(
+      path.join(exportDir, "taxonomy.json"),
+      JSON.stringify({
+        nodes: [
+          { path: "时间", name: "时间", root_type: "时间", parent_path: null, depth: 0 },
+          { path: "时间/最近3天", name: "最近3天", root_type: "时间", parent_path: "时间", depth: 1 },
+          { path: "时间/最近7天", name: "最近7天", root_type: "时间", parent_path: "时间", depth: 1 },
+          { path: "时间/最近30天", name: "最近30天", root_type: "时间", parent_path: "时间", depth: 1 }
+        ]
+      })
+    );
+    fs.writeFileSync(path.join(exportDir, "bootstrap.json"), JSON.stringify({ folders: [] }));
+    fs.writeFileSync(
+      path.join(exportDir, "documents-0.json"),
+      JSON.stringify({
+        documents: [
+          {
+            document_id: "doc-3",
+            path: "recent-3.txt",
+            title: "recent-3",
+            summary: "recent-3",
+            mtime: "2026-05-16T08:00:00.000Z",
+            direct_tags: [],
+            derived_tags: ["时间/最近3天", "时间/最近7天", "时间/最近30天"]
+          },
+          {
+            document_id: "doc-7",
+            path: "recent-7.txt",
+            title: "recent-7",
+            summary: "recent-7",
+            mtime: "2026-05-12T08:00:00.000Z",
+            direct_tags: [],
+            derived_tags: ["时间/最近7天", "时间/最近30天"]
+          },
+          {
+            document_id: "doc-30",
+            path: "recent-30.txt",
+            title: "recent-30",
+            summary: "recent-30",
+            mtime: "2026-04-25T08:00:00.000Z",
+            direct_tags: [],
+            derived_tags: ["时间/最近30天"]
+          }
+        ]
+      })
+    );
+
+    const service = createService({ rootDir });
+    const snapshot = service.getSnapshot("workspace-1", "user-1");
+    const recent3 = service.listDocuments("workspace-1", "user-1", {
+      browseMode: "tag",
+      selectedTagPath: "时间/最近3天"
+    });
+    const recent7 = service.listDocuments("workspace-1", "user-1", {
+      browseMode: "tag",
+      selectedTagPath: "时间/最近7天"
+    });
+
+    expect(snapshot.tags.find((item) => item.path === "时间/最近3天")?.documentCount).toBe(1);
+    expect(snapshot.tags.find((item) => item.path === "时间/最近7天")?.documentCount).toBe(2);
+    expect(snapshot.tags.find((item) => item.path === "时间/最近30天")?.documentCount).toBe(3);
+    expect(recent3.total).toBe(1);
+    expect(recent3.items.map((item) => item.path)).toEqual(["recent-3.txt"]);
+    expect(recent7.total).toBe(2);
+    expect(recent7.items.map((item) => item.path)).toEqual(["recent-3.txt", "recent-7.txt"]);
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
   it("导出刷新后会丢掉旧快照缓存并读到新的根目录文档", async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-refresh-cache-"));
     const exportDir = path.join(rootDir, ".ai-index", "exports");

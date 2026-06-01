@@ -164,9 +164,9 @@ function baseLibrarySnapshot() {
       runningTaskId: null,
       errorSummary: null
     },
-    tags: [
-      {
-        path: "类型",
+      tags: [
+        {
+          path: "类型",
         name: "类型",
         parentPath: null,
         depth: 0,
@@ -197,15 +197,23 @@ function baseLibrarySnapshot() {
         rootType: "时间",
         documentCount: 1
       },
-      {
-        path: "时间/2026/05",
-        name: "05",
-        parentPath: "时间",
-        depth: 2,
-        rootType: "时间",
-        documentCount: 1
-      }
-    ],
+        {
+          path: "时间/2026/05",
+          name: "05",
+          parentPath: "时间",
+          depth: 2,
+          rootType: "时间",
+          documentCount: 1
+        },
+        {
+          path: "时间/最近7天",
+          name: "最近7天",
+          parentPath: "时间",
+          depth: 1,
+          rootType: "时间",
+          documentCount: 1
+        }
+      ],
     favorites: [],
     folders: [
       {
@@ -684,6 +692,8 @@ describe("AffairsWorkbenchView", () => {
         { path: "时间", name: "时间", parentPath: null, depth: 0, rootType: "时间", documentCount: 9 },
         { path: "时间/2024", name: "2024", parentPath: "时间", depth: 1, rootType: "时间", documentCount: 2 },
         { path: "时间/2026", name: "2026", parentPath: "时间", depth: 1, rootType: "时间", documentCount: 4 },
+        { path: "时间/最近3天", name: "最近3天", parentPath: "时间", depth: 1, rootType: "时间", documentCount: 1 },
+        { path: "时间/最近7天", name: "最近7天", parentPath: "时间", depth: 1, rootType: "时间", documentCount: 3 },
         { path: "时间/最近30天", name: "最近30天", parentPath: "时间", depth: 1, rootType: "时间", documentCount: 3 }
       ],
       folders: []
@@ -706,7 +716,7 @@ describe("AffairsWorkbenchView", () => {
     const timeChildren = Array.from(timeNode?.querySelectorAll(":scope > .affairs-tag-tree-children > .affairs-tag-tree-node .affairs-sidebar-item-title") ?? [])
       .map((element) => element.textContent?.trim())
       .filter((value): value is string => Boolean(value));
-    expect(timeChildren.slice(0, 3)).toEqual(["最近30天", "2026", "2024"]);
+    expect(timeChildren.slice(0, 5)).toEqual(["最近3天", "最近7天", "最近30天", "2026", "2024"]);
 
     await user.click(within(typeNode!).getByRole("button", { name: /办公/ }));
     await user.click(screen.getByRole("button", { name: "/" }));
@@ -748,6 +758,18 @@ describe("AffairsWorkbenchView", () => {
     const reloadedTypeNode = findTagTreeNode("类型");
     expect(Array.from(reloadedTypeNode?.querySelectorAll(":scope > .affairs-tag-tree-children > .affairs-tag-tree-node") ?? [])).toHaveLength(6);
     expect(within(reloadedTypeNode!).getByRole("button", { name: /Show Fewer Tags|收起其他标签/ })).toBeInTheDocument();
+  });
+
+  it("时间树里会显示最近7天标签", async () => {
+    renderWorkbench();
+    const user = userEvent.setup();
+
+    await screen.findByRole("tree", { name: t("shell.affairsLibraryTagTreeTitle") });
+    const timeNode = findTagTreeNode("时间");
+    expect(timeNode).not.toBeNull();
+    await user.click(timeNode?.querySelector<HTMLButtonElement>(".affairs-tag-tree-toggle")!);
+
+    expect(within(timeNode!).getByRole("button", { name: /最近7天/ })).toBeInTheDocument();
   });
 
   it("进入事务视图时，不会仅因为快照较旧就自动发起刷新", async () => {

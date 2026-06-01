@@ -3595,6 +3595,20 @@ function isTimeTagNode(node: TagTreeNodeRecord): boolean {
 }
 
 function compareTimeTagNode(left: TagTreeNodeRecord, right: TagTreeNodeRecord): number {
+  const leftRecentOrder = resolveRecentTimeTagOrder(left);
+  const rightRecentOrder = resolveRecentTimeTagOrder(right);
+  if (leftRecentOrder !== null || rightRecentOrder !== null) {
+    if (leftRecentOrder === null) {
+      return 1;
+    }
+    if (rightRecentOrder === null) {
+      return -1;
+    }
+    if (leftRecentOrder !== rightRecentOrder) {
+      return leftRecentOrder - rightRecentOrder;
+    }
+  }
+
   const leftRank = resolveTimeTagSortRank(left);
   const rightRank = resolveTimeTagSortRank(right);
   if (leftRank !== null || rightRank !== null) {
@@ -3611,21 +3625,27 @@ function compareTimeTagNode(left: TagTreeNodeRecord, right: TagTreeNodeRecord): 
   return 0;
 }
 
+function resolveRecentTimeTagOrder(node: TagTreeNodeRecord): number | null {
+  const normalized = node.path.trim();
+  const relativePath = normalized.startsWith("时间/") ? normalized.slice("时间/".length) : normalized;
+  if (relativePath === "最近3天") {
+    return 0;
+  }
+  if (relativePath === "最近7天") {
+    return 1;
+  }
+  if (relativePath === "最近30天") {
+    return 2;
+  }
+  return null;
+}
+
 function resolveTimeTagSortRank(node: TagTreeNodeRecord): number | null {
   const normalized = node.path.trim();
   if (normalized === "时间") {
     return Number.MAX_SAFE_INTEGER;
   }
   const relativePath = normalized.startsWith("时间/") ? normalized.slice("时间/".length) : normalized;
-  if (relativePath === "最近3天") {
-    return Number.MAX_SAFE_INTEGER - 3;
-  }
-  if (relativePath === "最近7天") {
-    return Number.MAX_SAFE_INTEGER - 7;
-  }
-  if (relativePath === "最近30天") {
-    return Number.MAX_SAFE_INTEGER - 30;
-  }
   const segments = relativePath.split("/").filter(Boolean);
   if (segments.length === 0) {
     return null;
@@ -4166,7 +4186,7 @@ function buildTagDetailState(
     title: tag?.label || t("shell.affairsLibraryTagRootLabel"),
     path: normalized || t("shell.affairsLibraryTagRootLabel"),
     rootType: tag?.rootType || t("common.unknown"),
-    documentCount: filteredDocuments.filter((record) => [...record.tags, ...record.derivedTags].includes(normalized)).length,
+    documentCount: filteredDocuments.filter((record) => hasDirectTagMatch(record, normalized)).length,
     nestedDocumentCount: filteredDocuments.length
   };
 }
@@ -4776,7 +4796,19 @@ function matchesTag(record: DocumentRecord, tagPath: string | null) {
   if (!normalizedTagPath) {
     return true;
   }
-  return [...record.tags, ...record.derivedTags].some((tag) => tag === normalizedTagPath || tag.startsWith(`${normalizedTagPath}/`));
+  return [...record.tags, ...record.derivedTags].some((tag) => tag === normalizedTagPath || isTagPathAncestor(normalizedTagPath, tag));
+}
+
+function hasDirectTagMatch(record: DocumentRecord, tagPath: string): boolean {
+  const normalizedTagPath = tagPath.trim();
+  if (!normalizedTagPath) {
+    return false;
+  }
+  return [...record.tags, ...record.derivedTags].some((tag) => tag === normalizedTagPath);
+}
+
+function isTagPathAncestor(parentPath: string, childPath: string): boolean {
+  return childPath.startsWith(`${parentPath}/`);
 }
 
 function parseAllowedExtensionsText(input: string): string[] {
