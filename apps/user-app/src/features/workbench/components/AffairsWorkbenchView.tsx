@@ -8,14 +8,18 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode
 } from "react";
+import { createPortal } from "react-dom";
 
 import { DesktopModal } from "../../../components/DesktopModal";
-import { ModalActions, ModalField } from "../../../components/ModalAtoms";
+import { ModalActions, ModalEmptyState, ModalField, ModalList, ModalListItem, ModalSection, ModalTag } from "../../../components/ModalAtoms";
 import { MobileSheet } from "../../../components/MobileSheet";
 import { t } from "../../../shared/i18n";
+import { ApiError } from "../../../shared/network/api-error";
 import { useToast } from "../../../shared/toast";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import type {
@@ -46,20 +50,29 @@ import type {
   AffairsLibraryTagNodeDto,
   AffairsTagDetailDto,
   AffairsTagNodeDto,
-  AffairsTagRecommendationBatchDto
+  AffairsTagRecommendationBatchDto,
+  AffairsTagRecommendationItemDto,
+  AffairsTagRecommendationThemeDto,
+  AffairsTagRecommendationSourceTypeDto,
 } from "../../conversation/api/conversation-api";
 import {
+  applyAffairsTagRecommendationBatch,
   createAffairsTag,
   createAffairsTagRecommendationBatch,
+  deleteAffairsTag,
+  discardAffairsTagRecommendationBatch,
   getAffairsDocumentTagDetails,
   getAffairsFolderTagDetails,
   getAffairsTagDetail,
+  getAffairsTagRecommendationBatch,
   listAffairsTagRecommendationBatches,
   listAffairsTags,
   getAffairsLibraryConfig,
   getAffairsLibraryPreview,
   getAffairsLibrarySnapshot,
+  downloadAffairsLibraryFile,
   listAffairsLibraryDocuments,
+  operateAffairsLibraryFile,
   requestAffairsLibraryRefresh,
   saveAffairsDocumentTags,
   saveAffairsFolderTags,
@@ -75,9 +88,15 @@ import { FileViewerPanel } from "../../conversation/components/FileViewerModal";
 import { MessageTimeline } from "../../conversation/components/MessageTimeline";
 import { PermissionRequestList } from "../../conversation/components/PermissionRequestList";
 import { WorkspaceImportBrowserModal } from "../../conversation/components/WorkspaceImportBrowserModal";
+import { getPathLeafName } from "../../conversation/components/file-entry-visibility";
 import { buildConversationTimelineSourceItems } from "../../conversation/timeline-source-items";
 import { getCodingNSDesktopBridge } from "../../../platform/desktop/codingns-desktop-bridge";
+import {
+  showDesktopContextMenu,
+  type DesktopContextMenuItem
+} from "../../../platform/desktop/desktop-context-menu";
 import { usePlatform } from "../../../platform/platform-provider";
+import { resolveContextMenuPosition } from "../utils/context-menu-position";
 import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
 import {
@@ -124,6 +143,8 @@ const LIST_ITEM_HEIGHT = 40;
 const LIST_VIRTUAL_OVERSCAN_ROWS = 2;
 const AFFAIRS_LIBRARY_STATUS_POLL_ACTIVE_MS = 3_000;
 const AFFAIRS_LIBRARY_STATUS_POLL_IDLE_MS = 12_000;
+const AFFAIRS_LIBRARY_DIRECTORY_POLL_ACTIVE_MS = 3_000;
+const AFFAIRS_LIBRARY_DIRECTORY_POLL_IDLE_MS = 12_000;
 const AFFAIRS_LIBRARY_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 const AFFAIRS_LIBRARY_PRESET_EXTENSIONS = [
   ".md", ".mdx", ".txt", ".rtf", ".html", ".htm", ".xml", ".json", ".yaml", ".yml", ".tsv",
@@ -248,6 +269,33 @@ type LibraryEntry =
       documentId: string;
     };
 
+type LibraryContextMenuTarget =
+  | {
+      kind: "document";
+      entry: Extract<LibraryEntry, { kind: "document" }>;
+      record: DocumentRecord;
+    }
+  | {
+      kind: "folder";
+      entry: Extract<LibraryEntry, { kind: "folder" }>;
+      record: FolderRecord | null;
+    }
+  | {
+      kind: "blank";
+      folderPath: string | null;
+    };
+
+type LibraryContextMenuState = {
+  left: number;
+  top: number;
+  target: LibraryContextMenuTarget;
+};
+
+type LibraryClipboardState = {
+  mode: "copy" | "cut";
+  target: Extract<LibraryContextMenuTarget, { kind: "document" | "folder" }>;
+};
+
 type TodoRecord = {
   id: string;
   kind: "inbox" | "follow_up";
@@ -302,6 +350,7 @@ interface AffairsWorkbenchContextValue {
   binding: AffairsLibraryBindingDto | null;
   libraryConfig: AffairsLibraryConfigDto | null;
   indexStatus: AffairsLibraryIndexStatusDto | null;
+  currentDirectoryStatus: AffairsLibraryDocumentListDto["directoryStatus"];
   documentRecords: DocumentRecord[];
   filteredDocuments: DocumentRecord[];
   favoriteDocuments: DocumentRecord[];
@@ -333,7 +382,11 @@ interface AffairsWorkbenchContextValue {
   toggleToolbarExpanded: () => void;
   saveLibraryBinding: (rootDir: string) => Promise<void>;
   setLibraryEnabled: (enabled: boolean) => Promise<void>;
-  saveLibraryConfig: (input: { mirrorRoot: string | null; allowedExtensions: string[] }) => Promise<AffairsLibraryConfigDto>;
+  saveLibraryConfig: (input: {
+    mirrorRoot: string | null;
+    allowedExtensions: string[];
+    includedHiddenPaths: string[];
+  }) => Promise<AffairsLibraryConfigDto>;
   refreshLibrary: () => Promise<void>;
   toggleFavorite: (favorite: AffairsLibraryFavoriteRecordDto) => Promise<void>;
   loadMoreLibraryDocuments: () => Promise<void>;
@@ -347,11 +400,21 @@ interface AffairsWorkbenchContextValue {
   recommendationBatches: AffairsTagRecommendationBatchDto[];
   reloadTagManagement: () => Promise<void>;
   selectManagedTag: (tagId: string | null) => Promise<void>;
-  saveManagedTag: (input: { tagId?: string; name: string; parentId?: string | null; description?: string | null; status?: "active" | "disabled" }) => Promise<void>;
+  saveManagedTag: (input: { tagId?: string; name: string; parentId?: string | null; description?: string | null; status?: "active" | "disabled" }) => Promise<AffairsTagDetailDto>;
+  deleteManagedTag: (tagId: string) => Promise<{ deletedTagIds: string[]; deletedPaths: string[] }>;
   saveManagedTagRules: (tagId: string, payload: { rules: Array<{ id?: string; enabled?: boolean; ruleType?: string; scope?: string[]; matcher?: Record<string, unknown>; minScore?: number | null; priority?: number; source?: string }> }) => Promise<void>;
   saveDocumentTagSelection: (documentId: string, tagIds: string[]) => Promise<void>;
   saveFolderTagSelection: (folderPath: string, tagIds: string[]) => Promise<void>;
-  generateTagRecommendations: () => Promise<void>;
+  generateTagRecommendations: (themes: AffairsTagRecommendationThemeDto[]) => Promise<void>;
+  loadTagRecommendationBatch: (batchId: string) => Promise<AffairsTagRecommendationBatchDto>;
+  applyTagRecommendationBatch: (batchId: string, items: Array<{
+    itemId: string;
+    proposedPath?: string;
+    proposedName?: string;
+    proposedParentPath?: string | null;
+    selected?: boolean;
+  }>) => Promise<void>;
+  discardTagRecommendationBatch: (batchId: string) => Promise<void>;
 }
 
 const AffairsWorkbenchContext = createContext<AffairsWorkbenchContextValue | null>(null);
@@ -422,6 +485,7 @@ export function AffairsWorkbenchProvider({
   const { showToast } = useToast();
   const binding = librarySnapshot?.binding ?? null;
   const indexStatus = librarySnapshot?.status ?? null;
+  const currentDirectoryStatus = libraryDocumentPage?.directoryStatus ?? null;
   const activeSection = normalizeSection(state.primarySection);
   const recentFileActivationRef = useRef<{ path: string; timestamp: number } | null>(null);
   const librarySnapshotRef = useRef<AffairsLibrarySnapshotDto | null>(initialLibrarySnapshot);
@@ -452,7 +516,7 @@ export function AffairsWorkbenchProvider({
   };
 
   useEffect(() => {
-    if (activeSection !== "library" || !binding?.enabled) {
+    if (activeSection !== "library" || !binding?.enabled || state.browseMode !== "folder") {
       return;
     }
 
@@ -460,7 +524,7 @@ export function AffairsWorkbenchProvider({
       activeSection,
       state.browseMode,
       state.selectedFolderPath,
-      state.selectedTagPath
+      null
     );
     if (directoryHintKeyRef.current === nextDirectoryHintKey) {
       return;
@@ -475,9 +539,7 @@ export function AffairsWorkbenchProvider({
     directoryHintKeyRef.current = nextDirectoryHintKey;
     void Promise.resolve(requestAffairsLibraryRefresh(workspaceId, {
       reason: "directory_hint",
-      targetPath: state.browseMode === "tag"
-        ? state.selectedTagPath?.trim() || null
-        : state.selectedFolderPath?.trim() || null
+      targetPath: state.selectedFolderPath?.trim() || null
     })).catch(() => {
       // 目录 hint 刷新失败不影响当前快照展示，后面还有轮询和手动刷新兜底。
     });
@@ -486,7 +548,6 @@ export function AffairsWorkbenchProvider({
     binding?.enabled,
     state.browseMode,
     state.selectedFolderPath,
-    state.selectedTagPath,
     workspaceId
   ]);
 
@@ -678,6 +739,68 @@ export function AffairsWorkbenchProvider({
     () => libraryDocumentPage?.tagFacetCounts ?? {},
     [libraryDocumentPage?.tagFacetCounts]
   );
+
+  useEffect(() => {
+    if (activeSection !== "library" || !binding?.enabled || state.browseMode !== "folder") {
+      return;
+    }
+
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const pollIntervalMs = currentDirectoryStatus?.state === "queued"
+      || currentDirectoryStatus?.state === "running"
+      || indexStatus?.state === "running"
+      ? AFFAIRS_LIBRARY_DIRECTORY_POLL_ACTIVE_MS
+      : AFFAIRS_LIBRARY_DIRECTORY_POLL_IDLE_MS;
+
+    const pollDirectory = async () => {
+      try {
+        const response = await listAffairsLibraryDocuments(workspaceId, {
+          browseMode: "folder",
+          selectedFolderPath: state.selectedFolderPath,
+          selectedTagPath: state.selectedTagPath,
+          selectedTagPaths,
+          selectedFavoriteId: state.selectedFavoriteId,
+          offset: 0,
+          limit: LIBRARY_STAGE_PAGE_SIZE
+        });
+        if (!disposed) {
+          setLibraryDocumentPage((previous) => areLibraryDocumentPagesEqual(previous, response) ? previous : response);
+          writeCachedLibraryDocumentPage(workspaceId, state, response);
+        }
+      } catch {
+        // 目录实时轮询失败不打断当前页面，下一轮继续尝试。
+      }
+
+      if (!disposed) {
+        timer = setTimeout(() => {
+          void pollDirectory();
+        }, pollIntervalMs);
+      }
+    };
+
+    timer = setTimeout(() => {
+      void pollDirectory();
+    }, pollIntervalMs);
+
+    return () => {
+      disposed = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+  }, [
+    activeSection,
+    binding?.enabled,
+    currentDirectoryStatus?.state,
+    indexStatus?.state,
+    selectedTagPaths,
+    state.browseMode,
+    state.selectedFavoriteId,
+    state.selectedFolderPath,
+    state.selectedTagPath,
+    workspaceId
+  ]);
 
   const filteredDocuments = useMemo(() => {
     if (activeSection !== "library" || !binding) {
@@ -1009,6 +1132,7 @@ export function AffairsWorkbenchProvider({
     binding,
     libraryConfig,
     indexStatus,
+    currentDirectoryStatus,
     documentRecords,
     filteredDocuments,
     favoriteDocuments,
@@ -1258,6 +1382,17 @@ export function AffairsWorkbenchProvider({
         : await createAffairsTag(workspaceId, input);
       setSelectedManagedTag(saved);
       await reloadTagManagement();
+      return saved;
+    },
+    deleteManagedTag: async (tagId) => {
+      const result = await deleteAffairsTag(workspaceId, tagId);
+      setSelectedManagedTag((previous) => previous?.id === tagId || result.deletedTagIds.includes(previous?.id ?? "") ? null : previous);
+      await reloadTagManagement();
+      await refreshLibraryNow();
+      return {
+        deletedTagIds: result.deletedTagIds,
+        deletedPaths: result.deletedPaths,
+      };
     },
     saveManagedTagRules: async (tagId, payload) => {
       const result = await saveAffairsTagRules(workspaceId, tagId, payload);
@@ -1274,9 +1409,28 @@ export function AffairsWorkbenchProvider({
       setFolderTagDetails(await getAffairsFolderTagDetails(workspaceId, folderPath));
       await refreshLibraryNow();
     },
-    generateTagRecommendations: async () => {
-      await createAffairsTagRecommendationBatch(workspaceId);
+    generateTagRecommendations: async (themes) => {
+      await createAffairsTagRecommendationBatch(workspaceId, { themes });
       await reloadTagManagement();
+    },
+    loadTagRecommendationBatch: async (batchId) => getAffairsTagRecommendationBatch(workspaceId, batchId),
+    applyTagRecommendationBatch: async (batchId, items) => {
+      await applyAffairsTagRecommendationBatch(workspaceId, batchId, { items });
+      await reloadTagManagement();
+      await refreshLibraryNow();
+      showToast({
+        title: t("shell.affairsTagRecommendationApplySuccess"),
+        description: t("shell.affairsTagRecommendationApplySuccessDescription"),
+        tone: "success"
+      });
+    },
+    discardTagRecommendationBatch: async (batchId) => {
+      await discardAffairsTagRecommendationBatch(workspaceId, batchId);
+      await reloadTagManagement();
+      showToast({
+        title: t("shell.affairsTagRecommendationDiscardSuccess"),
+        tone: "success"
+      });
     }
   }), [
     activeSection,
@@ -1294,6 +1448,7 @@ export function AffairsWorkbenchProvider({
     filteredTodoRecords,
     folderRecords,
     indexStatus,
+    currentDirectoryStatus,
     libraryDocumentPage,
     libraryDocumentsLoading,
     libraryLoading,
@@ -1635,16 +1790,27 @@ export function AffairsSidebarPanel() {
             <header className="affairs-sidebar-group-header">
               <span>{t("shell.affairsLibraryTagTreeTitle")}</span>
               <div className="affairs-sidebar-group-header-actions">
+                <span>{tagRecords.length}</span>
                 {hasTagSelection ? (
                   <button
                     type="button"
-                    className="affairs-tag-tree-reset"
+                    className="affairs-tag-tree-icon-button affairs-tag-tree-reset"
+                    aria-label={t("shell.affairsLibraryTagTreeReset")}
+                    title={t("shell.affairsLibraryTagTreeReset")}
                     onClick={() => selectSidebarNode("library:tag-root")}
                   >
-                    {t("shell.affairsLibraryTagTreeReset")}
+                    <ResetFilterIcon />
                   </button>
                 ) : null}
-                <span>{tagRecords.length}</span>
+                <button
+                  type="button"
+                  className="affairs-tag-tree-icon-button"
+                  aria-label={t("shell.affairsTagManagerAction")}
+                  title={t("shell.affairsTagManagerAction")}
+                  onClick={openTagManagement}
+                >
+                  <AffairsTagManagerIcon />
+                </button>
               </div>
             </header>
             {visibleTagTree.length === 0 ? (
@@ -1705,12 +1871,18 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     folderRecords,
     tagRecords,
     indexStatus,
+    currentDirectoryStatus,
     loading,
     openLibraryViewer,
     error,
     selectedObject,
     state,
     selectedTagPaths,
+    managedTags,
+    saveDocumentTagSelection,
+    saveFolderTagSelection,
+    documentTagDetails,
+    folderTagDetails,
     selectObject,
     navigateLibraryFolder,
     navigateLibraryTag,
@@ -1718,7 +1890,6 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     libraryRefreshPending,
     libraryDocumentHasMore,
     loadMoreLibraryDocuments,
-    openTagManagement,
     refreshLibrary,
     setLibraryViewMode,
     selectSidebarNode
@@ -1733,12 +1904,17 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     direction: "desc"
   });
   const [finderColumnWidths, setFinderColumnWidths] = useState<Record<FinderColumnKey, number>>(DEFAULT_FINDER_COLUMN_WIDTHS);
+  const [contextMenu, setContextMenu] = useState<LibraryContextMenuState | null>(null);
+  const [libraryClipboard, setLibraryClipboard] = useState<LibraryClipboardState | null>(null);
   const finderResizeStateRef = useRef<{
     column: FinderColumnKey;
     startX: number;
     startWidth: number;
   } | null>(null);
   const listScrollRef = useRef<HTMLDivElement | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
+  const { showToast } = useToast();
+  const platform = usePlatform();
 
   const favoriteFolderPathSet = useMemo(
     () => new Set(favoriteEntries.filter((item) => item.kind === "folder").map((item) => item.path)),
@@ -1799,6 +1975,59 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     () => buildFinderGridTemplateColumns(finderColumnWidths),
     [finderColumnWidths]
   );
+  const recentAssignableTags = useMemo(
+    () => managedTags.filter(isAssignableManagedTag).slice(0, 8),
+    [managedTags]
+  );
+
+  useLayoutEffect(() => {
+    if (!contextMenu || !contextMenuRef.current || typeof window === "undefined") {
+      return;
+    }
+
+    const rect = contextMenuRef.current.getBoundingClientRect();
+    const position = resolveContextMenuPosition(
+      { x: contextMenu.left, y: contextMenu.top },
+      { width: rect.width, height: rect.height },
+      { width: window.innerWidth, height: window.innerHeight },
+      {
+        defaultWidthPx: 216,
+        estimatedHeightPx: 360,
+        minHeightPx: 180
+      }
+    );
+
+    const current = contextMenuRef.current;
+    current.style.left = `${position.left}px`;
+    current.style.top = `${position.top}px`;
+    current.style.width = `${position.width}px`;
+    current.style.maxHeight = `${position.maxHeight}px`;
+    current.style.transformOrigin = position.transformOrigin;
+  }, [contextMenu]);
+
+  useEffect(() => {
+    if (!contextMenu) {
+      return;
+    }
+
+    const close = () => setContextMenu(null);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        close();
+      }
+    };
+
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [contextMenu]);
 
   useLayoutEffect(() => {
     const element = state.viewMode === "list" ? listScrollRef.current : stageScrollRef.current;
@@ -1918,6 +2147,212 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     window.addEventListener("pointercancel", finishResize);
   }
 
+  function resolveContextTarget(entry: LibraryEntry): LibraryContextMenuTarget {
+    if (entry.kind === "document") {
+      const record = documentRecords.find((item) => item.id === entry.documentId);
+      return {
+        kind: "document",
+        entry,
+        record: record ?? {
+          id: entry.documentId,
+          title: entry.title,
+          displayName: entry.title,
+          filePath: entry.path,
+          fullPath: buildAbsoluteLibraryPath(binding?.rootDir ?? null, entry.path),
+          summary: entry.summary,
+          isFavorite: entry.isFavorite,
+          tags: [],
+          derivedTags: [],
+          createdAt: entry.createdAt,
+          sizeBytes: entry.sizeBytes,
+          updatedAt: entry.updatedAt
+        }
+      };
+    }
+
+    return {
+      kind: "folder",
+      entry,
+      record: folderRecords.find((item) => item.path === entry.path) ?? null
+    };
+  }
+
+  async function openDesktopContextMenu(target: LibraryContextMenuTarget) {
+    const items = buildDesktopLibraryContextMenuItems({
+      target,
+      bindingRootDir: binding?.rootDir ?? null,
+      libraryClipboard,
+      recentAssignableTags,
+      onPreview: target.kind === "document" ? () => openLibraryViewer(target.record) : null,
+      onOpen: target.kind === "document" || target.kind === "folder" ? () => handleOpenTarget(target) : null,
+      onDownload: target.kind === "document" ? () => handleDownload(target) : null,
+      onCopyFile: target.kind === "blank" ? null : () => handleCopyText(getContextTargetRelativePath(target), t("shell.affairsLibraryCopyFileSuccess")),
+      onCopyFileName: target.kind === "blank" ? null : () => handleCopyText(getContextTargetTitle(target), t("shell.affairsLibraryCopyFileNameSuccess")),
+      onCopyAbsolutePath: target.kind === "blank"
+        ? null
+        : () => {
+            const absolutePath = resolveTargetAbsolutePath(binding?.rootDir ?? null, target);
+            if (!absolutePath) {
+              throw new Error(t("shell.affairsLibraryAbsolutePathMissing"));
+            }
+            return handleCopyText(absolutePath, t("shell.affairsLibraryCopyAbsolutePathSuccess"));
+          },
+      onCopyRelativePath: target.kind === "blank" ? null : () => handleCopyText(getContextTargetRelativePath(target), t("shell.affairsLibraryCopyRelativePathSuccess")),
+      onCut: target.kind === "document" || target.kind === "folder"
+        ? () => {
+            setLibraryClipboard({ mode: "cut", target });
+            showToast({ title: t("shell.affairsLibraryCutSuccess", { name: getContextTargetTitle(target) }), tone: "success" });
+          }
+        : null,
+      onPaste: libraryClipboard ? () => handlePaste(target) : null,
+      onDelete: target.kind === "document" || target.kind === "folder" ? () => handleDeleteTarget(target) : null,
+      onApplyTag: target.kind === "document" || target.kind === "folder"
+        ? (tagId: string) => handleApplyTag(target, tagId)
+        : null,
+      onProperties: target.kind === "document" || target.kind === "folder"
+        ? () => selectObject(target.kind === "document" ? target.record.id : null)
+        : null
+    });
+
+    if (items.length === 0) {
+      return;
+    }
+
+    await showDesktopContextMenu(items);
+  }
+
+  function openContextMenu(event: ReactMouseEvent<HTMLElement>, target: LibraryContextMenuTarget) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (target.kind === "document") {
+      selectObject(target.record.id);
+    }
+    if (platform.isDesktop && platform.ui.osFamily === "macos" && platform.bridge.supported) {
+      void openDesktopContextMenu(target);
+      return;
+    }
+    setContextMenu({
+      left: event.clientX,
+      top: event.clientY,
+      target
+    });
+  }
+
+  function openBlankContextMenu(event: ReactMouseEvent<HTMLElement>) {
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+    openContextMenu(event, {
+      kind: "blank",
+      folderPath: state.selectedFolderPath
+    });
+  }
+
+  async function runContextAction(action: () => void | Promise<void>) {
+    setContextMenu(null);
+    try {
+      await action();
+    } catch (actionError) {
+      showToast({
+        title: readError(actionError, t("shell.affairsLibraryActionFailed")),
+        tone: "error"
+      });
+    }
+  }
+
+  async function handleDownload(target: Extract<LibraryContextMenuTarget, { kind: "document" }>) {
+    const payload = await downloadAffairsLibraryFile(workspaceId, target.record.filePath);
+    const fileBuffer = decodeBase64ToArrayBuffer(payload.contentBase64);
+    downloadBlob(payload.fileName, new Blob([fileBuffer], {
+      type: "application/octet-stream"
+    }));
+    showToast({
+      title: t("shell.affairsLibraryDownloadSuccess", { name: payload.fileName }),
+      tone: "success"
+    });
+  }
+
+  async function handleCopyText(text: string, successTitle: string) {
+    await writeTextToClipboard(text, platform);
+    showToast({
+      title: successTitle,
+      tone: "success"
+    });
+  }
+
+  async function handleOpenTarget(target: Extract<LibraryContextMenuTarget, { kind: "document" | "folder" }>) {
+    const absolutePath = resolveTargetAbsolutePath(binding?.rootDir ?? null, target);
+    if (!absolutePath) {
+      throw new Error(t("shell.affairsLibraryAbsolutePathMissing"));
+    }
+    const result = await getCodingNSDesktopBridge().fs.openFile(absolutePath);
+    if (!result.ok) {
+      throw new Error(result.detail ?? t("shell.affairsLibraryOpenLocalFileFailed"));
+    }
+  }
+
+  async function handlePaste(target: LibraryContextMenuTarget) {
+    if (!libraryClipboard) {
+      return;
+    }
+    const destinationFolder = resolvePasteDestinationFolder(target);
+    const sourcePath = getContextTargetRelativePath(libraryClipboard.target);
+    const destinationPath = buildUniqueLibraryTargetPath(
+      destinationFolder,
+      getPathLeafName(sourcePath),
+      libraryEntries
+    );
+
+    await operateAffairsLibraryFile(workspaceId, {
+      opType: libraryClipboard.mode === "cut" ? "move" : "copy",
+      srcPath: sourcePath,
+      dstPath: destinationPath
+    });
+    if (libraryClipboard.mode === "cut") {
+      setLibraryClipboard(null);
+    }
+    await refreshLibrary();
+    showToast({
+      title: t("shell.affairsLibraryPasteSuccess", { name: getPathLeafName(destinationPath) }),
+      tone: "success"
+    });
+  }
+
+  async function handleDeleteTarget(target: Extract<LibraryContextMenuTarget, { kind: "document" | "folder" }>) {
+    await operateAffairsLibraryFile(workspaceId, {
+      opType: "delete",
+      srcPath: getContextTargetRelativePath(target)
+    });
+    if (target.kind === "document" && selectedObject.section === "library" && selectedObject.record?.id === target.record.id) {
+      selectObject(null);
+    }
+    await refreshLibrary();
+    showToast({
+      title: t("shell.affairsLibraryDeleteSuccess", { name: getContextTargetTitle(target) }),
+      tone: "success"
+    });
+  }
+
+  async function handleApplyTag(
+    target: Extract<LibraryContextMenuTarget, { kind: "document" | "folder" }>,
+    tagId: string
+  ) {
+    if (target.kind === "document") {
+      const existing = target.record.id === documentTagDetails?.documentId
+        ? documentTagDetails.manualTagIds
+        : [];
+      await saveDocumentTagSelection(target.record.id, uniqueStringList([...existing, tagId]));
+      return;
+    }
+
+    const folderPath = target.entry.path || ".";
+    const details = folderTagDetails?.folderPath === folderPath
+      ? folderTagDetails
+      : await getAffairsFolderTagDetails(workspaceId, folderPath);
+    const existing = details.bindingTagIds;
+    await saveFolderTagSelection(folderPath, uniqueStringList([...existing, tagId]));
+  }
+
   const finderColumns: Array<{
     key: FinderColumnKey;
     label: string;
@@ -1929,6 +2364,111 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     { key: "type", label: t("shell.affairsFinderColumnType"), resizable: true },
     { key: "createdAt", label: t("shell.affairsFinderColumnCreatedAt"), resizable: false }
   ];
+
+  const renderContextMenu = () => {
+    if (!contextMenu) {
+      return null;
+    }
+
+    const target = contextMenu.target;
+    const copyTarget = target.kind === "blank" ? null : target;
+    const canPaste = Boolean(libraryClipboard);
+    const copyFileText = copyTarget ? getContextTargetRelativePath(copyTarget) : "";
+    const fileNameText = copyTarget ? getContextTargetTitle(copyTarget) : "";
+    const absolutePathText = copyTarget ? resolveTargetAbsolutePath(binding?.rootDir ?? null, copyTarget) ?? "" : "";
+    const isDocument = target.kind === "document";
+    const isFileSystemTarget = target.kind === "document" || target.kind === "folder";
+
+    const content = (
+      <div
+        ref={contextMenuRef}
+        className="affairs-library-context-menu"
+        role="menu"
+        aria-label={t("shell.affairsLibraryContextMenuLabel")}
+        onPointerDown={(event) => event.stopPropagation()}
+        onContextMenu={(event) => event.preventDefault()}
+      >
+        {isDocument ? (
+          <button type="button" role="menuitem" onClick={() => void runContextAction(() => openLibraryViewer(target.record))}>
+            {t("shell.affairsLibraryContextPreview")}
+          </button>
+        ) : null}
+        {isFileSystemTarget ? (
+          <button type="button" role="menuitem" onClick={() => void runContextAction(() => handleOpenTarget(target))}>
+            {t("shell.affairsLibraryContextOpen")}
+          </button>
+        ) : null}
+        {isDocument ? (
+          <button type="button" role="menuitem" onClick={() => void runContextAction(() => handleDownload(target))}>
+            {t("shell.affairsLibraryContextDownload")}
+          </button>
+        ) : null}
+        {copyTarget ? (
+          <div className="affairs-library-context-submenu">
+            <button type="button" role="menuitem" aria-haspopup="menu">
+              <span>{t("shell.affairsLibraryContextCopy")}</span>
+              <span aria-hidden="true">›</span>
+            </button>
+            <div className="affairs-library-context-submenu-panel" role="menu">
+              <button type="button" role="menuitem" onClick={() => void runContextAction(() => handleCopyText(copyFileText, t("shell.affairsLibraryCopyFileSuccess")))}>
+                {t("shell.affairsLibraryContextCopyFile")}
+              </button>
+              <button type="button" role="menuitem" onClick={() => void runContextAction(() => handleCopyText(fileNameText, t("shell.affairsLibraryCopyFileNameSuccess")))}>
+                {t("shell.affairsLibraryContextCopyFileName")}
+              </button>
+              <button type="button" role="menuitem" disabled={!absolutePathText} onClick={() => void runContextAction(() => handleCopyText(absolutePathText, t("shell.affairsLibraryCopyAbsolutePathSuccess")))}>
+                {t("shell.affairsLibraryContextCopyAbsolutePath")}
+              </button>
+              <button type="button" role="menuitem" onClick={() => void runContextAction(() => handleCopyText(copyFileText, t("shell.affairsLibraryCopyRelativePathSuccess")))}>
+                {t("shell.affairsLibraryContextCopyRelativePath")}
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {isFileSystemTarget ? (
+          <button type="button" role="menuitem" onClick={() => void runContextAction(() => setLibraryClipboard({ mode: "cut", target }))}>
+            {t("shell.affairsLibraryContextCut")}
+          </button>
+        ) : null}
+        <button type="button" role="menuitem" disabled={!canPaste} onClick={() => void runContextAction(() => handlePaste(target))}>
+          {t("shell.affairsLibraryContextPaste")}
+        </button>
+        {isFileSystemTarget ? (
+          <button type="button" role="menuitem" className="danger" onClick={() => void runContextAction(() => handleDeleteTarget(target))}>
+            {t("shell.affairsLibraryContextDelete")}
+          </button>
+        ) : null}
+        {isFileSystemTarget ? (
+          <div className="affairs-library-context-submenu">
+            <button type="button" role="menuitem" aria-haspopup="menu">
+              <span>{t("shell.affairsLibraryContextTags")}</span>
+              <span aria-hidden="true">›</span>
+            </button>
+            <div className="affairs-library-context-submenu-panel" role="menu">
+              {recentAssignableTags.length === 0 ? (
+                <span className="affairs-library-context-empty">{t("shell.affairsLibraryRecentTagsEmpty")}</span>
+              ) : recentAssignableTags.map((tag) => (
+                <button key={tag.id} type="button" role="menuitem" onClick={() => void runContextAction(() => handleApplyTag(target, tag.id))}>
+                  {tag.path}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {isFileSystemTarget ? (
+          <button type="button" role="menuitem" onClick={() => void runContextAction(() => selectObject(target.kind === "document" ? target.record.id : null))}>
+            {t("shell.affairsLibraryContextProperties")}
+          </button>
+        ) : null}
+      </div>
+    );
+
+    if (typeof document === "undefined") {
+      return content;
+    }
+
+    return createPortal(content, document.body);
+  };
 
   return (
     <div className="affairs-main-panel">
@@ -1946,6 +2486,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                   folderBreadcrumbs={folderBreadcrumbs}
                   tagRecords={tagRecords}
                   indexStatus={indexStatus}
+                  directoryStatus={state.browseMode === "folder" ? currentDirectoryStatus : null}
                   selectedTagPath={state.selectedTagPath}
                   selectedTagPaths={selectedTagPaths}
                   sortState={sortState}
@@ -1953,7 +2494,6 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                   onNavigateFolder={navigateLibraryFolder}
                   onNavigateTag={navigateLibraryTag}
                   onResetTags={() => selectSidebarNode("library:tag-root")}
-                  onOpenTagManagement={openTagManagement}
                   onOpenSettings={() => setSettingsOpen(true)}
                   onRefresh={refreshLibrary}
                   onSetSortState={setSortState}
@@ -1964,8 +2504,8 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                   libraryDocumentsLoading ? <AffairsStageSkeleton viewMode={state.viewMode} /> : <div className="affairs-stage-empty">{resolveLibraryEmptyText(indexStatus)}</div>
                 ) : state.viewMode === "grid" ? (
                   <>
-                <div ref={stageScrollRef} className="affairs-doc-grid-scroll">
-                <div className="affairs-doc-grid-viewport">
+                <div ref={stageScrollRef} className="affairs-doc-grid-scroll" onContextMenu={openBlankContextMenu}>
+                <div className="affairs-doc-grid-viewport" onContextMenu={openBlankContextMenu}>
                   {shouldVirtualizeGrid ? (
                     <div className="affairs-doc-grid-spacer" style={{ height: `${gridMetrics.totalHeight}px` }}>
                       <div
@@ -1979,6 +2519,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                               type="button"
                               className={state.selectedFolderPath === entry.path ? "affairs-doc-item grid active" : "affairs-doc-item grid"}
                               onClick={() => navigateLibraryFolder(entry.path)}
+                              onContextMenu={(event) => openContextMenu(event, resolveContextTarget(entry))}
                             >
                               <div className="affairs-doc-icon">{renderFolderShape()}</div>
                               <div className="affairs-doc-title" title={entry.title}>{entry.title}</div>
@@ -1992,6 +2533,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                               type="button"
                               className={selectedObject.section === "library" && selectedObject.record?.id === entry.documentId ? "affairs-doc-item grid active" : "affairs-doc-item grid"}
                               onClick={() => selectObject(entry.documentId)}
+                              onContextMenu={(event) => openContextMenu(event, resolveContextTarget(entry))}
                               onDoubleClick={() => {
                                 const record = documentRecords.find((item) => item.id === entry.documentId);
                                 if (record) {
@@ -2018,6 +2560,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                             type="button"
                             className={state.selectedFolderPath === entry.path ? "affairs-doc-item grid active" : "affairs-doc-item grid"}
                             onClick={() => navigateLibraryFolder(entry.path)}
+                            onContextMenu={(event) => openContextMenu(event, resolveContextTarget(entry))}
                           >
                             <div className="affairs-doc-icon">{renderFolderShape()}</div>
                             <div className="affairs-doc-title" title={entry.title}>{entry.title}</div>
@@ -2031,6 +2574,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                       type="button"
                       className={selectedObject.section === "library" && selectedObject.record?.id === entry.documentId ? "affairs-doc-item grid active" : "affairs-doc-item grid"}
                       onClick={() => selectObject(entry.documentId)}
+                      onContextMenu={(event) => openContextMenu(event, resolveContextTarget(entry))}
                       onDoubleClick={() => {
                         const record = documentRecords.find((item) => item.id === entry.documentId);
                         if (record) {
@@ -2091,7 +2635,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                     </span>
                   ))}
                 </div>
-                <div ref={listScrollRef} className="affairs-finder-list affairs-finder-viewport">
+                <div ref={listScrollRef} className="affairs-finder-list affairs-finder-viewport" onContextMenu={openBlankContextMenu}>
                   <div className="affairs-finder-spacer" style={{ height: `${listMetrics.totalHeight}px` }}>
                     <div className="affairs-finder-virtual" style={{ transform: `translateY(${listMetrics.offsetTop}px)` }}>
                       {visibleListEntries.map((entry) => (
@@ -2101,6 +2645,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                             type="button"
                             className={state.selectedFolderPath === entry.path ? "affairs-finder-row active" : "affairs-finder-row"}
                             onClick={() => navigateLibraryFolder(entry.path)}
+                            onContextMenu={(event) => openContextMenu(event, resolveContextTarget(entry))}
                             style={{ gridTemplateColumns: finderGridTemplateColumns }}
                           >
                             <span className="affairs-finder-name-cell">
@@ -2118,6 +2663,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                         type="button"
                         className={selectedObject.section === "library" && selectedObject.record?.id === entry.documentId ? "affairs-finder-row active" : "affairs-finder-row"}
                         onClick={() => selectObject(entry.documentId)}
+                        onContextMenu={(event) => openContextMenu(event, resolveContextTarget(entry))}
                         style={{ gridTemplateColumns: finderGridTemplateColumns }}
                         onDoubleClick={() => {
                           const record = documentRecords.find((item) => item.id === entry.documentId);
@@ -2199,6 +2745,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
         onClose={() => setSettingsOpen(false)}
       />
       <AffairsTagManagementModal />
+      {renderContextMenu()}
     </div>
   );
 }
@@ -2589,6 +3136,7 @@ function AffairsFolderDetailPanel({ detail }: { detail: FolderDetailState }) {
     return <div className="affairs-detail-empty-state">{t("shell.affairsDetailEmpty")}</div>;
   }
   const selectedTagIds = new Set(folderTagDetails?.bindingTagIds ?? []);
+  const visibleManagedTags = (Array.isArray(managedTags) ? managedTags : []).filter(isAssignableManagedTag);
   return (
     <section className="workbench-section-block affairs-detail-block affairs-detail-hero-block">
       <div className="affairs-detail-headline">
@@ -2619,7 +3167,7 @@ function AffairsFolderDetailPanel({ detail }: { detail: FolderDetailState }) {
       <div className="affairs-detail-tag-editor">
         <strong>{t("shell.affairsFolderTagsSectionTitle")}</strong>
         <div className="affairs-extension-chip-list">
-          {managedTags.map((tag) => {
+          {visibleManagedTags.map((tag) => {
             const selected = selectedTagIds.has(tag.id);
             return (
               <button
@@ -2658,42 +3206,228 @@ function AffairsDocumentTagSelectionPanel({
   details: AffairsDocumentTagDetailsDto | null;
 }) {
   const { managedTags, saveDocumentTagSelection } = useAffairsWorkbenchInternal();
+  const [query, setQuery] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const selectedTagIds = new Set(details?.manualTagIds ?? []);
+  const assignableTags = useMemo(
+    () => (Array.isArray(managedTags) ? managedTags : []).filter(isAssignableManagedTag),
+    [managedTags]
+  );
+  const normalizedQuery = query.trim().toLowerCase();
+  const matchedTags = useMemo(() => {
+    if (!normalizedQuery) {
+      return [];
+    }
+    return assignableTags
+      .filter((tag) => !selectedTagIds.has(tag.id))
+      .filter((tag) => {
+        const searchable = `${tag.path} ${tag.name}`.toLowerCase();
+        return searchable.includes(normalizedQuery);
+      })
+      .slice(0, 8);
+  }, [assignableTags, normalizedQuery, selectedTagIds]);
+  const selectedTags = useMemo(
+    () => assignableTags.filter((tag) => selectedTagIds.has(tag.id)),
+    [assignableTags, selectedTagIds]
+  );
+  const visibleTagPaths = useMemo(
+    () => compactDocumentTagPaths([
+      ...(details?.resolvedTags ?? []).map((tag) => tag.path),
+      ...selectedTags.map((tag) => tag.path)
+    ]),
+    [details?.resolvedTags, selectedTags]
+  );
+  const selectedTagByPath = useMemo(() => {
+    const map = new Map<string, AffairsTagNodeDto>();
+    selectedTags.forEach((tag) => map.set(tag.path, tag));
+    return map;
+  }, [selectedTags]);
+
+  const saveNextTagIds = async (tagIds: string[]) => {
+    setSubmitting(true);
+    try {
+      await saveDocumentTagSelection(documentId, tagIds);
+      setQuery("");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   if (!details) {
     return <span className="affairs-binding-hint">{t("shell.affairsTagDetailsLoading")}</span>;
   }
 
   return (
-    <div className="affairs-extension-chip-list">
-      {managedTags.map((tag) => {
-        const selected = selectedTagIds.has(tag.id);
-        return (
-          <button
-            key={tag.id}
-            type="button"
-            className={selected ? "affairs-extension-chip active" : "affairs-extension-chip"}
-            aria-pressed={selected}
+    <>
+      <div className="affairs-document-tag-list">
+        {visibleTagPaths.length === 0 ? (
+          <span className="affairs-binding-hint">{t("shell.affairsDocumentTagsEmpty")}</span>
+        ) : visibleTagPaths.map((tagPath) => {
+          const manualTag = selectedTagByPath.get(tagPath);
+          if (!manualTag) {
+            return <AffairsColorTag key={tagPath} label={tagPath} path={tagPath} />;
+          }
+          return (
+            <button
+              key={manualTag.id}
+              type="button"
+              className="affairs-document-tag-token"
+              aria-label={t("shell.affairsDocumentTagRemoveAction", { tag: manualTag.path })}
+              disabled={submitting}
+              onClick={() => {
+                void saveNextTagIds([...selectedTagIds].filter((item) => item !== manualTag.id));
+              }}
+            >
+              <AffairsColorTag label={manualTag.path} path={manualTag.path} />
+              <span aria-hidden="true">×</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="affairs-document-tag-picker">
+        <label className="affairs-document-tag-input-label">
+          <span>{t("shell.affairsDocumentTagAddLabel")}</span>
+          <input
+            value={query}
             disabled={submitting}
-            onClick={async () => {
-              const nextTagIds = selected
-                ? [...selectedTagIds].filter((item) => item !== tag.id)
-                : [...selectedTagIds, tag.id];
-              setSubmitting(true);
-              try {
-                await saveDocumentTagSelection(documentId, nextTagIds);
-              } finally {
-                setSubmitting(false);
-              }
-            }}
-          >
-            <span>{tag.path}</span>
-          </button>
-        );
-      })}
-    </div>
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={t("shell.affairsDocumentTagSearchPlaceholder")}
+          />
+        </label>
+        {normalizedQuery ? (
+          <div className="affairs-document-tag-suggestions" role="listbox" aria-label={t("shell.affairsDocumentTagSuggestionsLabel")}>
+            {matchedTags.length === 0 ? (
+              <span className="affairs-binding-hint">{t("shell.affairsDocumentTagNoMatch")}</span>
+            ) : matchedTags.map((tag) => (
+              <button
+                key={tag.id}
+                type="button"
+                className="affairs-document-tag-suggestion"
+                disabled={submitting}
+                onClick={() => {
+                  void saveNextTagIds([...selectedTagIds, tag.id]);
+                }}
+              >
+                <AffairsColorTag label={tag.path} path={tag.path} />
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </>
   );
+}
+
+function AffairsColorTag({ label, path }: { label: string; path: string }) {
+  return (
+    <span className="affairs-color-tag" style={buildTagColorStyle(path)}>
+      {label}
+    </span>
+  );
+}
+
+function buildManagedTagTree(tags: AffairsTagNodeDto[]): ManagedTagTreeNode[] {
+  const nodeById = new Map<string, ManagedTagTreeNode>();
+  tags.forEach((tag) => {
+    nodeById.set(tag.id, { tag, children: [] });
+  });
+  const roots: ManagedTagTreeNode[] = [];
+  nodeById.forEach((node) => {
+    if (node.tag.parentId) {
+      const parent = nodeById.get(node.tag.parentId);
+      if (parent) {
+        parent.children.push(node);
+        return;
+      }
+    }
+    roots.push(node);
+  });
+  const sortNodes = (items: ManagedTagTreeNode[]) => {
+    items.sort((left, right) => left.tag.path.localeCompare(right.tag.path, "zh-Hans-CN"));
+    items.forEach((item) => sortNodes(item.children));
+  };
+  sortNodes(roots);
+  return roots;
+}
+
+function flattenManagedTagTree(
+  nodes: ManagedTagTreeNode[],
+  depth = 0,
+): Array<{ tag: AffairsTagNodeDto; depth: number }> {
+  return nodes.flatMap((node) => [
+    { tag: node.tag, depth },
+    ...flattenManagedTagTree(node.children, depth + 1),
+  ]);
+}
+
+function isSelectableParentTag(
+  candidate: AffairsTagNodeDto,
+  current: AffairsTagDetailDto | null,
+): boolean {
+  if (!current) {
+    return true;
+  }
+  if (candidate.id === current.id) {
+    return false;
+  }
+  const currentPathPrefix = `${current.path}/`;
+  return !candidate.path.startsWith(currentPathPrefix);
+}
+
+function parseManagedTagKeywords(value: string): string[] {
+  return Array.from(new Set(
+    value
+      .split(/[，,]/g)
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0),
+  ));
+}
+
+function isAssignableManagedTag(tag: AffairsTagNodeDto): boolean {
+  if (tag.status !== "active") {
+    return false;
+  }
+  const rootType = tag.rootType.trim().toLowerCase();
+  return rootType !== "类型" && rootType !== "type" && rootType !== "时间" && rootType !== "time";
+}
+
+function compactDocumentTagPaths(paths: string[]): string[] {
+  const uniquePaths = Array.from(new Set(paths.map((path) => path.trim()).filter(Boolean)));
+  const recentTimeTags = uniquePaths
+    .map((path) => ({ path, days: resolveRecentTimeTagDays(path) }))
+    .filter((item): item is { path: string; days: number } => item.days !== null);
+  const keptRecentPath = recentTimeTags.length > 0
+    ? recentTimeTags.reduce((smallest, item) => item.days < smallest.days ? item : smallest).path
+    : null;
+  return uniquePaths.filter((path) => {
+    const days = resolveRecentTimeTagDays(path);
+    return days === null || path === keptRecentPath;
+  });
+}
+
+function resolveRecentTimeTagDays(path: string): number | null {
+  const normalized = path.trim();
+  const matched = /^时间\/最近(\d+)天$/.exec(normalized) ?? /^time\/recent-(\d+)-days$/i.exec(normalized);
+  if (!matched) {
+    return null;
+  }
+  const days = Number.parseInt(matched[1] ?? "", 10);
+  return Number.isFinite(days) ? days : null;
+}
+
+function buildTagColorStyle(path: string): CSSProperties {
+  const hue = hashTagPath(path) % 360;
+  return {
+    "--affairs-tag-hue": String(hue)
+  } as CSSProperties;
+}
+
+function hashTagPath(path: string): number {
+  let hash = 0;
+  for (const char of path) {
+    hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  }
+  return hash;
 }
 
 function AffairsStageSkeleton({ viewMode }: { viewMode: "grid" | "list" }) {
@@ -2721,6 +3455,7 @@ function AffairsLibraryStageToolbar({
   folderBreadcrumbs,
   tagRecords,
   indexStatus,
+  directoryStatus,
   selectedTagPath,
   selectedTagPaths,
   sortState,
@@ -2728,7 +3463,6 @@ function AffairsLibraryStageToolbar({
   onNavigateFolder,
   onNavigateTag,
   onResetTags,
-  onOpenTagManagement,
   onOpenSettings,
   onRefresh,
   onSetSortState,
@@ -2739,6 +3473,7 @@ function AffairsLibraryStageToolbar({
   folderBreadcrumbs: Array<{ label: string; path: string }>;
   tagRecords: TagRecord[];
   indexStatus: AffairsLibraryIndexStatusDto | null;
+  directoryStatus: AffairsLibraryDocumentListDto["directoryStatus"];
   selectedTagPath: string | null;
   selectedTagPaths: string[];
   sortState: LibrarySortState;
@@ -2746,7 +3481,6 @@ function AffairsLibraryStageToolbar({
   onNavigateFolder: (path: string | null) => void;
   onNavigateTag: (path: string | null) => void;
   onResetTags: () => void;
-  onOpenTagManagement: () => void;
   onOpenSettings: () => void;
   onRefresh: () => Promise<void>;
   onSetSortState: (state: LibrarySortState) => void;
@@ -2771,7 +3505,10 @@ function AffairsLibraryStageToolbar({
   );
   const indexStatusLabel = resolveIndexStatusLabel(indexStatus);
   const indexStatusSummaryLabel = t("shell.affairsLibraryStatusIndicatorAction", { status: indexStatusLabel });
-  const indexStatusDetails = useMemo(() => buildIndexStatusDetails(indexStatus), [indexStatus]);
+  const indexStatusDetails = useMemo(
+    () => buildIndexStatusDetails(indexStatus, directoryStatus ?? null),
+    [directoryStatus, indexStatus]
+  );
 
   useEffect(() => {
     const toolbar = toolbarRef.current;
@@ -2932,17 +3669,6 @@ function AffairsLibraryStageToolbar({
             <option value="size">{t("shell.affairsLibrarySortSize")}</option>
             <option value="createdAt">{t("shell.affairsLibrarySortCreatedAt")}</option>
           </select>
-        </div>
-        <div className="affairs-stage-toolbar-group">
-          <button
-            type="button"
-            className="affairs-stage-toolbar-icon"
-            aria-label={t("shell.affairsTagManagerAction")}
-            title={t("shell.affairsTagManagerAction")}
-            onClick={onOpenTagManagement}
-          >
-            <AffairsTagManagerIcon />
-          </button>
         </div>
         <div className="affairs-stage-toolbar-group">
           <button
@@ -3487,8 +4213,28 @@ function AffairsLibrarySettingsModal({
   );
 }
 
+type TagManagementEditorMode = "create-root" | "create-child" | "edit";
+
+type ManagedTagTreeNode = {
+  tag: AffairsTagNodeDto;
+  children: ManagedTagTreeNode[];
+};
+
+type RecommendationThemeDraft = {
+  id: string;
+  rootName: string;
+  sourceType: AffairsTagRecommendationSourceTypeDto;
+};
+
+type RecommendationThemeOption = {
+  rootName: string;
+  sourceType: AffairsTagRecommendationSourceTypeDto;
+  proposedPath: string;
+};
+
 function AffairsTagManagementModal() {
   const {
+    workspaceId,
     tagManagementOpen,
     closeTagManagement,
     managedTags,
@@ -3496,101 +4242,532 @@ function AffairsTagManagementModal() {
     recommendationBatches,
     selectManagedTag,
     saveManagedTag,
+    deleteManagedTag,
     saveManagedTagRules,
     generateTagRecommendations,
+    applyTagRecommendationBatch,
+    discardTagRecommendationBatch,
   } = useAffairsWorkbenchInternal();
   const platform = usePlatform();
+  const { showToast } = useToast();
+  const [editorMode, setEditorMode] = useState<TagManagementEditorMode>("create-root");
   const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
+  const [parentId, setParentId] = useState<string>("");
   const [ruleKeywords, setRuleKeywords] = useState("");
+  const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
+  const [selectedBatch, setSelectedBatch] = useState<AffairsTagRecommendationBatchDto | null>(null);
+  const [recommendationItems, setRecommendationItems] = useState<AffairsTagRecommendationItemDto[]>([]);
+  const [activeRecommendationItemId, setActiveRecommendationItemId] = useState<string | null>(null);
+  const [bulkRecommendationRootTheme, setBulkRecommendationRootTheme] = useState<string>("");
+  const [recommendationSearchQuery, setRecommendationSearchQuery] = useState("");
+  const [recommendationThemes, setRecommendationThemes] = useState<RecommendationThemeDraft[]>([
+    { id: "theme-1", rootName: "", sourceType: "mixed" },
+  ]);
+  const [batchLoading, setBatchLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const visibleManagedTags = useMemo(
+    () => (Array.isArray(managedTags) ? managedTags : []).filter(isAssignableManagedTag),
+    [managedTags],
+  );
+  const visibleRecommendationBatches = Array.isArray(recommendationBatches) ? recommendationBatches : [];
+  const selectedBatchIsDraft = selectedBatch?.status === "draft";
+  const treeNodes = useMemo(() => buildManagedTagTree(visibleManagedTags), [visibleManagedTags]);
+  const flattenedTags = useMemo(() => flattenManagedTagTree(treeNodes), [treeNodes]);
+  const selectedEditableTag = selectedManagedTag && isAssignableManagedTag(selectedManagedTag) ? selectedManagedTag : null;
+  const activeRecommendationItem = useMemo(
+    () => recommendationItems.find((item) => item.id === activeRecommendationItemId) ?? recommendationItems[0] ?? null,
+    [activeRecommendationItemId, recommendationItems],
+  );
+  const visibleRecommendationItems = useMemo(() => {
+    const keyword = recommendationSearchQuery.trim().toLowerCase();
+    if (!keyword) {
+      return recommendationItems;
+    }
+    return recommendationItems.filter((item) => {
+      const candidateLabel = String(item.evidence?.candidateLabel ?? item.proposedName).toLowerCase();
+      const proposedPath = (item.proposedPath ?? "").toLowerCase();
+      const sourceLabel = resolveRecommendationSourceLabel(String(item.evidence?.candidateSourceType ?? item.evidence?.sourceType ?? "mixed")).toLowerCase();
+      return candidateLabel.includes(keyword) || proposedPath.includes(keyword) || sourceLabel.includes(keyword);
+    });
+  }, [recommendationItems, recommendationSearchQuery]);
+  const selectedRecommendationCount = useMemo(
+    () => recommendationItems.filter((item) => item.selectedByDefault).length,
+    [recommendationItems],
+  );
+  const currentEditTagId = editorMode === "edit" ? selectedEditableTag?.id ?? null : null;
+  const parentOptions = useMemo(
+    () => flattenedTags.filter(({ tag }) => isSelectableParentTag(tag, selectedEditableTag)),
+    [flattenedTags, selectedEditableTag],
+  );
 
-  useEffect(() => {
-    setName(selectedManagedTag?.name ?? "");
-    setDescription(selectedManagedTag?.description ?? "");
-    const keywordList = Array.isArray(selectedManagedTag?.rules?.[0]?.matcher?.keywords)
-      ? (selectedManagedTag?.rules?.[0]?.matcher?.keywords as string[])
+  const resetEditor = (nextMode: TagManagementEditorMode, parentTag?: AffairsTagDetailDto | AffairsTagNodeDto | null) => {
+    setEditorMode(nextMode);
+    setError(null);
+    setName("");
+    setRuleKeywords("");
+    setParentId(nextMode === "create-child" ? parentTag?.id ?? "" : "");
+  };
+
+  const beginCreateRoot = () => {
+    resetEditor("create-root");
+    void selectManagedTag(null);
+  };
+
+  const beginCreateChild = () => {
+    if (!selectedEditableTag) {
+      return;
+    }
+    resetEditor("create-child", selectedEditableTag);
+  };
+
+  const reloadEditorFromSelected = () => {
+    if (!selectedEditableTag) {
+      beginCreateRoot();
+      return;
+    }
+    setEditorMode("edit");
+    setName(selectedEditableTag.name);
+    setParentId(selectedEditableTag.parentId ?? "");
+    const keywordList = Array.isArray(selectedEditableTag.rules?.[0]?.matcher?.keywords)
+      ? (selectedEditableTag.rules?.[0]?.matcher?.keywords as string[])
       : [];
     setRuleKeywords(keywordList.join("，"));
-  }, [selectedManagedTag]);
+    setError(null);
+  };
+
+  useEffect(() => {
+    if (!tagManagementOpen) {
+      return;
+    }
+    if (editorMode === "edit") {
+      reloadEditorFromSelected();
+      return;
+    }
+    if (editorMode === "create-child") {
+      setParentId(selectedEditableTag?.id ?? parentId);
+    }
+  }, [editorMode, parentId, selectedEditableTag, tagManagementOpen]);
+
+  useEffect(() => {
+    if (!tagManagementOpen) {
+      return;
+    }
+    if (selectedEditableTag) {
+      setEditorMode("edit");
+      return;
+    }
+    setEditorMode("create-root");
+  }, [selectedEditableTag, tagManagementOpen]);
+
+  useEffect(() => {
+    if (!tagManagementOpen) {
+      closeRecommendationWorkbench();
+      return;
+    }
+  }, [tagManagementOpen]);
+
+  useEffect(() => {
+    if (!selectedBatchId) {
+      setSelectedBatch(null);
+      setRecommendationItems([]);
+      setActiveRecommendationItemId(null);
+      return;
+    }
+
+    let cancelled = false;
+    setBatchLoading(true);
+    setError(null);
+    getAffairsTagRecommendationBatch(workspaceId, selectedBatchId)
+      .then((batch) => {
+        if (cancelled) {
+          return;
+        }
+        setSelectedBatch(batch);
+        setRecommendationItems((batch.items ?? []).map((item) => ({ ...item })));
+        setActiveRecommendationItemId(batch.items?.[0]?.id ?? null);
+      })
+      .catch((requestError) => {
+        if (cancelled) {
+          return;
+        }
+        setError(requestError instanceof Error ? requestError.message : t("shell.affairsTagRecommendationLoadFailed"));
+        setSelectedBatch(null);
+        setRecommendationItems([]);
+        setActiveRecommendationItemId(null);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setBatchLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedBatchId, workspaceId]);
+
+  useEffect(() => {
+    if (visibleRecommendationItems.length === 0) {
+      setActiveRecommendationItemId(null);
+      return;
+    }
+    if (!activeRecommendationItemId || !visibleRecommendationItems.some((item) => item.id === activeRecommendationItemId)) {
+      setActiveRecommendationItemId(visibleRecommendationItems[0]?.id ?? null);
+    }
+  }, [activeRecommendationItemId, visibleRecommendationItems]);
+
+  function updateRecommendationItem(
+    itemId: string,
+    updater: (item: AffairsTagRecommendationItemDto) => AffairsTagRecommendationItemDto,
+  ) {
+    setRecommendationItems((items) => items.map((item) => item.id === itemId ? updater(item) : item));
+  }
+
+  function resolveRecommendationThemeOptions(item: AffairsTagRecommendationItemDto): RecommendationThemeOption[] {
+    const raw = Array.isArray(item.evidence?.availableThemes) ? item.evidence.availableThemes : [];
+    return raw
+      .map((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return null;
+        }
+        const record = entry as Record<string, unknown>;
+        const rootName = typeof record.rootName === "string" ? record.rootName : "";
+        const sourceType = typeof record.sourceType === "string" ? record.sourceType as AffairsTagRecommendationSourceTypeDto : "mixed";
+        const proposedPath = typeof record.proposedPath === "string" ? record.proposedPath : "";
+        if (!rootName || !proposedPath) {
+          return null;
+        }
+        return { rootName, sourceType, proposedPath };
+      })
+      .filter((entry): entry is RecommendationThemeOption => entry !== null);
+  }
+
+  function applyRecommendationTheme(itemId: string, nextRootName: string) {
+    updateRecommendationItem(itemId, (current) => ({
+      ...current,
+      proposedPath: [nextRootName, current.proposedName.trim() || String(current.evidence?.candidateLabel ?? current.proposedName)].filter(Boolean).join("/"),
+      proposedParentPath: nextRootName || null,
+    }));
+  }
+
+  const batchThemeOptions = useMemo(
+    () => resolveBatchThemeDefinitions(selectedBatch, recommendationItems),
+    [recommendationItems, selectedBatch],
+  );
+  const recommendationPreviewGroups = useMemo(
+    () => buildRecommendationPreviewGroups(recommendationItems),
+    [recommendationItems],
+  );
+
+  useEffect(() => {
+    if (batchThemeOptions.length === 0) {
+      setBulkRecommendationRootTheme("");
+      return;
+    }
+    if (!batchThemeOptions.some((item) => item.rootName === bulkRecommendationRootTheme)) {
+      setBulkRecommendationRootTheme(batchThemeOptions[0]?.rootName ?? "");
+    }
+  }, [batchThemeOptions, bulkRecommendationRootTheme]);
+
+  function updateRecommendationTheme(
+    themeId: string,
+    updater: (item: RecommendationThemeDraft) => RecommendationThemeDraft,
+  ) {
+    setRecommendationThemes((items) => items.map((item) => item.id === themeId ? updater(item) : item));
+  }
+
+  function appendRecommendationTheme() {
+    setRecommendationThemes((items) => [
+      ...items,
+      {
+        id: `theme-${Date.now()}-${items.length + 1}`,
+        rootName: "",
+        sourceType: "mixed",
+      },
+    ]);
+  }
+
+  function removeRecommendationTheme(themeId: string) {
+    setRecommendationThemes((items) => {
+      if (items.length <= 1) {
+        return [{ id: "theme-1", rootName: "", sourceType: "mixed" }];
+      }
+      return items.filter((item) => item.id !== themeId);
+    });
+  }
+
+  const normalizedRecommendationThemes = recommendationThemes
+    .map((item) => ({
+      rootName: item.rootName.trim(),
+      sourceType: item.sourceType,
+    }))
+    .filter((item) => item.rootName.length > 0);
+
+  const editorTitle = editorMode === "edit"
+    ? t("shell.affairsTagEditorEditTitle")
+    : editorMode === "create-child"
+      ? t("shell.affairsTagEditorCreateChildTitle")
+      : t("shell.affairsTagEditorCreateRootTitle");
+  const editorDescription = editorMode === "edit"
+    ? t("shell.affairsTagEditorEditDescription")
+    : editorMode === "create-child" && selectedEditableTag
+      ? t("shell.affairsTagEditorCreateChildDescription", { tag: selectedEditableTag.path })
+      : t("shell.affairsTagEditorCreateRootDescription");
+  const saveActionLabel = editorMode === "edit"
+    ? t("shell.affairsTagUpdateSubmitAction")
+    : t("shell.affairsTagCreateSubmitAction");
+  const showParentField = editorMode === "edit";
+  const recommendationWorkbenchOpen = Boolean(selectedBatchId);
+
+  function openRecommendationWorkbench(batchId: string) {
+    setSelectedBatchId(batchId);
+    setError(null);
+  }
+
+  function closeRecommendationWorkbench() {
+    setSelectedBatchId(null);
+    setSelectedBatch(null);
+    setRecommendationItems([]);
+    setActiveRecommendationItemId(null);
+    setRecommendationSearchQuery("");
+    setError(null);
+  }
 
   const content = (
-    <div className="affairs-library-settings-form">
-      <div className="affairs-library-config-section">
-        <strong>{t("shell.affairsTagManagerSectionTitle")}</strong>
-        <p>{t("shell.affairsTagManagerSectionDescription")}</p>
-        <div className="affairs-library-settings-inline-actions">
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={submitting}
-            onClick={async () => {
-              setSubmitting(true);
-              setError(null);
-              try {
-                await generateTagRecommendations();
-              } catch (requestError) {
-                setError(requestError instanceof Error ? requestError.message : t("shell.affairsTagRecommendationGenerateFailed"));
-              } finally {
-                setSubmitting(false);
-              }
-            }}
-          >
-            {t("shell.affairsTagRecommendationGenerateAction")}
-          </button>
-        </div>
-      </div>
+    <div className="affairs-library-settings-form affairs-tag-management-shell">
       <div className="affairs-tag-management-layout">
-        <div className="affairs-tag-management-list">
-          <button
-            type="button"
-            className={!selectedManagedTag ? "affairs-tag-management-item active" : "affairs-tag-management-item"}
-            onClick={() => void selectManagedTag(null)}
-          >
-            {t("shell.affairsTagCreateAction")}
-          </button>
-          {managedTags.map((tag) => (
+        <ModalSection
+          className="affairs-tag-management-tree-panel"
+          heading={t("shell.affairsTagTreeSectionTitle")}
+          description={t("shell.affairsTagTreeSectionDescription")}
+        >
+          <div className="affairs-tag-management-toolbar">
             <button
-              key={tag.id}
               type="button"
-              className={selectedManagedTag?.id === tag.id ? "affairs-tag-management-item active" : "affairs-tag-management-item"}
-              onClick={() => void selectManagedTag(tag.id)}
+              className={editorMode === "create-root" ? "secondary-button active" : "secondary-button"}
+              disabled={submitting}
+              onClick={beginCreateRoot}
             >
-              <span>{tag.path}</span>
-              {tag.ruleEnabled ? <span className="affairs-inline-pill">{t("shell.affairsTagRuleEnabledBadge")}</span> : null}
+              {t("shell.affairsTagCreateRootAction")}
             </button>
-          ))}
-        </div>
-        <div className="affairs-tag-management-editor">
-          <ModalField label={t("shell.affairsTagNameLabel")}>
-            <input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("shell.affairsTagNamePlaceholder")} />
-          </ModalField>
-          <ModalField label={t("shell.affairsTagDescriptionLabel")}>
-            <textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder={t("shell.affairsTagDescriptionPlaceholder")} />
-          </ModalField>
-          <ModalField
-            label={t("shell.affairsTagRuleKeywordsLabel")}
-            description={t("shell.affairsTagRuleKeywordsHint")}
-          >
-            <input value={ruleKeywords} onChange={(event) => setRuleKeywords(event.target.value)} placeholder={t("shell.affairsTagRuleKeywordsPlaceholder")} />
-          </ModalField>
-          <div className="affairs-tag-management-recommendations">
-            <strong>{t("shell.affairsTagRecommendationListTitle")}</strong>
-            {recommendationBatches.length === 0 ? (
-              <span className="affairs-binding-hint">{t("shell.affairsTagRecommendationEmpty")}</span>
-            ) : recommendationBatches.slice(0, 3).map((batch) => (
-              <div key={batch.id} className="affairs-tag-management-recommendation-item">
-                <span>{batch.summary || batch.id}</span>
-                <span className="affairs-inline-pill">{batch.status}</span>
-              </div>
-            ))}
+            <button
+              type="button"
+              className={editorMode === "create-child" ? "secondary-button active" : "secondary-button"}
+              disabled={submitting || !selectedEditableTag}
+              onClick={beginCreateChild}
+            >
+              {t("shell.affairsTagCreateChildAction")}
+            </button>
           </div>
+          {treeNodes.length === 0 ? (
+            <ModalEmptyState
+              compact
+              title={t("shell.affairsTagTreeEmpty")}
+              description={t("shell.affairsTagTreeEmptyDescription")}
+            />
+          ) : (
+            <div className="affairs-tag-management-tree" role="tree" aria-label={t("shell.affairsTagTreeSectionTitle")}>
+              <AffairsTagManagementTreeNodes
+                nodes={treeNodes}
+                selectedTagId={currentEditTagId}
+                onSelect={(tagId) => {
+                  setEditorMode("edit");
+                  setError(null);
+                  void selectManagedTag(tagId);
+                }}
+              />
+            </div>
+          )}
+        </ModalSection>
+
+        <div className="affairs-tag-management-editor-column">
+          <ModalSection
+            className="affairs-tag-management-editor"
+            heading={editorTitle}
+            description={editorDescription}
+          >
+            <ModalField label={t("shell.affairsTagNameLabel")}>
+              <input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("shell.affairsTagNamePlaceholder")} />
+            </ModalField>
+            {showParentField ? (
+              <ModalField label={t("shell.affairsTagParentLabel")}>
+                <select value={parentId} onChange={(event) => setParentId(event.target.value)}>
+                  <option value="">{t("shell.affairsTagParentRootOption")}</option>
+                  {parentOptions.map(({ tag, depth }) => (
+                    <option key={tag.id} value={tag.id}>
+                      {`${"　".repeat(depth)}${tag.path}`}
+                    </option>
+                  ))}
+                </select>
+              </ModalField>
+            ) : null}
+            <ModalField label={t("shell.affairsTagRuleKeywordsLabel")}>
+              <input value={ruleKeywords} onChange={(event) => setRuleKeywords(event.target.value)} placeholder={t("shell.affairsTagRuleKeywordsPlaceholder")} />
+            </ModalField>
+          </ModalSection>
+
+          {editorMode === "edit" && selectedEditableTag ? (
+            <ModalSection
+              className="affairs-tag-management-danger"
+              heading={t("shell.affairsTagDangerZoneTitle")}
+              description={t("shell.affairsTagDangerZoneDescription")}
+            >
+              <button
+                type="button"
+                className="secondary-button workbench-danger-button"
+                disabled={submitting}
+                onClick={async () => {
+                  const confirmed = typeof window === "undefined"
+                    ? true
+                    : window.confirm(t("shell.affairsTagDeleteConfirm", { tag: selectedEditableTag.path }));
+                  if (!confirmed) {
+                    return;
+                  }
+                  setSubmitting(true);
+                  setError(null);
+                  try {
+                    await deleteManagedTag(selectedEditableTag.id);
+                    beginCreateRoot();
+                    showToast({
+                      title: t("shell.affairsTagDeleteSuccess"),
+                      description: t("shell.affairsTagDeleteSuccessDescription"),
+                      tone: "success",
+                    });
+                  } catch (requestError) {
+                    setError(requestError instanceof Error ? requestError.message : t("shell.affairsTagDeleteFailed"));
+                  } finally {
+                    setSubmitting(false);
+                  }
+                }}
+              >
+                {t("shell.affairsTagDeleteAction")}
+              </button>
+            </ModalSection>
+          ) : null}
+
+          <ModalSection
+            className="affairs-tag-management-recommendations"
+            heading={t("shell.affairsTagRecommendationListTitle")}
+            description={t("shell.affairsTagRecommendationListDescription")}
+          >
+            <div className="affairs-tag-recommendation-theme-list">
+              {recommendationThemes.map((theme, index) => (
+                <div key={theme.id} className="affairs-tag-recommendation-theme-row">
+                  <ModalField label={t("shell.affairsTagRecommendationThemeLabel", { index: index + 1 })}>
+                    <input
+                      value={theme.rootName}
+                      disabled={submitting}
+                      placeholder={t("shell.affairsTagRecommendationThemePlaceholder")}
+                      onChange={(event) => updateRecommendationTheme(theme.id, (current) => ({
+                        ...current,
+                        rootName: event.target.value,
+                      }))}
+                    />
+                  </ModalField>
+                  <ModalField label={t("shell.affairsTagRecommendationThemeSourceLabel")}>
+                    <select
+                      value={theme.sourceType}
+                      disabled={submitting}
+                      onChange={(event) => updateRecommendationTheme(theme.id, (current) => ({
+                        ...current,
+                        sourceType: event.target.value as AffairsTagRecommendationSourceTypeDto,
+                      }))}
+                    >
+                      <option value="path_entity">{t("shell.affairsTagRecommendationSourcePathEntity")}</option>
+                      <option value="title_phrase">{t("shell.affairsTagRecommendationSourceTitlePhrase")}</option>
+                      <option value="summary_keyword">{t("shell.affairsTagRecommendationSourceSummaryKeyword")}</option>
+                      <option value="mixed">{t("shell.affairsTagRecommendationSourceMixed")}</option>
+                    </select>
+                  </ModalField>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    disabled={submitting || recommendationThemes.length <= 1}
+                    onClick={() => removeRecommendationTheme(theme.id)}
+                  >
+                    {t("shell.affairsTagRecommendationThemeRemoveAction")}
+                  </button>
+                </div>
+              ))}
+              <div className="affairs-library-settings-inline-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={submitting}
+                  onClick={appendRecommendationTheme}
+                >
+                  {t("shell.affairsTagRecommendationThemeAddAction")}
+                </button>
+              </div>
+            </div>
+            <div className="affairs-library-settings-inline-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={submitting || normalizedRecommendationThemes.length === 0}
+                onClick={async () => {
+                  setSubmitting(true);
+                  setError(null);
+                  try {
+                    await generateTagRecommendations(normalizedRecommendationThemes);
+                    setSelectedBatchId(null);
+                  } catch (requestError) {
+                    setError(requestError instanceof Error ? requestError.message : t("shell.affairsTagRecommendationGenerateFailed"));
+                  } finally {
+                    setSubmitting(false);
+                  }
+                }}
+              >
+                {t("shell.affairsTagRecommendationGenerateAction")}
+              </button>
+            </div>
+            <span className="affairs-binding-hint">{t("shell.affairsTagRecommendationThemeHint")}</span>
+            {visibleRecommendationBatches.length === 0 ? (
+              <ModalEmptyState
+                compact
+                title={t("shell.affairsTagRecommendationEmpty")}
+                description={t("shell.affairsTagRecommendationEmptyDescription")}
+              />
+            ) : (
+              <ModalList compact>
+                {visibleRecommendationBatches.map((batch) => (
+                  <ModalListItem
+                    key={batch.id}
+                    as="button"
+                    selected={selectedBatchId === batch.id}
+                    label={batch.summary || batch.id}
+                    description={formatDateTime(batch.generatedAt)}
+                    trailing={<ModalTag tone={batch.status === "draft" ? "accent" : "default"}>{resolveRecommendationStatusLabel(batch.status)}</ModalTag>}
+                    onClick={() => openRecommendationWorkbench(batch.id)}
+                  />
+                ))}
+              </ModalList>
+            )}
+          </ModalSection>
         </div>
       </div>
       <ModalActions className="affairs-library-settings-actions">
         <button type="button" className="secondary-button" disabled={submitting} onClick={closeTagManagement}>
-          {t("common.cancel")}
+          {t("shell.affairsTagCloseAction")}
+        </button>
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={submitting}
+          onClick={() => {
+            if (editorMode === "edit") {
+              reloadEditorFromSelected();
+              return;
+            }
+            if (editorMode === "create-child") {
+              resetEditor("create-child", selectedEditableTag);
+              return;
+            }
+            beginCreateRoot();
+          }}
+        >
+          {editorMode === "edit" ? t("shell.affairsTagRevertAction") : t("shell.affairsTagResetFormAction")}
         </button>
         <button
           type="button"
@@ -3600,32 +4777,32 @@ function AffairsTagManagementModal() {
             setSubmitting(true);
             setError(null);
             try {
-              await saveManagedTag({
-                tagId: selectedManagedTag?.id,
+              const currentRuleId = editorMode === "edit" ? selectedEditableTag?.rules?.[0]?.id : undefined;
+              const savedTag = await saveManagedTag({
+                tagId: editorMode === "edit" ? selectedEditableTag?.id : undefined,
                 name: name.trim(),
-                description: description.trim() || null,
-                parentId: selectedManagedTag?.parentId ?? null,
-                status: selectedManagedTag?.status ?? "active",
+                parentId: parentId || null,
+                status: selectedEditableTag?.status ?? "active",
               });
-              if (selectedManagedTag?.id) {
-                const keywords = ruleKeywords
-                  .split(/[，,]/g)
-                  .map((item) => item.trim())
-                  .filter((item) => item.length > 0);
-                await saveManagedTagRules(selectedManagedTag.id, {
-                  rules: keywords.length > 0 ? [{
-                    id: selectedManagedTag.rules[0]?.id,
-                    enabled: true,
-                    ruleType: "keyword",
-                    scope: ["path", "title", "summary", "body"],
-                    matcher: { keywords, pathIncludes: [] },
-                    minScore: 0.55,
-                    priority: 0,
-                    source: "user",
-                  }] : [],
-                });
-              }
-              closeTagManagement();
+              const keywords = parseManagedTagKeywords(ruleKeywords);
+              await saveManagedTagRules(savedTag.id, {
+                rules: keywords.length > 0 ? [{
+                  id: currentRuleId,
+                  enabled: true,
+                  ruleType: "keyword",
+                  scope: ["path", "title", "summary", "body"],
+                  matcher: { keywords, pathIncludes: [] },
+                  minScore: 0.55,
+                  priority: 0,
+                  source: "user",
+                }] : [],
+              });
+              setEditorMode("edit");
+              showToast({
+                title: t("shell.affairsTagSaveSuccess"),
+                description: t("shell.affairsTagSaveSuccessDescription"),
+                tone: "success",
+              });
             } catch (requestError) {
               setError(requestError instanceof Error ? requestError.message : t("shell.affairsTagSaveFailed"));
             } finally {
@@ -3633,7 +4810,310 @@ function AffairsTagManagementModal() {
             }
           }}
         >
-          {submitting ? t("common.loading") : t("shell.affairsTagSaveAction")}
+          {submitting ? t("common.loading") : saveActionLabel}
+        </button>
+      </ModalActions>
+      {error ? <span className="affairs-binding-error">{error}</span> : null}
+    </div>
+  );
+
+  const recommendationWorkbenchContent = (
+    <div className="affairs-library-settings-form affairs-tag-recommendation-modal-shell">
+      {batchLoading ? (
+        <span className="affairs-binding-hint">{t("common.loading")}</span>
+      ) : recommendationItems.length === 0 ? (
+        <ModalEmptyState
+          compact
+          title={t("shell.affairsTagRecommendationItemsEmpty")}
+          description={t("shell.affairsTagRecommendationPoolDescription")}
+        />
+      ) : (
+        <div className="affairs-tag-recommendation-workbench">
+          <div className="affairs-tag-recommendation-board-panel">
+            <div className="affairs-tag-recommendation-panel-header">
+              <strong>{t("shell.affairsTagRecommendationPoolTitle")}</strong>
+              <span className="affairs-binding-hint">{t("shell.affairsTagRecommendationPoolDescription")}</span>
+            </div>
+            <div className="affairs-tag-recommendation-board-toolbar">
+              <input
+                className="affairs-tag-recommendation-search-input"
+                value={recommendationSearchQuery}
+                placeholder={t("shell.affairsTagRecommendationSearchPlaceholder")}
+                onChange={(event) => setRecommendationSearchQuery(event.target.value)}
+              />
+              <div className="affairs-tag-recommendation-bulk-actions">
+                <select
+                  aria-label={t("shell.affairsTagRecommendationBulkThemeLabel")}
+                  value={bulkRecommendationRootTheme}
+                  disabled={!selectedBatchIsDraft || submitting || batchThemeOptions.length === 0}
+                  onChange={(event) => setBulkRecommendationRootTheme(event.target.value)}
+                >
+                  {batchThemeOptions.map((theme) => (
+                    <option key={theme.rootName} value={theme.rootName}>
+                      {theme.rootName}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={!selectedBatchIsDraft || submitting || !bulkRecommendationRootTheme || recommendationItems.every((item) => !item.selectedByDefault)}
+                  onClick={() => {
+                    setRecommendationItems((items) => items.map((item) => {
+                      if (!item.selectedByDefault) {
+                        return item;
+                      }
+                      const options = resolveRecommendationThemeOptions(item);
+                      if (!options.some((option) => option.rootName === bulkRecommendationRootTheme)) {
+                        return item;
+                      }
+                      const nextName = item.proposedName.trim() || String(item.evidence?.candidateLabel ?? item.proposedName);
+                      return {
+                        ...item,
+                        proposedName: nextName,
+                        proposedParentPath: bulkRecommendationRootTheme,
+                        proposedPath: [bulkRecommendationRootTheme, nextName].filter(Boolean).join("/"),
+                      };
+                    }));
+                  }}
+                >
+                  {t("shell.affairsTagRecommendationBulkApplyAction")}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={!selectedBatchIsDraft || submitting || visibleRecommendationItems.length === 0}
+                  onClick={() => {
+                    const visibleIds = new Set(visibleRecommendationItems.map((item) => item.id));
+                    setRecommendationItems((items) => items.map((item) => visibleIds.has(item.id)
+                      ? { ...item, selectedByDefault: true }
+                      : item));
+                  }}
+                >
+                  {t("shell.affairsTagRecommendationSelectVisibleAction")}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={!selectedBatchIsDraft || submitting || visibleRecommendationItems.length === 0}
+                  onClick={() => {
+                    const visibleIds = new Set(visibleRecommendationItems.map((item) => item.id));
+                    setRecommendationItems((items) => items.map((item) => visibleIds.has(item.id)
+                      ? { ...item, selectedByDefault: false }
+                      : item));
+                  }}
+                >
+                  {t("shell.affairsTagRecommendationClearVisibleAction")}
+                </button>
+              </div>
+              <span className="affairs-binding-hint">
+                {t("shell.affairsTagRecommendationPoolStats", {
+                  visible: visibleRecommendationItems.length,
+                  total: recommendationItems.length,
+                  selected: selectedRecommendationCount,
+                })}
+              </span>
+            </div>
+            {visibleRecommendationItems.length === 0 ? (
+              <ModalEmptyState
+                compact
+                title={t("shell.affairsTagRecommendationSearchEmpty")}
+                description={t("shell.affairsTagRecommendationSearchEmptyDescription")}
+              />
+            ) : (
+              <div className="affairs-tag-recommendation-board-grid">
+                {visibleRecommendationItems.map((item) => {
+                  const candidateLabel = String(item.evidence?.candidateLabel ?? item.proposedName);
+                  const sourceLabel = resolveRecommendationSourceLabel(String(item.evidence?.candidateSourceType ?? item.evidence?.sourceType ?? "mixed"));
+                  const previewPath = item.proposedPath || [item.proposedParentPath, item.proposedName].filter(Boolean).join("/");
+                  return (
+                    <div
+                      key={item.id}
+                      className={item.id === activeRecommendationItem?.id
+                        ? "affairs-tag-recommendation-board-card active"
+                        : "affairs-tag-recommendation-board-card"}
+                    >
+                      <div className="affairs-tag-recommendation-board-card-topbar">
+                        <label className="affairs-tag-recommendation-check">
+                          <input
+                            type="checkbox"
+                            disabled={!selectedBatchIsDraft || submitting}
+                            checked={item.selectedByDefault}
+                            onChange={(event) => updateRecommendationItem(item.id, (current) => ({
+                              ...current,
+                              selectedByDefault: event.target.checked,
+                            }))}
+                          />
+                        </label>
+                        <ModalTag tone="accent">{sourceLabel}</ModalTag>
+                      </div>
+                      <button
+                        type="button"
+                        className="affairs-tag-recommendation-board-card-button"
+                        onClick={() => setActiveRecommendationItemId(item.id)}
+                      >
+                        <strong className="affairs-tag-recommendation-board-card-label">{candidateLabel}</strong>
+                        <div className="affairs-tag-recommendation-board-card-meta">
+                          <span className="affairs-binding-hint">
+                            {t("shell.affairsTagRecommendationDocumentCount", { count: item.documentCount })}
+                          </span>
+                          <span className="affairs-binding-hint">{sourceLabel}</span>
+                        </div>
+                        <span className="affairs-tag-recommendation-board-card-path" title={previewPath}>{previewPath}</span>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <div className="affairs-tag-recommendation-detail-layout">
+            <div className="affairs-tag-recommendation-editor-panel">
+              <div className="affairs-tag-recommendation-panel-header">
+                <strong>{t("shell.affairsTagRecommendationDetailTitle")}</strong>
+                <span className="affairs-binding-hint">{t("shell.affairsTagRecommendationWorkbenchDescription")}</span>
+              </div>
+              <div className="affairs-tag-recommendation-theme-slots">
+                {batchThemeOptions.map((theme) => (
+                  <ModalTag key={theme.rootName} tone="default">
+                    {`${theme.rootName} · ${resolveRecommendationSourceLabel(theme.sourceType)}`}
+                  </ModalTag>
+                ))}
+              </div>
+              {activeRecommendationItem ? (
+                <div className="affairs-tag-recommendation-item-body">
+                  <div className="affairs-tag-recommendation-meta">
+                    <strong>{String(activeRecommendationItem.evidence?.candidateLabel ?? activeRecommendationItem.proposedName)}</strong>
+                    <span className="affairs-binding-hint">
+                      {t("shell.affairsTagRecommendationDocumentCount", { count: activeRecommendationItem.documentCount })}
+                    </span>
+                  </div>
+                  <ModalField label={t("shell.affairsTagRecommendationThemeAssignLabel")}>
+                    <select
+                      value={activeRecommendationItem.proposedParentPath ?? ""}
+                      disabled={!selectedBatchIsDraft || submitting}
+                      aria-label={t("shell.affairsTagRecommendationThemeAssignLabel")}
+                      onChange={(event) => applyRecommendationTheme(activeRecommendationItem.id, event.target.value)}
+                    >
+                      {resolveRecommendationThemeOptions(activeRecommendationItem).map((option) => (
+                        <option key={option.rootName} value={option.rootName}>
+                          {option.rootName}
+                        </option>
+                      ))}
+                    </select>
+                  </ModalField>
+                  <ModalField label={t("shell.affairsTagRecommendationNameLabel")}>
+                    <input
+                      value={activeRecommendationItem.proposedName}
+                      disabled={!selectedBatchIsDraft || submitting}
+                      aria-label={t("shell.affairsTagRecommendationNameLabel")}
+                      onChange={(event) => updateRecommendationItem(activeRecommendationItem.id, (current) => {
+                        const nextName = event.target.value;
+                        const baseParent = current.proposedParentPath ?? deriveRecommendationParentPath(current.proposedPath) ?? "";
+                        const nextPath = [baseParent, nextName.trim()].filter(Boolean).join("/");
+                        return {
+                          ...current,
+                          proposedName: nextName,
+                          proposedPath: nextPath || current.proposedPath,
+                          proposedParentPath: baseParent || null,
+                        };
+                      })}
+                    />
+                  </ModalField>
+                  <ModalField label={t("shell.affairsTagRecommendationPathLabel")}>
+                    <input
+                      value={activeRecommendationItem.proposedPath}
+                      disabled={!selectedBatchIsDraft || submitting}
+                      aria-label={t("shell.affairsTagRecommendationPathLabel")}
+                      onChange={(event) => updateRecommendationItem(activeRecommendationItem.id, (current) => ({
+                        ...current,
+                        proposedPath: event.target.value,
+                        proposedParentPath: deriveRecommendationParentPath(event.target.value),
+                        proposedName: deriveRecommendationName(event.target.value) || current.proposedName,
+                      }))}
+                    />
+                  </ModalField>
+                </div>
+              ) : null}
+            </div>
+            <div className="affairs-tag-recommendation-preview-panel">
+              <div className="affairs-tag-recommendation-panel-header">
+                <strong>{t("shell.affairsTagRecommendationPreviewTitle")}</strong>
+                <span className="affairs-binding-hint">{t("shell.affairsTagRecommendationPreviewDescription")}</span>
+              </div>
+              <div className="affairs-tag-recommendation-preview-tree">
+                {recommendationPreviewGroups.length === 0 ? (
+                  <span className="affairs-binding-hint">{t("shell.affairsTagRecommendationPreviewEmpty")}</span>
+                ) : recommendationPreviewGroups.map((group) => (
+                  <div key={group.rootName} className="affairs-tag-recommendation-preview-group">
+                    <strong>{group.rootName}</strong>
+                    <div className="affairs-tag-recommendation-preview-tags">
+                      {group.children.map((child) => (
+                        <ModalTag key={child.itemId} tone="accent">
+                          {child.name}
+                        </ModalTag>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      <ModalActions className="affairs-library-settings-actions">
+        <button type="button" className="secondary-button" disabled={submitting} onClick={closeRecommendationWorkbench}>
+          {t("shell.affairsTagCloseAction")}
+        </button>
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={!selectedBatchIsDraft || submitting || recommendationItems.every((item) => !item.selectedByDefault)}
+          onClick={async () => {
+            if (!selectedBatchId) {
+              return;
+            }
+            setSubmitting(true);
+            setError(null);
+            try {
+              await applyTagRecommendationBatch(selectedBatchId, recommendationItems.map((item) => ({
+                itemId: item.id,
+                proposedPath: item.proposedPath,
+                proposedName: item.proposedName,
+                proposedParentPath: item.proposedParentPath,
+                selected: item.selectedByDefault,
+              })));
+              closeRecommendationWorkbench();
+            } catch (requestError) {
+              setError(requestError instanceof Error ? requestError.message : t("shell.affairsTagRecommendationApplyFailed"));
+            } finally {
+              setSubmitting(false);
+            }
+          }}
+        >
+          {t("shell.affairsTagRecommendationApplySelected")}
+        </button>
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={!selectedBatchIsDraft || submitting}
+          onClick={async () => {
+            if (!selectedBatchId) {
+              return;
+            }
+            setSubmitting(true);
+            setError(null);
+            try {
+              await discardTagRecommendationBatch(selectedBatchId);
+              closeRecommendationWorkbench();
+            } catch (requestError) {
+              setError(requestError instanceof Error ? requestError.message : t("shell.affairsTagRecommendationDiscardFailed"));
+            } finally {
+              setSubmitting(false);
+            }
+          }}
+        >
+          {t("shell.affairsTagRecommendationDiscardAction")}
         </button>
       </ModalActions>
       {error ? <span className="affairs-binding-error">{error}</span> : null}
@@ -3642,31 +5122,92 @@ function AffairsTagManagementModal() {
 
   if (platform.isMobile) {
     return (
-      <MobileSheet
-        open={tagManagementOpen}
-        title={t("shell.affairsTagManagerTitle")}
-        description={t("shell.affairsTagManagerDescription")}
-        height="three-quarter"
-        kind="form"
-        onClose={closeTagManagement}
-      >
-        {content}
-      </MobileSheet>
+      <>
+        <MobileSheet
+          open={tagManagementOpen}
+          title={t("shell.affairsTagManagerTitle")}
+          description={t("shell.affairsTagManagerDescription")}
+          height="three-quarter"
+          kind="form"
+          onClose={closeTagManagement}
+        >
+          {content}
+        </MobileSheet>
+        <MobileSheet
+          open={recommendationWorkbenchOpen}
+          title={t("shell.affairsTagRecommendationWorkbenchTitle")}
+          description={t("shell.affairsTagRecommendationWorkbenchDescription")}
+          height="three-quarter"
+          kind="form"
+          onClose={closeRecommendationWorkbench}
+        >
+          {recommendationWorkbenchContent}
+        </MobileSheet>
+      </>
     );
   }
 
   return (
-    <DesktopModal
-      open={tagManagementOpen}
-      title={t("shell.affairsTagManagerTitle")}
-      description={t("shell.affairsTagManagerDescription")}
-      size="wide"
-      layout="form"
-      className="affairs-library-settings-modal"
-      onClose={closeTagManagement}
-    >
-      {content}
-    </DesktopModal>
+    <>
+      <DesktopModal
+        open={tagManagementOpen}
+        title={t("shell.affairsTagManagerTitle")}
+        description={t("shell.affairsTagManagerDescription")}
+        size="wide"
+        layout="form"
+        className="affairs-library-settings-modal"
+        onClose={closeTagManagement}
+      >
+        {content}
+      </DesktopModal>
+      <DesktopModal
+        open={recommendationWorkbenchOpen}
+        title={t("shell.affairsTagRecommendationWorkbenchTitle")}
+        description={t("shell.affairsTagRecommendationWorkbenchDescription")}
+        size="xwide"
+        layout="form"
+        className="affairs-library-settings-modal"
+        onClose={closeRecommendationWorkbench}
+      >
+        {recommendationWorkbenchContent}
+      </DesktopModal>
+    </>
+  );
+}
+
+function AffairsTagManagementTreeNodes({
+  nodes,
+  selectedTagId,
+  onSelect,
+}: {
+  nodes: ManagedTagTreeNode[];
+  selectedTagId: string | null;
+  onSelect: (tagId: string) => void;
+}) {
+  return (
+    <ul className="affairs-tag-management-tree-list">
+      {nodes.map((node) => (
+        <li key={node.tag.id} className="affairs-tag-management-tree-node" role="treeitem" aria-selected={selectedTagId === node.tag.id}>
+          <button
+            type="button"
+            className={selectedTagId === node.tag.id ? "affairs-tag-management-tree-button active" : "affairs-tag-management-tree-button"}
+            onClick={() => onSelect(node.tag.id)}
+          >
+            <span className="affairs-tag-management-tree-main">
+              <span className="affairs-tag-management-tree-name">{node.tag.name}</span>
+              <span className="affairs-tag-management-tree-path">{node.tag.path}</span>
+            </span>
+            <span className="affairs-tag-management-tree-meta">
+              {node.tag.ruleEnabled ? <span className="affairs-inline-pill">{t("shell.affairsTagRuleEnabledBadge")}</span> : null}
+              {node.tag.documentCount > 0 ? <span className="affairs-binding-hint">{t("shell.affairsTagTreeDocumentCount", { count: node.tag.documentCount })}</span> : null}
+            </span>
+          </button>
+          {node.children.length > 0 ? (
+            <AffairsTagManagementTreeNodes nodes={node.children} selectedTagId={selectedTagId} onSelect={onSelect} />
+          ) : null}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -3681,14 +5222,23 @@ function AffairsLibraryConfigForm({
   const platform = usePlatform();
   const { showToast } = useToast();
   const mirrorRootInputId = useId();
+  const includedHiddenPathsInputId = useId();
   const persistedAllowedExtensions = useMemo(
     () => sortAllowedExtensions(libraryConfig?.allowedExtensions ?? []),
     [libraryConfig?.allowedExtensions]
   );
   const persistedAllowedExtensionsSignature = persistedAllowedExtensions.join("|");
+  const persistedIncludedHiddenPaths = useMemo(
+    () => sortIncludedHiddenPaths(libraryConfig?.includedHiddenPaths ?? []),
+    [libraryConfig?.includedHiddenPaths]
+  );
+  const persistedIncludedHiddenPathsSignature = persistedIncludedHiddenPaths.join("|");
   const [mirrorRoot, setMirrorRoot] = useState(libraryConfig?.mirrorRoot ?? "");
   const [selectedExtensions, setSelectedExtensions] = useState<string[]>(
     () => resolveEditableAllowedExtensions(libraryConfig?.allowedExtensions ?? [])
+  );
+  const [includedHiddenPathsText, setIncludedHiddenPathsText] = useState(
+    () => persistedIncludedHiddenPaths.join("\n")
   );
   const [manualExtension, setManualExtension] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -3697,8 +5247,15 @@ function AffairsLibraryConfigForm({
   useEffect(() => {
     setMirrorRoot(libraryConfig?.mirrorRoot ?? "");
     setSelectedExtensions(resolveEditableAllowedExtensions(persistedAllowedExtensions));
+    setIncludedHiddenPathsText(persistedIncludedHiddenPaths.join("\n"));
     setManualExtension("");
-  }, [persistedAllowedExtensions, persistedAllowedExtensionsSignature, libraryConfig?.mirrorRoot]);
+  }, [
+    persistedAllowedExtensions,
+    persistedAllowedExtensionsSignature,
+    persistedIncludedHiddenPaths,
+    persistedIncludedHiddenPathsSignature,
+    libraryConfig?.mirrorRoot
+  ]);
 
   if (!binding) {
     return null;
@@ -3769,6 +5326,19 @@ function AffairsLibraryConfigForm({
       {!platform.isDesktop ? (
         <span className="affairs-binding-hint">{t("shell.affairsLibraryMirrorRootDesktopOnlyHint")}</span>
       ) : null}
+      <ModalField
+        label={t("shell.affairsLibraryIncludedHiddenPathsLabel")}
+        htmlFor={includedHiddenPathsInputId}
+        description={t("shell.affairsLibraryIncludedHiddenPathsHint")}
+      >
+        <textarea
+          id={includedHiddenPathsInputId}
+          value={includedHiddenPathsText}
+          onChange={(event) => setIncludedHiddenPathsText(event.target.value)}
+          placeholder={t("shell.affairsLibraryIncludedHiddenPathsPlaceholder")}
+          rows={4}
+        />
+      </ModalField>
       <ModalField
         label={t("shell.affairsLibraryAllowedExtensionsLabel")}
         description={t("shell.affairsLibraryAllowedExtensionsHint")}
@@ -3848,6 +5418,7 @@ function AffairsLibraryConfigForm({
             try {
               const normalizedMirrorRoot = mirrorRoot.trim() || null;
               const normalizedSelectedExtensions = sortAllowedExtensions(selectedExtensions);
+              const normalizedIncludedHiddenPaths = parseIncludedHiddenPaths(includedHiddenPathsText);
               const normalizedExtensions = shouldPersistImplicitAllowedExtensions(
                 persistedAllowedExtensions,
                 normalizedSelectedExtensions
@@ -3856,7 +5427,8 @@ function AffairsLibraryConfigForm({
                 : normalizedSelectedExtensions;
               const result = await saveLibraryConfig({
                 mirrorRoot: normalizedMirrorRoot,
-                allowedExtensions: normalizedExtensions
+                allowedExtensions: normalizedExtensions,
+                includedHiddenPaths: normalizedIncludedHiddenPaths
               });
               const applyStatus = result?.applyConfigStatus;
               showToast({
@@ -3914,6 +5486,290 @@ function resolveLocalMirrorTarget(
     absolutePath,
     mirrorRoot: normalizedRoot
   };
+}
+
+function buildAbsoluteLibraryPath(rootDir: string | null | undefined, relativePath: string): string | null {
+  const root = rootDir?.trim().replace(/\/+$/g, "") ?? "";
+  const filePath = relativePath.trim().replace(/^\/+/, "");
+  if (!root || !filePath) {
+    return null;
+  }
+  return `${root}/${filePath}`.replace(/\/{2,}/g, "/");
+}
+
+function getContextTargetRelativePath(target: Extract<LibraryContextMenuTarget, { kind: "document" | "folder" }>): string {
+  return target.kind === "document" ? target.record.filePath : target.entry.path;
+}
+
+function getContextTargetTitle(target: Extract<LibraryContextMenuTarget, { kind: "document" | "folder" }>): string {
+  return target.kind === "document" ? target.record.displayName : target.entry.title;
+}
+
+function resolveTargetAbsolutePath(
+  rootDir: string | null | undefined,
+  target: Extract<LibraryContextMenuTarget, { kind: "document" | "folder" }>
+): string | null {
+  return buildAbsoluteLibraryPath(rootDir, getContextTargetRelativePath(target));
+}
+
+function resolvePasteDestinationFolder(target: LibraryContextMenuTarget): string | null {
+  if (target.kind === "blank") {
+    return target.folderPath;
+  }
+  if (target.kind === "folder") {
+    return target.entry.path;
+  }
+  return getParentFolderPath(target.record.filePath);
+}
+
+function buildUniqueLibraryTargetPath(
+  destinationFolder: string | null,
+  fileName: string,
+  currentEntries: LibraryEntry[]
+): string {
+  const normalizedName = fileName.trim() || t("shell.affairsLibraryUntitledFileName");
+  const existing = new Set(currentEntries.map((entry) => entry.path));
+  const basePath = joinLibraryRelativePath(destinationFolder, normalizedName);
+  if (!existing.has(basePath)) {
+    return basePath;
+  }
+
+  const dotIndex = normalizedName.lastIndexOf(".");
+  const name = dotIndex > 0 ? normalizedName.slice(0, dotIndex) : normalizedName;
+  const extension = dotIndex > 0 ? normalizedName.slice(dotIndex) : "";
+  for (let index = 2; index < 1000; index += 1) {
+    const candidate = joinLibraryRelativePath(destinationFolder, `${name} ${index}${extension}`);
+    if (!existing.has(candidate)) {
+      return candidate;
+    }
+  }
+  return joinLibraryRelativePath(destinationFolder, `${name} ${Date.now()}${extension}`);
+}
+
+function joinLibraryRelativePath(folderPath: string | null | undefined, fileName: string): string {
+  const folder = folderPath?.trim().replace(/^\/+|\/+$/g, "") ?? "";
+  const name = fileName.trim().replace(/^\/+/, "");
+  return folder ? `${folder}/${name}` : name;
+}
+
+function uniqueStringList(items: string[]): string[] {
+  return [...new Set(items.map((item) => item.trim()).filter(Boolean))];
+}
+
+function buildDesktopLibraryContextMenuItems(input: {
+  target: LibraryContextMenuTarget;
+  bindingRootDir: string | null;
+  libraryClipboard: LibraryClipboardState | null;
+  recentAssignableTags: AffairsTagNodeDto[];
+  onPreview: (() => void | Promise<void>) | null;
+  onOpen: (() => void | Promise<void>) | null;
+  onDownload: (() => void | Promise<void>) | null;
+  onCopyFile: (() => void | Promise<void>) | null;
+  onCopyFileName: (() => void | Promise<void>) | null;
+  onCopyAbsolutePath: (() => void | Promise<void>) | null;
+  onCopyRelativePath: (() => void | Promise<void>) | null;
+  onCut: (() => void | Promise<void>) | null;
+  onPaste: (() => void | Promise<void>) | null;
+  onDelete: (() => void | Promise<void>) | null;
+  onApplyTag: ((tagId: string) => void | Promise<void>) | null;
+  onProperties: (() => void | Promise<void>) | null;
+}): DesktopContextMenuItem[] {
+  const { target } = input;
+  const items: DesktopContextMenuItem[] = [];
+
+  if (target.kind === "document" && input.onPreview) {
+    items.push({
+      id: `preview:${target.record.id}`,
+      label: t("shell.affairsLibraryContextPreview"),
+      onSelect: input.onPreview
+    });
+  }
+
+  if ((target.kind === "document" || target.kind === "folder") && input.onOpen) {
+    items.push({
+      id: `open:${target.kind}:${getContextTargetRelativePath(target)}`,
+      label: t("shell.affairsLibraryContextOpen"),
+      onSelect: input.onOpen
+    });
+  }
+
+  if (target.kind === "document" && input.onDownload) {
+    items.push({
+      id: `download:${target.record.id}`,
+      label: t("shell.affairsLibraryContextDownload"),
+      onSelect: input.onDownload
+    });
+  }
+
+  if (target.kind !== "blank") {
+    items.push({
+      id: `copy:${target.kind}:${getContextTargetRelativePath(target)}`,
+      label: t("shell.affairsLibraryContextCopy"),
+      items: [
+        {
+          id: `copy-file:${target.kind}`,
+          label: t("shell.affairsLibraryContextCopyFile"),
+          onSelect: () => input.onCopyFile?.()
+        },
+        {
+          id: `copy-file-name:${target.kind}`,
+          label: t("shell.affairsLibraryContextCopyFileName"),
+          onSelect: () => input.onCopyFileName?.()
+        },
+        {
+          id: `copy-absolute-path:${target.kind}`,
+          label: t("shell.affairsLibraryContextCopyAbsolutePath"),
+          disabled: !buildAbsoluteLibraryPath(input.bindingRootDir, getContextTargetRelativePath(target)),
+          onSelect: () => input.onCopyAbsolutePath?.()
+        },
+        {
+          id: `copy-relative-path:${target.kind}`,
+          label: t("shell.affairsLibraryContextCopyRelativePath"),
+          onSelect: () => input.onCopyRelativePath?.()
+        }
+      ]
+    });
+  }
+
+  if ((target.kind === "document" || target.kind === "folder") && input.onCut) {
+    items.push({
+      id: `cut:${target.kind}:${getContextTargetRelativePath(target)}`,
+      label: t("shell.affairsLibraryContextCut"),
+      onSelect: input.onCut
+    });
+  }
+
+  items.push({
+    id: `paste:${target.kind === "blank" ? "blank" : getContextTargetRelativePath(target)}`,
+    label: t("shell.affairsLibraryContextPaste"),
+    disabled: !input.libraryClipboard,
+    onSelect: () => input.onPaste?.()
+  });
+
+  if ((target.kind === "document" || target.kind === "folder") && input.onDelete) {
+    items.push({
+      id: `delete:${target.kind}:${getContextTargetRelativePath(target)}`,
+      label: t("shell.affairsLibraryContextDelete"),
+      onSelect: input.onDelete
+    });
+  }
+
+  if ((target.kind === "document" || target.kind === "folder") && input.onApplyTag) {
+    items.push({
+      id: `tags:${target.kind}:${getContextTargetRelativePath(target)}`,
+      label: t("shell.affairsLibraryContextTags"),
+      disabled: input.recentAssignableTags.length === 0,
+      items: input.recentAssignableTags.length > 0
+        ? input.recentAssignableTags.map((tag) => ({
+            id: `tag:${tag.id}`,
+            label: tag.path,
+            onSelect: () => input.onApplyTag?.(tag.id)
+          }))
+        : [
+            {
+              id: "tag-empty",
+              label: t("shell.affairsLibraryRecentTagsEmpty"),
+              disabled: true,
+              onSelect: () => undefined
+            }
+          ]
+    });
+  }
+
+  if ((target.kind === "document" || target.kind === "folder") && input.onProperties) {
+    items.push({
+      id: `properties:${target.kind}:${getContextTargetRelativePath(target)}`,
+      label: t("shell.affairsLibraryContextProperties"),
+      onSelect: input.onProperties
+    });
+  }
+
+  return items;
+}
+
+function decodeBase64ToArrayBuffer(value: string): ArrayBuffer {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+}
+
+function downloadBlob(fileName: string, blob: Blob): void {
+  if (typeof document === "undefined") {
+    throw new Error(t("shell.affairsLibraryDownloadFailed"));
+  }
+
+  const objectUrl = window.URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = fileName;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(objectUrl);
+}
+
+async function writeTextToClipboard(
+  text: string,
+  platform: ReturnType<typeof usePlatform>
+): Promise<void> {
+  if (platform.isDesktop) {
+    const desktopResult = await platform.bridge.writeClipboardText(text);
+    if (desktopResult.ok) {
+      return;
+    }
+  }
+
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // 某些 WebView 会拒绝 clipboard API，继续走同步回退。
+    }
+  }
+
+  if (copyTextWithExecCommand(text)) {
+    return;
+  }
+
+  throw new Error(t("shell.affairsLibraryCopyFailed"));
+}
+
+function copyTextWithExecCommand(text: string): boolean {
+  if (typeof document === "undefined" || typeof document.execCommand !== "function") {
+    return false;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.top = "-9999px";
+  textarea.style.left = "-9999px";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
+function readError(error: unknown, fallback: string): string {
+  if (error instanceof ApiError || error instanceof Error) {
+    return error.message;
+  }
+  return fallback;
 }
 
 function AffairsLibraryFileViewerModal({
@@ -4211,6 +6067,18 @@ function RefreshLibraryIcon() {
       <path d="M4 19v-5h5" />
       <path d="M6.8 9A7 7 0 0 1 18 6.4L20 10" />
       <path d="M17.2 15A7 7 0 0 1 6 17.6L4 14" />
+    </svg>
+  );
+}
+
+function ResetFilterIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 5h16" />
+      <path d="M7 12h10" />
+      <path d="M10 19h4" />
+      <path d="M18 6l-4 4" />
+      <path d="M14 6l4 4" />
     </svg>
   );
 }
@@ -4736,16 +6604,10 @@ function mergeInitialLibraryDocumentPage(
   cached: AffairsLibraryDocumentListDto | null,
   response: AffairsLibraryDocumentListDto
 ): AffairsLibraryDocumentListDto {
-  if (!cached || cached.items.length === 0) {
-    return response;
-  }
-  return {
-    total: Math.max(cached.total, response.total),
-    offset: 0,
-    limit: Math.max(cached.limit, response.limit),
-    items: mergeDocumentPageItems(response.items, cached.items),
-    tagFacetCounts: response.tagFacetCounts ?? cached.tagFacetCounts ?? {}
-  };
+  void cached;
+  // 首屏可以先显示缓存，但接口返回后必须以接口结果为准。
+  // 文档库列表表达的是“当前目录状态”，不是追加日志；继续合并旧缓存会让已删除文件假装还存在。
+  return response;
 }
 
 function mergePagedLibraryDocumentPage(
@@ -4841,6 +6703,23 @@ function areLibraryConfigsEqual(
     return false;
   }
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function sortIncludedHiddenPaths(input: readonly string[]): string[] {
+  return [...new Set(
+    input
+      .map((item) => String(item ?? "").trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/g, ""))
+      .filter(Boolean)
+  )].sort((left, right) => left.localeCompare(right, "zh-Hans-CN"));
+}
+
+function parseIncludedHiddenPaths(input: string): string[] {
+  return sortIncludedHiddenPaths(
+    input
+      .split(/\r?\n|,/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+  );
 }
 
 function computeVirtualListMetrics(
@@ -5698,6 +7577,152 @@ function formatIndexStatusDateTime(value: string) {
   }).format(new Date(value));
 }
 
+function formatDateTime(value: string | null | undefined) {
+  if (!value) {
+    return t("common.unknown");
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return t("common.unknown");
+  }
+  return new Intl.DateTimeFormat(userPreferenceStore.getState().profile.language ?? "zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function resolveRecommendationStatusLabel(status: string) {
+  switch (status) {
+    case "draft":
+      return t("shell.affairsTagRecommendationStatusDraft");
+    case "applied":
+      return t("shell.affairsTagRecommendationStatusApplied");
+    case "discarded":
+      return t("shell.affairsTagRecommendationStatusDiscarded");
+    case "failed":
+      return t("shell.affairsTagRecommendationStatusFailed");
+    default:
+      return status;
+  }
+}
+
+function resolveRecommendationSourceLabel(sourceType: string) {
+  switch (sourceType) {
+    case "path_entity":
+      return t("shell.affairsTagRecommendationSourcePathEntity");
+    case "title_phrase":
+      return t("shell.affairsTagRecommendationSourceTitlePhrase");
+    case "summary_keyword":
+      return t("shell.affairsTagRecommendationSourceSummaryKeyword");
+    case "mixed":
+      return t("shell.affairsTagRecommendationSourceMixed");
+    default:
+      return sourceType;
+  }
+}
+
+function resolveTagSourceTypeLabel(sourceType: string) {
+  switch (sourceType) {
+    case "manual_document":
+      return t("shell.affairsTagSourceManualDocument");
+    case "folder_binding":
+      return t("shell.affairsTagSourceFolderBinding");
+    case "rule_match":
+      return t("shell.affairsTagSourceRuleMatch");
+    case "system_derived":
+      return t("shell.affairsTagSourceSystemDerived");
+    default:
+      return sourceType;
+  }
+}
+
+function deriveRecommendationParentPath(pathValue: string) {
+  const segments = pathValue.split("/").map((item) => item.trim()).filter(Boolean);
+  if (segments.length <= 1) {
+    return null;
+  }
+  return segments.slice(0, -1).join("/");
+}
+
+function deriveRecommendationName(pathValue: string) {
+  const segments = pathValue.split("/").map((item) => item.trim()).filter(Boolean);
+  return segments[segments.length - 1] ?? "";
+}
+
+function resolveBatchThemeDefinitions(
+  batch: AffairsTagRecommendationBatchDto | null,
+  items: AffairsTagRecommendationItemDto[],
+): RecommendationThemeOption[] {
+  const fromBatch = Array.isArray(batch?.evidenceSnapshot?.themes)
+    ? batch?.evidenceSnapshot?.themes
+    : [];
+  const themeMap = new Map<string, RecommendationThemeOption>();
+  fromBatch?.forEach((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return;
+    }
+    const record = entry as Record<string, unknown>;
+    const rootName = typeof record.rootName === "string" ? record.rootName : "";
+    const sourceType = typeof record.sourceType === "string" ? record.sourceType as AffairsTagRecommendationSourceTypeDto : "mixed";
+    if (!rootName) {
+      return;
+    }
+    themeMap.set(rootName, {
+      rootName,
+      sourceType,
+      proposedPath: rootName,
+    });
+  });
+  items.forEach((item) => {
+    const availableThemes = Array.isArray(item.evidence?.availableThemes) ? item.evidence.availableThemes : [];
+    availableThemes.forEach((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return;
+      }
+      const record = entry as Record<string, unknown>;
+      const rootName = typeof record.rootName === "string" ? record.rootName : "";
+      const sourceType = typeof record.sourceType === "string" ? record.sourceType as AffairsTagRecommendationSourceTypeDto : "mixed";
+      if (!rootName || themeMap.has(rootName)) {
+        return;
+      }
+      themeMap.set(rootName, {
+        rootName,
+        sourceType,
+        proposedPath: rootName,
+      });
+    });
+  });
+  return Array.from(themeMap.values());
+}
+
+function buildRecommendationPreviewGroups(items: AffairsTagRecommendationItemDto[]): Array<{
+  rootName: string;
+  children: Array<{ itemId: string; name: string; path: string }>;
+}> {
+  const groups = new Map<string, Array<{ itemId: string; name: string; path: string }>>();
+  items
+    .filter((item) => item.selectedByDefault)
+    .forEach((item) => {
+      const rootName = item.proposedParentPath ?? deriveRecommendationParentPath(item.proposedPath) ?? t("shell.affairsTagParentRootOption");
+      const group = groups.get(rootName) ?? [];
+      group.push({
+        itemId: item.id,
+        name: item.proposedName,
+        path: item.proposedPath,
+      });
+      groups.set(rootName, group);
+    });
+
+  return Array.from(groups.entries())
+    .map(([rootName, children]) => ({
+      rootName,
+      children: children.sort((left, right) => left.path.localeCompare(right.path, "zh-Hans-CN")),
+    }))
+    .sort((left, right) => left.rootName.localeCompare(right.rootName, "zh-Hans-CN"));
+}
+
 function buildFavoriteNodeId(favorite: AffairsLibraryFavoriteRecordDto) {
   return `library:favorite:${favorite.kind}:${favorite.path}`;
 }
@@ -5885,7 +7910,10 @@ function resolveIndexStatusLabel(status: AffairsLibraryIndexStatusDto | null) {
   }
 }
 
-function buildIndexStatusDetails(status: AffairsLibraryIndexStatusDto | null) {
+function buildIndexStatusDetails(
+  status: AffairsLibraryIndexStatusDto | null,
+  directoryStatus: AffairsLibraryDocumentListDto["directoryStatus"]
+) {
   const details: Array<{ label: string; value: string; multiline?: boolean }> = [
     {
       label: t("shell.affairsLibraryStatusCurrentLabel"),
@@ -5911,6 +7939,13 @@ function buildIndexStatusDetails(status: AffairsLibraryIndexStatusDto | null) {
     });
   }
 
+  if (status.runningStage?.trim()) {
+    details.push({
+      label: t("shell.affairsLibraryStatusRunningStageLabel"),
+      value: resolveIndexStatusStageLabel(status.runningStage.trim())
+    });
+  }
+
   if (status.dirtyReasons.length > 0) {
     details.push({
       label: t("shell.affairsLibraryStatusDirtyReasonsLabel"),
@@ -5925,6 +7960,50 @@ function buildIndexStatusDetails(status: AffairsLibraryIndexStatusDto | null) {
       value: status.errorSummary.trim(),
       multiline: true
     });
+  }
+
+  if (directoryStatus?.path?.trim()) {
+    details.push({
+      label: t("shell.affairsLibraryDirectoryStatusPathLabel"),
+      value: directoryStatus.path === "." ? t("shell.affairsLibraryDirectoryStatusRootPath") : directoryStatus.path
+    });
+    details.push({
+      label: t("shell.affairsLibraryDirectoryStatusStateLabel"),
+      value: resolveDirectoryStatusLabel(directoryStatus.state)
+    });
+    details.push({
+      label: t("shell.affairsLibraryDirectoryStatusSourceLabel"),
+      value: resolveDirectoryStatusSourceLabel(directoryStatus.source)
+    });
+    pushIndexStatusDetail(
+      details,
+      t("shell.affairsLibraryDirectoryStatusLastRequestedAtLabel"),
+      directoryStatus.lastRequestedAt
+    );
+    pushIndexStatusDetail(
+      details,
+      t("shell.affairsLibraryDirectoryStatusLastCompletedAtLabel"),
+      directoryStatus.lastCompletedAt
+    );
+    pushIndexStatusDetail(
+      details,
+      t("shell.affairsLibraryDirectoryStatusLastFailedAtLabel"),
+      directoryStatus.lastFailedAt
+    );
+    if (directoryStatus.runningTaskId?.trim()) {
+      details.push({
+        label: t("shell.affairsLibraryDirectoryStatusRunningTaskIdLabel"),
+        value: directoryStatus.runningTaskId.trim(),
+        multiline: true
+      });
+    }
+    if (directoryStatus.errorSummary?.trim()) {
+      details.push({
+        label: t("shell.affairsLibraryDirectoryStatusErrorSummaryLabel"),
+        value: directoryStatus.errorSummary.trim(),
+        multiline: true
+      });
+    }
   }
 
   return details;
@@ -5943,6 +8022,57 @@ function pushIndexStatusDetail(
     label,
     value: formatIndexStatusDateTime(value)
   });
+}
+
+function resolveIndexStatusStageLabel(stage: string) {
+  switch (stage) {
+    case "init":
+      return t("shell.affairsLibraryStatusStageInit");
+    case "apply_config":
+      return t("shell.affairsLibraryStatusStageApplyConfig");
+    case "index":
+      return t("shell.affairsLibraryStatusStageIndex");
+    case "incremental_index":
+      return t("shell.affairsLibraryStatusStageIncrementalIndex");
+    case "recompute_tags":
+      return t("shell.affairsLibraryStatusStageRecomputeTags");
+    case "export":
+      return t("shell.affairsLibraryStatusStageExport");
+    case "sqlite":
+      return t("shell.affairsLibraryStatusStageSqlite");
+    case "queued":
+      return t("shell.affairsLibraryStatusStageQueued");
+    default:
+      return stage;
+  }
+}
+
+function resolveDirectoryStatusLabel(state: string) {
+  switch (state) {
+    case "queued":
+      return t("shell.affairsLibraryDirectoryStatusQueued");
+    case "running":
+      return t("shell.affairsLibraryDirectoryStatusRunning");
+    case "fresh":
+      return t("shell.affairsLibraryDirectoryStatusFresh");
+    case "failed":
+      return t("shell.affairsLibraryDirectoryStatusFailed");
+    case "idle":
+    default:
+      return t("shell.affairsLibraryDirectoryStatusIdle");
+  }
+}
+
+function resolveDirectoryStatusSourceLabel(source: string) {
+  switch (source) {
+    case "live":
+      return t("shell.affairsLibraryDirectoryStatusSourceLive");
+    case "snapshot":
+      return t("shell.affairsLibraryDirectoryStatusSourceSnapshot");
+    case "mixed":
+    default:
+      return t("shell.affairsLibraryDirectoryStatusSourceMixed");
+  }
 }
 
 function resolveLibraryEmptyText(status: AffairsLibraryIndexStatusDto | null) {

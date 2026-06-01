@@ -128,6 +128,7 @@ export interface AffairsLibraryBindingDto {
   enabled: boolean;
   mirrorRoot: string | null;
   allowedExtensions: string[];
+  includedHiddenPaths?: string[];
   configRelativePath: string;
   exportMode: "v2";
   updatedAt: string;
@@ -137,6 +138,7 @@ export interface AffairsLibraryConfigDto {
   binding: AffairsLibraryBindingDto | null;
   mirrorRoot: string | null;
   allowedExtensions: string[];
+  includedHiddenPaths?: string[];
   configRelativePath: string;
   canWrite: boolean;
   applyConfigTaskId?: string;
@@ -151,6 +153,21 @@ export interface AffairsLibraryIndexStatusDto {
   lastCompletedAt: string | null;
   lastFailedAt: string | null;
   nextAllowedAt: string | null;
+  runningTaskId: string | null;
+  runningStage: string | null;
+  errorSummary: string | null;
+}
+
+export type AffairsLibraryDirectoryStateDto = "idle" | "queued" | "running" | "fresh" | "failed";
+export type AffairsLibraryDirectorySourceDto = "live" | "snapshot" | "mixed";
+
+export interface AffairsLibraryDirectoryStatusDto {
+  path: string;
+  state: AffairsLibraryDirectoryStateDto;
+  source: AffairsLibraryDirectorySourceDto;
+  lastRequestedAt: string | null;
+  lastCompletedAt: string | null;
+  lastFailedAt: string | null;
   runningTaskId: string | null;
   errorSummary: string | null;
 }
@@ -277,6 +294,17 @@ export interface AffairsTagRecommendationBatchDto {
   items?: AffairsTagRecommendationItemDto[];
 }
 
+export type AffairsTagRecommendationSourceTypeDto =
+  | "path_entity"
+  | "title_phrase"
+  | "summary_keyword"
+  | "mixed";
+
+export interface AffairsTagRecommendationThemeDto {
+  rootName: string;
+  sourceType: AffairsTagRecommendationSourceTypeDto;
+}
+
 export interface AffairsLibraryFolderNodeDto {
   path: string;
   name: string;
@@ -303,6 +331,7 @@ export interface AffairsLibraryDocumentListDto {
   limit: number;
   items: AffairsLibraryDocumentRecordDto[];
   tagFacetCounts?: Record<string, number>;
+  directoryStatus?: AffairsLibraryDirectoryStatusDto | null;
 }
 
 export type AffairsLibraryPreviewKindDto =
@@ -335,6 +364,24 @@ export interface AffairsLibraryPreviewDto {
   previewPath: string | null;
   previewUrl: string | null;
   capabilities: AffairsLibraryPreviewCapabilitiesDto;
+}
+
+export interface AffairsLibraryDownloadDto {
+  workspaceId: string;
+  path: string;
+  fileName: string;
+  contentBase64: string;
+  size: number;
+  updatedAt: string;
+}
+
+export type AffairsLibraryOperationType = "delete" | "move" | "copy";
+
+export interface AffairsLibraryOperationResultDto {
+  success: true;
+  opType: AffairsLibraryOperationType;
+  sourcePath: string;
+  targetPath: string | null;
 }
 
 export type DebugServiceRoleDto = "frontend" | "backend" | "worker" | "mock" | "custom";
@@ -1394,6 +1441,7 @@ export function saveAffairsLibraryConfig(
   payload: {
     mirrorRoot?: string | null;
     allowedExtensions?: string[];
+    includedHiddenPaths?: string[];
   }
 ) {
   return httpClient.request<AffairsLibraryConfigDto>(
@@ -1457,6 +1505,30 @@ export function getAffairsLibraryPreview(workspaceId: string, filePath: string) 
   );
 }
 
+
+export function downloadAffairsLibraryFile(workspaceId: string, filePath: string) {
+  const search = new URLSearchParams({
+    path: filePath
+  });
+
+  return httpClient.request<AffairsLibraryDownloadDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-download?${search.toString()}`
+  );
+}
+
+export function operateAffairsLibraryFile(
+  workspaceId: string,
+  payload: { opType: AffairsLibraryOperationType; srcPath: string; dstPath?: string | null }
+) {
+  return httpClient.request<AffairsLibraryOperationResultDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-ops`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
 export function requestAffairsLibraryRefresh(
   workspaceId: string,
   payload: { reason?: string; targetPath?: string | null } = {}
@@ -1466,6 +1538,7 @@ export function requestAffairsLibraryRefresh(
     taskId?: string;
     deduped?: boolean;
     status: AffairsLibraryIndexStatusDto;
+    directoryStatus?: AffairsLibraryDirectoryStatusDto | null;
   }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-refresh`, {
     method: "POST",
     body: JSON.stringify(payload)
@@ -1540,6 +1613,23 @@ export function updateAffairsTag(
   );
 }
 
+export function deleteAffairsTag(workspaceId: string, tagId: string) {
+  return httpClient.request<{
+    deletedTagIds: string[];
+    deletedPaths: string[];
+    exportRefreshTask: {
+      taskId: string;
+      deduped: boolean;
+      status: "queued";
+    } | null;
+  }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tags/${encodeURIComponent(tagId)}`,
+    {
+      method: "DELETE",
+    },
+  );
+}
+
 export function saveAffairsTagRules(
   workspaceId: string,
   tagId: string,
@@ -1604,12 +1694,18 @@ export function saveAffairsFolderTags(workspaceId: string, payload: { folderPath
   );
 }
 
-export function createAffairsTagRecommendationBatch(workspaceId: string) {
+export function createAffairsTagRecommendationBatch(
+  workspaceId: string,
+  payload: {
+    themes: AffairsTagRecommendationThemeDto[];
+  },
+) {
   return httpClient.request<{
     batch: AffairsTagRecommendationBatchDto;
     task: { taskId: string; deduped: boolean; status: "queued" };
   }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tag-recommendations`, {
     method: "POST",
+    body: JSON.stringify(payload),
   });
 }
 
@@ -1622,6 +1718,41 @@ export function listAffairsTagRecommendationBatches(workspaceId: string) {
 export function getAffairsTagRecommendationBatch(workspaceId: string, batchId: string) {
   return httpClient.request<AffairsTagRecommendationBatchDto>(
     `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tag-recommendations/${encodeURIComponent(batchId)}`
+  );
+}
+
+export function applyAffairsTagRecommendationBatch(
+  workspaceId: string,
+  batchId: string,
+  payload: {
+    items: Array<{
+      itemId: string;
+      proposedPath?: string;
+      proposedName?: string;
+      proposedParentPath?: string | null;
+      selected?: boolean;
+    }>;
+  },
+) {
+  return httpClient.request<{
+    batch: AffairsTagRecommendationBatchDto;
+    createdTags: AffairsTagDetailDto[];
+    exportRefreshTask: { taskId: string; deduped: boolean; status: "queued" };
+  }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tag-recommendations/${encodeURIComponent(batchId)}/apply`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function discardAffairsTagRecommendationBatch(workspaceId: string, batchId: string) {
+  return httpClient.request<AffairsTagRecommendationBatchDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tag-recommendations/${encodeURIComponent(batchId)}/discard`,
+    {
+      method: "POST",
+    },
   );
 }
 
