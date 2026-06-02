@@ -119,6 +119,25 @@ describe("httpClient", () => {
     } satisfies Partial<ApiError>);
   });
 
+  it("成功响应不是合法 JSON 时会抛出可识别的无效响应错误", async () => {
+    const fetchMock = vi.mocked(fetch);
+
+    fetchMock.mockResolvedValue(
+      new Response("<!doctype html><html><body>offline</body></html>", {
+        status: 200,
+        headers: {
+          "Content-Type": "text/html"
+        }
+      })
+    );
+
+    await expect(httpClient.request("/api/demo")).rejects.toMatchObject({
+      name: "ApiError",
+      status: 0,
+      errorCode: "INVALID_RESPONSE"
+    } satisfies Partial<ApiError>);
+  });
+
   it("401 TOKEN_EXPIRED 时会先刷新登录态再重试原请求", async () => {
     const fetchMock = vi.mocked(fetch);
     const refreshSpy = vi.spyOn(authStore, "refresh").mockImplementation(async () => {

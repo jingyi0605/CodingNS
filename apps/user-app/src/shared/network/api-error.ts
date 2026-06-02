@@ -29,3 +29,7 @@ export function isProviderDisabledApiError(error: unknown): error is ApiError {
 export function isNetworkApiError(error: unknown): error is ApiError {
   return error instanceof ApiError && error.errorCode === "NETWORK_ERROR";
 }
+
+export function isInvalidResponseApiError(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.errorCode === "INVALID_RESPONSE";
+}

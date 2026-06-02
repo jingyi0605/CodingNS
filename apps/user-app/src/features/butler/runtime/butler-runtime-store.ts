@@ -13,7 +13,7 @@ import { RealtimeClient } from "../../../network/realtime-client";
 import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
-import { ApiError, isNetworkApiError } from "../../../shared/network/api-error";
+import { ApiError, isInvalidResponseApiError, isNetworkApiError } from "../../../shared/network/api-error";
 import type {
   ContextUsageDto,
   ProviderCapabilitiesDto,
@@ -1639,6 +1639,10 @@ function toErrorMessage(error: unknown): string {
 
 function resolveBootstrapErrorCode(error: unknown): string | null {
   if (isNetworkApiError(error)) {
+    return error.errorCode;
+  }
+
+  if (isInvalidResponseApiError(error)) {
     return error.errorCode;
   }
 

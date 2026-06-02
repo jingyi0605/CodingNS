@@ -53,6 +53,7 @@ vi.mock("../../../network/realtime-client", () => ({
 
 import { ButlerRuntimeStore } from "./butler-runtime-store";
 import { userPreferenceStore } from "../../../preferences/user-preference-store";
+import { ApiError } from "../../../shared/network/api-error";
 import {
   getButlerProfile,
   initButlerProfile,
@@ -288,6 +289,23 @@ describe("ButlerRuntimeStore", () => {
       })
     );
     expect(mockedSendButlerControlMessage).not.toHaveBeenCalled();
+  });
+
+  it("初始化拿到无效 JSON 响应时会标记成 Host 不可用，而不是误判成未初始化", async () => {
+    const store = new ButlerRuntimeStore("workspace-1");
+    mockedGetButlerProfile.mockRejectedValueOnce(new ApiError(0, {
+      detail: "服务返回了无效的 JSON 响应：Unexpected token '<'",
+      error_code: "INVALID_RESPONSE"
+    }));
+
+    await store.initialize();
+
+    expect(store.getState()).toMatchObject({
+      loading: false,
+      initialized: false,
+      bootstrapErrorCode: "INVALID_RESPONSE",
+      error: "服务返回了无效的 JSON 响应：Unexpected token '<'"
+    });
   });
 
   it("发送消息已有控制会话时调用 send 接口", async () => {

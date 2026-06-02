@@ -26,7 +26,15 @@ class HttpClient {
       return undefined as T;
     }
 
-    return JSON.parse(raw) as T;
+    try {
+      return JSON.parse(raw) as T;
+    } catch (error) {
+      const detail = error instanceof Error ? `：${error.message}` : "";
+      throw new ApiError(0, {
+        detail: `服务返回了无效的 JSON 响应${detail}`,
+        error_code: "INVALID_RESPONSE"
+      });
+    }
   }
 
   async requestBlob(path: string, options: RequestOptions = {}): Promise<Blob> {
