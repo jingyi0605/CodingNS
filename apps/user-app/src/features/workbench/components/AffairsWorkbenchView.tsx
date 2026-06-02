@@ -47,6 +47,7 @@ import type {
   AffairsLibraryFolderNodeDto,
   AffairsLibraryIndexStatusDto,
   AffairsLibrarySnapshotDto,
+  AffairsTaskSnapshotDto,
   AffairsLibraryTagNodeDto,
   AffairsTagDetailWithRulesDto,
   AffairsTagNodeDto,
@@ -57,6 +58,7 @@ import {
   createWorkspaceDirectory,
   deleteAffairsTag,
   getAffairsDocumentTagDetails,
+  getAffairsFolderTagTask,
   getAffairsFolderTagDetails,
   getAffairsTagDetail,
   listAffairsTags,
@@ -127,6 +129,12 @@ interface AffairsAuxiliaryPanelProps {
   onToggleCollapse?: () => void;
 }
 
+interface FolderTagApplyTaskMonitorState {
+  folderPath: string;
+  taskId: string;
+  snapshot: AffairsTaskSnapshotDto | null;
+}
+
 const LIBRARY_STAGE_PAGE_SIZE = 120;
 const DETAIL_VIEWER_MOUNT_DELAY_MS = 220;
 const FILE_REPEAT_ACTIVATION_MS = 450;
@@ -139,6 +147,10 @@ const AFFAIRS_LIBRARY_STATUS_POLL_ACTIVE_MS = 3_000;
 const AFFAIRS_LIBRARY_STATUS_POLL_IDLE_MS = 12_000;
 const AFFAIRS_LIBRARY_DIRECTORY_POLL_ACTIVE_MS = 3_000;
 const AFFAIRS_LIBRARY_DIRECTORY_POLL_IDLE_MS = 12_000;
+const AFFAIRS_FOLDER_TAG_TASK_POLL_RUNNING_MS = 1_200;
+const AFFAIRS_FOLDER_TAG_TASK_POLL_TERMINAL_HIDE_MS = 8_000;
+const AFFAIRS_TAG_SAVE_SNAPSHOT_POLL_MS = 600;
+const AFFAIRS_TAG_SAVE_SNAPSHOT_TIMEOUT_MS = 8_000;
 const AFFAIRS_LIBRARY_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 const AFFAIRS_LIBRARY_PRESET_EXTENSIONS = [
   ".md", ".mdx", ".txt", ".rtf", ".html", ".htm", ".xml", ".json", ".yaml", ".yml", ".tsv",
@@ -340,10 +352,23 @@ type AutomationRecord = {
   lastRunStatusLabel: string | null;
 };
 
+type AffairsConversationKind = "lightweight" | "agent";
+type AffairsConversationProvider = "codex" | "claude-code";
+
+type AffairsConversationDraftOption = {
+  id: string;
+  kind: AffairsConversationKind;
+  provider: AffairsConversationProvider;
+};
+
 type AffairsSelectedObject =
   | {
       section: "library";
       record: DocumentRecord | null;
+    }
+  | {
+      section: "conversation";
+      record: null;
     }
   | {
       section: "todo";
@@ -416,6 +441,7 @@ interface AffairsWorkbenchContextValue {
   selectedManagedTag: AffairsTagDetailWithRulesDto | null;
   documentTagDetails: AffairsDocumentTagDetailsDto | null;
   folderTagDetails: AffairsFolderTagDetailsDto | null;
+  folderTagTaskMonitor: FolderTagApplyTaskMonitorState | null;
   reloadTagManagement: () => Promise<void>;
   selectManagedTag: (tagId: string | null) => Promise<void>;
   saveManagedTag: (input: {
@@ -430,6 +456,13 @@ interface AffairsWorkbenchContextValue {
   saveDocumentTagSelection: (documentId: string, tagIds: string[], createTagPaths?: string[]) => Promise<void>;
   saveFolderTagSelection: (folderPath: string, tagIds: string[], createTagPaths?: string[]) => Promise<void>;
 }
+
+const AFFAIRS_CONVERSATION_DRAFT_OPTIONS: AffairsConversationDraftOption[] = [
+  { id: "lightweight:codex", kind: "lightweight", provider: "codex" },
+  { id: "lightweight:claude-code", kind: "lightweight", provider: "claude-code" },
+  { id: "agent:codex", kind: "agent", provider: "codex" },
+  { id: "agent:claude-code", kind: "agent", provider: "claude-code" }
+];
 
 const AffairsWorkbenchContext = createContext<AffairsWorkbenchContextValue | null>(null);
 
@@ -491,6 +524,7 @@ export function AffairsWorkbenchProvider({
   const [selectedManagedTag, setSelectedManagedTag] = useState<AffairsTagDetailWithRulesDto | null>(null);
   const [documentTagDetails, setDocumentTagDetails] = useState<AffairsDocumentTagDetailsDto | null>(null);
   const [folderTagDetails, setFolderTagDetails] = useState<AffairsFolderTagDetailsDto | null>(null);
+  const [folderTagTaskMonitor, setFolderTagTaskMonitor] = useState<FolderTagApplyTaskMonitorState | null>(null);
   const [inboxItems, setInboxItems] = useState<ButlerInboxItemDto[]>([]);
   const [followUpTasks, setFollowUpTasks] = useState<ButlerFollowUpTaskDto[]>([]);
   const [automations, setAutomations] = useState<AssistantAutomationTaskDto[]>([]);
@@ -509,6 +543,71 @@ export function AffairsWorkbenchProvider({
     librarySnapshotRef.current = librarySnapshot;
   }, [librarySnapshot]);
 
+  useEffect(() => {
+    if (!folderTagTaskMonitor) {
+      return;
+    }
+
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const pollTask = async () => {
+      try {
+        const snapshot = await getAffairsFolderTagTask(workspaceId, folderTagTaskMonitor.folderPath);
+        if (disposed) {
+          return;
+        }
+        setFolderTagTaskMonitor((previous) => {
+          if (!previous || previous.taskId !== folderTagTaskMonitor.taskId || previous.folderPath !== folderTagTaskMonitor.folderPath) {
+            return previous;
+          }
+          if (areAffairsTaskSnapshotsEqual(previous.snapshot, snapshot)) {
+            return previous;
+          }
+          return {
+            ...previous,
+            snapshot,
+          };
+        });
+        if (!snapshot || isTerminalAffairsTaskStatus(snapshot.status)) {
+          return;
+        }
+      } catch {
+        if (disposed) {
+          return;
+        }
+      }
+
+      if (!disposed) {
+        timer = setTimeout(() => {
+          void pollTask();
+        }, AFFAIRS_FOLDER_TAG_TASK_POLL_RUNNING_MS);
+      }
+    };
+
+    void pollTask();
+
+    return () => {
+      disposed = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+  }, [folderTagTaskMonitor?.folderPath, folderTagTaskMonitor?.taskId, workspaceId]);
+
+  useEffect(() => {
+    if (!folderTagTaskMonitor?.snapshot || !isTerminalAffairsTaskStatus(folderTagTaskMonitor.snapshot.status)) {
+      return;
+    }
+    const currentTaskId = folderTagTaskMonitor.taskId;
+    const timer = setTimeout(() => {
+      setFolderTagTaskMonitor((previous) => previous?.taskId === currentTaskId ? null : previous);
+    }, AFFAIRS_FOLDER_TAG_TASK_POLL_TERMINAL_HIDE_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [folderTagTaskMonitor?.snapshot?.status, folderTagTaskMonitor?.taskId]);
+
   const reloadTagManagement = async () => {
     if (!binding?.enabled) {
       setManagedTags([]);
@@ -519,6 +618,90 @@ export function AffairsWorkbenchProvider({
       setManagedTags(tagTree.items);
     } catch {
       setManagedTags([]);
+    }
+  };
+
+  const syncLibrarySnapshotAfterManagedTagSave = async (
+    previousPath: string | null,
+    nextPath: string,
+  ) => {
+    const normalizedPreviousPath = previousPath?.trim() || null;
+    const normalizedNextPath = nextPath.trim();
+    if (!normalizedNextPath) {
+      return;
+    }
+
+    const deadlineAt = Date.now() + AFFAIRS_TAG_SAVE_SNAPSHOT_TIMEOUT_MS;
+    let latestSnapshot: AffairsLibrarySnapshotDto | null = null;
+    while (Date.now() <= deadlineAt) {
+      try {
+        const snapshot = await getAffairsLibrarySnapshot(workspaceId);
+        latestSnapshot = snapshot;
+        setLibrarySnapshot((previous) => areLibrarySnapshotsEqual(previous, snapshot) ? previous : snapshot);
+        writeCachedLibrarySnapshot(workspaceId, snapshot);
+        const tagPathSet = new Set((snapshot.tags ?? []).map((item) => item.path));
+        const hasNextPath = tagPathSet.has(normalizedNextPath);
+        const oldPathCleared = !normalizedPreviousPath
+          || normalizedPreviousPath === normalizedNextPath
+          || !tagPathSet.has(normalizedPreviousPath);
+        if (hasNextPath && oldPathCleared) {
+          break;
+        }
+      } catch {
+        // 标签保存后的左侧树刷新失败时先静默重试，不打断保存主流程。
+      }
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, AFFAIRS_TAG_SAVE_SNAPSHOT_POLL_MS);
+      });
+    }
+
+    if (
+      normalizedPreviousPath
+      && normalizedPreviousPath !== normalizedNextPath
+      && state.browseMode === "tag"
+      && (
+        state.selectedTagPath === normalizedPreviousPath
+        || selectedTagPaths.includes(normalizedPreviousPath)
+      )
+    ) {
+      const nextSelectedTagPaths = Array.from(new Set(
+        selectedTagPaths.map((tagPath) => tagPath === normalizedPreviousPath ? normalizedNextPath : tagPath),
+      ));
+      onStateChange({
+        ...state,
+        selectedTagPath: state.selectedTagPath === normalizedPreviousPath
+          ? normalizedNextPath
+          : nextSelectedTagPaths[nextSelectedTagPaths.length - 1] ?? null,
+        selectedTagPaths: nextSelectedTagPaths,
+      });
+    }
+
+    if (latestSnapshot && state.browseMode === "tag") {
+      const nextPage = await listAffairsLibraryDocuments(workspaceId, {
+        browseMode: "tag",
+        selectedFolderPath: state.selectedFolderPath,
+        selectedTagPath: normalizedPreviousPath && state.selectedTagPath === normalizedPreviousPath
+          ? normalizedNextPath
+          : state.selectedTagPath,
+        selectedTagPaths: normalizedPreviousPath
+          ? selectedTagPaths.map((tagPath) => tagPath === normalizedPreviousPath ? normalizedNextPath : tagPath)
+          : selectedTagPaths,
+        selectedFavoriteId: state.selectedFavoriteId,
+        offset: 0,
+        limit: LIBRARY_STAGE_PAGE_SIZE,
+      }).catch(() => null);
+      if (nextPage) {
+        setLibraryDocumentPage((previous) => areLibraryDocumentPagesEqual(previous, nextPage) ? previous : nextPage);
+        writeCachedLibraryDocumentPage(workspaceId, {
+          ...state,
+          selectedTagPath: normalizedPreviousPath && state.selectedTagPath === normalizedPreviousPath
+            ? normalizedNextPath
+            : state.selectedTagPath,
+          selectedTagPaths: normalizedPreviousPath
+            ? selectedTagPaths.map((tagPath) => tagPath === normalizedPreviousPath ? normalizedNextPath : tagPath)
+            : selectedTagPaths,
+        }, nextPage);
+      }
     }
   };
 
@@ -968,12 +1151,16 @@ export function AffairsWorkbenchProvider({
   const loading =
     activeSection === "library"
       ? libraryLoading
+      : activeSection === "conversation"
+        ? false
       : activeSection === "todo"
         ? todoLoading
         : automationLoading;
   const error =
     activeSection === "library"
       ? libraryError
+      : activeSection === "conversation"
+        ? null
       : activeSection === "todo"
         ? todoError
         : automationError;
@@ -993,6 +1180,13 @@ export function AffairsWorkbenchProvider({
       return {
         section: "todo",
         record
+      };
+    }
+
+    if (activeSection === "conversation") {
+      return {
+        section: "conversation",
+        record: null
       };
     }
 
@@ -1072,6 +1266,10 @@ export function AffairsWorkbenchProvider({
         : null;
     }
 
+    if (selectedObject.section === "conversation") {
+      return null;
+    }
+
     const record = selectedObject.record;
     return record
       ? {
@@ -1088,6 +1286,15 @@ export function AffairsWorkbenchProvider({
   const sidebarNodes = useMemo<AffairsSidebarNode[]>(() => {
     if (activeSection === "library") {
       return [];
+    }
+
+    if (activeSection === "conversation") {
+      return AFFAIRS_CONVERSATION_DRAFT_OPTIONS.map((item) => ({
+        id: `conversation:draft:${item.id}`,
+        label: buildAffairsConversationOptionLabel(item),
+        summary: buildAffairsConversationOptionSummary(item),
+        tone: item.kind === "agent" ? "automation" : "source"
+      }));
     }
 
     if (activeSection === "todo") {
@@ -1374,6 +1581,7 @@ export function AffairsWorkbenchProvider({
     selectedManagedTag,
     documentTagDetails,
     folderTagDetails,
+    folderTagTaskMonitor,
     reloadTagManagement,
     selectManagedTag: async (tagId) => {
       if (!tagId) {
@@ -1383,11 +1591,15 @@ export function AffairsWorkbenchProvider({
       setSelectedManagedTag(await getAffairsTagDetail(workspaceId, tagId));
     },
     saveManagedTag: async (input) => {
+      const previousPath = input.tagId
+        ? selectedManagedTag?.path?.trim() ?? null
+        : null;
       const saved = input.tagId
         ? await updateAffairsTag(workspaceId, input.tagId, input)
         : await createAffairsTag(workspaceId, input);
       setSelectedManagedTag(saved);
       await reloadTagManagement();
+      await syncLibrarySnapshotAfterManagedTagSave(previousPath, saved.path);
       return saved;
     },
     deleteManagedTag: async (tagId) => {
@@ -1413,10 +1625,15 @@ export function AffairsWorkbenchProvider({
       await refreshLibraryNow();
     },
     saveFolderTagSelection: async (folderPath, tagIds, createTagPaths = []) => {
-      if (createTagPaths.length > 0) {
-        await saveAffairsFolderTagsWithCreate(workspaceId, { folderPath, tagIds, createTagPaths });
-      } else {
-        await saveAffairsFolderTags(workspaceId, { folderPath, tagIds });
+      const result = createTagPaths.length > 0
+        ? await saveAffairsFolderTagsWithCreate(workspaceId, { folderPath, tagIds, createTagPaths })
+        : await saveAffairsFolderTags(workspaceId, { folderPath, tagIds });
+      if (result.refreshTask) {
+        setFolderTagTaskMonitor({
+          folderPath: result.target.folderPath,
+          taskId: result.refreshTask.taskId,
+          snapshot: null,
+        });
       }
       if (createTagPaths.length > 0) {
         await reloadTagManagement();
@@ -1460,6 +1677,7 @@ export function AffairsWorkbenchProvider({
     tagManagementOpen,
     documentTagDetails,
     folderTagDetails,
+    folderTagTaskMonitor,
     refreshLibraryNow,
     viewerState,
     showToast,
@@ -1493,6 +1711,16 @@ export function AffairsSectionMenu() {
       >
         <AffairsLibraryIcon />
         <span>{t("shell.affairsLibraryNav")}</span>
+      </button>
+      <button
+        type="button"
+        className={activeSection === "conversation" ? "workbench-nav-segment-button active" : "workbench-nav-segment-button"}
+        role="tab"
+        aria-selected={activeSection === "conversation"}
+        onClick={() => selectSection("conversation")}
+      >
+        <AffairsConversationIcon />
+        <span>{t("shell.affairsConversationNav")}</span>
       </button>
       <button
         type="button"
@@ -1850,6 +2078,49 @@ export function AffairsSidebarPanel() {
   );
 }
 
+function AffairsConversationEmptyState() {
+  return (
+    <div className="affairs-conversation-empty-state">
+      <header className="affairs-conversation-empty-header">
+        <span className="affairs-inline-pill">{t("shell.affairsConversationEntryBadge")}</span>
+        <h2>{t("shell.affairsConversationStageTitle")}</h2>
+        <p>{t("shell.affairsConversationEmptyDescription")}</p>
+      </header>
+
+      <section className="affairs-conversation-empty-section">
+        <div className="affairs-conversation-empty-section-header">
+          <strong>{t("shell.affairsConversationModePickerTitle")}</strong>
+          <p>{t("shell.affairsConversationModePickerDescription")}</p>
+        </div>
+        <div className="affairs-conversation-option-grid" role="list" aria-label={t("shell.affairsConversationModePickerTitle")}>
+          {AFFAIRS_CONVERSATION_DRAFT_OPTIONS.map((option) => (
+            <article key={option.id} className="affairs-conversation-option-card" role="listitem">
+              <div className="affairs-conversation-option-topline">
+                <span className="affairs-inline-pill subtle">{resolveAffairsConversationKindLabel(option.kind)}</span>
+                <span className="affairs-inline-pill">{resolveAffairsConversationProviderLabel(option.provider)}</span>
+              </div>
+              <strong>{buildAffairsConversationOptionLabel(option)}</strong>
+              <p>{buildAffairsConversationOptionSummary(option)}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="affairs-conversation-empty-section">
+        <div className="affairs-conversation-empty-section-header">
+          <strong>{t("shell.affairsConversationBoundaryTitle")}</strong>
+          <p>{t("shell.affairsConversationBoundaryDescription")}</p>
+        </div>
+        <ul className="affairs-conversation-boundary-list">
+          <li>{t("shell.affairsConversationBoundaryLightweight")}</li>
+          <li>{t("shell.affairsConversationBoundaryAgent")}</li>
+          <li>{t("shell.affairsConversationBoundaryProvider")}</li>
+        </ul>
+      </section>
+    </div>
+  );
+}
+
 export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps) {
   const {
     activeSection,
@@ -1874,6 +2145,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     saveFolderTagSelection,
     documentTagDetails,
     folderTagDetails,
+    folderTagTaskMonitor,
     selectObject,
     navigateLibraryFolder,
     navigateLibraryTag,
@@ -2626,6 +2898,26 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     return createPortal(content, document.body);
   };
 
+  if (activeSection === "conversation") {
+    return (
+      <main className="workbench-page conversation-page-shell affairs-conversation-page-shell" data-affairs-section="conversation">
+        <div className="conversation-main affairs-conversation-main">
+          <header className="conversation-header affairs-conversation-header">
+            <div className="conversation-header-main">
+              <h1>{t("shell.affairsConversationStageTitle")}</h1>
+              <p>{t("shell.affairsConversationSummary")}</p>
+            </div>
+          </header>
+          <div className="conversation-timeline-shell affairs-conversation-timeline-shell">
+            <div className="message-list affairs-conversation-message-list">
+              <AffairsConversationEmptyState />
+            </div>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <div className="affairs-main-panel">
       <section className="affairs-stage-panel">
@@ -2640,6 +2932,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                 <AffairsLibraryStageToolbar
                   browseMode={state.browseMode}
                   folderBreadcrumbs={folderBreadcrumbs}
+                  folderTagTaskMonitor={folderTagTaskMonitor}
                   tagRecords={tagRecords}
                   indexStatus={indexStatus}
                   directoryStatus={state.browseMode === "folder" ? currentDirectoryStatus : null}
@@ -3849,6 +4142,7 @@ function AffairsStageSkeleton({ viewMode }: { viewMode: "grid" | "list" }) {
 function AffairsLibraryStageToolbar({
   browseMode,
   folderBreadcrumbs,
+  folderTagTaskMonitor,
   tagRecords,
   indexStatus,
   directoryStatus,
@@ -3867,6 +4161,7 @@ function AffairsLibraryStageToolbar({
 }: {
   browseMode: "folder" | "tag";
   folderBreadcrumbs: Array<{ label: string; path: string }>;
+  folderTagTaskMonitor: FolderTagApplyTaskMonitorState | null;
   tagRecords: TagRecord[];
   indexStatus: AffairsLibraryIndexStatusDto | null;
   directoryStatus: AffairsLibraryDocumentListDto["directoryStatus"];
@@ -3987,8 +4282,14 @@ function AffairsLibraryStageToolbar({
     <div ref={toolbarRef} className="affairs-stage-toolbar">
       <div className="affairs-stage-toolbar-left">
         <div className="affairs-stage-breadcrumb" aria-label={t("shell.affairsLibraryBindingFieldLabel")}>
-          <button type="button" className="affairs-stage-breadcrumb-button root" onClick={() => onNavigateFolder(null)}>
-            {" / "}
+          <button
+            type="button"
+            className="affairs-stage-breadcrumb-button root"
+            aria-label={t("shell.affairsLibraryFolderRootLabel")}
+            title={t("shell.affairsLibraryFolderRootLabel")}
+            onClick={() => onNavigateFolder(null)}
+          >
+            <AffairsBreadcrumbHomeIcon />
           </button>
           {breadcrumbItems.map((item, index) => (
             <Fragment key={item.key}>
@@ -4080,6 +4381,11 @@ function AffairsLibraryStageToolbar({
             <RefreshLibraryIcon />
           </button>
         </div>
+        {folderTagTaskMonitor ? (
+          <div className="affairs-stage-toolbar-group">
+            <AffairsFolderTagTaskProgressButton task={folderTagTaskMonitor} />
+          </div>
+        ) : null}
         <div className="affairs-stage-toolbar-group">
           <button
             ref={statusTriggerRef}
@@ -4186,6 +4492,90 @@ function AffairsTagDetailPanel({ detail }: { detail: TagDetailState }) {
         </div>
       </div>
     </section>
+  );
+}
+
+function AffairsFolderTagTaskProgressButton({ task }: { task: FolderTagApplyTaskMonitorState }) {
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const snapshot = task.snapshot;
+  const status = snapshot?.status ?? "queued";
+  const progress = snapshot?.progress ?? null;
+  const normalizedPercent = Math.max(0, Math.min(100, Math.round(progress?.percent ?? (isTerminalAffairsTaskStatus(status) ? 100 : 0))));
+  const folderLabel = task.folderPath === "."
+    ? t("shell.affairsLibraryDirectoryStatusRootPath")
+    : getPathLeafName(task.folderPath) || task.folderPath;
+  const statusLabel = resolveAffairsTaskStatusLabel(status);
+  const phaseLabel = resolveAffairsTaskPhaseLabel(progress?.phase ?? null);
+  const progressSummary = progress && typeof progress.current === "number" && typeof progress.total === "number"
+    ? t("shell.affairsFolderTagTaskProgressCount", { current: progress.current, total: progress.total })
+    : t("shell.affairsFolderTagTaskPreparing");
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="affairs-folder-tag-task-trigger"
+        aria-label={t("shell.affairsFolderTagTaskButtonLabel", {
+          folder: folderLabel,
+          status: statusLabel,
+          percent: normalizedPercent,
+        })}
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className={`affairs-folder-tag-task-dot state-${status}`} aria-hidden="true" />
+        <span className="affairs-folder-tag-task-text">
+          {t("shell.affairsFolderTagTaskShortTitle")}
+        </span>
+        <span className="affairs-folder-tag-task-badge">
+          {status === "running" ? `${normalizedPercent}%` : statusLabel}
+        </span>
+      </button>
+      <ButlerAnchoredPopover
+        open={open && triggerRef.current !== null}
+        className="affairs-folder-tag-task-popover"
+        anchorRef={triggerRef}
+        popoverRef={popoverRef}
+        role="dialog"
+        labelledBy="affairs-folder-tag-task-popover-title"
+        maxWidth={340}
+        gap={8}
+      >
+        <div className="affairs-folder-tag-task-popover-card">
+          <div className="affairs-folder-tag-task-popover-header">
+            <strong id="affairs-folder-tag-task-popover-title">{t("shell.affairsFolderTagTaskTitle")}</strong>
+            <span>{statusLabel}</span>
+          </div>
+          <div className="affairs-folder-tag-task-popover-grid">
+            <div className="affairs-folder-tag-task-popover-row">
+              <span className="affairs-folder-tag-task-popover-label">{t("shell.affairsFolderTagTaskFolderLabel")}</span>
+              <span className="affairs-folder-tag-task-popover-value">{task.folderPath === "." ? "/" : task.folderPath}</span>
+            </div>
+            <div className="affairs-folder-tag-task-popover-row">
+              <span className="affairs-folder-tag-task-popover-label">{t("shell.affairsFolderTagTaskPhaseLabel")}</span>
+              <span className="affairs-folder-tag-task-popover-value">{phaseLabel}</span>
+            </div>
+            <div className="affairs-folder-tag-task-popover-row">
+              <span className="affairs-folder-tag-task-popover-label">{t("shell.affairsFolderTagTaskProgressLabel")}</span>
+              <span className="affairs-folder-tag-task-popover-value">{progressSummary}</span>
+            </div>
+          </div>
+          <div className="affairs-folder-tag-task-progress-track" aria-hidden="true">
+            <span className="affairs-folder-tag-task-progress-fill" style={{ width: `${normalizedPercent}%` }} />
+          </div>
+          <p className="affairs-folder-tag-task-popover-detail">
+            {progress?.label ?? t("shell.affairsFolderTagTaskPreparing")}
+            {progress?.detail ? ` · ${progress.detail}` : ""}
+          </p>
+          {snapshot?.errorMessage ? (
+            <p className="affairs-folder-tag-task-popover-error">{snapshot.errorMessage}</p>
+          ) : null}
+        </div>
+      </ButlerAnchoredPopover>
+    </>
   );
 }
 
@@ -6331,6 +6721,35 @@ function AffairsAutomationIcon() {
   );
 }
 
+function AffairsConversationIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
+      <path d="M6.5 5h11A2.5 2.5 0 0 1 20 7.5v7A2.5 2.5 0 0 1 17.5 17H9l-4 3V7.5A2.5 2.5 0 0 1 7.5 5Z" />
+      <path d="M9 10h6" />
+      <path d="M9 13h4" />
+    </svg>
+  );
+}
+
+function AffairsBreadcrumbHomeIcon() {
+  return (
+    <svg
+      className="affairs-stage-breadcrumb-home-icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.55"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4.5 10.5 12 4.5l7.5 6" />
+      <path d="M6.75 9.75v8.75h10.5V9.75" />
+      <path d="M10.25 18.5v-4.75h3.5v4.75" />
+    </svg>
+  );
+}
+
 function GridViewIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
@@ -6399,6 +6818,55 @@ function AffairsTagManagerIcon() {
   );
 }
 
+function resolveAffairsTaskStatusLabel(status: AffairsTaskSnapshotDto["status"] | "queued"): string {
+  switch (status) {
+    case "running":
+      return t("shell.affairsFolderTagTaskStatusRunning");
+    case "succeeded":
+      return t("shell.affairsFolderTagTaskStatusSucceeded");
+    case "failed":
+      return t("shell.affairsFolderTagTaskStatusFailed");
+    case "cancelled":
+      return t("shell.affairsFolderTagTaskStatusCancelled");
+    case "timeout":
+      return t("shell.affairsFolderTagTaskStatusTimeout");
+    case "queued":
+    default:
+      return t("shell.affairsFolderTagTaskStatusQueued");
+  }
+}
+
+function resolveAffairsTaskPhaseLabel(phase: string | null): string {
+  switch (phase) {
+    case "prepare":
+      return t("shell.affairsFolderTagTaskPhasePrepare");
+    case "recompute":
+      return t("shell.affairsFolderTagTaskPhaseRecompute");
+    case "write":
+      return t("shell.affairsFolderTagTaskPhaseWrite");
+    case "export":
+      return t("shell.affairsFolderTagTaskPhaseExport");
+    case "finished":
+      return t("shell.affairsFolderTagTaskPhaseFinished");
+    default:
+      return t("shell.affairsFolderTagTaskPhasePrepare");
+  }
+}
+
+function isTerminalAffairsTaskStatus(status: AffairsTaskSnapshotDto["status"]): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled" || status === "timeout";
+}
+
+function areAffairsTaskSnapshotsEqual(left: AffairsTaskSnapshotDto | null, right: AffairsTaskSnapshotDto | null): boolean {
+  if (left === right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 function useAffairsWorkbenchInternal() {
   const context = useContext(AffairsWorkbenchContext);
 
@@ -6445,16 +6913,19 @@ function buildTagRecordsFromSnapshot(tags: AffairsLibraryTagNodeDto[]): TagRecor
     }));
 }
 
+const HIDDEN_TAG_ROOTS = new Set(["来源", "主题", "状态"]);
+
 function isVisibleTagRecord(tag: TagRecord): boolean {
-  const rootType = tag.rootType.trim().toLowerCase();
-  if (rootType === "类型" || rootType === "time" || rootType === "时间" || rootType === "type") {
-    return true;
-  }
   return isVisibleTagPath(tag.path);
 }
 
 function isVisibleTagPath(tagPath: string): boolean {
-  return tagPath.startsWith("类型/") || tagPath === "类型" || tagPath.startsWith("时间/") || tagPath === "时间";
+  const normalizedPath = tagPath.trim();
+  if (!normalizedPath) {
+    return false;
+  }
+  const rootPath = normalizedPath.split("/")[0]?.trim() ?? "";
+  return !HIDDEN_TAG_ROOTS.has(rootPath);
 }
 
 function buildFolderRecordsFromSnapshot(folders: AffairsLibraryFolderNodeDto[]): FolderRecord[] {
@@ -7497,6 +7968,8 @@ function buildAffairsAssistantPrefix(context: AffairsObjectContext | null) {
 
 function resolveAffairsSectionTitle(section: AffairsPrimarySection) {
   switch (section) {
+    case "conversation":
+      return t("shell.affairsConversationNav");
     case "todo":
       return t("shell.affairsTodoNav");
     case "automation":
@@ -7509,6 +7982,8 @@ function resolveAffairsSectionTitle(section: AffairsPrimarySection) {
 
 function resolveAffairsSectionSummary(section: AffairsPrimarySection) {
   switch (section) {
+    case "conversation":
+      return t("shell.affairsConversationSummary");
     case "todo":
       return t("shell.affairsTodoSummary");
     case "automation":
@@ -7521,6 +7996,8 @@ function resolveAffairsSectionSummary(section: AffairsPrimarySection) {
 
 function resolveStageTitle(section: AffairsPrimarySection) {
   switch (section) {
+    case "conversation":
+      return t("shell.affairsConversationStageTitle");
     case "todo":
       return t("shell.affairsTodoStageTitle");
     case "automation":
@@ -7533,6 +8010,8 @@ function resolveStageTitle(section: AffairsPrimarySection) {
 
 function resolveStageDescription(section: AffairsPrimarySection, sidebarCount: number) {
   switch (section) {
+    case "conversation":
+      return t("shell.affairsConversationStageDescription", { count: sidebarCount });
     case "todo":
       return t("shell.affairsTodoStageDescription", { count: sidebarCount });
     case "automation":
@@ -7545,6 +8024,8 @@ function resolveStageDescription(section: AffairsPrimarySection, sidebarCount: n
 
 function resolveSectionSidebarTitle(section: AffairsPrimarySection) {
   switch (section) {
+    case "conversation":
+      return t("shell.affairsConversationSidebarTitle");
     case "todo":
       return t("shell.affairsTodoSidebarTitle");
     case "automation":
@@ -7566,6 +8047,8 @@ function resolveSectionSidebarDescription(
   }
 ) {
   switch (section) {
+    case "conversation":
+      return t("shell.affairsConversationSidebarDescription", { count: 4 });
     case "todo":
       return t("shell.affairsTodoSidebarDescription", { count: counts.todoCount });
     case "automation":
@@ -7582,6 +8065,8 @@ function resolveSectionSidebarDescription(
 
 function resolveSectionEmptyText(section: AffairsPrimarySection) {
   switch (section) {
+    case "conversation":
+      return t("shell.affairsConversationEmpty");
     case "todo":
       return t("shell.affairsTodoEmpty");
     case "automation":
@@ -7676,12 +8161,45 @@ function resolveAutomationTargetLabel(
   return sessionTitleById[sessionId] ?? t("shell.affairsAutomationTargetFallback");
 }
 
+function resolveAffairsConversationKindLabel(kind: AffairsConversationKind) {
+  return kind === "agent"
+    ? t("shell.affairsConversationKindAgent")
+    : t("shell.affairsConversationKindLightweight");
+}
+
+function resolveAffairsConversationProviderLabel(provider: AffairsConversationProvider) {
+  return provider === "claude-code"
+    ? t("shell.providerClaudeCode")
+    : t("conversation.providerCodex");
+}
+
+function buildAffairsConversationOptionLabel(option: AffairsConversationDraftOption) {
+  return t("shell.affairsConversationOptionLabel", {
+    kind: resolveAffairsConversationKindLabel(option.kind),
+    provider: resolveAffairsConversationProviderLabel(option.provider)
+  });
+}
+
+function buildAffairsConversationOptionSummary(option: AffairsConversationDraftOption) {
+  if (option.kind === "agent") {
+    return t("shell.affairsConversationOptionSummaryAgent", {
+      provider: resolveAffairsConversationProviderLabel(option.provider)
+    });
+  }
+
+  return t("shell.affairsConversationOptionSummaryLightweight", {
+    provider: resolveAffairsConversationProviderLabel(option.provider)
+  });
+}
+
 function resolveDefaultNodeId(
   section: AffairsPrimarySection,
   automationRecords: AutomationRecord[],
   binding: AffairsLibraryBindingDto | null
 ) {
   switch (section) {
+    case "conversation":
+      return "conversation:draft:lightweight:codex";
     case "todo":
       return "todo:all";
     case "automation":
@@ -7693,6 +8211,16 @@ function resolveDefaultNodeId(
 }
 
 function groupSidebarNodes(section: AffairsPrimarySection, nodes: AffairsSidebarNode[]) {
+  if (section === "conversation") {
+    return [
+      {
+        id: "conversation",
+        label: t("shell.affairsConversationSidebarGroupModes"),
+        items: nodes
+      }
+    ];
+  }
+
   if (section === "todo") {
     return [
       {
@@ -7713,7 +8241,7 @@ function groupSidebarNodes(section: AffairsPrimarySection, nodes: AffairsSidebar
 }
 
 function normalizeSection(section: AffairsPrimarySection): AffairsPrimarySection {
-  if (section === "todo" || section === "automation") {
+  if (section === "conversation" || section === "todo" || section === "automation") {
     return section;
   }
 

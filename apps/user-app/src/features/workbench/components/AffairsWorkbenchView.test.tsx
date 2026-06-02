@@ -10,6 +10,7 @@ import type { WorkspaceSessionGroup } from "../../conversation/components/Workbe
 import { getCodingNSDesktopBridge } from "../../../platform/desktop/codingns-desktop-bridge";
 import {
   AffairsAuxiliaryPanel,
+  AffairsSectionMenu,
   AffairsSidebarPanel,
   AffairsWorkbenchProvider,
   AffairsWorkbenchView
@@ -52,6 +53,7 @@ const conversationApiMock = vi.hoisted(() => ({
   createWorkspaceDirectory: vi.fn(),
   deleteAffairsTag: vi.fn(),
   getAffairsDocumentTagDetails: vi.fn(),
+  getAffairsFolderTagTask: vi.fn(),
   getAffairsFolderTagDetails: vi.fn(),
   getAffairsTagDetail: vi.fn(),
   getAffairsLibraryConfig: vi.fn(),
@@ -81,6 +83,7 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     createWorkspaceDirectory: conversationApiMock.createWorkspaceDirectory,
     deleteAffairsTag: conversationApiMock.deleteAffairsTag,
     getAffairsDocumentTagDetails: conversationApiMock.getAffairsDocumentTagDetails,
+    getAffairsFolderTagTask: conversationApiMock.getAffairsFolderTagTask,
     getAffairsFolderTagDetails: conversationApiMock.getAffairsFolderTagDetails,
     getAffairsTagDetail: conversationApiMock.getAffairsTagDetail,
     getAffairsLibraryConfig: conversationApiMock.getAffairsLibraryConfig,
@@ -367,9 +370,34 @@ function renderWorkbench() {
   return render(<TestHarness />);
 }
 
+function renderWorkbenchWithSectionMenu() {
+  function TestHarness(): ReactElement {
+    const [state, setState] = useState(createState());
+
+    return (
+      <AffairsWorkbenchProvider
+        workspaceId="workspace-1"
+        workspaceName="事务工作区"
+        navigationGroups={navigationGroups}
+        state={state}
+        onStateChange={setState}
+      >
+        <div style={{ display: "flex", gap: 12 }}>
+          <AffairsSectionMenu />
+          <AffairsSidebarPanel />
+          <AffairsWorkbenchView workspaceId="workspace-1" />
+          <AffairsAuxiliaryPanel workspaceId="workspace-1" />
+        </div>
+      </AffairsWorkbenchProvider>
+    );
+  }
+
+  return render(<TestHarness />);
+}
+
 function findTagTreeNode(label: string) {
   const tree = screen.getByRole("tree", { name: t("shell.affairsLibraryTagTreeTitle") });
-  const labelNode = within(tree).getAllByText(label).find((node) => node.classList.contains("affairs-sidebar-item-title"));
+  const labelNode = within(tree).queryAllByText(label).find((node) => node.classList.contains("affairs-sidebar-item-title"));
   return labelNode?.closest(".affairs-tag-tree-node") ?? null;
 }
 
@@ -465,10 +493,19 @@ describe("AffairsWorkbenchView", () => {
       bindingTagIds: [],
       bindings: []
     });
+    conversationApiMock.getAffairsFolderTagTask.mockResolvedValue(null);
     conversationApiMock.saveAffairsDocumentTags.mockResolvedValue(undefined);
     conversationApiMock.saveAffairsDocumentTagsWithCreate.mockResolvedValue(undefined);
-    conversationApiMock.saveAffairsFolderTags.mockResolvedValue(undefined);
-    conversationApiMock.saveAffairsFolderTagsWithCreate.mockResolvedValue(undefined);
+    conversationApiMock.saveAffairsFolderTags.mockResolvedValue({
+      target: { type: "folder", folderPath: "." },
+      items: [],
+      refreshTask: null
+    });
+    conversationApiMock.saveAffairsFolderTagsWithCreate.mockResolvedValue({
+      target: { type: "folder", folderPath: "." },
+      items: [],
+      refreshTask: null
+    });
 
     conversationApiMock.setAffairsLibraryEnabled.mockImplementation(async (_workspaceId, payload) => ({
       workspaceId: "workspace-1",
@@ -794,6 +831,23 @@ describe("AffairsWorkbenchView", () => {
     expect(screen.queryByRole("tab", { name: t("shell.affairsLibraryBrowseModeTag") })).not.toBeInTheDocument();
   });
 
+  it("事务左侧新增对话入口，并在中间主区显示对话空态壳层", async () => {
+    const user = userEvent.setup();
+    renderWorkbenchWithSectionMenu();
+
+    const conversationTab = screen.getByRole("tab", { name: "对话" });
+    expect(conversationTab).toBeInTheDocument();
+
+    await user.click(conversationTab);
+
+    expect((await screen.findAllByRole("heading", { name: "事务对话" })).length).toBeGreaterThan(0);
+    expect(screen.getByText("先选会话模式，再选 provider")).toBeInTheDocument();
+    expect(screen.getByText("轻量会话 · Codex")).toBeInTheDocument();
+    expect(screen.getByText("轻量会话 · Claude Code")).toBeInTheDocument();
+    expect(screen.getByText("Agent 会话 · Codex")).toBeInTheDocument();
+    expect(screen.getByText("Agent 会话 · Claude Code")).toBeInTheDocument();
+  });
+
   it("没有收藏内容时会自动隐藏收藏夹分组", async () => {
     renderWorkbench();
 
@@ -971,9 +1025,9 @@ describe("AffairsWorkbenchView", () => {
 
     const typeTagButton = (await screen.findAllByRole("button", { name: /类型/ }))[0];
     await user.click(typeTagButton);
-    expect(await screen.findByRole("button", { name: "/" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: t("shell.affairsLibraryFolderRootLabel") })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "/" }));
+    await user.click(screen.getByRole("button", { name: t("shell.affairsLibraryFolderRootLabel") }));
 
     await waitFor(() => {
       expect(conversationApiMock.listAffairsLibraryDocuments).toHaveBeenCalledWith("workspace-1", {
@@ -1327,7 +1381,7 @@ describe("AffairsWorkbenchView", () => {
     expect(within(expandedTypeNode!).getByRole("button", { name: /文本/ })).toBeInTheDocument();
     await user.click(within(expandedTypeNode!).getByRole("button", { name: /文本/ }));
 
-    const rootButton = await screen.findByRole("button", { name: "/" });
+    const rootButton = await screen.findByRole("button", { name: t("shell.affairsLibraryFolderRootLabel") });
     const breadcrumb = rootButton.closest(".affairs-stage-breadcrumb");
     expect(rootButton).toBeInTheDocument();
     expect(breadcrumb).not.toBeNull();
@@ -1538,18 +1592,40 @@ describe("AffairsWorkbenchView", () => {
     });
   });
 
-  it("标签树只显示类型和时间根标签，并且不再显示说明文本", async () => {
+  it("标签树显示手动业务标签，同时继续隐藏来源、主题、状态这类噪音根标签", async () => {
+    conversationApiMock.getAffairsLibrarySnapshot.mockReset();
+    conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
+      tags: [
+        { path: "类型", name: "类型", parentPath: null, depth: 0, rootType: "类型", documentCount: 2 },
+        { path: "类型/文本", name: "文本", parentPath: "类型", depth: 1, rootType: "类型", documentCount: 1 },
+        { path: "时间", name: "时间", parentPath: null, depth: 0, rootType: "时间", documentCount: 2 },
+        { path: "时间/2026/05", name: "05", parentPath: "时间", depth: 2, rootType: "时间", documentCount: 1 },
+        { path: "系统集成", name: "系统集成", parentPath: null, depth: 0, rootType: "系统集成", documentCount: 1 },
+        { path: "系统集成/售前", name: "售前", parentPath: "系统集成", depth: 1, rootType: "系统集成", documentCount: 1 },
+        { path: "来源", name: "来源", parentPath: null, depth: 0, rootType: "来源", documentCount: 1 },
+        { path: "来源/邮件", name: "邮件", parentPath: "来源", depth: 1, rootType: "来源", documentCount: 1 },
+        { path: "主题", name: "主题", parentPath: null, depth: 0, rootType: "主题", documentCount: 1 },
+        { path: "主题/投标", name: "投标", parentPath: "主题", depth: 1, rootType: "主题", documentCount: 1 },
+        { path: "状态", name: "状态", parentPath: null, depth: 0, rootType: "状态", documentCount: 1 },
+        { path: "状态/待处理", name: "待处理", parentPath: "状态", depth: 1, rootType: "状态", documentCount: 1 }
+      ],
+      folders: []
+    }));
+
     renderWorkbench();
+    const user = userEvent.setup();
 
     await screen.findByRole("tree", { name: t("shell.affairsLibraryTagTreeTitle") });
 
     expect(findTagTreeNode("类型")).not.toBeNull();
     expect(findTagTreeNode("时间")).not.toBeNull();
-    expect(screen.queryByText("来源")).not.toBeInTheDocument();
-    expect(screen.queryByText("主题")).not.toBeInTheDocument();
-    expect(screen.queryByText("状态")).not.toBeInTheDocument();
-    expect(screen.queryByText("类型/文本")).not.toBeInTheDocument();
-    expect(screen.queryByText("时间/2026/05")).not.toBeInTheDocument();
+    expect(findTagTreeNode("系统集成")).not.toBeNull();
+    expect(findTagTreeNode("来源")).toBeNull();
+    expect(findTagTreeNode("主题")).toBeNull();
+    expect(findTagTreeNode("状态")).toBeNull();
+
+    await user.click(findTagTreeNode("系统集成")?.querySelector<HTMLButtonElement>(".affairs-tag-tree-toggle")!);
+    expect(within(findTagTreeNode("系统集成")!).getByRole("button", { name: /售前/ })).toBeInTheDocument();
   });
 
   it("时间标签按最新优先，其他标签按更常访问优先", async () => {
@@ -1590,7 +1666,7 @@ describe("AffairsWorkbenchView", () => {
     expect(timeChildren.slice(0, 5)).toEqual(["最近3天", "最近7天", "最近30天", "2026", "2024"]);
 
     await user.click(within(expandedTypeNode!).getByRole("button", { name: /办公/ }));
-    await user.click(screen.getByRole("button", { name: "/" }));
+    await user.click(screen.getByRole("button", { name: t("shell.affairsLibraryFolderRootLabel") }));
     await user.click(within(findTagTreeNode("类型")!).getByRole("button", { name: /办公/ }));
     expect(window.localStorage.getItem("codingns.affairs.tag-tree.state.workspace-1")).toContain("\"类型/办公\":2");
   });
@@ -2072,7 +2148,7 @@ describe("AffairsWorkbenchView", () => {
     expect(await screen.findByText(t("shell.affairsTagEditorEditTitle"))).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsTagCreateChildAction") }));
-    expect(await screen.findByText(t("shell.affairsTagEditorCreateChildDescription", { tag: "客户/合同" }))).toBeInTheDocument();
+    expect(await screen.findByText(t("shell.affairsTagEditorCreateChildTitle"))).toBeInTheDocument();
 
     await userEvent.click(tagTreeButton);
     const nameInput = screen.getByPlaceholderText(t("shell.affairsTagNamePlaceholder"));
@@ -2093,6 +2169,149 @@ describe("AffairsWorkbenchView", () => {
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsTagDeleteAction") }));
     await waitFor(() => {
       expect(conversationApiMock.deleteAffairsTag).toHaveBeenCalledWith("workspace-1", "tag-1");
+    });
+  });
+
+  it("标签改名后会主动刷新左侧标签树名称", async () => {
+    const oldSnapshot = createLibrarySnapshot({
+      tags: [
+        {
+          path: "客户",
+          name: "客户",
+          parentPath: null,
+          depth: 0,
+          rootType: "客户",
+          documentCount: 1730,
+        },
+        {
+          path: "客户/中电绿能科技有限公司",
+          name: "中电绿能科技有限公司",
+          parentPath: "客户",
+          depth: 1,
+          rootType: "客户",
+          documentCount: 318,
+        },
+      ],
+    });
+    const newSnapshot = createLibrarySnapshot({
+      status: {
+        ...oldSnapshot.status,
+        lastCompletedAt: "2026-06-02T08:00:00.000Z",
+      },
+      tags: [
+        {
+          path: "客户",
+          name: "客户",
+          parentPath: null,
+          depth: 0,
+          rootType: "客户",
+          documentCount: 1730,
+        },
+        {
+          path: "客户/中电投绿能科技有限公司",
+          name: "中电投绿能科技有限公司",
+          parentPath: "客户",
+          depth: 1,
+          rootType: "客户",
+          documentCount: 318,
+        },
+      ],
+    });
+    conversationApiMock.getAffairsLibrarySnapshot
+      .mockResolvedValueOnce(oldSnapshot)
+      .mockResolvedValue(newSnapshot);
+    conversationApiMock.listAffairsTags.mockResolvedValue({
+      items: [
+        {
+          id: "tag-root",
+          path: "客户",
+          name: "客户",
+          rootType: "客户",
+          parentId: null,
+          parentPath: null,
+          description: null,
+          status: "active",
+          documentCount: 1730,
+          createdAt: "2026-06-01T08:00:00.000Z",
+          updatedAt: "2026-06-01T08:00:00.000Z",
+          disabledAt: null,
+        },
+        {
+          id: "tag-company",
+          path: "客户/中电绿能科技有限公司",
+          name: "中电绿能科技有限公司",
+          rootType: "客户",
+          parentId: "tag-root",
+          parentPath: "客户",
+          description: null,
+          status: "active",
+          documentCount: 318,
+          createdAt: "2026-06-01T08:00:00.000Z",
+          updatedAt: "2026-06-01T08:00:00.000Z",
+          disabledAt: null,
+        },
+      ],
+    });
+    conversationApiMock.getAffairsTagDetail.mockResolvedValue({
+      id: "tag-company",
+      path: "客户/中电绿能科技有限公司",
+      name: "中电绿能科技有限公司",
+      rootType: "客户",
+      parentId: "tag-root",
+      parentPath: "客户",
+      description: null,
+      status: "active",
+      documentCount: 318,
+      createdAt: "2026-06-01T08:00:00.000Z",
+      updatedAt: "2026-06-01T08:00:00.000Z",
+      disabledAt: null,
+      smartRules: [],
+      smartRuleEnabled: false,
+    });
+    conversationApiMock.updateAffairsTag.mockResolvedValue({
+      id: "tag-company",
+      path: "客户/中电投绿能科技有限公司",
+      name: "中电投绿能科技有限公司",
+      rootType: "客户",
+      parentId: "tag-root",
+      parentPath: "客户",
+      description: null,
+      status: "active",
+      documentCount: 318,
+      createdAt: "2026-06-01T08:00:00.000Z",
+      updatedAt: "2026-06-02T08:00:00.000Z",
+      disabledAt: null,
+      smartRules: [],
+      smartRuleEnabled: false,
+    });
+    conversationApiMock.listAffairsLibraryDocuments.mockResolvedValue(createDocumentListResponse());
+
+    renderWorkbench();
+
+    const rootNode = await waitFor(() => {
+      const node = findTagTreeNode("客户");
+      expect(node).not.toBeNull();
+      return node as HTMLElement;
+    });
+    await userEvent.click(within(rootNode).getByRole("button", { name: /展开子代理列表/ }));
+    expect(await screen.findByText("中电绿能科技有限公司")).toBeInTheDocument();
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsTagManagerAction") }));
+    await userEvent.click(screen.getByRole("button", { name: /中电绿能科技有限公司.*客户\/中电绿能科技有限公司/s }));
+    const nameInput = screen.getByPlaceholderText(t("shell.affairsTagNamePlaceholder"));
+    await userEvent.clear(nameInput);
+    await userEvent.type(nameInput, "中电投绿能科技有限公司");
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsTagUpdateSubmitAction") }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.updateAffairsTag).toHaveBeenCalledWith("workspace-1", "tag-company", expect.objectContaining({
+        tagId: "tag-company",
+        name: "中电投绿能科技有限公司",
+      }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("中电投绿能科技有限公司")).toBeInTheDocument();
     });
   });
 
@@ -2493,10 +2712,41 @@ describe("AffairsWorkbenchView", () => {
       bindingTagIds: [],
       bindings: []
     });
+    conversationApiMock.saveAffairsFolderTags.mockResolvedValue({
+      target: { type: "folder", folderPath: "." },
+      items: [],
+      refreshTask: {
+        taskId: "task-folder-1",
+        deduped: false,
+        affectedPaths: ["."]
+      }
+    });
+    conversationApiMock.getAffairsFolderTagTask.mockResolvedValue({
+      taskId: "task-folder-1",
+      taskType: "affairs.library_tag_apply_bindings",
+      key: "workspace-1:folder:.",
+      executionLane: "helper_process",
+      status: "running",
+      source: "affairs_tag.save_folder_bindings",
+      attempt: 1,
+      enqueuedAt: Date.now(),
+      startedAt: Date.now(),
+      finishedAt: null,
+      timeoutMs: 30000,
+      progress: {
+        phase: "recompute",
+        label: "正在应用文件夹标签",
+        detail: "25 / 120",
+        current: 25,
+        total: 120,
+        percent: 29,
+        updatedAt: Date.now(),
+      }
+    });
 
     renderWorkbench();
 
-    await userEvent.click(await screen.findByRole("button", { name: "/" }));
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibraryFolderRootLabel") }));
     expect(await screen.findByText(t("shell.affairsFolderTagsSectionTitle"))).toBeInTheDocument();
     const tagInput = await screen.findByPlaceholderText(t("shell.affairsTagQuickSearchPlaceholder"));
     await userEvent.type(tagInput, "合同");
@@ -2509,6 +2759,14 @@ describe("AffairsWorkbenchView", () => {
         tagIds: ["tag-1"]
       });
     });
+
+    expect(await screen.findByRole("button", {
+      name: t("shell.affairsFolderTagTaskButtonLabel", {
+        folder: t("shell.affairsLibraryDirectoryStatusRootPath"),
+        status: t("shell.affairsFolderTagTaskStatusRunning"),
+        percent: 29,
+      })
+    })).toBeInTheDocument();
   });
 
   it("文件夹详情输入不存在的标签时会直接创建并绑定", async () => {
@@ -2522,7 +2780,7 @@ describe("AffairsWorkbenchView", () => {
 
     renderWorkbench();
 
-    await userEvent.click(await screen.findByRole("button", { name: "/" }));
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibraryFolderRootLabel") }));
     const tagInput = await screen.findByPlaceholderText(t("shell.affairsTagQuickSearchPlaceholder"));
     await userEvent.type(tagInput, "归档/待签");
     await userEvent.click(screen.getByRole("button", { name: /创建并分配“归档\/待签”/ }));
