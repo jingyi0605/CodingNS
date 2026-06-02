@@ -622,13 +622,16 @@ export function AffairsWorkbenchProvider({
   const butlerInitError = useButlerRuntimeStore(butlerStore, (value) => value.error);
   const butlerProfile = useButlerRuntimeStore(butlerStore, (value) => value.profile);
   const { showToast } = useToast();
+  const butlerHostUnavailable =
+    butlerBootstrapErrorCode === "NETWORK_ERROR"
+    || butlerBootstrapErrorCode === "INVALID_RESPONSE";
   const binding = librarySnapshot?.binding ?? null;
   const indexStatus = librarySnapshot?.status ?? null;
   const currentDirectoryStatus = libraryDocumentPage?.directoryStatus ?? null;
   const initGuard = useMemo<AffairsInitGuardSnapshot>(() => ({
     loading: butlerInitLoading,
     initialized: butlerInitialized,
-    unavailable: !butlerInitLoading && butlerBootstrapErrorCode === "NETWORK_ERROR",
+    unavailable: !butlerInitLoading && butlerHostUnavailable,
     errorMessage: butlerInitError,
     profile: butlerProfile
       ? {
@@ -637,7 +640,7 @@ export function AffairsWorkbenchProvider({
           personaTone: butlerProfile.persona.tone
         }
       : null
-  }), [butlerBootstrapErrorCode, butlerInitError, butlerInitLoading, butlerInitialized, butlerProfile]);
+  }), [butlerHostUnavailable, butlerInitError, butlerInitLoading, butlerInitialized, butlerProfile]);
   const affairsUnavailable = initGuard.unavailable;
   const affairsInitGuardActive = initGuard.loading || (!initGuard.initialized && !affairsUnavailable);
   const activeSection =
@@ -4468,32 +4471,6 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
     selectedTagPaths
   } = useAffairsWorkbenchInternal();
   const [viewerReady, setViewerReady] = useState(false);
-  if (initGuard.loading) {
-    return (
-      <section className="workbench-section-block affairs-sidebar-block affairs-auxiliary-block">
-        <div className="affairs-sidebar-block-header">
-          <div>
-            <h2>{t("shell.affairsConnectionCheckingTitle")}</h2>
-            <p>{t("shell.affairsConnectionCheckingDescription")}</p>
-          </div>
-        </div>
-        <div className="affairs-stage-empty">{t("shell.affairsConnectionCheckingAuxiliaryEmpty")}</div>
-      </section>
-    );
-  }
-  if (initGuard.unavailable) {
-    return (
-      <section className="workbench-section-block affairs-sidebar-block affairs-auxiliary-block">
-        <div className="affairs-sidebar-block-header">
-          <div>
-            <h2>{t("shell.affairsHostUnavailableTitle")}</h2>
-            <p>{t("shell.affairsHostUnavailableDescription")}</p>
-          </div>
-        </div>
-        <div className="affairs-stage-empty">{t("shell.affairsHostUnavailableAuxiliaryEmpty")}</div>
-      </section>
-    );
-  }
   const guardActive = !initGuard.initialized;
 
   const selectedAutomationRuns = useMemo(() => {
@@ -4538,6 +4515,34 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
     }, DETAIL_VIEWER_MOUNT_DELAY_MS);
     return () => window.clearTimeout(timer);
   }, [auxiliaryTab, selectedObject]);
+
+  if (initGuard.loading) {
+    return (
+      <section className="workbench-section-block affairs-sidebar-block affairs-auxiliary-block">
+        <div className="affairs-sidebar-block-header">
+          <div>
+            <h2>{t("shell.affairsConnectionCheckingTitle")}</h2>
+            <p>{t("shell.affairsConnectionCheckingDescription")}</p>
+          </div>
+        </div>
+        <div className="affairs-stage-empty">{t("shell.affairsConnectionCheckingAuxiliaryEmpty")}</div>
+      </section>
+    );
+  }
+
+  if (initGuard.unavailable) {
+    return (
+      <section className="workbench-section-block affairs-sidebar-block affairs-auxiliary-block">
+        <div className="affairs-sidebar-block-header">
+          <div>
+            <h2>{t("shell.affairsHostUnavailableTitle")}</h2>
+            <p>{t("shell.affairsHostUnavailableDescription")}</p>
+          </div>
+        </div>
+        <div className="affairs-stage-empty">{t("shell.affairsHostUnavailableAuxiliaryEmpty")}</div>
+      </section>
+    );
+  }
 
   return (
     <div className="affairs-auxiliary-shell">
@@ -8138,7 +8143,7 @@ function createOptimisticFolderTagTaskSnapshot(
       detail: t("shell.affairsFolderTagTaskSubmittingDetail"),
       current: 0,
       total: 1,
-      percent: 1,
+      percent: 0,
       updatedAt: now,
     },
   };

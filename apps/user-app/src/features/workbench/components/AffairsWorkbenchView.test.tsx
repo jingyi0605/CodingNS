@@ -1312,6 +1312,35 @@ describe("AffairsWorkbenchView", () => {
     expect(screen.queryByRole("button", { name: t("shell.affairsInitSubmit") })).not.toBeInTheDocument();
   });
 
+  it("事务服务返回无效响应时也会显示不可用页面，不会误导成初始化页", async () => {
+    useButlerRuntimeStoreMock.mockImplementation((_store, selector) => selector({
+      initialized: false,
+      loading: false,
+      bootstrapErrorCode: "INVALID_RESPONSE",
+      error: "服务返回了无效的 JSON 响应：Unexpected token '<'",
+      profile: null,
+      activeProvider: "codex",
+      controlSession: null,
+      capabilities: null,
+      messages: [],
+      historyState: "idle",
+      loadingOlderMessages: false,
+      hasOlderMessages: false,
+      runtimeHasActiveRun: false,
+      runtimeCanInterrupt: false,
+      contextUsage: null,
+      permissionRequests: [],
+      sending: false
+    }));
+
+    renderWorkbenchWithState(createState());
+
+    expect((await screen.findAllByRole("heading", { name: t("shell.affairsHostUnavailableTitle") })).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(t("shell.affairsHostUnavailableDescription")).length).toBeGreaterThan(0);
+    expect(screen.queryByText(t("shell.affairsInitRouteGuardHint"))).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.affairsInitSubmit") })).not.toBeInTheDocument();
+  });
+
   it("事务服务连接检查中时会显示单独的检查页面，不会先误导成初始化页", async () => {
     useButlerRuntimeStoreMock.mockImplementation((_store, selector) => selector({
       initialized: false,
@@ -1339,6 +1368,62 @@ describe("AffairsWorkbenchView", () => {
     expect(screen.getAllByText(t("shell.affairsConnectionCheckingDescription")).length).toBeGreaterThan(0);
     expect(screen.queryByText(t("shell.affairsInitRouteGuardHint"))).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("shell.affairsInitSubmit") })).not.toBeInTheDocument();
+  });
+
+  it("辅助面板从连接检查切回正常态时不会触发 hooks 顺序错误", async () => {
+    butlerRuntimeStateMock.setState({
+      initialized: false,
+      loading: true,
+      bootstrapErrorCode: null,
+      error: null,
+      profile: null,
+      activeProvider: "codex"
+    });
+
+    function TestHarness(): ReactElement {
+      const [state, setState] = useState(createState());
+
+      return (
+        <AffairsWorkbenchProvider
+          workspaceId="workspace-1"
+          workspaceName="事务工作区"
+          navigationGroups={navigationGroups}
+          state={state}
+          onStateChange={setState}
+        >
+          <div style={{ display: "flex", gap: 12 }}>
+            <AffairsSectionMenu />
+            <AffairsSidebarPanel />
+            <AffairsWorkbenchView workspaceId="workspace-1" />
+            <AffairsAuxiliaryPanel workspaceId="workspace-1" />
+          </div>
+        </AffairsWorkbenchProvider>
+      );
+    }
+
+    const view = render(<TestHarness />);
+
+    expect((await screen.findAllByText(t("shell.affairsConnectionCheckingTitle"))).length).toBeGreaterThan(0);
+
+    butlerRuntimeStateMock.setState({
+      initialized: true,
+      loading: false,
+      bootstrapErrorCode: null,
+      error: null,
+      profile: {
+        displayName: "事务助手",
+        providerId: "codex",
+        persona: {
+          tone: "direct"
+        }
+      },
+      activeProvider: "codex"
+    });
+
+    view.rerender(<TestHarness />);
+
+    expect(await screen.findByRole("tab", { name: t("shell.affairsDetailTitle") })).toBeInTheDocument();
+    expect(screen.queryByText(t("shell.affairsConnectionCheckingAuxiliaryEmpty"))).not.toBeInTheDocument();
   });
 
   it("事务模式初始化完成后会自动切到文档库", async () => {
@@ -3562,7 +3647,7 @@ describe("AffairsWorkbenchView", () => {
         operation: t("shell.affairsFolderTagTaskOperationAttach"),
         folder: t("shell.affairsLibraryDirectoryStatusRootPath"),
         status: t("shell.affairsFolderTagTaskStatusQueued"),
-        percent: 1,
+        percent: 0,
       })
     })).toBeInTheDocument();
 
