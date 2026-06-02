@@ -84,6 +84,20 @@ export interface TaskRunContext {
   readonly executionLane: TaskExecutionLane;
   readonly attempt: number;
   readonly signal: AbortSignal;
+  reportProgress(progress: TaskProgressUpdate): void;
+}
+
+export interface TaskProgressUpdate {
+  readonly phase: string;
+  readonly label?: string | null;
+  readonly detail?: string | null;
+  readonly current?: number | null;
+  readonly total?: number | null;
+  readonly percent?: number | null;
+}
+
+export interface TaskProgressSnapshot extends TaskProgressUpdate {
+  readonly updatedAt: number;
 }
 
 export interface TaskLaneExecutor {
@@ -122,8 +136,11 @@ export interface TaskSnapshot<TResult = unknown> {
   readonly startedAt: number | null;
   readonly finishedAt: number | null;
   readonly timeoutMs: number | null;
+  readonly progress?: TaskProgressSnapshot | null;
   readonly result?: TResult;
+  readonly errorCode?: string;
   readonly errorMessage?: string;
+  readonly errorDetail?: string;
 }
 
 export interface TaskMetricGroupSnapshot {

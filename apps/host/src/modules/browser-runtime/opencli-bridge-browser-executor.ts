@@ -68,9 +68,9 @@ export class OpenCliBridgeBrowserExecutor implements BrowserTaskExecutor {
   }
 
   async execute(input: ExecuteBrowserTaskInput): Promise<BrowserExecutionResult> {
-    await this.ensureBridgeReady();
+    const bridge = await this.requireBridgeReady();
     const payload = parseBrowserTaskPayload(input.task.inputJson);
-    const page = await this.createPage();
+    const page = await this.createPageFromInstallPath(bridge.installPath);
 
     return await runBrowserTaskActions({
       task: input.task,
@@ -230,51 +230,61 @@ export class OpenCliBridgeBrowserExecutor implements BrowserTaskExecutor {
     }
   }
 
-  private async ensureBridgeReady(): Promise<void> {
+  private async requireBridgeReady(): Promise<BrowserBridgeReadyResult> {
     const status = await this.bridgeStatusService.getStatus();
 
-    if (status.availability === "ready") {
-      return;
+    if (status.availability !== "ready") {
+      const errorCode =
+        status.availability === "daemon_missing"
+          ? "OPENCLI_BRIDGE_DAEMON_MISSING"
+          : status.availability === "extension_missing"
+            ? "OPENCLI_BRIDGE_EXTENSION_MISSING"
+            : "OPENCLI_BRIDGE_UNAVAILABLE";
+
+      throw new AppError({
+        statusCode: 409,
+        errorCode,
+        detail: status.detail ?? "OpenCLI 浏览器桥接当前不可用"
+      });
     }
 
-    const errorCode =
-      status.availability === "daemon_missing"
-        ? "OPENCLI_BRIDGE_DAEMON_MISSING"
-        : status.availability === "extension_missing"
-          ? "OPENCLI_BRIDGE_EXTENSION_MISSING"
-          : "OPENCLI_BRIDGE_UNAVAILABLE";
-
-    throw new AppError({
-      statusCode: 409,
-      errorCode,
-      detail: status.detail ?? "OpenCLI 浏览器桥接当前不可用"
-    });
-  }
-
-  private async createPage(): Promise<OpenCliPageLike> {
-    const discovery = this.installDiscovery.discover();
-    const installPath = discovery.installPath?.trim();
+    const installPath = status.installPath?.trim();
 
     if (!installPath) {
       throw new AppError({
         statusCode: 409,
         errorCode: "OPENCLI_INSTALL_NOT_FOUND",
-        detail: "未找到 opencli 安装目录，无法加载浏览器桥接"
+        detail: "OpenCLI 健康检查已就绪，但未返回安装目录，无法加载浏览器桥接"
       });
     }
 
+    return {
+      installPath
+    };
+  }
+
+  private async createPageFromInstallPath(installPath: string): Promise<OpenCliPageLike> {
     const pageModuleUrl = pathToFileURL(path.join(installPath, "dist", "src", "browser", "page.js")).href;
 
     try {
       const pageModule = await import(pageModuleUrl);
       const PageCtor = pageModule.Page as new (workspace?: string, idleTimeout?: number) => OpenCliPageLike;
+      if (typeof PageCtor !== "function") {
+        throw new Error("page.js 未导出可用的 Page 构造函数");
+      }
       return new PageCtor("codingns-office-browser");
     } catch (error) {
       throw new AppError({
         statusCode: 500,
         errorCode: "OPENCLI_BRIDGE_LOAD_FAILED",
-        detail: error instanceof Error ? error.message : "无法加载 opencli 浏览器桥接模块"
+        detail: error instanceof Error
+          ? `无法加载 opencli 浏览器桥接模块: ${error.message}`
+          : "无法加载 opencli 浏览器桥接模块"
       });
     }
   }
+}
+
+interface BrowserBridgeReadyResult {
+  installPath: string;
 }

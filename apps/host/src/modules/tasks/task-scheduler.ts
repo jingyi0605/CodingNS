@@ -3,6 +3,7 @@ import { TaskMetrics } from "./task-metrics.js";
 import { TaskRegistry } from "./task-registry.js";
 import {
   TaskCancelledError,
+  type TaskProgressUpdate,
   type TaskActivitySink,
   type TaskDefinition,
   type TaskExecutionLane,
@@ -13,6 +14,7 @@ import {
   type TaskRunContext,
   TaskTimeoutError
 } from "./task-types.js";
+import { isAppError } from "../../shared/errors/app-error.js";
 
 interface TaskDeferred<TResult> {
   promise: Promise<TResult>;
@@ -320,7 +322,10 @@ export class TaskScheduler {
       taskId: record.taskId,
       executionLane: record.definition.executionLane,
       attempt,
-      signal: record.controller.signal
+      signal: record.controller.signal,
+      reportProgress: (progress) => {
+        this.updateProgress(record, progress);
+      }
     };
     const executor = this.laneExecutors[record.definition.executionLane];
 
@@ -378,6 +383,22 @@ export class TaskScheduler {
     });
   }
 
+  private updateProgress<TInput, TResult>(record: TaskRecord<TInput, TResult>, progress: TaskProgressUpdate): void {
+    record.snapshot = {
+      ...record.snapshot,
+      progress: {
+        phase: progress.phase,
+        label: progress.label ?? null,
+        detail: progress.detail ?? null,
+        current: typeof progress.current === "number" ? progress.current : null,
+        total: typeof progress.total === "number" ? progress.total : null,
+        percent: typeof progress.percent === "number" ? progress.percent : null,
+        updatedAt: Date.now()
+      }
+    };
+    this.latestSnapshots.set(record.dedupeKey, cloneSnapshot(record.snapshot));
+  }
+
   private finishSuccess<TResult>(record: TaskRecord<unknown, TResult>, result: TResult): void {
     this.metrics.increment(record.taskType, record.definition.executionLane, "finished");
     const finishedAt = Date.now();
@@ -387,7 +408,9 @@ export class TaskScheduler {
       status: "succeeded",
       finishedAt,
       result,
-      errorMessage: undefined
+      errorCode: undefined,
+      errorMessage: undefined,
+      errorDetail: undefined
     };
     this.activitySink?.record({
       eventType: "finished",
@@ -412,7 +435,9 @@ export class TaskScheduler {
       ...record.snapshot,
       status: "failed",
       finishedAt,
-      errorMessage: getErrorMessage(error)
+      errorCode: getErrorCode(error),
+      errorMessage: getErrorMessage(error),
+      errorDetail: getErrorDetail(error)
     };
     this.activitySink?.record({
       eventType: "failed",
@@ -442,7 +467,9 @@ export class TaskScheduler {
       ...record.snapshot,
       status: "cancelled",
       finishedAt,
-      errorMessage: getErrorMessage(error)
+      errorCode: getErrorCode(error),
+      errorMessage: getErrorMessage(error),
+      errorDetail: getErrorDetail(error)
     };
     this.activitySink?.record({
       eventType: "cancelled",
@@ -468,7 +495,9 @@ export class TaskScheduler {
       ...record.snapshot,
       status: "timeout",
       finishedAt,
-      errorMessage: error.message
+      errorCode: getErrorCode(error),
+      errorMessage: error.message,
+      errorDetail: getErrorDetail(error)
     };
     this.activitySink?.record({
       eventType: "timeout",
@@ -561,7 +590,12 @@ function buildDedupeKey(taskType: string, key: string): string {
 
 function cloneSnapshot(snapshot: TaskSnapshot): TaskSnapshot {
   return {
-    ...snapshot
+    ...snapshot,
+    progress: snapshot.progress
+      ? {
+          ...snapshot.progress
+        }
+      : snapshot.progress ?? null
   };
 }
 
@@ -607,6 +641,26 @@ function getErrorMessage(error: unknown): string {
   }
 
   return typeof error === "string" ? error : "unknown";
+}
+
+function getErrorCode(error: unknown): string | undefined {
+  if (isAppError(error)) {
+    return error.errorCode;
+  }
+
+  return undefined;
+}
+
+function getErrorDetail(error: unknown): string | undefined {
+  if (isAppError(error)) {
+    return error.message;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return typeof error === "string" ? error : undefined;
 }
 
 function removeQueuedRecord(queue: TaskRecord[] | undefined, record: TaskRecord): void {
