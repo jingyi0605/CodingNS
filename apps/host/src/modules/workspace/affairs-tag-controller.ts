@@ -26,7 +26,7 @@ interface SaveTagBody {
   smartRules?: Array<{
     id?: string;
     relation?: "and" | "or" | "not";
-    ruleType?: "file_name_contains" | "file_content_contains" | "file_extension_in" | "modified_time_between";
+    ruleType?: "file_name_contains" | "file_content_contains" | "file_extension_in" | "modified_time_between" | "document_path_in_folder";
     matcher?: Record<string, unknown>;
     enabled?: boolean;
     priority?: number;
@@ -39,6 +39,10 @@ interface SaveDocumentTagsBody {
 }
 
 interface FolderTagDetailsQuery {
+  folderPath?: string;
+}
+
+interface FolderTagTaskQuery {
   folderPath?: string;
 }
 
@@ -217,6 +221,57 @@ export class AffairsTagController {
           ).id
         ))),
       ],
+    ));
+  };
+
+  readonly requestFullTagRecompute = async (
+    request: FastifyRequest<{ Params: WorkspaceParams }>,
+    reply: FastifyReply,
+  ): Promise<void> => {
+    reply.send(this.affairsTagService.requestFullTagRecompute(
+      request.params.workspaceId,
+      requireUserId(request),
+    ));
+  };
+
+  readonly requestTagRecoveryRecompute = async (
+    request: FastifyRequest<{ Params: WorkspaceParams }>,
+    reply: FastifyReply,
+  ): Promise<void> => {
+    reply.send(this.affairsTagService.requestFullTagRecompute(
+      request.params.workspaceId,
+      requireUserId(request),
+    ));
+  };
+
+  readonly getFullTagRecomputeTask = async (
+    request: FastifyRequest<{ Params: WorkspaceParams }>,
+    reply: FastifyReply,
+  ): Promise<void> => {
+    reply.send(this.affairsTagService.getFullTagRecomputeTaskSnapshot(
+      request.params.workspaceId,
+      requireUserId(request),
+    ));
+  };
+
+  readonly getTagRecoveryStatus = async (
+    request: FastifyRequest<{ Params: WorkspaceParams }>,
+    reply: FastifyReply,
+  ): Promise<void> => {
+    reply.send(this.affairsTagService.getTagRecoveryStatus(
+      request.params.workspaceId,
+      requireUserId(request),
+    ));
+  };
+
+  readonly getFolderTagTask = async (
+    request: FastifyRequest<{ Params: WorkspaceParams; Querystring: FolderTagTaskQuery }>,
+    reply: FastifyReply,
+  ): Promise<void> => {
+    reply.send(this.affairsTagService.getFolderTagApplyTaskSnapshot(
+      request.params.workspaceId,
+      requireUserId(request),
+      request.query.folderPath?.trim() ?? "",
     ));
   };
 }

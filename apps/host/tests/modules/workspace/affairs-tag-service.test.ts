@@ -10,6 +10,7 @@ import { CatalogWriteRepository } from "../../../src/modules/affairs-indexer/cor
 import { TagRecomputeService } from "../../../src/modules/affairs-indexer/core/src/services/tagging/tag-recompute-service.js";
 import { createAffairsIndexerRuntimeConfig } from "../../../src/modules/affairs-indexer/internal-command-runner.js";
 import { SimpleTagInferenceEngine } from "../../../src/modules/affairs-indexer/core/src/tagging/simple-tag-inference.js";
+import { openDatabase } from "../../../src/modules/affairs-indexer/core/src/sqlite/open-database.js";
 
 function createRootDir() {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-tag-service-"));
@@ -65,6 +66,7 @@ describe("AffairsTagService", () => {
         has: vi.fn(() => false),
         register: vi.fn(),
         enqueue,
+        peek: vi.fn(() => null),
       } as never,
     );
   }
@@ -139,24 +141,159 @@ describe("AffairsTagService", () => {
     ]));
   });
 
-  it("文件夹标签变更时会走轻量重算，不再重新跑整套推理", async () => {
-    const document = addIndexedDocument("客户A/合同.md", "客户A 合同");
+  it("文件夹标签变更时只重跑目标文件夹子树，但会走完整标签推理", async () => {
+    addIndexedDocument("客户A/合同.md", "客户A 合同");
+    addIndexedDocument("客户B/报价.md", "客户B 报价");
     const service = createService();
+    const repository = new CatalogRepository(path.join(rootDir, ".ai-index", "catalog.db"));
     const folderTag = service.saveTagDefinition("workspace-1", "user-1", {
       name: "目录继承",
     });
-    service.saveFolderTagBindings("workspace-1", "user-1", ".", [folderTag.id]);
+    service.saveFolderTagBindings("workspace-1", "user-1", "客户A", [folderTag.id]);
     const inferSpy = vi.spyOn(SimpleTagInferenceEngine.prototype, "infer");
 
     await new TagRecomputeService(createAffairsIndexerRuntimeConfig(rootDir)).run({
-      scope: { kind: "folder", folderPath: ".", mode: "folder_bindings_only" },
+      scope: { kind: "folder", folderPath: "客户A" },
     });
 
-    expect(inferSpy).not.toHaveBeenCalled();
-    const details = service.getDocumentTagDetails("workspace-1", "user-1", document.documentId);
+    expect(inferSpy).toHaveBeenCalledTimes(1);
+    const customerA = repository.getDocumentContext(undefined, "客户A/合同.md");
+    const customerB = repository.getDocumentContext(undefined, "客户B/报价.md");
+    const details = service.getDocumentTagDetails("workspace-1", "user-1", customerA!.documentId);
     expect(details.resolvedTags.map(item => `${item.path}:${item.sourceType}`)).toEqual(expect.arrayContaining([
       "目录继承:folder_binding",
     ]));
+    const untouchedDetails = service.getDocumentTagDetails("workspace-1", "user-1", customerB!.documentId);
+    expect(untouchedDetails.resolvedTags.map(item => item.path)).not.toContain("目录继承");
+  });
+
+  it("智能标签规则支持匹配指定文件夹及其子文件夹", async () => {
+    const targetDocument = addIndexedDocument("售前/方案/系统集成方案.md", "系统集成方案");
+    addIndexedDocument("售后/巡检/记录.md", "巡检记录");
+    const service = createService();
+    const repository = new CatalogRepository(path.join(rootDir, ".ai-index", "catalog.db"));
+    const tag = service.saveTagDefinition("workspace-1", "user-1", {
+      name: "系统集成",
+      smartRules: [
+        {
+          id: "rule-folder-1",
+          relation: "and",
+          ruleType: "document_path_in_folder",
+          matcher: { folderPath: "售前/方案" },
+          enabled: true,
+          priority: 0,
+        },
+      ],
+    });
+
+    await new TagRecomputeService(createAffairsIndexerRuntimeConfig(rootDir)).run({
+      scope: { kind: "full" },
+    });
+
+    const details = service.getDocumentTagDetails("workspace-1", "user-1", targetDocument.documentId);
+    expect(details.resolvedTags.map(item => `${item.path}:${item.sourceType}`)).toEqual(expect.arrayContaining([
+      `${tag.path}:smart_rule`,
+    ]));
+    const otherDocument = repository.getDocumentContext(undefined, "售后/巡检/记录.md");
+    const otherDetails = service.getDocumentTagDetails("workspace-1", "user-1", otherDocument!.documentId);
+    expect(otherDetails.resolvedTags.map(item => item.path)).not.toContain(tag.path);
+  });
+
+  it("普通索引重复写入时不会再冲掉已有手动标签", async () => {
+    const dbPath = path.join(rootDir, ".ai-index", "catalog.db");
+    const service = createService();
+    const document = addIndexedDocument("客户A/合同.md", "客户A 合同");
+    const manualTag = service.saveTagDefinition("workspace-1", "user-1", {
+      name: "人工确认",
+    });
+    service.saveDocumentTagBindings("workspace-1", "user-1", document.documentId, [manualTag.id]);
+    await new TagRecomputeService(createAffairsIndexerRuntimeConfig(rootDir)).run({
+      scope: { kind: "document", documentId: document.documentId },
+    });
+
+    const writer = new CatalogWriteRepository(dbPath);
+    const now = new Date().toISOString();
+    writer.upsertTextDocument(
+      {
+        relativePath: "客户A/合同.md",
+        fullPath: path.join(rootDir, "客户A/合同.md"),
+        name: "合同.md",
+        extension: ".md",
+        size: 256,
+        mtime: now,
+        ctime: now,
+      },
+      {
+        title: "客户A 合同",
+        text: "第二次索引写入",
+        summary: "客户A 合同",
+        parser: "test",
+      },
+      [],
+      [],
+      now,
+    );
+
+    const details = service.getDocumentTagDetails("workspace-1", "user-1", document.documentId);
+    expect(details.manualTagIds).toContain(manualTag.id);
+    expect(details.resolvedTags.map(item => `${item.path}:${item.sourceType}`)).toEqual(expect.arrayContaining([
+      "人工确认:manual_document",
+    ]));
+  });
+
+  it("可以发起全量标签重算恢复任务", () => {
+    const service = createService();
+
+    const result = service.requestFullTagRecompute("workspace-1", "user-1");
+
+    expect(result).toEqual({
+      taskId: `task-${HOST_TASK_TYPES.affairsLibraryTagRecompute}`,
+      deduped: false,
+      status: "queued",
+      scope: "full",
+    });
+    expect(enqueue).toHaveBeenCalledWith(
+      HOST_TASK_TYPES.affairsLibraryTagRecompute,
+      expect.objectContaining({
+        key: "workspace-1:full",
+        source: "affairs_tag.request_full_recompute",
+        input: expect.objectContaining({
+          reason: "manual_full_recompute_requested",
+          scope: { kind: "full", mode: "full" },
+        }),
+      }),
+    );
+  });
+
+  it("手动文件标签保存后主链路只写 manual_file_tag_bindings，旧表只保留兼容层", () => {
+    const dbPath = path.join(rootDir, ".ai-index", "catalog.db");
+    const service = createService();
+    const document = addIndexedDocument("客户A/合同.md", "客户A 合同");
+    const manualTag = service.saveTagDefinition("workspace-1", "user-1", {
+      name: "人工确认",
+    });
+
+    service.saveDocumentTagBindings("workspace-1", "user-1", document.documentId, [manualTag.id]);
+
+    const db = openDatabase(dbPath);
+    try {
+      const legacyCount = Number((db.prepare("SELECT COUNT(*) AS count FROM manual_document_tag_bindings").get() as { count?: number } | undefined)?.count ?? 0);
+      const identityCount = Number((db.prepare("SELECT COUNT(*) AS count FROM manual_file_tag_bindings").get() as { count?: number } | undefined)?.count ?? 0);
+      expect(legacyCount).toBe(0);
+      expect(identityCount).toBe(1);
+    } finally {
+      db.close();
+    }
+
+    expect(service.getTagRecoveryStatus("workspace-1", "user-1")).toMatchObject({
+      task: null,
+      bindingStats: {
+        identityBindingCount: 1,
+        legacyBindingCount: 0,
+        legacyFallbackBindingCount: 0,
+        legacyFallbackDocumentCount: 0,
+      },
+    });
   });
 
   it("标签改名后重新跑标签重算与导出时不会再写入失效 tag_id，左侧标签树会看到新名称", async () => {
@@ -169,7 +306,7 @@ describe("AffairsTagService", () => {
 
     service.saveFolderTagBindings("workspace-1", "user-1", ".", [tag.id]);
     await new TagRecomputeService(createAffairsIndexerRuntimeConfig(rootDir)).run({
-      scope: { kind: "folder", folderPath: ".", mode: "folder_bindings_only" },
+      scope: { kind: "folder", folderPath: "." },
     });
 
     service.saveTagDefinition("workspace-1", "user-1", {
@@ -316,6 +453,7 @@ describe("AffairsTagService", () => {
         has: vi.fn(() => false),
         register: vi.fn(),
         enqueue,
+        peek: vi.fn(() => null),
       } as never,
     );
     const folderTag = service.saveTagDefinition("workspace-1", "user-1", {
@@ -347,6 +485,7 @@ describe("AffairsTagService", () => {
         has: vi.fn(() => false),
         register: vi.fn(),
         enqueue,
+        peek: vi.fn(() => null),
       } as never,
     );
 

@@ -6,6 +6,10 @@ export interface DocumentContextResult {
   title: string;
   summary: string;
   modifiedAt: string;
+  inodeKey: string | null;
+  contentHash: string | null;
+  size: number;
+  extension: string;
   tags: string[];
 }
 
@@ -80,7 +84,8 @@ export type TagRuleType =
   | "file_name_contains"
   | "file_content_contains"
   | "file_extension_in"
-  | "modified_time_between";
+  | "modified_time_between"
+  | "document_path_in_folder";
 
 export interface TagRuleMatcherFileNameContains {
   keyword: string;
@@ -99,11 +104,16 @@ export interface TagRuleMatcherModifiedTimeBetween {
   end?: string | null;
 }
 
+export interface TagRuleMatcherDocumentPathInFolder {
+  folderPath?: string | null;
+}
+
 export type TagRuleMatcher =
   | TagRuleMatcherFileNameContains
   | TagRuleMatcherFileContentContains
   | TagRuleMatcherFileExtensionIn
-  | TagRuleMatcherModifiedTimeBetween;
+  | TagRuleMatcherModifiedTimeBetween
+  | TagRuleMatcherDocumentPathInFolder;
 
 export interface TagRuleRow {
   id: string;
@@ -123,6 +133,35 @@ export interface TagRuleRow {
 export interface ManualDocumentTagBindingRow {
   id: string;
   documentId: string;
+  tagId: string;
+  tagPath: string;
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ManualTagBindingStats {
+  identityBindingCount: number;
+  legacyBindingCount: number;
+  legacyFallbackBindingCount: number;
+  legacyFallbackDocumentCount: number;
+}
+
+interface DocumentIdentityRow {
+  documentId: string;
+  path: string;
+  inodeKey: string | null;
+  contentHash: string | null;
+  size: number;
+  extension: string;
+}
+
+interface ManualFileTagBindingCandidateRow {
+  id: string;
+  inodeKey: string | null;
+  contentHash: string | null;
+  fileSize: number;
+  extension: string;
   tagId: string;
   tagPath: string;
   source: string;
@@ -176,6 +215,7 @@ export interface RecomputeScope {
   documentId?: string;
   folderPath?: string;
   tagId?: string;
+  mode?: "full" | "folder_bindings_only";
 }
 
 export interface ExportTagPostingRow {
@@ -439,7 +479,32 @@ export class CatalogRepository {
     const db = openDatabase(this.dbPath);
     try {
       const placeholders = normalizedIds.map(() => "?").join(", ");
-      const rows = db.prepare(`
+      const documentRows = db.prepare(`
+        SELECT
+          d.id AS document_id,
+          f.path,
+          f.inode_key,
+          f.content_hash,
+          f.size,
+          f.extension
+        FROM documents d
+        JOIN files f ON f.id = d.file_id
+        WHERE d.id IN (${placeholders})
+          AND f.status = 'active'
+          AND d.index_status = 'indexed'
+      `).all(...normalizedIds) as Array<Record<string, unknown>>;
+
+      const currentDocuments = documentRows.map((row) => ({
+        documentId: String(row.document_id),
+        path: String(row.path),
+        inodeKey: typeof row.inode_key === "string" && row.inode_key.trim() ? String(row.inode_key) : null,
+        contentHash: typeof row.content_hash === "string" && row.content_hash.trim() ? String(row.content_hash) : null,
+        size: Number(row.size ?? 0),
+        extension: String(row.extension ?? ""),
+      })) satisfies DocumentIdentityRow[];
+
+      const resolvedRows = this.resolveManualFileTagBindingsForDocuments(db, currentDocuments);
+      const legacyRows = db.prepare(`
         SELECT
           b.id,
           b.document_id,
@@ -451,21 +516,236 @@ export class CatalogRepository {
         FROM manual_document_tag_bindings b
         JOIN tags t ON t.id = b.tag_id
         WHERE b.document_id IN (${placeholders})
+          AND t.status = 'active'
         ORDER BY b.document_id, t.path
       `).all(...normalizedIds) as Array<Record<string, unknown>>;
 
-      return rows.map(row => ({
-        id: String(row.id),
-        documentId: String(row.document_id),
-        tagId: String(row.tag_id),
-        tagPath: String(row.tag_path),
-        source: String(row.source),
-        createdAt: String(row.created_at),
-        updatedAt: String(row.updated_at),
-      }));
+      const identityRowsByDocument = new Map<string, ManualDocumentTagBindingRow[]>();
+      resolvedRows.forEach((row) => {
+        const current = identityRowsByDocument.get(row.documentId) ?? [];
+        current.push(row);
+        identityRowsByDocument.set(row.documentId, current);
+      });
+      const legacyRowsByDocument = new Map<string, ManualDocumentTagBindingRow[]>();
+      legacyRows.forEach((row) => {
+        const mapped = {
+          id: String(row.id),
+          documentId: String(row.document_id),
+          tagId: String(row.tag_id),
+          tagPath: String(row.tag_path),
+          source: String(row.source),
+          createdAt: String(row.created_at),
+          updatedAt: String(row.updated_at),
+        } satisfies ManualDocumentTagBindingRow;
+        const current = legacyRowsByDocument.get(mapped.documentId) ?? [];
+        current.push(mapped);
+        legacyRowsByDocument.set(mapped.documentId, current);
+      });
+
+      return normalizedIds
+        .flatMap((documentId) => {
+          const identityRows = identityRowsByDocument.get(documentId);
+          if (identityRows && identityRows.length > 0) {
+            return identityRows;
+          }
+          return legacyRowsByDocument.get(documentId) ?? [];
+        })
+        .sort((left, right) =>
+        left.documentId.localeCompare(right.documentId, "zh-Hans-CN")
+        || left.tagPath.localeCompare(right.tagPath, "zh-Hans-CN"));
     } finally {
       db.close();
     }
+  }
+
+  getManualTagBindingStats(): ManualTagBindingStats {
+    const db = openDatabase(this.dbPath);
+    try {
+      const row = db.prepare(`
+        WITH legacy_active AS (
+          SELECT
+            mdtb.document_id,
+            mdtb.tag_id,
+            f.inode_key,
+            f.content_hash,
+            f.size,
+            f.extension
+          FROM manual_document_tag_bindings mdtb
+          JOIN documents d ON d.id = mdtb.document_id
+          JOIN files f ON f.id = d.file_id
+          WHERE f.status = 'active'
+            AND d.index_status IN ('indexed', 'failed', 'skipped')
+        ),
+        legacy_only AS (
+          SELECT la.document_id, la.tag_id
+          FROM legacy_active la
+          WHERE NOT EXISTS (
+            SELECT 1
+            FROM manual_file_tag_bindings mftb
+            WHERE mftb.tag_id = la.tag_id
+              AND (
+                (la.inode_key IS NOT NULL AND mftb.inode_key = la.inode_key)
+                OR (
+                  la.content_hash IS NOT NULL
+                  AND mftb.content_hash = la.content_hash
+                  AND mftb.file_size = la.size
+                  AND mftb.extension = la.extension
+                )
+              )
+          )
+        )
+        SELECT
+          (SELECT COUNT(*) FROM manual_file_tag_bindings) AS identity_binding_count,
+          (SELECT COUNT(*) FROM manual_document_tag_bindings) AS legacy_binding_count,
+          (SELECT COUNT(*) FROM legacy_only) AS legacy_fallback_binding_count,
+          (SELECT COUNT(DISTINCT document_id) FROM legacy_only) AS legacy_fallback_document_count
+      `).get() as Record<string, unknown> | undefined;
+
+      return {
+        identityBindingCount: Number(row?.identity_binding_count ?? 0),
+        legacyBindingCount: Number(row?.legacy_binding_count ?? 0),
+        legacyFallbackBindingCount: Number(row?.legacy_fallback_binding_count ?? 0),
+        legacyFallbackDocumentCount: Number(row?.legacy_fallback_document_count ?? 0),
+      };
+    } finally {
+      db.close();
+    }
+  }
+
+  private resolveManualFileTagBindingsForDocuments(
+    db: ReturnType<typeof openDatabase>,
+    documents: DocumentIdentityRow[],
+  ): ManualDocumentTagBindingRow[] {
+    if (documents.length === 0) {
+      return [];
+    }
+
+    const inodeKeys = [...new Set(documents.map((item) => item.inodeKey).filter((item): item is string => Boolean(item)))];
+    const contentHashes = [...new Set(documents.map((item) => item.contentHash).filter((item): item is string => Boolean(item)))];
+    if (inodeKeys.length === 0 && contentHashes.length === 0) {
+      return [];
+    }
+
+    const predicateParts: string[] = [];
+    const predicateParams: string[] = [];
+    if (inodeKeys.length > 0) {
+      predicateParts.push(`b.inode_key IN (${inodeKeys.map(() => "?").join(", ")})`);
+      predicateParams.push(...inodeKeys);
+    }
+    if (contentHashes.length > 0) {
+      predicateParts.push(`b.content_hash IN (${contentHashes.map(() => "?").join(", ")})`);
+      predicateParams.push(...contentHashes);
+    }
+
+    const candidateRows = db.prepare(`
+      SELECT
+        b.id,
+        b.inode_key,
+        b.content_hash,
+        b.file_size,
+        b.extension,
+        b.tag_id,
+        t.path AS tag_path,
+        b.source,
+        b.created_at,
+        b.updated_at
+      FROM manual_file_tag_bindings b
+      JOIN tags t ON t.id = b.tag_id
+      WHERE t.status = 'active'
+        AND (${predicateParts.join(" OR ")})
+      ORDER BY t.path, b.updated_at DESC, b.id
+    `).all(...predicateParams) as Array<Record<string, unknown>>;
+
+    if (candidateRows.length === 0) {
+      return [];
+    }
+
+    const candidates = candidateRows.map((row) => ({
+      id: String(row.id),
+      inodeKey: typeof row.inode_key === "string" && row.inode_key.trim() ? String(row.inode_key) : null,
+      contentHash: typeof row.content_hash === "string" && row.content_hash.trim() ? String(row.content_hash) : null,
+      fileSize: Number(row.file_size ?? 0),
+      extension: String(row.extension ?? ""),
+      tagId: String(row.tag_id),
+      tagPath: String(row.tag_path),
+      source: String(row.source),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    })) satisfies ManualFileTagBindingCandidateRow[];
+
+    const candidateInodeKeys = [...new Set(candidates.map((item) => item.inodeKey).filter((item): item is string => Boolean(item)))];
+    const candidateContentHashes = [...new Set(candidates.map((item) => item.contentHash).filter((item): item is string => Boolean(item)))];
+    const activeIdentityRows = this.listActiveDocumentIdentitiesByKeys(db, candidateInodeKeys, candidateContentHashes);
+    const activeDocIdsByInode = buildDocumentIdsByInode(activeIdentityRows);
+    const activeDocIdsByContent = buildDocumentIdsByContent(activeIdentityRows);
+
+    const resolved = new Map<string, ManualDocumentTagBindingRow>();
+    for (const document of documents) {
+      const documentContentKey = buildContentIdentityKey(document.contentHash, document.size, document.extension);
+      for (const candidate of candidates) {
+        const matchedByInode = Boolean(candidate.inodeKey && document.inodeKey && candidate.inodeKey === document.inodeKey);
+        const matchedByContent = !matchedByInode && matchesContentFallback(document, candidate, activeDocIdsByInode, activeDocIdsByContent, documentContentKey);
+        if (!matchedByInode && !matchedByContent) {
+          continue;
+        }
+        resolved.set(`${document.documentId}:${candidate.tagId}`, {
+          id: candidate.id,
+          documentId: document.documentId,
+          tagId: candidate.tagId,
+          tagPath: candidate.tagPath,
+          source: candidate.source,
+          createdAt: candidate.createdAt,
+          updatedAt: candidate.updatedAt,
+        });
+      }
+    }
+
+    return [...resolved.values()];
+  }
+
+  private listActiveDocumentIdentitiesByKeys(
+    db: ReturnType<typeof openDatabase>,
+    inodeKeys: string[],
+    contentHashes: string[],
+  ): DocumentIdentityRow[] {
+    if (inodeKeys.length === 0 && contentHashes.length === 0) {
+      return [];
+    }
+
+    const predicateParts: string[] = [];
+    const params: string[] = [];
+    if (inodeKeys.length > 0) {
+      predicateParts.push(`f.inode_key IN (${inodeKeys.map(() => "?").join(", ")})`);
+      params.push(...inodeKeys);
+    }
+    if (contentHashes.length > 0) {
+      predicateParts.push(`f.content_hash IN (${contentHashes.map(() => "?").join(", ")})`);
+      params.push(...contentHashes);
+    }
+
+    const rows = db.prepare(`
+      SELECT
+        d.id AS document_id,
+        f.path,
+        f.inode_key,
+        f.content_hash,
+        f.size,
+        f.extension
+      FROM documents d
+      JOIN files f ON f.id = d.file_id
+      WHERE f.status = 'active'
+        AND d.index_status = 'indexed'
+        AND (${predicateParts.join(" OR ")})
+    `).all(...params) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      documentId: String(row.document_id),
+      path: String(row.path),
+      inodeKey: typeof row.inode_key === "string" && row.inode_key.trim() ? String(row.inode_key) : null,
+      contentHash: typeof row.content_hash === "string" && row.content_hash.trim() ? String(row.content_hash) : null,
+      size: Number(row.size ?? 0),
+      extension: String(row.extension ?? ""),
+    }));
   }
 
   listFolderTagBindingsByPaths(paths: string[]): FolderTagBindingRow[] {
@@ -514,8 +794,61 @@ export class CatalogRepository {
 
     const db = openDatabase(this.dbPath);
     try {
-      const conditions = normalizedPaths.map(() => `(f.path = ? OR f.path LIKE ?)` ).join(" OR ");
-      const params = normalizedPaths.flatMap(item => [item, `${item}/%`]);
+      const valuePlaceholders = normalizedPaths.map(() => "(?)").join(", ");
+      const rows = db.prepare(`
+        WITH target_paths(path) AS (
+          VALUES ${valuePlaceholders}
+        )
+        SELECT
+          b.id,
+          b.folder_path,
+          b.tag_id,
+          t.path AS tag_path,
+          b.apply_mode,
+          b.created_at,
+          b.updated_at,
+          f.path AS document_path,
+          d.id AS document_id
+        FROM target_paths p
+        JOIN files f ON f.path = p.path
+        JOIN documents d ON d.file_id = f.id
+        JOIN folder_tag_bindings b ON (
+          b.folder_path = '.'
+          OR f.path = b.folder_path
+          OR f.path LIKE b.folder_path || '/%'
+        )
+        JOIN tags t ON t.id = b.tag_id
+        WHERE f.status = 'active'
+          AND d.index_status = 'indexed'
+        ORDER BY f.path, b.folder_path, t.path
+      `).all(...normalizedPaths) as Array<Record<string, unknown>>;
+
+      return rows.map(row => ({
+        id: String(row.id),
+        folderPath: String(row.folder_path),
+        tagId: String(row.tag_id),
+        tagPath: String(row.tag_path),
+        applyMode: String(row.apply_mode),
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at),
+        documentPath: String(row.document_path),
+        documentId: String(row.document_id),
+      }));
+    } finally {
+      db.close();
+    }
+  }
+
+  listEffectiveFolderTagBindingsForFolderScope(folderPath: string): EffectiveFolderTagBindingRow[] {
+    const normalizedFolderPath = normalizeScopedFolderPath(folderPath);
+    const db = openDatabase(this.dbPath);
+    try {
+      const whereClause = normalizedFolderPath === "."
+        ? ""
+        : "AND (f.path = ? OR f.path LIKE ?)";
+      const params = normalizedFolderPath === "."
+        ? []
+        : [normalizedFolderPath, `${normalizedFolderPath}/%`];
       const rows = db.prepare(`
         SELECT
           b.id,
@@ -527,17 +860,17 @@ export class CatalogRepository {
           b.updated_at,
           f.path AS document_path,
           d.id AS document_id
-        FROM folder_tag_bindings b
-        JOIN tags t ON t.id = b.tag_id
-        JOIN files f ON (
+        FROM files f
+        JOIN documents d ON d.file_id = f.id
+        JOIN folder_tag_bindings b ON (
           b.folder_path = '.'
           OR f.path = b.folder_path
           OR f.path LIKE b.folder_path || '/%'
         )
-        JOIN documents d ON d.file_id = f.id
+        JOIN tags t ON t.id = b.tag_id
         WHERE f.status = 'active'
           AND d.index_status = 'indexed'
-          AND (${conditions})
+          ${whereClause}
         ORDER BY f.path, b.folder_path, t.path
       `).all(...params) as Array<Record<string, unknown>>;
 
@@ -632,21 +965,37 @@ export class CatalogRepository {
       }
 
       if (scope.kind === "folder" && scope.folderPath) {
-        const normalizedPath = scope.folderPath.trim().replace(/^\.\/+/, "").replace(/\/+$/g, "");
+        const normalizedPath = normalizeScopedFolderPath(scope.folderPath);
+        const includeContentText = scope.mode !== "folder_bindings_only";
+        const contentJoinClause = includeContentText
+          ? "LEFT JOIN chunks c ON c.document_id = d.id"
+          : "";
+        const contentSelectClause = includeContentText
+          ? "COALESCE(group_concat(c.content, char(10)), '') AS content_text,"
+          : "'' AS content_text,";
+        const whereClause = normalizedPath === "."
+          ? ""
+          : "AND (f.path = ? OR f.path LIKE ?)";
+        const groupByClause = includeContentText
+          ? "GROUP BY d.id, f.path, d.title, f.name, d.summary, f.mtime, f.ctime, f.extension"
+          : "";
+        const params = normalizedPath === "."
+          ? []
+          : [normalizedPath, `${normalizedPath}/%`];
         const rows = db.prepare(`
           SELECT d.id AS document_id, f.path, COALESCE(d.title, f.name) AS title,
                  COALESCE(d.summary, '') AS summary,
-                 COALESCE(group_concat(c.content, char(10)), '') AS content_text,
+                 ${contentSelectClause}
                  f.mtime, f.ctime, f.extension
           FROM documents d
           JOIN files f ON f.id = d.file_id
-          LEFT JOIN chunks c ON c.document_id = d.id
+          ${contentJoinClause}
           WHERE f.status = 'active'
             AND d.index_status = 'indexed'
-            AND (f.path = ? OR f.path LIKE ?)
-          GROUP BY d.id, f.path, d.title, f.name, d.summary, f.mtime, f.ctime, f.extension
+            ${whereClause}
+          ${groupByClause}
           ORDER BY f.path
-        `).all(normalizedPath, `${normalizedPath}/%`) as Array<Record<string, unknown>>;
+        `).all(...params) as Array<Record<string, unknown>>;
         return rows.map(mapTagRecomputeRow);
       }
 
@@ -688,7 +1037,7 @@ export class CatalogRepository {
       if (documentId) {
         row = db.prepare(`
           SELECT d.id AS document_id, f.path, COALESCE(d.title, f.name) AS title,
-                 COALESCE(d.summary, '') AS summary, f.mtime
+                 COALESCE(d.summary, '') AS summary, f.mtime, f.inode_key, f.content_hash, f.size, f.extension
           FROM documents d
           JOIN files f ON f.id = d.file_id
           WHERE d.id = ?
@@ -698,7 +1047,7 @@ export class CatalogRepository {
       } else if (filePath) {
         row = db.prepare(`
           SELECT d.id AS document_id, f.path, COALESCE(d.title, f.name) AS title,
-                 COALESCE(d.summary, '') AS summary, f.mtime
+                 COALESCE(d.summary, '') AS summary, f.mtime, f.inode_key, f.content_hash, f.size, f.extension
           FROM documents d
           JOIN files f ON f.id = d.file_id
           WHERE f.path = ?
@@ -731,6 +1080,10 @@ export class CatalogRepository {
         title: String(row.title),
         summary: String(row.summary ?? ""),
         modifiedAt: String(row.mtime),
+        inodeKey: typeof row.inode_key === "string" && row.inode_key.trim() ? String(row.inode_key) : null,
+        contentHash: typeof row.content_hash === "string" && row.content_hash.trim() ? String(row.content_hash) : null,
+        size: Number(row.size ?? 0),
+        extension: String(row.extension ?? ""),
         tags: tags.map(item => item.tag_path),
       };
     } finally {
@@ -1370,6 +1723,65 @@ export class CatalogRepository {
   }
 }
 
+function buildDocumentIdsByInode(rows: DocumentIdentityRow[]): Map<string, Set<string>> {
+  const byInode = new Map<string, Set<string>>();
+  rows.forEach((row) => {
+    if (!row.inodeKey) {
+      return;
+    }
+    const current = byInode.get(row.inodeKey) ?? new Set<string>();
+    current.add(row.documentId);
+    byInode.set(row.inodeKey, current);
+  });
+  return byInode;
+}
+
+function buildDocumentIdsByContent(rows: DocumentIdentityRow[]): Map<string, Set<string>> {
+  const byContent = new Map<string, Set<string>>();
+  rows.forEach((row) => {
+    const key = buildContentIdentityKey(row.contentHash, row.size, row.extension);
+    if (!key) {
+      return;
+    }
+    const current = byContent.get(key) ?? new Set<string>();
+    current.add(row.documentId);
+    byContent.set(key, current);
+  });
+  return byContent;
+}
+
+function buildContentIdentityKey(contentHash: string | null, size: number, extension: string): string | null {
+  if (!contentHash) {
+    return null;
+  }
+  return `${contentHash}::${size}::${extension}`;
+}
+
+function matchesContentFallback(
+  document: DocumentIdentityRow,
+  candidate: ManualFileTagBindingCandidateRow,
+  activeDocIdsByInode: Map<string, Set<string>>,
+  activeDocIdsByContent: Map<string, Set<string>>,
+  documentContentKey: string | null,
+): boolean {
+  const candidateContentKey = buildContentIdentityKey(candidate.contentHash, candidate.fileSize, candidate.extension);
+  if (!documentContentKey || !candidateContentKey || documentContentKey !== candidateContentKey) {
+    return false;
+  }
+
+  const contentMatches = activeDocIdsByContent.get(candidateContentKey);
+  if (!contentMatches || contentMatches.size !== 1 || !contentMatches.has(document.documentId)) {
+    return false;
+  }
+
+  if (!candidate.inodeKey) {
+    return true;
+  }
+
+  const inodeMatches = activeDocIdsByInode.get(candidate.inodeKey);
+  return !inodeMatches || (inodeMatches.size === 1 && inodeMatches.has(document.documentId));
+}
+
 function mapTagRecomputeRow(row: Record<string, unknown>): TagRecomputeDocumentRow {
   return {
     documentId: String(row.document_id),
@@ -1381,6 +1793,14 @@ function mapTagRecomputeRow(row: Record<string, unknown>): TagRecomputeDocumentR
     ctime: String(row.ctime),
     extension: String(row.extension),
   };
+}
+
+function normalizeScopedFolderPath(value: string): string {
+  const normalized = value.trim().replace(/^\.\/+/, "").replace(/\/+$/g, "");
+  if (!normalized || normalized === ".") {
+    return ".";
+  }
+  return normalized;
 }
 
 function parseJsonRecord(value: unknown): Record<string, unknown> {

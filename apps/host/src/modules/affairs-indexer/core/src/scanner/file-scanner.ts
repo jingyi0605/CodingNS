@@ -10,6 +10,7 @@ export interface FileScanResult {
   size: number;
   mtime: string;
   ctime: string;
+  inodeKey?: string | null;
 }
 
 const SUPPORTED_INDEX_EXTENSIONS = new Set([
@@ -235,6 +236,16 @@ export class FileScanner {
       size: stat.size,
       mtime: stat.mtime.toISOString(),
       ctime: stat.ctime.toISOString(),
+      inodeKey: buildInodeKey(stat),
     };
   }
+}
+
+function buildInodeKey(stat: fs.Stats): string | null {
+  const dev = Number(stat.dev);
+  const ino = Number(stat.ino);
+  if (!Number.isFinite(dev) || !Number.isFinite(ino) || dev < 0 || ino <= 0) {
+    return null;
+  }
+  return `${dev}:${ino}`;
 }

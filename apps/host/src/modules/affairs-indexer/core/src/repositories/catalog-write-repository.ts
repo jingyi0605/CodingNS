@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { openDatabase } from "../sqlite/open-database.js";
@@ -34,6 +35,10 @@ interface PreparedStatements {
   selectTagChildrenByParentId: ReturnType<DatabaseSync["prepare"]>;
   deleteManualDocumentBindingsByDocumentId: ReturnType<DatabaseSync["prepare"]>;
   insertManualDocumentBinding: ReturnType<DatabaseSync["prepare"]>;
+  deleteManualFileBindingsByTagId: ReturnType<DatabaseSync["prepare"]>;
+  insertManualFileBinding: ReturnType<DatabaseSync["prepare"]>;
+  selectManualFileBindingsForIdentity: ReturnType<DatabaseSync["prepare"]>;
+  deleteManualFileBindingById: ReturnType<DatabaseSync["prepare"]>;
   deleteFolderBindingsByFolderPath: ReturnType<DatabaseSync["prepare"]>;
   insertFolderBinding: ReturnType<DatabaseSync["prepare"]>;
   deleteTagRulesByTagId: ReturnType<DatabaseSync["prepare"]>;
@@ -46,8 +51,14 @@ interface PreparedStatements {
   insertDerivedTag: ReturnType<DatabaseSync["prepare"]>;
   upsertDocumentTag: ReturnType<DatabaseSync["prepare"]>;
   upsertDerivedTag: ReturnType<DatabaseSync["prepare"]>;
+  selectActiveFileIdentityByPath: ReturnType<DatabaseSync["prepare"]>;
   selectFileByPath: ReturnType<DatabaseSync["prepare"]>;
   selectDocumentByFileId: ReturnType<DatabaseSync["prepare"]>;
+  selectUnseenIdentityCandidates: ReturnType<DatabaseSync["prepare"]>;
+  selectManualBindingsByDocumentId: ReturnType<DatabaseSync["prepare"]>;
+  selectManualFileBindingRowsForIdentity: ReturnType<DatabaseSync["prepare"]>;
+  deleteManualBindingByPair: ReturnType<DatabaseSync["prepare"]>;
+  selectManualDocumentTagsByDocumentId: ReturnType<DatabaseSync["prepare"]>;
   selectDocumentTagIds: ReturnType<DatabaseSync["prepare"]>;
   selectDerivedTagIds: ReturnType<DatabaseSync["prepare"]>;
   deleteDocumentTags: ReturnType<DatabaseSync["prepare"]>;
@@ -72,6 +83,37 @@ export interface IndexedDocumentWritePayload {
   title: string;
   summary: string;
   text: string;
+}
+
+interface FileIdentityFingerprint {
+  inodeKey: string | null;
+  contentHash: string | null;
+}
+
+interface FileIdentityMigrationCandidate {
+  fileId: string;
+  path: string;
+  documentId: string;
+  inodeKey: string | null;
+  contentHash: string | null;
+  size: number;
+  extension: string;
+}
+
+export interface ManualDocumentBindingTarget {
+  documentId: string;
+  inodeKey: string | null;
+  contentHash: string | null;
+  size: number;
+  extension: string;
+}
+
+interface ManualFileBindingRow {
+  id: string;
+  tagId: string;
+  source: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface IndexedDocumentBatchEntry {
@@ -231,8 +273,8 @@ export class CatalogWriteRepository {
   private prepareStatements(db: DatabaseSync): PreparedStatements {
     return {
       upsertFile: db.prepare(`
-        INSERT INTO files(id, path, dir_path, name, extension, size, mtime, ctime, content_hash, status, last_seen_at)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+        INSERT INTO files(id, path, dir_path, name, extension, size, mtime, ctime, inode_key, content_hash, status, last_seen_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
         ON CONFLICT(path) DO UPDATE SET
           dir_path = excluded.dir_path,
           name = excluded.name,
@@ -240,6 +282,7 @@ export class CatalogWriteRepository {
           size = excluded.size,
           mtime = excluded.mtime,
           ctime = excluded.ctime,
+          inode_key = excluded.inode_key,
           content_hash = excluded.content_hash,
           status = 'active',
           last_seen_at = excluded.last_seen_at
@@ -295,9 +338,27 @@ export class CatalogWriteRepository {
       `),
       deleteManualDocumentBindingsByDocumentId: db.prepare(`DELETE FROM manual_document_tag_bindings WHERE document_id = ?`),
       insertManualDocumentBinding: db.prepare(`
-        INSERT INTO manual_document_tag_bindings(id, document_id, tag_id, source, created_at, updated_at)
+        INSERT OR REPLACE INTO manual_document_tag_bindings(id, document_id, tag_id, source, created_at, updated_at)
         VALUES(?, ?, ?, ?, ?, ?)
       `),
+      deleteManualFileBindingsByTagId: db.prepare(`DELETE FROM manual_file_tag_bindings WHERE tag_id = ?`),
+      insertManualFileBinding: db.prepare(`
+        INSERT OR REPLACE INTO manual_file_tag_bindings(id, inode_key, content_hash, file_size, extension, tag_id, source, created_at, updated_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `),
+      selectManualFileBindingsForIdentity: db.prepare(`
+        SELECT id
+        FROM manual_file_tag_bindings
+        WHERE (? IS NOT NULL AND inode_key = ?)
+           OR (
+             ? IS NOT NULL
+             AND inode_key IS NULL
+             AND content_hash = ?
+             AND file_size = ?
+             AND extension = ?
+           )
+      `),
+      deleteManualFileBindingById: db.prepare(`DELETE FROM manual_file_tag_bindings WHERE id = ?`),
       deleteFolderBindingsByFolderPath: db.prepare(`DELETE FROM folder_tag_bindings WHERE folder_path = ?`),
       insertFolderBinding: db.prepare(`
         INSERT INTO folder_tag_bindings(id, folder_path, tag_id, apply_mode, created_at, updated_at)
@@ -343,8 +404,80 @@ export class CatalogWriteRepository {
           updated_at = excluded.updated_at,
           expires_at = excluded.expires_at
       `),
+      selectActiveFileIdentityByPath: db.prepare(`
+        SELECT
+          d.id AS document_id,
+          f.inode_key,
+          f.content_hash,
+          f.size,
+          f.extension
+        FROM files f
+        JOIN documents d ON d.file_id = f.id
+        WHERE f.path = ?
+          AND f.status = 'active'
+          AND d.index_status IN ('indexed', 'failed', 'skipped')
+      `),
       selectFileByPath: db.prepare(`SELECT id FROM files WHERE path = ?`),
       selectDocumentByFileId: db.prepare(`SELECT id FROM documents WHERE file_id = ?`),
+      selectUnseenIdentityCandidates: db.prepare(`
+        SELECT
+          f.id AS file_id,
+          f.path,
+          f.inode_key,
+          f.content_hash,
+          f.size,
+          f.extension,
+          d.id AS document_id
+        FROM files f
+        JOIN documents d ON d.file_id = f.id
+        WHERE f.status = 'active'
+          AND d.index_status IN ('indexed', 'failed', 'skipped')
+          AND f.path <> ?
+          AND f.last_seen_at <> ?
+          AND (
+            (? IS NOT NULL AND f.inode_key = ?)
+            OR (
+              ? IS NOT NULL
+              AND f.content_hash = ?
+              AND f.size = ?
+              AND f.extension = ?
+            )
+          )
+        ORDER BY
+          CASE
+            WHEN ? IS NOT NULL AND f.inode_key = ? THEN 0
+            ELSE 1
+          END,
+          f.last_seen_at DESC,
+          f.path
+      `),
+      selectManualBindingsByDocumentId: db.prepare(`
+        SELECT id, tag_id, source, created_at, updated_at
+        FROM manual_document_tag_bindings
+        WHERE document_id = ?
+        ORDER BY tag_id
+      `),
+      selectManualFileBindingRowsForIdentity: db.prepare(`
+        SELECT id, tag_id, source, created_at, updated_at
+        FROM manual_file_tag_bindings
+        WHERE (? IS NOT NULL AND inode_key = ?)
+           OR (
+             ? IS NOT NULL
+             AND inode_key IS NULL
+             AND content_hash = ?
+             AND file_size = ?
+             AND extension = ?
+           )
+        ORDER BY updated_at DESC, id
+      `),
+      deleteManualBindingByPair: db.prepare(`DELETE FROM manual_document_tag_bindings WHERE document_id = ? AND tag_id = ?`),
+      selectManualDocumentTagsByDocumentId: db.prepare(`
+        SELECT tag_id, confidence, source_ref, evidence, manual_override, updated_at
+        FROM document_tags
+        WHERE document_id = ?
+          AND source = 'manual_document'
+        ORDER BY tag_id
+      `),
       selectDocumentTagIds: db.prepare(`SELECT tag_id FROM document_tags WHERE document_id = ?`),
       selectDerivedTagIds: db.prepare(`SELECT tag_id FROM derived_document_tags WHERE document_id = ?`),
       deleteDocumentTags: db.prepare(`DELETE FROM document_tags WHERE document_id = ?`),
@@ -441,6 +574,9 @@ export class CatalogWriteRepository {
         SELECT 1 FROM manual_document_tag_bindings mdtb WHERE mdtb.tag_id = t.id
       )
       AND NOT EXISTS (
+        SELECT 1 FROM manual_file_tag_bindings mftb WHERE mftb.tag_id = t.id
+      )
+      AND NOT EXISTS (
         SELECT 1 FROM folder_tag_bindings ftb WHERE ftb.tag_id = t.id
       )
     `);
@@ -460,6 +596,416 @@ export class CatalogWriteRepository {
     }
   }
 
+  private buildDocumentIdentityFingerprint(file: FileScanResult, document: IndexedDocumentWritePayload): FileIdentityFingerprint {
+    return {
+      inodeKey: normalizeFileIdentityValue(file.inodeKey),
+      contentHash: buildDocumentContentHash(document.text),
+    };
+  }
+
+  private resolveMigrationCandidateInConnection(
+    statements: PreparedStatements,
+    file: FileScanResult,
+    fingerprint: FileIdentityFingerprint,
+    observedAt: string,
+  ): FileIdentityMigrationCandidate | null {
+    if (!fingerprint.inodeKey && !fingerprint.contentHash) {
+      return null;
+    }
+
+    const rows = statements.selectUnseenIdentityCandidates.all(
+      file.relativePath,
+      observedAt,
+      fingerprint.inodeKey,
+      fingerprint.inodeKey,
+      fingerprint.contentHash,
+      fingerprint.contentHash,
+      file.size,
+      file.extension,
+      fingerprint.inodeKey,
+      fingerprint.inodeKey,
+    ) as Array<Record<string, unknown>>;
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    const candidates = rows.map((row) => ({
+      fileId: String(row.file_id),
+      path: String(row.path),
+      documentId: String(row.document_id),
+      inodeKey: normalizeFileIdentityValue(row.inode_key),
+      contentHash: typeof row.content_hash === "string" && row.content_hash.trim() ? row.content_hash : null,
+      size: Number(row.size ?? 0),
+      extension: String(row.extension ?? ""),
+    }));
+
+    const inodeMatches = fingerprint.inodeKey
+      ? candidates.filter((candidate) => candidate.inodeKey === fingerprint.inodeKey)
+      : [];
+    if (inodeMatches.length === 1) {
+      return inodeMatches[0];
+    }
+    if (inodeMatches.length > 1) {
+      return null;
+    }
+
+    const contentMatches = fingerprint.contentHash
+      ? candidates.filter((candidate) =>
+        candidate.contentHash === fingerprint.contentHash
+        && candidate.size === file.size
+        && candidate.extension === file.extension
+        && !doesSiblingPathStillExist(file, candidate.path))
+      : [];
+    if (contentMatches.length === 1) {
+      return contentMatches[0];
+    }
+    return null;
+  }
+
+  private migrateManualBindingsInConnection(
+    statements: PreparedStatements,
+    previousDocumentId: string,
+    nextDocumentId: string,
+    observedAt: string,
+  ): void {
+    if (!previousDocumentId || !nextDocumentId || previousDocumentId === nextDocumentId) {
+      return;
+    }
+
+    const bindingRows = statements.selectManualBindingsByDocumentId.all(previousDocumentId) as Array<Record<string, unknown>>;
+    bindingRows.forEach((row) => {
+      const tagId = String(row.tag_id);
+      statements.insertManualDocumentBinding.run(
+        makeStableId("manual_binding", `${nextDocumentId}:${tagId}`),
+        nextDocumentId,
+        tagId,
+        String(row.source ?? "manual_document"),
+        String(row.created_at ?? observedAt),
+        observedAt,
+      );
+      statements.deleteManualBindingByPair.run(previousDocumentId, tagId);
+    });
+
+    const manualTagRows = statements.selectManualDocumentTagsByDocumentId.all(previousDocumentId) as Array<Record<string, unknown>>;
+    manualTagRows.forEach((row) => {
+      const tagId = String(row.tag_id);
+      statements.upsertDocumentTag.run(
+        makeStableId("doc_tag", `${nextDocumentId}:${tagId}`),
+        nextDocumentId,
+        tagId,
+        Number(row.confidence ?? 1),
+        "manual_document",
+        typeof row.source_ref === "string" ? row.source_ref : null,
+        typeof row.evidence === "string" ? row.evidence : "手动分配",
+        Number(row.manual_override ?? 1) ? 1 : 0,
+        observedAt,
+      );
+    });
+  }
+
+  private deleteManualFileBindingsForTargetInConnection(
+    statements: PreparedStatements,
+    target: ManualDocumentBindingTarget,
+  ): void {
+    const existingRows = statements.selectManualFileBindingsForIdentity.all(
+      target.inodeKey,
+      target.inodeKey,
+      target.contentHash,
+      target.contentHash,
+      target.size,
+      target.extension,
+    ) as Array<Record<string, unknown>>;
+    existingRows.forEach((row) => {
+      statements.deleteManualFileBindingById.run(String(row.id));
+    });
+  }
+
+  private buildManualBindingTarget(
+    file: FileScanResult,
+    fingerprint: FileIdentityFingerprint,
+    documentId: string,
+  ): ManualDocumentBindingTarget {
+    return {
+      documentId,
+      inodeKey: fingerprint.inodeKey,
+      contentHash: fingerprint.contentHash,
+      size: file.size,
+      extension: file.extension,
+    };
+  }
+
+  private getActiveManualBindingTargetByPathInConnection(
+    statements: PreparedStatements,
+    relativePath: string,
+  ): ManualDocumentBindingTarget | null {
+    const row = statements.selectActiveFileIdentityByPath.get(relativePath) as Record<string, unknown> | undefined;
+    if (!row?.document_id) {
+      return null;
+    }
+    return {
+      documentId: String(row.document_id),
+      inodeKey: normalizeFileIdentityValue(row.inode_key),
+      contentHash: typeof row.content_hash === "string" && row.content_hash.trim() ? String(row.content_hash) : null,
+      size: Number(row.size ?? 0),
+      extension: String(row.extension ?? ""),
+    };
+  }
+
+  private listManualFileBindingRowsForIdentityInConnection(
+    statements: PreparedStatements,
+    target: ManualDocumentBindingTarget,
+  ): ManualFileBindingRow[] {
+    if (!target.inodeKey && !target.contentHash) {
+      return [];
+    }
+    const rows = statements.selectManualFileBindingRowsForIdentity.all(
+      target.inodeKey,
+      target.inodeKey,
+      target.contentHash,
+      target.contentHash,
+      target.size,
+      target.extension,
+    ) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      id: String(row.id),
+      tagId: String(row.tag_id),
+      source: String(row.source ?? "manual_document"),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    }));
+  }
+
+  private carryForwardManualFileBindingsForSameDocumentInConnection(
+    statements: PreparedStatements,
+    previousTarget: ManualDocumentBindingTarget | null,
+    nextTarget: ManualDocumentBindingTarget,
+    observedAt: string,
+  ): void {
+    if (!previousTarget || previousTarget.documentId !== nextTarget.documentId) {
+      return;
+    }
+    if (hasSameManualBindingIdentity(previousTarget, nextTarget)) {
+      return;
+    }
+
+    const existingNextRows = this.listManualFileBindingRowsForIdentityInConnection(statements, nextTarget);
+    if (existingNextRows.length > 0) {
+      return;
+    }
+
+    const previousRows = this.listManualFileBindingRowsForIdentityInConnection(statements, previousTarget);
+    if (previousRows.length === 0) {
+      return;
+    }
+
+    previousRows.forEach((row) => {
+      statements.insertManualFileBinding.run(
+        makeStableId("manual_file_binding", serializeManualFileBindingIdentity(nextTarget, row.tagId)),
+        nextTarget.inodeKey,
+        nextTarget.contentHash,
+        nextTarget.size,
+        nextTarget.extension,
+        row.tagId,
+        row.source,
+        row.createdAt,
+        observedAt,
+      );
+      statements.deleteManualFileBindingById.run(row.id);
+    });
+  }
+
+  private resolveManualFileBindingsForTargetInConnection(
+    db: DatabaseSync,
+    target: ManualDocumentBindingTarget,
+  ): Array<{ id: string; tagId: string; source: string; createdAt: string; updatedAt: string }> {
+    if (!target.inodeKey && !target.contentHash) {
+      return [];
+    }
+
+    const candidateRows = db.prepare(`
+      SELECT id, inode_key, content_hash, file_size, extension, tag_id, source, created_at, updated_at
+      FROM manual_file_tag_bindings
+      WHERE (? IS NOT NULL AND inode_key = ?)
+         OR (? IS NOT NULL AND content_hash = ? AND file_size = ? AND extension = ?)
+      ORDER BY updated_at DESC, id
+    `).all(
+      target.inodeKey,
+      target.inodeKey,
+      target.contentHash,
+      target.contentHash,
+      target.size,
+      target.extension,
+    ) as Array<Record<string, unknown>>;
+
+    if (candidateRows.length === 0) {
+      return [];
+    }
+
+    const candidateInodeKeys = [...new Set(candidateRows
+      .map((row) => normalizeFileIdentityValue(row.inode_key))
+      .filter((value): value is string => Boolean(value)))];
+    const candidateContentHashes = [...new Set(candidateRows
+      .map((row) => typeof row.content_hash === "string" && row.content_hash.trim() ? String(row.content_hash) : null)
+      .filter((value): value is string => Boolean(value)))];
+
+    const activeIdentityRows = this.listActiveDocumentIdentityRowsInConnection(
+      db,
+      candidateInodeKeys,
+      candidateContentHashes,
+    );
+    const activeDocIdsByInode = buildIdentityDocumentIdsByInode(activeIdentityRows);
+    const activeDocIdsByContent = buildIdentityDocumentIdsByContent(activeIdentityRows);
+    const targetContentKey = buildIdentityContentKey(target.contentHash, target.size, target.extension);
+
+    return candidateRows
+      .filter((row) => {
+        const candidateInodeKey = normalizeFileIdentityValue(row.inode_key);
+        if (candidateInodeKey && target.inodeKey && candidateInodeKey === target.inodeKey) {
+          return true;
+        }
+        const candidateContentKey = buildIdentityContentKey(
+          typeof row.content_hash === "string" && row.content_hash.trim() ? String(row.content_hash) : null,
+          Number(row.file_size ?? 0),
+          String(row.extension ?? ""),
+        );
+        if (!candidateContentKey || !targetContentKey || candidateContentKey !== targetContentKey) {
+          return false;
+        }
+        const contentMatches = activeDocIdsByContent.get(candidateContentKey);
+        if (contentMatches !== 1) {
+          return false;
+        }
+        if (!candidateInodeKey) {
+          return true;
+        }
+        return !activeDocIdsByInode.has(candidateInodeKey);
+      })
+      .map((row) => ({
+        id: String(row.id),
+        tagId: String(row.tag_id),
+        source: String(row.source ?? "manual_document"),
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at),
+      }));
+  }
+
+  private listActiveDocumentIdentityRowsInConnection(
+    db: DatabaseSync,
+    inodeKeys: string[],
+    contentHashes: string[],
+  ): Array<{ inodeKey: string | null; contentHash: string | null; size: number; extension: string }> {
+    if (inodeKeys.length === 0 && contentHashes.length === 0) {
+      return [];
+    }
+
+    const predicateParts: string[] = [];
+    const params: string[] = [];
+    if (inodeKeys.length > 0) {
+      predicateParts.push(`f.inode_key IN (${inodeKeys.map(() => "?").join(", ")})`);
+      params.push(...inodeKeys);
+    }
+    if (contentHashes.length > 0) {
+      predicateParts.push(`f.content_hash IN (${contentHashes.map(() => "?").join(", ")})`);
+      params.push(...contentHashes);
+    }
+
+    const rows = db.prepare(`
+      SELECT f.inode_key, f.content_hash, f.size, f.extension
+      FROM documents d
+      JOIN files f ON f.id = d.file_id
+      WHERE f.status = 'active'
+        AND d.index_status = 'indexed'
+        AND (${predicateParts.join(" OR ")})
+    `).all(...params) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      inodeKey: normalizeFileIdentityValue(row.inode_key),
+      contentHash: typeof row.content_hash === "string" && row.content_hash.trim() ? String(row.content_hash) : null,
+      size: Number(row.size ?? 0),
+      extension: String(row.extension ?? ""),
+    }));
+  }
+
+  private syncManualResolvedTagsForDocumentInConnection(
+    db: DatabaseSync,
+    statements: PreparedStatements,
+    target: ManualDocumentBindingTarget,
+    observedAt: string,
+  ): void {
+    const existingManualTagRows = statements.selectManualDocumentTagsByDocumentId.all(target.documentId) as Array<Record<string, unknown>>;
+    this.backfillManualFileBindingsFromLegacyDocumentBindingsInConnection(statements, target, observedAt);
+    statements.deleteDocumentTagByDocumentAndSource.run(target.documentId, "manual_document");
+    let manualBindings = this.resolveManualFileBindingsForTargetInConnection(db, target);
+    if (manualBindings.length === 0 && existingManualTagRows.length > 0 && (target.inodeKey || target.contentHash)) {
+      existingManualTagRows.forEach((row) => {
+        const tagId = String(row.tag_id);
+        statements.insertManualFileBinding.run(
+          makeStableId("manual_file_binding", serializeManualFileBindingIdentity(target, tagId)),
+          target.inodeKey,
+          target.contentHash,
+          target.size,
+          target.extension,
+          tagId,
+          "manual_document",
+          String(row.updated_at ?? observedAt),
+          observedAt,
+        );
+      });
+      manualBindings = this.resolveManualFileBindingsForTargetInConnection(db, target);
+    }
+    manualBindings.forEach((binding) => {
+      statements.upsertDocumentTag.run(
+        makeStableId("doc_tag", `${target.documentId}:${binding.tagId}`),
+        target.documentId,
+        binding.tagId,
+        1,
+        "manual_document",
+        binding.id,
+        "手动分配",
+        1,
+        observedAt,
+      );
+    });
+  }
+
+  private backfillManualFileBindingsFromLegacyDocumentBindingsInConnection(
+    statements: PreparedStatements,
+    target: ManualDocumentBindingTarget,
+    observedAt: string,
+  ): void {
+    if (!target.inodeKey && !target.contentHash) {
+      return;
+    }
+    const existingIdentityRows = statements.selectManualFileBindingsForIdentity.all(
+      target.inodeKey,
+      target.inodeKey,
+      target.contentHash,
+      target.contentHash,
+      target.size,
+      target.extension,
+    ) as Array<Record<string, unknown>>;
+    if (existingIdentityRows.length > 0) {
+      return;
+    }
+    const legacyRows = statements.selectManualBindingsByDocumentId.all(target.documentId) as Array<Record<string, unknown>>;
+    legacyRows.forEach((row) => {
+      const tagId = String(row.tag_id);
+      statements.insertManualFileBinding.run(
+        makeStableId("manual_file_binding", serializeManualFileBindingIdentity(target, tagId)),
+        target.inodeKey,
+        target.contentHash,
+        target.size,
+        target.extension,
+        tagId,
+        String(row.source ?? "manual_document"),
+        String(row.created_at ?? observedAt),
+        observedAt,
+      );
+    });
+  }
+
   private deleteDocumentInConnection(
     db: DatabaseSync,
     statements: PreparedStatements,
@@ -475,6 +1021,7 @@ export class CatalogWriteRepository {
     const documentRow = statements.selectDocumentByFileId.get(fileRow.id) as { id?: string } | undefined;
     if (documentRow?.id) {
       statements.deleteChunksByDocumentId.run(documentRow.id);
+      statements.deleteManualDocumentBindingsByDocumentId.run(documentRow.id);
       statements.deleteDocumentTags.run(documentRow.id);
       statements.deleteDerivedDocumentTags.run(documentRow.id);
       statements.deleteDocumentById.run(documentRow.id);
@@ -496,6 +1043,13 @@ export class CatalogWriteRepository {
   ): { fileId: string; documentId: string } {
     const fileId = makeStableId("file", file.relativePath);
     const documentId = makeStableId("doc", file.relativePath);
+    const fingerprint = this.buildDocumentIdentityFingerprint(file, document);
+    const previousManualBindingTarget = this.getActiveManualBindingTargetByPathInConnection(
+      statements,
+      file.relativePath,
+    );
+    const migrationCandidate = this.resolveMigrationCandidateInConnection(statements, file, fingerprint, observedAt);
+    const manualBindingTarget = this.buildManualBindingTarget(file, fingerprint, documentId);
 
     statements.upsertFile.run(
       fileId,
@@ -506,7 +1060,8 @@ export class CatalogWriteRepository {
       file.size,
       file.mtime,
       file.ctime,
-      null,
+      fingerprint.inodeKey,
+      fingerprint.contentHash,
       observedAt,
     );
 
@@ -519,6 +1074,29 @@ export class CatalogWriteRepository {
       null,
       "indexed",
       document.text.trim() ? 1 : 0,
+      observedAt,
+    );
+
+    if (migrationCandidate) {
+      this.migrateManualBindingsInConnection(
+        statements,
+        migrationCandidate.documentId,
+        documentId,
+        observedAt,
+      );
+    }
+
+    this.carryForwardManualFileBindingsForSameDocumentInConnection(
+      statements,
+      previousManualBindingTarget,
+      manualBindingTarget,
+      observedAt,
+    );
+
+    this.syncManualResolvedTagsForDocumentInConnection(
+      db,
+      statements,
+      manualBindingTarget,
       observedAt,
     );
 
@@ -566,13 +1144,8 @@ export class CatalogWriteRepository {
       return { fileId, documentId };
     }
 
-    const existingDirectTagRows = statements.selectDocumentTagIds.all(documentId) as Array<{ tag_id: string }>;
-    const existingDirectTagIds = new Set(existingDirectTagRows.map(row => String(row.tag_id)));
-    const nextDirectTagIds = new Set<string>();
-
     for (const tag of tags) {
       const tagId = this.ensureTagInConnection(db, statements, tagCache, tag.tagPath, tag.source.split("+")[0] || "rule");
-      nextDirectTagIds.add(tagId);
       statements.upsertDocumentTag.run(
         makeStableId("doc_tag", `${documentId}:${tagId}`),
         documentId,
@@ -584,12 +1157,6 @@ export class CatalogWriteRepository {
         tag.manualOverride ? 1 : 0,
         observedAt,
       );
-    }
-
-    for (const tagId of existingDirectTagIds) {
-      if (!nextDirectTagIds.has(tagId)) {
-        statements.deleteDocumentTagByPair.run(documentId, tagId);
-      }
     }
 
     const existingDerivedTagRows = statements.selectDerivedTagIds.all(documentId) as Array<{ tag_id: string }>;
@@ -630,6 +1197,7 @@ export class CatalogWriteRepository {
   ): { fileId: string; documentId: string } {
     const fileId = makeStableId("file", file.relativePath);
     const documentId = makeStableId("doc", file.relativePath);
+    const inodeKey = normalizeFileIdentityValue(file.inodeKey);
 
     statements.upsertFile.run(
       fileId,
@@ -640,6 +1208,7 @@ export class CatalogWriteRepository {
       file.size,
       file.mtime,
       file.ctime,
+      inodeKey,
       null,
       observedAt,
     );
@@ -671,6 +1240,7 @@ export class CatalogWriteRepository {
     const { file, adapter, reasonCode, message } = entry;
     const fileId = makeStableId("file", file.relativePath);
     const documentId = makeStableId("doc", file.relativePath);
+    const inodeKey = normalizeFileIdentityValue(file.inodeKey);
 
     statements.upsertFile.run(
       fileId,
@@ -681,6 +1251,7 @@ export class CatalogWriteRepository {
       file.size,
       file.mtime,
       file.ctime,
+      inodeKey,
       null,
       observedAt,
     );
@@ -1065,16 +1636,22 @@ export class CatalogWriteRepository {
     });
   }
 
-  replaceManualDocumentTagBindings(documentId: string, tagIds: string[], observedAt = new Date().toISOString()): void {
+  replaceManualDocumentTagBindings(target: ManualDocumentBindingTarget, tagIds: string[], observedAt = new Date().toISOString()): void {
     const normalizedTagIds = [...new Set(tagIds.map(item => item.trim()).filter(Boolean))];
     this.withConnection((db, statements) => {
       try {
         db.exec("BEGIN IMMEDIATE");
-        statements.deleteManualDocumentBindingsByDocumentId.run(documentId);
+        // 旧 manual_document_tag_bindings 现在只保留给历史数据兼容。
+        // 新写入统一只进 manual_file_tag_bindings，避免继续把 document_id 绑定当主链路。
+        statements.deleteManualDocumentBindingsByDocumentId.run(target.documentId);
+        this.deleteManualFileBindingsForTargetInConnection(statements, target);
         normalizedTagIds.forEach(tagId => {
-          statements.insertManualDocumentBinding.run(
-            makeStableId("manual_binding", `${documentId}:${tagId}`),
-            documentId,
+          statements.insertManualFileBinding.run(
+            makeStableId("manual_file_binding", serializeManualFileBindingIdentity(target, tagId)),
+            target.inodeKey,
+            target.contentHash,
+            target.size,
+            target.extension,
             tagId,
             "manual_document",
             observedAt,
@@ -1119,11 +1696,12 @@ export class CatalogWriteRepository {
     if (normalizedTagIds.length === 0) {
       return;
     }
-    this.withConnection((db) => {
+    this.withConnection((db, statements) => {
       try {
         db.exec("BEGIN IMMEDIATE");
         const selectTagPath = db.prepare(`SELECT path FROM tags WHERE id = ?`);
         const deleteManualBindings = db.prepare(`DELETE FROM manual_document_tag_bindings WHERE tag_id = ?`);
+        const deleteManualFileBindings = statements.deleteManualFileBindingsByTagId;
         const deleteFolderBindings = db.prepare(`DELETE FROM folder_tag_bindings WHERE tag_id = ?`);
         const deleteRules = db.prepare(`DELETE FROM tag_rules WHERE tag_id = ?`);
         const deleteDocumentTags = db.prepare(`DELETE FROM document_tags WHERE tag_id = ?`);
@@ -1132,6 +1710,7 @@ export class CatalogWriteRepository {
         normalizedTagIds.forEach((tagId) => {
           const current = selectTagPath.get(tagId) as { path?: string } | undefined;
           deleteManualBindings.run(tagId);
+          deleteManualFileBindings.run(tagId);
           deleteFolderBindings.run(tagId);
           deleteRules.run(tagId);
           deleteDocumentTags.run(tagId);
@@ -1245,4 +1824,95 @@ export class CatalogWriteRepository {
       }
     });
   }
+}
+
+function normalizeFileIdentityValue(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized ? normalized : null;
+}
+
+function buildDocumentContentHash(text: string): string | null {
+  if (!text.trim()) {
+    return null;
+  }
+  return crypto.createHash("sha1").update(text).digest("hex");
+}
+
+function doesSiblingPathStillExist(file: FileScanResult, candidateRelativePath: string): boolean {
+  const rootDir = resolveRootDirFromFile(file);
+  if (!rootDir) {
+    return true;
+  }
+  return fs.existsSync(path.join(rootDir, candidateRelativePath));
+}
+
+function resolveRootDirFromFile(file: FileScanResult): string | null {
+  const normalizedRelativePath = file.relativePath.split(path.sep).join("/");
+  if (!normalizedRelativePath) {
+    return path.dirname(file.fullPath);
+  }
+  const suffix = normalizedRelativePath.split("/").join(path.sep);
+  if (!file.fullPath.endsWith(suffix)) {
+    return path.dirname(file.fullPath);
+  }
+  const rootDir = file.fullPath.slice(0, file.fullPath.length - suffix.length);
+  return rootDir.replace(/[\\/]$/, "") || path.parse(file.fullPath).root || null;
+}
+
+function serializeManualFileBindingIdentity(target: ManualDocumentBindingTarget, tagId: string): string {
+  return JSON.stringify({
+    inodeKey: target.inodeKey ?? null,
+    contentHash: target.contentHash ?? null,
+    size: target.size,
+    extension: target.extension,
+    tagId,
+  });
+}
+
+function buildIdentityContentKey(contentHash: string | null, size: number, extension: string): string | null {
+  if (!contentHash) {
+    return null;
+  }
+  return `${contentHash}::${size}::${extension}`;
+}
+
+function buildIdentityDocumentIdsByInode(
+  rows: Array<{ inodeKey: string | null }>,
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  rows.forEach((row) => {
+    if (!row.inodeKey) {
+      return;
+    }
+    counts.set(row.inodeKey, (counts.get(row.inodeKey) ?? 0) + 1);
+  });
+  return counts;
+}
+
+function buildIdentityDocumentIdsByContent(
+  rows: Array<{ contentHash: string | null; size: number; extension: string }>,
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  rows.forEach((row) => {
+    const key = buildIdentityContentKey(row.contentHash, row.size, row.extension);
+    if (!key) {
+      return;
+    }
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  });
+  return counts;
+}
+
+function hasSameManualBindingIdentity(
+  left: ManualDocumentBindingTarget,
+  right: ManualDocumentBindingTarget,
+): boolean {
+  if (left.inodeKey && right.inodeKey) {
+    return left.inodeKey === right.inodeKey;
+  }
+  return buildIdentityContentKey(left.contentHash, left.size, left.extension)
+    === buildIdentityContentKey(right.contentHash, right.size, right.extension);
 }

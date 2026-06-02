@@ -36,9 +36,14 @@ export async function registerWorkspaceRoutes(
     app.get("/api/workspaces/:workspaceId/affairs/tags/:tagId", affairsTagController.getTagDetail);
     app.put("/api/workspaces/:workspaceId/affairs/tags/:tagId", affairsTagController.updateTag);
     app.delete("/api/workspaces/:workspaceId/affairs/tags/:tagId", affairsTagController.deleteTag);
+    app.post("/api/workspaces/:workspaceId/affairs/tags/recompute", affairsTagController.requestFullTagRecompute);
+    app.get("/api/workspaces/:workspaceId/affairs/tags/recompute-task", affairsTagController.getFullTagRecomputeTask);
+    app.post("/api/workspaces/:workspaceId/affairs/tags/recovery/recompute", affairsTagController.requestTagRecoveryRecompute);
+    app.get("/api/workspaces/:workspaceId/affairs/tags/recovery/status", affairsTagController.getTagRecoveryStatus);
     app.get("/api/workspaces/:workspaceId/affairs/documents/:documentId/tag-details", affairsTagController.getDocumentTagDetails);
     app.put("/api/workspaces/:workspaceId/affairs/documents/:documentId/tags", affairsTagController.saveDocumentTags);
     app.get("/api/workspaces/:workspaceId/affairs/folders/tag-details", affairsTagController.getFolderTagDetails);
+    app.get("/api/workspaces/:workspaceId/affairs/folders/tag-task", affairsTagController.getFolderTagTask);
     app.put("/api/workspaces/:workspaceId/affairs/folders/tags", affairsTagController.saveFolderTags);
   }
   app.get("/api/workspaces/:workspaceId/management", workspaceController.getManagementSummary);

@@ -4,6 +4,7 @@ import type { RuntimeConfig } from "../../../../contracts/src/index.js";
 import {
   CatalogRepository,
   type RecomputeScope,
+  type ResolvedDocumentTagRow,
   type TagRuleRow,
   type TagRecomputeDocumentRow,
   type TagResolvedSourceType,
@@ -22,6 +23,7 @@ import { throwIfAborted, yieldToEventLoop } from "../../utils/abort.js";
 export interface TagRecomputeRunInput {
   scope?: RecomputeScope;
   signal?: AbortSignal;
+  onProgress?: (progress: TagRecomputeProgressSnapshot) => void;
 }
 
 export interface TagRecomputeResult {
@@ -42,6 +44,15 @@ export interface TagRecomputeResult {
     export: number;
     total: number;
   };
+}
+
+export interface TagRecomputeProgressSnapshot {
+  phase: "prepare" | "recompute" | "write" | "export" | "finished";
+  label: string;
+  detail: string | null;
+  current: number;
+  total: number;
+  percent: number;
 }
 
 interface ResolvedTagAccumulator {
@@ -126,32 +137,54 @@ export class TagRecomputeService {
     let derivedAssignedCount = 0;
     let inferMs = 0;
     let writeMs = 0;
+    const folderBindingOnly = isFolderBindingOnlyScope(scope);
 
     const documents = repository.listRecomputeCandidateDocuments(scope);
     const documentIds = documents.map(item => item.documentId);
     const documentPaths = documents.map(item => item.path);
+    const totalDocuments = documents.length;
+    this.emitProgress(input, {
+      phase: "prepare",
+      label: folderBindingOnly ? "正在准备文件夹标签分配" : "正在准备标签重算",
+      detail: totalDocuments > 0 ? `共 ${totalDocuments} 份文档` : "没有需要处理的文档",
+      current: 0,
+      total: Math.max(totalDocuments, 1),
+      percent: totalDocuments === 0 ? 100 : 2,
+    });
     const manualBindingsByDocument = this.resolveManualAssignments(repository, documentIds);
-    const folderBindingsByDocument = this.resolveFolderAssignments(repository, documentPaths);
-    const smartRules = repository.listAllEnabledTagRules();
+    const folderBindingsByDocument = this.resolveFolderAssignments(repository, scope, documentPaths);
+    const retainedResolvedByDocument = folderBindingOnly
+      ? this.resolveRetainedResolvedAssignments(repository, documentIds)
+      : new Map<string, ResolvedDocumentTagRow[]>();
+    const smartRules = folderBindingOnly ? [] : repository.listAllEnabledTagRules();
 
     const accumulators = new Map<string, ResolvedTagAccumulator>();
 
     const inferStartedAt = performance.now();
     for (const row of documents) {
       throwIfAborted(input.signal, "事务文档库标签重算已取消");
-      const file = buildFileScanResult(this.config.rootDir, row);
-      const parsed = buildParsedDocument(row);
-      const inferred = tagger.infer(file, parsed);
       const manualBindings = manualBindingsByDocument.get(row.documentId) ?? [];
       const folderBindings = folderBindingsByDocument.get(row.documentId) ?? [];
-      const smartBindings = this.resolveSmartRuleAssignments(file, row, parsed, smartRules);
-      const accumulator = this.mergeResolvedAssignments(
-        row.documentId,
-        inferred,
-        manualBindings,
-        folderBindings,
-        smartBindings,
-      );
+      const accumulator = folderBindingOnly
+        ? this.mergeResolvedAssignmentsWithRetained(
+            row.documentId,
+            retainedResolvedByDocument.get(row.documentId) ?? [],
+            manualBindings,
+            folderBindings,
+          )
+        : (() => {
+            const file = buildFileScanResult(this.config.rootDir, row);
+            const parsed = buildParsedDocument(row);
+            const inferred = tagger.infer(file, parsed);
+            const smartBindings = this.resolveSmartRuleAssignments(file, row, parsed, smartRules);
+            return this.mergeResolvedAssignments(
+              row.documentId,
+              inferred,
+              manualBindings,
+              folderBindings,
+              smartBindings,
+            );
+          })();
       accumulators.set(row.documentId, accumulator);
       directAssignedCount += accumulator.entries.filter(item => item.sourceType !== "system_derived").length;
       derivedAssignedCount += accumulator.entries.filter(item => item.sourceType === "system_derived").length;
@@ -159,6 +192,16 @@ export class TagRecomputeService {
         collectTagAncestors(entry.tagPath).forEach(tagPath => dirtyTagPaths.add(tagPath));
       });
       scannedCount += 1;
+      if (scannedCount === 1 || scannedCount === totalDocuments || scannedCount % 25 === 0) {
+        this.emitProgress(input, {
+          phase: "recompute",
+          label: folderBindingOnly ? "正在应用文件夹标签" : "正在重算标签",
+          detail: totalDocuments > 0 ? `${scannedCount} / ${totalDocuments}` : "没有需要处理的文档",
+          current: scannedCount,
+          total: Math.max(totalDocuments, 1),
+          percent: resolveProgressPercent("recompute", scannedCount, totalDocuments),
+        });
+      }
       if (scannedCount % 200 === 0) {
         await yieldToEventLoop(input.signal, "事务文档库标签重算已取消");
       }
@@ -166,6 +209,14 @@ export class TagRecomputeService {
     inferMs += performance.now() - inferStartedAt;
 
     throwIfAborted(input.signal, "事务文档库标签重算已取消");
+    this.emitProgress(input, {
+      phase: "write",
+      label: "正在写入标签结果",
+      detail: totalDocuments > 0 ? `准备写入 ${totalDocuments} 份文档` : "没有需要写入的结果",
+      current: totalDocuments,
+      total: Math.max(totalDocuments, 1),
+      percent: resolveProgressPercent("write", totalDocuments, totalDocuments),
+    });
     const writeStartedAt = performance.now();
     const written = writer.recomputeResolvedTags(
       [...accumulators.values()].flatMap(item => item.entries),
@@ -180,6 +231,14 @@ export class TagRecomputeService {
       [...accumulators.values()].flatMap(item => item.entries),
       dirtyTagPaths,
     );
+    this.emitProgress(input, {
+      phase: "export",
+      label: "正在刷新标签结果",
+      detail: "马上就好",
+      current: totalDocuments,
+      total: Math.max(totalDocuments, 1),
+      percent: resolveProgressPercent("export", totalDocuments, totalDocuments),
+    });
     const exportStartedAt = performance.now();
     const exportResult = await new ExportBuilder(this.config).build({
       dirtyScope: {
@@ -190,6 +249,14 @@ export class TagRecomputeService {
       signal: input.signal,
     });
     const exportMs = performance.now() - exportStartedAt;
+    this.emitProgress(input, {
+      phase: "finished",
+      label: "标签分配已完成",
+      detail: totalDocuments > 0 ? `已处理 ${totalDocuments} 份文档` : "这次没有需要处理的文档",
+      current: totalDocuments,
+      total: Math.max(totalDocuments, 1),
+      percent: 100,
+    });
 
     return {
       scannedCount,
@@ -223,8 +290,10 @@ export class TagRecomputeService {
     return byDocument;
   }
 
-  private resolveFolderAssignments(repository: CatalogRepository, documentPaths: string[]) {
-    const rows = repository.listEffectiveFolderTagBindingsForDocumentPaths(documentPaths);
+  private resolveFolderAssignments(repository: CatalogRepository, scope: RecomputeScope, documentPaths: string[]) {
+    const rows = scope.kind === "folder" && scope.folderPath
+      ? repository.listEffectiveFolderTagBindingsForFolderScope(scope.folderPath)
+      : repository.listEffectiveFolderTagBindingsForDocumentPaths(documentPaths);
     const byDocument = new Map<string, EffectiveFolderTagAssignment[]>();
     rows.forEach(row => {
       const current = byDocument.get(row.documentId) ?? [];
@@ -233,6 +302,18 @@ export class TagRecomputeService {
         tagPath: row.tagPath,
         folderPath: row.folderPath,
       });
+      byDocument.set(row.documentId, current);
+    });
+    return byDocument;
+  }
+
+  private resolveRetainedResolvedAssignments(repository: CatalogRepository, documentIds: string[]) {
+    const rows = repository.listResolvedDocumentTagsByDocumentIds(documentIds)
+      .filter((row) => row.sourceType !== "manual_document" && row.sourceType !== "folder_binding");
+    const byDocument = new Map<string, ResolvedDocumentTagRow[]>();
+    rows.forEach((row) => {
+      const current = byDocument.get(row.documentId) ?? [];
+      current.push(row);
       byDocument.set(row.documentId, current);
     });
     return byDocument;
@@ -297,6 +378,53 @@ export class TagRecomputeService {
     };
   }
 
+  private mergeResolvedAssignmentsWithRetained(
+    documentId: string,
+    retained: ResolvedDocumentTagRow[],
+    manualBindings: Array<{ id: string; tagPath: string }>,
+    folderBindings: EffectiveFolderTagAssignment[],
+  ): ResolvedTagAccumulator {
+    const merged = new Map<string, RecomputedResolvedTagEntry>();
+
+    manualBindings.forEach(binding => {
+      setResolvedTag(merged, {
+        documentId,
+        tagPath: binding.tagPath,
+        sourceType: "manual_document",
+        confidence: 1,
+        sourceRef: binding.id,
+        evidence: "手动分配",
+      });
+    });
+
+    folderBindings.forEach(binding => {
+      setResolvedTag(merged, {
+        documentId,
+        tagPath: binding.tagPath,
+        sourceType: "folder_binding",
+        confidence: 0.98,
+        sourceRef: binding.id,
+        evidence: `继承自文件夹：${binding.folderPath || "."}`,
+      });
+    });
+
+    retained.forEach((entry) => {
+      setResolvedTag(merged, {
+        documentId,
+        tagPath: entry.path,
+        sourceType: entry.sourceType,
+        confidence: entry.confidence,
+        sourceRef: entry.sourceRef,
+        evidence: entry.evidence,
+      });
+    });
+
+    return {
+      documentId,
+      entries: [...merged.values()].sort((left, right) => left.tagPath.localeCompare(right.tagPath, "zh-Hans-CN")),
+    };
+  }
+
   private resolveSmartRuleAssignments(
     file: FileScanResult,
     row: TagRecomputeDocumentRow,
@@ -341,6 +469,37 @@ export class TagRecomputeService {
       dirtyPostingBuckets: [],
       dirtyRelations: entries.map(item => item.documentId),
     };
+  }
+
+  private emitProgress(input: TagRecomputeRunInput, progress: TagRecomputeProgressSnapshot): void {
+    input.onProgress?.(progress);
+  }
+}
+
+function isFolderBindingOnlyScope(scope: RecomputeScope): boolean {
+  return scope.kind === "folder" && scope.mode === "folder_bindings_only";
+}
+
+function resolveProgressPercent(
+  phase: TagRecomputeProgressSnapshot["phase"],
+  current: number,
+  total: number,
+): number {
+  const safeTotal = total > 0 ? total : 1;
+  const loopRatio = Math.min(1, Math.max(0, current / safeTotal));
+  switch (phase) {
+    case "prepare":
+      return total === 0 ? 100 : 2;
+    case "recompute":
+      return Math.round(8 + loopRatio * 82);
+    case "write":
+      return 94;
+    case "export":
+      return 98;
+    case "finished":
+      return 100;
+    default:
+      return 0;
   }
 }
 
@@ -466,6 +625,10 @@ function evaluateSingleSmartRule(
       }
       return startTime !== null || endTime !== null;
     }
+    case "document_path_in_folder": {
+      const folderPath = normalizeFolderScopeMatcherPath((rule.matcher as { folderPath?: string | null }).folderPath);
+      return matchesDocumentPathInFolderScope(row.path, folderPath);
+    }
     default:
       return false;
   }
@@ -496,7 +659,25 @@ function resolveSmartRuleEvidence(rule: TagRuleRow): string {
       }
       return "修改时间命中";
     }
+    case "document_path_in_folder": {
+      const folderPath = normalizeFolderScopeMatcherPath((rule.matcher as { folderPath?: string | null }).folderPath);
+      return folderPath === "."
+        ? "位于根目录及其子文件夹"
+        : `位于“${folderPath}”及其子文件夹`;
+    }
     default:
       return "规则命中";
   }
+}
+
+function normalizeFolderScopeMatcherPath(value: string | null | undefined): string {
+  const normalized = String(value ?? "").trim().replace(/^\.\/+/, "").replace(/\/+$/g, "");
+  return normalized || ".";
+}
+
+function matchesDocumentPathInFolderScope(documentPath: string, folderPath: string): boolean {
+  if (folderPath === ".") {
+    return true;
+  }
+  return documentPath === folderPath || documentPath.startsWith(`${folderPath}/`);
 }

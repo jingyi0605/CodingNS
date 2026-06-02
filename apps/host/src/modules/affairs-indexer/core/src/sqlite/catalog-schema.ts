@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS files (
   size INTEGER NOT NULL,
   mtime TEXT NOT NULL,
   ctime TEXT,
+  inode_key TEXT,
   content_hash TEXT,
   status TEXT NOT NULL,
   last_seen_at TEXT NOT NULL
@@ -142,6 +143,19 @@ CREATE TABLE IF NOT EXISTS manual_document_tag_bindings (
   FOREIGN KEY(tag_id) REFERENCES tags(id)
 );
 
+CREATE TABLE IF NOT EXISTS manual_file_tag_bindings (
+  id TEXT PRIMARY KEY,
+  inode_key TEXT,
+  content_hash TEXT,
+  file_size INTEGER NOT NULL,
+  extension TEXT NOT NULL,
+  tag_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(tag_id) REFERENCES tags(id)
+);
+
 CREATE TABLE IF NOT EXISTS folder_tag_bindings (
   id TEXT PRIMARY KEY,
   folder_path TEXT NOT NULL,
@@ -210,6 +224,7 @@ CREATE TABLE IF NOT EXISTS parser_skip_catalog (
 );
 
 CREATE INDEX IF NOT EXISTS idx_files_hash ON files(content_hash);
+CREATE INDEX IF NOT EXISTS idx_files_inode_key ON files(inode_key);
 CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id, chunk_index);
 CREATE INDEX IF NOT EXISTS idx_tags_path ON tags(path);
 CREATE INDEX IF NOT EXISTS idx_document_tags_document ON document_tags(document_id);
@@ -219,6 +234,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_derived_document_tags_pair ON derived_docu
 CREATE INDEX IF NOT EXISTS idx_tag_aliases_alias ON tag_aliases(alias);
 CREATE INDEX IF NOT EXISTS idx_tag_rules_tag ON tag_rules(tag_id, enabled, priority);
 CREATE INDEX IF NOT EXISTS idx_manual_document_tag_bindings_document ON manual_document_tag_bindings(document_id);
+CREATE INDEX IF NOT EXISTS idx_manual_file_tag_bindings_inode ON manual_file_tag_bindings(inode_key);
+CREATE INDEX IF NOT EXISTS idx_manual_file_tag_bindings_content ON manual_file_tag_bindings(content_hash, file_size, extension);
+CREATE INDEX IF NOT EXISTS idx_manual_file_tag_bindings_tag ON manual_file_tag_bindings(tag_id);
 CREATE INDEX IF NOT EXISTS idx_folder_tag_bindings_folder ON folder_tag_bindings(folder_path);
 CREATE INDEX IF NOT EXISTS idx_tag_recommendation_items_batch ON tag_recommendation_items(batch_id, status);
 CREATE INDEX IF NOT EXISTS idx_reindex_jobs_status ON reindex_jobs(status, priority, created_at);

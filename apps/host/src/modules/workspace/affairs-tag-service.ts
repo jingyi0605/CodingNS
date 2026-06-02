@@ -2,11 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { AppError } from "../../shared/errors/app-error.js";
 import type { TaskManager } from "../tasks/task-manager.js";
-import { HOST_TASK_TYPES } from "../tasks/task-types.js";
+import { HOST_TASK_TYPES, type TaskSnapshot } from "../tasks/task-types.js";
 import type { WorkspaceService } from "./workspace-service.js";
 import type { AffairsLibraryService } from "./affairs-library-service.js";
 import {
   CatalogRepository,
+  type ManualTagBindingStats,
   type RecomputeScope,
   type TagDefinitionRow,
   type TagRuleMatcher,
@@ -22,8 +23,10 @@ import {
 import { createAffairsIndexerRuntimeConfig } from "../affairs-indexer/internal-command-runner.js";
 import { TagRecomputeService } from "../affairs-indexer/core/src/services/tagging/tag-recompute-service.js";
 import { ExportBuilder } from "../affairs-indexer/core/src/services/export/export-builder.js";
+import { initCatalog } from "../affairs-indexer/core/src/sqlite/init-catalog.js";
 
 const TAG_EXPORT_REFRESH_TASK_TIMEOUT_MS = 30 * 60 * 1000;
+const TAG_RECOMPUTE_TASK_TIMEOUT_MS = 30 * 60 * 1000;
 
 interface WorkspaceNavigationStateRepositoryLike {
   findByWorkspaceIdAndUserId(workspaceId: string, userId: string): {
@@ -96,6 +99,18 @@ export interface AffairsFolderTagDetailsDto {
     tagPath: string;
     applyMode: string;
   }>;
+}
+
+export interface AffairsTagRecomputeRequestResultDto {
+  taskId: string;
+  deduped: boolean;
+  status: "queued";
+  scope: "full";
+}
+
+export interface AffairsTagRecoveryStatusDto {
+  task: TaskSnapshot | null;
+  bindingStats: ManualTagBindingStats;
 }
 
 export class AffairsTagService {
@@ -486,7 +501,13 @@ export class AffairsTagService {
       });
     }
     const writer = new CatalogWriteRepository(dbPath);
-    writer.replaceManualDocumentTagBindings(documentId, tagIds);
+    writer.replaceManualDocumentTagBindings({
+      documentId,
+      inodeKey: context.inodeKey,
+      contentHash: context.contentHash,
+      size: context.size,
+      extension: context.extension,
+    }, tagIds);
     const handle = this.taskManager.enqueue<{ workspaceId: string; rootDir: string; reason: string; scope?: RecomputeScope }, { ok: true }>(
       HOST_TASK_TYPES.affairsLibraryTagApplyBindings,
       {
@@ -538,6 +559,58 @@ export class AffairsTagService {
     };
   }
 
+  getFolderTagApplyTaskSnapshot(workspaceId: string, userId: string, folderPath: string): TaskSnapshot | null {
+    this.requireBinding(workspaceId, userId);
+    const normalizedFolderPath = normalizeFolderPath(folderPath);
+    return this.taskManager.peek(
+      HOST_TASK_TYPES.affairsLibraryTagApplyBindings,
+      `${workspaceId}:folder:${normalizedFolderPath}`,
+    );
+  }
+
+  getFullTagRecomputeTaskSnapshot(workspaceId: string, userId: string): TaskSnapshot | null {
+    this.requireBinding(workspaceId, userId);
+    return this.taskManager.peek(
+      HOST_TASK_TYPES.affairsLibraryTagRecompute,
+      `${workspaceId}:full`,
+    );
+  }
+
+  getTagRecoveryStatus(workspaceId: string, userId: string): AffairsTagRecoveryStatusDto {
+    const { dbPath } = this.requireBinding(workspaceId, userId);
+    const repository = new CatalogRepository(dbPath);
+    return {
+      task: this.taskManager.peek(
+        HOST_TASK_TYPES.affairsLibraryTagRecompute,
+        `${workspaceId}:full`,
+      ),
+      bindingStats: repository.getManualTagBindingStats(),
+    };
+  }
+
+  requestFullTagRecompute(workspaceId: string, userId: string): AffairsTagRecomputeRequestResultDto {
+    const { rootDir } = this.requireBinding(workspaceId, userId);
+    const handle = this.taskManager.enqueue<{ workspaceId: string; rootDir: string; reason: string; scope?: RecomputeScope }, { ok: true }>(
+      HOST_TASK_TYPES.affairsLibraryTagRecompute,
+      {
+        key: `${workspaceId}:full`,
+        source: "affairs_tag.request_full_recompute",
+        input: {
+          workspaceId,
+          rootDir,
+          reason: "manual_full_recompute_requested",
+          scope: { kind: "full", mode: "full" },
+        },
+      },
+    );
+    return {
+      taskId: handle.taskId,
+      deduped: handle.deduped,
+      status: "queued",
+      scope: "full",
+    };
+  }
+
   saveFolderTagBindings(workspaceId: string, userId: string, folderPath: string, tagIds: string[]) {
     const { dbPath, rootDir } = this.requireBinding(workspaceId, userId);
     const normalizedFolderPath = normalizeFolderPath(folderPath);
@@ -552,6 +625,8 @@ export class AffairsTagService {
           workspaceId,
           rootDir,
           reason: `folder_binding_saved:${normalizedFolderPath}`,
+          // 文件夹分配标签只重跑目标文件夹子树，但要走完整标签推理，
+          // 这样它和“位于某文件夹及其子文件夹”的智能规则语义保持一致。
           scope: { kind: "folder", folderPath: normalizedFolderPath },
         },
       },
@@ -581,6 +656,11 @@ export class AffairsTagService {
         detail: "当前工作区还没有启用事务文档库",
       });
     }
+    // 这里不能假设 catalog.db 一定已经被 helper 跑到最新版本。
+    // 事务文档库标签接口会直接打开 SQLite；如果用户库还是旧 schema，
+    // prepareStatements 阶段就会因为缺表直接炸掉。
+    // 所以每次进入标签链路前先补一次幂等迁移，保证旧库也能安全读写。
+    initCatalog(createAffairsIndexerRuntimeConfig(rootDir));
     return {
       rootDir,
       dbPath: resolveCatalogDbPath(rootDir),
@@ -592,11 +672,13 @@ export class AffairsTagService {
       this.taskManager.register<{ workspaceId: string; rootDir: string; reason: string; scope?: RecomputeScope }, { ok: true }>({
         taskType: HOST_TASK_TYPES.affairsLibraryTagRecompute,
         executionLane: "helper_process",
-        timeoutMs: 30_000,
+        // 事务文档库全量标签恢复可能要扫几千到上万文档，30s 很容易误杀。
+        timeoutMs: TAG_RECOMPUTE_TASK_TIMEOUT_MS,
         run: async (input, context) => {
           await new TagRecomputeService(createAffairsIndexerRuntimeConfig(input.rootDir)).run({
             scope: input.scope,
             signal: context.signal,
+            onProgress: context.reportProgress,
           });
           return { ok: true };
         },
@@ -606,11 +688,12 @@ export class AffairsTagService {
       this.taskManager.register<{ workspaceId: string; rootDir: string; reason: string; scope?: RecomputeScope }, { ok: true }>({
         taskType: HOST_TASK_TYPES.affairsLibraryTagApplyBindings,
         executionLane: "helper_process",
-        timeoutMs: 30_000,
+        timeoutMs: TAG_RECOMPUTE_TASK_TIMEOUT_MS,
         run: async (input, context) => {
           await new TagRecomputeService(createAffairsIndexerRuntimeConfig(input.rootDir)).run({
             scope: input.scope,
             signal: context.signal,
+            onProgress: context.reportProgress,
           });
           return { ok: true };
         },

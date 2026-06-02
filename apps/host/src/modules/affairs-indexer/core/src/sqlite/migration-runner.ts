@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS files (
   size INTEGER NOT NULL,
   mtime TEXT NOT NULL,
   ctime TEXT,
+  inode_key TEXT,
   content_hash TEXT,
   status TEXT NOT NULL,
   last_seen_at TEXT NOT NULL
@@ -150,6 +151,7 @@ CREATE TABLE IF NOT EXISTS watch_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_files_hash ON files(content_hash);
+CREATE INDEX IF NOT EXISTS idx_files_inode_key ON files(inode_key);
 CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id, chunk_index);
 CREATE INDEX IF NOT EXISTS idx_tags_path ON tags(path);
 CREATE INDEX IF NOT EXISTS idx_tag_aliases_alias ON tag_aliases(alias);
@@ -301,6 +303,65 @@ CREATE INDEX IF NOT EXISTS idx_tag_rules_tag ON tag_rules(tag_id, enabled, prior
 CREATE INDEX IF NOT EXISTS idx_manual_document_tag_bindings_document ON manual_document_tag_bindings(document_id);
 CREATE INDEX IF NOT EXISTS idx_folder_tag_bindings_folder ON folder_tag_bindings(folder_path);
 CREATE INDEX IF NOT EXISTS idx_tag_recommendation_items_batch ON tag_recommendation_items(batch_id, status);
+    `,
+  },
+  {
+    version: 5,
+    name: "files_identity_tracking_v5",
+    columns: [
+      { table: "files", name: "inode_key", definition: "TEXT" },
+    ],
+    sql: `
+CREATE INDEX IF NOT EXISTS idx_files_inode_key ON files(inode_key);
+    `,
+  },
+  {
+    version: 6,
+    name: "manual_file_tag_bindings_v6",
+    sql: `
+CREATE TABLE IF NOT EXISTS manual_file_tag_bindings (
+  id TEXT PRIMARY KEY,
+  inode_key TEXT,
+  content_hash TEXT,
+  file_size INTEGER NOT NULL,
+  extension TEXT NOT NULL,
+  tag_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(tag_id) REFERENCES tags(id)
+);
+
+INSERT OR IGNORE INTO manual_file_tag_bindings(
+  id,
+  inode_key,
+  content_hash,
+  file_size,
+  extension,
+  tag_id,
+  source,
+  created_at,
+  updated_at
+)
+SELECT
+  'manual_file_binding_' || mdtb.document_id || '_' || mdtb.tag_id,
+  f.inode_key,
+  f.content_hash,
+  f.size,
+  f.extension,
+  mdtb.tag_id,
+  mdtb.source,
+  mdtb.created_at,
+  mdtb.updated_at
+FROM manual_document_tag_bindings mdtb
+JOIN documents d ON d.id = mdtb.document_id
+JOIN files f ON f.id = d.file_id
+WHERE f.status = 'active'
+  AND d.index_status IN ('indexed', 'failed', 'skipped');
+
+CREATE INDEX IF NOT EXISTS idx_manual_file_tag_bindings_inode ON manual_file_tag_bindings(inode_key);
+CREATE INDEX IF NOT EXISTS idx_manual_file_tag_bindings_content ON manual_file_tag_bindings(content_hash, file_size, extension);
+CREATE INDEX IF NOT EXISTS idx_manual_file_tag_bindings_tag ON manual_file_tag_bindings(tag_id);
     `,
   },
 ];
