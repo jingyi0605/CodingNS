@@ -56,28 +56,31 @@ const TASK_HELPER_PROCESS_HANDLERS: TaskHelperProcessHandlerMap = {
     discoverTemplateRuntimeStatuses(items, signal),
   "session.workspace_discovery": ({ config, workspacePath, knownSessions, enabledProviders }, signal) =>
     discoverWorkspaceSessionsInRuntime(config, workspacePath, knownSessions, enabledProviders, signal),
-  "affairs.library_apply_config": ({ rootDir, reason, __taskMeta }) =>
+  "affairs.library_apply_config": ({ rootDir, reason, __taskMeta }, signal) =>
     runAffairsIndexerCommand(
       rootDir,
       "apply-config" satisfies AffairsIndexerCommandName,
       {
         reason,
-        taskMeta: __taskMeta
+        taskMeta: __taskMeta,
+        signal
       }
     ),
-  "affairs.library_index": ({ rootDir, targetPath, reason, __taskMeta }) =>
+  "affairs.library_index": ({ rootDir, targetPath, reason, __taskMeta }, signal) =>
     runAffairsIndexerCommand(
       rootDir,
       targetPath ? ("watch-touch" satisfies AffairsIndexerCommandName) : ("index" satisfies AffairsIndexerCommandName),
       {
         targetPath,
         reason,
-        taskMeta: __taskMeta
+        taskMeta: __taskMeta,
+        signal
       }
     ),
-  "affairs.library_export": ({ rootDir, __taskMeta }) =>
+  "affairs.library_export": ({ rootDir, __taskMeta }, signal) =>
     runAffairsIndexerCommand(rootDir, "export" satisfies AffairsIndexerCommandName, {
-      taskMeta: __taskMeta
+      taskMeta: __taskMeta,
+      signal
     })
 };
 

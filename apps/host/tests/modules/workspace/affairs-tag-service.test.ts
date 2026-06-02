@@ -109,7 +109,7 @@ describe("AffairsTagService", () => {
     expect(child.parentId).toBe(tag.id);
   });
 
-  it("标签重算会合并手动标签、文件夹标签和系统派生标签", () => {
+  it("标签重算会合并手动标签、文件夹标签和系统派生标签", async () => {
     const document = addIndexedDocument("客户A/合同.md", "客户A 合同");
     const service = createService();
     const manualTag = service.saveTagDefinition("workspace-1", "user-1", {
@@ -120,7 +120,7 @@ describe("AffairsTagService", () => {
     });
     service.saveDocumentTagBindings("workspace-1", "user-1", document.documentId, [manualTag.id]);
     service.saveFolderTagBindings("workspace-1", "user-1", ".", [folderTag.id]);
-    new TagRecomputeService(createAffairsIndexerRuntimeConfig(rootDir)).run({
+    await new TagRecomputeService(createAffairsIndexerRuntimeConfig(rootDir)).run({
       scope: { kind: "document", documentId: document.documentId },
     });
 
@@ -190,7 +190,7 @@ describe("AffairsTagService", () => {
     });
   });
 
-  it("删除父标签时会级联删除子标签和相关绑定", () => {
+  it("删除父标签时会级联删除子标签和相关绑定", async () => {
     const document = addIndexedDocument("客户A/合同.md", "客户A 合同");
     const service = createService();
     const rootTag = service.saveTagDefinition("workspace-1", "user-1", {
@@ -203,7 +203,7 @@ describe("AffairsTagService", () => {
 
     service.saveDocumentTagBindings("workspace-1", "user-1", document.documentId, [childTag.id]);
     service.saveFolderTagBindings("workspace-1", "user-1", ".", [rootTag.id]);
-    new TagRecomputeService(createAffairsIndexerRuntimeConfig(rootDir)).run({
+    await new TagRecomputeService(createAffairsIndexerRuntimeConfig(rootDir)).run({
       scope: { kind: "document", documentId: document.documentId },
     });
 

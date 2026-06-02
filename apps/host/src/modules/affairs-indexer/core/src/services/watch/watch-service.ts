@@ -91,7 +91,7 @@ export class WatchService {
   private async runCycleAsync(targetPath?: string): Promise<WatchCycleResult> {
     const indexer = new TextIndexer(this.config);
     const indexResult = await indexer.index(targetPath);
-    const exportResult = new ExportBuilder(this.config).build({ dirtyScope: indexResult.dirtyScope });
+    const exportResult = await new ExportBuilder(this.config).build({ dirtyScope: indexResult.dirtyScope });
 
     return {
       scopePath: targetPath,
@@ -155,7 +155,7 @@ export class WatchService {
     const exportedDocumentCount = Array.isArray(manifest?.detail_shards) ? manifest.detail_shards.length : 0;
     const exportIsStale = exportedDocumentCount < indexedDocumentCount;
     if (!options.targetPath && exportIsStale) {
-      const exportResult = new ExportBuilder(this.config).build({ light: true });
+      const exportResult = await new ExportBuilder(this.config).build({ light: true });
       writer.setSchemaMeta(WATCHER_READY_META_KEY, new Date().toISOString());
       initialCycle.export = {
         metaShardCount: exportResult.metaShardCount,

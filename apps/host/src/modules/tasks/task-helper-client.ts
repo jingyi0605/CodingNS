@@ -58,7 +58,8 @@ export class TaskHelperProcessClient {
         return await this.executeOnce<TResult>(handler, input, signal);
       } catch (error) {
         if (isHelperTimeoutError(error, signal)) {
-          this.forceRecycleCurrentChild("task helper 请求超时");
+          // 超时现在先走 cancel 链路，不再第一时间把整个 helper 进程打死。
+          // 只要下游任务实现了 AbortSignal 检查，就应该自己尽快停下。
           throw error;
         }
 

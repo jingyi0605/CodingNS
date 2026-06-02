@@ -10,9 +10,11 @@ import {
   iterateNdjsonFileSync,
 } from "../../utils/file-streaming.js";
 import { logAffairsIndexerRss } from "../../utils/rss-log.js";
+import { throwIfAborted, yieldToEventLoop } from "../../utils/abort.js";
 
 export interface SearchIndexBuildOptions {
   dirtyScope?: DirtyScope;
+  signal?: AbortSignal;
 }
 
 export interface SearchIndexBuildResult {
@@ -173,7 +175,7 @@ function writeSearchBucketFile(
 export class SearchIndexBuilder {
   constructor(private readonly config: RuntimeConfig) {}
 
-  build(_options: SearchIndexBuildOptions = {}): SearchIndexBuildResult {
+  async build(options: SearchIndexBuildOptions = {}): Promise<SearchIndexBuildResult> {
     const exportedAt = new Date().toISOString();
     const repository = new CatalogRepository(this.config.dbPath);
     const outputDir = path.join(this.config.exportDir, "search");
@@ -187,7 +189,9 @@ export class SearchIndexBuilder {
     const termTempPaths = new Map<string, string>();
 
     for (const batch of repository.iterateExportDocumentRecords(2000)) {
+      throwIfAborted(options.signal, "事务文档库搜索索引构建已取消");
       for (const document of batch) {
+        throwIfAborted(options.signal, "事务文档库搜索索引构建已取消");
         const entry = buildDocumentEntry(document);
         const sourceText = [
           document.path,
@@ -219,9 +223,11 @@ export class SearchIndexBuilder {
           }
         }
       }
+      await yieldToEventLoop(options.signal, "事务文档库搜索索引构建已取消");
     }
 
     for (const bucket of [...documentTempPaths.keys()].sort((a, b) => a.localeCompare(b, "zh-Hans-CN"))) {
+      throwIfAborted(options.signal, "事务文档库搜索索引构建已取消");
       const documentTempPath = documentTempPaths.get(bucket)!;
       const termTempPath = termTempPaths.get(bucket)!;
       const documentMap = new Map<string, SearchDocumentEntry>();
@@ -258,6 +264,7 @@ export class SearchIndexBuilder {
 
       safeUnlink(documentTempPath);
       safeUnlink(termTempPath);
+      await yieldToEventLoop(options.signal, "事务文档库搜索索引构建已取消");
     }
 
     if (fs.existsSync(tempDir) && fs.readdirSync(tempDir).length === 0) {

@@ -15,10 +15,12 @@ import {
   type JsonArrayFileWriter,
 } from "../../utils/file-streaming.js";
 import { logAffairsIndexerRss } from "../../utils/rss-log.js";
+import { throwIfAborted, yieldToEventLoop } from "../../utils/abort.js";
 
 export interface ExportBuildOptions {
   dirtyScope?: DirtyScope;
   light?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface ExportBuildResult {
@@ -234,7 +236,7 @@ function isRelationEligibleTag(tagPath: string): boolean {
 export class ExportBuilder {
   constructor(private readonly config: RuntimeConfig) {}
 
-  build(options: ExportBuildOptions = {}): ExportBuildResult {
+  async build(options: ExportBuildOptions = {}): Promise<ExportBuildResult> {
     const exportedAt = new Date().toISOString();
     const repository = new CatalogRepository(this.config.dbPath);
     const tags = repository.listExportTags();
@@ -312,7 +314,9 @@ export class ExportBuilder {
     };
 
     for (const batch of repository.iterateExportDocumentRecords(2000)) {
+      throwIfAborted(options.signal, "事务文档库导出已取消");
       for (const document of batch) {
+        throwIfAborted(options.signal, "事务文档库导出已取消");
         const directory = normalizeDirectory(document.path);
         ensureFolderBootstrapNode(folderBootstrapMap, directory).direct_document_count += 1;
         let currentBootstrapDirectory: string | null = directory;
@@ -375,6 +379,7 @@ export class ExportBuilder {
           filesWritten.push(absoluteDetailPath);
         }
       }
+      await yieldToEventLoop(options.signal, "事务文档库导出已取消");
     }
     flushMetaShard();
     logAffairsIndexerRss("export.meta_detail_complete", {
@@ -389,6 +394,7 @@ export class ExportBuilder {
 
     const tagsByRoot = new Map<string, ExportTagRecord[]>();
     for (const tag of tags) {
+      throwIfAborted(options.signal, "事务文档库导出已取消");
       const current = tagsByRoot.get(tag.rootType) ?? [];
       current.push(tag);
       tagsByRoot.set(tag.rootType, current);
@@ -455,7 +461,9 @@ export class ExportBuilder {
     };
 
     for (const batch of repository.iterateTagPostingRows(10000)) {
+      throwIfAborted(options.signal, "事务文档库导出已取消");
       for (const row of batch) {
+        throwIfAborted(options.signal, "事务文档库导出已取消");
         if (currentRootType !== row.rootType) {
           flushCurrentRoot();
           currentRootType = row.rootType;
@@ -485,6 +493,7 @@ export class ExportBuilder {
           derived: row.derived,
         });
       }
+      await yieldToEventLoop(options.signal, "事务文档库导出已取消");
     }
     flushCurrentRoot();
     logAffairsIndexerRss("export.tag_complete", {
@@ -534,7 +543,9 @@ export class ExportBuilder {
 
     if (!lightBuild) {
       for (const batch of repository.iterateDirectTagPostingRows(10000)) {
+        throwIfAborted(options.signal, "事务文档库导出已取消");
         for (const row of batch) {
+          throwIfAborted(options.signal, "事务文档库导出已取消");
           if (currentRelationTag !== row.tagPath) {
             flushRelationTag();
             currentRelationTag = row.tagPath;
@@ -545,6 +556,7 @@ export class ExportBuilder {
             title: row.title,
           });
         }
+        await yieldToEventLoop(options.signal, "事务文档库导出已取消");
       }
     }
     flushRelationTag();
@@ -553,6 +565,7 @@ export class ExportBuilder {
       ? fs.readdirSync(relationTempDir).filter(name => name.endsWith(".relations.ndjson"))
       : [];
     for (const fileName of relationTempFiles) {
+      throwIfAborted(options.signal, "事务文档库导出已取消");
       const documentId = fileName.replace(/\.relations\.ndjson$/, "");
       const merged = new Map<string, RelationPair>();
       iterateNdjsonFileSync<RelationPair>(path.join(relationTempDir, fileName), (record) => {
@@ -587,6 +600,7 @@ export class ExportBuilder {
         filesWritten.push(absolutePath);
       }
       safeUnlink(path.join(relationTempDir, fileName));
+      await yieldToEventLoop(options.signal, "事务文档库导出已取消");
     }
     if (fs.existsSync(relationTempDir) && fs.readdirSync(relationTempDir).length === 0) {
       fs.rmdirSync(relationTempDir);
@@ -608,7 +622,10 @@ export class ExportBuilder {
 
     const searchIndexResult = lightBuild
       ? { bucketCount: 0, filesWritten: [] as string[], manifestPath: path.join(this.config.exportDir, "search", "manifest.json") }
-      : new SearchIndexBuilder(this.config).build({ dirtyScope: options.dirtyScope });
+      : await new SearchIndexBuilder(this.config).build({
+        dirtyScope: options.dirtyScope,
+        signal: options.signal
+      });
     logAffairsIndexerRss("export.search_complete", {
       rootDir: this.config.rootDir,
       searchBucketCount: searchIndexResult.bucketCount,
@@ -689,6 +706,7 @@ export class ExportBuilder {
       const activeRelationPaths = new Set(relationShards.map(item => item.path));
 
       for (const shard of previousManifest.meta_shards ?? []) {
+        throwIfAborted(options.signal, "事务文档库导出已取消");
         const shardDirectories = metaShardDirectories(shard);
         if (
           !activeMetaPaths.has(shard.path)
@@ -700,6 +718,7 @@ export class ExportBuilder {
       }
 
       for (const shard of previousManifest.detail_shards ?? []) {
+        throwIfAborted(options.signal, "事务文档库导出已取消");
         if (!activeDetailPaths.has(shard.path) || (changedPaths.has(shard.document_path) && !detailDocumentPaths.has(shard.document_path))) {
           const absolutePath = path.join(this.config.exportDir, shard.path);
           if (fs.existsSync(absolutePath)) fs.unlinkSync(absolutePath);
@@ -707,6 +726,7 @@ export class ExportBuilder {
       }
 
       for (const shard of previousManifest.relation_shards ?? []) {
+        throwIfAborted(options.signal, "事务文档库导出已取消");
         if (!activeRelationPaths.has(shard.path)) {
           const absolutePath = path.join(this.config.exportDir, shard.path);
           if (fs.existsSync(absolutePath)) fs.unlinkSync(absolutePath);

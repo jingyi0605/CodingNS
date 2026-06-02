@@ -33,7 +33,7 @@ function uniqueDocuments(documents: ExportDocumentRecord[]): ExportDocumentRecor
 
 function createExportSummary(
   dirtyScope: DirtyScope,
-  exportResult: ReturnType<ExportBuilder["build"]>,
+  exportResult: Awaited<ReturnType<ExportBuilder["build"]>>,
 ) {
   return {
     exportResult: {
@@ -46,11 +46,12 @@ function createExportSummary(
   };
 }
 
-function buildConfiguredExports(
+async function buildConfiguredExports(
   config: RuntimeConfig,
   dirtyScope: DirtyScope,
+  signal?: AbortSignal,
 ) {
-  const exportResult = new ExportBuilder(config).build({ dirtyScope });
+  const exportResult = await new ExportBuilder(config).build({ dirtyScope, signal });
   return createExportSummary(dirtyScope, exportResult);
 }
 
@@ -154,7 +155,7 @@ export class AllowedExtensionsDiffService {
     );
   }
 
-  async applyIfNeeded(): Promise<AllowedExtensionsDiffApplyResult> {
+  async applyIfNeeded(signal?: AbortSignal): Promise<AllowedExtensionsDiffApplyResult> {
     const writer = new CatalogWriteRepository(this.config.dbPath);
     const repository = new CatalogRepository(this.config.dbPath);
     const effectiveCurrent = this.resolveEffectiveAllowedExtensions();
@@ -174,7 +175,7 @@ export class AllowedExtensionsDiffService {
 
     if (addedExtensions.length === 0 && removedExtensions.length === 0) {
       writer.setSchemaMeta(APPLIED_ALLOWED_EXTENSIONS_META_KEY, JSON.stringify(effectiveCurrent));
-      const exportSummary = buildConfiguredExports(this.config, emptyDirtyScope);
+      const exportSummary = await buildConfiguredExports(this.config, emptyDirtyScope, signal);
       return {
         changed: false,
         addedExtensions,
@@ -191,6 +192,7 @@ export class AllowedExtensionsDiffService {
         reconcileMode: "none",
         collectChangedPaths: true,
         dirtyScopeTrigger: "incremental",
+        signal,
       })
       : createEmptyIncrementalIndexResult(emptyDirtyScope);
 
@@ -217,7 +219,7 @@ export class AllowedExtensionsDiffService {
       triggerOverride: "incremental",
     });
 
-    const exportSummary = buildConfiguredExports(this.config, dirtyScope);
+    const exportSummary = await buildConfiguredExports(this.config, dirtyScope, signal);
 
     return {
       changed: true,

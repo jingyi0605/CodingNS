@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { throwIfAborted } from "../utils/abort.js";
 
 export interface FileScanResult {
   relativePath: string;
@@ -155,11 +156,11 @@ export class FileScanner {
     return this.allowedExtensions.has(extension);
   }
 
-  scan(targetPath?: string): FileScanResult[] {
-    return [...this.scanIterator(targetPath)];
+  scan(targetPath?: string, signal?: AbortSignal): FileScanResult[] {
+    return [...this.scanIterator(targetPath, signal)];
   }
 
-  *scanIterator(targetPath?: string): Generator<FileScanResult> {
+  *scanIterator(targetPath?: string, signal?: AbortSignal): Generator<FileScanResult> {
     const base = targetPath ? path.resolve(this.rootDir, targetPath) : this.rootDir;
     if (!fs.existsSync(base)) {
       return;
@@ -167,11 +168,13 @@ export class FileScanner {
 
     const stack: string[] = [base];
     while (stack.length > 0) {
+      throwIfAborted(signal, "事务文档库扫描已取消");
       const currentPath = stack.pop();
       if (!currentPath || !fs.existsSync(currentPath)) {
         continue;
       }
 
+      throwIfAborted(signal, "事务文档库扫描已取消");
       const stat = fs.statSync(currentPath);
       if (stat.isFile()) {
         const item = this.scanFile(currentPath, stat);
@@ -185,6 +188,7 @@ export class FileScanner {
         continue;
       }
 
+      throwIfAborted(signal, "事务文档库扫描已取消");
       const entries = fs.readdirSync(currentPath, { withFileTypes: true })
         .filter(entry => {
           if (IGNORED_DIRECTORY_NAMES.has(entry.name)) {

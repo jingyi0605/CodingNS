@@ -3,6 +3,7 @@ import type { ParsedDocument as ParsedDocumentResult } from "./plain-text-parser
 import type { ParseSkip } from "./parser-adapter.js";
 import { ParserRouter, createDefaultParserAdapters } from "./parser-router.js";
 import type { ParserAdapter } from "./parser-adapter.js";
+import { throwIfAborted } from "../utils/abort.js";
 
 /**
  * 统一解析入口。
@@ -17,8 +18,10 @@ export class DocumentParser {
     });
   }
 
-  async parse(filePath: string): Promise<ParsedDocumentResult> {
+  async parse(filePath: string, signal?: AbortSignal): Promise<ParsedDocumentResult> {
+    throwIfAborted(signal, "事务文档库解析已取消");
     const { adapter, extension } = await this.router.resolveForFile(filePath);
+    throwIfAborted(signal, "事务文档库解析已取消");
     const result = await adapter.parse({
       filePath,
       extension,
@@ -29,8 +32,10 @@ export class DocumentParser {
     return result as ParsedDocumentResult;
   }
 
-  async parseWithOutcome(filePath: string): Promise<ParsedDocumentResult | ParseSkip> {
+  async parseWithOutcome(filePath: string, signal?: AbortSignal): Promise<ParsedDocumentResult | ParseSkip> {
+    throwIfAborted(signal, "事务文档库解析已取消");
     const { adapter, extension } = await this.router.resolveForFile(filePath);
+    throwIfAborted(signal, "事务文档库解析已取消");
     return await adapter.parse({
       filePath,
       extension,

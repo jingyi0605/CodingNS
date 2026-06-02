@@ -112,7 +112,7 @@ describe("TaskHelperProcessClient", () => {
     expect(client.rejectPendingForChild).toHaveBeenCalledTimes(1);
   });
 
-  it("helper 请求超时时会强制回收当前 child 并停止自动重试", async () => {
+  it("helper 请求超时时不再强制回收当前 child，并停止自动重试", async () => {
     const kill = vi.fn();
     const close = vi.fn();
     const rejectPendingForChild = vi.fn();
@@ -149,13 +149,11 @@ describe("TaskHelperProcessClient", () => {
     )).rejects.toBe(timeoutError);
 
     expect(client.executeOnce).toHaveBeenCalledTimes(1);
-    expect(kill).toHaveBeenCalledWith("SIGKILL");
-    expect(close).toHaveBeenCalledTimes(1);
-    expect(client.child).toBeNull();
-    expect(client.stdoutReader).toBeNull();
-    expect(client.stdoutReaderChild).toBeNull();
-    expect(rejectPendingForChild).toHaveBeenCalledTimes(1);
-    expect(rejectPendingForChild.mock.calls[0]?.[0]).toBe(child);
-    expect(rejectPendingForChild.mock.calls[0]?.[1]).toBeInstanceOf(TaskTimeoutError);
+    expect(kill).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+    expect(client.child).toBe(child);
+    expect(client.stdoutReader).not.toBeNull();
+    expect(client.stdoutReaderChild).toBe(child);
+    expect(rejectPendingForChild).not.toHaveBeenCalled();
   });
 });

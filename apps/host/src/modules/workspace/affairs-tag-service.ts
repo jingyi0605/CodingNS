@@ -23,6 +23,8 @@ import { createAffairsIndexerRuntimeConfig } from "../affairs-indexer/internal-c
 import { TagRecomputeService } from "../affairs-indexer/core/src/services/tagging/tag-recompute-service.js";
 import { ExportBuilder } from "../affairs-indexer/core/src/services/export/export-builder.js";
 
+const TAG_EXPORT_REFRESH_TASK_TIMEOUT_MS = 30 * 60 * 1000;
+
 interface WorkspaceNavigationStateRepositoryLike {
   findByWorkspaceIdAndUserId(workspaceId: string, userId: string): {
     affairsLibraryRootPath?: string | null;
@@ -591,9 +593,10 @@ export class AffairsTagService {
         taskType: HOST_TASK_TYPES.affairsLibraryTagRecompute,
         executionLane: "helper_process",
         timeoutMs: 30_000,
-        run: async (input) => {
-          new TagRecomputeService(createAffairsIndexerRuntimeConfig(input.rootDir)).run({
+        run: async (input, context) => {
+          await new TagRecomputeService(createAffairsIndexerRuntimeConfig(input.rootDir)).run({
             scope: input.scope,
+            signal: context.signal,
           });
           return { ok: true };
         },
@@ -604,9 +607,10 @@ export class AffairsTagService {
         taskType: HOST_TASK_TYPES.affairsLibraryTagApplyBindings,
         executionLane: "helper_process",
         timeoutMs: 30_000,
-        run: async (input) => {
-          new TagRecomputeService(createAffairsIndexerRuntimeConfig(input.rootDir)).run({
+        run: async (input, context) => {
+          await new TagRecomputeService(createAffairsIndexerRuntimeConfig(input.rootDir)).run({
             scope: input.scope,
+            signal: context.signal,
           });
           return { ok: true };
         },
@@ -617,9 +621,13 @@ export class AffairsTagService {
         taskType: HOST_TASK_TYPES.affairsLibraryTagExportRefresh,
         executionLane: "helper_process",
         helperProcessHandler: "affairs.library_export",
-        timeoutMs: 20_000,
-        run: async (input) => {
-          new ExportBuilder(createAffairsIndexerRuntimeConfig(input.rootDir)).build();
+        // 这里跑的不是轻量标签刷新，而是整套静态导出。
+        // 大库下 20s 很容易误判超时，直接对齐文档库索引任务的分钟级超时。
+        timeoutMs: TAG_EXPORT_REFRESH_TASK_TIMEOUT_MS,
+        run: async (input, context) => {
+          await new ExportBuilder(createAffairsIndexerRuntimeConfig(input.rootDir)).build({
+            signal: context.signal,
+          });
           return { ok: true };
         },
       });

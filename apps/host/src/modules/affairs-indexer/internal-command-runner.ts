@@ -46,6 +46,7 @@ export async function runAffairsIndexerCommand(
     targetPath?: string;
     reason?: string;
     taskMeta?: AffairsIndexerTaskMeta;
+    signal?: AbortSignal;
   } = {}
 ): Promise<AffairsIndexerCommandResult> {
   const startedAt = performance.now();
@@ -84,7 +85,7 @@ export async function runAffairsIndexerCommand(
     switch (command) {
       case "apply-config": {
         runtimeStageWriter.write("running", "index");
-        const applyResult = await new AllowedExtensionsDiffService(config).applyIfNeeded();
+        const applyResult = await new AllowedExtensionsDiffService(config).applyIfNeeded(options.signal);
         result = {
           changed: applyResult.changed,
           addedExtensions: applyResult.addedExtensions,
@@ -111,10 +112,14 @@ export async function runAffairsIndexerCommand(
         runtimeStageWriter.write("running", "index");
         const indexResult = await new TextIndexer(config).index(undefined, {
           collectChangedPaths: true,
-          dirtyScopeTrigger: "full"
+          dirtyScopeTrigger: "full",
+          signal: options.signal
         });
         runtimeStageWriter.write("running", "export");
-        const exportResult = new ExportBuilder(config).build({ dirtyScope: indexResult.dirtyScope });
+        const exportResult = await new ExportBuilder(config).build({
+          dirtyScope: indexResult.dirtyScope,
+          signal: options.signal
+        });
         runtimeStageWriter.write("running", "sqlite");
         writeIndexerCommandMeta(config, command, options);
         result = {
@@ -136,7 +141,9 @@ export async function runAffairsIndexerCommand(
       }
       case "export": {
         runtimeStageWriter.write("running", "export");
-        const exportResult = new ExportBuilder(config).build();
+        const exportResult = await new ExportBuilder(config).build({
+          signal: options.signal
+        });
         result = { exportResult };
         message = "静态导出完成。";
         break;
@@ -146,10 +153,14 @@ export async function runAffairsIndexerCommand(
         runtimeStageWriter.write("running", "index");
         const indexResult = await new TextIndexer(config).index(targetPath, {
           collectChangedPaths: true,
-          dirtyScopeTrigger: "incremental"
+          dirtyScopeTrigger: "incremental",
+          signal: options.signal
         });
         runtimeStageWriter.write("running", "export");
-        const exportResult = new ExportBuilder(config).build({ dirtyScope: indexResult.dirtyScope });
+        const exportResult = await new ExportBuilder(config).build({
+          dirtyScope: indexResult.dirtyScope,
+          signal: options.signal
+        });
         runtimeStageWriter.write("running", "sqlite");
         new CatalogWriteRepository(config.dbPath).setSchemaMeta(
           "watcher.last_touch",

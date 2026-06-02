@@ -16,6 +16,7 @@ import type { ParsedDocument } from "../../parser/plain-text-parser.js";
 import type { TagAssignment } from "../../tagging/simple-tag-inference.js";
 import { DirtyScopeResolver, type DirtyScope } from "../dirty/dirty-scope-resolver.js";
 import { logAffairsIndexerRss } from "../../utils/rss-log.js";
+import { throwIfAborted, yieldToEventLoop } from "../../utils/abort.js";
 
 export interface TextIndexResult {
   scannedCount: number;
@@ -115,6 +116,7 @@ export class TextIndexer {
       reconcileMode?: "scope" | "none";
       collectChangedPaths?: boolean;
       dirtyScopeTrigger?: "full" | "incremental";
+      signal?: AbortSignal;
     } = {},
   ): Promise<TextIndexResult> {
     const startedAt = performance.now();
@@ -246,8 +248,9 @@ export class TextIndexer {
     writer.beginSession();
     skipRepository.beginSession();
     try {
-      const iterator = scanner.scanIterator(targetPath);
+      const iterator = scanner.scanIterator(targetPath, options.signal);
       while (true) {
+        throwIfAborted(options.signal, "事务文档库索引已取消");
         const scanT0 = performance.now();
         const next = iterator.next();
         scanFsMs += performance.now() - scanT0;
@@ -259,7 +262,7 @@ export class TextIndexer {
         maybeLogParseProgress();
         try {
           const parseStartedAt = performance.now();
-          const parseResult = await parser.parseWithOutcome(file.fullPath);
+          const parseResult = await parser.parseWithOutcome(file.fullPath, options.signal);
           parseMs += performance.now() - parseStartedAt;
           if ("kind" in parseResult && parseResult.kind === "skip") {
             skippedCount += 1;
@@ -346,6 +349,10 @@ export class TextIndexer {
             flushFailures();
           }
         }
+
+        if (scannedCount % Math.max(1, this.config.writeBatchSize) === 0) {
+          await yieldToEventLoop(options.signal, "事务文档库索引已取消");
+        }
       }
       flushSuccess();
       flushSkipped();
@@ -370,6 +377,7 @@ export class TextIndexer {
     let reconcile = { deletedCount: 0, deletedPaths: [] as string[] };
     let reconcileMs = 0;
     if ((options.reconcileMode ?? "scope") !== "none") {
+      throwIfAborted(options.signal, "事务文档库索引已取消");
       const reconcileStartedAt = performance.now();
       reconcile = writer.reconcileScope(
         resolveReconcileScope(this.config.rootDir, targetPath),
@@ -378,6 +386,7 @@ export class TextIndexer {
       reconcileMs = performance.now() - reconcileStartedAt;
     }
 
+    throwIfAborted(options.signal, "事务文档库索引已取消");
     const dirtyScopeStartedAt = performance.now();
     const dirtyScope = new DirtyScopeResolver(repository).resolve({
       targetPath,

@@ -17,9 +17,11 @@ import type { FileScanResult } from "../../scanner/file-scanner.js";
 import type { ParsedDocument } from "../../parser/plain-text-parser.js";
 import { ExportBuilder } from "../export/export-builder.js";
 import type { DirtyScope } from "../dirty/dirty-scope-resolver.js";
+import { throwIfAborted, yieldToEventLoop } from "../../utils/abort.js";
 
 export interface TagRecomputeRunInput {
   scope?: RecomputeScope;
+  signal?: AbortSignal;
 }
 
 export interface TagRecomputeResult {
@@ -110,7 +112,7 @@ function setResolvedTag(
 export class TagRecomputeService {
   constructor(private readonly config: RuntimeConfig) {}
 
-  run(input: TagRecomputeRunInput = {}): TagRecomputeResult {
+  async run(input: TagRecomputeRunInput = {}): Promise<TagRecomputeResult> {
     const startedAt = performance.now();
     const repository = new CatalogRepository(this.config.dbPath);
     const writer = new CatalogWriteRepository(this.config.dbPath);
@@ -136,6 +138,7 @@ export class TagRecomputeService {
 
     const inferStartedAt = performance.now();
     for (const row of documents) {
+      throwIfAborted(input.signal, "事务文档库标签重算已取消");
       const file = buildFileScanResult(this.config.rootDir, row);
       const parsed = buildParsedDocument(row);
       const inferred = tagger.infer(file, parsed);
@@ -156,9 +159,13 @@ export class TagRecomputeService {
         collectTagAncestors(entry.tagPath).forEach(tagPath => dirtyTagPaths.add(tagPath));
       });
       scannedCount += 1;
+      if (scannedCount % 200 === 0) {
+        await yieldToEventLoop(input.signal, "事务文档库标签重算已取消");
+      }
     }
     inferMs += performance.now() - inferStartedAt;
 
+    throwIfAborted(input.signal, "事务文档库标签重算已取消");
     const writeStartedAt = performance.now();
     const written = writer.recomputeResolvedTags(
       [...accumulators.values()].flatMap(item => item.entries),
@@ -168,17 +175,19 @@ export class TagRecomputeService {
     writeMs += performance.now() - writeStartedAt;
     updatedCount += written.updatedCount;
 
+    throwIfAborted(input.signal, "事务文档库标签重算已取消");
     const dirtyScope = this.buildDirtyScopeFromResolvedEntries(
       [...accumulators.values()].flatMap(item => item.entries),
       dirtyTagPaths,
     );
     const exportStartedAt = performance.now();
-    const exportResult = new ExportBuilder(this.config).build({
+    const exportResult = await new ExportBuilder(this.config).build({
       dirtyScope: {
         ...dirtyScope,
         trigger: "full",
       },
       light: true,
+      signal: input.signal,
     });
     const exportMs = performance.now() - exportStartedAt;
 
